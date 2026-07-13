@@ -172,6 +172,19 @@ async function hydrateChat(chat) {
     // stay valid. Replace messages, copy server fields.
     Object.assign(chat, session);
     delete chat._needsHydrate;
+    // A live anchor was sampled against the PRE-hydrate array. When the
+    // hydrate replaced chat.messages (reload mid-turn: the user's prompt is
+    // only persisted server-side at send, never saved locally, so the server
+    // array is one longer and reconcileSessionSnapshot force-hydrates), the
+    // stale anchor lands the live row ABOVE that prompt. Re-anchor to the end
+    // of the fresh array; the streaming repaint below is already a full
+    // renderMessages (_hydrateRepaintMode returns 'full' whenever streaming
+    // and !keptLocal), so the live row moves to the corrected slot on this
+    // same repaint.
+    if (!keptLocal && typeof ChatStreamStore !== 'undefined'
+        && ChatStreamStore.isStreaming(chat.id) && Array.isArray(chat.messages)) {
+      ChatStreamStore.reanchorTurn(chat.id, chat.messages.length);
+    }
     saveChats();
     if (activeChat && activeChat.id === chat.id && window.renderMessages) {
       const streaming = typeof ChatStreamStore !== 'undefined' && ChatStreamStore.isStreaming(chat.id);

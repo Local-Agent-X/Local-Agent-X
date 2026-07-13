@@ -29,6 +29,8 @@
 //   feedTTS                                             (chat-voice-tts.js)
 //   VoiceSphere                                         (chat-voice-ui.js)
 //   addAgentFeed, updateAgentFeed, renderAgentCard_inline (chat-agent-feeds.js)
+//   _finalizeWsTurn                                       (chat-send-ws.js)
+//   renderMessages                                        (chat-render.js)
 
 function dispatchChatStreamEvent(msg) {
   const sessionId = msg.sessionId;
@@ -43,13 +45,53 @@ function dispatchChatStreamEvent(msg) {
   if (event.type === 'inject_queued' || event.type === 'inject_consumed') return false;
 
   // Always update the store first — off-screen sessions need their state
-  // captured even if we don't paint DOM for them. _opId/_seq tracking is
-  // bumped here too via the store's lastSeenSeq mutation in applyEvent
-  // (chat_op_started) and the parent-dispatcher bumpActivity for envelope
-  // _opId/_seq.
+  // captured even if we don't paint DOM for them. Activity bumping happens
+  // here (applyEvent stamps lastActivityMs on every event) plus the parent
+  // dispatcher's bumpActivity for envelopes carrying _opId. (No seq
+  // tracking: lastSeenSeq was removed from the store — 2026-07-13 audit.)
   ChatStreamStore.applyEvent(sessionId, event);
 
   const viewing = !!(activeChat && activeChat.id === sessionId);
+
+  // ── Turn adoption (audit F4b) ──
+  // After a page reload mid-turn (or switching to a chat whose turn started
+  // while unwatched), the server's subscribe replay re-lights 'streaming',
+  // but startTurn never ran locally: liveAnchorIndex is -1 so renderMessages
+  // never synthesizes a live row (live content invisible), and no per-turn
+  // subscriber exists so nothing promotes/persists on `done`. Adopt the
+  // turn: anchor the live row at the end of the hydrated history and wire
+  // the same one-shot finalize _sendMessageWs uses. Runs at most once per
+  // turn — adoptTurn flips the anchor >= 0, which falsifies this condition
+  // for every later event; the anchor only returns to -1 via
+  // promoteLiveToMessages, by which point status is 'done' (isStreaming
+  // false), so a finished turn can't be re-adopted.
+  if (viewing && ChatStreamStore.isStreaming(sessionId) && Array.isArray(activeChat.messages)) {
+    const entry = ChatStreamStore.get(sessionId);
+    if (entry && entry.liveAnchorIndex < 0
+        && ChatStreamStore.adoptTurn(sessionId, activeChat.messages.length)) {
+      // Resolve the canonical chat object the way the send path does —
+      // finalize splices the promoted row into chat.messages, so it must be
+      // the instance held in `chats`, not a detached copy. activeChat IS
+      // that instance (selectChat assigns from chats), but prefer the
+      // lookup and fall back, mirroring handleInjectConsumed.
+      const chat = (typeof chats !== 'undefined' && Array.isArray(chats))
+        ? (chats.find(c => c.id === sessionId) || activeChat)
+        : activeChat;
+      // Same one-shot finalize pattern as _sendMessageWs: on 'done',
+      // unsubscribe then promote + persist + paint via _finalizeWsTurn.
+      const unsubscribe = ChatStreamStore.subscribe(sessionId, function(e2) {
+        if (!e2 || e2.status !== 'done') return;
+        unsubscribe();
+        _finalizeWsTurn(sessionId, chat);
+      });
+      // One full render so the live row appears at the adopted anchor
+      // immediately — rerenderLiveMessage below only swaps an EXISTING
+      // data-live="1" node (chat-render-live.js refuses to synthesize),
+      // so without this the adopted turn stays invisible until the next
+      // full render.
+      if (typeof renderMessages === 'function') renderMessages();
+    }
+  }
 
   // Store-driven swap of the live bubble. rerenderLiveMessage is
   // rAF-coalesced and bails for off-screen/post-done sessions. This is

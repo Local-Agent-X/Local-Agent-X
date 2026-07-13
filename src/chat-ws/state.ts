@@ -192,14 +192,25 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
  *   chat.events, so the trim is a backstop over the small non-stream list
  *   and can never eat streamed text.
  *
- * The replace is sent FIRST so a trailing buffered `error`/`done` lands
- * after it (`error` appends to content; a `replace` after `error` would
- * wipe it). Non-stream events replay in order and are idempotent
- * client-side (tool_* dedupe by call id, done is terminal).
+ * Frame order: chat_op_started events FIRST (relative order preserved),
+ * then the coalesced replace, then the remaining buffered events in order.
+ * op_started precedes all stream text chronologically, so it must replay
+ * before the replace: the client wipes its per-turn scratch on a
+ * done→streaming transition (reconnect onto a finished entry after a NEW
+ * op started while disconnected — chat-stream-store.js applyEvent), and
+ * that wipe has to run BEFORE the replace refills content, not after (an
+ * op_started replayed after the replace destroyed the just-replayed text).
+ * The replace still precedes any trailing `error`/`done` (`error` appends
+ * to content; a `replace` after `error` would wipe it). Non-stream events
+ * are idempotent client-side (tool_* dedupe by call id, done is terminal).
  */
 export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
   const chat = activeChats.get(sessionId);
   if (!chat) return;
+  for (const event of chat.events) {
+    if (event.type !== "chat_op_started") continue;
+    ws.send(JSON.stringify({ type: "event", sessionId, event }));
+  }
   // Gate on sawStream, not streamText truthiness: an empty accumulator after
   // a stream event means the extractor REPLACED the text with "" (visible
   // text was all tool-call JSON) — the client needs that empty replace to
@@ -213,6 +224,7 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
     }));
   }
   for (const event of chat.events) {
+    if (event.type === "chat_op_started") continue;
     ws.send(JSON.stringify({ type: "event", sessionId, event }));
   }
 }

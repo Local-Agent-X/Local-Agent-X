@@ -237,6 +237,33 @@
           break;
         }
         if (event.opId) e.opId = event.opId;
+        if (e.status === 'done') {
+          // A NEW op starting on a finished entry (the doneOpIds guard above
+          // already rejected stale replays). Adopted turns never ran
+          // startTurn, so scratch left behind after the last promote — a late
+          // '\n\nError: …' appended AFTER promote cleared content — would
+          // become the head of this turn and get persisted. Mirror startTurn's
+          // scratch resets; leave liveAnchorIndex/doneOpIds alone (adoption
+          // owns the anchor; doneOpIds must keep rejecting stale starts).
+          //
+          // Replay-ordering guarantee (state.ts replayBufferedEvents): on a
+          // subscribe replay the server sends ALL chat_op_started events
+          // FIRST, then the coalesced stream `replace`, then the remaining
+          // buffered events. Same-tab reconnect onto an entry still 'done'
+          // from its last turn: the new op's replayed chat_op_started fires
+          // this wipe BEFORE the replace refills content — a genuinely new
+          // op, nothing lost. Page reload: the entry is fresh ('idle'), the
+          // wipe doesn't fire, the replace lands untouched either way.
+          e.content = '';
+          e.reasoning = '';
+          e.toolsSinceText = false;
+          e.toolEvents = [];
+          e.chips = [];
+          e.progressByTool = {};
+          e.approvals = [];
+          e.stopNote = null;
+          e.abortReason = null;
+        }
         if (e.status === 'idle' || e.status === 'done') e.status = 'streaming';
         e.lastActivityMs = now;
         break;
@@ -387,6 +414,36 @@
     e.liveAnchorIndex += delta;
   }
 
+  // Adopt an in-flight turn this client never started — page reload mid-turn,
+  // or switching into a chat whose turn began while unwatched. The server's
+  // subscribe replay has already refilled content/reasoning/toolEvents via
+  // applyEvent, so startTurn (which wipes all of that) is the wrong tool:
+  // adoption only needs an anchor so renderMessages can synthesize the live
+  // row and promoteLiveToMessages knows where to splice on `done`. No-op
+  // when a live anchor already exists (a locally-started turn).
+  function adoptTurn(sessionId, anchorIdx) {
+    if (!sessionId || typeof anchorIdx !== 'number') return false;
+    const e = entries.get(sessionId);
+    if (!e || e.liveAnchorIndex >= 0) return false;
+    e.liveAnchorIndex = Math.max(0, anchorIdx);
+    return true;
+  }
+
+  // Re-point an EXISTING live anchor after chat.messages was REPLACED under
+  // it (hydrateChat swaps in the server's array — the user prompt is only
+  // persisted server-side at send, never saved locally mid-turn, so the
+  // server array is typically one longer). The anchor was sampled against
+  // the pre-hydrate array; left alone it lands the live row ABOVE the user's
+  // own prompt. Deliberately the inverse of adoptTurn's guard: adoption
+  // refuses when an anchor exists, re-anchoring requires one.
+  function reanchorTurn(sessionId, anchorIdx) {
+    if (!sessionId || typeof anchorIdx !== 'number') return false;
+    const e = entries.get(sessionId);
+    if (!e || e.liveAnchorIndex < 0) return false;
+    e.liveAnchorIndex = Math.max(0, anchorIdx);
+    return true;
+  }
+
   // Force-terminate from a local action (stop button, transport error). The
   // dispatcher's `done` event normally clears state; this is for cases where
   // we can't wait for it (force-closing the WS, never-arrived done frame).
@@ -517,7 +574,7 @@
 
   window.ChatStreamStore = {
     get, ensure,
-    startTurn, applyEvent, bumpActivity, bumpAnchor, endTurn, promoteLiveToMessages,
+    startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity, bumpAnchor, endTurn, promoteLiveToMessages,
     setSidebarActive, setActiveSidebarSet, resolveApprovalLocal,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,

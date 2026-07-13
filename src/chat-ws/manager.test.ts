@@ -205,6 +205,32 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     }
   });
 
+  it("(i) chat_op_started replays BEFORE the replace; replace before trailing error/done", () => {
+    // The client wipes per-turn scratch on a done→streaming transition
+    // (chat-stream-store.js applyEvent 'chat_op_started'). Chronologically
+    // op_started precedes all stream text, but it's buffered in chat.events
+    // while the text is coalesced into the up-front replace — replaying it
+    // AFTER the replace made the wipe destroy the just-replayed content on
+    // same-tab reconnects. Pin the partition: op_started first, then the
+    // replace, then the rest in order (replace still ahead of error/done so
+    // they can't be wiped by it).
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-op-order");
+    onEvent({ type: "chat_op_started", opId: "op-1" } as ServerEvent);
+    onEvent(delta("partial "));
+    onEvent(toolStart);
+    onEvent(delta("answer"));
+    onEvent(toolEnd);
+    terminateChat("s-op-order", { abort: false, errorMessage: "provider died" });
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-op-order");
+    const types = frames().map(f => (f.event as { type: string }).type);
+    expect(types).toEqual(["chat_op_started", "stream", "tool_start", "tool_end", "error", "done"]);
+    const streamFrame = frames().find(f => f.event?.type === "stream")!;
+    expect(streamFrame.event).toMatchObject({ replace: true, text: "partial \n\nanswer" });
+  });
+
   it("sends no stream frame when nothing was streamed (tool-only turn)", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-notext");
@@ -217,3 +243,81 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     expect(types).toEqual(["tool_start", "tool_end"]);
   });
 });
+
+describe("op_heartbeat keepalive (2026-07-13 audit I3)", () => {
+  // A single long tool call (build, npm install) emits nothing for 60s+, so
+  // the client's stuck-stream watchdog (public/js/chat-ws.js, 60s threshold
+  // on lastActivityMs) fired reconnect_op replays against healthy turns. The
+  // manager now broadcasts a lightweight op_heartbeat every 20s while the
+  // turn is live; chat-stream-store.js applyEvent's default case bumps
+  // lastActivityMs for any event type, so no client changes are needed.
+  const doneEvent: ServerEvent = {
+    type: "done",
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  } as ServerEvent;
+
+  const heartbeatFrames = (frames: Frame[]) =>
+    frames.filter(f => f.event?.type === "op_heartbeat");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  it("(a) live chat + subscribed client → one heartbeat at 20s, more after", () => {
+    const m = buildManager();
+    m.startChat("s-hb");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb"]));
+
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames())).toHaveLength(1);
+    expect(frames().at(-1)).toMatchObject({ type: "event", sessionId: "s-hb" });
+
+    vi.advanceTimersByTime(60_000);
+    expect(heartbeatFrames(frames())).toHaveLength(4);
+  });
+
+  it("(b) after done, advancing time produces no further heartbeats", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-hb-done");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-done"]));
+
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames())).toHaveLength(1);
+
+    onEvent(doneEvent);
+    vi.advanceTimersByTime(120_000);
+    expect(heartbeatFrames(frames())).toHaveLength(1);
+  });
+
+  it("(c) an overwritten entry's interval self-clears via the identity check", () => {
+    const m = buildManager();
+    // Old turn stays live (done:false) — only the identity check can stop
+    // its interval once a successor overwrites the map entry.
+    m.startChat("s-hb-dup");
+    const { onEvent: onNew } = m.startChat("s-hb-dup");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-dup"]));
+
+    // Finish the NEW turn; any heartbeat after this can only come from the
+    // OLD interval failing to self-clear.
+    onNew(doneEvent);
+    vi.advanceTimersByTime(120_000);
+    expect(heartbeatFrames(frames())).toHaveLength(0);
+  });
+
+  it("(d) heartbeats never land in chat.events (no replay noise)", () => {
+    const m = buildManager();
+    m.startChat("s-hb-buf");
+    const { ws } = makeWs();
+    clients.set(ws, new Set(["s-hb-buf"]));
+
+    vi.advanceTimersByTime(60_000);
+    const chat = activeChats.get("s-hb-buf")!;
+    expect(chat.events.some(e => (e as { type: string }).type === "op_heartbeat")).toBe(false);
+    expect(chat.events).toHaveLength(0);
+  });
+});
+

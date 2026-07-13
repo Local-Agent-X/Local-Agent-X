@@ -91,6 +91,21 @@ describe("buildSanitizedEnv host-contamination scrub (macOS app-bundle SIGSEGV)"
     const env = buildSanitizedEnv();
     expect(env.NODE_ENV).toBe("development");
   });
+
+  it.runIf(process.platform === "darwin")(
+    "injects the process.title guard so a freehand `npm run build` via bash can't SIGSEGV",
+    () => {
+      // Stripping __CFBundleIdentifier isn't enough — the app-bundle responsibility
+      // survives as a posix_spawn attribute. The bash / process_* paths run npm/vite
+      // directly, so buildSanitizedEnv must carry the same NODE_OPTIONS guard the
+      // managed build spawns get via hardenChildEnv.
+      expect(buildSanitizedEnv().NODE_OPTIONS).toMatch(/--require .*no-process-title\.cjs/);
+    },
+  );
+
+  it.skipIf(process.platform === "darwin")("does not inject the guard off macOS", () => {
+    expect(buildSanitizedEnv().NODE_OPTIONS ?? "").not.toMatch(/no-process-title\.cjs/);
+  });
 });
 
 describe("withNodeTitleGuard — process.title SIGSEGV guard (macOS)", () => {

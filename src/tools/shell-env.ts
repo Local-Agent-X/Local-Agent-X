@@ -8,7 +8,7 @@ import type { ServerEvent } from "../types.js";
 // __CFBundleIdentifier that SIGSEGVs a child's process.title set on macOS, etc.
 // Lives in its own module (LOC cap); re-exported so existing shell-env importers
 // keep working, and used locally in buildSanitizedEnv below.
-import { isHostContaminationEnvKey, stripHostContaminationEnv } from "./env-contamination.js";
+import { isHostContaminationEnvKey, stripHostContaminationEnv, withNodeTitleGuard } from "./env-contamination.js";
 export { isHostContaminationEnvKey, stripHostContaminationEnv };
 
 // ── Windows shell resolution ──────────────────────────────────────────────
@@ -373,5 +373,11 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
   // user's toolchain (cargo/go/python3/node/Homebrew). Done last so it applies
   // over any caller-supplied PATH too; only existing dirs are appended.
   sanitizedEnv.PATH = mergePathDirs(sanitizedEnv.PATH, toolchainBinDirs().filter((d) => existsSync(d)));
-  return sanitizedEnv;
+  // Guard the macOS process.title SIGSEGV for agent-spawned node children too:
+  // stripping __CFBundleIdentifier above is NOT sufficient (the app-bundle
+  // responsibility is a posix_spawn attribute node can't clear), so a freehand
+  // `npm run build`/`vite` through the bash or process_* path crashes exactly
+  // like the managed build spawns did before they adopted hardenChildEnv.
+  // No-op off macOS, so the Windows/Linux env is unchanged.
+  return withNodeTitleGuard(sanitizedEnv) as Record<string, string>;
 }

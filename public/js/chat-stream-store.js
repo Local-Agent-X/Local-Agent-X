@@ -280,7 +280,13 @@
         // Live chain-of-thought — accumulate on its own lane so the renderer
         // shows a collapsible "Thinking" block. Never touches `content`, so it
         // stays out of the answer bubble and the persisted message.
-        if (typeof event.delta === 'string') e.reasoning += event.delta;
+        // `replace` is the replay-coalescing frame (state.ts
+        // replayBufferedEvents) — same duplication class as the stream lane's
+        // CT-3: appending replayed deltas onto reasoning this client already
+        // holds double-counts the Thinking text, so the server sends ONE
+        // replace built from its accumulator and we SET instead of append.
+        if (event.replace === true) e.reasoning = event.text || '';
+        else if (typeof event.delta === 'string') e.reasoning += event.delta;
         e.lastActivityMs = now;
         break;
       case 'tool_start':

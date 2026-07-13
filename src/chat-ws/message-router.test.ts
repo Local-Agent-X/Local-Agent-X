@@ -54,7 +54,7 @@ function registerChat(sessionId: string, events: ServerEvent[] = [], streamText 
   const abortController = new AbortController();
   activeChats.set(sessionId, {
     sessionId, events: [...events], abortController, startedAt: Date.now(), done: false,
-    streamText, sawStream: streamText !== "", toolsSinceText: false,
+    streamText, sawStream: streamText !== "", reasoningText: "", sawReasoning: false, toolsSinceText: false,
   });
   broadcastActiveChats();
   return abortController;
@@ -206,7 +206,7 @@ describe("CT-4 — stop during the prep window", () => {
     // Previous turn finished; its entry lingers (5-min replay window).
     activeChats.set(sessionId, {
       sessionId, events: [], abortController: new AbortController(), startedAt: Date.now(), done: true,
-      streamText: "", sawStream: false, toolsSinceText: false,
+      streamText: "", sawStream: false, reasoningText: "", sawReasoning: false, toolsSinceText: false,
     });
     markChatHandlerPending(sessionId); // new turn mid-prep
     try {

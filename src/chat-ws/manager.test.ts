@@ -244,6 +244,84 @@ describe("stream accumulator survives the 500/400 event trim", () => {
   });
 });
 
+describe("reasoning accumulator mirrors the stream lane", () => {
+  // Sibling gap to the stream trim-truncation fix: `reasoning` deltas are
+  // per-token (event-pump.ts), so buffering them in chat.events (a) blew the
+  // 500/400 trim on any long thinking phase and EVICTED buffered tool events
+  // from replays, and (b) double-counted on reconnect — the client APPENDS
+  // replayed reasoning deltas onto the text it already holds. The fix folds
+  // them into chat.reasoningText and replays ONE coalesced replace.
+  const reasoning = (d: string): ServerEvent => ({ type: "reasoning", delta: d });
+
+  it("(a) 600 reasoning deltas stay out of chat.events; buffered tool events survive; replay carries ONE replace with the full text", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-think");
+    // Tool events land BEFORE the thinking flood — under the old buffering
+    // the 600 deltas trimmed them out of the replay window (the eviction
+    // bug this fixes).
+    onEvent(toolStart);
+    onEvent(toolEnd);
+    let full = "";
+    for (let i = 0; i < 600; i++) {
+      const d = `r${i} `;
+      full += d;
+      onEvent(reasoning(d));
+    }
+    const chat = activeChats.get("s-think")!;
+    expect(chat.events.some(e => e.type === "reasoning")).toBe(false);
+    expect(chat.events).toHaveLength(2); // just the tool pair — no trim pressure
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-think");
+    const reasoningFrames = frames().filter(f => f.event?.type === "reasoning");
+    expect(reasoningFrames).toHaveLength(1);
+    expect(reasoningFrames[0].event).toMatchObject({ replace: true, text: full });
+    expect(reasoningFrames[0]._replay).toBe(true);
+    // The eviction half: the tool cards still replay.
+    const types = frames().map(f => (f.event as { type: string }).type);
+    expect(types).toEqual(["reasoning", "tool_start", "tool_end"]);
+  });
+
+  it("(b) frame order: op_started → stream replace → reasoning replace → rest", () => {
+    // op_started must precede both replaces — the client's done→streaming
+    // scratch wipe (applyEvent 'chat_op_started') resets content AND
+    // reasoning, and has to run before either refill. Reasoning and answer
+    // text interleave live but sit on separate client lanes, so one
+    // coalesced replace per lane reproduces the client state exactly.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-think-order");
+    onEvent({ type: "chat_op_started", opId: "op-r" } as ServerEvent);
+    onEvent(reasoning("let me check "));
+    onEvent(delta("partial "));
+    onEvent(reasoning("the docs"));
+    onEvent(toolStart);
+    onEvent(delta("answer"));
+    onEvent(toolEnd);
+    terminateChat("s-think-order", { abort: false, errorMessage: "provider died" });
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-think-order");
+    const types = frames().map(f => (f.event as { type: string }).type);
+    expect(types).toEqual(["chat_op_started", "stream", "reasoning", "tool_start", "tool_end", "error", "done"]);
+    const reasoningFrame = frames().find(f => f.event?.type === "reasoning")!;
+    expect(reasoningFrame.event).toMatchObject({ replace: true, text: "let me check the docs" });
+  });
+
+  it("(c) a turn with no reasoning sends no reasoning frame", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-no-think");
+    onEvent(delta("plain answer"));
+    onEvent(toolStart);
+    onEvent(toolEnd);
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-no-think");
+    expect(frames().some(f => f.event?.type === "reasoning")).toBe(false);
+    const types = frames().map(f => (f.event as { type: string }).type);
+    expect(types).toEqual(["stream", "tool_start", "tool_end"]);
+  });
+});
+
 describe("op_heartbeat keepalive (2026-07-13 audit I3)", () => {
   // A single long tool call (build, npm install) emits nothing for 60s+, so
   // the client's stuck-stream watchdog (public/js/chat-ws.js, 60s threshold

@@ -57,6 +57,12 @@ export type ServerEvent =
    *  history. Silent for models that don't emit reasoning; the tool-lifecycle
    *  events carry visibility for those. Clients that don't handle it ignore it. */
   | { type: "reasoning"; delta: string }
+  /** Replay-coalescing frame for the reasoning lane (state.ts
+   *  replayBufferedEvents) — same duplication class as the stream lane's
+   *  `replace`: replaying raw deltas onto a client that already holds the
+   *  Thinking text double-counts it, so replay sends ONE replace built from
+   *  the ActiveChat.reasoningText accumulator. `delta` is omitted here. */
+  | { type: "reasoning"; replace: true; text: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
   | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus }

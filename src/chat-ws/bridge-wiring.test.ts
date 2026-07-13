@@ -38,6 +38,8 @@ function registerChat(sessionId: string): { events: ServerEvent[] } {
     done: false,
     streamText: "",
     sawStream: false,
+    reasoningText: "",
+    sawReasoning: false,
     toolsSinceText: false,
   };
   activeChats.set(sessionId, chat);

@@ -27,6 +27,17 @@ export interface ActiveChat {
    *  truthy streamText would drop exactly that frame (skeptic catch,
    *  2026-07-13). */
   sawStream: boolean;
+  /** Accumulated chain-of-thought for this turn — the reasoning lane's twin
+   *  of streamText. `reasoning` deltas are per-token (event-pump.ts), so
+   *  buffering them in `events` both blew the 500/400 trim (evicting
+   *  buffered tool_start/tool_end/chat_op_started from replays) AND
+   *  double-counted on replay (the client APPENDS reasoning deltas onto the
+   *  text it already holds). Plain append, no paragraph-break logic — the
+   *  client's reasoning lane appends plainly too. */
+  reasoningText: string;
+  /** Mirrors sawStream for the reasoning lane: true once ANY reasoning
+   *  event passed through onEvent; gates the replay's coalesced replace. */
+  sawReasoning: boolean;
   /** Mirrors the client store's toolsSinceText: a tool_start/tool_end landed
    *  since the last text delta. The client inserts "\n\n" before the next
    *  delta in that case (chat-stream-store.js applyEvent); the accumulator
@@ -220,6 +231,26 @@ export function replayBufferedEvents(ws: WebSocket, sessionId: string): void {
       type: "event",
       sessionId,
       event: { type: "stream", replace: true, text: chat.streamText },
+      _replay: true,
+    }));
+  }
+  // Reasoning mirrors the stream lane — same duplication class: the client
+  // APPENDS live reasoning deltas onto whatever Thinking text it already
+  // holds, so replaying raw deltas double-counts it. One coalesced replace
+  // reproduces the client state exactly: reasoning and answer text
+  // interleave live but the client keeps them on separate lanes
+  // (reasoning vs content), so per-lane coalescing loses nothing. Ordering:
+  // it must follow the op_started frames above — the client's done→streaming
+  // scratch wipe (chat-stream-store.js applyEvent 'chat_op_started') resets
+  // `reasoning` too and has to run before this refill. Placement relative to
+  // the stream replace is arbitrary (different lanes); keep it after so the
+  // frame sequence stays op_started → stream → reasoning, mirroring build
+  // order here.
+  if (chat.sawReasoning) {
+    ws.send(JSON.stringify({
+      type: "event",
+      sessionId,
+      event: { type: "reasoning", replace: true, text: chat.reasoningText },
       _replay: true,
     }));
   }

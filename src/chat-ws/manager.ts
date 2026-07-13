@@ -73,6 +73,8 @@ export function buildManager(): ChatWsManager {
         events: [],
         streamText: "",
         sawStream: false,
+        reasoningText: "",
+        sawReasoning: false,
         toolsSinceText: false,
         abortController,
         startedAt: Date.now(),
@@ -134,6 +136,18 @@ export function buildManager(): ChatWsManager {
               chat.streamText += event.delta;
               chat.toolsSinceText = false;
             }
+          } else if (event.type === "reasoning") {
+            // Reasoning lane's twin of the stream fold above. Per-token
+            // deltas (event-pump.ts) buffered here used to blow the 500/400
+            // trim on any long thinking phase, evicting buffered
+            // tool_start/tool_end/chat_op_started from replays — and the
+            // replayed deltas double-counted client-side (the store APPENDS
+            // reasoning). Plain append, no toolsSinceText paragraph logic:
+            // the client's reasoning lane appends plainly too, so the
+            // accumulator must match it byte-for-byte.
+            chat.sawReasoning = true; // gates the replay's coalesced replace
+            if ("replace" in event) chat.reasoningText = event.text;
+            else chat.reasoningText += event.delta;
           } else {
             if (event.type === "tool_start" || event.type === "tool_end") {
               chat.toolsSinceText = true;

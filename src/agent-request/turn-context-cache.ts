@@ -41,6 +41,16 @@ const logger = createLogger("agent-request.turn-context-cache");
 // correct clock + fresh recall.
 const TTL_MS = 45 * 1000;
 const MAX_ENTRIES = 32;
+// Backstop: a full context build measures 3-5s on real follow-ups; anything
+// past 10s means a retrieval dependency is wedged (Ollama embed, reranker
+// load). The turn ships without memory context rather than freezing — the
+// build keeps running in background and populates the cache for the next
+// turn. This should ~never fire in healthy operation; when it does, the warn
+// log (with a running count) is the signal that retrieval is degraded, not
+// business as usual.
+const BUILD_WALLCLOCK_MS = 10 * 1000;
+const BUILD_TIMEOUT_SENTINEL = Symbol("turn-context-build-timeout");
+let wallclockTrips = 0;
 // Hamming-distance budget on the 64-bit SimHash of the current query.
 // <= 6 differing bits ≈ a rephrase of the same ask; more = a topic pivot.
 const FINGERPRINT_MATCH_MAX_DISTANCE = 6;
@@ -138,22 +148,46 @@ export async function buildTurnContextCached(
   }
 
   const t0 = Date.now();
-  const ctx = await memoryManager.buildTurnContext(input);
-  const elapsed = Date.now() - t0;
-  logger.info(`[turn-context-cache] MISS sess=${input.sessionId} built in ${elapsed}ms`);
-
-  cache.set(sessionKey, {
-    sessionId: input.sessionId,
-    contextFingerprint: fingerprintContext(input),
-    liteMode: !!input.liteMode,
-    skipDailyLog: !!input.skipDailyLog,
-    storedAt: now,
-    context: ctx,
-    hits: 0,
+  const build = memoryManager.buildTurnContext(input).then((ctx) => {
+    const elapsed = Date.now() - t0;
+    logger.info(`[turn-context-cache] MISS sess=${input.sessionId} built in ${elapsed}ms`);
+    // Store on completion even if the wallclock already gave up on this turn —
+    // a late build warms the cache so the NEXT turn gets real memory context.
+    cache.set(sessionKey, {
+      sessionId: input.sessionId,
+      contextFingerprint: fingerprintContext(input),
+      liteMode: !!input.liteMode,
+      skipDailyLog: !!input.skipDailyLog,
+      storedAt: Date.now(),
+      context: ctx,
+      hits: 0,
+    });
+    evictIfNeeded();
+    return ctx;
   });
-  evictIfNeeded();
 
-  return ctx;
+  let timer: NodeJS.Timeout | undefined;
+  const wallclock = new Promise<typeof BUILD_TIMEOUT_SENTINEL>((resolve) => {
+    timer = setTimeout(() => resolve(BUILD_TIMEOUT_SENTINEL), BUILD_WALLCLOCK_MS);
+    timer.unref?.();
+  });
+  const raced = await Promise.race([build, wallclock]).finally(() => clearTimeout(timer));
+  if (raced === BUILD_TIMEOUT_SENTINEL) {
+    wallclockTrips += 1;
+    logger.warn(
+      `[turn-context-cache] build exceeded ${BUILD_WALLCLOCK_MS}ms — shipping turn WITHOUT memory context (retrieval degraded; trip #${wallclockTrips}) sess=${input.sessionId}`,
+    );
+    build.catch(() => {});
+    return {
+      contextBlock: "",
+      relevantMemories: "",
+      smartContext: "",
+      memoryContext: "",
+      notifications: [],
+      knownProjectsFound: false,
+    };
+  }
+  return raced;
 }
 
 /** Test/inspection: drop everything. */

@@ -82,3 +82,47 @@ describe("buildTurnContextCached invalidation (CM-1)", () => {
     expect(build).toHaveBeenCalledTimes(2);
   });
 });
+
+// Locks the 2026-07-14 hang: a wedged retrieval dependency (Ollama embed,
+// reranker load) made buildTurnContext block chat prepare for 95-200s. The
+// wallclock backstop ships the turn without memory context instead of
+// freezing, and the late build still warms the cache for the next turn.
+describe("buildTurnContextCached wallclock backstop", () => {
+  beforeEach(() => clearTurnContextCache());
+  afterEach(() => {
+    clearTurnContextCache();
+    vi.useRealTimers();
+  });
+
+  it("ships an empty context when the build exceeds the wallclock, then serves the late build from cache", async () => {
+    vi.useFakeTimers();
+    let resolveBuild: (c: TurnContext) => void;
+    const slow = new Promise<TurnContext>((r) => { resolveBuild = r; });
+    const build = vi.fn(async (_input: TurnContextInput) => slow);
+    const mgr = { buildTurnContext: build } as unknown as MemoryManager;
+
+    const q = "Change the background pattern on the sip dirty landing page hero";
+    const pending = buildTurnContextCached(mgr, input(q));
+    await vi.advanceTimersByTimeAsync(10_100);
+    const degraded = await pending;
+    expect(degraded.contextBlock).toBe("");
+    expect(degraded.relevantMemories).toBe("");
+    expect(degraded.notifications).toEqual([]);
+
+    // The wedged build completes late — it must warm the cache, not vanish.
+    resolveBuild!(ctx("late"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    const next = await buildTurnContextCached(mgr, input(q, [q]));
+    expect(next.memoryContext).toBe("late");
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+
+  it("a build under the wallclock is returned and cached as before", async () => {
+    const { mgr, build } = fakeManager();
+    const q = "How does the billing service invoice PDF export layout work here";
+    const r = await buildTurnContextCached(mgr, input(q));
+    expect(r.memoryContext).toBe("build-1");
+    expect(build).toHaveBeenCalledTimes(1);
+  });
+});

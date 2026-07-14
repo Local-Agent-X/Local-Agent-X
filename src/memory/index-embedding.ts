@@ -56,7 +56,14 @@ export async function embedChunksWithRetry(
     if (cachedEmbeddings.has(i)) {
       chunks[i].embedding = cachedEmbeddings.get(i);
     } else if (newIdx < newEmbeddings.length) {
-      chunks[i].embedding = newEmbeddings[newIdx];
+      const vec = newEmbeddings[newIdx];
+      if (vec.length === 0 || vec.every((v) => v === 0)) {
+        // Degraded-mode placeholder from the provider — leave the chunk
+        // vectorless (keyword-searchable) instead of indexing a zero vector.
+        newIdx++;
+        continue;
+      }
+      chunks[i].embedding = vec;
       cacheEmbedding(
         db,
         chunks[i].hash,
@@ -145,6 +152,10 @@ export function cacheEmbedding(
   model: string,
   embedding: number[]
 ): void {
+  // All-zero vectors are the providers' degraded-mode value (Ollama wedged,
+  // key missing), not data. Persisting one poisons recall for that chunk
+  // permanently — it would never be re-embedded once the provider recovers.
+  if (embedding.length === 0 || embedding.every((v) => v === 0)) return;
   db
     .prepare(
       `INSERT OR REPLACE INTO embedding_cache (hash, provider, model, embedding, updated_at)

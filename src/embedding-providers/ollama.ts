@@ -7,6 +7,20 @@ import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 
 const logger = createLogger("embedding-providers");
 
+// Turn-path caps. A warm embed is sub-second (measured ~250ms); these only
+// trip when Ollama is wedged or mid-model-load. Tripping flips the provider
+// unhealthy so subsequent turn-path calls return instantly, and the
+// background recheck restores service — the turn path itself never waits on
+// sidecar lifecycle (model loads, health probes).
+const EMBED_TIMEOUT_MS = 5_000;
+const BATCH_TIMEOUT_MS = 20_000;
+// Model load into GPU/RAM can take 30-60s — allowed only in the background probe.
+const PROBE_TIMEOUT_MS = 60_000;
+const RECHECK_DELAY_MS = 60_000;
+// Pin the embed model resident. Ollama's default keep_alive is 5 minutes, so
+// the model unloaded between chats and the next turn paid the reload.
+const KEEP_ALIVE = "4h";
+
 export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   readonly name = "ollama";
   model: string;
@@ -16,6 +30,8 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private baseUrl: string;
   private healthy: boolean | null = null;
   private dimensionsDetected = false;
+  private probing: Promise<boolean> | null = null;
+  private recheckTimer: NodeJS.Timeout | null = null;
 
   constructor(opts?: { model?: string; baseUrl?: string }) {
     // mxbai-embed-large (1024d) scored 97.0% R@5 on LongMemEval — #1 zero-cost.
@@ -36,40 +52,18 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
 
   async embed(text: string): Promise<number[]> {
     if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return emptyVector(this.dimensions);
-    if (!(await this.ensureHealthy())) return emptyVector(this.dimensions);
+    if (!this.isHealthyNow()) return emptyVector(this.dimensions);
     if (!text || !text.trim()) return emptyVector(this.dimensions);
     // Truncate to ~512 tokens (~2000 chars) for models with smaller context windows
     const truncated = text.trim().slice(0, 2000);
-    // 30s wallclock cap. Without this, a wedged Ollama request blocks chat
-    // prepare-request indefinitely (the fetch had no timeout). Returning an
-    // empty vector lets semantic-search/tool-RAG degrade gracefully instead
-    // of stalling the whole turn.
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 30_000);
     try {
-      const res = await fetch(`${this.baseUrl}/api/embed`, {
-        method: "POST",
-        redirect: "manual",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: truncated }),
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        throw new Error(`Ollama embed HTTP ${res.status}`);
-      }
-      const json = (await res.json()) as { embeddings: number[][] };
+      const json = await this.embedRequest([truncated], EMBED_TIMEOUT_MS);
       const vec = json.embeddings?.[0] ?? emptyVector(this.dimensions);
-      // Auto-detect dimensions from first result
-      if (!this.dimensionsDetected && vec.length > 0) {
-        this.dimensions = vec.length;
-        this.dimensionsDetected = true;
-      }
+      this.detectDimensions(vec);
       return vec;
-    } catch {
-      // Suppress noisy per-chunk errors — batch fallback handles it
+    } catch (e) {
+      this.markUnhealthy(`embed: ${(e as Error).message}`);
       return emptyVector(this.dimensions);
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -80,101 +74,143 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
     if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return texts.map(() => emptyVector(this.dimensions));
-    if (!(await this.ensureHealthy())) {
-      return texts.map(() => emptyVector(this.dimensions));
-    }
+    if (!this.isHealthyNow()) return texts.map(() => emptyVector(this.dimensions));
     // Filter out empty strings and truncate long text
     const cleaned = texts.map(t => (t && t.trim()) ? t.trim().slice(0, 2000) : null);
     const validTexts = cleaned.filter((t): t is string => t !== null);
     if (validTexts.length === 0) return texts.map(() => emptyVector(this.dimensions));
-    // 60s wallclock cap for batches (10 items max per maxBatchSize). Same
-    // rationale as embed() — never let Ollama hang the caller.
+    try {
+      const json = await this.embedRequest(validTexts, BATCH_TIMEOUT_MS);
+      const validResults = json.embeddings ?? validTexts.map(() => emptyVector(this.dimensions));
+      this.detectDimensions(validResults[0] ?? []);
+      // Map results back to original positions
+      let vi = 0;
+      return cleaned.map(t => t !== null ? validResults[vi++] || emptyVector(this.dimensions) : emptyVector(this.dimensions));
+    } catch (e) {
+      // No per-item retry here: a failed batch means Ollama is wedged, and
+      // re-embedding each item serially multiplied one 60s hang into minutes
+      // of blocked callers. Callers that need durability (index-embedding)
+      // carry their own retry; everyone else degrades on empty vectors.
+      this.markUnhealthy(`embedBatch: ${(e as Error).message}`);
+      return texts.map(() => emptyVector(this.dimensions));
+    }
+  }
+
+  private async embedRequest(input: string[], timeoutMs: number): Promise<{ embeddings: number[][] }> {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 60_000);
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
         redirect: "manual",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: validTexts }),
+        body: JSON.stringify({ model: this.model, input, keep_alive: KEEP_ALIVE }),
         signal: ac.signal,
       });
       if (!res.ok) {
-        throw new Error(`Ollama batch embed HTTP ${res.status}`);
+        throw new Error(`Ollama embed HTTP ${res.status}`);
       }
-      const json = (await res.json()) as { embeddings: number[][] };
-      const validResults = json.embeddings ?? validTexts.map(() => emptyVector(this.dimensions));
-      // Auto-detect dimensions from first successful result
-      if (!this.dimensionsDetected && validResults[0]?.length > 0) {
-        this.dimensions = validResults[0].length;
-        this.dimensionsDetected = true;
-      }
-      // Map results back to original positions
-      let vi = 0;
-      return cleaned.map(t => t !== null ? validResults[vi++] || emptyVector(this.dimensions) : emptyVector(this.dimensions));
-    } catch {
-      // Batch failed — fall back silently to individual embeds
-      const results: number[][] = [];
-      for (const text of texts) {
-        results.push(await this.embed(text));
-      }
-      return results;
+      return (await res.json()) as { embeddings: number[][] };
     } finally {
       clearTimeout(timer);
     }
   }
 
-  private async ensureHealthy(): Promise<boolean> {
-    if (this.healthy !== null) return this.healthy;
-    try {
-      if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return false;
-      const { reachable, models } = await fetchLocalOllamaTags(this.baseUrl);
-      if (!reachable) {
-        logger.warn(`[ollama-embed] Server at ${this.baseUrl} not reachable`);
-        this.healthy = false;
-        return false;
-      }
-      if (isLocalOnlyMode() && !models.some((entry) => entry.name.replace(/:latest$/, "") === this.model)) {
-        this.healthy = false;
-        return false;
-      }
-      // Verify the model is actually available — do a quick test embed.
-      // First call to a large model (mxbai-embed-large = 1.3GB) can take 30-60s to load into GPU/RAM.
-      try {
-        const testRes = await fetch(`${this.baseUrl}/api/embed`, {
-          method: "POST",
-          redirect: "manual",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: this.model, input: ["test"] }),
-          signal: AbortSignal.timeout(60000), // 60s for first model load
-        });
-        if (!testRes.ok) {
-          // Model not available — try fallback to nomic-embed-text
-          if (!isLocalOnlyMode() && this.model !== "nomic-embed-text") {
-            logger.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
-            this.model = "nomic-embed-text";
-            this.dimensions = 768;
-            const fallbackRes = await fetch(`${this.baseUrl}/api/embed`, {
-              method: "POST",
-              redirect: "manual",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: this.model, input: ["test"] }),
-              signal: AbortSignal.timeout(30000),
-            });
-            this.healthy = fallbackRes.ok;
-          } else {
-            this.healthy = false;
-          }
-        } else {
-          this.healthy = true;
-        }
-      } catch {
-        this.healthy = false;
-      }
-    } catch {
-      this.healthy = false;
-      logger.warn(`[ollama-embed] Server at ${this.baseUrl} not reachable`);
+  private detectDimensions(vec: number[]): void {
+    if (!this.dimensionsDetected && vec.length > 0) {
+      this.dimensions = vec.length;
+      this.dimensionsDetected = true;
     }
-    return this.healthy;
+  }
+
+  /**
+   * Non-blocking health gate. Unknown health kicks a background probe and
+   * reports unhealthy for THIS call — callers degrade to empty vectors
+   * instead of waiting up to 60s for a model load inside a chat turn. The
+   * boot pre-warm normally completes the probe before any user turn.
+   */
+  private isHealthyNow(): boolean {
+    if (this.healthy === null) void this.probeInBackground();
+    return this.healthy === true;
+  }
+
+  private markUnhealthy(reason: string): void {
+    if (this.healthy !== false) {
+      logger.warn(`[ollama-embed] degraded (${reason}) — embeddings return empty until recheck succeeds`);
+    }
+    this.healthy = false;
+    this.scheduleRecheck();
+  }
+
+  private scheduleRecheck(): void {
+    if (this.recheckTimer) return;
+    this.recheckTimer = setTimeout(() => {
+      this.recheckTimer = null;
+      void this.probeInBackground();
+    }, RECHECK_DELAY_MS);
+    this.recheckTimer.unref?.();
+  }
+
+  private probeInBackground(): Promise<boolean> {
+    this.probing ??= this.probe()
+      .then((ok) => {
+        this.healthy = ok;
+        if (ok) logger.info(`[ollama-embed] healthy (model=${this.model})`);
+        else this.scheduleRecheck();
+        return ok;
+      })
+      .catch(() => {
+        this.healthy = false;
+        this.scheduleRecheck();
+        return false;
+      })
+      .finally(() => {
+        this.probing = null;
+      });
+    return this.probing;
+  }
+
+  /** Test hook + boot warm: resolves when a probe settles health. */
+  async ensureHealthy(): Promise<boolean> {
+    if (this.healthy !== null) return this.healthy;
+    return this.probeInBackground();
+  }
+
+  private async probe(): Promise<boolean> {
+    if (isLocalOnlyMode() && !isLoopbackUrl(this.baseUrl)) return false;
+    const { reachable, models } = await fetchLocalOllamaTags(this.baseUrl);
+    if (!reachable) {
+      logger.warn(`[ollama-embed] Server at ${this.baseUrl} not reachable`);
+      return false;
+    }
+    if (isLocalOnlyMode() && !models.some((entry) => entry.name.replace(/:latest$/, "") === this.model)) {
+      return false;
+    }
+    // Verify the model is actually available — do a test embed. First call to
+    // a large model can take 30-60s to load into GPU/RAM; that cost lives
+    // here, in the background, never in a caller's turn.
+    const testRes = await fetch(`${this.baseUrl}/api/embed`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: this.model, input: ["test"], keep_alive: KEEP_ALIVE }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (testRes.ok) return true;
+    // Model not available — try fallback to nomic-embed-text
+    if (!isLocalOnlyMode() && this.model !== "nomic-embed-text") {
+      logger.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
+      this.model = "nomic-embed-text";
+      this.dimensions = 768;
+      const fallbackRes = await fetch(`${this.baseUrl}/api/embed`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: this.model, input: ["test"], keep_alive: KEEP_ALIVE }),
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS / 2),
+      });
+      return fallbackRes.ok;
+    }
+    return false;
   }
 }

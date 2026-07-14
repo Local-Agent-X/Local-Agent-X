@@ -80,6 +80,16 @@ export interface PendingApprovalRecord {
   argsPreview: string;
   context?: string;
   requestedAt: number;
+  /**
+   * Decision recorded while NO in-process card was live (post-restart
+   * opResolveApproval). The column is kept — not cleared — so recovery's
+   * re-ask reconciliation (approval-manager) can APPLY the decision to the
+   * matching re-ask instead of re-prompting; consumption clears the column.
+   * An expired never-consumed resolution is settled as timeout by the
+   * recovery hygiene sweep. A card with a resolution is not answerable and
+   * must not be surfaced by rediscovery APIs.
+   */
+  resolution?: { approved: boolean; resolvedAt: number };
 }
 
 // ── Additive Op fields (PRD §9 ops columns) ───────────────────────────────

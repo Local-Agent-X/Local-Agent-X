@@ -25,6 +25,10 @@ export interface DurableApprovalRequest {
   argsPreview: string;
   context?: string;
   requestedAt: number;
+  /** Decision recorded post-restart while no card was live (see
+   *  canonical-loop/types.ts PendingApprovalRecord.resolution). Never set on
+   *  ask-side writes; read-side only, for reconcileRecoveredAsk. */
+  resolution?: { approved: boolean; resolvedAt: number };
 }
 
 interface CanonicalApprovalBridge {
@@ -40,6 +44,7 @@ interface CanonicalApprovalBridge {
     },
   ) => void;
   readPendingApproval: (opId: string) => DurableApprovalRequest | null;
+  consumePendingApproval: (opId: string, approvalId: string) => void;
 }
 
 type CanonicalBarrelImport = () => Promise<CanonicalApprovalBridge>;
@@ -76,6 +81,7 @@ export async function ensureDurableBridge(): Promise<void> {
           recordApprovalRequested: mod.recordApprovalRequested,
           recordApprovalResolved: mod.recordApprovalResolved,
           readPendingApproval: mod.readPendingApproval,
+          consumePendingApproval: mod.consumePendingApproval,
         };
         return canonicalBridge;
       },
@@ -125,7 +131,7 @@ export function recordDurableResolve(
 }
 
 /** Read the op's crash-surviving pendingApproval column (re-ask continuity —
- *  see approval-manager reconcileRecoveredAsk). Sync; requires a prior
+ *  see reconcileRecoveredAsk below). Sync; requires a prior
  *  ensureDurableBridge() await. Best-effort: null when the bridge is absent
  *  or the read throws — the ask then proceeds as a fresh window. */
 export function readDurableRequest(opId: string): DurableApprovalRequest | null {
@@ -135,5 +141,71 @@ export function readDurableRequest(opId: string): DurableApprovalRequest | null 
   } catch (e) {
     logger.warn(`failed reading pendingApproval column for op ${opId} — re-ask continues with a fresh window: ${(e as Error)?.message ?? String(e)}`);
     return null;
+  }
+}
+
+export interface RecoveredAskReconciliation {
+  /** Original requestedAt to inherit (remaining window), or null for fresh. */
+  carriedRequestedAt: number | null;
+  /** A decision the user recorded post-restart (opResolveApproval, delivery
+   *  "recorded") for THIS exact ask — apply it as the outcome without
+   *  registering a card. Null when there is nothing to apply. */
+  recordedDecision: { approved: boolean } | null;
+}
+
+const NO_RECONCILIATION: RecoveredAskReconciliation = { carriedRequestedAt: null, recordedDecision: null };
+
+/**
+ * Re-ask continuity after crash recovery. A pendingApproval column whose
+ * approvalId no live card owns is a crash survivor: the op died blocked on
+ * that card and recovery re-drove the turn, producing THIS re-ask.
+ *
+ *   - Survivor carries a recorded decision (resolution) for the SAME
+ *     (toolName, argsPreview) within the original 5-min window → APPLY it:
+ *     consume the column (no new event — approval_resolved was appended when
+ *     the decision was recorded) and return the decision as the outcome.
+ *   - Same ask, window still open, no decision → return the original
+ *     requestedAt so the new card inherits the REMAINING budget instead of
+ *     restarting from zero across restarts.
+ *   - Original window already expired → resolve the old record as timeout
+ *     (delivery: "recorded") — including a never-consumed recorded decision,
+ *     whose window is equally over — and give this ask a fresh, honest window.
+ *   - Different ask → resolve the old record as superseded; the re-driven
+ *     turn went another way.
+ */
+export function reconcileRecoveredAsk(
+  opId: string,
+  toolName: string,
+  argsPreview: string,
+  isLiveCard: (approvalId: string) => boolean,
+  timeoutMs: number,
+): RecoveredAskReconciliation {
+  const survivor = readDurableRequest(opId);
+  if (!survivor) return NO_RECONCILIATION;
+  // A column owned by a live card is not a survivor — its own settle path
+  // clears it. (Op tool dispatch is sequential, so this is belt-and-braces.)
+  if (isLiveCard(survivor.approvalId)) return NO_RECONCILIATION;
+  const expired = Date.now() - survivor.requestedAt >= timeoutMs;
+  if (!expired && survivor.toolName === toolName && survivor.argsPreview === argsPreview) {
+    if (survivor.resolution) {
+      consumeDurablePending(opId, survivor.approvalId);
+      logger.info(`applying recorded approval from restart: ${survivor.approvalId} (op ${opId}, tool ${toolName}) approved=${survivor.resolution.approved}`);
+      return { carriedRequestedAt: null, recordedDecision: { approved: survivor.resolution.approved } };
+    }
+    logger.info(`approval re-asked after recovery, original requestedAt=${new Date(survivor.requestedAt).toISOString()} carried over (op ${opId}, tool ${toolName}, prior approval ${survivor.approvalId})`);
+    return { carriedRequestedAt: survivor.requestedAt, recordedDecision: null };
+  }
+  recordDurableResolve(opId, survivor.approvalId, survivor.toolName, false, expired ? "timeout" : "superseded", "recorded");
+  return NO_RECONCILIATION;
+}
+
+/** Clear the column after its recorded decision is consumed — NO event
+ *  append (see consumePendingApproval). Best-effort, warns on failure. */
+function consumeDurablePending(opId: string, approvalId: string): void {
+  if (!canonicalBridge) return; // import failed — already warned at load
+  try {
+    canonicalBridge.consumePendingApproval(opId, approvalId);
+  } catch (e) {
+    logger.warn(`failed consuming recorded approval ${approvalId} (op ${opId}) — column may be stale: ${(e as Error)?.message ?? String(e)}`);
   }
 }

@@ -636,6 +636,7 @@ describe("canonical bridge load failure (durable shadow is best-effort)", () => 
         recordApprovalRequested: (opId, rec) => { requested.push({ opId, approvalId: rec.approvalId }); },
         recordApprovalResolved: (opId, res) => { resolved.push({ opId, approvalId: res.approvalId, approved: res.approved }); },
         readPendingApproval: () => null,
+        consumePendingApproval: () => {},
       }));
       const { emit: e2, cap: c2 } = captureEmit();
       const p2 = mgr.requestApprovalDetailed({

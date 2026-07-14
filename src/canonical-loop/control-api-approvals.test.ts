@@ -161,7 +161,7 @@ describe("opResolveApproval", () => {
     expect(opResolveApproval(opId, "apr-none", true)).toMatchObject({ ok: false, code: "unknown_approval" });
   });
 
-  it("not-live path: records the decision, clears the column, appends approval_resolved", () => {
+  it("not-live path: stores the decision ON the column and appends approval_resolved (recorded)", () => {
     const opId = uid("op-notlive");
     writeOp(mkOp(opId));
     // Column exists on disk but no live card (post-restart shape).
@@ -169,7 +169,12 @@ describe("opResolveApproval", () => {
 
     const res = opResolveApproval(opId, "apr-dead", false);
     expect(res).toEqual({ ok: true, delivery: "recorded" });
-    expect(readOp(opId)?.canonical?.pendingApproval).toBeNull();
+    // The column survives with the decision attached — recovery's re-ask
+    // reconciliation consumes it; clearing here would drop the answer.
+    const col = readOp(opId)?.canonical?.pendingApproval;
+    expect(col?.approvalId).toBe("apr-dead");
+    expect(col?.resolution?.approved).toBe(false);
+    expect(typeof col?.resolution?.resolvedAt).toBe("number");
     const resolved = eventsOf(opId, "approval_resolved");
     expect(resolved).toHaveLength(1);
     expect(resolved[0].body).toEqual({
@@ -177,10 +182,13 @@ describe("opResolveApproval", () => {
       toolName: "write_file",
       approved: false,
       reason: "declined",
+      delivery: "recorded",
     });
 
-    // Second resolve of the same card: nothing pending anymore.
-    expect(opResolveApproval(opId, "apr-dead", false)).toMatchObject({ ok: false, code: "unknown_approval" });
+    // Re-resolve before recovery consumed it: latest decision wins.
+    expect(opResolveApproval(opId, "apr-dead", true)).toEqual({ ok: true, delivery: "recorded" });
+    expect(readOp(opId)?.canonical?.pendingApproval?.resolution?.approved).toBe(true);
+    expect(eventsOf(opId, "approval_resolved")).toHaveLength(2);
   });
 
   it("not-live approve carries approved:true and no reason", () => {
@@ -192,6 +200,7 @@ describe("opResolveApproval", () => {
       approvalId: "apr-dead-ok",
       toolName: "bash",
       approved: true,
+      delivery: "recorded",
     });
   });
 

@@ -6,10 +6,12 @@
 // live `approval_requested` WS event (page reload, second device, server
 // restart) rediscover the card and answer it via the durable-resolve path.
 //
-// Expiry mirrors the in-process card timeout (approval-manager.ts
-// APPROVAL_TIMEOUT_MS = 5 min): a column older than that is either already
-// timed out in-process or a stale crash leftover recovery will overwrite —
-// neither is answerable, so it is filtered here rather than surfaced.
+// Expiry shares the in-process card budget (approval-manager.ts
+// APPROVAL_TIMEOUT_MS): a column older than that is either already timed
+// out in-process or a stale crash leftover the recovery hygiene sweep will
+// settle — neither is answerable, so it is filtered here rather than
+// surfaced. Columns carrying a recorded decision (record.resolution) are
+// likewise filtered: they are answered, awaiting consumption by recovery.
 //
 // Reuses listActiveCanonicalOps() (the one active-op listing seam) — no
 // parallel ops walk. Canonical-loop is imported at request time, same lazy
@@ -17,10 +19,8 @@
 
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse } from "../server-utils.js";
+import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
 import type { ActiveCanonicalOp } from "../canonical-loop/active-ops.js";
-
-/** Mirrors approval-manager.ts APPROVAL_TIMEOUT_MS (not exported there). */
-export const APPROVAL_PENDING_TTL_MS = 5 * 60_000;
 
 export interface PendingApprovalEntry {
   opId: string;
@@ -31,7 +31,7 @@ export interface PendingApprovalEntry {
   context: string | null;
   /** Epoch ms the ask went out (PendingApprovalRecord.requestedAt). */
   requestedAt: number;
-  /** requestedAt + 5 min — past this the card is unanswerable. */
+  /** requestedAt + APPROVAL_TIMEOUT_MS — past this the card is unanswerable. */
   expiresAt: number;
 }
 
@@ -44,7 +44,10 @@ export function buildPendingApprovals(
   for (const op of ops) {
     const p = op.pendingApproval;
     if (!p || typeof p.requestedAt !== "number") continue;
-    const expiresAt = p.requestedAt + APPROVAL_PENDING_TTL_MS;
+    // Already answered (recorded decision awaiting recovery's re-ask) —
+    // surfacing it again would invite a double answer.
+    if (p.resolution) continue;
+    const expiresAt = p.requestedAt + APPROVAL_TIMEOUT_MS;
     if (expiresAt <= now) continue;
     out.push({
       opId: op.opId,

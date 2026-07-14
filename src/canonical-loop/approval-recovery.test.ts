@@ -35,6 +35,7 @@ const {
   sweepStaleCanonicalOps,
   resolveExpiredPendingApproval,
   readPendingApproval,
+  opResolveApproval,
   opEventsSince,
   OP_EVENTS_FROM_BEGINNING,
 } = await import("./index.js");
@@ -239,6 +240,83 @@ describe("re-ask continuity after recovery", () => {
 
     const column = readPendingApproval(opId);
     expect(column?.approvalId).toBe(newId);
+    expect(column?.requestedAt).toBeGreaterThanOrEqual(before);
+
+    getApprovalManager().resolveApproval(newId, true);
+    await expect(ask.outcome).resolves.toMatchObject({ approved: true });
+  });
+
+  it("recorded decision within the window → applied to the re-ask, no new card, no extra event", async () => {
+    const opId = uid("op-recorded");
+    const args = { command: `echo recorded-${opId}` };
+    const rec = survivorRecord({ argsPreview: JSON.stringify(args), requestedAt: Date.now() - 60_000 });
+    writeCrashedOp(opId, rec);
+
+    // The user answered the durable card post-restart (WS durable-resolve →
+    // opResolveApproval): decision stored ON the column, event appended.
+    expect(opResolveApproval(opId, rec.approvalId, true)).toEqual({ ok: true, delivery: "recorded" });
+    expect(resolvedEvents(opId)).toHaveLength(1);
+
+    const logSpy = vi.spyOn(console, "log");
+    try {
+      const events: ServerEvent[] = [];
+      const outcome = await getApprovalManager().requestApprovalDetailed({
+        toolName: "bash", toolCallId: "tc-1", sessionId: uid("sess"), context: "test ask",
+        args, alwaysAsk: true, opId, emit: (e) => events.push(e),
+      });
+      // Applied immediately: no approval_requested card went up, the column
+      // was consumed, and NO second approval_resolved was appended (the
+      // recorded event already documents the settlement).
+      expect(outcome).toEqual({ approved: true });
+      expect(events).toHaveLength(0);
+      expect(readPendingApproval(opId)).toBeNull();
+      expect(resolvedEvents(opId)).toHaveLength(1);
+      expect(logSpy.mock.calls.some(c => String(c[0]).includes("applying recorded approval from restart"))).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("recorded DENY within the window → applied as declined", async () => {
+    const opId = uid("op-recorded-deny");
+    const args = { command: `echo recdeny-${opId}` };
+    const rec = survivorRecord({ argsPreview: JSON.stringify(args), requestedAt: Date.now() - 60_000 });
+    writeCrashedOp(opId, rec);
+    expect(opResolveApproval(opId, rec.approvalId, false)).toEqual({ ok: true, delivery: "recorded" });
+
+    const outcome = await getApprovalManager().requestApprovalDetailed({
+      toolName: "bash", toolCallId: "tc-1", sessionId: uid("sess"), context: "test ask",
+      args, alwaysAsk: true, opId, emit: () => {},
+    });
+    expect(outcome).toEqual({ approved: false, reason: "declined" });
+    expect(readPendingApproval(opId)).toBeNull();
+  });
+
+  it("EXPIRED recorded decision → ignored: old record timeout-resolved, fresh honest window", async () => {
+    const opId = uid("op-recorded-expired");
+    const args = { command: `echo recexp-${opId}` };
+    const rec = survivorRecord({
+      argsPreview: JSON.stringify(args),
+      requestedAt: Date.now() - APPROVAL_TIMEOUT_MS - 1_000,
+    });
+    writeCrashedOp(opId, rec);
+    // Decision recorded on an already-expired card (client raced the expiry).
+    expect(opResolveApproval(opId, rec.approvalId, true)).toEqual({ ok: true, delivery: "recorded" });
+    expect(resolvedEvents(opId)).toHaveLength(1);
+
+    const before = Date.now();
+    const ask = await askOpScoped(opId, uid("sess"), args);
+    const newId = ask.approvalId();
+
+    // The stale decision is NOT applied — the old record settles as timeout
+    // and a genuinely fresh card goes up with a full window.
+    const evs = resolvedEvents(opId);
+    expect(evs).toHaveLength(2);
+    expect(evs[1].body).toMatchObject({ approvalId: rec.approvalId, approved: false, reason: "timeout", delivery: "recorded" });
+
+    const column = readPendingApproval(opId);
+    expect(column?.approvalId).toBe(newId);
+    expect(column?.resolution).toBeUndefined();
     expect(column?.requestedAt).toBeGreaterThanOrEqual(before);
 
     getApprovalManager().resolveApproval(newId, true);

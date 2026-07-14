@@ -4,12 +4,21 @@
 // GET /api/approvals/pending). Split out of message-router.ts for the
 // 400-LOC gate — same sibling pattern as agent-controls.ts.
 //
-// Resolution routes through opResolveApproval (canonical-loop
-// control-api-approvals.ts): live card → delivered; column-only card →
-// durable clear + approval_resolved event, delivery "recorded". On success
-// this replies to the asking socket with the existing `approval_resolved`
-// ServerEvent shape plus a `delivery` field so durable cards can render
-// "recorded, applies on recovery" distinctly from a live settle.
+// The client MUST send the opId for durable resolution — rediscovered cards
+// carry it (pending-route entries include opId), so it is always available.
+// No directory scan happens here: requiring opId keeps this path O(1) on a
+// hot WS handler. Without an opId the id is genuinely unknown → error reply.
+//
+// Expiry: a column older than APPROVAL_TIMEOUT_MS is a dead card — the
+// user's decision must NOT be recorded on it. It is settled as a timeout
+// (resolveExpiredPendingApproval, delivery "recorded") and the client gets
+// the error reply.
+//
+// Live-window resolution routes through opResolveApproval (canonical-loop
+// control-api-approvals.ts): the decision is stored on the column
+// (record.resolution) for recovery's re-ask to apply, and the reply carries
+// the existing `approval_resolved` ServerEvent shape plus delivery:
+// "recorded" so durable cards render distinctly from a live settle.
 //
 // Canonical-loop is imported dynamically — chat-ws is loaded by the server
 // front door before the canonical barrel; a static import here would mint
@@ -17,14 +26,17 @@
 
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
+import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
 
 const logger = createLogger("chat-ws");
 
 interface CanonicalApprovalControls {
-  listActiveCanonicalOps: () => Array<{
-    opId: string;
-    pendingApproval: { approvalId: string; toolName: string } | null;
-  }>;
+  readPendingApproval: (opId: string) => {
+    approvalId: string;
+    toolName: string;
+    requestedAt: number;
+  } | null;
+  resolveExpiredPendingApproval: (opId: string) => boolean;
   opResolveApproval: (
     opId: string,
     approvalId: string,
@@ -46,10 +58,9 @@ export function _setCanonicalImportForTest(fn: CanonicalImport | null): void {
 }
 
 /**
- * Resolve an approval that resolveApproval() did not know. `opId` comes from
- * the client when it answers a durable card (rediscovered via
- * /api/approvals/pending — entries carry opId); without one, the active-op
- * columns are scanned for a matching approvalId.
+ * Resolve an approval that resolveApproval() did not know. Requires the
+ * client-sent `opId` (durable cards rediscovered via /api/approvals/pending
+ * carry it); frames without one get the existing unknown-approval error.
  */
 export async function resolveDurableApproval(
   ws: WebSocket,
@@ -61,30 +72,35 @@ export async function resolveDurableApproval(
   const send = (payload: Record<string, unknown>) => {
     try { ws.send(JSON.stringify(payload)); } catch { /* socket gone */ }
   };
+  const unknown = () => send({ type: "error", message: `Unknown or expired approval: ${approvalId}` });
+  const opId = typeof opIdFromClient === "string" && opIdFromClient ? opIdFromClient : null;
+  if (!opId) {
+    unknown();
+    return;
+  }
   try {
-    const { listActiveCanonicalOps, opResolveApproval } = await importCanonical();
-    let opId = typeof opIdFromClient === "string" && opIdFromClient ? opIdFromClient : null;
-    const ops = listActiveCanonicalOps();
-    const row = opId
-      ? ops.find((o) => o.opId === opId)
-      : ops.find((o) => o.pendingApproval?.approvalId === approvalId);
-    if (!opId) opId = row?.opId ?? null;
-    if (!opId) {
-      send({ type: "error", message: `Unknown or expired approval: ${approvalId}` });
+    const { readPendingApproval, resolveExpiredPendingApproval, opResolveApproval } =
+      await importCanonical();
+    const pending = readPendingApproval(opId);
+    if (!pending || pending.approvalId !== approvalId) {
+      unknown();
       return;
     }
-    // Capture toolName BEFORE resolving — the durable write clears the column.
-    const toolName = row?.pendingApproval?.approvalId === approvalId
-      ? row.pendingApproval.toolName
-      : "";
-
+    if (Date.now() - pending.requestedAt >= APPROVAL_TIMEOUT_MS) {
+      // Dead card: settle it as a timeout instead of recording the user's
+      // decision on an ask window that already closed.
+      resolveExpiredPendingApproval(opId);
+      logger.info(`[ws-chat] durable approval ${approvalId} (op ${opId}) expired — resolved as timeout, decision dropped`);
+      unknown();
+      return;
+    }
     const result = opResolveApproval(opId, approvalId, approved, rememberForSession);
     if (!result.ok) {
-      send({ type: "error", message: `Unknown or expired approval: ${approvalId}` });
+      unknown();
       return;
     }
     logger.info(`[ws-chat] durable approval resolve ${approvalId} op=${opId} approved=${approved} delivery=${result.delivery}`);
-    send({ type: "approval_resolved", approvalId, toolName, approved, delivery: result.delivery });
+    send({ type: "approval_resolved", approvalId, toolName: pending.toolName, approved, delivery: result.delivery });
   } catch (e) {
     send({ type: "error", message: `Approval response failed: ${e}` });
   }

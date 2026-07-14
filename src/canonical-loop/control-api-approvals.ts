@@ -11,8 +11,12 @@
  *            canonical path (tool dispatch is sequential per op).
  *   CLEARED  when the card settles — approve / deny / timeout / superseded /
  *            session teardown (approval-manager settle sites →
- *            recordApprovalResolved), or when opResolveApproval records a
- *            decision for a card that is no longer live in-process.
+ *            recordApprovalResolved), or when recovery's re-ask CONSUMES a
+ *            recorded decision (consumePendingApproval).
+ *   RESOLVED when opResolveApproval records a decision for a card that is no
+ *            longer live in-process: the decision is stored ON the column
+ *            (record.resolution) so the recovery re-ask can apply it —
+ *            clearing it here would make the recorded answer a dead write.
  *
  * Crash + recovery: the ApprovalManager's pending map and its resolve
  *   closures die with the process — the durable column and the
@@ -94,6 +98,21 @@ export function readPendingApproval(opId: string): PendingApprovalRecord | null 
 }
 
 /**
+ * Clear the pendingApproval column WITHOUT appending a canonical event —
+ * used when recovery's re-ask consumes a recorded decision
+ * (record.resolution): the approval_resolved event was already appended when
+ * the decision was recorded, so a second append would double-count the
+ * settlement. Only clears while the column still belongs to THIS approvalId.
+ */
+export function consumePendingApproval(opId: string, approvalId: string): void {
+  const op = readOp(opId);
+  if (!op) return;
+  writeSignalColumn(opId, op, (c) => {
+    if (c.pendingApproval?.approvalId === approvalId) c.pendingApproval = null;
+  });
+}
+
+/**
  * Recovery-time stale-record hygiene (recovery.ts). If the op carries a
  * pendingApproval whose ask window (requestedAt + APPROVAL_TIMEOUT_MS) has
  * already passed — the op died blocked on the card and nobody answered before
@@ -144,10 +163,13 @@ export type ApprovalControlResult = ApprovalControlOk | ApprovalControlErr;
  * tool call is awaiting settles, and the manager writes the durable clear +
  * `approval_resolved` (single durable writer per resolution).
  *
- * Not-live path (process restarted since the ask): clears the durable column
- * + appends `approval_resolved`, and returns `delivery: "recorded"` so the
- * caller knows the decision landed on disk but was not delivered to a
- * waiting tool call.
+ * Not-live path (process restarted since the ask): stores the decision ON
+ * the column (record.resolution — latest-wins if resolved again before it is
+ * consumed) + appends `approval_resolved`, and returns `delivery:
+ * "recorded"`. The column is NOT cleared: recovery's re-drive re-asks the
+ * same tool call, and the approval manager's reconciliation applies the
+ * recorded decision to that re-ask (clearing the column on consumption)
+ * instead of re-prompting — see approval-durable-record.ts.
  */
 export function opResolveApproval(
   opId: string,
@@ -176,11 +198,17 @@ export function opResolveApproval(
       message: `op ${opId} has no live or recorded pending approval ${approvalId}`,
     };
   }
-  recordApprovalResolved(opId, {
+  writeSignalColumn(opId, op, (c) => {
+    if (c.pendingApproval?.approvalId === approvalId) {
+      c.pendingApproval = { ...c.pendingApproval, resolution: { approved, resolvedAt: Date.now() } };
+    }
+  });
+  emit(opId, "approval_resolved", {
     approvalId,
     toolName: pending.toolName,
     approved,
     ...(approved ? {} : { reason: "declined" as const }),
+    delivery: "recorded",
   });
   return { ok: true, delivery: "recorded" };
 }

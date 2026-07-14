@@ -13,11 +13,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
 import type { ActiveCanonicalOp } from "../canonical-loop/active-ops.js";
-import {
-  APPROVAL_PENDING_TTL_MS,
-  buildPendingApprovals,
-  handleApprovalRoutes,
-} from "./approvals.js";
+import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
+import { buildPendingApprovals, handleApprovalRoutes } from "./approvals.js";
 
 const NOW = 1_750_000_000_000;
 
@@ -63,17 +60,28 @@ describe("buildPendingApprovals", () => {
       argsPreview: `{"command":"rm -rf build"}`,
       context: "irreversible",
       requestedAt: NOW - 1_000,
-      expiresAt: NOW - 1_000 + APPROVAL_PENDING_TTL_MS,
+      expiresAt: NOW - 1_000 + APPROVAL_TIMEOUT_MS,
     }]);
   });
 
   it("filters cards at or past the 5-minute expiry, keeps ones just inside it", () => {
     const ops = [
-      mkOp({ opId: "op_expired", pendingApproval: pending({ approvalId: "apr-old", requestedAt: NOW - APPROVAL_PENDING_TTL_MS }) }),
-      mkOp({ opId: "op_fresh", pendingApproval: pending({ approvalId: "apr-new", requestedAt: NOW - APPROVAL_PENDING_TTL_MS + 1 }) }),
+      mkOp({ opId: "op_expired", pendingApproval: pending({ approvalId: "apr-old", requestedAt: NOW - APPROVAL_TIMEOUT_MS }) }),
+      mkOp({ opId: "op_fresh", pendingApproval: pending({ approvalId: "apr-new", requestedAt: NOW - APPROVAL_TIMEOUT_MS + 1 }) }),
     ];
     const out = buildPendingApprovals(ops, NOW);
     expect(out.map(e => e.approvalId)).toEqual(["apr-new"]);
+  });
+
+  it("filters cards carrying a recorded decision (already answered, awaiting recovery)", () => {
+    const ops = [
+      mkOp({
+        opId: "op_answered",
+        pendingApproval: pending({ approvalId: "apr-done", resolution: { approved: true, resolvedAt: NOW - 500 } }),
+      }),
+      mkOp({ opId: "op_open", pendingApproval: pending({ approvalId: "apr-open" }) }),
+    ];
+    expect(buildPendingApprovals(ops, NOW).map(e => e.approvalId)).toEqual(["apr-open"]);
   });
 
   it("defaults a missing context to null and skips a malformed requestedAt", () => {

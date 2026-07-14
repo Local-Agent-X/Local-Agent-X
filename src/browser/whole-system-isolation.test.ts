@@ -173,7 +173,7 @@ afterAll(async () => {
   else process.env.LAX_BROWSER_HEADLESS = previousHeadless;
 });
 
-describe.sequential.skipIf(!browserAvailable())("whole-system browser identity isolation", () => {
+describe.skipIf(!browserAvailable()).sequential("whole-system browser identity isolation", () => {
   it("runs the production CDP profile path and reaps its process, locks, and disposable profile", async () => {
     const profileDir = join(dataDir, "cdp-profile-test");
     mkdirSync(profileDir, { recursive: true });

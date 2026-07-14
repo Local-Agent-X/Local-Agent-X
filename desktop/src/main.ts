@@ -241,7 +241,7 @@ app.on("ready", async () => {
   const killedOrphan = await reclaimOrphanServer();
   const alreadyRunning = !killedOrphan && (await isServerRunning());
   if (!alreadyRunning) {
-    startServer({
+    void startServer({
       onCrash: ({ code, signal }) => {
         // Tell the renderer so the chat UI can clear any frozen "typing"
         // indicator and surface a banner. Without this, an OOM crash
@@ -262,7 +262,7 @@ app.on("ready", async () => {
         // re-runs with the handlers already registered above.
         const { promptAndUpgradeNode } = await import("./node-floor");
         const result = await promptAndUpgradeNode(status);
-        if (result.ok) startServer();
+        if (result.ok) void startServer();
         else showSplashRecovery("Node.js upgrade required", result.detail);
       },
       onNativeAbiMismatch: async () => {
@@ -275,7 +275,7 @@ app.on("ready", async () => {
         const { rebuildNativeModules } = await import("./native-rebuild");
         setSplashStatus("Rebuilding native modules…");
         const result = await rebuildNativeModules();
-        if (result.ok) startServer();
+        if (result.ok) void startServer();
         else showSplashRecovery(
           "Native modules need rebuilding",
           `${result.detail} Run \`npm rebuild better-sqlite3\` in the install directory, then relaunch.`,
@@ -326,7 +326,7 @@ app.on("ready", async () => {
       await new Promise(r => setTimeout(r, 1000));
       const cfg = reloadLAXConfig();
       console.log("[desktop] Tray restart on port", cfg.port);
-      startServer();
+      await startServer();
       setRestarting(false);
       const ready = await waitForServer();
       const w = getMainWindow();

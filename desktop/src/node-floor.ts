@@ -9,7 +9,7 @@
 // which runs the (OTA-updated) `scripts/install-common.mjs --upgrade-node`
 // under Electron-as-node — works even when the system node is absent
 // entirely, so there is no chicken-and-egg.
-import { execSync, spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import { createWriteStream, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -43,22 +43,31 @@ function readNodeFloor(projectRoot: string): number {
   return 22;
 }
 
-export function checkNodeFloor(projectRoot: string, pathEnv: string): NodeFloorStatus {
+// Async on purpose: this runs on the Electron main thread at every
+// startServer(), including mid-session OTA/crash restarts. The execSync
+// version blocked all windows for the full subprocess round-trip (up to its
+// 5s timeout under Defender/AV interception) — part of the whole-app
+// freeze-while-typing class. `node -v` resolves via execFile off-thread.
+export function checkNodeFloor(projectRoot: string, pathEnv: string): Promise<NodeFloorStatus> {
   const requiredMajor = readNodeFloor(projectRoot);
-  let foundMajor = -1;
-  try {
-    const out = execSync("node -v", {
+  return new Promise((resolve) => {
+    execFile("node", ["-v"], {
       env: { ...process.env, PATH: pathEnv },
       encoding: "utf-8",
       timeout: 5000,
       windowsHide: true,
-    }).trim();
-    const major = Number(out.replace(/^v/, "").split(".")[0]);
-    foundMajor = Number.isFinite(major) && major > 0 ? major : -1;
-  } catch {
-    foundMajor = -1; // node missing from PATH entirely
-  }
-  return { ok: foundMajor >= requiredMajor, foundMajor, requiredMajor, projectRoot, pathEnv };
+      // Windows: bare "node" is resolved by the shell, not CreateProcess.
+      // execSync ran through cmd implicitly; execFile needs it explicit.
+      shell: process.platform === "win32",
+    }, (err, stdout) => {
+      let foundMajor = -1;
+      if (!err) {
+        const major = Number(String(stdout).trim().replace(/^v/, "").split(".")[0]);
+        foundMajor = Number.isFinite(major) && major > 0 ? major : -1;
+      }
+      resolve({ ok: foundMajor >= requiredMajor, foundMajor, requiredMajor, projectRoot, pathEnv });
+    });
+  });
 }
 
 /** Native dialog → automatic upgrade → { ok, detail }. The caller retries
@@ -103,7 +112,7 @@ export async function promptAndUpgradeNode(status: NodeFloorStatus): Promise<{ o
   }
   // Re-resolve from the same PATH the server spawn will use — "the script
   // succeeded" is not the invariant, "the spawnable node meets the floor" is.
-  const recheck = checkNodeFloor(status.projectRoot, status.pathEnv);
+  const recheck = await checkNodeFloor(status.projectRoot, status.pathEnv);
   return recheck.ok
     ? { ok: true, detail: `Node.js ${recheck.foundMajor} installed.` }
     : { ok: false, detail: `Upgrade ran but the node on PATH is still ${recheck.foundMajor === -1 ? "missing" : `v${recheck.foundMajor}`} — see ${logPath}.` };

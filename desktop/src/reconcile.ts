@@ -302,7 +302,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // genuinely behind (a dev editing src/ in a git checkout, or a half-applied
   // update). serverDistFresh is captured ONCE here, before any step below can
   // touch dist, so it reflects the state reconcile was handed.
-  const serverDistFresh = serverDistIsFresh(projectRoot);
+  const serverDistFresh = await serverDistIsFresh(projectRoot);
   if ((rootChanged || rootSrcChanged) && !serverDistFresh) {
     onStatus?.("Building server updates…");
     const rootDist = join(projectRoot, "dist");
@@ -346,7 +346,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // Same freshness short-circuit the server build uses above: a gated update
   // pre-builds desktop/dist (update-pipeline.ts), so the post-update boot loads
   // a current main process — skip the redundant tsc AND the relaunch it forces.
-  const needsDesktopBuild = srcChanged && !desktopDistIsFresh(projectRoot);
+  const needsDesktopBuild = srcChanged && !(await desktopDistIsFresh(projectRoot));
   if (needsDesktopBuild) {
     onStatus?.("Building app updates…");
     const distDir = join(projectRoot, "desktop", "dist");

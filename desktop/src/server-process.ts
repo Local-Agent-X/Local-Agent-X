@@ -19,45 +19,20 @@ import { join } from "path";
 import { homedir } from "os";
 import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
 import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
-import { checkNodeFloor, type NodeFloorStatus } from "./node-floor";
+import { checkNodeFloor } from "./node-floor";
 import { ensureManagedNode } from "./node-runtime";
 import { serverDistIsFresh } from "./dist-freshness";
 
 export { reclaimOrphanServer, isServerRunning, waitForServer } from "./server-probe";
 
-export interface ServerEventHandlers {
-  /** Fired when the server process exits uncleanly (non-zero code or
-   *  signal). Caller usually forwards to the renderer to clear the
-   *  "typing" indicator + surface a banner. */
-  onCrash?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void;
-  /** Fired when startServer() refuses to spawn — e.g. PROJECT_ROOT is
-   *  unset, or src/index.ts is missing. Without this the failure used
-   *  to be a console.error to a /dev/null stdout and the splash hung
-   *  forever. Caller surfaces this on the splash so the user sees what
-   *  went wrong and how to fix it. */
-  onStartupFailure?: (info: { reason: string }) => void;
-  /** Fired when the server child exits with code 75 (EX_TEMPFAIL),
-   *  which src/lifecycle.ts uses to signal "another LAX server already
-   *  owns the pidfile — refuse to start". This is NOT a crash; the
-   *  default 3s-restart loop would hit the same refusal forever. The
-   *  splash should ask the user to kill the stale server. */
-  onAlreadyRunning?: (info: { competingPid?: number; pidfilePath: string }) => void;
-  /** Fired when the PATH-resolved `node` is below the project's
-   *  engines.node floor (or missing). The spawn is refused — updated app
-   *  code on an outdated runtime fails confusingly mid-boot. Caller offers
-   *  the one-click upgrade (node-floor.ts promptAndUpgradeNode) and retries
-   *  startServer() on success. */
-  onNodeTooOld?: (status: NodeFloorStatus) => void;
-  /** Fired when the server child exits with a native-addon ABI mismatch
-   *  (NODE_MODULE_VERSION in its stderr) — better-sqlite3 was built against a
-   *  different Node major than the one we spawn. Caller rebuilds the addon
-   *  against the runtime node (native-rebuild.ts) and retries startServer().
-   *  Fired at most once per app session so a still-broken rebuild falls
-   *  through to the normal crash-loop → repair path instead of looping. */
-  onNativeAbiMismatch?: () => void;
-}
+export type { ServerEventHandlers } from "./server-events";
+import type { ServerEventHandlers } from "./server-events";
 
 let serverProcess: ChildProcess | null = null;
+// startServer is async (freshness sweep + node-floor await); two overlapping
+// calls (e.g. crash-restart timer racing a tray restart) must not both pass
+// the serverProcess null-check and double-spawn.
+let isStarting = false;
 let isQuitting = false;
 let isRestarting = false;
 let crashHandler: ServerEventHandlers["onCrash"] | undefined;
@@ -107,8 +82,23 @@ export function buildAugmentedPath(): string {
   return [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
 }
 
-export function startServer(handlers?: ServerEventHandlers): void {
-  if (serverProcess) return;
+// Async on purpose: the freshness sweep and the node-floor check both await
+// off-thread I/O now. The synchronous versions ran ~1200 Defender-intercepted
+// stats plus an execSync subprocess on the main thread at every (re)start —
+// OTA rolling updates and crash-recovery restart the server mid-session, so
+// users saw the whole app freeze ~15s at random while typing. Nothing here
+// may block the event loop; keep it that way.
+export async function startServer(handlers?: ServerEventHandlers): Promise<void> {
+  if (serverProcess || isStarting) return;
+  isStarting = true;
+  try {
+    await startServerInner(handlers);
+  } finally {
+    isStarting = false;
+  }
+}
+
+async function startServerInner(handlers?: ServerEventHandlers): Promise<void> {
   if (handlers?.onCrash) crashHandler = handlers.onCrash;
   if (handlers?.onAlreadyRunning) alreadyRunningHandler = handlers.onAlreadyRunning;
   if (handlers?.onStartupFailure) startupFailureHandler = handlers.onStartupFailure;
@@ -139,7 +129,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
     try { startupFailureHandler?.({ reason }); } catch {}
     return;
   }
-  const useDist = serverDistIsFresh(projectRoot);
+  const useDist = await serverDistIsFresh(projectRoot);
   const nodeArgs = useDist
     ? ["--max-old-space-size=4096", join(projectRoot, "dist", "index.js")]
     : ["--max-old-space-size=4096", "--import=tsx", srcIndex];
@@ -154,7 +144,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
   // project's engines.node — it would die confusingly mid-boot (or on the
   // first newer-syntax module). The handler offers a one-click in-app
   // upgrade and calls startServer() again on success.
-  const nodeFloor = checkNodeFloor(projectRoot, augmentedPath);
+  const nodeFloor = await checkNodeFloor(projectRoot, augmentedPath);
   if (!nodeFloor.ok) {
     console.error(`[desktop] node on PATH is ${nodeFloor.foundMajor === -1 ? "missing" : `v${nodeFloor.foundMajor}`}, engines floor is ${nodeFloor.requiredMajor} — refusing to spawn`);
     try { nodeTooOldHandler?.(nodeFloor); } catch {}
@@ -312,7 +302,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
 
     if (!isQuitting && !isRestarting) {
       setTimeout(() => {
-        if (!isQuitting && !isRestarting && !serverProcess) startServer();
+        if (!isQuitting && !isRestarting && !serverProcess) void startServer();
       }, 3000);
     }
   });
@@ -339,7 +329,7 @@ export async function restartServer(): Promise<{ ready: boolean; cfg: LAXConfig 
   await new Promise(r => setTimeout(r, 1000));
   const cfg = reloadLAXConfig();
   console.log(`[desktop] Restarting on port ${cfg.port}`);
-  startServer();
+  await startServer();
   setRestarting(false);
   const ready = await waitForServer();
   return { ready, cfg };
@@ -359,7 +349,14 @@ export function stopServer(): Promise<void> {
     // hours-old code (2026-06-09: five process generations in one day).
     if (process.platform === "win32") {
       if (pid) {
-        try { execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
+        // spawn, not execSync: taskkill walking the child tree takes seconds on
+        // Windows, and this runs mid-session on every OTA/agent restart — a sync
+        // wait here froze every window. Resolve when taskkill exits so the
+        // restart sequence still orders stop → start correctly.
+        const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+        killer.on("exit", () => { serverProcess = null; resolve(); });
+        killer.on("error", () => { serverProcess = null; resolve(); });
+        return;
       }
       serverProcess = null;
       resolve();

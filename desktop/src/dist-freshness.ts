@@ -31,23 +31,33 @@
 // newer than dist and fools the mtime check. The updater touches dist/index.js
 // after the copy so a validated, freshly-built dist still reads as fresh.
 
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { existsSync, readFileSync } from "fs";
+import { readdir, stat } from "fs/promises";
 import { join } from "path";
 
-function distNewerThanSources(distFile: string, srcDir: string): boolean {
+// Async on purpose — this sweep stats every .ts under src/ (~1200 files) and
+// runs on the Electron MAIN thread at every startServer(), including the
+// mid-session restarts an OTA rolling update or crash-recovery triggers. The
+// synchronous version froze ALL windows for the whole sweep (Defender
+// intercepts each stat; measured in the ~15s class on Windows), which users
+// felt as a random whole-app freeze while typing. Awaiting per-directory
+// batches keeps the event loop live for the identical result.
+async function distNewerThanSources(distFile: string, srcDir: string): Promise<boolean> {
   if (!existsSync(distFile)) return false;
-  const distMtime = statSync(distFile).mtimeMs;
+  const distMtime = (await stat(distFile)).mtimeMs;
   const stack = [srcDir];
   while (stack.length) {
     const dir = stack.pop()!;
     let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { continue; }
+    const files: string[] = [];
     for (const e of entries) {
       const p = join(dir, e.name);
       if (e.isDirectory()) { stack.push(p); continue; }
-      if (!e.name.endsWith(".ts")) continue;
-      if (statSync(p).mtimeMs > distMtime) return false;
+      if (e.name.endsWith(".ts")) files.push(p);
     }
+    const stats = await Promise.all(files.map(f => stat(f).catch(() => null)));
+    if (stats.some(s => s !== null && s.mtimeMs > distMtime)) return false;
   }
   return true;
 }
@@ -95,17 +105,17 @@ function builtRefFresh(distDir: string, projectRoot: string): boolean {
   }
 }
 
-export function serverDistIsFresh(projectRoot: string): boolean {
+export async function serverDistIsFresh(projectRoot: string): Promise<boolean> {
   const distDir = join(projectRoot, "dist");
-  return distNewerThanSources(join(distDir, "index.js"), join(projectRoot, "src"))
+  return await distNewerThanSources(join(distDir, "index.js"), join(projectRoot, "src"))
     && builtRefFresh(distDir, projectRoot);
 }
 
 // Desktop (Electron main) counterpart. A gated update pre-builds desktop/dist
 // before the restart (update-pipeline.ts), so reconcile can skip the rebuild —
 // and the relaunch it forces — when the loaded main process is already current.
-export function desktopDistIsFresh(projectRoot: string): boolean {
+export async function desktopDistIsFresh(projectRoot: string): Promise<boolean> {
   const distDir = join(projectRoot, "desktop", "dist");
-  return distNewerThanSources(join(distDir, "main.js"), join(projectRoot, "desktop", "src"))
+  return await distNewerThanSources(join(distDir, "main.js"), join(projectRoot, "desktop", "src"))
     && builtRefFresh(distDir, projectRoot);
 }

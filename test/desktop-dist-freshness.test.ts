@@ -34,41 +34,41 @@ describe("desktopDistIsFresh", () => {
   const distMain = () => join(root, "desktop", "dist", "main.js");
   const src = (...p: string[]) => join(root, "desktop", "src", ...p);
 
-  it("is fresh when dist/main.js is newer than every src .ts", () => {
+  it("is fresh when dist/main.js is newer than every src .ts", async () => {
     writeAt(src("main.ts"), OLD);
     writeAt(src("ipc", "handlers.ts"), OLD);
     writeAt(distMain(), NEW);
-    expect(desktopDistIsFresh(root)).toBe(true);
+    await expect(desktopDistIsFresh(root)).resolves.toBe(true);
   });
 
-  it("is STALE when any src .ts (even nested) is newer than dist — the relaunch case", () => {
+  it("is STALE when any src .ts (even nested) is newer than dist — the relaunch case", async () => {
     writeAt(src("main.ts"), OLD);
     writeAt(distMain(), NEW);
     writeAt(src("ipc", "handlers.ts"), new Date("2026-01-01T02:00:00Z"));
-    expect(desktopDistIsFresh(root)).toBe(false);
+    await expect(desktopDistIsFresh(root)).resolves.toBe(false);
   });
 
-  it("is stale when dist/main.js is missing", () => {
+  it("is stale when dist/main.js is missing", async () => {
     writeAt(src("main.ts"), OLD);
-    expect(desktopDistIsFresh(root)).toBe(false);
+    await expect(desktopDistIsFresh(root)).resolves.toBe(false);
   });
 
-  it("ignores non-.ts files newer than dist", () => {
+  it("ignores non-.ts files newer than dist", async () => {
     writeAt(src("main.ts"), OLD);
     writeAt(distMain(), NEW);
     writeAt(src("notes.md"), new Date("2026-01-01T03:00:00Z"));
-    expect(desktopDistIsFresh(root)).toBe(true);
+    await expect(desktopDistIsFresh(root)).resolves.toBe(true);
   });
 });
 
 describe("serverDistIsFresh (shared walk did not regress in the refactor)", () => {
-  it("fresh vs stale by dist/index.js mtime", () => {
+  it("fresh vs stale by dist/index.js mtime", async () => {
     writeAt(join(root, "src", "index.ts"), OLD);
     writeAt(join(root, "dist", "index.js"), NEW);
-    expect(serverDistIsFresh(root)).toBe(true);
+    await expect(serverDistIsFresh(root)).resolves.toBe(true);
 
     utimesSync(join(root, "src", "index.ts"), new Date("2026-01-01T04:00:00Z"), new Date("2026-01-01T04:00:00Z"));
-    expect(serverDistIsFresh(root)).toBe(false);
+    await expect(serverDistIsFresh(root)).resolves.toBe(false);
   });
 });
 
@@ -101,31 +101,31 @@ describe("git-HEAD stamp — catches a pull the mtime sweep misses", () => {
     writeAt(join(root, "dist", "index.js"), NEW);
   });
 
-  it("fresh when the stamped commit equals HEAD", () => {
+  it("fresh when the stamped commit equals HEAD", async () => {
     fakeGit(SHA_A, SHA_A);
-    expect(serverDistIsFresh(root)).toBe(true);
+    await expect(serverDistIsFresh(root)).resolves.toBe(true);
   });
 
-  it("STALE when HEAD moved past the stamp (the git pull that didn't show up)", () => {
+  it("STALE when HEAD moved past the stamp (the git pull that didn't show up)", async () => {
     fakeGit(SHA_B, SHA_A); // built from A, now on B
-    expect(serverDistIsFresh(root)).toBe(false);
+    await expect(serverDistIsFresh(root)).resolves.toBe(false);
   });
 
-  it("defers to mtime (fresh) when dist carries no stamp — no regression for deployed dist", () => {
+  it("defers to mtime (fresh) when dist carries no stamp — no regression for deployed dist", async () => {
     fakeGit(SHA_A); // .git present, but no dist/.builtref
-    expect(serverDistIsFresh(root)).toBe(true);
+    await expect(serverDistIsFresh(root)).resolves.toBe(true);
   });
 
-  it("defers to mtime when there is no .git (the installed-app / OTA case)", () => {
+  it("defers to mtime when there is no .git (the installed-app / OTA case)", async () => {
     // no fakeGit() call → no .git; a stray stamp must not engage the check
     writeFileSync(join(root, "dist", ".builtref"), SHA_B + "\n");
-    expect(serverDistIsFresh(root)).toBe(true);
+    await expect(serverDistIsFresh(root)).resolves.toBe(true);
   });
 
-  it("can only ADD staleness: an mtime-STALE dist stays stale regardless of a matching stamp", () => {
+  it("can only ADD staleness: an mtime-STALE dist stays stale regardless of a matching stamp", async () => {
     utimesSync(join(root, "src", "index.ts"), new Date("2026-01-01T05:00:00Z"), new Date("2026-01-01T05:00:00Z"));
     fakeGit(SHA_A, SHA_A); // stamp matches HEAD, but src is newer than dist
-    expect(serverDistIsFresh(root)).toBe(false);
+    await expect(serverDistIsFresh(root)).resolves.toBe(false);
   });
 });
 

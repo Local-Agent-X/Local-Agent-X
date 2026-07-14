@@ -12,9 +12,39 @@
   window.__laxFreezeProbeInstalled = true;
 
   var LOG = (window.__laxFreezeLog = window.__laxFreezeLog || []);
+
+  // Ship each recorded stall to the server so it lands in server.log next to
+  // the backend's own restart/OTA lines — the in-memory ring buffer dies with
+  // the window, which kept intermittent freezes unattributable. Batched (one
+  // POST per 5s window), capped per session, and silent on any failure: the
+  // probe must never become a source of work itself.
+  var REPORT_CAP = 40;
+  var reported = 0;
+  var pending = [];
+  var flushTimer = 0;
+  function flushReports() {
+    flushTimer = 0;
+    var batch = pending.splice(0, 10);
+    if (!batch.length) return;
+    try {
+      var tok = (typeof AUTH_TOKEN === "string" && AUTH_TOKEN) ? AUTH_TOKEN : "";
+      if (!tok) return;
+      fetch("/api/health/client-freeze", {
+        method: "POST",
+        keepalive: true,
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + tok },
+        body: JSON.stringify({ entries: batch }),
+      }).catch(function () {});
+    } catch (e) { /* never throw from the probe */ }
+  }
   function record(entry) {
     LOG.push(entry);
     if (LOG.length > 100) LOG.shift();
+    if (reported < REPORT_CAP) {
+      reported++;
+      pending.push(entry);
+      if (!flushTimer) flushTimer = setTimeout(flushReports, 5000);
+    }
   }
   function stamp() {
     try {

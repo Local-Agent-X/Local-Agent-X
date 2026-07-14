@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse } from "../server-utils.js";
+import { jsonResponse, safeParseBody } from "../server-utils.js";
 
 const PROCESS_STARTED_AT = Date.now();
 const APP_VERSION = (() => {
@@ -21,7 +21,34 @@ const APP_VERSION = (() => {
   catch { return "0.0.0"; }
 })();
 
+// UI-freeze reports from the renderer's freeze probe (public/js/perf-longtask.js).
+// The probe's ring buffer (window.__laxFreezeLog) dies with the window, which is
+// why intermittent freezes went unattributed for weeks — this lands each event in
+// server.log (console is mirrored there) next to server restart/OTA lines, so a
+// freeze can be correlated with what the backend was doing at that moment.
+// Bounded: at most 60 entries logged per process lifetime, then dropped silently.
+let freezeReportsLogged = 0;
+const FREEZE_REPORT_CAP = 60;
+
 export const handleHealthRoutes: RouteHandler = async (method, url, req, res) => {
+  if (method === "POST" && url.pathname === "/api/health/client-freeze") {
+    const body = await safeParseBody(req).catch(() => null);
+    const entries = Array.isArray(body?.entries) ? body.entries : [];
+    for (const e of entries.slice(0, 10)) {
+      if (freezeReportsLogged >= FREEZE_REPORT_CAP) break;
+      if (typeof e !== "object" || e === null) continue;
+      const r = e as Record<string, unknown>;
+      const ms = Math.min(Math.round(Number(r.ms) || 0), 600_000);
+      if (ms < 200) continue;
+      const kind = r.kind === "longtask" ? "longtask" : "freeze";
+      const where = typeof r.where === "string" ? r.where.slice(0, 120) : "";
+      const at = typeof r.t === "string" ? r.t.slice(0, 32) : "";
+      freezeReportsLogged++;
+      console.warn(`[client-freeze] ${kind} ${ms}ms${where ? ` in:${where}` : ""}${at ? ` at:${at}` : ""}`);
+    }
+    jsonResponse(res, 200, { ok: true }, req);
+    return true;
+  }
   if (method !== "GET") return false;
 
   if (url.pathname === "/api/health") {

@@ -13,6 +13,7 @@ import { CronService } from "../cron/cron-service.js";
 import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
 import { fetchLocalOllamaTags } from "../ollama-cloud.js";
+import { embeddingModelInstalled, decideEmbeddingModelAction } from "./embedding-model-match.js";
 import type { LAXConfig } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -71,9 +72,10 @@ export async function initOrRefreshEmbeddingProvider(deps: {
       try {
         const ollamaUrl = (settings.ollamaUrl || "http://127.0.0.1:11434").replace(/\/$/, "");
         const tags = await fetchLocalOllamaTags(ollamaUrl);
-        if (tags.reachable) {
-          const installed = tags.models.map(m => m.name.replace(/:latest$/, ""));
-          if (!installed.includes(targetModel)) {
+        const decision = decideEmbeddingModelAction(targetModel, tags);
+        if (decision.action !== "retry") {
+          const installed = tags.models.map(m => m.name);
+          if (decision.action === "pull") {
             logger.info(`[memory] Model "${targetModel}" not found in Ollama. Pulling... (this may take a minute on first run)`);
             try {
               const pullRes = await fetch(`${ollamaUrl}/api/pull`, {
@@ -83,11 +85,20 @@ export async function initOrRefreshEmbeddingProvider(deps: {
                 signal: AbortSignal.timeout(300_000),
               });
               if (pullRes.ok) {
-                logger.info(`[memory] Pulled ${targetModel} successfully`);
+                // Ollama's non-streaming /api/pull can report 200 without the
+                // model actually landing — trust /api/tags, not the pull.
+                const recheck = await fetchLocalOllamaTags(ollamaUrl);
+                const recheckNames = recheck.models.map(m => m.name);
+                if (recheck.reachable && embeddingModelInstalled(targetModel, recheckNames)) {
+                  logger.info(`[memory] Pulled ${targetModel} successfully`);
+                } else {
+                  logger.warn(`[memory] Pull of ${targetModel} reported ok but model not in tags (installed: ${recheckNames.join(", ") || "none"}) — will retry.`);
+                  return { providerName: "ollama", model: targetModel, degraded: true };
+                }
               } else {
                 degraded = true;
                 logger.warn(`[memory] Failed to pull ${targetModel} — trying ${fallbackModel}`);
-                if (!installed.includes(fallbackModel)) {
+                if (!embeddingModelInstalled(fallbackModel, installed)) {
                   await fetch(`${ollamaUrl}/api/pull`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -100,7 +111,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
             } catch (pullErr) {
               degraded = true;
               logger.warn(`[memory] Model pull failed: ${(pullErr as Error).message}`);
-              if (!installed.includes(fallbackModel)) {
+              if (!embeddingModelInstalled(fallbackModel, installed)) {
                 try {
                   await fetch(`${ollamaUrl}/api/pull`, {
                     method: "POST",

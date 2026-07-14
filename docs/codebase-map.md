@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1228 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1229 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -65,7 +65,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/routes/` | 5 | 82 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
-| `src/server/` *(entrypoint)* | 5 | 32 | XL |  |
+| `src/server/` *(entrypoint)* | 5 | 33 | XL |  |
 | `src/broker-transport/` | 4 | 27 | L |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/codex-client/` | 3 | 5 | M |  |

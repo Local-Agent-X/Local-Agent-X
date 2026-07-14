@@ -43,7 +43,7 @@ describe("special-purpose IP classification", () => {
     "100::dead:beef",
     "2001:2::1",
     "2001:db8:abcd::1",
-    "2002:808:808::1",
+    "2002:c0a8:0101::1",
     "2620:4f:8000::1234",
     "3fff:abc::1",
     "5f00::1",
@@ -122,8 +122,9 @@ describe("resolveAndPinHost", () => {
 // RFC3056) IPv6 literals embed an IPv4 address. A literal like
 // 64:ff9b::169.254.169.254 or 2002:a9fe:a9fe:: dials the embedded IPv4 (here,
 // cloud metadata) while looking like a benign public IPv6 host. isPrivateIPv6
-// must reject the special-purpose transition range regardless of the embedded
-// address. Browser egress is global-unicast only.
+// decodes the embedded IPv4 and classifies by it: private/reserved/metadata
+// embeds are blocked, public embeds pass (NAT64 is how IPv6-only networks
+// reach the IPv4 internet — a blanket block breaks them).
 describe("evaluateWebFetch — NAT64/6to4 embedded-IPv4 SSRF (C3-5)", () => {
   it.each([
     ["[64:ff9b::169.254.169.254]", "NAT64 dotted-tail → AWS metadata"],
@@ -140,6 +141,9 @@ describe("evaluateWebFetch — NAT64/6to4 embedded-IPv4 SSRF (C3-5)", () => {
 
   it.each([
     ["[2606:4700:4700::1111]", "Cloudflare public IPv6 — not a transition literal"],
+    ["[2002:0808:0808::]", "6to4 wrapping public 8.8.8.8"],
+    ["[64:ff9b::8.8.8.8]", "NAT64 wrapping public 8.8.8.8"],
+    ["[64:ff9b:1::1.1.1.1]", "NAT64 local-use prefix wrapping public 1.1.1.1"],
   ])("allows %s (%s)", (host) => {
     const d = webFetch(`http://${host}/`);
     expect(d.allowed).toBe(true);
@@ -153,9 +157,9 @@ describe("evaluateWebFetch — NAT64/6to4 embedded-IPv4 SSRF (C3-5)", () => {
     if (!result.ok) expect(result.reason).toContain("SSRF protection");
   });
 
-  it("resolveAndPinHost blocks 6to4 even when it wraps a public IPv4", async () => {
+  it("resolveAndPinHost allows 6to4 wrapping a public IPv4", async () => {
     const result = await resolveAndPinHost("2002:0808:0808::");
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: true, pin: null });
   });
 });
 

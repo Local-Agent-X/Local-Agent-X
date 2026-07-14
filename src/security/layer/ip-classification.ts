@@ -78,12 +78,9 @@ export const SPECIAL_USE_IPV6_RANGES: readonly SpecialUseRange[] = [
   { cidr: "::/96", reason: "deprecated IPv4-compatible addressing" },
   { cidr: "::ffff:0:0/96", reason: "IPv4-mapped addressing" },
   { cidr: "::ffff:0:0:0/96", reason: "IPv4-translated addressing" },
-  { cidr: "64:ff9b::/96", reason: "IPv4/IPv6 translation" },
-  { cidr: "64:ff9b:1::/48", reason: "local IPv4/IPv6 translation" },
   { cidr: "100::/64", reason: "discard only" },
   { cidr: "2001::/23", reason: "IETF protocol assignments" },
   { cidr: "2001:db8::/32", reason: "documentation" },
-  { cidr: "2002::/16", reason: "6to4" },
   { cidr: "2620:4f:8000::/48", reason: "AS112 service" },
   { cidr: "3fff::/20", reason: "documentation" },
   { cidr: "5f00::/16", reason: "segment routing SIDs" },
@@ -126,10 +123,41 @@ const compiledIPv6Ranges = SPECIAL_USE_IPV6_RANGES.map(({ cidr }) => {
   return { value, prefix: Number(prefixText) };
 });
 
+function ipv4FromBits(bits: bigint): string {
+  const n = Number(bits & 0xffffffffn);
+  return `${(n >>> 24) & 0xff}.${(n >>> 16) & 0xff}.${(n >>> 8) & 0xff}.${n & 0xff}`;
+}
+
+/**
+ * IPv4 embedded in a NAT64/6to4 transition address, or null if the address
+ * isn't one. These prefixes wrap an IPv4 address inside an IPv6 literal
+ * (Round-3 finding C3-5): 64:ff9b::169.254.169.254 or 2002:a9fe:a9fe:: dials
+ * the embedded IPv4 while looking like a benign IPv6 host — but the same
+ * mechanisms wrap PUBLIC addresses legitimately (NAT64 is how IPv6-only
+ * networks reach the IPv4 internet), so classification must follow the
+ * embedded address, not the prefix.
+ */
+function embeddedTransitionIPv4(value: bigint): string | null {
+  // NAT64 well-known prefix 64:ff9b::/96 (RFC6052): embedded v4 = low 32 bits.
+  if (value >> 32n === 0x0064ff9bn << 64n) return ipv4FromBits(value);
+  // NAT64 local-use prefix 64:ff9b:1::/48 (RFC8215): likewise low 32 bits.
+  if (value >> 80n === 0x0064ff9b0001n) return ipv4FromBits(value);
+  // 6to4 2002::/16 (RFC3056): embedded v4 = bits 16-47, i.e. groups 1-2.
+  if (value >> 112n === 0x2002n) return ipv4FromBits(value >> 80n);
+  return null;
+}
+
 /** True for malformed, non-global, or special-purpose IPv6 addresses. */
 export function isPrivateIPv6(ip: string): boolean {
   const value = parseIPv6Value(ip);
   if (value === null) return true;
+
+  // Transition addresses classify by their embedded IPv4: private/reserved/
+  // metadata embeds are blocked, public embeds pass. This must short-circuit —
+  // 64:ff9b::/96 sits outside global unicast 2000::/3, so falling through to
+  // the fail-closed check below would re-block public NAT64.
+  const embedded = embeddedTransitionIPv4(value);
+  if (embedded !== null) return isPrivateIPv4(embedded);
 
   if (compiledIPv6Ranges.some(({ value: base, prefix }) => {
     const shift = BigInt(128 - prefix);

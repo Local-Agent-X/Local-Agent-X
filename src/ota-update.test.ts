@@ -13,7 +13,30 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OTAManager, assertSha256 } from "./ota-update.js";
+import { resolveTarBinaries } from "./ota-extract.js";
 import { createHash } from "node:crypto";
+
+describe("resolveTarBinaries — extract must not depend on the inherited PATH", () => {
+  // Field failure (Win11): the installed app inherited a PATH without
+  // System32, so bare `tar` AND the old `powershell -Command tar …` fallback
+  // (same PATH) both died with CommandNotFound and the update aborted. The
+  // fix pins the first candidate to the absolute System32 bsdtar.
+  it("puts absolute %SystemRoot%\\System32\\tar.exe first on Windows", () => {
+    if (process.platform !== "win32") return;
+    const sysTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+    if (!existsSync(sysTar)) return; // pre-17063 host — nothing to pin
+    expect(resolveTarBinaries()[0]).toBe(sysTar);
+  });
+
+  it("always ends with PATH `tar` as the final fallback", () => {
+    const bins = resolveTarBinaries();
+    expect(bins[bins.length - 1]).toBe("tar");
+  });
+
+  it("never emits a powershell candidate (it resolves through the same PATH)", () => {
+    expect(resolveTarBinaries().some(b => /powershell/i.test(b))).toBe(false);
+  });
+});
 
 describe("assertSha256 — rolling-channel bytes-level verify (round-8)", () => {
   const bytes = Buffer.from("synthetic source tarball bytes");

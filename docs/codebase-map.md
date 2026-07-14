@@ -132,6 +132,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/model-fallback.ts` | S |
 | `src/model-tiers.ts` | S |
 | `src/ollama-cloud.ts` | S |
+| `src/ota-extract.ts` | S |
 | `src/ota-update.ts` | M |
 | `src/pid-probe.ts` | S |
 | `src/plugin-system.ts` | M |

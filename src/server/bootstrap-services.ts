@@ -131,7 +131,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
     if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
     else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
     const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
-    memoryIndex.setEmbeddingProvider(provider);
+    await memoryIndex.setEmbeddingProvider(provider);
     // Share the same provider with anyone else that needs embeddings (protocol
     // dedup, future similar) — single warm-up cost, single source of truth on
     // the user's configured choice.
@@ -141,7 +141,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
     registerLocalOnlyTeardown("embeddings", async () => {
       const { LocalEmbeddings } = await import("../embedding-providers/index.js");
       const local = new LocalEmbeddings();
-      memoryIndex.setEmbeddingProvider(local);
+      await memoryIndex.setEmbeddingProvider(local);
       setEmbeddingProviderSingleton(local);
     });
     logger.info(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)${degraded ? " [degraded]" : ""}`);

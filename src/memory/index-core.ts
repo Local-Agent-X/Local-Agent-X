@@ -132,9 +132,12 @@ export class MemoryIndex extends MemoryFactsBase {
 
   // ── Embedding Provider ──
 
-  setEmbeddingProvider(provider: EmbeddingProvider): void {
+  // Async: the signature wipe and dimension self-heal batch their full-table
+  // sqlite work and yield the event loop, so boot-time callers no longer
+  // starve concurrent awaited phases (measured 17-21s setupVoiceWs inflation).
+  async setEmbeddingProvider(provider: EmbeddingProvider): Promise<void> {
     this.embeddingProvider = provider;
-    const verdict = Embedding.reconcileEmbeddingSignature(this.db, provider);
+    const verdict = await Embedding.reconcileEmbeddingSignature(this.db, provider);
     if (Embedding.initVectorTable(this.db, provider.dimensions).hasVec) {
       this.hasVec = true;
     }
@@ -149,7 +152,7 @@ export class MemoryIndex extends MemoryFactsBase {
       // scores 0 → unfindable. NULL those so the backfill below rebuilds them
       // under the current provider. Runs every boot, so a model change can
       // never permanently orphan content. (Skipped in degraded/local fallback.)
-      const healed = Embedding.nullDimensionMismatchedEmbeddings(this.db, provider);
+      const healed = await Embedding.nullDimensionMismatchedEmbeddings(this.db, provider);
       if (healed > 0) {
         logger.warn(
           `[memory] Self-heal: ${healed} chunk(s) had stale-dimension embeddings ` +

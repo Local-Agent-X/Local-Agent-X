@@ -59,6 +59,13 @@ export async function summarizeOldMessages(
     // circuit breaker). Transport-level nulls (kill-switch, 30s timeout,
     // provider error) short-circuit inside guardedRewrite without a retry, so
     // the existing latency and kill-switch behavior is unchanged.
+    //
+    // Live guard branches AT THIS SEAM: only the loop detectors can fire.
+    // classifyWithLLM's parse below already maps whitespace-only output to
+    // null (→ the transport-null path, not the guard's empty branch), and
+    // maxResponseChars 6000 makes a >10k-char line unreachable. Both branches
+    // stay in the guard because it is a shared primitive — other seams have
+    // different parse/limit envelopes.
     return await guardedRewrite(
       (_attempt, feedback) =>
         classifyWithLLM<string>({

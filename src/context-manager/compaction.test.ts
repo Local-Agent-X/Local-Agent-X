@@ -95,8 +95,8 @@ describe("summarizeOldMessages — an auth-error backend must never become a sum
 });
 
 describe("summarizeOldMessages — degenerate-output guard (looping model output)", () => {
-  // Short-period repetition: every sampled 200-char window shares its phase
-  // with others, so detectDegenerateRewrite flags it as looping output.
+  // Single-line short-period repetition: gzips to ~2% of its size, so
+  // detectDegenerateRewrite's compression check flags it as looping output.
   const LOOPING_SUMMARY = "DECISIONS: the same bullet again. ".repeat(120);
 
   beforeEach(() => {

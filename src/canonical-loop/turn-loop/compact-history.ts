@@ -132,8 +132,8 @@ export function locateAnchor(
 
 // ─── Compaction circuit breaker ──────────────────────────────────────────────
 // A session whose context is irrecoverably over the summarizer's own limits
-// fails the summarize call every turn, forever — each retry burns a 30s LLM
-// call for nothing. After TRIP_THRESHOLD consecutive failed attempts for an op
+// fails the summarize call every turn, forever — each retry burns up to two
+// 30s LLM calls for nothing (the rewrite guard may retry a degenerate output). After TRIP_THRESHOLD consecutive failed attempts for an op
 // the breaker trips and compactHistory skips the attempt on later calls — but
 // not forever: a transient provider outage must not disable summarization for
 // a long-lived op's whole life. While tripped, every PROBE_INTERVAL-th

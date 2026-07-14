@@ -33,12 +33,15 @@ describe("openai-compat reasoning heartbeat", () => {
     const reports: AdapterReport[] = [];
     const out = await streamOnce(req, (r) => reports.push(r), { isAborted: () => false });
 
-    const heartbeats = reports.filter((r) => r.kind === "heartbeat");
-    expect(heartbeats).toHaveLength(3); // one per reasoning delta → watchdog never trips
+    // Since 78213fb2 each reasoning delta emits a live `reasoning_chunk`
+    // (streamed to the UI's Thinking affordance) rather than a payload-less
+    // heartbeat; a reasoning_chunk resets the idle watchdog just the same, so
+    // the watchdog still never trips during silent reasoning.
+    const reasoningChunks = reports.filter((r) => r.kind === "reasoning_chunk");
+    expect(reasoningChunks).toHaveLength(3); // one per reasoning delta → watchdog never trips
 
-    // Per-delta thoughts are NOT streamed live to chat — heartbeats carry no
-    // payload. The reasoning is buffered and only surfaced once at end-of-turn
-    // as a fallback, since the model never emitted a `content` answer.
+    // The reasoning is also accumulated and surfaced once at end-of-turn as a
+    // fallback, since the model never emitted a `content` answer.
     expect(out.assembledThinking).toBe("let me think about this some more");
     expect(out.assembledText).toBe("let me think about this some more");
   });

@@ -117,18 +117,18 @@ describe("defaultGeminiNativeTransport SSE parsing", () => {
 
 // Stub-transport adapter test: proves the adapter maps transport events to the
 // canonical AdapterReport contract (text→stream_chunk, tool_call→requested,
-// thinking→heartbeat, plus message_finalized).
+// thinking→reasoning_chunk, plus message_finalized).
 describe("GeminiNativeAdapter event mapping", () => {
   function stub(events: GeminiTransportEvent[]): GeminiNativeTransport {
     return { async *stream() { for (const e of events) yield e; } };
   }
   const turn: TurnInput = { opId: "op1", turnIdx: 0, messages: [{ messageId: "m0", role: "user", content: { text: "open x.com" } }], tools: [{ name: "browser", description: "", inputSchema: { type: "object" } }] };
 
-  it("emits heartbeat for thinking, stream_chunk for text, tool_call_requested for functionCall", async () => {
+  it("emits reasoning_chunk for thinking, stream_chunk for text, tool_call_requested for functionCall", async () => {
     const adapter = createGeminiNativeAdapter({
       model: "gemini-2.5-flash", apiKey: "k",
       transport: stub([
-        { type: "thinking" },
+        { type: "thinking", delta: "considering" },
         { type: "text", delta: "Opening" },
         { type: "tool_call", id: "g1", name: "browser", arguments: '{"action":"navigate"}' },
         { type: "done", stopReason: "STOP" },
@@ -136,7 +136,9 @@ describe("GeminiNativeAdapter event mapping", () => {
     });
     const reports: AdapterReport[] = [];
     const res = await adapter.runTurn(turn, r => reports.push(r));
-    expect(reports.filter(r => r.kind === "heartbeat")).toHaveLength(1);
+    // Since 78213fb2 a reasoning delta streams as a live reasoning_chunk
+    // (which resets the idle watchdog) rather than a payload-less heartbeat.
+    expect(reports.filter(r => r.kind === "reasoning_chunk")).toHaveLength(1);
     expect(reports.filter(r => r.kind === "stream_chunk")).toHaveLength(1);
     const calls = reports.filter(r => r.kind === "tool_call_requested");
     expect(calls).toHaveLength(1);

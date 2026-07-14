@@ -194,6 +194,12 @@ export function buildChromeLaunchArgs(cdpPort: number, userDataDir: string, down
     `--user-data-dir=${userDataDir}`,
     ...STEALTH_ARGS,
     "--window-size=1280,800",
+    // Suppress Chrome's initial about:blank window. Every agent session runs in a
+    // fresh per-session CDP context and opens its own tab via newContext().newPage();
+    // the default-context startup window is never adopted, so it would just linger
+    // as an empty stray window next to the real one. CDP readiness polls
+    // /json/version (browser endpoint), not a page target, so no startup page is needed.
+    "--no-startup-window",
     `--download.default_directory=${downloadsPath}`,
     `--disable-features=${DISABLE_FEATURES.join(",")}`,
     ...browserProxyArgs(proxyServer),

@@ -26,6 +26,13 @@
 // full innerHTML rebuilds _renderAgentFeedsList does on every add/update.
 var ambientExpanded = {};
 
+// Card ids that have already played their entrance animation. _renderAgentFeedsList
+// does a full innerHTML rebuild on every add/update, and a live worker streams
+// bg_op_progress constantly — so without this, staggerIn re-animated EVERY card on
+// EVERY tick, which read as the card flashing. Now staggerIn runs only for cards
+// whose id is new this rebuild; existing cards re-mount silently.
+var animatedCardIds = {};
+
 function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
   if (!panel) return;
@@ -242,6 +249,7 @@ function updateAgentFeed(agentId, update) {
 
 function removeAgentFeed(agentId) {
   delete agentFeedsData[agentId];
+  delete animatedCardIds['agent-card-' + agentId]; // re-animate if this id comes back; don't leak
   var card = document.getElementById('agent-card-' + agentId);
   if (card) card.remove();
   _updateAgentCount();
@@ -278,7 +286,14 @@ function _renderAgentFeedsList() {
     list.innerHTML = Object.keys(parts.ambient).length ? '' : '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
   } else {
     list.innerHTML = buildAgentFeedTree(parts.main).map(_renderAgentFeedNode).join('');
-    if (typeof Spring !== 'undefined') Spring.staggerIn(Array.from(list.querySelectorAll('.agent-feed-card')), { delay: 50, preset: 'stiff' });
+    // Animate only cards that haven't animated before — a rebuild triggered by a
+    // progress tick must not replay the entrance on already-visible cards.
+    var fresh = Array.from(list.querySelectorAll('.agent-feed-card')).filter(function(el) {
+      if (animatedCardIds[el.id]) return false;
+      animatedCardIds[el.id] = 1;
+      return true;
+    });
+    if (fresh.length && typeof Spring !== 'undefined') Spring.staggerIn(fresh, { delay: 50, preset: 'stiff' });
   }
   var region = document.getElementById('agent-feeds-ambient'); if (region) { var ah = renderAmbientRegion(parts.ambient, ambientExpanded); region.innerHTML = ah; region.style.display = ah ? '' : 'none'; }
   _updateAgentCount();

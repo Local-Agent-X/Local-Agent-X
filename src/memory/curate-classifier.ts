@@ -24,16 +24,16 @@
  * preferred.
  */
 
-import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../classifiers/schema-output.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import type { NudgeTrigger } from "./curate-nudge.js";
 
 const CLASSIFIER_TIMEOUT_MS = 2000;
 
-const SYSTEM_PROMPT = `You decide whether a user message contains durable, transferable knowledge that the agent should save (via the \`remember\` tool for facts, or \`memory_update_profile\` for narrative profile sections).
+const SHAPE_HINT = `{"teach": true|false, "kind": "preference"|"correction"|"workflow"|"fact"|"explicit-remember"|"none", "confidence": 0-1, "why": "one short phrase"}`;
 
-Output ONE JSON line and nothing else:
-{"teach": true|false, "kind": "preference"|"correction"|"workflow"|"fact"|"explicit-remember"|"none", "confidence": 0-1, "why": "one short phrase"}
+const SYSTEM_PROMPT = `You decide whether a user message contains durable, transferable knowledge that the agent should save (via the \`remember\` tool for facts, or \`memory_update_profile\` for narrative profile sections).
 
 KIND DEFINITIONS:
 - preference: user states a stable preference. "I prefer X", "always do X", "never use Y", "I usually...", workflow choice that should apply to future similar tasks.
@@ -48,17 +48,55 @@ RULES:
 - Confidence 0.7+ for clear cases, 0.4-0.7 for plausible, <0.4 for uncertain. Caller will only act on >= 0.6.
 - A short message is fine — "always sort by date" is teach=true. Length doesn't matter; transferability does.
 - If the agent's last message was an action and the user is REDIRECTING that action ("not facebook, instagram"), that's "correction".
-- If you're unsure, lean toward teach=false. False positives are worse than false negatives — the cadence-based fire catches misses anyway.
-
-Respond with ONLY the JSON object on one line. No prose, no code fences, no leading text.`;
+- If you're unsure, lean toward teach=false. False positives are worse than false negatives — the cadence-based fire catches misses anyway.`;
 
 export interface ClassifierResult {
   teach: boolean;
   kind: NudgeTrigger | "none";
   confidence: number;
   why: string;
-  raw: string;
 }
+
+// Map classifier kinds to NudgeTrigger names. The classifier emits a
+// richer vocabulary than the nudge module's trigger set — collapse to
+// the closest existing trigger so the boost amounts apply correctly.
+const KIND_TO_TRIGGER: Record<string, NudgeTrigger> = {
+  preference: "preference-stated",
+  correction: "correction-detected",
+  workflow: "preference-stated",       // workflow rules are a kind of preference
+  fact: "preference-stated",            // facts about user are durable like prefs
+  "explicit-remember": "explicit-remember",
+};
+
+/**
+ * Reply schema. `kind` is the load-bearing field and is validated strictly
+ * (an unknown kind is rejected → single self-correction retry → null).
+ * `teach` / `confidence` / `why` keep the old parser's tolerance: a sloppy
+ * value degrades (teach→false, confidence→0, why→"") instead of burning the
+ * retry — same observable behavior as the hand-rolled parser it replaces.
+ */
+const TeachSchema = z
+  .object({
+    teach: z.unknown().optional(),
+    kind: z.preprocess(
+      (v) => String(v ?? "none").toLowerCase(),
+      z.enum(["preference", "correction", "workflow", "fact", "explicit-remember", "none"]),
+    ),
+    confidence: z.unknown().optional(),
+    why: z.unknown().optional(),
+  })
+  .transform((obj): ClassifierResult => {
+    const teach = obj.teach === true;
+    const triggerKind = teach && obj.kind !== "none" ? KIND_TO_TRIGGER[obj.kind] : null;
+    return {
+      teach,
+      kind: triggerKind || "none",
+      confidence: typeof obj.confidence === "number"
+        ? Math.max(0, Math.min(1, obj.confidence))
+        : 0,
+      why: typeof obj.why === "string" ? obj.why.slice(0, 120) : "",
+    };
+  });
 
 /**
  * Classify whether a user message is a teaching moment worth boosting the
@@ -79,6 +117,8 @@ export interface ClassifierResult {
 export async function classifyTeachMoment(
   userMessage: string,
   lastAssistantPreview: string,
+  /** Test seam — forwarded to classifySchema (see its `_llm` doc). */
+  _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>,
 ): Promise<ClassifierResult | null> {
   const trimmed = userMessage.trim();
   if (trimmed.length < 4) return null;       // 1-3 char acks ("ok", "ya")
@@ -94,79 +134,22 @@ export async function classifyTeachMoment(
     (safePrev ? `AGENT'S PRIOR MESSAGE (preview, 200ch):\n"""${safePrev}"""\n\n` : "") +
     `Classify per the system rules. JSON only, one line.`;
 
-  return classifyWithLLM<ClassifierResult>({
+  return classifySchema<ClassifierResult>({
     category: "curate-teach-moment",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: userBlock,
-    parse: parseClassifierResponse,
+    schema: TeachSchema,
+    shapeHint: SHAPE_HINT,
     timeoutMs: CLASSIFIER_TIMEOUT_MS,
     maxResponseChars: 500,
     envDisableVar: "LAX_MEMORY_CURATE_CLASSIFIER",
+    _llm,
   });
-}
-
-/**
- * Parse the Haiku JSON response. Tolerant of trailing prose / code fences
- * the model occasionally adds despite the instruction. Returns null if the
- * shape is wrong — caller treats as "no boost."
- */
-export function parseClassifierResponse(raw: string): ClassifierResult | null {
-  if (!raw) return null;
-  // Strip code fences if the model added them
-  let cleaned = raw.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
-  // Find the first {...} block
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start < 0 || end < 0 || end <= start) return null;
-  const jsonStr = cleaned.slice(start, end + 1);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const obj = parsed as Record<string, unknown>;
-  const teach = obj.teach === true;
-  const kindRaw = String(obj.kind || "none").toLowerCase();
-  const validKinds: ReadonlySet<string> = new Set([
-    "preference",
-    "correction",
-    "workflow",
-    "fact",
-    "explicit-remember",
-    "none",
-  ]);
-  if (!validKinds.has(kindRaw)) return null;
-  const confidence = typeof obj.confidence === "number"
-    ? Math.max(0, Math.min(1, obj.confidence))
-    : 0;
-  const why = typeof obj.why === "string" ? obj.why.slice(0, 120) : "";
-
-  // Map classifier kinds to NudgeTrigger names. The classifier emits a
-  // richer vocabulary than the nudge module's trigger set — collapse to
-  // the closest existing trigger so the boost amounts apply correctly.
-  const kindToTrigger: Record<string, NudgeTrigger> = {
-    preference: "preference-stated",
-    correction: "correction-detected",
-    workflow: "preference-stated",       // workflow rules are a kind of preference
-    fact: "preference-stated",            // facts about user are durable like prefs
-    "explicit-remember": "explicit-remember",
-  };
-  const triggerKind = teach && kindRaw !== "none" ? kindToTrigger[kindRaw] : null;
-
-  return {
-    teach,
-    kind: triggerKind || "none",
-    confidence,
-    why,
-    raw: raw.slice(0, 500),
-  };
 }
 
 /** @internal — for tests */
 export const _internals = {
   SYSTEM_PROMPT,
   CLASSIFIER_TIMEOUT_MS,
-  parseClassifierResponse,
+  TeachSchema,
 };

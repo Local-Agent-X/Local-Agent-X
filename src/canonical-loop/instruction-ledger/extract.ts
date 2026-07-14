@@ -8,7 +8,7 @@
  *     prohibition/obligation cues. No cue → EMPTY ledger immediately, zero
  *     LLM calls — the overwhelmingly common path.
  *  2. LLM CONFIRM (only on a gate hit): the current provider's background
- *     model (via classifyJson) maps each cued phrase to a CapabilityClass
+ *     model (via classifySchema) maps each cued phrase to a CapabilityClass
  *     prohibition or a commit-when-done obligation, and rejects gate
  *     false-positives ("never mind, run the tests" is not a constraint).
  *
@@ -25,7 +25,8 @@ import type { InstructionLedger, Obligation } from "./ledger.js";
 // CapabilityClass lives in tool-registry (ledger.ts imports it from there too
 // and doesn't re-export it) — same canonical source, no new seam.
 import type { CapabilityClass } from "../../tool-registry.js";
-import { classifyJson } from "../../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../../classifiers/schema-output.js";
 
 /** What the LLM (or an injected test double) confirms from the gated cues. */
 export interface ConfirmedConstraints {
@@ -248,8 +249,7 @@ const VALID_CLASSES: ReadonlySet<string> = new Set([
   "sensitive-read",
 ]);
 
-const SYSTEM_PROMPT = `You audit ONE user message sent to an autonomous coding agent for EXPLICIT run constraints the user stated. Reply with ONLY minified JSON, no prose, no fences:
-{"prohibitions":[],"obligations":[]}
+const SYSTEM_PROMPT = `You audit ONE user message sent to an autonomous coding agent for EXPLICIT run constraints the user stated.
 
 prohibitions — capability classes the user FORBADE for this task. Allowed values only:
 - "workspace-write": forbade editing/modifying/writing/touching files or code (e.g. "don't edit any code", "read-only", "just tell me what's wrong")
@@ -268,11 +268,38 @@ HIGH PRECISION RULES:
 - "workspace-write" means the user forbade editing files AT ALL (a diagnose/read-only session). A prohibition that only CARVES OUT a subset while the task itself asks for changes is NOT workspace-write — e.g. "remove X but don't change any OTHER feature", "fix the bug but don't touch the tests", "refactor auth but leave the public API alone". If the message asks you to edit/create/remove/rename/refactor anything, do NOT return workspace-write. Conversely, a genuine read-only session that ALSO contains a carve-out phrase ("read-only session, don't touch anything else") IS workspace-write — the carve-out doesn't cancel an explicit read-only instruction.
 - When in doubt, return empty arrays.`;
 
-async function llmConfirm(
+/**
+ * Shape schema for the model's JSON. Root arrays are required (a reply
+ * missing either is rejected → single retry → null), but their MEMBERS are
+ * deliberately loose: unknown class names and unknown obligation kinds are
+ * dropped in the transform, not rejected wholesale — a partial valid answer
+ * beats a null, and a novel-but-wrong entry must not consume the retry.
+ */
+const ConfirmationSchema = z
+  .object({
+    prohibitions: z.array(z.unknown()),
+    obligations: z.array(z.unknown()),
+  })
+  .transform((obj): ConfirmedConstraints => {
+    const prohibitions: CapabilityClass[] = [];
+    for (const p of obj.prohibitions) {
+      if (typeof p === "string" && VALID_CLASSES.has(p) && !prohibitions.includes(p as CapabilityClass)) {
+        prohibitions.push(p as CapabilityClass);
+      }
+    }
+    const obligations: Obligation[] = [];
+    if (obj.obligations.some((o) => o === "commit-when-done")) obligations.push({ kind: "commit-when-done" });
+    if (obj.obligations.some((o) => o === "read-before-answer")) obligations.push({ kind: "read-before-answer" });
+    return { prohibitions, obligations };
+  });
+
+/** Default confirmer. Exported for direct tests via the `_llm` seam. */
+export async function llmConfirm(
   userMessage: string,
   cues: string[],
+  _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>,
 ): Promise<ConfirmedConstraints | null> {
-  return classifyJson<ConfirmedConstraints>({
+  return classifySchema<ConfirmedConstraints>({
     category: "constraint-extract",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt:
@@ -280,33 +307,24 @@ async function llmConfirm(
       `PHRASES THAT TRIPPED THE PREFILTER (may be false alarms):\n${cues
         .map((c) => `  - "${c}"`)
         .join("\n")}\n\nJSON:`,
+    schema: ConfirmationSchema,
+    shapeHint: `{"prohibitions":[],"obligations":[]}`,
     // Fires only on a gated message, so a small budget; a timeout falls back
-    // to the deterministic strong tier without ever blocking the op.
+    // to the deterministic strong tier without ever blocking the op. (The
+    // budget is per attempt — an invalid reply gets one schema-fed retry.)
     timeoutMs: 1500,
     envDisableVar: "LAX_LLM_CONSTRAINT_EXTRACT",
-    validate: validateConfirmation,
+    _llm,
   });
 }
 
 /**
- * Strict shape validator for the model's JSON: unknown class names and
- * unknown obligation kinds are dropped (not rejected wholesale — a partial
- * valid answer beats a null). Exported for direct testing.
+ * Strict shape validator for the model's JSON — ConfirmationSchema applied to
+ * an already-parsed value. Exported for direct testing.
  */
 export function validateConfirmation(parsed: unknown): ConfirmedConstraints | null {
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const obj = parsed as { prohibitions?: unknown; obligations?: unknown };
-  if (!Array.isArray(obj.prohibitions) || !Array.isArray(obj.obligations)) return null;
-  const prohibitions: CapabilityClass[] = [];
-  for (const p of obj.prohibitions) {
-    if (typeof p === "string" && VALID_CLASSES.has(p) && !prohibitions.includes(p as CapabilityClass)) {
-      prohibitions.push(p as CapabilityClass);
-    }
-  }
-  const obligations: Obligation[] = [];
-  if (obj.obligations.some((o) => o === "commit-when-done")) obligations.push({ kind: "commit-when-done" });
-  if (obj.obligations.some((o) => o === "read-before-answer")) obligations.push({ kind: "read-before-answer" });
-  return { prohibitions, obligations };
+  const result = ConfirmationSchema.safeParse(parsed);
+  return result.success ? result.data : null;
 }
 
 // ---------------------------------------------------------------------------

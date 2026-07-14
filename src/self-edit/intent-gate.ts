@@ -3,23 +3,25 @@
  * user's most recent message via a small LLM call on the SAME provider+
  * model the chat is currently using (no provider hardcode → no migration
  * tax when switching models). Returns null on any classifier failure
- * (no creds, timeout, parse error) and the caller fails open.
+ * (no creds, timeout, invalid reply after the schema retry) and the
+ * caller fails open.
  *
  * The gate prompt is intentionally narrow: "does the task match the
  * intent?" rather than open-ended. Yes/no/unsure with a one-line
  * reason. Tiny output, fast classification, low chance of weird drift.
  */
 
-import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../classifiers/schema-output.js";
 
 const TIMEOUT_MS = 8000;
+
+const SHAPE_HINT = `{"verdict": "match" | "mismatch" | "unsure", "reason": "<one short sentence>"}`;
 
 const SYSTEM_PROMPT =
   `You are a sanity-check classifier for self_edit, a destructive tool that modifies the agent's own source code. ` +
   `Decide whether the user's most recent message is actually requesting a source-code change right now. ` +
   `self_edit should ONLY run when the user is asking for a code change: a bug fix, a broken behavior to repair, or a missing capability to add.\n\n` +
-  `Reply with ONE LINE of JSON, nothing else:\n` +
-  `{"verdict": "match" | "mismatch" | "unsure", "reason": "<one short sentence>"}\n\n` +
   `- "match": the user is reporting a bug / broken behavior, or explicitly requesting a code change or new capability, AND the task addresses it ` +
   `(e.g. user "fix the chat freeze" / "the export button does nothing" / "add a transcribe tool" → task patches that area).\n` +
   `- "mismatch": the user is NOT requesting a change. This includes asking a question, making an observation about the agent's own prior action, ` +
@@ -41,31 +43,45 @@ export function isAffirmativeGoAhead(msg: string): boolean {
   return AFFIRMATIVE_GO_AHEAD.test(msg.trim());
 }
 
+export interface IntentVerdict {
+  verdict: "match" | "mismatch" | "unsure";
+  reason: string;
+}
+
+// `verdict` is the load-bearing field — strict enum (an off-vocabulary value
+// gets classifySchema's single retry, then null → the caller's fallback).
+// `reason` keeps the old parser's tolerance: any value stringifies, missing
+// becomes "" — a good verdict must not be discarded over a sloppy reason.
+const VerdictSchema = z
+  .object({
+    verdict: z.enum(["match", "mismatch", "unsure"]),
+    reason: z.unknown().optional(),
+  })
+  .transform((obj): IntentVerdict => ({
+    verdict: obj.verdict,
+    reason: String(obj.reason || "").slice(0, 200),
+  }));
+
 export async function checkSelfEditIntent(
   task: string,
   lastUserMessage: string,
   lastAssistantMessage: string,
-): Promise<{ verdict: "match" | "mismatch" | "unsure"; reason: string } | null> {
+  /** Test seam — forwarded to classifySchema (see its `_llm` doc). */
+  _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>,
+): Promise<IntentVerdict | null> {
   const userBlock =
     `User's most recent message:\n"""${lastUserMessage.slice(0, 600)}"""\n\n` +
     (lastAssistantMessage ? `Most recent assistant text:\n"""${lastAssistantMessage.slice(0, 400)}"""\n\n` : "") +
     `self_edit task being submitted:\n"""${task.slice(0, 600)}"""\n\n` +
     `Classify per the system rules. JSON only.`;
 
-  return classifyWithLLM<{ verdict: "match" | "mismatch" | "unsure"; reason: string }>({
+  return classifySchema<IntentVerdict>({
     category: "self-edit-intent",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: userBlock,
-    parse: (raw) => {
-      const m = raw.match(/\{[\s\S]*\}/);
-      if (!m) return null;
-      try {
-        const parsed = JSON.parse(m[0]) as { verdict?: string; reason?: string };
-        const v = parsed.verdict;
-        if (v !== "match" && v !== "mismatch" && v !== "unsure") return null;
-        return { verdict: v, reason: String(parsed.reason || "").slice(0, 200) };
-      } catch { return null; }
-    },
+    schema: VerdictSchema,
+    shapeHint: SHAPE_HINT,
     timeoutMs: TIMEOUT_MS,
+    _llm,
   });
 }

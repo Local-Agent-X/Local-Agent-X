@@ -23,11 +23,11 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
-import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
-import { stripCodeFences } from "../classifiers/strip-code-fences.js";
+import { classifySchema } from "../classifiers/schema-output.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { PERSONALITY_FILES } from "./personality.js";
 import { dedupeProfileMarkdownConfirmed } from "./personality-confirmed.js";
@@ -42,10 +42,9 @@ const TIMEOUT_MS = 8000; // generous — runs in background, no user blocking
  *  passed to classifyWithLLM as its envDisableVar. Keep the two in sync. */
 const ENV_DISABLE_VAR = "LAX_MEMORY_END_OF_TURN";
 
-const WRITE_DECISION_PROMPT = `You decide whether the user/agent exchange just finished revealed something durable about the USER (preferences, workflow rules, communication style, identity) that belongs in their narrative profile (USER.md).
+const SHAPE_HINT = `{"write": false} | {"write": true, "action": "append"|"replace_section", "section_heading": "string or null", "content": "string"}`;
 
-OUTPUT EXACTLY ONE JSON LINE, no prose, no code fences:
-{"write": false} | {"write": true, "action": "append"|"replace_section", "section_heading": "string or null", "content": "string"}
+const WRITE_DECISION_PROMPT = `You decide whether the user/agent exchange just finished revealed something durable about the USER (preferences, workflow rules, communication style, identity) that belongs in their narrative profile (USER.md).
 
 DECISION RULES:
 - write=false unless the exchange revealed something durable about the USER's preferences, workflow, or identity.
@@ -125,11 +124,12 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<En
     `[AGENT FINAL REPLY]\n"""${safeReply}"""\n\n` +
     `Decide whether to write to memory. JSON only.`;
 
-  const decision = await classifyWithLLM<WriteDecision>({
+  const decision = await classifySchema<WriteDecision>({
     category: "end-of-turn-write",
     systemPrompt: WRITE_DECISION_PROMPT,
     userPrompt: userBlock,
-    parse: parseWriteDecision,
+    schema: WriteDecisionSchema,
+    shapeHint: SHAPE_HINT,
     timeoutMs: TIMEOUT_MS,
     maxResponseChars: 1500,
     envDisableVar: ENV_DISABLE_VAR,
@@ -184,39 +184,46 @@ export interface WriteDecisionPayload {
 /**
  * A parsed decision is either "write this" or an explicit "nothing to write".
  * `{"write": false}` is the classifier's most common (and perfectly valid)
- * verdict — parsing it to null used to make classifyWithLLM log it as
- * `parse failed: "```json…"` on every routine turn, drowning out real
- * parse failures. null now means only: the reply was garbage.
+ * verdict — it validates successfully rather than surfacing as null. null
+ * means only: the reply was garbage twice (classifySchema's single
+ * self-correction retry included).
  */
 export type WriteDecision = { write: false } | WriteDecisionPayload;
 
-export function parseWriteDecision(raw: string): WriteDecision | null {
-  if (!raw) return null;
-  // Canonical fence unwrap — opus & co. fence the JSON despite the prompt.
-  // Handles raw JSON, ```json / bare ``` fences, and prose around the block.
-  const cleaned = stripCodeFences(raw);
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
-  if (!parsed || typeof parsed !== "object") return null;
-  const obj = parsed as Record<string, unknown>;
-  if (obj.write === false) return { write: false };
-  if (obj.write !== true) return null;
-  // Legacy classifiers may still emit `file: "user"` or `file: "mind"`. Accept
-  // "user" or absent (default), reject anything else — "mind" is retired.
-  if (obj.file !== undefined && obj.file !== "user") return null;
-  const action = obj.action === "append" || obj.action === "replace_section" ? obj.action : null;
-  const content = typeof obj.content === "string" ? obj.content.trim() : "";
-  if (!action || !content) return null;
-  if (content.length > 800) return null; // sanity cap — single write should never be huge
-  const section_heading = typeof obj.section_heading === "string" && obj.section_heading.trim()
-    ? obj.section_heading.trim()
-    : null;
-  if (action === "replace_section" && !section_heading) return null;
-  return { write: true, action, section_heading, content };
-}
+/**
+ * Reply schema. Notes mirrored from the hand-rolled parser this replaced:
+ * - Legacy classifiers may still emit `file: "user"` or `file: "mind"`.
+ *   Accept "user" or absent (default), reject anything else — "mind" is retired.
+ * - content is trimmed, must be non-empty, and capped at 800 chars (a single
+ *   write should never be huge).
+ * - replace_section requires a section_heading; a blank/whitespace heading
+ *   normalizes to null and is rejected for replace_section.
+ */
+const WriteDecisionSchema = z.union([
+  z.object({ write: z.literal(false) }).transform((): WriteDecision => ({ write: false })),
+  z
+    .object({
+      write: z.literal(true),
+      file: z.literal("user").optional(),
+      action: z.enum(["append", "replace_section"]),
+      section_heading: z.unknown().optional(),
+      content: z.string(),
+    })
+    .transform((obj): WriteDecisionPayload => ({
+      write: true,
+      action: obj.action,
+      section_heading: typeof obj.section_heading === "string" && obj.section_heading.trim()
+        ? obj.section_heading.trim()
+        : null,
+      content: obj.content.trim(),
+    }))
+    .refine((d) => d.content.length > 0 && d.content.length <= 800, {
+      message: "content must be 1-800 chars",
+    })
+    .refine((d) => d.action !== "replace_section" || d.section_heading !== null, {
+      message: "replace_section requires a section_heading",
+    }),
+]);
 
 export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): Promise<ApplyWriteResult> {
   // Mirrors memory_update_profile's write path with the same char caps.
@@ -282,4 +289,4 @@ export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): 
 }
 
 /** @internal — exported for tests */
-export const _internals = { WRITE_DECISION_PROMPT, parseWriteDecision };
+export const _internals = { WRITE_DECISION_PROMPT, WriteDecisionSchema };

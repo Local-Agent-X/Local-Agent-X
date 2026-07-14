@@ -19,11 +19,14 @@ import {
   extractConstraints,
   phraseGate,
   validateConfirmation,
+  llmConfirm,
   isScopedWriteCarveout,
   type ConfirmConstraintsFn,
 } from "./extract.js";
 
 const confirmNone: ConfirmConstraintsFn = async () => ({ prohibitions: [], obligations: [] });
+
+type Llm = (systemPrompt: string, userPrompt: string) => Promise<string | null>;
 
 describe("extractConstraints — phrase-gate path (no LLM)", () => {
   it("returns an empty ledger for an unconstrained message without calling the confirmer", async () => {
@@ -372,5 +375,46 @@ describe("gate-only recall cues — audited miss classes now reach the LLM confi
     const ledger = await extractConstraints("please update the config file", confirm);
     expect(ledger).toEqual({ prohibitions: [], obligations: [], phrases: [] });
     expect(confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe("llmConfirm — schema-validated confirm path (injected _llm)", () => {
+  const MSG = "Don't edit any code; just tell me what's wrong.";
+  const CUES = ["don't edit any code", "just tell me what"];
+
+  it("accepts a valid reply, dropping unknown classes/obligation kinds on the wire", async () => {
+    const llm = vi.fn<Llm>(async () =>
+      `{"prohibitions":["workspace-write","network","workspace-write"],"obligations":["commit-when-done","deploy-when-done"]}`);
+    await expect(llmConfirm(MSG, CUES, llm)).resolves.toEqual({
+      prohibitions: ["workspace-write"],
+      obligations: [{ kind: "commit-when-done" }],
+    });
+    // Unknown members were DROPPED via the schema transform, not rejected —
+    // a partial valid answer must not consume the retry.
+    expect(llm).toHaveBeenCalledTimes(1);
+  });
+
+  it("a shape-mismatched reply gets one schema-fed retry, then null", async () => {
+    const llm = vi.fn<Llm>(async () => `{"prohibitions":"workspace-write"}`);
+    await expect(llmConfirm(MSG, CUES, llm)).resolves.toBeNull();
+    expect(llm).toHaveBeenCalledTimes(2);
+    expect(llm.mock.calls[1][1]).toContain("Your previous reply was invalid:");
+  });
+
+  it("LLM unavailable (null) → null without a retry", async () => {
+    const llm = vi.fn<Llm>(async () => null);
+    await expect(llmConfirm(MSG, CUES, llm)).resolves.toBeNull();
+    expect(llm).toHaveBeenCalledTimes(1);
+  });
+
+  it("fail-open contract end-to-end: garbage replies degrade to phraseGate.strong", async () => {
+    // Wire the real llmConfirm (garbage transport) as the confirmer: the
+    // schema rejects twice → null → extractConstraints falls back to the
+    // deterministic strong tier, exactly like an LLM timeout.
+    const confirm: ConfirmConstraintsFn = (msg, cues) =>
+      llmConfirm(msg, cues, async () => "no json here, sorry");
+    const ledger = await extractConstraints("Don't edit any code; commit when you're done.", confirm);
+    expect(ledger.prohibitions).toEqual(["workspace-write"]);
+    expect(ledger.obligations).toEqual([{ kind: "commit-when-done" }]);
   });
 });

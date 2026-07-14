@@ -30,10 +30,14 @@ vi.mock("./write-safely.js", async () => {
   };
 });
 
-// Mock the classifier so runEndOfTurnMemoryWrite tests can script the
-// decision without an LLM call. __nextDecision is scripted per-test.
+// Mock the classifier transport so runEndOfTurnMemoryWrite tests can script
+// the decision without an LLM call. __nextDecision is scripted per-test and
+// played back as the raw JSON reply on the wire — the real classifySchema
+// (schema validation + retry) runs on top of it.
 let __nextDecision: unknown = null;
-const classifyMock = vi.fn(async () => __nextDecision);
+const classifyMock = vi.fn(async () =>
+  __nextDecision == null ? null : JSON.stringify(__nextDecision),
+);
 vi.mock("../classifiers/classify-with-llm.js", () => ({
   classifyWithLLM: classifyMock,
 }));
@@ -303,5 +307,73 @@ describe("runEndOfTurnMemoryWrite — availability gating (unavailable ≠ succe
     expect(outcome).toBe("completed");
     expect(classifyMock).toHaveBeenCalledTimes(1);
     expect(hasCurateSignal(sess)).toBe(false); // consumed — pre-existing semantics
+  });
+});
+
+describe("runEndOfTurnMemoryWrite — schema-validated decision (classifySchema wire)", () => {
+  function ctxFor(sessionId: string) {
+    return {
+      sessionId,
+      userMessage: "always sort my reports by date",
+      assistantReply: "got it",
+      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
+    };
+  }
+
+  it("a valid write decision on the wire lands the write", async () => {
+    __nextDecision = appendDecision();
+    writeMemorySafelyMock.mockReturnValueOnce(undefined);
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor("sess-schema-ok"));
+    expect(outcome).toBe("completed");
+    expect(classifyMock).toHaveBeenCalledTimes(1);
+    expect(writeMemorySafelyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("valid JSON with an oversized content is rejected by the schema — one retry, then no write", async () => {
+    __nextDecision = appendDecision("x".repeat(801)); // schema cap is 800
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor("sess-schema-cap"));
+    expect(outcome).toBe("completed"); // transient failure, not unavailability
+    expect(classifyMock).toHaveBeenCalledTimes(2); // the single self-correction retry
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+  });
+
+  it("the retired legacy file:\"mind\" is rejected → no write", async () => {
+    __nextDecision = { ...appendDecision(), file: "mind" };
+    await runEndOfTurnMemoryWrite(ctxFor("sess-schema-mind"));
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+  });
+
+  it("file:\"user\" (legacy but accepted) still writes", async () => {
+    __nextDecision = { ...appendDecision(), file: "user" };
+    writeMemorySafelyMock.mockReturnValueOnce(undefined);
+    await runEndOfTurnMemoryWrite(ctxFor("sess-schema-user"));
+    expect(writeMemorySafelyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("replace_section without a section_heading is rejected → no write", async () => {
+    __nextDecision = { write: true, action: "replace_section", section_heading: "   ", content: "c" };
+    await runEndOfTurnMemoryWrite(ctxFor("sess-schema-heading"));
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+  });
+
+  it("non-JSON garbage on the wire → retried once → null decision → no write, 'completed'", async () => {
+    classifyMock
+      .mockResolvedValueOnce("I don't think we should write anything.")
+      .mockResolvedValueOnce("Still prose, sorry.");
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor("sess-schema-garbage"));
+    expect(outcome).toBe("completed");
+    expect(classifyMock).toHaveBeenCalledTimes(2);
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+  });
+
+  it("garbage first reply, valid decision on the self-correction retry → the write lands", async () => {
+    classifyMock
+      .mockResolvedValueOnce("hmm let me think")
+      .mockResolvedValueOnce(JSON.stringify(appendDecision()));
+    writeMemorySafelyMock.mockReturnValueOnce(undefined);
+    const outcome = await runEndOfTurnMemoryWrite(ctxFor("sess-schema-retry"));
+    expect(outcome).toBe("completed");
+    expect(classifyMock).toHaveBeenCalledTimes(2);
+    expect(writeMemorySafelyMock).toHaveBeenCalledTimes(1);
   });
 });

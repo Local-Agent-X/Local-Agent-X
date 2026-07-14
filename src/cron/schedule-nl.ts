@@ -17,12 +17,13 @@
  * Timezone is handled SEPARATELY by the job's `tz` field — the model produces a
  * wall-clock cron and must NOT shift times across zones (told so in the prompt).
  *
- * Rides the canonical classifier path (classifyJson → provider background
- * model, hard wallclock race, graceful null on any failure). Disabled via
- * LAX_SCHEDULE_NL=0.
+ * Rides the canonical classifier path (classifySchema → provider background
+ * model, hard wallclock race, schema-validated JSON with one self-correction
+ * retry, graceful null on any failure). Disabled via LAX_SCHEDULE_NL=0.
  */
 
-import { classifyJson } from "../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../classifiers/schema-output.js";
 import { isValidSchedule } from "./cron-parser.js";
 
 export interface ParsedSchedule {
@@ -57,15 +58,29 @@ Examples:
 "every 2 hours" -> {"schedule":"2h","description":"Every 2 hours"}
 "every 15 minutes" -> {"schedule":"15m","description":"Every 15 minutes"}
 "the 1st of every month at noon" -> {"schedule":"0 12 1 * *","description":"On the 1st of each month at 12:00 PM"}
-"twice a day, 8am and 8pm" -> {"schedule":"0 8,20 * * *","description":"Every day at 8:00 AM and 8:00 PM"}
+"twice a day, 8am and 8pm" -> {"schedule":"0 8,20 * * *","description":"Every day at 8:00 AM and 8:00 PM"}`;
 
-Reply with JSON only, no prose, no markdown fences:
-{"schedule":"<interval-or-cron>","description":"<plain English>"}`;
-
-interface RawParse {
-  schedule?: unknown;
-  description?: unknown;
-}
+// The VALIDATION GATE lives in the schema: an LLM reply that is valid JSON but
+// not a parseable schedule (hallucinated cron, 4-field expression, the vague-
+// phrase empty string) fails the refine, gets the single self-correction
+// retry, and on repeat failure surfaces as null — never a garbage schedule.
+const ScheduleSchema = z
+  .object({
+    schedule: z.string(),
+    description: z.unknown().optional(),
+  })
+  .transform(({ schedule, description }): ParsedSchedule => {
+    const trimmed = schedule.trim();
+    return {
+      schedule: trimmed,
+      description: typeof description === "string" && description.trim()
+        ? description.trim().slice(0, 200)
+        : trimmed,
+    };
+  })
+  .refine((v) => v.schedule !== "" && isParseableSchedule(v.schedule), {
+    message: "schedule is not a fixed interval (e.g. \"5m\") or a parseable 5-field cron expression",
+  });
 
 /**
  * Translate a free-text schedule phrase into a concrete schedule. Returns the
@@ -75,7 +90,13 @@ interface RawParse {
  */
 export async function parseScheduleNL(
   text: string,
-  opts?: { tz?: string; nowISO?: string; signal?: AbortSignal },
+  opts?: {
+    tz?: string;
+    nowISO?: string;
+    signal?: AbortSignal;
+    /** Test seam — forwarded to classifySchema (see its `_llm` doc). */
+    _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>;
+  },
 ): Promise<ParsedSchedule | null> {
   const trimmed = (text || "").trim();
   if (!trimmed) return null;
@@ -85,8 +106,8 @@ export async function parseScheduleNL(
     return { schedule: trimmed, description: trimmed };
   }
 
-  // 2. Ask the background model, then gate the answer on the real parser.
-  return classifyJson<ParsedSchedule>({
+  // 2. Ask the background model, gated on the real parser via the schema.
+  return classifySchema<ParsedSchedule>({
     category: "schedule-nl",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt: [
@@ -94,19 +115,10 @@ export async function parseScheduleNL(
       opts?.tz ? `Timezone (context only — do not shift clock times): ${opts.tz}` : "",
       `Phrase: ${trimmed}`,
     ].filter(Boolean).join("\n"),
+    schema: ScheduleSchema,
+    shapeHint: `{"schedule":"<interval-or-cron>","description":"<plain English>"}`,
     envDisableVar: "LAX_SCHEDULE_NL",
     signal: opts?.signal,
-    validate: (parsed: unknown): ParsedSchedule | null => {
-      if (!parsed || typeof parsed !== "object") return null;
-      const obj = parsed as RawParse;
-      if (typeof obj.schedule !== "string") return null;
-      const schedule = obj.schedule.trim();
-      // The validation gate: only accept what the cron service can actually run.
-      if (!schedule || !isParseableSchedule(schedule)) return null;
-      const description = typeof obj.description === "string" && obj.description.trim()
-        ? obj.description.trim().slice(0, 200)
-        : schedule;
-      return { schedule, description };
-    },
+    _llm: opts?._llm,
   });
 }

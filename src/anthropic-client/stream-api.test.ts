@@ -174,6 +174,22 @@ describe("streamViaAPI — prompt-cache breakpoints", () => {
     expect(sys[1].cache_control).toEqual({ type: "ephemeral" });
   });
 
+  it("omits system entirely when the prompt is empty (API-key path) — no empty block, no 400", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "" });
+    // JSON.stringify drops undefined — the wire body must have NO system key.
+    expect("system" in cap.calls[0].body).toBe(false);
+  });
+
+  it("sends identity-block-only with the breakpoint on it when the prompt is empty (OAuth path)", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "direct-oauth:sk-ant-oat-fake", model: "claude-fable-5", systemPrompt: "" });
+    const sys = cap.calls[0].body.system as Array<{ text: string; cache_control?: { type: string } }>;
+    expect(sys).toHaveLength(1);
+    expect(sys[0].text).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+    expect(sys[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
   it("keeps the tools breakpoint on the last tool alongside the system breakpoint", async () => {
     const cap = stubFetchCapturing(done);
     await collect({

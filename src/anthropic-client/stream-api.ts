@@ -65,12 +65,21 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // identical system prompt, so all iterations after the first read the
     // whole tools+system prefix at 0.1×. Cross-turn requests miss when the
     // dynamic sections change (expected) and re-write at 1.25×.
+    //
+    // Empty-system guard: the API rejects an empty text block, so an empty
+    // systemPrompt must not become one. API-key path → omit `system` entirely;
+    // OAuth path → identity block only, carrying the breakpoint itself (the
+    // identity prefix is load-bearing for OAuth routing and never empty).
     system: oauth
-      ? [
-          { type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX },
-          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
-        ]
-      : [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+      ? systemPrompt
+        ? [
+            { type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX },
+            { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+          ]
+        : [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX, cache_control: { type: "ephemeral" } }]
+      : systemPrompt
+        ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
+        : undefined,
     messages: convertMessages(messages),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive

@@ -18,7 +18,8 @@
  * indices judged relevant; null on failure.
  */
 
-import { classifyJson } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "./schema-output.js";
 
 const SYSTEM_PROMPT = `You are a relevance gate for a chat agent's memory system. Decide which prior-memory signals are TOPICALLY relevant to the user's current message.
 
@@ -42,6 +43,32 @@ export interface TopicalGateResult {
 }
 
 /**
+ * Result schema, built per call: the range check closes over the signal
+ * count. Missing/non-array `relevant_indices` is a hard reject (→ retry →
+ * null → caller keeps the regex verdict); individual entries stay fail-soft —
+ * numeric strings coerce via parseInt, non-numeric and out-of-range entries
+ * are dropped, and surviving 1-based indices map to 0-based.
+ */
+function topicalGateSchema(signalCount: number): z.ZodType<TopicalGateResult> {
+  return z
+    .custom<TopicalGateResult>(
+      (v) => !!v && typeof v === "object" && Array.isArray((v as { relevant_indices?: unknown }).relevant_indices),
+      { message: "relevant_indices must be an array" },
+    )
+    .transform((parsed): TopicalGateResult => {
+      const arr = (parsed as { relevant_indices?: unknown[] }).relevant_indices ?? [];
+      const set = new Set<number>();
+      for (const v of arr) {
+        const n = typeof v === "number" ? v : parseInt(String(v), 10);
+        if (Number.isFinite(n) && n >= 1 && n <= signalCount) {
+          set.add(n - 1); // convert 1-based → 0-based
+        }
+      }
+      return { relevantIndices: set };
+    });
+}
+
+/**
  * Filter a list of candidate signals by topical relevance to the user's
  * current message. Returns the indices judged relevant (0-based).
  *
@@ -51,7 +78,13 @@ export interface TopicalGateResult {
 export async function batchedTopicalRelevance(
   userMessage: string,
   signalTexts: string[],
-  opts?: { signal?: AbortSignal; timeoutMs?: number; model?: string },
+  opts?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    model?: string;
+    /** Test seam, forwarded to classifySchema. */
+    _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>;
+  },
 ): Promise<TopicalGateResult | null> {
   if (signalTexts.length === 0) return { relevantIndices: new Set() };
 
@@ -64,27 +97,17 @@ export async function batchedTopicalRelevance(
     `Candidate signals from prior memory:\n${numbered}\n\n` +
     `Reply with the JSON object only.`;
 
-  const result = await classifyJson<TopicalGateResult>({
+  const result = await classifySchema<TopicalGateResult>({
     category: "topical-relevance",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
+    schema: topicalGateSchema(signalTexts.length),
+    shapeHint: `{"relevant_indices":[1,3]}`,
     timeoutMs: opts?.timeoutMs ?? 5000,
     model: opts?.model,
     envDisableVar: "LAX_LLM_TOPICAL_GATE",
     signal: opts?.signal,
-    validate: (parsed) => {
-      if (!parsed || typeof parsed !== "object") return null;
-      const arr = (parsed as { relevant_indices?: unknown }).relevant_indices;
-      if (!Array.isArray(arr)) return null;
-      const set = new Set<number>();
-      for (const v of arr) {
-        const n = typeof v === "number" ? v : parseInt(String(v), 10);
-        if (Number.isFinite(n) && n >= 1 && n <= signalTexts.length) {
-          set.add(n - 1); // convert 1-based → 0-based
-        }
-      }
-      return { relevantIndices: set };
-    },
+    _llm: opts?._llm,
   });
 
   return result;

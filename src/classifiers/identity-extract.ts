@@ -22,7 +22,8 @@
  * previous behavior where a regex misfire would corrupt durable memory).
  */
 
-import { classifyJson } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "./schema-output.js";
 
 const SYSTEM_PROMPT = `You extract durable identity facts AND durable preference / biographical statements from a user's message to a chat agent. ONLY extract facts the user EXPLICITLY stated. Do not infer, do not guess.
 
@@ -71,31 +72,18 @@ export interface IdentityFacts {
   evidence_spans?: Record<string, string | string[]>;
 }
 
-export async function extractIdentityFactsWithLLM(
-  userMessage: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number; model?: string },
-): Promise<IdentityFacts | null> {
-  if (!userMessage || userMessage.trim().length < 2) return null;
-  // Cheap pre-skip: extremely long messages almost certainly aren't a single-
-  // shot identity statement. The cap was 600 chars when this only handled
-  // names/roles; biographical_event commonly arrives inside a longer story
-  // ("we had a tough day, the vet called this morning and rex passed away
-  // last Thursday after a long fight…"), so the cap is bumped to 1200 to
-  // let those through. Beyond 1200 it's almost certainly a multi-fact story
-  // that belongs to the dream/consolidation path, not single-shot extract.
-  if (userMessage.length > 1200) return null;
-
-  return classifyJson<IdentityFacts>({
-    category: "identity-extract",
-    systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `User message:\n"${userMessage}"\n\nReply with the JSON object only.`,
-    timeoutMs: opts?.timeoutMs ?? 4000,
-    model: opts?.model,
-    envDisableVar: "LAX_LLM_IDENTITY_EXTRACT",
-    signal: opts?.signal,
-    validate: (parsed) => {
-      if (!parsed || typeof parsed !== "object") return null;
-      const p = parsed as IdentityFacts;
+/**
+ * Fact schema, built per message: the evidence-span verification is a closure
+ * over the raw user message (a span only counts when it appears VERBATIM in
+ * the message). Everything here is fail-soft field coercion — a bad field is
+ * nulled, never a reason to reject the whole reply. The only hard rejection
+ * is a non-object root.
+ */
+function identityFactsSchema(userMessage: string): z.ZodType<IdentityFacts> {
+  return z
+    .custom<IdentityFacts>((v) => typeof v === "object" && v !== null, { message: "reply must be a JSON object" })
+    .transform((parsed): IdentityFacts => {
+      const p = parsed;
       const evidence = p.evidence_spans && typeof p.evidence_spans === "object" ? p.evidence_spans : {};
       const exactSpan = (key: string): string | null => {
         const span = evidence[key];
@@ -156,6 +144,41 @@ export async function extractIdentityFactsWithLLM(
         p.user_role || p.family_count || p.relationships || p.preference_rule ||
         p.personal_affinity || p.ongoing_state || p.biographical_event;
       return any ? p : { user_name: null }; // return empty-shape so caller knows it ran
-    },
+    });
+}
+
+const SHAPE_HINT = `{"user_name":null,"agent_name":null,"user_location":null,"user_employer":null,"user_role":null,"family_count":null,"relationships":null,"preference_rule":null,"personal_affinity":null,"ongoing_state":null,"biographical_event":null,"evidence_spans":{}}`;
+
+export async function extractIdentityFactsWithLLM(
+  userMessage: string,
+  opts?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    model?: string;
+    /** Test seam, forwarded to classifySchema. */
+    _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>;
+  },
+): Promise<IdentityFacts | null> {
+  if (!userMessage || userMessage.trim().length < 2) return null;
+  // Cheap pre-skip: extremely long messages almost certainly aren't a single-
+  // shot identity statement. The cap was 600 chars when this only handled
+  // names/roles; biographical_event commonly arrives inside a longer story
+  // ("we had a tough day, the vet called this morning and rex passed away
+  // last Thursday after a long fight…"), so the cap is bumped to 1200 to
+  // let those through. Beyond 1200 it's almost certainly a multi-fact story
+  // that belongs to the dream/consolidation path, not single-shot extract.
+  if (userMessage.length > 1200) return null;
+
+  return classifySchema<IdentityFacts>({
+    category: "identity-extract",
+    systemPrompt: SYSTEM_PROMPT,
+    userPrompt: `User message:\n"${userMessage}"\n\nReply with the JSON object only.`,
+    schema: identityFactsSchema(userMessage),
+    shapeHint: SHAPE_HINT,
+    timeoutMs: opts?.timeoutMs ?? 4000,
+    model: opts?.model,
+    envDisableVar: "LAX_LLM_IDENTITY_EXTRACT",
+    signal: opts?.signal,
+    _llm: opts?._llm,
   });
 }

@@ -39,7 +39,8 @@
  * is worse than no forcing.
  */
 
-import { classifyJson } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "./schema-output.js";
 
 export type IntentKind = "build_app" | "agent_spawn" | "self_edit" | "free";
 export type IntentMode = "force" | "lean";
@@ -50,12 +51,6 @@ export interface IntentVerdict {
   reason: string;
 }
 
-interface RawVerdict {
-  kind?: string;
-  mode?: string;
-  reason?: string;
-}
-
 const VALID_KINDS: ReadonlySet<IntentKind> = new Set<IntentKind>([
   "build_app", "agent_spawn", "self_edit", "free",
 ]);
@@ -63,6 +58,31 @@ const VALID_KINDS: ReadonlySet<IntentKind> = new Set<IntentKind>([
 const VALID_MODES: ReadonlySet<IntentMode> = new Set<IntentMode>([
   "force", "lean",
 ]);
+
+/**
+ * Verdict schema. An unknown kind is a hard reject (→ retry → null → caller
+ * treats as "free"), but mode stays FAIL-SOFT: a missing/garbled mode must
+ * never escalate to forcing, and "free" carries no mode signal at all —
+ * both coerce to "lean" instead of rejecting the reply.
+ */
+const IntentVerdictSchema: z.ZodType<IntentVerdict> = z
+  .custom<IntentVerdict>(
+    (v) => {
+      if (!v || typeof v !== "object") return false;
+      const kind = (v as { kind?: unknown }).kind;
+      return typeof kind === "string" && VALID_KINDS.has(kind.trim().toLowerCase() as IntentKind);
+    },
+    { message: "kind must be one of: build_app | agent_spawn | self_edit | free" },
+  )
+  .transform((parsed): IntentVerdict => {
+    const obj = parsed as { kind?: unknown; mode?: unknown; reason?: unknown };
+    const kind = (obj.kind as string).trim().toLowerCase() as IntentKind;
+    const modeRaw = typeof obj.mode === "string" ? obj.mode.trim().toLowerCase() : "";
+    const mode: IntentMode =
+      kind !== "free" && VALID_MODES.has(modeRaw as IntentMode) ? (modeRaw as IntentMode) : "lean";
+    const reason = typeof obj.reason === "string" ? obj.reason.slice(0, 240) : "";
+    return { kind, mode, reason };
+  });
 
 const SYSTEM_PROMPT = `You classify the user's message into an intent KIND and a confidence MODE. Reply with a JSON object: {"kind": "<one of: build_app | agent_spawn | self_edit | free>", "mode": "<force | lean>", "reason": "<short reason>"}
 
@@ -172,7 +192,14 @@ Reply with JSON only. No prose, no markdown fences.`;
  */
 export async function classifyIntent(
   message: string,
-  opts?: { signal?: AbortSignal; timeoutMs?: number; model?: string; historyDigest?: string },
+  opts?: {
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    model?: string;
+    historyDigest?: string;
+    /** Test seam, forwarded to classifySchema. */
+    _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>;
+  },
 ): Promise<IntentVerdict | null> {
   const trimmed = (message || "").trim();
   if (!trimmed) return null;
@@ -192,28 +219,17 @@ export async function classifyIntent(
     `Current user message:\n"${trimmed.slice(0, 1200)}"\n\n` +
     `Return JSON only: {"kind": "build_app" | "agent_spawn" | "self_edit" | "free", "mode": "force" | "lean", "reason": "..."}`;
 
-  const verdict = await classifyJson<IntentVerdict>({
+  const verdict = await classifySchema<IntentVerdict>({
     category: "intent",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
+    schema: IntentVerdictSchema,
+    shapeHint: `{"kind":"build_app","mode":"lean","reason":"..."}`,
     timeoutMs: opts?.timeoutMs ?? 8000,
     model: opts?.model,
     envDisableVar: "LAX_INTENT_CLASSIFIER",
     signal: opts?.signal,
-    validate: (parsed: unknown): IntentVerdict | null => {
-      if (!parsed || typeof parsed !== "object") return null;
-      const obj = parsed as RawVerdict;
-      const kindRaw = typeof obj.kind === "string" ? obj.kind.trim().toLowerCase() : "";
-      if (!VALID_KINDS.has(kindRaw as IntentKind)) return null;
-      const kind = kindRaw as IntentKind;
-      // Fail-soft: a missing/garbled mode must never escalate to forcing,
-      // and "free" carries no mode signal at all.
-      const modeRaw = typeof obj.mode === "string" ? obj.mode.trim().toLowerCase() : "";
-      const mode: IntentMode =
-        kind !== "free" && VALID_MODES.has(modeRaw as IntentMode) ? (modeRaw as IntentMode) : "lean";
-      const reason = typeof obj.reason === "string" ? obj.reason.slice(0, 240) : "";
-      return { kind, mode, reason };
-    },
+    _llm: opts?._llm,
   });
 
   return verdict;

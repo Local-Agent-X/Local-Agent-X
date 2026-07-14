@@ -6,12 +6,13 @@
  * here. The LLM's rule: tools = workers, no tools = chat.
  *
  * Provider: rides on the user's currently-selected provider + model via
- * classifyJson (same path the chat is using). No hardcoded Haiku/Sonnet
+ * classifySchema (same path the chat is using). No hardcoded Haiku/Sonnet
  * "cheaper" tricks — the user's chosen Opus/Sonnet/gpt-5/etc. handles
  * routing decisions too. Disabled via LAX_ROUTE_CLASSIFIER=0.
  */
 
-import { classifyJson } from "../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../classifiers/schema-output.js";
 import type { ClassifierResult } from "./types.js";
 
 const CLASSIFIER_SYSTEM_PROMPT = `You are a routing classifier for a chat agent system. Decide whether a user's chat message should run INLINE (main chat agent answers directly, possibly using a quick tool call during its turn) or DELEGATE (a worker subagent runs the task in the background).
@@ -44,10 +45,32 @@ If the user explicitly says they want inline ("don't spawn", "handle this yourse
 Reply with JSON only, no prose, no markdown fences:
 {"decision": "INLINE" | "DELEGATE", "reason": "one sentence"}`;
 
-interface RawRouteVerdict {
-  decision?: string;
-  reason?: string;
-}
+/**
+ * Verdict schema. A missing/unknown decision is a hard reject (→ retry →
+ * null → caller falls back to the regex decision); decision casing and
+ * whitespace normalize, and a missing reason coerces rather than rejects.
+ * `raw` snapshots the parsed reply pre-normalization, as before.
+ */
+const RouteVerdictSchema: z.ZodType<ClassifierResult> = z
+  .custom<ClassifierResult>(
+    (v) => {
+      if (!v || typeof v !== "object") return false;
+      const decision = (v as { decision?: unknown }).decision;
+      if (typeof decision !== "string") return false;
+      const normalized = decision.trim().toUpperCase();
+      return normalized === "INLINE" || normalized === "DELEGATE";
+    },
+    { message: `decision must be "INLINE" or "DELEGATE"` },
+  )
+  .transform((parsed): ClassifierResult => {
+    const obj = parsed as { decision?: unknown; reason?: unknown };
+    const decision = (obj.decision as string).trim().toUpperCase();
+    return {
+      inline: decision === "INLINE",
+      reason: typeof obj.reason === "string" ? obj.reason.slice(0, 240) : "(no reason given)",
+      raw: JSON.stringify(parsed).slice(0, 500),
+    };
+  });
 
 /**
  * Classify a message via the user's selected provider/model. Returns null
@@ -56,6 +79,8 @@ interface RawRouteVerdict {
 export async function classifyRouteWithLLM(
   message: string,
   signal?: AbortSignal,
+  /** Test seam, forwarded to classifySchema. */
+  _llm?: (systemPrompt: string, userPrompt: string) => Promise<string | null>,
 ): Promise<ClassifierResult | null> {
   // Extremely long messages don't need an LLM call to confirm they're
   // task-class. Save the call.
@@ -63,23 +88,15 @@ export async function classifyRouteWithLLM(
     return { inline: false, reason: "message too long, skipping LLM classifier", raw: "(skipped)" };
   }
 
-  const verdict = await classifyJson<ClassifierResult>({
+  const verdict = await classifySchema<ClassifierResult>({
     category: "route",
     systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
     userPrompt: message,
+    schema: RouteVerdictSchema,
+    shapeHint: `{"decision":"INLINE","reason":"one sentence"}`,
     envDisableVar: "LAX_ROUTE_CLASSIFIER",
     signal,
-    validate: (parsed: unknown): ClassifierResult | null => {
-      if (!parsed || typeof parsed !== "object") return null;
-      const obj = parsed as RawRouteVerdict;
-      const decisionRaw = typeof obj.decision === "string" ? obj.decision.trim().toUpperCase() : "";
-      if (decisionRaw !== "INLINE" && decisionRaw !== "DELEGATE") return null;
-      return {
-        inline: decisionRaw === "INLINE",
-        reason: typeof obj.reason === "string" ? obj.reason.slice(0, 240) : "(no reason given)",
-        raw: JSON.stringify(parsed).slice(0, 500),
-      };
-    },
+    _llm,
   });
 
   return verdict;

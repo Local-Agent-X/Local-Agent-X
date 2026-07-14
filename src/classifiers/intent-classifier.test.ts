@@ -1,27 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// intent-classifier imports classifyJson statically; hoist the mock so the
-// factory sees it at import time (same pattern as refute-claim.test.ts).
-const { classifyJsonMock } = vi.hoisted(() => ({ classifyJsonMock: vi.fn() }));
-vi.mock("./classify-with-llm.js", () => ({ classifyJson: classifyJsonMock }));
+import { describe, it, expect, vi } from "vitest";
 
 import { mightNeedToolForcing, hasLiteralToolCall, classifyIntent } from "./intent-classifier.js";
 
-/** Run classifyIntent with the LLM returning `raw`, exercising the real validate. */
+/** Run classifyIntent with the LLM returning `raw` as JSON, exercising the real schema. */
 async function classifyRaw(raw: unknown) {
-  classifyJsonMock.mockImplementation(async (args: { validate: (p: unknown) => unknown }) =>
-    args.validate(raw),
-  );
-  return classifyIntent("build me something");
+  return classifyIntent("build me something", { _llm: async () => JSON.stringify(raw) });
 }
 
-describe("classifyIntent validate — graded verdict (kind + mode)", () => {
-  // Braces matter: mockReset() returns the mock, and a beforeEach that
-  // returns a function has it invoked as a zero-arg teardown hook.
-  beforeEach(() => {
-    classifyJsonMock.mockReset();
-  });
-
+describe("classifyIntent schema — graded verdict (kind + mode)", () => {
   it("honors an explicit force mode on a non-free kind", async () => {
     expect(await classifyRaw({ kind: "build_app", mode: "force", reason: "specified" })).toEqual({
       kind: "build_app", mode: "force", reason: "specified",
@@ -51,6 +37,35 @@ describe("classifyIntent validate — graded verdict (kind + mode)", () => {
   it("still rejects an invalid kind outright", async () => {
     expect(await classifyRaw({ kind: "build_everything", mode: "force", reason: "" })).toBeNull();
     expect(await classifyRaw(null)).toBeNull();
+  });
+
+  it("returns null on non-JSON garbage after the single retry — fallback path", async () => {
+    const llm = vi.fn(async () => "definitely a build_app, force it");
+    expect(await classifyIntent("build me something", { _llm: llm })).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns null without retrying when the LLM is unavailable", async () => {
+    const llm = vi.fn(async () => null);
+    expect(await classifyIntent("build me something", { _llm: llm })).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers on the retry when the first reply has a bad kind", async () => {
+    const llm = vi
+      .fn()
+      .mockResolvedValueOnce(`{"kind":"build_everything","mode":"force","reason":"nope"}`)
+      .mockResolvedValueOnce(`{"kind":"build_app","mode":"force","reason":"ok"}`);
+    expect(await classifyIntent("build me something", { _llm: llm })).toEqual({
+      kind: "build_app", mode: "force", reason: "ok",
+    });
+    expect(llm).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps a runaway reason at 240 chars and coerces a non-string reason", async () => {
+    expect((await classifyRaw({ kind: "build_app", mode: "force", reason: "r".repeat(500) }))?.reason)
+      .toBe("r".repeat(240));
+    expect((await classifyRaw({ kind: "build_app", mode: "force", reason: 42 }))?.reason).toBe("");
   });
 });
 

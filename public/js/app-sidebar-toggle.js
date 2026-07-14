@@ -72,7 +72,9 @@ function refreshSideButtonTitles() {
   [['left', leftBtn], ['right', rightBtn], ['right', macRightBtn]].forEach(([side, btn]) => {
     if (!btn) return;
     const { kind, el } = panelOnSide(side);
-    const name = kind === 'nav' ? 'sidebar' : 'agents panel';
+    // Both panels read as "sidebar" in tooltips — the left nav and the right
+    // agents rail are both sidebars to the user.
+    const name = 'sidebar';
     const isCollapsed = kind === 'nav'
       ? (el && el.classList.contains('collapsed'))
       : !document.body.classList.contains('agents-panel-open');

@@ -81,7 +81,7 @@
        and the native caption buttons; the 138px right-padding on #desktop-titlebar
        keeps it clear of min/max/close. Windows/Linux only — macOS puts the same
        control beside the traffic lights (see #sidebar-controls). -->
-  <span class="dtb-btn dtb-btn-icon" id="dtb-agents-toggle" title="Hide/show right sidebar" aria-label="Toggle right sidebar" onclick="toggleSidePanel('right')">&#9707;</span>
+  <span class="dtb-btn dtb-btn-icon" id="dtb-agents-toggle" title="Hide sidebar" aria-label="Toggle right sidebar" onclick="toggleSidePanel('right')">&#9704;</span>
 </div>
 
 <!-- Skip to content link (accessibility feature 100) -->
@@ -1526,12 +1526,19 @@
      Chromium resolves app-region by PAINT ORDER, not z-index — so these
      no-drag buttons only stay clickable if they paint after the strips. -->
 <div id="sidebar-controls">
-  <button id="sidebar-hide-btn" onclick="toggleSidebarCollapse()" title="Hide sidebar" aria-label="Hide or show sidebar">&#9707;</button>
+  <button id="sidebar-hide-btn" onclick="toggleSidebarCollapse()" title="Hide sidebar" aria-label="Hide or show sidebar">&#9703;</button>
   <button id="sidebar-flip-btn" onclick="flipSidebarSide()" title="Move sidebar to the other side" aria-label="Move sidebar to the other side">&#8644;</button>
-  <!-- Agents-panel toggle for macOS/browser, where the Windows titlebar's
-       #dtb-agents-toggle never renders. Hidden under platform-win (CSS) so
-       Windows keeps exactly one top-bar agents button. -->
-  <button id="sidebar-agents-btn" onclick="toggleSidePanel('right')" title="Hide/show agents panel" aria-label="Toggle agents panel">&#9704;</button>
+</div>
+
+<!-- Right-side panel toggle, pinned to the top-RIGHT of the window on
+     macOS/browser to mirror the Windows titlebar's #dtb-agents-toggle position.
+     Split out of #sidebar-controls (which stays top-left) so it sits on the same
+     side as the panel it closes. Hidden under platform-win (CSS) so Windows keeps
+     its single titlebar copy. Kept a top-level, last-painted body element so it
+     stays clickable over the macOS drag strips (same paint-order rule as
+     #sidebar-controls). -->
+<div id="sidebar-agents-controls">
+  <button id="sidebar-agents-btn" onclick="toggleSidePanel('right')" title="Hide sidebar" aria-label="Toggle right sidebar">&#9704;</button>
 </div>
 
 </body>

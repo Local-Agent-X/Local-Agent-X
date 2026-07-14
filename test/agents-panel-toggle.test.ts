@@ -4,9 +4,9 @@
 // the window-top bar is now the ONLY mouse affordance that opens the agents
 // sidebar. Two top-bar toggles exist in the DOM — #dtb-agents-toggle inside
 // the Windows in-window titlebar, and #sidebar-agents-btn in the window-top
-// #sidebar-controls cluster for macOS/browser — and CSS guarantees exactly
-// one renders per platform (platform-win hides the cluster copy; the titlebar
-// itself only renders under platform-win).
+// #sidebar-agents-controls cluster (pinned top-right) for macOS/browser — and
+// CSS guarantees exactly one renders per platform (platform-win hides the
+// cluster copy; the titlebar itself only renders under platform-win).
 //
 // These are source-text invariants, mirroring boot-reveal-gate.test.ts.
 import { describe, it, expect, beforeAll } from "vitest";
@@ -38,7 +38,14 @@ describe("agents panel opener (top-bar only)", () => {
   });
 
   it("platform-win hides the window-top copy so Windows shows exactly one", () => {
-    expect(css).toMatch(/body\.platform-win #sidebar-agents-btn\{[^}]*display:none/);
+    expect(css).toMatch(/body\.platform-win #sidebar-agents-controls\{[^}]*display:none/);
+  });
+
+  it("the macOS/browser copy sits in its own top-right cluster, not the left one", () => {
+    // Split out of #sidebar-controls so it renders on the same side as the
+    // right panel it toggles.
+    expect(html).toMatch(/id="sidebar-agents-controls"[\s\S]*id="sidebar-agents-btn"/);
+    expect(css).toMatch(/#sidebar-agents-controls\{[^}]*position:fixed[^}]*right:/);
   });
 
   it("menu paths call toggleAgentFeeds directly, not the removed pill", () => {

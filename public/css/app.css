@@ -54,7 +54,7 @@ body.agents-panel-open #desktop-titlebar #dtb-agents-toggle{color:var(--accent);
 body.agents-panel-open #sidebar-agents-btn{color:var(--accent);background:var(--hover)}
 /* Windows already has #dtb-agents-toggle in the titlebar — the window-top
    cluster's copy is for macOS/browser only, so never show both. */
-body.platform-win #sidebar-agents-btn{display:none}
+body.platform-win #sidebar-agents-controls{display:none}
 /* The titlebar is a drag region; standalone buttons must opt out or the OS
    swallows the click as a window-drag. The ⋯ menu gets this via .dtb-menu;
    this button sits outside any menu, so it needs the exemption directly. */
@@ -100,6 +100,13 @@ body.sidebar-right #sidebar.collapsed{border-left:none}
 body.sidebar-controls-ready #sidebar-controls{visibility:visible}
 #sidebar-controls button{-webkit-app-region:no-drag;background:none;border:none;color:var(--muted);cursor:pointer;font-size:17px;line-height:1;padding:4px 7px;border-radius:6px}
 #sidebar-controls button:hover{color:var(--text);background:var(--hover)}
+/* Right-side panel toggle cluster — mirrors #sidebar-controls but pinned to the
+   window's top-right so it sits on the same side as the panel it closes. Shares
+   the reveal gate and button styling. */
+#sidebar-agents-controls{position:fixed;top:18px;right:10px;z-index:1100;display:flex;-webkit-app-region:no-drag;visibility:hidden}
+body.sidebar-controls-ready #sidebar-agents-controls{visibility:visible}
+#sidebar-agents-controls button{-webkit-app-region:no-drag;background:none;border:none;color:var(--muted);cursor:pointer;font-size:17px;line-height:1;padding:4px 7px;border-radius:6px}
+#sidebar-agents-controls button:hover{color:var(--text);background:var(--hover)}
 /* Plain browser: no native chrome strip, so the cluster floats over the
    top-left corner. Clear whatever column sits there — the brand row when the
    sidebar is on the left, page titles when it's hidden or flipped right. */
@@ -154,6 +161,7 @@ body.platform-darwin.sidebar-right #main .page-header{padding-left:76px}
 /* macOS: the sidebar controls sit in the 28px chrome strip, immediately
    right of the traffic lights (~70px zone + breathing room). */
 body.platform-darwin #sidebar-controls{top:3px;left:78px}
+body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 
 /* Brand row — AGENT X logo + New Chat button on a single line below the
    traffic-light spacer. Logo flexes to fill so the button sits hard
@@ -1304,7 +1312,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
   #sidebar{position:fixed;left:-300px;top:0;bottom:0;z-index:1000;width:280px;transition:left .25s ease;box-shadow:none}
   #sidebar.mobile-open{left:0;box-shadow:4px 0 20px rgba(0,0,0,.4)}
   #sidebar-resizer{display:none}
-  #sidebar-controls{display:none}
+  #sidebar-controls,#sidebar-agents-controls{display:none}
   #mobile-menu-btn{display:flex}
   #main{margin-left:0;width:100%}
 
@@ -1495,6 +1503,7 @@ body.ide-resizing iframe{pointer-events:none}
 body.ide-fullscreen #sidebar,
 body.ide-fullscreen #mobile-menu-btn,
 body.ide-fullscreen #sidebar-controls,
+body.ide-fullscreen #sidebar-agents-controls,
 body.ide-fullscreen #sidebar-backdrop{display:none!important}
 
 /* IDE file empty state */

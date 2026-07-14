@@ -79,10 +79,12 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
 
   // Clean-session model self-save: on a session that never ingested external
-  // (untrusted off-box) content — and whose current turn carries no tool result
-  // or external-untrusted marker — the model may promote its own reasoning
-  // without a human click, there being nothing laundered to guard against. Any
-  // session-level ingestion OR turn-level untrusted signal falls the promotion
+  // (untrusted off-box) content — and whose current turn carries no
+  // external-untrusted marker anywhere, tool results included — the model may
+  // promote its own reasoning without a human click, there being nothing
+  // laundered to guard against. Memory prompts therefore only appear once a
+  // session has touched off-box content (web/browser/MCP/email); that
+  // session-level taint OR a turn-level untrusted marker falls the promotion
   // through to interactive approval, same as any risky one.
   if (promotion && sessionClean && cleanTurnForModelSelfSave(ctx.priorMessages as unknown[] | undefined)) {
     stampCleanModelPromotion(ctx.args, promotion);

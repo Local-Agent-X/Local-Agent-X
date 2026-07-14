@@ -140,28 +140,37 @@ export function describeMemoryPromotionRequest(
   return { content, target, sessionId, source: `model-tool:${toolName}`, ...metadata, origin: "assistant" };
 }
 
-function currentUserTurn(priorMessages: unknown[] | undefined): { text: string; hasToolResult: boolean } {
-  if (!priorMessages) return { text: "", hasToolResult: false };
+const UNTRUSTED_MARKERS = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
+
+function currentUserTurn(priorMessages: unknown[] | undefined): { text: string; turnTail: string } {
+  if (!priorMessages) return { text: "", turnTail: "" };
   for (let i = priorMessages.length - 1; i >= 0; i--) {
     const message = priorMessages[i] as { role?: string; content?: unknown };
     if (message.role === "user" && typeof message.content === "string") {
-      const hasToolResult = priorMessages.slice(i + 1).some(
-        (later) => (later as { role?: string }).role === "tool",
-      );
-      return { text: message.content, hasToolResult };
+      const turnTail = priorMessages.slice(i + 1)
+        .map((later) => {
+          const content = (later as { content?: unknown }).content;
+          return typeof content === "string" ? content : JSON.stringify(content ?? "");
+        })
+        .join("\n");
+      return { text: message.content, turnTail };
     }
   }
-  return { text: "", hasToolResult: false };
+  return { text: "", turnTail: "" };
 }
 
+// Trusted-user evidence needs no save-intent phrasing: any current-turn user
+// statement the proposed memory is verbatim-supported by (supportedBy's
+// overlap + number checks) is the user's own words, which cannot be laundered
+// external content. Off-box laundering is guarded one level up by the
+// session-level ingestion taint and here by the untrusted-content markers.
 export function trustedCurrentUserEvidence(
   request: MemoryPromotionRequest,
   priorMessages: unknown[] | undefined,
 ): { userMessage: string; evidenceSpan: string } | null {
   const turn = currentUserTurn(priorMessages);
   const userMessage = turn.text;
-  if (!userMessage || turn.hasToolResult || /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i.test(userMessage)) return null;
-  if (!/\b(remember|save (?:this|that|to memory)|update (?:my |the )?(?:profile|memory)|note that|create (?:a |the )?project|project brief)\b/i.test(userMessage)) return null;
+  if (!userMessage || UNTRUSTED_MARKERS.test(userMessage)) return null;
   return supportedBy(userMessage, request.content) ? { userMessage, evidenceSpan: userMessage } : null;
 }
 
@@ -170,16 +179,16 @@ export function stampTrustedUserPromotion(args: Record<string, unknown>, request
   Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
 }
 
-// Turn-level guards for silent model self-save, mirroring the ones in
-// trustedCurrentUserEvidence. The session-level taint flag (hasExternalIngestion)
-// is sticky across the whole session, but a single turn can carry untrusted
-// content BEFORE that flag is set (an external-marker wrapper injected into the
-// user span, or a tool result the model may now be paraphrasing) — both must
-// keep the promotion on the interactive-approval path.
+// Turn-level guard for silent model self-save. The session-level taint flag
+// (hasExternalIngestion) is sticky across the whole session, but a single turn
+// can carry untrusted content BEFORE that flag is set — an external-marker
+// wrapper injected into the user span or into a tool result the model may now
+// be paraphrasing. Scan the whole current turn (user span + everything after
+// it) for the markers; a clean local tool result does NOT block the save —
+// on a clean session there is no off-box content to launder.
 export function cleanTurnForModelSelfSave(priorMessages: unknown[] | undefined): boolean {
   const turn = currentUserTurn(priorMessages);
-  if (turn.hasToolResult) return false;
-  return !/EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i.test(turn.text);
+  return !UNTRUSTED_MARKERS.test(turn.text) && !UNTRUSTED_MARKERS.test(turn.turnTail);
 }
 
 export const CLEAN_SELF_SOURCE_SUFFIX = ":clean-self";

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getApprovalManager } from "../approval-manager.js";
+import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
 import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
 import { requireApprovalPhase } from "../tool-execution/require-approval.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
@@ -27,6 +28,7 @@ afterEach(() => {
   for (const session of sessions) {
     getApprovalManager().clearSession(session);
     clearSessionProfile(session);
+    clearExternalIngestion(session);
   }
   sessions.clear();
 });
@@ -38,10 +40,12 @@ async function prepareRemember(opts: {
   confidence?: number;
   approve?: boolean;
   toolResult?: string;
+  taintSession?: boolean;
 }) {
   const sessionId = `promotion-${++seq}`;
   sessions.add(sessionId);
   setSessionProfile(sessionId, "Power");
+  if (opts.taintSession) recordExternalIngestion(sessionId);
   const args: Record<string, unknown> = {
     content: opts.content,
     provenance: opts.provenance ?? "inference",
@@ -152,12 +156,49 @@ describe("memory promotion through the canonical tool pipeline", () => {
     expect(replay.content).toMatch(/already been consumed/);
   });
 
-  it("prompts when a tool result occurred after an explicit user memory request", async () => {
+  it("saves silently after a clean local tool result on a clean session", async () => {
     const prepared = await prepareRemember({
       content: "The service is healthy",
-      userMessage: "Remember the service health.",
+      userMessage: "Check on the service health.",
       toolResult: "The service is healthy",
       provenance: "tool_observation",
+    });
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError, result.content).toBeUndefined();
+  });
+
+  it("saves user-given facts silently without save-intent phrasing (naming the assistant)", async () => {
+    const prepared = await prepareRemember({
+      content: "The user named the assistant Nova",
+      userMessage: "From now on I'll call you Nova.",
+    });
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError, result.content).toBeUndefined();
+    expect(memory.recallByKind("observation")).toHaveLength(1);
+  });
+
+  it("prompts when a current-turn tool result carries untrusted markers", async () => {
+    const prepared = await prepareRemember({
+      content: "The service is healthy",
+      userMessage: "Check on the service health.",
+      toolResult: '<<<EXTERNAL_UNTRUSTED_CONTENT id="x">>>service healthy<<<END_EXTERNAL_UNTRUSTED_CONTENT id="x">>>',
+      provenance: "tool_observation",
+      approve: true,
+    });
+    expect(prepared.events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError, result.content).toBeUndefined();
+  });
+
+  it("prompts on a session that has ingested external content", async () => {
+    const prepared = await prepareRemember({
+      content: "The user named the assistant Nova",
+      userMessage: "From now on I'll call you Nova.",
+      taintSession: true,
       approve: true,
     });
     expect(prepared.events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
@@ -171,6 +212,7 @@ describe("memory promotion through the canonical tool pipeline", () => {
       userMessage: "unknown observation",
       provenance: "tool_observation",
       confidence: 0.6,
+      taintSession: true,
       approve: true,
     });
     approved.args.provenance = "user_statement";

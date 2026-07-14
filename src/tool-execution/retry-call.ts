@@ -14,7 +14,20 @@ function cloneValue<T>(value: T, seen = new Map<object, unknown>()): T {
   const copy: Record<string, unknown> = {};
   seen.set(value, copy);
   for (const [key, item] of Object.entries(value)) copy[key] = cloneValue(item, seen);
+  copySymbolProperties(value, copy);
   return copy as T;
+}
+
+// Symbol-keyed properties are harness-attached capability handles (e.g. the
+// memory-promotion capability stamped by the approval phase), looked up by
+// object IDENTITY in a WeakMap — so they must ride along by reference, never
+// deep-cloned, and keep their descriptors (they are non-enumerable on
+// purpose: invisible to JSON serialization and Object.entries).
+function copySymbolProperties(source: object, target: object): void {
+  for (const key of Object.getOwnPropertySymbols(source)) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (descriptor) Object.defineProperty(target, key, descriptor);
+  }
 }
 
 function freezeValue<T>(value: T, seen = new Set<object>()): T {

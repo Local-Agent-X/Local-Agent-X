@@ -111,7 +111,12 @@ export function assertMemoryPromotionCapability(
 }
 
 function factMetadata(args: Record<string, unknown>): { provenance: string; confidence: number } {
-  const declared = String(args.provenance || "inference");
+  // Normalize exactly like the fact-tool sinks (parseProvenance in
+  // memory/tools/facts.ts): an off-enum provenance falls back to "inference".
+  // The sinks verify these claims against their own recomputation, so any
+  // divergence here bricks the write with a claims mismatch.
+  const raw = String(args.provenance || "inference");
+  const declared = ["user_statement", "tool_observation", "inference"].includes(raw) ? raw : "inference";
   const cap = declared === "user_statement" ? 1 : 0.6;
   const requested = args.confidence == null ? cap : Number(args.confidence);
   return {

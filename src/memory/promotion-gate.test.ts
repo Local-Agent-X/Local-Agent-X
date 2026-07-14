@@ -6,6 +6,8 @@ import { getApprovalManager } from "../approval-manager.js";
 import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
 import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
 import { requireApprovalPhase } from "../tool-execution/require-approval.js";
+import { createRetryCallSnapshot } from "../tool-execution/retry-call.js";
+import type { ToolDefinition } from "../types.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ServerEvent } from "../types.js";
 import { MemoryIndex } from "./index.js";
@@ -240,6 +242,34 @@ describe("memory promotion through the canonical tool pipeline", () => {
     expect(facts).toHaveLength(1);
     expect(facts[0].sourceFile).toMatch(/auto-model-clean/);
     expect(facts[0].sourceFile).not.toMatch(/approved-model-declared/);
+  });
+
+  it("capability survives the retry-call arg clone the sandbox executes with", async () => {
+    // Production path: the approval phase stamps the capability onto ctx.args,
+    // then run-sandboxed executes tool.execute(retryCall.freshArgs()) — a
+    // CLONE. The symbol-keyed capability must ride along or every promotion
+    // that passed the gate fails at the sink with a claims mismatch.
+    const prepared = await prepareRemember({
+      content: "The user named the assistant Nova",
+      userMessage: "From now on I'll call you Nova.",
+    });
+    expect(prepared.outcome.kind).toBe("continue");
+    const tool = rememberTool();
+    const attemptArgs = createRetryCallSnapshot(tool as unknown as ToolDefinition, prepared.args).freshArgs();
+    const result = await tool.execute(attemptArgs);
+    expect(result.isError, result.content).toBeUndefined();
+    expect(memory.recallByKind("observation")).toHaveLength(1);
+  });
+
+  it("off-enum provenance normalizes identically in gate claims and sink recomputation", async () => {
+    const prepared = await prepareRemember({
+      content: "The user named the assistant Nova",
+      userMessage: "From now on I'll call you Nova.",
+      provenance: "user",
+    });
+    expect(prepared.outcome.kind).toBe("continue");
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError, result.content).toBeUndefined();
   });
 
   it("raw durable primitives deny callers without a capability", async () => {

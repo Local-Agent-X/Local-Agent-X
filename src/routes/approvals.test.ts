@@ -12,7 +12,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
-import type { ActiveCanonicalOp } from "../canonical-loop/active-ops.js";
+import type { ActiveCanonicalOp } from "../canonical-loop/index.js";
 import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
 import { buildPendingApprovals, handleApprovalRoutes } from "./approvals.js";
 

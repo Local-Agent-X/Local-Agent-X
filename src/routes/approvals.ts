@@ -20,7 +20,7 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse } from "../server-utils.js";
 import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
-import type { ActiveCanonicalOp } from "../canonical-loop/active-ops.js";
+import type { ActiveCanonicalOp } from "../canonical-loop/index.js";
 
 export interface PendingApprovalEntry {
   opId: string;

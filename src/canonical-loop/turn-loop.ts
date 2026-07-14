@@ -352,6 +352,7 @@ export async function driveTurn(
     terminalReason,
     redirectConsumed: pendingRedirect != null,
     redirectInstructionId: pendingRedirect?.instructionId,
+    redirectText: pendingRedirect?.text,
     modelMs,
     toolDispatchMs,
   });

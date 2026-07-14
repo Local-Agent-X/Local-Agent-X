@@ -4,9 +4,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // on-disk message store, so pin the request text here.
 vi.mock("../store.js", () => ({
   firstUserMessageText: vi.fn(() => "Remove every tailnet reference from the app"),
+  appliedRedirectTexts: vi.fn(() => []),
 }));
 
-import { firstUserMessageText } from "../store.js";
+import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
 import { runSpecAuditGate, clearSpecAuditStateForOp, _resetSpecAuditState } from "./spec-audit.js";
 import type { Op } from "../../ops/types.js";
 
@@ -23,6 +24,7 @@ beforeEach(() => {
   (firstUserMessageText as ReturnType<typeof vi.fn>).mockReturnValue(
     "Remove every tailnet reference from the app",
   );
+  (appliedRedirectTexts as ReturnType<typeof vi.fn>).mockReturnValue([]);
 });
 
 describe("runSpecAuditGate", () => {
@@ -91,5 +93,31 @@ describe("runSpecAuditGate", () => {
     const r = await runSpecAuditGate(op("i"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit });
     expect(r.shouldRetry).toBe(true);
     expect(audit).toHaveBeenCalledTimes(2);
+  });
+
+  it("applied redirect instructions are audited as amendments to the request", async () => {
+    // 2026-07-13: "make sure its not dark theme" arrived as a redirect, was
+    // consumed, and vanished — the audit re-read only the opening prompt and
+    // returned MET on a worker that never made the edit. Amendments must be
+    // part of the audited request.
+    (appliedRedirectTexts as ReturnType<typeof vi.fn>).mockReturnValue([
+      "make sure its not dark theme",
+      "give it a custom background",
+    ]);
+    const audit = auditWith([]);
+    await runSpecAuditGate(op("j"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit });
+    const { userRequest } = (audit.mock.calls[0] as unknown as [{ userRequest: string }])[0];
+    expect(userRequest).toContain("Remove every tailnet reference");
+    expect(userRequest).toContain("Mid-build user amendments");
+    expect(userRequest).toContain("1. make sure its not dark theme");
+    expect(userRequest).toContain("2. give it a custom background");
+  });
+
+  it("no applied redirects → the audited request is the first message alone", async () => {
+    const audit = auditWith([]);
+    await runSpecAuditGate(op("k"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit });
+    const { userRequest } = (audit.mock.calls[0] as unknown as [{ userRequest: string }])[0];
+    expect(userRequest).toBe("Remove every tailnet reference from the app");
+    expect(userRequest).not.toContain("amendments");
   });
 });

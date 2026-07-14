@@ -71,6 +71,18 @@ export interface CommitTurnInput {
    *     mid-turn is preserved for the next turn (latest-wins semantics).
    */
   redirectInstructionId?: string;
+  /**
+   * The instruction TEXT folded into this turn's prompt. Persisted on the
+   * `redirect_applied` event body — the redirect column is cleared right
+   * here in commitTurn and the `[REDIRECT]` row is transport-only, so the
+   * event ledger is the ONLY durable record of what the user asked for
+   * mid-op. spec-audit reads it back (store.appliedRedirectTexts) so the
+   * done-claim is audited against the amended request, not just the
+   * opening one. 2026-07-13: a build worker claimed a redirect ("switch
+   * default to light theme") it never implemented and the audit said MET
+   * because the redirect had vanished from every gate's view.
+   */
+  redirectText?: string;
   /** Wall-clock ms inside `adapter.runTurn`. Recorded for soak telemetry. */
   modelMs?: number;
   /** Wall-clock ms inside `dispatchTools`. Recorded for soak telemetry. */
@@ -259,7 +271,14 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   });
 
   if (redirectConsumed && appliedId != null) {
-    emit(op.id, "redirect_applied", { turnIdx, instructionId: appliedId });
+    emit(op.id, "redirect_applied", {
+      turnIdx,
+      instructionId: appliedId,
+      // Durable copy of the instruction — see CommitTurnInput.redirectText.
+      ...(typeof input.redirectText === "string" && input.redirectText
+        ? { text: input.redirectText }
+        : {}),
+    });
   }
 
   if (input.terminalReason === "done") {

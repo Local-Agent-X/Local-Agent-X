@@ -24,7 +24,7 @@
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
-import { firstUserMessageText } from "../store.js";
+import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { auditDoneClaim, AUDIT_EVIDENCE_LIMIT } from "../../classifiers/done-claim-audit.js";
@@ -146,8 +146,20 @@ export async function runSpecAuditGate(op: Op, opts: SpecAuditOptions = {}): Pro
 
   const raw = opts.editedPaths ?? opEditedSourcePaths(op.id);
   if (raw.length === 0) return NO_RETRY;
-  const request = firstUserMessageText(op.id).trim();
+  let request = firstUserMessageText(op.id).trim();
   if (request.length < MIN_REQUEST_CHARS) return NO_RETRY;
+  // The request the audit re-reads is the WHOLE ask: mid-op redirect
+  // instructions are amendments to it, and they used to vanish from every
+  // gate once consumed (one-slot column cleared on apply, prompt row
+  // transport-only). A worker that narrates compliance with a redirect but
+  // never edits the code sailed through here because the audited request
+  // never mentioned the amendment — 2026-07-13, "make sure its not dark
+  // theme" → four theme:'dark' defaults untouched → MET.
+  const amendments = appliedRedirectTexts(op.id);
+  if (amendments.length > 0) {
+    request += `\n\nMid-build user amendments (each must be satisfied like the request above):\n` +
+      amendments.map((t, i) => `${i + 1}. ${t}`).join("\n");
+  }
 
   const sessionId = getSessionForOp(op.id);
   const abs = raw.map((p) => resolveAgentPath(p, sessionId));

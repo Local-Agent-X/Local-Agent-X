@@ -297,6 +297,25 @@ export function firstUserMessageText(opId: string): string {
   return "";
 }
 
+/**
+ * Texts of every redirect instruction APPLIED during the op, in application
+ * order. The redirect column is one-slot and cleared on consume, and the
+ * `[REDIRECT]` prompt row is transport-only, so the `redirect_applied` event
+ * body (checkpoint.ts) is the sole durable record. Amendments to the request
+ * arrive this way mid-op; spec-audit folds them into the done-claim audit so
+ * "what the user asked for" means the WHOLE ask, not just the first message.
+ * Events predating the `text` field are skipped — absent evidence, not "".
+ */
+export function appliedRedirectTexts(opId: string): string[] {
+  const out: string[] = [];
+  for (const e of readCanonicalEvents(opId)) {
+    if (e.type !== "redirect_applied") continue;
+    const text = (e.body as { text?: unknown } | null)?.text;
+    if (typeof text === "string" && text.trim()) out.push(text.trim());
+  }
+  return out;
+}
+
 export function readOpMessages(opId: string): OpMessageRow[] {
   const path = opMessagesPath(opId);
   if (!existsSync(path)) return [];

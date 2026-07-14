@@ -60,6 +60,13 @@ export class MemoryIndex extends MemoryFactsBase {
     this.db = openDatabaseSafe(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("busy_timeout = 5000");
+    // Boot-time WAL truncation: nothing else checkpoints memory.db, so a WAL
+    // left by the previous run grows unbounded (observed 485MB) and is
+    // replayed on every open. No other readers exist yet, so TRUNCATE works.
+    const boot = this.checkpoint();
+    if (boot.busy > 0 || boot.log > 0) {
+      logger.info(`[memory] Boot WAL checkpoint: busy=${boot.busy} log=${boot.log} checkpointed=${boot.checkpointed}`);
+    }
 
     this.hasFts = Schema.initSchema(this.db).hasFts;
 
@@ -352,6 +359,21 @@ export class MemoryIndex extends MemoryFactsBase {
 
   markDirty(): void {
     this.dirty = true;
+  }
+
+  // Truncate the WAL back to zero. Safe on idle (hygiene jobs): a concurrent
+  // readonly snapshot connection (atlas-layout, load-facts, sql-tools) can
+  // block truncation — that surfaces as busy > 0, a normal outcome, never an
+  // exception.
+  checkpoint(): { busy: number; log: number; checkpointed: number } {
+    try {
+      const rows = this.db.pragma("wal_checkpoint(TRUNCATE)") as
+        Array<{ busy: number; log: number; checkpointed: number }>;
+      return rows[0] ?? { busy: 0, log: 0, checkpointed: 0 };
+    } catch (e) {
+      logger.warn(`[memory] WAL checkpoint failed: ${(e as Error).message}`);
+      return { busy: 1, log: -1, checkpointed: -1 };
+    }
   }
 
   close(): void {

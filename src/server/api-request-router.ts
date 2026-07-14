@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse } from "../server-utils.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleApprovalRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes } from "../routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleApprovalRoutes, handleIssueRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes, handleHealthRoutes, handleAccountRoutes, handleArtifactRoutes } from "../routes/index.js";
 import type { LAXConfig } from "../types.js";
 import type { Role } from "../rbac.js";
 import type { ServerContext } from "../server-context.js";
@@ -13,6 +13,7 @@ const ROUTE_HANDLERS = [
   handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleApprovalRoutes, handleIssueRoutes,
   handleRunsRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes,
   handleMcpRoutes, handleMcpServerRoutes, handleAutopilotRoutes, handleConnectorProxyRoutes,
+  handleArtifactRoutes,
 ];
 
 const UPLOAD_MAGIC: Record<string, Buffer[]> = {

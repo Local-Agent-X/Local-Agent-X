@@ -32,7 +32,7 @@ let appJs = "";
 // The top-level shell regions that must be gated together. Missing any one of
 // these from the gate reintroduces a piecemeal flash for that region — e.g.
 // dropping #desktop-titlebar brings back the titleless fallback frame.
-const SHELL_IDS = ["#desktop-titlebar", "#sidebar", "#main", "#agents-toggle"];
+const SHELL_IDS = ["#desktop-titlebar", "#sidebar", "#main"];
 
 beforeAll(() => {
   css = flat(readFileSync(join(here, "../public/css/app.css"), "utf8"));

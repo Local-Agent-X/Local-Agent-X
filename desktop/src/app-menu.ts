@@ -44,7 +44,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
     const win = getMainWindow();
     if (win) win.loadURL(tokenizedAppUrl());
   };
-  const toggleAgentsAction = () => triggerRenderer("document.getElementById('agents-toggle')?.click()");
+  const toggleAgentsAction = () => triggerRenderer("typeof toggleAgentFeeds === 'function' && toggleAgentFeeds()");
   const toggleDevToolsAction = () => getMainWindow()?.webContents.toggleDevTools();
   const openInBrowserAction = () => { shell.openExternal(tokenizedAppUrl()); };
   const copyAppUrlAction = () => { clipboard.writeText(tokenizedAppUrl()); };

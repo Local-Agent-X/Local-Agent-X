@@ -42,11 +42,8 @@ function toggleAgentFeeds() {
     panel.classList.remove('collapsed');
     panel.classList.add('active');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
-    // Toggle visibility is driven from a body class, not inline style on
-    // the button. Inline style was getting clobbered by navigate('chat')
-    // in app.js (fires on hashchange, file drop, new chat, select chat),
-    // which unconditionally sets agents-toggle display=''. The body-class
-    // + CSS !important is immune to that.
+    // Body class drives the open-state styling of the top-bar toggles
+    // (#dtb-agents-toggle / #sidebar-agents-btn accent highlight).
     document.body.classList.add('agents-panel-open');
     panel.style.overflow = 'hidden';
     // Desktop: open to the user's persisted width (default 320), not a hardcoded
@@ -303,10 +300,6 @@ function _updateAgentCount() {
   var count = Object.keys(agentFeedsData).length;
   var el = document.getElementById('agent-count');
   if (el) el.textContent = count;
-  var toggleCount = document.getElementById('agents-toggle-count');
-  if (toggleCount) toggleCount.textContent = count;
-  var toggleBtn = document.getElementById('agents-toggle');
-  if (toggleBtn) toggleBtn.style.borderColor = count > 0 ? 'var(--accent)' : 'var(--border)';
 }
 
 // 1s safety-net sync: re-applies the visible DOM of every non-terminal

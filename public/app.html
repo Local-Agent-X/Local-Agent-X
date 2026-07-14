@@ -164,7 +164,6 @@
   <!-- VOICE INDICATORS (global) -->
   <div id="voice-indicator" role="status" aria-live="polite"></div>
   <div id="voice-engine-badge" role="status" aria-live="polite" title="Voice engine that actually loaded"></div>
-  <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:16px;z-index:200;-webkit-app-region:no-drag;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
 
   <!-- ══ NOTIFICATION CENTER ══ -->
   <div id="notif-panel" class="notif-panel">
@@ -1377,7 +1376,7 @@
 <script src="/js/app-sync.js?v=v2"></script>
 <script src="/js/app-sidebar-actions.js?v=v2"></script>
 <script src="/js/app-sidebar-render.js?v=v1"></script>
-<script src="/js/app.js?v=va6"></script>
+<script src="/js/app.js?v=va7"></script>
 <script src="/js/home-launcher.js?v=v1"></script>
 <script type="module" src="/js/voice-sphere.js?v=vb8"></script>
 <script type="module" src="/js/memory-brain.js?v=v15"></script>
@@ -1395,7 +1394,7 @@
 <script src="/js/chat-agent-feeds-ambient.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-actions.js?v=v2"></script>
 <script src="/js/chat-agent-feeds-autoopen.js?v=v1"></script>
-<script src="/js/chat-agent-feeds.js?v=v5"></script>
+<script src="/js/chat-agent-feeds.js?v=v6"></script>
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
 <script src="/js/chat-status-bar.js?v=v5"></script>
@@ -1505,8 +1504,8 @@
 <script src="/js/apps-ide-snapshots.js?v=v1"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
-<script src="/js/app-sidebar-toggle.js?v=v4"></script>
-<script src="/js/desktop-titlebar.js?v=v2"></script>
+<script src="/js/app-sidebar-toggle.js?v=v5"></script>
+<script src="/js/desktop-titlebar.js?v=v3"></script>
 
 <!-- ═══ Global Search Modal ═══ -->
 <div id="global-search-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:20000;align-items:flex-start;justify-content:center;padding-top:12vh">
@@ -1529,6 +1528,10 @@
 <div id="sidebar-controls">
   <button id="sidebar-hide-btn" onclick="toggleSidebarCollapse()" title="Hide sidebar" aria-label="Hide or show sidebar">&#9707;</button>
   <button id="sidebar-flip-btn" onclick="flipSidebarSide()" title="Move sidebar to the other side" aria-label="Move sidebar to the other side">&#8644;</button>
+  <!-- Agents-panel toggle for macOS/browser, where the Windows titlebar's
+       #dtb-agents-toggle never renders. Hidden under platform-win (CSS) so
+       Windows keeps exactly one top-bar agents button. -->
+  <button id="sidebar-agents-btn" onclick="toggleSidePanel('right')" title="Hide/show agents panel" aria-label="Toggle agents panel">&#9704;</button>
 </div>
 
 </body>

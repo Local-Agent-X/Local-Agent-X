@@ -48,10 +48,13 @@ body.platform-win{height:calc(100vh - 32px);margin-top:32px}
 /* right padding reserves room for the OS caption buttons (min/max/close ~138px
    on Windows) so the ⋯ overflow doesn't sit under them and get misclicked. */
 body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;padding-right:138px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
-body.platform-win #agents-toggle{top:52px !important}
-/* The titlebar agents-panel toggle lights up while the panel is open, matching
-   the .dtb-menu.open accent treatment so its state reads at a glance. */
+/* The top-bar agents-panel toggles light up while the panel is open, matching
+   the .dtb-menu.open accent treatment so their state reads at a glance. */
 body.agents-panel-open #desktop-titlebar #dtb-agents-toggle{color:var(--accent);background:var(--hover)}
+body.agents-panel-open #sidebar-agents-btn{color:var(--accent);background:var(--hover)}
+/* Windows already has #dtb-agents-toggle in the titlebar — the window-top
+   cluster's copy is for macOS/browser only, so never show both. */
+body.platform-win #sidebar-agents-btn{display:none}
 /* The titlebar is a drag region; standalone buttons must opt out or the OS
    swallows the click as a window-drag. The ⋯ menu gets this via .dtb-menu;
    this button sits outside any menu, so it needs the exemption directly. */
@@ -74,7 +77,6 @@ body.platform-win #sidebar-controls{top:4px;left:128px;z-index:100000}
 #desktop-titlebar .dtb-item:hover{background:var(--hover)}
 #desktop-titlebar .dtb-key{color:var(--muted);font-size:.85em;opacity:.75}
 #desktop-titlebar .dtb-sep{height:1px;margin:4px 0;background:var(--border)}
-body.agents-panel-open #agents-toggle{display:none !important}
 body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,color-mix(in srgb, var(--accent) 1%, transparent) 2px,color-mix(in srgb, var(--accent) 1%, transparent) 4px);z-index:9999}
 
 /* ── Sidebar ── */
@@ -1055,8 +1057,8 @@ body.platform-win .settings-overlay{top:32px}
    as the splash window — shows until then, so the swap reads as one clean fade,
    not a reflow. Safety net: app.js also arms app-ready on a 2s timer, so a boot
    that throws before the rAF (or a plain browser) still reveals the shell. */
-#desktop-titlebar,#sidebar,#main,#agents-toggle,#mobile-menu-btn{opacity:0;transition:opacity .18s ease}
-body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,body.app-ready #agents-toggle,body.app-ready #mobile-menu-btn{opacity:1}
+#desktop-titlebar,#sidebar,#main,#mobile-menu-btn{opacity:0;transition:opacity .18s ease}
+body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,body.app-ready #mobile-menu-btn{opacity:1}
 .status-item{display:flex;align-items:center;gap:4px}
 .status-icon{font-size:.7rem}
 .status-selector{position:relative}

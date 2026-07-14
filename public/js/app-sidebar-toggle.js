@@ -64,8 +64,12 @@ function flipSidebarSide() {
 // side, and reflect that panel's collapsed state.
 function refreshSideButtonTitles() {
   const leftBtn = document.getElementById('sidebar-hide-btn');
+  // Two right-side toggles exist in the DOM (Windows titlebar + the
+  // macOS/browser window-top cluster); CSS shows exactly one per platform,
+  // so keep both tooltips in sync.
   const rightBtn = document.getElementById('dtb-agents-toggle');
-  [['left', leftBtn], ['right', rightBtn]].forEach(([side, btn]) => {
+  const macRightBtn = document.getElementById('sidebar-agents-btn');
+  [['left', leftBtn], ['right', rightBtn], ['right', macRightBtn]].forEach(([side, btn]) => {
     if (!btn) return;
     const { kind, el } = panelOnSide(side);
     const name = kind === 'nav' ? 'sidebar' : 'agents panel';

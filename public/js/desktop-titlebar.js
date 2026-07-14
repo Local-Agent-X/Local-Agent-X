@@ -52,7 +52,7 @@
       case 'close-to-tray':   d.toggleWindow && d.toggleWindow(); break;
       case 'about':           d.showAbout && d.showAbout(); break;
       case 'reload':          location.reload(); break;
-      case 'toggle-agents':   { var b = document.getElementById('agents-toggle'); if (b) b.click(); break; }
+      case 'toggle-agents':   { if (typeof toggleAgentFeeds === 'function') toggleAgentFeeds(); break; }
       case 'zoom-in':         d.contentZoom && d.contentZoom('in'); break;
       case 'zoom-out':        d.contentZoom && d.contentZoom('out'); break;
       case 'zoom-reset':      d.contentZoom && d.contentZoom('reset'); break;

@@ -85,9 +85,6 @@ function navigate(route) {
   });
   // Init page if it has an init function
   if (!isPin && window['init_' + route]) window['init_' + route]();
-  // Only show agents toggle on chat page
-  var agentsBtn = document.getElementById('agents-toggle');
-  if (agentsBtn) agentsBtn.style.display = (route === 'chat') ? '' : 'none';
 }
 
 function currentRoute() {

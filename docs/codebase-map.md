@@ -12,14 +12,14 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1226 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1227 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 69 | 22 | XL |  |
-| `src/security/` | 68 | 28 | XL |  |
+| `src/security/` | 69 | 28 | XL |  |
 | `src/tools/` | 57 | 144 | XL |  |
 | `src/canonical-loop/` | 43 | 141 | XL |  |
 | `src/providers/` | 42 | 16 | L |  |
@@ -29,7 +29,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/auth/` | 23 | 10 | L |  |
-| `src/tool-policy/` | 22 | 19 | L |  |
+| `src/tool-policy/` | 23 | 19 | L |  |
 | `src/threat/` | 20 | 11 | L |  |
 | `src/util/` | 20 | 2 | S |  |
 | `src/session/` | 19 | 5 | M |  |
@@ -37,9 +37,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/orchestrator/` | 16 | 22 | L |  |
 | `src/agent-guards/` | 15 | 13 | L |  |
 | `src/agents/` | 15 | 13 | L |  |
+| `src/chat-ws/` | 15 | 11 | L |  |
 | `src/app-runtime/` | 14 | 12 | L |  |
 | `src/browser/` | 14 | 28 | XL |  |
-| `src/chat-ws/` | 14 | 11 | L |  |
 | `src/anthropic-client/` | 12 | 19 | L |  |
 | `src/context-manager/` | 12 | 9 | M |  |
 | `src/voice/` | 12 | 65 | XL |  |
@@ -56,18 +56,18 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/protocols/` | 7 | 32 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
+| `src/tool-execution/` | 7 | 29 | XL |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 11 | L |  |
 | `src/cognition/` | 6 | 29 | XL |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
-| `src/tool-execution/` | 6 | 29 | XL |  |
 | `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |
 | `src/routes/` | 5 | 82 | XL |  |
 | `src/routing/` | 5 | 7 | M |  |
+| `src/server/` *(entrypoint)* | 5 | 32 | XL |  |
 | `src/broker-transport/` | 4 | 27 | L |  |
 | `src/hooks/` | 4 | 3 | M |  |
-| `src/server/` *(entrypoint)* | 4 | 31 | XL |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
 | `src/embedding-providers/` | 3 | 8 | M |  |

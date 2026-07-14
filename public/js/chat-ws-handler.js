@@ -73,6 +73,16 @@ function handleChatWsMessage(e) {
     return;
   }
 
+  // Runtime canary verdicts (e.g. the memory-write self-test): show a
+  // dismissible failure banner; auto-clear it when the subsystem recovers.
+  if (msg.type === 'system_health') {
+    if (msg.state === 'failing' && typeof window.showHealthBanner === 'function') {
+      window.showHealthBanner(msg.message || `Subsystem failing: ${msg.subsystem}`);
+    } else if (msg.state === 'ok' && typeof window.hideHealthBanner === 'function') {
+      window.hideHealthBanner();
+    }
+  }
+
   if (msg.type === 'settings_changed' && msg.settings) handleSettingsChanged(msg);
   if (msg.type === 'sidebar_pins_changed' && msg.pins) handleSidebarPinsChanged(msg);
   if (msg.type === 'sidebar_clear_chats') handleSidebarClearChats(msg);

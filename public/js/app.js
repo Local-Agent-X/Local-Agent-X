@@ -187,6 +187,22 @@ setInterval(() => {
   } catch {}
 })();
 
+// ── Subsystem health banner (fed by system_health WS broadcasts from the
+//    server's runtime canaries, e.g. the memory-write self-test) ──
+window.showHealthBanner = function (message) {
+  const banner = document.getElementById('health-banner');
+  if (!banner) return;
+  banner.style.display = 'flex';
+  banner.innerHTML = `
+    <span style="flex:1">⚠ ${esc(message)}</span>
+    <button onclick="hideHealthBanner()" title="Dismiss" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:2px 6px">&times;</button>
+  `;
+};
+window.hideHealthBanner = function () {
+  const banner = document.getElementById('health-banner');
+  if (banner) banner.style.display = 'none';
+};
+
 function dismissUpdate() {
   const banner = document.getElementById('update-banner');
   if (banner) { banner.style.display = 'none'; banner.className = ''; }

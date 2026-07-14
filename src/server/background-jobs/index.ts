@@ -120,6 +120,19 @@ export function startBackgroundJobs(deps: {
   });
 
   scheduler.register({
+    name: "memory-write-canary",
+    // Cheap (two local DB writes, no LLM) — run soon after boot so a broken
+    // OTA update surfaces within minutes, then keep a steady heartbeat.
+    intervalMs: 30 * 60 * 1000,
+    startupDelayMs: 90_000,
+    run: async () => {
+      const { makeRunMemoryCanary } = await import("./memory-canary.js");
+      const { broadcastAll } = await import("../../chat-ws/index.js");
+      await makeRunMemoryCanary({ security, toolPolicy, allAgentTools, broadcast: broadcastAll })();
+    },
+  });
+
+  scheduler.register({
     name: "dream-check",
     intervalMs: 2 * 60 * 60 * 1000,
     startupDelayMs: 5 * 60 * 1000,

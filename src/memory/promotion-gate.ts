@@ -97,15 +97,29 @@ export function assertMemoryPromotionCapability(
   consume = true,
 ): void {
   const state = capability ? states.get(capability) : undefined;
-  const claims = state?.claims;
-  const matches = claims
-    && hash(claims.content) === hash(expected.content)
+  // Two distinct failures, two distinct messages: a MISSING capability means
+  // the approval-phase stamp never reached the sink (dispatch plumbing bug —
+  // e.g. an arg clone dropping the symbol), while mismatched CLAIMS mean the
+  // gate and the sink computed different provenance/confidence/target for the
+  // same write (policy-twin divergence). Conflating them cost days of
+  // diagnosis when retry-call cloning broke every memory write in Jul 2026.
+  if (!state) {
+    throw new Error(
+      "memory promotion capability required but none is attached — the approval-phase stamp was lost between gate and sink (dispatch plumbing bug), or the caller never minted one",
+    );
+  }
+  const claims = state.claims;
+  const matches = hash(claims.content) === hash(expected.content)
     && claims.target === expected.target
     && claims.source === expected.source
     && claims.sessionId === expected.sessionId
     && claims.provenance === expected.provenance
     && claims.confidence === expected.confidence;
-  if (!state || !matches) throw new Error("valid memory promotion capability required");
+  if (!matches) {
+    throw new Error(
+      "memory promotion capability claims do not match this write — gate and sink disagree on content/target/source/session/provenance/confidence",
+    );
+  }
   if (consume && state.consumed) throw new Error("memory promotion capability has already been consumed");
   if (consume) state.consumed = true;
 }

@@ -14,6 +14,7 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
   if (method === "GET" && url.pathname === "/api/system-status") {
     const { getSandboxStatus, isDockerAvailable, isGuardedUsable } = await import("../../sandbox/index.js");
     const { loadProfileName } = await import("../../autonomy/profile-store.js");
+    const { getMemoryCanaryStatus } = await import("../../server/background-jobs/memory-canary.js");
     const threatData = getThreatDashboard();
     const providerHealth = getProviderHealthStatus();
     const tStats = getToolStats();
@@ -26,6 +27,7 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       security: { threatsBlocked: threatData.stats?.totalBlocked || 0, threatLevel: threatData.currentThreatLevel || "normal", recentEvents: (threatData.recentEvents || []).slice(0, 5) },
       providers: providerHealth,
       tools: { totalCalls: Object.values(tStats).reduce((sum, t) => sum + (t.totalCalls || 0), 0), successRate: getToolSuccessRate(), recentFailures: getRecentFailures(5) },
+      memoryCanary: getMemoryCanaryStatus(),
       uptime: Math.floor(process.uptime()), memoryUsage: process.memoryUsage().heapUsed, nodeVersion: process.version,
     }); return true;
   }

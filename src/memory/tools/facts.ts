@@ -146,6 +146,12 @@ export function createFactsTools(memory: MemoryIndex) {
             target,
             sessionId: String(args._sessionId || "default"),
           });
+          if (!promotion.capability) {
+            return {
+              content: "BLOCKED: memory write arrived at the sink without its promotion capability — the approval-phase stamp was lost in dispatch (plumbing bug, not a policy denial)",
+              isError: true,
+            };
+          }
           if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
             return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
           }
@@ -238,6 +244,12 @@ export function createFactsTools(memory: MemoryIndex) {
             target,
             sessionId: String(args._sessionId || "default"),
           });
+          if (!promotion.capability) {
+            return {
+              content: "BLOCKED: memory write arrived at the sink without its promotion capability — the approval-phase stamp was lost in dispatch (plumbing bug, not a policy denial)",
+              isError: true,
+            };
+          }
           if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
             return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
           }

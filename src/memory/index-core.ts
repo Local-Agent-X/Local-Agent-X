@@ -139,35 +139,18 @@ export class MemoryIndex extends MemoryFactsBase {
 
   // ── Embedding Provider ──
 
-  // Async: the signature wipe and dimension self-heal batch their full-table
-  // sqlite work and yield the event loop, so boot-time callers no longer
-  // starve concurrent awaited phases (measured 17-21s setupVoiceWs inflation).
+  // Async: the heavy sqlite passes (signature wipe + dimension self-heal)
+  // live in Embedding.attachEmbeddingProvider and yield the event loop, so
+  // boot-time callers no longer starve concurrent awaited phases (measured
+  // 17-21s setupVoiceWs inflation).
   async setEmbeddingProvider(provider: EmbeddingProvider): Promise<void> {
     this.embeddingProvider = provider;
-    const verdict = await Embedding.reconcileEmbeddingSignature(this.db, provider);
-    if (Embedding.initVectorTable(this.db, provider.dimensions).hasVec) {
-      this.hasVec = true;
-    }
+    const { verdict, hasVec } = await Embedding.attachEmbeddingProvider(this.db, provider);
+    if (hasVec) this.hasVec = true;
     // Backfill vectors for anything missing one — a provider switch just
     // wiped them, or an earlier embed failed/crashed partway. Skipped in the
-    // degraded local-fallback state: re-embedding a real provider's corpus
-    // with TF-IDF would trade good vectors for junk.
-    if (verdict !== "degraded") {
-      // Self-heal: the signature wipe handles the clean provider-change case,
-      // but chunks falsely adopted from a pre-signature corpus (or survivors of
-      // a partial wipe) keep a stale-DIMENSION vector that search silently
-      // scores 0 → unfindable. NULL those so the backfill below rebuilds them
-      // under the current provider. Runs every boot, so a model change can
-      // never permanently orphan content. (Skipped in degraded/local fallback.)
-      const healed = await Embedding.nullDimensionMismatchedEmbeddings(this.db, provider);
-      if (healed > 0) {
-        logger.warn(
-          `[memory] Self-heal: ${healed} chunk(s) had stale-dimension embeddings ` +
-          `(orphaned by an embedding-model change) — re-embedding under ${provider.name}/${provider.model}`,
-        );
-      }
-      this.kickBackgroundReembed(verdict);
-    }
+    // degraded local-fallback state.
+    if (verdict !== "degraded") this.kickBackgroundReembed(verdict);
   }
 
   private reembedInProgress = false;

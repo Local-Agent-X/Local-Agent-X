@@ -16,6 +16,7 @@
  */
 import type { MemoryIndex } from "./index.js";
 import { dispatch } from "../llm-dispatch.js";
+import { guardedRewrite } from "../context-manager/llm-rewrite-guard.js";
 import { runMemoryGate } from "./write-safely.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
 
@@ -183,17 +184,35 @@ async function extractFactsFromSession(
   // sequential bulk calls); otherwise it runs on the user's configured
   // provider, resolved store-aware by dispatch, with a cheap non-reasoning
   // model floor per provider.
-  return dispatch({
-    prompt,
-    provider: opts.provider,
-    ollamaModel: opts.model || "llama3:8b",
-    anthropicModel: opts.model,
-    openaiModel: opts.model,
-    temperature: 0,
-    maxTokens: 500,
-    timeoutMs: 60_000,
-    rejectOAuth: true,
-  });
+  //
+  // guardedRewrite screens the output for degenerate/looping generations
+  // before they reach retainSmart (durable fact writes). The default
+  // detector thresholds were calibrated 2026-07-13 against this lane's
+  // legitimately repetitive-ish bullet lists: realistic 3-30 fact bullets
+  // sharing "- W @user " prefixes measure gzip ratios 0.455-0.664 (floor
+  // 0.10, >4.5x margin) and duplicate-substantial-line ratios of 0.000
+  // (threshold 0.40), while a genuine 20x repeated-bullet loop measures
+  // dup ratio 1.0 / gzip 0.077 and is flagged. Defaults are safely
+  // permissive for this lane — no custom validate() needed. A null return
+  // (transport failure, or still degenerate after the retry) flows into
+  // the caller's existing "LLM returned null" path: logged, no writes.
+  return guardedRewrite(
+    (_attempt, feedback) =>
+      dispatch({
+        prompt: feedback
+          ? `${prompt}\n\nYour previous attempt was rejected: ${feedback}. Output only the corrected fact list, one fact per line, with no repetition.`
+          : prompt,
+        provider: opts.provider,
+        ollamaModel: opts.model || "llama3:8b",
+        anthropicModel: opts.model,
+        openaiModel: opts.model,
+        temperature: 0,
+        maxTokens: 500,
+        timeoutMs: 60_000,
+        rejectOAuth: true,
+      }),
+    { maxAttempts: 2 },
+  );
 }
 
 function buildExtractionPrompt(sessionPath: string, transcript: string): string {

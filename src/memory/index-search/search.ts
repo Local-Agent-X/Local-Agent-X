@@ -4,7 +4,7 @@ import { extractKeywords } from "../utils.js";
 import { createLogger } from "../../logger.js";
 import type { SearchDeps, SearchOptions } from "./types.js";
 import { searchKeyword } from "./keyword-search.js";
-import { searchVector } from "./vector-search.js";
+import { searchVectorOffThread } from "./vector-search.js";
 import { postProcess, applyGraphBoost } from "./post-process.js";
 import { traverseFrom } from "../index-relations.js";
 
@@ -63,7 +63,7 @@ export async function searchInIndex(
         if (hyp) embedText = hyp;
       }
       const queryVec = await deps.embeddingProvider.embed(embedText);
-      vectorResults = searchVector(deps.db, queryVec, candidateLimit, options?.sources, sqlSessionFilter);
+      vectorResults = await searchVectorOffThread(deps.db, queryVec, candidateLimit, options?.sources, sqlSessionFilter);
     } catch (e) {
       logger.warn("[memory] Vector search failed:", (e as Error).message);
     }

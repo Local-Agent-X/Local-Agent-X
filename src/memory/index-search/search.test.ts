@@ -17,7 +17,7 @@ import { DEFAULT_MEMORY_CONFIG } from "../types.js";
 import { searchInIndex } from "./search.js";
 import type { SearchDeps } from "./types.js";
 import { searchKeyword } from "./keyword-search.js";
-import { searchVector } from "./vector-search.js";
+import { searchVectorOffThread } from "./vector-search.js";
 
 vi.mock("./keyword-search.js", () => ({
   searchKeyword: vi.fn(() => [
@@ -35,7 +35,7 @@ vi.mock("./keyword-search.js", () => ({
 }));
 
 vi.mock("./vector-search.js", () => ({
-  searchVector: vi.fn(() => [
+  searchVectorOffThread: vi.fn(async () => [
     {
       id: 2,
       path: "memory/bank/other.md",
@@ -102,7 +102,7 @@ describe("hybrid search: keyword-only vs vector-found siblings sharing startLine
     // the SAME startLine. Here the vector channel found the EARLIER part and
     // the keyword channel found a LATER part of the SAME conversation — same
     // path, same startLine, DIFFERENT chunk ids.
-    vi.mocked(searchVector).mockReturnValueOnce([
+    vi.mocked(searchVectorOffThread).mockResolvedValueOnce([
       {
         id: 10,
         path: "import/chatgpt/imported-convo",

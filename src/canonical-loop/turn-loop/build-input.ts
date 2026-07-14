@@ -57,7 +57,12 @@ export async function buildTurnInput(
     const baselineTokens = (process.env.LAX_CONTEXT_BASELINE !== "0" && op.type === "chat_turn" && isAnthropicModel(model))
       ? (getSessionBaselineTokens(op.canonical?.sessionId) ?? getOpBaselineTokens(op.id))
       : 0;
-    const compacted = await compactHistory(messages, model, lastTurnUsage(op.id), op.id, baselineTokens);
+    // sessionBacked gates only the summary's recall-HINT line: recall confines
+    // reads to the caller's session, so a session-less op would get a refusal.
+    const compacted = await compactHistory(
+      messages, model, lastTurnUsage(op.id), op.id, baselineTokens,
+      Boolean(op.canonical?.sessionId),
+    );
     messages = compacted.messages;
     viewCompacted = compacted.compacted;
   }

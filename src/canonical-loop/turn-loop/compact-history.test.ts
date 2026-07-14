@@ -354,6 +354,55 @@ describe("compactHistory — replaced-range citation for recall", () => {
     expect(content.summaryRange).toEqual({ firstId: "u1", lastId: "a2" });
   });
 
+  // Boundary rows must survive recall's projection (opMessageRowToChatParam):
+  // recall errors on a dropped startId and silently widens a dropped endId to
+  // end-of-transcript — either way the cited cursor would be broken.
+  it("skips dropped rows (nudges, empty assistants) at the head boundaries", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const nudge = (id: string): CanonicalMessage =>
+      ({ messageId: id, role: "user", content: { text: "[auto] try again", kind: "nudge" } });
+    const msgs = [
+      nudge("n1"), u("u1", "q1"), a("a1", "r1"), nudge("n2"),
+      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    // head = n1,u1,a1,n2 → both boundary nudges skipped → range u1:a1
+    const text = (out[0].content as { text: string }).text;
+    expect(text).toContain("messages, range u1:a1]");
+    expect(recallCursorOf(text)).toBe("u1:a1");
+  });
+
+  it("omits the range and recall hint entirely when no head row survives recall", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const nudge = (id: string): CanonicalMessage =>
+      ({ messageId: id, role: "user", content: { text: "[auto] try again", kind: "nudge" } });
+    const msgs = [
+      nudge("n1"), a("e1", ""), nudge("n2"), a("e2", ""), // all dropped by recall
+      u("u3", "q3"), a("a3", "r3"), u("u4", "q4"), a("a4", "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    const content = out[0].content as { text: string; summaryRange?: unknown };
+    expect(content.text).toContain("— 4 messages]"); // no range tag
+    expect(content.text).not.toContain("recall tool");
+    expect(content.summaryRange).toBeUndefined();
+  });
+
+  it("suppresses only the hint line on a session-less op (recall would refuse)", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const msgs = [
+      u("u1", "first"), a("a1", "r1"), u("u2", "second"), a("a2", "r2"),
+      u("u3", "third"), a("a3", "r3"), u("u4", "fourth"), a("a4", "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6", null, undefined, 0, false);
+    const content = out[0].content as { text: string; summaryRange?: unknown };
+    expect(content.text).toContain("messages, range u1:a2]"); // citation stays
+    expect(content.text).not.toContain("recall tool"); // hint gated off
+    expect(content.summaryRange).toEqual({ firstId: "u1", lastId: "a2" });
+  });
+
   it("emitted cursor round-trips through recall-tool's parseCursor", async () => {
     mockStatus.mockReturnValue(status(96, true));
     mockSummarize.mockResolvedValue("DECISIONS: ship it");

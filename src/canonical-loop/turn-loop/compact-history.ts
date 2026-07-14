@@ -17,6 +17,7 @@ import { turnCompactionKeepLast } from "../../context-manager/compaction-policy.
 import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
 import { extractText, extractToolResultText } from "./content-extract.js";
 import { createLogger } from "../../logger.js";
 
@@ -262,6 +263,9 @@ export async function compactHistory(
   // sends outside `messages`. Added to the estimate when there is no anchor, so
   // chat sizing accounts for the ~147k the pure estimate can't see. 0 → off.
   baselineTokens = 0,
+  // recall confines reads to the caller's session; on a session-less op the
+  // recall HINT line is suppressed (the range citation itself still lands).
+  sessionBacked = true,
 ): Promise<CompactHistoryResult> {
   // Consume the overflow-recovery marker (set once per provider overflow).
   const forced = opId ? forcedOps.delete(opId) : false;
@@ -323,17 +327,18 @@ export async function compactHistory(
   const anchor = recent[0];
   // Replaced-span range pointer. head rows always come from the raw op_messages
   // replay (build-input.ts rebuilds the view from readOpMessages every turn and
-  // never persists the compacted view), so they can never themselves be
-  // compact-summary rows — first/last ids always name real, recallable rows.
-  // The `firstId:lastId` cursor format is recall-tool's parseCursor range shape.
-  const firstId = head[0].messageId;
-  const lastId = head[head.length - 1].messageId;
+  // never persists the compacted view), so they are never prior compact-summary
+  // rows. The `firstId:lastId` format is recall-tool's parseCursor range shape.
+  const range = recallRange(head);
+  const rangeTag = range ? `, range ${range.firstId}:${range.lastId}` : "";
+  const hint = range && sessionBacked
+    ? `[Full original messages retrievable via the recall tool with cursor="${range.firstId}:${range.lastId}"]\n`
+    : "";
   const block =
-    `[Earlier conversation auto-summarized to save context — ${head.length} messages, range ${firstId}:${lastId}]\n` +
+    `[Earlier conversation auto-summarized to save context — ${head.length} messages${rangeTag}]\n` +
     `${summary}\n` +
-    `[Full original messages retrievable via the recall tool with cursor="${firstId}:${lastId}"]\n` +
+    hint +
     `[End of summary. Your most recent messages follow.]`;
-  const summaryRange = { firstId, lastId };
 
   // Fold the summary into a USER boundary row (no extra message → no adjacent-
   // user rejection, mirrors the situational-awareness digest). But when the tail
@@ -347,17 +352,41 @@ export async function compactHistory(
     const mergedAnchor: CanonicalMessage = {
       ...anchor,
       content: hasImages(anchor.content)
-        ? { ...(anchor.content as Record<string, unknown>), text: merged, summaryRange }
-        : { text: merged, summaryRange },
+        ? { ...(anchor.content as Record<string, unknown>), text: merged, ...(range && { summaryRange: range }) }
+        : { text: merged, ...(range && { summaryRange: range }) },
     };
     return { messages: [mergedAnchor, ...recent.slice(1)], compacted: true };
   }
   const summaryRow: CanonicalMessage = {
     messageId: `compact-summary-${anchor.messageId}`,
     role: "user",
-    content: { text: block, summaryRange },
+    content: { text: block, ...(range && { summaryRange: range }) },
   };
   return { messages: [summaryRow, ...recent], compacted: true };
+}
+
+// Nearest head rows that SURVIVE recall's projection — recall pages only rows
+// opMessageRowToChatParam keeps (called here directly so this never drifts):
+// nudges/control/empty rows are dropped, an unresolvable startId errors, and an
+// unresolvable endId silently widens the range to end-of-transcript, so a
+// dropped boundary row would emit a broken cursor. Null when nothing survives.
+function recallRange(head: CanonicalMessage[]): { firstId: string; lastId: string } | null {
+  const survives = (m: CanonicalMessage): boolean =>
+    opMessageRowToChatParam({
+      messageId: m.messageId,
+      opId: "",
+      turnIdx: m.turnIdx ?? 0,
+      seqInTurn: m.seqInTurn ?? 0,
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt ?? "",
+    }) !== null;
+  let first = -1;
+  for (let i = 0; i < head.length; i++) if (survives(head[i])) { first = i; break; }
+  if (first === -1) return null;
+  let last = head.length - 1;
+  while (last > first && !survives(head[last])) last--;
+  return { firstId: head[first].messageId, lastId: head[last].messageId };
 }
 
 function hasImages(content: unknown): boolean {

@@ -456,7 +456,12 @@ describe("evaluateShellCommandAndPaths — C3-3 shared shell+path confinement", 
 
   it("is a no-op for path confinement in unrestricted mode but still vets the command", () => {
     const unrestricted = { ...ctx, fileAccessMode: "unrestricted" as const };
+    // Path confinement is off: reading a system file is allowed.
     expect(evaluateShellCommandAndPaths("cat /etc/passwd", unrestricted).allowed).toBe(true);
-    expect(evaluateShellCommandAndPaths("rm -rf /tmp/x", unrestricted).allowed).toBe(false);
+    // Deleting the user's OWN files via the shell is allowed in unrestricted mode
+    // (the mode-aware rm rule — see shell-policy.ts:176), NOT blanket-blocked.
+    expect(evaluateShellCommandAndPaths("rm -rf /tmp/x", unrestricted).allowed).toBe(true);
+    // But the command is still vetted: the catastrophic-rm floor holds even here.
+    expect(evaluateShellCommandAndPaths("rm -rf /", unrestricted).allowed).toBe(false);
   });
 });

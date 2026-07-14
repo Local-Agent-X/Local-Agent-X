@@ -7,6 +7,9 @@ import {
 } from "./oauth-direct.js";
 import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("anthropic-client.stream-api");
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal, temperature, disableThinking } = options;
@@ -40,9 +43,34 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // OAuth routing keys on the system prompt STARTING with the Claude Code
     // identity block; prepend it as a separate text block so the caller's own
     // system prompt still applies verbatim below it.
+    //
+    // Prompt caching: the LAST system block carries a cache_control breakpoint,
+    // extending the cached prefix from tools-only (see the tools marker below)
+    // to tools + system. Prefix order is tools → system → messages, so this one
+    // marker covers both tiers.
+    //
+    // Why ONE breakpoint and not a stable/volatile two-block split: the prompt
+    // from build-system-prompt.ts IS ordered stable-first (SystemPromptBuilder
+    // emits static sections — base prompt, runtime, App Map, AGENTS.md, tool
+    // guidance, project catalog — before the dynamic ones), and the static
+    // prefix is the large majority of the bytes. But the churn (memory context
+    // blocks, background-completion notices, turn directives) is appended into
+    // the SAME string, and caching is block-granular: with one block, a changed
+    // tail misses the whole system tier. A two-block split needs the stable/
+    // volatile boundary to survive the string-typed systemPrompt seam, and that
+    // string also feeds the CLI proxy path (stream-cli/, subscription auth) —
+    // a marker would leak verbatim into those prompts. Deferred until the seam
+    // carries structured parts. The single breakpoint still pays for itself:
+    // within a turn's agentic tool loop every iteration re-sends a byte-
+    // identical system prompt, so all iterations after the first read the
+    // whole tools+system prefix at 0.1×. Cross-turn requests miss when the
+    // dynamic sections change (expected) and re-write at 1.25×.
     system: oauth
-      ? [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX }, { type: "text", text: systemPrompt }]
-      : systemPrompt,
+      ? [
+          { type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX },
+          { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
+        ]
+      : [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
     messages: convertMessages(messages),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
@@ -229,6 +257,16 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens, responseText,
     });
     logClassification("anthropic", resolvedModel, classification);
+    // Cache observability: hit ratio = read / (read + creation + input). The
+    // three terms partition the full prompt (input_tokens EXCLUDES the cached
+    // prefix), so this is "fraction of the prompt served from cache". Debug
+    // level — one line per call, visible under LAX_LOG_LEVEL=debug.
+    if (cacheReadTokens !== undefined || cacheCreateTokens !== undefined) {
+      const read = cacheReadTokens ?? 0;
+      const total = read + (cacheCreateTokens ?? 0) + inputTokens;
+      const ratio = total > 0 ? read / total : 0;
+      logger.debug(`[cache] model=${resolvedModel} read=${read} created=${cacheCreateTokens ?? 0} uncached=${inputTokens} hit-ratio=${(ratio * 100).toFixed(1)}%`);
+    }
     yield { type: "done", usage: { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens }, stopReason, classification };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };

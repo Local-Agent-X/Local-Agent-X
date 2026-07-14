@@ -136,16 +136,58 @@ describe("streamViaAPI — direct-HTTP OAuth path", () => {
     expect(call?.name).toBe("mcp_linear_get_issue");
   });
 
-  it("keeps x-api-key auth and a string system prompt on the plain API-key path", async () => {
+  it("keeps x-api-key auth on the plain API-key path", async () => {
     const cap = stubFetchCapturing(sse([
       { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } },
       { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
     ]));
     await collect({ token: "sk-ant-api03-real", systemPrompt: "PLAIN" });
-    const { headers, body } = cap.calls[0];
+    const { headers } = cap.calls[0];
     expect(headers["x-api-key"]).toBe("sk-ant-api03-real");
     expect(headers.authorization).toBeUndefined();
-    expect(body.system).toBe("PLAIN");
+  });
+});
+
+describe("streamViaAPI — prompt-cache breakpoints", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+
+  it("sends system as the array form with an ephemeral breakpoint (API-key path)", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "PLAIN" });
+    expect(cap.calls[0].body.system).toEqual([
+      { type: "text", text: "PLAIN", cache_control: { type: "ephemeral" } },
+    ]);
+  });
+
+  it("marks the LAST system block on the OAuth path so the identity prefix caches too", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "direct-oauth:sk-ant-oat-fake", model: "claude-fable-5", systemPrompt: "BE HELPFUL" });
+    const sys = cap.calls[0].body.system as Array<{ text: string; cache_control?: { type: string } }>;
+    expect(sys).toHaveLength(2);
+    // Prefix caching covers everything ABOVE the marker — only the last block
+    // needs it. A marker on the identity block would waste a breakpoint.
+    expect(sys[0].cache_control).toBeUndefined();
+    expect(sys[1].text).toBe("BE HELPFUL");
+    expect(sys[1].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("keeps the tools breakpoint on the last tool alongside the system breakpoint", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      tools: [
+        { name: "alpha", description: "a", parameters: { type: "object" } },
+        { name: "beta", description: "b", parameters: { type: "object" } },
+      ],
+    });
+    const body = cap.calls[0].body;
+    const sentTools = body.tools as Array<{ name: string; cache_control?: { type: string } }>;
+    expect(sentTools[0].cache_control).toBeUndefined();
+    expect(sentTools[1].cache_control).toEqual({ type: "ephemeral" });
+    const sys = body.system as Array<{ cache_control?: { type: string } }>;
+    expect(sys[sys.length - 1].cache_control).toEqual({ type: "ephemeral" });
   });
 });
 

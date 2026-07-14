@@ -17,12 +17,12 @@
 // we're trying to prevent.
 
 import { ChildProcess, execSync, spawn } from "child_process";
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, cpSync, rmSync } from "fs";
+import { existsSync, readFileSync, readdirSync, statSync, cpSync, rmSync } from "fs";
 import { join, relative } from "path";
 import { homedir } from "os";
 import { Script } from "vm";
 import { serverDistIsFresh, desktopDistIsFresh } from "./dist-freshness";
-import { EMPTY_SHA256, STATE_PATH, sha256File, sha256SrcTree } from "./reconcile-hash";
+import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState } from "./reconcile-hash";
 
 // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
 // PATH that excludes Homebrew, nvm, and asdf. Without this augment, our
@@ -39,21 +39,6 @@ function buildAugmentedPath(): string {
   ];
   const existing = (process.env.PATH || "").split(":");
   return [...augments, ...existing].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
-}
-
-interface ReconcileState {
-  version: 1;
-  rootLock: string;
-  desktopLock: string;
-  desktopSrc: string;
-  /** Hash of the server's src/ tree. Optional because pre-existing state
-   *  files don't have it — absence reads as "changed", which forces one
-   *  root build on first launch after this field shipped. That's the heal
-   *  for installs whose dist froze while updates only touched src/ (the
-   *  2026-06-09 failure: dist stuck at Jun 7 while the user pulled updates
-   *  all day, every boot falling back to slow tsx). */
-  rootSrc?: string;
-  lastReconciledAt: string;
 }
 
 export interface ReconcileResult {
@@ -75,19 +60,6 @@ export interface ReconcileOpts {
   /** Called with short status strings ("Updating components…",
    *  "Building app…") so the caller can update the splash. */
   onStatus?: (text: string) => void;
-}
-
-function loadState(): ReconcileState | null {
-  if (!existsSync(STATE_PATH)) return null;
-  try {
-    const parsed = JSON.parse(readFileSync(STATE_PATH, "utf-8"));
-    if (parsed && parsed.version === 1) return parsed as ReconcileState;
-  } catch {}
-  return null;
-}
-
-function saveState(state: ReconcileState): void {
-  writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
 // In-flight reconcile children. Quitting mid-"Building server updates…"
@@ -219,10 +191,16 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   const warnings: string[] = [];
   let rootBuildSucceeded = false;
 
+  const stored = loadState();
   const currentRootLock = sha256File(join(projectRoot, "package-lock.json"));
   const currentDesktopLock = sha256File(join(projectRoot, "desktop", "package-lock.json"));
-  const currentDesktopSrc = await sha256SrcTree(join(projectRoot, "desktop", "src"), projectRoot);
-  const currentRootSrc = await sha256SrcTree(join(projectRoot, "src"), projectRoot);
+  // Stat-manifest fast path: when the stored manifest matches the tree, the
+  // stored hash is reused with ZERO content reads (Defender scans every read
+  // on Windows — this was the dominant deterministic launch cost).
+  const { hash: currentDesktopSrc, manifest: desktopManifest } = await srcTreeHashCached(
+    join(projectRoot, "desktop", "src"), projectRoot, stored?.desktopSrcManifest, stored?.desktopSrc);
+  const { hash: currentRootSrc, manifest: rootManifest } = await srcTreeHashCached(
+    join(projectRoot, "src"), projectRoot, stored?.rootSrcManifest, stored?.rootSrc);
 
   // Misconfigured projectRoot guard. If we found zero .ts files under
   // desktop/src AND the root package-lock.json is missing, the path
@@ -235,8 +213,6 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       `This is almost certainly the wrong projectRoot. Check ~/.lax/config.json.`,
     );
   }
-
-  const stored = loadState();
 
   // node_modules can be gone/incomplete without the lockfile changing — a fresh
   // checkout, an interrupted install, or (the macOS bug this guards) an update
@@ -260,11 +236,13 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
     }
     saveState({
-      version: 1,
+      version: 2,
       rootLock: currentRootLock,
       desktopLock: currentDesktopLock,
       desktopSrc: currentDesktopSrc,
+      desktopSrcManifest: desktopManifest,
       rootSrc: currentRootSrc,
+      rootSrcManifest: rootManifest,
       lastReconciledAt: new Date().toISOString(),
     });
     const healed = rootDepsMissing || desktopDepsMissing;
@@ -387,11 +365,15 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // build is the only case we keep the stale marker, so the next boot retries.
   const rootSrcReconciled = rootBuildSucceeded || !rootSrcChanged || serverDistFresh;
   saveState({
-    version: 1,
+    version: 2,
     rootLock: currentRootLock,
     desktopLock: currentDesktopLock,
     desktopSrc: currentDesktopSrc,
+    desktopSrcManifest: desktopManifest,
+    // Hash and manifest travel together: keeping the stale pair after a
+    // failed build makes the next boot re-detect the change and retry.
     rootSrc: rootSrcReconciled ? currentRootSrc : stored.rootSrc,
+    rootSrcManifest: rootSrcReconciled ? rootManifest : stored.rootSrcManifest,
     lastReconciledAt: new Date().toISOString(),
   });
 

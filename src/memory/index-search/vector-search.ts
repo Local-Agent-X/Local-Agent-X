@@ -1,7 +1,19 @@
+import { Worker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
 import type { Chunk } from "../types.js";
-import { cosineSimilarity } from "../utils.js";
+import { createLogger } from "../../logger.js";
+import { scanChunks, type VectorScanRequest } from "./vector-search-worker.js";
 
+const logger = createLogger("memory.vector-search");
+
+/**
+ * Synchronous full-corpus cosine scan. The implementation lives in
+ * vector-search-worker.ts (see its header for why) — this is the same code
+ * the worker executes, so on-thread and off-thread results are identical by
+ * construction. Prefer searchVectorOffThread on any hot path: this scan
+ * blocks the calling event loop for seconds on large corpora.
+ */
 export function searchVector(
   db: InstanceType<typeof Database>,
   queryVec: number[],
@@ -9,83 +21,77 @@ export function searchVector(
   sources?: string[],
   sessionFilter?: string | null
 ): Array<Chunk & { score: number }> {
-  const BATCH_SIZE = 1000;
-  const sourceFilter = sources ? `AND source IN (${sources.map(() => "?").join(",")})` : "";
-  // Same source-authoritative gate as searchKeyword.
-  const sessionWhere = sessionFilter !== undefined
-    ? `AND (source IN ('entity', 'mind', 'personality', 'import')${sessionFilter ? " OR session_id = ?" : ""})`
-    : "";
-  const baseParams: unknown[] = sources ? [...sources] : [];
-  const params = sessionFilter ? [...baseParams, sessionFilter] : baseParams;
+  return scanChunks(db, queryVec, limit, sources, sessionFilter);
+}
 
-  const totalCount = (
-    db
-      .prepare(
-        `SELECT COUNT(*) as n FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere}`
-      )
-      .get(...params) as { n: number }
-  ).n;
+type WorkerResponse =
+  | { ok: true; results: Array<Chunk & { score: number }> }
+  | { ok: false; message: string };
 
-  const results: Array<Chunk & { score: number }> = [];
-  let minResultScore = -Infinity;
+// Under tsx/vitest this module's URL ends in .ts and the worker source must
+// be loaded through tsx; the compiled dist tree spawns the plain .js file.
+const IS_TS_RUNTIME = import.meta.url.endsWith(".ts");
 
-  for (let offset = 0; offset < totalCount; offset += BATCH_SIZE) {
-    const batch = db
-      .prepare(
-        `SELECT id, path, source, start_line, end_line, text, embedding, metadata, session_id, updated_at
-         FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere}
-         LIMIT ? OFFSET ?`
-      )
-      .all(...params, BATCH_SIZE, offset) as Array<{
-      id: number;
-      path: string;
-      source: string;
-      start_line: number;
-      end_line: number;
-      text: string;
-      embedding: string;
-      metadata: string | null;
-      session_id: string | null;
-      updated_at: number;
-    }>;
+function workerSpawnSpec(): { path: string; execArgv: string[] | undefined } {
+  const workerUrl = new URL(
+    IS_TS_RUNTIME ? "./vector-search-worker.ts" : "./vector-search-worker.js",
+    import.meta.url
+  );
+  return {
+    path: fileURLToPath(workerUrl),
+    execArgv: IS_TS_RUNTIME ? ["--import", "tsx"] : undefined,
+  };
+}
 
-    for (const row of batch) {
-      let embedding: number[];
-      try {
-        embedding = JSON.parse(row.embedding);
-      } catch {
-        continue;
-      }
-
-      const similarity = cosineSimilarity(queryVec, embedding);
-      if (!Number.isFinite(similarity)) continue;
-
-      if (results.length < limit * 2 || similarity > minResultScore) {
-        results.push({
-          id: row.id,
-          path: row.path,
-          source: row.source,
-          startLine: row.start_line,
-          endLine: row.end_line,
-          text: row.text,
-          hash: "",
-          metadata: {
-            ...(row.metadata ? JSON.parse(row.metadata) as Record<string, unknown> : {}),
-            session_id: row.session_id ?? undefined,
-          },
-          updatedAt: row.updated_at,
-          score: similarity,
-        });
-
-        if (results.length > limit * 4) {
-          results.sort((a, b) => b.score - a.score);
-          results.length = limit * 2;
-          minResultScore = results[results.length - 1].score;
-        }
-      }
-    }
+/**
+ * Runs the vector scan in a worker_thread against its own short-lived
+ * readonly connection (open → scan → close), keeping the main event loop
+ * free. The synchronous scan measured 13-21s on a 45k-chunk corpus and froze
+ * the whole server when it ran on-loop.
+ */
+export async function searchVectorOffThread(
+  db: InstanceType<typeof Database>,
+  queryVec: number[],
+  limit: number,
+  sources?: string[],
+  sessionFilter?: string | null
+): Promise<Array<Chunk & { score: number }>> {
+  // In-memory databases are invisible to a second connection — scan in
+  // process (tests and ephemeral indexes only; the freeze was file-backed).
+  if (db.memory || !db.name) {
+    return searchVector(db, queryVec, limit, sources, sessionFilter);
   }
 
-  results.sort((a, b) => b.score - a.score);
-  return results.slice(0, limit);
+  try {
+    return await runScanWorker({ dbPath: db.name, queryVec, limit, sources, sessionFilter });
+  } catch (e) {
+    // Same results either way — the fallback only re-pays the loop cost, so
+    // surface it loudly rather than shipping a memory-less turn.
+    logger.warn(
+      "[memory] vector-search worker failed, falling back to in-process scan:",
+      (e as Error).message
+    );
+    return searchVector(db, queryVec, limit, sources, sessionFilter);
+  }
+}
+
+function runScanWorker(request: VectorScanRequest): Promise<Array<Chunk & { score: number }>> {
+  const { path, execArgv } = workerSpawnSpec();
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path, { workerData: request, execArgv });
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+      void worker.terminate();
+    };
+    worker.once("message", (msg: WorkerResponse) => {
+      finish(() => (msg.ok ? resolve(msg.results) : reject(new Error(msg.message))));
+    });
+    worker.once("error", (err) => finish(() => reject(err)));
+    worker.once("exit", (code) => {
+      finish(() => reject(new Error(`vector-search worker exited (code ${code}) without a result`)));
+    });
+  });
 }

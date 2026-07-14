@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1230 non-test source files · 0 god files (>400 LOC).
+**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1232 non-test source files · 1 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tools/` | 57 | 144 | XL |  |
 | `src/canonical-loop/` | 43 | 141 | XL |  |
 | `src/providers/` | 42 | 16 | L |  |
-| `src/memory/` | 39 | 113 | XL |  |
+| `src/memory/` | 40 | 114 | XL | 1 |
 | `src/classifiers/` | 33 | 16 | L |  |
 | `src/workspace/` | 26 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
@@ -174,4 +174,14 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-pipeline.ts` | M |
 | `src/update-service.ts` | S |
 | `src/worker-session.ts` | S |
+
+## God files (> 400 LOC)
+
+Burn-down targets for `/refactor-godfiles`. Membership only (not exact LOC),
+so a god file growing a little doesn't churn this doc — only crossing the
+400-line line does.
+
+| File | Size |
+|---|:--:|
+| `src/memory/index-core.ts` | M |
 

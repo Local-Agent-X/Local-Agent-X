@@ -598,3 +598,63 @@ describe("ApprovalManager — denyPendingForSession (user answered in words, not
     expect(getApprovalManager().denyPendingForSession(sid("deny-none"))).toBe(0);
   });
 });
+
+describe("canonical bridge load failure (durable shadow is best-effort)", () => {
+  it("a failed barrel import never blocks the card, warns, and is retried on the next ask", async () => {
+    const { _setCanonicalBarrelImportForTest } = await import("./approval-durable-record.js");
+    const { getApprovalManager } = await import("./approval-manager.js");
+    const { vi } = await import("vitest");
+    const mgr = getApprovalManager();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 1st ask: the import rejects. The card must still register and
+      // resolve normally — no throw, no permanent brick.
+      _setCanonicalBarrelImportForTest(() => Promise.reject(new Error("barrel exploded")));
+      const { emit: e1, cap: c1 } = captureEmit();
+      const p1 = mgr.requestApprovalDetailed({
+        toolName: "bash",
+        toolCallId: "t1",
+        sessionId: sid("bridge-fail"),
+        context: "",
+        args: { command: "echo one" },
+        alwaysAsk: true,
+        opId: "op-bridge-fail",
+        emit: e1,
+      });
+      await vi.waitFor(() => expect(c1.lastApprovalId).toBeTruthy());
+      expect(mgr.resolveApproval(c1.lastApprovalId!, true)).toBe(true);
+      await expect(p1).resolves.toMatchObject({ approved: true });
+      expect(
+        errSpy.mock.calls.some((call) => String(call[0]).includes("canonical bridge import failed")),
+      ).toBe(true);
+
+      // 2nd ask: the failed load was NOT cached — the import runs again and
+      // this time the durable record lands via the injected bridge.
+      const requested: Array<{ opId: string; approvalId: string }> = [];
+      const resolved: Array<{ opId: string; approvalId: string; approved: boolean }> = [];
+      _setCanonicalBarrelImportForTest(() => Promise.resolve({
+        recordApprovalRequested: (opId, rec) => { requested.push({ opId, approvalId: rec.approvalId }); },
+        recordApprovalResolved: (opId, res) => { resolved.push({ opId, approvalId: res.approvalId, approved: res.approved }); },
+      }));
+      const { emit: e2, cap: c2 } = captureEmit();
+      const p2 = mgr.requestApprovalDetailed({
+        toolName: "bash",
+        toolCallId: "t2",
+        sessionId: sid("bridge-retry"),
+        context: "",
+        args: { command: "echo two" },
+        alwaysAsk: true,
+        opId: "op-bridge-retry",
+        emit: e2,
+      });
+      await vi.waitFor(() => expect(c2.lastApprovalId).toBeTruthy());
+      expect(requested).toEqual([{ opId: "op-bridge-retry", approvalId: c2.lastApprovalId! }]);
+      expect(mgr.resolveApproval(c2.lastApprovalId!, true)).toBe(true);
+      await expect(p2).resolves.toMatchObject({ approved: true });
+      expect(resolved).toEqual([{ opId: "op-bridge-retry", approvalId: c2.lastApprovalId!, approved: true }]);
+    } finally {
+      errSpy.mockRestore();
+      _setCanonicalBarrelImportForTest(null);
+    }
+  });
+});

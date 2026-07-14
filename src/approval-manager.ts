@@ -27,6 +27,7 @@
 
 import type { ActionPreview, ServerEvent } from "./types.js";
 import { cacheKey, exactKey, DECLINE_SUPPRESS_MS } from "./approval-decision.js";
+import { ensureDurableBridge, recordDurableRequest, recordDurableResolve } from "./approval-durable-record.js";
 
 export {
   getToolDecision,
@@ -47,50 +48,6 @@ export {
 } from "./approval-preview.js";
 
 const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
-
-// ── Durable canonical-loop bridge (op-scoped requests only) ───────────────
-// Op-scoped asks get a durable shadow: a pendingApproval signal column on the
-// op plus approval_requested / approval_resolved canonical events, written by
-// canonical-loop/control-api-approvals.ts. Loaded lazily through the front
-// door (canonical-loop imports tool-execution which imports this file, so a
-// static import of the barrel would mint a cycle — same dynamic-import
-// pattern as bridge-control.ts / chat-ws/agent-controls.ts). The bridge is
-// awaited BEFORE a card with an opId is registered, so every settle site can
-// use the sync `canonicalBridge` reference.
-interface CanonicalApprovalBridge {
-  recordApprovalRequested: (
-    opId: string,
-    record: {
-      approvalId: string;
-      toolName: string;
-      toolCallId?: string;
-      argsPreview: string;
-      context?: string;
-      requestedAt: number;
-    },
-  ) => void;
-  recordApprovalResolved: (
-    opId: string,
-    res: { approvalId: string; toolName: string; approved: boolean; reason?: ApprovalDenyReason },
-  ) => void;
-}
-
-let canonicalBridge: CanonicalApprovalBridge | null = null;
-let canonicalBridgeLoading: Promise<CanonicalApprovalBridge> | null = null;
-
-async function loadCanonicalBridge(): Promise<CanonicalApprovalBridge> {
-  if (canonicalBridge) return canonicalBridge;
-  if (!canonicalBridgeLoading) {
-    canonicalBridgeLoading = import("./canonical-loop/index.js").then((mod) => {
-      canonicalBridge = {
-        recordApprovalRequested: mod.recordApprovalRequested,
-        recordApprovalResolved: mod.recordApprovalResolved,
-      };
-      return canonicalBridge;
-    });
-  }
-  return canonicalBridgeLoading;
-}
 
 /**
  * WHY a denial carries a reason: `requestApproval` resolves false on three
@@ -156,17 +113,15 @@ class ApprovalManager {
 
   /**
    * Durable settle bookkeeping for op-scoped cards: clears the op's
-   * pendingApproval column and appends the approval_resolved canonical event.
-   * No-op for non-op cards. `canonicalBridge` is guaranteed non-null for any
-   * op-scoped card (requestApprovalDetailed awaits the bridge before
-   * registering one); the guard is belt-and-braces. Best-effort: durable
-   * bookkeeping must never block settling the card's promise.
+   * pendingApproval column and appends the approval_resolved canonical event
+   * (approval-durable-record.ts — best-effort, warns instead of throwing, so
+   * durable bookkeeping never blocks settling the card's promise). No-op for
+   * non-op cards. The bridge was awaited before an op-scoped card could be
+   * registered, so the sync call is safe here.
    */
   private recordDurableResolve(p: PendingApproval, id: string, approved: boolean, reason?: ApprovalDenyReason): void {
-    if (!p.opId || !canonicalBridge) return;
-    try {
-      canonicalBridge.recordApprovalResolved(p.opId, { approvalId: id, toolName: p.toolName, approved, reason });
-    } catch { /* never block the resolution */ }
+    if (!p.opId) return;
+    recordDurableResolve(p.opId, id, p.toolName, approved, reason);
   }
 
   private gcSuppressed(now: number): void {
@@ -238,11 +193,11 @@ class ApprovalManager {
 
     const id = `apr-${this.nextId++}-${Date.now()}`;
     const argsPreview = JSON.stringify(opts.args).slice(0, 500);
-    // Load the canonical bridge BEFORE registering the card: every settle
-    // path (approve/deny/timeout/superseded/teardown) is synchronous, and
-    // this await guarantees `canonicalBridge` is set whenever an op-scoped
-    // card exists in `pending`.
-    const bridge = opts.opId ? await loadCanonicalBridge() : null;
+    // Load the durable bridge BEFORE registering the card: every settle path
+    // (approve/deny/timeout/superseded/teardown) is synchronous, and this
+    // await lets them record durably without one. Best-effort: a failed load
+    // resolves (never rejects) and the ask proceeds without a durable shadow.
+    if (opts.opId) await ensureDurableBridge();
 
     const promise = new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => {
@@ -268,19 +223,17 @@ class ApprovalManager {
       });
 
       // Durable shadow for op-scoped asks: pendingApproval signal column +
-      // approval_requested canonical event. Best-effort — a durable-record
-      // failure must never take down the live card.
-      if (opts.opId && bridge) {
-        try {
-          bridge.recordApprovalRequested(opts.opId, {
-            approvalId: id,
-            toolName: opts.toolName,
-            toolCallId: opts.toolCallId,
-            argsPreview,
-            context: opts.context,
-            requestedAt: Date.now(),
-          });
-        } catch { /* live card still works without the durable record */ }
+      // approval_requested canonical event. Best-effort (warns, never throws)
+      // — a durable-record failure must never take down the live card.
+      if (opts.opId) {
+        recordDurableRequest(opts.opId, {
+          approvalId: id,
+          toolName: opts.toolName,
+          toolCallId: opts.toolCallId,
+          argsPreview,
+          context: opts.context,
+          requestedAt: Date.now(),
+        });
       }
     });
 

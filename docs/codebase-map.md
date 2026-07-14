@@ -91,6 +91,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/anthropic-models.ts` | S |
 | `src/api-docs.ts` | M |
 | `src/approval-decision.ts` | M |
+| `src/approval-durable-record.ts` | S |
 | `src/approval-manager.ts` | M |
 | `src/approval-preview.ts` | S |
 | `src/auto-retry.ts` | S |

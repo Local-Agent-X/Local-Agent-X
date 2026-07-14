@@ -182,6 +182,13 @@ const JUDGMENT_SHAPE_HINT =
  * validates and carries the verdict inside an envelope; `judgment: null`
  * means "mechanical verdict stands". (classifySchema forbids nullable ROOT
  * schemas — a valid null would be indistinguishable from its failure path.)
+ *
+ * Honest delta vs the pre-schema parser: a malformed reply now gets ONE
+ * self-correction retry before the fail-open null, so the null can arrive
+ * one LLM round-trip later than the old immediate fail-open, and the retry
+ * can recover a violation verdict the old parser dropped. That direction is
+ * acceptable here — a recovered violation is MORE enforcement, not a softer
+ * eval (the scenario judge is deliberately one-shot for the opposite reason).
  */
 interface JudgmentEnvelope {
   judgment: JudgmentResult | null;

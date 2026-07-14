@@ -18,7 +18,7 @@
  */
 
 import { z } from "zod";
-import { classifySchema } from "../../classifiers/schema-output.js";
+import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
 import type { ParsedScenario, ScoreStep } from "./types.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
 
@@ -79,9 +79,6 @@ export function buildJudgePrompt(input: JudgeInput): string {
   );
 }
 
-const JUDGE_SHAPE_HINT =
-  `{"score": 7, "met_criteria": ["..."], "failed_criteria": ["..."], "reasoning": "..."}`;
-
 /** camelCase first, snake_case drift second — same precedence as the legacy hand parser. */
 function criteriaList(camel: unknown, snake: unknown): string[] {
   if (Array.isArray(camel)) return camel.map(String);
@@ -137,15 +134,18 @@ export async function judgeScenario(input: JudgeInput, signal?: AbortSignal): Pr
     return result;
   }
 
-  // classifySchema never throws — but the judge's contract is the opposite:
-  // an unscoreable scenario must THROW, never silently become a score.
-  // (Eval integrity: a swallowed parse failure would read as a judged run.)
-  const result = await classifySchema<JudgeResult>({
+  // ONE shot, validated locally by the zod-backed parseJudgeResponse —
+  // deliberately NOT classifySchema. Its self-correction retry would tell
+  // the judge "score must be 0-10", inviting a clamped re-reply that could
+  // PASS a scenario the legacy parser always failed — a one-directional
+  // softening of the eval gate. Eval integrity: the FIRST invalid reply
+  // (wrong shape, out-of-range, unparseable) must THROW, never silently
+  // become a score.
+  const result = await classifyWithLLM<JudgeResult>({
     category: "scenario-judge",
     systemPrompt: JUDGE_SYSTEM_PROMPT,
     userPrompt: prompt,
-    schema: judgeResponseSchema,
-    shapeHint: JUDGE_SHAPE_HINT,
+    parse: parseJudgeResponse,
     timeoutMs: JUDGE_TIMEOUT_MS,
     maxResponseChars: 4000,
     signal,

@@ -1,15 +1,20 @@
 /**
  * S6 — schema-validated auto-build parsers. Exercises the zod schemas that
  * replaced the hand-rolled JSON.parse shape checks in:
- *   - scenario-scorer/judge.ts        (THROW-on-failure contract preserved)
+ *   - scenario-scorer/judge.ts        (ONE-SHOT: first invalid reply THROWS —
+ *                                      no self-correction retry; a retried
+ *                                      "clamp to 0-10" reply could pass a
+ *                                      scenario the legacy parser always
+ *                                      failed, softening the eval gate)
  *   - scenario-scorer/step-planner.ts (throw on unparseable, like before)
  *   - chunk-review/judgment-hook.ts   (fail-open null; violation:false is a
  *                                      VALID reply, must not burn the retry)
  *   - advisor/index.ts                (null → deterministic fallback)
  *
- * The production transport (classifySchema → classifyWithLLM) is exercised
- * with classifyWithLLM mocked, so the real classifySchema retry/validation
- * logic runs against each site's schema.
+ * The production transports are exercised with classifyWithLLM mocked: the
+ * judge's one-shot local validation runs its zod-backed `parse` directly;
+ * the other three run the real classifySchema retry/validation logic
+ * against each site's schema.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -49,9 +54,19 @@ const judgeInput: JudgeInput = {
   finalUrl: "http://localhost:5173/welcome",
 };
 
-describe("judge — schema validation", () => {
+/**
+ * The judge calls classifyWithLLM with its zod-backed parse. The mock
+ * mirrors the real transport's contract: run the site's `parse` over the
+ * canned raw reply, yield null when parse rejects (or when raw is null =
+ * provider unavailable). One mock call = one LLM shot.
+ */
+function primeJudgeReply(raw: string | null): void {
+  mockLlm.mockImplementation(async (opts) => (raw === null ? null : opts.parse(raw)));
+}
+
+describe("judge — one-shot schema validation", () => {
   it("valid snake_case reply parses through the production path", async () => {
-    mockLlm.mockResolvedValueOnce(JSON.stringify({
+    primeJudgeReply(JSON.stringify({
       score: 8, met_criteria: ["Account created"], failed_criteria: [], reasoning: "Clean run.",
     }));
     const r = await judgeScenario(judgeInput);
@@ -72,14 +87,20 @@ describe("judge — schema validation", () => {
     expect(r!.score).toBe(7);
   });
 
-  it("out-of-range score THROWS after the single self-correction retry", async () => {
-    mockLlm.mockResolvedValue('{"score": 11, "met_criteria": [], "failed_criteria": [], "reasoning": "x"}');
+  it("out-of-range score THROWS on the FIRST reply — no self-correction retry (eval-gate pin)", async () => {
+    primeJudgeReply('{"score": 11, "met_criteria": [], "failed_criteria": [], "reasoning": "x"}');
     await expect(judgeScenario(judgeInput)).rejects.toThrow("judge returned unparseable response");
-    expect(mockLlm).toHaveBeenCalledTimes(2);
+    expect(mockLlm).toHaveBeenCalledTimes(1);
   });
 
-  it("provider-unavailable (null) THROWS without a retry — never a silent score", async () => {
-    mockLlm.mockResolvedValue(null);
+  it("wrong-shape / unparseable reply THROWS on the FIRST reply — one shot only", async () => {
+    primeJudgeReply("not json at all");
+    await expect(judgeScenario(judgeInput)).rejects.toThrow("judge returned unparseable response");
+    expect(mockLlm).toHaveBeenCalledTimes(1);
+  });
+
+  it("provider-unavailable (null) THROWS — never a silent score", async () => {
+    primeJudgeReply(null);
     await expect(judgeScenario(judgeInput)).rejects.toThrow("judge returned unparseable response");
     expect(mockLlm).toHaveBeenCalledTimes(1);
   });

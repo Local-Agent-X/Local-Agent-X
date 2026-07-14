@@ -46,6 +46,7 @@ function toggleModelMenu(ev) {
   document.getElementById('model-chip')?.classList.add('open');
   _mmRender();
   menu.style.display = 'block';
+  _mmPositionMenu();
   // Cold boot: the provider cache may still be warming — refresh and
   // re-render in place so the menu fills in without being reopened.
   if (!_providersCache?.providers?.length) {
@@ -65,71 +66,110 @@ function toggleVoicePop(ev) {
   pop.style.display = 'block';
 }
 
-// Render the two columns for `pid` (defaults to the active provider). The
-// effort flyout is a third, absolutely-positioned element created on model
-// hover — not a column — so it can align with the hovered row.
-function _mmRender(pid) {
+// The menu is a single providers column. Hovering a provider pops a models
+// flyout to its right; hovering a model pops a thinking-effort flyout further
+// right. Flyouts are absolutely positioned siblings (not columns), so the
+// providers column never re-renders on hover — nothing shifts under the
+// cursor, so nothing bounces.
+function _mmRender() {
   const menu = _mmEl();
   if (!menu) return;
   const data = _providersCache || {};
   const providers = data.providers || [];
-  const current = data.current || {};
   if (!providers.length) {
     menu.innerHTML = `<div class="mm-col"><div class="mm-head">Loading providers…</div></div>`;
     return;
   }
-  const activeP = providers.find(p => p.active) || providers[0];
-  const shownPid = pid || activeP.id;
-  const shown = providers.find(p => p.id === shownPid) || activeP;
-
   const provRows = providers.map(p =>
-    `<button class="mm-row${p.id === shownPid ? ' hl' : ''}${p.active ? ' active' : ''}" data-pid="${esc(p.id)}" role="menuitem">
+    `<button class="mm-row${p.active ? ' active' : ''}" data-pid="${esc(p.id)}" role="menuitem" aria-haspopup="menu">
        ${esc(p.name)}<span class="mm-arrow">&#9654;</span></button>`).join('');
 
-  const models = Array.isArray(shown.models) ? shown.models : [];
-  const modelRows = models.length ? models.map(m => {
-    const tier = classifyModelTier(m);
-    const isCurrent = shown.active && m === current.model;
-    const tag = isCurrent ? `<span class="mm-tag mm-check">&#10003;</span>`
-      : tier !== 'strong' ? `<span class="mm-tag">${tier}</span>` : `<span class="mm-tag"></span>`;
-    return `<button class="mm-row${isCurrent ? ' active' : ''}" data-model="${esc(m)}" role="menuitem">${esc(m)}${tag}</button>`;
-  }).join('') : `<div class="mm-head">No models</div>`;
-
-  menu.innerHTML = `
-    <div class="mm-cols">
-      <div class="mm-col"><div class="mm-head">Provider</div>${provRows}</div>
-      <div class="mm-col mm-model-col"><div class="mm-head">Model &#183; hover for thinking</div>${modelRows}</div>
-    </div>`;
+  menu.innerHTML = `<div class="mm-col mm-prov-col"><div class="mm-head">Provider</div>${provRows}</div>`;
+  menu._openPid = null;
 
   for (const row of menu.querySelectorAll('.mm-row[data-pid]')) {
-    const go = () => { if (row.dataset.pid !== shownPid) _mmRender(row.dataset.pid); };
-    row.addEventListener('mouseenter', go);
-    row.addEventListener('click', go);
+    const provider = providers.find(p => p.id === row.dataset.pid);
+    const open = () => _mmShowModels(row, provider);
+    row.addEventListener('mouseenter', open);
+    row.addEventListener('click', open);
   }
-  const modelCol = menu.querySelector('.mm-model-col');
-  for (const row of menu.querySelectorAll('.mm-row[data-model]')) {
-    row.addEventListener('mouseenter', () => _mmShowEffort(row, shown.id, row.dataset.model));
+}
+
+// Remove the models flyout (and any effort flyout hanging off it).
+function _mmHideModels() {
+  const menu = _mmEl();
+  if (!menu) return;
+  menu.querySelectorAll('.mm-model-fly, .mm-effort').forEach(el => el.remove());
+  menu._openPid = null;
+}
+
+function _mmShowModels(provRow, provider) {
+  const menu = _mmEl();
+  if (!menu || !provider) return;
+  if (menu._openPid === provider.id) return;   // already showing this one
+  _mmHideModels();
+  menu._openPid = provider.id;
+
+  // Highlight the provider whose models are open.
+  menu.querySelectorAll('.mm-row[data-pid]').forEach(r =>
+    r.classList.toggle('hl', r.dataset.pid === provider.id));
+
+  const current = (_providersCache || {}).current || {};
+  const models = Array.isArray(provider.models) ? provider.models : [];
+  const modelRows = models.length ? models.map(m => {
+    const tier = classifyModelTier(m);
+    const isCurrent = provider.active && m === current.model;
+    const tag = isCurrent ? `<span class="mm-tag mm-check">&#10003;</span>`
+      : tier !== 'strong' ? `<span class="mm-tag">${tier}</span>` : `<span class="mm-tag"></span>`;
+    return `<button class="mm-row${isCurrent ? ' active' : ''}" data-model="${esc(m)}" role="menuitem" aria-haspopup="menu">${esc(m)}${tag}</button>`;
+  }).join('') : `<div class="mm-head">No models</div>`;
+
+  const fly = document.createElement('div');
+  fly.className = 'mm-fly mm-model-fly';
+  fly.setAttribute('role', 'menu');
+  fly.innerHTML = `<div class="mm-head">Model &#183; hover for thinking</div>${modelRows}`;
+  for (const row of fly.querySelectorAll('.mm-row[data-model]')) {
+    row.addEventListener('mouseenter', () => _mmShowEffort(row, fly, provider.id, row.dataset.model));
     row.addEventListener('click', () => {
       closeModelMenu();
-      laxSwitchModel(shown.id, row.dataset.model);
+      laxSwitchModel(provider.id, row.dataset.model);
     });
   }
-  // The flyout is anchored to a row's offsetTop; scrolling the model list
-  // would leave it floating over the wrong row — just hide it.
-  modelCol?.addEventListener('scroll', _mmHideEffort);
+  // Scrolling the model list would leave the effort flyout over the wrong
+  // row — just hide it while scrolling.
+  fly.addEventListener('scroll', _mmHideEffort);
+  menu.appendChild(fly);
+  _mmPositionFly(fly, provRow, menu.getBoundingClientRect().width - 4);
 }
 
 function _mmHideEffort() {
   _mmEl()?.querySelector('.mm-effort')?.remove();
 }
 
-function _mmShowEffort(row, pid, model) {
+// Align the menu's left edge with the model chip so it opens directly above
+// the chip (the CSS default is left:0, which pins it to the composer's far
+// left). Flyouts extend rightward from here into open space.
+function _mmPositionMenu() {
+  const menu = _mmEl();
+  const chip = document.getElementById('model-chip');
+  if (!menu || !chip) return;
+  const parent = menu.offsetParent || menu.parentElement;
+  if (!parent) return;
+  const pRect = parent.getBoundingClientRect();
+  const cRect = chip.getBoundingClientRect();
+  menu.style.left = `${Math.max(0, cRect.left - pRect.left)}px`;
+  // Sit the menu's bottom just above the chip (the CSS default anchors it to
+  // the top of a tall container, floating it too high).
+  menu.style.bottom = `${pRect.bottom - cRect.top + 8}px`;
+}
+
+function _mmShowEffort(row, modelFly, pid, model) {
   const menu = _mmEl();
   if (!menu) return;
   _mmHideEffort();
   const saved = laxGetSavedEffort();
   const fly = document.createElement('div');
-  fly.className = 'mm-effort';
+  fly.className = 'mm-fly mm-effort';
   fly.setAttribute('role', 'menu');
   fly.innerHTML = `<div class="mm-head">Thinking</div>` + LAX_EFFORT_LEVELS.map(([v, label]) =>
     `<button class="mm-row${v === saved ? ' active' : ''}" data-effort="${v}" role="menuitem">${label}</button>`).join('');
@@ -141,12 +181,22 @@ function _mmShowEffort(row, pid, model) {
     });
   }
   menu.appendChild(fly);
-  // Align the flyout's top with the hovered row, overlapping the menu edge
-  // by a few px so the pointer never crosses a dead gap that would feel
-  // like the flyout "ran away".
+  // Anchor just past the model flyout's right edge, overlapping a few px so
+  // the pointer never crosses a dead gap that would feel like the flyout
+  // "ran away".
+  const menuLeft = menu.getBoundingClientRect().left;
+  const flyRect = modelFly.getBoundingClientRect();
+  _mmPositionFly(fly, row, flyRect.right - menuLeft - 4);
+}
+
+// Place `fly` at horizontal offset `left` (px from the menu's left edge),
+// its top aligned with `anchorRow`, clamped inside the menu's height.
+function _mmPositionFly(fly, anchorRow, left) {
+  const menu = _mmEl();
+  if (!menu) return;
   const menuRect = menu.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  fly.style.left = `${menuRect.width - 4}px`;
+  const rowRect = anchorRow.getBoundingClientRect();
+  fly.style.left = `${left}px`;
   const top = rowRect.top - menuRect.top;
   fly.style.top = `${Math.max(0, Math.min(top, menuRect.height - fly.offsetHeight))}px`;
 }

@@ -526,11 +526,11 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 #voice-pop .vp-label{color:var(--muted);font-size:.62rem;letter-spacing:.5px;flex-shrink:0;width:44px}
 #voice-pop select{flex:1;min-width:0}
 #voice-pop input[type=range]{flex:1}
-/* Cascading model menu: providers column, models column, effort flyout.
-   Columns sit side by side; models/effort appear as the pointer moves in. */
-.mm-cols{display:flex;align-items:stretch}
+/* Cascading model menu: a single providers column; hovering a provider pops
+   a models flyout to its right, hovering a model pops an effort flyout. The
+   flyouts are absolutely positioned, so the providers column never re-renders
+   on hover (nothing shifts under the cursor). */
 .mm-col{display:flex;flex-direction:column;gap:1px;padding:6px;min-width:170px;max-height:360px;overflow-y:auto}
-.mm-col+.mm-col{border-left:1px solid var(--border)}
 .mm-head{color:var(--muted);font-size:.56rem;letter-spacing:1.2px;padding:4px 10px 6px;text-transform:uppercase}
 .mm-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:transparent;border:none;border-radius:7px;color:var(--text);font-family:var(--mono);font-size:.68rem;padding:6px 10px;cursor:pointer;white-space:nowrap}
 .mm-row:hover,.mm-row.hl{background:var(--hover)}
@@ -538,8 +538,10 @@ body.platform-darwin #sidebar-controls{top:3px;left:78px}
 .mm-row .mm-tag{margin-left:auto;color:var(--muted);font-size:.56rem;padding-left:10px}
 .mm-row .mm-arrow{margin-left:auto;color:var(--muted);font-size:.55rem;padding-left:10px}
 .mm-row.active .mm-check{color:var(--accent)}
-/* Effort flyout is absolutely positioned beside the hovered model row. */
-.mm-effort{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:5px;min-width:120px;z-index:610}
+/* Flyouts (models, effort) are absolutely positioned beside their anchor row. */
+.mm-fly{position:absolute;top:0;display:flex;flex-direction:column;gap:1px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:5px;z-index:610}
+.mm-model-fly{min-width:200px;max-height:360px;overflow-y:auto}
+.mm-effort{min-width:120px;z-index:611}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
 /* Inject mode — applied when the active chat has an in-flight turn (see

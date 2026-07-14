@@ -48,10 +48,6 @@ body.platform-win{height:calc(100vh - 32px);margin-top:32px}
 /* right padding reserves room for the OS caption buttons (min/max/close ~138px
    on Windows) so the ⋯ overflow doesn't sit under them and get misclicked. */
 body.platform-win #desktop-titlebar{display:flex;position:fixed;top:0;left:0;right:0;height:32px;padding-right:138px;z-index:99999;align-items:center;background:var(--surface);-webkit-app-region:drag;font-size:12px;user-select:none}
-/* The top-bar agents-panel toggles light up while the panel is open, matching
-   the .dtb-menu.open accent treatment so their state reads at a glance. */
-body.agents-panel-open #desktop-titlebar #dtb-agents-toggle{color:var(--accent);background:var(--hover)}
-body.agents-panel-open #sidebar-agents-btn{color:var(--accent);background:var(--hover)}
 /* Windows already has #dtb-agents-toggle in the titlebar — the window-top
    cluster's copy is for macOS/browser only, so never show both. */
 body.platform-win #sidebar-agents-controls{display:none}
@@ -67,7 +63,7 @@ body.platform-win #sidebar-controls{top:4px;left:128px;z-index:100000}
 #desktop-titlebar .dtb-spacer{flex:1;-webkit-app-region:drag}
 #desktop-titlebar .dtb-menu{position:relative;-webkit-app-region:no-drag}
 #desktop-titlebar .dtb-btn{display:block;padding:4px 8px;color:var(--muted);cursor:pointer}
-#desktop-titlebar .dtb-btn-icon{padding:3px 10px;font-size:17px;line-height:1;border-radius:6px;color:var(--text)}
+#desktop-titlebar .dtb-btn-icon{padding:3px 10px;font-size:17px;line-height:1;border-radius:6px;color:var(--muted)}
 #desktop-titlebar .dtb-menu.open .dtb-btn{color:var(--accent);background:var(--hover)}
 #desktop-titlebar .dtb-btn-icon:hover{color:var(--text);background:var(--hover)}
 #desktop-titlebar .dtb-dd{display:none;position:absolute;top:100%;left:0;min-width:180px;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.5);padding:4px 0}
@@ -107,6 +103,22 @@ body.sidebar-controls-ready #sidebar-controls{visibility:visible}
 body.sidebar-controls-ready #sidebar-agents-controls{visibility:visible}
 #sidebar-agents-controls button{-webkit-app-region:no-drag;background:none;border:none;color:var(--muted);cursor:pointer;font-size:17px;line-height:1;padding:4px 7px;border-radius:6px}
 #sidebar-agents-controls button:hover{color:var(--text);background:var(--hover)}
+/* ── Top-bar panel toggles: one shared 3-state treatment ──
+   Every button in the top bar that opens/closes a panel reads the same way, on
+   both sides and on every platform:
+     rest  → var(--muted)   (quiet chrome)
+     hover → var(--text)    (reachable)
+     open  → var(--accent)  (this panel is showing)
+   The `is-open` class is applied by refreshSideButtons() in
+   app-sidebar-toggle.js, which resolves WHICH panel each button controls
+   through the flip state — so the accent always tracks the panel physically
+   under the button. Must stay after the :hover rules above: the cluster
+   selectors tie on specificity, so source order decides, and an open panel's
+   button should hold accent while hovered rather than drop back to --text.
+   The ⋯ overflow menu gets the same open treatment from .dtb-menu.open. */
+#sidebar-controls button.is-open,
+#sidebar-agents-controls button.is-open,
+#desktop-titlebar #dtb-agents-toggle.is-open{color:var(--accent);background:var(--hover)}
 /* Plain browser: no native chrome strip, so the cluster floats over the
    top-left corner. Clear whatever column sits there — the brand row when the
    sidebar is on the left, page titles when it's hidden or flipped right. */

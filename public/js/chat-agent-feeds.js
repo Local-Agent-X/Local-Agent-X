@@ -58,12 +58,19 @@ function toggleAgentFeeds() {
     var mobile = agentFeedsIsMobile();
     var openW = mobile ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth();
     Spring.animate(panel, 'width', openW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; if (mobile) { panel.style.width = ''; panel.style.minWidth = ''; } else { panel.style.width = openW + 'px'; panel.style.minWidth = openW + 'px'; } } });
-    if (typeof refreshSideButtonTitles === 'function') refreshSideButtonTitles();
+    if (typeof refreshSideButtons === 'function') refreshSideButtons();
   } else {
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
+    // Drop the body class SYNCHRONOUSLY, before the refresh below reads it —
+    // it used to be cleared in the spring's onDone, so refreshSideButtons()
+    // saw the still-open class and left the toggle accented + titled "Hide"
+    // after the panel had been closed. Nothing about this class depends on the
+    // animation: it only drives the top-bar toggle's open styling, which should
+    // release the moment the user clicks, not 300ms later.
+    document.body.classList.remove('agents-panel-open');
     // Collapse from the current width (mobile overlay = 300, else persisted).
-    Spring.animate(panel, 'width', 0, { from: agentFeedsIsMobile() ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth(), preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); document.body.classList.remove('agents-panel-open'); panel.style.transition = ''; panel.style.width = ''; panel.style.minWidth = ''; } });
-    if (typeof refreshSideButtonTitles === 'function') refreshSideButtonTitles();
+    Spring.animate(panel, 'width', 0, { from: agentFeedsIsMobile() ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth(), preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); panel.style.transition = ''; panel.style.width = ''; panel.style.minWidth = ''; } });
+    if (typeof refreshSideButtons === 'function') refreshSideButtons();
   }
 }
 

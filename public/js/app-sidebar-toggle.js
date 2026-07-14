@@ -34,6 +34,10 @@ function toggleNavSidebar() {
     Spring.animate(sidebar, 'width', expandedW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: v => { sidebar.style.minWidth = v + 'px'; }, onDone: () => { sidebar.style.overflow = ''; sidebar.style.transition = ''; } });
   }
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
+  // The nav's own toggle must repaint its button too — without this the left
+  // button never picked up an open state while the agents button did, so the
+  // two sides of the same top bar disagreed.
+  refreshSideButtons();
 }
 
 // Toggle whichever panel sits on `side`. This is what the titlebar buttons
@@ -52,21 +56,25 @@ function toggleSidebarCollapse() { toggleSidePanel('left'); }
 
 // Flip both panels to the opposite side. body.sidebar-right drives the nav via
 // row-reverse (CSS) and the agents rail via #page-chat row-reverse (CSS); this
-// JS only owns the class + persistence. Titles refresh so each button reads
+// JS only owns the class + persistence. Buttons refresh so each one reads
 // against the panel now under it.
 function flipSidebarSide() {
   const right = document.body.classList.toggle('sidebar-right');
   localStorage.setItem('sidebar-side', right ? 'right' : '');
-  refreshSideButtonTitles();
+  refreshSideButtons();
 }
 
-// Keep each titlebar button's tooltip describing the panel currently on its
-// side, and reflect that panel's collapsed state.
-function refreshSideButtonTitles() {
+// Single source of truth for every top-bar panel toggle's presentation: the
+// tooltip AND the `is-open` state class the accent styling hangs off of
+// (app.css). Both derive from the same question — which panel is under this
+// button, and is it showing — so they're answered in one place, through the
+// flip-aware panelOnSide() resolver. Call after ANY change to a panel's
+// collapsed state or to the flip.
+function refreshSideButtons() {
   const leftBtn = document.getElementById('sidebar-hide-btn');
   // Two right-side toggles exist in the DOM (Windows titlebar + the
   // macOS/browser window-top cluster); CSS shows exactly one per platform,
-  // so keep both tooltips in sync.
+  // so keep both in sync.
   const rightBtn = document.getElementById('dtb-agents-toggle');
   const macRightBtn = document.getElementById('sidebar-agents-btn');
   [['left', leftBtn], ['right', rightBtn], ['right', macRightBtn]].forEach(([side, btn]) => {
@@ -75,13 +83,16 @@ function refreshSideButtonTitles() {
     // Both panels read as "sidebar" in tooltips — the left nav and the right
     // agents rail are both sidebars to the user.
     const name = 'sidebar';
+    // Coerce to a real boolean: a missing #sidebar would otherwise yield null
+    // here and mark the button open.
     const isCollapsed = kind === 'nav'
-      ? (el && el.classList.contains('collapsed'))
+      ? !!(el && el.classList.contains('collapsed'))
       : !document.body.classList.contains('agents-panel-open');
     btn.title = (isCollapsed ? 'Show ' : 'Hide ') + name;
+    btn.classList.toggle('is-open', !isCollapsed);
   });
 }
-window.refreshSideButtonTitles = refreshSideButtonTitles;
+window.refreshSideButtons = refreshSideButtons;
 
 // Restore sidebar state on load
 (function() {
@@ -92,13 +103,24 @@ window.refreshSideButtonTitles = refreshSideButtonTitles;
   if (localStorage.getItem('sidebar-side') === 'right') {
     document.body.classList.add('sidebar-right');
   }
-  refreshSideButtonTitles();
   // Reveal the window-top controls only once the platform class (added by the
   // preload's DOMContentLoaded handler, which is registered before this script)
   // is in place — so they appear directly at the macOS/Windows position instead
   // of flashing at the browser-fallback spot first. This script's DCL listener
   // runs after the preload's, guaranteeing the platform class is already set.
-  const reveal = () => document.body.classList.add('sidebar-controls-ready');
+  //
+  // The initial refreshSideButtons() rides the SAME gate, and must: both button
+  // clusters are the last elements in <body> (they have to paint after the
+  // macOS drag strips to stay clickable), while this script is parsed well
+  // above them. Refreshing at parse time found no buttons and silently left
+  // every one of them showing the hardcoded HTML title — which claims "Hide",
+  // i.e. panel-open — so a collapsed sidebar still offered to hide itself, and
+  // the nav toggle never lit up on boot. Waiting for DOMContentLoaded is what
+  // makes the boot state honest.
+  const reveal = () => {
+    refreshSideButtons();
+    document.body.classList.add('sidebar-controls-ready');
+  };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', reveal, { once: true });
   } else {

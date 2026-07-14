@@ -16,7 +16,8 @@
  * scenario to a freewheeling agent (which is what Day 3 explicitly does NOT).
  */
 
-import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../../classifiers/schema-output.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
 
 const STEP_PLANNER_SYSTEM_PROMPT =
@@ -75,26 +76,36 @@ export function buildStepPlannerPrompt(input: ChooseStepActionInput): string {
   );
 }
 
-export function parseStepPlannerResponse(raw: string): StepActionPlan | null {
-  const trimmed = raw.trim();
-  const m = trimmed.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  try {
-    const parsed = JSON.parse(m[0]) as Partial<StepActionPlan>;
-    const action = parsed.action;
-    if (action !== "click" && action !== "fill" && action !== "navigate" && action !== "assert-text" && action !== "skip") {
-      return null;
-    }
+const STEP_PLANNER_SHAPE_HINT =
+  `{"action": "click", "selector": "role=button[name=/Continue/i]", "value": null, "reason": "...", "confidence": 0.9}`;
+
+export const stepActionPlanSchema = z
+  .object({
+    action: z.enum(["click", "fill", "navigate", "assert-text", "skip"]),
+  })
+  .passthrough()
+  .transform((parsed): StepActionPlan => {
+    const rec = parsed as Record<string, unknown>;
     return {
-      action,
-      selector: typeof parsed.selector === "string" ? parsed.selector : null,
-      value: typeof parsed.value === "string" ? parsed.value : null,
-      reason: typeof parsed.reason === "string" ? parsed.reason : "",
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : undefined,
+      action: parsed.action,
+      selector: typeof rec.selector === "string" ? rec.selector : null,
+      value: typeof rec.value === "string" ? rec.value : null,
+      reason: typeof rec.reason === "string" ? rec.reason : "",
+      confidence: typeof rec.confidence === "number" ? rec.confidence : undefined,
     };
+  });
+
+export function parseStepPlannerResponse(raw: string): StepActionPlan | null {
+  const m = raw.trim().match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(m[0]);
   } catch {
     return null;
   }
+  const result = stepActionPlanSchema.safeParse(obj);
+  return result.success ? result.data : null;
 }
 
 let injectedLlmCall: LlmCall | null = null;
@@ -113,11 +124,12 @@ export async function chooseStepAction(input: ChooseStepActionInput): Promise<St
     return plan;
   }
 
-  const plan = await classifyWithLLM<StepActionPlan>({
+  const plan = await classifySchema<StepActionPlan>({
     category: "scenario-step-planner",
     systemPrompt: STEP_PLANNER_SYSTEM_PROMPT,
     userPrompt: prompt,
-    parse: parseStepPlannerResponse,
+    schema: stepActionPlanSchema,
+    shapeHint: STEP_PLANNER_SHAPE_HINT,
     timeoutMs: STEP_PLANNER_TIMEOUT_MS,
     maxResponseChars: 2000,
   });

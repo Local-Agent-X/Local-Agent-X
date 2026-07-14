@@ -26,7 +26,8 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../../classifiers/schema-output.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ScoreReport } from "../scenario-scorer/types.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
@@ -127,11 +128,12 @@ export async function consultAdvisor(situation: AdvisorSituation, opts: AdvisorO
     return parseAdvisorResponse(raw);
   }
 
-  return classifyWithLLM<AdvisorRecommendation>({
+  return classifySchema<AdvisorRecommendation>({
     category: "auto-build-advisor",
     systemPrompt: ADVISOR_SYSTEM_PROMPT,
     userPrompt: prompt,
-    parse: parseAdvisorResponse,
+    schema: advisorResponseSchema,
+    shapeHint: ADVISOR_SHAPE_HINT,
     timeoutMs: ADVISOR_TIMEOUT_MS,
     maxResponseChars: 4000,
     signal: opts.signal,
@@ -248,40 +250,59 @@ function buildSystemicHaltPrompt(situation: SystemicHaltPatternSituation): strin
   );
 }
 
-const VALID_ACTIONS: AdvisorAction[] = [
+const VALID_ACTIONS = [
   "try-fix-worker", "amend-spec-additively", "retry-as-is", "retry-with-hint", "halt",
-];
+] as const;
+
+const ADVISOR_SHAPE_HINT =
+  `{"action": "try-fix-worker" | "amend-spec-additively" | "retry-as-is" | "retry-with-hint" | "halt", ` +
+  `"reasoning": "...", "fixWorkerHint": "", "specAddition": "", "retryHint": "", "haltReason": ""}`;
+
+export const advisorResponseSchema = z
+  .object({
+    action: z.enum(VALID_ACTIONS),
+  })
+  .passthrough()
+  .superRefine((parsed, ctx) => {
+    const rec = parsed as Record<string, unknown>;
+    if (!String(rec.reasoning || "").trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reasoning"], message: "reasoning is required" });
+    }
+    if (parsed.action === "amend-spec-additively" && !String(rec.specAddition || "").trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["specAddition"], message: "specAddition is required for amend-spec-additively" });
+    }
+    if (parsed.action === "retry-with-hint" && !String(rec.retryHint || "").trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["retryHint"], message: "retryHint is required for retry-with-hint" });
+    }
+  })
+  .transform((parsed): AdvisorRecommendation => {
+    const rec = parsed as Record<string, unknown>;
+    const reasoning = String(rec.reasoning || "").trim();
+    switch (parsed.action) {
+      case "try-fix-worker":
+        return { action: parsed.action, reasoning, fixWorkerHint: String(rec.fixWorkerHint || "").trim() };
+      case "amend-spec-additively":
+        return { action: parsed.action, reasoning, specAddition: String(rec.specAddition || "").trim() };
+      case "retry-with-hint":
+        return { action: parsed.action, reasoning, retryHint: String(rec.retryHint || "").trim() };
+      case "retry-as-is":
+        return { action: parsed.action, reasoning };
+      case "halt":
+        return { action: "halt", reasoning, haltReason: String(rec.haltReason || reasoning) };
+    }
+  });
 
 export function parseAdvisorResponse(raw: string): AdvisorRecommendation | null {
   const m = raw.trim().match(/\{[\s\S]*\}/);
   if (!m) return null;
+  let obj: unknown;
   try {
-    const parsed = JSON.parse(m[0]) as Partial<AdvisorRecommendation>;
-    const action = parsed.action as AdvisorAction | undefined;
-    if (!action || !VALID_ACTIONS.includes(action)) return null;
-    const reasoning = String(parsed.reasoning || "").trim();
-    if (!reasoning) return null;
-
-    if (action === "try-fix-worker") {
-      return { action, reasoning, fixWorkerHint: String(parsed.fixWorkerHint || "").trim() };
-    }
-    if (action === "amend-spec-additively") {
-      const addition = String(parsed.specAddition || "").trim();
-      if (!addition) return null;
-      return { action, reasoning, specAddition: addition };
-    }
-    if (action === "retry-with-hint") {
-      const hint = String(parsed.retryHint || "").trim();
-      if (!hint) return null;
-      return { action, reasoning, retryHint: hint };
-    }
-    if (action === "retry-as-is") {
-      return { action, reasoning };
-    }
-    return { action: "halt", reasoning, haltReason: String(parsed.haltReason || reasoning) };
+    obj = JSON.parse(m[0]);
   } catch {
     return null;
   }
+  const result = advisorResponseSchema.safeParse(obj);
+  return result.success ? result.data : null;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@
  * a timeout or missing credential won't get better on a second identical call.
  */
 
-import type { ZodType } from "zod";
+import type { ZodType, ZodTypeDef } from "zod";
 import { createLogger } from "../logger.js";
 import { classifyWithLLM } from "./classify-with-llm.js";
 import { stripCodeFences } from "./strip-code-fences.js";
@@ -28,8 +28,12 @@ export interface ClassifySchemaOptions<T> {
   systemPrompt: string;
   /** User-side payload — the content to classify/extract from. */
   userPrompt: string;
-  /** Zod schema the parsed reply must satisfy. */
-  schema: ZodType<T>;
+  /**
+   * Zod schema the parsed reply must satisfy. Input is `unknown` (not `T`)
+   * so schemas whose OUTPUT differs from their raw JSON input — i.e. any
+   * `.transform(...)` doing snake/camel drift-mapping — are accepted.
+   */
+  schema: ZodType<T, ZodTypeDef, unknown>;
   /** Short example-JSON string shown to the model, e.g. `{"verdict":"pass","reason":"..."}`. */
   shapeHint: string;
   /** Pass-throughs to classifyWithLLM. */
@@ -56,7 +60,7 @@ type ParseOutcome<T> = { ok: true; value: T } | { ok: false; error: string };
 const MAX_RETRY_ERROR_CHARS = 500;
 
 /** Fence-strip → JSON.parse → schema.safeParse. Never throws. */
-function parseAgainstSchema<T>(raw: string, schema: ZodType<T>): ParseOutcome<T> {
+function parseAgainstSchema<T>(raw: string, schema: ZodType<T, ZodTypeDef, unknown>): ParseOutcome<T> {
   const cleaned = stripCodeFences(raw);
   let obj: unknown;
   try {

@@ -17,7 +17,8 @@
  *    0: app didn't load or errored before step 1
  */
 
-import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../../classifiers/schema-output.js";
 import type { ParsedScenario, ScoreStep } from "./types.js";
 import type { LlmCall } from "../chunk-review/judgment-hook.js";
 
@@ -78,24 +79,45 @@ export function buildJudgePrompt(input: JudgeInput): string {
   );
 }
 
+const JUDGE_SHAPE_HINT =
+  `{"score": 7, "met_criteria": ["..."], "failed_criteria": ["..."], "reasoning": "..."}`;
+
+/** camelCase first, snake_case drift second — same precedence as the legacy hand parser. */
+function criteriaList(camel: unknown, snake: unknown): string[] {
+  if (Array.isArray(camel)) return camel.map(String);
+  if (Array.isArray(snake)) return snake.map(String);
+  return [];
+}
+
+export const judgeResponseSchema = z
+  .object({
+    score: z.coerce.number().refine(
+      (n) => Number.isFinite(n) && n >= 0 && n <= 10,
+      "score must be a finite number between 0 and 10",
+    ),
+  })
+  .passthrough()
+  .transform((parsed): JudgeResult => {
+    const rec = parsed as Record<string, unknown>;
+    return {
+      score: Math.round(parsed.score),
+      metCriteria: criteriaList(rec.metCriteria, rec.met_criteria),
+      failedCriteria: criteriaList(rec.failedCriteria, rec.failed_criteria),
+      reasoning: typeof rec.reasoning === "string" ? rec.reasoning : "",
+    };
+  });
+
 export function parseJudgeResponse(raw: string): JudgeResult | null {
   const m = raw.trim().match(/\{[\s\S]*\}/);
   if (!m) return null;
+  let obj: unknown;
   try {
-    const parsed = JSON.parse(m[0]) as Partial<JudgeResult>;
-    const score = Number(parsed.score);
-    if (!Number.isFinite(score) || score < 0 || score > 10) return null;
-    return {
-      score: Math.round(score),
-      metCriteria: Array.isArray(parsed.metCriteria) ? parsed.metCriteria.map(String) :
-                   Array.isArray((parsed as Record<string, unknown>).met_criteria) ? ((parsed as Record<string, unknown>).met_criteria as unknown[]).map(String) : [],
-      failedCriteria: Array.isArray(parsed.failedCriteria) ? parsed.failedCriteria.map(String) :
-                      Array.isArray((parsed as Record<string, unknown>).failed_criteria) ? ((parsed as Record<string, unknown>).failed_criteria as unknown[]).map(String) : [],
-      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
-    };
+    obj = JSON.parse(m[0]);
   } catch {
     return null;
   }
+  const result = judgeResponseSchema.safeParse(obj);
+  return result.success ? result.data : null;
 }
 
 let injectedLlmCall: LlmCall | null = null;
@@ -115,11 +137,15 @@ export async function judgeScenario(input: JudgeInput, signal?: AbortSignal): Pr
     return result;
   }
 
-  const result = await classifyWithLLM<JudgeResult>({
+  // classifySchema never throws — but the judge's contract is the opposite:
+  // an unscoreable scenario must THROW, never silently become a score.
+  // (Eval integrity: a swallowed parse failure would read as a judged run.)
+  const result = await classifySchema<JudgeResult>({
     category: "scenario-judge",
     systemPrompt: JUDGE_SYSTEM_PROMPT,
     userPrompt: prompt,
-    parse: parseJudgeResponse,
+    schema: judgeResponseSchema,
+    shapeHint: JUDGE_SHAPE_HINT,
     timeoutMs: JUDGE_TIMEOUT_MS,
     maxResponseChars: 4000,
     signal,

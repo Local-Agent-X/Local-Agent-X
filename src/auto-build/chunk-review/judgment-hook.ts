@@ -22,7 +22,8 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
-import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema } from "../../classifiers/schema-output.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReport } from "./report-parser.js";
 
@@ -107,15 +108,17 @@ export const defaultJudgmentHook: JudgmentHook = async (input) => {
     changedSnippets,
   });
 
-  return classifyWithLLM<JudgmentResult>({
+  const result = await classifySchema<JudgmentEnvelope>({
     category: "chunk-review-judgment",
     systemPrompt: JUDGMENT_SYSTEM_PROMPT,
     userPrompt: prompt,
-    parse: parseJudgmentResponse,
+    schema: judgmentEnvelopeSchema,
+    shapeHint: JUDGMENT_SHAPE_HINT,
     timeoutMs: CLASSIFIER_TIMEOUT_MS,
     maxResponseChars: 3000,
     signal: input.signal,
   });
+  return result ? result.judgment : null; // null result = unavailable/unparseable → fail open
 };
 
 // ── prompt construction ───────────────────────────────────────────────────
@@ -169,26 +172,42 @@ export function buildJudgmentPrompt(input: PromptInput): string {
   );
 }
 
+const JUDGMENT_SHAPE_HINT =
+  `{"violation": false, "rule": "", "pattern": "", "specGap": "", "reasoning": ""}`;
+
+/**
+ * "violation": false (or a violation with no usable specGap) is a VALID
+ * reply meaning "no violation found" — not a parse failure, so it must not
+ * burn classifySchema's self-correction retry. The schema therefore always
+ * validates and carries the verdict inside an envelope; `judgment: null`
+ * means "mechanical verdict stands". (classifySchema forbids nullable ROOT
+ * schemas — a valid null would be indistinguishable from its failure path.)
+ */
+interface JudgmentEnvelope {
+  judgment: JudgmentResult | null;
+}
+
+export const judgmentEnvelopeSchema = z
+  .record(z.unknown())
+  .transform((rec): JudgmentEnvelope => {
+    if (rec.violation !== true) return { judgment: null };
+    const specGap = String(rec.specGap || "").trim();
+    if (!specGap) return { judgment: null };
+    const reasoning = `Implicit spec violation: ${rec.rule || "(unnamed rule)"} — ${rec.reasoning || "(no reasoning)"}`;
+    return { judgment: { specGap, reasoning } };
+  });
+
 export function parseJudgmentResponse(raw: string): JudgmentResult | null {
-  const trimmed = raw.trim();
-  const match = trimmed.match(/\{[\s\S]*\}/);
+  const match = raw.trim().match(/\{[\s\S]*\}/);
   if (!match) return null;
+  let obj: unknown;
   try {
-    const parsed = JSON.parse(match[0]) as {
-      violation?: boolean;
-      rule?: string;
-      pattern?: string;
-      specGap?: string;
-      reasoning?: string;
-    };
-    if (parsed.violation !== true) return null;
-    const specGap = String(parsed.specGap || "").trim();
-    if (!specGap) return null;
-    const reasoning = `Implicit spec violation: ${parsed.rule || "(unnamed rule)"} — ${parsed.reasoning || "(no reasoning)"}`;
-    return { specGap, reasoning };
+    obj = JSON.parse(match[0]);
   } catch {
     return null;
   }
+  const result = judgmentEnvelopeSchema.safeParse(obj);
+  return result.success ? result.data.judgment : null;
 }
 
 // ── filesystem reads (best-effort) ────────────────────────────────────────

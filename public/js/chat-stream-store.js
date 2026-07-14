@@ -66,6 +66,14 @@
       // showed streaming for minutes after a successful stop.
       doneOpIds: new Set(),
       lastActivityMs: 0,
+      // Timestamp of the last event that produced VISIBLE progress — stream
+      // text, reasoning, tool cards/chips/progress. Deliberately NOT bumped
+      // by applyEvent's default case: op_heartbeat lands there, and a
+      // heartbeat proves the op is alive, not that anything new is on
+      // screen. The content-idle thinking indicator
+      // (chat-render-artifacts.js) keys off this; lastActivityMs stays the
+      // watchdog's lane.
+      lastContentMs: 0,
       status: 'idle',
       abortReason: null,
       sidebarActive: false,
@@ -150,6 +158,7 @@
     e.stopNote = null;
     e.opId = null;
     e.lastActivityMs = Date.now();
+    e.lastContentMs = Date.now();
     e.status = 'streaming';
     e.abortReason = null;
     e.liveAnchorIndex = typeof anchorIdx === 'number' ? anchorIdx : -1;
@@ -275,6 +284,8 @@
           e.toolsSinceText = false;
         }
         e.lastActivityMs = now;
+        // Visible progress — see the lastContentMs comment in blank().
+        e.lastContentMs = now;
         break;
       case 'reasoning':
         // Live chain-of-thought — accumulate on its own lane so the renderer
@@ -288,6 +299,7 @@
         if (event.replace === true) e.reasoning = event.text || '';
         else if (typeof event.delta === 'string') e.reasoning += event.delta;
         e.lastActivityMs = now;
+        e.lastContentMs = now;
         break;
       case 'tool_start':
         // Idempotent by call id. The same tool_start can reach the store more
@@ -300,6 +312,7 @@
         }
         e.toolsSinceText = true;
         e.lastActivityMs = now;
+        e.lastContentMs = now;
         break;
       case 'tool_end': {
         // Preserve the media URL line through the 500-char cap so
@@ -319,17 +332,20 @@
         }
         e.toolsSinceText = true;
         e.lastActivityMs = now;
+        e.lastContentMs = now;
         break;
       }
       case 'tool_chip':
         if (event.chip) e.chips.push(event.chip);
         e.lastActivityMs = now;
+        e.lastContentMs = now;
         break;
       case 'tool_progress':
         if (event.toolName) {
           e.progressByTool[event.toolName] = { message: event.message || '' };
         }
         e.lastActivityMs = now;
+        e.lastContentMs = now;
         break;
       case 'approval_requested':
         if (event.approvalId) {
@@ -391,6 +407,9 @@
         e.lastActivityMs = now;
         break;
       default:
+        // Deliberately does NOT bump lastContentMs: op_heartbeat lands here,
+        // and heartbeats must not mask content-idleness — the idle thinking
+        // indicator exists precisely to show during heartbeat-only stretches.
         e.lastActivityMs = now;
     }
     notify(sessionId, event);

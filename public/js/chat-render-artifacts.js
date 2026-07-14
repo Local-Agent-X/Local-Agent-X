@@ -40,9 +40,28 @@ function prependReasoningBlock(bodyEl, reasoning, open) {
   bodyEl.insertBefore(details, bodyEl.firstChild);
 }
 
+// A streaming turn is "content-idle" when nothing VISIBLE has landed for a
+// while — long silent tool calls read as frozen after a few seconds of static
+// text + blinking cursor. 6s is past normal inter-token gaps but well under
+// the server's 20s op_heartbeat cadence, so idleness is detected from real
+// silence, never from heartbeat timing (heartbeats deliberately don't bump
+// lastContentMs — see chat-stream-store.js).
+const STREAM_IDLE_MS = 6000;
+function isContentIdle(store) {
+  return !!(store && store.lastContentMs) &&
+    (Date.now() - store.lastContentMs) > STREAM_IDLE_MS;
+}
+
 function _buildLiveAssistantInto(parent, store) {
   if (!parent) return null;
   const content = store ? (store.content || '') : '';
+  // Content-idle mid-turn: suppress the 'streaming' class (that's what draws
+  // the ▍ cursor via .msg-body.streaming::after — no CSS change needed) and
+  // show the rotating thinking indicator under the content instead. Requires
+  // non-empty content: empty turns already get the thinking dots below.
+  // The finalize path synthesizes a store WITHOUT lastContentMs, so a
+  // terminal paint can never render idle.
+  const contentIdle = !!content && isContentIdle(store);
   const bodyContent = mdPreviewMode ? md(content) : `<pre class="raw-md">${esc(content)}</pre>`;
   const div = document.createElement('div');
   div.className = 'msg assistant';
@@ -55,7 +74,7 @@ function _buildLiveAssistantInto(parent, store) {
   div.dataset.live = '1';
   div.setAttribute('role', 'article');
   div.setAttribute('aria-label', 'Assistant message');
-  div.innerHTML = `<div class="msg-label">Assistant</div><div class="msg-body streaming">${bodyContent}</div><div class="msg-footer"></div>`;
+  div.innerHTML = `<div class="msg-label">Assistant</div><div class="msg-body${contentIdle ? '' : ' streaming'}">${bodyContent}</div><div class="msg-footer"></div>`;
   parent.appendChild(div);
   const bodyEl = div.querySelector('.msg-body');
   // Pre-delta render: thinking dots so the chat doesn't look frozen until
@@ -75,6 +94,13 @@ function _buildLiveAssistantInto(parent, store) {
     approvals: store ? (store.approvals || []) : [],
     stopNote: store ? store.stopNote : null,
   });
+  // Idle indicator sits UNDER the content + tool artifacts — same .thinking
+  // markup as the turn-start dots, so thinking-phrases.js's shared rotation
+  // timer picks it up (it queries the live document every tick; no start call
+  // needed) and finalizeLiveMessageInPlace's `.msg-body .thinking` sweep
+  // removes it on the terminal paint. No double-append: contentIdle requires
+  // non-empty content, and the pre-delta dots above require empty content.
+  if (bodyEl && contentIdle) bodyEl.insertAdjacentHTML('beforeend', thinkingHTML());
   return div;
 }
 

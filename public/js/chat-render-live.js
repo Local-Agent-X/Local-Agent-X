@@ -38,6 +38,30 @@ const MIN_SWAP_INTERVAL_MS = 150;
 const _rerenderTimers = new Map();        // sessionId → trailing setTimeout id
 const _lastSwapAt = new Map();            // sessionId → ts of last completed swap
 
+// ── Content-idle repaint ticker ──
+// Swaps only fire when WS events arrive, so a turn that goes content-idle
+// (long silent tool call) would get its next natural repaint at the 20s
+// op_heartbeat — far too late for the 6s STREAM_IDLE_MS threshold in
+// chat-render-artifacts.js. One lightweight interval watches the ACTIVE
+// streaming session and repaints ONLY when the idle state differs from what
+// the last swap painted, so a healthy fast stream never pays for it and the
+// interval is a pure no-op when nothing is streaming. 3s ticks bound the
+// indicator's appearance to at most STREAM_IDLE_MS + 3s.
+const IDLE_TICK_MS = 3000;
+const _lastIdlePainted = new Map();       // sessionId → idle state last painted
+setInterval(() => {
+  if (typeof activeChat === 'undefined' || !activeChat) return;
+  const sid = activeChat.id;
+  if (typeof ChatStreamStore === 'undefined' || !ChatStreamStore.isStreaming(sid)) return;
+  const store = ChatStreamStore.get(sid);
+  // Content-empty turns keep today's behavior — the turn-start thinking dots
+  // are already showing, there's no idle/active flip to paint.
+  if (!store || !(store.content || '')) return;
+  const idle = isContentIdle(store);
+  // rerenderLiveMessage is rAF/throttle-coalesced, safe to call here.
+  if (idle !== !!_lastIdlePainted.get(sid)) rerenderLiveMessage(sid);
+}, IDLE_TICK_MS);
+
 // Paint + record the swap time so the throttle above measures from the last
 // COMPLETED swap, not from when one was queued.
 function _paintLiveSwap(sessionId) {
@@ -172,6 +196,9 @@ function _swapLiveMessage(sessionId) {
   oldNode.replaceWith(fresh);
   restoreActivityScroll(fresh, activityScroll);
   _liveMessageNodes.set(sessionId, fresh);
+  // Record the idle state this paint actually rendered (same predicate the
+  // build used) so the ticker above only fires on a genuine flip.
+  _lastIdlePainted.set(sessionId, !!(store.content || '') && isContentIdle(store));
   autoScroll();
   return true;
 }
@@ -258,6 +285,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   const timer = _rerenderTimers.get(sessionId);
   if (timer !== undefined) { clearTimeout(timer); _rerenderTimers.delete(sessionId); }
   _lastSwapAt.delete(sessionId);
+  _lastIdlePainted.delete(sessionId);
   const el = document.getElementById('messages');
   if (!el || !finalizedMsg) return false;
   let oldNode = _liveMessageNodes.get(sessionId);

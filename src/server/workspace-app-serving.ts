@@ -6,7 +6,7 @@ import { confineToDir } from "../security/layer/index.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
 import { ensureDevServerRunning, readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
 import { pidsOnPort } from "../tools/process-session.js";
-import { registerFrameworkDevServerFromDisk } from "../canonical-loop/adapters/app-build-finalize.js";
+import { registerFrameworkDevServerFromDisk } from "../canonical-loop/public/build-adapters.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
 import { decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";

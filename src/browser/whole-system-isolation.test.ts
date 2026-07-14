@@ -10,6 +10,7 @@ import { setRuntimeConfig } from "../config.js";
 import { CHROME_PROFILE_LOCKS, launchViaCDP } from "./launcher.js";
 import { startBrowserEgressProxy } from "./egress-proxy.js";
 import { closeAllBrowsers, closeBrowser, getBrowserManager } from "./instance.js";
+import { browserAvailable } from "./test-browser-available.js";
 
 interface IdentityState {
   cookie: string;
@@ -172,7 +173,7 @@ afterAll(async () => {
   else process.env.LAX_BROWSER_HEADLESS = previousHeadless;
 });
 
-describe.sequential("whole-system browser identity isolation", () => {
+describe.sequential.skipIf(!browserAvailable())("whole-system browser identity isolation", () => {
   it("runs the production CDP profile path and reaps its process, locks, and disposable profile", async () => {
     const profileDir = join(dataDir, "cdp-profile-test");
     mkdirSync(profileDir, { recursive: true });

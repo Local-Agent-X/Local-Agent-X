@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { chromium, type Browser, type Page } from "playwright";
 import { persistBrowserContextState } from "./runtime.js";
+import { browserAvailable } from "./test-browser-available.js";
 
 declare const indexedDB: { open(name: string, version: number): any };
 
@@ -62,7 +63,7 @@ afterEach(async () => {
   dataDir = null;
 });
 
-describe("continuity IndexedDB persistence", () => {
+describe.skipIf(!browserAvailable())("continuity IndexedDB persistence", () => {
   it("survives owner handoff and a full local Chromium restart", async () => {
     dataDir = mkdtempSync(join(tmpdir(), "browser-continuity-idb-"));
     const statePath = join(dataDir, "state.json");

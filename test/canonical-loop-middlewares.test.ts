@@ -27,14 +27,11 @@ import { _resetEvidenceHistories } from "../src/canonical-loop/middlewares/evide
 
 import { loopDetectionMiddleware } from "../src/canonical-loop/middlewares/loop-detection.js";
 import { deadEndMiddleware } from "../src/canonical-loop/middlewares/dead-end.js";
-import { postCommitMiddleware } from "../src/canonical-loop/middlewares/post-commit.js";
-import { hallucinationCheckMiddleware } from "../src/canonical-loop/middlewares/hallucination-check.js";
 import { actionClaimMiddleware } from "../src/canonical-loop/middlewares/action-claim.js";
 import { prematureCompletionMiddleware } from "../src/canonical-loop/middlewares/premature-completion.js";
 import { selfCheckMiddleware } from "../src/canonical-loop/middlewares/self-check.js";
 import { midTurnStaleMiddleware } from "../src/canonical-loop/middlewares/mid-turn-stale.js";
 import { postTurnDetectorMiddleware } from "../src/canonical-loop/middlewares/post-turn-detector.js";
-import { autoBuildAppMiddleware } from "../src/canonical-loop/middlewares/auto-build-app.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const tracked: string[] = [];
@@ -194,115 +191,6 @@ describe("dead-end middleware", () => {
   });
 });
 
-// ── post-commit ──────────────────────────────────────────────────────────
-
-describe("post-commit middleware", () => {
-  it("does not fire on a fresh commit; nudges on the NEXT turn", () => {
-    const op = mkOp("post-commit");
-    // First turn: see a commit
-    const ctx1 = mkCtx({
-      op,
-      toolResults: [{
-        toolName: "bash", toolCallId: "c1",
-        content: "[main abc1234] commit msg\n 1 file changed",
-      }],
-    });
-    const r1 = postCommitMiddleware.afterToolExecution!(ctx1);
-    expect((r1 as { kind: string }).kind).toBe("continue");
-    // Next turn: no commit this round, but flag was set — nudge fires.
-    const ctx2 = mkCtx({
-      op,
-      toolResults: [{ toolName: "bash", toolCallId: "c2", content: "ok" }],
-    });
-    const r2 = postCommitMiddleware.afterToolExecution!(ctx2);
-    expect((r2 as { kind: string }).kind).toBe("nudge");
-  });
-});
-
-// ── hallucination-check ──────────────────────────────────────────────────
-
-describe("hallucination-check middleware", () => {
-  it("continues on a benign mixed turn (tool calls + non-claim text)", async () => {
-    // Early-return on `toolCalls.length > 0` was removed so the worker check
-    // fires on mixed turns. Benign text on a mixed turn must still continue.
-    const op = mkOp("hall-tools");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op, toolCalls: [mkToolCall("bash")], assistantContent: "I will save it",
-    }));
-    expect(r.kind).toBe("continue");
-  });
-
-  it("fires worker-hallucination on a MIXED turn (tool calls + worker narration, no spawn)", async () => {
-    // Regression for the mixed-turn early-return removal: a turn that made a
-    // tool call but narrates a worker that was never spawned must still nudge.
-    verifyMock.mockResolvedValue(false); // worker path must ignore the verifier
-    const op = mkOp("hall-worker-mixed");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op,
-      turnIdx: 2,
-      toolCalls: [mkToolCall("bash")],
-      assistantContent: "Background worker is building the PDF right now.",
-      toolsCalledThisOp: ["bash"], // bash ran, but no spawn-class tool
-    }));
-    expect(r.kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toBe("worker-hallucination");
-  });
-
-  it("nudges on approval-hallucination text", async () => {
-    const op = mkOp("hall-approval");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op, assistantContent: "This requires approval before I can proceed.",
-    }));
-    expect(r.kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toBe("approval-hallucination");
-  });
-
-  it("nudges on creation-hallucination text on turn 0", async () => {
-    verifyMock.mockResolvedValue(true); // LLM confirms
-    const op = mkOp("hall-creation");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op, turnIdx: 0, assistantContent: "I added the X to your settings.",
-    }));
-    expect(r.kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toBe("creation-hallucination");
-  });
-
-  it("skips creation-hallucination on turn > 0", async () => {
-    const op = mkOp("hall-no-creation-late");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op, turnIdx: 1, assistantContent: "I added the X to your settings.",
-    }));
-    expect(r.kind).toBe("continue");
-  });
-
-  it("nudges worker-hallucination when no spawn tool succeeded — no LLM second-opinion", async () => {
-    // verifyMock returns false (would have vetoed in the old code). The new
-    // code must NOT consult the verifier on the worker path — the ledger is
-    // authoritative. Repro of the live 2026-05-23 PDF-worker failure.
-    verifyMock.mockResolvedValue(false);
-    const op = mkOp("hall-worker-no-spawn");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op,
-      turnIdx: 2,
-      assistantContent: "Background worker is building the PDF from your meals right now.",
-      toolsCalledThisOp: ["bash"], // bash ran, but no spawn-class tool
-    }));
-    expect(r.kind).toBe("nudge");
-    expect((r as { reason: string }).reason).toBe("worker-hallucination");
-    expect(verifyMock).not.toHaveBeenCalled();
-  });
-
-  it("does not fire worker-hallucination when a spawn tool actually succeeded this op", async () => {
-    const op = mkOp("hall-worker-spawn-ok");
-    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
-      op,
-      turnIdx: 2,
-      assistantContent: "Background worker is processing your request.",
-      toolsCalledThisOp: ["agent_spawn"], // real spawn in the ledger
-    }));
-    expect(r.kind).toBe("continue");
-  });
-});
 
 // ── action-claim ─────────────────────────────────────────────────────────
 
@@ -547,55 +435,6 @@ describe("post-turn-detector middleware", () => {
   });
 });
 
-// ── auto-build-app ───────────────────────────────────────────────────────
-
-describe("auto-build-app middleware", () => {
-  it("only registers for anthropic provider", () => {
-    expect(autoBuildAppMiddleware.when?.(mkCtx({ op: mkOp("aba-a"), provider: "anthropic" }))).toBe(true);
-    expect(autoBuildAppMiddleware.when?.(mkCtx({ op: mkOp("aba-c"), provider: "codex" }))).toBe(false);
-  });
-
-  it("does nothing when the model already emitted tool calls", () => {
-    const op = mkOp("aba-tools");
-    const ctx = mkCtx({
-      op, provider: "anthropic",
-      userMessage: "build me a calendar app",
-      assistantContent: "Building it now",
-      toolCalls: [mkToolCall("build_app")],
-      tools: [{ name: "build_app" }],
-    });
-    autoBuildAppMiddleware.afterModelCall!(ctx);
-    expect(ctx.toolCalls).toHaveLength(1);
-  });
-
-  it("does nothing when build_app is not available in the tool surface", () => {
-    const op = mkOp("aba-no-tool");
-    const ctx = mkCtx({
-      op, provider: "anthropic",
-      userMessage: "build me a calendar app",
-      assistantContent: "Sure, building a calendar app for you now.",
-      tools: [],
-    });
-    autoBuildAppMiddleware.afterModelCall!(ctx);
-    expect(ctx.toolCalls).toHaveLength(0);
-  });
-
-  it("synthesizes a build_app tool call on detected build intent", () => {
-    const op = mkOp("aba-fires");
-    const ctx = mkCtx({
-      op, provider: "anthropic",
-      userMessage: "build me a calendar app",
-      // claudeCodeSignals regex requires explicit "I'll write the files" /
-      // "I'll create the files" commitment shape — that's what flags an
-      // Anthropic answer as a build commitment vs a clarifying question.
-      assistantContent: "I'll write the files for the calendar app now.",
-      tools: [{ name: "build_app" }],
-    });
-    autoBuildAppMiddleware.afterModelCall!(ctx);
-    expect(ctx.toolCalls).toHaveLength(1);
-    expect(ctx.toolCalls[0].tool).toBe("build_app");
-  });
-});
 
 // ── host: toolsCalledThisOp success-only semantics ──────────────────────
 

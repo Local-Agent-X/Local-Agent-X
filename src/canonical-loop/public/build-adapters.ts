@@ -19,3 +19,5 @@ export {
 export { VERIFY_EVIDENCE_MARKER } from "../adapters/app-build-verify-adapter.js";
 
 export { withTransportRetry } from "../adapters/transport-retry.js";
+
+export { registerFrameworkDevServerFromDisk } from "../adapters/app-build-finalize.js";

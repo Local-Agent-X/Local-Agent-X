@@ -87,6 +87,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // sessions never reaches its schema. This is the date-recall surfacing fix.
   search_past_sessions:  ["main-chat", "spawned-agent", "operator"],
   read_my_logs:          ["spawned-agent"],
+  // recall (raw op-message paging) is DELIBERATELY absent: deferred tier per
+  // the 2026-07-13 telemetry re-sort — reachable via tool_search plus the
+  // keyword router in agent-request/tool-filter.ts.
   memory_save:           ["main-chat", "spawned-agent", "operator"],
   memory_recall:         ["main-chat", "spawned-agent", "operator"],
   memory_get:            ["main-chat"],

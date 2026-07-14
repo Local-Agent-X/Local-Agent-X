@@ -10,6 +10,9 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyEntry> = {
   ari_retrieval:        { kernel: "internal",  risk: "safe" },
   search_past_sessions: { kernel: "retrieval", risk: "safe", rules: [{ id: "allow-search-past-sessions", decision: "allow", reason: "Search prior chat sessions", priority: 50 }] },
   memory_search:        { kernel: "retrieval", risk: "safe" },
+  // Raw conversation-history paging from the canonical op store (recall-tool.ts).
+  // kernel "internal" (local read of ~/.lax op state, no ARI_ACTION_MAP needed).
+  recall:               { kernel: "internal", risk: "safe", rules: [{ id: "allow-recall", decision: "allow", reason: "Page raw messages of the agent's own op history (read-only)", priority: 50 }] },
 
   // ── Secrets vault ──
   clipboard_write_from_secret: { kernel: "secret-vault", risk: "secrets" },

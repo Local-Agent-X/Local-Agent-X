@@ -42,6 +42,7 @@ import { startAppBuildTool, finalizeAppBuildTool } from "../auto-build/app-build
 import { buildPlanStatusTool, buildPlanResumeTool } from "../auto-build/orchestrator/tools.js";
 import { autopilotTools } from "../autopilot/tools.js";
 import { opTools } from "../ops/tools.js";
+import { recallTool } from "./recall-tool.js";
 // Legacy skill_list/skill_run tools removed — protocol(action:'list'/'get') covers the same surface.
 // SKILL.md files are still recognized as an import format via src/protocols/skill-md-parser.ts.
 
@@ -50,7 +51,7 @@ const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, bashTool, webFetchTool,
   globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
-  selfEditTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
+  selfEditTool, recallTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   buildAppTool,

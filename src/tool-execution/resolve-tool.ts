@@ -35,6 +35,8 @@ const SESSION_SCOPED_TOOLS = new Set([
   "task_create", "task_update", "task_list", "task_get",
   "op_submit", "op_submit_async", "op_wait", "op_status",
   "memory_search", "search_past_sessions", "memory_save", "remember", "update_fact",
+  // recall resolves session→op from the trusted _sessionId (recall-tool.ts).
+  "recall",
   "memory_set_user_field", "memory_update_profile",
   "project_brief_update", "project_create",
   "self_edit",

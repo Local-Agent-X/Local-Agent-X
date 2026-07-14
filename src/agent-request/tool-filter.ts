@@ -62,6 +62,9 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /secret|api.?key|credential|\btoken\b/i, toolPrefixes: ["request_secret", "list_secrets"] },
   { keywords: /create.*agent|new agent/i, toolPrefixes: ["agent_create"] },
   { keywords: /your logs|read.*logs/i, toolPrefixes: ["read_my_logs"] },
+  // Raw-transcript paging (deferred tier — no audience entry): surfaces when
+  // the user asks about earlier conversation verbatim or a compacted range.
+  { keywords: /\brecall\b|earlier (message|conversation)|what did (i|you) (say|ask)|scroll back/i, toolPrefixes: ["recall"] },
 ];
 
 // Build-intent narrowing fires when the user asks to build/create an app —

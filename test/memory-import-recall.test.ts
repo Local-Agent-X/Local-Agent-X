@@ -185,7 +185,7 @@ describe("import provenance migration", () => {
       expect(JSON.parse(rows[2].metadata)).toMatchObject({
         source_type: "import", session_id: "import-id", trust_status: "untrusted",
       });
-      expect(getSchemaVersion(legacyDb)).toBe(11);
+      expect(getSchemaVersion(legacyDb)).toBe(12);
 
       const snapshot = JSON.stringify(rows);
       migrateSchema(legacyDb, getSchemaVersion(legacyDb));

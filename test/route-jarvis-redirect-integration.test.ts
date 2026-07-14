@@ -64,7 +64,7 @@ describe("tryWorkerRedirect — no active workers", () => {
       sessionId: "s1",
       message: "make it blue",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(false);
     expect(events).toEqual([]);
@@ -83,7 +83,7 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
       sessionId: "s1",
       message: "make the header blue",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(true);
     // most recent (last) op gets the redirect, not the older one
@@ -105,24 +105,28 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(false);
     expect(events).toEqual([]);
   });
 
-  it("returns true but emits no events when sseSink is null (WS-only caller)", async () => {
+  it("emits the ack and done through the provided emit on every transport", async () => {
     trackOp("s1", "op-x");
     classifierResult = { redirect: true, reason: "feedback" };
 
+    const { events, sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      sseSink: null,
+      emit: sink,
     });
     expect(result).toBe(true);
     expect(redirectedCalls).toEqual([{ opId: "op-x", instruction: "x" }]);
+    // The WS-transport fix (322273c5): the ack + done fire on whatever emit
+    // the caller wires (WS or SSE), never skipped.
+    expect(events).toHaveLength(2);
   });
 });
 
@@ -138,7 +142,7 @@ describe("tryWorkerRedirect — live-worker targeting (OP-7)", () => {
       sessionId: "s1",
       message: "make the header blue",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(true);
     expect(redirectedCalls).toEqual([{ opId: "op-worker", instruction: "make the header blue" }]);
@@ -153,7 +157,7 @@ describe("tryWorkerRedirect — live-worker targeting (OP-7)", () => {
       sessionId: "s1",
       message: "make the header blue",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(false);
     expect(redirectedCalls).toEqual([]);
@@ -174,7 +178,7 @@ describe("tryWorkerRedirect — live-worker targeting (OP-7)", () => {
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(true);
     expect(redirectedCalls).toEqual([{ opId: "op-live", instruction: "x" }]);
@@ -188,7 +192,7 @@ describe("tryWorkerRedirect — live-worker targeting (OP-7)", () => {
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(true);
     expect(redirectedCalls).toEqual([{ opId: "op-pending", instruction: "x" }]);
@@ -205,7 +209,7 @@ describe("tryWorkerRedirect — classifier says no", () => {
       sessionId: "s1",
       message: "yes",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(false);
     expect(redirectedCalls).toEqual([]);
@@ -221,7 +225,7 @@ describe("tryWorkerRedirect — classifier says no", () => {
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(false);
   });
@@ -247,7 +251,7 @@ describe("tryWorkerRedirect — recentSessionMessages plumbing", () => {
       sessionId: "s1",
       message: "current",
       recentSessionMessages: messages,
-      sseSink: sink,
+      emit: sink,
     });
 
     const { classifyWorkerRedirect } = await import("../src/routing/worker-redirect-classifier.js");
@@ -273,7 +277,7 @@ describe("tryWorkerRedirect — error handling", () => {
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      sseSink: sink,
+      emit: sink,
     });
     expect(result).toBe(false);
     expect(events).toEqual([]);

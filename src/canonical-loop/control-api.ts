@@ -34,8 +34,12 @@ import { isTerminalState } from "./terminal-states.js";
  * this API's validating readOp and its write is preserved — never reverted by
  * a stale in-memory op. Falls back to the already-loaded op if the re-read
  * fails (op deleted mid-flight is handled by the caller's earlier checks).
+ *
+ * Exported for control-api-approvals.ts (the file-size split sibling) ONLY —
+ * other canonical-loop writers use persistOpKeepingSignals, and code outside
+ * the module never writes signal columns directly.
  */
-function writeSignalColumn(opId: string, loaded: Op, mutate: (c: NonNullable<Op["canonical"]>) => void): void {
+export function writeSignalColumn(opId: string, loaded: Op, mutate: (c: NonNullable<Op["canonical"]>) => void): void {
   withOpLock(opId, () => {
     const base = readOp(opId) ?? loaded;
     if (!base.canonical) base.canonical = {};

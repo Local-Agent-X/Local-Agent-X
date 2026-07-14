@@ -60,6 +60,28 @@ export interface RedirectInstruction {
   receivedAt: string;
 }
 
+// ── Pending approval (durable signal column) ──────────────────────────────
+
+/**
+ * Durable record of an approval card the op is blocked on. Written by the
+ * approval manager when an op-scoped "ask" goes out, cleared when the card
+ * settles (approve / deny / timeout / superseded / session teardown) or when
+ * `opResolveApproval` records a decision for a no-longer-live card
+ * (post-restart). The in-process ApprovalManager promise remains the ONLY
+ * delivery mechanism — this column is the durable shadow that survives a
+ * crash so recovery's re-drive re-ask (recovery.ts) has the prior context.
+ * Timeout stays in-process; `requestedAt` (epoch ms) lets a future reader
+ * compute expiry without a timer.
+ */
+export interface PendingApprovalRecord {
+  approvalId: string;
+  toolName: string;
+  toolCallId?: string;
+  argsPreview: string;
+  context?: string;
+  requestedAt: number;
+}
+
 // ── Additive Op fields (PRD §9 ops columns) ───────────────────────────────
 // Sub-object on `Op` so legacy consumers ignore it and the canonical-loop
 // has one place to read/write its own concerns.
@@ -73,6 +95,7 @@ export interface CanonicalOpFields {
   cancelRequestedAt?: string | null;
   redirectInstruction?: RedirectInstruction | null;
   redirectReceivedAt?: string | null;
+  pendingApproval?: PendingApprovalRecord | null;
   currentTurnIdx?: number | null;
   currentCheckpointId?: string | null;
   sessionId?: string | null;
@@ -173,6 +196,8 @@ export type CanonicalEventType =
   | "redirect_applied"
   | "pause_requested"
   | "resume_requested"
+  | "approval_requested"
+  | "approval_resolved"
   | "cancel_requested"
   | "lease_acquired"
   | "lease_lost"

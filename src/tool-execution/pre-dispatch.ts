@@ -315,6 +315,7 @@ export async function assertToolCallAllowed(
       context: "Disable strict local-only mode and restore remote network access?",
       args: call.args,
       alwaysAsk: true,
+      opId: ctx.opId,
       emit: ctx.approval.onEvent,
     });
     if (!approved) {
@@ -362,6 +363,7 @@ export async function assertToolCallAllowed(
           : ctx.approval.context || "",
         args: call.args,
         alwaysAsk: !!destructive,
+        opId: ctx.opId,
         emit: ctx.approval.onEvent,
       });
       if (!approved) {

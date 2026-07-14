@@ -62,6 +62,7 @@ export type {
   CanonicalOpFields,
   OpTurnRow,
   OpMessageRow,
+  PendingApprovalRecord,
   ProviderStateEnvelope,
   RedirectInstruction,
   StateChangedBody,
@@ -176,6 +177,9 @@ export {
 } from "./control-api.js";
 
 export { type RedirectSignal } from "./signals.js";
+
+// ── Durable pending-approval control surface ──────────────────────────────
+export { opResolveApproval, recordApprovalRequested, recordApprovalResolved, type ApprovalControlResult, type ApprovalControlOk, type ApprovalControlErr, type ApprovalResolution } from "./control-api-approvals.js";
 
 // ── Issue 08 lease + crash-recovery surface ───────────────────────────────
 

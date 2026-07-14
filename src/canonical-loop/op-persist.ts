@@ -59,6 +59,9 @@ export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): vo
       if (!op.canonical) op.canonical = {};
       op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
       op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
+      // Approval-manager-owned column (control-api-approvals.ts). Worker
+      // writes never intend to touch it, so it is always restored from disk.
+      op.canonical.pendingApproval = onDisk.canonical.pendingApproval ?? null;
       if (!opts.clearRedirect) {
         op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
         op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;

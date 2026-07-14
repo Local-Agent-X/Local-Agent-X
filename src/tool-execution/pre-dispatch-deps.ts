@@ -38,6 +38,8 @@ export interface PreDispatchApprovalManager {
     context: string;
     args: Record<string, unknown>;
     alwaysAsk: boolean;
+    /** Canonical op id — keys the durable pendingApproval column. */
+    opId?: string;
     emit: (event: ServerEvent) => void;
   }): Promise<boolean>;
 }

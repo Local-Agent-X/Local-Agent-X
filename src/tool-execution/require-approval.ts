@@ -132,6 +132,10 @@ export const requireApprovalPhase: Phase = async (ctx) => {
         : ctx.approvalContext,
     args: promotion ? { ...promotion } : ctx.args,
     alwaysAsk: !!destructive || policyRequiresPrompt,
+    // Canonical op id (chat-tool-dispatcher threads opts.opId through
+    // executeToolCalls as `operationId`): keys the durable pendingApproval
+    // column + canonical events. Absent on non-op dispatches.
+    opId: ctx.operationId,
     emit: ctx.onEvent,
   });
   if (outcome.approved) {

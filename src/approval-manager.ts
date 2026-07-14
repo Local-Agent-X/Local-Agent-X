@@ -48,6 +48,50 @@ export {
 
 const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
 
+// ── Durable canonical-loop bridge (op-scoped requests only) ───────────────
+// Op-scoped asks get a durable shadow: a pendingApproval signal column on the
+// op plus approval_requested / approval_resolved canonical events, written by
+// canonical-loop/control-api-approvals.ts. Loaded lazily through the front
+// door (canonical-loop imports tool-execution which imports this file, so a
+// static import of the barrel would mint a cycle — same dynamic-import
+// pattern as bridge-control.ts / chat-ws/agent-controls.ts). The bridge is
+// awaited BEFORE a card with an opId is registered, so every settle site can
+// use the sync `canonicalBridge` reference.
+interface CanonicalApprovalBridge {
+  recordApprovalRequested: (
+    opId: string,
+    record: {
+      approvalId: string;
+      toolName: string;
+      toolCallId?: string;
+      argsPreview: string;
+      context?: string;
+      requestedAt: number;
+    },
+  ) => void;
+  recordApprovalResolved: (
+    opId: string,
+    res: { approvalId: string; toolName: string; approved: boolean; reason?: ApprovalDenyReason },
+  ) => void;
+}
+
+let canonicalBridge: CanonicalApprovalBridge | null = null;
+let canonicalBridgeLoading: Promise<CanonicalApprovalBridge> | null = null;
+
+async function loadCanonicalBridge(): Promise<CanonicalApprovalBridge> {
+  if (canonicalBridge) return canonicalBridge;
+  if (!canonicalBridgeLoading) {
+    canonicalBridgeLoading = import("./canonical-loop/index.js").then((mod) => {
+      canonicalBridge = {
+        recordApprovalRequested: mod.recordApprovalRequested,
+        recordApprovalResolved: mod.recordApprovalResolved,
+      };
+      return canonicalBridge;
+    });
+  }
+  return canonicalBridgeLoading;
+}
+
 /**
  * WHY a denial carries a reason: `requestApproval` resolves false on three
  * different paths, and they demand different model behavior —
@@ -80,6 +124,9 @@ interface PendingApproval {
   toolName: string;
   args: Record<string, unknown>;
   alwaysAsk: boolean;
+  /** Canonical op this card blocks, when the caller is op-scoped. Keys the
+   *  durable pendingApproval column + canonical events. */
+  opId?: string;
   emit: (event: ServerEvent) => void;
 }
 
@@ -106,6 +153,21 @@ class ApprovalManager {
   // teardown deliberately never seed it.
   private suppressed = new Map<string, { ts: number; reason: ApprovalDenyReason }>();
   private nextId = 1;
+
+  /**
+   * Durable settle bookkeeping for op-scoped cards: clears the op's
+   * pendingApproval column and appends the approval_resolved canonical event.
+   * No-op for non-op cards. `canonicalBridge` is guaranteed non-null for any
+   * op-scoped card (requestApprovalDetailed awaits the bridge before
+   * registering one); the guard is belt-and-braces. Best-effort: durable
+   * bookkeeping must never block settling the card's promise.
+   */
+  private recordDurableResolve(p: PendingApproval, id: string, approved: boolean, reason?: ApprovalDenyReason): void {
+    if (!p.opId || !canonicalBridge) return;
+    try {
+      canonicalBridge.recordApprovalResolved(p.opId, { approvalId: id, toolName: p.toolName, approved, reason });
+    } catch { /* never block the resolution */ }
+  }
 
   private gcSuppressed(now: number): void {
     for (const [k, v] of this.suppressed) {
@@ -141,6 +203,10 @@ class ApprovalManager {
     /** Force a prompt every time: skip the session auto-approve cache on both
      *  read and write. Used for irreversible/destructive operations. */
     alwaysAsk?: boolean;
+    /** Canonical op id when the tool call runs on the canonical path. Enables
+     *  the durable pendingApproval column + approval_requested/resolved
+     *  canonical events. Optional: non-op callers keep in-process-only cards. */
+    opId?: string;
     emit: (event: ServerEvent) => void;
   }): Promise<ApprovalOutcome> {
     // Session-scoped auto-approval short-circuit. Key is composite
@@ -171,17 +237,25 @@ class ApprovalManager {
     if (existing) return existing;
 
     const id = `apr-${this.nextId++}-${Date.now()}`;
+    const argsPreview = JSON.stringify(opts.args).slice(0, 500);
+    // Load the canonical bridge BEFORE registering the card: every settle
+    // path (approve/deny/timeout/superseded/teardown) is synchronous, and
+    // this await guarantees `canonicalBridge` is set whenever an op-scoped
+    // card exists in `pending`.
+    const bridge = opts.opId ? await loadCanonicalBridge() : null;
 
     const promise = new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => {
-        if (this.pending.delete(id)) {
+        const p = this.pending.get(id);
+        if (p && this.pending.delete(id)) {
           this.suppressed.set(ekey, { ts: Date.now(), reason: "timeout" });
+          this.recordDurableResolve(p, id, false, "timeout");
           opts.emit({ type: "approval_timeout", approvalId: id, toolName: opts.toolName, toolCallId: opts.toolCallId });
           resolve({ approved: false, reason: "timeout" });
         }
       }, APPROVAL_TIMEOUT_MS);
 
-      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk, emit: opts.emit });
+      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk, opId: opts.opId, emit: opts.emit });
 
       opts.emit({
         type: "approval_requested",
@@ -189,9 +263,25 @@ class ApprovalManager {
         toolName: opts.toolName,
         toolCallId: opts.toolCallId,
         context: opts.context,
-        argsPreview: JSON.stringify(opts.args).slice(0, 500),
+        argsPreview,
         preview: opts.preview,
       });
+
+      // Durable shadow for op-scoped asks: pendingApproval signal column +
+      // approval_requested canonical event. Best-effort — a durable-record
+      // failure must never take down the live card.
+      if (opts.opId && bridge) {
+        try {
+          bridge.recordApprovalRequested(opts.opId, {
+            approvalId: id,
+            toolName: opts.toolName,
+            toolCallId: opts.toolCallId,
+            argsPreview,
+            context: opts.context,
+            requestedAt: Date.now(),
+          });
+        } catch { /* live card still works without the durable record */ }
+      }
     });
 
     this.inflight.set(ekey, promise);
@@ -218,6 +308,7 @@ class ApprovalManager {
       clearTimeout(p.timer);
       this.pending.delete(id);
       this.suppressed.delete(exactKey(p.sessionId, p.toolName, p.args));
+      this.recordDurableResolve(p, id, false, "superseded");
       try {
         p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved: false });
       } catch { /* a dead emitter must not block the resolution */ }
@@ -261,6 +352,7 @@ class ApprovalManager {
     // Suppression is written HERE, synchronously, so the stored reason can
     // never be a stale microtask racing a session sweep.
     const ekey = exactKey(p.sessionId, p.toolName, p.args);
+    this.recordDurableResolve(p, id, approved, approved ? undefined : "declined");
     if (approved) {
       this.suppressed.delete(ekey);
       p.resolve({ approved: true, grantId: id });
@@ -283,6 +375,7 @@ class ApprovalManager {
     for (const [id, p] of this.pending) {
       if (p.sessionId === sessionId) {
         clearTimeout(p.timer);
+        this.recordDurableResolve(p, id, false, "timeout");
         p.resolve({ approved: false, reason: "timeout" });
         this.pending.delete(id);
       }

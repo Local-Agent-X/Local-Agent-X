@@ -8,7 +8,7 @@ const THEME_LABELS = { dark: 'Dark', light: 'Light', system: 'System' };
 // the accent tokens (with a light-mode variant for contrast).
 const PALETTES = ['aurora', 'forge', 'phosphor', 'nebula', 'cobalt', 'bloom', 'graphite'];
 function applyPalette(name) {
-  if (!PALETTES.includes(name)) name = 'aurora';
+  if (!PALETTES.includes(name)) name = 'phosphor';
   document.documentElement.setAttribute('data-palette', name);
   // Palettes redefine --surface (not just accents), so the native overlay
   // must re-sample here — applyTheme() alone only covers mode changes.
@@ -139,7 +139,7 @@ function toggleTheme() {
     }).catch(() => {});
   // Apply local defaults immediately (server override arrives async)
   applyTheme(localStorage.getItem('lax_theme') || 'dark');
-  applyPalette(localStorage.getItem('lax_palette') || 'aurora');
+  applyPalette(localStorage.getItem('lax_palette') || 'phosphor');
   // Listen for OS theme changes when in system mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (localStorage.getItem('lax_theme') === 'system') applyTheme('system');

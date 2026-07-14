@@ -66,3 +66,24 @@ export function setSetting(key: string, value: unknown): void {
   const next = { ...loadSettings(), [key]: value };
   saveSettings(next);
 }
+
+/**
+ * One-time appearance default rollout: dark + phosphor is the product
+ * default from generation 1 on. Runs once per install — the generation
+ * marker (not the theme/palette values) gates it, so whatever the user
+ * picks in Appearance afterwards sticks across boots and updates. Bump
+ * APPEARANCE_DEFAULT_GEN (and the values below) only to roll out a future
+ * one-time default change to every install.
+ *
+ * Returns true when it applied (first boot after the update, or a fresh
+ * install — both get the same starting state).
+ */
+export const APPEARANCE_DEFAULT_GEN = 1;
+
+export function applyAppearanceDefaultGeneration(): boolean {
+  const settings = loadSettings();
+  const gen = typeof settings.appearanceDefaultGen === "number" ? settings.appearanceDefaultGen : 0;
+  if (gen >= APPEARANCE_DEFAULT_GEN) return false;
+  saveSettings({ ...settings, theme: "dark", palette: "phosphor", appearanceDefaultGen: APPEARANCE_DEFAULT_GEN });
+  return true;
+}

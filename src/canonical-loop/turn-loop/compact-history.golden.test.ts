@@ -59,7 +59,7 @@ describe("golden: turn-loop keep-last policy bands", () => {
 		expect(out.compacted).toBe(true);
 		expect(ids(out.messages)).toEqual(["u4", "a4", "u5", "a5", "u6", "a6"]);
 		const folded = (out.messages[0].content as { text: string }).text;
-		expect(folded).toContain("[Earlier conversation auto-summarized to save context — 6 messages]");
+		expect(folded).toContain("[Earlier conversation auto-summarized to save context — 6 messages, range u1:a3]");
 		expect(folded).toContain("GOLDEN SUMMARY");
 		expect(folded).toContain("q4"); // anchor row's own text survives the fold
 	});

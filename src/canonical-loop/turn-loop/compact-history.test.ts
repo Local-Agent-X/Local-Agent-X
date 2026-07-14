@@ -10,6 +10,7 @@ const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.f
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
 import { compactHistory, forceCompactNext, locateAnchor, safeSplitIndex, toChatParams } from "./compact-history.js";
+import { parseCursor } from "../../tools/recall-tool.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { CanonicalMessage } from "../contract-types.js";
@@ -308,6 +309,62 @@ describe("compactHistory — forced compaction (provider overflow recovery)", ()
     const second = await compactHistory(msgs, "claude-opus-4-8", null, "op-once");
     expect(second.compacted).toBe(false);
     expect(mockSummarize).not.toHaveBeenCalled();
+  });
+});
+
+// The summary must cite the replaced span so the model (and the user) can page
+// the original rows back via the recall tool's "startId:endId" range cursor.
+describe("compactHistory — replaced-range citation for recall", () => {
+  const recallCursorOf = (text: string): string => {
+    const m = text.match(/recall tool with cursor="([^"]+)"/);
+    expect(m, "recall hint line missing").not.toBeNull();
+    return m![1];
+  };
+
+  it("standalone summary row cites the head's first:last ids and a recall hint", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const msgs = [
+      u("u1", "first ask"), a("a1", "", [{ id: "t1", name: "read", arguments: "{}" }]), tr("r1", "t1", "res1"),
+      u("u2", "second ask"), a("a2", "", [{ id: "t2", name: "read", arguments: "{}" }]), tr("r2", "t2", "res2"),
+      u("u3", "latest ask"), a("a3", "working"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    // head = u1..u2 (split lands on a2) → range u1:u2
+    const content = out[0].content as { text: string; summaryRange?: { firstId: string; lastId: string } };
+    expect(content.text).toContain("messages, range u1:u2]");
+    expect(recallCursorOf(content.text)).toBe("u1:u2");
+    expect(content.summaryRange).toEqual({ firstId: "u1", lastId: "u2" });
+    // the compacted view stays deliberately un-anchorable
+    expect(locateAnchor(out, { turnIdx: 0, contextTokens: 1_000 })).toBeNull();
+  });
+
+  it("merged-into-user-row branch carries the same range text and metadata", async () => {
+    mockStatus.mockReturnValue(status(96, true)); // keepLast = 4
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const msgs = [
+      u("u1", "first"), a("a1", "r1"), u("u2", "second"), a("a2", "r2"),
+      u("u3", "third ask"), a("a3", "r3"), u("u4", "fourth ask"), a("a4", "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    expect(out[0].messageId).toBe("u3"); // merged branch, not a synthetic row
+    const content = out[0].content as { text: string; summaryRange?: { firstId: string; lastId: string } };
+    expect(content.text).toContain("messages, range u1:a2]");
+    expect(recallCursorOf(content.text)).toBe("u1:a2");
+    expect(content.summaryRange).toEqual({ firstId: "u1", lastId: "a2" });
+  });
+
+  it("emitted cursor round-trips through recall-tool's parseCursor", async () => {
+    mockStatus.mockReturnValue(status(96, true));
+    mockSummarize.mockResolvedValue("DECISIONS: ship it");
+    const mid = (n: number): string => `um-op1-${n}-abc12345`; // realistic dashed ids
+    const msgs = [
+      u(mid(0), "q1"), a(mid(1), "r1"), u(mid(2), "q2"), a(mid(3), "r2"),
+      u(mid(4), "q3"), a(mid(5), "r3"), u(mid(6), "q4"), a(mid(7), "r4"),
+    ];
+    const { messages: out } = await compactHistory(msgs, "claude-sonnet-4-6");
+    const cursor = recallCursorOf((out[0].content as { text: string }).text);
+    expect(parseCursor(cursor)).toEqual({ startId: mid(0), endId: mid(3) });
   });
 });
 

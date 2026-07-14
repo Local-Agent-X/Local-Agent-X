@@ -321,10 +321,19 @@ export async function compactHistory(
   }
 
   const anchor = recent[0];
+  // Replaced-span range pointer. head rows always come from the raw op_messages
+  // replay (build-input.ts rebuilds the view from readOpMessages every turn and
+  // never persists the compacted view), so they can never themselves be
+  // compact-summary rows — first/last ids always name real, recallable rows.
+  // The `firstId:lastId` cursor format is recall-tool's parseCursor range shape.
+  const firstId = head[0].messageId;
+  const lastId = head[head.length - 1].messageId;
   const block =
-    `[Earlier conversation auto-summarized to save context — ${head.length} messages]\n` +
+    `[Earlier conversation auto-summarized to save context — ${head.length} messages, range ${firstId}:${lastId}]\n` +
     `${summary}\n` +
+    `[Full original messages retrievable via the recall tool with cursor="${firstId}:${lastId}"]\n` +
     `[End of summary. Your most recent messages follow.]`;
+  const summaryRange = { firstId, lastId };
 
   // Fold the summary into a USER boundary row (no extra message → no adjacent-
   // user rejection, mirrors the situational-awareness digest). But when the tail
@@ -338,15 +347,15 @@ export async function compactHistory(
     const mergedAnchor: CanonicalMessage = {
       ...anchor,
       content: hasImages(anchor.content)
-        ? { ...(anchor.content as Record<string, unknown>), text: merged }
-        : { text: merged },
+        ? { ...(anchor.content as Record<string, unknown>), text: merged, summaryRange }
+        : { text: merged, summaryRange },
     };
     return { messages: [mergedAnchor, ...recent.slice(1)], compacted: true };
   }
   const summaryRow: CanonicalMessage = {
     messageId: `compact-summary-${anchor.messageId}`,
     role: "user",
-    content: { text: block },
+    content: { text: block, summaryRange },
   };
   return { messages: [summaryRow, ...recent], compacted: true };
 }

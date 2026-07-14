@@ -29,6 +29,7 @@ demand via tool search and aren't all listed here.)
 - `edit` — Make a targeted edit to a file. _e.g._ "edit index.html and change the title"
 - `edit_lines`
 - `multi_edit`
+- `bulk_replace`
 - `delete_file` — Delete a file.
 - `bash` — Run a shell command. _e.g._ "run `npm test` in the project"
 - `glob` — Find files by name pattern.
@@ -39,8 +40,6 @@ demand via tool search and aren't all listed here.)
 - `web_fetch` — Fetch and read a web page. _e.g._ "summarize https://example.com"
 - `web_search` — Search the web. _e.g._ "search the web for the latest on X"
 - `image_search`
-- `create_chart`
-- `preview_document`
 - `http_request` — Make a raw HTTP request to an API.
 
 ### App self-control
@@ -54,24 +53,23 @@ demand via tool search and aren't all listed here.)
 ### Vision
 
 - `view_image` — Look at an image you share. _e.g._ "what's in this screenshot?"
-- `send_video` — Send/attach a video.
 - `send_image`
 - `screen_capture` — Capture the screen. _e.g._ "take a screenshot of my screen"
-- `telegram_send`
-- `whatsapp_send`
-- `restart`
-- `check_for_updates`
-- `apply_update`
 
 ### Memory
 
 - `memory_search` — Search long-term memory. _e.g._ "what do you know about my projects?"
 - `search_past_sessions`
-- `read_my_logs`
 - `memory_save` — Save a fact to memory. _e.g._ "remember that I prefer tabs over spaces"
 - `memory_recall` — Recall stored facts.
 - `memory_get` — Fetch a specific memory entry.
-- `memory_forget` — Mark a fact as no longer true. _e.g._ "forget that I use Coinbase"
+- `remember`
+- `update_fact`
+- `forget`
+
+### process_status promoted 2026-07-13: 47 fires/4wks, all paying the
+
+- `process_status`
 
 ### Worker-pool observation
 
@@ -92,14 +90,6 @@ demand via tool search and aren't all listed here.)
 - `task_list` — List tasks.
 - `task_get` — Get a task's details.
 
-### Protocols
-
-- `protocol`
-
-### MCP administration
-
-- `mcp_add_server`
-
 ### Agents
 
 - `agent_list` — List available agents.
@@ -112,7 +102,6 @@ demand via tool search and aren't all listed here.)
 - `project_list` — List projects.
 - `project_add_agent` — Add an agent to a project.
 - `project_brief_read`
-- `project_brief_update`
 - `agent_status` — Check a spawned agent's status.
 - `agent_cancel` — Cancel a spawned agent.
 - `agent_output` — Get a spawned agent's output.
@@ -136,14 +125,11 @@ demand via tool search and aren't all listed here.)
 
 - `run_build_plan` — Run a staged app-build plan.
 - `build_plan_status` — Check an app build's status.
-- `build_plan_resume` — Resume a paused app build.
 - `start_app_build`
 - `finalize_app_build`
 
 ### Secrets
 
-- `request_secret` — Securely request + store a secret. _e.g._ "I need to store my OpenAI key"
-- `request_secrets` — Request multiple secrets.
 - `list_secrets` — List stored secret names (never values).
 
 ### Office documents
@@ -152,4 +138,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_72 capabilities · 50 with a description · 22 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_61 capabilities · 45 with a description · 16 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

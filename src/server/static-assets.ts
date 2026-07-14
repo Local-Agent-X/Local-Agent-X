@@ -1,10 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { corsHeaders, jsonResponse } from "../server-utils.js";
 import { confineToDir } from "../security/layer/index.js";
-import { getPageBundle } from "./static-bundle.js";
+import { getPageBundle, stampAssetTags } from "./static-bundle.js";
 import type { LAXConfig } from "../types.js";
 
 const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv" };
@@ -77,6 +77,8 @@ export function servePublicAsset(method: string, url: URL, req: IncomingMessage,
   const file = url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/app.html" ? join(publicDir, "app.html") : join(publicDir, url.pathname);
   if (relative(publicDir, resolve(file)).startsWith("..")) { json(403, { error: "Path traversal blocked" }); return true; }
   if (!existsSync(file)) return false;
+  const stat = statSync(file);
+  if (!stat.isFile()) return false;
   const ext = file.split(".").pop() || "";
   const contentTypes: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", svg: "image/svg+xml", png: "image/png", ico: "image/x-icon" };
   const headers: Record<string, string> = { "Content-Type": contentTypes[ext] || "application/octet-stream" };
@@ -87,7 +89,18 @@ export function servePublicAsset(method: string, url: URL, req: IncomingMessage,
     const raw = readFileSync(file, "utf-8");
     const page = (file.split(/[/\\]/).pop() || "").replace(/\.html$/i, "");
     const bundle = getPageBundle(page, publicDir, raw);
-    res.writeHead(200, headers); res.end(bundle ? bundle.rewrittenHtml : raw); return true;
+    // Stamp remaining asset tags (css/vendor/module js) with ?v=<mtime> so the
+    // immutable branch below applies to them. HTML stays no-cache, so a changed
+    // file re-stamps on the very next page load.
+    res.writeHead(200, headers); res.end(stampAssetTags(bundle ? bundle.rewrittenHtml : raw, publicDir)); return true;
   }
+  // Non-HTML static assets. mtime-stamped URLs (?v=, written by stampAssetTags
+  // or the bundler) are content-addressed → cache forever. Unstamped URLs
+  // (CSS url() refs like the hero mask, /manifest.json, favicons) revalidate
+  // via ETag — a 304 costs one loopback round trip instead of a re-download.
+  const etag = `W/"${Math.round(stat.mtimeMs).toString(36)}-${stat.size.toString(36)}"`;
+  headers["ETag"] = etag;
+  headers["Cache-Control"] = url.searchParams.has("v") ? "public, max-age=31536000, immutable" : "no-cache";
+  if (req.headers["if-none-match"] === etag) { res.writeHead(304, headers); res.end(); return true; }
   res.writeHead(200, headers); res.end(readFileSync(file)); return true;
 }

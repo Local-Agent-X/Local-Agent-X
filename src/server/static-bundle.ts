@@ -31,6 +31,26 @@ const CLASSIC_JS_SCRIPT =
 
 const cache = new Map<string, PageBundle>();
 
+// Same-origin <script src> / <link href> under /js, /css, or /vendor. Any
+// existing ?query is dropped and replaced with the file's mtime stamp, so a
+// hand-bumped ?v=v3 can never go stale and vendor tags (which had no version)
+// become stampable. URLs whose file doesn't exist on disk (e.g. the virtual
+// /js/_bundle/<page>.js the bundler just emitted) are left untouched.
+const STAMPABLE_ASSET =
+  /(<(?:script|link)\b[^>]*?\b(?:src|href)\s*=\s*(["']))(\/(?:js|css|vendor)\/[^"'?]+)(?:\?[^"']*)?(\2)/gi;
+
+// Rewrite static asset URLs in an HTML page to ?v=<mtime> so static-assets.ts
+// can serve them immutable. The page HTML itself is always no-cache, so a
+// changed file re-stamps on the next load — staleness is impossible by design.
+export function stampAssetTags(html: string, publicDir: string): string {
+  return html.replace(STAMPABLE_ASSET, (full, prefix, _q, src, suffix) => {
+    try {
+      const stamp = Math.round(statSync(srcToPath(src, publicDir)).mtimeMs);
+      return `${prefix}${src}?v=${stamp}${suffix}`;
+    } catch { return full; }
+  });
+}
+
 function srcToPath(src: string, publicDir: string): string {
   const clean = src.split("?")[0];
   return join(publicDir, clean);

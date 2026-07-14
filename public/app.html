@@ -19,14 +19,22 @@
 <meta http-equiv="Expires" content="0"/>
 <title>Local Agent X</title>
 <link rel="stylesheet" href="/vendor/highlightjs/github-dark.min.css"/>
-<script src="/vendor/highlightjs/highlight.min.js"></script>
+<!-- highlight + KaTeX are deferred: both are consumed only at render time
+     (shared-dom.js MutationObserver / shared-md.js md()), never at script
+     eval, and the first route render waits for DOMContentLoaded (bootNavigate
+     in app.js) — by which point deferred scripts have executed. Keeping them
+     synchronous blocked first paint on ~400KB of parse. -->
+<script defer src="/vendor/highlightjs/highlight.min.js"></script>
 <!-- KaTeX (self-hosted, like highlightjs): shared-md.js renders \[..\] / \(..\) /
      $$..$$ LaTeX from model output into typeset math at md() time. -->
 <link rel="stylesheet" href="/vendor/katex/katex.min.css"/>
-<script src="/vendor/katex/katex.min.js"></script>
-<!-- Mermaid (self-hosted): shared-dom.js renders ```mermaid code blocks into
-     diagrams at display time, same MutationObserver hook as highlightjs. -->
-<script src="/vendor/mermaid/mermaid.min.js"></script>
+<script defer src="/vendor/katex/katex.min.js"></script>
+<!-- Mermaid (2.7MB) is NOT loaded here: shared-dom.js lazy-loads
+     /vendor/mermaid/mermaid.min.js the first time a ```mermaid block actually
+     appears in a chat. -->
+<!-- Hero background (CSS mask on #chat-bg) — preload so it doesn't pop in
+     after the app-ready reveal. -->
+<link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
 <link rel="stylesheet" href="/css/app.css?v=vb25"/>

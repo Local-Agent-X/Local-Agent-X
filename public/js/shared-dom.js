@@ -40,6 +40,25 @@ function highlightCodeBlocks(container) {
 // inject markup through the SVG), and the whole code-block wrapper is swapped
 // for the diagram. mermaid.parse() gates rendering so a half-streamed block
 // stays a plain code block until it parses; the next observer tick retries.
+// Mermaid (2.7MB) is lazy-loaded on the first ```mermaid block instead of
+// shipping in app.html's <head>, where its parse+eval blocked first paint on
+// every boot. Injected as a same-origin script (CSP script-src 'self' allows
+// it); resolves on error too — the typeof guard below just no-ops then, and
+// the next observer tick retries the load.
+let _mermaidLoad = null;
+function _loadMermaid() {
+  if (typeof mermaid !== 'undefined') return Promise.resolve();
+  if (!_mermaidLoad) {
+    _mermaidLoad = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = '/vendor/mermaid/mermaid.min.js';
+      s.onload = resolve;
+      s.onerror = () => { _mermaidLoad = null; resolve(); };
+      document.head.appendChild(s);
+    });
+  }
+  return _mermaidLoad;
+}
 let _mermaidReady = false;
 function _mermaidInit() {
   if (_mermaidReady) return;
@@ -51,9 +70,12 @@ function _mermaidInit() {
 }
 let _mermaidSeq = 0;
 async function renderMermaidBlocks(container) {
-  if (typeof mermaid === 'undefined') return;
   const el = container || document;
-  for (const block of el.querySelectorAll('pre code.language-mermaid')) {
+  const blocks = el.querySelectorAll('pre code.language-mermaid');
+  if (!blocks.length) return;
+  await _loadMermaid();
+  if (typeof mermaid === 'undefined') return;
+  for (const block of blocks) {
     if (block.dataset.mermaidDone) continue;
     block.dataset.mermaidDone = 'true';
     const src = block.textContent;

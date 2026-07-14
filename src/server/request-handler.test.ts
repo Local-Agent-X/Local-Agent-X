@@ -102,8 +102,20 @@ beforeAll(async () => {
   mkdirSync(join(tmpDir, "public"), { recursive: true });
   writeFileSync(join(tmpDir, "public", "app.html"), "<!doctype html><html><head><title>core</title></head><body>shell</body></html>");
   mkdirSync(join(tmpDir, "public", "js"), { recursive: true });
-  writeFileSync(join(tmpDir, "public", "bundle.html"), '<!doctype html><html><head><script src="/js/one.js"></script></head><body>bundle</body></html>');
+  mkdirSync(join(tmpDir, "public", "css"), { recursive: true });
+  mkdirSync(join(tmpDir, "public", "vendor"), { recursive: true });
+  writeFileSync(join(tmpDir, "public", "bundle.html"), [
+    '<!doctype html><html><head>',
+    '<script src="/js/one.js"></script>',
+    '<link rel="stylesheet" href="/css/site.css?v=v1">',
+    '<script src="/vendor/lib.js"></script>',
+    '<script type="module" src="/js/mod.js?v=v2"></script>',
+    "</head><body>bundle</body></html>",
+  ].join(""));
   writeFileSync(join(tmpDir, "public", "js", "one.js"), "window.bundleContract = true;");
+  writeFileSync(join(tmpDir, "public", "css", "site.css"), "body{color:#000}");
+  writeFileSync(join(tmpDir, "public", "vendor", "lib.js"), "window.vendorContract = true;");
+  writeFileSync(join(tmpDir, "public", "js", "mod.js"), "export {};");
   mkdirSync(join(tmpDir, "workspace", "videos"), { recursive: true });
   writeFileSync(join(tmpDir, "workspace", "videos", "sample.mp4"), "0123456789");
   // Seed a cron report so /api/cron/<id>/reports/latest renders 200 HTML.
@@ -341,12 +353,40 @@ describe("request-handler extraction preserves the recorded legacy contract", ()
     });
 
     const page = await fetch(`${base()}/bundle.html`);
-    const bundlePath = (await page.text()).match(/src="([^"?]+)\?v=\d+"/)?.[1];
+    const html = await page.text();
+    const bundlePath = html.match(/src="(\/js\/_bundle\/[^"?]+)\?v=\d+"/)?.[1];
     expect(bundlePath).toBe("/js/_bundle/bundle.js");
     const bundle = await fetch(`${base()}${bundlePath}`);
     expect(bundle.status).toBe(200);
     expect(bundle.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect(bundle.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await bundle.text()).toContain("window.bundleContract = true;");
+  });
+
+  // Regression (boot lag): assets used to ship with no Cache-Control and no
+  // validators, so every Electron boot re-downloaded the whole UI. HTML now
+  // stamps css/vendor/module-js tags with ?v=<mtime> (served immutable) and
+  // unstamped assets revalidate via ETag → 304.
+  it("stamps asset tags in HTML and serves stamped-immutable / unstamped-304 assets", async () => {
+    const html = await (await fetch(`${base()}/bundle.html`)).text();
+    const cssSrc = html.match(/href="(\/css\/site\.css\?v=\d+)"/)?.[1];
+    const vendorSrc = html.match(/src="(\/vendor\/lib\.js\?v=\d+)"/)?.[1];
+    const modSrc = html.match(/src="(\/js\/mod\.js\?v=\d+)"/)?.[1];
+    expect(cssSrc && vendorSrc && modSrc).toBeTruthy(); // hand ?v= replaced by mtime stamps
+    for (const src of [cssSrc, vendorSrc, modSrc]) {
+      const res = await fetch(`${base()}${src}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+      expect(res.headers.get("etag")).toBeTruthy();
+    }
+    // Unstamped URL (a CSS url() ref can't carry a stamp): cached + revalidated.
+    const first = await fetch(`${base()}/css/site.css`);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("cache-control")).toBe("no-cache");
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+    const revalidated = await fetch(`${base()}/css/site.css`, { headers: { "If-None-Match": etag! } });
+    expect(revalidated.status).toBe(304);
+    expect(await revalidated.text()).toBe("");
   });
 });

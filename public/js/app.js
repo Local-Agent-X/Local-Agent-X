@@ -154,8 +154,16 @@ if (document.readyState === 'loading') {
 }
 // Safety net: the gate hides the ENTIRE shell until app-ready, so if bootNavigate
 // throws before flipping it the app would be blank forever. Force the reveal on a
-// timer regardless. Idempotent with the rAF above.
-setTimeout(() => document.body.classList.add('app-ready'), 2000);
+// timer regardless. Idempotent with the rAF above. Armed from DOMContentLoaded
+// (not script eval) so a slow first parse can't burn the budget before
+// bootNavigate even gets a chance to run — firing mid-assembly is exactly the
+// piecemeal render the gate exists to prevent.
+const _armRevealSafetyNet = () => setTimeout(() => document.body.classList.add('app-ready'), 2000);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _armRevealSafetyNet);
+} else {
+  _armRevealSafetyNet();
+}
 
 // Auto-refresh sidebar every 30s to pick up new WhatsApp sessions
 setInterval(() => {

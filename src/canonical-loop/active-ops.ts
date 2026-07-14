@@ -15,6 +15,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
 import { readLatestOpTurn } from "./store.js";
+import type { PendingApprovalRecord } from "./types.js";
 
 const ACTIVE_STATES = new Set(["queued", "running", "paused", "cancelling"]);
 const OPS_BASE = join(getLaxDir(), "operations");
@@ -32,6 +33,15 @@ export interface ActiveCanonicalOp {
   /** Lease expiry — null when the op is queued or paused with no live worker. */
   leaseExpiresAt: string | null;
   workerId: string | null;
+  /** Chat session the op belongs to, or null for headless/cron ops. */
+  sessionId: string | null;
+  /**
+   * Durable approval card the op is blocked on (canonical-loop/types.ts
+   * PendingApprovalRecord), or null when nothing is pending. Pass-through of
+   * the signal column — expiry (requestedAt + timeout) is the READER's
+   * concern (routes/approvals.ts), not this listing's.
+   */
+  pendingApproval: PendingApprovalRecord | null;
 }
 
 export function listActiveCanonicalOps(): ActiveCanonicalOp[] {
@@ -66,6 +76,8 @@ export function listActiveCanonicalOps(): ActiveCanonicalOp[] {
       startedAt: typeof op.startedAt === "string" ? op.startedAt : null,
       leaseExpiresAt: typeof c.leaseExpiresAt === "string" ? c.leaseExpiresAt : null,
       workerId: typeof c.leaseOwner === "string" ? c.leaseOwner : null,
+      sessionId: typeof c.sessionId === "string" ? c.sessionId : null,
+      pendingApproval: c.pendingApproval ?? null,
     });
   }
   return out;

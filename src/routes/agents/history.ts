@@ -68,7 +68,36 @@ export const handleAgentHistoryRoutes: RouteHandler = async (method, url, req, r
   if (method === "GET" && url.pathname === "/api/agents/active") {
     try {
       const handler = (await import("../../agency/handler.js")).Handler.getInstance();
-      json(200, handler.getAgentStatus());
+      const status = handler.getAgentStatus();
+      const rows: unknown[] = Array.isArray(status) ? [...status] : [status];
+      // Additive: canonical-loop ops blocked on a durable approval card.
+      // Field-agent rows are untouched; a canonical row only appears while
+      // its pendingApproval column is set, so the poll payload is unchanged
+      // in the steady state. Rows carry the FieldAgentStatus fields the
+      // existing renderers read, plus path:"canonical" + pendingApproval.
+      try {
+        const { listActiveCanonicalOps } = await import("../../canonical-loop/index.js");
+        for (const op of listActiveCanonicalOps()) {
+          if (!op.pendingApproval) continue;
+          const startedAt = op.startedAt ? Date.parse(op.startedAt) || 0 : 0;
+          rows.push({
+            id: op.opId,
+            name: op.lane ? `${op.lane} op` : op.opId,
+            role: "canonical",
+            status: op.state,
+            currentTask: `Awaiting approval: ${op.pendingApproval.toolName}`,
+            progress: 0,
+            outputLines: 0,
+            startedAt,
+            elapsed: startedAt ? Date.now() - startedAt : 0,
+            tokensUsed: 0,
+            path: "canonical",
+            sessionId: op.sessionId,
+            pendingApproval: op.pendingApproval,
+          });
+        }
+      } catch { /* canonical listing unavailable — field agents still served */ }
+      json(200, rows);
     } catch { json(200, []); }
     return true;
   }

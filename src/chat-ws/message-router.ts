@@ -29,6 +29,7 @@ import { pushInject } from "../agent-loop/inject-queue.js";
 import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
+import { resolveDurableApproval } from "./approval-durable-resolve.js";
 import type { ScreenAttachment } from "../screen-stream/index.js";
 
 const logger = createLogger("chat-ws");
@@ -196,7 +197,7 @@ export function attachMessageRouter(ctx: RouterContext): void {
     }
 
     if (type === "approval_response" && msg.approvalId) {
-      handleApprovalResponse(ws, msg);
+      await handleApprovalResponse(ws, msg);
       return;
     }
 
@@ -355,18 +356,22 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
   if (handler) handler(sessionId, _msgText, _atts);
 }
 
-function handleApprovalResponse(ws: WebSocket, msg: Record<string, unknown>): void {
+async function handleApprovalResponse(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
+  const approvalId = String(msg.approvalId);
+  const approved = Boolean(msg.approved);
+  const rememberForSession = Boolean(msg.rememberForSession);
   try {
-    const resolved = getApprovalManager().resolveApproval(
-      String(msg.approvalId),
-      Boolean(msg.approved),
-      Boolean(msg.rememberForSession),
-    );
-    if (!resolved) {
-      ws.send(JSON.stringify({ type: "error", message: `Unknown or expired approval: ${msg.approvalId}` }));
-    }
+    // Happy path: the card is live in-process — the waiting tool call's
+    // promise settles and the manager's settle hook does the durable
+    // bookkeeping. No reply needed (unchanged behavior).
+    if (getApprovalManager().resolveApproval(approvalId, approved, rememberForSession)) return;
   } catch (e) {
     ws.send(JSON.stringify({ type: "error", message: `Approval response failed: ${e}` }));
+    return;
   }
+  // Unknown in-process (restart / rediscovered durable card) — fall through
+  // to the durable-record resolve. `opId` is optional on the frame; durable
+  // cards from /api/approvals/pending carry it.
+  await resolveDurableApproval(ws, approvalId, approved, rememberForSession, msg.opId);
 }
 

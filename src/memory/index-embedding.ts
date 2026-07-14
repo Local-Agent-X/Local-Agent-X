@@ -176,16 +176,52 @@ export function cacheEmbedding(
 
 const SIGNATURE_KEY = "embedding_signature";
 
+// Full-table UPDATEs over a large chunk corpus (~45k rows observed) used to
+// run as one synchronous statement on the main event loop, starving every
+// concurrent awaited boot phase (measured: setupVoiceWs inflated 17-21s).
+const UPDATE_BATCH_ROWS = 4000;
+
+function yieldEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+// NULL chunk embeddings matching the AND-appended predicate, batched by rowid
+// with an event-loop yield between batches. Each batch UPDATE is atomic; rows
+// inserted after the bounds snapshot carry vectors from the CURRENT provider
+// (callers set the provider before invoking) and are correctly left alone.
+async function nullEmbeddingsInBatches(
+  db: InstanceType<typeof Database>,
+  predicateSql: string,
+  params: readonly unknown[]
+): Promise<number> {
+  const bounds = db
+    .prepare("SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM chunks")
+    .get() as { lo: number | null; hi: number | null };
+  if (bounds.lo === null || bounds.hi === null) return 0;
+
+  const stmt = db.prepare(
+    "UPDATE chunks SET embedding = NULL " +
+    `WHERE rowid BETWEEN ? AND ? AND embedding IS NOT NULL${predicateSql}`
+  );
+  let changed = 0;
+  for (let lo = bounds.lo; lo <= bounds.hi; lo += UPDATE_BATCH_ROWS) {
+    const hi = Math.min(lo + UPDATE_BATCH_ROWS - 1, bounds.hi);
+    changed += stmt.run(lo, hi, ...params).changes;
+    await yieldEventLoop();
+  }
+  return changed;
+}
+
 export function embeddingSignature(p: EmbeddingProvider): string {
   return `${p.name}/${p.model}/${p.dimensions}`;
 }
 
 export type SignatureVerdict = "match" | "adopted" | "wiped" | "degraded";
 
-export function reconcileEmbeddingSignature(
+export async function reconcileEmbeddingSignature(
   db: InstanceType<typeof Database>,
   provider: EmbeddingProvider
-): SignatureVerdict {
+): Promise<SignatureVerdict> {
   const sig = embeddingSignature(provider);
   const row = db
     .prepare("SELECT value FROM meta WHERE key = ?")
@@ -225,11 +261,12 @@ export function reconcileEmbeddingSignature(
     }
   }
 
-  db.transaction(() => {
-    db.prepare("UPDATE chunks SET embedding = NULL WHERE embedding IS NOT NULL").run();
-    try { db.exec("DROP TABLE IF EXISTS chunks_vec"); } catch {}
-    setSig.run(SIGNATURE_KEY, sig);
-  })();
+  // Batched so the event loop keeps turning. Signature written LAST: a crash
+  // mid-wipe leaves it stale, so the next boot re-enters and the (idempotent)
+  // wipe resumes.
+  await nullEmbeddingsInBatches(db, "", []);
+  try { db.exec("DROP TABLE IF EXISTS chunks_vec"); } catch {}
+  setSig.run(SIGNATURE_KEY, sig);
   logger.warn(
     `[memory] Embedding provider changed (${stored ?? "untracked"} → ${sig}) — ` +
     `stale vectors wiped, re-embed scheduled`
@@ -258,18 +295,16 @@ export function countChunksMissingEmbedding(db: InstanceType<typeof Database>): 
  * parsing every embedding in JS. Returns how many were healed. Live 2026-06-12:
  * an instruction in 2026-04-07.md was unfindable for exactly this reason.
  */
-export function nullDimensionMismatchedEmbeddings(
+export async function nullDimensionMismatchedEmbeddings(
   db: InstanceType<typeof Database>,
   provider: EmbeddingProvider
-): number {
+): Promise<number> {
   try {
-    const res = db
-      .prepare(
-        "UPDATE chunks SET embedding = NULL " +
-        "WHERE embedding IS NOT NULL AND json_array_length(embedding) != ?"
-      )
-      .run(provider.dimensions);
-    return res.changes;
+    return await nullEmbeddingsInBatches(
+      db,
+      " AND json_array_length(embedding) != ?",
+      [provider.dimensions]
+    );
   } catch {
     // json_array_length unavailable, or a non-JSON embedding — leave it for the
     // signature wipe path rather than risk nulling a valid vector.
@@ -304,6 +339,7 @@ export async function reembedMissingChunks(
 
   for (;;) {
     const rows = select.all(afterId, BATCH) as Array<{ id: number; text: string; hash: string }>;
+    await yieldEventLoop();
     if (rows.length === 0) break;
     afterId = rows[rows.length - 1].id;
 
@@ -323,6 +359,7 @@ export async function reembedMissingChunks(
         embedded++;
       }
     })();
+    await yieldEventLoop();
 
     // Full-batch failure means the provider is down — stop burning retries;
     // the next boot resumes from whatever is still NULL.

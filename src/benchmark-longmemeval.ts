@@ -78,7 +78,7 @@ async function main() {
   try {
     const { createEmbeddingProvider } = await import("./embedding-providers/index.js");
     const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL, baseUrl: EMB_URL });
-    memory.setEmbeddingProvider(embProvider);
+    await memory.setEmbeddingProvider(embProvider);
     const source = EMB_URL ? `(${EMB_URL})` : "ollama";
     logger.info(`Embedding: ${source}/${EMB_MODEL} (${embProvider.dimensions}d)`);
   } catch { logger.info("Keyword search only"); }

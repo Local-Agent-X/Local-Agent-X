@@ -58,27 +58,27 @@ function embeddingOf(chunkId: number): number[] | null {
 }
 
 describe("reconcileEmbeddingSignature", () => {
-  it("adopts on an empty index, then matches on the same provider", () => {
+  it("adopts on an empty index, then matches on the same provider", async () => {
     const db = memory["db"];
     const prov = fakeProvider("fake", "m1", 4);
-    expect(reconcileEmbeddingSignature(db, prov)).toBe("adopted");
-    expect(reconcileEmbeddingSignature(db, prov)).toBe("match");
+    expect(await reconcileEmbeddingSignature(db, prov)).toBe("adopted");
+    expect(await reconcileEmbeddingSignature(db, prov)).toBe("match");
   });
 
-  it("wipes stale vectors on a provider change", () => {
+  it("wipes stale vectors on a provider change", async () => {
     const db = memory["db"];
     const provA = fakeProvider("fake", "m1", 4);
-    reconcileEmbeddingSignature(db, provA);
+    await reconcileEmbeddingSignature(db, provA);
     const id = insertChunk("hello world", [0.1, 0.2, 0.3, 0.4]);
 
     const provB = fakeProvider("fake", "m2", 8);
-    expect(reconcileEmbeddingSignature(db, provB)).toBe("wiped");
+    expect(await reconcileEmbeddingSignature(db, provB)).toBe("wiped");
     expect(embeddingOf(id)).toBeNull();
     // Signature now pins the new provider — no second wipe.
-    expect(reconcileEmbeddingSignature(db, provB)).toBe("match");
+    expect(await reconcileEmbeddingSignature(db, provB)).toBe("match");
   });
 
-  it("claims pre-signature vectors when the cache corroborates the provider", () => {
+  it("claims pre-signature vectors when the cache corroborates the provider", async () => {
     const db = memory["db"];
     const prov = fakeProvider("fake", "m1", 4);
     insertChunk("hello", [0.1, 0.2, 0.3, 0.4]);
@@ -86,30 +86,30 @@ describe("reconcileEmbeddingSignature", () => {
       "INSERT INTO embedding_cache (hash, provider, model, embedding, updated_at) VALUES ('h-hello', 'fake', 'm1', '[0.1,0.2,0.3,0.4]', ?)"
     ).run(Date.now());
 
-    expect(reconcileEmbeddingSignature(db, prov)).toBe("adopted");
+    expect(await reconcileEmbeddingSignature(db, prov)).toBe("adopted");
     expect(countChunksMissingEmbedding(db)).toBe(0);
   });
 
-  it("wipes pre-signature vectors when nothing ties them to the current provider", () => {
+  it("wipes pre-signature vectors when nothing ties them to the current provider", async () => {
     const db = memory["db"];
     const id = insertChunk("hello", [0.1, 0.2, 0.3, 0.4]);
     const prov = fakeProvider("fake", "m1", 4);
 
-    expect(reconcileEmbeddingSignature(db, prov)).toBe("wiped");
+    expect(await reconcileEmbeddingSignature(db, prov)).toBe("wiped");
     expect(embeddingOf(id)).toBeNull();
   });
 
-  it("does NOT wipe when falling back to local — degraded, vectors intact", () => {
+  it("does NOT wipe when falling back to local — degraded, vectors intact", async () => {
     const db = memory["db"];
     const real = fakeProvider("ollama", "mxbai", 4);
-    reconcileEmbeddingSignature(db, real);
+    await reconcileEmbeddingSignature(db, real);
     const id = insertChunk("hello", [0.1, 0.2, 0.3, 0.4]);
 
     const local = fakeProvider("local", "tfidf", 16);
-    expect(reconcileEmbeddingSignature(db, local)).toBe("degraded");
+    expect(await reconcileEmbeddingSignature(db, local)).toBe("degraded");
     expect(embeddingOf(id)).toEqual([0.1, 0.2, 0.3, 0.4]);
     // The real provider coming back is a plain match — still no wipe.
-    expect(reconcileEmbeddingSignature(db, real)).toBe("match");
+    expect(await reconcileEmbeddingSignature(db, real)).toBe("match");
     expect(embeddingOf(id)).toEqual([0.1, 0.2, 0.3, 0.4]);
   });
 });
@@ -120,14 +120,14 @@ describe("reconcileEmbeddingSignature", () => {
 // dimensions 0, so the content was on disk but invisible. The app must SELF-HEAL
 // this without a human running memory_reindex.
 describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
-  it("nulls stale-dimension vectors and leaves correct-dimension ones intact", () => {
+  it("nulls stale-dimension vectors and leaves correct-dimension ones intact", async () => {
     const db = memory["db"];
     const prov = fakeProvider("fake", "m1", 4);
-    reconcileEmbeddingSignature(db, prov);
+    await reconcileEmbeddingSignature(db, prov);
     const right = insertChunk("right dims", [1, 2, 3, 4]);                 // dim 4 — matches provider
     const stale = insertChunk("orphaned by a model change", [1, 2, 3, 4, 5, 6, 7, 8]); // dim 8 — mismatch
 
-    expect(nullDimensionMismatchedEmbeddings(db, prov)).toBe(1);
+    expect(await nullDimensionMismatchedEmbeddings(db, prov)).toBe(1);
     expect(embeddingOf(right)).toEqual([1, 2, 3, 4]);
     expect(embeddingOf(stale)).toBeNull(); // healed → will be re-embedded
   });
@@ -135,7 +135,7 @@ describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
   it("PROVES the heal: an orphaned chunk is re-embedded under the current provider and becomes searchable", async () => {
     const db = memory["db"];
     const current = fakeProvider("ollama", "mxbai", 8);
-    reconcileEmbeddingSignature(db, current); // current vector space is 8-dim
+    await reconcileEmbeddingSignature(db, current); // current vector space is 8-dim
 
     // A chunk left behind with an OLD provider's 4-dim vector (the orphan bug):
     // its text is on disk + indexed, but at dim 4 it's invisible to 8-dim search.
@@ -144,7 +144,7 @@ describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
 
     // Self-heal: NULL the dimension-mismatched vector, then the standard backfill
     // rebuilds it under the current provider.
-    expect(nullDimensionMismatchedEmbeddings(db, current)).toBe(1);
+    expect(await nullDimensionMismatchedEmbeddings(db, current)).toBe(1);
     expect(embeddingOf(orphan)).toBeNull();
     await reembedMissingChunks(db, current, DEFAULT_MEMORY_CONFIG, false);
 
@@ -158,7 +158,7 @@ describe("reembedMissingChunks", () => {
   it("fills every NULL embedding and leaves existing ones alone", async () => {
     const db = memory["db"];
     const prov = fakeProvider("fake", "m1", 4);
-    reconcileEmbeddingSignature(db, prov);
+    await reconcileEmbeddingSignature(db, prov);
 
     const existing = insertChunk("already embedded", [9, 9, 9, 9]);
     const missing1 = insertChunk("needs a vector", null);
@@ -190,5 +190,57 @@ describe("reembedMissingChunks", () => {
     const r2 = await reembedMissingChunks(db, fakeProvider("fake", "m1", 4), cfg, false);
     expect(r2.embedded).toBe(1);
     expect(countChunksMissingEmbedding(db)).toBe(0);
+  });
+});
+
+// Regression (boot starvation, measured 2026-07): the provider-change wipe ran
+// as ONE synchronous full-table UPDATE over ~45k chunks on the main event loop,
+// stalling every concurrent awaited boot phase (setupVoiceWs inflated 17-21s).
+// The wipe must batch its sqlite work and yield between batches so concurrent
+// work keeps progressing.
+describe("event-loop yielding during heavy sqlite work", () => {
+  it("provider-change wipe over thousands of chunks yields the event loop", async () => {
+    const db = memory["db"];
+    const provA = fakeProvider("fake", "m1", 8);
+    await reconcileEmbeddingSignature(db, provA);
+
+    const ROWS = 12_000; // > 2 batch windows at any 2000-5000 batch size; CI-safe
+    const vec = JSON.stringify(Array.from({ length: 8 }, (_, i) => i / 8));
+    const ins = db.prepare(`
+      INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at)
+      VALUES ('t.md', 'personality', 1, 1, ?, ?, ?, ?, ?)
+    `);
+    db.transaction(() => {
+      for (let i = 0; i < ROWS; i++) ins.run(`c${i}`, `h${i}`, `h${i}`, vec, Date.now());
+    })();
+
+    // Event-loop probe: counts turns and tracks the longest gap between them.
+    // A synchronous full-table wipe gives the probe ZERO turns until it ends.
+    let turns = 0;
+    let maxGapMs = 0;
+    let last = Date.now();
+    let stop = false;
+    const probe = (async () => {
+      while (!stop) {
+        await new Promise<void>((r) => setImmediate(r));
+        const now = Date.now();
+        if (now - last > maxGapMs) maxGapMs = now - last;
+        last = now;
+        turns++;
+      }
+    })();
+
+    last = Date.now();
+    const verdict = await reconcileEmbeddingSignature(db, fakeProvider("fake", "m2", 8));
+    stop = true;
+    await probe;
+
+    expect(verdict).toBe("wiped");
+    expect(countChunksMissingEmbedding(db)).toBe(ROWS); // same end state as before
+    // Deterministic starvation check: the wipe must hand the loop back at
+    // least twice mid-flight (12k rows / <=5k batch => >=2 interior yields).
+    expect(turns).toBeGreaterThanOrEqual(2);
+    // And no single stall may approach the observed multi-second starvation.
+    expect(maxGapMs).toBeLessThan(250);
   });
 });

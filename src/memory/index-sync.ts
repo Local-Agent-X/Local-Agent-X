@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, join, sep } from "node:path";
 import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
 import type { CanonicalSource, Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
@@ -89,6 +89,30 @@ export function removeFile(
   });
 
   doRemove();
+}
+
+/**
+ * Re-point an indexed file to a new on-disk location, keeping every chunk
+ * (fts/vec rows are keyed by chunk id, so they follow automatically).
+ *
+ * Used by session archival: archiveOldSessions moves the transcript to
+ * sessions-archive/, and without this the next sync's removed-path sweep
+ * would see the old path gone and permanently delete the session's embedded
+ * memory — violating archive-never-delete in substance. Returns true when a
+ * files row existed (false = the session was never indexed; nothing to do).
+ */
+export function repointFile(
+  db: InstanceType<typeof Database>,
+  oldPath: string,
+  newPath: string
+): boolean {
+  const doRepoint = db.transaction((): boolean => {
+    const r = db.prepare("UPDATE files SET path = ? WHERE path = ?").run(newPath, oldPath);
+    if (r.changes === 0) return false;
+    db.prepare("UPDATE chunks SET path = ? WHERE path = ?").run(newPath, oldPath);
+    return true;
+  });
+  return doRepoint();
 }
 
 async function indexFile(
@@ -302,9 +326,19 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
     }
 
     const allPaths = new Set(allFiles.map((f) => f.path));
+    // Archived session transcripts are frozen cold storage: never rescanned
+    // (listSessionFiles only walks sessions/), so without this exemption the
+    // sweep below would delete their repointed chunks on the first sync after
+    // archival — permanently, since nothing re-indexes the archive.
+    const archivePrefix = join(deps.dataDir, "sessions-archive") + sep;
     const dbFiles = deps.db.prepare("SELECT path FROM files").all() as { path: string }[];
     for (const { path } of dbFiles) {
-      if (!allPaths.has(path) && !path.startsWith("import/") && !path.startsWith("session-live/")) {
+      if (
+        !allPaths.has(path) &&
+        !path.startsWith("import/") &&
+        !path.startsWith("session-live/") &&
+        !path.startsWith(archivePrefix)
+      ) {
         removeFile(deps.db, deps.hasFts, deps.hasVec, path);
       }
     }

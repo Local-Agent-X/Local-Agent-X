@@ -92,8 +92,19 @@ export class SessionStore {
    * activity guard (the store has no "currently loaded" concept — a live
    * session's file was written this turn, so recency is the sound proxy).
    * Per-session errors are isolated so one bad file can't abort the sweep.
+   *
+   * `onArchived(oldPath, newPath)` fires after each successful move so the
+   * caller can keep dependent state consistent (the memory index re-points
+   * the session's files row — its embedded chunks are keyed by absolute
+   * path, and losing that link would let the sync sweep delete them). If it
+   * throws, the move is ROLLED BACK (file renamed home, session counted
+   * failed) — a moved transcript whose index still points at the old path
+   * would be swept as removed on the next sync.
    */
-  archiveOldSessions(maxAgeDays: number): { archived: number; skipped: number; failed: number } {
+  archiveOldSessions(
+    maxAgeDays: number,
+    onArchived?: (oldPath: string, newPath: string) => void,
+  ): { archived: number; skipped: number; failed: number } {
     const now = Date.now();
     const cutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
     const activityGuard = now - 24 * 60 * 60 * 1000;
@@ -116,6 +127,16 @@ export class SessionStore {
           continue;
         }
         renameSync(src, dest);
+        if (onArchived) {
+          try {
+            onArchived(src, dest);
+          } catch (e) {
+            renameSync(dest, src); // roll the move back — see doc comment
+            logger.warn(`archive rolled back for session ${id}: ${(e as Error).message}`);
+            failed++;
+            continue;
+          }
+        }
         // Per-session sidecar from the legacy migration rides along.
         const sidecar = join(this.dir, `${id}.json.pre-migration`);
         if (existsSync(sidecar)) {

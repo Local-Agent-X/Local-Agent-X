@@ -82,6 +82,25 @@ describe("SessionStore.archiveOldSessions", () => {
     expect(readFileSync(join(dataDir, "sessions-archive", "clash.jsonl"), "utf-8")).toBe("pre-existing archive copy\n");
   });
 
+  it("rolls the move back when onArchived throws — file home, session still listed", () => {
+    store.save(makeSession("linked"));
+    store.save(makeSession("solo"));
+    backdate("linked", 100);
+    backdate("solo", 100);
+
+    const r = store.archiveOldSessions(90, (oldPath) => {
+      if (oldPath.includes("linked")) throw new Error("repoint failed");
+    });
+
+    expect(r).toEqual({ archived: 1, skipped: 0, failed: 1 });
+    // Rolled back: file back in sessions/, still listed, nothing in archive.
+    expect(existsSync(join(dataDir, "sessions", "linked.jsonl"))).toBe(true);
+    expect(existsSync(join(dataDir, "sessions-archive", "linked.jsonl"))).toBe(false);
+    expect(store.list().map((s) => s.id)).toContain("linked");
+    // The healthy sibling still archived.
+    expect(existsSync(join(dataDir, "sessions-archive", "solo.jsonl"))).toBe(true);
+  });
+
   it("carries the legacy .json.pre-migration sidecar along with the session", () => {
     store.save(makeSession("legacy"));
     writeFileSync(join(dataDir, "sessions", "legacy.json.pre-migration"), "{}");

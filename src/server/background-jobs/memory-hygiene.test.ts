@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "../../memory/index.js";
 import { SessionStore } from "../../memory/session-store.js";
+import { UniversalIndex } from "../../memory/universal-index.js";
 import type { Session } from "../../types.js";
 import { makeRunMemoryHygiene, SESSION_ARCHIVE_MAX_AGE_DAYS } from "./memory-hygiene.js";
 
@@ -106,6 +107,47 @@ describe("memory-hygiene job", () => {
     // Collided session: both copies intact — nothing deleted, nothing clobbered.
     expect(existsSync(join(dataDir, "sessions", "stuck.jsonl"))).toBe(true);
     expect(readFileSync(join(dataDir, "sessions-archive", "stuck.jsonl"), "utf-8")).toBe("pre-existing\n");
+  });
+
+  it("archiving preserves the session's indexed memory across a sync sweep", async () => {
+    // Regression: transcripts are indexed into memory.db keyed by ABSOLUTE
+    // path. Before the repoint + sweep exemption, archiving moved the file,
+    // the next sync's removed-path sweep saw the old path gone, and the
+    // session's embedded chunks were permanently deleted — with nothing ever
+    // rescanning sessions-archive/ to rebuild them.
+    const s = makeSession("remembered");
+    s.messages = [
+      { role: "user", content: "Tell me about the fee-protection module in the trading bot." },
+      { role: "assistant", content: "Fee protection blocks trades whose expected edge is below round-trip exchange fees." },
+      { role: "user", content: "And where do the thresholds live?" },
+      { role: "assistant", content: "Per-pair thresholds are set in the settings panel and persisted to the bot config." },
+    ];
+    sessionStore.save(s);
+    const indexed = await new UniversalIndex(memoryIndex).indexSessionTranscript("remembered");
+    expect(indexed.added).toBeGreaterThan(0);
+
+    const oldPath = join(dataDir, "sessions", "remembered.jsonl");
+    const newPath = join(dataDir, "sessions-archive", "remembered.jsonl");
+    const db = memoryIndex.maintenanceDb();
+    const chunkCount = (p: string) =>
+      (db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE path = ?").get(p) as { n: number }).n;
+    expect(chunkCount(oldPath)).toBeGreaterThan(0);
+
+    backdate("remembered", SESSION_ARCHIVE_MAX_AGE_DAYS + 30);
+    await makeRunMemoryHygiene({ dataDir, sessionStore, memoryIndex })();
+
+    // The files row followed the move…
+    expect(existsSync(newPath)).toBe(true);
+    expect(db.prepare("SELECT 1 FROM files WHERE path = ?").get(newPath)).toBeTruthy();
+    expect(db.prepare("SELECT 1 FROM files WHERE path = ?").get(oldPath)).toBeUndefined();
+    expect(chunkCount(newPath)).toBeGreaterThan(0);
+
+    // …and the removed-path sweep leaves the archived chunks alone.
+    memoryIndex.markDirty();
+    await memoryIndex.sync();
+    expect(chunkCount(newPath)).toBeGreaterThan(0);
+    expect(chunkCount(oldPath)).toBe(0);
+    expect(db.prepare("SELECT 1 FROM files WHERE path = ?").get(newPath)).toBeTruthy();
   });
 
   it("is a no-op on a quiet store — nothing archived, job completes", async () => {

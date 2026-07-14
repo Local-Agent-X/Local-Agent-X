@@ -18,10 +18,14 @@
  *      so no other statement can interleave with the lowered timeout).
  *   4. Archive sessions older than SESSION_ARCHIVE_MAX_AGE_DAYS to
  *      <dataDir>/sessions-archive/ via SessionStore.archiveOldSessions().
- *      Archived, never deleted — user-decided policy.
+ *      Archived, never deleted — user-decided policy. Each moved transcript's
+ *      memory.db files row is re-pointed to the archive path (repointFile) so
+ *      its embedded chunks survive the sync sweep; the sweep in index-sync
+ *      exempts sessions-archive/ since the archive is never rescanned.
  */
 import type { SessionStore, MemoryIndex } from "../../memory/index.js";
 import { pruneEmbeddingCache } from "../../memory/index-embedding.js";
+import { repointFile } from "../../memory/index-sync.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("server.background-jobs.memory-hygiene");
@@ -44,19 +48,26 @@ export function makeRunMemoryHygiene(deps: MemoryHygieneDeps): () => Promise<voi
       // optimize BEFORE the checkpoint: its ANALYZE writes land in the WAL,
       // so running it after would undo the truncation we just did.
       db.pragma("optimize");
+      const priorBusyTimeout = db.pragma("busy_timeout", { simple: true }) as number;
       db.pragma("busy_timeout = 100");
       let cp: { busy: number; log: number; checkpointed: number };
       try {
         cp = memoryIndex.checkpoint();
       } finally {
-        db.pragma("busy_timeout = 5000");
+        db.pragma(`busy_timeout = ${priorBusyTimeout}`);
       }
       logger.info(`[memory-hygiene] db pass: wal busy=${cp.busy} log=${cp.log} checkpointed=${cp.checkpointed}`);
     } catch (e) {
       logger.warn(`[memory-hygiene] db pass failed: ${(e as Error).message}`);
     }
     try {
-      const r = sessionStore.archiveOldSessions(SESSION_ARCHIVE_MAX_AGE_DAYS);
+      // Re-point each archived transcript's memory.db files row (chunks are
+      // keyed by absolute path): without this, the sync sweep sees the old
+      // path gone and permanently deletes the session's embedded memory. A
+      // repoint failure rolls the file move back inside archiveOldSessions.
+      const r = sessionStore.archiveOldSessions(SESSION_ARCHIVE_MAX_AGE_DAYS, (oldPath, newPath) => {
+        repointFile(memoryIndex.maintenanceDb(), oldPath, newPath);
+      });
       if (r.archived > 0 || r.failed > 0) {
         logger.info(`[memory-hygiene] sessions: archived=${r.archived} skipped=${r.skipped} failed=${r.failed} (>${SESSION_ARCHIVE_MAX_AGE_DAYS}d → sessions-archive/)`);
       }

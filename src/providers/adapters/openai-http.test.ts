@@ -48,10 +48,17 @@ function baseReq(overrides: Partial<ProviderRequest> = {}): ProviderRequest {
   };
 }
 
+// A VALID strict schema — strict mode requires `required` covering every
+// property and `additionalProperties: false`, or real OpenAI 400s on it.
 const RESPONSE_FORMAT: NonNullable<ProviderRequest["responseFormat"]> = {
   type: "json_schema",
   name: "verdict",
-  schema: { type: "object", properties: { ok: { type: "boolean" } } },
+  schema: {
+    type: "object",
+    properties: { ok: { type: "boolean" } },
+    required: ["ok"],
+    additionalProperties: false,
+  },
   strict: true,
 };
 
@@ -97,9 +104,9 @@ describe("buildParams response_format emission", () => {
 });
 
 describe("response_format 400 self-heal", () => {
-  it("drops response_format (and only it), marks the param, and retries once", async () => {
+  it("unsupported-phrasing 400: drops response_format (and only it), marks the param, retries once", async () => {
     createMock
-      .mockRejectedValueOnce(new Error("400 Invalid parameter: 'response_format' is not supported by this model"))
+      .mockRejectedValueOnce(new Error("400 Invalid parameter: 'response_format' of type 'json_schema' is not supported with this model"))
       .mockResolvedValueOnce(fakeStream());
     const chunks = await collect(baseReq({ responseFormat: RESPONSE_FORMAT }));
 
@@ -112,6 +119,25 @@ describe("response_format 400 self-heal", () => {
     expect(retryParams.temperature).toBe(createMock.mock.calls[0][0].temperature);
     expect(vi.mocked(markParamUnsupported)).toHaveBeenCalledWith(undefined, "gpt-4o-mini", "response_format");
     expect(chunks).toContainEqual({ type: "text", delta: "ok" });
+  });
+
+  it("schema-validation 400 propagates: no heal, no mark — a bad schema is a caller bug", async () => {
+    const schemaError =
+      "400 Invalid schema for response_format 'verdict': In context=(), 'additionalProperties' is required to be supplied and to be false.";
+    createMock.mockRejectedValueOnce(new Error(schemaError));
+    const chunks = await collect(baseReq({ responseFormat: RESPONSE_FORMAT }));
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(chunks[0]).toMatchObject({ type: "error", message: schemaError });
+    expect(vi.mocked(markParamUnsupported)).not.toHaveBeenCalled();
+  });
+
+  it("invalid response_format field 400 also propagates without healing", async () => {
+    const fieldError = "400 Invalid 'response_format.json_schema.name': string does not match pattern.";
+    createMock.mockRejectedValueOnce(new Error(fieldError));
+    const chunks = await collect(baseReq({ responseFormat: RESPONSE_FORMAT }));
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(chunks[0]).toMatchObject({ type: "error", message: fieldError });
+    expect(vi.mocked(markParamUnsupported)).not.toHaveBeenCalled();
   });
 
   it("does NOT self-heal when we never sent response_format — the error propagates", async () => {
@@ -131,9 +157,16 @@ describe("response_format 400 self-heal", () => {
 });
 
 describe("isResponseFormatRejection", () => {
-  it("matches 400s naming the param in either casing style", () => {
+  it("matches UNSUPPORTED phrasing in either casing style", () => {
     expect(isResponseFormatRejection("does not support parameter response_format")).toBe(true);
-    expect(isResponseFormatRejection("Invalid responseFormat for this model")).toBe(true);
+    expect(isResponseFormatRejection("does not support responseFormat")).toBe(true);
+    expect(isResponseFormatRejection("Invalid parameter: 'response_format' of type 'json_schema' is not supported with this model")).toBe(true);
+    expect(isResponseFormatRejection("Unsupported parameter: 'response_format'")).toBe(true);
+  });
+
+  it("does NOT match schema-validation errors that merely name the param", () => {
+    expect(isResponseFormatRejection("Invalid schema for response_format 'verdict': 'additionalProperties' is required to be supplied and to be false")).toBe(false);
+    expect(isResponseFormatRejection("Invalid 'response_format.json_schema.name': string does not match pattern")).toBe(false);
     expect(isResponseFormatRejection("rate limit exceeded")).toBe(false);
     expect(isResponseFormatRejection(undefined)).toBe(false);
   });

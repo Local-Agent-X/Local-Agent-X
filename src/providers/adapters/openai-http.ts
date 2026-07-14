@@ -64,13 +64,19 @@ export function isTemperatureRejection(message: string | undefined): boolean {
 }
 
 // Not every OpenAI-compatible server implements `response_format` with
-// json_schema (strict servers 400 the whole request). Match a 400 that names
-// the param — and only that — so the catch drops response_format and retries,
-// while every other 400 still propagates untouched. Structured output is
-// documented best-effort (see ProviderRequest.responseFormat), so dropping
-// it on rejection is safe.
+// json_schema (strict servers 400 the whole request: "Invalid parameter:
+// 'response_format' of type 'json_schema' is not supported with this model").
+// Match UNSUPPORTED phrasing only — same discipline as the reasoning_effort
+// and temperature matchers above. Schema-validation 400s also name the param
+// ("Invalid schema for response_format 'x': ... 'additionalProperties' is
+// required...", "Invalid 'response_format.json_schema.name'...") but those
+// are a CALLER bug: they must propagate untouched, never mark the learned
+// store, and never silently heal — otherwise one bad schema permanently
+// disables structured output for the (baseURL, model).
 export function isResponseFormatRejection(message: string | undefined): boolean {
-  return /response_?format/i.test(message ?? "");
+  return /does not support(?: parameter)?\s+'?response_?format|response_?format'?[^.]*\bnot supported|unsupported (?:parameter:?\s*)?'?response_?format/i.test(
+    message ?? "",
+  );
 }
 
 // stream_options.include_usage makes an OpenAI-compatible stream emit a final
@@ -228,9 +234,11 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeResponseFormat: responseFormatAllowed,
           });
         }
-        // response_format 400 — some OpenAI-compatible servers reject the
-        // json_schema wire param. Only when WE actually sent it; structured
-        // output is best-effort by contract, so retry omitting the field.
+        // response_format 400 — some OpenAI-compatible servers don't support
+        // the json_schema wire param. Only when WE actually sent it AND the
+        // server said "not supported" (schema-validation 400s fall through
+        // and propagate — see isResponseFormatRejection). Structured output
+        // is best-effort by contract, so retry omitting the field.
         if (responseFormatAllowed && isResponseFormatRejection(err.message)) {
           markParamUnsupported(req.baseURL, req.model, "response_format");
           logger.warn(`model ${req.model} rejected response_format — retrying without structured output`);

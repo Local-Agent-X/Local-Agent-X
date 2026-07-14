@@ -25,7 +25,7 @@
 import { resolveCredential } from "./auth/resolve.js";
 import { usesAnthropicSubscriptionAuth } from "./anthropic-models.js";
 import { resolveProviderContext } from "./providers/resolve-provider-context.js";
-import { backgroundModelFor } from "./providers/registry.js";
+import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
 import type { ProviderId } from "./providers/provider-ids.js";
 import type { ProviderRequest } from "./providers/adapter/types.js";
 import { createLogger } from "./logger.js";
@@ -61,11 +61,12 @@ export interface DispatchOptions {
   images?: string[];
   /**
    * Wire-level structured output (`response_format: json_schema`), same shape
-   * as ProviderRequest.responseFormat. Sent ONLY on the openai and xai paths;
-   * every other provider (ollama, anthropic, codex) ignores it silently —
-   * callers MUST NOT depend on it being honored and should still parse the
-   * output defensively. Absent → the request body is byte-identical to
-   * before this option existed.
+   * as ProviderRequest.responseFormat. Sent only on providers whose registry
+   * entry sets capabilities.structuredOutput (openai and xai on the dispatch
+   * paths); every other provider (ollama, anthropic, codex) ignores it
+   * silently — callers MUST NOT depend on it being honored and should still
+   * parse the output defensively. Absent → the request body is byte-identical
+   * to before this option existed.
    */
   responseFormat?: ProviderRequest["responseFormat"];
 }
@@ -93,6 +94,14 @@ const DISPATCH_MODEL_FALLBACK: Record<Exclude<LLMProvider, "ollama">, string> = 
  *  by hidden chain-of-thought (which returns empty → null). */
 export function dispatchBackgroundModel(provider: Exclude<LLMProvider, "ollama">): string {
   return backgroundModelFor(DISPATCH_REGISTRY_ID[provider], DISPATCH_MODEL_FALLBACK[provider]);
+}
+
+/** Whether a dispatch provider's registry entry advertises wire-level
+ *  structured output (capabilities.structuredOutput). The registry is the
+ *  single source of truth — dispatch consults it instead of hardcoding a
+ *  provider list, so flipping the flag there is enough to change routing. */
+export function dispatchStructuredOutputEnabled(provider: Exclude<LLMProvider, "ollama">): boolean {
+  return PROVIDERS[DISPATCH_REGISTRY_ID[provider]]?.capabilities.structuredOutput === true;
 }
 
 const DISPATCHABLE = new Set<LLMProvider>(["ollama", "anthropic", "openai", "xai", "codex"]);
@@ -132,8 +141,8 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
 
   if (provider === "ollama") return callOllama(opts.prompt, opts.ollamaModel ?? DEFAULTS.ollamaModel, temp, maxTokens, timeout);
   if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
-  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout, opts.responseFormat);
-  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout, opts.responseFormat);
+  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
+  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
   if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
   return null;
 }
@@ -279,29 +288,41 @@ async function callOpenAICompatible(
     const resolved = await resolveCredential(credentialProvider);
     if (!resolved) return null;
     const apiKey = resolved.credential;
-    const res = await fetch(`${baseURL}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model, temperature, max_tokens: maxTokens,
-        messages: [{ role: "user", content: prompt }],
-        // Structured output on the OpenAI wire shape. Absent → the body is
-        // byte-identical to before responseFormat existed.
-        ...(responseFormat
-          ? {
-              response_format: {
-                type: "json_schema",
-                json_schema: {
-                  name: responseFormat.name,
-                  schema: responseFormat.schema,
-                  ...(responseFormat.strict !== undefined ? { strict: responseFormat.strict } : {}),
+    const send = (rf: ProviderRequest["responseFormat"]) =>
+      fetch(`${baseURL}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model, temperature, max_tokens: maxTokens,
+          messages: [{ role: "user", content: prompt }],
+          // Structured output on the OpenAI wire shape. Absent → the body is
+          // byte-identical to before responseFormat existed.
+          ...(rf
+            ? {
+                response_format: {
+                  type: "json_schema",
+                  json_schema: {
+                    name: rf.name,
+                    schema: rf.schema,
+                    ...(rf.strict !== undefined ? { strict: rf.strict } : {}),
+                  },
                 },
-              },
-            }
-          : {}),
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+              }
+            : {}),
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    let res = await send(responseFormat);
+    if (!res.ok && res.status === 400 && responseFormat) {
+      // A 400 with response_format on board is very likely about it (param
+      // unsupported, or the caller's schema). Structured output is documented
+      // best-effort here, so surface the server's complaint and retry exactly
+      // once without it — no persistent learning at this layer (the adapter
+      // path owns that); second failure degrades to null as before.
+      const snippet = (await res.text().catch(() => "")).slice(0, 200);
+      logger.warn(`${label} HTTP 400 with response_format sent (${snippet}) — retrying once without structured output`);
+      res = await send(undefined);
+    }
     if (!res.ok) {
       logger.warn(`${label} call failed: HTTP ${res.status}`);
       return null;

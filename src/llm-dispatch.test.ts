@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-import { dispatch, dispatchBackgroundModel } from "./llm-dispatch.js";
+import { dispatch, dispatchBackgroundModel, dispatchStructuredOutputEnabled } from "./llm-dispatch.js";
 import { resolveCredential } from "./auth/resolve.js";
 import { streamAnthropicResponse } from "./anthropic-client/index.js";
-import { backgroundModelFor } from "./providers/registry.js";
+import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
 
 // Credential resolution is mocked so the request-shape tests below can drive
 // dispatch() against a stubbed fetch — nothing here touches the network or
@@ -29,6 +29,20 @@ describe("dispatchBackgroundModel reads the canonical registry", () => {
     for (const p of ["xai", "openai", "codex", "anthropic"] as const) {
       expect(dispatchBackgroundModel(p)).toBe(backgroundModelFor(p, ""));
     }
+  });
+});
+
+// The registry's structuredOutput capability flag is the single source of
+// truth for whether dispatch forwards responseFormat — no hardcoded provider
+// list allowed to drift away from it.
+describe("dispatchStructuredOutputEnabled reads the canonical registry", () => {
+  it("mirrors capabilities.structuredOutput for every dispatch provider", () => {
+    for (const p of ["xai", "openai", "codex", "anthropic"] as const) {
+      expect(dispatchStructuredOutputEnabled(p)).toBe(PROVIDERS[p].capabilities.structuredOutput === true);
+    }
+    // The two openai-compat dispatch paths advertise it today.
+    expect(dispatchStructuredOutputEnabled("openai")).toBe(true);
+    expect(dispatchStructuredOutputEnabled("xai")).toBe(true);
   });
 });
 
@@ -97,10 +111,17 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     });
   });
 
+  // A VALID strict schema — strict mode requires `required` covering every
+  // property and `additionalProperties: false`, or real OpenAI 400s on it.
   const RESPONSE_FORMAT = {
     type: "json_schema" as const,
     name: "verdict",
-    schema: { type: "object", properties: { ok: { type: "boolean" } } },
+    schema: {
+      type: "object",
+      properties: { ok: { type: "boolean" } },
+      required: ["ok"],
+      additionalProperties: false,
+    },
     strict: true,
   };
 
@@ -147,6 +168,38 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     const body = sentBody();
     expect(fetchSpy.mock.calls[0][0]).toBe("http://localhost:11434/api/generate");
     expect("response_format" in body).toBe(false);
+  });
+
+  it("a 400 with responseFormat sent retries exactly once WITHOUT it, then succeeds", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response("Invalid schema for response_format 'verdict'", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "healed-reply" } }] }), { status: 200 }));
+    const out = await dispatch({ prompt: "ping", provider: "openai", responseFormat: RESPONSE_FORMAT });
+    expect(out).toBe("healed-reply");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as Record<string, unknown>;
+    const retryBody = JSON.parse(fetchSpy.mock.calls[1][1].body as string) as Record<string, unknown>;
+    expect("response_format" in firstBody).toBe(true);
+    expect("response_format" in retryBody).toBe(false);
+    // Everything else in the retry body is identical to the first send.
+    const { response_format: _rf, ...firstRest } = firstBody;
+    expect(retryBody).toEqual(firstRest);
+  });
+
+  it("a second failure after the responseFormat retry degrades to null as before", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response("bad response_format", { status: 400 }))
+      .mockResolvedValueOnce(new Response("still broken", { status: 400 }));
+    const out = await dispatch({ prompt: "ping", provider: "xai", responseFormat: RESPONSE_FORMAT });
+    expect(out).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("a 400 WITHOUT responseFormat sent does not retry — one call, null", async () => {
+    fetchSpy.mockResolvedValueOnce(new Response("context length exceeded", { status: 400 }));
+    const out = await dispatch({ prompt: "ping", provider: "openai" });
+    expect(out).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("anthropic API keys go over direct HTTP with x-api-key, never Bearer", async () => {

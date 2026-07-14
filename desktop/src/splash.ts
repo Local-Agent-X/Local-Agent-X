@@ -118,6 +118,15 @@ window.__laxShowRecovery=function(){
     if(!run)return;
     if(!last)last=t;
     var dt=Math.min(t-last,60);last=t;
+    render(dt);
+    requestAnimationFrame(frame);
+  }
+  // Drawing is split from the rAF pump so start() can paint frame zero
+  // SYNCHRONOUSLY (dt=0 → no advance, trails at seeded positions). The
+  // splash appears while reconcile is rebuilding at full CPU; waiting for
+  // the first rAF tick under that load left the bare card visible for a
+  // beat before the rain popped in.
+  function render(dt){
     var H=innerHeight,off=H+TRAIL*CELL;
     cx.save();cx.scale(dpr,dpr);
     cx.clearRect(0,0,innerWidth,H);
@@ -142,9 +151,8 @@ window.__laxShowRecovery=function(){
       }
     }
     cx.globalAlpha=1;cx.restore();
-    requestAnimationFrame(frame);
   }
-  function start(){if(dead||run)return;run=true;last=0;requestAnimationFrame(frame);}
+  function start(){if(dead||run)return;run=true;last=0;render(0);requestAnimationFrame(frame);}
   window.__laxRainStop=function(){dead=true;run=false;cx.clearRect(0,0,cv.width,cv.height);cv.style.display='none';};
   addEventListener('resize',function(){if(!dead)size();});
   document.addEventListener('visibilitychange',function(){if(document.hidden)run=false;else start();});

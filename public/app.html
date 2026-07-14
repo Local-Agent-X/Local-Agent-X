@@ -213,11 +213,13 @@
              presence gates render + is removed on first send in chat-send.js):
              the classic hero, and the "command center" launcher gated behind
              the lax_home_style setting. home-launcher.js picks which to show;
-             default = classic so the flag is a pure, revertable toggle. -->
+             default = classic so the flag is a pure, revertable toggle.
+             This static copy MUST stay in sync with emptyHTML() in
+             home-launcher.js — it's what first paint shows before any JS
+             runs, so a stale copy here flashes retired art on every load
+             (test/home-empty-state-parity.test.ts guards this). -->
         <div id="empty">
           <div class="home-hero" data-home="classic">
-            <img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" />
-            <img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" />
             <h2>LOCAL AGENT X</h2>
             <p>Select a chat or start a new one.</p>
           </div>

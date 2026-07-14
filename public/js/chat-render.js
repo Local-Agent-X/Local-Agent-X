@@ -117,7 +117,7 @@ function renderMessages() {
     if (typeof window.renderEmptyInto === 'function') {
       window.renderEmptyInto(el, sub);
     } else {
-      el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" /><img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" /><h2>LOCAL AGENT X</h2><p>${sub}</p></div>`;
+      el.innerHTML = `<div id="empty"><div class="home-hero" data-home="classic"><h2>LOCAL AGENT X</h2><p>${sub}</p></div></div>`;
     }
     _liveMessageNodes.clear();
     return;

@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { createLogger } from "../logger.js";
+import { guardedRewrite } from "./llm-rewrite-guard.js";
 
 const logger = createLogger("context-manager");
 
@@ -47,20 +48,35 @@ export async function summarizeOldMessages(
     })
     .join("\n\n");
 
+  const basePrompt = `Conversation segment to summarize (${oldMessages.length} messages):\n\n${transcript}`;
+
   try {
     const { classifyWithLLM } = await import("../classifiers/classify-with-llm.js");
-    return await classifyWithLLM<string>({
-      category: "compaction",
-      systemPrompt: COMPACTION_SYSTEM_PROMPT,
-      userPrompt: `Conversation segment to summarize (${oldMessages.length} messages):\n\n${transcript}`,
-      timeoutMs: 30_000,
-      maxResponseChars: 6000,
-      envDisableVar: "LAX_LLM_COMPACTION",
-      parse: (raw) => {
-        const trimmed = raw.trim();
-        return trimmed.length > 0 ? trimmed : null;
-      },
-    });
+    // guardedRewrite screens each attempt for degenerate output (looping
+    // text, runaway lines, emptiness) and gives the model ONE structured
+    // retry with the rejection reason before surfacing null — which callers
+    // already treat as a summarize failure (compact-history feeds it into the
+    // circuit breaker). Transport-level nulls (kill-switch, 30s timeout,
+    // provider error) short-circuit inside guardedRewrite without a retry, so
+    // the existing latency and kill-switch behavior is unchanged.
+    return await guardedRewrite(
+      (_attempt, feedback) =>
+        classifyWithLLM<string>({
+          category: "compaction",
+          systemPrompt: COMPACTION_SYSTEM_PROMPT,
+          userPrompt: feedback
+            ? `${basePrompt}\n\nYour previous summary was rejected: ${feedback}. Produce a corrected summary following the same section rules.`
+            : basePrompt,
+          timeoutMs: 30_000,
+          maxResponseChars: 6000,
+          envDisableVar: "LAX_LLM_COMPACTION",
+          parse: (raw) => {
+            const trimmed = raw.trim();
+            return trimmed.length > 0 ? trimmed : null;
+          },
+        }),
+      { maxAttempts: 2 },
+    );
   } catch (e) {
     logger.warn(`[context] LLM compaction call failed: ${(e as Error).message}`);
     return null;

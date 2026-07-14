@@ -29,6 +29,14 @@ export interface ProviderCapabilities {
    * provider-agnostic.
    */
   reasoning: RegExp | false;
+  /**
+   * Whether the provider's OpenAI-compat endpoint honors wire-level
+   * `response_format: json_schema` structured output. Unset/false means
+   * "don't count on it" — the param is best-effort everywhere (the adapter
+   * self-heals a rejection by dropping it), so this flag is a routing hint,
+   * not a hard gate.
+   */
+  structuredOutput?: boolean;
 }
 
 /** HTTP transport — OpenAI Chat Completions wire format. */
@@ -125,7 +133,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     backgroundModel: "grok-4.20-0309-non-reasoning",
     baseURL: "https://api.x.ai/v1",
     envKey: "XAI_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_GROK },
+    capabilities: { tools: true, streaming: true, reasoning: REASONING_GROK, structuredOutput: true },
     auth: AUTH_PROVIDERS.xai,
   },
   openai: {
@@ -140,7 +148,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     backgroundModel: "gpt-4o-mini",
     baseURL: "https://api.openai.com/v1",
     envKey: "OPENAI_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY },
+    capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY, structuredOutput: true },
     auth: AUTH_PROVIDERS.openai,
   },
   codex: {
@@ -211,7 +219,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "gpt-oss-120b",
     baseURL: "https://api.cerebras.ai/v1",
     envKey: "CEREBRAS_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS },
+    capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS, structuredOutput: true },
     auth: AUTH_PROVIDERS.cerebras,
   },
   local: {

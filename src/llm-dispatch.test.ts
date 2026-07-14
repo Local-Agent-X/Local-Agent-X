@@ -97,6 +97,58 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     });
   });
 
+  const RESPONSE_FORMAT = {
+    type: "json_schema" as const,
+    name: "verdict",
+    schema: { type: "object", properties: { ok: { type: "boolean" } } },
+    strict: true,
+  };
+
+  it("openai passes responseFormat through as the OpenAI response_format wire shape", async () => {
+    await dispatch({ prompt: "ping", provider: "openai", responseFormat: RESPONSE_FORMAT });
+    expect(sentBody().response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "verdict", schema: RESPONSE_FORMAT.schema, strict: true },
+    });
+  });
+
+  it("xai passes responseFormat through identically (same openai-compat body)", async () => {
+    await dispatch({ prompt: "ping", provider: "xai", responseFormat: RESPONSE_FORMAT });
+    const body = sentBody();
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://api.x.ai/v1/chat/completions");
+    expect(body.response_format).toEqual({
+      type: "json_schema",
+      json_schema: { name: "verdict", schema: RESPONSE_FORMAT.schema, strict: true },
+    });
+  });
+
+  it("openai WITHOUT responseFormat sends the exact pre-structured-output body", async () => {
+    await dispatch({ prompt: "ping", provider: "openai" });
+    expect(sentBody()).toEqual({
+      model: dispatchBackgroundModel("openai"),
+      temperature: 0,
+      max_tokens: 200,
+      messages: [{ role: "user", content: "ping" }],
+    });
+  });
+
+  it("anthropic drops responseFormat silently — body unchanged", async () => {
+    await dispatch({ prompt: "ping", provider: "anthropic", responseFormat: RESPONSE_FORMAT });
+    expect(sentBody()).toEqual({
+      model: dispatchBackgroundModel("anthropic"),
+      max_tokens: 200,
+      temperature: 0,
+      messages: [{ role: "user", content: "ping" }],
+    });
+  });
+
+  it("ollama drops responseFormat silently — body unchanged", async () => {
+    await dispatch({ prompt: "ping", provider: "ollama", responseFormat: RESPONSE_FORMAT });
+    const body = sentBody();
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://localhost:11434/api/generate");
+    expect("response_format" in body).toBe(false);
+  });
+
   it("anthropic API keys go over direct HTTP with x-api-key, never Bearer", async () => {
     await dispatch({ prompt: "ping", provider: "anthropic" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);

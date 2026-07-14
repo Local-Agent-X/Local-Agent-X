@@ -63,6 +63,16 @@ export function isTemperatureRejection(message: string | undefined): boolean {
   );
 }
 
+// Not every OpenAI-compatible server implements `response_format` with
+// json_schema (strict servers 400 the whole request). Match a 400 that names
+// the param — and only that — so the catch drops response_format and retries,
+// while every other 400 still propagates untouched. Structured output is
+// documented best-effort (see ProviderRequest.responseFormat), so dropping
+// it on rejection is safe.
+export function isResponseFormatRejection(message: string | undefined): boolean {
+  return /response_?format/i.test(message ?? "");
+}
+
 // stream_options.include_usage makes an OpenAI-compatible stream emit a final
 // usage-only chunk (it's omitted otherwise), which soak-metrics needs to price
 // the op. Only request it from KNOWN cloud http providers (xAI, OpenAI,
@@ -97,6 +107,10 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     // the failed round-trip.
     const temperatureAllowed = !hasParamUnsupported(req.baseURL, req.model, "temperature");
     const streamUsage = streamUsageSupported(req.baseURL);
+    // Structured output only when the caller asked for it AND this
+    // (baseURL, model) hasn't already rejected the param.
+    const responseFormatAllowed =
+      !!req.responseFormat && !hasParamUnsupported(req.baseURL, req.model, "response_format");
 
     // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
     // shape. Only meaningful when we're shipping tools this turn.
@@ -119,6 +133,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       includeTools: boolean;
       includeReasoningEffort: boolean;
       includeTemperature: boolean;
+      includeResponseFormat: boolean;
     }) => ({
       model: req.model,
       messages: [
@@ -135,6 +150,20 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       ...(opts.includeReasoningEffort
         ? { reasoning_effort: effortForChatCompletions(req.reasoningEffort ?? DEFAULT_REASONING_EFFORT) as "low" | "medium" | "high" }
         : {}),
+      // OpenAI structured-output wire shape. Guarded by responseFormatAllowed,
+      // so req.responseFormat is always set when this branch is included.
+      ...(opts.includeResponseFormat && req.responseFormat
+        ? {
+            response_format: {
+              type: "json_schema" as const,
+              json_schema: {
+                name: req.responseFormat.name,
+                schema: req.responseFormat.schema,
+                ...(req.responseFormat.strict !== undefined ? { strict: req.responseFormat.strict } : {}),
+              },
+            },
+          }
+        : {}),
     });
 
     let stream;
@@ -144,6 +173,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           includeTools: useTools,
           includeReasoningEffort: reasoningCapable,
           includeTemperature: temperatureAllowed,
+          includeResponseFormat: responseFormatAllowed,
         }),
         { signal: req.signal || undefined },
       ).catch(async (err: Error) => {
@@ -156,6 +186,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           includeTools: boolean;
           includeReasoningEffort: boolean;
           includeTemperature: boolean;
+          includeResponseFormat: boolean;
         }) =>
           client.chat.completions.create(buildParams(opts), { signal: req.signal || undefined });
 
@@ -170,6 +201,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTools: false,
             includeReasoningEffort: reasoningCapable,
             includeTemperature: temperatureAllowed,
+            includeResponseFormat: responseFormatAllowed,
           });
         }
         // reasoning_effort 400 — only when WE sent the param and the server
@@ -181,6 +213,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTools: useTools,
             includeReasoningEffort: false,
             includeTemperature: temperatureAllowed,
+            includeResponseFormat: responseFormatAllowed,
           });
         }
         // temperature 400 — o-series models reject a non-default temperature.
@@ -192,6 +225,20 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeTools: useTools,
             includeReasoningEffort: reasoningCapable,
             includeTemperature: false,
+            includeResponseFormat: responseFormatAllowed,
+          });
+        }
+        // response_format 400 — some OpenAI-compatible servers reject the
+        // json_schema wire param. Only when WE actually sent it; structured
+        // output is best-effort by contract, so retry omitting the field.
+        if (responseFormatAllowed && isResponseFormatRejection(err.message)) {
+          markParamUnsupported(req.baseURL, req.model, "response_format");
+          logger.warn(`model ${req.model} rejected response_format — retrying without structured output`);
+          return retry({
+            includeTools: useTools,
+            includeReasoningEffort: reasoningCapable,
+            includeTemperature: temperatureAllowed,
+            includeResponseFormat: false,
           });
         }
         throw err;

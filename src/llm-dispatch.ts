@@ -27,6 +27,7 @@ import { usesAnthropicSubscriptionAuth } from "./anthropic-models.js";
 import { resolveProviderContext } from "./providers/resolve-provider-context.js";
 import { backgroundModelFor } from "./providers/registry.js";
 import type { ProviderId } from "./providers/provider-ids.js";
+import type { ProviderRequest } from "./providers/adapter/types.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("llm-dispatch");
@@ -58,6 +59,15 @@ export interface DispatchOptions {
    * byte-identical to before this option existed.
    */
   images?: string[];
+  /**
+   * Wire-level structured output (`response_format: json_schema`), same shape
+   * as ProviderRequest.responseFormat. Sent ONLY on the openai and xai paths;
+   * every other provider (ollama, anthropic, codex) ignores it silently —
+   * callers MUST NOT depend on it being honored and should still parse the
+   * output defensively. Absent → the request body is byte-identical to
+   * before this option existed.
+   */
+  responseFormat?: ProviderRequest["responseFormat"];
 }
 
 const DEFAULTS = {
@@ -122,8 +132,8 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
 
   if (provider === "ollama") return callOllama(opts.prompt, opts.ollamaModel ?? DEFAULTS.ollamaModel, temp, maxTokens, timeout);
   if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
-  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout);
-  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout);
+  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout, opts.responseFormat);
+  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout, opts.responseFormat);
   if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
   return null;
 }
@@ -263,6 +273,7 @@ async function callOpenAICompatible(
   credentialProvider: ProviderId,
   baseURL: string,
   prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number,
+  responseFormat?: ProviderRequest["responseFormat"],
 ): Promise<string | null> {
   try {
     const resolved = await resolveCredential(credentialProvider);
@@ -271,7 +282,24 @@ async function callOpenAICompatible(
     const res = await fetch(`${baseURL}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, temperature, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
+      body: JSON.stringify({
+        model, temperature, max_tokens: maxTokens,
+        messages: [{ role: "user", content: prompt }],
+        // Structured output on the OpenAI wire shape. Absent → the body is
+        // byte-identical to before responseFormat existed.
+        ...(responseFormat
+          ? {
+              response_format: {
+                type: "json_schema",
+                json_schema: {
+                  name: responseFormat.name,
+                  schema: responseFormat.schema,
+                  ...(responseFormat.strict !== undefined ? { strict: responseFormat.strict } : {}),
+                },
+              },
+            }
+          : {}),
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
@@ -286,18 +314,18 @@ async function callOpenAICompatible(
   }
 }
 
-function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
-  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs);
+function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
+  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat);
 }
 
-function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
+function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
   // xAI exposes an OpenAI-compatible endpoint at api.x.ai/v1; the OpenAI body
   // works unchanged. Auth comes from env XAI_API_KEY or the secrets store (the
   // chat path stores it there). Without this, every background classifier
   // (identity-extract, claim-verify, intent-classifier, …) silently no-ops for
   // xAI users — classify-with-llm hits the xAI fallback that returns null
   // before reaching this dispatcher.
-  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs);
+  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat);
 }
 
 async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number): Promise<string | null> {

@@ -41,6 +41,10 @@ export interface ProviderRequest {
   /** Codex-style response chaining — pass back the previous turn's responseId
    *  to keep the encrypted reasoning chain alive without resending it. */
   previousResponseId?: string;
+  /** Wire-level structured output (OpenAI `response_format: json_schema`).
+   *  Optional and best-effort: adapters/providers that don't support it
+   *  ignore it silently, so callers MUST NOT depend on it being honored. */
+  responseFormat?: { type: "json_schema"; name: string; schema: Record<string, unknown>; strict?: boolean };
 }
 
 /**

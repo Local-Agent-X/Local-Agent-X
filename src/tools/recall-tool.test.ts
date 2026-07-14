@@ -63,15 +63,47 @@ describe("session→op resolution", () => {
 		expect(readOpId).toBe("op-newest-A");
 		expect(res.isError).toBeFalsy();
 	});
-	it("explicit opId overrides session resolution", async () => {
+	it("same-session historical opId selects that op", async () => {
 		let readOpId = "";
-		const d: RecallDeps = { ...deps(rows), readOpMessages: (opId) => { readOpId = opId; return rows; } };
-		await run(d, { opId: "op-explicit" });
-		expect(readOpId).toBe("op-explicit");
+		const d: RecallDeps = {
+			...deps(rows, [
+				{ id: "op-newest-A", canonical: { sessionId: "sess-A" } },
+				{ id: "op-older-A", canonical: { sessionId: "sess-A" } },
+			]),
+			readOpMessages: (opId) => { readOpId = opId; return rows; },
+		};
+		const res = await run(d, { opId: "op-older-A" });
+		expect(res.isError).toBeFalsy();
+		expect(readOpId).toBe("op-older-A");
 	});
-	it("errors when no session and no opId are in scope", async () => {
+	it("cross-session opId errors, indistinguishably from an unknown opId", async () => {
+		let readCalled = false;
+		const d: RecallDeps = {
+			...deps(rows, [
+				{ id: "op-mine", canonical: { sessionId: "sess-A" } },
+				{ id: "op-theirs", canonical: { sessionId: "sess-B" } },
+			]),
+			readOpMessages: () => { readCalled = true; return rows; },
+		};
+		const crossSession = await run(d, { opId: "op-theirs" });
+		expect(crossSession.isError).toBe(true);
+		expect(readCalled).toBe(false); // never reached the store
+		const unknown = await run(d, { opId: "op-nonexistent" });
+		expect(unknown.isError).toBe(true);
+		expect(readCalled).toBe(false);
+		// same shape either way — existence of the foreign op is not leaked
+		expect(crossSession.content.replace("op-theirs", "X")).toBe(unknown.content.replace("op-nonexistent", "X"));
+	});
+	it("errors when no session is in scope", async () => {
 		const res = await createRecallTool(deps(rows)).execute({});
 		expect(res.isError).toBe(true);
+	});
+	it("errors when no session is in scope even with an explicit opId (no unscoped path)", async () => {
+		let readCalled = false;
+		const d: RecallDeps = { ...deps(rows), readOpMessages: () => { readCalled = true; return rows; } };
+		const res = await createRecallTool(d).execute({ opId: "op-1" });
+		expect(res.isError).toBe(true);
+		expect(readCalled).toBe(false);
 	});
 	it("reports cleanly when the session has no ops yet", async () => {
 		const res = await run(deps(rows, []), {});
@@ -116,6 +148,13 @@ describe("paging (low detail)", () => {
 		expect(p2.content).toContain("[m19]");
 		expect(p2.content).not.toContain("[m20]");
 	});
+	it("an inverted range cursor errors instead of returning a silent empty page", async () => {
+		const res = await run(deps(rows), { cursor: "m19:m10", limit: 5 });
+		expect(res.isError).toBe(true);
+		expect(res.content).toMatch(/inverted/);
+		expect(res.content).toContain("m19");
+		expect(res.content).toContain("m10");
+	});
 	it("an unknown cursor errors instead of guessing", async () => {
 		const res = await run(deps(rows), { cursor: "nope-123" });
 		expect(res.isError).toBe(true);
@@ -156,7 +195,8 @@ describe("low-detail rendering", () => {
 		const res = await run(deps(rows), { limit: 30 });
 		expect(res.content).toMatch(/output capped — \d+ older message\(s\) omitted/);
 		expect(res.content).toContain('call recall with cursor="');
-		expect(res.content.length).toBeLessThan(7000);
+		// cap is honest: the note/hints are inside the budget, not on top of it
+		expect(res.content.length).toBeLessThanOrEqual(6000);
 	});
 });
 

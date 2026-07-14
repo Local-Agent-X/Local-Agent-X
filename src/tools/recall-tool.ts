@@ -144,6 +144,9 @@ export function pageMessages(msgs: RecallMsg[], opts: { cursor?: string; page: n
 		if (endId !== undefined) {
 			const eIdxRaw = msgs.findIndex(m => m.row.messageId === endId);
 			const eIdx = eIdxRaw === -1 ? msgs.length - 1 : eIdxRaw;
+			if (eIdx < sIdx) {
+				return { slice: [], startIdx: 0, total: msgs.length, scopeNote: "", error: `range cursor "${startId}:${endId}" is inverted — "${startId}" comes after "${endId}" in this op's history; swap the two ids` };
+			}
 			list = msgs.slice(sIdx, eIdx + 1);
 			scopeNote = ` within range ${startId}:${endId}`;
 			start = page >= 1
@@ -171,17 +174,22 @@ function renderLowPage(res: PageResult, opId: string, page: number): string {
 	}
 	const header = `recall op ${opId}${res.scopeNote} — messages ${res.startIdx + 1}–${res.startIdx + res.slice.length} of ${res.total}, oldest→newest (page ${page}; older: page=${page + 1}, newer: page=${page - 1}):`;
 	const entries = res.slice.map(renderLow);
-	// Cap total output: drop OLDEST entries first, keep the cap note explicit.
+	// Cap total output: drop OLDEST entries first. The cap note is part of
+	// the budget — it is recomputed per iteration (its cursor id changes with
+	// `dropped`) so the FINAL assembled string honors MAX_OUTPUT_CHARS.
 	let kept = entries.slice();
 	let dropped = 0;
-	while (kept.length > 1 && `${header}\n${kept.join("\n")}`.length > MAX_OUTPUT_CHARS) {
+	const assemble = (): string => {
+		const capNote = dropped > 0
+			? `\n[output capped — ${dropped} older message(s) omitted from this page; call recall with cursor="${res.slice[dropped].row.messageId}" to page back from there]`
+			: "";
+		return `${header}${capNote}\n${kept.join("\n")}`;
+	};
+	while (kept.length > 1 && assemble().length > MAX_OUTPUT_CHARS) {
 		kept = kept.slice(1);
 		dropped++;
 	}
-	const capNote = dropped > 0
-		? `\n[output capped — ${dropped} older message(s) omitted from this page; call recall with cursor="${res.slice[dropped].row.messageId}" to page back from there]`
-		: "";
-	return `${header}${capNote}\n${kept.join("\n")}`;
+	return assemble();
 }
 
 function renderHigh(msgs: RecallMsg[], target: RecallMsg, partIndex: number | undefined): string {
@@ -216,7 +224,7 @@ export function createRecallTool(deps?: RecallDeps): ToolDefinition {
 	return {
 		name: "recall",
 		description:
-			"Page through the RAW messages of this conversation (or another op's) from the canonical store — exact user/assistant/tool messages, not summaries. " +
+			"Page through the RAW messages of this conversation from the canonical store — exact user/assistant/tool messages, not summaries. " +
 			"Use it to re-read what was actually said earlier. When earlier conversation was summarized (compacted), the summary cites a message range like \"startId:endId\" — pass that range as `cursor` to read the original messages it replaced. " +
 			"detail=\"low\" (default) lists one line per message with messageIds; detail=\"high\" with cursor=<messageId> returns that one message in full (use partIndex for oversized messages). " +
 			"page=1 is the most recent page, higher pages go further back in time. " +
@@ -230,20 +238,26 @@ export function createRecallTool(deps?: RecallDeps): ToolDefinition {
 				limit: { type: "number", description: "Messages per page (default 20, max 50)." },
 				detail: { type: "string", enum: ["low", "high"], description: "\"low\" (default): one line per message. \"high\": ONE message's full content." },
 				partIndex: { type: "number", description: "With detail=\"high\": return just this part of an oversized/multi-part message (0-based)." },
-				opId: { type: "string", description: "Explicit op to read. Default: the current session's most recent op." },
+				opId: { type: "string", description: "Select an earlier op OF THIS SESSION to read. Default: the session's most recent op. Ops from other sessions are not readable." },
 			},
 			required: [],
 		},
 		async execute(args: Record<string, unknown>): Promise<ToolResult> {
 			const d = deps ?? await defaultDeps();
-			let opId = typeof args.opId === "string" && args.opId ? args.opId : "";
-			if (!opId) {
-				const sessionId = args._sessionId ? String(args._sessionId) : "";
-				if (!sessionId) return err("No session in scope and no opId given — nothing to recall.");
-				const op = d.listOps().find(o => o.canonical?.sessionId === sessionId);
-				if (!op) return ok("No recorded operation for this conversation yet — there is no raw history to page.");
-				opId = op.id;
+			// CONFINEMENT INVARIANT: every read is scoped to the caller's session.
+			// The session's op set is resolved FIRST and args.opId is only a
+			// selector WITHIN that set — there is no unscoped read path, and an
+			// op outside the session is indistinguishable from one that doesn't
+			// exist (same error either way; existence is not leaked).
+			const sessionId = args._sessionId ? String(args._sessionId) : "";
+			if (!sessionId) return err("No session in scope — nothing to recall.");
+			const sessionOps = d.listOps().filter(o => o.canonical?.sessionId === sessionId);
+			if (sessionOps.length === 0) return ok("No recorded operation for this conversation yet — there is no raw history to page.");
+			const requested = typeof args.opId === "string" && args.opId ? args.opId : "";
+			if (requested && !sessionOps.some(o => o.id === requested)) {
+				return err(`op "${requested}" not found in this session.`);
 			}
+			const opId = requested || sessionOps[0].id;
 			const rows = d.readOpMessages(opId);
 			const msgs: RecallMsg[] = [];
 			for (const row of rows) {

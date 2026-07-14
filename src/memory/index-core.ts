@@ -379,6 +379,9 @@ export class MemoryIndex extends MemoryFactsBase {
     }
   }
 
+  /** Shared db handle for the memory-hygiene job (cache prune / pragmas). Not for general queries. */
+  maintenanceDb(): InstanceType<typeof Database> { return this.db; }
+
   close(): void {
     try {
       if (this.watcherHandle.debounceTimer) {

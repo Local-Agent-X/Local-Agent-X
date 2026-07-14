@@ -14,6 +14,7 @@ import { registerCronRunner } from "./cron-runner.js";
 import { registerWorkerRunnerForServer } from "./worker-runner.js";
 import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js";
 import { makeRunMemBg } from "./memory-bg.js";
+import { makeRunMemoryHygiene } from "./memory-hygiene.js";
 import { registerDreamRunnerForServer } from "./dream-check.js";
 import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../../local-only-policy.js";
 
@@ -106,6 +107,15 @@ export function startBackgroundJobs(deps: {
     intervalMs: 6 * 60 * 60 * 1000,
     startupDelayMs: 30_000,
     run: makeRunMemBg({ dataDir, sessionStore, memoryIndex }),
+  });
+  scheduler.register({
+    name: "memory-hygiene",
+    // Daily upkeep nothing else owns: embedding-cache LRU prune, WAL
+    // truncation, PRAGMA optimize, and >90d session archival (move-only).
+    intervalMs: 24 * 60 * 60 * 1000,
+    startupDelayMs: 10 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: makeRunMemoryHygiene({ dataDir, sessionStore, memoryIndex }),
   });
   scheduler.register({
     name: "idle-workers-cleanup",

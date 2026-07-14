@@ -27,7 +27,8 @@
 
 import type { ActionPreview, ServerEvent } from "./types.js";
 import { cacheKey, exactKey, DECLINE_SUPPRESS_MS } from "./approval-decision.js";
-import { ensureDurableBridge, recordDurableRequest, recordDurableResolve } from "./approval-durable-record.js";
+import { ensureDurableBridge, readDurableRequest, recordDurableRequest, recordDurableResolve } from "./approval-durable-record.js";
+import { createLogger } from "./logger.js";
 
 export {
   getToolDecision,
@@ -47,7 +48,12 @@ export {
   previewMoney,
 } from "./approval-preview.js";
 
-const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
+/** One ask window — long enough to read + decide. Exported so the durable
+ *  substrate (control-api-approvals.ts expiry hygiene) shares the SAME budget
+ *  instead of forking a second constant that drifts. */
+export const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+
+const logger = createLogger("approval-manager");
 
 /**
  * WHY a denial carries a reason: `requestApproval` resolves false on three
@@ -124,6 +130,39 @@ class ApprovalManager {
     recordDurableResolve(p.opId, id, p.toolName, approved, reason);
   }
 
+  /**
+   * Re-ask continuity after crash recovery. A pendingApproval column whose
+   * approvalId no live card owns is a crash survivor: the op died blocked on
+   * that card and recovery re-drove the turn, producing THIS re-ask.
+   *
+   *   - Same (toolName, argsPreview) and the original 5-min window is still
+   *     open → return the original requestedAt so the new card inherits the
+   *     REMAINING budget (column write + in-process timer) instead of
+   *     restarting from zero across restarts.
+   *   - Original window already expired → resolve the old record as timeout
+   *     (delivery: "recorded") and give this ask a fresh window; the user
+   *     never answered the old card, and pretending its window still ran
+   *     would time the new card out instantly.
+   *   - Different ask → resolve the old record as superseded (delivery:
+   *     "recorded"); the re-driven turn went another way.
+   *
+   * Returns the carried-over requestedAt, or null for a fresh window.
+   */
+  private reconcileRecoveredAsk(opId: string, toolName: string, argsPreview: string): number | null {
+    const survivor = readDurableRequest(opId);
+    if (!survivor) return null;
+    // A column owned by a live card is not a survivor — its own settle path
+    // clears it. (Op tool dispatch is sequential, so this is belt-and-braces.)
+    if (this.pending.has(survivor.approvalId)) return null;
+    const expired = Date.now() - survivor.requestedAt >= APPROVAL_TIMEOUT_MS;
+    if (!expired && survivor.toolName === toolName && survivor.argsPreview === argsPreview) {
+      logger.info(`approval re-asked after recovery, original requestedAt=${new Date(survivor.requestedAt).toISOString()} carried over (op ${opId}, tool ${toolName}, prior approval ${survivor.approvalId})`);
+      return survivor.requestedAt;
+    }
+    recordDurableResolve(opId, survivor.approvalId, survivor.toolName, false, expired ? "timeout" : "superseded", "recorded");
+    return null;
+  }
+
   private gcSuppressed(now: number): void {
     for (const [k, v] of this.suppressed) {
       if (now - v.ts > DECLINE_SUPPRESS_MS) this.suppressed.delete(k);
@@ -197,7 +236,15 @@ class ApprovalManager {
     // (approve/deny/timeout/superseded/teardown) is synchronous, and this
     // await lets them record durably without one. Best-effort: a failed load
     // resolves (never rejects) and the ask proceeds without a durable shadow.
-    if (opts.opId) await ensureDurableBridge();
+    // Then reconcile against a crash-surviving pendingApproval column: a
+    // re-driven turn re-asking the SAME (tool, argsPreview) inherits the
+    // original ask window instead of restarting the 5-min budget from zero.
+    let carriedRequestedAt: number | null = null;
+    if (opts.opId) {
+      await ensureDurableBridge();
+      carriedRequestedAt = this.reconcileRecoveredAsk(opts.opId, opts.toolName, argsPreview);
+    }
+    const requestedAt = carriedRequestedAt ?? Date.now();
 
     const promise = new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => {
@@ -208,7 +255,9 @@ class ApprovalManager {
           opts.emit({ type: "approval_timeout", approvalId: id, toolName: opts.toolName, toolCallId: opts.toolCallId });
           resolve({ approved: false, reason: "timeout" });
         }
-      }, APPROVAL_TIMEOUT_MS);
+        // Honest window: a carried-over ask times out when the ORIGINAL
+        // window ends, not a fresh 5 minutes after the re-ask.
+      }, Math.max(1, requestedAt + APPROVAL_TIMEOUT_MS - Date.now()));
 
       this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk, opId: opts.opId, emit: opts.emit });
 
@@ -232,7 +281,7 @@ class ApprovalManager {
           toolCallId: opts.toolCallId,
           argsPreview,
           context: opts.context,
-          requestedAt: Date.now(),
+          requestedAt,
         });
       }
     });

@@ -635,6 +635,7 @@ describe("canonical bridge load failure (durable shadow is best-effort)", () => 
       _setCanonicalBarrelImportForTest(() => Promise.resolve({
         recordApprovalRequested: (opId, rec) => { requested.push({ opId, approvalId: rec.approvalId }); },
         recordApprovalResolved: (opId, res) => { resolved.push({ opId, approvalId: res.approvalId, approved: res.approved }); },
+        readPendingApproval: () => null,
       }));
       const { emit: e2, cap: c2 } = captureEmit();
       const p2 = mgr.requestApprovalDetailed({

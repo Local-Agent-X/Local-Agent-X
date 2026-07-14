@@ -179,7 +179,7 @@ export {
 export { type RedirectSignal } from "./signals.js";
 
 // ── Durable pending-approval control surface ──────────────────────────────
-export { opResolveApproval, recordApprovalRequested, recordApprovalResolved, type ApprovalControlResult, type ApprovalControlOk, type ApprovalControlErr, type ApprovalResolution } from "./control-api-approvals.js";
+export { opResolveApproval, recordApprovalRequested, recordApprovalResolved, readPendingApproval, resolveExpiredPendingApproval, type ApprovalControlResult, type ApprovalControlOk, type ApprovalControlErr, type ApprovalResolution } from "./control-api-approvals.js";
 
 // ── Issue 08 lease + crash-recovery surface ───────────────────────────────
 

@@ -31,8 +31,15 @@ interface CanonicalApprovalBridge {
   recordApprovalRequested: (opId: string, record: DurableApprovalRequest) => void;
   recordApprovalResolved: (
     opId: string,
-    res: { approvalId: string; toolName: string; approved: boolean; reason?: ApprovalDenyReason },
+    res: {
+      approvalId: string;
+      toolName: string;
+      approved: boolean;
+      reason?: ApprovalDenyReason;
+      delivery?: "delivered" | "recorded";
+    },
   ) => void;
+  readPendingApproval: (opId: string) => DurableApprovalRequest | null;
 }
 
 type CanonicalBarrelImport = () => Promise<CanonicalApprovalBridge>;
@@ -68,6 +75,7 @@ export async function ensureDurableBridge(): Promise<void> {
         canonicalBridge = {
           recordApprovalRequested: mod.recordApprovalRequested,
           recordApprovalResolved: mod.recordApprovalResolved,
+          readPendingApproval: mod.readPendingApproval,
         };
         return canonicalBridge;
       },
@@ -103,14 +111,29 @@ export function recordDurableResolve(
   toolName: string,
   approved: boolean,
   reason?: ApprovalDenyReason,
+  delivery?: "delivered" | "recorded",
 ): void {
   if (!canonicalBridge) {
     logger.warn(`no canonical bridge at resolve — approval ${approvalId} (op ${opId}) settled without a durable approval_resolved record`);
     return;
   }
   try {
-    canonicalBridge.recordApprovalResolved(opId, { approvalId, toolName, approved, reason });
+    canonicalBridge.recordApprovalResolved(opId, { approvalId, toolName, approved, reason, delivery });
   } catch (e) {
     logger.warn(`failed durable approval_resolved for ${approvalId} (op ${opId}, tool ${toolName}) — pendingApproval column may be stale: ${(e as Error)?.message ?? String(e)}`);
+  }
+}
+
+/** Read the op's crash-surviving pendingApproval column (re-ask continuity —
+ *  see approval-manager reconcileRecoveredAsk). Sync; requires a prior
+ *  ensureDurableBridge() await. Best-effort: null when the bridge is absent
+ *  or the read throws — the ask then proceeds as a fresh window. */
+export function readDurableRequest(opId: string): DurableApprovalRequest | null {
+  if (!canonicalBridge) return null; // import failed — already warned at load
+  try {
+    return canonicalBridge.readPendingApproval(opId);
+  } catch (e) {
+    logger.warn(`failed reading pendingApproval column for op ${opId} — re-ask continues with a fresh window: ${(e as Error)?.message ?? String(e)}`);
+    return null;
   }
 }

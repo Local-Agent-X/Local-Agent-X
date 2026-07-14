@@ -46,6 +46,7 @@ import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { isLeaseExpired } from "./lease.js";
 import { evictWorker, enqueueOp, pumpScheduler } from "./scheduler.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
+import { resolveExpiredPendingApproval } from "./control-api-approvals.js";
 import type { CanonicalLane } from "./types.js";
 
 export type RecoveryOutcomeKind =
@@ -110,6 +111,17 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   if (state !== "queued" && leaseOwner && !isLeaseExpired(op)) {
     return { ok: false, kind: "lease_fresh" };
   }
+
+  // Stale-approval hygiene: the op is dead-owner from here on, so a
+  // pendingApproval column whose ask window has already expired can never be
+  // answered — durably resolve it as a timeout (delivery: "recorded") so
+  // rediscovery APIs never surface a dead approval. A still-live column is
+  // preserved: the replacement worker's re-drive re-asks and the approval
+  // manager carries the original window over (re-ask continuity). Runs for
+  // every recoverable shape, boot sweep included (it routes through here),
+  // and BEFORE the persists below — persistOpKeepingSignals always restores
+  // pendingApproval from disk, so the clear cannot be clobbered.
+  resolveExpiredPendingApproval(opId);
 
   // Drop the scheduler's claim on the (dead) worker so the replacement launch
   // is not blocked by the lane cap. Idempotent; no-op when there was no lease.

@@ -31,7 +31,7 @@
  *   here directly.
  */
 import { readOp } from "../ops/op-store.js";
-import { getApprovalManager, type ApprovalDenyReason } from "../approval-manager.js";
+import { getApprovalManager, APPROVAL_TIMEOUT_MS, type ApprovalDenyReason } from "../approval-manager.js";
 import { writeSignalColumn } from "./control-api.js";
 import { emit } from "./event-emitter.js";
 import type { PendingApprovalRecord } from "./types.js";
@@ -59,6 +59,10 @@ export interface ApprovalResolution {
   approved: boolean;
   /** Set on every approved:false resolution (see ApprovalDenyReason). */
   reason?: ApprovalDenyReason;
+  /** "recorded" when no in-process waiter consumed the resolution — the
+   *  recovery hygiene / re-ask supersede paths settling a crash-surviving
+   *  record durably. Omitted on live-card settles (delivery is implicit). */
+  delivery?: "delivered" | "recorded";
 }
 
 /**
@@ -78,7 +82,38 @@ export function recordApprovalResolved(opId: string, res: ApprovalResolution): v
     toolName: res.toolName,
     approved: res.approved,
     ...(res.reason !== undefined ? { reason: res.reason } : {}),
+    ...(res.delivery !== undefined ? { delivery: res.delivery } : {}),
   });
+}
+
+/** Read the op's durable pendingApproval column (null when none / unknown
+ *  op). The approval manager's re-ask continuity reads through this via the
+ *  durable bridge; rediscovery surfaces (A2/A3) may share it. */
+export function readPendingApproval(opId: string): PendingApprovalRecord | null {
+  return readOp(opId)?.canonical?.pendingApproval ?? null;
+}
+
+/**
+ * Recovery-time stale-record hygiene (recovery.ts). If the op carries a
+ * pendingApproval whose ask window (requestedAt + APPROVAL_TIMEOUT_MS) has
+ * already passed — the op died blocked on the card and nobody answered before
+ * the budget ran out — durably resolve it as a timeout (delivery: "recorded")
+ * so rediscovery APIs never surface a dead approval. A still-live column is
+ * left untouched: the re-driven turn's re-ask consumes it (approval-manager
+ * re-ask continuity). Returns true when a record was resolved.
+ */
+export function resolveExpiredPendingApproval(opId: string, now: number = Date.now()): boolean {
+  const pending = readPendingApproval(opId);
+  if (!pending) return false;
+  if (now - pending.requestedAt < APPROVAL_TIMEOUT_MS) return false;
+  recordApprovalResolved(opId, {
+    approvalId: pending.approvalId,
+    toolName: pending.toolName,
+    approved: false,
+    reason: "timeout",
+    delivery: "recorded",
+  });
+  return true;
 }
 
 export interface ApprovalControlOk {

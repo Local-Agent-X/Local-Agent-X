@@ -5,8 +5,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createRecallTool, parseCursor, pageMessages, type RecallDeps } from "./recall-tool.js";
-import { opMessageRowToChatParam } from "../canonical-loop/chat-runner/message-convert.js";
-import type { OpMessageRow } from "../canonical-loop/types.js";
+import { opMessageRowToChatParam, type OpMessageRow } from "../canonical-loop/index.js";
 
 function row(id: string, role: OpMessageRow["role"], content: unknown, turnIdx = 0): OpMessageRow {
 	return { messageId: id, opId: "op-1", turnIdx, seqInTurn: 0, role, content, createdAt: "2026-07-13T10:00:00.000Z" };

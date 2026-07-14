@@ -10,7 +10,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import type { OpMessageRow } from "../canonical-loop/types.js";
+import type { OpMessageRow } from "../canonical-loop/index.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -25,14 +25,13 @@ export interface RecallDeps {
 }
 
 async function defaultDeps(): Promise<RecallDeps> {
-	const [store, convert, ops] = await Promise.all([
-		import("../canonical-loop/store.js"),
-		import("../canonical-loop/chat-runner/message-convert.js"),
+	const [canonical, ops] = await Promise.all([
+		import("../canonical-loop/index.js"),
 		import("../ops/op-store.js"),
 	]);
 	return {
-		readOpMessages: store.readOpMessages,
-		toChatParam: convert.opMessageRowToChatParam,
+		readOpMessages: canonical.readOpMessages,
+		toChatParam: canonical.opMessageRowToChatParam,
 		listOps: ops.listOps,
 	};
 }

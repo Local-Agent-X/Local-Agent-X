@@ -206,9 +206,20 @@ function connectChatWs() {
         } catch (e) { /* best-effort — watchdog will retry */ }
       }
     }
+    // Rediscover pending approvals this client never saw the live
+    // approval_requested for (page reload, server restart, second device) —
+    // GET /api/approvals/pending is the durable source of truth.
+    rediscoverPendingApprovals().catch(() => {});
   };
 
-  chatWs.onmessage = handleChatWsMessage;
+  // The durable-resolve reply (approval_resolved + delivery) is a bare
+  // top-level frame — no {type:'event', sessionId} envelope, because the
+  // op wasn't live in-process — so it never reaches the per-session event
+  // dispatch in handleChatWsMessage. Intercept it here before delegating.
+  chatWs.onmessage = (e) => {
+    if (handleDurableApprovalReply(e)) return;
+    handleChatWsMessage(e);
+  };
 
   chatWs.onclose = () => {
     console.log('[ws] Chat WebSocket closed, reconnecting in 3s...');
@@ -281,10 +292,15 @@ function isChatActive(sessionId) {
   });
 })();
 
-window.sendApprovalResponse = function(approvalId, approved, rememberForSession) {
+window.sendApprovalResponse = function(approvalId, approved, rememberForSession, opId) {
   try {
     if (chatWs && chatWs.readyState === 1) {
-      chatWs.send(JSON.stringify({ type: 'approval_response', approvalId, approved, rememberForSession: !!rememberForSession }));
+      const frame = { type: 'approval_response', approvalId, approved, rememberForSession: !!rememberForSession };
+      // Durable-sourced cards (rediscovered via /api/approvals/pending)
+      // carry the opId; the server needs it to resolve an approval that is
+      // no longer live in-process. Live cards may not have one — omit then.
+      if (typeof opId === 'string' && opId) frame.opId = opId;
+      chatWs.send(JSON.stringify(frame));
     }
   } catch {}
   // Flip the store immediately so a re-render before the server's

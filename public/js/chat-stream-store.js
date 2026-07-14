@@ -348,12 +348,21 @@
         e.lastContentMs = now;
         break;
       case 'approval_requested':
-        if (event.approvalId) {
+        // Idempotent by approvalId — the same ask can reach the store twice
+        // (live event + connect-time rediscovery hydration from
+        // /api/approvals/pending, or a replayed frame). A duplicate would
+        // render two actionable cards for one decision.
+        if (event.approvalId && !e.approvals.some(a => a.id === event.approvalId)) {
           e.approvals.push({
             id: event.approvalId,
             toolName: event.toolName,
             context: event.context,
             argsPreview: event.argsPreview,
+            // Durable-sourced asks (chat-ws.js rediscovery) carry the op id +
+            // expiry so the answer can route via the durable-resolve path and
+            // the card can expire client-side; live asks omit both → null.
+            opId: event.opId || null,
+            expiresAt: typeof event.expiresAt === 'number' ? event.expiresAt : null,
             status: 'pending',
             resolvedAt: null,
           });
@@ -374,7 +383,14 @@
         // actionable prompt.
         if (event.approvalId) {
           const ap = e.approvals.find(a => a.id === event.approvalId);
-          if (ap) { ap.status = event.approved ? 'approved' : 'denied'; ap.resolvedAt = now; }
+          if (ap) {
+            ap.status = event.approved ? 'approved' : 'denied';
+            ap.resolvedAt = now;
+            // Durable-resolve reply: the decision was recorded on the op's
+            // durable column (server restarted since the ask) and applies
+            // when the agent resumes — render distinctly from a live settle.
+            if (event.delivery === 'recorded') ap.delivery = 'recorded';
+          }
         }
         e.lastActivityMs = now;
         break;
@@ -581,26 +597,47 @@
     return function unsubscribe() { globalSubs.delete(cb); };
   }
 
+  // Locate an approval card across all entries by its id — card click
+  // handlers and the durable-resolve reply only know the approvalId.
+  function findApproval(approvalId) {
+    if (!approvalId) return null;
+    for (const [sessionId, e] of entries) {
+      const ap = e.approvals.find(a => a.id === approvalId);
+      if (ap) return { sessionId, approval: ap };
+    }
+    return null;
+  }
+
   // Optimistic local flip when the user clicks Approve/Deny — the server's
   // approval_resolved event confirms it, but a re-render in the gap between
   // click and server echo must not resurrect an actionable card. Scans all
   // entries because the card click only knows the approvalId.
   function resolveApprovalLocal(approvalId, approved) {
-    for (const [sessionId, e] of entries) {
-      const ap = e.approvals.find(a => a.id === approvalId);
-      if (ap) {
-        ap.status = approved ? 'approved' : 'denied';
-        ap.resolvedAt = Date.now();
-        notify(sessionId, null);
-        return;
-      }
-    }
+    const found = findApproval(approvalId);
+    if (!found) return;
+    found.approval.status = approved ? 'approved' : 'denied';
+    found.approval.resolvedAt = Date.now();
+    notify(found.sessionId, null);
+  }
+
+  // Server confirmed the decision was durably RECORDED (approval_resolved
+  // reply carrying delivery:"recorded") — the approval wasn't live
+  // in-process (server restarted since the ask); it applies when the agent
+  // resumes. Distinct from resolveApprovalLocal so renders can show the
+  // "Recorded" state instead of a normal live settle.
+  function resolveApprovalRecorded(approvalId, approved) {
+    const found = findApproval(approvalId);
+    if (!found) return;
+    found.approval.status = approved ? 'approved' : 'denied';
+    found.approval.delivery = 'recorded';
+    found.approval.resolvedAt = Date.now();
+    notify(found.sessionId, null);
   }
 
   window.ChatStreamStore = {
     get, ensure,
     startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity, bumpAnchor, endTurn, promoteLiveToMessages,
-    setSidebarActive, setActiveSidebarSet, resolveApprovalLocal,
+    setSidebarActive, setActiveSidebarSet, resolveApprovalLocal, resolveApprovalRecorded, findApproval,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,
   };

@@ -64,7 +64,14 @@ function makeApprovalCard(approvalId, toolName, context, argsPreview) {
     const always = card.querySelector('.always-cb').checked;
     try {
       if (typeof window.sendApprovalResponse === 'function') {
-        window.sendApprovalResponse(approvalId, approved, approved && always);
+        // Durable-sourced cards (rediscovered via /api/approvals/pending)
+        // carry an opId in the store — the server needs it to resolve an
+        // approval that isn't live in-process. Looked up at click time so
+        // callers of makeApprovalCard don't have to thread it through.
+        const found = (window.ChatStreamStore && typeof ChatStreamStore.findApproval === 'function')
+          ? ChatStreamStore.findApproval(approvalId) : null;
+        const opId = found && found.approval ? found.approval.opId : null;
+        window.sendApprovalResponse(approvalId, approved, approved && always, opId);
       }
     } catch {}
     card.querySelector('.approval-status').textContent = approved ? (always ? 'Approved (remembered for session)' : 'Approved') : 'Denied';
@@ -73,7 +80,39 @@ function makeApprovalCard(approvalId, toolName, context, argsPreview) {
   };
   card.querySelector('.btn-approve').addEventListener('click', () => send(true));
   card.querySelector('.btn-deny').addEventListener('click', () => send(false));
+  // A decision the server durably RECORDED (delivery:'recorded' — see
+  // applyApprovalRecordedState) survives re-renders through the store flag:
+  // rebuild paths call makeApprovalCard fresh, so re-apply the state here.
+  try {
+    const found = (window.ChatStreamStore && typeof ChatStreamStore.findApproval === 'function')
+      ? ChatStreamStore.findApproval(approvalId) : null;
+    if (found && found.approval && found.approval.delivery === 'recorded') {
+      applyApprovalRecordedState(card, found.approval.status === 'approved');
+    }
+  } catch {}
   return card;
+}
+
+// Flip an approval card to the RECORDED resolved state — the answer was
+// durably stored (the op wasn't live in-process, e.g. server restarted since
+// the ask) and applies when the agent resumes, unlike a normal live settle.
+// The note is a separate element (not the .approval-status text) so the
+// artifacts re-render path — which overwrites that text with plain
+// 'Approved'/'Denied' — can't clobber the recorded copy. Reuses existing
+// approval-card classes; no app.css hook needed.
+function applyApprovalRecordedState(card, approved) {
+  if (!card) return;
+  card.classList.add(approved ? 'approved' : 'denied');
+  card.classList.add('recorded');
+  const statusEl = card.querySelector('.approval-status');
+  if (statusEl) statusEl.textContent = approved ? 'Approved' : 'Denied';
+  if (!card.querySelector('.approval-recorded-note')) {
+    const note = document.createElement('div');
+    note.className = 'approval-status approval-recorded-note';
+    note.textContent = 'Recorded — applies when the agent resumes';
+    card.appendChild(note);
+  }
+  card.querySelectorAll('button').forEach(b => b.disabled = true);
 }
 
 function makeToolCard(name, args, riskLevel, context) {

@@ -1420,7 +1420,11 @@
 <script src="/js/chat-ws-handler-misc.js?v=v1"></script>
 <script src="/js/chat-ws-handler-chat-events.js?v=v1"></script>
 <script src="/js/chat-ws-handler.js?v=v3"></script>
-<script src="/js/chat-ws.js?v=v2"></script>
+<!-- chat-ws.js split: durable-approval rediscovery must load BEFORE
+     chat-ws.js so its onopen hook + onmessage intercept can reference
+     rediscoverPendingApprovals / handleDurableApprovalReply. -->
+<script src="/js/chat-approval-rediscovery.js?v=v1"></script>
+<script src="/js/chat-ws.js?v=v3"></script>
 <script src="/js/chat-render-artifacts.js?v=v2"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>

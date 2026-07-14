@@ -142,7 +142,17 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     const { routeMessage } = await import("../../../routing/index.js");
     message = await applyDiscussPrefix(message);
 
-    if (await tryWorkerRedirect({ sessionId, message, recentSessionMessages: session.messages, sseSink })) {
+    // The redirect's ack + done must reach the client on whatever transport
+    // is live — same dual-channel rule as emitTurnError above. WS clients
+    // have no per-turn onEvent yet (startChat hasn't run), so route through
+    // chatWs.emit → broadcastToSession; without it the browser's optimistic
+    // turn spins forever (no opId → invisible to the stuck-stream watchdog).
+    const emitRedirectAck = (event: ServerEvent) => {
+      emitSse(event);
+      if (!sseSink) ctx.chatWs.emit(sessionId, event);
+    };
+    if (await tryWorkerRedirect({ sessionId, message, recentSessionMessages: session.messages, emit: emitRedirectAck })) {
+      doneEmitted = true;
       return;
     }
 

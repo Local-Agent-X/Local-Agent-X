@@ -1,6 +1,5 @@
 import { createLogger } from "../../logger.js";
 import type { ServerEvent } from "../../types.js";
-import type { SseSink } from "./run-chat-turn.js";
 
 const logger = createLogger("routes.chat.jarvis-redirect");
 
@@ -8,10 +7,18 @@ interface JarvisRedirectArgs {
   sessionId: string;
   message: string;
   recentSessionMessages: Array<{ role: string; content?: unknown }>;
-  /** SSE side-channel sink — null for WS-only callers. The redirect ack
-   *  delta goes here when present; WS subscribers receive it via the
-   *  normal chat-ws pub/sub on subsequent worker_stream events. */
-  sseSink: SseSink;
+  /** Transport-agnostic emitter for the redirect ack + terminal done —
+   *  the orchestrator wires it to sseSink on HTTP and to chatWs.emit
+   *  (broadcastToSession) on WS, same as emitTurnError. It must reach the
+   *  client on EVERY transport: the browser's send path optimistically
+   *  starts a local turn (placeholder bubble, STREAMING state, no opId), so
+   *  a redirect that consumes the message without a chat-lane `done` leaves
+   *  that turn spinning forever — no chat op ever starts, the stuck-stream
+   *  watchdog only watches ops with an opId, and the finally's failChat net
+   *  no-ops because no ActiveChat was registered. Live failure 2026-07-13:
+   *  "can we use photos?" redirected to a running app_build; WS client sat
+   *  on the thinking placeholder for the rest of the build. */
+  emit: (event: ServerEvent) => void;
 }
 
 /**
@@ -25,7 +32,7 @@ interface JarvisRedirectArgs {
  * normal chat flow).
  */
 export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boolean> {
-  const { sessionId, message, recentSessionMessages, sseSink } = args;
+  const { sessionId, message, recentSessionMessages, emit } = args;
   try {
     const { listOpsForSession, getOpTask } = await import("../../ops/session-bridge.js");
     const activeOps = listOpsForSession(sessionId);
@@ -70,20 +77,16 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
     logger.info(`[router] worker-redirect → op=${targetOpId} ok=${res.ok} reason="${cls.reason}"`);
     if (!res.ok) return false;
 
-    // Emit an inline ack so the user sees their message landed.
-    // Worker will narrate its acknowledgement via the worker_stream channel
-    // (Step 1) on its next iteration. WS-only callers get no ack here
-    // (sseSink === null) — they still see the worker_stream events that
-    // follow, which is the same observable behavior as the previous
-    // HTTP-self-loop implementation (WS clients didn't subscribe to the
-    // drained SSE body either).
-    if (sseSink) {
-      sseSink({
-        type: "stream",
-        delta: `*→ telling the worker:* "${message.slice(0, 200)}"\n\n`,
-      });
-      sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
-    }
+    // Emit an inline ack so the user sees their message landed, then the
+    // terminal done so the client's optimistic turn ends cleanly (the
+    // worker narrates its acknowledgement via the worker_stream channel on
+    // its next iteration). This must fire on every transport — see the
+    // `emit` doc comment above for the WS stranded-turn failure this closes.
+    emit({
+      type: "stream",
+      delta: `*→ telling the worker:* "${message.slice(0, 200)}"\n\n`,
+    });
+    emit({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
     return true;
   } catch (e) {
     logger.warn(`[router] worker-redirect check failed (falling through): ${(e as Error).message}`);

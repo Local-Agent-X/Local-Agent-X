@@ -41,7 +41,6 @@ function toggleAgentFeeds() {
   if (agentFeedsOpen) {
     panel.classList.remove('collapsed');
     panel.classList.add('active');
-    panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
     // Body class drives the open-state styling of the top-bar toggles
     // (#dtb-agents-toggle / #sidebar-agents-btn accent highlight).
     document.body.classList.add('agents-panel-open');
@@ -60,7 +59,6 @@ function toggleAgentFeeds() {
     Spring.animate(panel, 'width', openW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; if (mobile) { panel.style.width = ''; panel.style.minWidth = ''; } else { panel.style.width = openW + 'px'; panel.style.minWidth = openW + 'px'; } } });
     if (typeof refreshSideButtons === 'function') refreshSideButtons();
   } else {
-    panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
     // Drop the body class SYNCHRONOUSLY, before the refresh below reads it —
     // it used to be cleared in the spring's onDone, so refreshSideButtons()
     // saw the still-open class and left the toggle accented + titled "Hide"

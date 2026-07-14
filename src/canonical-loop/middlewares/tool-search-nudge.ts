@@ -28,9 +28,10 @@
  * deterministic regex behavior exactly (the ETHICAL_REFUSAL regex carve-out is
  * kept as the floor), so a downed classifier costs nothing.
  */
+import { z } from "zod";
 import { type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
-import { classifyWithLLM } from "../../classifiers/classify-with-llm.js";
+import { classifySchema, type ClassifySchemaOptions } from "../../classifiers/schema-output.js";
 import { capabilityForbiddenForOp } from "../instruction-ledger/index.js";
 import type { CapabilityClass } from "../../tool-registry.js";
 
@@ -102,37 +103,46 @@ type DenialClass = "gap" | "ethical" | "not-a-refusal";
 
 const CONFIRM_SYSTEM_PROMPT = `A regex prefilter flagged an AI assistant's reply as possibly declining a request because it "lacks a tool or capability". You classify what the reply is actually doing before a tool-search nudge (and a retraction of the "I can't" text) fires.
 
-Reply with EXACTLY one of these three tokens on the first line, then a brief reason:
+Classify with EXACTLY one of these three verdicts, plus a brief reason:
 - GAP — the assistant is declining because it believes it has NO tool/function/capability/access to do a mechanical action the user wants (e.g. "I don't have a tool to move the mouse", "I can't browse the web", "no capability to run that"). This is a missed-tool gap: the assistant WOULD do it but thinks it can't.
 - ETHICAL — the assistant is UNWILLING on safety/ethics/policy grounds, not because it lacks a tool (e.g. "I won't help with that", "I'm not comfortable", "that would be harmful", "against my guidelines"). It could act but chooses not to.
 - NORMAL — the reply is NOT a refusal at all. It answers the question, reports a result, negates a premise in passing, or otherwise does not decline a capability (regex false positive).
 
-Judge intent, not surface words: a safety refusal dressed as "I can't" is ETHICAL, not GAP. Reply with one line: the token, then a short reason.`;
+Judge intent, not surface words: a safety refusal dressed as "I can't" is ETHICAL, not GAP.`;
 
 /** Confirm fn: classifies the declining text. Returns the verdict or null when
  *  the classifier is unavailable/times out (caller falls back to the regex floor). */
 export type ConfirmDenialFn = (decliningText: string) => Promise<DenialClass | null>;
 
-function parseDenialClass(raw: string): DenialClass | null {
-  const m = (raw ?? "").trim().match(/^\s*(GAP|ETHICAL|NORMAL)\b/i);
-  if (!m) return null;
-  const tok = m[1].toUpperCase();
-  if (tok === "GAP") return "gap";
-  if (tok === "ETHICAL") return "ethical";
-  return "not-a-refusal";
-}
+// Verdict tokens keep the prompt vocabulary; NORMAL maps to "not-a-refusal".
+// `reason` is log-only, so a terse reply doesn't void a valid verdict.
+const DenialReplySchema = z.object({
+  verdict: z.enum(["GAP", "ETHICAL", "NORMAL"]),
+  reason: z.string().optional(),
+});
 
-async function llmConfirm(decliningText: string): Promise<DenialClass | null> {
-  return classifyWithLLM<DenialClass>({
+/** Exported for tests (the middleware itself takes an injectable confirm);
+ *  `_llm` is the classifySchema test seam. */
+export async function llmConfirm(
+  decliningText: string,
+  _llm?: ClassifySchemaOptions<unknown>["_llm"],
+): Promise<DenialClass | null> {
+  const reply = await classifySchema({
     category: "tool-search-denial-confirm",
     systemPrompt: CONFIRM_SYSTEM_PROMPT,
     userPrompt:
       `Assistant reply:\n"${decliningText.slice(0, 1500)}"\n\n` +
-      `Is this a missed-tool capability GAP, an ETHICAL/safety refusal, or a NORMAL (non-refusal) reply? Reply GAP, ETHICAL, or NORMAL + one-line reason.`,
-    parse: parseDenialClass,
+      `Is this a missed-tool capability GAP, an ETHICAL/safety refusal, or a NORMAL (non-refusal) reply? Verdict GAP, ETHICAL, or NORMAL + one-line reason.`,
+    schema: DenialReplySchema,
+    shapeHint: `{"verdict":"GAP" or "ETHICAL" or "NORMAL","reason":"one line"}`,
     timeoutMs: 4000,
     envDisableVar: "LAX_LLM_TOOL_SEARCH",
+    _llm,
   });
+  if (!reply) return null;
+  if (reply.verdict === "GAP") return "gap";
+  if (reply.verdict === "ETHICAL") return "ethical";
+  return "not-a-refusal";
 }
 
 /**

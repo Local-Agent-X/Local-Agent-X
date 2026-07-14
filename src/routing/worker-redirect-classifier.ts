@@ -20,14 +20,16 @@
  * count as MAIN_AGENT because the main agent SEES the worker's
  * progress trace and can answer without disturbing the worker.
  *
- * Routes through the canonical classifier wrapper (classifyWithLLM): runs on
- * the user's provider + background model, no hardcoded model, works for every
- * provider — not Anthropic-only. Returns null on any failure — caller treats
- * null as MAIN_AGENT (safer default — never silently divert a user's message
- * to the worker if we're not confident).
+ * Routes through the canonical schema-validated classifier (classifySchema →
+ * classifyWithLLM): runs on the user's provider + background model, no
+ * hardcoded model, works for every provider — not Anthropic-only. Returns
+ * null on any failure — caller treats null as MAIN_AGENT (safer default —
+ * never silently divert a user's message to the worker if we're not
+ * confident).
  */
 
-import { classifyWithLLM } from "../classifiers/classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema, type ClassifySchemaOptions } from "../classifiers/schema-output.js";
 
 export interface WorkerRedirectResult {
   /** True if message should silently go to the worker as a redirect. */
@@ -48,11 +50,17 @@ If "Recent main-agent chat" is provided, use it: a short or ambiguous reply ("ye
 
 When in doubt, choose MAIN_AGENT. False redirects are far worse than false main-agent calls — diverting a real question to a worker means the user gets no answer.
 
-Reply with EXACTLY one line in this format:
-DECISION: <REDIRECT|MAIN_AGENT>
-REASON: <one short sentence>
+Report your decision ("REDIRECT" or "MAIN_AGENT") plus one short reason sentence.`;
 
-Nothing else.`;
+// The model's reply shape. `reason` is advisory (logs/telemetry only) — a
+// missing one must not void a valid decision, so it stays optional here and
+// gets the legacy "(no reason given)" placeholder below.
+const RedirectReplySchema = z.object({
+  decision: z.enum(["REDIRECT", "MAIN_AGENT"]),
+  reason: z.string().optional(),
+});
+
+const SHAPE_HINT = `{"decision":"REDIRECT" or "MAIN_AGENT","reason":"one short sentence"}`;
 
 export interface RecentTurn {
   role: "user" | "assistant";
@@ -75,6 +83,7 @@ export async function classifyWorkerRedirect(
   workerTask: string | undefined,
   recentTurns: RecentTurn[] = [],
   signal?: AbortSignal,
+  _llm?: ClassifySchemaOptions<unknown>["_llm"],
 ): Promise<WorkerRedirectResult | null> {
   // Trivially short messages can't really be feedback worth routing.
   // "yes"/"yep"/"yeah"/"sure"/"ok"/"3"/"no" answering the main agent's
@@ -106,24 +115,23 @@ export async function classifyWorkerRedirect(
     ? `${recentBlock}Worker is currently working on: ${workerTask.slice(0, 200)}\n\nUser's new message: ${message}`
     : `${recentBlock}(Worker task unknown — judge by the message alone.)\n\nUser's new message: ${message}`;
 
-  return classifyWithLLM<WorkerRedirectResult>({
+  const reply = await classifySchema({
     category: "worker-redirect",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
-    parse: parseWorkerRedirect,
+    schema: RedirectReplySchema,
+    shapeHint: SHAPE_HINT,
     timeoutMs: 3000,
     maxResponseChars: 500,
     signal,
+    _llm,
   });
-}
-
-export function parseWorkerRedirect(raw: string): WorkerRedirectResult | null {
-  const decisionMatch = raw.match(/DECISION:\s*(REDIRECT|MAIN_AGENT)/i);
-  if (!decisionMatch) return null;
-  const reasonMatch = raw.match(/REASON:\s*(.+?)$/im);
+  if (!reply) return null;
   return {
-    redirect: decisionMatch[1].toUpperCase() === "REDIRECT",
-    reason: reasonMatch?.[1].trim() || "(no reason given)",
-    raw,
+    redirect: reply.decision === "REDIRECT",
+    reason: reply.reason?.trim() || "(no reason given)",
+    // The schema layer owns the raw text; the validated reply is what routing
+    // acted on, so that's what lands in the debug trail.
+    raw: JSON.stringify(reply),
   };
 }

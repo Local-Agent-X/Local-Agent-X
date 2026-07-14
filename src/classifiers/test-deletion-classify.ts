@@ -30,7 +30,8 @@
  *     regex-fallback contract — a null never makes the harness stricter than it
  *     was before the judge existed.
  */
-import { classifyWithLLM } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema, type ClassifySchemaOptions } from "./schema-output.js";
 import type { TestDeletionVerdict } from "../agent-guards/verify-gate.js";
 
 /** One deleted test + whether the code it tested still exists on disk. */
@@ -56,7 +57,15 @@ Decide in this order and STOP at the first rule that applies:
 
 3. Otherwise the subject code still exists AND the user did not ask to remove the test → reply DODGE. Deleting a live-code test to go green is the evasion this guard exists to catch.
 
-Reply with EXACTLY one line starting with DODGE or LEGIT, followed by a brief reason.`;
+Verdict DODGE or LEGIT, plus a brief reason.`;
+
+// Verdict tokens match the prompt's vocabulary; LEGIT maps onto the
+// verify-gate's "legit-cleanup" label. `reason` is log-only — optional so a
+// terse-but-correct verdict still counts.
+const DeletionReplySchema = z.object({
+  verdict: z.enum(["DODGE", "LEGIT"]),
+  reason: z.string().optional(),
+});
 
 export async function classifyTestDeletion(args: {
   /** The user's originating request for this op. */
@@ -70,6 +79,7 @@ export async function classifyTestDeletion(args: {
   signal?: AbortSignal;
   timeoutMs?: number;
   model?: string;
+  _llm?: ClassifySchemaOptions<unknown>["_llm"];
 }): Promise<TestDeletionVerdict | null> {
   const subjectLines = args.subjects
     .map(
@@ -86,12 +96,14 @@ export async function classifyTestDeletion(args: {
     `OTHER SOURCE FILES EDITED THIS TASK:\n${
       args.editedPaths.length ? args.editedPaths.map((p) => `  - ${p}`).join("\n") : "  (none)"
     }\n\n` +
-    `Was this deletion a DODGE (delete a live-code test to go green) or LEGIT (user-directed, or the subject code was removed)? Reply DODGE or LEGIT + one-line reason.`;
+    `Was this deletion a DODGE (delete a live-code test to go green) or LEGIT (user-directed, or the subject code was removed)? Verdict DODGE or LEGIT + one-line reason.`;
 
-  return classifyWithLLM<TestDeletionVerdict>({
+  const reply = await classifySchema({
     category: "test-deletion",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
+    schema: DeletionReplySchema,
+    shapeHint: `{"verdict":"DODGE" or "LEGIT","reason":"one line"}`,
     // A test deletion is rare, so this only fires on the few wrap-up turns that
     // follow one — a slightly larger budget than give-up's 2500ms is fine, and
     // a timeout falls back to the advisory nudge without demoting the label.
@@ -99,10 +111,8 @@ export async function classifyTestDeletion(args: {
     model: args.model,
     envDisableVar: "LAX_LLM_TEST_DELETION_JUDGE",
     signal: args.signal,
-    parse: (raw) => {
-      const m = raw.trim().match(/^\s*(DODGE|LEGIT)\b/i);
-      if (!m) return null;
-      return m[1].toUpperCase() === "DODGE" ? "dodge" : "legit-cleanup";
-    },
+    _llm: args._llm,
   });
+  if (!reply) return null;
+  return reply.verdict === "DODGE" ? "dodge" : "legit-cleanup";
 }

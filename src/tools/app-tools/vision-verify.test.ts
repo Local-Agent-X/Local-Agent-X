@@ -238,3 +238,34 @@ describe("visionVerdictForScreenshot — graded design rubric", () => {
     expect(verdict).toBeNull();
   });
 });
+
+describe("visionVerdictForScreenshot — zod schema parity with the legacy hand-rolled checks", () => {
+  it("a null design block degrades to no design, keeping the verdict", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": null}'),
+    });
+    expect(verdict).toEqual({ ok: true, reason: "fine" });
+    expect(verdict?.design).toBeUndefined();
+  });
+
+  it("a non-string reason coerces to empty, never voiding a valid ok", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": false, "reason": 42}'),
+    });
+    expect(verdict).toEqual({ ok: false, reason: "" });
+  });
+
+  it("unknown extra keys are ignored", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "confidence": 0.9}'),
+    });
+    expect(verdict).toEqual({ ok: true, reason: "fine" });
+  });
+
+  it("a design block missing its issues list defaults to []", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok": true, "reason": "fine", "design": {"score": 3}}'),
+    });
+    expect(verdict?.design).toEqual({ score: 3, issues: [] });
+  });
+});

@@ -1,42 +1,68 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("./classify-with-llm.js", () => ({ classifyWithLLM: vi.fn(async () => null) }));
+// classifySchema routes through the canonical chokepoint; the mock resolves
+// RAW model text so the real JSON.parse → zod pipeline runs.
+const classifyWithLLM = vi.hoisted(() =>
+  vi.fn(async (_opts: Record<string, unknown>): Promise<string | null> => null),
+);
+vi.mock("./classify-with-llm.js", () => ({
+  classifyWithLLM: (...args: unknown[]) => classifyWithLLM(...(args as [Record<string, unknown>])),
+}));
 
-import { classifyWithLLM } from "./classify-with-llm.js";
-import { auditDoneClaim, parseAuditVerdict } from "./done-claim-audit.js";
+import { auditDoneClaim } from "./done-claim-audit.js";
+
+type Llm = (system: string, user: string) => Promise<string | null>;
+const llmReturning = (...replies: (string | null)[]) => {
+  const fn = vi.fn<Llm>();
+  for (const r of replies) fn.mockResolvedValueOnce(r);
+  return fn;
+};
+
+const realInput = {
+  userRequest: "remove every tailnet reference from the app",
+  evidence: "diff --git a/x.ts b/x.ts\n- tailnetAddr\n+ desktopAddr",
+};
 
 beforeEach(() => vi.clearAllMocks());
 
-describe("parseAuditVerdict — bias-to-MET verdict extraction", () => {
-  it("MET (any casing, trailing prose ignored) is an empty finding list", () => {
-    expect(parseAuditVerdict("MET")).toEqual([]);
-    expect(parseAuditVerdict("met")).toEqual([]);
-    expect(parseAuditVerdict("MET — everything requested is present")).toEqual([]);
+describe("auditDoneClaim — schema-validated verdict (bias-to-MET)", () => {
+  it('{"unmet":[]} is the MET verdict — an empty finding list', async () => {
+    const llm = llmReturning('{"unmet":[]}');
+    expect(await auditDoneClaim({ ...realInput, _llm: llm })).toEqual([]);
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 
-  it("UNMET with numbered items returns the items, markers stripped", () => {
-    expect(
-      parseAuditVerdict('UNMET:\n1. "remove every tailnet ref" — voice/errors.ts still shows "Tailscale network"\n2) "rename the field" — chat/ subtree untouched'),
-    ).toEqual([
+  it("unmet findings come back verbatim, whitespace-only entries dropped", async () => {
+    const llm = llmReturning(
+      '{"unmet":["\\"remove every tailnet ref\\" — voice/errors.ts still shows \\"Tailscale network\\"","   ","\\"rename the field\\" — chat/ subtree untouched"]}',
+    );
+    expect(await auditDoneClaim({ ...realInput, _llm: llm })).toEqual([
       '"remove every tailnet ref" — voice/errors.ts still shows "Tailscale network"',
       '"rename the field" — chat/ subtree untouched',
     ]);
   });
 
-  it("bullet markers and a stray code fence are tolerated", () => {
-    expect(parseAuditVerdict('```\nUNMET:\n- item one\n• item two\n```')).toEqual(["item one", "item two"]);
+  it("caps the findings at 5", async () => {
+    const items = Array.from({ length: 9 }, (_, i) => `"item ${i + 1}"`).join(",");
+    const llm = llmReturning(`{"unmet":[${items}]}`);
+    expect(await auditDoneClaim({ ...realInput, _llm: llm })).toHaveLength(5);
   });
 
-  it("caps the findings at 5", () => {
-    const raw = "UNMET:\n" + Array.from({ length: 9 }, (_, i) => `${i + 1}. item ${i + 1}`).join("\n");
-    expect(parseAuditVerdict(raw)).toHaveLength(5);
+  it("a fenced JSON reply still parses", async () => {
+    const llm = llmReturning('```json\n{"unmet":[]}\n```');
+    expect(await auditDoneClaim({ ...realInput, _llm: llm })).toEqual([]);
   });
 
-  it("no verdict on anything else — empty, prose, or UNMET with zero items", () => {
-    expect(parseAuditVerdict("")).toBeNull();
-    expect(parseAuditVerdict("The changes look mostly fine to me.")).toBeNull();
-    expect(parseAuditVerdict("UNMET:")).toBeNull();
-    expect(parseAuditVerdict("UNMET:\n\n  \n")).toBeNull();
+  it("no verdict on prose or a wrong shape — single retry, then null (gate no-op)", async () => {
+    const llm = llmReturning("The changes look mostly fine to me.", '{"unmet":"none"}');
+    expect(await auditDoneClaim({ ...realInput, _llm: llm })).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(2);
+  });
+
+  it("LLM unavailable → null without a retry", async () => {
+    const llm = llmReturning(null);
+    expect(await auditDoneClaim({ ...realInput, _llm: llm })).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -47,14 +73,11 @@ describe("auditDoneClaim — input guards (no LLM call wasted)", () => {
     expect(classifyWithLLM).not.toHaveBeenCalled();
   });
 
-  it("a real request+evidence pair reaches the classifier on the active tier", async () => {
-    (classifyWithLLM as ReturnType<typeof vi.fn>).mockResolvedValueOnce(["item"]);
-    const out = await auditDoneClaim({
-      userRequest: "remove every tailnet reference from the app",
-      evidence: "diff --git a/x.ts b/x.ts\n- tailnetAddr\n+ desktopAddr",
-    });
+  it("a real request+evidence pair reaches the chokepoint on the active tier", async () => {
+    classifyWithLLM.mockResolvedValueOnce('{"unmet":["item"]}');
+    const out = await auditDoneClaim(realInput);
     expect(out).toEqual(["item"]);
-    const opts = (classifyWithLLM as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const opts = classifyWithLLM.mock.calls[0][0];
     expect(opts.category).toBe("spec-audit");
     expect(opts.modelTier).toBe("active");
     expect(opts.envDisableVar).toBe("LAX_SPEC_AUDIT");

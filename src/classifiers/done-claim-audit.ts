@@ -22,9 +22,16 @@
  * work is worse than no check at all). The prompt confines findings to
  * requirements that are EXPLICIT in the request and VERIFIABLY unmet in the
  * shown changes; anything uncertain or out-of-view counts as met.
+ *
+ * Verdict shape: the schema root is the OBJECT {"unmet": string[]} rather
+ * than a bare array. The old MET / "UNMET: <items>" line protocol maps 1:1
+ * onto it ({"unmet":[]} = MET) with the caller contract unchanged —
+ * [] = everything met, items = unmet findings, null = no verdict — and an
+ * object root gives the model one unambiguous shape instead of two spellings.
  */
 
-import { classifyWithLLM } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema, type ClassifySchemaOptions } from "./schema-output.js";
 
 const SYSTEM_PROMPT = `You are auditing a coding agent's "done" claim with fresh eyes. You receive the user's original REQUEST and the CHANGES the agent made (a unified diff, or final file contents). The agent's conversation and reasoning are deliberately hidden from you.
 
@@ -35,10 +42,7 @@ HARD RULES:
 - An item is unmet only when the shown changes PROVE it — e.g. the request says to remove every occurrence of something and one is still visible in the shown content; the request names a concrete change and the diff shows it contradicted.
 - If evidence for a requirement could live in files you cannot see, or you are at all unsure, treat it as MET. A false alarm is worse than a miss.
 - Requirements about running, testing, verifying, or committing are OUT of scope — other gates own those. Judge WHAT was changed, not process.
-- Output EXACTLY one of:
-  - the single word MET
-  - the word UNMET: followed by a numbered list (at most 5 lines), each line quoting the request phrase and one short clause of visible evidence.
-No other prose.`;
+- Report the "unmet" list: EMPTY when everything explicit is met; otherwise at most 5 entries, each quoting the request phrase and one short clause of visible evidence.`;
 
 /** Chars of request/evidence forwarded to the auditor — head-truncated by the
  *  caller; these are the hard ceilings the prompt budget is sized for. */
@@ -47,26 +51,18 @@ export const AUDIT_EVIDENCE_LIMIT = 14_000;
 
 const MAX_FINDINGS = 5;
 
-/**
- * Extract the unmet-requirement list from the auditor's reply.
- *   - "MET"                → []   (audited, nothing unmet)
- *   - "UNMET:" + ≥1 items  → the items (capped)
- *   - anything else        → null (no verdict — fail open, never guess)
- * Exported for direct unit testing.
- */
-export function parseAuditVerdict(raw: string): string[] | null {
-  const s = raw.trim().replace(/^```[a-z0-9]*\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-  if (!s) return null;
-  if (/^MET\b/i.test(s)) return [];
-  const m = s.match(/^UNMET:?\s*/i);
-  if (!m) return null;
-  const items = s
-    .slice(m[0].length)
-    .split("\n")
-    .map((l) => l.replace(/^\s*(?:\d+[.)]|[-•*])\s*/, "").trim())
-    .filter((l) => l.length > 0);
-  if (items.length === 0) return null; // "UNMET" with no findings is no verdict
-  return items.slice(0, MAX_FINDINGS);
+// Object root; the caller unwraps to the string[] the gate consumes.
+// (classifySchema types its schema input=output, so the tidy-up below stays
+// out of the schema.) Whitespace-only entries are dropped — the old line
+// parser skipped blank lines — and the list is capped at MAX_FINDINGS: an
+// over-long list is truncated, not rejected, mirroring the old slice.
+const AuditReplySchema = z.object({ unmet: z.array(z.string()) });
+
+function tidyFindings(unmet: string[]): string[] {
+  return unmet
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .slice(0, MAX_FINDINGS);
 }
 
 /**
@@ -81,19 +77,21 @@ export async function auditDoneClaim(input: {
   evidence: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  _llm?: ClassifySchemaOptions<unknown>["_llm"];
 }): Promise<string[] | null> {
   const request = input.userRequest.trim().slice(0, AUDIT_REQUEST_LIMIT);
   const evidence = input.evidence.trim().slice(0, AUDIT_EVIDENCE_LIMIT);
   if (request.length < 12 || evidence.length === 0) return null;
 
-  return classifyWithLLM<string[]>({
+  const reply = await classifySchema({
     category: "spec-audit",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt:
       `ORIGINAL REQUEST:\n${request}\n\n` +
       `CHANGES THE AGENT MADE:\n${evidence}\n\n` +
       `Audit now. Remember: explicit-and-proven only; when unsure, MET.`,
-    parse: parseAuditVerdict,
+    schema: AuditReplySchema,
+    shapeHint: `{"unmet":["\\"quoted request phrase\\" — short visible-evidence clause"]}`,
     maxResponseChars: 4_000,
     // The auditor is the ACTIVE (reasoning) model — verdict QUALITY is the
     // point, and the gate only fires at a done-claim where latency is
@@ -102,5 +100,7 @@ export async function auditDoneClaim(input: {
     timeoutMs: input.timeoutMs ?? 40_000,
     envDisableVar: "LAX_SPEC_AUDIT",
     signal: input.signal,
+    _llm: input._llm,
   });
+  return reply ? tidyFindings(reply.unmet) : null;
 }

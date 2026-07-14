@@ -3,8 +3,10 @@ import {
   toolSearchNudgeMiddleware,
   createToolSearchNudgeMiddleware,
   looksLikeCapabilityDenial,
+  llmConfirm,
   type ConfirmDenialFn,
 } from "./tool-search-nudge.js";
+import { vi } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
@@ -164,6 +166,38 @@ describe("LLM confirm gate (three-way denial classifier)", () => {
     const op = opId();
     expect((await runWith(CONFIRM_GAP, op, { content: "No tool for mouse control." })).kind).toBe("nudge");
     expect((await runWith(CONFIRM_GAP, op, { content: "Still no such tool." })).kind).toBe("continue");
+  });
+});
+
+describe("llmConfirm — schema-validated denial verdict", () => {
+  type Llm = (system: string, user: string) => Promise<string | null>;
+  const llmReturning = (...replies: (string | null)[]) => {
+    const fn = vi.fn<Llm>();
+    for (const r of replies) fn.mockResolvedValueOnce(r);
+    return fn;
+  };
+
+  it.each([
+    ['{"verdict":"GAP","reason":"thinks it has no mouse tool"}', "gap"],
+    ['{"verdict":"ETHICAL","reason":"declines on safety grounds"}', "ethical"],
+    ['{"verdict":"NORMAL","reason":"just answers the question"}', "not-a-refusal"],
+  ])("maps %s → %s", async (reply, expected) => {
+    const llm = llmReturning(reply);
+    expect(await llmConfirm("I can't move the mouse.", llm)).toBe(expected);
+    expect(llm).toHaveBeenCalledTimes(1);
+    expect(llm.mock.calls[0][1]).toContain("I can't move the mouse.");
+  });
+
+  it("an off-vocabulary verdict is retried once, then null (regex floor applies)", async () => {
+    const llm = llmReturning('{"verdict":"KINDA"}', "GAP but not as JSON");
+    expect(await llmConfirm("I can't move the mouse.", llm)).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(2);
+  });
+
+  it("LLM unavailable → null without a retry", async () => {
+    const llm = llmReturning(null);
+    expect(await llmConfirm("I can't move the mouse.", llm)).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 });
 

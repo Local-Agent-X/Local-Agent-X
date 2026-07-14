@@ -27,11 +27,12 @@
  * message of the session (the active-task anchor).
  */
 
-import { classifyWithLLM } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema, type ClassifySchemaOptions } from "./schema-output.js";
 
 export type FollowupVerdict = "followup" | "new" | "resume";
 
-const SYSTEM_PROMPT = `You decide how a user's message relates to the conversation. Reply with EXACTLY one line: <VERDICT> <reason>
+const SYSTEM_PROMPT = `You decide how a user's message relates to the conversation. Give one verdict plus a one-line reason.
 
 VERDICTS:
 - FOLLOWUP — short ack, agreement, or short reaction tied to what the assistant just said. ("yeah", "ok", "thanks", "got it", "really?", "tell me more", "i love it", "wait what")
@@ -42,6 +43,20 @@ Rules:
 - If the prior assistant turn ended with an imperative directed at the user ("please log in", "click X", "paste it here") AND the user's reply is short and acknowledges/continues, that's RESUME, not FOLLOWUP — the active task isn't done.
 - If the user's message names a CONCRETE NEW topic distinct from the active-task anchor, that's NEW. Do not classify it as RESUME just because it's short.
 - Default to NEW when uncertain — keeping recall is safer than dropping it.`;
+
+// Verdict tokens stay the uppercase prompt vocabulary; the map below converts
+// to the lowercase FollowupVerdict the callers switch on. `reason` is
+// telemetry-only — optional so a terse reply doesn't void a valid verdict.
+const FollowupReplySchema = z.object({
+  verdict: z.enum(["FOLLOWUP", "RESUME", "NEW"]),
+  reason: z.string().optional(),
+});
+
+const VERDICT_MAP: Record<"FOLLOWUP" | "RESUME" | "NEW", FollowupVerdict> = {
+  FOLLOWUP: "followup",
+  RESUME: "resume",
+  NEW: "new",
+};
 
 /**
  * Classify the user's current message in relation to the prior turn and the
@@ -62,6 +77,7 @@ export async function classifyFollowupWithLLM(
     signal?: AbortSignal;
     timeoutMs?: number;
     model?: string;
+    _llm?: ClassifySchemaOptions<unknown>["_llm"];
   },
 ): Promise<FollowupVerdict | null> {
   const prior = (priorAssistantText || "").slice(0, 800);
@@ -70,24 +86,19 @@ export async function classifyFollowupWithLLM(
     `Active-task anchor (first substantive ask this session):\n"${anchor || "(none yet)"}"\n\n` +
     `Prior assistant message:\n"${prior || "(none — this is the first turn)"}"\n\n` +
     `User's current message:\n"${userMessage.slice(0, 400)}"\n\n` +
-    `Reply FOLLOWUP / RESUME / NEW + one-line reason.`;
+    `Verdict FOLLOWUP / RESUME / NEW + one-line reason.`;
 
-  return classifyWithLLM<FollowupVerdict>({
+  const reply = await classifySchema({
     category: "followup",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
+    schema: FollowupReplySchema,
+    shapeHint: `{"verdict":"FOLLOWUP" or "RESUME" or "NEW","reason":"one line"}`,
     timeoutMs: opts?.timeoutMs ?? 3000,
     model: opts?.model,
     envDisableVar: "LAX_LLM_FOLLOWUP",
     signal: opts?.signal,
-    parse: (raw) => {
-      const m = raw.trim().match(/^\s*(FOLLOWUP|RESUME|NEW)\b/i);
-      if (!m) return null;
-      const v = m[1].toUpperCase();
-      if (v === "FOLLOWUP") return "followup";
-      if (v === "RESUME") return "resume";
-      if (v === "NEW") return "new";
-      return null;
-    },
+    _llm: opts?._llm,
   });
+  return reply ? VERDICT_MAP[reply.verdict] : null;
 }

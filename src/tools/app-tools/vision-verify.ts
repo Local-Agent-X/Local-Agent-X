@@ -10,6 +10,7 @@
  * a lost free check must not fail a build.
  */
 
+import { z } from "zod";
 import type { DispatchOptions } from "../../llm-dispatch.js";
 import { dispatch, dispatchBackgroundModel } from "../../llm-dispatch.js";
 
@@ -103,44 +104,50 @@ export async function visionVerdictForScreenshot(
   return parseVerdict(raw);
 }
 
+// Zod schema encoding the verdict's tolerance rules. The design block is a
+// BONUS signal: a valid finite `score` is clamped to an integer 0–5 and
+// `issues` is coerced to its string entries, while an absent or garbled block
+// degrades to undefined (via the outer .catch) instead of nulling an
+// otherwise valid ok/reason verdict.
+const DesignSchema = z
+  .object({
+    score: z.number().finite(),
+    issues: z.array(z.unknown()).catch([]),
+  })
+  .transform((d) => ({
+    score: Math.min(5, Math.max(0, Math.round(d.score))),
+    issues: d.issues.filter((x): x is string => typeof x === "string"),
+  }));
+
+// A valid `ok` boolean is the ONLY hard requirement for a verdict; a missing
+// or non-string `reason` coerces to "".
+const VisionVerdictSchema = z.object({
+  ok: z.boolean(),
+  reason: z.string().catch(""),
+  design: DesignSchema.optional().catch(undefined),
+});
+
 // Models sometimes wrap JSON in ``` fences or pad it with prose despite the
-// strict-JSON prompt. Strip fences, then take the FIRST balanced JSON object
-// (string-aware, so braces inside "reason" don't derail the scan).
+// strict-JSON prompt. Strip fences, take the FIRST balanced JSON object
+// (string-aware, so braces inside "reason" don't derail the scan), then
+// safeParse it against the schema. NOTE: this stays a LOCAL validation on the
+// raw dispatch() reply — the images transport is Anthropic-only and does not
+// route through classifySchema.
 function parseVerdict(raw: string): VisionVerdict | null {
   const text = raw.replace(/```(?:json)?/gi, "");
   const json = extractFirstJsonObject(text);
   if (!json) return null;
+  let obj: unknown;
   try {
-    const parsed = JSON.parse(json) as { ok?: unknown; reason?: unknown; design?: unknown };
-    // A valid `ok` boolean is still the ONLY hard requirement for a verdict.
-    if (typeof parsed.ok !== "boolean") return null;
-    const verdict: VisionVerdict = {
-      ok: parsed.ok,
-      reason: typeof parsed.reason === "string" ? parsed.reason : "",
-    };
-    // Design is a bonus signal: parse it tolerantly and never let an absent or
-    // garbled `design` block null out an otherwise valid verdict.
-    const design = parseDesign(parsed.design);
-    if (design) verdict.design = design;
-    return verdict;
+    obj = JSON.parse(json);
   } catch {
     return null;
   }
-}
-
-// Tolerant parse of the optional design block. Returns undefined (not null,
-// never a throw) whenever the block is absent or too malformed to score, so the
-// caller keeps a valid ok/reason verdict. When present, `score` is clamped to
-// an integer 0–5 and `issues` is coerced to a string array.
-function parseDesign(value: unknown): { score: number; issues: string[] } | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const obj = value as { score?: unknown; issues?: unknown };
-  if (typeof obj.score !== "number" || !Number.isFinite(obj.score)) return undefined;
-  const score = Math.min(5, Math.max(0, Math.round(obj.score)));
-  const issues = Array.isArray(obj.issues)
-    ? obj.issues.filter((x): x is string => typeof x === "string")
-    : [];
-  return { score, issues };
+  const result = VisionVerdictSchema.safeParse(obj);
+  if (!result.success) return null;
+  const verdict: VisionVerdict = { ok: result.data.ok, reason: result.data.reason };
+  if (result.data.design) verdict.design = result.data.design;
+  return verdict;
 }
 
 function extractFirstJsonObject(text: string): string | null {

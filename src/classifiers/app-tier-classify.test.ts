@@ -1,66 +1,75 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const classifyWithLLM = vi.fn();
+// classifySchema routes through the canonical chokepoint; the mock resolves
+// RAW model text so the real JSON.parse → zod (discriminated union) runs.
+const classifyWithLLM = vi.hoisted(() =>
+  vi.fn(async (_opts: Record<string, unknown>): Promise<string | null> => null),
+);
 vi.mock("./classify-with-llm.js", () => ({
-  classifyWithLLM: (...args: unknown[]) => classifyWithLLM(...args),
+  classifyWithLLM: (...args: unknown[]) => classifyWithLLM(...(args as [Record<string, unknown>])),
 }));
 
-const { classifyAppTierEscalation, parseTier, parseTierOrClarify } = await import("./app-tier-classify.js");
+const { classifyAppTierEscalation } = await import("./app-tier-classify.js");
 const { resolveAppTier } = await import("../tools/app-tier.js");
+
+type Llm = (system: string, user: string) => Promise<string | null>;
+const llmReturning = (...replies: (string | null)[]) => {
+  const fn = vi.fn<Llm>();
+  for (const r of replies) fn.mockResolvedValueOnce(r);
+  return fn;
+};
 
 beforeEach(() => classifyWithLLM.mockReset());
 
-describe("parseTier", () => {
-  it.each([
-    ["FULL-STACK — needs a shared reservations database", "full-stack"],
-    ["frontend-spa: login implies routing and state", "frontend-spa"],
-    ["QUICK-HTML, a single page can honestly be this", "quick-html"],
-    ["COMPILED-NATIVE because it names a Rust toolchain", "compiled-native"],
-    ["  Full-Stack\nsecond line ignored", "full-stack"],
-  ])("parses %j → %s", (raw, tier) => {
-    expect(parseTier(raw)).toBe(tier);
+describe("classifyAppTierEscalation — schema-validated union verdict", () => {
+  it("a tier reply resolves to the bare tier token", async () => {
+    const llm = llmReturning('{"kind":"tier","tier":"full-stack","reason":"shared reservations db"}');
+    const verdict = await classifyAppTierEscalation({
+      prompt: "a booking system for my car wash where customers reserve slots",
+      _llm: llm,
+    });
+    expect(verdict).toBe("full-stack");
+    expect(llm).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["", "MAYBE full-stack?", "static page", "tier: unknown"])(
-    "rejects non-tier reply %j",
-    (raw) => {
-      expect(parseTier(raw)).toBeNull();
-    },
-  );
-});
-
-describe("parseTierOrClarify", () => {
-  it("still parses plain tier tokens (delegates to parseTier)", () => {
-    expect(parseTierOrClarify("FULL-STACK — shared reservations db")).toBe("full-stack");
-    expect(parseTierOrClarify("quick-html, one page is honest")).toBe("quick-html");
-  });
-
-  it("parses a well-formed CLARIFY line into a clarify verdict", () => {
-    const v = parseTierOrClarify(
-      "CLARIFY | What do you mean by a mega computer? | A retro-computer web app | A simulated CPU in code | A real PC parts list",
+  it("a well-formed clarify reply resolves to a clarify verdict", async () => {
+    const llm = llmReturning(
+      '{"kind":"clarify","question":"What do you mean by a mega computer?","options":["A retro-computer web app","A simulated CPU in code","A real PC parts list"]}',
     );
-    expect(v).toEqual({
+    const verdict = await classifyAppTierEscalation({ prompt: "build me a mega computer", _llm: llm });
+    expect(verdict).toEqual({
       kind: "clarify",
       question: "What do you mean by a mega computer?",
       options: ["A retro-computer web app", "A simulated CPU in code", "A real PC parts list"],
     });
   });
 
-  it("is case-insensitive on the CLARIFY keyword and caps at 4 options", () => {
-    const v = parseTierOrClarify("clarify | Q | a | b | c | d | e");
-    expect(v).toMatchObject({ kind: "clarify", question: "Q", options: ["a", "b", "c", "d"] });
+  it("caps clarify options at 4", async () => {
+    const llm = llmReturning('{"kind":"clarify","question":"Q","options":["a","b","c","d","e"]}');
+    const verdict = await classifyAppTierEscalation({ prompt: "build me a thing", _llm: llm });
+    expect(verdict).toMatchObject({ kind: "clarify", question: "Q", options: ["a", "b", "c", "d"] });
   });
 
-  it("rejects a malformed CLARIFY (missing question or < 2 options) so the caller builds", () => {
-    expect(parseTierOrClarify("CLARIFY")).toBeNull();
-    expect(parseTierOrClarify("CLARIFY | only a question")).toBeNull();
-    expect(parseTierOrClarify("CLARIFY | q | just-one-option")).toBeNull();
+  it("rejects a malformed clarify (missing question or < 2 options) so the caller builds", async () => {
+    for (const bad of [
+      '{"kind":"clarify"}',
+      '{"kind":"clarify","question":"only a question","options":[]}',
+      '{"kind":"clarify","question":"q","options":["just-one-option"]}',
+    ]) {
+      const llm = llmReturning(bad, bad); // invalid on both attempts
+      expect(await classifyAppTierEscalation({ prompt: "x", _llm: llm })).toBeNull();
+      expect(llm).toHaveBeenCalledTimes(2);
+    }
   });
-});
 
-describe("classifyAppTierEscalation", () => {
+  it("rejects a non-tier token after the single retry", async () => {
+    const llm = llmReturning('{"kind":"tier","tier":"static-page"}', "MAYBE full-stack?");
+    expect(await classifyAppTierEscalation({ prompt: "a tip calculator", _llm: llm })).toBeNull();
+    expect(llm).toHaveBeenCalledTimes(2);
+  });
+
   it("passes the brief through the chokepoint with the app-tier env flag", async () => {
-    classifyWithLLM.mockResolvedValue("full-stack");
+    classifyWithLLM.mockResolvedValue('{"kind":"tier","tier":"full-stack","reason":"r"}');
     const verdict = await classifyAppTierEscalation({
       prompt: "a booking system for my car wash where customers reserve slots",
     });
@@ -74,18 +83,19 @@ describe("classifyAppTierEscalation", () => {
   it("returns null when the LLM is unavailable (caller keeps the regex verdict)", async () => {
     classifyWithLLM.mockResolvedValue(null);
     expect(await classifyAppTierEscalation({ prompt: "a tip calculator" })).toBeNull();
+    expect(classifyWithLLM).toHaveBeenCalledTimes(1); // unavailable is never retried
   });
 });
 
 describe("resolveAppTier — escalation-only hybrid", () => {
   it("trusts regex hard signals without consulting the LLM", async () => {
-    classifyWithLLM.mockResolvedValue("quick-html");
+    classifyWithLLM.mockResolvedValue('{"kind":"tier","tier":"quick-html"}');
     expect(await resolveAppTier("build a rust raytracer")).toBe("compiled-native");
     expect(classifyWithLLM).not.toHaveBeenCalled();
   });
 
   it("escalates the quick-html residue on an LLM verdict", async () => {
-    classifyWithLLM.mockResolvedValue("full-stack");
+    classifyWithLLM.mockResolvedValue('{"kind":"tier","tier":"full-stack","reason":"r"}');
     expect(await resolveAppTier("a booking system for my car wash")).toBe("full-stack");
   });
 
@@ -95,12 +105,13 @@ describe("resolveAppTier — escalation-only hybrid", () => {
   });
 
   it("surfaces a clarify verdict from the quick-html residue instead of a tier", async () => {
-    const clarify = {
+    classifyWithLLM.mockResolvedValue(
+      '{"kind":"clarify","question":"What do you mean by a mega computer?","options":["A retro-computer web app","A real PC parts list"]}',
+    );
+    expect(await resolveAppTier("build me a mega computer")).toEqual({
       kind: "clarify",
       question: "What do you mean by a mega computer?",
       options: ["A retro-computer web app", "A real PC parts list"],
-    };
-    classifyWithLLM.mockResolvedValue(clarify);
-    expect(await resolveAppTier("build me a mega computer")).toEqual(clarify);
+    });
   });
 });

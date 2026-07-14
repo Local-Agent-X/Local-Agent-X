@@ -19,26 +19,49 @@
  * Returns the model's tier verdict, or null (LLM unavailable / bad shape).
  */
 
-import { classifyWithLLM } from "./classify-with-llm.js";
+import { z } from "zod";
+import { classifySchema, type ClassifySchemaOptions } from "./schema-output.js";
 import type { AppTier, AppTierClarify } from "../tools/app-tier.js";
 
-const TIERS: readonly AppTier[] = ["quick-html", "frontend-spa", "full-stack", "compiled-native"];
+const TIERS = ["quick-html", "frontend-spa", "full-stack", "compiled-native"] as const;
 
-const SYSTEM_PROMPT = `You triage an app build brief. Reply with EXACTLY one tier token from: QUICK-HTML, FRONTEND-SPA, FULL-STACK, COMPILED-NATIVE — OR a CLARIFY line if the brief is materially ambiguous.
+const SYSTEM_PROMPT = `You triage an app build brief. Reply with EXACTLY one tier from: quick-html, frontend-spa, full-stack, compiled-native — OR a clarify verdict if the brief is materially ambiguous.
 
 Definitions:
-- QUICK-HTML: a single static HTML page can honestly BE this app — a calculator, a tracker, a landing page, a small tool, a dashboard with local/hardcoded data. No login, no server, no persistence beyond localStorage.
-- FRONTEND-SPA: a real multi-screen browser app — it needs routing/state across multiple views, user accounts/login, or is explicitly a "web app"/SaaS/PWA — but the backend is unspecified or not required.
-- FULL-STACK: the brief needs a real server process — an API the app must serve, a real database with shared/persistent data across users or devices, server-side logic, integrations that cannot run in a browser.
-- COMPILED-NATIVE: the brief asks for a program in a compiled non-browser language (Rust, Go, C/C++, Zig, ...) whose real output comes from running a native toolchain.
+- quick-html: a single static HTML page can honestly BE this app — a calculator, a tracker, a landing page, a small tool, a dashboard with local/hardcoded data. No login, no server, no persistence beyond localStorage.
+- frontend-spa: a real multi-screen browser app — it needs routing/state across multiple views, user accounts/login, or is explicitly a "web app"/SaaS/PWA — but the backend is unspecified or not required.
+- full-stack: the brief needs a real server process — an API the app must serve, a real database with shared/persistent data across users or devices, server-side logic, integrations that cannot run in a browser.
+- compiled-native: the brief asks for a program in a compiled non-browser language (Rust, Go, C/C++, Zig, ...) whose real output comes from running a native toolchain.
 
-Bias: reply QUICK-HTML unless the brief CLEARLY requires more. A brief that merely sounds ambitious but a single page can honestly satisfy is QUICK-HTML. Escalate only when a static page would have to FAKE something the user asked for (fake login, fake saved data shared between users, fake multi-page navigation, fake native program output).
+Bias: reply quick-html unless the brief CLEARLY requires more. A brief that merely sounds ambitious but a single page can honestly satisfy is quick-html. Escalate only when a static page would have to FAKE something the user asked for (fake login, fake saved data shared between users, fake multi-page navigation, fake native program output).
 
-CLARIFY — only for MATERIAL ambiguity: the target might not even be software ("a mega computer", "a business", "a house"), OR the plausible builds diverge so much that guessing wrong wastes a real build. Then do NOT pick a tier; reply exactly:
-CLARIFY | <one short question> | <option 1> | <option 2> | <option 3 optional>
-Do NOT use CLARIFY for a brief that is merely vague but unmistakably a real app or site — "a website for a peptide company" is a real site, pick its tier. Reserve CLARIFY for genuine forks.
+Clarify — only for MATERIAL ambiguity: the target might not even be software ("a mega computer", "a business", "a house"), OR the plausible builds diverge so much that guessing wrong wastes a real build. Then do NOT pick a tier; reply with kind "clarify", one short question, and 2-3 concrete options for the user to pick from.
+Do NOT clarify a brief that is merely vague but unmistakably a real app or site — "a website for a peptide company" is a real site, pick its tier. Reserve clarify for genuine forks.
 
-Reply: a single tier token + brief reason on one line, OR one CLARIFY line.`;
+Reply: kind "tier" with the single tier + brief reason, OR kind "clarify" with the question and options.`;
+
+// Discriminated union so the root stays an OBJECT (never a bare/nullable
+// value): a tier verdict rides in {"kind":"tier",...}, a clarify question in
+// {"kind":"clarify",...}. The clarify branch encodes the old parser's
+// validity rule — a question plus at least 2 options, else the reply is
+// invalid and the caller falls open to building rather than surfacing a
+// broken question.
+const TierReplySchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("tier"),
+    tier: z.enum(TIERS),
+    reason: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("clarify"),
+    question: z.string().trim().min(1),
+    options: z.array(z.string().trim().min(1)).min(2),
+  }),
+]);
+
+const SHAPE_HINT =
+  `{"kind":"tier","tier":"quick-html|frontend-spa|full-stack|compiled-native","reason":"one line"}` +
+  ` OR {"kind":"clarify","question":"...","options":["...","..."]}`;
 
 /**
  * Ask the LLM to triage a build brief. Caller policy (build_app): consult only
@@ -46,13 +69,20 @@ Reply: a single tier token + brief reason on one line, OR one CLARIFY line.`;
  * verdict. Null = keep the regex verdict (build).
  */
 export async function classifyAppTierEscalation(
-  args: { prompt: string; signal?: AbortSignal; timeoutMs?: number; model?: string },
+  args: {
+    prompt: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    model?: string;
+    _llm?: ClassifySchemaOptions<unknown>["_llm"];
+  },
 ): Promise<AppTier | AppTierClarify | null> {
-  return classifyWithLLM<AppTier | AppTierClarify>({
+  const reply = await classifySchema({
     category: "app-tier",
     systemPrompt: SYSTEM_PROMPT,
-    userPrompt: `BUILD BRIEF:\n"${args.prompt.slice(0, 2000)}"\n\nTier token + reason, or a CLARIFY line if materially ambiguous.`,
-    parse: parseTierOrClarify,
+    userPrompt: `BUILD BRIEF:\n"${args.prompt.slice(0, 2000)}"\n\nTier verdict, or a clarify verdict if materially ambiguous.`,
+    schema: TierReplySchema,
+    shapeHint: SHAPE_HINT,
     // Once per build_app invocation, before any scaffolding — latency budget
     // is generous relative to the build itself, but keep the default ceiling
     // so a hung provider never stalls the op start.
@@ -60,30 +90,10 @@ export async function classifyAppTierEscalation(
     model: args.model,
     envDisableVar: "LAX_LLM_APP_TIER",
     signal: args.signal,
+    _llm: args._llm,
   });
-}
-
-export function parseTier(raw: string): AppTier | null {
-  const head = raw.trim().split(/\r?\n/, 1)[0] ?? "";
-  const token = head.trim().toLowerCase().replace(/^[^a-z]*/, "").split(/[\s:,.]+/, 1)[0] ?? "";
-  const match = TIERS.find((t) => t === token);
-  return match ?? null;
-}
-
-/**
- * Parse the escalation reply into a tier token OR a clarify verdict. A CLARIFY
- * line is `CLARIFY | question | opt1 | opt2 [| opt3]`; a malformed one (missing
- * question or < 2 options) returns null so the caller falls open to building
- * rather than surfacing a broken question. Pure + exported for direct testing.
- */
-export function parseTierOrClarify(raw: string): AppTier | AppTierClarify | null {
-  const head = raw.trim().split(/\r?\n/, 1)[0] ?? "";
-  if (/^\s*clarify\b/i.test(head)) {
-    const parts = head.split("|").map((s) => s.trim()).filter(Boolean);
-    const question = parts[1] ?? "";
-    const options = parts.slice(2).filter(Boolean).slice(0, 4);
-    if (!question || options.length < 2) return null;
-    return { kind: "clarify", question, options };
-  }
-  return parseTier(raw);
+  if (!reply) return null;
+  if (reply.kind === "tier") return reply.tier;
+  // AppTierClarify documents 2-4 options; the schema floors at 2, cap at 4 here.
+  return { kind: "clarify", question: reply.question, options: reply.options.slice(0, 4) };
 }

@@ -297,6 +297,15 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     setInterval(warm, 60_000).unref();
   }).catch(() => {});
 
+  // Warm the local-runtime sweep (Ollama + LM Studio/vLLM/llama.cpp on
+  // their known loopback ports + manual adds) on the same cadence, so the
+  // picker and per-turn context-window lookups read a warm cache.
+  import("../local-runtimes/index.js").then(({ refreshLocalRuntimes }) => {
+    const warmRuntimes = () => void refreshLocalRuntimes().catch(() => {});
+    warmRuntimes();
+    setInterval(warmRuntimes, 60_000).unref();
+  }).catch(() => {});
+
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir);

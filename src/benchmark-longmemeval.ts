@@ -8,6 +8,13 @@
  * Also: R@10, proper session IDs, full text matching as secondary.
  *
  * Usage: npx tsx src/benchmark-longmemeval.ts [--k 10] [--limit 10]
+ *        [--emb-provider ollama|local|openai|gemini] [--emb-model <name>]
+ *
+ * --emb-provider selects the embedding backend under test. "local" is the
+ * built-in TF-IDF/feature-hashing embedder (no runtime, no download) — use it
+ * to measure the exact default-install memory quality against "ollama" (the
+ * opt-in mxbai model). Cloud providers read OPENAI_API_KEY / GEMINI_API_KEY
+ * from the environment.
  */
 
 import { readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
@@ -26,6 +33,10 @@ const DATA_PATH = process.argv.includes("--data")
 const K = process.argv.includes("--k")
   ? parseInt(process.argv[process.argv.indexOf("--k") + 1])
   : 10;
+
+const EMB_PROVIDER = (process.argv.includes("--emb-provider")
+  ? process.argv[process.argv.indexOf("--emb-provider") + 1]
+  : "ollama") as "ollama" | "local" | "openai" | "gemini";
 
 const EMB_MODEL = process.argv.includes("--emb-model")
   ? process.argv[process.argv.indexOf("--emb-model") + 1]
@@ -77,10 +88,19 @@ async function main() {
 
   try {
     const { createEmbeddingProvider } = await import("./embedding-providers/index.js");
-    const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL, baseUrl: EMB_URL });
+    // Cloud backends need a key or the factory silently falls back to local —
+    // read it from env so an openai/gemini run measures what it claims to.
+    const apiKey = EMB_PROVIDER === "openai" ? process.env.OPENAI_API_KEY
+      : EMB_PROVIDER === "gemini" ? process.env.GEMINI_API_KEY
+      : undefined;
+    const embProvider = createEmbeddingProvider({ provider: EMB_PROVIDER, model: EMB_MODEL, baseUrl: EMB_URL, apiKey });
     await memory.setEmbeddingProvider(embProvider);
-    const source = EMB_URL ? `(${EMB_URL})` : "ollama";
-    logger.info(`Embedding: ${source}/${EMB_MODEL} (${embProvider.dimensions}d)`);
+    // local ignores model/url (it's TF-IDF); label it by what it actually is.
+    const modelLabel = EMB_PROVIDER === "local" ? "tfidf-256" : EMB_MODEL;
+    const source = EMB_PROVIDER === "local" ? "local"
+      : EMB_PROVIDER === "ollama" ? (EMB_URL ? `ollama(${EMB_URL})` : "ollama")
+      : EMB_PROVIDER;
+    logger.info(`Embedding: ${source}/${modelLabel} (${embProvider.dimensions}d)`);
   } catch { logger.info("Keyword search only"); }
 
   const scores: Record<string, { hits: number; total: number }> = {};

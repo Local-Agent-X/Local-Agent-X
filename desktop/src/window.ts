@@ -151,6 +151,13 @@ export function createWindow(): void {
     },
   });
 
+  // Start maximized (filling the screen) unless the user last left it
+  // un-maximized. Done while the window is still hidden (show: false), so it
+  // paints maximized on first show with no small→large flash. windowBounds is
+  // left as the restore size — the resize handler below only writes it when
+  // NOT maximized, so un-maximizing snaps back to the last chosen box.
+  if (getSetting("windowMaximized")) mainWindow.maximize();
+
   const url = `http://127.0.0.1:${laxConfig.port}/?token=${laxConfig.authToken}`;
   const serverOrigin = `http://127.0.0.1:${laxConfig.port}`;
 
@@ -312,6 +319,12 @@ export function createWindow(): void {
       setSetting("windowBounds", { width, height });
     }
   });
+
+  // Remember the maximize state so the next launch opens the same way. Paired
+  // with the resize handler above: while maximized, windowBounds keeps the
+  // last un-maximized box as the restore size.
+  mainWindow.on("maximize", () => setSetting("windowMaximized", true));
+  mainWindow.on("unmaximize", () => setSetting("windowMaximized", false));
 
   mainWindow.on("close", (e) => {
     if (!isQuittingFlag() && getSetting("closeToTray")) {

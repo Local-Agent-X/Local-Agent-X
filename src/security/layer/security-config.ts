@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getLaxDir } from "../../lax-data-dir.js";
-import { LOCAL_RUNTIME_PROBES } from "../../local-runtimes/probes.js";
+import { getLocalRuntimes } from "../../local-runtimes/cache.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
@@ -80,20 +80,32 @@ export function loopbackPortFromUrl(url: string): string | null {
 
 /**
  * Loopback ports of local inference runtimes the agent's HTTP tools may
- * reach: every probe's default sweep port (LM Studio 1234, vLLM 8000,
- * llama.cpp 8080 — same standing as Ollama's 11434) plus operator
- * manual-add entries from settings.json that are LOOPBACK. Non-loopback
- * manual runtimes are deliberately NOT folded in: the loopback-host guard
- * in network-policy makes port entries meaningless for them, and agent
- * egress to a LAN box is a separate authorization from chat routing
- * (LAX's own chat/probe fetch reaches it via the admission gate instead).
- * settings.json is read raw from disk, not via the settings cache, so a
- * security decision never runs on a stale allowlist.
+ * reach: every DISCOVERED runtime's loopback port plus operator manual-add
+ * entries from settings.json that are LOOPBACK.
+ *
+ * Discovered — not the sweep's candidate port list. The sweep list exists
+ * to find runtimes and grows freely (Jan, GPT4All, KoboldCpp, dev-server
+ * ports like 5000); agent egress is a separate authorization that only
+ * live evidence grants: a port joins this set once something answering an
+ * inference-runtime handshake was actually found there, and leaves when
+ * the runtime stops (next sweep drops it). Before the first sweep lands
+ * the set is manual-adds-only — the Ollama chat port keeps its own
+ * config-based carve-out (ollamaLoopbackPort), so the primary runtime
+ * never waits on discovery.
+ *
+ * Non-loopback runtimes (discovered or manual — a LAN GPU box) are
+ * deliberately NOT folded in: the loopback-host guard in network-policy
+ * makes port entries meaningless for them, and agent egress to a LAN box
+ * is a separate authorization from chat routing (LAX's own chat/probe
+ * fetch reaches it via the admission gate instead). settings.json is read
+ * raw from disk, not via the settings cache, so a security decision never
+ * runs on a stale allowlist.
  */
 export function localRuntimeLoopbackPorts(): Set<string> {
   const ports = new Set<string>();
-  for (const probe of LOCAL_RUNTIME_PROBES) {
-    for (const port of probe.defaultPorts) ports.add(String(port));
+  for (const rt of getLocalRuntimes() ?? []) {
+    const port = loopbackPortFromUrl(rt.endpoint.baseUrl);
+    if (port) ports.add(port);
   }
   try {
     const sPath = join(getLaxDir(), "settings.json");

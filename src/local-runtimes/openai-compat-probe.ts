@@ -97,9 +97,13 @@ function listFrom(data: Record<string, unknown> | null): unknown[] | null {
 export const openaiCompatProbe: LocalRuntimeProbe = {
   kind: "openai-compat",
   label: "OpenAI-compatible",
-  // LM Studio, vLLM, llama.cpp server defaults. 11434 is claimed by the
+  // LM Studio 1234, vLLM 8000, llama.cpp 8080, Jan 1337, GPT4All 4891,
+  // text-generation-webui 5000, KoboldCpp 5001. 11434 is claimed by the
   // ollama probe first (probe order in probes.ts is load-bearing).
-  defaultPorts: [1234, 8000, 8080],
+  // Growing this list is discovery-only: agent egress derives from
+  // DISCOVERED runtimes (localRuntimeLoopbackPorts), never from these
+  // candidates — so common dev ports like 5000 are safe to sweep.
+  defaultPorts: [1234, 1337, 4891, 5000, 5001, 8000, 8080],
 
   async detect(ep, signal) {
     return listFrom(await getJson(`${base(ep)}/v1/models`, DETECT_TIMEOUT_MS, signal)) !== null;

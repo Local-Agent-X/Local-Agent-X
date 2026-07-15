@@ -5,7 +5,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager, BrowserEngine } from "../../browser/index.js";
+import type { BrowserBackend, BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
 import { ok, err, computeAuthWallPrefix, appendPostActionSnapshot } from "./shared.js";
@@ -18,7 +18,7 @@ import { safeBrowserPageLabel, sensitivePageStub } from "../../browser/guards.js
 const log = createLogger("browser.nav");
 
 export async function handleNavigate(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
   engine: BrowserEngine | undefined,
 ): Promise<ToolResult> {
@@ -38,7 +38,7 @@ export async function handleNavigate(
 }
 
 export async function handleNewTab(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const url = String(args.url || "");
@@ -50,7 +50,7 @@ export async function handleNewTab(
   return ok(await appendPostActionSnapshot(manager, tabResult));
 }
 
-export async function handleSnapshot(manager: BrowserManager): Promise<ToolResult> {
+export async function handleSnapshot(manager: BrowserBackend): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   const raw = await manager.snapshot();

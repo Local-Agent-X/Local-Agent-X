@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { BrowserManager, InteractionResult } from "../../browser/manager.js";
+import type { BrowserManager } from "../../browser/manager.js";
+import type { InteractionResult } from "../../browser/backend.js";
 import { handleClick, handleFill, handleClickText } from "./interact.js";
 import { handleAct } from "./act.js";
 

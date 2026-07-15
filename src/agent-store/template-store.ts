@@ -42,6 +42,10 @@ export interface AgentTemplate {
    *  through. Chunk 4 owns the per-template seed values; this chunk
    *  only adds the field. */
   defaultModel?: AgentModelPin;
+  /** Rung 1 of the browser-profile chain (agent default). Mirrors
+   *  defaultModel — the catalog adapter copies it through to
+   *  AgentDefinition. Unset resolves to the "default" profile. */
+  defaultBrowserProfileId?: string;
   providerStrategy?: AgentProviderStrategy;
   // Note: hired / reportsTo / heartbeatSchedule / heartbeatEnabled /
   // budget moved to ProjectRoster (src/project-rosters.ts) in the L3

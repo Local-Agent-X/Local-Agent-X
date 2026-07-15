@@ -51,7 +51,7 @@ vi.mock("./launcher.js", async (importOriginal) => {
   };
 });
 
-import { getBrowserManager, closeBrowser, closeAllBrowsers } from "./instance.js";
+import { getCdpBrowserManager, closeBrowser, closeAllBrowsers } from "./instance.js";
 import { acquireSessionContext, closeSharedBrowser, releaseSessionContext } from "./runtime.js";
 
 // These exercise the per-session isolation contract at the registry level —
@@ -63,27 +63,27 @@ describe("per-session browser isolation", () => {
   afterEach(async () => { await closeAllBrowsers(); });
 
   it("returns the same manager for the same session id", () => {
-    expect(getBrowserManager("chat-1")).toBe(getBrowserManager("chat-1"));
+    expect(getCdpBrowserManager("chat-1")).toBe(getCdpBrowserManager("chat-1"));
   });
 
   it("returns distinct managers for distinct sessions", () => {
-    const chat = getBrowserManager("chat-1");
-    const mission = getBrowserManager("cron-nightly");
+    const chat = getCdpBrowserManager("chat-1");
+    const mission = getCdpBrowserManager("cron-nightly");
     expect(chat).not.toBe(mission);
   });
 
   it("starts each session with no owned tabs and inactive", () => {
-    const m = getBrowserManager("chat-1");
+    const m = getCdpBrowserManager("chat-1");
     expect(m.listOwnedPages()).toEqual([]);
     expect(m.isActive()).toBe(false);
   });
 
   it("closing one session leaves the other's manager untouched", async () => {
-    const chat = getBrowserManager("chat-1");
-    const mission = getBrowserManager("cron-nightly");
+    const chat = getCdpBrowserManager("chat-1");
+    const mission = getCdpBrowserManager("cron-nightly");
     await closeBrowser("chat-1");
-    expect(getBrowserManager("chat-1")).not.toBe(chat);
-    expect(getBrowserManager("cron-nightly")).toBe(mission);
+    expect(getCdpBrowserManager("chat-1")).not.toBe(chat);
+    expect(getCdpBrowserManager("cron-nightly")).toBe(mission);
   });
 });
 

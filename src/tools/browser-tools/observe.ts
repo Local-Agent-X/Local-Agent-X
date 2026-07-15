@@ -5,11 +5,11 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager } from "../../browser/index.js";
+import type { BrowserBackend } from "../../browser/index.js";
 import { ok } from "./shared.js";
 import { sensitivePageStub } from "../../browser/guards.js";
 
-export async function handleObserve(manager: BrowserManager): Promise<ToolResult> {
+export async function handleObserve(manager: BrowserBackend): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   // Structured view grouped by role, viewport-first, diff-aware

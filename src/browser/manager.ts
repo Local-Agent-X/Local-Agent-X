@@ -24,9 +24,7 @@ import {
 import { isBlankish } from "./blankish.js";
 import type { BrowserMode } from "../types.js";
 import { waitForContinuityCacheRestore } from "./continuity-cache.js";
-
-/** Keeps ref-resolution failures distinct from successful action text. */
-export interface InteractionResult { ok: boolean; text: string; }
+import type { BrowserBackend, InteractionResult } from "./backend.js";
 
 /**
  * Per-session browser surface. Each session owns its own tabs + observation
@@ -35,7 +33,7 @@ export interface InteractionResult { ok: boolean; text: string; }
  * The Chrome process and connection are NOT owned here — close() only tears
  * down this session's tabs (and its own context in isolated mode).
  */
-export class BrowserManager {
+export class BrowserManager implements BrowserBackend {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private owned: Page[] = [];
@@ -48,8 +46,11 @@ export class BrowserManager {
   constructor(
     private readonly sessionId: string = "default",
     private readonly mode: BrowserMode = "isolated",
+    // Profile binding (see backend.ts). CDP maps it to a userDataDir later.
+    private readonly profileId: string = "default",
   ) {}
 
+  getProfileId(): string { return this.profileId; }
   /** Called when the idle timer fires after this session is torn down. */
   setIdleHandler(fn: () => void): void { this.onIdle = fn; }
   /** Supplies tabs owned by other sessions so we never adopt one of theirs. */

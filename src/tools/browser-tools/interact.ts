@@ -5,11 +5,11 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager } from "../../browser/index.js";
+import type { BrowserBackend } from "../../browser/index.js";
 import { ok, err, appendPostActionSnapshot, listInputRefs } from "./shared.js";
 
 export async function handleClick(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   // Prefer ref (from snapshot) over CSS selector
@@ -25,7 +25,7 @@ export async function handleClick(
 }
 
 export async function handleClickText(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const text = String(args.text || "");
@@ -35,7 +35,7 @@ export async function handleClickText(
 }
 
 export async function handleFill(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const value = String(args.value ?? "");
@@ -75,7 +75,7 @@ export async function handleFill(
 }
 
 export async function handleSelect(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const selector = String(args.selector || "");
@@ -86,7 +86,7 @@ export async function handleSelect(
 }
 
 export async function handleScroll(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   // value = "up" | "down" | "top" | "bottom" | "<number>" (for refId)

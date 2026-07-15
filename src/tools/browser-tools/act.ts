@@ -5,11 +5,11 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager } from "../../browser/index.js";
+import type { BrowserBackend } from "../../browser/index.js";
 import { ok, err } from "./shared.js";
 
 export async function handleAct(
-  manager: BrowserManager,
+  manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   // Natural language action: "click the login button", "fill in the search box with 'cats'"

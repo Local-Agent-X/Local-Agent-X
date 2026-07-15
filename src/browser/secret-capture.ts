@@ -13,7 +13,7 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
-import { getBrowserManager } from "./index.js";
+import { getCdpBrowserManager } from "./index.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -116,7 +116,7 @@ export function createBrowserSecretCaptureTool(
       }
 
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
-      const manager = getBrowserManager(sessionId);
+      const manager = getCdpBrowserManager(sessionId);
 
       let value: string | null = null;
       try {

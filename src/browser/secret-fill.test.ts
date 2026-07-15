@@ -50,7 +50,7 @@ let currentPage: FakePage;
 let elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
 
 vi.mock("./index.js", () => ({
-  getBrowserManager: () => ({
+  getCdpBrowserManager: () => ({
     getPage: async () => currentPage,
   }),
   withBrowserLock: async <T>(_sid: string, fn: () => Promise<T>) => fn(),

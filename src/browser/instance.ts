@@ -1,5 +1,7 @@
 import type { Page } from "playwright";
 import { BrowserManager } from "./manager.js";
+import type { BrowserBackend } from "./backend.js";
+import { resolveSessionBrowserProfileId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { getRuntimeConfig } from "../config.js";
 
@@ -17,11 +19,15 @@ function peerPagesExcept(self: BrowserManager): Page[] {
   return pages;
 }
 
-export function getBrowserManager(sessionId: string = "default"): BrowserManager {
+function ensureManager(sessionId: string): BrowserManager {
   const key = sessionId || "default";
   let manager = managers.get(key);
   if (!manager) {
-    manager = new BrowserManager(key, getRuntimeConfig().browserMode);
+    // Resolve the session's browser profile (3-rung winner, pre-computed at
+    // run-prep) and bind the manager to it. CDP behavior is unchanged — the
+    // profile is carried for the in-app backend + CDP userDataDir twin later.
+    const profileId = resolveSessionBrowserProfileId(key);
+    manager = new BrowserManager(key, getRuntimeConfig().browserMode, profileId);
     manager.setPeerPages(() => peerPagesExcept(manager!));
     manager.setIdleHandler(() => {
       if (managers.get(key) === manager) managers.delete(key);
@@ -30,6 +36,23 @@ export function getBrowserManager(sessionId: string = "default"): BrowserManager
     managers.set(key, manager);
   }
   return manager;
+}
+
+// Returns BrowserBackend — the tool-facing contract. Concretely a
+// BrowserManager (CDP) today; the profile-bound ElectronInAppBackend routes
+// through here in a later phase. Callers depend on the interface, not the class.
+export function getBrowserManager(sessionId: string = "default"): BrowserBackend {
+  return ensureManager(sessionId);
+}
+
+/**
+ * Concrete-typed accessor for CDP-internal helpers that need the Playwright
+ * `Page` (secret-fill / secret-capture operate directly on the page). Not part
+ * of the tool-facing BrowserBackend contract — the in-app backend has no
+ * Playwright page and grows its own secret-handling path in a later phase.
+ */
+export function getCdpBrowserManager(sessionId: string = "default"): BrowserManager {
+  return ensureManager(sessionId);
 }
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {

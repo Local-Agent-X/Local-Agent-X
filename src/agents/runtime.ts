@@ -44,6 +44,11 @@ export interface AgentRunDriverRequest {
    *  roster, template default). When undefined, the driver falls back
    *  to the global default via resolveProvider's normal chain. */
   modelOverride?: AgentModelPin;
+  /** Resolved browser profile id for this run (3-rung winner from
+   *  resolveAgentBrowserProfileId). The driver records it in the
+   *  session-owner registry so the run's browser tool calls drive the right
+   *  profile. Undefined resolves to the "default" profile. */
+  browserProfileId?: string;
   /** Absolute dir this run may mutate — the driver registers it with the
    *  security layer for the run's session (and removes it after), giving
    *  delegated bash/write/edit the same standing a worktree grants.

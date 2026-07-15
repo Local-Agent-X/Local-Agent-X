@@ -28,7 +28,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { deriveOrigin, normalizeSecretName } from "../secrets.js";
-import { getBrowserManager } from "./index.js";
+import { getCdpBrowserManager } from "./index.js";
 import { registerRedactedSecretValue } from "../sanitize.js";
 import { getActivePreBlessedSecrets } from "../ops/pre-bless.js";
 
@@ -116,7 +116,7 @@ export function createBrowserSecretFillTool(
       }
 
       // --- Guardrail 1: identify the target element + check selector whitelist ---
-      const manager = getBrowserManager(sessionId);
+      const manager = getCdpBrowserManager(sessionId);
       let page;
       try {
         page = await manager.getPage();

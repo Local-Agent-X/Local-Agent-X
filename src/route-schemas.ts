@@ -46,10 +46,25 @@ export const AgentTemplateSchema = z.object({
   allowedTools: z.array(z.string()).optional().default([]),
   description: z.string().optional().default(""),
   icon: z.string().optional(),
+  /** Rung-1 (agent-default) browser profile. Optional; unset resolves to the
+   *  "default" profile at drive time. */
+  defaultBrowserProfileId: z.string().optional(),
 });
 
 export const SpawnAgentSchema = z.object({
   task: z.string().optional().default("Execute your role"),
+});
+
+// ── Browser profiles ──
+
+export const BrowserProfileSchema = z.object({
+  name: z.string().min(1, "name required"),
+  notes: z.string().optional(),
+});
+
+export const BrowserProfileUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  notes: z.string().optional(),
 });
 
 // ── Issues ──

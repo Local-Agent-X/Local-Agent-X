@@ -72,6 +72,11 @@ export interface AgentDefinition {
    *  resolveAgentModel chain (run-override → roster.model → this →
    *  undefined). Leave unset to let the global default win. */
   defaultModel?: AgentModelPin;
+  /** Template-level default browser profile id. Rung 1 (lowest priority)
+   *  of the browser-profile chain (run override → roster override → this →
+   *  "default"). Resolved by resolveAgentBrowserProfileId in invoke.ts.
+   *  Unset resolves to the "default" profile. */
+  defaultBrowserProfileId?: string;
 }
 
 /** Org-level metadata about an agent definition. Lives separately from
@@ -128,6 +133,11 @@ export interface InvokeOpts {
    *  highest-priority override, used by delegation tools that want to
    *  pick a model explicitly for a single invocation. */
   modelOverride?: AgentModelPin;
+  /** Per-run browser profile override. Highest-priority rung of
+   *  resolveAgentBrowserProfileId — beats roster + template default. Lets a
+   *  single task drive a specific profile's saved logins regardless of the
+   *  agent's default. */
+  browserProfileId?: string;
   /** Absolute dir this run is sanctioned to mutate (e.g. the auto-build
    *  loop's project dir). The driver registers it with the security layer
    *  for the run's session — the same standing a worktree grants — and

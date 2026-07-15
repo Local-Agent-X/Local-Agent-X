@@ -87,6 +87,7 @@ export function invokeDefinition(
   const name = opts.nameOverride ?? def.name;
   const templateId = def.id.startsWith("tpl-") ? def.id : undefined;
   const modelOverride = resolveAgentModel(def, opts);
+  const browserProfileId = resolveAgentBrowserProfileId(def, opts);
 
   const { agentId, abortController } = Handler.getInstance().attachExternalRun({
     name,
@@ -138,6 +139,7 @@ export function invokeDefinition(
       sessionId: opts.sessionId,
       templateId,
       modelOverride,
+      browserProfileId,
       workRoot: opts.workRoot,
     },
     abortController.signal,
@@ -288,6 +290,26 @@ export function resolveAgentModel(
     if (roster?.model) return roster.model;
   }
   return def.defaultModel;
+}
+
+/**
+ * Resolve the effective browser profile id for one invocation. Mirrors
+ * resolveAgentModel — same three rungs, same scope gate:
+ *   1. opts.browserProfileId              — per-run/task override
+ *   2. roster.browserProfileId (scoped)   — per-project override
+ *   3. def.defaultBrowserProfileId        — agent template default
+ *   4. undefined                          — resolves to "default" downstream
+ */
+export function resolveAgentBrowserProfileId(
+  def: AgentDefinition,
+  opts: InvokeOpts,
+): string | undefined {
+  if (opts.browserProfileId) return opts.browserProfileId;
+  if (opts.scope) {
+    const roster = ProjectRosterStore.getInstance().get(opts.scope.projectId, def.id);
+    if (roster?.browserProfileId) return roster.browserProfileId;
+  }
+  return def.defaultBrowserProfileId;
 }
 
 export function applyProjectToolGate(allowed: string[], opts: InvokeOpts): string[] {

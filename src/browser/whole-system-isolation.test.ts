@@ -9,7 +9,7 @@ import { configSchema } from "../config-schema.js";
 import { setRuntimeConfig } from "../config.js";
 import { CHROME_PROFILE_LOCKS, launchViaCDP } from "./launcher.js";
 import { startBrowserEgressProxy } from "./egress-proxy.js";
-import { closeAllBrowsers, closeBrowser, getBrowserManager } from "./instance.js";
+import { closeAllBrowsers, closeBrowser, getCdpBrowserManager } from "./instance.js";
 import { browserAvailable } from "./test-browser-available.js";
 
 interface IdentityState {
@@ -220,8 +220,8 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
   it("isolates simultaneous sessions through the first-launch allocation race", async () => {
     setRuntimeConfig(configSchema.parse(runtimeConfigInput));
     expect(configSchema.parse({}).browserMode).toBe("isolated");
-    const alice = getBrowserManager("alice");
-    const bob = getBrowserManager("bob");
+    const alice = getCdpBrowserManager("alice");
+    const bob = getCdpBrowserManager("bob");
 
     const [alicePage, bobPage] = await Promise.all([alice.getPage(), bob.getPage()]);
     expect(alicePage.context()).not.toBe(bobPage.context());
@@ -278,12 +278,12 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
 
   it("hands continuity to one owner at a time without a stale-owner close failure", async () => {
     setRuntimeConfig(configSchema.parse({ ...runtimeConfigInput, browserMode: "continuity" }));
-    const first = getBrowserManager("owner-a");
+    const first = getCdpBrowserManager("owner-a");
     const firstPage = await first.getPage();
     await firstPage.goto(`${fixtureOrigin}/?identity=continuity-a`);
     await writeIdentity(firstPage, "continuity-a");
 
-    const second = getBrowserManager("owner-b");
+    const second = getCdpBrowserManager("owner-b");
     const secondPage = await second.getPage();
     expect(secondPage.context()).not.toBe(firstPage.context());
     await second.navigate(`${fixtureOrigin}/?identity=continuity-b`);
@@ -295,7 +295,7 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
     await writeIdentity(secondPage, "continuity-b");
     await closeBrowser("owner-b");
 
-    const third = getBrowserManager("owner-c");
+    const third = getCdpBrowserManager("owner-c");
     const thirdPage = await third.getPage();
     await third.navigate(`${fixtureOrigin}/?identity=continuity-c`);
     expect(await readIdentity(thirdPage)).toMatchObject({
@@ -307,8 +307,8 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
 
   it("shares identity only in advanced-shared and survives one manager closing", async () => {
     setRuntimeConfig(configSchema.parse({ ...runtimeConfigInput, browserMode: "advanced-shared" }));
-    const alice = getBrowserManager("shared-alice");
-    const bob = getBrowserManager("shared-bob");
+    const alice = getCdpBrowserManager("shared-alice");
+    const bob = getCdpBrowserManager("shared-bob");
     const [alicePage, bobPage] = await Promise.all([alice.getPage(), bob.getPage()]);
     expect(alicePage.context()).toBe(bobPage.context());
     await Promise.all([

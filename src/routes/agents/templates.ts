@@ -122,6 +122,7 @@ export const handleAgentTemplateRoutes: RouteHandler = async (method, url, req, 
           description: tpl.description ?? "",
           icon: tpl.icon,
           requiresWorktree: tpl.requiresWorktree,
+          defaultBrowserProfileId: tpl.defaultBrowserProfileId,
         },
         task,
       );

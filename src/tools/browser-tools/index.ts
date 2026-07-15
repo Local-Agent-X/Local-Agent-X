@@ -17,7 +17,7 @@
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import type { ServerEvent } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
-import type { BrowserEngine, BrowserManager } from "../../browser/index.js";
+import type { BrowserEngine, BrowserBackend } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
 import { VALID_ENGINES, err } from "./shared.js";
@@ -77,7 +77,7 @@ const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", 
  */
 async function applyProgressGuard(
   action: string,
-  manager: BrowserManager,
+  manager: BrowserBackend,
   sessionId: string,
   result: ToolResult,
 ): Promise<ToolResult> {
@@ -131,7 +131,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
               { layer: "browser-download", browserStatus: "approval-required" },
             );
-            let approvalBinding: ReturnType<BrowserManager["getDownloadApproval"]>;
+            let approvalBinding: ReturnType<BrowserBackend["getDownloadApproval"]>;
             try { approvalBinding = manager.getDownloadApproval(id); }
             catch (error) { return blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable" }); }
             const outcome = await getApprovalManager().requestApprovalDetailed({

@@ -18,6 +18,7 @@ import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js"
 
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
+import { registerSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
 import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
 const logger = createLogger("server.handler-events");
 
@@ -86,6 +87,10 @@ export function registerHandlerEvents(deps: {
     const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools, modelOverride } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
     const runSessionId = req.sessionId ?? `agent-${agentId}`;
+    // Bind this run's session to its agent + resolved browser profile (3-rung
+    // winner, computed in invoke.ts). The browser tool keys getBrowserManager on
+    // this same runSessionId, so an assigned agent drives its profile's logins.
+    registerSessionOwner(runSessionId, { agentId: templateId ?? agentId, browserProfileId: req.browserProfileId });
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
     const projectStore = ProjectStore.getInstance();
@@ -320,7 +325,7 @@ export function registerHandlerEvents(deps: {
       // Tear down any inherited per-session profile override (set at spawn in
       // invoke.ts). Only for the auto-minted per-run session — an explicit
       // req.sessionId is a shared/borrowed session whose lifecycle the caller owns.
-      if (!req.sessionId) clearSessionProfile(runSessionId);
+      if (!req.sessionId) { clearSessionProfile(runSessionId); clearSessionOwner(runSessionId); }
     }
   };
   registerAgentRunDriver(agentRunDriver);

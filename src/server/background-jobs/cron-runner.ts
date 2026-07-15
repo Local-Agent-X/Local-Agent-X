@@ -17,6 +17,7 @@ import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
+import { registerSessionOwner, clearSessionOwner } from "../../browser/session-owner-registry.js";
 
 const logger = createLogger("server.background-jobs.cron");
 
@@ -95,6 +96,9 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     // block unattended under the global profile. Cleared in finally so the
     // override never outlives the run.
     if (jobMeta?.profile) setSessionProfile(sessionId, jobMeta.profile);
+    // Rung-3 (per-job) browser profile: bind this scheduled session so its
+    // browser tool calls drive the job's assigned logins. Cleared in finally.
+    if (jobMeta?.browserProfileId) registerSessionOwner(sessionId, { browserProfileId: jobMeta.browserProfileId });
     let result;
     try {
       result = await runAgentViaCanonical(wrappedPrompt, [], {
@@ -116,6 +120,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     } finally {
       cronService.unregisterRunAbort(jobId);
       clearSessionProfile(sessionId);
+      clearSessionOwner(sessionId);
     }
     const session = getOrCreateSession(sessionId);
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);

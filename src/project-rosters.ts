@@ -51,6 +51,10 @@ export interface ProjectRoster {
   /** Per-project provider+model override. Rung 2 of resolveAgentModel —
    *  beats template.defaultModel, loses to a per-run modelOverride. */
   model?: AgentModelPin;
+  /** Per-project browser profile override. Rung 2 of the browser-profile
+   *  chain — beats template.defaultBrowserProfileId, loses to a per-run
+   *  browserProfileId. */
+  browserProfileId?: string;
   /** Stall threshold for the watchdog, in hours. Below this, the agent
    *  is considered "working." At threshold the manager is woken; at 2x
    *  the watchdog escalates past the manager directly to the user.
@@ -276,7 +280,7 @@ export class ProjectRosterStore {
   patch(
     projectId: string,
     agentId: string,
-    patch: Partial<Pick<ProjectRoster, "reportsTo" | "heartbeatSchedule" | "heartbeatEnabled" | "budget" | "stallThresholdHours" | "lastEscalatedAt">> & { model?: AgentModelPin | null },
+    patch: Partial<Pick<ProjectRoster, "reportsTo" | "heartbeatSchedule" | "heartbeatEnabled" | "budget" | "stallThresholdHours" | "lastEscalatedAt" | "browserProfileId">> & { model?: AgentModelPin | null },
   ): ProjectRoster | null {
     const key = rosterKey(projectId, agentId);
     const existing = this.rosters[key];

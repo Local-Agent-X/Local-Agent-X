@@ -82,6 +82,19 @@ describe("openaiCompatProbe.detect / identify", () => {
     stubFetch({ "/v1/models": { object: "list", data: [] } });
     expect(await openaiCompatProbe.identify!(EP)).toBeNull();
   });
+
+  it("identify + detect on Docker Model Runner's path-prefixed endpoint", async () => {
+    const DMR: LocalRuntimeEndpoint = {
+      baseUrl: "http://127.0.0.1:12434/engines",
+      origin: "auto",
+    };
+    stubFetch({ "/engines/v1/models": { object: "list", data: [{ id: "ai/smollm2" }] } });
+    expect(await openaiCompatProbe.detect(DMR)).toBe(true);
+    expect(await openaiCompatProbe.identify!(DMR)).toBe("Docker Model Runner");
+    expect(await openaiCompatProbe.listModels(DMR)).toEqual([
+      { id: "ai/smollm2", contextWindow: null, tools: null },
+    ]);
+  });
 });
 
 describe("openaiCompatProbe.listModels", () => {

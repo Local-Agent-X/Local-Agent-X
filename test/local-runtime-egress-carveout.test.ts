@@ -68,6 +68,11 @@ describe("localRuntimeLoopbackPorts — discovery evidence, not sweep candidates
     expect(localRuntimeLoopbackPorts().has("1234")).toBe(true);
   });
 
+  it("a path-prefixed discovered runtime (Docker Model Runner) contributes its port", () => {
+    vi.mocked(getLocalRuntimes).mockReturnValue([runtimeAt("http://127.0.0.1:12434/engines")]);
+    expect(localRuntimeLoopbackPorts().has("12434")).toBe(true);
+  });
+
   it("INVARIANT: sweep candidate ports grant NO egress until discovered there", () => {
     vi.mocked(getLocalRuntimes).mockReturnValue([]);
     const ports = localRuntimeLoopbackPorts();

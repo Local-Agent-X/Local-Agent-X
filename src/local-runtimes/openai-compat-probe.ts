@@ -98,18 +98,24 @@ export const openaiCompatProbe: LocalRuntimeProbe = {
   kind: "openai-compat",
   label: "OpenAI-compatible",
   // LM Studio 1234, vLLM 8000, llama.cpp 8080, Jan 1337, GPT4All 4891,
-  // text-generation-webui 5000, KoboldCpp 5001. 11434 is claimed by the
-  // ollama probe first (probe order in probes.ts is load-bearing).
+  // text-generation-webui 5000, KoboldCpp 5001, SGLang 30000. 11434 is
+  // claimed by the ollama probe first (probe order in probes.ts is
+  // load-bearing); Docker Model Runner 12434 is a path-prefixed candidate
+  // added in endpoints.ts, not a bare port here.
   // Growing this list is discovery-only: agent egress derives from
   // DISCOVERED runtimes (localRuntimeLoopbackPorts), never from these
   // candidates — so common dev ports like 5000 are safe to sweep.
-  defaultPorts: [1234, 1337, 4891, 5000, 5001, 8000, 8080],
+  defaultPorts: [1234, 1337, 4891, 5000, 5001, 8000, 8080, 30000],
 
   async detect(ep, signal) {
     return listFrom(await getJson(`${base(ep)}/v1/models`, DETECT_TIMEOUT_MS, signal)) !== null;
   },
 
   async identify(ep, signal) {
+    // Docker Model Runner is the only runtime probed under a path prefix
+    // (endpoints.ts pins its candidate to .../engines); this endpoint only
+    // exists because <base>/v1/models answered — DMR's signature path.
+    if (base(ep).endsWith("/engines")) return "Docker Model Runner";
     // LM Studio is the only server with /api/v0/models; llama.cpp the only
     // one with /props. Both checks are cheap loopback GETs.
     if (listFrom(await getJson(`${base(ep)}/api/v0/models`, DETECT_TIMEOUT_MS, signal))) {

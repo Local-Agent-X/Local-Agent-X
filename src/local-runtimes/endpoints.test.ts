@@ -62,6 +62,14 @@ describe("candidateEndpoints", () => {
     });
   });
 
+  it("Docker Model Runner candidate carries its /engines path prefix, pinned to openai-compat", () => {
+    const dmr = candidateEndpoints({}).find((c) => c.endpoint.baseUrl.includes(":12434"));
+    expect(dmr).toMatchObject({
+      kind: "openai-compat",
+      endpoint: { baseUrl: "http://127.0.0.1:12434/engines", origin: "auto" },
+    });
+  });
+
   it("manual non-loopback entries are admitted via their own allowlist entry", () => {
     const cands = candidateEndpoints({
       localRuntimes: [{ kind: "openai-compat", baseUrl: "http://192.168.1.50:8000" }],

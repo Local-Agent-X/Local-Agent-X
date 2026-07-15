@@ -225,7 +225,12 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   local: {
     transport: "http",
     id: "local",
-    label: "Ollama",
+    // The id stays "local" (settings.json on disk references it) but it no
+    // longer means Ollama-only: models come from the src/local-runtimes/
+    // discovery sweep (Ollama, LM Studio, vLLM, llama.cpp, manual adds).
+    // baseURL here is the Ollama back-compat fallback; per-model runtime
+    // resolution happens in the openai-compat adapter's resolve-target.
+    label: "Local Models",
     models: [],
     defaultModel: "qwen2:7b",
     baseURL: (ctx) => `${ctx.ollamaUrl}/v1`,

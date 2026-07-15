@@ -8,10 +8,16 @@ import { PROVIDERS } from "../../providers/registry.js";
 import {
   refreshCloudOllama,
   getCachedCloudModels,
-  refreshLocalOllama,
-  getCachedLocalOllama,
   fetchLocalOllamaTags,
 } from "../../ollama-cloud.js";
+import {
+  getLocalRuntimes,
+  localRuntimesStale,
+  refreshLocalRuntimes,
+  invalidateLocalRuntimes,
+  manualRuntimeEntries,
+  endpointHostPort,
+} from "../../local-runtimes/index.js";
 import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -22,7 +28,13 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const { loadTokens } = await import("../../auth/index.js");
     const { loadAnthropicTokens, isAnthropicCliAuthenticated } = await import("../../auth/anthropic.js");
     const { loadXaiTokens } = await import("../../auth/xai.js");
-    const providers: Array<{ id: string; name: string; models: string[]; active: boolean }> = [];
+    const providers: Array<{
+      id: string; name: string; models: string[]; active: boolean;
+      runtimes?: Array<{
+        id: string; label: string; kind: string; origin: string; baseUrl: string;
+        models: Array<{ id: string; contextWindow: number | null; tools: boolean | null }>;
+      }>;
+    }> = [];
     const localOnly = isLocalOnlyMode();
     const hasOpenAIOAuth = !localOnly && !!loadTokens();
     // Count BOTH our setup-token store (~/.lax) and the CLI's own credential
@@ -34,15 +46,6 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY") || hasXaiOAuth;
     const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
-    const ollamaUrl = getRuntimeConfig().ollamaUrl;
-    // Read local Ollama state from the cache — NEVER a live /api/tags fetch on
-    // this path (it stacked 2-3s of cold-boot latency before the dropdown
-    // could render). If the cache was never populated, kick a background
-    // refresh and proceed with what we know (nothing yet); the next poll hit
-    // picks it up. bootstrap-services warms it at startup so this is rare.
-    const localCache = getCachedLocalOllama();
-    if (!localCache) void refreshLocalOllama(ollamaUrl).catch(() => {});
-    const hasOllama = localCache?.reachable ?? false;
     // Resolve current provider/model the same way the request path does
     // (see src/agent-request/resolve-provider.ts). The previous default
     // hardcoded "xai"/"grok-4" here regardless of which creds were
@@ -96,9 +99,31 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     if (hasOpenAIOAuth && !localOnly) pushFromRegistry("codex");
     if (hasAnthropicOAuth && !localOnly) pushFromRegistry("anthropic");
     if (hasOpenAIKey && !localOnly) pushFromRegistry("openai");
-    if (hasOllama) {
-      // From cache (populated above / at boot) — no network call here.
-      providers.push({ id: "local", name: "Ollama", models: localCache?.models ?? [], active: currentProvider === "local" });
+    // Local runtimes (Ollama, LM Studio, vLLM, llama.cpp, manual adds) —
+    // ONE picker entry whose models are the union across discovered
+    // runtimes. Read from the local-runtimes cache (warmed at boot,
+    // re-swept every 60s) — never a live probe on this path. The
+    // `runtimes` sibling carries per-runtime detail for the settings UI;
+    // the flat `models` array keeps the existing renderer working as-is.
+    const localRuntimes = getLocalRuntimes();
+    if (localRuntimesStale()) void refreshLocalRuntimes().catch(() => {});
+    if (localRuntimes && localRuntimes.length > 0) {
+      const union = [...new Set(localRuntimes.flatMap(r => r.models.map(m => m.id)))]
+        .filter(n => !isEmbeddingModel(n));
+      providers.push({
+        id: "local",
+        name: PROVIDERS.local.label,
+        models: union,
+        active: currentProvider === "local",
+        runtimes: localRuntimes.map(r => ({
+          id: r.id,
+          label: r.label,
+          kind: r.kind,
+          origin: r.endpoint.origin,
+          baseUrl: r.endpoint.baseUrl,
+          models: r.models.map(m => ({ id: m.id, contextWindow: m.contextWindow, tools: m.tools })),
+        })),
+      });
     }
     // Ollama Turbo (cloud) — separate top-level entry so users find it
     // by name in the dropdown. When the API key isn't set yet, we still
@@ -228,6 +253,57 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     }
     return true;
   }
+  // Manual local-runtime registration (LM Studio on a custom port, a GPU
+  // box, etc.). The entry itself IS the admission-gate allowlist entry —
+  // exact host:port, no ranges. Non-loopback adds are refused in strict
+  // local-only mode (they would widen the nothing-leaves-this-box promise).
+  if (method === "GET" && url.pathname === "/api/local-runtimes") {
+    const runtimes = getLocalRuntimes();
+    if (localRuntimesStale()) void refreshLocalRuntimes().catch(() => {});
+    json(200, { runtimes: runtimes ?? [], manual: manualRuntimeEntries() });
+    return true;
+  }
+  if (method === "POST" && url.pathname === "/api/local-runtimes") {
+    let body: Record<string, unknown>;
+    try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
+    const kind = String(body.kind || "");
+    const baseUrl = String(body.baseUrl || "").replace(/\/+$/, "");
+    const label = typeof body.label === "string" && body.label.length > 0 ? body.label : undefined;
+    if (kind !== "ollama" && kind !== "openai-compat") { json(400, { error: "kind must be ollama | openai-compat" }); return true; }
+    const hostPort = endpointHostPort(baseUrl);
+    if (!hostPort) { json(400, { error: "baseUrl must be a valid http(s) URL" }); return true; }
+    const { isLoopbackUrl } = await import("../../local-only-policy.js");
+    if (isLocalOnlyMode() && !isLoopbackUrl(baseUrl)) {
+      json(403, { error: LOCAL_ONLY_BLOCK_MESSAGE, code: "LOCAL_ONLY" });
+      return true;
+    }
+    const settings = { ...loadSettings() };
+    const existing = manualRuntimeEntries(settings);
+    if (existing.some(e => endpointHostPort(e.baseUrl) === hostPort)) {
+      json(409, { error: `a runtime at ${hostPort} is already registered` });
+      return true;
+    }
+    settings.localRuntimes = [...existing, { kind, baseUrl, ...(label ? { label } : {}) }];
+    saveSettings(settings);
+    invalidateLocalRuntimes();
+    const runtimes = await refreshLocalRuntimes().catch(() => []);
+    const added = runtimes.find(r => r.endpoint.baseUrl === baseUrl) ?? null;
+    json(200, { ok: true, reachable: added !== null, runtime: added });
+    return true;
+  }
+  if (method === "DELETE" && url.pathname === "/api/local-runtimes") {
+    const hostPort = endpointHostPort(String(url.searchParams.get("baseUrl") || ""));
+    if (!hostPort) { json(400, { error: "baseUrl query param required" }); return true; }
+    const settings = { ...loadSettings() };
+    const remaining = manualRuntimeEntries(settings).filter(e => endpointHostPort(e.baseUrl) !== hostPort);
+    settings.localRuntimes = remaining;
+    saveSettings(settings);
+    invalidateLocalRuntimes();
+    void refreshLocalRuntimes().catch(() => {});
+    json(200, { ok: true });
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/api/ollama/start") {
     try {
       const { spawn } = await import("node:child_process");

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { LOCAL_RUNTIME_PROBES } from "../../local-runtimes/probes.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
@@ -62,6 +63,56 @@ export function ollamaLoopbackPort(): string | null {
   return ollamaPortFromUrl(ollamaUrl);
 }
 
+/** Pure: the port of a LITERAL-loopback URL (127.0.0.1/::1 — hostnames
+ *  including "localhost" rejected, same DNS-rebind boundary as
+ *  ollamaPortFromUrl), explicit ports only (no default-port guessing —
+ *  that's how exact allowlists rot into prefixes). */
+export function loopbackPortFromUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+    if (host !== "127.0.0.1" && host !== "::1") return null;
+    const n = Number(u.port);
+    if (Number.isInteger(n) && n > 0 && n <= 65535) return String(n);
+  } catch {}
+  return null;
+}
+
+/**
+ * Loopback ports of local inference runtimes the agent's HTTP tools may
+ * reach: every probe's default sweep port (LM Studio 1234, vLLM 8000,
+ * llama.cpp 8080 — same standing as Ollama's 11434) plus operator
+ * manual-add entries from settings.json that are LOOPBACK. Non-loopback
+ * manual runtimes are deliberately NOT folded in: the loopback-host guard
+ * in network-policy makes port entries meaningless for them, and agent
+ * egress to a LAN box is a separate authorization from chat routing
+ * (LAX's own chat/probe fetch reaches it via the admission gate instead).
+ * settings.json is read raw from disk, not via the settings cache, so a
+ * security decision never runs on a stale allowlist.
+ */
+export function localRuntimeLoopbackPorts(): Set<string> {
+  const ports = new Set<string>();
+  for (const probe of LOCAL_RUNTIME_PROBES) {
+    for (const port of probe.defaultPorts) ports.add(String(port));
+  }
+  try {
+    const sPath = join(getLaxDir(), "settings.json");
+    if (existsSync(sPath)) {
+      const s = JSON.parse(readFileSync(sPath, "utf-8"));
+      if (Array.isArray(s?.localRuntimes)) {
+        for (const e of s.localRuntimes) {
+          const url = e && typeof e === "object" && typeof (e as { baseUrl?: unknown }).baseUrl === "string"
+            ? (e as { baseUrl: string }).baseUrl
+            : "";
+          const port = loopbackPortFromUrl(url);
+          if (port) ports.add(port);
+        }
+      }
+    }
+  } catch {}
+  return ports;
+}
+
 export function loadLocalServicePorts(): Set<string> {
   const ports = new Set<string>();
   try {
@@ -78,6 +129,7 @@ export function loadLocalServicePorts(): Set<string> {
   } catch {}
   const ollama = ollamaLoopbackPort();
   if (ollama) ports.add(ollama);
+  for (const p of localRuntimeLoopbackPorts()) ports.add(p);
   if (ports.size > 0) {
     logger.info(`[security] Local service ports loaded: ${ports.size} ports`);
   }

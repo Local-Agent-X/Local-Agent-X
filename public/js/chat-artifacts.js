@@ -13,16 +13,26 @@ function switchSidePanelTab(tab) {
   sidePanelTab = tab;
   var agentsBody = document.getElementById('agents-tab-body');
   var artifactsBody = document.getElementById('artifacts-tab-body');
+  var browserBody = document.getElementById('browser-tab-body');
   var agentsTab = document.getElementById('side-tab-agents');
   var artifactsTab = document.getElementById('side-tab-artifacts');
+  var browserTab = document.getElementById('side-tab-browser');
   var autoBtn = document.getElementById('agent-feeds-autoopen-toggle');
   if (agentsBody) agentsBody.style.display = tab === 'agents' ? '' : 'none';
   if (artifactsBody) artifactsBody.style.display = tab === 'artifacts' ? '' : 'none';
+  if (browserBody) browserBody.style.display = tab === 'browser' ? '' : 'none';
   if (agentsTab) agentsTab.classList.toggle('active', tab === 'agents');
   if (artifactsTab) artifactsTab.classList.toggle('active', tab === 'artifacts');
+  if (browserTab) browserTab.classList.toggle('active', tab === 'browser');
   // AUTO (auto-open on agent spawn) only makes sense on the agents tab.
   if (autoBtn) autoBtn.style.display = tab === 'agents' ? '' : 'none';
   if (tab === 'artifacts') loadArtifacts(false);
+  // The browser pane hosts a native overlay (browser-tab.js) that must be
+  // hidden the moment its tab is not the visible one.
+  if (window.laxBrowserTab) {
+    if (tab === 'browser') window.laxBrowserTab.onTabShown();
+    else window.laxBrowserTab.onTabHidden();
+  }
 }
 
 function loadArtifacts(force) {

@@ -127,6 +127,29 @@ contextBridge.exposeInMainWorld("desktop", {
   reportChromeTint: (color: string, symbolColor: string) =>
     ipcRenderer.invoke("report-chrome-tint", color, symbolColor),
 
+  // In-app browser (right panel Browser tab). The page is a native
+  // WebContentsView overlay drawn by main; the renderer reserves space,
+  // reports the anchor rect (CSS px relative to the window content), and
+  // toggles visibility. Nav-state pushes ("browser-nav-state") mirror the
+  // real webContents back into the address bar.
+  browser: {
+    setBounds: (rect: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke("browser-set-bounds", rect),
+    setVisible: (visible: boolean) => ipcRenderer.invoke("browser-set-visible", visible),
+    navigate: (url: string) => ipcRenderer.invoke("browser-navigate", url),
+    goBack: () => ipcRenderer.invoke("browser-go-back"),
+    goForward: () => ipcRenderer.invoke("browser-go-forward"),
+    reload: () => ipcRenderer.invoke("browser-reload"),
+    getNavState: (): Promise<{
+      url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+    }> => ipcRenderer.invoke("browser-get-nav-state"),
+    onNavState: (cb: (state: {
+      url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+    }) => void) => {
+      ipcRenderer.on("browser-nav-state", (_e, state) => cb(state));
+    },
+  },
+
   // Server-crash signal: main fires "server-crashed" when the spawned
   // node server exits uncleanly (OOM / SIGKILL / nonzero code). The
   // renderer can subscribe to clear stuck "typing…" state and show a

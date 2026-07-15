@@ -1,6 +1,98 @@
 // ── Settings: Embedding provider ──
 //
-// Picks the embedding provider (Ollama / OpenAI / etc.) for semantic search.
+// Picks the embedding provider (Ollama / OpenAI / etc.) for semantic search,
+// and surfaces whether semantic memory is actually WORKING — plus a one-click
+// repair when it isn't.
+//
+// The install can now finish with optional components degraded (an Ollama that
+// wouldn't install no longer aborts it — see scripts/install-common.mjs), so
+// "installed" and "working" genuinely diverge. Without this the shortfall was
+// invisible: it lived in installer scrollback the user had already closed and
+// in server logs they'll never read, while memory silently ran keyword-only.
+
+// Status is scoped to THIS settings surface on purpose. A global setup
+// checklist was deliberately deleted (see public/js/notifications.js) because
+// pre-checked stale state misled users about what was actually connected —
+// don't rebuild it. Server is authoritative; there's no localStorage cache.
+async function renderSetupStatus() {
+  const host = document.getElementById('cfg-emb-status');
+  if (!host) return;
+  let data;
+  try {
+    data = await apiJson('/api/setup/status');
+  } catch {
+    // Unreachable status endpoint is NOT evidence of a problem. Render nothing
+    // rather than a scary banner driven by a transient fetch failure.
+    host.innerHTML = '';
+    return;
+  }
+  if (!data || data.ok !== true) { host.innerHTML = ''; return; }
+
+  if (data.ready) {
+    host.innerHTML = _embPill('Semantic memory connected', 'ok');
+    return;
+  }
+  host.innerHTML = (data.components || []).map(function(c) {
+    var btn = c.action === 'reinit-embeddings'
+      ? '<button class="action-btn primary" id="cfg-emb-repair" onclick="onRepairEmbeddings(this)" style="font-size:.7rem;padding:4px 10px">Reconnect</button>'
+      : '';
+    return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--border)">'
+      + '<div style="font-size:.78rem">' + _embPill(esc(c.label) + ' unavailable', 'warn')
+      + '<div style="color:var(--muted);font-size:.7rem;margin-top:3px">' + esc(c.impact) + ' ' + esc(c.reason) + '</div></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">' + btn + '</div></div>';
+  }).join('');
+}
+window.renderSetupStatus = renderSetupStatus;
+
+function _embPill(text, kind) {
+  var colors = { ok: 'var(--accent)', warn: '#dba917', muted: 'var(--muted)' };
+  var c = colors[kind] || colors.muted;
+  return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:.72rem">'
+    + '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + c + '"></span>'
+    + esc(text) + '</span>';
+}
+
+// Repair = re-run the embedding provider init. The server already pulls the
+// model itself when Ollama is reachable, so this covers the common case (user
+// installed Ollama after the app) without the app shipping its own installer.
+// Ollama genuinely absent stays a manual step — we surface `manual` for that
+// rather than pretending to fix it.
+async function onRepairEmbeddings(btn) {
+  if (!btn) return;
+  var original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Reconnecting…';
+  try {
+    // Can take ~a minute when it triggers the model pull on a fresh Ollama.
+    var r = await apiJson('/api/memory/reinit', { method: 'POST' });
+    if (r && r.ok && !r.degraded) {
+      await renderSetupStatus(); // re-render from the server's verdict, not ours
+      return;
+    }
+    // Reinit ran but the provider is still degraded — say so honestly and give
+    // the manual path instead of leaving a button that looks like it worked.
+    btn.textContent = original;
+    btn.disabled = false;
+    var host = document.getElementById('cfg-emb-status');
+    if (host) {
+      var note = document.createElement('div');
+      note.style.cssText = 'color:var(--muted);font-size:.7rem;margin-top:6px';
+      note.textContent = 'Still not connected. Install Ollama from https://ollama.com/download, then try again.';
+      host.appendChild(note);
+    }
+  } catch (e) {
+    btn.textContent = original;
+    btn.disabled = false;
+    var h = document.getElementById('cfg-emb-status');
+    if (h) {
+      var err = document.createElement('div');
+      err.style.cssText = 'color:var(--muted);font-size:.7rem;margin-top:6px';
+      err.textContent = 'Reconnect failed: ' + (e && e.message ? e.message : 'unknown error');
+      h.appendChild(err);
+    }
+  }
+}
+window.onRepairEmbeddings = onRepairEmbeddings;
 
 async function onEmbProviderChange(provider) {
   const hint = document.getElementById('cfg-emb-hint');

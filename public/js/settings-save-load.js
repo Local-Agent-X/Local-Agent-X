@@ -116,6 +116,9 @@ async function loadSettings() {
     set('cfg-emb-provider', s.embeddingProvider || 'ollama');
     set('cfg-emb-model', s.embeddingModel || '');
     onEmbProviderChange(s.embeddingProvider || 'ollama');
+    // Not awaited — it probes the live provider and must never delay the
+    // settings render; it paints its own status host when the server answers.
+    if (typeof renderSetupStatus === 'function') renderSetupStatus();
     // Show/hide XTTS sections based on engine
     if (s.ttsEngine) onTtsEngineChange(s.ttsEngine);
     // Show local model dropdown if provider is local

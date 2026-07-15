@@ -136,6 +136,26 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  // What's set up and what isn't — the read side of in-app repair.
+  //
+  // The live probe is authoritative; the installer's report only supplies the
+  // REASON. A machine that degraded at install time but has since had Ollama
+  // installed by hand must report clean, so this never answers from the report
+  // alone. An indeterminate probe yields `null` (unknown), not `true` — a
+  // transient blip must not manufacture a permanent "broken" banner.
+  if (method === "GET" && url.pathname === "/api/setup/status") {
+    try {
+      const { buildDegradedList, readInstallReport, isFullySetUp, probeEmbeddingsDegraded } =
+        await import("../server/setup-status.js");
+      const embeddingsDegraded = await probeEmbeddingsDegraded();
+      const components = buildDegradedList(embeddingsDegraded, readInstallReport(ctx.dataDir));
+      json(200, { ok: true, ready: isFullySetUp(components), components });
+    } catch (e) {
+      json(500, { error: "Setup status check failed: " + safeErrorMessage(e) });
+    }
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/api/memory/health") {
     try {
       const { MemoryOrchestrator } = await import("../orchestrator/orchestrator.js");

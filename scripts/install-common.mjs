@@ -131,20 +131,43 @@ exit 0
 // computes STEPS_PLAN for the current platform so the UI never shows a
 // step that won't run (e.g. Mac users don't see "C++ build tools" because
 // xcode-clt covers that on macOS).
+//
+// `required` decides whether a step may ABORT the install, and it is the
+// single source of truth for that — never decide severity at the call site.
+// required: true  → without it there is no app at all; fail() aborts.
+// required: false → the app boots without it in a degraded state; fail()
+//   is downgraded to a warning by the guard in fail() and the run continues,
+//   with the shortfall recorded for in-app repair (see DEGRADED / step 9).
+//
+// This exists because severity used to be a local judgment call at each
+// call site, and it drifted: the Ollama step aborted the whole install on a
+// winget failure while the C++ build-tools step — a HEAVIER dependency
+// failing with the identical winget error in the same run — only warned and
+// continued. One optional runtime took the entire install down with it
+// (live failure 2026-07-14, winget 0x8A15005E msstore cert mismatch).
+// Declaring severity next to the step makes that class of bug unwritable:
+// a step that isn't required cannot abort, no matter what its handler calls.
 const ALL_STEPS = [
-  { id: "node",         label: "Node.js runtime",          platforms: ["win32", "darwin", "linux"] },
-  { id: "vsbuildtools", label: "C++ build tools",          platforms: ["win32"] },
-  { id: "xcode-clt",    label: "Xcode Command Line Tools", platforms: ["darwin"] },
-  { id: "python",       label: "Python 3.12",              platforms: ["win32", "darwin", "linux"] },
-  { id: "ollama",       label: "Ollama AI runtime",        platforms: ["win32", "darwin", "linux"] },
-  { id: "npm",          label: "App dependencies",         platforms: ["win32", "darwin", "linux"] },
-  { id: "embedmodel",   label: "AI memory engine",         platforms: ["win32", "darwin", "linux"] },
-  { id: "settings",     label: "User settings",            platforms: ["win32", "darwin", "linux"] },
-  { id: "build",        label: "App build",                platforms: ["win32", "darwin", "linux"] },
-  { id: "config",       label: "Configuration",            platforms: ["win32", "darwin", "linux"] },
-  { id: "posixshell",   label: "POSIX shell",              platforms: ["win32"] },
-  { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"] },
+  { id: "node",         label: "Node.js runtime",          platforms: ["win32", "darwin", "linux"], required: true },
+  { id: "vsbuildtools", label: "C++ build tools",          platforms: ["win32"],                    required: false },
+  { id: "xcode-clt",    label: "Xcode Command Line Tools", platforms: ["darwin"],                   required: false },
+  { id: "python",       label: "Python 3.12",              platforms: ["win32", "darwin", "linux"], required: false },
+  { id: "ollama",       label: "Ollama AI runtime",        platforms: ["win32", "darwin", "linux"], required: false },
+  { id: "npm",          label: "App dependencies",         platforms: ["win32", "darwin", "linux"], required: true },
+  { id: "embedmodel",   label: "AI memory engine",         platforms: ["win32", "darwin", "linux"], required: false },
+  { id: "settings",     label: "User settings",            platforms: ["win32", "darwin", "linux"], required: false },
+  { id: "build",        label: "App build",                platforms: ["win32", "darwin", "linux"], required: true },
+  { id: "config",       label: "Configuration",            platforms: ["win32", "darwin", "linux"], required: true },
+  // POSIX shell stays REQUIRED: the runtime's shell tool
+  // (src/tools/shell-env.ts resolveWindowsShell) assumes bash exists because
+  // this step guarantees it. Degrading here would push the failure into the
+  // running app, where it surfaces worse. PortableGit's checksum-verified
+  // download gives this step a real self-heal path before it ever aborts.
+  { id: "posixshell",   label: "POSIX shell",              platforms: ["win32"],                    required: true },
+  { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"], required: true },
 ];
+
+const STEP_REQUIRED = new Map(ALL_STEPS.map((s) => [s.id, s.required]));
 
 const STEPS_PLAN = ALL_STEPS
   .filter(s => s.platforms.includes(process.platform))
@@ -178,7 +201,28 @@ function stepError(id, message) {
 const log  = (m) => { if (!IPC) console.log(`[install] ${m}`); ipc({ type: "log", level: "info",  id: currentStepId, line: m }); };
 const ok   = (m) => { if (!IPC) console.log(`[ok] ${m}`);      ipc({ type: "log", level: "ok",    id: currentStepId, line: m }); };
 const warn = (m) => { if (!IPC) console.warn(`[warn] ${m}`);   ipc({ type: "log", level: "warn",  id: currentStepId, line: m }); };
+
+// Optional steps that degraded, recorded for in-app repair. Written to
+// ~/.lax/install-report.json at the end of the run so the app can tell the
+// user what's missing and how to fix it, instead of the installer dead-ending.
+const DEGRADED = [];
+
+// The ONE gate that decides whether the install dies. Callers state the
+// problem; ALL_STEPS.required decides the severity. Inside a step marked
+// required:false this degrades to a warning, records the shortfall, and
+// returns so the run continues — so an optional dependency can never take
+// the whole install down, regardless of what its handler calls.
 const fail = (m) => {
+  const required = currentStepId ? STEP_REQUIRED.get(currentStepId) !== false : true;
+  if (!required) {
+    warn(`${m} — continuing without it; the app will run with this feature unavailable.`);
+    DEGRADED.push({ step: currentStepId, message: m });
+    // Mark the step done, NOT errored: the install is still on track and the
+    // GUI must not paint a red step for a survivable shortfall.
+    ipc({ type: "step", id: currentStepId, state: "done" });
+    if (currentStepId) currentStepId = null;
+    return;
+  }
   if (!IPC) console.error(`[error] ${m}`);
   ipc({ type: "log", level: "error", id: currentStepId, line: m });
   if (currentStepId) ipc({ type: "step", id: currentStepId, state: "error", message: m });
@@ -435,6 +479,20 @@ function wingetAvailable() {
   return process.platform === "win32" && has("winget");
 }
 
+// Every package we install lives in the community `winget` source; NONE come
+// from `msstore`. But winget searches ALL configured sources by default, so a
+// single broken source fails the whole command even when the package resolves
+// fine — msstore in particular does cert-pinned auth that dies behind
+// corporate TLS inspection, on stale App Installer builds, and in regions
+// where the Store is blocked. Live failure 2026-07-14:
+//   0x8A15005E : The server certificate did not match any of the expected values
+// took down VS Build Tools, Python AND Ollama in one run on a fresh machine —
+// the msstore source was broken, and none of those packages come from it.
+// Pinning --source winget skips msstore entirely: unreachable sources we never
+// use can't fail installs. Also removes the "multiple packages found, specify
+// --source" ambiguity that the same log shows.
+const WINGET_SOURCE = ["--source", "winget"];
+
 // Install Ollama on Windows WITHOUT winget: download the official Inno Setup
 // installer and run it silently. Per-user (%LOCALAPPDATA%\Programs\Ollama),
 // no admin. Returns true on success. Only used on machines that lack winget.
@@ -626,6 +684,7 @@ if (process.argv.includes("--upgrade-node")) {
       // elevate, rather than silently failing.
       r = spawnSync("winget", [
         "install", "OpenJS.NodeJS.LTS",
+        ...WINGET_SOURCE,
         "--accept-package-agreements", "--accept-source-agreements",
         "--silent",
       ], { stdio: "inherit", shell: true });
@@ -727,6 +786,7 @@ if (process.platform === "win32") {
     // asked for the toolchain and gets nothing. Let winget raise the prompt.
     const r = await runStreaming(
       `winget install --id Microsoft.VisualStudio.2022.BuildTools `
+      + `${WINGET_SOURCE.join(" ")} `
       + `--accept-package-agreements --accept-source-agreements `
       + `--silent --override "${vcOverride}"`,
       [],
@@ -770,8 +830,13 @@ if (process.platform === "win32") {
         done = true; break;
       }
     }
-    if (!done) fail("Xcode CLT install didn't complete within 30 min. Click 'Install' in the system dialog and re-run.");
-    ok("Xcode Command Line Tools installed");
+    // Same reasoning as the Windows vsbuildtools step: the C++ toolchain is
+    // only needed for a from-source native build, and better-sqlite3 /
+    // onnxruntime-node ship prebuilt binaries npm uses with no compiler. A
+    // user who walks away from Apple's dialog (or never sees it) shouldn't
+    // lose the install — especially on a 30-minute timeout.
+    if (!done) fail("Xcode Command Line Tools didn't finish installing within 30 min — prebuilt native binaries will be used. If a later step fails on a C++ source build, run 'xcode-select --install' and re-run");
+    else ok("Xcode Command Line Tools installed");
   }
   stepDone("xcode-clt");
 } else if (process.platform === "linux") {
@@ -795,7 +860,7 @@ if (pyOk) {
     if (!wingetAvailable()) {
       warn("winget not available — skipping Python 3.12 (voice servers won't work until you install Python from https://python.org and re-run).");
     } else {
-      const r = await runStreaming("winget", ["install", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+      const r = await runStreaming("winget", ["install", "Python.Python.3.12", ...WINGET_SOURCE, "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
       if (r.status !== 0) warn(`Python install failed (exit ${r.status}) — continuing without (voice servers won't work)`);
       else ok("Python 3.12 installed");
     }
@@ -819,34 +884,43 @@ if (has("ollama")) {
 } else {
   log("Installing Ollama…");
   if (process.platform === "win32") {
+    // Two independent delivery paths, tried in order. winget first (keeps the
+    // package manager's update story), then Ollama's official per-user
+    // installer — which needs no winget, no admin, and no Store. The direct
+    // path existed but was only reachable when winget was ABSENT, so a winget
+    // that was present-but-broken (the 0x8A15005E cert failure) skipped it and
+    // went straight to a fatal error, even though the fallback would have worked.
+    let installed = false;
     if (wingetAvailable()) {
-      const r = await runStreaming("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
-      if (r.status !== 0) fail(`Ollama install failed (exit ${r.status}). Install manually from https://ollama.com/download`);
+      const r = await runStreaming("winget", ["install", "Ollama.Ollama", ...WINGET_SOURCE, "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+      if (r.status === 0) installed = true;
+      else warn(`winget couldn't install Ollama (exit ${r.status}) — falling back to Ollama's official installer…`);
+    } else {
+      log("winget not available — installing Ollama from its official installer…");
+    }
+    if (!installed && await installOllamaDirectWindows()) installed = true;
+    if (installed) {
       ensureOllamaOnPath(); // make the just-installed ollama visible to this run
       ok("Ollama installed");
     } else {
-      // No winget: run Ollama's official per-user installer directly. Non-fatal
-      // — the embedmodel step below already degrades gracefully when Ollama is
-      // absent, so an optional runtime that won't install shouldn't brick the
-      // whole install the way the fatal winget path did.
-      log("winget not available — installing Ollama from its official installer…");
-      if (await installOllamaDirectWindows()) {
-        ensureOllamaOnPath();
-        ok("Ollama installed");
-      } else {
-        warn("Ollama install failed — semantic memory unavailable until you install it from https://ollama.com/download and re-run.");
-      }
+      fail("Ollama couldn't be installed via winget or its official installer. Install it from https://ollama.com/download and re-run to enable semantic memory");
     }
   } else if (process.platform === "darwin") {
-    const r = run("brew", ["install", "ollama"]);
-    if (r.status !== 0) fail("Ollama install failed. Install manually from https://ollama.com/download");
-    ok("Ollama installed");
+    // brew is the only delivery path on macOS, and it's frequently absent on a
+    // fresh Mac — which must not be fatal for an optional runtime.
+    if (!has("brew")) {
+      fail("Homebrew not found, so Ollama couldn't be installed. Install Ollama from https://ollama.com/download to enable semantic memory");
+    } else {
+      const r = run("brew", ["install", "ollama"]);
+      if (r.status !== 0) fail("Ollama install failed. Install it from https://ollama.com/download and re-run to enable semantic memory");
+      else ok("Ollama installed");
+    }
   } else {
     // Linux: pipe Ollama's official install script through sh. Trust the
     // ollama.com source the same way the upstream README tells users to.
     const r = spawnSync("sh", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"], { stdio: IPC ? ["ignore", "pipe", "pipe"] : "inherit" });
-    if (r.status !== 0) fail("Ollama install failed. Install manually from https://ollama.com/download");
-    ok("Ollama installed");
+    if (r.status !== 0) fail("Ollama install failed. Install it from https://ollama.com/download and re-run to enable semantic memory");
+    else ok("Ollama installed");
   }
 }
 stepDone("ollama");
@@ -1348,9 +1422,33 @@ if (/^[0-9a-f]{40}$/.test(installedCommit)) {
   }
 }
 
+// 9. Record optional steps that degraded so the APP can surface them and
+// offer repair, rather than the shortfall vanishing into installer scrollback
+// the user already closed. Always written (empty array on a clean install) so
+// readers can distinguish "nothing degraded" from "never recorded".
+try {
+  mkdirSync(join(homedir(), ".lax"), { recursive: true });
+  writeFileSync(
+    join(homedir(), ".lax", "install-report.json"),
+    JSON.stringify({ installedAt: new Date().toISOString(), degraded: DEGRADED }, null, 2),
+    "utf-8",
+  );
+  if (DEGRADED.length) ok(`Recorded ${DEGRADED.length} degraded step(s) for in-app repair`);
+} catch (e) {
+  warn(`Couldn't record the install report: ${e.message}`);
+}
+
 ipc({ type: "complete" });
 if (!IPC) console.log("");
 log("Install complete.");
+// Close the loop in the terminal too — the install "succeeded", so say plainly
+// what isn't working and how to fix it instead of burying it mid-scrollback.
+if (DEGRADED.length) {
+  log("");
+  log(`Installed with ${DEGRADED.length} optional component(s) unavailable:`);
+  for (const d of DEGRADED) log(`  • [${d.step}] ${d.message}`);
+  log("  The app works without these — re-run the installer once resolved to enable them.");
+}
 if (appInstalled && process.platform === "darwin") {
   log("  Launch:      open Launchpad, click \"Local Agent X\"");
   log("  First time:  right-click the icon → Open → Open (one-time Gatekeeper prompt)");

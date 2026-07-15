@@ -19,6 +19,14 @@
 	var tabShown = false;
 	var lastVisible = null; // dedup setVisible IPC; null = never sent
 	var lastBoundsKey = null; // dedup setBounds IPC
+	// Multi-view switcher state. selectedViewId is the view whose nav-state fills
+	// the address bar (and the highlighted pill); it follows the user's switches
+	// and adopts the first view main reports. switcherTimer polls the pool for
+	// new/closed views (e.g. an agent spinning up a per-profile view) only while
+	// the tab is actually shown — no background polling.
+	var selectedViewId = null;
+	var switcherTimer = null;
+	var SWITCHER_POLL_MS = 2000;
 
 	function panelCollapsed() {
 		var panel = document.getElementById('agent-feeds');
@@ -98,8 +106,80 @@
 		raf(function () { syncQueued = false; sync(); });
 	}
 
+	// ── Multi-view switcher ─────────
+	// The pool may hold several views: the user's own foreground view plus any
+	// agent-driven per-(session,profile) views. The switcher lists them all and
+	// flips which one the anchor drives/shows; background views stay live.
+
+	function switcherLabel(v) {
+		var name = v.profileId || 'view';
+		return (v.agentDriven ? '🤖 ' : '') + name;
+	}
+
+	function renderSwitcher(views) {
+		var slot = document.getElementById('browser-view-switcher-slot');
+		if (!slot) return;
+		// One view (or none) → no switcher clutter.
+		if (!views || views.length <= 1) { slot.innerHTML = ''; return; }
+		slot.innerHTML = '';
+		slot.style.display = 'flex';
+		slot.style.gap = '4px';
+		for (var i = 0; i < views.length; i++) {
+			(function (v) {
+				var pill = document.createElement('button');
+				pill.className = 'artifact-filter' + (v.viewId === selectedViewId ? ' active' : '');
+				pill.textContent = switcherLabel(v);
+				pill.title = v.viewId + (v.url ? ('\n' + v.url) : '') +
+					(v.agentDriven ? '\n(agent-driven)' : '');
+				pill.setAttribute('data-view-id', v.viewId);
+				pill.addEventListener('click', function () { switchTo(v.viewId); });
+				slot.appendChild(pill);
+			})(views[i]);
+		}
+	}
+
+	function refreshSwitcher() {
+		if (!bridge || !bridge.listViews) return Promise.resolve();
+		return Promise.resolve(bridge.listViews()).then(function (views) {
+			// Adopt the attached view as selected if we don't have one yet (first
+			// paint, before any user switch or nav-state push).
+			if (selectedViewId == null && views && views.length) {
+				var attached = null;
+				for (var i = 0; i < views.length; i++) if (views[i].attached) { attached = views[i].viewId; break; }
+				selectedViewId = attached || views[0].viewId;
+			}
+			renderSwitcher(views);
+			return views;
+		}).catch(swallow);
+	}
+
+	function switchTo(viewId) {
+		if (!bridge || !bridge.switchView) return;
+		selectedViewId = viewId; // optimistic — pill highlights immediately
+		Promise.resolve(bridge.switchView(viewId)).then(function (state) {
+			if (state) updateNavUI(state);
+			refreshSwitcher();
+		}).catch(swallow);
+	}
+
+	function startSwitcherPolling() {
+		if (switcherTimer || !bridge || !bridge.listViews) return;
+		switcherTimer = setInterval(refreshSwitcher, SWITCHER_POLL_MS);
+		refreshSwitcher();
+	}
+
+	function stopSwitcherPolling() {
+		if (switcherTimer) { clearInterval(switcherTimer); switcherTimer = null; }
+	}
+
 	function updateNavUI(state) {
 		if (!state) return;
+		// Tagged nav-state: only the currently shown view drives the address bar.
+		// Adopt the first view we hear about if nothing is selected yet.
+		if (state.viewId) {
+			if (selectedViewId == null) selectedViewId = state.viewId;
+			if (state.viewId !== selectedViewId) return;
+		}
 		var input = document.getElementById('browser-url-input');
 		var back = document.getElementById('browser-nav-back');
 		var fwd = document.getElementById('browser-nav-fwd');
@@ -146,6 +226,7 @@
 		}
 		bridge.onNavState(updateNavUI);
 		Promise.resolve(bridge.getNavState()).then(updateNavUI).catch(function () {});
+		refreshSwitcher();
 		// Rect changes: panel resize drag, window resize, layout shifts —
 		// the ResizeObserver on the anchor catches all of them without
 		// touching chat-agent-feeds-resize.js.
@@ -180,13 +261,16 @@
 	}
 
 	window.laxBrowserTab = {
-		onTabShown: function () { tabShown = true; sync(); },
-		onTabHidden: function () { tabShown = false; sync(); },
+		onTabShown: function () { tabShown = true; sync(); startSwitcherPolling(); },
+		onTabHidden: function () { tabShown = false; sync(); stopSwitcherPolling(); },
 		sync: sync,
 		goBack: function () { if (bridge) bridge.goBack(); },
 		goForward: function () { if (bridge) bridge.goForward(); },
 		reload: function () { if (bridge) bridge.reload(); },
 		navigateFromInput: navigateFromInput,
+		// Exposed for the switcher test + programmatic refresh.
+		refreshSwitcher: refreshSwitcher,
+		switchTo: switchTo,
 	};
 
 	if (document.readyState === 'loading') {

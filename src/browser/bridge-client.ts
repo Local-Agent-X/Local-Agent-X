@@ -45,6 +45,9 @@ export interface BrowserViewInfo {
 	url: string;
 	title: string;
 	attached: boolean;
+	/** Set by the desktop at creation: agent-driving bridge view vs. the
+	 *  renderer's own foreground view (mirrors browser-views.ts). */
+	agentDriven: boolean;
 }
 
 export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list";

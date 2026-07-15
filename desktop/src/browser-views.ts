@@ -20,12 +20,18 @@ export interface BrowserViewInfo {
 	url: string;
 	title: string;
 	attached: boolean;
+	/** Provenance, set at creation: true when the server's agent-driving bridge
+	 *  path created the view (per-(session,profile) view), false when the
+	 *  renderer's Browser tab created its own foreground view. Real state, not a
+	 *  heuristic — the switcher badges agent-driven views from this. */
+	agentDriven: boolean;
 }
 
 interface PoolEntry {
 	view: WebContentsView;
 	partition: string;
 	bounds: Rectangle;
+	agentDriven: boolean;
 }
 
 const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
@@ -39,7 +45,10 @@ function requireEntry(viewId: string): PoolEntry {
 	return entry;
 }
 
-export function createBrowserView(viewId: string, opts: { partition: string; bounds?: Rectangle }): BrowserViewInfo {
+export function createBrowserView(
+	viewId: string,
+	opts: { partition: string; bounds?: Rectangle; agentDriven?: boolean },
+): BrowserViewInfo {
 	if (pool.has(viewId)) throw new Error(`browser view "${viewId}" already exists`);
 	// Harden the partition BEFORE any webContents exists on it, so the
 	// first request already runs under the egress/permission stack.
@@ -56,6 +65,7 @@ export function createBrowserView(viewId: string, opts: { partition: string; bou
 		view,
 		partition: opts.partition,
 		bounds: opts.bounds ?? { ...DEFAULT_BOUNDS },
+		agentDriven: opts.agentDriven === true,
 	};
 	pool.set(viewId, entry);
 	return describe(viewId, entry);
@@ -122,5 +132,6 @@ function describe(viewId: string, entry: PoolEntry): BrowserViewInfo {
 		url: alive ? wc.getURL() : "",
 		title: alive ? wc.getTitle() : "",
 		attached: attachedId === viewId,
+		agentDriven: entry.agentDriven,
 	};
 }

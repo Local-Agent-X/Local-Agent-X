@@ -253,7 +253,9 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 	switch (msg.op) {
 		case "create": {
 			if (!msg.partition) throw new Error("create requires a partition");
-			return { view: createBrowserView(msg.viewId, { partition: msg.partition, bounds: msg.bounds }) };
+			// Bridge-created views are always agent-driving (per-(session,profile));
+			// the renderer's own foreground view is created via browser-ipc.ts.
+			return { view: createBrowserView(msg.viewId, { partition: msg.partition, bounds: msg.bounds, agentDriven: true }) };
 		}
 		case "show":
 			showBrowserView(msg.viewId);

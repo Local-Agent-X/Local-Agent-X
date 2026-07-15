@@ -141,13 +141,22 @@ contextBridge.exposeInMainWorld("desktop", {
     goForward: () => ipcRenderer.invoke("browser-go-forward"),
     reload: () => ipcRenderer.invoke("browser-reload"),
     getNavState: (): Promise<{
-      url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
     }> => ipcRenderer.invoke("browser-get-nav-state"),
     onNavState: (cb: (state: {
-      url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
     }) => void) => {
       ipcRenderer.on("browser-nav-state", (_e, state) => cb(state));
     },
+    // Multi-view switcher: enumerate every pool view (renderer foreground +
+    // agent-driven per-(session,profile) views) and flip which one the anchor
+    // drives/shows. switchView returns the switched-to view's nav-state.
+    listViews: (): Promise<Array<{
+      viewId: string; url: string; title: string; profileId?: string; attached: boolean; agentDriven: boolean;
+    }>> => ipcRenderer.invoke("browser-list-views"),
+    switchView: (viewId: string): Promise<{
+      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+    } | null> => ipcRenderer.invoke("browser-switch-view", viewId),
   },
 
   // Server-crash signal: main fires "server-crashed" when the spawned

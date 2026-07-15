@@ -107,7 +107,7 @@ describe("ElectronInAppBackend (A1)", () => {
 			if (op === "ping") return { ping: { ok: true, url: PAGE_URL, title: PAGE_TITLE } };
 			if (op === "create") {
 				return {
-					view: { viewId: VIEW_ID, partition: "persist:lax-profile-work", url: "", title: "", attached: false },
+					view: { viewId: VIEW_ID, partition: "persist:lax-profile-work", url: "", title: "", attached: false, agentDriven: true },
 				};
 			}
 			return {};

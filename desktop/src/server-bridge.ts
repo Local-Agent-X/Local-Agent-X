@@ -1,6 +1,13 @@
 import { BrowserWindow, shell } from "electron";
 import type { ChildProcess } from "child_process";
 
+import {
+  handleBrowserBridgeMessage,
+  isBrowserBridgeMessage,
+  wireBrowserEgressEvaluator,
+  type BrowserBridgeMessage,
+} from "./server-bridge-browser";
+
 // Fulfills native-capability requests from the server child over the IPC
 // channel using Electron main-only APIs:
 //   - trashItem: server-side deletes land in the OS Trash / Recycle Bin with
@@ -12,12 +19,16 @@ import type { ChildProcess } from "child_process";
 //   - probe-app: loads a built app in an invisible BrowserWindow and reports
 //     runtime evidence (console errors, failed loads, blankness, optional
 //     screenshot) so the server can verify a build actually renders.
+//   - lax:browser-*: drives the in-app browser view pool (lifecycle, navigate,
+//     exec, input, capture, abort) — dispatched to server-bridge-browser.ts,
+//     which also wires the partition egress guard to ask the server for its
+//     canonical URL policy per hop.
 
 interface TrashRequest { type: "lax:trash-item"; id: number; path: string; }
 interface RestartRequest { type: "lax:restart-server" }
 interface RelaunchRequest { type: "lax:relaunch-app" }
 interface ProbeRequest { type: "lax:probe-app"; id: number; url: string; timeoutMs?: number; wantScreenshot?: boolean }
-type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest;
+type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest | BrowserBridgeMessage;
 
 interface ProbeError { kind: string; message: string; source?: string; line?: number }
 interface ProbeOutcome { ok: boolean; booted: boolean; errors: ProbeError[]; screenshotB64?: string; error?: string }
@@ -34,8 +45,16 @@ export interface ServerBridgeHandlers {
 }
 
 export function attachServerBridge(proc: ChildProcess, handlers: ServerBridgeHandlers): void {
+  // Browser-view partitions have no egress policy of their own — every hop
+  // asks this child (fail-closed on timeout / dead child). Re-wired on each
+  // (re)spawn so the evaluator always targets the live process.
+  wireBrowserEgressEvaluator(proc);
   proc.on("message", async (msg: ServerMessage) => {
     if (!msg || typeof msg.type !== "string") return;
+    if (isBrowserBridgeMessage(msg)) {
+      await handleBrowserBridgeMessage(proc, msg);
+      return;
+    }
     if (msg.type === "lax:trash-item") {
       let ok = false;
       try { await shell.trashItem(msg.path); ok = true; } catch { ok = false; }

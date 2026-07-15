@@ -264,6 +264,10 @@ export async function startServer(config: LAXConfig) {
       disarmComputerControl();
       broadcastAll({ type: "settings_changed", settings: { enableComputerControl: false } });
     });
+    // Arm the in-app browser bridge's reverse listener (desktop egress-asks
+    // fail closed until this answers), same bridge, same lifetime.
+    const { initBrowserBridgeClient } = await import("../browser/bridge-client.js");
+    initBrowserBridgeClient();
   }
 
   // Wire the message-count provider used by the WS session_snapshot event.

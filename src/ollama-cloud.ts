@@ -153,24 +153,26 @@ export interface OllamaTag {
 
 let cachedLocal: LocalState | null = null;
 
-/** THE one place that hits local Ollama's `/api/tags`. Returns the raw
- *  model list (nothing stripped) so each caller can apply its own view —
- *  chat-only, embeddings-only, or full with sizes. Always resolves;
- *  unreachable Ollama yields reachable:false + empty list, never throws. */
+/** Compat facade over the canonical local-runtime seam. Historically THE
+ *  one place that hit local Ollama's `/api/tags`; the wire call now lives
+ *  in src/local-runtimes/ollama-probe.ts, and this keeps the name, shape,
+ *  and guard so its five consumers (resolve-provider, bootstrap-services,
+ *  providers route, setup-status, embedding-providers) stay untouched.
+ *  Always resolves; unreachable Ollama yields reachable:false + empty
+ *  list, never throws. */
 export async function fetchLocalOllamaTags(
   ollamaUrl: string,
 ): Promise<{ reachable: boolean; models: OllamaTag[] }> {
   if (isLocalOnlyMode() && !isLoopbackUrl(ollamaUrl)) return { reachable: false, models: [] };
-  const base = ollamaUrl.replace(/\/+$/, "");
-  try {
-    const r = await fetch(`${base}/api/tags`, { redirect: "manual", signal: AbortSignal.timeout(3000) });
-    if (!r.ok) return { reachable: false, models: [] };
-    const data = (await r.json()) as { models?: OllamaTag[] };
-    const models = (data.models || []).filter(m => typeof m?.name === "string" && m.name.length > 0);
-    return { reachable: true, models };
-  } catch {
-    return { reachable: false, models: [] };
-  }
+  const { ollamaProbe } = await import("./local-runtimes/ollama-probe.js");
+  const ep = { baseUrl: ollamaUrl, origin: "manual" as const };
+  if (!(await ollamaProbe.detect(ep))) return { reachable: false, models: [] };
+  const models = (await ollamaProbe.listModels(ep)).map((m) => ({
+    name: m.id,
+    size: m.sizeBytes,
+    modified_at: m.modifiedAt,
+  }));
+  return { reachable: true, models };
 }
 
 /** Fetch local Ollama chat models (embeddings filtered out) and update the

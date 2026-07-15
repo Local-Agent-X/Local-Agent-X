@@ -32,6 +32,7 @@ import { registerAutostart } from "./autostart";
 import { runReconcile, killReconcileStepsSync } from "./reconcile";
 import { shutdownNativeSpeech } from "./native-speech";
 import { setupSessionPermissions } from "./session-permissions";
+import { initBrowserNetworkHardening } from "./browser-partition";
 import {
   setSplashStatus,
   setSplashHint,
@@ -63,6 +64,7 @@ app.commandLine.appendSwitch("enable-media-stream");
 // stays on (only the sandbox is dropped), so the blast radius is small.
 app.commandLine.appendSwitch("disable-features", "AudioServiceSandbox");
 // permission-request handler in app.ready controls media grants explicitly.
+initBrowserNetworkHardening(); // QUIC/DoH off (app-wide, pre-ready) for browser-view partitions
 
 app.on("ready", async () => {
   loadLAXConfig();

@@ -77,7 +77,10 @@ export type BridgeInputEvent = BridgeMouseEvent | BridgeMouseWheelEvent | Bridge
 export interface BrowserLifecycleResult {
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
-	ping?: { ok: boolean; url?: string; title?: string };
+	// userActive: the desktop's co-drive lock reports the human is driving the
+	// view. Read by the in-app backend's pre-exec arbitration before running an
+	// eval-driven mutation (which bypasses the desktop input gate).
+	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
 }
 export interface BrowserNavigateResult { url: string; title: string }
 
@@ -101,7 +104,7 @@ interface BridgeReply {
 	error?: string;
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
-	ping?: { ok: boolean; url?: string; title?: string };
+	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
 	url?: string;
 	title?: string;
 	result?: unknown;

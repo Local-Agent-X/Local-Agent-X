@@ -6,8 +6,9 @@
  *   - navigate / newTab / screenshot / getInfo / tabs result shapes match
  *     the CDP backend's strings.
  *   - evaluate guard rejects blocked scripts BEFORE any bridge call.
- *   - A2 stubs throw typed NotImplementedError; dialogs/downloads report
- *     their not-supported state honestly.
+ *   - A2 methods (clickByRef/scroll) route through the resolution chain; the
+ *     KB1 credential-focus guard blocks screenshot capture; dialogs/downloads
+ *     report their not-supported state honestly.
  *   - hostile-page invariant: every page-script execution flows through
  *     browserExec (isolated-world-only transport); no main-world path exists.
  */
@@ -40,8 +41,8 @@ import {
 	ElectronInAppBackend,
 	EvaluateBlockedError,
 	InAppDownloadsUnavailableError,
-	NotImplementedError,
 } from "./in-app-backend.js";
+import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
 import { ObservationRegistry, type DurableRef } from "./observation.js";
 import type { RawElement } from "./extract.js";
 
@@ -276,22 +277,44 @@ describe("ElectronInAppBackend (A1)", () => {
 		await expect(backend.click("#ghost")).rejects.toThrow("Element not found: #ghost");
 	});
 
-	// ── A2 stubs / not-supported surfaces ─────────
+	// ── A2 wiring / KB1 credential guard ─────────
 
-	it("byRef/byText/scroll throw typed NotImplementedError naming chunk A2", async () => {
-		for (const call of [
-			() => backend.clickByRef(1),
-			() => backend.fillByRef(1, "x"),
-			() => backend.clickByText("Submit"),
-			() => backend.scroll({ direction: "down" }),
-		]) {
-			const err = await call().then(
-				() => null,
-				(e: unknown) => e,
-			);
-			expect(err).toBeInstanceOf(NotImplementedError);
-			expect((err as Error).message).toContain("A2");
-		}
+	it("clickByRef routes through the A2 resolution chain over browserExec + browserInput", async () => {
+		await backend.navigate(PAGE_URL);
+		await backend.snapshot(); // mint refs [1]=button, [2]=textbox
+		// Resolution round-trip resolves ref [1] at CSS (110,55); real input events follow.
+		vi.mocked(browserExec).mockImplementation(async (_viewId, script) => {
+			if (script.includes("occluded")) {
+				return { found: true, via: "role", x: 110, y: 55, w: 100, h: 30, dpr: 1, zoom: 1, tag: "BUTTON", type: "", editable: false };
+			}
+			return routeExec(script);
+		});
+		vi.mocked(browserInput).mockResolvedValue(undefined);
+		const res = await backend.clickByRef(1);
+		expect(res.ok).toBe(true);
+		expect(res.text).toContain("[1] click via role/name");
+		// mouseMove → mouseDown → mouseUp at the converted DIP coords (zoom 1 ⇒ identity).
+		const inputTypes = vi.mocked(browserInput).mock.calls.map(([, e]) => e.type);
+		expect(inputTypes).toEqual(["mouseMove", "mouseDown", "mouseUp"]);
+	});
+
+	it("KB1: screenshot is blocked while a credential field is focused — browserCapture is NOT called", async () => {
+		await backend.navigate(PAGE_URL);
+		vi.mocked(browserExec).mockImplementation(async (_viewId, script) => {
+			if (script.includes("current-password")) return true; // credential focus probe
+			return routeExec(script);
+		});
+		const out = await backend.screenshot();
+		expect(out).toBe(CREDENTIAL_CAPTURE_BLOCKED);
+		expect(browserCapture).not.toHaveBeenCalled();
+	});
+
+	it("KB1: screenshot proceeds when no credential field is focused", async () => {
+		await backend.navigate(PAGE_URL);
+		// routeExec returns undefined for the credential probe (not === true) → proceed.
+		const out = await backend.screenshot();
+		expect(out).toContain("Screenshot captured");
+		expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
 	});
 
 	it("dialogs report not-supported without pretending to act", async () => {

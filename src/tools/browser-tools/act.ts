@@ -6,7 +6,19 @@
 
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
+import { USER_TOOK_WHEEL } from "../../browser/in-app-actions.js";
 import { ok, err } from "./shared.js";
+
+// Co-drive preemption: the in-app backend refused because the human is driving
+// the view, signalled by the exact USER_TOOK_WHEEL text on the InteractionResult
+// (backend.ts InteractionResult carries only { ok, text }). Stamp the ToolResult
+// so applyProgressGuard resets the breaker instead of counting a preempted
+// action as a stall.
+function tagUserActive(result: ToolResult, interactionText: string): ToolResult {
+  return interactionText === USER_TOOK_WHEEL
+    ? { ...result, metadata: { ...result.metadata, userActive: true } }
+    : result;
+}
 
 export async function handleAct(
   manager: BrowserBackend,
@@ -49,9 +61,9 @@ export async function handleAct(
       if (refMatch) {
         const ref = parseInt(refMatch[1]);
         const result = await manager.fillByRef(ref, fillValue);
-        return result.ok
+        return tagUserActive(result.ok
           ? ok(`Filled ref [${ref}] with "${fillValue}". ${result.text}`)
-          : err(`Failed to fill ref [${ref}] with "${fillValue}". ${result.text}`);
+          : err(`Failed to fill ref [${ref}] with "${fillValue}". ${result.text}`), result.text);
       }
     }
     // Fallback: try click_text on the field label, then fill
@@ -72,17 +84,17 @@ export async function handleAct(
       if (refMatch) {
         const ref = parseInt(refMatch[1]);
         const result = await manager.clickByRef(ref);
-        return result.ok
+        return tagUserActive(result.ok
           ? ok(`Clicked ref [${ref}] (matched "${target}"). ${result.text}`)
-          : err(`Failed to click ref [${ref}] (matched "${target}"). ${result.text}`);
+          : err(`Failed to click ref [${ref}] (matched "${target}"). ${result.text}`), result.text);
       }
     }
     // Fallback: try click_text
     try {
       const result = await manager.clickByText(target);
-      return result.ok
+      return tagUserActive(result.ok
         ? ok(`Clicked text "${target}". ${result.text}`)
-        : err(`Could not click text "${target}". ${result.text}`);
+        : err(`Could not click text "${target}". ${result.text}`), result.text);
     } catch {
       return err(`Could not find element matching "${target}". Take a snapshot to see available elements.`);
     }

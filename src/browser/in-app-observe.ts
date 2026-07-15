@@ -1,26 +1,22 @@
 /**
- * In-app observe + page-script glue. Two things live here:
- *   1. BridgeObservePage — adapts the B1 bridge exec channel to the minimal
- *      Page subset the canonical observation/page-ops pipeline consumes.
- *   2. The A1 simple isolated-world action scripts (click/fill/select),
- *      kept out of in-app-backend.ts for the 400-LOC cap.
+ * In-app observe + page-script glue:
+ *   1. BridgeObservePage — an ADAPTER (not a re-implementation) exposing the
+ *      minimal structural subset of Playwright's `Page` the canonical pipeline
+ *      consumes (observation/extract/stability/modal/iframe/page-ops/
+ *      interactions.fingerprintPage). Ref/diff/format stays in
+ *      ObservationRegistry, extraction in extract.ts, shaping in page-ops.ts —
+ *      so both backends share one source of truth for observation semantics.
+ *   2. The isolated-world page scripts (A1 click/fill/select, the A2 resolution
+ *      chain), kept out of the backend for the LOC cap. The KB1 credential
+ *      probe lives with screenshot() in in-app-backend.ts (its sole caller).
  *
- * BridgeObservePage adapts the bridge to the minimal
- * structural subset of Playwright's `Page` that the canonical observation /
- * page-ops pipeline consumes (observation.ts, extract.ts, stability.ts,
- * modal-detector.ts, iframe-detector.ts, page-ops.ts, and interactions.ts's
- * fingerprintPage). This is deliberately an ADAPTER, not a re-implementation:
- * ref/diff/format logic stays in ObservationRegistry, the extraction script
- * stays in extract.ts, output shaping stays in page-ops.ts — so both backends
- * share one source of truth for observation semantics and result shapes.
- *
- * Every script the adapter runs goes through browserExec, which executes in
- * the view's ISOLATED world only (world 1901, enforced desktop-side in
- * desktop/src/server-bridge-browser.ts) — page JS can never tamper with or
- * observe what the pipeline executes. No main-world channel exists here.
+ * Every script goes through browserExec, which runs ONLY in the view's isolated
+ * world (1901, enforced in desktop/src/server-bridge-browser.ts) — page JS can
+ * neither tamper with nor observe it. No main-world channel exists here.
  */
 
 import type { Page } from "playwright";
+import type { DurableRef } from "./observation.js";
 import { browserCapture, browserExec } from "./bridge-client.js";
 
 /** Mutable url/title cache shared with the owning backend — updated on
@@ -186,16 +182,201 @@ export function selectScript(selector: string, value: string): string {
 })()`;
 }
 
+// ── A2 resolution-chain scripts (isolated world) ─────────
+// Pure string builders consumed by the in-app-actions.ts drivers. They live
+// here beside the A1 scripts so all isolated-world page code shares one home;
+// the drivers (retry/hit-test-fallthrough/real-input) stay in in-app-actions.ts.
+
 /**
- * The one deliberate cast in the in-app backend. ObservationRegistry.observe
- * and the page-ops helpers are typed against Playwright's `Page` but only
- * consume the structural subset BridgeObservePage implements (url / title /
- * evaluate / viewportSize / waitForLoadState / waitForFunction / $ /
- * innerText / screenshot / isClosed / bringToFront — see each callsite).
- * Widening the whole pipeline to a narrower PageLike interface is the right
- * long-term seam, but it touches observation/extract/stability/page-ops,
- * which are outside this chunk's scope lock; until then this adapter + cast
- * keeps ONE observation implementation instead of a forked one.
+ * The whole ref resolution chain in ONE round-trip: role+name → visible text
+ * (click only) → XPath → stored coords (click only). Each candidate is
+ * scrolled into view, re-measured, and hit-tested with elementFromPoint; an
+ * occluded candidate is recorded in `occluded` and the chain falls through
+ * instead of blind-clicking. Returns {found:true, via, x, y, w, h, dpr, zoom,
+ * tag, type, editable} (CSS px, viewport-relative) or {found:false, occluded}.
+ * Free identifiers are limited to document / getComputedStyle /
+ * devicePixelRatio / visualViewport so the contract is unit-testable against a
+ * fake DOM (see in-app-actions.test.ts).
+ */
+export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string {
+	const params = JSON.stringify({
+		role: ref.role,
+		name: ref.name,
+		xpath: ref.xpath,
+		cx: ref.rect.x,
+		cy: ref.rect.y,
+		cw: ref.rect.width,
+		ch: ref.rect.height,
+		op,
+	});
+	return `(() => {
+	const p = ${params};
+	const occluded = [];
+	const lname = (p.name || "").toLowerCase();
+	const env = () => ({
+		dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
+		zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1,
+	});
+	const vis = (el) => {
+		if (!el || !el.getBoundingClientRect) return false;
+		const r = el.getBoundingClientRect();
+		if (r.width <= 0 || r.height <= 0) return false;
+		const s = getComputedStyle(el);
+		return s.visibility !== "hidden" && s.display !== "none";
+	};
+	const acc = (el) => (((el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("placeholder") || "")) || "")
+		+ " " + (el.value || "") + " " + (el.textContent || "")).toLowerCase();
+	const ROLE_SEL = {
+		button: 'button,[role="button"],input[type="button"],input[type="submit"],input[type="reset"]',
+		link: 'a[href],[role="link"]',
+		textbox: 'input,textarea,[role="textbox"],[contenteditable="true"],[contenteditable=""]',
+		searchbox: 'input[type="search"],[role="searchbox"]',
+		combobox: 'select,[role="combobox"]',
+		checkbox: 'input[type="checkbox"],[role="checkbox"]',
+		radio: 'input[type="radio"],[role="radio"]',
+		menuitem: '[role="menuitem"]',
+		tab: '[role="tab"]',
+	};
+	const finish = (el, via, px, py) => {
+		if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "center" });
+		const r = el.getBoundingClientRect();
+		const x = typeof px === "number" ? px : r.left + r.width / 2;
+		const y = typeof py === "number" ? py : r.top + r.height / 2;
+		const hit = document.elementFromPoint(x, y);
+		const label = hit && hit.closest ? hit.closest("label") : null;
+		const related = !!hit && (hit === el
+			|| (el.contains && el.contains(hit))
+			|| (hit.contains && hit.contains(el))
+			|| (!!label && !!el.id && label.getAttribute("for") === el.id));
+		if (!related) { occluded.push(via); return null; }
+		const e = env();
+		return { found: true, via, x, y, w: r.width, h: r.height, dpr: e.dpr, zoom: e.zoom,
+			tag: el.tagName || "",
+			type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
+			editable: el.isContentEditable === true };
+	};
+	if (p.role && p.name && ROLE_SEL[p.role]) {
+		for (const el of document.querySelectorAll(ROLE_SEL[p.role])) {
+			if (!vis(el) || !acc(el).includes(lname)) continue;
+			const hit = finish(el, "role");
+			if (hit) return hit;
+			break;
+		}
+	}
+	if (p.op === "click" && p.name) {
+		for (const el of document.querySelectorAll("a,button,[role],label,summary,span,div,li,td,th")) {
+			if (!vis(el)) continue;
+			if (!(el.textContent || "").toLowerCase().includes(lname)) continue;
+			let inner = false;
+			for (const c of el.children) if ((c.textContent || "").toLowerCase().includes(lname)) { inner = true; break; }
+			if (inner) continue;
+			const hit = finish(el, "text");
+			if (hit) return hit;
+			break;
+		}
+	}
+	if (p.xpath) {
+		try {
+			const el = document.evaluate(p.xpath, document, null, 9, null).singleNodeValue;
+			if (el && vis(el)) {
+				const hit = finish(el, "xpath");
+				if (hit) return hit;
+			}
+		} catch { /* stale xpath */ }
+	}
+	if (p.op === "click" && p.cw > 0 && p.ch > 0) {
+		const el = document.elementFromPoint(p.cx, p.cy);
+		if (el) {
+			const e = env();
+			return { found: true, via: "coords", x: p.cx, y: p.cy, w: p.cw, h: p.ch, dpr: e.dpr, zoom: e.zoom,
+				tag: el.tagName || "", type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
+				editable: el.isContentEditable === true };
+		}
+		occluded.push("coords");
+	}
+	return { found: false, occluded };
+})()`;
+}
+
+/** clickByText search: clickable elements first (exact matches preferred),
+ *  then any innermost visible element containing the text. Occluded
+ *  candidates are skipped, never blind-clicked. */
+export function textSearchScript(text: string): string {
+	return `(() => {
+	const q = ${JSON.stringify(text)}.toLowerCase();
+	const CLICKABLE = 'a[href],button,[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],input[type="submit"],input[type="button"],label';
+	const vis = (el) => {
+		if (!el || !el.getBoundingClientRect) return false;
+		const r = el.getBoundingClientRect();
+		if (r.width <= 0 || r.height <= 0) return false;
+		const s = getComputedStyle(el);
+		return s.visibility !== "hidden" && s.display !== "none";
+	};
+	const leafText = (el) => (el.textContent || "").trim().toLowerCase();
+	const roleOf = (el) => ((el.getAttribute && el.getAttribute("role")) || ({ A: "link", BUTTON: "button" })[el.tagName] || "");
+	const picks = [];
+	for (const el of document.querySelectorAll(CLICKABLE)) {
+		if (!vis(el)) continue;
+		const t = leafText(el);
+		if (!t.includes(q)) continue;
+		picks.push([t === q ? 5 : 2, el]);
+	}
+	if (picks.length === 0) {
+		for (const el of document.querySelectorAll("*")) {
+			if (!vis(el)) continue;
+			const t = leafText(el);
+			if (!t.includes(q)) continue;
+			let inner = false;
+			for (const c of el.children) if ((c.textContent || "").toLowerCase().includes(q)) { inner = true; break; }
+			if (!inner) picks.push([t === q ? 3 : 0, el]);
+		}
+	}
+	picks.sort((a, b) => b[0] - a[0]);
+	for (const pick of picks) {
+		const el = pick[1];
+		if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "center" });
+		const r = el.getBoundingClientRect();
+		const x = r.left + r.width / 2, y = r.top + r.height / 2;
+		const hit = document.elementFromPoint(x, y);
+		if (!hit || !(hit === el || (el.contains && el.contains(hit)) || (hit.contains && hit.contains(el)))) continue;
+		return { found: true, role: roleOf(el), x, y,
+			dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
+			zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1 };
+	}
+	return { found: false };
+})()`;
+}
+
+/** <select> fill: CDP parity — never typed; .value + input/change events. */
+export function selectFillScript(ref: DurableRef, value: string): string {
+	const params = JSON.stringify({ xpath: ref.xpath, name: ref.name, value });
+	return `(() => {
+	const p = ${params};
+	let el = null;
+	if (p.xpath) { try { el = document.evaluate(p.xpath, document, null, 9, null).singleNodeValue; } catch { /* stale */ } }
+	if (!el || el.tagName !== "SELECT") {
+		const lname = (p.name || "").toLowerCase();
+		for (const c of document.querySelectorAll("select")) {
+			const acc = (((c.getAttribute("aria-label") || "") + " " + (c.name || "") + " " + (c.id || ""))).toLowerCase();
+			if (!lname || acc.includes(lname)) { el = c; break; }
+		}
+	}
+	if (!el || el.tagName !== "SELECT") return { ok: false, error: "not-found" };
+	const match = [...el.options].find((o) => o.value === p.value || o.label === p.value || o.text === p.value);
+	if (!match) return { ok: false, error: "no-matching-option" };
+	el.value = match.value;
+	el.dispatchEvent(new Event("input", { bubbles: true }));
+	el.dispatchEvent(new Event("change", { bubbles: true }));
+	return { ok: true, selected: [match.value] };
+})()`;
+}
+
+/**
+ * The one deliberate cast in the in-app backend. The pipeline is typed against
+ * Playwright's `Page` but only consumes the structural subset BridgeObservePage
+ * implements. Widening it to a narrower PageLike interface is the right seam but
+ * touches observation/extract/stability/page-ops (outside this chunk); until
+ * then the cast keeps ONE observation implementation instead of a forked one.
  */
 export function asObservePage(adapter: BridgeObservePage): Page {
 	return adapter as unknown as Page;

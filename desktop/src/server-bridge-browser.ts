@@ -270,7 +270,9 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 			return {};
 		}
 		case "ping":
-			return { ping: pingBrowserView(msg.viewId) };
+			// userActive lets the server-side pre-exec arbitration (eval-driven
+			// mutations bypass the input gate) see the co-drive lock.
+			return { ping: { ...pingBrowserView(msg.viewId), userActive: isUserActive(msg.viewId) } };
 		case "list":
 			return { views: listBrowserViews() satisfies BrowserViewInfo[] };
 	}

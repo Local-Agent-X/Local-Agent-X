@@ -9,14 +9,15 @@
  * (in-app-observe.ts), so both backends share one observation pipeline and
  * the tool layer sees identical result shapes.
  *
- * A1 scope:
+ * Scope:
  *   - navigation, observe/snapshot/fingerprint, page reads, screenshot,
  *     evaluate (guarded), tabs (single-view), lifecycle — implemented.
- *   - click/fill/select: SIMPLE isolated-world DOM-eval versions. Chunk A2
- *     replaces them with the full resolution chain + real input events
- *     (browserInput synthetic cursor path).
- *   - clickByRef/fillByRef/clickByText/scroll: throw NotImplementedError
- *     until A2 delivers the resolution chain.
+ *   - click/fill/select (by SELECTOR): simple isolated-world DOM-eval versions.
+ *   - clickByRef/fillByRef/clickByText/scroll (A2): the full resolution chain
+ *     (role+name → visible text → XPath → coords, hit-tested) executed via real
+ *     input events (browserInput synthetic-cursor path), in in-app-actions.ts.
+ *   - screenshot: KB1 credential-focus guard blocks capture while a password
+ *     field is focused in the co-driven view.
  *   - dialogs: JS dialogs need desktop-side interception — not-supported
  *     strings until then (A2/follow-up).
  *   - downloads: desktop quarantine records aren't plumbed to the server yet
@@ -48,6 +49,14 @@ import {
 	selectScript,
 	type BridgePageState,
 } from "./in-app-observe.js";
+import {
+	clickRefInApp,
+	clickTextInApp,
+	fillRefInApp,
+	scrollInApp,
+	CREDENTIAL_CAPTURE_BLOCKED,
+	type InAppActionContext,
+} from "./in-app-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
 import type { BrowserEngine } from "./launcher.js";
 import type { Page } from "playwright";
@@ -58,24 +67,42 @@ const logger = createLogger("browser.in-app");
 /** The engine label surfaced in getInfo/screenshot output. */
 const IN_APP_ENGINE = "electron";
 
+/**
+ * KB1 credential-focus probe (isolated world) — screenshot()'s sole gate.
+ * Walks the focus chain through same-origin iframes AND open shadow roots
+ * (activeElement retargets to the shadow host). Fails CLOSED: a focused
+ * CROSS-ORIGIN iframe (contentDocument null/throws) is unreadable but
+ * focus-is-inside-it IS observable — the canonical embedded bank/Stripe/Plaid/
+ * OAuth login — so we block (over-blocking any cross-origin embed is the right
+ * direction; CREDENTIAL_CAPTURE_BLOCKED names that reason). Closed shadow roots
+ * are the residual gap.
+ */
+export const CREDENTIAL_FOCUS_SCRIPT = `(() => {
+	let el = document.activeElement;
+	for (let i = 0; i < 16 && el; i++) {
+		if (el.tagName === "IFRAME") {
+			let doc = null;
+			try { doc = el.contentDocument; } catch { return true; }
+			if (!doc) return true;
+			el = doc.activeElement;
+			continue;
+		}
+		if (el.shadowRoot && el.shadowRoot.activeElement) {
+			el = el.shadowRoot.activeElement;
+			continue;
+		}
+		break;
+	}
+	if (!el || el.tagName !== "INPUT" || !el.getAttribute) return false;
+	const type = (el.getAttribute("type") || "").toLowerCase();
+	const ac = (el.getAttribute("autocomplete") || "").toLowerCase();
+	return type === "password" || ac === "current-password" || ac === "new-password";
+})()`;
+
 // ── Typed errors ─────────
 
-/** A1 placeholder: the ref/text resolution chain + real input events land in
- *  chunk A2. Message names the workaround so the agent isn't dead-ended. */
-export class NotImplementedError extends Error {
-	constructor(method: string) {
-		super(
-			`browser ${method} is not implemented by the in-app backend yet — ` +
-				`the ref/text resolution chain and real input events land in chunk A2. ` +
-				`Use selector-based click/fill/select, evaluate, or extract in the meantime.`,
-		);
-		this.name = "NotImplementedError";
-	}
-}
-
-/** Same message shape the tool layer produces for the CDP path, so a blocked
- *  script reads identically regardless of backend. Thrown BEFORE any bridge
- *  call — a blocked script never reaches the view. */
+/** Same message shape the CDP path produces, thrown BEFORE any bridge call —
+ *  a blocked script never reaches the view. */
 export class EvaluateBlockedError extends Error {
 	constructor(pattern: string) {
 		super(
@@ -86,8 +113,7 @@ export class EvaluateBlockedError extends Error {
 	}
 }
 
-/** Desktop download quarantine records aren't plumbed to the server yet
- *  (follow-up chunk). Approval/release must fail closed, not fake-succeed. */
+/** Desktop download quarantine isn't plumbed to the server yet; approval/release must fail closed (follow-up). */
 export class InAppDownloadsUnavailableError extends Error {
 	constructor(op: string) {
 		super(
@@ -167,10 +193,9 @@ export class ElectronInAppBackend implements BrowserBackend {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
 		await this.ensureView();
-		// NOTE: the bridge navigate settles on load events and carries no HTTP
-		// status, so unlike the CDP path an HTTP ≥400 page is not detectable
-		// here yet — "Status: unknown" is the in-family CDP value for a missing
-		// response. Surfacing the status via the desktop is a follow-up.
+		// The bridge navigate settles on load events and carries no HTTP status,
+		// so an HTTP ≥400 page isn't detectable here yet — "Status: unknown" is
+		// the in-family CDP value for a missing response (desktop follow-up).
 		const result = await browserNavigate(this.viewId, url);
 		this.state.url = result.url;
 		this.state.title = result.title;
@@ -253,20 +278,31 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return `Selected "${selected.join(", ")}" in ${selector}`;
 	}
 
-	async clickByRef(_ref: number): Promise<InteractionResult> {
-		throw new NotImplementedError("click (by ref)");
+	/** The A2 resolution-chain + real-input driver context. Shares this
+	 *  backend's registry/page/viewId so refs resolve against the same
+	 *  observation state the snapshot minted. */
+	private actionContext(): InAppActionContext {
+		return { viewId: this.viewId, page: this.page, registry: this.registry };
 	}
 
-	async fillByRef(_ref: number, _value: string): Promise<InteractionResult> {
-		throw new NotImplementedError("fill (by ref)");
+	async clickByRef(ref: number): Promise<InteractionResult> {
+		await this.ensureView();
+		return clickRefInApp(this.actionContext(), ref);
 	}
 
-	async clickByText(_text: string): Promise<InteractionResult> {
-		throw new NotImplementedError("click_text");
+	async fillByRef(ref: number, value: string): Promise<InteractionResult> {
+		await this.ensureView();
+		return fillRefInApp(this.actionContext(), ref, value);
 	}
 
-	async scroll(_opts: ScrollOptions): Promise<string> {
-		throw new NotImplementedError("scroll");
+	async clickByText(text: string): Promise<InteractionResult> {
+		await this.ensureView();
+		return clickTextInApp(this.actionContext(), text);
+	}
+
+	async scroll(opts: ScrollOptions): Promise<string> {
+		await this.ensureView();
+		return scrollInApp(this.actionContext(), opts);
 	}
 
 	// ── Page reads / tabs ──
@@ -278,6 +314,11 @@ export class ElectronInAppBackend implements BrowserBackend {
 
 	async screenshot(): Promise<string> {
 		await this.ensureView();
+		// KB1 (plan invariant S1-5): never paint pixels while a credential field
+		// is focused in the co-driven view — the user may be mid-password. Probe
+		// the isolated world FIRST; if blocked, do NOT reach browserCapture.
+		const credentialFocused = await browserExec(this.viewId, CREDENTIAL_FOCUS_SCRIPT);
+		if (credentialFocused === true) return CREDENTIAL_CAPTURE_BLOCKED;
 		return screenshotAsBase64(this.page, IN_APP_ENGINE);
 	}
 

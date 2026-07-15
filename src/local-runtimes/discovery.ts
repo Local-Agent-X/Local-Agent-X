@@ -68,6 +68,14 @@ async function surveyEndpoint(c: CandidateEndpoint): Promise<LocalRuntimeInfo | 
 export async function discoverLocalRuntimes(
   candidates: readonly CandidateEndpoint[],
 ): Promise<LocalRuntimeInfo[]> {
+  // Test-env guard: the sweep is the ONE place this subsystem does live
+  // loopback network I/O. Under vitest that's both a CI-hygiene problem (real
+  // fetches during the suite) and a determinism hazard — a dev running tests
+  // with Ollama/LM Studio up would discover real models and diverge from CI.
+  // Every caller already tolerates an empty result, so bail before the wire.
+  // The probe adapters keep their coverage: their tests call detect()/
+  // listModels() directly rather than through this sweep.
+  if (process.env.VITEST || process.env.NODE_ENV === "test") return [];
   const surveyed = await Promise.all(candidates.map((c) => surveyEndpoint(c)));
   return surveyed.filter((r): r is LocalRuntimeInfo => r !== null);
 }

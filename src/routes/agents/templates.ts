@@ -94,7 +94,7 @@ export const handleAgentTemplateRoutes: RouteHandler = async (method, url, req, 
       const rosters = ProjectRosterStore.getInstance().listByProject(projectId);
       const merged = rosters.map((r) => {
         const tpl = ctx.agentTemplateStore.get(r.agentId);
-        return tpl ? { ...tpl, reportsTo: r.reportsTo, heartbeatSchedule: r.heartbeatSchedule, heartbeatEnabled: r.heartbeatEnabled, budget: r.budget, projectId: r.projectId, model: r.model } : null;
+        return tpl ? { ...tpl, reportsTo: r.reportsTo, heartbeatSchedule: r.heartbeatSchedule, heartbeatEnabled: r.heartbeatEnabled, budget: r.budget, projectId: r.projectId, model: r.model, browserProfileId: r.browserProfileId } : null;
       }).filter((x): x is NonNullable<typeof x> => x !== null);
       json(200, merged); return true;
     }

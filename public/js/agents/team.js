@@ -83,6 +83,46 @@ function renderModelPicker(agentId, currentModel, registry) {
     </div>`;
 }
 
+// Browser profiles for the per-roster profile picker. Fetched fresh on each
+// panel open (small list, no cache needed). Source: GET /api/browser/profiles.
+async function fetchBrowserProfiles() {
+  try {
+    const r = await fetch(`${API}/api/browser/profiles`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data) ? data : [];
+  } catch { return []; }
+}
+
+// Per-roster browser-profile picker. Like the model picker it's a per-project
+// pin, so it's hidden without a selected project. "(inherit)" clears the pin
+// back to the template default.
+function renderProfilePicker(agentId, currentProfileId, profiles) {
+  if (!state.currentProject) return '';
+  const current = currentProfileId || '';
+  const opts = ['<option value="">(inherit)</option>']
+    .concat(profiles.map(p => `<option value="${esc(p.id)}" ${p.id === current ? 'selected' : ''}>${esc(p.name)}</option>`))
+    .join('');
+  return `
+    <div style="margin-top:12px">
+      <div class="agent-detail-label">Browser profile (per-project override)</div>
+      <select id="agent-browser-profile" class="field-input" style="width:100%;font-size:.75rem;padding:4px 8px;margin-top:4px" onchange="onAgentProfileChange('${agentId}')">${opts}</select>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:4px;line-height:1.4">Browser profile this agent drives in this project. Pick "(inherit)" to fall back to the template default.</div>
+    </div>`;
+}
+
+export async function onAgentProfileChange(agentId) {
+  const sel = document.getElementById('agent-browser-profile');
+  if (!sel || !state.currentProject) return;
+  try {
+    await fetch(`${API}/api/projects/${state.currentProject}/rosters/${agentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ browserProfileId: sel.value }),
+    });
+  } catch (e) { console.error('Failed to update agent browser profile:', e); }
+}
+
 export async function onAgentProviderChange(agentId) {
   const provSel = document.getElementById('agent-model-provider');
   const modelSel = document.getElementById('agent-model-name');
@@ -146,6 +186,7 @@ export async function showHiredAgent(id) {
     }
     if (!a || !detail) return;
     const registry = await getProviderRegistry();
+    const browserProfiles = await fetchBrowserProfiles();
     // Get issues assigned to this agent
     const ir = await fetch(`${API}/api/issues?assignee=${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const issues = await ir.json();
@@ -161,6 +202,7 @@ export async function showHiredAgent(id) {
         <div class="agent-detail-field"><span class="agent-detail-label">Tools</span><span>${(a.allowedTools || []).join(', ') || 'All'}</span></div>
       </div>
       ${renderModelPicker(a.id, a.model, registry)}
+      ${renderProfilePicker(a.id, a.browserProfileId, browserProfiles)}
       <div style="margin-top:16px">
         <div class="agent-detail-label">System Prompt</div>
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.78rem;line-height:1.5;margin-top:4px;max-height:120px;overflow-y:auto">${esc(a.systemPrompt)}</div>
@@ -211,3 +253,4 @@ window.showHiredAgent = showHiredAgent;
 window.fireAgent = fireAgent;
 window.onAgentProviderChange = onAgentProviderChange;
 window.onAgentModelChange = onAgentModelChange;
+window.onAgentProfileChange = onAgentProfileChange;

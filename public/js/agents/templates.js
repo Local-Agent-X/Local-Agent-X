@@ -31,6 +31,17 @@ export async function loadAgentTemplates() {
   } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
 }
 
+// Browser profiles for the per-template default-profile picker. Source of
+// truth is the BrowserProfileStore, reached over GET /api/browser/profiles.
+async function fetchBrowserProfiles() {
+  try {
+    const r = await fetch(`${API}/api/browser/profiles`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    if (!r.ok) return [];
+    const profiles = await r.json();
+    return Array.isArray(profiles) ? profiles : [];
+  } catch { return []; }
+}
+
 async function fetchHiredProjectsForTemplate(templateId) {
   // /api/agents/hired with no projectId returns rostered entries across all
   // projects. We don't trust template.hired -- that field is L3-deprecated and
@@ -53,6 +64,10 @@ export async function showTemplateForm(existing) {
   const hiredProjects = isEdit ? await fetchHiredProjectsForTemplate(t.id) : [];
   const isHired = hiredProjects.length > 0;
   const hiredInCurrent = !!state.currentProject && hiredProjects.includes(state.currentProject);
+  const browserProfiles = await fetchBrowserProfiles();
+  const profileOpts = ['<option value="">(inherit)</option>']
+    .concat(browserProfiles.map(p => `<option value="${esc(p.id)}" ${p.id === t.defaultBrowserProfileId ? 'selected' : ''}>${esc(p.name)}</option>`))
+    .join('');
   form.innerHTML = `
     <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">${isEdit ? 'Edit' : 'New'} Agent Template</h2>
     <div class="field"><label class="field-label">Name</label><input class="field-input" id="tpl-name" value="${esc(t.name)}" placeholder="e.g. Code Reviewer"></div>
@@ -60,6 +75,7 @@ export async function showTemplateForm(existing) {
     <div class="field"><label class="field-label">Description</label><input class="field-input" id="tpl-desc" value="${esc(t.description)}" placeholder="What this agent does"></div>
     <div class="field"><label class="field-label">System Prompt</label><textarea class="field-input" id="tpl-prompt" rows="6" style="resize:vertical" placeholder="You are a...">${esc(t.systemPrompt)}</textarea></div>
     <div class="field"><label class="field-label">Allowed Tools (comma-separated, leave empty for all)</label><input class="field-input" id="tpl-tools" value="${(t.allowedTools || []).join(', ')}" placeholder="read, write, bash, web_fetch"></div>
+    <div class="field"><label class="field-label">Browser profile</label><select class="field-input" id="tpl-browser-profile">${profileOpts}</select></div>
     <div style="display:flex;gap:8px;margin-top:16px">
       <button class="action-btn primary" onclick="saveTemplate('${t.id}')">${isEdit ? 'Update' : 'Create'}</button>
       <button class="action-btn secondary" onclick="cancelTemplateForm()">Cancel</button>
@@ -78,7 +94,10 @@ export async function saveTemplate(existingId) {
   const toolsStr = document.getElementById('tpl-tools')?.value.trim();
   const tools = toolsStr ? toolsStr.split(',').map(s => s.trim()).filter(Boolean) : [];
   if (!name || !role) { alert('Name and role are required'); return; }
-  const body = { name, role, description: desc, systemPrompt: prompt, allowedTools: tools };
+  // Empty string = "(inherit)": sent explicitly so an edit can clear a prior
+  // pin (the resolver treats a falsy id as unset). resolveAgentBrowserProfileId.
+  const browserProfileId = document.getElementById('tpl-browser-profile')?.value || '';
+  const body = { name, role, description: desc, systemPrompt: prompt, allowedTools: tools, defaultBrowserProfileId: browserProfileId };
   try {
     if (existingId) {
       await fetch(`${API}/api/agents/templates/${existingId}`, {

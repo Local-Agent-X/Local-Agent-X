@@ -71,6 +71,60 @@ async function setMissionModel(value) {
   }
 }
 
+// Browser-profile picker — same shape as the model picker above, but the
+// options come from GET /api/browser/profiles and the choice is PATCHed as
+// browserProfileId. Cached once, reused across mission switches.
+let cronProfileOptions = null;
+let cronProfileOptionsLoading = null;
+
+async function loadMissionProfileOptions() {
+  if (cronProfileOptions) return cronProfileOptions;
+  if (cronProfileOptionsLoading) return cronProfileOptionsLoading;
+  cronProfileOptionsLoading = (async () => {
+    try {
+      const data = await apiJson('/api/browser/profiles');
+      cronProfileOptions = Array.isArray(data) ? data : [];
+    } catch { cronProfileOptions = []; }
+    return cronProfileOptions;
+  })();
+  return cronProfileOptionsLoading;
+}
+
+function renderMissionProfilePicker(job) {
+  const sel = document.getElementById('cron-detail-profile');
+  if (!sel) return;
+  const opts = cronProfileOptions || [];
+  const current = job.browserProfileId || '';
+  // A saved id that's no longer in the list (profile deleted) is surfaced
+  // anyway so the user sees the stale pick and can change it.
+  const haveCurrent = !current || opts.some(o => o.id === current);
+  let html = `<option value=""${current ? '' : ' selected'}>(inherit)</option>`;
+  if (!haveCurrent) html += `<option value="${esc(current)}" selected>(unavailable) ${esc(current)}</option>`;
+  for (const o of opts) {
+    const selAttr = o.id === current ? ' selected' : '';
+    html += `<option value="${esc(o.id)}"${selAttr}>${esc(o.name)}</option>`;
+  }
+  sel.innerHTML = html;
+}
+
+async function setMissionProfile(value) {
+  if (!selectedJob) return;
+  try {
+    const res = await apiJson(`/api/cron/${selectedJob.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ browserProfileId: value }),
+    });
+    if (res?.job) {
+      selectedJob.browserProfileId = res.job.browserProfileId || '';
+      const idx = cronJobs.findIndex(j => j.id === selectedJob.id);
+      if (idx >= 0) cronJobs[idx] = { ...cronJobs[idx], ...res.job };
+    }
+  } catch (e) {
+    alert('Failed to set browser profile: ' + (e?.message || e));
+  }
+}
+
 function startCronStatusPolling() {
   if (cronStatusTimer) { clearInterval(cronStatusTimer); cronStatusTimer = null; }
   if (!selectedJob) return;
@@ -192,6 +246,11 @@ function renderCronDetail() {
   // missions-panel init time).
   if (cronModelOptions) renderMissionModelPicker(selectedJob);
   else loadMissionModelOptions().then(() => { if (selectedJob) renderMissionModelPicker(selectedJob); });
+
+  // Browser profile picker — same lazy-load-then-render dance as the model
+  // picker, keyed off the just-selected job's saved browserProfileId.
+  if (cronProfileOptions) renderMissionProfilePicker(selectedJob);
+  else loadMissionProfileOptions().then(() => { if (selectedJob) renderMissionProfilePicker(selectedJob); });
 
   const resultEl = document.getElementById('cron-detail-result');
   if (resultEl) {

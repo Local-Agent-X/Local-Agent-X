@@ -44,6 +44,7 @@ export const handleRosterRoutes: RouteHandler = async (method, url, req, res, _c
       reportsTo: body.reportsTo as string | undefined,
       heartbeatSchedule: body.heartbeatSchedule as string | undefined,
       heartbeatEnabled: body.heartbeatEnabled as boolean | undefined,
+      browserProfileId: body.browserProfileId as string | undefined,
       model: modelField,
     });
     if (!updated) { json(404, { error: "Roster entry not found" }); return true; }

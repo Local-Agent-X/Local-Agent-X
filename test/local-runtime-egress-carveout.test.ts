@@ -10,10 +10,15 @@ vi.mock("../src/local-runtimes/cache.js", () => ({
 }));
 
 // The manual-add fold reads settings.json from the LAX data dir; point it
-// at nothing so a dev box's real manual entries can't sway assertions.
-vi.mock("../src/lax-data-dir.js", () => ({
-  getLaxDir: () => "no-such-dir-egress-carveout-test",
-}));
+// at an empty tmp dir so a dev box's real manual entries can't sway
+// assertions. Must be absolute + outside the repo: config.ts CREATES the
+// dir on first read, so a relative path would litter the working tree.
+vi.mock("../src/lax-data-dir.js", async () => {
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = join(tmpdir(), "lax-egress-carveout-test");
+  return { getLaxDir: () => dir };
+});
 
 // Local-runtime evolution of the ollama carve-out: the agent's HTTP tools
 // may reach the loopback ports of DISCOVERED local inference runtimes plus

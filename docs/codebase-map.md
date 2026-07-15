@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 59 top-level dirs · 59 live · 0 with no live importer · 1234 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1243 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -60,6 +60,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/ari-kernel/` | 6 | 11 | L |  |
 | `src/cognition/` | 6 | 29 | XL |  |
+| `src/local-runtimes/` | 6 | 9 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/auto-build/` | 5 | 47 | XL |  |
 | `src/bridge-voice/` | 5 | 5 | M |  |

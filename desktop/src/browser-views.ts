@@ -12,6 +12,7 @@ import { WebContentsView, type Rectangle } from "electron";
 
 import { getMainWindow } from "./window";
 import { getHardenedPartitionSession, hardenWebContents, viewWebPreferences } from "./browser-partition";
+import { armCoDrive } from "./in-app-browser";
 
 export interface BrowserViewInfo {
 	viewId: string;
@@ -45,6 +46,7 @@ export function createBrowserView(viewId: string, opts: { partition: string; bou
 	getHardenedPartitionSession(opts.partition);
 	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
 	hardenWebContents(view.webContents);
+	armCoDrive(viewId, view.webContents);
 	// window.open children would inherit the partition but NOT the
 	// per-webContents hardening (WebRTC policy) and would live outside
 	// the pool as unmanaged OS windows — deny them outright. In-view

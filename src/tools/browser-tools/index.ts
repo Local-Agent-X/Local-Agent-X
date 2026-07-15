@@ -81,6 +81,13 @@ async function applyProgressGuard(
   sessionId: string,
   result: ToolResult,
 ): Promise<ToolResult> {
+  // Co-drive preemption: the human took the wheel, so the action never ran —
+  // an unchanged page here is NOT the agent spinning. Reset instead of
+  // recording, so a preempted stretch can't false-trip the breaker.
+  if (result.metadata?.userActive === true) {
+    resetProgress(sessionId);
+    return result;
+  }
   if (RESET_ACTIONS.has(action)) {
     resetProgress(sessionId);
     return result;

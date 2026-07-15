@@ -81,6 +81,18 @@ export interface BrowserLifecycleResult {
 }
 export interface BrowserNavigateResult { url: string; title: string }
 
+/** The desktop refused an agent input because the HUMAN is currently
+ *  driving the view (co-drive human-priority lock). This is a STATUS the
+ *  backend surfaces to the model ("user took the wheel"), not an error. */
+export interface UserActiveResult { userActive: true }
+/** browserInput outcome: undefined = the event was dispatched;
+ *  UserActiveResult = refused, human is driving. */
+export type BrowserInputResult = UserActiveResult | undefined;
+
+export function isUserActiveResult(result: BrowserInputResult): result is UserActiveResult {
+	return result?.userActive === true;
+}
+
 // Inbound reply envelope shared by every "-result" message.
 interface BridgeReply {
 	type: string;
@@ -95,6 +107,7 @@ interface BridgeReply {
 	result?: unknown;
 	pngB64?: string;
 	allowed?: boolean;
+	userActive?: boolean;
 }
 
 const RESULT_TYPES = new Set([
@@ -213,7 +226,10 @@ function request(
 			op,
 			viewId,
 			settle: (reply) => finish(() => {
-				if (!reply.ok) reject(new BridgeOpError(op, viewId, reply.error ?? "unknown error"));
+				// ok:false + userActive is the co-drive human-priority refusal —
+				// a status outcome, and ONLY the input op is defined to carry it;
+				// on any other op the flag is garbage and stays a failure.
+				if (!reply.ok && !(op === "input" && reply.userActive === true)) reject(new BridgeOpError(op, viewId, reply.error ?? "unknown error"));
 				else resolve(reply);
 			}),
 			rejectClosed: () => finish(() => reject(new BridgeViewClosedError(op, viewId))),
@@ -260,28 +276,42 @@ export async function browserNavigate(viewId: string, url: string): Promise<Brow
 }
 
 /** Runs `script` in the view's ISOLATED world (the only supported world —
- *  main-world execution is deliberately not offered by the desktop side). */
+ *  main-world execution is deliberately not offered by the desktop side).
+ *  `allFrames: true` asks the desktop to run the script per same-origin
+ *  frame and aggregate the results as an array (main frame first); frames
+ *  the desktop cannot reach in an isolated world are skipped fail-closed,
+ *  never executed in the main world. */
 export async function browserExec(
 	viewId: string,
 	script: string,
-	opts?: { world?: "isolated" },
+	opts?: { world?: "isolated"; allFrames?: boolean },
 ): Promise<unknown> {
 	const reply = await request(
 		"exec",
 		viewId,
-		{ type: "lax:browser-exec", viewId, script, world: opts?.world ?? "isolated" },
+		{
+			type: "lax:browser-exec",
+			viewId,
+			script,
+			world: opts?.world ?? "isolated",
+			allFrames: opts?.allFrames === true,
+		},
 		EXEC_TIMEOUT_MS,
 	);
 	return reply.result;
 }
 
-export async function browserInput(viewId: string, event: BridgeInputEvent): Promise<void> {
-	await request(
+/** Dispatch one input event. Resolves { userActive: true } — WITHOUT the
+ *  event having been sent — when the human is driving the view; resolves
+ *  undefined when the event was dispatched (unchanged from the B1 shape). */
+export async function browserInput(viewId: string, event: BridgeInputEvent): Promise<BrowserInputResult> {
+	const reply = await request(
 		"input",
 		viewId,
 		{ type: "lax:browser-input", viewId, event },
 		INPUT_TIMEOUT_MS,
 	);
+	return reply.userActive === true ? { userActive: true } : undefined;
 }
 
 /** Returns the view's current paint as a base64 PNG. */

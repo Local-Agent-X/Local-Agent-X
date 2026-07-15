@@ -28,6 +28,7 @@ import {
 	type BrowserViewInfo,
 } from "./browser-views";
 import { setEgressEvaluator, type EgressDecision } from "./browser-partition";
+import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
 
 // Isolated world for agent scripts — never the main world, so page JS
 // can't tamper with (or observe) what the agent executes.
@@ -72,7 +73,7 @@ export interface BrowserLifecycleRequest {
 	bounds?: Rectangle;
 }
 export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number }
-export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated" }
+export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated"; allFrames?: boolean }
 export interface BrowserInputRequest { type: "lax:browser-input"; id: number; viewId: string; event: BridgeInputEvent }
 export interface BrowserCaptureRequest { type: "lax:browser-capture"; id: number; viewId: string }
 export interface BrowserAbortRequest { type: "lax:browser-abort"; viewId: string }
@@ -149,14 +150,16 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 			return;
 		}
 		case "lax:browser-exec": {
-			// WebContents.executeJavaScriptInIsolatedWorld runs in the MAIN
-			// frame's isolated world (Electron 35 has no WebFrameMain variant;
-			// per-frame targeting comes in a later chunk). Never the main world.
+			// Isolated world only (1901) — never the main world. Default runs in
+			// the main frame; allFrames aggregates per same-origin frame (see
+			// execSameOriginFrames for the Electron 35 subframe limitation).
 			reply(proc, "lax:browser-exec-result", msg.id, async () => ({
-				result: await requireWebContents(msg.viewId).executeJavaScriptInIsolatedWorld(
-					EXEC_ISOLATED_WORLD_ID,
-					[{ code: msg.script }],
-				) as unknown,
+				result: msg.allFrames
+					? await execSameOriginFrames(requireWebContents(msg.viewId), msg.script)
+					: await requireWebContents(msg.viewId).executeJavaScriptInIsolatedWorld(
+						EXEC_ISOLATED_WORLD_ID,
+						[{ code: msg.script }],
+					) as unknown,
 			}));
 			return;
 		}
@@ -164,7 +167,18 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 			reply(proc, "lax:browser-input-result", msg.id, () => {
 				const event = toElectronInputEvent(msg.event);
 				if (!event) throw new Error(`unsupported input event type "${(msg.event as { type?: string })?.type}"`);
-				requireWebContents(msg.viewId).sendInputEvent(event);
+				// Human-priority co-drive: while the user is driving this view,
+				// refuse agent input as a STATUS (not an error) — the client
+				// surfaces userActive so the model knows the user took the wheel.
+				if (isUserActive(msg.viewId)) return { ok: false, userActive: true };
+				const wc = requireWebContents(msg.viewId);
+				// Bank the attribution token BEFORE dispatch so the event's own
+				// before-input-event/focus echo can't arm the user lock.
+				markAgentInput(msg.viewId);
+				if (event.type === "mouseDown" || event.type === "mouseUp" || event.type === "mouseMove" || event.type === "mouseWheel") {
+					showAgentCursor(wc, event.x, event.y); // fire-and-forget, never blocks input
+				}
+				wc.sendInputEvent(event);
 				return {};
 			});
 			return;
@@ -197,6 +211,36 @@ function reply(
 		}
 		try { proc.send({ type, id, ...payload }); } catch { /* child exited */ }
 	})();
+}
+
+/**
+ * allFrames exec: one result per frame reachable in an ISOLATED world,
+ * main frame first. Electron 35's WebFrameMain exposes only main-world
+ * executeJavaScript — running agent scripts there would let page JS observe
+ * or tamper with them, so same-origin subframes are enumerated but SKIPPED
+ * (fail closed), never executed in the main world. Same-origin frame content
+ * remains reachable today from the main frame's isolated world via
+ * contentDocument traversal (how extract.ts collects iframe elements).
+ * Revisit when Electron grows a WebFrameMain isolated-world API.
+ */
+async function execSameOriginFrames(wc: WebContents, script: string): Promise<unknown[]> {
+	const results: unknown[] = [
+		await wc.executeJavaScriptInIsolatedWorld(EXEC_ISOLATED_WORLD_ID, [{ code: script }]) as unknown,
+	];
+	const skipped = wc.mainFrame.framesInSubtree
+		.filter((frame) => frame !== wc.mainFrame && sameOrigin(frame.url, wc.getURL()))
+		.length;
+	if (skipped > 0) {
+		console.warn(
+			`[browser-bridge] allFrames exec: skipped ${skipped} same-origin subframe(s) — ` +
+			`no isolated-world exec on WebFrameMain in Electron 35 (fail closed, never main world)`,
+		);
+	}
+	return results;
+}
+
+function sameOrigin(a: string, b: string): boolean {
+	try { return new URL(a).origin === new URL(b).origin; } catch { return false; }
 }
 
 function requireWebContents(viewId: string): WebContents {

@@ -17,6 +17,7 @@ import {
   invalidateLocalRuntimes,
   manualRuntimeEntries,
   endpointHostPort,
+  lmStudioAutoStartedAt,
 } from "../../local-runtimes/index.js";
 import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -260,7 +261,13 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
   if (method === "GET" && url.pathname === "/api/local-runtimes") {
     const runtimes = getLocalRuntimes();
     if (localRuntimesStale()) void refreshLocalRuntimes().catch(() => {});
-    json(200, { runtimes: runtimes ?? [], manual: manualRuntimeEntries() });
+    json(200, {
+      runtimes: runtimes ?? [],
+      manual: manualRuntimeEntries(),
+      // Epoch ms when LAX flipped LM Studio's API server on this process
+      // lifetime (null = never). Lets the UI label the runtime honestly.
+      lmStudioAutoStartedAt: lmStudioAutoStartedAt(),
+    });
     return true;
   }
   if (method === "POST" && url.pathname === "/api/local-runtimes") {

@@ -8,6 +8,7 @@
  */
 import { candidateEndpoints } from "./endpoints.js";
 import { discoverLocalRuntimes } from "./discovery.js";
+import { maybeAutostartLmStudio } from "./lmstudio-autostart.js";
 import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 
 /** Display-path staleness bound — same spirit as ollama-cloud's 60s TTL. */
@@ -22,7 +23,13 @@ export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      const found = await discoverLocalRuntimes(candidateEndpoints());
+      let found = await discoverLocalRuntimes(candidateEndpoints());
+      // LM Studio app running with its API server toggled off is invisible
+      // to the sweep; flip the server on (gated + throttled inside) and
+      // re-sweep once so its models land in THIS refresh, not the next.
+      if (await maybeAutostartLmStudio(found)) {
+        found = await discoverLocalRuntimes(candidateEndpoints());
+      }
       cache = found;
       refreshedAt = Date.now();
       return found;

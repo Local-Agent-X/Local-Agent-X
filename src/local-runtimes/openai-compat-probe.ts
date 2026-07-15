@@ -59,6 +59,8 @@ function posInt(v: unknown): number | null {
 
 interface RawEntry {
   id?: unknown;
+  /** LM Studio /api/v0: "llm" | "vlm" | "embeddings". Absent on bare /v1. */
+  type?: unknown;
   /** vLLM: the served window. */
   max_model_len?: unknown;
   /** LM Studio /api/v0: model max — NOT the served window. */
@@ -74,6 +76,11 @@ export function entryToModel(raw: unknown): LocalModel | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as RawEntry;
   if (typeof e.id !== "string" || e.id.length === 0) return null;
+  // This seam serves the CHAT picker. When the runtime declares the model
+  // type authoritatively (LM Studio /api/v0), drop embeddings models here
+  // rather than leaning on the downstream name-regex (isEmbeddingModel),
+  // which is a heuristic backstop for runtimes that won't say.
+  if (e.type === "embeddings") return null;
   // Served-window sources only; LM Studio's max_context_length is
   // deliberately ignored (it's a ceiling, not the loaded reality).
   const loaded = e.state === "loaded" ? posInt(e.loaded_context_length) : null;

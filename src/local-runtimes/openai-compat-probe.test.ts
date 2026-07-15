@@ -48,6 +48,17 @@ describe("entryToModel window honesty", () => {
     expect(entryToModel({ noId: true })).toBeNull();
     expect(entryToModel("garbage")).toBeNull();
   });
+
+  it("runtime-declared embeddings models are dropped (chat picker seam)", () => {
+    expect(
+      entryToModel({ id: "text-embedding-nomic-embed-text-v1.5", type: "embeddings", max_context_length: 2048 }),
+    ).toBeNull();
+    // llm/vlm/absent type all pass through — only the authoritative
+    // embeddings declaration excludes.
+    expect(entryToModel({ id: "m", type: "llm" })).not.toBeNull();
+    expect(entryToModel({ id: "m", type: "vlm" })).not.toBeNull();
+    expect(entryToModel({ id: "m" })).not.toBeNull();
+  });
 });
 
 describe("openaiCompatProbe.detect / identify", () => {
@@ -74,7 +85,7 @@ describe("openaiCompatProbe.detect / identify", () => {
 });
 
 describe("openaiCompatProbe.listModels", () => {
-  it("prefers the enhanced /api/v0/models listing (live LM Studio shape)", async () => {
+  it("prefers the enhanced /api/v0/models listing; embeddings entries dropped", async () => {
     stubFetch({
       "/api/v0/models": {
         object: "list",
@@ -89,7 +100,6 @@ describe("openaiCompatProbe.listModels", () => {
     });
     expect(await openaiCompatProbe.listModels(EP)).toEqual([
       { id: "google/gemma-4-e4b", contextWindow: null, tools: true },
-      { id: "text-embedding-nomic-embed-text-v1.5", contextWindow: null, tools: null },
     ]);
   });
 

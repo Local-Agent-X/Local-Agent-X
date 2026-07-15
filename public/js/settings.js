@@ -153,7 +153,7 @@ window.closeSettings = closeSettings;
 // once on load (defined here since it touches the settings DOM).
 function refreshAppearanceUI() {
   const mode = localStorage.getItem('lax_theme') || 'dark';
-  const palette = localStorage.getItem('lax_palette') || 'phosphor';
+  const palette = localStorage.getItem('lax_palette') || 'aurora';
   document.querySelectorAll('#mode-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   document.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('active', c.dataset.palette === palette));
   const rt = document.getElementById('tog-rain');

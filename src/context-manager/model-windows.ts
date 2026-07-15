@@ -1,3 +1,5 @@
+import { getLocalModel, getRuntimeForModel } from "../local-runtimes/index.js";
+
 const MODEL_CONTEXTS: Record<string, number> = {
   // GPT-5.6 family (Sol/Terra/Luna) — 1.05M native, 128k max output
   "gpt-5.6": 1_000_000,      // bare alias routes to Sol
@@ -44,11 +46,28 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gemini-3.1-pro-preview": 1_000_000,
 };
 
-// Ollama models typically have smaller context; use conservative default
 export const DEFAULT_CONTEXT = 128_000;
+
+/**
+ * Floor for a model a local runtime serves but whose window it wouldn't
+ * report (not loaded yet, no Modelfile num_ctx). Deliberately small:
+ * over-compaction is graceful and self-corrects on the next 60s sweep
+ * once the model loads; the old 128k assumption OVERFLOWED for real
+ * (measured 2026-07-15: LAX sent a 35,892-token turn to an LM Studio
+ * model serving 8,192 — hard exceed_context_size_error).
+ */
+export const LOCAL_UNKNOWN_CONTEXT = 8_192;
 
 export function lookupContextWindow(model: string): number {
   if (MODEL_CONTEXTS[model]) return MODEL_CONTEXTS[model];
+  // A model served by a DISCOVERED local runtime reports its REAL window
+  // (src/local-runtimes/ probes: Ollama /api/ps num_ctx, LM Studio loaded
+  // context, vLLM max_model_len, llama.cpp n_ctx). Ground truth beats the
+  // name heuristics below — a local "llama3" is not a cloud family member.
+  const rt = getRuntimeForModel(model);
+  if (rt) {
+    return getLocalModel(rt.chatBaseUrl, model)?.contextWindow ?? LOCAL_UNKNOWN_CONTEXT;
+  }
   const lower = model.toLowerCase();
   if (lower.includes("claude")) return 200_000;
   if (lower.includes("gemini")) return 1_000_000;

@@ -65,6 +65,13 @@ export interface LocalRuntimeProbe {
   /** Cheap reachability + identity check. Never throws; unreachable → false. */
   detect(ep: LocalRuntimeEndpoint, signal?: AbortSignal): Promise<boolean>;
 
+  /**
+   * Optional product identification for a detected endpoint ("LM Studio",
+   * "vLLM", "llama.cpp"). One probe kind can serve many products; the
+   * label is per-endpoint. Never throws; unknown → null.
+   */
+  identify?(ep: LocalRuntimeEndpoint, signal?: AbortSignal): Promise<string | null>;
+
   /** Never throws; unreachable → []. contextWindow/tools may be null here. */
   listModels(ep: LocalRuntimeEndpoint, signal?: AbortSignal): Promise<LocalModel[]>;
 

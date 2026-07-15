@@ -52,10 +52,11 @@ async function surveyEndpoint(c: CandidateEndpoint): Promise<LocalRuntimeInfo | 
     ...(await probe.probeModel(c.endpoint, m.id)),
   }));
   const hostPort = endpointHostPort(c.endpoint.baseUrl) ?? c.endpoint.baseUrl;
+  const identified = c.label ?? (probe.identify ? await probe.identify(c.endpoint) : null);
   return {
     kind: probe.kind,
     id: `${probe.kind}@${hostPort}`,
-    label: c.label ?? probe.label,
+    label: identified ?? probe.label,
     endpoint: c.endpoint,
     chatBaseUrl: `${c.endpoint.baseUrl.replace(/\/+$/, "")}/v1`,
     models,

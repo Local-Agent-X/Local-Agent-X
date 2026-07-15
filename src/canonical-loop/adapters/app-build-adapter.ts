@@ -372,17 +372,13 @@ async function defaultProviderAdapterFactory(
   const config = getRuntimeConfig();
   const secrets = getOrInitSecretsStore(dataDir);
   const prepared = await resolveProvider(config, secrets, dataDir, provider);
-  let target = await resolveOpenAICompatTarget(prepared.provider, {
-    apiKey: prepared.apiKey,
-    customBaseURL: prepared.customBaseURL,
-  });
-  if (prepared.provider === "local") {
-    const { isCloudModel, getCloudOllamaCallTarget } = await import("../../ollama-cloud.js");
-    if (isCloudModel(opts.model ?? prepared.model)) {
-      const cloudTarget = getCloudOllamaCallTarget();
-      if (cloudTarget) target = cloudTarget;
-    }
-  }
+  // Local per-model routing (Turbo cloud override, LM Studio/vLLM/llama.cpp
+  // runtime lookup) lives inside resolveOpenAICompatTarget — one seam.
+  const target = await resolveOpenAICompatTarget(
+    prepared.provider,
+    { apiKey: prepared.apiKey, customBaseURL: prepared.customBaseURL },
+    opts.model ?? prepared.model,
+  );
   if (!target) {
     throw new Error(`provider ${provider} has no usable OpenAI-compat target — check API key and base URL config`);
   }

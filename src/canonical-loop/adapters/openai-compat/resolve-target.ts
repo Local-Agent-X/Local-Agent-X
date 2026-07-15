@@ -11,6 +11,7 @@ import type { OpenAICompatTarget } from "./types.js";
 export async function resolveOpenAICompatTarget(
   provider: string,
   prepared: { apiKey: string; customBaseURL?: string },
+  model?: string,
 ): Promise<OpenAICompatTarget | null> {
   const { PROVIDERS, isHttpProvider } = await import("../../../providers/registry.js");
   const { PROVIDER_IDS } = await import("../../../providers/provider-ids.js");
@@ -27,6 +28,32 @@ export async function resolveOpenAICompatTarget(
   if (provider === "ollama-cloud") {
     const { getCloudOllamaCallTarget } = await import("../../../ollama-cloud.js");
     return getCloudOllamaCallTarget();
+  }
+
+  // "local" routes PER MODEL — this is the one place that decides which
+  // local endpoint serves a given model (previously three call sites each
+  // duplicated the cloud-override half of this rule):
+  //   1. Ollama Turbo models merged into the local picker → cloud target.
+  //   2. The discovered runtime actually serving the model (Ollama,
+  //      LM Studio, vLLM, llama.cpp — src/local-runtimes/ cache).
+  //   3. config.ollamaUrl — pre-seam fallback, keeps old setups working.
+  if (provider === "local" && model) {
+    const { isCloudModel, getCloudOllamaCallTarget } = await import("../../../ollama-cloud.js");
+    if (isCloudModel(model)) {
+      const cloud = getCloudOllamaCallTarget();
+      if (cloud) return cloud;
+    }
+    const { getRuntimeForModel, getLocalRuntimes, refreshLocalRuntimes } =
+      await import("../../../local-runtimes/index.js");
+    let rt = getRuntimeForModel(model);
+    if (!rt && getLocalRuntimes() === null) {
+      // Boot race: cache never populated. One awaited sweep, then retry —
+      // without this the first post-boot turn would 404 against ollamaUrl
+      // for any non-Ollama model.
+      try { await refreshLocalRuntimes(); } catch { /* fall through */ }
+      rt = getRuntimeForModel(model);
+    }
+    if (rt) return { baseURL: rt.chatBaseUrl, apiKey: prepared.apiKey || "ollama" };
   }
 
   const { getRuntimeConfig } = await import("../../../config.js");

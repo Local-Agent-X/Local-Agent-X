@@ -1,0 +1,70 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+import { resolveOpenAICompatTarget } from "../src/canonical-loop/adapters/openai-compat/resolve-target.js";
+import type { LocalRuntimeInfo } from "../src/local-runtimes/types.js";
+
+const LMSTUDIO_RT: LocalRuntimeInfo = {
+  kind: "openai-compat",
+  id: "openai-compat@127.0.0.1:1234",
+  label: "LM Studio",
+  endpoint: { baseUrl: "http://127.0.0.1:1234", origin: "auto" },
+  chatBaseUrl: "http://127.0.0.1:1234/v1",
+  models: [{ id: "google/gemma-4-e4b", contextWindow: null, tools: true }],
+  refreshedAt: 1,
+};
+
+let runtimes: LocalRuntimeInfo[] | null = [LMSTUDIO_RT];
+let cloudModels = new Set<string>();
+
+vi.mock("../src/config.js", () => ({
+  getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:11434" }),
+}));
+vi.mock("../src/local-runtimes/index.js", () => ({
+  getLocalRuntimes: () => runtimes,
+  getRuntimeForModel: (m: string) =>
+    runtimes?.find(r => r.models.some(x => x.id === m)) ?? null,
+  refreshLocalRuntimes: vi.fn(async () => {
+    runtimes = [LMSTUDIO_RT];
+    return runtimes;
+  }),
+}));
+vi.mock("../src/ollama-cloud.js", () => ({
+  isCloudModel: (m: string) => cloudModels.has(m),
+  getCloudOllamaCallTarget: () => ({ baseURL: "https://cloud.example/v1", apiKey: "ck" }),
+}));
+
+beforeEach(() => {
+  runtimes = [LMSTUDIO_RT];
+  cloudModels = new Set();
+});
+
+describe("resolveOpenAICompatTarget local per-model routing", () => {
+  it("routes an LM Studio model to LM Studio's /v1, not ollamaUrl", async () => {
+    const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
+    expect(t).toEqual({ baseURL: "http://127.0.0.1:1234/v1", apiKey: "ollama" });
+  });
+
+  it("falls back to config.ollamaUrl for a model no runtime claims (pre-seam behavior)", async () => {
+    const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "qwen2:7b");
+    expect(t).toEqual({ baseURL: "http://127.0.0.1:11434/v1", apiKey: "ollama" });
+  });
+
+  it("cloud (Turbo) models still override to the cloud target", async () => {
+    cloudModels.add("google/gemma-4-e4b");
+    const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
+    expect(t).toEqual({ baseURL: "https://cloud.example/v1", apiKey: "ck" });
+  });
+
+  it("boot race: null cache triggers ONE awaited sweep, then routes correctly", async () => {
+    runtimes = null;
+    const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
+    expect(t).toEqual({ baseURL: "http://127.0.0.1:1234/v1", apiKey: "ollama" });
+    const { refreshLocalRuntimes } = await import("../src/local-runtimes/index.js");
+    expect(vi.mocked(refreshLocalRuntimes)).toHaveBeenCalledTimes(1);
+  });
+
+  it("no model arg → old behavior exactly (ollamaUrl)", async () => {
+    const t = await resolveOpenAICompatTarget("local", { apiKey: "" });
+    expect(t).toEqual({ baseURL: "http://127.0.0.1:11434/v1", apiKey: "ollama" });
+  });
+});

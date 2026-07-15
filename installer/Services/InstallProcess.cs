@@ -14,7 +14,7 @@ public class InstallProcess
 
     private Process? _proc;
 
-    public void Start(string repoRoot, string? installedCommit = null)
+    public void Start(string repoRoot, string? installedCommit = null, bool installOllama = false)
     {
         var psi = new ProcessStartInfo
         {
@@ -41,6 +41,12 @@ public class InstallProcess
         // Developer-clone installs pass null — git is their source of truth.
         if (!string.IsNullOrEmpty(installedCommit))
             psi.Environment["LAX_INSTALLED_COMMIT"] = installedCommit;
+
+        // Opt-in from the Welcome checkbox. install-common.mjs reads this
+        // (WANT_OLLAMA) to gate BOTH the Ollama runtime install and the ~670 MB
+        // embedding-model pull. Unset/"0" → the fast default: no download, memory
+        // runs on the built-in local embedder.
+        psi.Environment["LAX_INSTALL_OLLAMA"] = installOllama ? "1" : "0";
 
         _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _proc.OutputDataReceived += (_, e) =>

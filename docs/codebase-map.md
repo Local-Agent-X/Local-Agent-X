@@ -68,10 +68,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/routing/` | 5 | 7 | M |  |
 | `src/server/` *(entrypoint)* | 5 | 35 | XL |  |
 | `src/broker-transport/` | 4 | 27 | L |  |
+| `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/codex-client/` | 3 | 5 | M |  |
 | `src/context/` | 3 | 2 | M |  |
-| `src/embedding-providers/` | 3 | 8 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |

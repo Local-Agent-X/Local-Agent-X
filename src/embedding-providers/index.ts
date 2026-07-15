@@ -23,10 +23,12 @@ import type {
 import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 import { LocalOnlyEmbeddingGuard } from "./local-only-guard.js";
 import { getRuntimeConfig } from "../config.js";
+import { DEFAULT_EMBEDDING_PROVIDER } from "./types.js";
 
 const logger = createLogger("embedding-providers");
 
 export type { EmbeddingProviderConfig, EmbeddingProviderType, ExtendedEmbeddingProvider } from "./types.js";
+export { DEFAULT_EMBEDDING_PROVIDER } from "./types.js";
 export { OpenAIEmbeddings } from "./openai.js";
 export { GeminiEmbeddings } from "./gemini.js";
 export { OllamaEmbeddings } from "./ollama.js";
@@ -48,7 +50,7 @@ export function listProviders(): string[] {
  * Falls back to 'local' if no API key is provided and the requested provider needs one.
  */
 export function createEmbeddingProvider(config: EmbeddingProviderConfig = {}): ExtendedEmbeddingProvider {
-  const requested = config.provider ?? "local";
+  const requested = config.provider ?? DEFAULT_EMBEDDING_PROVIDER;
 
   if (isLocalOnlyMode()) {
     const ollamaBaseUrl = config.baseUrl || getRuntimeConfig().ollamaUrl;

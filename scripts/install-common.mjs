@@ -49,6 +49,13 @@ const NODE_LTS_INSTALL = 24;
 // $ver in install.ps1 / install.bat.
 const NODE_PORTABLE_VERSION = "24.16.0";
 const EMBED_MODEL = "mxbai-embed-large";
+// Ollama is an OPT-IN upgrade, not part of the default install. Memory ships on
+// the built-in 'local' embedder (see DEFAULT_EMBEDDING_PROVIDER in
+// src/embedding-providers/types.ts) — zero network, no daemon, works out of the
+// box. Opting in (LAX_INSTALL_OLLAMA=1) installs the Ollama runtime, pulls the
+// ~670 MB embedding model, and seeds embeddingProvider="ollama" for stronger
+// semantic recall. Without it we skip both heavy steps and save the download.
+const WANT_OLLAMA = process.env.LAX_INSTALL_OLLAMA === "1" || process.env.LAX_INSTALL_OLLAMA === "true";
 const IPC = process.argv.includes("--ipc");
 
 // Windows uninstaller written into the install dir + registered in Add/Remove
@@ -879,7 +886,9 @@ stepDone("python");
 // 1c. Ollama runtime — separate from the embed-model pull below. Installing
 //     Ollama is the bootstrap; pulling the model is what makes it usable.
 step("ollama");
-if (has("ollama")) {
+if (!WANT_OLLAMA) {
+  ok("Skipped — memory uses the built-in local embedder (no Ollama needed). Set LAX_INSTALL_OLLAMA=1 to enable Ollama-backed semantic memory.");
+} else if (has("ollama")) {
   ok("Ollama already present");
 } else {
   log("Installing Ollama…");
@@ -1034,7 +1043,11 @@ async function ensureOllamaUp() {
   }
   return false;
 }
-step("embedmodel", `Downloading ${EMBED_MODEL} (~670 MB, one-time)`);
+step("embedmodel", WANT_OLLAMA ? `Downloading ${EMBED_MODEL} (~670 MB, one-time)` : "Using built-in local embedder");
+if (!WANT_OLLAMA) {
+  ok("Local embedder ready — no download needed. Enable Ollama later for stronger semantic memory: install Ollama, run `ollama pull " + EMBED_MODEL + "`, then set Embedding Provider to Ollama in Settings.");
+  stepDone("embedmodel");
+} else {
 ensureOllamaOnPath(); // defensive: cover an install done in a prior run this process can't see
 if (has("ollama")) {
   const ready = await ensureOllamaUp();
@@ -1067,6 +1080,7 @@ if (has("ollama")) {
   warn(`Ollama not on PATH — semantic memory will be unavailable until you install Ollama and run: ollama pull ${EMBED_MODEL}`);
 }
 stepDone("embedmodel");
+}
 
 // 4. Default settings scaffold (~/.lax/settings.json).
 step("settings");
@@ -1084,17 +1098,15 @@ if (!existsSync(settingsFile)) {
   // the first chat into the provider-switcher, which writes settings
   // via /api/providers/switch — so by the time anything actually needs
   // provider+model, they reflect a real working choice the user made.
-  const defaults = {
-    temperature: 0.7,
-    maxIterations: 160,
-    embeddingProvider: "ollama",
-    // Derive from EMBED_MODEL so the seeded value always matches what the
-    // install actually pulled. Previously hardcoded to "nomic-embed-text",
-    // which silently mismatched after the move to mxbai-embed-large (1024d,
-    // benchmark winner for our memory system) — fresh users had the right
-    // model on disk but settings.json pointing at a different one.
-    embeddingModel: EMBED_MODEL,
-  };
+  // Default memory ships on the built-in 'local' embedder — no Ollama, no
+  // model download. Opting into Ollama (LAX_INSTALL_OLLAMA=1) seeds it along
+  // with the model that was actually pulled. When we DO seed ollama, derive the
+  // model from EMBED_MODEL so settings.json always matches what landed on disk
+  // (a past bug hardcoded "nomic-embed-text" and silently mismatched after the
+  // move to mxbai-embed-large, 1024d, our memory-benchmark winner).
+  const defaults = WANT_OLLAMA
+    ? { temperature: 0.7, maxIterations: 160, embeddingProvider: "ollama", embeddingModel: EMBED_MODEL }
+    : { temperature: 0.7, maxIterations: 160, embeddingProvider: "local" };
   writeFileSync(settingsFile, JSON.stringify(defaults, null, 2));
   ok(`Seeded ${settingsFile}`);
 } else {

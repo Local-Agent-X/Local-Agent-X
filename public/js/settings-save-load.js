@@ -112,10 +112,12 @@ async function loadSettings() {
     if (typeof refreshVoiceTier4Visibility === 'function') refreshVoiceTier4Visibility(s.voiceEngine || 'tier4');
     if (typeof loadVoicePicker === 'function') loadVoicePicker(s);
     if (typeof syncPttUiFromConfig === 'function') syncPttUiFromConfig();
-    // Embedding settings
-    set('cfg-emb-provider', s.embeddingProvider || 'ollama');
+    // Embedding settings. Default mirrors DEFAULT_EMBEDDING_PROVIDER in
+    // src/embedding-providers/types.ts — 'local' (built-in, no Ollama). Keep in
+    // sync with that constant; plain JS can't import the TS source of truth.
+    set('cfg-emb-provider', s.embeddingProvider || 'local');
     set('cfg-emb-model', s.embeddingModel || '');
-    onEmbProviderChange(s.embeddingProvider || 'ollama');
+    onEmbProviderChange(s.embeddingProvider || 'local');
     // Not awaited — it probes the live provider and must never delay the
     // settings render; it paints its own status host when the server answers.
     if (typeof renderSetupStatus === 'function') renderSetupStatus();

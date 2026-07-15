@@ -14,6 +14,7 @@ import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
 import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import { embeddingModelInstalled, decideEmbeddingModelAction } from "./embedding-model-match.js";
+import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
 import type { LAXConfig } from "../types.js";
 
 import { createLogger } from "../logger.js";
@@ -61,7 +62,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
   try {
     const { createEmbeddingProvider } = await import("../embedding-providers/index.js");
     const settings = loadSettings() as Record<string, any>;
-    const embProvider = settings.embeddingProvider || "ollama";
+    const embProvider = settings.embeddingProvider || DEFAULT_EMBEDDING_PROVIDER;
     const embModel = settings.embeddingModel || undefined;
 
     let degraded = false;

@@ -34,6 +34,15 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private double _progressValue;
     [ObservableProperty] private bool _progressIndeterminate = true;
 
+    // Opt-in on the Welcome screen: install the Ollama runtime + its ~670 MB
+    // embedding model for meaning-based ("semantic") memory recall. Off by
+    // default — memory works on the built-in lightweight embedder without it,
+    // and skipping it avoids the download. Flows to install-common.mjs as the
+    // LAX_INSTALL_OLLAMA env var, which gates both the ollama and embedmodel
+    // steps. The two downloads are one unit (the model runs inside Ollama), so
+    // this is a single toggle, not two independent checkboxes.
+    [ObservableProperty] private bool _installOllama = false;
+
     // Computed flags for XAML IsVisible bindings — CommunityToolkit's
     // [ObservableProperty] doesn't auto-fire dependent props, so we notify
     // them manually in OnScreenChanged.
@@ -142,7 +151,7 @@ public partial class MainWindowViewModel : ObservableObject
             if (step != null) step.State = "done";
         }
 
-        _process.Start(_repoRoot, _source.ResolvedCommit);
+        _process.Start(_repoRoot, _source.ResolvedCommit, InstallOllama);
     }
 
     [RelayCommand]

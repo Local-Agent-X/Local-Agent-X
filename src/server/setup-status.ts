@@ -21,6 +21,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
 
 export interface DegradedComponent {
   /** Install step id from ALL_STEPS (e.g. "ollama"), or a runtime component id. */
@@ -116,7 +117,7 @@ export async function probeEmbeddingsDegraded(): Promise<boolean | null> {
   try {
     const { loadSettings } = await import("../settings.js");
     const settings = loadSettings() as Record<string, unknown>;
-    const provider = String(settings.embeddingProvider || "ollama");
+    const provider = String(settings.embeddingProvider || DEFAULT_EMBEDDING_PROVIDER);
     // Anything that isn't a local Ollama can't be probed from here, and its
     // failures are per-request rather than a service being down. Unknown.
     if (provider !== "ollama") return null;

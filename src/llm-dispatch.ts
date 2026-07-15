@@ -29,6 +29,7 @@ import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
 import type { ProviderId } from "./providers/provider-ids.js";
 import type { ProviderRequest } from "./providers/adapter/types.js";
 import { createLogger } from "./logger.js";
+import { getRuntimeConfig } from "./config.js";
 
 const logger = createLogger("llm-dispatch");
 
@@ -149,7 +150,8 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
 
 async function callOllama(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
   try {
-    const res = await fetch("http://localhost:11434/api/generate", {
+    const base = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+    const res = await fetch(`${base}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, prompt, stream: false, options: { temperature, num_predict: maxTokens } }),

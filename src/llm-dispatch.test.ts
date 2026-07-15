@@ -166,7 +166,7 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
   it("ollama drops responseFormat silently — body unchanged", async () => {
     await dispatch({ prompt: "ping", provider: "ollama", responseFormat: RESPONSE_FORMAT });
     const body = sentBody();
-    expect(fetchSpy.mock.calls[0][0]).toBe("http://localhost:11434/api/generate");
+    expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:11434/api/generate");
     expect("response_format" in body).toBe(false);
   });
 

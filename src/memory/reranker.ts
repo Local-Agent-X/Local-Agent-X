@@ -10,6 +10,7 @@ import type { MemorySearchResult } from "./index.js";
 
 import { createLogger } from "../logger.js";
 import { resolveCredential } from "../auth/resolve.js";
+import { getRuntimeConfig } from "../config.js";
 const logger = createLogger("memory-reranker");
 
 export interface RerankOptions {
@@ -69,7 +70,8 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
   if (provider === "ollama") {
     const model = options.model || "qwen2:7b";
     try {
-      const res = await fetch("http://localhost:11434/api/generate", {
+      const base = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+      const res = await fetch(`${base}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0, num_predict: 200 } }),

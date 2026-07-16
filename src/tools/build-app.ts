@@ -141,11 +141,37 @@ export function resolveBuildProvider(
  * default is a retired model (gpt-5.3-codex), so build_app must pass one
  * explicitly: the chat's runtime model when it's valid for the provider,
  * else the provider's registry default.
+ *
+ * The membership check is only meaningful for providers that HAVE a static
+ * catalog. `local` and `ollama-cloud` populate `models` dynamically from the
+ * src/local-runtimes/ discovery sweep and ship an empty static list by design
+ * (see the `models` field docs in providers/registry.ts) — so for them
+ * `includes()` is unconditionally false. Treating that as "invalid model" made
+ * every local build silently fall back to PROVIDERS.local.defaultModel
+ * ("qwen2:7b"), discarding the model the user actually picked. That's the
+ * opposite of this function's documented contract ("resolveBuildModel honors
+ * whatever's selected" — registry.ts, on the coding-specialist models).
+ *
+ * An EMPTY static list therefore means "catalog is dynamic, membership is
+ * unprovable, trust the selection" — never "fall back to the default". Keyed
+ * off list emptiness rather than a `provider === "local"` special-case so a
+ * future dynamic-catalog provider inherits the right behavior for free.
+ *
+ * Concretely, the qwen2:7b fallback was the worst reachable outcome: it's the
+ * model this codebase documents as THE exemplar of silently returning empty
+ * when sent tools, so the builder would narrate instead of writing files and
+ * die on artifact_missing — while the user's actual pick may have been fine.
+ * It also mis-routed the endpoint (resolve-target looks the model up in the
+ * runtime cache; a phantom model finds nothing and falls back to the Ollama
+ * URL) and mis-sized the context window.
  */
 export function resolveBuildModel(provider: string, runtimeModel: string | undefined): string | undefined {
   const meta = PROVIDERS[provider as keyof typeof PROVIDERS];
-  if (runtimeModel && meta?.models.includes(runtimeModel)) return runtimeModel;
-  return meta?.defaultModel || undefined;
+  if (!meta) return undefined;
+  if (!runtimeModel) return meta.defaultModel || undefined;
+  if (meta.models.length === 0) return runtimeModel;
+  if (meta.models.includes(runtimeModel)) return runtimeModel;
+  return meta.defaultModel || undefined;
 }
 
 export function resolveBuildStrategy(provider: string): AgentExecStrategy {

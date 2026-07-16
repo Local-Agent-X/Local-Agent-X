@@ -44,6 +44,30 @@ describe("fillSecretScript", () => {
 	it("focuses the field so a following real Enter lands on it", () => {
 		expect(fillSecretScript("#pw", SECRET)).toContain("el.focus()");
 	});
+
+	it("generates syntactically valid JS even for hostile values", () => {
+		// String pins can't catch a template slip that breaks the script itself.
+		const nasty = `a"b\\c'; alert(1); // `;
+		for (const script of [fillSecretScript("#pw", nasty), describeElementScript("#pw"), readValueScript({ selector: "#pw" })]) {
+			expect(() => new Function(`return ${script}`)).not.toThrow();
+		}
+	});
+
+	it("writes through the prototype's native value setter, not plain assignment", () => {
+		// React (>=16) dedupes synthetic input events against its own value
+		// tracker on the element instance; a bare `el.value =` write updates the
+		// tracker too, so onChange never fires and framework state stays empty —
+		// while reading back as "landed". The native prototype setter bypasses
+		// the instance tracker. Plain assignment must survive only as the
+		// fallback for exotic value-bearing elements.
+		const script = fillSecretScript("#pw", SECRET);
+		expect(script).toContain('Object.getOwnPropertyDescriptor(proto, "value")');
+		expect(script).toContain(`desc.set.call(el, ${JSON.stringify(SECRET)})`);
+		expect(script).toContain("HTMLTextAreaElement.prototype");
+		// The bare assignment appears exactly once — the else-branch fallback.
+		const bareAssigns = script.match(/el\.value = /g) ?? [];
+		expect(bareAssigns).toHaveLength(1);
+	});
 });
 
 describe("asFillOutcome", () => {

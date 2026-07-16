@@ -113,7 +113,15 @@ export function fillSecretScript(selector: string, value: string): string {
 	if (!("value" in el)) return { kind: "not-fillable" };
 	var type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
 	try { el.focus(); } catch (e) {}
-	el.value = ${val};
+	// React (>=16) tracks the value on the element instance, so a plain
+	// el.value assignment gets deduped by its value tracker and onChange never
+	// fires — the field looks filled but the framework state stays empty. Write
+	// through the prototype's native setter to defeat the tracker.
+	var proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+		: el instanceof HTMLInputElement ? HTMLInputElement.prototype
+		: null;
+	var desc = proto && Object.getOwnPropertyDescriptor(proto, "value");
+	if (desc && desc.set) { desc.set.call(el, ${val}); } else { el.value = ${val}; }
 	el.dispatchEvent(new Event("input", { bubbles: true }));
 	el.dispatchEvent(new Event("change", { bubbles: true }));
 	if (el.value === ${val}) return { kind: "landed" };

@@ -174,11 +174,52 @@ export async function nullDimensionMismatchedEmbeddings(
 }
 
 /**
+ * Self-heal degraded-mode poison: NULL any chunk whose stored vector is
+ * all-zero. A provider returns an all-zero vector as its degraded sentinel
+ * (Ollama wedged mid-model-load, missing API key); if one gets persisted it
+ * is correct-dimension and non-NULL, so neither the dimension self-heal nor
+ * the missing-chunk backfill ever touches it — the chunk stays permanently
+ * unsearchable (vector search scores a zero vector 0 against every query).
+ * NULLing it hands the chunk to reembedMissingChunks, which rebuilds a real
+ * vector once the provider recovers; until then the chunk is at least
+ * keyword-searchable instead of silently invisible.
+ *
+ * An all-zero JSON vector ("[0,0,...,0]") is exactly the set of stored
+ * vectors containing no 1-9 digit — every real component carries a
+ * significant digit, and JSON.stringify renders the only other value, 0, as
+ * bare "0". The GLOB test runs in SQL so we never parse each vector in JS.
+ */
+export async function nullZeroVectorEmbeddings(
+  db: InstanceType<typeof Database>
+): Promise<number> {
+  return nullEmbeddingsInBatches(db, " AND embedding NOT GLOB '*[1-9]*'", []);
+}
+
+/**
+ * Drop all-zero rows from the content-keyed embedding cache. cacheEmbedding
+ * now refuses to write them, but rows persisted before that guard would be
+ * served straight back by getCachedEmbedding — re-poisoning the very chunk
+ * nullZeroVectorEmbeddings just cleared. One statement: the cache is
+ * LRU-capped, so it stays small.
+ */
+export function purgeZeroVectorEmbeddingCache(
+  db: InstanceType<typeof Database>
+): number {
+  try {
+    return db
+      .prepare("DELETE FROM embedding_cache WHERE embedding NOT GLOB '*[1-9]*'")
+      .run().changes;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Provider-attach reconciliation — the boot path behind
  * MemoryIndex.setEmbeddingProvider. Async: the signature wipe and the
- * dimension self-heal batch their full-table sqlite work and yield the
- * event loop, so boot-time callers no longer starve concurrent awaited
- * phases (measured 17-21s setupVoiceWs inflation).
+ * self-heal passes batch their full-table sqlite work and yield the event
+ * loop, so boot-time callers no longer starve concurrent awaited phases
+ * (measured 17-21s setupVoiceWs inflation).
  *
  * Beyond the clean provider-change wipe, chunks falsely adopted from a
  * pre-signature corpus (or survivors of a partial wipe) keep a
@@ -194,6 +235,21 @@ export async function attachEmbeddingProvider(
 ): Promise<{ verdict: SignatureVerdict; hasVec: boolean }> {
   const verdict = await reconcileEmbeddingSignature(db, provider);
   const { hasVec } = initVectorTable(db, provider.dimensions);
+
+  // All-zero sentinel vectors are invalid for EVERY provider, so heal them
+  // regardless of verdict — even the local fallback is better off
+  // keyword-searching a NULLed chunk than never returning a zero-vector one.
+  // NULLed chunks re-embed on the next healthy backfill; the cache purge stops
+  // getCachedEmbedding re-serving a stale zero into a chunk just cleared.
+  const purged = purgeZeroVectorEmbeddingCache(db);
+  const zeroed = await nullZeroVectorEmbeddings(db);
+  if (zeroed > 0 || purged > 0) {
+    logger.warn(
+      `[memory] Self-heal: cleared ${zeroed} all-zero chunk vector(s) + ${purged} cache row(s) ` +
+      `(degraded-mode embedding poison) — will re-embed under ${provider.name}/${provider.model} once healthy`,
+    );
+  }
+
   if (verdict !== "degraded") {
     const healed = await nullDimensionMismatchedEmbeddings(db, provider);
     if (healed > 0) {

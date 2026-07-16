@@ -16,6 +16,8 @@ export {
   reconcileEmbeddingSignature,
   countChunksMissingEmbedding,
   nullDimensionMismatchedEmbeddings,
+  nullZeroVectorEmbeddings,
+  purgeZeroVectorEmbeddingCache,
   attachEmbeddingProvider,
   type SignatureVerdict,
 } from "./index-embedding-reconcile.js";

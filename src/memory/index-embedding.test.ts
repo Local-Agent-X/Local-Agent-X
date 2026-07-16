@@ -16,6 +16,8 @@ import {
   reembedMissingChunks,
   countChunksMissingEmbedding,
   nullDimensionMismatchedEmbeddings,
+  nullZeroVectorEmbeddings,
+  purgeZeroVectorEmbeddingCache,
 } from "./index-embedding.js";
 import { DEFAULT_MEMORY_CONFIG, type EmbeddingProvider } from "./types.js";
 
@@ -150,6 +152,61 @@ describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
 
     // Now embedded at the correct dimension — findable again. No human reindex.
     expect(embeddingOf(orphan)).toHaveLength(8);
+    expect(countChunksMissingEmbedding(db)).toBe(0);
+  });
+});
+
+// Degraded-mode poison (live: Peter's Windows box, 2026-07): while Ollama was
+// wedged mid-model-load, prepareAgentRequest persisted all-zero sentinel
+// vectors. They're correct-dimension and non-NULL, so nullDimensionMismatched
+// (dims match) and reembedMissingChunks (not NULL) BOTH skip them — the chunk
+// is permanently invisible to vector search (a zero vector scores 0 against
+// every query). The write guard in cacheEmbedding stops NEW zeros; this pass
+// heals the ones already on disk, on every box, at boot — no human reindex.
+describe("nullZeroVectorEmbeddings + purgeZeroVectorEmbeddingCache (degraded-mode poison heal)", () => {
+  it("nulls all-zero chunk vectors and leaves real ones — including negatives — intact", async () => {
+    const db = memory["db"];
+    const poison = insertChunk("wedged-ollama chunk", [0, 0, 0, 0]);
+    const real = insertChunk("healthy chunk", [0.1, 0.2, 0.3, 0.4]);
+    // A vector that's zero everywhere but one negative component must SURVIVE:
+    // the GLOB test keys on 1-9 digits, and "-0.5" carries a 5.
+    const negative = insertChunk("mostly-zero real chunk", [0, 0, 0, -0.5]);
+
+    expect(await nullZeroVectorEmbeddings(db)).toBe(1);
+    expect(embeddingOf(poison)).toBeNull();
+    expect(embeddingOf(real)).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expect(embeddingOf(negative)).toEqual([0, 0, 0, -0.5]);
+  });
+
+  it("purges all-zero cache rows and keeps real ones", () => {
+    const db = memory["db"];
+    const ins = db.prepare(
+      "INSERT INTO embedding_cache (hash, provider, model, embedding, updated_at) VALUES (?, 'ollama', 'mxbai', ?, ?)"
+    );
+    ins.run("h-zero", "[0,0,0,0]", Date.now());
+    ins.run("h-real", "[0.1,0.2,0.3,0.4]", Date.now());
+
+    expect(purgeZeroVectorEmbeddingCache(db)).toBe(1);
+    const rows = db.prepare("SELECT hash FROM embedding_cache ORDER BY hash").all() as { hash: string }[];
+    expect(rows.map((r) => r.hash)).toEqual(["h-real"]);
+  });
+
+  it("PROVES the heal: a zero-vector chunk the other passes can't see is re-embedded and made searchable", async () => {
+    const db = memory["db"];
+    const prov = fakeProvider("ollama", "mxbai", 4);
+    await reconcileEmbeddingSignature(db, prov);
+
+    const poison = insertChunk("peter's marfan diagnosis", [0, 0, 0, 0]);
+    // The two existing self-heals are both BLIND to it: dims match (4 == 4) and
+    // the vector is not NULL.
+    expect(await nullDimensionMismatchedEmbeddings(db, prov)).toBe(0);
+    expect(countChunksMissingEmbedding(db)).toBe(0);
+
+    // The zero-vector heal catches it, then the standard backfill rebuilds it.
+    expect(await nullZeroVectorEmbeddings(db)).toBe(1);
+    expect(embeddingOf(poison)).toBeNull();
+    await reembedMissingChunks(db, prov, DEFAULT_MEMORY_CONFIG, false);
+    expect(embeddingOf(poison)).toEqual([0.25, 0.5, 0.75, 1]);
     expect(countChunksMissingEmbedding(db)).toBe(0);
   });
 });

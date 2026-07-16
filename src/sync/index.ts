@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -84,18 +84,38 @@ export class AgentSync {
     // The set-url below also migrates installs whose .git/config still has the
     // old token-embedded remote: it's overwritten with this bare one.
     const url = this.config.repoUrl;
-    if (!existsSync(this.syncDir)) {
-      mkdirSync(this.syncDir, { recursive: true });
-      try {
-        await execFileAsync("git", [...gitCredentialArgs(token), "clone", url, this.syncDir], { timeout: 60_000, windowsHide: true, env: { ...process.env, ...gitCredentialEnv(token) } });
-      } catch {
-        await execFileAsync("git", ["-c", "credential.helper=", "init"], { cwd: this.syncDir, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
-        await this.git("remote", "add", "origin", url);
-      }
-    }
+    if (!existsSync(join(this.syncDir, ".git"))) await this.materializeRepo(url, token);
     try { await this.git("remote", "set-url", "origin", url); } catch {}
     await this.recoverStrandedGitState();
     return true;
+  }
+
+  // Guard on .git, NOT on the directory. Live failure (2026-07-14): a clone
+  // failed, its fallback `git init` failed too, and the mkdir'd directory
+  // survived. Every later init saw the directory, skipped the clone, and
+  // returned true for a path that was not a repository at all — so push()
+  // happily filled it with the user's brain via copyToSync while every git
+  // command failed, and pull() reported "Could not reach remote" forever.
+  // A directory is not a repo; only .git is.
+  private async materializeRepo(url: string, token: string): Promise<void> {
+    // A populated repo-less dir is quarantined rather than adopted in place.
+    // sync-repo is a DERIVED mirror: copyToSync rebuilds every file in it from
+    // dataDir, so nothing is lost by discarding it — while `git init` + reset
+    // over the leftovers would stage every remote-only file (other machines'
+    // data) as a DELETION, re-creating the 2026-05-05 mass-delete. Quarantine
+    // keeps the bytes on disk for inspection and lets the clone below be the
+    // one true path.
+    if (existsSync(this.syncDir) && readdirSync(this.syncDir).length > 0) {
+      const quarantine = `${this.syncDir}.broken`;
+      rmSync(quarantine, { recursive: true, force: true });
+      renameSync(this.syncDir, quarantine);
+      logger.warn(`[sync] sync-repo had no .git — moved to ${quarantine} and re-cloning from origin`);
+    }
+    mkdirSync(this.syncDir, { recursive: true });
+    // Let a failed clone throw. The old silent `git init` fallback is what
+    // manufactured the wedged non-repo: an empty dir is retried on the next
+    // sync, but a broken one is forever.
+    await execFileAsync("git", [...gitCredentialArgs(token), "clone", url, this.syncDir], { timeout: 60_000, windowsHide: true, env: { ...process.env, ...gitCredentialEnv(token) } });
   }
 
   // A git child killed mid-flight (e.g. a hard app exit during a heartbeat
@@ -248,7 +268,16 @@ export class AgentSync {
     this.isSyncing = true;
     try {
       if (!await this.init()) { this.isSyncing = false; return { success: false, message: "Sync token missing from vault — add GITHUB_SYNC_TOKEN in Secrets, or re-paste your token in Settings → Sync." }; }
-      try { await this.git("fetch", "origin", "main"); } catch { this.isSyncing = false; return { success: false, message: "Could not reach remote" }; }
+      // Name the cause. The bare `catch {}` here collapsed offline, expired
+      // token, wrong repo URL, missing main branch and "not a repo at all"
+      // into one opaque string, with git's stderr — already attached by the
+      // git() helper — thrown away at the one place it was needed.
+      try { await this.git("fetch", "origin", "main"); } catch (e) {
+        const msg = `Could not reach remote: ${(e as Error).message.split("\n")[0].slice(0, 300)}`;
+        logger.error(`[sync] ${msg}`);
+        this.isSyncing = false;
+        return { success: false, message: msg };
+      }
       let hasChanges = true;
       try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}
       if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await resolveConflicts(this.syncDir, this.git); } }

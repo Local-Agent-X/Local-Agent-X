@@ -188,9 +188,10 @@ const MUTATING_BROWSER_ACTIONS = new Set([
 ]);
 // read_console/read_network belong here too: a secret-bearing page's console
 // output and request URLs are page-controlled channels that can carry the
-// same secrets its DOM does.
+// same secrets its DOM does. bookmark_add reads the page's url+title AND
+// persists them to disk — on a vault-ish page that's a secret write-out.
 const SECRET_READING_ACTIONS = new Set([
-  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network",
+  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "bookmark_add",
 ]);
 
 function pageLabel(url: URL): string {

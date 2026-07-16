@@ -62,6 +62,15 @@ const MAX_LINE_LENGTH = 240;
 // gets dropped entirely — better to lose one breadcrumb than leak a secret.
 const SENSITIVE_TARGET = /password|passwd|pwd|token|secret|api[-_]?key|credential|value=|otp\b|2fa/i;
 
+/** ONE law for "does this page-controlled text smell credential-shaped?" —
+ *  shared with the history/bookmark stores so titles and URLs are judged by
+ *  the same pattern (extended with phrasings that appear in TITLES rather
+ *  than URLs: one-time / verification codes). */
+const SENSITIVE_TITLE_EXTRAS = /one[- ]?time (code|password)|verification code|security code/i;
+export function containsSensitiveText(text: string): boolean {
+  return SENSITIVE_TARGET.test(text) || SENSITIVE_TITLE_EXTRAS.test(text);
+}
+
 // surface/action are LABELS. No '=', ':', '@', '?', '&' — the characters every
 // key=value / token smuggle needs. A producer that violates this loses the
 // whole event (fail closed), not just the field.

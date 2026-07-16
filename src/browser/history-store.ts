@@ -17,11 +17,11 @@
  * module).
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { redactTarget } from "../orchestrator/ui-event-store.js";
+import { containsSensitiveText, redactTarget } from "../orchestrator/ui-event-store.js";
 
 const HISTORY_FILE = join(getLaxDir(), "browser-history.json");
 
@@ -44,6 +44,19 @@ export interface HistoryEntry {
 export function sanitizeHistoryUrl(url: string): string | null {
   if (typeof url !== "string") return null;
   return redactTarget(url);
+}
+
+/**
+ * Titles are as page-controlled as urls and carry the same secrets
+ * ("Reset password — one-time code 934812"). The PRIVACY LAW covers them
+ * too: a credential-shaped title is withheld (stored empty), judged by the
+ * same shared pattern the url law uses.
+ */
+export function sanitizeHistoryTitle(title: unknown): string {
+  if (typeof title !== "string") return "";
+  const clean = title.trim().slice(0, 300);
+  if (clean === "") return "";
+  return containsSensitiveText(clean) ? "" : clean;
 }
 
 export class BrowserHistoryStore {
@@ -71,8 +84,15 @@ export class BrowserHistoryStore {
   }
 
   private persist(): void {
-    writeFileSync(HISTORY_FILE, JSON.stringify(this.entries, null, 2), "utf-8");
+    // 0600: browsing breadcrumbs are the user's private data. mode only
+    // applies on create, so chmod covers a pre-existing looser file.
+    writeFileSync(HISTORY_FILE, JSON.stringify(this.entries, null, 2), { encoding: "utf-8", mode: 0o600 });
+    try { chmodSync(HISTORY_FILE, 0o600); } catch { /* best-effort on Windows ACL setups */ }
   }
+
+  /** Profiles whose most recent recordVisit was DROPPED by redaction — their
+   *  follow-up "title" event must not stamp the previous, unrelated row. */
+  private readonly titleSuppressed = new Set<string>();
 
   /**
    * Record a visit. The url is redacted first (see PRIVACY LAW above); a
@@ -81,15 +101,22 @@ export class BrowserHistoryStore {
    * updated when provided) instead of minting a duplicate row.
    */
   recordVisit(profileId: string, url: string, title = ""): HistoryEntry | null {
-    const clean = sanitizeHistoryUrl(url);
-    if (clean === null) return null;
     const pid = profileId || "default";
+    const clean = sanitizeHistoryUrl(url);
+    if (clean === null) {
+      // The visit was credential-shaped: suppress its follow-up title too,
+      // or it would stamp the previous, unrelated row (misattribution).
+      this.titleSuppressed.add(pid);
+      return null;
+    }
+    this.titleSuppressed.delete(pid);
+    const cleanTitle = sanitizeHistoryTitle(title);
     const now = Date.now();
 
     const latest = this.latestFor(pid);
     if (latest && latest.url === clean) {
       latest.ts = now;
-      if (title.trim() !== "") latest.title = title.trim();
+      if (cleanTitle !== "") latest.title = cleanTitle;
       this.persist();
       return latest;
     }
@@ -98,7 +125,7 @@ export class BrowserHistoryStore {
       id: "hist-" + now.toString(36) + "-" + randomBytes(3).toString("hex"),
       profileId: pid,
       url: clean,
-      title: title.trim(),
+      title: cleanTitle,
       ts: now,
     };
     this.entries.push(entry);
@@ -108,11 +135,17 @@ export class BrowserHistoryStore {
   }
 
   /** Stamp a title onto the profile's most recent entry (navigate events carry
-   *  no title; it arrives as a follow-up "title" event). No-op without one. */
+   *  no title; it arrives as a follow-up "title" event). No-op without one,
+   *  when the title is credential-shaped (same law as urls), or when the
+   *  profile's last visit was dropped by redaction — that title belongs to
+   *  the dropped page, not to whatever row happens to be latest. */
   touchTitle(profileId: string, title: string): void {
-    const latest = this.latestFor(profileId || "default");
-    if (!latest || typeof title !== "string" || title.trim() === "") return;
-    latest.title = title.trim().slice(0, 300);
+    const pid = profileId || "default";
+    if (this.titleSuppressed.has(pid)) return;
+    const latest = this.latestFor(pid);
+    const clean = sanitizeHistoryTitle(title);
+    if (!latest || clean === "") return;
+    latest.title = clean;
     this.persist();
   }
 

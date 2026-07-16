@@ -118,3 +118,13 @@ describe("3-place sync: enum, prose, read-only classification", () => {
     expect(effect({ action: "bookmark_add" })).toEqual({ class: "non-idempotent" });
   });
 });
+
+describe("bookmark_add sensitive-page gate (skeptic regression)", () => {
+  it("is blocked on secret-bearing pages like the other secret-reading actions", async () => {
+    const { sensitivePageActionDecision } = await import("../../browser/guards.js");
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "bookmark_add").disposition).toBe("blocked");
+    expect(sensitivePageActionDecision("https://example.com/account-recovery/start", "bookmark_add").disposition).toBe("blocked");
+    // Ordinary pages stay bookmarkable.
+    expect(sensitivePageActionDecision("https://news.ycombinator.com/", "bookmark_add").disposition).toBe("allow");
+  });
+});

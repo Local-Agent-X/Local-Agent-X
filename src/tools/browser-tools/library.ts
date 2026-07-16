@@ -85,7 +85,9 @@ export async function handleBookmarkAdd(
     profileId: manager.getProfileId(),
     addedBy: "agent",
   });
-  return ok(`Bookmarked: ${bookmark.title ? `${bookmark.title} — ` : ""}${bookmark.url} (id: ${bookmark.id})`);
+  // title/url are page-controlled — same external-content posture as the
+  // listings, even for this one-line echo.
+  return ok(`Bookmarked (id: ${bookmark.id}):\n${wrapExternalContent(`${bookmark.title ? `${bookmark.title} — ` : ""}${bookmark.url}`, "browser.bookmark-add")}`);
 }
 
 /** Read-only. args.find = substring query over url+title+tags. */

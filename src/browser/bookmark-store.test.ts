@@ -75,3 +75,26 @@ describe("BrowserBookmarkStore", () => {
     expect(store.list()).toHaveLength(0);
   });
 });
+
+describe("credential-param scrub (skeptic regression)", () => {
+  it("removes credential-named query params but keeps benign ones", async () => {
+    const { scrubCredentialParams } = await import("./bookmark-store.js");
+    expect(scrubCredentialParams("https://x.com/watch?v=abc123&session_token=SECRET")).toBe("https://x.com/watch?v=abc123");
+    expect(scrubCredentialParams("https://x.com/reset?token=SECRET")).toBe("https://x.com/reset");
+    expect(scrubCredentialParams("https://x.com/cb#access_token=SECRET&state=1")).toBe("https://x.com/cb#state=1");
+    expect(scrubCredentialParams("https://x.com/doc#section-2")).toBe("https://x.com/doc#section-2");
+    expect(scrubCredentialParams("https://x.com/search?q=how+to+cook")).toBe("https://x.com/search?q=how+to+cook");
+  });
+
+  it("add() persists the scrubbed url, not the live token", async () => {
+    const { BrowserBookmarkStore } = await import("./bookmark-store.js");
+    BrowserBookmarkStore._resetForTest();
+    const bm = BrowserBookmarkStore.getInstance().add({
+      url: "https://accounts.example.com/page?tab=2&auth_code=LIVE-SECRET",
+      title: "Account page",
+      addedBy: "agent",
+    });
+    expect(bm.url).toBe("https://accounts.example.com/page?tab=2");
+    expect(JSON.stringify(BrowserBookmarkStore.getInstance().list({}))).not.toContain("LIVE-SECRET");
+  });
+});

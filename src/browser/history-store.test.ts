@@ -150,3 +150,30 @@ describe("remove + clear", () => {
     expect(store.query()).toHaveLength(0);
   });
 });
+
+describe("title privacy law (skeptic regression)", () => {
+  it("withholds credential-shaped titles at recordVisit and touchTitle", () => {
+    const store = freshStore();
+    store.recordVisit("default", "https://example.com/inbox", "Reset password — one-time code 934812 for alice@example.com");
+    expect(store.query()[0].title).toBe("");
+    store.touchTitle("default", "Your verification code is 112233");
+    expect(store.query()[0].title).toBe("");
+    // A benign title still lands.
+    store.touchTitle("default", "Inbox — 3 unread");
+    expect(store.query()[0].title).toBe("Inbox — 3 unread");
+  });
+
+  it("a dropped credential url suppresses its follow-up title (no misattribution)", () => {
+    const store = freshStore();
+    store.recordVisit("default", "https://news.example.com/story", "Big Launch");
+    // Credential-shaped url: no row minted…
+    expect(store.recordVisit("default", "https://bank.example.com/reset-password")).toBeNull();
+    // …and its title event must NOT stamp the unrelated previous row.
+    store.touchTitle("default", "Reset your password — SecureBank");
+    expect(store.query()[0].title).toBe("Big Launch");
+    // The next ACCEPTED visit re-enables titles.
+    store.recordVisit("default", "https://news.example.com/other", "");
+    store.touchTitle("default", "Other Story");
+    expect(store.query()[0].title).toBe("Other Story");
+  });
+});

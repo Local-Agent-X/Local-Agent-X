@@ -169,12 +169,45 @@ describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 		expect(list.active).toBe(t2);
 	});
 
-	it("switchMergedTab ADOPTS a user view at its merged index", async () => {
+	it("switchMergedTab ADOPTS a user view at its merged index (after a listing pinned it)", async () => {
 		mockList([userView("view-user-1", "https://u.example/", "U")]);
+		await formatTabsListing(list, async () => { /* refresh mocked out */ });
 		const res = await switchMergedTab(list, 1);
 		expect(res.ok).toBe(true);
 		expect(list.active.viewId).toBe("view-user-1");
 		expect(list.active.owned).toBe(false);
+	});
+
+	it("REFUSES to adopt a user view without a prior listing (no pin to verify)", async () => {
+		mockList([userView("view-user-1", "https://u.example/", "U")]);
+		const res = await switchMergedTab(list, 1);
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.message).toContain("requires a current listing");
+		expect(list.active.viewId).toBe(FIRST_ID);
+	});
+
+	it("REFUSES to adopt when the pool changed since the listing (index now names a different tab)", async () => {
+		// Listing sees A at [1]; A closes and B slides into slot [1].
+		mockList([userView("view-user-A", "https://a.example/", "A")]);
+		await formatTabsListing(list, async () => { /* refresh mocked out */ });
+		mockList([userView("view-user-B", "https://b.example/", "B")]);
+		const res = await switchMergedTab(list, 1);
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.message).toContain("tabs changed since the last 'tabs' listing");
+		expect(list.active.viewId).toBe(FIRST_ID);
+		// A fresh listing re-pins and the switch then succeeds.
+		await formatTabsListing(list, async () => { /* refresh mocked out */ });
+		const retry = await switchMergedTab(list, 1);
+		expect(retry.ok).toBe(true);
+		expect(list.active.viewId).toBe("view-user-B");
+	});
+
+	it("own-tab switches stay index-based — no listing required", async () => {
+		const t2 = list.openOwned();
+		list.setActive(list.all()[0]);
+		mockList([]);
+		const res = await switchMergedTab(list, 1);
+		expect(res).toEqual({ ok: true, tab: t2 });
 	});
 
 	it("rejects an out-of-range index with the canonical invalid-index message", async () => {

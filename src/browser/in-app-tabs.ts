@@ -111,7 +111,13 @@ export class TabList {
 		}
 		this.tabs.length = 1;
 		this.activeIdx = 0;
+		this.lastListing = null;
 	}
+
+	/** viewIds in the order the last `tabs` listing printed them — the pin
+	 *  switchMergedTab verifies against, so a pool that changed between the
+	 *  listing and the switch can never cause adoption of the WRONG user tab. */
+	lastListing: string[] | null = null;
 }
 
 // ── Per-tab view lifecycle (bridge ops keyed on the tab's viewId) ─────────
@@ -216,6 +222,7 @@ export async function formatTabsListing(
 		const userMark = entry.kind === "user" ? ` [user tab — switch_tab(${i}) takes control]` : "";
 		return `[${i}] ${label}${active}${userMark}`;
 	});
+	list.lastListing = merged.map((entry) => (entry.kind === "own" ? entry.tab.viewId : entry.view.viewId));
 	return `${merged.length} tab(s) open:\n${rows.join("\n")}`;
 }
 
@@ -225,7 +232,15 @@ export type MergedSwitchResult =
 
 /** Resolve a switch over the same combined ordering the listing printed:
  *  an own tab becomes active; a user view is ADOPTED (owned:false) and
- *  becomes active — the takeover seam. */
+ *  becomes active — the takeover seam.
+ *
+ *  Takeover is PINNED to the last listing: the pool can change between the
+ *  `tabs` call and the switch (the human opens/closes tabs), and an index
+ *  alone would then silently grab whatever slid into that slot. Adopting a
+ *  user view therefore requires a prior listing whose viewId at this index
+ *  still matches; a mismatch (or no listing at all) refuses and asks for a
+ *  fresh `tabs`. Switches onto the agent's OWN tabs stay index-based — that
+ *  list only changes by the agent's own actions. */
 export async function switchMergedTab(list: TabList, index: number): Promise<MergedSwitchResult> {
 	const merged = await mergeTabs(list);
 	if (index < 0 || index >= merged.length) {
@@ -235,6 +250,21 @@ export async function switchMergedTab(list: TabList, index: number): Promise<Mer
 		};
 	}
 	const entry = merged[index];
+	if (entry.kind === "user") {
+		const pinned = list.lastListing?.[index];
+		if (pinned === undefined) {
+			return {
+				ok: false,
+				message: `Taking control of a user tab requires a current listing. Run 'tabs' first, then switch_tab(${index}).`,
+			};
+		}
+		if (pinned !== entry.view.viewId) {
+			return {
+				ok: false,
+				message: "The browser's tabs changed since the last 'tabs' listing — refusing to take over a tab that may not be the one you meant. Run 'tabs' again and retry.",
+			};
+		}
+	}
 	const tab = entry.kind === "own" ? entry.tab : list.adopt(entry.view);
 	list.setActive(tab);
 	return { ok: true, tab };

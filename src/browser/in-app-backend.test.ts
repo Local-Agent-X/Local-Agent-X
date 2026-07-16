@@ -479,6 +479,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		it("switch_tab onto a user view ADOPTS it (owned:false): active follows, no create, no re-listing as user tab", async () => {
 			mockDesktopPool([USER_VIEW, OTHER_AGENT_VIEW]);
 			await backend.navigate(PAGE_URL);
+			await backend.listTabs(); // pins the merged ordering — takeover requires a current listing
 			const msg = await backend.switchTab(1);
 			expect(msg).toBe(`Switched to tab [1]: ${USER_TITLE} — ${USER_URL}`);
 			// Adoption, not creation: the user's view was never re-created.
@@ -511,6 +512,7 @@ describe("ElectronInAppBackend (A1)", () => {
 			mockDesktopPool([USER_VIEW]);
 			await backend.navigate(PAGE_URL);
 			await backend.newTab(PAGE_URL); // -t2 (owned)
+			await backend.listTabs(); // pins the merged ordering — takeover requires a current listing
 			await backend.switchTab(2); // merged: [0]=first, [1]=t2, [2]=user → adopt
 			expect(backend.getCurrentUrl()).toBe(USER_URL);
 			await backend.close();

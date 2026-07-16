@@ -5,6 +5,7 @@ import {
   parseNumCtx,
   parseToolCapability,
   parseLoadedContext,
+  isEmbeddingOnly,
 } from "./ollama-probe.js";
 import type { LocalRuntimeEndpoint } from "./types.js";
 
@@ -57,6 +58,20 @@ describe("parseLoadedContext", () => {
   });
 });
 
+describe("isEmbeddingOnly", () => {
+  it("true only when the runtime proves it embeds and cannot complete", () => {
+    expect(isEmbeddingOnly(["embedding"])).toBe(true);
+    expect(isEmbeddingOnly(["completion", "tools"])).toBe(false);
+    // Hedged declarations stay chat-capable — "embedding" alone isn't a veto.
+    expect(isEmbeddingOnly(["embedding", "completion"])).toBe(false);
+  });
+  it("unknown capabilities are not proof — never drop on silence", () => {
+    expect(isEmbeddingOnly(undefined)).toBe(false);
+    expect(isEmbeddingOnly("embedding")).toBe(false);
+    expect(isEmbeddingOnly(null)).toBe(false);
+  });
+});
+
 describe("ollamaProbe.detect", () => {
   it("true on /api/version, false on unreachable — never throws", async () => {
     stubFetch({ "/api/version": { version: "0.32.0" } });
@@ -77,6 +92,21 @@ describe("ollamaProbe.listModels", () => {
   it("[] on unreachable / malformed — never throws, never guesses", async () => {
     stubFetch({ "/api/tags": { unexpected: true } });
     expect(await ollamaProbe.listModels(EP)).toEqual([]);
+  });
+  // This seam feeds the chat picker and background dispatch. An embedder that
+  // survives to either one 404s /api/generate or offers a model nobody can
+  // chat with. Ollama 0.32's /api/tags declares this, so drop it here rather
+  // than leaning on the downstream name-regex.
+  it("drops embedding-only models when /api/tags declares capabilities", async () => {
+    stubFetch({ "/api/tags": { models: [
+      { name: "qwen3.6:27b", capabilities: ["completion", "tools"] },
+      { name: "mxbai-embed-large:latest", capabilities: ["embedding"] },
+    ] } });
+    expect((await ollamaProbe.listModels(EP)).map(m => m.id)).toEqual(["qwen3.6:27b"]);
+  });
+  it("keeps models on older Ollama builds that omit capabilities — never drop what we can't disprove", async () => {
+    stubFetch({ "/api/tags": { models: [{ name: "llama3:8b" }] } });
+    expect((await ollamaProbe.listModels(EP)).map(m => m.id)).toEqual(["llama3:8b"]);
   });
 });
 

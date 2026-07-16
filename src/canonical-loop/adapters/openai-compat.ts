@@ -45,7 +45,7 @@ import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessRequestFit, describeUnfittableRequest } from "../../context-manager/request-fit.js";
-import { lookupContextWindow } from "../../context-manager/model-windows.js";
+import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import { proseLooksLikeToolCall, annotatePersistentNarration } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -145,13 +145,28 @@ export class OpenAICompatAdapter implements Adapter {
     // observed 2026-07-15: a 36,611-token "hi" into an 8,192-ctx LM Studio
     // gemma. Local runtimes report their true loaded window via the
     // src/local-runtimes/ probes, so size the composed request against it.
+    const window = resolveContextWindow(model);
     const fit = assessRequestFit({
-      windowTokens: lookupContextWindow(model),
+      windowTokens: window.tokens,
       systemPrompt: req.systemPrompt,
       tools: req.tools,
       messages: req.messages,
     });
-    if (fit.verdict === "too_big") {
+    // Only ACT on a window we actually measured. A "floor" window is the
+    // placeholder for a local model that hasn't loaded yet (no /api/ps entry,
+    // no Modelfile num_ctx) — it is not this model's window, it's a stand-in.
+    // Refusing on it deadlocks: the refused send is the very request that
+    // would load the model, populate /api/ps, and replace the guess with the
+    // truth on the next 60s sweep. Regressed 2026-07-15 when this preflight
+    // landed six hours after the floor and silently voided the floor's
+    // "self-corrects once the model loads" premise — a 262,144-ctx qwen3.6
+    // was refused all night against a phantom 8,192. Send it: an engine 400
+    // is recoverable and self-correcting, a refusal loop is neither.
+    if (window.provenance === "floor" && fit.verdict !== "fits") {
+      logger.info(
+        `${model}: window unknown (model not loaded yet) — the ${window.tokens}-token floor is a placeholder, not a measurement, so preflight is not refusing this send. The runtime will load the model and the next sweep learns its real window. Compaction still sizes history against the floor.`,
+      );
+    } else if (fit.verdict === "too_big") {
       const message = describeUnfittableRequest(model, fit);
       logger.warn(`preflight refused send: ${message}`);
       report({ kind: "error", code: "context_window_exceeded", message, retryable: false });
@@ -159,8 +174,7 @@ export class OpenAICompatAdapter implements Adapter {
         providerState: this.buildProviderState(input, { preflight: "context_window_exceeded" }),
         terminalReason: "error",
       };
-    }
-    if (fit.verdict === "fits_without_tools") {
+    } else if (fit.verdict === "fits_without_tools") {
       // Window problem, not a capability problem — this turn only, and never
       // markNoToolSupport (the model may do tools fine at a larger n_ctx).
       logger.info(

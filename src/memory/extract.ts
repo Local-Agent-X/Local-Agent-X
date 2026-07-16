@@ -203,7 +203,10 @@ async function extractFactsFromSession(
           ? `${prompt}\n\nYour previous attempt was rejected: ${feedback}. Output only the corrected fact list, one fact per line, with no repetition.`
           : prompt,
         provider: opts.provider,
-        ollamaModel: opts.model || "llama3:8b",
+        // No hardcoded fallback: an id that isn't installed 404s. Undefined
+        // lets llm-dispatch pick a model this box actually has, like the
+        // sibling *Model fields already do.
+        ollamaModel: opts.model,
         anthropicModel: opts.model,
         openaiModel: opts.model,
         temperature: 0,

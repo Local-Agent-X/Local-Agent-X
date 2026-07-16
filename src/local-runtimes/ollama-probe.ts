@@ -65,6 +65,21 @@ export function parseToolCapability(capabilities: unknown): boolean | null {
   return capabilities.includes("tools");
 }
 
+/**
+ * True only when the runtime AUTHORITATIVELY says this model embeds and
+ * cannot chat. This seam serves the chat picker, so — same rule as the
+ * openai-compat probe's `type === "embeddings"` drop — an embedder is
+ * excluded at list time rather than left for the downstream name-regex
+ * (isEmbeddingModel), which stays the backstop for runtimes that won't say.
+ * Absent/unknown capabilities → false: never drop a model we can't prove is
+ * an embedder. (Ollama 0.32's /api/tags carries capabilities per model;
+ * older versions omit it and fall through to the regex.)
+ */
+export function isEmbeddingOnly(capabilities: unknown): boolean {
+  if (!Array.isArray(capabilities)) return false;
+  return capabilities.includes("embedding") && !capabilities.includes("completion");
+}
+
 /** The loaded model's served context from /api/ps, or null if not loaded. */
 export function parseLoadedContext(ps: unknown, modelId: string): number | null {
   if (!ps || typeof ps !== "object") return null;
@@ -97,8 +112,11 @@ export const ollamaProbe: LocalRuntimeProbe = {
     const out: LocalModel[] = [];
     for (const m of models) {
       if (!m || typeof m !== "object") continue;
-      const row = m as { name?: unknown; size?: unknown; modified_at?: unknown };
+      const row = m as {
+        name?: unknown; size?: unknown; modified_at?: unknown; capabilities?: unknown;
+      };
       if (typeof row.name !== "string" || row.name.length === 0) continue;
+      if (isEmbeddingOnly(row.capabilities)) continue;
       out.push({
         id: row.name,
         contextWindow: null,

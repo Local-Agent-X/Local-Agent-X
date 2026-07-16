@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { lookupContextWindow, DEFAULT_CONTEXT, LOCAL_UNKNOWN_CONTEXT } from "./model-windows.js";
+import {
+  lookupContextWindow,
+  resolveContextWindow,
+  DEFAULT_CONTEXT,
+  LOCAL_UNKNOWN_CONTEXT,
+} from "./model-windows.js";
 import type { LocalRuntimeInfo } from "../local-runtimes/types.js";
 
 let runtimes: LocalRuntimeInfo[] = [];
@@ -51,5 +56,55 @@ describe("lookupContextWindow — local runtime truth beats the 128k default", (
     expect(lookupContextWindow("claude-mystery")).toBe(200_000);
     expect(lookupContextWindow("grok-mystery")).toBe(131_072);
     expect(lookupContextWindow("total-mystery")).toBe(DEFAULT_CONTEXT);
+  });
+});
+
+// The number alone cannot answer "is this a fact or a placeholder?" — a real
+// 8k-ctx gemma and an unloaded 262k qwen both surface as 8192. Callers that
+// refuse work (the openai-compat preflight) MUST branch on provenance; the
+// absence of it deadlocked local chat on 2026-07-15.
+describe("resolveContextWindow — provenance separates measurement from guess", () => {
+  it("marks a probed local window as ground truth", () => {
+    runtimes = [rt([{ id: "qwen3.6:27b", contextWindow: 262_144, tools: true }])];
+    expect(resolveContextWindow("qwen3.6:27b")).toEqual({
+      tokens: 262_144,
+      provenance: "probed",
+    });
+  });
+
+  it("marks the unloaded-model floor as a GUESS, not a measurement", () => {
+    runtimes = [rt([{ id: "qwen3.6:27b", contextWindow: null, tools: true }])];
+    expect(resolveContextWindow("qwen3.6:27b")).toEqual({
+      tokens: LOCAL_UNKNOWN_CONTEXT,
+      provenance: "floor",
+    });
+  });
+
+  it("distinguishes a REAL 8,192 window from the 8,192 floor — same integer, opposite meaning", () => {
+    runtimes = [rt([{ id: "real-8k", contextWindow: 8_192, tools: true }])];
+    const measured = resolveContextWindow("real-8k");
+
+    runtimes = [rt([{ id: "unloaded", contextWindow: null, tools: true }])];
+    const guessed = resolveContextWindow("unloaded");
+
+    expect(measured.tokens).toBe(guessed.tokens); // indistinguishable by number
+    expect(measured.provenance).toBe("probed");   // ...but not by provenance
+    expect(guessed.provenance).toBe("floor");
+  });
+
+  it("tags the pinned table as exact and name-matches as heuristic", () => {
+    expect(resolveContextWindow("claude-fable-5")).toEqual({
+      tokens: 1_000_000,
+      provenance: "exact",
+    });
+    expect(resolveContextWindow("total-mystery")).toEqual({
+      tokens: DEFAULT_CONTEXT,
+      provenance: "heuristic",
+    });
+  });
+
+  it("lookupContextWindow stays the number-only view of the same resolution", () => {
+    runtimes = [rt([{ id: "qwen3.6:27b", contextWindow: 262_144, tools: true }])];
+    expect(lookupContextWindow("qwen3.6:27b")).toBe(resolveContextWindow("qwen3.6:27b").tokens);
   });
 });

@@ -46,9 +46,11 @@ const EMBEDDING_NAME_RE = /(^|[/_:.\-])(embed|embedding|embeddings)([_:.\-]|$)|^
  * filter the chat-model picker so users don't accidentally pick an
  * embedding model and get a runtime "model does not generate" error.
  *
- * For higher confidence, the future capability registry will additionally
- * query `/api/show` and check `capabilities: ["embedding"]` (Ollama 0.4+).
- * Until then, the regex catches the common families.
+ * Now the BACKSTOP rather than the only signal: the local-runtimes seam
+ * drops embedders at list time wherever the runtime declares them
+ * authoritatively (LM Studio `type: "embeddings"`, Ollama 0.32+ /api/tags
+ * `capabilities: ["embedding"]`). This regex still covers runtimes and
+ * older builds that won't say.
  */
 export function isEmbeddingModel(name: string): boolean {
   if (!name) return false;

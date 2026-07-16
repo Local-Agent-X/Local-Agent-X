@@ -55,7 +55,10 @@ export async function resolveFact(
   const raw = await dispatch({
     prompt,
     provider: opts.provider,
-    ollamaModel: opts.model || "qwen2.5:3b",
+    // No hardcoded fallback: an id that isn't installed 404s. Undefined lets
+    // llm-dispatch pick a model this box actually has (smallest-first, which
+    // is what the old qwen2.5:3b pin was reaching for).
+    ollamaModel: opts.model,
     anthropicModel: opts.model,
     openaiModel: opts.model,
     temperature: 0,

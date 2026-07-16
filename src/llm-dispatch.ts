@@ -29,7 +29,7 @@ import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
 import type { ProviderId } from "./providers/provider-ids.js";
 import type { ProviderRequest } from "./providers/adapter/types.js";
 import { createLogger } from "./logger.js";
-import { getRuntimeConfig } from "./config.js";
+import { callOllama, resolveOllamaDispatchModel } from "./llm-dispatch/ollama.js";
 
 const logger = createLogger("llm-dispatch");
 
@@ -73,7 +73,6 @@ export interface DispatchOptions {
 }
 
 const DEFAULTS = {
-  ollamaModel: "llama3:8b",
   temperature: 0,
   maxTokens: 200,
   timeoutMs: 30_000,
@@ -140,36 +139,19 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   const maxTokens = opts.maxTokens ?? DEFAULTS.maxTokens;
   const timeout = opts.timeoutMs ?? DEFAULTS.timeoutMs;
 
-  if (provider === "ollama") return callOllama(opts.prompt, opts.ollamaModel ?? DEFAULTS.ollamaModel, temp, maxTokens, timeout);
+  if (provider === "ollama") {
+    const ollamaModel = opts.ollamaModel ?? await resolveOllamaDispatchModel();
+    if (!ollamaModel) {
+      logger.warn("no chat-capable Ollama model installed — skipping dispatch");
+      return null;
+    }
+    return callOllama(opts.prompt, ollamaModel, temp, maxTokens, timeout);
+  }
   if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
   if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
   if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
   if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
   return null;
-}
-
-async function callOllama(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
-  try {
-    const base = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
-    const res = await fetch(`${base}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false, options: { temperature, num_predict: maxTokens } }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) {
-      logger.warn(`ollama call failed: HTTP ${res.status}`);
-      return null;
-    }
-    const data = await res.json() as { response?: string };
-    return data.response || null;
-  } catch (e) {
-    // Callers fall back to the next provider on null — without the warn
-    // the user sees "all providers returned null" with zero context on
-    // which one failed and why (timeout vs. network vs. JSON parse).
-    logger.warn(`ollama call threw: ${(e as Error).message}`);
-    return null;
-  }
 }
 
 // Anthropic Messages API user-content shape: a bare string, or content blocks

@@ -58,24 +58,62 @@ export const DEFAULT_CONTEXT = 128_000;
  */
 export const LOCAL_UNKNOWN_CONTEXT = 8_192;
 
-export function lookupContextWindow(model: string): number {
-  if (MODEL_CONTEXTS[model]) return MODEL_CONTEXTS[model];
+/**
+ * Where a window number came from. The distinction is load-bearing, not
+ * informational: "probed" is a MEASUREMENT of what the runtime is serving,
+ * "floor" is a GUESS standing in for a model that hasn't loaded yet. They
+ * can be the same integer (a real 8,192-ctx LM Studio gemma vs. an unloaded
+ * qwen3.6 that actually serves 262,144), so a caller holding only the number
+ * cannot tell a fact from a placeholder.
+ *
+ * Callers that merely SIZE things (compaction) may treat every provenance
+ * alike — over-compacting on a guess is graceful and self-corrects. Callers
+ * that REFUSE work must gate on provenance: refusing on a guess is terminal
+ * and cannot self-correct, because the refused request is the one that would
+ * have loaded the model and revealed the truth. See openai-compat's preflight.
+ */
+export type ContextWindowProvenance =
+  | "exact"      // hit in the pinned MODEL_CONTEXTS table
+  | "probed"     // measured from a live local runtime — ground truth
+  | "floor"      // local model, window unknowable right now — a GUESS
+  | "heuristic"; // name-pattern / DEFAULT_CONTEXT — also a guess, cloud-side
+
+export interface ContextWindowResolution {
+  tokens: number;
+  provenance: ContextWindowProvenance;
+}
+
+/**
+ * Resolve a model's window AND how much to trust it. Prefer this over
+ * lookupContextWindow anywhere the answer drives a refusal or an error.
+ */
+export function resolveContextWindow(model: string): ContextWindowResolution {
+  if (MODEL_CONTEXTS[model]) return { tokens: MODEL_CONTEXTS[model], provenance: "exact" };
   // A model served by a DISCOVERED local runtime reports its REAL window
   // (src/local-runtimes/ probes: Ollama /api/ps num_ctx, LM Studio loaded
   // context, vLLM max_model_len, llama.cpp n_ctx). Ground truth beats the
   // name heuristics below — a local "llama3" is not a cloud family member.
   const rt = getRuntimeForModel(model);
   if (rt) {
-    return getLocalModel(rt.chatBaseUrl, model)?.contextWindow ?? LOCAL_UNKNOWN_CONTEXT;
+    const probed = getLocalModel(rt.chatBaseUrl, model)?.contextWindow;
+    return probed != null
+      ? { tokens: probed, provenance: "probed" }
+      : { tokens: LOCAL_UNKNOWN_CONTEXT, provenance: "floor" };
   }
   const lower = model.toLowerCase();
-  if (lower.includes("claude")) return 200_000;
-  if (lower.includes("gemini")) return 1_000_000;
-  if (lower.includes("gpt-5.6") || lower.includes("gpt-5.5")) return 1_000_000;
-  if (lower.includes("gpt-5.4")) return 272_000;
-  if (lower.includes("gpt-4") || lower.includes("gpt-5") || lower.includes("o3")) return 128_000;
-  if (lower.includes("grok")) return 131_072;
-  return DEFAULT_CONTEXT;
+  const heuristic = (tokens: number): ContextWindowResolution => ({ tokens, provenance: "heuristic" });
+  if (lower.includes("claude")) return heuristic(200_000);
+  if (lower.includes("gemini")) return heuristic(1_000_000);
+  if (lower.includes("gpt-5.6") || lower.includes("gpt-5.5")) return heuristic(1_000_000);
+  if (lower.includes("gpt-5.4")) return heuristic(272_000);
+  if (lower.includes("gpt-4") || lower.includes("gpt-5") || lower.includes("o3")) return heuristic(128_000);
+  if (lower.includes("grok")) return heuristic(131_072);
+  return heuristic(DEFAULT_CONTEXT);
+}
+
+/** Window only. Fine for sizing/compaction; see resolveContextWindow to refuse. */
+export function lookupContextWindow(model: string): number {
+  return resolveContextWindow(model).tokens;
 }
 
 /**

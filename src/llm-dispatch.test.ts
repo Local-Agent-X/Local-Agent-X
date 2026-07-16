@@ -1,9 +1,39 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import type { LocalRuntimeInfo } from "./local-runtimes/types.js";
+
+// Which Ollama models this box "has installed". dispatch() must read this
+// rather than a pinned id — a hardcoded default 404s on every box that
+// didn't happen to pull it (regression: "llama3:8b", April–July 2026).
+let localRuntimes: LocalRuntimeInfo[] | null = null;
+
+vi.mock("./local-runtimes/index.js", () => ({
+  getLocalRuntimes: () => localRuntimes,
+  refreshLocalRuntimes: vi.fn(async () => localRuntimes ?? []),
+}));
+
 import { dispatch, dispatchBackgroundModel, dispatchStructuredOutputEnabled } from "./llm-dispatch.js";
 import { resolveCredential } from "./auth/resolve.js";
 import { streamAnthropicResponse } from "./anthropic-client/index.js";
 import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
+
+function ollamaRuntime(models: LocalRuntimeInfo["models"]): LocalRuntimeInfo {
+  return {
+    kind: "ollama",
+    id: "ollama@127.0.0.1:11434",
+    label: "Ollama",
+    endpoint: { baseUrl: "http://127.0.0.1:11434", origin: "auto" },
+    chatBaseUrl: "http://127.0.0.1:11434/v1",
+    models,
+    refreshedAt: 1,
+  };
+}
+
+const INSTALLED = ollamaRuntime([
+  { id: "gpt-oss:120b", contextWindow: null, tools: true, sizeBytes: 65e9 },
+  { id: "qwen3.6:27b", contextWindow: null, tools: true, sizeBytes: 17e9 },
+  { id: "mxbai-embed-large:latest", contextWindow: 512, tools: false, sizeBytes: 0.6e9 },
+]);
 
 // Credential resolution is mocked so the request-shape tests below can drive
 // dispatch() against a stubbed fetch — nothing here touches the network or
@@ -53,6 +83,7 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localRuntimes = [INSTALLED];
     fetchSpy = vi.fn(async () =>
       new Response(
         JSON.stringify({ content: [{ text: "anthropic-reply" }], choices: [{ message: { content: "openai-reply" } }] }),
@@ -168,6 +199,51 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     const body = sentBody();
     expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:11434/api/generate");
     expect("response_format" in body).toBe(false);
+  });
+
+  // Regression 2026-07-15: DEFAULTS.ollamaModel pinned "llama3:8b" since April.
+  // It was never installed on this box, so every classifier dispatch 404'd
+  // /api/generate and surfaced as "empty response". No code changed — the
+  // machine's model inventory did. The installed set is the only source of
+  // truth for which local model exists.
+  describe("ollama model comes from what's INSTALLED, never a hardcoded id", () => {
+    it("picks an installed model — and specifically not the old llama3:8b pin", async () => {
+      await dispatch({ prompt: "ping", provider: "ollama" });
+      expect(sentBody().model).toBe("qwen3.6:27b");
+    });
+
+    it("prefers the smallest chat model — these are single-shot classifier prompts", async () => {
+      await dispatch({ prompt: "ping", provider: "ollama" });
+      expect(sentBody().model).not.toBe("gpt-oss:120b");
+    });
+
+    it("never dispatches to an embedding model (it cannot generate)", async () => {
+      localRuntimes = [ollamaRuntime([
+        { id: "mxbai-embed-large:latest", contextWindow: 512, tools: false, sizeBytes: 0.6e9 },
+        { id: "qwen3.6:27b", contextWindow: null, tools: true, sizeBytes: 17e9 },
+      ])];
+      await dispatch({ prompt: "ping", provider: "ollama" });
+      expect(sentBody().model).toBe("qwen3.6:27b");
+    });
+
+    it("an explicit caller override still wins", async () => {
+      await dispatch({ prompt: "ping", provider: "ollama", ollamaModel: "gpt-oss:120b" });
+      expect(sentBody().model).toBe("gpt-oss:120b");
+    });
+
+    it("degrades to null WITHOUT a wire call when nothing chat-capable is installed", async () => {
+      localRuntimes = [ollamaRuntime([
+        { id: "mxbai-embed-large:latest", contextWindow: 512, tools: false, sizeBytes: 0.6e9 },
+      ])];
+      expect(await dispatch({ prompt: "ping", provider: "ollama" })).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("degrades to null WITHOUT a wire call when Ollama isn't running at all", async () => {
+      localRuntimes = [];
+      expect(await dispatch({ prompt: "ping", provider: "ollama" })).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
 
   it("a 400 with responseFormat sent retries exactly once WITHOUT it, then succeeds", async () => {

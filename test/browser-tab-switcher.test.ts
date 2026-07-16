@@ -200,6 +200,29 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(urlInput().value).toBe("https://agent.example/run");
 	});
 
+	it("re-adoption fetches FULL nav state — back/fwd reflect the adopted view's history, not stuck disabled", async () => {
+		// The pool entry carries only {viewId, url}; an IDLE view never pushes
+		// another nav-state. Without the getNavState() refill, back/fwd would
+		// stay disabled forever on an auto-surfaced idle agent view.
+		const views = [fgView(), agentView()];
+		const bridge = makeBridge(views);
+		bridge.getNavState = vi.fn(() => Promise.resolve({
+			viewId: "view-s1-work", url: "https://agent.example/run", title: "Run",
+			canGoBack: true, canGoForward: false, loading: false,
+		}));
+		g.desktop = { browser: bridge };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		views[0].attached = false;
+		views[1].attached = true;
+		views[1].url = "https://agent.example/run";
+		bridge.viewsChangedCb!();
+		await flushMicrotasks();
+		expect(bridge.getNavState).toHaveBeenCalled();
+		const back = document.getElementById("browser-nav-back") as HTMLButtonElement;
+		expect(back.disabled).toBe(false);
+	});
+
 	it("the 2s poll also re-adopts the attached view (fallback path)", async () => {
 		const views = [fgView(), agentView()];
 		const bridge = makeBridge(views);

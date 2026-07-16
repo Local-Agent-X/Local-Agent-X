@@ -139,7 +139,19 @@
 				var readopt = selectedViewId != null && adopted.viewId !== selectedViewId;
 				selectedViewId = adopted.viewId;
 				// updateNavUI's activeElement guard keeps a mid-typed URL intact.
-				if (readopt) updateNavUI({ viewId: adopted.viewId, url: adopted.url || '' });
+				if (readopt) {
+					updateNavUI({ viewId: adopted.viewId, url: adopted.url || '' });
+					// The pool entry has no history state, and an IDLE view never
+					// pushes another nav-state — without this fetch, back/fwd stay
+					// wrongly disabled until the next navigation event. Main's
+					// currentViewId is already retargeted, so getNavState() is
+					// the full state of exactly this view.
+					if (bridge.getNavState) {
+						Promise.resolve(bridge.getNavState()).then(function (state) {
+							if (state && state.viewId === selectedViewId) updateNavUI(state);
+						}).catch(swallow);
+					}
+				}
 			}
 			strip.render(views, {
 				slot: document.getElementById('browser-view-switcher-slot'),

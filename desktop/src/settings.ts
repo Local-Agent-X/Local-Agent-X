@@ -11,6 +11,11 @@ export interface DesktopSettings {
   closeToTray: boolean;
   globalHotkey: string;
   windowBounds: { width: number; height: number };
+  // Start maximized (fill the screen). Persisted so an un-maximize sticks:
+  // the resize handler keeps windowBounds as the restore size, and this flag
+  // decides whether the next launch maximizes. Default true — a fresh install
+  // opens filling the screen rather than at a small 1200×800 box.
+  windowMaximized: boolean;
   // Mirrors the renderer's lax_theme so the BrowserWindow paint colour
   // matches the web UI's theme. Renderer toggles push the new value here
   // via IPC.
@@ -22,6 +27,7 @@ const DEFAULT_SETTINGS: DesktopSettings = {
   closeToTray: true,
   globalHotkey: "CommandOrControl+Shift+Space",
   windowBounds: { width: 1200, height: 800 },
+  windowMaximized: true,
   theme: "dark",
 };
 

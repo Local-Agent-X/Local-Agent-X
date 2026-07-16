@@ -273,7 +273,20 @@ function writeConfigFile(config: object): void {
 }
 
 export function saveConfig(config: LAXConfig): void {
-  writeConfigFile(config);
+  // config.json has more than one writer: the desktop shell owns keys the
+  // server's LAXConfig doesn't know about (e.g. projectRoot, which decides
+  // where the shell loads code from). Serializing only the runtime object
+  // would silently drop those on every settings save, so merge over the
+  // on-disk JSON — unknown keys survive, server-known keys take the runtime
+  // value. Migrations that must REMOVE a key go through deleteDiskKeys in
+  // loadConfig, not here.
+  let diskExtras: Record<string, unknown> = {};
+  try {
+    diskExtras = JSON.parse(readFileSync(getConfigPath(), "utf-8"));
+  } catch {
+    // Missing or corrupt config.json — nothing to preserve.
+  }
+  writeConfigFile({ ...diskExtras, ...config });
 }
 
 export function getAuthPath(): string {

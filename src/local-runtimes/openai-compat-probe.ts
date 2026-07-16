@@ -59,6 +59,8 @@ function posInt(v: unknown): number | null {
 
 interface RawEntry {
   id?: unknown;
+  /** LM Studio /api/v0: "llm" | "vlm" | "embeddings". Absent on bare /v1. */
+  type?: unknown;
   /** vLLM: the served window. */
   max_model_len?: unknown;
   /** LM Studio /api/v0: model max — NOT the served window. */
@@ -74,6 +76,11 @@ export function entryToModel(raw: unknown): LocalModel | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as RawEntry;
   if (typeof e.id !== "string" || e.id.length === 0) return null;
+  // This seam serves the CHAT picker. When the runtime declares the model
+  // type authoritatively (LM Studio /api/v0), drop embeddings models here
+  // rather than leaning on the downstream name-regex (isEmbeddingModel),
+  // which is a heuristic backstop for runtimes that won't say.
+  if (e.type === "embeddings") return null;
   // Served-window sources only; LM Studio's max_context_length is
   // deliberately ignored (it's a ceiling, not the loaded reality).
   const loaded = e.state === "loaded" ? posInt(e.loaded_context_length) : null;
@@ -90,15 +97,25 @@ function listFrom(data: Record<string, unknown> | null): unknown[] | null {
 export const openaiCompatProbe: LocalRuntimeProbe = {
   kind: "openai-compat",
   label: "OpenAI-compatible",
-  // LM Studio, vLLM, llama.cpp server defaults. 11434 is claimed by the
-  // ollama probe first (probe order in probes.ts is load-bearing).
-  defaultPorts: [1234, 8000, 8080],
+  // LM Studio 1234, vLLM 8000, llama.cpp 8080, Jan 1337, GPT4All 4891,
+  // text-generation-webui 5000, KoboldCpp 5001, SGLang 30000. 11434 is
+  // claimed by the ollama probe first (probe order in probes.ts is
+  // load-bearing); Docker Model Runner 12434 is a path-prefixed candidate
+  // added in endpoints.ts, not a bare port here.
+  // Growing this list is discovery-only: agent egress derives from
+  // DISCOVERED runtimes (localRuntimeLoopbackPorts), never from these
+  // candidates — so common dev ports like 5000 are safe to sweep.
+  defaultPorts: [1234, 1337, 4891, 5000, 5001, 8000, 8080, 30000],
 
   async detect(ep, signal) {
     return listFrom(await getJson(`${base(ep)}/v1/models`, DETECT_TIMEOUT_MS, signal)) !== null;
   },
 
   async identify(ep, signal) {
+    // Docker Model Runner is the only runtime probed under a path prefix
+    // (endpoints.ts pins its candidate to .../engines); this endpoint only
+    // exists because <base>/v1/models answered — DMR's signature path.
+    if (base(ep).endsWith("/engines")) return "Docker Model Runner";
     // LM Studio is the only server with /api/v0/models; llama.cpp the only
     // one with /props. Both checks are cheap loopback GETs.
     if (listFrom(await getJson(`${base(ep)}/api/v0/models`, DETECT_TIMEOUT_MS, signal))) {

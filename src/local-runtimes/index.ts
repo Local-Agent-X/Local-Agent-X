@@ -16,6 +16,11 @@ export {
 } from "./endpoints.js";
 export { discoverLocalRuntimes } from "./discovery.js";
 export {
+  lmStudioAutoStartedAt,
+  maybeAutostartLmStudio,
+  type LmStudioAutostartDeps,
+} from "./lmstudio-autostart.js";
+export {
   getLocalContextWindow,
   getLocalModel,
   getLocalRuntimeById,

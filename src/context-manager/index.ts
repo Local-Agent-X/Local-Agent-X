@@ -22,5 +22,13 @@ export {
 	type CompactionTriggers,
 } from "./compaction-policy.js";
 export { effectiveContextWindow, isAnthropicModel, type AnthropicTransport } from "./effective-window.js";
+export {
+	assessRequestFit,
+	describeUnfittableRequest,
+	toolManifestTokens,
+	OUTPUT_RESERVE_TOKENS,
+	type RequestFit,
+	type RequestFitVerdict,
+} from "./request-fit.js";
 export { resolveAnthropicTransport } from "./resolve-transport.js";
 export { summarizeOldMessages, COMPACTION_SYSTEM_PROMPT } from "./compaction.js";

@@ -218,10 +218,10 @@ export function loadEgressConfig(): EgressConfig {
     }
   } catch {}
 
-  // Fold in the configured ollama loopback port + the local-runtime sweep
-  // ports (LM Studio/vLLM/llama.cpp + loopback manual adds) so a redirect
-  // re-check (this path) agrees with the pre-dispatch gate's
-  // localServicePorts. Same validate-as-loopback guarantee.
+  // Fold in the configured ollama loopback port + DISCOVERED local-runtime
+  // ports (plus loopback manual adds) so a redirect re-check (this path)
+  // agrees with the pre-dispatch gate's localServicePorts. Same
+  // validate-as-loopback guarantee.
   const ollama = ollamaLoopbackPort();
   if (ollama) localServicePorts.add(ollama);
   for (const p of localRuntimeLoopbackPorts()) localServicePorts.add(p);

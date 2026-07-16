@@ -95,8 +95,16 @@ export function candidateEndpoints(
       });
     }
   }
-  // Known openai-compat loopback ports probes don't claim yet get swept
-  // once the openai-compat probe lands (its defaultPorts cover them).
+
+  // Docker Model Runner is the one runtime whose OpenAI surface lives under
+  // a PATH prefix (http://127.0.0.1:12434/engines/v1/...), so its candidate
+  // carries the prefix in baseUrl — detect, listModels, and the `${baseUrl}/v1`
+  // chat derivation then work unchanged. kind is pinned so the ollama probe
+  // never wastes a detect on it.
+  add({
+    endpoint: { baseUrl: "http://127.0.0.1:12434/engines", origin: "auto" },
+    kind: "openai-compat",
+  });
 
   const ollamaUrl = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
   add({ endpoint: { baseUrl: ollamaUrl, origin: "auto" }, kind: "ollama" });

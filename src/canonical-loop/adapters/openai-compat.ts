@@ -44,6 +44,8 @@ import {
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
+import { assessRequestFit, describeUnfittableRequest } from "../../context-manager/request-fit.js";
+import { lookupContextWindow } from "../../context-manager/model-windows.js";
 import { proseLooksLikeToolCall, annotatePersistentNarration } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -135,6 +137,38 @@ export class OpenAICompatAdapter implements Adapter {
           ? { toolChoice: "required" as const }
           : {}),
     };
+
+    // Request-fit preflight. The engine 400s (llama.cpp/LM Studio
+    // exceed_context_size_error) on a request bigger than the model's LOADED
+    // context, and history compaction can't save a request whose FIXED
+    // overhead (system prompt + tool manifest) doesn't fit on its own —
+    // observed 2026-07-15: a 36,611-token "hi" into an 8,192-ctx LM Studio
+    // gemma. Local runtimes report their true loaded window via the
+    // src/local-runtimes/ probes, so size the composed request against it.
+    const fit = assessRequestFit({
+      windowTokens: lookupContextWindow(model),
+      systemPrompt: req.systemPrompt,
+      tools: req.tools,
+      messages: req.messages,
+    });
+    if (fit.verdict === "too_big") {
+      const message = describeUnfittableRequest(model, fit);
+      logger.warn(`preflight refused send: ${message}`);
+      report({ kind: "error", code: "context_window_exceeded", message, retryable: false });
+      return {
+        providerState: this.buildProviderState(input, { preflight: "context_window_exceeded" }),
+        terminalReason: "error",
+      };
+    }
+    if (fit.verdict === "fits_without_tools") {
+      // Window problem, not a capability problem — this turn only, and never
+      // markNoToolSupport (the model may do tools fine at a larger n_ctx).
+      logger.info(
+        `${model}: tool manifest (~${fit.toolTokens} tokens) can't fit the ${fit.windowTokens}-token window — sending this turn without tools`,
+      );
+      req.tools = [] as unknown as ProviderRequest["tools"];
+      delete req.toolChoice;
+    }
 
     this.inflight = this.runStreamOnce(req, report);
     let result = await this.inflight;

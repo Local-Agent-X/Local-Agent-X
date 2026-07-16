@@ -234,12 +234,12 @@ try {
   logger.warn(`[autonomy] Profile migration skipped: ${(e as Error).message}`);
 }
 
-// One-time appearance default rollout (dark + phosphor) — see
+// One-time appearance default rollout (dark + aurora) — see
 // applyAppearanceDefaultGeneration in settings.ts for the semantics.
 try {
   const { applyAppearanceDefaultGeneration, APPEARANCE_DEFAULT_GEN } = await import("./settings.js");
   if (applyAppearanceDefaultGeneration()) {
-    logger.info(`[settings] Applied appearance default generation ${APPEARANCE_DEFAULT_GEN} (dark + phosphor)`);
+    logger.info(`[settings] Applied appearance default generation ${APPEARANCE_DEFAULT_GEN} (dark + aurora)`);
   }
 } catch (e) {
   logger.warn(`[settings] Appearance-default migration skipped: ${(e as Error).message}`);

@@ -11,10 +11,10 @@ import {
   settingsPath,
 } from "./settings.js";
 
-// One-time appearance default rollout (dark + phosphor). The contract under
-// test: the generation marker — not the theme/palette values — gates the
-// migration, so it fires exactly once per install and never clobbers a
-// choice the user makes afterwards.
+// One-time appearance default rollout (gen 2: dark + aurora; gen 1 was
+// dark + phosphor). The contract under test: the generation marker — not the
+// theme/palette values — gates the migration, so it fires exactly once per
+// install and never clobbers a choice the user makes afterwards.
 
 let dir: string;
 let prevEnv: string | undefined;
@@ -34,15 +34,15 @@ afterEach(() => {
 });
 
 describe("applyAppearanceDefaultGeneration", () => {
-  it("gives a fresh install dark + phosphor and stamps the generation", () => {
+  it("gives a fresh install dark + aurora and stamps the generation", () => {
     expect(applyAppearanceDefaultGeneration()).toBe(true);
     const settings = loadSettings();
     expect(settings.theme).toBe("dark");
-    expect(settings.palette).toBe("phosphor");
+    expect(settings.palette).toBe("aurora");
     expect(settings.appearanceDefaultGen).toBe(APPEARANCE_DEFAULT_GEN);
     // Persisted, not just cached.
     const onDisk = JSON.parse(readFileSync(settingsPath(), "utf-8"));
-    expect(onDisk.palette).toBe("phosphor");
+    expect(onDisk.palette).toBe("aurora");
   });
 
   it("switches an existing install's prior choice exactly once", () => {
@@ -51,18 +51,27 @@ describe("applyAppearanceDefaultGeneration", () => {
     expect(applyAppearanceDefaultGeneration()).toBe(true);
     const settings = loadSettings();
     expect(settings.theme).toBe("dark");
-    expect(settings.palette).toBe("phosphor");
+    expect(settings.palette).toBe("aurora");
     // Sibling keys survive the migration write.
     expect(settings.sidebarPins).toEqual(["chat"]);
   });
 
+  it("re-applies when an install is on a PRIOR generation (gen-1 phosphor → gen-2 aurora)", () => {
+    writeFileSync(settingsPath(), JSON.stringify({ theme: "dark", palette: "phosphor", appearanceDefaultGen: 1 }));
+    reloadSettings();
+    expect(applyAppearanceDefaultGeneration()).toBe(true);
+    const settings = loadSettings();
+    expect(settings.palette).toBe("aurora");
+    expect(settings.appearanceDefaultGen).toBe(APPEARANCE_DEFAULT_GEN);
+  });
+
   it("never overrides a choice the user makes after the rollout", () => {
     applyAppearanceDefaultGeneration();
-    setSetting("palette", "aurora");
+    setSetting("palette", "nebula");
     setSetting("theme", "light");
     expect(applyAppearanceDefaultGeneration()).toBe(false);
     const settings = loadSettings();
-    expect(settings.palette).toBe("aurora");
+    expect(settings.palette).toBe("nebula");
     expect(settings.theme).toBe("light");
   });
 

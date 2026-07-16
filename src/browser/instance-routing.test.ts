@@ -56,6 +56,7 @@ import {
 	closeAllBrowsers,
 	resetWedgedBrowser,
 	inAppViewId,
+	resolveBrowserBackendKind,
 	CdpOnlyOperationError,
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
@@ -113,6 +114,46 @@ describe("getBrowserManager routing", () => {
 		state.profiles.set("agent-run", "work-profile");
 		const backend = getBrowserManager("agent-run");
 		expect(backend.getProfileId()).toBe("work-profile");
+	});
+});
+
+// The explicit fallback matrix (F1): resolveBrowserBackendKind() is "in-app"
+// ONLY when mode=in-app AND not headless AND the bridge is up; ANY other cell
+// falls to CDP. The CDP arm then binds the manager to the session's profile
+// (whose userDataDir is threaded into launchViaCDP — proven in
+// runtime-profile-dir / manager-profile-dir tests), so every fallback path
+// carries the right profile identity.
+describe("resolveBrowserBackendKind — fallback matrix", () => {
+	it("in-app when mode=in-app + windowed + bridge up", () => {
+		setInApp();
+		expect(resolveBrowserBackendKind()).toBe("in-app");
+	});
+
+	it("cdp when the browserMode is not in-app (even with a bridge)", () => {
+		state.browserMode = "continuity";
+		state.bridge = true;
+		expect(resolveBrowserBackendKind()).toBe("cdp");
+	});
+
+	it("cdp when running headless (LAX_BROWSER_HEADLESS=1)", () => {
+		setInApp();
+		process.env.LAX_BROWSER_HEADLESS = "1";
+		expect(resolveBrowserBackendKind()).toBe("cdp");
+	});
+
+	it("cdp when the desktop bridge is absent", () => {
+		setInApp(false);
+		expect(resolveBrowserBackendKind()).toBe("cdp");
+	});
+
+	it("each cdp-fallback cell routes getBrowserManager to a profile-bound BrowserManager", () => {
+		state.profiles.set("agent-run", "work-profile");
+		// non-in-app mode
+		state.browserMode = "isolated";
+		state.bridge = true;
+		const m1 = getBrowserManager("agent-run");
+		expect(m1).toBeInstanceOf(BrowserManager);
+		expect(m1.getProfileId()).toBe("work-profile");
 	});
 });
 

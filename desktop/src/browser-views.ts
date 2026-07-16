@@ -45,6 +45,16 @@ function requireEntry(viewId: string): PoolEntry {
 	return entry;
 }
 
+/**
+ * Create a pooled view. It is created DETACHED — attaching to the window is a
+ * separate, explicit showBrowserView() call. That is exactly what an
+ * app-open-but-panel-closed background/cron agent needs: create the view for its
+ * (session, profile), drive it (loadURL / co-drive / bridge ops) while it stays
+ * hidden, and never call showBrowserView. The webContents is fully live from
+ * creation, so no separate headless-window system is required. (Only a fully
+ * CLOSED app has no Electron process at all — that case falls to the CDP
+ * backend, which now carries the profile's userDataDir.)
+ */
 export function createBrowserView(
 	viewId: string,
 	opts: { partition: string; bounds?: Rectangle; agentDriven?: boolean },

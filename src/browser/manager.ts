@@ -5,6 +5,7 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
+import { profileUserDataDir } from "./profile-store.js";
 import {
   formatRecentDownloads,
   getDownloadApprovalBinding,
@@ -113,7 +114,19 @@ export class BrowserManager implements BrowserBackend {
       }
     }
 
-    this.context = await acquireSessionContext(this.currentEngine, this.mode, this.sessionId);
+    // Bind the shared Chrome to THIS session's profile dir. On the CDP backend
+    // the profile's userDataDir is what holds its logins/cookies, so the CDP
+    // twin of a profile stays logged in across restarts and mirrors the in-app
+    // partition. The default profile aliases the legacy shared dir, so default
+    // sessions are byte-for-byte unchanged. (Shared-Chrome caveat: one Chrome
+    // process = one userDataDir, so the FIRST session to launch the shared
+    // browser fixes it for concurrent CDP sessions — see runtime.getSharedBrowser.)
+    this.context = await acquireSessionContext(
+      this.currentEngine,
+      this.mode,
+      this.sessionId,
+      profileUserDataDir(this.profileId),
+    );
     // Install the context-level SSRF/scheme request guard so EVERY navigation
     // this context makes (click/act/fill-induced, redirect hop, JS-redirect) is
     // egress-checked at the request layer — not just the initial navigate URL.

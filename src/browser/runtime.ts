@@ -80,13 +80,16 @@ export function createQuarantinedChromiumContext(
   return create;
 }
 
-async function launch(engine: BrowserEngine): Promise<Browser> {
+async function launch(engine: BrowserEngine, userDataDir?: string): Promise<Browser> {
   const proxy = await ensureBrowserEgressProxy();
   proxyServer = proxy.url;
   const pw = await import("playwright");
   try {
     if (engine === "chromium") {
-      const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url);
+      // userDataDir carries the launching session's browser-profile dir. The
+      // launcher keeps its own legacy default when this is undefined, so a
+      // direct/legacy call is unchanged.
+      const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url, { userDataDir });
       chromeProcess = proc;
       browserLaunchCleanup = cleanup ?? null;
       return b;
@@ -105,8 +108,17 @@ async function launch(engine: BrowserEngine): Promise<Browser> {
 }
 
 /** The single Chrome connection, launched on first use. Switching engines
- *  closes the current browser and relaunches. */
-export async function getSharedBrowser(engine: BrowserEngine): Promise<Browser> {
+ *  closes the current browser and relaunches.
+ *
+ *  `userDataDir` is the CDP profile dir of the session triggering the launch.
+ *  Because there is exactly ONE shared Chrome process (and a Chrome process
+ *  owns a single --user-data-dir), the FIRST session to launch fixes the dir
+ *  for every concurrent CDP session until the shared browser is torn down. That
+ *  is the accepted CDP-fallback limitation: true per-(session,profile) browsing
+ *  is the in-app backend's job (isolated WebContentsView partitions); CDP is the
+ *  single-profile fallback that at least persists the driving profile's logins.
+ *  An already-connected browser ignores the arg (its dir is already committed). */
+export async function getSharedBrowser(engine: BrowserEngine, userDataDir?: string): Promise<Browser> {
   if (browser && browser.isConnected() && engine !== currentEngine) {
     await closeSharedBrowser();
   }
@@ -115,7 +127,7 @@ export async function getSharedBrowser(engine: BrowserEngine): Promise<Browser> 
   sharedContext = null;
   sharedContextCreation = null;
   if (!launching) {
-    launching = launch(engine)
+    launching = launch(engine, userDataDir)
       .then((b) => { browser = b; return b; })
       .finally(() => { launching = null; });
   }
@@ -189,8 +201,9 @@ export async function acquireSessionContext(
   engine: BrowserEngine,
   mode: BrowserMode,
   ownerId: string,
+  userDataDir?: string,
 ): Promise<BrowserContext> {
-  const b = await getSharedBrowser(engine);
+  const b = await getSharedBrowser(engine, userDataDir);
   if (mode === "isolated") {
     return engine === "chromium"
       ? createQuarantinedChromiumContext(b, CONTEXT_OPTS(engine))

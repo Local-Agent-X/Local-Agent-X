@@ -62,6 +62,29 @@ function inAppBackendAvailable(): boolean {
 	);
 }
 
+export type BrowserBackendKind = "in-app" | "cdp";
+
+/**
+ * THE fallback matrix, made explicit + testable. A session resolves to the
+ * embedded in-app WebContentsView ONLY when all three conditions hold; it falls
+ * to the CDP BrowserManager (which now carries the profile's own userDataDir, so
+ * the fallback keeps the profile's logins) when ANY of these is true:
+ *
+ *   condition                         → backend
+ *   ─────────────────────────────────────────────
+ *   browserMode !== "in-app"          → cdp   (config selects external Chrome)
+ *   LAX_BROWSER_HEADLESS=1            → cdp   (no desktop window to mount a view)
+ *   !desktopBridgeAvailable()         → cdp   (no desktop app / bridge down)
+ *   all of: in-app + windowed + bridge → in-app
+ *
+ * This is just the sign of inAppBackendAvailable(), named so the routing intent
+ * is legible and the ELSE branch (which must supply the profile's userDataDir)
+ * is a first-class, tested outcome rather than an implicit fallthrough.
+ */
+export function resolveBrowserBackendKind(): BrowserBackendKind {
+	return inAppBackendAvailable() ? "in-app" : "cdp";
+}
+
 /** Deterministic view id — one embedded view per (session, profile), so a
  *  re-created backend for the same pair adopts the same desktop view. */
 export function inAppViewId(sessionId: string, profileId: string): string {
@@ -114,7 +137,10 @@ function ensureInAppBackend(key: string): ElectronInAppBackend {
 // BrowserManager otherwise. Callers depend on the interface, not the class.
 export function getBrowserManager(sessionId: string = "default"): BrowserBackend {
 	const key = sessionId || "default";
-	if (inAppBackendAvailable()) return ensureInAppBackend(key);
+	// The CDP manager it returns is bound to the session's profile id, whose
+	// userDataDir is threaded into launchViaCDP at first getPage() — so every
+	// arm of this matrix carries the right profile identity.
+	if (resolveBrowserBackendKind() === "in-app") return ensureInAppBackend(key);
 	return ensureCdpManager(key);
 }
 

@@ -23,8 +23,17 @@ import { trashRecord } from "../safe-delete.js";
 const logger = createLogger("browser-profiles");
 
 const PROFILES_FILE = join(getLaxDir(), "browser-profiles.json");
-/** Parent dir for each profile's CDP userDataDir twin. */
+/** Parent dir for each NON-default profile's CDP userDataDir twin. */
 const PROFILES_DATA_DIR = join(getLaxDir(), "browser-profiles");
+/**
+ * Legacy shared CDP profile dir (`<laxDir>/chrome-profile`) — the dir every
+ * pre-profiles CDP session used. The built-in "default" profile ALIASES this
+ * (see profileUserDataDir) so users upgrading into the profiles world keep their
+ * existing CDP logins instead of silently starting logged-out under
+ * `browser-profiles/default`. It is also the launcher's hardcoded fallback
+ * (launcher.ts), so default-profile CDP behavior is byte-for-byte unchanged.
+ */
+const LEGACY_DEFAULT_DATA_DIR = join(getLaxDir(), "chrome-profile");
 
 export const DEFAULT_PROFILE_ID = "default";
 
@@ -45,8 +54,19 @@ export function profilePartition(id: string): string {
   return `persist:lax-profile-${id}`;
 }
 
-/** CDP userDataDir for a profile id. */
+/**
+ * CDP userDataDir for a profile id. The default profile aliases the legacy
+ * shared dir (migration safety — see LEGACY_DEFAULT_DATA_DIR); every other
+ * profile gets its own isolated dir under `browser-profiles/<id>`.
+ *
+ * This is the single derivation both backends AND the clear route key on, so
+ * the alias holds everywhere at once: the store seeds default with this value,
+ * BrowserManager launches CDP with this value, and profiles.ts compares against
+ * it before the recursive wipe. Change the alias here and all three stay
+ * consistent by construction.
+ */
 export function profileUserDataDir(id: string): string {
+  if (id === DEFAULT_PROFILE_ID) return LEGACY_DEFAULT_DATA_DIR;
   return join(PROFILES_DATA_DIR, id);
 }
 
@@ -78,15 +98,31 @@ export class BrowserProfileStore {
     writeFileSync(PROFILES_FILE, JSON.stringify(this.profiles, null, 2), "utf-8");
   }
 
-  /** Seed the built-in "default" profile on first run. Idempotent. */
+  /** Seed the built-in "default" profile on first run. Idempotent. Also carries
+   *  the one-time migration that re-aliases an already-seeded default profile to
+   *  the legacy shared CDP dir. */
   private seedDefault(): void {
-    if (this.profiles.some((p) => p.id === DEFAULT_PROFILE_ID)) return;
+    const existing = this.profiles.find((p) => p.id === DEFAULT_PROFILE_ID);
+    const canonical = profileUserDataDir(DEFAULT_PROFILE_ID);
+    if (existing) {
+      // Migration: an earlier build seeded default with userDataDir=
+      // browser-profiles/default. F1 aliases default to the legacy shared
+      // chrome-profile dir so upgrading users keep their CDP logins. Heal the
+      // persisted record so BOTH the CDP launch AND the clear route's canonical
+      // comparison (profiles.ts) resolve to the same legacy dir.
+      if (existing.userDataDir !== canonical) {
+        existing.userDataDir = canonical;
+        this.persist();
+        logger.info("[browser-profiles] Migrated default profile userDataDir to legacy chrome-profile dir");
+      }
+      return;
+    }
     const now = Date.now();
     this.profiles.unshift({
       id: DEFAULT_PROFILE_ID,
       name: "Default",
       partition: profilePartition(DEFAULT_PROFILE_ID),
-      userDataDir: profileUserDataDir(DEFAULT_PROFILE_ID),
+      userDataDir: canonical,
       createdAt: now,
       lastUsedAt: now,
     });

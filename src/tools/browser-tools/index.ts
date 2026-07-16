@@ -48,6 +48,7 @@ import {
   handleReleaseDownload,
 } from "./page.js";
 import { handleAct } from "./act.js";
+import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
 import { handleReadConsole, handleReadNetwork } from "./perception.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
@@ -68,7 +69,7 @@ const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
 // Pure reads/utilities (extract, screenshot, evaluate, info, tabs, dialogs)
 // are excluded: they legitimately return varying data off an unchanged page.
 const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "observe", "snapshot", "act"]);
-const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network"]);
+const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "history", "bookmarks"]);
 
 /**
  * After an advancing action, fingerprint the page and trip a no-progress stop
@@ -200,6 +201,9 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "info": return await handleInfo(manager);
             case "downloads": return await handleDownloads(manager);
             case "release_download": return await handleReleaseDownload(manager, args);
+            case "history": return handleHistory(args);
+            case "bookmark_add": return await handleBookmarkAdd(manager, args);
+            case "bookmarks": return handleBookmarks(args);
             case "dialog_accept": return await handleDialogAccept(manager, args);
             case "dialog_dismiss": return await handleDialogDismiss(manager);
             case "close": return await handleClose(sessionId);

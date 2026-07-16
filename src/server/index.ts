@@ -268,6 +268,10 @@ export async function startServer(config: LAXConfig) {
     // fail closed until this answers), same bridge, same lifetime.
     const { initBrowserBridgeClient } = await import("../browser/bridge-client.js");
     initBrowserBridgeClient();
+    // Record user browser navigations (ui:browser bus) into shared history —
+    // same lifetime as the bridge listener that produces those events.
+    const { initHistoryRecorder } = await import("../browser/history-recorder.js");
+    initHistoryRecorder();
   }
 
   // Wire the message-count provider used by the WS session_snapshot event.

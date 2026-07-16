@@ -37,6 +37,9 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- release_download: Release a quarantined archive or macro-enabled document after user approval (set 'download_id').\n" +
   "- dialog_accept: Accept a pending native browser dialog (alert/confirm/prompt). Pass 'value' for prompt() responses.\n" +
   "- dialog_dismiss: Dismiss a pending native browser dialog.\n" +
+  "- history: Search shared browser history (pass 'find' to filter, 'limit' to cap rows; newest first). It covers the user's own browsing too — when they mention 'that site from yesterday' or a page they had open, check history FIRST instead of web-searching for it.\n" +
+  "- bookmark_add: Save a bookmark. With no 'url'/'title' it bookmarks the CURRENT page. Bookmarks are shared with the user — when they say 'post it to the usual place' or 'save it where I keep those', this is that place.\n" +
+  "- bookmarks: List shared bookmarks (pass 'find' to filter). Shared both ways: check here first when the user refers to a saved/usual site.\n" +
   "- close: Close the browser session.\n\n" +
   "TIPS:\n" +
   "- After navigate, ALWAYS take a snapshot before interacting.\n" +
@@ -59,7 +62,7 @@ export const BROWSER_TOOL_PARAMETERS = {
   properties: {
     action: {
       type: "string",
-      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "info", "read_console", "read_network", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "close"],
+      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "info", "read_console", "read_network", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
       description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
     },
     url: {
@@ -96,7 +99,11 @@ export const BROWSER_TOOL_PARAMETERS = {
     },
     find: {
       type: "string",
-      description: "For 'extract': return only page lines matching this text (case-insensitive) plus context, instead of the whole page. Prefer this when you know what you're looking for on a large page.",
+      description: "For 'extract': return only page lines matching this text (case-insensitive) plus context, instead of the whole page. Prefer this when you know what you're looking for on a large page. For 'history'/'bookmarks': substring filter on url/title.",
+    },
+    limit: {
+      type: "number",
+      description: "For 'history': maximum entries to return (default 25, max 100).",
     },
     download_id: {
       type: "string",

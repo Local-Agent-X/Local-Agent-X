@@ -12,6 +12,7 @@ import { WebContentsView, type Rectangle } from "electron";
 
 import { getMainWindow } from "./window";
 import { getHardenedPartitionSession, hardenWebContents, viewWebPreferences } from "./browser-partition";
+import { managePopups, type PopupTracker } from "./browser-view-popups";
 import { armCoDrive } from "./in-app-browser";
 
 export interface BrowserViewInfo {
@@ -32,6 +33,7 @@ interface PoolEntry {
 	partition: string;
 	bounds: Rectangle;
 	agentDriven: boolean;
+	popups: PopupTracker;
 }
 
 const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
@@ -66,16 +68,21 @@ export function createBrowserView(
 	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
 	hardenWebContents(view.webContents);
 	armCoDrive(viewId, view.webContents);
-	// window.open children would inherit the partition but NOT the
-	// per-webContents hardening (WebRTC policy) and would live outside
-	// the pool as unmanaged OS windows — deny them outright. In-view
-	// navigation stays free; the session egress guard covers it.
-	view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+	// window.open children (popup-mode OAuth lives or dies on these) get the
+	// managed discipline: same-partition webPreferences, per-webContents
+	// hardening, recursive window-open handling, and a tracked lifetime that
+	// ends with the view. Session guards (egress, permissions, downloads)
+	// ride the partition and cover them already.
+	const popups = managePopups(view.webContents, {
+		webPreferences: () => viewWebPreferences(opts.partition),
+		harden: hardenWebContents,
+	});
 	const entry: PoolEntry = {
 		view,
 		partition: opts.partition,
 		bounds: opts.bounds ?? { ...DEFAULT_BOUNDS },
 		agentDriven: opts.agentDriven === true,
+		popups,
 	};
 	pool.set(viewId, entry);
 	return describe(viewId, entry);
@@ -118,6 +125,7 @@ export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
 export function closeBrowserView(viewId: string): void {
 	const entry = requireEntry(viewId);
 	if (attachedId === viewId) hideBrowserView(viewId);
+	entry.popups.closeAll();
 	if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
 	pool.delete(viewId);
 }

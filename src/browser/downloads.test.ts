@@ -6,6 +6,8 @@ import { Readable } from "node:stream";
 import JSZip from "jszip";
 import {
   getDownloadApprovalBinding,
+  getRecentDownloads,
+  ingestInAppDownload,
   inspectBrowserDownload,
   releaseQuarantinedDownload,
   safeDownloadFilename,
@@ -223,6 +225,90 @@ describe("browser download quarantine", () => {
     expect(result.status).toBe("released");
     expect(readFileSync(result.releasePath!, "utf8")).toBe("%PDF-1.7\nsafe");
     expect(result.metadataPath).toContain(paths.quarantineDir);
+  });
+});
+
+describe("in-app download ingest (desktop quarantine → canonical records)", () => {
+  /** A desktop-quarantined ".part" file plus fresh server-side dirs. */
+  function desktopEntry(id: string, filename: string, mime: string, bytes: Buffer | string) {
+    const root = mkdtempSync(join(tmpdir(), "lax-inapp-ingest-"));
+    roots.push(root);
+    const savePath = join(root, `${id}.part`);
+    writeFileSync(savePath, bytes);
+    return {
+      dirs: { quarantineDir: join(root, "srv-quarantine"), releaseDir: join(root, "srv-release") },
+      entry: {
+        id, url: `https://files.test/${filename}?token=secret`, pageUrl: "https://files.test/page",
+        filename, mime, bytes: Buffer.byteLength(bytes), state: "completed", savePath,
+      },
+    };
+  }
+
+  it("runs the ONE canonical inspection pipeline: safe pdf releases, zip quarantines, executable rejects", async () => {
+    const pdf = desktopEntry("desk-pdf-1", "report.pdf", "application/pdf", "%PDF-1.7\nin-app");
+    const released = await ingestInAppDownload("inapp-a", pdf.entry, pdf.dirs);
+    expect(released?.status).toBe("released");
+    expect(readFileSync(released!.releasePath!, "utf8")).toBe("%PDF-1.7\nin-app");
+    expect(released?.sourceUrl).not.toContain("secret"); // same URL privacy law
+    expect(existsSync(pdf.entry.savePath)).toBe(false);  // desktop .part consumed
+
+    const zipped = desktopEntry("desk-zip-1", "data.zip", "application/zip", await zip({ "a.txt": "zzz" }));
+    const quarantined = await ingestInAppDownload("inapp-a", zipped.entry, zipped.dirs);
+    expect(quarantined?.status).toBe("quarantined");
+    expect(quarantined?.reason).toMatch(/approval/i);
+    expect(existsSync(zipped.entry.savePath)).toBe(false);
+
+    const exe = desktopEntry("desk-exe-1", "setup.exe", "application/octet-stream", Buffer.from("MZsetup"));
+    const rejected = await ingestInAppDownload("inapp-a", exe.entry, exe.dirs);
+    expect(rejected?.status).toBe("rejected");
+    expect(rejected?.reason).toMatch(/executable/i);
+    expect(existsSync(exe.entry.savePath)).toBe(false);
+  });
+
+  it("is idempotent by desktop id: a re-push (at-least-once outbox) never double-records", async () => {
+    const a = desktopEntry("desk-dupe-1", "a.pdf", "application/pdf", "%PDF-1.7\nonce");
+    const first = await ingestInAppDownload("inapp-dupe", a.entry, a.dirs);
+    expect(first?.status).toBe("released");
+    const again = await ingestInAppDownload("inapp-dupe", a.entry, a.dirs);
+    expect(again).toBeNull();
+    expect(getRecentDownloads("inapp-dupe")).toHaveLength(1);
+  });
+
+  it("non-completed terminal states land exactly one FAILED record and consume the partial", async () => {
+    const bad = desktopEntry("desk-int-1", "half.pdf", "application/pdf", "%PDF-1.7\nhal");
+    bad.entry.state = "interrupted";
+    const record = await ingestInAppDownload("inapp-fail", bad.entry, bad.dirs);
+    expect(record?.status).toBe("failed");
+    expect(record?.reason).toMatch(/interrupted/);
+    expect(existsSync(bad.entry.savePath)).toBe(false);
+    expect(await ingestInAppDownload("inapp-fail", bad.entry, bad.dirs)).toBeNull();
+    expect(getRecentDownloads("inapp-fail")).toHaveLength(1);
+  });
+
+  it("a missing desktop file records a FAILED entry instead of throwing", async () => {
+    const ghost = desktopEntry("desk-ghost-1", "gone.pdf", "application/pdf", "%PDF-1.7\nx");
+    rmSync(ghost.entry.savePath);
+    const record = await ingestInAppDownload("inapp-ghost", ghost.entry, ghost.dirs);
+    expect(record?.status).toBe("failed");
+    expect(record?.reason).toMatch(/Download failed/);
+  });
+
+  it("approval binding + digest-bound release round-trips for an in-app record exactly like CDP", async () => {
+    const zipped = desktopEntry("desk-rel-1", "data.zip", "application/zip", await zip({ "a.txt": "bound bytes" }));
+    const record = await ingestInAppDownload("inapp-rel", zipped.entry, zipped.dirs);
+    expect(record?.status).toBe("quarantined");
+    const binding = getDownloadApprovalBinding("inapp-rel", record!.id);
+    expect(binding.digest).toBe(record!.digest);
+    // Tampered binding refused (double-digest law holds for in-app records).
+    await expect(
+      releaseQuarantinedDownload("inapp-rel", record!.id, { ...binding, size: binding.size + 1 }, zipped.dirs.releaseDir),
+    ).rejects.toThrow(/metadata/i);
+    const released = await releaseQuarantinedDownload("inapp-rel", record!.id, binding, zipped.dirs.releaseDir);
+    expect(released.status).toBe("released");
+    expect(existsSync(released.releasePath!)).toBe(true);
+    // Session scoping: another session can't see or bind this record.
+    expect(getRecentDownloads("other-session")).toHaveLength(0);
+    expect(() => getDownloadApprovalBinding("other-session", record!.id)).toThrow(/not found/i);
   });
 });
 

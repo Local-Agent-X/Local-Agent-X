@@ -1,44 +1,39 @@
 /**
  * Browser bridge client — server→desktop IPC for driving the pooled
- * WebContentsViews (desktop/src/browser-views.ts). Same transport and
- * correlation idiom as src/desktop-bridge.ts (seq id + pending map over
- * the parent-child IPC channel), but deliberately self-contained with
- * its OWN process.on("message") listener so desktop-bridge.ts stays
- * untouched — multiple "message" listeners coexist fine on a process.
- *
- * Also owns the REVERSE egress channel: the desktop's per-partition
- * egress guard (desktop/src/browser-partition.ts) has no policy of its
- * own — per request hop it sends "lax:browser-egress-ask" and THIS
- * listener answers from the canonical evaluateEgressForUrl, so the one
- * source of truth for URL policy never gets duplicated in Electron
- * main. Call initBrowserBridgeClient() at boot to arm that channel
- * before the first browser op.
- *
- * Fail-closed throughout: no bridge → reject; timeout → reject with a
- * typed error naming op + viewId; closing a view rejects every pending
- * op addressed to it so callers never hang out the full timeout.
+ * WebContentsViews (desktop/src/browser-views.ts). Same correlation idiom
+ * as src/desktop-bridge.ts (seq id + pending map) but self-contained with
+ * its OWN process.on("message") listener. That listener also serves the
+ * desktop-initiated channels: the REVERSE egress asks (answered from the
+ * canonical evaluateEgressForUrl — URL policy is never duplicated in
+ * Electron main; arm at boot via initBrowserBridgeClient), plus the
+ * fire-and-forget ui-event and download-event pushes (bridge-perception).
+ * Fail-closed throughout: no bridge → reject; timeout → typed error
+ * naming op + viewId; closing a view rejects its pending ops immediately.
  */
 
 import { createLogger } from "../logger.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
-import { handleBrowserUiEvent, type BridgeConsoleEntry, type BridgeNetworkEntry } from "./bridge-perception.js";
+import {
+	handleBrowserDownloadEvent,
+	handleBrowserUiEvent,
+	type BridgeConsoleEntry,
+	type BridgeNetworkEntry,
+} from "./bridge-perception.js";
 
 const logger = createLogger("browser-bridge");
 
 // ── Per-op timeouts ─────────
-// navigate: the desktop enforces its own load deadline (sent in the
-// message); the client waits that plus a reply grace — probeApp's
-// pattern — for a 28s ceiling, under the tool wedge deadline.
+// navigate: the desktop enforces its own load deadline (sent in the message);
+// the client waits that plus a reply grace — 28s ceiling, under the tool wedge.
 export const LIFECYCLE_TIMEOUT_MS = 8_000;
 export const NAVIGATE_DESKTOP_TIMEOUT_MS = 25_000;
 export const NAVIGATE_REPLY_GRACE_MS = 3_000; // 25s + 3s = 28s total
 export const EXEC_TIMEOUT_MS = 10_000;
 export const INPUT_TIMEOUT_MS = 5_000;
 export const CAPTURE_TIMEOUT_MS = 10_000;
-// clear-partition navigates every open view on the partition to about:blank
-// (so in-memory cookies can't survive the wipe) THEN clears storage — a couple
-// of loads plus a storage flush, so a longer ceiling than a bare lifecycle op.
+// clear-partition blanks every open view on the partition THEN clears storage
+// (loads + a storage flush) — longer ceiling than a bare lifecycle op.
 export const CLEAR_PARTITION_TIMEOUT_MS = 12_000;
 
 // ── Wire types (mirrored in desktop/src/server-bridge-browser.ts) ─────────
@@ -50,8 +45,7 @@ export interface BrowserViewInfo {
 	url: string;
 	title: string;
 	attached: boolean;
-	/** Set by the desktop at creation: agent-driving bridge view vs. the
-	 *  renderer's own foreground view (mirrors browser-views.ts). */
+	/** Set at creation: agent-driving bridge view vs. the renderer's own. */
 	agentDriven: boolean;
 }
 
@@ -85,18 +79,16 @@ export type BridgeInputEvent = BridgeMouseEvent | BridgeMouseWheelEvent | Bridge
 export interface BrowserLifecycleResult {
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
-	// userActive: the desktop's co-drive lock reports the human is driving the
-	// view. Read by the in-app backend's pre-exec arbitration before running an
-	// eval-driven mutation (which bypasses the desktop input gate).
+	// userActive: the co-drive lock says the human is driving — read by the
+	// in-app backend's pre-exec arbitration (eval bypasses the input gate).
 	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
 }
 /** status: main-frame HTTP response code, when the desktop observed one
  *  (did-navigate). Absent for non-HTTP loads → callers print "unknown". */
 export interface BrowserNavigateResult { url: string; title: string; status?: number }
 
-/** The desktop refused an agent input because the HUMAN is currently
- *  driving the view (co-drive human-priority lock). This is a STATUS the
- *  backend surfaces to the model ("user took the wheel"), not an error. */
+/** The desktop refused an agent input: the HUMAN is driving the view
+ *  (co-drive lock). A STATUS ("user took the wheel"), not an error. */
 export interface UserActiveResult { userActive: true }
 /** browserInput outcome: undefined = the event was dispatched;
  *  UserActiveResult = refused, human is driving. */
@@ -124,6 +116,8 @@ interface BridgeReply {
 	status?: number;
 	entries?: BridgeConsoleEntry[];
 	network?: { entries: BridgeNetworkEntry[]; inFlight: number };
+	dialogs?: InAppDialogSummary[];
+	handled?: InAppDialogSummary | null;
 }
 
 const RESULT_TYPES = new Set([
@@ -135,6 +129,7 @@ const RESULT_TYPES = new Set([
 	"lax:browser-clear-partition-result",
 	"lax:browser-read-console-result",
 	"lax:browser-read-network-result",
+	"lax:browser-dialogs-result",
 ]);
 
 // ── Typed errors ─────────
@@ -212,6 +207,11 @@ function ensureListener(): void {
 			handleBrowserUiEvent(msg as unknown as Record<string, unknown>);
 			return;
 		}
+		if (msg.type === "lax:browser-download-event") {
+			// Desktop-initiated, fire-and-forget → canonical download ingest.
+			handleBrowserDownloadEvent(msg as unknown as Record<string, unknown>);
+			return;
+		}
 		if (!RESULT_TYPES.has(msg.type)) return;
 		const entry = pendingOps.get(msg.id);
 		if (entry) entry.settle(msg);
@@ -280,22 +280,12 @@ export async function browserLifecycle(
 	if (op === "create" && !opts?.partition) {
 		throw new BridgeOpError(`lifecycle:${op}`, viewId, "create requires a partition");
 	}
-	const reply = await request(
-		`lifecycle:${op}`,
-		viewId,
-		{ type: "lax:browser-lifecycle", op, viewId, partition: opts?.partition, bounds: opts?.bounds },
-		LIFECYCLE_TIMEOUT_MS,
-	);
+	const reply = await request(`lifecycle:${op}`, viewId, { type: "lax:browser-lifecycle", op, viewId, partition: opts?.partition, bounds: opts?.bounds }, LIFECYCLE_TIMEOUT_MS);
 	return { view: reply.view, views: reply.views, ping: reply.ping };
 }
 
 export async function browserNavigate(viewId: string, url: string): Promise<BrowserNavigateResult> {
-	const reply = await request(
-		"navigate",
-		viewId,
-		{ type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS },
-		NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS,
-	);
+	const reply = await request("navigate", viewId, { type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS }, NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS);
 	return { url: reply.url ?? "", title: reply.title ?? "", ...(typeof reply.status === "number" ? { status: reply.status } : {}) };
 }
 
@@ -312,12 +302,26 @@ export async function browserReadNetwork(viewId: string): Promise<{ entries: Bri
 	return { entries: Array.isArray(net?.entries) ? net.entries : [], inFlight: typeof net?.inFlight === "number" ? net.inFlight : 0 };
 }
 
+/** Desktop beforeunload-dialog queue entry (desktop/src/browser-dialogs.ts). */
+export interface InAppDialogSummary { type: string; message: string }
+
+/** Dialog queue ops: list pending, or accept/dismiss the next queued entry
+ *  (handled: null when nothing was pending). */
+export async function browserDialogs(
+	viewId: string,
+	op: "list" | "accept" | "dismiss",
+): Promise<{ dialogs: InAppDialogSummary[]; handled: InAppDialogSummary | null }> {
+	const reply = await request(`dialogs:${op}`, viewId, { type: "lax:browser-dialogs", viewId, op }, LIFECYCLE_TIMEOUT_MS);
+	return {
+		dialogs: Array.isArray(reply.dialogs) ? reply.dialogs : [],
+		handled: reply.handled ?? null,
+	};
+}
+
 /** Runs `script` in the view's ISOLATED world (the only supported world —
  *  main-world execution is deliberately not offered by the desktop side).
- *  `allFrames: true` asks the desktop to run the script per same-origin
- *  frame and aggregate the results as an array (main frame first); frames
- *  the desktop cannot reach in an isolated world are skipped fail-closed,
- *  never executed in the main world. */
+ *  `allFrames: true` aggregates per same-origin frame (main frame first);
+ *  frames unreachable in an isolated world are skipped fail-closed. */
 export async function browserExec(
 	viewId: string,
 	script: string,
@@ -342,23 +346,13 @@ export async function browserExec(
  *  event having been sent — when the human is driving the view; resolves
  *  undefined when the event was dispatched (unchanged from the B1 shape). */
 export async function browserInput(viewId: string, event: BridgeInputEvent): Promise<BrowserInputResult> {
-	const reply = await request(
-		"input",
-		viewId,
-		{ type: "lax:browser-input", viewId, event },
-		INPUT_TIMEOUT_MS,
-	);
+	const reply = await request("input", viewId, { type: "lax:browser-input", viewId, event }, INPUT_TIMEOUT_MS);
 	return reply.userActive === true ? { userActive: true } : undefined;
 }
 
 /** Returns the view's current paint as a base64 PNG. */
 export async function browserCapture(viewId: string): Promise<string> {
-	const reply = await request(
-		"capture",
-		viewId,
-		{ type: "lax:browser-capture", viewId },
-		CAPTURE_TIMEOUT_MS,
-	);
+	const reply = await request("capture", viewId, { type: "lax:browser-capture", viewId }, CAPTURE_TIMEOUT_MS);
 	if (typeof reply.pngB64 !== "string" || reply.pngB64.length === 0) {
 		throw new BridgeOpError("capture", viewId, "desktop returned no image data");
 	}
@@ -367,21 +361,16 @@ export async function browserCapture(viewId: string): Promise<string> {
 
 /**
  * Wipe a profile partition's saved logins (cookies + all storage) on the
- * Electron backend. The desktop side enforces the fail-safe ordering INSIDE
- * one handler — every open view on the partition is navigated to about:blank
- * FIRST, then session.clearStorageData() runs — so no in-memory cookie of a
- * live page survives the wipe (a cross-process navigate/clear would race).
- * Fails closed off-desktop: the caller treats BridgeUnavailableError as
- * "no Electron store to clear" and still wipes the CDP userDataDir twin.
- * The `partition` doubles as the correlation label for typed errors.
+ * Electron backend. The desktop enforces the fail-safe ordering INSIDE one
+ * handler — every open view on the partition navigates to about:blank FIRST,
+ * then session.clearStorageData() runs — so no in-memory cookie of a live
+ * page survives (a cross-process navigate/clear would race). Fails closed
+ * off-desktop: the caller treats BridgeUnavailableError as "no Electron
+ * store to clear" and still wipes the CDP userDataDir twin. The `partition`
+ * doubles as the correlation label for typed errors.
  */
 export async function browserClearPartition(partition: string): Promise<void> {
-	await request(
-		"clear-partition",
-		partition,
-		{ type: "lax:browser-clear-partition", partition },
-		CLEAR_PARTITION_TIMEOUT_MS,
-	);
+	await request("clear-partition", partition, { type: "lax:browser-clear-partition", partition }, CLEAR_PARTITION_TIMEOUT_MS);
 }
 
 /** Fire-and-forget: stop the view's in-flight load. No id, no reply. */

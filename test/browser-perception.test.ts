@@ -30,6 +30,10 @@ vi.mock("../desktop/src/browser-views", () => ({
 vi.mock("../desktop/src/browser-partition", () => ({
   getHardenedPartitionSession: () => ({ clearStorageData: async () => {} }),
   setEgressEvaluator: (fn: unknown) => { h.egressEvaluator = fn; },
+  // Chunk F seams (browser-downloads-bridge wires these on every respawn).
+  setDownloadContextResolver: () => {},
+  setDownloadDoneListener: () => {},
+  listQuarantinedDownloads: () => [],
 }));
 vi.mock("../desktop/src/browser-ipc", () => ({ autoSurfaceAgentView: () => {} }));
 vi.mock("../desktop/src/in-app-browser", () => ({

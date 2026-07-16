@@ -1,12 +1,18 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Keep this file hermetic: bridge-perception routes download pushes into
+// downloads.ts (config/fs machinery) — the routing law is what's under test.
+vi.mock("./downloads.js", () => ({ ingestInAppDownload: vi.fn(async () => null) }));
 
 import { EventBus } from "../event-bus.js";
 import {
 	formatConsoleReport,
 	formatNetworkReport,
+	handleBrowserDownloadEvent,
 	handleBrowserUiEvent,
 	sessionIdFromViewId,
 } from "./bridge-perception.js";
+import { ingestInAppDownload } from "./downloads.js";
 import { sanitizeUiEvent } from "../orchestrator/ui-event-store.js";
 
 afterEach(() => {
@@ -69,6 +75,49 @@ describe("handleBrowserUiEvent → ui:browser bus", () => {
 		expect(received[1]).toMatchObject({ surface: "browser", action: "title" });
 		expect("target" in received[1]).toBe(false);
 		expect(typeof received[1].ts).toBe("number");
+	});
+});
+
+describe("handleBrowserDownloadEvent → canonical download ingest", () => {
+	const download = {
+		id: "desk-1", url: "https://files.test/a.pdf", pageUrl: "https://files.test/",
+		filename: "a.pdf", mime: "application/pdf", bytes: 10, state: "completed",
+		savePath: "C:/tmp/desk-1.part",
+	};
+
+	afterEach(() => vi.clearAllMocks());
+
+	it("routes an agent view's download to ingest under the session parsed from the viewId", () => {
+		handleBrowserDownloadEvent({ type: "lax:browser-download-event", viewId: "view-sess-7-work-t2", download });
+		expect(ingestInAppDownload).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(ingestInAppDownload).mock.calls[0][0]).toBe("sess-7");
+		expect(vi.mocked(ingestInAppDownload).mock.calls[0][1]).toEqual(download);
+	});
+
+	it("skips user views and unattributed (null) viewIds — never a global-scope record", () => {
+		handleBrowserDownloadEvent({ viewId: "foreground", download });
+		handleBrowserDownloadEvent({ viewId: null, download });
+		handleBrowserDownloadEvent({ viewId: "user-3", download });
+		expect(ingestInAppDownload).not.toHaveBeenCalled();
+	});
+
+	it("drops malformed payloads (missing download / id / savePath / state) without throwing", () => {
+		handleBrowserDownloadEvent({ viewId: "view-s-1-work" });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, id: 5 } });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, savePath: undefined } });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, state: 9 } });
+		expect(ingestInAppDownload).not.toHaveBeenCalled();
+	});
+
+	it("degrades non-string metadata to safe defaults instead of dropping the entry", () => {
+		handleBrowserDownloadEvent({
+			viewId: "view-s-1-work",
+			download: { id: "desk-2", savePath: "C:/tmp/d2.part", state: "completed", url: 1, pageUrl: null, filename: {}, mime: 4, bytes: "big" },
+		});
+		expect(vi.mocked(ingestInAppDownload).mock.calls[0][1]).toEqual({
+			id: "desk-2", savePath: "C:/tmp/d2.part", state: "completed",
+			url: "", pageUrl: "", filename: "download.bin", mime: "", bytes: 0,
+		});
 	});
 });
 

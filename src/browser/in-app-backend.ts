@@ -21,13 +21,14 @@
  *   - readConsole/readNetwork (chunk E): desktop perception rings, active tab.
  *   - screenshot: KB1 credential-focus guard blocks capture while a password
  *     field is focused in the co-driven view.
- *   - dialogs: not-supported strings until desktop-side interception lands.
- *   - downloads: desktop quarantine not plumbed to the server yet —
- *     list is empty, approvals throw (follow-up chunk, P1/KB1 territory).
+ *   - dialogs (chunk F): beforeunload interception via the desktop queue
+ *     (browser-dialogs.ts); alert/confirm/prompt have no Electron hook.
+ *   - downloads (chunk F): the desktop pushes finished quarantine entries
+ *     into the canonical downloads.ts records; list/approve/release delegate.
  */
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { browserExec, browserNavigate, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
+import { browserDialogs, browserExec, browserNavigate, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
 import { formatConsoleReport, formatNetworkReport } from "./bridge-perception.js";
 import {
 	closeOwnedTabs,
@@ -42,7 +43,7 @@ import {
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost } from "./redirect.js";
 import { scanEvaluateScript, sensitivePageStub } from "./guards.js";
-import { formatRecentDownloads, type DownloadApprovalBinding } from "./downloads.js";
+import { formatRecentDownloads, getDownloadApprovalBinding, releaseQuarantinedDownload, type DownloadApprovalBinding } from "./downloads.js";
 import { fingerprintPage } from "./interactions.js";
 import {
 	evaluateScript,
@@ -118,14 +119,12 @@ export class EvaluateBlockedError extends Error {
 	}
 }
 
-/** Desktop download quarantine isn't plumbed to the server yet; approval/release must fail closed (follow-up). */
-export class InAppDownloadsUnavailableError extends Error {
-	constructor(op: string) {
-		super(`browser ${op} is not available in the in-app backend yet — desktop ` +
-			`download quarantine is not plumbed to the server (follow-up chunk).`);
-		this.name = "InAppDownloadsUnavailableError";
-	}
-}
+/** Honest no-pending answer: only beforeunload is interceptable here, so a
+ *  visible popup is NATIVE and belongs to the co-driving user. */
+export const IN_APP_NO_DIALOG =
+	"No native dialog pending. Note: the in-app browser can only intercept beforeunload " +
+	"dialogs — alert/confirm/prompt render natively to the user co-driving the window; " +
+	"if a popup is visible, ask the user to handle it.";
 
 // ── Backend ─────────
 
@@ -357,36 +356,38 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return formatNetworkReport(entries, inFlight);
 	}
 
-	// ── Dialogs (need desktop-side interception — A2/follow-up) ──
+	// ── Dialogs (beforeunload queue on the desktop — browser-dialogs.ts) ──
+	// No ensureView: a dialog can only pend on an EXISTING view — never mint
+	// one. promptText is parity only; prompt() isn't interceptable here.
 
 	async dialogAccept(_promptText?: string): Promise<string> {
-		return (
-			"Dialog handling is not supported by the in-app browser backend yet — " +
-			"JS dialogs require desktop-side interception (chunk A2 follow-up). No dialog was accepted."
-		);
+		if (!this.isActive()) return IN_APP_NO_DIALOG;
+		const { handled } = await browserDialogs(this.viewId, "accept");
+		if (!handled) return IN_APP_NO_DIALOG;
+		return `Accepted ${handled.type} dialog: "${handled.message.slice(0, 80)}" — the block is lifted for the NEXT unload: retry the navigation or close that was cancelled.`;
 	}
 
 	async dialogDismiss(): Promise<string> {
-		return (
-			"Dialog handling is not supported by the in-app browser backend yet — " +
-			"JS dialogs require desktop-side interception (chunk A2 follow-up). No dialog was dismissed."
-		);
+		if (!this.isActive()) return IN_APP_NO_DIALOG;
+		const { handled } = await browserDialogs(this.viewId, "dismiss");
+		if (!handled) return IN_APP_NO_DIALOG;
+		return `Dismissed ${handled.type} dialog: "${handled.message.slice(0, 80)}" — the page stays.`;
 	}
 
-	// ── Downloads (desktop quarantine not plumbed to server yet) ──
+	// ── Downloads — same delegations to downloads.ts the CDP manager makes:
+	// one policy, one digest-bound approval/release law for both backends.
 
 	getDownloads(): string {
-		// Canonical formatter; desktop-side downloads aren't recorded into the
-		// server's session records yet, so this reports the empty state.
 		return formatRecentDownloads(this.sessionId);
 	}
 
-	getDownloadApproval(_id: string): DownloadApprovalBinding {
-		throw new InAppDownloadsUnavailableError("download approval");
+	getDownloadApproval(id: string): DownloadApprovalBinding {
+		return getDownloadApprovalBinding(this.sessionId, id);
 	}
 
-	async releaseDownload(_id: string, _approved: DownloadApprovalBinding): Promise<string> {
-		throw new InAppDownloadsUnavailableError("download release");
+	async releaseDownload(id: string, approved: DownloadApprovalBinding): Promise<string> {
+		const record = await releaseQuarantinedDownload(this.sessionId, id, approved);
+		return `RELEASED: ${record.filename} (${record.size} bytes)\nReleased to: ${record.releasePath}`;
 	}
 
 	// ── Lifecycle ──

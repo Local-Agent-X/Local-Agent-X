@@ -51,6 +51,9 @@ export interface BrowserAbortRequest { type: "lax:browser-abort"; viewId: string
 export interface BrowserEgressAskResult { type: "lax:browser-egress-ask-result"; id: number; allowed: boolean }
 export interface BrowserReadConsoleRequest { type: "lax:browser-read-console"; id: number; viewId: string }
 export interface BrowserReadNetworkRequest { type: "lax:browser-read-network"; id: number; viewId: string }
+/** Beforeunload dialog queue ops (browser-dialogs.ts): list pending, or
+ *  accept/dismiss the next queued entry. */
+export interface BrowserDialogsRequest { type: "lax:browser-dialogs"; id: number; viewId: string; op: "list" | "accept" | "dismiss" }
 
 export type BrowserBridgeMessage =
 	| BrowserLifecycleRequest
@@ -62,7 +65,8 @@ export type BrowserBridgeMessage =
 	| BrowserAbortRequest
 	| BrowserEgressAskResult
 	| BrowserReadConsoleRequest
-	| BrowserReadNetworkRequest;
+	| BrowserReadNetworkRequest
+	| BrowserDialogsRequest;
 
 const BROWSER_MESSAGE_TYPES = new Set<string>([
 	"lax:browser-lifecycle",
@@ -75,6 +79,7 @@ const BROWSER_MESSAGE_TYPES = new Set<string>([
 	"lax:browser-egress-ask-result",
 	"lax:browser-read-console",
 	"lax:browser-read-network",
+	"lax:browser-dialogs",
 ]);
 
 export function isBrowserBridgeMessage(msg: { type?: string }): msg is BrowserBridgeMessage {

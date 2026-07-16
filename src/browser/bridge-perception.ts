@@ -20,6 +20,10 @@
  */
 
 import { EventBus } from "../event-bus.js";
+import { createLogger } from "../logger.js";
+import { ingestInAppDownload } from "./downloads.js";
+
+const logger = createLogger("browser.bridge-perception");
 
 export interface BridgeConsoleEntry {
 	level: string;
@@ -61,6 +65,36 @@ export function handleBrowserUiEvent(msg: Record<string, unknown>): void {
 	const sessionId = sessionIdFromViewId(msg.viewId);
 	if (sessionId !== undefined) event.sessionId = sessionId;
 	void EventBus.emit("ui:browser", event);
+}
+
+/**
+ * Inbound desktop download push ("lax:browser-download-event", fire-and-
+ * forget like ui-events) → canonical download records (downloads.ts). Only
+ * AGENT-attributed downloads enter session records: the owning session is
+ * parsed from the top-level viewId; user views and unattributed (null)
+ * viewIds are skipped — their bytes stay in the desktop quarantine dir.
+ * The ingest is async (stream-hash) and self-deduping; kicking it off
+ * fire-and-forget here matches the CDP path's page.on("download") posture.
+ */
+export function handleBrowserDownloadEvent(msg: Record<string, unknown>): void {
+	const sessionId = sessionIdFromViewId(msg.viewId);
+	if (sessionId === undefined) return;
+	const d = msg.download as Record<string, unknown> | null | undefined;
+	if (!d || typeof d.id !== "string" || typeof d.savePath !== "string" || typeof d.state !== "string") return;
+	void ingestInAppDownload(sessionId, {
+		id: d.id,
+		state: d.state,
+		savePath: d.savePath,
+		url: typeof d.url === "string" ? d.url : "",
+		pageUrl: typeof d.pageUrl === "string" ? d.pageUrl : "",
+		filename: typeof d.filename === "string" ? d.filename : "download.bin",
+		mime: typeof d.mime === "string" ? d.mime : "",
+		bytes: typeof d.bytes === "number" ? d.bytes : 0,
+	}).catch((e) => {
+		// ingestInAppDownload records failures itself; this only catches a bug
+		// in the ingest machinery — never let it become an unhandled rejection.
+		logger.warn(`[browser-downloads] ingest crashed for ${d.id}: ${(e as Error).message}`);
+	});
 }
 
 /** Compact console report: counts + levels up front, entries newest last. */

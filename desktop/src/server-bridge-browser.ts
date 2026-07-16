@@ -5,7 +5,8 @@
  * "<type>-result" carrying the request id). Drives the WebContentsView
  * pool (browser-views.ts) on behalf of the server child:
  *   lifecycle / navigate / exec / input / capture / abort /
- *   read-console / read-network (browser-perception.ts rings).
+ *   read-console / read-network (browser-perception.ts rings) /
+ *   dialogs (browser-dialogs.ts beforeunload queue).
  *
  * Also wires the per-partition egress guard (browser-partition.ts) to
  * the server's canonical URL policy: wireBrowserEgressEvaluator installs
@@ -30,6 +31,8 @@ import {
 	type BrowserViewInfo,
 } from "./browser-views";
 import { autoSurfaceAgentView } from "./browser-ipc";
+import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
+import { wireDownloadBridge } from "./browser-downloads-bridge";
 import { getHardenedPartitionSession, setEgressEvaluator, type EgressDecision } from "./browser-partition";
 import {
 	attachViewPerception,
@@ -82,17 +85,32 @@ function askServerEgress(proc: ChildProcess, url: string): Promise<EgressDecisio
  *  live process; a dead/replaced child fails closed inside the ask. */
 export function wireBrowserEgressEvaluator(proc: ChildProcess): void {
 	setEgressEvaluator((url) => askServerEgress(proc, url));
-	// Same (re)spawn moment arms perception: console rings on every new view,
-	// and fire-and-forget UI events (user views only) to the live child.
+	// Same (re)spawn moment arms perception (console rings + UI events) and
+	// beforeunload-dialog interception on every view's lifecycle.
 	setViewLifecycleObserver({
-		onViewCreated: attachViewPerception,
-		onViewClosed: detachViewPerception,
+		onViewCreated: (viewId, wc, agentDriven) => {
+			attachViewPerception(viewId, wc, agentDriven);
+			attachDialogInterception(viewId, wc);
+		},
+		onViewClosed: (viewId) => {
+			detachViewPerception(viewId);
+			detachDialogState(viewId);
+		},
 	});
 	setBrowserUiEventSink((msg) => {
 		try {
 			if (proc.connected && !proc.killed) proc.send(msg);
 		} catch {
 			/* child gone — UI events are best-effort by contract */
+		}
+	});
+	// Download attribution + terminal-entry push (outbox: flushes backlog now,
+	// marks entries reported only when proc.send succeeded).
+	wireDownloadBridge((msg) => {
+		try {
+			return proc.connected && !proc.killed && proc.send(msg);
+		} catch {
+			return false;
 		}
 	});
 }
@@ -153,6 +171,15 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 		}
 		case "lax:browser-clear-partition": {
 			reply(proc, "lax:browser-clear-partition-result", msg.id, () => clearPartition(msg.partition));
+			return;
+		}
+		case "lax:browser-dialogs": {
+			reply(proc, "lax:browser-dialogs-result", msg.id, () => {
+				requireWebContents(msg.viewId); // typed "no browser view" on dead/unknown ids
+				return msg.op === "list"
+					? { dialogs: listDialogs(msg.viewId) }
+					: { handled: handleDialog(msg.viewId, msg.op) };
+			});
 			return;
 		}
 		case "lax:browser-read-console": {

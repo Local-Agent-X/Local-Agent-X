@@ -1,5 +1,5 @@
 import type { Download, Page, Response } from "playwright";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdirSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { basename, extname, join, resolve } from "node:path";
@@ -221,6 +221,63 @@ export async function inspectBrowserDownload(input: InspectInput): Promise<Downl
     await rm(quarantinePath, { force: true });
     await rm(metadataPath, { force: true });
     throw error;
+  }
+}
+
+// ── In-app (Electron) download ingest ─────────
+// The desktop's per-partition will-download handler (desktop/src/
+// browser-partition.ts) saves every download to <LAX_DIR>/quarantine/<id>.part
+// and pushes terminal entries over the bridge (browser-downloads-bridge.ts →
+// bridge-perception.handleBrowserDownloadEvent → here). This seam runs the
+// SAME inspection pipeline (inspectBrowserDownload: size cap + sha256 + magic
+// detection + policy + quarantine/release) over those bytes, producing a
+// normal DownloadRecord so formatRecentDownloads / approval / release work
+// identically for both backends — one policy implementation, never two.
+export interface InAppDownloadEntry {
+  id: string;
+  url: string;
+  pageUrl: string;
+  filename: string;
+  mime: string;
+  bytes: number;
+  state: string;
+  savePath: string;
+}
+
+// Idempotency law: an entry ingested once is never double-recorded. Dedupe is
+// SERVER-side (not a desktop-only flag) because the desktop's outbox is
+// at-least-once — a resend after a send the desktop couldn't confirm must be
+// dropped HERE. The id is claimed before any async work so a concurrent
+// re-push during hashing can't double-record either.
+const ingestedInAppIds = new Set<string>();
+
+export async function ingestInAppDownload(
+  sessionId: string,
+  entry: InAppDownloadEntry,
+  dirs?: { quarantineDir?: string; releaseDir?: string },
+): Promise<DownloadRecord | null> {
+  if (ingestedInAppIds.has(entry.id)) return null;
+  ingestedInAppIds.add(entry.id);
+  try {
+    if (entry.state !== "completed") {
+      return recordFailure(sessionId, entry.url, entry.pageUrl, entry.filename,
+        `Browser reported the download ${entry.state}; partial bytes were removed.`);
+    }
+    const record = await inspectBrowserDownload({
+      sessionId, sourceUrl: entry.url, pageUrl: entry.pageUrl,
+      suggestedFilename: entry.filename, contentType: entry.mime,
+      stream: createReadStream(entry.savePath), ...dirs,
+    });
+    browserLogger.info(`[downloads] ${record.status} ${record.filename} from ${sourceOrigin(entry.url)} (in-app)`);
+    return record;
+  } catch (error) {
+    browserLogger.warn(`[downloads] in-app ingest failed from ${sourceOrigin(entry.url)}: ${(error as Error).message}`);
+    return recordFailure(sessionId, entry.url, entry.pageUrl, entry.filename,
+      `Download failed and partial bytes were removed: ${(error as Error).message}`);
+  } finally {
+    // The desktop .part is consumed either way: released/quarantined bytes now
+    // live in the server's own dirs; failed/rejected partials must not linger.
+    await rm(entry.savePath, { force: true }).catch(() => { /* already gone */ });
   }
 }
 

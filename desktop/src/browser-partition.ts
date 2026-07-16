@@ -117,12 +117,20 @@ async function evaluateEgress(url: string): Promise<boolean> {
 // ── Download quarantine registry ─────────
 export interface QuarantinedDownload {
 	id: string;
+	/** Pool view that triggered the download; null when the webContents is not
+	 *  a pool view (popup / unresolvable). Resolved at will-download time. */
+	viewId: string | null;
+	/** Page URL of the triggering webContents at will-download time. */
+	pageUrl: string;
 	url: string;
 	filename: string;
 	mime: string;
 	bytes: number;
 	state: "progressing" | "completed" | "cancelled" | "interrupted";
 	savePath: string;
+	/** Set by browser-downloads-bridge once the entry reached a live server
+	 *  child (outbox flag — mark ONLY after a successful send). */
+	reported: boolean;
 }
 
 const QUARANTINE_DIR = join(LAX_DIR, "quarantine");
@@ -134,6 +142,23 @@ export function getQuarantinedDownload(id: string): QuarantinedDownload | undefi
 
 export function listQuarantinedDownloads(): QuarantinedDownload[] {
 	return [...downloadRegistry.values()];
+}
+
+export function _resetDownloadRegistryForTest(): void {
+	downloadRegistry.clear();
+}
+
+// Attribution + terminal-state seams (browser-downloads-bridge.ts wires
+// both). Setter pattern — importing browser-views here would be a cycle.
+export type DownloadContextResolver = (wc: WebContents | undefined) => { viewId: string | null; pageUrl: string };
+let downloadContextResolver: DownloadContextResolver | null = null;
+export function setDownloadContextResolver(fn: DownloadContextResolver | null): void {
+	downloadContextResolver = fn;
+}
+
+let downloadDoneListener: ((entry: QuarantinedDownload) => void) | null = null;
+export function setDownloadDoneListener(fn: ((entry: QuarantinedDownload) => void) | null): void {
+	downloadDoneListener = fn;
 }
 
 // ── Per-partition hardening ─────────
@@ -175,21 +200,33 @@ function hardenSession(sess: Session, partition: string): void {
 		(_wc: WebContents | null, permission: string) => VIEW_ALLOWED_PERMISSIONS.has(permission),
 	);
 
-	// Nothing lands outside quarantine, nothing auto-opens. Release /
-	// approval flow is server-owned and wired in a later chunk.
-	sess.on("will-download", (_event: unknown, item: DownloadItem) => {
+	// Nothing lands outside quarantine, nothing auto-opens. The server owns
+	// the release/approval flow: terminal entries are pushed to it by the
+	// done-listener seam (browser-downloads-bridge.ts).
+	sess.on("will-download", (_event: unknown, item: DownloadItem, wc?: WebContents) => {
 		const id = randomUUID();
 		mkdirSync(QUARANTINE_DIR, { recursive: true });
 		const savePath = join(QUARANTINE_DIR, `${id}.part`);
 		item.setSavePath(savePath);
+		// Attribute at DOWNLOAD time — the view may be gone by the time anyone
+		// lists the registry. No resolver wired yet → unattributed (null).
+		let context = { viewId: null as string | null, pageUrl: "" };
+		try {
+			if (downloadContextResolver) context = downloadContextResolver(wc);
+		} catch {
+			/* attribution is best-effort; the quarantine save is not */
+		}
 		const record: QuarantinedDownload = {
 			id,
+			viewId: context.viewId,
+			pageUrl: context.pageUrl,
 			url: item.getURL(),
 			filename: item.getFilename(),
 			mime: item.getMimeType(),
 			bytes: item.getTotalBytes(),
 			state: "progressing",
 			savePath,
+			reported: false,
 		};
 		downloadRegistry.set(id, record);
 		item.on("updated", (_e: unknown, state: string) => {
@@ -199,6 +236,11 @@ function hardenSession(sess: Session, partition: string): void {
 		item.once("done", (_e: unknown, state: "completed" | "cancelled" | "interrupted") => {
 			record.bytes = item.getReceivedBytes();
 			record.state = state;
+			try {
+				downloadDoneListener?.(record);
+			} catch {
+				/* push is best-effort; the outbox flush retries unreported entries */
+			}
 		});
 	});
 

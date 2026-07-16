@@ -88,6 +88,10 @@ vi.mock("../desktop/src/browser-partition", () => ({
   hardenWebContents: () => {},
   viewWebPreferences: () => ({}),
   setEgressEvaluator: () => {},
+  // Chunk F seams (browser-downloads-bridge wires these on every respawn).
+  setDownloadContextResolver: () => {},
+  setDownloadDoneListener: () => {},
+  listQuarantinedDownloads: () => [],
 }));
 vi.mock("../desktop/src/browser-view-popups", () => ({
   managePopups: () => ({ closeAll: () => {} }),

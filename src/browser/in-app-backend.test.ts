@@ -29,11 +29,13 @@ vi.mock("./bridge-client.js", async (importOriginal) => {
 		browserAbort: vi.fn(),
 		browserReadConsole: vi.fn(),
 		browserReadNetwork: vi.fn(),
+		browserDialogs: vi.fn(),
 	};
 });
 
 import {
 	browserCapture,
+	browserDialogs,
 	browserExec,
 	browserInput,
 	browserLifecycle,
@@ -44,8 +46,9 @@ import {
 import {
 	ElectronInAppBackend,
 	EvaluateBlockedError,
-	InAppDownloadsUnavailableError,
+	IN_APP_NO_DIALOG,
 } from "./in-app-backend.js";
+import { ingestInAppDownload } from "./downloads.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
 import { ObservationRegistry, type DurableRef } from "./observation.js";
 import type { RawElement } from "./extract.js";
@@ -388,14 +391,58 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(await backend.readNetwork()).toBe("No network requests captured for this tab. 0 request(s) in flight");
 	});
 
-	it("dialogs report not-supported without pretending to act", async () => {
-		expect(await backend.dialogAccept()).toContain("No dialog was accepted");
-		expect(await backend.dialogDismiss()).toContain("No dialog was dismissed");
+	// ── Dialogs (chunk F: beforeunload queue over the bridge) ─────────
+
+	it("dialogAccept surfaces the desktop-handled beforeunload dialog with the retry note", async () => {
+		await backend.navigate(PAGE_URL);
+		vi.mocked(browserDialogs).mockResolvedValue({
+			dialogs: [],
+			handled: { type: "beforeunload", message: "This page asked to confirm leaving." },
+		});
+		const out = await backend.dialogAccept();
+		expect(browserDialogs).toHaveBeenCalledWith(VIEW_ID, "accept");
+		// Prefix parity with the CDP dialog-handler string.
+		expect(out).toMatch(/^Accepted beforeunload dialog: "This page asked to confirm leaving\."/);
+		expect(out).toContain("retry the navigation or close");
 	});
 
-	it("downloads: list is the canonical empty state; approval/release fail closed", async () => {
+	it("dialogDismiss surfaces the desktop-handled dialog and says the page stays", async () => {
+		await backend.navigate(PAGE_URL);
+		vi.mocked(browserDialogs).mockResolvedValue({
+			dialogs: [],
+			handled: { type: "beforeunload", message: "This page asked to confirm leaving." },
+		});
+		const out = await backend.dialogDismiss();
+		expect(browserDialogs).toHaveBeenCalledWith(VIEW_ID, "dismiss");
+		expect(out).toMatch(/^Dismissed beforeunload dialog: /);
+		expect(out).toContain("the page stays");
+	});
+
+	it("no pending dialog → the HONEST note (only beforeunload is interceptable; native popups are the user's)", async () => {
+		await backend.navigate(PAGE_URL);
+		vi.mocked(browserDialogs).mockResolvedValue({ dialogs: [], handled: null });
+		const out = await backend.dialogAccept();
+		expect(out).toBe(IN_APP_NO_DIALOG);
+		expect(out).toContain("No native dialog pending."); // CDP-parity prefix
+		expect(out).toContain("beforeunload");
+		expect(out).toContain("alert/confirm/prompt");
+		expect(await backend.dialogDismiss()).toBe(IN_APP_NO_DIALOG);
+	});
+
+	it("dialog ops on an INACTIVE backend answer honestly without minting a view or touching the bridge", async () => {
+		expect(await backend.dialogAccept()).toBe(IN_APP_NO_DIALOG);
+		expect(await backend.dialogDismiss()).toBe(IN_APP_NO_DIALOG);
+		expect(browserDialogs).not.toHaveBeenCalled();
+		expect(browserLifecycle).not.toHaveBeenCalled(); // no ensureView side effect
+	});
+
+	// ── Downloads (chunk F: canonical downloads.ts records, ingested via push) ──
+
+	it("downloads: empty state comes from the canonical formatter; approval/release fail closed with the canonical errors", async () => {
 		expect(backend.getDownloads()).toBe("No browser downloads recorded for this session.");
-		expect(() => backend.getDownloadApproval("dl-1")).toThrow(InAppDownloadsUnavailableError);
+		expect(() => backend.getDownloadApproval("dl-1")).toThrow(
+			"Quarantined download not found in this browser session.",
+		);
 		await expect(
 			backend.releaseDownload("dl-1", {
 				download_id: "dl-1",
@@ -405,7 +452,46 @@ describe("ElectronInAppBackend (A1)", () => {
 				content_type: "text/plain",
 				detected_type: "text",
 			}),
-		).rejects.toBeInstanceOf(InAppDownloadsUnavailableError);
+		).rejects.toThrow("Download not found in this browser session.");
+	});
+
+	it("an ingested in-app download lists, binds, and releases through the SAME canonical flow as CDP", async () => {
+		const { default: JSZip } = await import("jszip");
+		const { writeFileSync, existsSync } = await import("node:fs");
+		const archive = new JSZip();
+		archive.file("data.txt", "in-app bytes");
+		const zipBytes = await archive.generateAsync({ type: "nodebuffer", compression: "STORE" });
+		const savePath = join(laxDir, "desktop-quarantine.part");
+		writeFileSync(savePath, zipBytes);
+		const dirs = { quarantineDir: join(laxDir, "srv-q"), releaseDir: join(laxDir, "srv-rel") };
+
+		// Desktop push → server ingest for THIS backend's session ("sess-1").
+		const record = await ingestInAppDownload("sess-1", {
+			id: "desk-backend-1", url: "https://files.test/data.zip", pageUrl: "https://files.test/",
+			filename: "data.zip", mime: "application/zip", bytes: zipBytes.length,
+			state: "completed", savePath,
+		}, dirs);
+		expect(record?.status).toBe("quarantined");
+		expect(existsSync(savePath)).toBe(false); // desktop .part consumed
+
+		// list → approval binding, through the backend members (canonical store).
+		expect(backend.getDownloads()).toContain(`[${record!.id}] QUARANTINED: data.zip`);
+		const binding = backend.getDownloadApproval(record!.id);
+		expect(binding).toEqual({
+			download_id: record!.id, digest: record!.digest, size: record!.size,
+			filename: "data.zip", content_type: "application/zip", detected_type: "zip",
+		});
+		// Tampered binding is refused for in-app records exactly as CDP ones.
+		await expect(
+			backend.releaseDownload(record!.id, { ...binding, digest: "0".repeat(64) }),
+		).rejects.toThrow(/no longer matches/);
+		// Release through the canonical function (explicit releaseDir keeps the
+		// test off getRuntimeConfig's workspace machinery); the backend's list
+		// then reflects the released state — one store, both surfaces.
+		const { releaseQuarantinedDownload } = await import("./downloads.js");
+		const released = await releaseQuarantinedDownload("sess-1", record!.id, binding, dirs.releaseDir);
+		expect(released.status).toBe("released");
+		expect(backend.getDownloads()).toContain(`[${record!.id}] RELEASED: data.zip`);
 	});
 
 	// ── Info / tabs ─────────

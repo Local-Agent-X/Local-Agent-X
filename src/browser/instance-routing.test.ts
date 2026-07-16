@@ -78,6 +78,7 @@ import {
 	inAppViewId,
 	resolveBrowserBackendKind,
 	resolveBrowserRoute,
+	getSecretBrowserOps,
 	CdpOnlyOperationError,
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
@@ -288,6 +289,33 @@ describe("browser route reporting", () => {
 	});
 });
 
+describe("getSecretBrowserOps", () => {
+	// The whole point of the port: saved-password logins must work on the
+	// DEFAULT backend. Before this, an in-app session threw CdpOnlyOperationError
+	// and the user had to leave in-app mode to use secrets at all.
+	it("serves an in-app session instead of refusing it", () => {
+		setInApp();
+		const ops = getSecretBrowserOps("chat-1");
+		expect(ops).toBeDefined();
+		expect(typeof ops.fillValue).toBe("function");
+	});
+
+	it("serves a CDP session through the same contract", () => {
+		state.browserMode = "continuity";
+		const ops = getSecretBrowserOps("chat-1");
+		expect(ops).toBeDefined();
+		expect(typeof ops.fillValue).toBe("function");
+	});
+
+	it("binds to the session's own backend, not a second browser identity", () => {
+		setInApp();
+		getSecretBrowserOps("chat-1");
+		// No CDP manager may be conjured for an in-app session — that would open a
+		// separate Chrome beside the live view, with a different login state.
+		expect(() => getCdpBrowserManager("chat-1")).toThrow(CdpOnlyOperationError);
+	});
+});
+
 describe("getCdpBrowserManager", () => {
 	it("returns the concrete BrowserManager on the CDP path", () => {
 		const manager = getCdpBrowserManager("chat-1");
@@ -298,9 +326,7 @@ describe("getCdpBrowserManager", () => {
 	it("throws the typed CDP-only error for an in-app session", () => {
 		setInApp();
 		expect(() => getCdpBrowserManager("chat-1")).toThrow(CdpOnlyOperationError);
-		expect(() => getCdpBrowserManager("chat-1")).toThrow(
-			/secret-fill\/secret-capture require the CDP profile flow for now/,
-		);
+		expect(() => getCdpBrowserManager("chat-1")).toThrow(/has no Playwright page/);
 	});
 
 	it("keeps throwing while a cached in-app backend exists even after a mode flip", () => {

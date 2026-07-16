@@ -9,6 +9,7 @@ import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { desktopBridgeAvailable } from "../desktop-bridge.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
+import { createCdpSecretOps, type SecretBrowserOps } from "./secret-ops.js";
 
 const logger = createLogger("browser.route");
 
@@ -23,15 +24,15 @@ const logger = createLogger("browser.route");
 const cdpManagers = new Map<string, BrowserManager>();
 const inAppBackends = new Map<string, { backend: ElectronInAppBackend; viewId: string }>();
 
-/** getCdpBrowserManager was called for a session routed to the in-app
- *  backend. Secret handling stays CDP-only for now (parked product decision). */
+/** getCdpBrowserManager was called for a session routed to the in-app backend.
+ *  Handing back a CDP manager there would open a second, separate browser
+ *  identity beside the session's live view. */
 export class CdpOnlyOperationError extends Error {
 	constructor(sessionId: string) {
 		super(
 			`This session's browser runs on the in-app backend (sessionId=${sessionId}), ` +
-				`but secret-fill/secret-capture require the CDP profile flow for now — ` +
-				`that's the parked product decision. Switch the session off the in-app ` +
-				`browser mode to use secret handling.`,
+				`which has no Playwright page. Use getSecretBrowserOps for page access ` +
+				`that works on both backends.`,
 		);
 		this.name = "CdpOnlyOperationError";
 	}
@@ -212,11 +213,28 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
 }
 
 /**
+ * Page access for the secret tools, on whichever backend the session actually
+ * has. This is the seam that used to force secret-fill/secret-capture onto CDP:
+ * they took a BrowserManager and drove its Playwright page, so a session on the
+ * in-app backend — the default — got a typed refusal and no saved-password
+ * logins at all. Both backends can do what those tools need; only the concrete
+ * page handle differed, which is what SecretBrowserOps abstracts.
+ */
+export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowserOps {
+	const key = sessionId || "default";
+	const route = resolveBrowserRoute();
+	reportBrowserRoute(key, route);
+	if (route.kind === "in-app") return ensureInAppBackend(key).secretOps();
+	const manager = ensureCdpManager(key);
+	return createCdpSecretOps(() => manager.getPage());
+}
+
+/**
  * Concrete-typed accessor for CDP-internal helpers that need the Playwright
- * `Page` (secret-fill / secret-capture operate directly on the page). Not part
- * of the tool-facing BrowserBackend contract — the in-app backend has no
- * Playwright page, so a session routed in-app gets a typed refusal instead of
- * a surprise second (CDP) browser identity opening beside its view.
+ * `Page`. Not part of the tool-facing BrowserBackend contract — the in-app
+ * backend has no Playwright page, so a session routed in-app gets a typed
+ * refusal instead of a surprise second (CDP) browser identity opening beside
+ * its view.
  */
 export function getCdpBrowserManager(sessionId: string = "default"): BrowserManager {
 	const key = sessionId || "default";

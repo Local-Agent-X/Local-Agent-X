@@ -41,12 +41,8 @@ import {
 	screenshotAsBase64,
 } from "./page-ops.js";
 import {
-	asExecResult,
 	asObservePage,
 	BridgeObservePage,
-	clickScript,
-	fillScript,
-	selectScript,
 	type BridgePageState,
 } from "./in-app-observe.js";
 import {
@@ -57,10 +53,16 @@ import {
 	CREDENTIAL_CAPTURE_BLOCKED,
 	type InAppActionContext,
 } from "./in-app-actions.js";
+import {
+	clickSelectorInApp,
+	fillSelectorInApp,
+	selectOptionInApp,
+} from "./in-app-selector-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
 import type { BrowserEngine } from "./launcher.js";
 import type { Page } from "playwright";
 import { createLogger } from "../logger.js";
+import { createInAppSecretOps, type SecretBrowserOps } from "./secret-ops.js";
 
 const logger = createLogger("browser.in-app");
 
@@ -239,43 +241,30 @@ export class ElectronInAppBackend implements BrowserBackend {
 		}
 	}
 
-	// ── Interaction (A1: simple isolated-world eval; A2 replaces) ──
+	// ── Interaction (A1 drivers live in in-app-actions.ts beside the A2 chain) ──
 
 	async click(selector: string): Promise<string> {
 		await this.ensureView();
-		const res = asExecResult(await browserExec(this.viewId, clickScript(selector)));
-		if (!res.ok) {
-			if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
-			throw new Error(`Cannot click ${selector}: ${res.error}`);
-		}
+		await clickSelectorInApp(this.viewId, selector);
 		const snap = await this.snapshot(); // refreshes state.url too
 		return `Clicked: ${selector}\nPage: ${this.state.url}\n\n${snap}`;
 	}
 
 	async fill(selector: string, value: string): Promise<string> {
 		await this.ensureView();
-		const res = asExecResult(await browserExec(this.viewId, fillScript(selector, value)));
-		if (!res.ok) {
-			if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
-			throw new Error(`Cannot fill ${selector}: ${res.error}`);
-		}
-		const actual = typeof res.actual === "string" ? res.actual : "";
-		if (actual === value) return `Filled "${selector}" with value (${value.length} chars)`;
-		if (actual === "" && res.type === "password") {
-			return `Filled "${selector}" (verification skipped: masked input)`;
-		}
-		throw new Error(`Fill did not land: expected '${value}' got '${actual}'`);
+		return fillSelectorInApp(this.viewId, selector, value);
 	}
 
 	async select(selector: string, value: string): Promise<string> {
 		await this.ensureView();
-		const res = asExecResult(await browserExec(this.viewId, selectScript(selector, value)));
-		if (!res.ok) {
-			if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
-			throw new Error(`Cannot select in ${selector}: ${res.error}`);
-		}
-		const selected = Array.isArray(res.selected) ? res.selected.map(String) : [];
-		return `Selected "${selected.join(", ")}" in ${selector}`;
+		return selectOptionInApp(this.viewId, selector, value);
+	}
+
+	/** Page access for the secret tools. Lives off the tool-facing contract on
+	 *  purpose — a secret must never take the formatted, value-echoing paths in
+	 *  BrowserBackend (see secret-ops.ts). */
+	secretOps(): SecretBrowserOps {
+		return createInAppSecretOps({ viewId: this.viewId, ensureView: () => this.ensureView() });
 	}
 
 	/** The A2 resolution-chain + real-input driver context. Shares this

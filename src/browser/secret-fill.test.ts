@@ -33,26 +33,14 @@ vi.mock("../logger.js", () => ({
   createLogger: () => loggerMock,
 }));
 
-// Browser barrel: control what page the tool gets, and bypass the mutex.
-interface FakeLocator {
-  inputValue: () => Promise<string>;
-  fill: (val: string) => Promise<void>;
-  press: (key: string) => Promise<void>;
-}
-interface FakePage {
-  url: () => string;
-  evaluate: (script: string) => Promise<unknown>;
-  fill: (sel: string, val: string) => Promise<void>;
-  locator: (selector: string) => FakeLocator;
-}
-
-let currentPage: FakePage;
+// Browser barrel: control the page access the tool gets, and bypass the mutex.
+// The tool now drives SecretBrowserOps, which both backends implement — so this
+// fake stands in for either one, and every assertion below holds on both.
+let currentOps: SecretBrowserOps;
 let elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
 
 vi.mock("./index.js", () => ({
-  getCdpBrowserManager: () => ({
-    getPage: async () => currentPage,
-  }),
+  getSecretBrowserOps: () => currentOps,
   withBrowserLock: async <T>(_sid: string, fn: () => Promise<T>) => fn(),
 }));
 
@@ -70,28 +58,25 @@ vi.mock("../sanitize.js", () => ({
 // ───────────────────────── imports after mocks ─────────────────────────
 import { createBrowserSecretFillTool } from "./secret-fill.js";
 import type { SecretsStore } from "../secrets.js";
+import type { SecretBrowserOps, SecretFillOutcome } from "./secret-ops.js";
 
 const ORIGIN = "https://example.com";
 const SECRET_NAME = "GH_TOKEN";
 const SECRET_VALUE = "super-secret-token-zzzZZZ-1234567890";
 
-function buildPage(opts: {
-  readback: string;
+function buildOps(opts: {
+  outcome: SecretFillOutcome;
   fillThrows?: boolean;
-}): FakePage {
+}): SecretBrowserOps {
   return {
-    url: () => `${ORIGIN}/login`,
-    evaluate: async () => ({ ...elementDescriptor }),
-    fill: async () => {
+    currentOrigin: async () => ORIGIN,
+    describeElement: async () => ({ ...elementDescriptor }),
+    readValue: async () => null,
+    fillValue: async () => {
       if (opts.fillThrows) throw new Error("fill failed");
+      return opts.outcome;
     },
-    locator: () => ({
-      inputValue: async () => opts.readback,
-      fill: async () => {
-        if (opts.fillThrows) throw new Error("fill failed");
-      },
-      press: async () => undefined,
-    }),
+    pressEnter: async () => undefined,
   };
 }
 
@@ -127,9 +112,9 @@ beforeEach(() => {
 });
 
 describe("browser_fill_from_secret — readback never leaks the secret", () => {
-  it("plain text + matching readback → ok, no secret in message or logs", async () => {
+  it("landed → ok, no secret in message or logs", async () => {
     elementDescriptor = { found: true, tag: "input", type: "text", autocomplete: "username" };
-    currentPage = buildPage({ readback: SECRET_VALUE });
+    currentOps = buildOps({ outcome: { kind: "landed" } });
 
     const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
     const result = await tool.execute({ name: SECRET_NAME, selector: "#user" });
@@ -146,33 +131,26 @@ describe("browser_fill_from_secret — readback never leaks the secret", () => {
     expect(redactedRegistrations).toContain(SECRET_VALUE);
   });
 
-  it("plain text + length mismatch → err with 'length mismatch', NO secret in message or logs", async () => {
+  it("mismatch → err, NO secret in message or logs", async () => {
     elementDescriptor = { found: true, tag: "input", type: "text", autocomplete: "username" };
-    currentPage = buildPage({ readback: "decoy-value-that-came-back-instead" });
+    currentOps = buildOps({ outcome: { kind: "mismatch" } });
 
     const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
     const result = await tool.execute({ name: SECRET_NAME, selector: "#user" });
 
     expect(result.isError).toBe(true);
     expect(result.content).toMatch(/Secret fill did not land/);
-    expect(result.content).toMatch(/length mismatch/);
-
-    // SECURITY: error message must not include the secret OR the actual readback
-    // (the readback could itself be a sensitive value we just happened to read).
+    expect(result.content).toMatch(/value mismatch/);
     assertNoSecretLeak([result.content, ...auditCalls]);
-    expect(result.content).not.toContain("decoy-value-that-came-back-instead");
-    for (const line of auditCalls) {
-      expect(line).not.toContain("decoy-value-that-came-back-instead");
-    }
 
     // The mismatch event SHOULD have been audited (so we can spot leaks-from-the-page).
     const mismatchLogged = auditCalls.some((l) => l.includes("fill_mismatch"));
     expect(mismatchLogged).toBe(true);
   });
 
-  it("password input + empty readback → ok with skip note", async () => {
+  it("masked-unverifiable → ok with skip note", async () => {
     elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
-    currentPage = buildPage({ readback: "" });
+    currentOps = buildOps({ outcome: { kind: "masked-unverifiable" } });
 
     const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
     const result = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
@@ -182,36 +160,31 @@ describe("browser_fill_from_secret — readback never leaks the secret", () => {
     assertNoSecretLeak([result.content, ...auditCalls]);
   });
 
-  it("hidden input + empty readback → ok with skip note", async () => {
-    elementDescriptor = { found: true, tag: "input", type: "hidden", autocomplete: "current-password" };
-    currentPage = buildPage({ readback: "" });
-
-    const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
-    const result = await tool.execute({ name: SECRET_NAME, selector: "#hidden-token" });
-
-    expect(result.isError).not.toBe(true);
-    expect(result.content).toContain("verification skipped: masked input");
-    assertNoSecretLeak([result.content, ...auditCalls]);
+  it("not-found / not-fillable → err naming the shape, not the value", async () => {
+    elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+    for (const kind of ["not-found", "not-fillable"] as const) {
+      auditCalls.length = 0;
+      currentOps = buildOps({ outcome: { kind } });
+      const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
+      const result = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
+      expect(result.isError).toBe(true);
+      expect(result.content).toMatch(/Fill failed/);
+      assertNoSecretLeak([result.content, ...auditCalls]);
+    }
   });
 
-  it("readback machinery throws → ok with readback-failed skip note (does not leak)", async () => {
+  it("a throwing fill reports failure and does not leak", async () => {
+    // The write and its verification are one in-page step now, so a throw means
+    // the outcome is genuinely unknown — report failure rather than the old
+    // "readback failed but we'll call it a success" note, which guessed.
     elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
-    currentPage = {
-      url: () => `${ORIGIN}/login`,
-      evaluate: async () => ({ ...elementDescriptor }),
-      fill: async () => undefined,
-      locator: () => ({
-        inputValue: () => Promise.reject(new Error("Target closed")),
-        fill: async () => undefined,
-        press: async () => undefined,
-      }),
-    };
+    currentOps = buildOps({ outcome: { kind: "landed" }, fillThrows: true });
 
     const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
     const result = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
 
-    expect(result.isError).not.toBe(true);
-    expect(result.content).toContain("verification skipped: readback failed");
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/Fill failed/);
     assertNoSecretLeak([result.content, ...auditCalls]);
   });
 });

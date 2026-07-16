@@ -23,8 +23,15 @@ export { BrowserWedgeError } from "./observation.js";
 export {
   getBrowserManager,
   getCdpBrowserManager,
+  getSecretBrowserOps,
   closeBrowser,
   closeAllBrowsers,
   resetWedgedBrowser,
   setCurrentBrowserSession,
 } from "./instance.js";
+export type {
+  SecretBrowserOps,
+  SecretElementDescriptor,
+  SecretFillOutcome,
+  SecretReadTarget,
+} from "./secret-ops.js";

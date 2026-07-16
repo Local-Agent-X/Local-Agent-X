@@ -28,9 +28,10 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { deriveOrigin, normalizeSecretName } from "../secrets.js";
-import { getCdpBrowserManager } from "./index.js";
+import { getSecretBrowserOps } from "./index.js";
 import { registerRedactedSecretValue } from "../sanitize.js";
 import { getActivePreBlessedSecrets } from "../ops/pre-bless.js";
+import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
@@ -116,48 +117,26 @@ export function createBrowserSecretFillTool(
       }
 
       // --- Guardrail 1: identify the target element + check selector whitelist ---
-      const manager = getCdpBrowserManager(sessionId);
-      let page;
+      const ops = getSecretBrowserOps(sessionId);
+
+      let currentOrigin: string;
       try {
-        page = await manager.getPage();
+        currentOrigin = await ops.currentOrigin();
       } catch (e) {
         return err(`Browser not available: ${(e as Error).message}`);
       }
-
-      const currentOrigin = (() => { try { return new URL(page.url()).origin; } catch { return ""; } })();
       if (!currentOrigin) {
         auditLog({ event: "fill_denied", secret: name, reason: "no_current_origin", session: sessionId });
         return err("Browser has no current page origin — navigate somewhere first.");
       }
 
       // Resolve ref → selector via the observation registry if ref was provided.
-      // We use evaluate() with a generated selector to inspect the target node's
-      // tag/type/autocomplete server-side, so the decision doesn't depend on
-      // anything the LLM said.
+      // The target node's tag/type/autocomplete are read server-side, so the
+      // decision doesn't depend on anything the LLM said.
       const targetSelector = selector ?? `[data-lax-ref="${ref}"]`;
-      interface ElementDescriptor { tag: string; type: string; autocomplete: string; found: boolean }
-      let elementDescriptor: ElementDescriptor = { tag: "", type: "", autocomplete: "", found: false };
+      let elementDescriptor: SecretElementDescriptor;
       try {
-        const script = `(function(sel){
-          var el = document.querySelector(sel);
-          if (!el) return { found: false, tag: '', type: '', autocomplete: '' };
-          return {
-            found: true,
-            tag: (el.tagName || '').toLowerCase(),
-            type: (el.getAttribute('type') || '').toLowerCase(),
-            autocomplete: (el.getAttribute('autocomplete') || '').toLowerCase(),
-          };
-        })(${JSON.stringify(targetSelector)})`;
-        const raw = await page.evaluate(script);
-        if (raw && typeof raw === "object") {
-          const r = raw as Partial<ElementDescriptor>;
-          elementDescriptor = {
-            tag: String(r.tag ?? ""),
-            type: String(r.type ?? ""),
-            autocomplete: String(r.autocomplete ?? ""),
-            found: Boolean(r.found),
-          };
-        }
+        elementDescriptor = await ops.describeElement(targetSelector);
       } catch (e) {
         return err(`Could not inspect target element: ${(e as Error).message}`);
       }
@@ -235,13 +214,13 @@ export function createBrowserSecretFillTool(
         return err(`Secret "${name}" disappeared between check and read. Retry or ask the user.`);
       }
 
+      // The write and its verification happen together, inside the page — the
+      // outcome that comes back carries no value, so nothing below can echo the
+      // secret even by accident. Verification precedes pressEnter so a
+      // post-submit navigation can't tear the element out from under it.
+      let outcome: SecretFillOutcome;
       try {
-        if (ref !== undefined && !selector) {
-          // Playwright locator via attr-selector still reaches the right node
-          await page.locator(targetSelector).fill(value);
-        } else {
-          await page.fill(targetSelector, value);
-        }
+        outcome = await ops.fillValue(targetSelector, value);
       } catch (e) {
         auditLog({
           event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,
@@ -250,35 +229,28 @@ export function createBrowserSecretFillTool(
         return err(`Fill failed: ${(e as Error).message}`);
       }
 
-      // Best-effort readback (security-adjacent): NEVER include the secret
-      // value, even truncated. Length-mismatch presence is all the agent
-      // needs. Masked inputs (password/hidden) return "" — skip verification.
-      // Readback runs BEFORE pressEnter so we don't trip on the post-submit
-      // navigation tearing down the locator.
       let verificationNote = "";
-      try {
-        const loc = page.locator(targetSelector);
-        const actual = await loc.inputValue();
-        if (actual === value) {
-          // ok — verified
-        } else if (actual === "" && (elementDescriptor.type === "password" || elementDescriptor.type === "hidden")) {
-          verificationNote = " (verification skipped: masked input)";
-        } else {
-          auditLog({
-            event: "fill_mismatch", secret: name, origin: currentOrigin, session: sessionId,
-            selectorKind: matchedPattern.label,
-          });
-          return err(`Secret fill did not land: ${targetSelector} (length mismatch)`);
-        }
-      } catch {
-        // Readback machinery itself broke (element gone, navigation, detach).
-        // Don't bury the underlying successful fill.
-        verificationNote = " (verification skipped: readback failed)";
+      if (outcome.kind === "not-found" || outcome.kind === "not-fillable") {
+        auditLog({
+          event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,
+          selectorKind: matchedPattern.label, error: outcome.kind,
+        });
+        return err(`Fill failed: target ${targetSelector} is ${outcome.kind.replace("-", " ")}.`);
+      }
+      if (outcome.kind === "mismatch") {
+        auditLog({
+          event: "fill_mismatch", secret: name, origin: currentOrigin, session: sessionId,
+          selectorKind: matchedPattern.label,
+        });
+        return err(`Secret fill did not land: ${targetSelector} (value mismatch)`);
+      }
+      if (outcome.kind === "masked-unverifiable") {
+        verificationNote = " (verification skipped: masked input)";
       }
 
       if (pressEnter) {
         try {
-          await page.locator(targetSelector).press("Enter");
+          await ops.pressEnter(targetSelector);
         } catch (e) {
           auditLog({
             event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,

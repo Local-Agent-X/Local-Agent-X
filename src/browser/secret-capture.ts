@@ -13,7 +13,7 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
-import { getCdpBrowserManager } from "./index.js";
+import { getSecretBrowserOps } from "./index.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -116,35 +116,19 @@ export function createBrowserSecretCaptureTool(
       }
 
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
-      const manager = getCdpBrowserManager(sessionId);
+      const ops = getSecretBrowserOps(sessionId);
 
       let value: string | null = null;
       try {
-        // Read the value server-side via the same page the agent is on.
-        // We run a string-form evaluate so TypeScript doesn't try to type-check
-        // DOM globals (which aren't in Node's lib). The returned string is
-        // captured here and never placed into any tool result visible to the LLM.
-        const page = await manager.getPage();
-        const argsJson = JSON.stringify({
-          sel: selector || null,
-          textSel: textSelector || null,
-          attrSel: attrSelector || null,
-          attr: attribute || null,
+        // Read the value server-side out of the same page the agent is on. The
+        // returned string is captured here and never placed into any tool
+        // result visible to the LLM.
+        value = await ops.readValue({
+          selector,
+          textSelector,
+          attributeSelector: attrSelector,
+          attribute,
         });
-        const script = `(function(a){
-          var s = a.sel || a.textSel || a.attrSel;
-          var el = document.querySelector(s);
-          if (!el) return null;
-          if (a.sel) {
-            if (el.value !== undefined && el.value !== null) return String(el.value);
-            return el.textContent || '';
-          }
-          if (a.textSel) return el.textContent || '';
-          if (a.attrSel && a.attr) return el.getAttribute(a.attr) || '';
-          return null;
-        })(${argsJson})`;
-        const raw = await page.evaluate(script);
-        value = typeof raw === "string" ? raw : null;
       } catch (e) {
         return err(`Capture failed: ${(e as Error).message}`);
       }
@@ -162,8 +146,7 @@ export function createBrowserSecretCaptureTool(
       // auto-approve same-session same-origin reuse without user prompts.
       let captureOrigin: string | undefined;
       try {
-        const page = await manager.getPage();
-        captureOrigin = new URL(page.url()).origin;
+        captureOrigin = (await ops.currentOrigin()) || undefined;
       } catch { /* best-effort */ }
 
       // Direct write to vault. AES-256-GCM at rest, master key in OS keychain.

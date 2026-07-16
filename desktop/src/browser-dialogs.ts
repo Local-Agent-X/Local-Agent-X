@@ -35,9 +35,15 @@ export const BEFOREUNLOAD_MESSAGE =
 
 export const MAX_PENDING_DIALOGS = 8;
 
+/** dialog_accept's one-shot allow expires after this long. Without a TTL a
+ *  stale accept (agent never retried) would linger forever and silently
+ *  swallow the USER's next unsaved-changes guard, hours later. */
+export const UNLOAD_ALLOW_TTL_MS = 30_000;
+
 interface ViewDialogState {
 	pending: InAppDialogInfo[];
-	allowNextUnload: boolean;
+	/** Epoch ms until which the next unload may proceed; 0 = not armed. */
+	allowUnloadUntil: number;
 	cleanup: () => void;
 }
 
@@ -49,11 +55,15 @@ export function attachDialogInterception(viewId: string, wc: WebContents): void 
 	const onWillPreventUnload = (event: { preventDefault(): void }): void => {
 		const state = stateByView.get(viewId);
 		if (!state) return;
-		if (state.allowNextUnload) {
-			// One-shot accept: ignore the page's handler — the unload proceeds.
-			state.allowNextUnload = false;
-			event.preventDefault();
-			return;
+		if (state.allowUnloadUntil > 0) {
+			const fresh = Date.now() < state.allowUnloadUntil;
+			// One-shot either way: consumed by this attempt or expired.
+			state.allowUnloadUntil = 0;
+			if (fresh) {
+				// Accepted recently: ignore the page's handler — unload proceeds.
+				event.preventDefault();
+				return;
+			}
 		}
 		// Default: leave the event alone → Chromium cancels the unload and the
 		// page stays. Queue the interception for dialog_accept / dialog_dismiss.
@@ -63,7 +73,7 @@ export function attachDialogInterception(viewId: string, wc: WebContents): void 
 	wc.on("will-prevent-unload", onWillPreventUnload as never);
 	stateByView.set(viewId, {
 		pending: [],
-		allowNextUnload: false,
+		allowUnloadUntil: 0,
 		cleanup: () => {
 			if (wc.isDestroyed()) return;
 			wc.off("will-prevent-unload", onWillPreventUnload as never);
@@ -97,7 +107,7 @@ export function handleDialog(viewId: string, action: "accept" | "dismiss"): InAp
 	const state = stateByView.get(viewId);
 	const next = state?.pending.shift();
 	if (!state || !next) return null;
-	if (action === "accept") state.allowNextUnload = true;
+	if (action === "accept") state.allowUnloadUntil = Date.now() + UNLOAD_ALLOW_TTL_MS;
 	return next;
 }
 

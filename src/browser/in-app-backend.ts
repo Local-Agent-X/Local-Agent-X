@@ -337,7 +337,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  ADOPTED (owned:false — driven, never closed) and becomes active. */
 	async switchTab(index: number): Promise<string> {
 		if (!this.isActive()) return listTabsOp([], null); // "No browser session active."
-		const result = await switchMergedTab(this.tabs, index);
+		const result = await switchMergedTab(this.tabs, index, this.sessionId);
 		if (!result.ok) return result.message;
 		await this.refreshState(result.tab);
 		const sensitive = sensitivePageStub(this.state.url);
@@ -394,6 +394,6 @@ export class ElectronInAppBackend implements BrowserBackend {
 
 	/** Closes owned views only; adopted user tabs are dropped, never closed. */
 	async close(): Promise<void> {
-		await closeOwnedTabs(this.tabs);
+		await closeOwnedTabs(this.tabs, this.sessionId);
 	}
 }

@@ -48,6 +48,29 @@ export function sessionIdFromViewId(viewId: unknown): string | undefined {
 	return rest.slice(0, cut);
 }
 
+// ── Adopted-view session registry ─────────
+// A user view taken over via switch_tab keeps its USER viewId (foreground /
+// user-N), which sessionIdFromViewId can't attribute — downloads the agent
+// triggers on an adopted tab would otherwise vanish from its getDownloads()
+// forever. The backend registers adoptions here (and clears them at close),
+// so download attribution follows the takeover.
+const adoptedViewSessions = new Map<string, string>();
+
+export function registerAdoptedView(viewId: string, sessionId: string): void {
+	adoptedViewSessions.set(viewId, sessionId);
+}
+
+/** Drop every adoption a session holds (backend close). */
+export function unregisterAdoptedViews(sessionId: string): void {
+	for (const [viewId, sess] of adoptedViewSessions) {
+		if (sess === sessionId) adoptedViewSessions.delete(viewId);
+	}
+}
+
+export function _resetAdoptedViewsForTest(): void {
+	adoptedViewSessions.clear();
+}
+
 /**
  * Inbound desktop UI-activity message → `ui:browser` bus event. Fire-and-
  * forget on both hops: no reply, and bus emission failures stay in the bus.
@@ -71,13 +94,15 @@ export function handleBrowserUiEvent(msg: Record<string, unknown>): void {
  * Inbound desktop download push ("lax:browser-download-event", fire-and-
  * forget like ui-events) → canonical download records (downloads.ts). Only
  * AGENT-attributed downloads enter session records: the owning session is
- * parsed from the top-level viewId; user views and unattributed (null)
- * viewIds are skipped — their bytes stay in the desktop quarantine dir.
+ * parsed from the top-level viewId, or resolved through the adopted-view
+ * registry for taken-over user tabs; un-adopted user views and unattributed
+ * (null) viewIds are skipped — their bytes stay in the desktop quarantine.
  * The ingest is async (stream-hash) and self-deduping; kicking it off
  * fire-and-forget here matches the CDP path's page.on("download") posture.
  */
 export function handleBrowserDownloadEvent(msg: Record<string, unknown>): void {
-	const sessionId = sessionIdFromViewId(msg.viewId);
+	const sessionId = sessionIdFromViewId(msg.viewId)
+		?? (typeof msg.viewId === "string" ? adoptedViewSessions.get(msg.viewId) : undefined);
 	if (sessionId === undefined) return;
 	const d = msg.download as Record<string, unknown> | null | undefined;
 	if (!d || typeof d.id !== "string" || typeof d.savePath !== "string" || typeof d.state !== "string") return;

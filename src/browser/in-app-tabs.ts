@@ -18,6 +18,7 @@ import { browserLifecycle, type BrowserNavigateResult, type BrowserViewInfo } fr
 import { profilePartition } from "./profile-store.js";
 import { redirectMessage, safeHost } from "./redirect.js";
 import { sensitivePageStub } from "./guards.js";
+import { registerAdoptedView, unregisterAdoptedViews } from "./bridge-perception.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("browser.in-app-tabs");
@@ -174,7 +175,8 @@ export async function refreshTabState(tab: InAppTab): Promise<void> {
 /** Close ONLY owned views — adopted (owned:false) tabs are the user's own
  *  browser tabs, never closed, just dropped by resetToFirst. Tolerates
  *  already-gone views (desktop teardown) like the single-view close did. */
-export async function closeOwnedTabs(list: TabList): Promise<void> {
+export async function closeOwnedTabs(list: TabList, sessionId?: string): Promise<void> {
+	if (sessionId) unregisterAdoptedViews(sessionId);
 	const owned = list.all().filter((t) => t.owned && t.created && !t.closed);
 	for (const tab of owned) {
 		tab.closed = true;
@@ -260,7 +262,7 @@ export type MergedSwitchResult =
  *  still matches; a mismatch (or no listing at all) refuses and asks for a
  *  fresh `tabs`. Switches onto the agent's OWN tabs stay index-based — that
  *  list only changes by the agent's own actions. */
-export async function switchMergedTab(list: TabList, index: number): Promise<MergedSwitchResult> {
+export async function switchMergedTab(list: TabList, index: number, sessionId?: string): Promise<MergedSwitchResult> {
 	const merged = await mergeTabs(list);
 	if (index < 0 || index >= merged.length) {
 		return {
@@ -284,7 +286,14 @@ export async function switchMergedTab(list: TabList, index: number): Promise<Mer
 			};
 		}
 	}
-	const tab = entry.kind === "own" ? entry.tab : list.adopt(entry.view);
+	if (entry.kind === "own") {
+		list.setActive(entry.tab);
+		return { ok: true, tab: entry.tab };
+	}
+	const tab = list.adopt(entry.view);
 	list.setActive(tab);
+	// Attribution follows the takeover: downloads the agent triggers on this
+	// user view must land in the adopting session's records.
+	if (sessionId) registerAdoptedView(tab.viewId, sessionId);
 	return { ok: true, tab };
 }

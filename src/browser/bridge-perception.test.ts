@@ -101,6 +101,24 @@ describe("handleBrowserDownloadEvent → canonical download ingest", () => {
 		expect(ingestInAppDownload).not.toHaveBeenCalled();
 	});
 
+	it("an ADOPTED user view's download follows the takeover into the adopting session (skeptic regression)", async () => {
+		const { registerAdoptedView, unregisterAdoptedViews, _resetAdoptedViewsForTest } = await import("./bridge-perception.js");
+		_resetAdoptedViewsForTest();
+		// Un-adopted: skipped (previous test's rule still holds).
+		handleBrowserDownloadEvent({ viewId: "foreground", download });
+		expect(ingestInAppDownload).not.toHaveBeenCalled();
+		// Adopted by sess-9: the same event now attributes to that session.
+		registerAdoptedView("foreground", "sess-9");
+		handleBrowserDownloadEvent({ viewId: "foreground", download });
+		expect(ingestInAppDownload).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(ingestInAppDownload).mock.calls[0][0]).toBe("sess-9");
+		// Session close drops the adoption — back to skipped.
+		unregisterAdoptedViews("sess-9");
+		handleBrowserDownloadEvent({ viewId: "foreground", download });
+		expect(ingestInAppDownload).toHaveBeenCalledTimes(1);
+		_resetAdoptedViewsForTest();
+	});
+
 	it("drops malformed payloads (missing download / id / savePath / state) without throwing", () => {
 		handleBrowserDownloadEvent({ viewId: "view-s-1-work" });
 		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, id: 5 } });

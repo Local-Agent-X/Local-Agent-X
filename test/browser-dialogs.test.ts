@@ -119,6 +119,26 @@ describe("beforeunload interception queue (pure leaf)", () => {
     expect(listDialogs("v1")).toHaveLength(1);
   });
 
+  it("a STALE accept expires: the user's later unload guard is NOT swallowed (skeptic regression)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { UNLOAD_ALLOW_TTL_MS } = await import("../desktop/src/browser-dialogs.js");
+      const wc = fakeWc();
+      attachDialogInterception("v1", wc as never);
+      wc.fire("will-prevent-unload", unloadEvent());
+      handleDialog("v1", "accept"); // armed… but the agent never retries
+      vi.advanceTimersByTime(UNLOAD_ALLOW_TTL_MS + 1);
+      // Hours later the USER closes the tab with unsaved changes: the page's
+      // guard must fire (no preventDefault), and the attempt queues normally.
+      const userClose = unloadEvent();
+      wc.fire("will-prevent-unload", userClose);
+      expect(userClose.preventDefault).not.toHaveBeenCalled();
+      expect(listDialogs("v1")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("dismiss drops the entry without arming the allow — the page keeps its guard", () => {
     const wc = fakeWc();
     attachDialogInterception("v1", wc as never);

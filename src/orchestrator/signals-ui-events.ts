@@ -6,10 +6,13 @@
 //      per-session ring buffers (ui-event-store.ts). Wired once at module
 //      init — the registry imports this file, so any orchestrator boot
 //      registers exactly one listener.
-//   2. The "ui-events" registry entry: when a session has undigested
-//      activity, run() emits ONE ModuleSignal carrying the digest, then
-//      advances the freshness cursor so the same activity is never
-//      re-injected on later turns.
+//   2. The "ui-events" registry entry: when a session has activity in the
+//      digest window, run() emits ONE ModuleSignal carrying the digest. No
+//      cursor: the digest text leads with its variable identity (count +
+//      latest-event time), so the pipeline's own hash dedup drops exact
+//      repeats, while a digest that a downstream gate cut (bleed gate,
+//      top-7 slice, contextual cut) is simply retried on a later turn
+//      instead of being lost.
 //
 // Gated end-to-end by the enableUiEventBus toggle (Settings → Security):
 // off ⇒ the store buffers nothing and triage never activates this module.
@@ -17,10 +20,8 @@
 import { EventBus } from "../event-bus.js";
 import type { CognitiveSignal } from "./types.js";
 import {
-  advanceDigestTs,
-  digestSince,
-  getLastDigestTs,
   hasFreshUiEvents,
+  recentUiDigest,
   recordUiEvent,
   uiEventBusEnabled,
   uiEventStoreHealth,
@@ -28,6 +29,9 @@ import {
 } from "./ui-event-store.js";
 
 let busWired = false;
+// Kept so a re-wire can DETACH the previous subscription first — wiring must
+// never stack listeners (each stacked listener double-records every event).
+const busHandler = (data: unknown): void => recordUiEvent(data as UiEvent);
 
 /** Idempotent — safe to call from any boot path; only the first call binds. */
 export function wireUiEventBus(): void {
@@ -35,11 +39,13 @@ export function wireUiEventBus(): void {
   busWired = true;
   // Bus payloads are untyped; the store's sanitizer is the schema authority
   // and rejects/strips anything that doesn't conform.
-  EventBus.on("ui:*", data => recordUiEvent(data as UiEvent));
+  EventBus.on("ui:*", busHandler);
 }
 
-/** Re-arm after EventBus.reset() in tests (reset drops the live instance). */
+/** Re-arm in tests (also after EventBus.reset() drops the live instance).
+ *  Detaches before re-attaching so repeated calls can't stack listeners. */
 export function _rewireUiEventBusForTest(): void {
+  EventBus.off("ui:*", busHandler);
   busWired = false;
   wireUiEventBus();
 }
@@ -51,16 +57,15 @@ export const uiEventSignals: CognitiveSignal[] = [
     id: "ui-events",
     // "profile" scope, deliberately: cross-session bleed is prevented
     // STRUCTURALLY by the store (a session's ring is only readable by that
-    // session; the global scope is shared by design), and the digest is
-    // ambient "what the user is doing right now" context that must survive
-    // short follow-ups ("ok, log in") where the session-scope bleed gate
-    // would drop it.
+    // session; the global scope is shared by design). Note the bleed gate's
+    // "resume" verdict can still drop the digest for a turn — that costs one
+    // retry, not the activity: the window re-digests on the next turn.
     scope: "profile",
     triage: ({ input }) =>
       uiEventBusEnabled() && hasFreshUiEvents(input.sessionId) ? "conditional" : null,
     run: (input, out) => {
       if (!uiEventBusEnabled()) return;
-      const digest = digestSince(input.sessionId, getLastDigestTs(input.sessionId));
+      const digest = recentUiDigest(input.sessionId);
       if (!digest) return;
       out.push({
         source: "ui-events",
@@ -72,7 +77,6 @@ export const uiEventSignals: CognitiveSignal[] = [
         category: "recall",
         confidence: 0.9,
       });
-      advanceDigestTs(input.sessionId, digest.latestTs);
     },
     health: () => uiEventStoreHealth(),
   },

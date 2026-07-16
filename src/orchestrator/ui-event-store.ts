@@ -3,21 +3,33 @@
 // Producers (in-app browser first; other surfaces later) emit `ui:<surface>`
 // events on the global event bus; signals-ui-events.ts funnels them here.
 // The store is the LAW for the event schema: unknown fields are stripped,
-// malformed events are rejected, and targets are redacted BEFORE buffering —
+// malformed events are rejected, and every field is redacted BEFORE buffering —
 // redaction is a property of the store, never a producer courtesy (mirrors
 // the KB1/secret-ops posture in src/browser/). Field VALUES from sensitive
 // inputs (passwords, tokens, form values) must never survive into a digest:
-// query strings / fragments are always stripped, and a target whose path
-// still smells credential-shaped is dropped outright.
+// query strings / fragments / URL userinfo are always stripped, opaque
+// token-shaped path segments are elided, credential-shaped remainders are
+// dropped, and surface/action must be plain labels (no key=value smuggling).
 //
-// Bounded exactly like the per-session cadence map in state.ts: LRU scopes
-// (MRU touch, evict oldest) plus a per-scope event cap, so a long-lived
-// process can never grow this without limit.
+// Freshness is a TTL WINDOW, not a cursor: the digest always covers the last
+// UI_DIGEST_TTL_MS of events, and the digest TEXT leads with its variable
+// content (event count + latest timestamp) so the pipeline's 40-char signal
+// hash distinguishes new activity from a repeat. A digest that gets dropped
+// downstream (bleed gate, top-7 slice, contextual cut) is therefore RETRIED
+// on later turns instead of being lost forever — the cursor design advanced
+// before those gates and silently discarded activity. Residual (accepted):
+// if an injection attempt is cut downstream and NO new event arrives before
+// the next turn, the identical hash keeps it out until a new event lands.
+//
+// Bounded like the per-session cadence map in state.ts: LRU scopes (MRU touch
+// on writes AND digest reads, evict oldest) plus a per-scope event cap. The
+// global scope is pinned — it is every session's shared context and must not
+// be evicted by a flood of one-off session scopes.
 
 import { getRuntimeConfig } from "../config.js";
 
 export interface UiEvent {
-  /** Producing surface, e.g. "browser". */
+  /** Producing surface, e.g. "browser". Plain label — see LABEL_SHAPE. */
   surface: string;
   /** What happened, e.g. "navigate", "title", "login-page", "tab-open". */
   action: string;
@@ -38,15 +50,28 @@ export interface UiDigest {
 export const GLOBAL_UI_SCOPE = "global";
 export const MAX_UI_EVENT_SESSIONS = 200;
 export const MAX_UI_EVENTS_PER_SESSION = 50;
+/** Digest window: activity older than this is no longer ambient context. */
+export const UI_DIGEST_TTL_MS = 10 * 60_000;
 const MAX_FIELD_LENGTH = 60;
 const MAX_TARGET_LENGTH = 200;
 const MAX_DIGEST_LINES = 4;
 const MAX_FRAGMENTS_PER_LINE = 6;
 const MAX_LINE_LENGTH = 240;
 
-// A target whose host/path (post query-strip) still looks credential-shaped
+// A target whose host/path (post strip/elide) still looks credential-shaped
 // gets dropped entirely — better to lose one breadcrumb than leak a secret.
 const SENSITIVE_TARGET = /password|passwd|pwd|token|secret|api[-_]?key|credential|value=|otp\b|2fa/i;
+
+// surface/action are LABELS. No '=', ':', '@', '?', '&' — the characters every
+// key=value / token smuggle needs. A producer that violates this loses the
+// whole event (fail closed), not just the field.
+const LABEL_SHAPE = /^[\w .\/-]+$/;
+
+// An opaque path segment: long, single-token, and containing digits (covers
+// hex digests, base64 ids, session keys) or JWT-prefixed. Elided, not kept —
+// `/reset/eyJhbGciOi...` becomes `/reset/…`.
+const OPAQUE_SEGMENT = /^(eyJ[\w+/=.-]*|[\w%+=.-]{20,})$/;
+const HAS_DIGIT = /\d/;
 
 /**
  * Master switch (Settings → Security). Read live on every ingest AND every
@@ -59,13 +84,12 @@ export function uiEventBusEnabled(): boolean {
 
 interface UiEventRing {
   events: UiEvent[];
-  /** Freshness cursor for THIS session's digests (covers global events too). */
-  lastDigestTs: number;
 }
 
 // Insertion order in a Map is its LRU order here (same pattern as
-// state.ts getSessionCadence): reading re-inserts at the tail, so
-// keys().next() is always the least-recently-used scope.
+// state.ts getSessionCadence): touching re-inserts at the tail, so
+// keys().next() is always the least-recently-used scope. The global
+// scope is exempt from eviction.
 const rings = new Map<string, UiEventRing>();
 
 function touchRing(scope: string): UiEventRing {
@@ -75,12 +99,17 @@ function touchRing(scope: string): UiEventRing {
     rings.set(scope, existing);
     return existing;
   }
-  const fresh: UiEventRing = { events: [], lastDigestTs: 0 };
+  const fresh: UiEventRing = { events: [] };
   rings.set(scope, fresh);
   while (rings.size > MAX_UI_EVENT_SESSIONS) {
-    const oldest = rings.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    rings.delete(oldest);
+    let evicted = false;
+    for (const key of rings.keys()) {
+      if (key === GLOBAL_UI_SCOPE) continue; // pinned
+      rings.delete(key);
+      evicted = true;
+      break;
+    }
+    if (!evicted) break; // only the global scope remains
   }
   return fresh;
 }
@@ -89,22 +118,27 @@ function touchRing(scope: string): UiEventRing {
  * Enforce the UiEvent schema on an untrusted value (producers reach this
  * through the untyped event bus). Returns a fresh object holding ONLY the
  * schema fields, or null when the event is unusable:
- *  - surface/action must be non-empty strings (else reject);
+ *  - surface/action must be non-empty label-shaped strings (else reject —
+ *    a '=' or ':' in a label is the value-smuggling pattern, fail closed);
  *  - ts must be a finite positive number (else stamped now — a producer's
  *    clock bug shouldn't erase the activity);
  *  - target/sessionId must be strings or they're dropped;
- *  - target is redacted: query/fragment always stripped, credential-shaped
- *    remainders dropped, length capped.
+ *  - target is redacted: query/fragment/userinfo always stripped, opaque
+ *    token-shaped segments elided, credential-shaped remainders dropped,
+ *    length capped.
  */
 export function sanitizeUiEvent(raw: unknown): UiEvent | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
-  if (typeof r.surface !== "string" || r.surface.trim() === "") return null;
-  if (typeof r.action !== "string" || r.action.trim() === "") return null;
+  if (typeof r.surface !== "string" || typeof r.action !== "string") return null;
+  const surface = r.surface.trim().slice(0, MAX_FIELD_LENGTH);
+  const action = r.action.trim().slice(0, MAX_FIELD_LENGTH);
+  if (surface === "" || action === "") return null;
+  if (!LABEL_SHAPE.test(surface) || !LABEL_SHAPE.test(action)) return null;
 
   const event: UiEvent = {
-    surface: r.surface.trim().slice(0, MAX_FIELD_LENGTH),
-    action: r.action.trim().slice(0, MAX_FIELD_LENGTH),
+    surface,
+    action,
     ts: typeof r.ts === "number" && Number.isFinite(r.ts) && r.ts > 0 ? r.ts : Date.now(),
   };
   if (typeof r.sessionId === "string" && r.sessionId.trim() !== "") {
@@ -117,11 +151,21 @@ export function sanitizeUiEvent(raw: unknown): UiEvent | null {
   return event;
 }
 
-function redactTarget(target: string): string | null {
+export function redactTarget(target: string): string | null {
   // Query strings and fragments carry input VALUES (?value=..., #token=...)
   // — always stripped, no exceptions.
-  const stripped = target.replace(/[?#].*$/, "").trim();
+  let stripped = target.replace(/[?#].*$/, "").trim();
   if (stripped === "") return null;
+  // URL userinfo (https://user:pass@host/..., //user@host, user:pass@host):
+  // everything between the scheme/start and an '@' that precedes the first
+  // path slash is credentials — strip it, keep the host.
+  stripped = stripped.replace(/^([a-z][\w+.-]*:\/\/|\/\/)?[^\/]*@/i, "$1");
+  // Opaque token-shaped path segments (hex digests, base64 ids, JWTs) are
+  // elided so a secret embedded in the PATH can't ride along.
+  stripped = stripped
+    .split("/")
+    .map(seg => (OPAQUE_SEGMENT.test(seg) && (HAS_DIGIT.test(seg) || seg.startsWith("eyJ")) ? "…" : seg))
+    .join("/");
   if (SENSITIVE_TARGET.test(stripped)) return null;
   return stripped.length > MAX_TARGET_LENGTH ? stripped.slice(0, MAX_TARGET_LENGTH) : stripped;
 }
@@ -138,44 +182,38 @@ export function recordUiEvent(event: UiEvent): void {
   }
 }
 
-function freshEventsFor(sessionId: string, sinceTs: number): UiEvent[] {
+function windowedEventsFor(sessionId: string, now: number): UiEvent[] {
+  const floor = now - UI_DIGEST_TTL_MS;
   const own = rings.get(sessionId)?.events ?? [];
   const shared = sessionId === GLOBAL_UI_SCOPE ? [] : rings.get(GLOBAL_UI_SCOPE)?.events ?? [];
-  return [...own, ...shared].filter(e => e.ts > sinceTs).sort((a, b) => a.ts - b.ts);
+  return [...own, ...shared].filter(e => e.ts > floor).sort((a, b) => a.ts - b.ts);
 }
 
-/** True when the session (or the global scope) has undigested events. */
-export function hasFreshUiEvents(sessionId: string): boolean {
-  const cursor = rings.get(sessionId)?.lastDigestTs ?? 0;
-  return freshEventsFor(sessionId, cursor).length > 0;
-}
-
-/** The session's freshness cursor — pass it to digestSince, then advance. */
-export function getLastDigestTs(sessionId: string): number {
-  return rings.get(sessionId)?.lastDigestTs ?? 0;
-}
-
-/** Advance the cursor after a digest was actually emitted (never rewinds). */
-export function advanceDigestTs(sessionId: string, ts: number): void {
-  const ring = touchRing(sessionId);
-  if (ts > ring.lastDigestTs) ring.lastDigestTs = ts;
+/** True when the session (or the global scope) has activity in the window. */
+export function hasFreshUiEvents(sessionId: string, now = Date.now()): boolean {
+  return windowedEventsFor(sessionId, now).length > 0;
 }
 
 /**
- * Distill the session's undigested activity (own ring + global scope) into
- * at most MAX_DIGEST_LINES human-readable lines, one per surface. Consecutive
- * same-target repeats are deduped; navigations collapse into a "a → b" chain.
- * Returns null when there's nothing fresh. Read-only: the caller advances
- * the cursor via advanceDigestTs once the digest is actually used.
+ * Distill the session's windowed activity (own ring + global scope) into at
+ * most MAX_DIGEST_LINES human-readable lines, one per surface, prefixed with
+ * the window's variable identity (event count + latest event time). That
+ * prefix is deliberate: the signal pipeline dedupes on category + the first
+ * 40 chars, so two digests are "the same signal" exactly when they describe
+ * the same events, and a NEW event always mints a fresh hash. Consecutive
+ * same-target repeats are deduped; navigations collapse into an "a → b"
+ * chain. Returns null when the window is empty. Read-only apart from the
+ * MRU touch that keeps an actively-digested session from being evicted.
  */
-export function digestSince(sessionId: string, sinceTs: number): UiDigest | null {
+export function recentUiDigest(sessionId: string, now = Date.now()): UiDigest | null {
   if (!uiEventBusEnabled()) return null;
-  const fresh = freshEventsFor(sessionId, sinceTs);
-  if (fresh.length === 0) return null;
+  if (sessionId !== GLOBAL_UI_SCOPE && rings.has(sessionId)) touchRing(sessionId);
+  const windowed = windowedEventsFor(sessionId, now);
+  if (windowed.length === 0) return null;
 
   // Drop consecutive duplicates (same surface+action+target back-to-back).
   const deduped: UiEvent[] = [];
-  for (const e of fresh) {
+  for (const e of windowed) {
     const prev = deduped[deduped.length - 1];
     if (prev && prev.surface === e.surface && prev.action === e.action && prev.target === e.target) continue;
     deduped.push(e);
@@ -187,16 +225,21 @@ export function digestSince(sessionId: string, sinceTs: number): UiDigest | null
     if (list) list.push(e); else bySurface.set(e.surface, [e]);
   }
 
+  const latestTs = windowed[windowed.length - 1].ts;
   const lines: string[] = [];
   for (const [surface, events] of bySurface) {
     if (lines.length >= MAX_DIGEST_LINES) break;
     lines.push(surfaceLine(surface, events));
   }
 
+  const stamp = new Date(latestTs);
+  const hh = String(stamp.getHours()).padStart(2, "0");
+  const mm = String(stamp.getMinutes()).padStart(2, "0");
+  const ss = String(stamp.getSeconds()).padStart(2, "0");
   return {
-    text: lines.join("\n"),
-    latestTs: fresh[fresh.length - 1].ts,
-    eventCount: fresh.length,
+    text: `[${windowed.length} ui events, latest ${hh}:${mm}:${ss}] ${lines.join("\n")}`,
+    latestTs,
+    eventCount: windowed.length,
   };
 }
 

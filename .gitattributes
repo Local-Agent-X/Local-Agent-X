@@ -5,3 +5,10 @@
 
 # Keep Python files LF for cross-platform consistency.
 *.py   text eol=lf
+
+# Generated artifacts that a build gate byte-compares against freshly
+# generated content must keep the generator's line endings in the working
+# tree. gen-codebase-map.mjs emits LF and --check compares raw strings, so
+# without this autocrlf hands Windows a CRLF checkout and `npm run build`
+# fails "stale" on a map that is perfectly current.
+docs/codebase-map.md text eol=lf

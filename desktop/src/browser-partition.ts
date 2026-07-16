@@ -253,7 +253,10 @@ function hardenSession(sess: Session, partition: string): void {
 	// onCompleted/onErrorOccurred below — cancelled requests (SW block,
 	// egress deny) also settle through onErrorOccurred.
 	sess.webRequest.onBeforeRequest((details, callback) => {
-		noteRequestStart(partition);
+		// details.id is stable across a redirect chain's hops — the perception
+		// side keys in-flight on an unsettled-id SET, so per-hop re-entry here
+		// (load-bearing for egress) can't drift the count.
+		noteRequestStart(partition, details.id);
 		if (SW_RESOURCE_TYPES.has(details.resourceType)) {
 			callback({ cancel: true });
 			return;
@@ -268,10 +271,10 @@ function hardenSession(sess: Session, partition: string): void {
 	// network ring (browser-perception.ts). Session-scoped by design — the
 	// read op resolves a viewId to its partition.
 	sess.webRequest.onCompleted((details) => {
-		noteRequestDone(partition, { url: details.url, method: details.method, statusCode: details.statusCode });
+		noteRequestDone(partition, { id: details.id, url: details.url, method: details.method, statusCode: details.statusCode });
 	});
 	sess.webRequest.onErrorOccurred((details) => {
-		noteRequestFailed(partition, { url: details.url, method: details.method, error: details.error });
+		noteRequestFailed(partition, { id: details.id, url: details.url, method: details.method, error: details.error });
 	});
 }
 

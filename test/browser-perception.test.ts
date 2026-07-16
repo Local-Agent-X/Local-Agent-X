@@ -45,6 +45,7 @@ vi.mock("../desktop/src/in-app-browser", () => ({
 import {
   attachViewPerception,
   detachViewPerception,
+  markAgentNavigation,
   noteRequestDone,
   noteRequestFailed,
   noteRequestStart,
@@ -165,11 +166,11 @@ describe("per-partition network ring", () => {
   const PART = "persist:lax-profile-work";
 
   it("records completions with status and failures with error, newest last, in-flight balanced", () => {
-    noteRequestStart(PART);
-    noteRequestStart(PART);
-    noteRequestStart(PART);
-    noteRequestDone(PART, { url: "https://api.example/ok", method: "GET", statusCode: 200 });
-    noteRequestFailed(PART, { url: "https://api.example/dead", method: "POST", error: "net::ERR_FAILED" });
+    noteRequestStart(PART, 1);
+    noteRequestStart(PART, 2);
+    noteRequestStart(PART, 3);
+    noteRequestDone(PART, { id: 1, url: "https://api.example/ok", method: "GET", statusCode: 200 });
+    noteRequestFailed(PART, { id: 2, url: "https://api.example/dead", method: "POST", error: "net::ERR_FAILED" });
     const { entries, inFlight } = readNetworkEntries(PART);
     expect(inFlight).toBe(1);
     expect(entries.map((e) => [e.method, e.status, e.error])).toEqual([
@@ -178,11 +179,37 @@ describe("per-partition network ring", () => {
     ]);
   });
 
+  it("redirect chains do NOT drift the in-flight count (skeptic regression)", () => {
+    // A redirect re-enters onBeforeRequest with the SAME request id per hop;
+    // onCompleted fires once for the whole chain. The old raw counter ended
+    // at +N per N-hop redirect; the unsettled-id set must end at zero.
+    noteRequestStart(PART, 7); // hop 1: http://x/
+    noteRequestStart(PART, 7); // hop 2: https://x/ (redirect re-entry, same id)
+    noteRequestStart(PART, 7); // hop 3: https://www.x/
+    noteRequestDone(PART, { id: 7, url: "https://www.x/", method: "GET", statusCode: 200 });
+    expect(readNetworkEntries(PART).inFlight).toBe(0);
+    // Denied hop settles through onErrorOccurred — also zero.
+    noteRequestStart(PART, 8);
+    noteRequestStart(PART, 8);
+    noteRequestFailed(PART, { id: 8, url: "https://evil/", method: "GET", error: "net::ERR_BLOCKED_BY_CLIENT" });
+    expect(readNetworkEntries(PART).inFlight).toBe(0);
+  });
+
+  it("stores urls WITHOUT query/fragment/userinfo (skeptic regression)", () => {
+    noteRequestStart(PART, 9);
+    noteRequestDone(PART, { id: 9, url: "https://alice:hunter2@api.example/data?session_token=SECRET#access=1", method: "GET", statusCode: 200 });
+    const { entries } = readNetworkEntries(PART);
+    const last = entries[entries.length - 1];
+    expect(last.url).toBe("https://api.example/data");
+    expect(JSON.stringify(entries)).not.toContain("hunter2");
+    expect(JSON.stringify(entries)).not.toContain("SECRET");
+  });
+
   it("in-flight never goes negative and the ring stays bounded", () => {
-    noteRequestDone(PART, { url: "https://a/", method: "GET", statusCode: 204 }); // no matching start
+    noteRequestDone(PART, { id: 100, url: "https://a/", method: "GET", statusCode: 204 }); // no matching start
     expect(readNetworkEntries(PART).inFlight).toBe(0);
     for (let i = 0; i < RING_MAX_ENTRIES + 5; i++) {
-      noteRequestDone(PART, { url: `https://a/${i}`, method: "GET", statusCode: 200 });
+      noteRequestDone(PART, { id: 200 + i, url: `https://a/${i}`, method: "GET", statusCode: 200 });
     }
     expect(readNetworkEntries(PART).entries.length).toBe(RING_MAX_ENTRIES);
   });
@@ -232,6 +259,26 @@ describe("UI-event production (user views only)", () => {
       attachViewPerception("user-2", wc as never, false);
       wc.fire("did-navigate", {}, "https://x.example/");
     }).not.toThrow();
+  });
+
+  it("agent-initiated navigations on an ADOPTED user view are NOT narrated as user activity (skeptic regression)", () => {
+    const sink = vi.fn();
+    setBrowserUiEventSink(sink);
+    const wc = fakeWc();
+    attachViewPerception("foreground", wc as never, false); // user view, later adopted
+    sink.mockClear(); // drop the tab-open
+
+    // Bridge navigate marks, then the load's did-navigate + title fire:
+    markAgentNavigation("foreground");
+    wc.fire("did-navigate", {}, "https://x.com/compose");
+    wc.fire("page-title-updated", {}, "Compose post");
+    expect(sink).not.toHaveBeenCalled();
+
+    // The USER's next navigation on the same view emits again.
+    wc.fire("did-navigate", {}, "https://news.example/");
+    wc.fire("page-title-updated", {}, "News");
+    const actions = sink.mock.calls.map(([m]) => (m as Record<string, unknown>).action);
+    expect(actions).toEqual(["navigate", "title"]);
   });
 });
 
@@ -285,9 +332,9 @@ describe("bridge ops + wiring (server-bridge-browser.ts)", () => {
   it("lax:browser-read-network resolves the view's PARTITION and returns its ring + inFlight", async () => {
     const PART = "persist:lax-profile-work";
     h.poolList = [{ viewId: "v1", partition: PART, agentDriven: true }];
-    noteRequestStart(PART);
-    noteRequestDone(PART, { url: "https://api.example/x", method: "GET", statusCode: 500 });
-    noteRequestStart(PART);
+    noteRequestStart(PART, 1);
+    noteRequestDone(PART, { id: 1, url: "https://api.example/x", method: "GET", statusCode: 500 });
+    noteRequestStart(PART, 2);
     await handleBrowserBridgeMessage(proc as never, { type: "lax:browser-read-network", id: 13, viewId: "v1" });
     await flush();
     expect(proc.send).toHaveBeenCalledWith(expect.objectContaining({

@@ -37,6 +37,7 @@ import { getHardenedPartitionSession, setEgressEvaluator, type EgressDecision } 
 import {
 	attachViewPerception,
 	detachViewPerception,
+	markAgentNavigation,
 	readConsoleEntries,
 	readNetworkEntries,
 	setBrowserUiEventSink,
@@ -352,6 +353,10 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 		wc.on("did-finish-load", onDone);
 		wc.on("did-stop-loading", onDone);
 		wc.on("did-navigate", onNavigated);
+		// Bridge navigations are the AGENT's — even on an adopted user view
+		// (agentDriven:false). Mark before loadURL so perception doesn't emit
+		// this navigation (and its title update) as user activity.
+		markAgentNavigation(msg.viewId);
 		wc.loadURL(msg.url).catch((e: unknown) => {
 			finish({ ok: false, error: e instanceof Error ? e.message : String(e) });
 		});

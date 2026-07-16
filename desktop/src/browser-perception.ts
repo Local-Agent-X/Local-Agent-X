@@ -63,6 +63,18 @@ export function trimText(text: unknown, max: number): string {
 // signature; newer Electron also puts a string level on the event object).
 const LEGACY_LEVELS = ["debug", "info", "warning", "error"] as const;
 
+/**
+ * Store-time URL redaction for the network ring: query/fragment (where
+ * values live) and userinfo (where credentials live) never enter the ring,
+ * so read_network can't replay them later. Mirrors the server's
+ * ui-event-store law — duplicated MINIMALLY here because desktop main
+ * cannot import server modules across the project boundary.
+ */
+export function scrubRingUrl(url: unknown): string {
+	const s = typeof url === "string" ? url : String(url ?? "");
+	return trimText(s.replace(/[?#].*$/, "").replace(/^([a-z][\w+.-]*:\/\/|\/\/)?[^/]*@/i, "$1"), URL_MAX_CHARS);
+}
+
 // ── UI-event sink (desktop → server, fire-and-forget) ─────────
 type UiEventSink = (msg: Record<string, unknown>) => void;
 let uiEventSink: UiEventSink | null = null;
@@ -99,6 +111,17 @@ interface ViewPerception {
 
 const viewsById = new Map<string, ViewPerception>();
 
+// Views whose NEXT did-navigate was initiated by the agent over the bridge
+// (server-bridge navigate marks this right before loadURL). Their navigate —
+// and its follow-up title update — must not be emitted as user activity.
+const agentNavPending = new Set<string>();
+const titleSuppressed = new Set<string>();
+
+/** Flag the view's next did-navigate as agent-initiated (bridge navigate). */
+export function markAgentNavigation(viewId: string): void {
+	agentNavPending.add(viewId);
+}
+
 function pushConsole(viewId: string, level: string, message: string): void {
 	const view = viewsById.get(viewId);
 	if (!view) return;
@@ -124,9 +147,19 @@ export function attachViewPerception(viewId: string, wc: WebContents, agentDrive
 	};
 	const onUnresponsive = (): void => pushConsole(viewId, "error", "page became unresponsive");
 	const onNavigate = (_e: unknown, url: unknown): void => {
+		// A bridge-driven navigation on an ADOPTED user view is the AGENT's
+		// action — narrating it back as user activity would feed the agent
+		// its own moves (and poison the co-drive digest). markAgentNavigation
+		// flags it just before loadURL; consume the flag here.
+		if (agentNavPending.delete(viewId)) {
+			titleSuppressed.add(viewId);
+			return;
+		}
+		titleSuppressed.delete(viewId);
 		if (!agentDriven) emitUiEvent("navigate", viewId, trimText(url, URL_MAX_CHARS));
 	};
 	const onTitle = (_e: unknown, title: unknown): void => {
+		if (titleSuppressed.has(viewId)) return; // title of an agent navigation
 		if (!agentDriven) emitUiEvent("title", viewId, trimText(title, UI_TITLE_MAX_CHARS));
 	};
 	wc.on("console-message", onConsole as never);
@@ -169,9 +202,14 @@ export function readConsoleEntries(viewId: string): ConsoleEntry[] {
 }
 
 // ── Per-partition network rings ─────────
+// In-flight is a SET of unsettled Electron request ids, not a counter: a
+// redirect re-enters onBeforeRequest with the SAME id (per-hop egress
+// evaluation depends on that), while onCompleted fires once for the whole
+// chain — a raw counter therefore drifts +1 per hop forever. Set.add is
+// idempotent across hops; settle deletes the id whichever way it ends.
 interface PartitionNetwork {
 	entries: NetworkEntry[];
-	inFlight: number;
+	unsettled: Set<number>;
 }
 
 const netByPartition = new Map<string, PartitionNetwork>();
@@ -179,7 +217,7 @@ const netByPartition = new Map<string, PartitionNetwork>();
 function partitionNet(partition: string): PartitionNetwork {
 	let net = netByPartition.get(partition);
 	if (!net) {
-		net = { entries: [], inFlight: 0 };
+		net = { entries: [], unsettled: new Set() };
 		netByPartition.set(partition, net);
 		// Bounded regardless of profile churn: evict the oldest partition ring.
 		while (netByPartition.size > MAX_PARTITION_RINGS) {
@@ -191,18 +229,18 @@ function partitionNet(partition: string): PartitionNetwork {
 	return net;
 }
 
-export function noteRequestStart(partition: string): void {
-	partitionNet(partition).inFlight++;
+export function noteRequestStart(partition: string, requestId: number): void {
+	partitionNet(partition).unsettled.add(requestId);
 }
 
 export function noteRequestDone(
 	partition: string,
-	outcome: { url: string; method: string; statusCode: number },
+	outcome: { id: number; url: string; method: string; statusCode: number },
 ): void {
 	const net = partitionNet(partition);
-	net.inFlight = Math.max(0, net.inFlight - 1);
+	net.unsettled.delete(outcome.id);
 	pushBounded(net.entries, {
-		url: trimText(outcome.url, URL_MAX_CHARS),
+		url: scrubRingUrl(outcome.url),
 		method: outcome.method,
 		status: outcome.statusCode,
 		ts: Date.now(),
@@ -211,12 +249,12 @@ export function noteRequestDone(
 
 export function noteRequestFailed(
 	partition: string,
-	outcome: { url: string; method: string; error: string },
+	outcome: { id: number; url: string; method: string; error: string },
 ): void {
 	const net = partitionNet(partition);
-	net.inFlight = Math.max(0, net.inFlight - 1);
+	net.unsettled.delete(outcome.id);
 	pushBounded(net.entries, {
-		url: trimText(outcome.url, URL_MAX_CHARS),
+		url: scrubRingUrl(outcome.url),
 		method: outcome.method,
 		error: outcome.error,
 		ts: Date.now(),
@@ -226,7 +264,7 @@ export function noteRequestFailed(
 /** Snapshot the partition's network ring + in-flight counter. */
 export function readNetworkEntries(partition: string): { entries: NetworkEntry[]; inFlight: number } {
 	const net = netByPartition.get(partition);
-	return { entries: [...(net?.entries ?? [])], inFlight: net?.inFlight ?? 0 };
+	return { entries: [...(net?.entries ?? [])], inFlight: net?.unsettled.size ?? 0 };
 }
 
 export function _resetBrowserPerceptionForTest(): void {
@@ -235,5 +273,7 @@ export function _resetBrowserPerceptionForTest(): void {
 	}
 	viewsById.clear();
 	netByPartition.clear();
+	agentNavPending.clear();
+	titleSuppressed.clear();
 	uiEventSink = null;
 }

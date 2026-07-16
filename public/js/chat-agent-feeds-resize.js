@@ -19,25 +19,61 @@
 // scripts; toggleAgentFeeds only *calls* getAgentFeedsWidth at interaction
 // time (long after all scripts parse), so cross-file load order is not tight.
 
-var AGENT_FEEDS_MIN = 260, AGENT_FEEDS_MAX = 720, AGENT_FEEDS_DEFAULT = 320;
+var AGENT_FEEDS_MIN = 260, AGENT_FEEDS_DEFAULT = 320;
 var AGENT_FEEDS_WIDTH_KEY = 'lax_agent_feeds_width';
 
-// Pure: clamp any candidate width to [MIN,MAX]; non-numeric / non-positive
+// Ceiling of last resort — used only when there is no viewport to measure
+// (headless tests, pre-layout). The real ceiling is agentFeedsMaxWidth().
+var AGENT_FEEDS_MAX = 720;
+
+// The panel may grow until only this much chat column is left. The BROWSER tab
+// wants to run near-fullscreen while the user talks to the agent about what's
+// on screen, so the ceiling is the viewport minus the chat minimum minus the
+// nav sidebar (only while it's open) — closing the left pane hands its width
+// straight to the panel, which is the point of the workflow. A fixed 720 cap
+// made "near-fullscreen" impossible on any large monitor.
+var CHAT_MIN_VISIBLE = 360;
+
+function agentFeedsMaxWidth() {
+  var vw = 0;
+  try { vw = window.innerWidth || 0; } catch (e) {}
+  if (!vw) return AGENT_FEEDS_MAX;
+  var reserved = CHAT_MIN_VISIBLE;
+  try {
+    var sidebar = document.getElementById('sidebar');
+    if (sidebar && !sidebar.classList.contains('collapsed')) {
+      reserved += sidebar.getBoundingClientRect().width || 0;
+    }
+  } catch (e) {}
+  // Never return below MIN: on a narrow viewport the reserve can exceed the
+  // whole width, and a max under the min would inverse the clamp.
+  return Math.max(AGENT_FEEDS_MIN, vw - reserved);
+}
+
+// Pure: clamp any candidate width to [MIN, max]; non-numeric / non-positive
 // (null storage, garbage, 0) falls back to the default. 0 is never a valid
 // width here — "closed" is a class-driven state, not a zero width.
-function clampAgentFeedsWidth(w) {
+// `max` is injected (not read from the DOM) so this stays pure and headlessly
+// testable; callers pass agentFeedsMaxWidth().
+function clampAgentFeedsWidth(w, max) {
+  var hi = (typeof max === 'number' && isFinite(max) && max > 0) ? max : AGENT_FEEDS_MAX;
+  if (hi < AGENT_FEEDS_MIN) hi = AGENT_FEEDS_MIN;
   w = parseInt(w, 10);
-  if (!isFinite(w) || w <= 0) return AGENT_FEEDS_DEFAULT;
+  // The default itself must respect the ceiling — on a narrow viewport the
+  // ceiling can sit below DEFAULT, and returning DEFAULT would overflow it.
+  if (!isFinite(w) || w <= 0) return Math.min(AGENT_FEEDS_DEFAULT, hi);
   if (w < AGENT_FEEDS_MIN) return AGENT_FEEDS_MIN;
-  if (w > AGENT_FEEDS_MAX) return AGENT_FEEDS_MAX;
+  if (w > hi) return hi;
   return w;
 }
 
-// The persisted open width (falls back to default when unset/invalid).
+// The persisted open width (falls back to default when unset/invalid). Clamped
+// against the CURRENT viewport, so a width dragged wide on a big monitor comes
+// back sane on a smaller window instead of burying the chat.
 function getAgentFeedsWidth() {
   var raw = null;
   try { raw = localStorage.getItem(AGENT_FEEDS_WIDTH_KEY); } catch (e) {}
-  return clampAgentFeedsWidth(raw);
+  return clampAgentFeedsWidth(raw, agentFeedsMaxWidth());
 }
 
 // Mobile = the fixed-overlay breakpoint in app.css (@media max-width:768px).
@@ -85,7 +121,12 @@ function _initAgentFeedsResize() {
       // flipped to the left dock → dragging right grows it (add dx).
       var dx = ev.clientX - startX;
       var flipped = document.body.classList.contains('sidebar-right');
-      _applyAgentFeedsWidth(panel, clampAgentFeedsWidth(startW + (flipped ? dx : -dx)));
+      // Re-read the ceiling each move: collapsing the nav sidebar mid-drag
+      // should widen the room available immediately.
+      _applyAgentFeedsWidth(
+        panel,
+        clampAgentFeedsWidth(startW + (flipped ? dx : -dx), agentFeedsMaxWidth())
+      );
     }
     function onUp() {
       handle.releasePointerCapture(e.pointerId);

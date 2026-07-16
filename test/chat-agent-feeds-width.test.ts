@@ -11,33 +11,56 @@
 // with a default fallback, which is exactly the resize correctness we can test
 // headlessly (the pointer-drag glue itself is DOM/pointer-event only — see the
 // note at the bottom of this file).
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-let clampAgentFeedsWidth: (w: unknown) => number;
-let MIN: number, MAX: number, DEFAULT: number;
+let clampAgentFeedsWidth: (w: unknown, max?: number) => number;
+let agentFeedsMaxWidth: () => number;
+let MIN: number, MAX: number, DEFAULT: number, CHAT_MIN: number;
 
 beforeAll(() => {
   const src = readFileSync(join(here, "../public/js/chat-agent-feeds-resize.js"), "utf8");
   // eslint-disable-next-line no-new-func
   const factory = new Function(
     src +
-      "\nreturn { clampAgentFeedsWidth, AGENT_FEEDS_MIN, AGENT_FEEDS_MAX, AGENT_FEEDS_DEFAULT };"
+      "\nreturn { clampAgentFeedsWidth, agentFeedsMaxWidth, AGENT_FEEDS_MIN, AGENT_FEEDS_MAX," +
+      " AGENT_FEEDS_DEFAULT, CHAT_MIN_VISIBLE };"
   );
   const m = factory();
   clampAgentFeedsWidth = m.clampAgentFeedsWidth;
+  agentFeedsMaxWidth = m.agentFeedsMaxWidth;
   MIN = m.AGENT_FEEDS_MIN;
   MAX = m.AGENT_FEEDS_MAX;
   DEFAULT = m.AGENT_FEEDS_DEFAULT;
+  CHAT_MIN = m.CHAT_MIN_VISIBLE;
+});
+
+function setViewport(w: number): void {
+  Object.defineProperty(window, "innerWidth", { value: w, configurable: true, writable: true });
+}
+
+// happy-dom does no layout, so a real rect is always 0 — stub the one read.
+function makeSidebar(width: number): HTMLElement {
+  const el = document.createElement("div");
+  el.id = "sidebar";
+  el.getBoundingClientRect = (() => ({ width })) as unknown as HTMLElement["getBoundingClientRect"];
+  document.body.appendChild(el);
+  return el;
+}
+
+afterEach(() => {
+  document.getElementById("sidebar")?.remove();
 });
 
 describe("clampAgentFeedsWidth (C7 right-rail resize)", () => {
-  it("bounds are the agreed [260,720] with a 320 default", () => {
+  it("MIN is 260, the default is 320, and 720 is now only the no-viewport fallback", () => {
     expect(MIN).toBe(260);
+    // Not a hard cap any more: the live ceiling is agentFeedsMaxWidth(), which
+    // is viewport-derived so the BROWSER tab can run near-fullscreen.
     expect(MAX).toBe(720);
     expect(DEFAULT).toBe(320);
   });
@@ -78,6 +101,63 @@ describe("clampAgentFeedsWidth (C7 right-rail resize)", () => {
     // localStorage.setItem stores String(w); getItem returns that string.
     expect(clampAgentFeedsWidth("500")).toBe(500);
     expect(clampAgentFeedsWidth("300")).toBe(300);
+  });
+});
+
+// The panel used to be capped at a fixed 720px, which made a near-fullscreen
+// BROWSER tab impossible on any large monitor. The ceiling is now derived from
+// the viewport so the user can close the left pane, drag the browser out to
+// nearly the whole window, and still have a chat column to talk to the agent in.
+describe("agentFeedsMaxWidth (near-fullscreen browser ceiling)", () => {
+  it("is the viewport minus the chat minimum when the nav sidebar is closed", () => {
+    setViewport(1920);
+    expect(agentFeedsMaxWidth()).toBe(1920 - CHAT_MIN);
+    // Far past the old hard cap — the whole point of the change.
+    expect(agentFeedsMaxWidth()).toBeGreaterThan(MAX);
+  });
+
+  it("reserves the nav sidebar while open, and hands that width over when it closes", () => {
+    setViewport(1920);
+    const sb = makeSidebar(240);
+    expect(agentFeedsMaxWidth()).toBe(1920 - CHAT_MIN - 240);
+    // Closing the left pane must immediately buy the browser that space.
+    sb.classList.add("collapsed");
+    expect(agentFeedsMaxWidth()).toBe(1920 - CHAT_MIN);
+  });
+
+  it("always leaves the chat column at least CHAT_MIN_VISIBLE", () => {
+    setViewport(1600);
+    expect(1600 - agentFeedsMaxWidth()).toBeGreaterThanOrEqual(CHAT_MIN);
+  });
+
+  it("never returns below MIN, even when the reserve exceeds the viewport", () => {
+    // A narrow window: viewport - reserve would go negative and invert the clamp.
+    setViewport(400);
+    expect(agentFeedsMaxWidth()).toBe(MIN);
+    setViewport(200);
+    expect(agentFeedsMaxWidth()).toBe(MIN);
+  });
+});
+
+describe("clampAgentFeedsWidth honours the injected ceiling", () => {
+  it("allows widths far beyond the old 720 cap", () => {
+    expect(clampAgentFeedsWidth(1560, 1560)).toBe(1560);
+    expect(clampAgentFeedsWidth(1200, 1560)).toBe(1200);
+    expect(clampAgentFeedsWidth(9999, 1560)).toBe(1560);
+  });
+
+  it("keeps the fallback default under a ceiling narrower than the default", () => {
+    // Returning DEFAULT (320) against a 300 ceiling would overflow the layout.
+    expect(clampAgentFeedsWidth(null, 300)).toBe(300);
+    expect(clampAgentFeedsWidth("garbage", 300)).toBe(300);
+  });
+
+  it("a ceiling below MIN cannot invert the clamp", () => {
+    expect(clampAgentFeedsWidth(500, 100)).toBe(MIN);
+  });
+
+  it("still uses the static fallback when no ceiling is passed", () => {
+    expect(clampAgentFeedsWidth(9999)).toBe(MAX);
   });
 });
 

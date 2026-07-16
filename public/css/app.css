@@ -1166,6 +1166,10 @@ body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,bo
   #chat-main:has(#empty) #chat-bg::after{animation:none}
 }
 /* === end hero background === */
+/* Width of the right pane's drag strip. One token: the handle's width and the
+   browser anchor's inset MUST stay equal or the native browser view creeps
+   back over the handle (see #browser-view-anchor below). */
+:root{--feeds-resize-w:5px}
 .agent-feeds{position:relative;width:0;min-width:0;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column}
 .agent-feeds.collapsed{width:0;min-width:0;border-left:none}
 /* Flip: the whole chat row reverses so #agent-feeds docks to the LEFT edge
@@ -1183,7 +1187,18 @@ body.sidebar-right .agent-feeds-resize-handle{left:auto;right:0}
    positioned because the panel is a column flexbox, so a flex-child handle
    would be a horizontal bar, not a left-edge gutter. Clipped away when the
    panel is collapsed (width 0, overflow hidden), and hard-hidden below too. */
-.agent-feeds-resize-handle{position:absolute;left:0;top:0;bottom:0;width:5px;z-index:6;cursor:ew-resize;background:transparent;transition:background .15s;touch-action:none}
+.agent-feeds-resize-handle{position:absolute;left:0;top:0;bottom:0;width:var(--feeds-resize-w);z-index:6;cursor:ew-resize;background:transparent;transition:background .15s;touch-action:none}
+/* The BROWSER tab paints a NATIVE Electron view at #browser-view-anchor's rect
+   (browser-tab.js sync() -> setBounds). A native view is not in the DOM: it
+   renders above every element regardless of z-index and swallows every mouse
+   event inside its rect. The anchor is a normal-flow child of a panel with no
+   padding, so its rect started at the panel's left edge — right on top of this
+   handle — and the panel became undraggable everywhere the view painted. The
+   handle only kept working ABOVE the address bar because no native view is
+   painted up there. Inset the anchor off the handle's strip; it flips sides
+   with body.sidebar-right exactly as the handle does. */
+#browser-view-anchor{margin-left:var(--feeds-resize-w)}
+body.sidebar-right #browser-view-anchor{margin-left:0;margin-right:var(--feeds-resize-w)}
 .agent-feeds-resize-handle:hover,.agent-feeds-resize-handle.dragging{background:var(--accent-dim,color-mix(in srgb, var(--accent) 35%, transparent))}
 .agent-feeds.collapsed .agent-feeds-resize-handle{display:none}
 body.agent-feeds-resizing{cursor:ew-resize;user-select:none}
@@ -1378,6 +1393,8 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
   .agent-feeds.active{box-shadow:-4px 0 20px rgba(0,0,0,.4);width:300px;min-width:300px}
   /* Resize is a desktop affordance — the mobile fixed overlay isn't draggable. */
   .agent-feeds-resize-handle{display:none}
+  /* No handle to dodge here, so give the browser view the full width back. */
+  #browser-view-anchor,body.sidebar-right #browser-view-anchor{margin-left:0;margin-right:0}
 }
 
 @media (max-width:480px) {

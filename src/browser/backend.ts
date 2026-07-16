@@ -8,15 +8,22 @@
  * is therefore backend-agnostic — it survives a backend swap.
  *
  * Two concrete backends implement it:
+ *   - ElectronInAppBackend (src/browser/in-app-backend.ts) — an embedded
+ *     WebContentsView the user co-drives, one per (session, profile). THE
+ *     DEFAULT.
  *   - BrowserManager (src/browser/manager.ts) — external Chrome over CDP /
- *     Playwright. The default today; the CDP fallback going forward.
- *   - ElectronInAppBackend (Phase 3) — an embedded WebContentsView the user
- *     co-drives, one per (session, profile).
+ *     Playwright. The fallback when there is no desktop window to mount a view
+ *     in, or when the mode explicitly selects external Chrome. See
+ *     resolveBrowserRoute() in instance.ts for the matrix.
  *
  * Deliberately EXCLUDES the Playwright-leaking members BrowserManager also
  * carries (`getPage`, `setPeerPages`, `listOwnedPages`, `setIdleHandler`,
  * `exportRegistry`/`importRegistry`): those hand out `Page` objects or manage
  * CDP-specific session plumbing that an in-app view has no equivalent for.
+ *
+ * Also excludes the secret tools' page access: a secret must never take these
+ * value-echoing, LLM-facing paths. That contract is SecretBrowserOps
+ * (secret-ops.ts), which both backends implement.
  */
 
 import type { BrowserObservation } from "./observation.js";

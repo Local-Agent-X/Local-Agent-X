@@ -1,7 +1,9 @@
 /**
- * Local Agent X — Browser Manager barrel.
+ * Local Agent X — Browser barrel.
  *
- * Real Chrome via CDP; helpers in src/browser/*.
+ * Two backends behind one contract: an embedded co-drivable WebContentsView
+ * (the default) and external Chrome over CDP (the fallback). getBrowserManager
+ * routes; see instance.ts. Helpers in src/browser/*.
  */
 
 export type { BrowserEngine } from "./launcher.js";

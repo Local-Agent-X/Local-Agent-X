@@ -75,30 +75,29 @@ if (-not (Test-Path $KokoroVoices)) {
     Write-Host "      kokoro voices.bin already present"
 }
 
-# 5. Smoke test - write a tiny script to a temp file and run it from the venv
-$smokeBody = @'
-import sys
-print("python", sys.version.split()[0])
-import faster_whisper
-print("faster_whisper", faster_whisper.__version__)
-import kokoro_onnx
-print("kokoro_onnx", kokoro_onnx.__version__)
-import onnxruntime as ort
-print("onnxruntime", ort.__version__, "providers:", ort.get_available_providers())
-try:
-    import torch
-    print("torch", torch.__version__, "cuda:", torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
-except Exception as e:
-    print("torch import failed:", e)
-'@
-Set-Content -Path $SmokeScript -Value $smokeBody -Encoding ASCII
-
+# 5. Verify-after-install. Runs the committed _smoke.py from the venv and
+# FAILS the install if any critical module is missing. pip's exit code alone
+# is not proof: a resolution error leaves the venv on disk with only pip in
+# it, and the picker reads a bare venv as "Installed" - that gap is what let
+# a failed install surface later as a ModuleNotFoundError crash on Start.
+# Only an import proves the venv can run the sidecar.
+#
+# NOTE: keep this file pure ASCII. It has no BOM, so Windows PowerShell 5.1
+# decodes it as Windows-1252, where a UTF-8 em-dash's trailing byte becomes a
+# smart quote that PowerShell honors as a string terminator - one stray dash
+# stops the whole script from parsing.
 Write-Host ""
-Write-Host "==> smoke-testing venv..."
+Write-Host "==> verifying venv (importing every critical module)..."
 $smokeOut = & $VenvPython $SmokeScript 2>&1
+$smokeExit = $LASTEXITCODE
 Write-Host $smokeOut
 
-Remove-Item $SmokeScript -ErrorAction SilentlyContinue
+if ($smokeExit -ne 0) {
+    Write-Host ""
+    Write-Host "==> Install FAILED - the venv is missing critical modules (see above)." -ForegroundColor Red
+    Write-Host "    Nothing was left in a usable state; fix the error above and re-run."
+    exit 1
+}
 
 if ($smokeOut -match "cuda: True") {
     Write-Host ""
@@ -107,7 +106,7 @@ if ($smokeOut -match "cuda: True") {
     Write-Host "      $VenvPython python\voice\server.py"
 } else {
     Write-Host ""
-    Write-Host "==> Install partially OK but CUDA was not detected." -ForegroundColor Yellow
+    Write-Host "==> Install OK, but CUDA was not detected." -ForegroundColor Yellow
     Write-Host "    Voice sidecar will fall back to CPU (slow). Check that:"
     Write-Host "      - NVIDIA driver supports CUDA 12.x (run nvidia-smi)"
     Write-Host "      - You haven't installed cpu-only onnxruntime on top of onnxruntime-gpu"

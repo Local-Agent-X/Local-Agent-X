@@ -7,10 +7,25 @@ import { createLogger } from "../../../logger.js";
 import { kokoroVoiceList, tier4Readiness } from "../../../voice/tier4/index.js";
 import { IS_WIN, TIERS, tierById } from "./tiers.js";
 import { isInstalled, probeHealth, probeVoiceNpmDeps, tierStatus } from "./detection.js";
-import { killTier, startTierAndWait } from "./process-control.js";
+import { killTier, sidecarLogPath, startTierAndWait, type StartOutcome } from "./process-control.js";
 import { running } from "./state.js";
 
 const logger = createLogger("routes.bridges.voice-setup");
+
+/**
+ * Describe a failed start in terms of what actually happened. A crashed
+ * sidecar and a slow one need opposite advice — "wait 30s and retry" is
+ * useless when the process is already dead — so report the real cause and
+ * quote the log tail rather than asserting a timeout that may not have
+ * occurred.
+ */
+export function startFailureSummary(tierId: string, outcome: Extract<StartOutcome, { ok: false }>): string {
+  const tail = outcome.logTail ? `\n\nLast log lines:\n${outcome.logTail}` : "";
+  if (outcome.reason === "exited") {
+    return `crashed on startup (exit code ${outcome.exitCode ?? "unknown"}). Retrying won't help until the cause is fixed. Full log: ${sidecarLogPath(tierId)}${tail}`;
+  }
+  return `didn't report healthy within 3 min, but pid ${outcome.pid ?? "?"} is still running. Cold-start can be slow; try Start again in 30s.${tail}`;
+}
 
 export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -79,9 +94,13 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
         if (lite && isInstalled(lite)) {
           const lh = await probeHealth(lite.healthUrl);
           if (!lh.ok) {
-            const ok = await startTierAndWait(lite);
-            if (!ok) {
-              json(502, { error: `${tier.label} requires Lite as a dispatcher, but Lite failed to start. Open the Lite card and start it manually to see the error.` });
+            const outcome = await startTierAndWait(lite);
+            if (!outcome.ok) {
+              json(502, {
+                error: `${tier.label} requires Lite as a dispatcher, but Lite ${startFailureSummary(lite.id, outcome)}`,
+                reason: outcome.reason,
+                logTail: outcome.logTail,
+              });
               return true;
             }
             logger.info(`[voice-setup] auto-started Lite as prereq for ${tier.id}`);
@@ -96,10 +115,13 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       const existingHealth = await probeHealth(tier.healthUrl);
       if (existingHealth.ok) { json(200, { ok: true, already: true, healthPayload: existingHealth.payload }); return true; }
 
-      const ok = await startTierAndWait(tier);
-      if (!ok) {
-        const proc = running.get(tier.id);
-        json(504, { error: `${tier.label} didn't report healthy within 3 min — but pid ${proc?.pid ?? "?"} is still running. Cold-start can be slow; try clicking Start again in 30s, or check logs.` });
+      const outcome = await startTierAndWait(tier);
+      if (!outcome.ok) {
+        json(outcome.reason === "exited" ? 502 : 504, {
+          error: `${tier.label} ${startFailureSummary(tier.id, outcome)}`,
+          reason: outcome.reason,
+          logTail: outcome.logTail,
+        });
         return true;
       }
       const proc = running.get(tier.id);

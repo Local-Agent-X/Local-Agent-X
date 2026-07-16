@@ -82,22 +82,19 @@ else
     echo "      kokoro voices.bin already present"
 fi
 
-# 5. Smoke test
+# 5. Verify-after-install. Runs the same committed _smoke.py the Windows
+# installer uses; it exits non-zero if any critical module is missing, and
+# `set -e` propagates that as an install failure. pip's exit code alone is not
+# proof — a resolution error leaves a venv on disk with only pip in it, which
+# the picker would otherwise read as "Installed" and crash on Start.
 echo ""
-echo "==> smoke-testing venv..."
-"$VENV_PYTHON" - <<'PY'
-import sys
-print("python", sys.version.split()[0])
-import faster_whisper
-print("faster_whisper", faster_whisper.__version__)
-import kokoro_onnx
-print("kokoro_onnx", kokoro_onnx.__version__)
-import onnxruntime as ort
-print("onnxruntime", ort.__version__, "providers:", ort.get_available_providers())
-import torch
-mps_ok = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-print("torch", torch.__version__, "mps:", mps_ok)
-PY
+echo "==> verifying venv (importing every critical module)..."
+if ! "$VENV_PYTHON" "$HERE/_smoke.py"; then
+    echo ""
+    echo "==> Install FAILED — the venv is missing critical modules (see above)." >&2
+    echo "    Nothing was left in a usable state; fix the error above and re-run." >&2
+    exit 1
+fi
 
 echo ""
 echo "==> Install OK."

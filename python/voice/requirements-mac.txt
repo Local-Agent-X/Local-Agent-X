@@ -6,10 +6,13 @@
 
 faster-whisper==1.1.0
 kokoro-onnx==0.4.9
+# See requirements.txt: kokoro-onnx pulls the `phonemizer-fork` distribution,
+# which provides the `phonemizer` import package that _server/models.py patches.
+phonemizer-fork==3.3.2
 onnxruntime==1.20.1
 silero-vad==5.1.2
 soundfile==0.12.1
-numpy>=1.26,<2.0
+numpy>=2.0.2,<3.0  # kokoro-onnx 0.4.9 requires >=2.0.2; must match requirements.txt
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 websockets==14.1

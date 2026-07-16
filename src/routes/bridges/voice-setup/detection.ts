@@ -1,10 +1,54 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { HOME, PYTHON_EXE, REPO_ROOT, type VoiceTier } from "./tiers.js";
+import { HOME, IS_WIN, PYTHON_EXE, REPO_ROOT, type VoiceTier } from "./tiers.js";
 import { running } from "./state.js";
 
+/**
+ * Resolve a venv's site-packages dir. Windows puts it at a fixed path; POSIX
+ * nests it under a version-specific dir (lib/python3.12/site-packages), so we
+ * scan for the first python* entry. Returns null when it can't be located.
+ */
+export function sitePackagesDir(venvDir: string): string | null {
+  if (!venvDir) return null;
+  if (IS_WIN) {
+    const p = join(venvDir, "Lib", "site-packages");
+    return existsSync(p) ? p : null;
+  }
+  const libDir = join(venvDir, "lib");
+  if (!existsSync(libDir)) return null;
+  try {
+    for (const entry of readdirSync(libDir)) {
+      if (!entry.startsWith("python")) continue;
+      const p = join(libDir, entry, "site-packages");
+      if (existsSync(p)) return p;
+    }
+  } catch { /* unreadable — fall through */ }
+  return null;
+}
+
+/**
+ * A venv is "installed" only if its interpreter exists AND the tier's marker
+ * packages are actually importable-on-disk.
+ *
+ * The interpreter check alone lies. `python -m venv` creates the interpreter
+ * FIRST, so a venv whose `pip install` failed afterwards is left on disk
+ * containing nothing but pip — and the old check reported that as "Installed".
+ * The picker then enabled Start, the sidecar booted, and the user got a
+ * ModuleNotFoundError crash instead of the install error that actually
+ * explained it. Markers are the same modules each tier's installer verifies
+ * (python/voice/_smoke.py, python/sovits/install.ps1 $VerifyImports).
+ *
+ * Conservative by design: a tier with no markers, or a venv whose
+ * site-packages we can't locate, falls back to the interpreter check rather
+ * than reporting a working install as broken.
+ */
 export function isInstalled(tier: VoiceTier): boolean {
-  return existsSync(join(tier.venvDir, PYTHON_EXE));
+  if (!existsSync(join(tier.venvDir, PYTHON_EXE))) return false;
+  const markers = tier.installMarkers;
+  if (!markers || markers.length === 0) return true;
+  const sp = sitePackagesDir(tier.venvDir);
+  if (!sp) return true;
+  return markers.every(m => existsSync(join(sp, m)) || existsSync(join(sp, `${m}.py`)));
 }
 
 // Studio-trained-specific: detect partial state where the GPT-SoVITS repo

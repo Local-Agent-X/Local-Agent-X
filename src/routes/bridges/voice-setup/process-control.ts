@@ -1,5 +1,5 @@
 import { spawn, execFileSync, execFile } from "node:child_process";
-import { existsSync, mkdirSync, openSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createLogger } from "../../../logger.js";
@@ -15,6 +15,21 @@ const SIDECAR_LOG_DIR = join(HOME, ".lax", "sidecars");
 
 export function sidecarLogPath(tierId: string): string {
   return join(SIDECAR_LOG_DIR, `${tierId}.log`);
+}
+
+/**
+ * Last few lines of a sidecar's log — the crash reason, in other words. The
+ * start API surfaces this to the UI so a sidecar that dies on boot explains
+ * itself in the dialog instead of sending the user hunting through log files
+ * for a traceback that was written the whole time.
+ */
+export function sidecarLogTail(tierId: string, maxLines = 12): string {
+  try {
+    const lines = readFileSync(sidecarLogPath(tierId), "utf8").split(/\r?\n/).filter(l => l.trim() !== "");
+    return lines.slice(-maxLines).join("\n");
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -182,20 +197,33 @@ export async function reapOrphanSidecars(): Promise<number> {
 }
 
 /**
- * Start one tier's sidecar and block until /healthz reports OK or the
- * 3-min deadline passes. Returns true on healthy start, false on timeout.
+ * Outcome of a start attempt. The distinction matters to the user: "exited"
+ * means the process is dead and retrying changes nothing until the cause in
+ * `logTail` is fixed, while "timeout" means it's still alive and may just be
+ * cold-starting. Collapsing both into `false` is what produced the
+ * "didn't report healthy within 3 min — but pid ? is still running" dialog
+ * for a sidecar that had already crashed 0.7s in.
+ */
+export type StartOutcome =
+  | { ok: true; adopted?: boolean }
+  | { ok: false; reason: "exited"; exitCode: number | null; logTail: string }
+  | { ok: false; reason: "timeout"; pid: number | undefined; logTail: string };
+
+/**
+ * Start one tier's sidecar and block until /healthz reports OK, the process
+ * exits, or the 3-min deadline passes.
  *
  * If a sidecar is already responding on the tier's port (left over from a
  * previous LAX run because we now spawn detached), adopt it — skip the spawn
- * and return true. This prevents starting two sidecars on the same port and
+ * and return ok. This prevents starting two sidecars on the same port and
  * makes the picker resilient to LAX hot-reloads.
  */
-export async function startTierAndWait(tier: VoiceTier): Promise<boolean> {
+export async function startTierAndWait(tier: VoiceTier): Promise<StartOutcome> {
   // Adopt an existing healthy sidecar instead of double-spawning.
   const existing = await probeHealth(tier.healthUrl);
   if (existing.ok) {
     logger.info(`[voice-setup] ${tier.id}: already running on ${tier.port}, adopting`);
-    return true;
+    return { ok: true, adopted: true };
   }
   killTier(tier.id);
   const cmd = tier.startCmd();
@@ -220,12 +248,16 @@ export async function startTierAndWait(tier: VoiceTier): Promise<boolean> {
   // file cache is warm are <20s.
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
-    if (proc.exitCode !== null) return false;
+    // Death beats the deadline: report it immediately, with the traceback the
+    // child just wrote to its log, rather than blaming a cold-start timeout.
+    if (proc.exitCode !== null) {
+      return { ok: false, reason: "exited", exitCode: proc.exitCode, logTail: sidecarLogTail(tier.id) };
+    }
     const h = await probeHealth(tier.healthUrl);
-    if (h.ok) return true;
+    if (h.ok) return { ok: true };
     await new Promise(r => setTimeout(r, 1000));
   }
-  return false;
+  return { ok: false, reason: "timeout", pid: proc.pid, logTail: sidecarLogTail(tier.id) };
 }
 
 export function killTier(tierId: string): void {

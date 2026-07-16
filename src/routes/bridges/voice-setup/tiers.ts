@@ -20,6 +20,12 @@ export interface VoiceTier {
   // hung sidecars by signature when they've stopped listening (so pidOnPort
   // misses them). Omit for native tiers.
   procMatch?: string[];
+  // Import-name dirs that must be present in the venv's site-packages for the
+  // tier to count as installed (see detection.isInstalled). Guards the
+  // "pip install failed but the venv exists" state, which the interpreter
+  // check alone reports as installed. Keep each list a subset of what that
+  // tier's installer verifies. Omit to fall back to the interpreter check.
+  installMarkers?: string[];
 }
 
 export const REPO_ROOT = resolve(process.cwd());
@@ -44,6 +50,10 @@ export const TIERS: VoiceTier[] = [
     description: "faster-whisper STT + Kokoro TTS + Silero VAD. Built-in voices, GPU-accelerated streaming.",
     diskFootprint: "~3–4 GB",
     procMatch: ["python-voice", "server.py"],
+    // numpy is the module whose absence crashed the sidecar at boot
+    // (_server/cuda_bootstrap.py imports it at module scope); the other two
+    // are the tier's reason for existing. Subset of python/voice/_smoke.py.
+    installMarkers: ["numpy", "faster_whisper", "kokoro_onnx"],
   },
   {
     id: "studio",
@@ -67,6 +77,10 @@ export const TIERS: VoiceTier[] = [
     description: "Chatterbox Turbo high-quality TTS with reference-clip voice cloning. ~200ms per chunk.",
     diskFootprint: "~3–5 GB (model auto-downloads on first use)",
     procMatch: ["python-chatterbox", "server:app"],
+    // Both are installed unconditionally by python/chatterbox/install.ps1
+    // (torch via chatterbox-streaming, fastapi explicitly) and torch is the
+    // module that installer smoke-checks.
+    installMarkers: ["torch", "fastapi"],
   },
   {
     id: "studio-trained",
@@ -89,6 +103,9 @@ export const TIERS: VoiceTier[] = [
     description: "Fine-tuned voice cloning via GPT-SoVITS v2Pro. Train your own voices (~30–45 min on RTX 3060).",
     diskFootprint: "~5 GB (per trained voice: ~50–100 MB)",
     procMatch: ["sovits", "server.py"],
+    // Subset of $VerifyImports in python/sovits/install.ps1 — that installer
+    // already refuses to succeed without these.
+    installMarkers: ["torch", "fastapi"],
   },
   {
     id: "native",

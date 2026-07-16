@@ -20,6 +20,30 @@ import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 import type { Chunk } from "../types.js";
 
+// Local copy of memory/embedding-codec.ts decodeEmbedding — this file cannot
+// import it (see header). embedding-codec.parity.test.ts locks the two
+// implementations together. Reads blobs (current) and legacy JSON text (rows
+// the background conversion hasn't reached yet).
+function decodeVec(value: unknown): number[] | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return Array.isArray(parsed) ? (parsed as number[]) : null;
+    } catch {
+      return null;
+    }
+  }
+  if (value instanceof Uint8Array) {
+    if (value.byteLength === 0 || value.byteLength % 4 !== 0) return null;
+    const view = new DataView(value.buffer, value.byteOffset, value.byteLength);
+    const out = new Array<number>(value.byteLength / 4);
+    for (let i = 0; i < out.length; i++) out[i] = view.getFloat32(i * 4, true);
+    return out;
+  }
+  return null;
+}
+
 // Local copy of memory/utils.ts cosineSimilarity — this file cannot import
 // it (see header). The parity test locks the two implementations together.
 function cosine(a: number[], b: number[]): number {
@@ -72,7 +96,7 @@ export function scanChunks(
       start_line: number;
       end_line: number;
       text: string;
-      embedding: string;
+      embedding: unknown;
       metadata: string | null;
       session_id: string | null;
       updated_at: number;
@@ -81,12 +105,8 @@ export function scanChunks(
     lastId = batch[batch.length - 1].id;
 
     for (const row of batch) {
-      let embedding: number[];
-      try {
-        embedding = JSON.parse(row.embedding);
-      } catch {
-        continue;
-      }
+      const embedding = decodeVec(row.embedding);
+      if (!embedding) continue;
 
       const similarity = cosine(queryVec, embedding);
       if (!Number.isFinite(similarity)) continue;

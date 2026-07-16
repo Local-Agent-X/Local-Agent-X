@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { sleep } from "./utils.js";
+import { decodeEmbedding, encodeEmbedding } from "./embedding-codec.js";
 import { yieldEventLoop } from "./index-embedding-reconcile.js";
 
 import { createLogger } from "../logger.js";
@@ -128,7 +129,7 @@ export function getCachedEmbedding(
     .prepare(
       "SELECT embedding FROM embedding_cache WHERE hash = ? AND provider = ? AND model = ?"
     )
-    .get(hash, provider, model) as { embedding: string } | undefined;
+    .get(hash, provider, model) as { embedding: unknown } | undefined;
   if (!row) return null;
   try {
     db
@@ -136,7 +137,7 @@ export function getCachedEmbedding(
         "UPDATE embedding_cache SET updated_at = ? WHERE hash = ? AND provider = ? AND model = ?"
       )
       .run(Date.now(), hash, provider, model);
-    return JSON.parse(row.embedding);
+    return decodeEmbedding(row.embedding);
   } catch {
     return null;
   }
@@ -158,7 +159,7 @@ export function cacheEmbedding(
       `INSERT OR REPLACE INTO embedding_cache (hash, provider, model, embedding, updated_at)
        VALUES (?, ?, ?, ?, ?)`
     )
-    .run(hash, provider, model, JSON.stringify(embedding), Date.now());
+    .run(hash, provider, model, encodeEmbedding(embedding), Date.now());
 }
 
 /**
@@ -201,7 +202,7 @@ export async function reembedMissingChunks(
     db.transaction(() => {
       for (const c of chunks) {
         if (!c.embedding) { missing++; continue; }
-        update.run(JSON.stringify(c.embedding), c.id);
+        update.run(encodeEmbedding(c.embedding), c.id);
         if (insVec) {
           try { insVec.run(c.id, new Float32Array(c.embedding)); } catch {}
         }

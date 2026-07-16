@@ -11,6 +11,7 @@ import { openDatabaseSafe } from "./index-db.js";
 import * as Schema from "./index-schema.js";
 import * as Files from "./index-files.js";
 import * as Embedding from "./index-embedding.js";
+import * as BlobMigration from "./index-embedding-blob-migration.js";
 import * as Sync from "./index-sync.js";
 import * as Ingest from "./index-ingest.js";
 import * as Forget from "./index-forget.js";
@@ -147,10 +148,14 @@ export class MemoryIndex extends MemoryFactsBase {
     this.embeddingProvider = provider;
     const { verdict, hasVec } = await Embedding.attachEmbeddingProvider(this.db, provider);
     if (hasVec) this.hasVec = true;
-    // Backfill vectors for anything missing one — a provider switch just
-    // wiped them, or an earlier embed failed/crashed partway. Skipped in the
-    // degraded local-fallback state.
-    if (verdict !== "degraded") this.kickBackgroundReembed(verdict);
+    // Drain legacy JSON-text vectors to float32 blobs, THEN backfill anything
+    // missing a vector — a provider switch just wiped them, an earlier embed
+    // crashed partway, or the drain NULLed a row it couldn't read. Conversion
+    // gates the re-embed so those NULLs are picked up in the same pass rather
+    // than waiting for the next boot.
+    BlobMigration.kickBackgroundBlobConversion(this.db, () => {
+      if (verdict !== "degraded") this.kickBackgroundReembed(verdict);
+    });
   }
 
   private reembedInProgress = false;

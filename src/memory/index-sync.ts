@@ -6,6 +6,7 @@ import type { CanonicalSource, Chunk, ChunkMetadata, EmbeddingProvider, FileReco
 import { chunkConversationPairs, extractSessionPairs } from "./chunking.js";
 import { chunkText, withChunkProvenance } from "./search-helpers.js";
 import { redactCredentials, safeReadTextFile } from "./utils.js";
+import { encodeEmbedding } from "./embedding-codec.js";
 import { embedChunksWithRetry, pruneEmbeddingCache } from "./index-embedding.js";
 import { archiveOldFacts } from "./index-watcher.js";
 import { listMemoryFiles, listSessionFiles, extractDateFromPath } from "./index-files.js";
@@ -229,7 +230,7 @@ async function indexFile(
         chunk.text,
         chunk.hash,
         chunk.hash,
-        chunk.embedding ? JSON.stringify(chunk.embedding) : null,
+        chunk.embedding ? encodeEmbedding(chunk.embedding) : null,
         preservedClock(chunk.hash, chunk.text) ?? now,
         chunk.metadata ? JSON.stringify(chunk.metadata) : null,
         chunk.metadata?.session_id ?? null

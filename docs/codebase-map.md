@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1255 non-test source files · 0 god files (>400 LOC).
+**Totals:** 60 top-level dirs · 60 live · 0 with no live importer · 1257 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tools/` | 57 | 144 | XL |  |
 | `src/canonical-loop/` | 43 | 141 | XL |  |
 | `src/providers/` | 42 | 16 | L |  |
-| `src/memory/` | 40 | 115 | XL |  |
+| `src/memory/` | 40 | 117 | XL |  |
 | `src/classifiers/` | 33 | 16 | L |  |
 | `src/workspace/` | 27 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |

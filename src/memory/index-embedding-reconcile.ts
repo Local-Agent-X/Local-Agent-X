@@ -152,25 +152,36 @@ export function countChunksMissingEmbedding(db: InstanceType<typeof Database>): 
  * vector. NULLing them here makes reembedMissingChunks rebuild them under the
  * current provider — so a model change can never leave content unsearchable.
  *
- * Uses json_array_length to read the stored JSON vector's length in SQL without
- * parsing every embedding in JS. Returns how many were healed. Live 2026-06-12:
- * an instruction in 2026-04-07.md was unfindable for exactly this reason.
+ * Measures the vector's length in SQL so we never parse every embedding in JS.
+ * Returns how many were healed. Live 2026-06-12: an instruction in
+ * 2026-04-07.md was unfindable for exactly this reason.
+ *
+ * BOTH encodings are covered. Blobs are 4 bytes per float32 component; legacy
+ * JSON text rows still awaiting conversion keep the json_array_length test.
+ * Testing only one would silently retire this self-heal for the other half of
+ * the corpus while the background conversion drains (embedding-codec.ts).
  */
 export async function nullDimensionMismatchedEmbeddings(
   db: InstanceType<typeof Database>,
   provider: EmbeddingProvider
 ): Promise<number> {
+  let healed = 0;
+  healed += await nullEmbeddingsInBatches(
+    db,
+    " AND typeof(embedding) = 'blob' AND length(embedding) != ?",
+    [provider.dimensions * 4]
+  );
   try {
-    return await nullEmbeddingsInBatches(
+    healed += await nullEmbeddingsInBatches(
       db,
-      " AND json_array_length(embedding) != ?",
+      " AND typeof(embedding) = 'text' AND json_array_length(embedding) != ?",
       [provider.dimensions]
     );
   } catch {
-    // json_array_length unavailable, or a non-JSON embedding — leave it for the
-    // signature wipe path rather than risk nulling a valid vector.
-    return 0;
+    // json_array_length unavailable, or a non-JSON text embedding — leave it
+    // for the signature wipe path rather than risk nulling a valid vector.
   }
+  return healed;
 }
 
 /**
@@ -184,15 +195,31 @@ export async function nullDimensionMismatchedEmbeddings(
  * vector once the provider recovers; until then the chunk is at least
  * keyword-searchable instead of silently invisible.
  *
- * An all-zero JSON vector ("[0,0,...,0]") is exactly the set of stored
- * vectors containing no 1-9 digit — every real component carries a
- * significant digit, and JSON.stringify renders the only other value, 0, as
- * bare "0". The GLOB test runs in SQL so we never parse each vector in JS.
+ * Both encodings are tested, in SQL, so we never parse each vector in JS:
+ *
+ * - blob: an all-zero float32 vector is byte-identical to zeroblob(n), since
+ *   +0.0f is four zero bytes. (A -0.0f sentinel would be 0x80000000 and slip
+ *   through, but degraded providers emit +0.)
+ * - text: an all-zero JSON vector ("[0,0,...,0]") is exactly the set of stored
+ *   vectors containing no 1-9 digit — every real component carries a
+ *   significant digit, and JSON.stringify renders the only other value, 0, as
+ *   bare "0". GLOB is a text operator, so it must not be aimed at blobs.
  */
 export async function nullZeroVectorEmbeddings(
   db: InstanceType<typeof Database>
 ): Promise<number> {
-  return nullEmbeddingsInBatches(db, " AND embedding NOT GLOB '*[1-9]*'", []);
+  let healed = 0;
+  healed += await nullEmbeddingsInBatches(
+    db,
+    " AND typeof(embedding) = 'blob' AND embedding = zeroblob(length(embedding))",
+    []
+  );
+  healed += await nullEmbeddingsInBatches(
+    db,
+    " AND typeof(embedding) = 'text' AND embedding NOT GLOB '*[1-9]*'",
+    []
+  );
+  return healed;
 }
 
 /**
@@ -207,7 +234,12 @@ export function purgeZeroVectorEmbeddingCache(
 ): number {
   try {
     return db
-      .prepare("DELETE FROM embedding_cache WHERE embedding NOT GLOB '*[1-9]*'")
+      .prepare(
+        // Same two-encoding test as nullZeroVectorEmbeddings — see its comment.
+        "DELETE FROM embedding_cache WHERE " +
+        "(typeof(embedding) = 'blob' AND embedding = zeroblob(length(embedding))) OR " +
+        "(typeof(embedding) = 'text' AND embedding NOT GLOB '*[1-9]*')"
+      )
       .run().changes;
   } catch {
     return 0;

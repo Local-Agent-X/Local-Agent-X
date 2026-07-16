@@ -7,6 +7,7 @@
  * re-embed on every flap).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { decodeEmbedding } from "./embedding-codec.js";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,8 +56,11 @@ function insertChunk(text: string, embedding: number[] | null): number {
 
 function embeddingOf(chunkId: number): number[] | null {
   const db = memory["db"];
-  const row = db.prepare("SELECT embedding FROM chunks WHERE id = ?").get(chunkId) as { embedding: string | null };
-  return row.embedding ? JSON.parse(row.embedding) : null;
+  const row = db.prepare("SELECT embedding FROM chunks WHERE id = ?").get(chunkId) as { embedding: unknown };
+  // Reads through the codec, not JSON.parse: writers emit float32 blobs now.
+  // insertChunk above still seeds legacy JSON text on purpose, so these cases
+  // also cover the mixed corpus the background conversion leaves mid-drain.
+  return decodeEmbedding(row.embedding);
 }
 
 describe("reconcileEmbeddingSignature", () => {

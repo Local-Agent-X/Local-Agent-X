@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { embedChunksWithRetry } from "./index-embedding.js";
+import { encodeEmbedding } from "./embedding-codec.js";
 import { withChunkProvenance } from "./search-helpers.js";
 
 import { createLogger } from "../logger.js";
@@ -59,7 +60,7 @@ export async function indexChunks(
       try {
         const result = insertChunk.run(
           virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash, chunk.hash,
-          chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
+          chunk.embedding ? encodeEmbedding(chunk.embedding) : null, now,
           chunk.metadata ? JSON.stringify(chunk.metadata) : null,
           chunk.metadata?.session_id ?? null
         );
@@ -156,7 +157,7 @@ export async function indexChunksIdempotent(
       for (const chunk of toInsert) {
         const res = insertChunk.run(
           virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash, chunk.hash,
-          chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
+          chunk.embedding ? encodeEmbedding(chunk.embedding) : null, now,
           chunk.metadata ? JSON.stringify(chunk.metadata) : null,
           chunk.metadata?.session_id ?? null
         );

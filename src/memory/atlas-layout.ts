@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
+import { decodeEmbedding } from "./embedding-codec.js";
 import { makeJL, project, topEigenvectors, palette, tokenize, labelClusters } from "./atlas-math.js";
 import { kmeans } from "./atlas-cluster.js";
 
@@ -88,10 +89,9 @@ async function compute(dataDir: string, signature: string): Promise<AtlasLayout 
     const tmp = new Float32Array(DOUT);
     let n = 0;
 
-    for (const r of rows.iterate(LIMIT) as Iterable<{ id: number; embedding: string; snip: string }>) {
-      let vec: number[];
-      try { vec = JSON.parse(r.embedding); } catch { continue; }
-      if (!Array.isArray(vec) || vec.length === 0) continue;
+    for (const r of rows.iterate(LIMIT) as Iterable<{ id: number; embedding: unknown; snip: string }>) {
+      const vec = decodeEmbedding(r.embedding);
+      if (!vec || vec.length === 0) continue;
       if (!jl) {
         dIn = vec.length;
         jl = makeJL(dIn, DOUT, 1337);

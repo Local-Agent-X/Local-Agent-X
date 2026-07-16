@@ -193,11 +193,15 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // unchanged. The filter+RAG above already picked the message-relevant tools;
   // shrink preserves essentials, and we keep tool_search so the model can still
   // reach the rest (Google's "dynamic tool selection").
-  const { toolCapTierForProvider } = await import("../../model-tiers.js");
+  const { toolCapTierForProvider, GEMINI_STRONG_TOOL_CAP } = await import("../../model-tiers.js");
   const capTier = toolCapTierForProvider(input.resolvedProvider, input.resolvedModel);
   if (!isBridge && capTier !== tier) {
     const before = tools.length;
-    tools = shrinkToolsForTier(tools, capTier, input.allAgentTools);
+    // Explicit endpoint cap, NOT the medium tier's count. The two were the same
+    // number until 2026-07-15 and were silently coupled — raising medium for
+    // model-capacity reasons would have pushed Gemini further past Google's
+    // documented 10-20 ceiling as a side effect. Pinned so they move apart.
+    tools = shrinkToolsForTier(tools, capTier, input.allAgentTools, GEMINI_STRONG_TOOL_CAP);
     if (!tools.some(t => t.name === "tool_search")) {
       const ts = input.allAgentTools.find(t => t.name === "tool_search");
       if (ts) tools = [ts, ...tools];

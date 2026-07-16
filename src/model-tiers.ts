@@ -67,18 +67,44 @@ export function isMediumOrWeak(model: string): boolean {
 }
 
 /**
+ * Slots the medium cap reserves for tools the USER'S MESSAGE matched
+ * (keyword/RAG), over and above the unconditional essentials. This is the
+ * whole reason the cap isn't just ESSENTIAL_TOOLS_ORDER.length: without
+ * headroom, a medium model gets the same 20 tools no matter what it's asked.
+ *
+ * Live 2026-07-15 (local qwen3.6:27b, "build me a side scroller"): the cap was
+ * a hand-maintained 21 whose comment claimed "19 essentials + 2 intent slots",
+ * but the list had since grown to 20 — so the real headroom was 1 slot, and
+ * build_app lost it to whichever tool sorted earlier. The model knew build_app
+ * existed, couldn't find it in its schema, and improvised bash("build_app …").
+ * Nobody was wrong; the constant just drifted from the list it depends on.
+ * Deriving it means appending an essential can never silently eat the headroom
+ * again — that's the actual bug class, not the missing tool.
+ */
+export const MEDIUM_INTENT_SLOTS = 2;
+
+/**
+ * Gemini's OpenAI-compat endpoint cap. Historically this rode on the medium
+ * count (they happened to both be 21), which silently coupled an ENDPOINT
+ * limit to a MODEL-CAPACITY limit — bumping medium for model reasons would
+ * shove Gemini further past Google's documented ceiling for unrelated reasons.
+ * Pinned explicitly so the two move independently. 21 preserves the exact
+ * behavior from when they were coupled; see toolCapTierForProvider.
+ */
+export const GEMINI_STRONG_TOOL_CAP = 21;
+
+/**
  * Max tool count to send per model tier. Weak models cap aggressively
- * (~8 tools) to prevent 0-token paralysis. Medium models cap at ~15
- * (covers most agent flows without overwhelming). Strong — no cap.
+ * (~8 tools) to prevent 0-token paralysis. Medium models take every essential
+ * plus MEDIUM_INTENT_SLOTS of message-matched headroom. Strong — no cap.
  */
 export function maxToolsForTier(tier: ModelTier): number {
   switch (tier) {
     case "weak":   return 8;
-    // 21 = 19 essentials + 2 user-intent slots. Most recent bump added
-    // the profile-write tools (memory_update_profile, memory_set_user_field,
-    // remember, forget) so medium models can actually respond to "stop X" /
-    // "use Y by default" by writing the preference, not just acknowledging it.
-    case "medium": return 21;
+    // Derived, never hand-tuned: essentials are unconditional, so the cap has
+    // to be list-length + headroom or the headroom silently goes to zero the
+    // next time someone appends an essential (which is exactly what happened).
+    case "medium": return ESSENTIAL_TOOLS_ORDER.length + MEDIUM_INTENT_SLOTS;
     case "strong": return Number.MAX_SAFE_INTEGER;
   }
 }
@@ -125,6 +151,15 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "http_request", "browser",
   "self_edit",                      // agent self-repair via Claude Code
   "memory_save", "memory_search",
+  // Flagship capability — "build me an app/game/site" is a primary reason this
+  // product exists, so it cannot be left to compete for the intent slots. It
+  // sits BELOW the weak-tier cut (first 8) on purpose: weak 1-13B models can't
+  // drive a build loop, and promoting it above would evict memory_save from
+  // every weak model's set. Medium+ is where builds actually land.
+  // Live 2026-07-15: absent from this list, build_app fell out of a local 27B's
+  // schema entirely and the model improvised bash("build_app --name …") — the
+  // catalog-order intent slot went to another tool. See MEDIUM_INTENT_SLOTS.
+  "build_app",
   // Profile + Facts DB writers — without these in the medium-tier set,
   // models like grok-4-fast that get a "stop X" / "use Y" preference
   // fall back to memory_save (daily log only) which doesn't trigger the
@@ -157,8 +192,12 @@ export function shrinkToolsForTier<T extends { name: string; description: string
   tools: T[],
   tier: ModelTier,
   allTools?: T[],
+  capOverride?: number,
 ): T[] {
-  const cap = maxToolsForTier(tier);
+  // capOverride lets an ENDPOINT limit (Gemini's compat cap) be expressed
+  // without hijacking the tier's MODEL-capacity limit. tier still drives
+  // description truncation, which is a model-comprehension concern.
+  const cap = capOverride ?? maxToolsForTier(tier);
   const maybeTruncate = (t: T): T => {
     if (tier !== "weak" || t.description.length <= 150) return t;
     // Keep only the first sentence, falling back to hard cut at 150

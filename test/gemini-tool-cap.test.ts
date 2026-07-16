@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toolCapTierForProvider, maxToolsForTier, classifyModel } from "../src/model-tiers.js";
+import { toolCapTierForProvider, GEMINI_STRONG_TOOL_CAP, classifyModel } from "../src/model-tiers.js";
 
 // Regression guard (live 2026-06-11): Gemini 2.5/3.x classify as "strong" tier,
 // which has no tool cap — so LAX sent its OpenAI-compat endpoint all ~98 tools.
@@ -11,8 +11,14 @@ describe("toolCapTierForProvider — Gemini endpoint tool cap", () => {
     expect(toolCapTierForProvider("gemini", "gemini-2.5-pro")).toBe("medium");
     expect(toolCapTierForProvider("gemini", "gemini-2.5-flash")).toBe("medium");
     expect(toolCapTierForProvider("gemini", "gemini-3.5-flash")).toBe("medium");
-    // sanity: the cap is well under Google's ≤20 guidance
-    expect(maxToolsForTier("medium")).toBeLessThanOrEqual(21);
+    // The effective cap is now GEMINI_STRONG_TOOL_CAP, not maxToolsForTier
+    // ("medium") — the two were coincidentally both 21 and silently coupled
+    // until 2026-07-15, so a medium bump for model-capacity reasons moved
+    // Gemini's endpoint limit as a side effect. Assert the real number this
+    // path passes to shrinkToolsForTier. NB: 21 was inherited, not tuned, and
+    // is already a hair over Google's ≤20 guidance; tool_search covers the
+    // rest. Kept as-is to hold behavior, not because 21 is proven optimal.
+    expect(GEMINI_STRONG_TOOL_CAP).toBeLessThanOrEqual(21);
   });
 
   it("never RAISES a weak Gemini model's cap (gemini-2.0-flash stays weak)", () => {

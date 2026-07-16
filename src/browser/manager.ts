@@ -279,6 +279,21 @@ export class BrowserManager implements BrowserBackend {
     return clickTextOn(await this.getPage(), this.registry, text);
   }
 
+  // Console/network capture rides the desktop's WebContentsView plumbing —
+  // not-supported strings here, honestly (matches the in-app dialog stubs).
+  async readConsole(): Promise<string> {
+    return (
+      "Console capture is not supported on the external-Chrome backend — " +
+      "it is available in the in-app browser. No console output was read."
+    );
+  }
+  async readNetwork(): Promise<string> {
+    return (
+      "Network capture is not supported on the external-Chrome backend — " +
+      "it is available in the in-app browser. No network activity was read."
+    );
+  }
+
   async dialogAccept(promptText?: string): Promise<string> {
     const page = await this.getPage();
     return handleNextDialog(page, "accept", promptText);

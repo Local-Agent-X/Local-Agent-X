@@ -8,7 +8,7 @@
  * only close() destroys them.
  */
 
-import { WebContentsView, type Rectangle } from "electron";
+import { WebContentsView, type Rectangle, type WebContents } from "electron";
 
 import { getMainWindow } from "./window";
 import { getHardenedPartitionSession, hardenWebContents, viewWebPreferences } from "./browser-partition";
@@ -47,6 +47,22 @@ let poolChangedListener: (() => void) | null = null;
 
 export function setPoolChangedListener(fn: (() => void) | null): void {
 	poolChangedListener = fn;
+}
+
+/** Per-view lifecycle observation seam — browser-perception.ts registers here
+ *  (via server-bridge-browser's wire call) to arm console capture + UI-event
+ *  production without the pool importing perception. Same posture as the
+ *  pool-change listener: optional, and a throwing observer must never break
+ *  view lifecycle. */
+export interface ViewLifecycleObserver {
+	onViewCreated(viewId: string, wc: WebContents, agentDriven: boolean): void;
+	onViewClosed(viewId: string): void;
+}
+
+let viewObserver: ViewLifecycleObserver | null = null;
+
+export function setViewLifecycleObserver(obs: ViewLifecycleObserver | null): void {
+	viewObserver = obs;
 }
 
 function notifyPoolChanged(): void {
@@ -102,6 +118,11 @@ export function createBrowserView(
 		popups,
 	};
 	pool.set(viewId, entry);
+	try {
+		viewObserver?.onViewCreated(viewId, view.webContents, entry.agentDriven);
+	} catch {
+		/* perception must never break view creation */
+	}
 	notifyPoolChanged();
 	return describe(viewId, entry);
 }
@@ -146,6 +167,13 @@ export function closeBrowserView(viewId: string): void {
 	const entry = requireEntry(viewId);
 	if (attachedId === viewId) hideBrowserView(viewId);
 	entry.popups.closeAll();
+	try {
+		// Observed BEFORE the webContents dies so listener cleanup still has a
+		// live target; also frees the view's console ring (no leak on close).
+		viewObserver?.onViewClosed(viewId);
+	} catch {
+		/* perception must never break view teardown */
+	}
 	if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
 	pool.delete(viewId);
 	notifyPoolChanged();

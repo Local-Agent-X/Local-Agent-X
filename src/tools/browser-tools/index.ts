@@ -49,6 +49,7 @@ import {
 } from "./page.js";
 import { handleAct } from "./act.js";
 import { handleObserve } from "./observe.js";
+import { handleReadConsole, handleReadNetwork } from "./perception.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { createLogger } from "../../logger.js";
 import { sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
@@ -67,7 +68,7 @@ const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
 // Pure reads/utilities (extract, screenshot, evaluate, info, tabs, dialogs)
 // are excluded: they legitimately return varying data off an unchanged page.
 const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "observe", "snapshot", "act"]);
-const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe"]);
+const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network"]);
 
 /**
  * After an advancing action, fingerprint the page and trip a no-progress stop
@@ -204,6 +205,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "close": return await handleClose(sessionId);
             case "act": return await handleAct(manager, args);
             case "observe": return await handleObserve(manager);
+            case "read_console": return await handleReadConsole(manager);
+            case "read_network": return await handleReadNetwork(manager);
             default:
               return err(
                 `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, tabs, switch_tab, info, close`

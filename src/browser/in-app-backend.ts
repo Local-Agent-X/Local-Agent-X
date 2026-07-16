@@ -10,36 +10,37 @@
  * the tool layer sees identical result shapes.
  *
  * Scope:
- *   - navigation, observe/snapshot/fingerprint, page reads, screenshot,
- *     evaluate (guarded), lifecycle — implemented.
- *   - tabs (chunk B): real multi-view tabs (in-app-tabs.ts) — new_tab opens
- *     an additional view; `tabs` also lists the user's own views and
- *     switch_tab onto one ADOPTS it (owned:false — driven, never closed).
+ *   - navigation (real HTTP status when the desktop observed one), observe/
+ *     snapshot/fingerprint, page reads, screenshot, evaluate (guarded),
+ *     lifecycle — implemented.
+ *   - tabs (chunk B): real multi-view tabs (in-app-tabs.ts); `tabs` also lists
+ *     the user's own views and switch_tab ADOPTS one (driven, never closed).
  *   - click/fill/select (by SELECTOR): simple isolated-world DOM-eval versions.
- *   - clickByRef/fillByRef/clickByText/scroll (A2): the full resolution chain
- *     (role+name → visible text → XPath → coords, hit-tested) executed via real
+ *   - clickByRef/fillByRef/clickByText/scroll (A2): resolution chain over real
  *     input events (browserInput synthetic-cursor path), in in-app-actions.ts.
+ *   - readConsole/readNetwork (chunk E): desktop perception rings, active tab.
  *   - screenshot: KB1 credential-focus guard blocks capture while a password
  *     field is focused in the co-driven view.
- *   - dialogs: JS dialogs need desktop-side interception — not-supported
- *     strings until then (A2/follow-up).
- *   - downloads: desktop quarantine records aren't plumbed to the server yet
- *     (follow-up chunk, P1/KB1 territory) — list is empty, approvals throw.
+ *   - dialogs: not-supported strings until desktop-side interception lands.
+ *   - downloads: desktop quarantine not plumbed to the server yet —
+ *     list is empty, approvals throw (follow-up chunk, P1/KB1 territory).
  */
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { browserExec, browserNavigate } from "./bridge-client.js";
+import { browserExec, browserNavigate, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
+import { formatConsoleReport, formatNetworkReport } from "./bridge-perception.js";
 import {
 	closeOwnedTabs,
 	ensureTabView,
 	formatTabsListing,
+	navigationReport,
 	refreshTabState,
 	switchMergedTab,
 	TabList,
 	type InAppTab,
 } from "./in-app-tabs.js";
 import { injectTokenIfLocal } from "./auth-context.js";
-import { redirectMessage, safeHost } from "./redirect.js";
+import { safeHost } from "./redirect.js";
 import { scanEvaluateScript, sensitivePageStub } from "./guards.js";
 import { formatRecentDownloads, type DownloadApprovalBinding } from "./downloads.js";
 import { fingerprintPage } from "./interactions.js";
@@ -77,10 +78,9 @@ const IN_APP_ENGINE = "electron";
  * Walks the focus chain through same-origin iframes AND open shadow roots
  * (activeElement retargets to the shadow host). Fails CLOSED: a focused
  * CROSS-ORIGIN iframe (contentDocument null/throws) is unreadable but
- * focus-is-inside-it IS observable — the canonical embedded bank/Stripe/Plaid/
- * OAuth login — so we block (over-blocking any cross-origin embed is the right
- * direction; CREDENTIAL_CAPTURE_BLOCKED names that reason). Closed shadow roots
- * are the residual gap.
+ * focus-is-inside-it IS observable — the canonical embedded bank/Stripe/
+ * OAuth login — so we block (CREDENTIAL_CAPTURE_BLOCKED names the reason).
+ * Closed shadow roots are the residual gap.
  */
 export const CREDENTIAL_FOCUS_SCRIPT = `(() => {
 	let el = document.activeElement;
@@ -121,10 +121,8 @@ export class EvaluateBlockedError extends Error {
 /** Desktop download quarantine isn't plumbed to the server yet; approval/release must fail closed (follow-up). */
 export class InAppDownloadsUnavailableError extends Error {
 	constructor(op: string) {
-		super(
-			`browser ${op} is not available in the in-app backend yet — desktop ` +
-				`download quarantine is not plumbed to the server (follow-up chunk).`,
-		);
+		super(`browser ${op} is not available in the in-app backend yet — desktop ` +
+			`download quarantine is not plumbed to the server (follow-up chunk).`);
 		this.name = "InAppDownloadsUnavailableError";
 	}
 }
@@ -197,16 +195,10 @@ export class ElectronInAppBackend implements BrowserBackend {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
 		await this.ensureView();
-		// The bridge navigate settles on load events and carries no HTTP status,
-		// so an HTTP ≥400 page isn't detectable here yet — "Status: unknown" is
-		// the in-family CDP value for a missing response (desktop follow-up).
 		const result = await browserNavigate(this.viewId, url);
 		this.state.url = result.url;
 		this.state.title = result.title;
-		const sensitive = sensitivePageStub(result.url);
-		if (sensitive) return sensitive;
-		const redirect = redirectMessage(requestedHost, safeHost(result.url));
-		return `Navigated to: ${result.url}\nStatus: unknown\nTitle: ${result.title}${redirect}`;
+		return navigationReport("Navigated to: ", result, requestedHost);
 	}
 
 	/** Open a REAL additional view (viewId `<first>-t<N>`, N monotonic) and make
@@ -227,10 +219,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 		const result = await browserNavigate(tab.viewId, url);
 		tab.state.url = result.url;
 		tab.state.title = result.title;
-		const sensitive = sensitivePageStub(result.url);
-		if (sensitive) return sensitive;
-		const redirect = redirectMessage(requestedHost, safeHost(result.url));
-		return `Opened new tab (${this.tabs.all().length} tabs total)\nURL: ${result.url}\nStatus: unknown\nTitle: ${result.title}${redirect}`;
+		return navigationReport(`Opened new tab (${this.tabs.all().length} tabs total)\nURL: `, result, requestedHost);
 	}
 
 	async observe(): Promise<BrowserObservation> {
@@ -271,12 +260,10 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return selectOptionInApp(this.viewId, selector, value);
 	}
 
-	/** Page access for the secret tools. Lives off the tool-facing contract on
-	 *  purpose — a secret must never take the formatted, value-echoing paths in
-	 *  BrowserBackend (see secret-ops.ts). */
+	/** Page access for the secret tools — off the tool-facing contract on purpose:
+	 *  a secret never takes the value-echoing BrowserBackend paths (secret-ops.ts). */
 	secretOps(): SecretBrowserOps {
-		// viewId resolves at CALL time — a switch_tab between secret ops must
-		// retarget the ops to the newly active tab.
+		// viewId resolves at CALL time — switch_tab between ops must retarget.
 		return createInAppSecretOps({ viewId: () => this.viewId, ensureView: () => this.ensureView() });
 	}
 
@@ -325,8 +312,8 @@ export class ElectronInAppBackend implements BrowserBackend {
 	}
 
 	async evaluate(script: string): Promise<string> {
-		// Guarded here as well as at the tool layer (defense in depth): a
-		// blocked script must never reach the bridge from ANY caller.
+		// Guarded here AND at the tool layer (defense in depth): a blocked
+		// script must never reach the bridge from any caller.
 		const blockedPattern = scanEvaluateScript(script);
 		if (blockedPattern) throw new EvaluateBlockedError(blockedPattern);
 		await this.ensureView();
@@ -356,6 +343,18 @@ export class ElectronInAppBackend implements BrowserBackend {
 		await this.refreshState(result.tab);
 		const sensitive = sensitivePageStub(this.state.url);
 		return sensitive ?? `Switched to tab [${index}]: ${this.state.title} — ${this.state.url}`;
+	}
+
+	// ── Perception (desktop console/network rings, active tab) ──
+
+	async readConsole(): Promise<string> {
+		await this.ensureView();
+		return formatConsoleReport(await browserReadConsole(this.viewId));
+	}
+	async readNetwork(): Promise<string> {
+		await this.ensureView();
+		const { entries, inFlight } = await browserReadNetwork(this.viewId);
+		return formatNetworkReport(entries, inFlight);
 	}
 
 	// ── Dialogs (need desktop-side interception — A2/follow-up) ──

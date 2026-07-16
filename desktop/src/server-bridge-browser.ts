@@ -4,7 +4,8 @@
  * Dispatched from server-bridge.ts (same transport, same reply idiom:
  * "<type>-result" carrying the request id). Drives the WebContentsView
  * pool (browser-views.ts) on behalf of the server child:
- *   lifecycle / navigate / exec / input / capture / abort.
+ *   lifecycle / navigate / exec / input / capture / abort /
+ *   read-console / read-network (browser-perception.ts rings).
  *
  * Also wires the per-partition egress guard (browser-partition.ts) to
  * the server's canonical URL policy: wireBrowserEgressEvaluator installs
@@ -14,7 +15,7 @@
  */
 
 import type { ChildProcess } from "child_process";
-import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent, Rectangle, WebContents } from "electron";
+import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent, WebContents } from "electron";
 
 import {
 	closeBrowserView,
@@ -24,11 +25,19 @@ import {
 	listBrowserViews,
 	pingBrowserView,
 	setBrowserViewBounds,
+	setViewLifecycleObserver,
 	showBrowserView,
 	type BrowserViewInfo,
 } from "./browser-views";
 import { autoSurfaceAgentView } from "./browser-ipc";
 import { getHardenedPartitionSession, setEgressEvaluator, type EgressDecision } from "./browser-partition";
+import {
+	attachViewPerception,
+	detachViewPerception,
+	readConsoleEntries,
+	readNetworkEntries,
+	setBrowserUiEventSink,
+} from "./browser-perception";
 import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
 
 // Isolated world for agent scripts — never the main world, so page JS
@@ -38,73 +47,15 @@ const NAVIGATE_DEFAULT_TIMEOUT_MS = 25_000;
 const CAPTURE_MAX_B64 = 2 * 1024 * 1024; // mirrors PROBE_MAX_SCREENSHOT_B64
 const EGRESS_ASK_DEADLINE_MS = 250;      // per-hop policy ask; fail closed past this
 
-// ── Wire types (mirrored in src/browser/bridge-client.ts) ─────────
-export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list";
-
-type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
-interface BridgeMouseEvent {
-	type: "mouseDown" | "mouseUp" | "mouseMove";
-	x: number;
-	y: number;
-	button?: "left" | "middle" | "right";
-	clickCount?: number;
-	modifiers?: BridgeInputModifier[];
-}
-interface BridgeMouseWheelEvent {
-	type: "mouseWheel";
-	x: number;
-	y: number;
-	deltaX?: number;
-	deltaY?: number;
-	modifiers?: BridgeInputModifier[];
-}
-interface BridgeKeyEvent {
-	type: "keyDown" | "keyUp" | "char";
-	keyCode: string;
-	modifiers?: BridgeInputModifier[];
-}
-export type BridgeInputEvent = BridgeMouseEvent | BridgeMouseWheelEvent | BridgeKeyEvent;
-
-export interface BrowserLifecycleRequest {
-	type: "lax:browser-lifecycle";
-	id: number;
-	op: BrowserLifecycleOp;
-	viewId: string;
-	partition?: string;
-	bounds?: Rectangle;
-}
-export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number }
-export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated"; allFrames?: boolean }
-export interface BrowserInputRequest { type: "lax:browser-input"; id: number; viewId: string; event: BridgeInputEvent }
-export interface BrowserCaptureRequest { type: "lax:browser-capture"; id: number; viewId: string }
-export interface BrowserClearPartitionRequest { type: "lax:browser-clear-partition"; id: number; partition: string }
-export interface BrowserAbortRequest { type: "lax:browser-abort"; viewId: string }
-export interface BrowserEgressAskResult { type: "lax:browser-egress-ask-result"; id: number; allowed: boolean }
-
-export type BrowserBridgeMessage =
-	| BrowserLifecycleRequest
-	| BrowserNavigateRequest
-	| BrowserExecRequest
-	| BrowserInputRequest
-	| BrowserCaptureRequest
-	| BrowserClearPartitionRequest
-	| BrowserAbortRequest
-	| BrowserEgressAskResult;
-
-const BROWSER_MESSAGE_TYPES = new Set<string>([
-	"lax:browser-lifecycle",
-	"lax:browser-navigate",
-	"lax:browser-exec",
-	"lax:browser-input",
-	"lax:browser-capture",
-	"lax:browser-clear-partition",
-	"lax:browser-abort",
-	"lax:browser-egress-ask-result",
-]);
-
-export function isBrowserBridgeMessage(msg: { type?: string }): msg is BrowserBridgeMessage {
-	return typeof msg?.type === "string" && BROWSER_MESSAGE_TYPES.has(msg.type);
-}
+// ── Wire types (server-bridge-browser-wire.ts; re-exported for callers) ─────────
+import type {
+	BridgeInputEvent,
+	BrowserBridgeMessage,
+	BrowserLifecycleRequest,
+	BrowserNavigateRequest,
+} from "./server-bridge-browser-wire";
+export { isBrowserBridgeMessage } from "./server-bridge-browser-wire";
+export type { BridgeInputEvent, BrowserBridgeMessage, BrowserLifecycleOp } from "./server-bridge-browser-wire";
 
 // ── Egress evaluator (desktop→server ask, fail-closed) ─────────
 let egressSeq = 0;
@@ -131,6 +82,19 @@ function askServerEgress(proc: ChildProcess, url: string): Promise<EgressDecisio
  *  live process; a dead/replaced child fails closed inside the ask. */
 export function wireBrowserEgressEvaluator(proc: ChildProcess): void {
 	setEgressEvaluator((url) => askServerEgress(proc, url));
+	// Same (re)spawn moment arms perception: console rings on every new view,
+	// and fire-and-forget UI events (user views only) to the live child.
+	setViewLifecycleObserver({
+		onViewCreated: attachViewPerception,
+		onViewClosed: detachViewPerception,
+	});
+	setBrowserUiEventSink((msg) => {
+		try {
+			if (proc.connected && !proc.killed) proc.send(msg);
+		} catch {
+			/* child gone — UI events are best-effort by contract */
+		}
+	});
 }
 
 // ── Dispatch ─────────
@@ -189,6 +153,23 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 		}
 		case "lax:browser-clear-partition": {
 			reply(proc, "lax:browser-clear-partition-result", msg.id, () => clearPartition(msg.partition));
+			return;
+		}
+		case "lax:browser-read-console": {
+			reply(proc, "lax:browser-read-console-result", msg.id, () => {
+				requireWebContents(msg.viewId); // typed "no browser view" on a dead/unknown id
+				return { entries: readConsoleEntries(msg.viewId) };
+			});
+			return;
+		}
+		case "lax:browser-read-network": {
+			reply(proc, "lax:browser-read-network-result", msg.id, () => {
+				// Network capture is per-partition (session-scoped webRequest) —
+				// resolve the view's partition, then read that ring.
+				const info = listBrowserViews().find((v) => v.viewId === msg.viewId);
+				if (!info) throw new Error(`no browser view "${msg.viewId}"`);
+				return { network: readNetworkEntries(info.partition) };
+			});
 			return;
 		}
 		case "lax:browser-capture": {
@@ -302,6 +283,11 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 	const timeoutMs = msg.timeoutMs ?? NAVIGATE_DEFAULT_TIMEOUT_MS;
 	return new Promise((resolve) => {
 		let settled = false;
+		// Main-frame HTTP status: 'did-navigate' carries httpResponseCode, so an
+		// HTTP ≥400 error page (which still load-finishes) is finally detectable
+		// by the server side. Absent for non-HTTP loads → the client keeps its
+		// "unknown" fallback.
+		let status: number | undefined;
 		const finish = (payload: Record<string, unknown>) => {
 			if (settled) return;
 			settled = true;
@@ -309,15 +295,19 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 			wc.off("did-fail-load", onFail);
 			wc.off("did-finish-load", onDone);
 			wc.off("did-stop-loading", onDone);
+			wc.off("did-navigate", onNavigated);
 			resolve(payload);
 		};
 		const onFail = (_e: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => {
 			if (!isMainFrame || errorCode === -3) return;
 			finish({ ok: false, error: `${errorDescription || `load failed (${errorCode})`} (${validatedURL})` });
 		};
+		const onNavigated = (_e: unknown, _url: string, httpResponseCode: number) => {
+			if (typeof httpResponseCode === "number" && httpResponseCode > 0) status = httpResponseCode;
+		};
 		const onDone = () => {
 			if (settled) return;
-			finish({ ok: true, url: wc.getURL(), title: wc.getTitle() });
+			finish({ ok: true, url: wc.getURL(), title: wc.getTitle(), ...(status !== undefined ? { status } : {}) });
 			// Successful AGENT navigate → offer the view to the renderer's anchor.
 			// browser-ipc owns the policy (blank-foreground only); this path only
 			// fires for bridge-owned agentDriven views.
@@ -334,6 +324,7 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 		wc.on("did-fail-load", onFail);
 		wc.on("did-finish-load", onDone);
 		wc.on("did-stop-loading", onDone);
+		wc.on("did-navigate", onNavigated);
 		wc.loadURL(msg.url).catch((e: unknown) => {
 			finish({ ok: false, error: e instanceof Error ? e.message : String(e) });
 		});

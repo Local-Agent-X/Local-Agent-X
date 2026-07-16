@@ -1,0 +1,113 @@
+import { afterEach, describe, expect, it } from "vitest";
+
+import { EventBus } from "../event-bus.js";
+import {
+	formatConsoleReport,
+	formatNetworkReport,
+	handleBrowserUiEvent,
+	sessionIdFromViewId,
+} from "./bridge-perception.js";
+import { sanitizeUiEvent } from "../orchestrator/ui-event-store.js";
+
+afterEach(() => {
+	EventBus.removeAllListeners("ui:browser");
+});
+
+describe("sessionIdFromViewId", () => {
+	it("parses the sessionId out of agent viewIds, including hyphenated sessions and -tN tabs", () => {
+		expect(sessionIdFromViewId("view-sess-1-work")).toBe("sess-1");
+		expect(sessionIdFromViewId("view-sess-1-work-t2")).toBe("sess-1");
+		expect(sessionIdFromViewId("view-abc-default")).toBe("abc");
+	});
+
+	it("returns undefined for user views and malformed ids (global scope by design)", () => {
+		expect(sessionIdFromViewId("foreground")).toBeUndefined();
+		expect(sessionIdFromViewId("user-3")).toBeUndefined();
+		expect(sessionIdFromViewId("profile-work")).toBeUndefined();
+		expect(sessionIdFromViewId("view-x")).toBeUndefined(); // no profile segment
+		expect(sessionIdFromViewId(42)).toBeUndefined();
+		expect(sessionIdFromViewId(undefined)).toBeUndefined();
+	});
+});
+
+describe("handleBrowserUiEvent → ui:browser bus", () => {
+	function capture(): Array<Record<string, unknown>> {
+		const received: Array<Record<string, unknown>> = [];
+		EventBus.on("ui:browser", (data) => { received.push(data as Record<string, unknown>); });
+		return received;
+	}
+
+	it("emits a store-valid event with the sessionId parsed from the viewId", () => {
+		const received = capture();
+		handleBrowserUiEvent({
+			type: "lax:browser-ui-event", surface: "browser", action: "navigate",
+			target: "https://example.com/inbox", viewId: "view-sess-9-work-t2", ts: 1234,
+		});
+		expect(received).toEqual([
+			{ surface: "browser", action: "navigate", target: "https://example.com/inbox", sessionId: "sess-9", ts: 1234 },
+		]);
+		// The store's schema law accepts it (label-shaped action, no smuggling).
+		expect(sanitizeUiEvent(received[0])).not.toBeNull();
+	});
+
+	it("omits sessionId for user views (global scope)", () => {
+		const received = capture();
+		handleBrowserUiEvent({ action: "tab-open", viewId: "foreground", ts: 99 });
+		expect(received).toEqual([{ surface: "browser", action: "tab-open", ts: 99 }]);
+		expect("sessionId" in received[0]).toBe(false);
+	});
+
+	it("stamps the surface itself and drops malformed input", () => {
+		const received = capture();
+		handleBrowserUiEvent({ surface: "evil=1", action: "title", target: "Hi", viewId: "user-1", ts: 5 });
+		expect(received[0].surface).toBe("browser"); // wire surface never trusted
+		handleBrowserUiEvent({ target: "no action", viewId: "user-1", ts: 5 }); // no action → dropped
+		handleBrowserUiEvent({ action: "  ", viewId: "user-1", ts: 5 });        // blank action → dropped
+		expect(received.length).toBe(1);
+		// Non-string / bogus fields degrade, never throw.
+		handleBrowserUiEvent({ action: "title", target: 42, viewId: null, ts: "soon" });
+		expect(received[1]).toMatchObject({ surface: "browser", action: "title" });
+		expect("target" in received[1]).toBe(false);
+		expect(typeof received[1].ts).toBe("number");
+	});
+});
+
+describe("formatConsoleReport", () => {
+	it("reports the empty state honestly", () => {
+		expect(formatConsoleReport([])).toBe("No console messages captured for this tab.");
+	});
+
+	it("leads with counts + levels and lists entries newest last", () => {
+		const out = formatConsoleReport([
+			{ level: "info", message: "booting", ts: 1 },
+			{ level: "warning", message: "slow asset", ts: 2 },
+			{ level: "error", message: "TypeError: x is not a function", ts: 3 },
+		]);
+		const lines = out.split("\n");
+		expect(lines[0]).toBe("Console: 3 message(s) (1 error(s), 1 warning(s)), newest last:");
+		expect(lines[3]).toBe("[error] TypeError: x is not a function"); // newest last
+	});
+});
+
+describe("formatNetworkReport", () => {
+	it("reports the empty state with the in-flight count", () => {
+		expect(formatNetworkReport([], 2)).toBe("No network requests captured for this tab. 2 request(s) in flight");
+	});
+
+	it("prints status or error per line plus failure count and in-flight tail", () => {
+		const out = formatNetworkReport(
+			[
+				{ url: "https://api.example/ok", method: "GET", status: 200, ts: 1 },
+				{ url: "https://api.example/missing", method: "GET", status: 404, ts: 2 },
+				{ url: "https://api.example/dead", method: "POST", error: "net::ERR_CONNECTION_REFUSED", ts: 3 },
+			],
+			1,
+		);
+		const lines = out.split("\n");
+		expect(lines[0]).toBe("Network: 3 request(s) captured (2 failed/error status), newest last:");
+		expect(lines[1]).toBe("GET 200 https://api.example/ok");
+		expect(lines[2]).toBe("GET 404 https://api.example/missing");
+		expect(lines[3]).toBe("POST FAILED (net::ERR_CONNECTION_REFUSED) https://api.example/dead");
+		expect(lines[4]).toBe("1 request(s) in flight");
+	});
+});

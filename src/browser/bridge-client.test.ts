@@ -20,10 +20,14 @@ import {
 	browserInput,
 	browserLifecycle,
 	browserNavigate,
+	browserReadConsole,
+	browserReadNetwork,
 	initBrowserBridgeClient,
 	INPUT_TIMEOUT_MS,
+	LIFECYCLE_TIMEOUT_MS,
 	NAVIGATE_DESKTOP_TIMEOUT_MS,
 } from "./bridge-client.js";
+import { EventBus } from "../event-bus.js";
 
 const originalSend = process.send;
 const originalEnv = process.env.LAX_DESKTOP_BRIDGE;
@@ -83,6 +87,50 @@ describe("browser bridge client — happy paths", () => {
 		expect(msg).toMatchObject({ type: "lax:browser-navigate", viewId: "v1", url: "https://example.com/", timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS });
 		receive({ type: "lax:browser-navigate-result", id: msg.id, ok: true, url: "https://example.com/", title: "Example" });
 		await expect(p).resolves.toEqual({ url: "https://example.com/", title: "Example" });
+	});
+
+	it("navigate passes the desktop's real HTTP status through when present", async () => {
+		const p = browserNavigate("v1", "https://example.com/missing");
+		receive({ type: "lax:browser-navigate-result", id: lastSent().id, ok: true, url: "https://example.com/missing", title: "404", status: 404 });
+		await expect(p).resolves.toEqual({ url: "https://example.com/missing", title: "404", status: 404 });
+	});
+
+	it("read-console correlates and resolves the entries array (garbage → empty)", async () => {
+		const p = browserReadConsole("v1");
+		const msg = lastSent();
+		expect(msg).toMatchObject({ type: "lax:browser-read-console", viewId: "v1" });
+		const entries = [{ level: "error", message: "boom", ts: 5 }];
+		receive({ type: "lax:browser-read-console-result", id: msg.id, ok: true, entries });
+		await expect(p).resolves.toEqual(entries);
+
+		const p2 = browserReadConsole("v1");
+		receive({ type: "lax:browser-read-console-result", id: lastSent().id, ok: true, entries: "nope" });
+		await expect(p2).resolves.toEqual([]);
+	});
+
+	it("read-network correlates and resolves entries + inFlight (missing → safe defaults)", async () => {
+		const p = browserReadNetwork("v1");
+		const msg = lastSent();
+		expect(msg).toMatchObject({ type: "lax:browser-read-network", viewId: "v1" });
+		const network = { entries: [{ url: "https://x/", method: "GET", status: 500, ts: 9 }], inFlight: 2 };
+		receive({ type: "lax:browser-read-network-result", id: msg.id, ok: true, network });
+		await expect(p).resolves.toEqual(network);
+
+		const p2 = browserReadNetwork("v1");
+		receive({ type: "lax:browser-read-network-result", id: lastSent().id, ok: true });
+		await expect(p2).resolves.toEqual({ entries: [], inFlight: 0 });
+	});
+
+	it("read ops reject typed on ok:false and time out on the LIFECYCLE class", async () => {
+		const p = browserReadConsole("v9");
+		receive({ type: "lax:browser-read-console-result", id: lastSent().id, ok: false, error: 'no browser view "v9"' });
+		await expect(p).rejects.toThrow('browser read-console failed (viewId=v9): no browser view "v9"');
+
+		vi.useFakeTimers();
+		const p2 = browserReadNetwork("v9");
+		const expectation = expect(p2).rejects.toThrow(`browser read-network timed out after ${LIFECYCLE_TIMEOUT_MS}ms (viewId=v9)`);
+		vi.advanceTimersByTime(LIFECYCLE_TIMEOUT_MS);
+		await expectation;
 	});
 
 	it("exec defaults to the isolated world and returns the result", async () => {
@@ -203,5 +251,26 @@ describe("browser bridge client — reverse egress-ask channel", () => {
 		initBrowserBridgeClient();
 		receive({ type: "lax:browser-egress-ask", url: "https://x.example/" }); // no id
 		expect(sent().filter((m) => m.type === "lax:browser-egress-ask-result")).toHaveLength(0);
+	});
+});
+
+describe("browser bridge client — inbound UI events (desktop co-drive activity)", () => {
+	afterEach(() => {
+		EventBus.removeAllListeners("ui:browser");
+	});
+
+	it("lax:browser-ui-event lands on the ui:browser bus with the sessionId parsed from the viewId", () => {
+		initBrowserBridgeClient();
+		const received: Array<Record<string, unknown>> = [];
+		EventBus.on("ui:browser", (data) => { received.push(data as Record<string, unknown>); });
+		receive({ type: "lax:browser-ui-event", surface: "browser", action: "navigate", target: "https://x.example/a", viewId: "view-sess-4-work-t2", ts: 777 });
+		receive({ type: "lax:browser-ui-event", action: "tab-open", viewId: "foreground", ts: 778 });
+		expect(received).toEqual([
+			{ surface: "browser", action: "navigate", target: "https://x.example/a", sessionId: "sess-4", ts: 777 },
+			{ surface: "browser", action: "tab-open", ts: 778 },
+		]);
+		expect("sessionId" in received[1]).toBe(false); // user view → global scope
+		// Fire-and-forget: nothing was sent back to the desktop.
+		expect(sent()).toHaveLength(0);
 	});
 });

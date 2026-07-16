@@ -18,6 +18,7 @@ import { join } from "path";
 import { app, session, type DownloadItem, type Session, type WebContents, type WebPreferences } from "electron";
 
 import { LAX_DIR, getLAXConfig } from "./config";
+import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 
 const PARTITION_PREFIX = "persist:lax-profile-";
 
@@ -151,7 +152,7 @@ export function getHardenedPartitionSession(partition: string): Session {
 	const sess = session.fromPartition(partition);
 	if (hardenedPartitions.has(partition)) return sess;
 	hardenedPartitions.add(partition);
-	hardenSession(sess);
+	hardenSession(sess, partition);
 	return sess;
 }
 
@@ -164,7 +165,7 @@ const VIEW_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
 // Set<string> rather than a (type-error) literal comparison.
 const SW_RESOURCE_TYPES: ReadonlySet<string> = new Set(["serviceWorker"]);
 
-function hardenSession(sess: Session): void {
+function hardenSession(sess: Session, partition: string): void {
 	sess.setPermissionRequestHandler(
 		(_wc: WebContents | null, permission: string, callback: (granted: boolean) => void) => {
 			callback(VIEW_ALLOWED_PERMISSIONS.has(permission));
@@ -204,8 +205,13 @@ function hardenSession(sess: Session): void {
 	// Single onBeforeRequest handler per session (Electron replaces, not
 	// stacks): service-worker script fetches are cancelled outright, and
 	// every other request — including each redirect hop, which re-enters
-	// here with the new URL — must pass the egress evaluator.
+	// here with the new URL — must pass the egress evaluator. The perception
+	// in-flight counter rides the SAME single handler (composed here, never a
+	// second registration): every start is balanced by exactly one
+	// onCompleted/onErrorOccurred below — cancelled requests (SW block,
+	// egress deny) also settle through onErrorOccurred.
 	sess.webRequest.onBeforeRequest((details, callback) => {
+		noteRequestStart(partition);
 		if (SW_RESOURCE_TYPES.has(details.resourceType)) {
 			callback({ cancel: true });
 			return;
@@ -214,6 +220,16 @@ function hardenSession(sess: Session): void {
 			(allowed) => callback({ cancel: !allowed }),
 			() => callback({ cancel: true }),
 		);
+	});
+
+	// Agent perception: per-request outcomes into the partition's bounded
+	// network ring (browser-perception.ts). Session-scoped by design — the
+	// read op resolves a viewId to its partition.
+	sess.webRequest.onCompleted((details) => {
+		noteRequestDone(partition, { url: details.url, method: details.method, statusCode: details.statusCode });
+	});
+	sess.webRequest.onErrorOccurred((details) => {
+		noteRequestFailed(partition, { url: details.url, method: details.method, error: details.error });
 	});
 }
 

@@ -22,6 +22,7 @@
 import { createLogger } from "../logger.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
+import { handleBrowserUiEvent, type BridgeConsoleEntry, type BridgeNetworkEntry } from "./bridge-perception.js";
 
 const logger = createLogger("browser-bridge");
 
@@ -89,7 +90,9 @@ export interface BrowserLifecycleResult {
 	// eval-driven mutation (which bypasses the desktop input gate).
 	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
 }
-export interface BrowserNavigateResult { url: string; title: string }
+/** status: main-frame HTTP response code, when the desktop observed one
+ *  (did-navigate). Absent for non-HTTP loads → callers print "unknown". */
+export interface BrowserNavigateResult { url: string; title: string; status?: number }
 
 /** The desktop refused an agent input because the HUMAN is currently
  *  driving the view (co-drive human-priority lock). This is a STATUS the
@@ -118,6 +121,9 @@ interface BridgeReply {
 	pngB64?: string;
 	allowed?: boolean;
 	userActive?: boolean;
+	status?: number;
+	entries?: BridgeConsoleEntry[];
+	network?: { entries: BridgeNetworkEntry[]; inFlight: number };
 }
 
 const RESULT_TYPES = new Set([
@@ -127,6 +133,8 @@ const RESULT_TYPES = new Set([
 	"lax:browser-input-result",
 	"lax:browser-capture-result",
 	"lax:browser-clear-partition-result",
+	"lax:browser-read-console-result",
+	"lax:browser-read-network-result",
 ]);
 
 // ── Typed errors ─────────
@@ -197,6 +205,11 @@ function ensureListener(): void {
 		if (msg.type === "lax:browser-egress-ask") {
 			if (typeof msg.id !== "number" || typeof msg.url !== "string") return;
 			answerEgressAsk(msg.id, msg.url);
+			return;
+		}
+		if (msg.type === "lax:browser-ui-event") {
+			// Desktop-initiated, fire-and-forget (no id) → ui:browser bus (bridge-perception.ts).
+			handleBrowserUiEvent(msg as unknown as Record<string, unknown>);
 			return;
 		}
 		if (!RESULT_TYPES.has(msg.type)) return;
@@ -283,7 +296,20 @@ export async function browserNavigate(viewId: string, url: string): Promise<Brow
 		{ type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS },
 		NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS,
 	);
-	return { url: reply.url ?? "", title: reply.title ?? "" };
+	return { url: reply.url ?? "", title: reply.title ?? "", ...(typeof reply.status === "number" ? { status: reply.status } : {}) };
+}
+
+/** Read the view's bounded console ring (desktop browser-perception.ts). */
+export async function browserReadConsole(viewId: string): Promise<BridgeConsoleEntry[]> {
+	const reply = await request("read-console", viewId, { type: "lax:browser-read-console", viewId }, LIFECYCLE_TIMEOUT_MS);
+	return Array.isArray(reply.entries) ? reply.entries : [];
+}
+
+/** Read the view's partition-scoped network ring + in-flight counter. */
+export async function browserReadNetwork(viewId: string): Promise<{ entries: BridgeNetworkEntry[]; inFlight: number }> {
+	const reply = await request("read-network", viewId, { type: "lax:browser-read-network", viewId }, LIFECYCLE_TIMEOUT_MS);
+	const net = reply.network;
+	return { entries: Array.isArray(net?.entries) ? net.entries : [], inFlight: typeof net?.inFlight === "number" ? net.inFlight : 0 };
 }
 
 /** Runs `script` in the view's ISOLATED world (the only supported world —

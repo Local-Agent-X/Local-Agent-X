@@ -27,6 +27,8 @@ vi.mock("./bridge-client.js", async (importOriginal) => {
 		browserInput: vi.fn(),
 		browserCapture: vi.fn(),
 		browserAbort: vi.fn(),
+		browserReadConsole: vi.fn(),
+		browserReadNetwork: vi.fn(),
 	};
 });
 
@@ -36,6 +38,8 @@ import {
 	browserInput,
 	browserLifecycle,
 	browserNavigate,
+	browserReadConsole,
+	browserReadNetwork,
 } from "./bridge-client.js";
 import {
 	ElectronInAppBackend,
@@ -137,6 +141,18 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(browserNavigate).toHaveBeenCalledWith(VIEW_ID, PAGE_URL);
 		expect(backend.getCurrentUrl()).toBe(PAGE_URL);
 		expect(backend.isActive()).toBe(true);
+	});
+
+	it("navigate prints the REAL HTTP status when the bridge reply carries one", async () => {
+		vi.mocked(browserNavigate).mockResolvedValue({ url: PAGE_URL, title: PAGE_TITLE, status: 404 });
+		const out = await backend.navigate(PAGE_URL);
+		expect(out).toBe(`Navigated to: ${PAGE_URL}\nStatus: 404\nTitle: ${PAGE_TITLE}`);
+	});
+
+	it("new_tab prints the REAL HTTP status when the bridge reply carries one", async () => {
+		vi.mocked(browserNavigate).mockResolvedValue({ url: PAGE_URL, title: PAGE_TITLE, status: 200 });
+		const out = await backend.newTab(PAGE_URL);
+		expect(out).toBe(`Opened new tab (1 tabs total)\nURL: ${PAGE_URL}\nStatus: 200\nTitle: ${PAGE_TITLE}`);
 	});
 
 	it("navigate surfaces cross-host redirects like the CDP backend", async () => {
@@ -331,6 +347,45 @@ describe("ElectronInAppBackend (A1)", () => {
 		const out = await backend.screenshot();
 		expect(out).toContain("Screenshot captured");
 		expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
+	});
+
+	// ── Perception (chunk E) ─────────
+
+	it("readConsole reads the ACTIVE tab's ring and formats a compact report", async () => {
+		vi.mocked(browserReadConsole).mockResolvedValue([
+			{ level: "warning", message: "slow asset", ts: 1 },
+			{ level: "error", message: "TypeError: boom", ts: 2 },
+		]);
+		await backend.navigate(PAGE_URL);
+		await backend.newTab(PAGE_URL); // active tab: -t2
+		const out = await backend.readConsole();
+		expect(browserReadConsole).toHaveBeenCalledWith(`${VIEW_ID}-t2`);
+		expect(out).toContain("Console: 2 message(s) (1 error(s), 1 warning(s)), newest last:");
+		expect(out.endsWith("[error] TypeError: boom")).toBe(true);
+	});
+
+	it("readNetwork reads the ACTIVE tab's partition ring with in-flight count", async () => {
+		vi.mocked(browserReadNetwork).mockResolvedValue({
+			entries: [
+				{ url: "https://api.example/x", method: "GET", status: 500, ts: 1 },
+				{ url: "https://api.example/y", method: "POST", error: "net::ERR_FAILED", ts: 2 },
+			],
+			inFlight: 3,
+		});
+		await backend.navigate(PAGE_URL);
+		const out = await backend.readNetwork();
+		expect(browserReadNetwork).toHaveBeenCalledWith(VIEW_ID);
+		expect(out).toContain("GET 500 https://api.example/x");
+		expect(out).toContain("POST FAILED (net::ERR_FAILED) https://api.example/y");
+		expect(out).toContain("3 request(s) in flight");
+	});
+
+	it("readConsole/readNetwork report empty states honestly", async () => {
+		vi.mocked(browserReadConsole).mockResolvedValue([]);
+		vi.mocked(browserReadNetwork).mockResolvedValue({ entries: [], inFlight: 0 });
+		await backend.navigate(PAGE_URL);
+		expect(await backend.readConsole()).toBe("No console messages captured for this tab.");
+		expect(await backend.readNetwork()).toBe("No network requests captured for this tab. 0 request(s) in flight");
 	});
 
 	it("dialogs report not-supported without pretending to act", async () => {

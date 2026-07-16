@@ -14,8 +14,9 @@
 import type { Page } from "playwright";
 import { ObservationRegistry } from "./observation.js";
 import { asObservePage, BridgeObservePage, type BridgePageState } from "./in-app-observe.js";
-import { browserLifecycle, type BrowserViewInfo } from "./bridge-client.js";
+import { browserLifecycle, type BrowserNavigateResult, type BrowserViewInfo } from "./bridge-client.js";
 import { profilePartition } from "./profile-store.js";
+import { redirectMessage, safeHost } from "./redirect.js";
 import { sensitivePageStub } from "./guards.js";
 import { createLogger } from "../logger.js";
 
@@ -136,6 +137,24 @@ export async function ensureTabView(tab: InAppTab, profileId: string): Promise<v
 	}
 	tab.created = true;
 	tab.closed = false;
+}
+
+/**
+ * Shared navigate/new_tab result text (CDP-shaped): sensitive-page stub wins
+ * outright; otherwise `<prefix><url>\nStatus: <code|unknown>\nTitle: …` plus
+ * the cross-host redirect warning. `status` is the REAL main-frame HTTP code
+ * when the desktop observed one (bridge navigate carries it since chunk E);
+ * "unknown" remains the in-family fallback for non-HTTP loads.
+ */
+export function navigationReport(
+	prefix: string,
+	result: BrowserNavigateResult,
+	requestedHost: string,
+): string {
+	const sensitive = sensitivePageStub(result.url);
+	if (sensitive) return sensitive;
+	const redirect = redirectMessage(requestedHost, safeHost(result.url));
+	return `${prefix}${result.url}\nStatus: ${result.status ?? "unknown"}\nTitle: ${result.title}${redirect}`;
 }
 
 /** Refresh a tab's cached url/title from the live view. Advisory: a failed

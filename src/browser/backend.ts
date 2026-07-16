@@ -72,6 +72,14 @@ export interface BrowserBackend {
   listTabs(): Promise<string>;
   switchTab(index: number): Promise<string>;
 
+  // ── Perception (console / network capture) ──
+  /** Recent console output of the active tab (bounded ring, newest last).
+   *  In-app backend only; the CDP backend reports not-supported. */
+  readConsole(): Promise<string>;
+  /** Recent network request outcomes (status or error per line) plus the
+   *  in-flight count for the active tab's partition. In-app backend only. */
+  readNetwork(): Promise<string>;
+
   // ── Dialogs ──
   dialogAccept(promptText?: string): Promise<string>;
   dialogDismiss(): Promise<string>;

@@ -27,7 +27,7 @@ import {
 	showBrowserView,
 	type BrowserViewInfo,
 } from "./browser-views";
-import { setEgressEvaluator, type EgressDecision } from "./browser-partition";
+import { getHardenedPartitionSession, setEgressEvaluator, type EgressDecision } from "./browser-partition";
 import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
 
 // Isolated world for agent scripts — never the main world, so page JS
@@ -76,6 +76,7 @@ export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: numb
 export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated"; allFrames?: boolean }
 export interface BrowserInputRequest { type: "lax:browser-input"; id: number; viewId: string; event: BridgeInputEvent }
 export interface BrowserCaptureRequest { type: "lax:browser-capture"; id: number; viewId: string }
+export interface BrowserClearPartitionRequest { type: "lax:browser-clear-partition"; id: number; partition: string }
 export interface BrowserAbortRequest { type: "lax:browser-abort"; viewId: string }
 export interface BrowserEgressAskResult { type: "lax:browser-egress-ask-result"; id: number; allowed: boolean }
 
@@ -85,6 +86,7 @@ export type BrowserBridgeMessage =
 	| BrowserExecRequest
 	| BrowserInputRequest
 	| BrowserCaptureRequest
+	| BrowserClearPartitionRequest
 	| BrowserAbortRequest
 	| BrowserEgressAskResult;
 
@@ -94,6 +96,7 @@ const BROWSER_MESSAGE_TYPES = new Set<string>([
 	"lax:browser-exec",
 	"lax:browser-input",
 	"lax:browser-capture",
+	"lax:browser-clear-partition",
 	"lax:browser-abort",
 	"lax:browser-egress-ask-result",
 ]);
@@ -181,6 +184,10 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 				wc.sendInputEvent(event);
 				return {};
 			});
+			return;
+		}
+		case "lax:browser-clear-partition": {
+			reply(proc, "lax:browser-clear-partition-result", msg.id, () => clearPartition(msg.partition));
 			return;
 		}
 		case "lax:browser-capture": {
@@ -315,6 +322,27 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 			finish({ ok: false, error: e instanceof Error ? e.message : String(e) });
 		});
 	});
+}
+
+/**
+ * Wipe a profile partition's saved logins on the Electron backend. Fail-safe
+ * ORDERING, all in one place so nothing races across the process boundary:
+ *   1. navigate every OPEN pool view on this partition to about:blank, so a
+ *      live page can't keep authenticated cookies resident in memory and
+ *      re-persist them past the clear,
+ *   2. THEN session.clearStorageData() flushes cookies + every storage backend
+ *      (localStorage/IndexedDB/service workers/cache) for the partition.
+ * The renderer/caller reloads afterward; a blanked view just shows about:blank
+ * until then. Best-effort per view — a destroyed webContents is skipped.
+ */
+async function clearPartition(partition: string): Promise<Record<string, unknown>> {
+	for (const info of listBrowserViews()) {
+		if (info.partition !== partition) continue;
+		const wc = getBrowserView(info.viewId)?.webContents;
+		if (wc && !wc.isDestroyed()) await wc.loadURL("about:blank").catch(() => { /* keep clearing */ });
+	}
+	await getHardenedPartitionSession(partition).clearStorageData();
+	return {};
 }
 
 function toElectronInputEvent(ev: BridgeInputEvent): MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent | null {

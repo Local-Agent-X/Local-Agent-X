@@ -329,15 +329,20 @@
       <!-- Browser tab: the page itself is a native WebContentsView overlay drawn
            by Electron main; #browser-view-anchor only reserves space and
            browser-tab.js reports its rect + visibility over window.desktop.browser. -->
-      <div id="browser-tab-body" class="side-tab-body" style="display:none">
+      <div id="browser-tab-body" class="side-tab-body" style="display:none;position:relative">
         <div id="browser-address-bar" style="display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--border);flex-shrink:0">
           <button id="browser-nav-back" class="artifact-filter" onclick="window.laxBrowserTab&&laxBrowserTab.goBack()" title="Back" disabled>&#8592;</button>
           <button id="browser-nav-fwd" class="artifact-filter" onclick="window.laxBrowserTab&&laxBrowserTab.goForward()" title="Forward" disabled>&#8594;</button>
           <button id="browser-nav-reload" class="artifact-filter" onclick="window.laxBrowserTab&&laxBrowserTab.reload()" title="Reload">&#8635;</button>
           <input id="browser-url-input" type="text" placeholder="Enter URL" spellcheck="false" autocomplete="off" aria-label="Address bar" style="flex:1;min-width:0;background:transparent;border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:.68rem;padding:4px 8px;border-radius:4px;outline:none">
           <div id="browser-view-switcher-slot"></div>
+          <button id="browser-profiles-btn" class="artifact-filter" onclick="window.laxBrowserProfiles&&laxBrowserProfiles.toggle()" title="Browser profiles &amp; saved logins">Profiles</button>
         </div>
         <div id="browser-view-anchor" style="flex:1;min-height:0"></div>
+        <!-- Profile manager overlay. Positioned over the whole pane so the native
+             WebContentsView (browser-tab.js occlusion probe) hides while it's
+             open; closing it reveals the view again. Populated by browser-profiles.js. -->
+        <div id="browser-profiles-panel" style="display:none;position:absolute;inset:0;z-index:5;background:var(--bg);overflow:auto"></div>
       </div>
     </div>
   </div>
@@ -1439,6 +1444,7 @@
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
 <script src="/js/chat-artifacts.js?v=v1"></script>
 <script src="/js/browser-tab.js?v=v1"></script>
+<script src="/js/browser-profiles.js?v=v1"></script>
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
 <script src="/js/chat-status-bar.js?v=v5"></script>
 <script src="/js/chat-composer-menus.js?v=v1"></script>

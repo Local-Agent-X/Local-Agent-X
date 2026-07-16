@@ -241,4 +241,33 @@ export function setupBrowserIPC(): void {
 		pushNavState(viewId, view.webContents); // mirror immediately for late subscribers
 		return state;
 	});
+
+	// Profile manager "Log in once": open (or reuse) a foreground view on a
+	// specific profile's partition and drive it from the anchor so the user can
+	// sign in by hand. The default profile shares the FOREGROUND view (same
+	// partition); every other profile gets its own renderer-owned foreground view
+	// keyed `profile-<id>` (agentDriven:false — it is the user's, not an agent's).
+	// The partition persists whatever login the user completes.
+	ipcMain.handle("browser-open-profile-view", async (event: IpcMainInvokeEvent, profileId: string, url?: string): Promise<BrowserNavState | null> => {
+		if (!isTrustedBrowserSender(event.sender)) return null;
+		if (typeof profileId !== "string" || !profileId) return null;
+		const viewId = profileId === "default" ? FOREGROUND_ID : `profile-${profileId}`;
+		const partition = PARTITION_PREFIX + profileId;
+		let view = getBrowserView(viewId);
+		if (!view) {
+			createBrowserView(viewId, { partition, agentDriven: false });
+			view = getBrowserView(viewId)!;
+		}
+		wireNavPushes(viewId, view.webContents);
+		currentViewId = viewId;
+		showBrowserView(viewId);
+		// Snap to the last anchor geometry (a just-created view carries the pool's
+		// default 800×600 box until now).
+		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
+		const target = (typeof url === "string" && url.trim()) || "about:blank";
+		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
+		const state = readNavState(viewId, view.webContents);
+		pushNavState(viewId, view.webContents);
+		return state;
+	});
 }

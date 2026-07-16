@@ -157,6 +157,12 @@ contextBridge.exposeInMainWorld("desktop", {
     switchView: (viewId: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
     } | null> => ipcRenderer.invoke("browser-switch-view", viewId),
+    // Profile manager "Log in once": open (or reuse) a FOREGROUND view on the
+    // given profile's partition and navigate it, so the user can sign in by hand
+    // — the partition persists the login. url omitted → about:blank.
+    openProfileView: (profileId: string, url?: string): Promise<{
+      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+    } | null> => ipcRenderer.invoke("browser-open-profile-view", profileId, url),
   },
 
   // Server-crash signal: main fires "server-crashed" when the spawned

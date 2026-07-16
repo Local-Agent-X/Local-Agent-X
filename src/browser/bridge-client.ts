@@ -35,6 +35,10 @@ export const NAVIGATE_REPLY_GRACE_MS = 3_000; // 25s + 3s = 28s total
 export const EXEC_TIMEOUT_MS = 10_000;
 export const INPUT_TIMEOUT_MS = 5_000;
 export const CAPTURE_TIMEOUT_MS = 10_000;
+// clear-partition navigates every open view on the partition to about:blank
+// (so in-memory cookies can't survive the wipe) THEN clears storage — a couple
+// of loads plus a storage flush, so a longer ceiling than a bare lifecycle op.
+export const CLEAR_PARTITION_TIMEOUT_MS = 12_000;
 
 // ── Wire types (mirrored in desktop/src/server-bridge-browser.ts) ─────────
 export interface BridgeRect { x: number; y: number; width: number; height: number }
@@ -122,6 +126,7 @@ const RESULT_TYPES = new Set([
 	"lax:browser-exec-result",
 	"lax:browser-input-result",
 	"lax:browser-capture-result",
+	"lax:browser-clear-partition-result",
 ]);
 
 // ── Typed errors ─────────
@@ -332,6 +337,25 @@ export async function browserCapture(viewId: string): Promise<string> {
 		throw new BridgeOpError("capture", viewId, "desktop returned no image data");
 	}
 	return reply.pngB64;
+}
+
+/**
+ * Wipe a profile partition's saved logins (cookies + all storage) on the
+ * Electron backend. The desktop side enforces the fail-safe ordering INSIDE
+ * one handler — every open view on the partition is navigated to about:blank
+ * FIRST, then session.clearStorageData() runs — so no in-memory cookie of a
+ * live page survives the wipe (a cross-process navigate/clear would race).
+ * Fails closed off-desktop: the caller treats BridgeUnavailableError as
+ * "no Electron store to clear" and still wipes the CDP userDataDir twin.
+ * The `partition` doubles as the correlation label for typed errors.
+ */
+export async function browserClearPartition(partition: string): Promise<void> {
+	await request(
+		"clear-partition",
+		partition,
+		{ type: "lax:browser-clear-partition", partition },
+		CLEAR_PARTITION_TIMEOUT_MS,
+	);
 }
 
 /** Fire-and-forget: stop the view's in-flight load. No id, no reply. */

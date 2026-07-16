@@ -294,6 +294,7 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
 
   it("the trusted sender still gets full nav state and can navigate", async () => {
     expect(h.handlers.get("browser-get-nav-state")!({ sender: trustedWC })).toEqual({
+      viewId: "foreground",
       url: "https://private.example/page",
       title: "Private",
       canGoBack: true,

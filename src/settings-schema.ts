@@ -184,6 +184,13 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Model name within the chosen provider (gpt-5.5, claude-opus-4-7, grok-4, etc)",
   },
   {
+    field: "localClassifierModel",
+    validate: z.string(),
+    runtime: false,
+    broadcast: true,
+    description: "Local model to run classifiers/background work on (e.g. llama3.2:3b). Only applies to the 'local' and 'ollama-cloud' providers, which have no declared background model. Empty = auto-pick the smallest small non-reasoning model found by the local-runtimes sweep, else fall back to your chat model. Pick a SMALL non-reasoning model: classifiers get an 8s budget and a thinking or 27B+ model burns it and silently returns no verdict",
+  },
+  {
     field: "reasoningEffort",
     validate: z.enum(["minimal", "low", "medium", "high", "xhigh"]),
     runtime: false,

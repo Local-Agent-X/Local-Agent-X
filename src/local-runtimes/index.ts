@@ -30,3 +30,4 @@ export {
   localRuntimesStale,
   refreshLocalRuntimes,
 } from "./cache.js";
+export { pickLocalClassifierModel, isEligibleClassifierModel } from "./classifier-model.js";

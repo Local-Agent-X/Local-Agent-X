@@ -35,7 +35,7 @@
 import { createLogger } from "../logger.js";
 import { stripCodeFences } from "./strip-code-fences.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
-import { backgroundModelFor } from "../providers/registry.js";
+import { resolveBackgroundModel } from "../providers/background-model.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 
 // Aggressive default timeout. These classifiers shape signal quality but
@@ -119,13 +119,13 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   // Model precedence: explicit per-call override > tier request > the cheaper
   // floor. "active" = the user's selected chat model (a probe author wants the
   // reasoning tier; the call site owns a long timeout). Default "background"
-  // stays on the provider's fast non-reasoning model — a yes/no verdict must
-  // not burn a flagship reasoner's chain-of-thought (grok-4.3 timed out EVERY
-  // 8s classifier call, 2026-06-26). Never cross-provider either way.
+  // stays on a fast non-reasoning model — a yes/no verdict must not burn a
+  // reasoner's chain-of-thought (grok-4.3 EVERY call, 2026-06-26; qwen3.6:27b,
+  // 2026-07-15). Never cross-provider. Which model: background-model.ts.
   const model =
     opts.model ||
     (opts.modelTier === "active" && ctx.model) ||
-    backgroundModelFor(provider as ProviderId, ctx.model || MODEL_FALLBACKS[provider] || "");
+    (await resolveBackgroundModel(provider as ProviderId, ctx.model || MODEL_FALLBACKS[provider] || ""));
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;

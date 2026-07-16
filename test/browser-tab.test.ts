@@ -204,6 +204,45 @@ describe("browser tab in the right side panel", () => {
     expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
   });
 
+  it("hides the overlay when a dropdown covers only a CORNER of the pane", () => {
+    // Regression: the titlebar ⋯ menu drapes over the top corner of the
+    // browser pane — never its center — so a center-only occlusion probe
+    // missed it and the menu rendered stuck behind the native view.
+    setAnchorRect({ left: 600, top: 40, width: 380, height: 500 });
+    window.laxBrowserTab.onTabShown();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+    const menu = document.createElement("div");
+    menu.className = "dtb-dd";
+    document.body.appendChild(menu);
+    // Hit-testing: the menu wins only in the pane's top-left region.
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = (x, y) =>
+        x < 800 && y < 200 ? menu : document.getElementById("browser-view-anchor");
+    window.laxBrowserTab.sync();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(false);
+    // Menu closed → all probes resolve to the anchor → view returns.
+    menu.remove();
+    (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint =
+      () => document.getElementById("browser-view-anchor");
+    window.laxBrowserTab.sync();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  it("corner probes are inset past edge chrome like the 5px resize handle", () => {
+    // The panel resize handle permanently overlaps the pane's left edge; if a
+    // corner probe landed on it, the view would hide forever. Probes must sit
+    // deeper than the handle's 5px strip.
+    setAnchorRect({ left: 600, top: 40, width: 380, height: 500 });
+    const handle = document.createElement("div");
+    handle.className = "agent-feeds-resize-handle";
+    document.body.appendChild(handle);
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = (x) =>
+        x < 605 ? handle : document.getElementById("browser-view-anchor");
+    window.laxBrowserTab.onTabShown();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+  });
+
   it("a hit on the anchor's own descendant counts as unoccluded", () => {
     setAnchorRect({ left: 600, top: 40, width: 380, height: 500 });
     const child = document.createElement("div");

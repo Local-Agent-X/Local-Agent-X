@@ -43,18 +43,30 @@
 			document.visibilityState === 'visible';
 	}
 
-	// Full-screen DOM overlays (global search, shortcuts help, the agents
-	// detail panel, voice/secret modals) would render UNDER the native view
-	// unless it hides — probe the anchor's center: if hit-testing there
-	// resolves to anything outside the anchor, the pane is occluded. The
-	// anchor itself or any descendant (e.g. an empty anchor's own box)
-	// counts as unoccluded; a null hit (no layout info) is treated as
-	// unoccluded rather than flapping the view off.
+	// DOM overlays (global search, shortcuts help, modals, dropdown menus)
+	// would render UNDER the native view unless it hides — hit-test the
+	// anchor's center AND four inset corners: full-screen overlays cover the
+	// center, but a dropdown (e.g. the titlebar ⋯ menu) only drapes over a
+	// corner of the pane and a center-only probe misses it, leaving the menu
+	// stuck behind the page. Any probe resolving outside the anchor means
+	// occluded. The inset keeps corner probes off adjacent chrome (the 5px
+	// panel resize handle overlaps the pane's left edge); a null hit (no
+	// layout info) is treated as unoccluded rather than flapping the view off.
 	function anchorOccluded(anchor, rect) {
 		if (typeof document.elementFromPoint !== 'function') return false;
-		var hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-		if (!hit) return false;
-		return hit !== anchor && !anchor.contains(hit);
+		var inset = 12;
+		var points = [
+			[rect.left + rect.width / 2, rect.top + rect.height / 2],
+			[rect.left + inset, rect.top + inset],
+			[rect.left + rect.width - inset, rect.top + inset],
+			[rect.left + inset, rect.top + rect.height - inset],
+			[rect.left + rect.width - inset, rect.top + rect.height - inset],
+		];
+		for (var i = 0; i < points.length; i++) {
+			var hit = document.elementFromPoint(points[i][0], points[i][1]);
+			if (hit && hit !== anchor && !anchor.contains(hit)) return true;
+		}
+		return false;
 	}
 
 	// IPC invokes can reject during shutdown races (bridge torn down while a

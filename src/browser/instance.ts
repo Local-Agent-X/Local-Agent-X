@@ -8,6 +8,9 @@ import { resolveSessionBrowserProfileId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { desktopBridgeAvailable } from "../desktop-bridge.js";
 import { getRuntimeConfig } from "../config.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("browser.route");
 
 // One backend per session — THE routing seam for the browser tool. Two kinds:
 //   - BrowserManager (CDP): one external Chrome process, one manager per
@@ -45,44 +48,106 @@ function wantsInAppBackend(mode: BrowserMode): boolean {
 	return mode === "in-app";
 }
 
-/**
- * Availability = mode + env + bridge presence, all synchronous — NO live
- * lifecycle ping here: getBrowserManager is sync and on the tool hot path.
- * A ping-based mounted-view check was considered and rejected: the backend's
- * view create is lazy and fails loudly (bridge-client rejects typed errors),
- * so the tool layer surfaces a dead bridge at first use instead of this seam
- * guessing ahead of time. Headless runs (LAX_BROWSER_HEADLESS=1 — CI, soak)
- * have no desktop window to mount a view in, so they stay on CDP.
- */
-function inAppBackendAvailable(): boolean {
-	return (
-		wantsInAppBackend(getRuntimeConfig().browserMode) &&
-		process.env.LAX_BROWSER_HEADLESS !== "1" &&
-		desktopBridgeAvailable()
-	);
-}
-
 export type BrowserBackendKind = "in-app" | "cdp";
 
 /**
- * THE fallback matrix, made explicit + testable. A session resolves to the
- * embedded in-app WebContentsView ONLY when all three conditions hold; it falls
- * to the CDP BrowserManager (which now carries the profile's own userDataDir, so
- * the fallback keeps the profile's logins) when ANY of these is true:
- *
- *   condition                         → backend
- *   ─────────────────────────────────────────────
- *   browserMode !== "in-app"          → cdp   (config selects external Chrome)
- *   LAX_BROWSER_HEADLESS=1            → cdp   (no desktop window to mount a view)
- *   !desktopBridgeAvailable()         → cdp   (no desktop app / bridge down)
- *   all of: in-app + windowed + bridge → in-app
- *
- * This is just the sign of inAppBackendAvailable(), named so the routing intent
- * is legible and the ELSE branch (which must supply the profile's userDataDir)
- * is a first-class, tested outcome rather than an implicit fallthrough.
+ * WHY a session landed on its backend. The kind alone can't be reported
+ * usefully: "cdp" collapses a deliberate config choice, an expected headless
+ * run, and a genuine failure to reach the desktop app into one indistinguishable
+ * bit. Each arm wants a different severity and a different thing said to the
+ * user, so the reason is the return value and the kind is derived from it.
  */
+export type BrowserRouteReason =
+	/** Every condition held — the embedded WebContentsView. */
+	| "in-app"
+	/** Config selects external Chrome. A choice being honored, not a fallback. */
+	| "mode-not-in-app"
+	/** LAX_BROWSER_HEADLESS=1 — CI/soak, no desktop window to mount a view in. */
+	| "headless"
+	/** Wanted in-app but the desktop app/bridge isn't there. The surprising arm. */
+	| "no-desktop-bridge";
+
+export interface BrowserRoute {
+	kind: BrowserBackendKind;
+	reason: BrowserRouteReason;
+}
+
+/**
+ * THE fallback matrix — one source of truth for both the routing decision and
+ * the reason reported for it. A session resolves to the embedded in-app
+ * WebContentsView ONLY when all three conditions hold; it falls to the CDP
+ * BrowserManager (which carries the profile's own userDataDir, so the fallback
+ * keeps the profile's logins) on the first condition that fails.
+ *
+ * Order is deliberate: an explicit non-in-app browserMode outranks the
+ * environment checks, so a user who picked external Chrome is told THAT, not
+ * that some bridge was missing.
+ *
+ * All synchronous — NO live lifecycle ping: getBrowserManager is sync and on the
+ * tool hot path. A ping-based mounted-view check was considered and rejected:
+ * the backend's view create is lazy and fails loudly (bridge-client rejects
+ * typed errors), so the tool layer surfaces a dead bridge at first use instead
+ * of this seam guessing ahead of time.
+ */
+export function resolveBrowserRoute(): BrowserRoute {
+	if (!wantsInAppBackend(getRuntimeConfig().browserMode)) {
+		return { kind: "cdp", reason: "mode-not-in-app" };
+	}
+	if (process.env.LAX_BROWSER_HEADLESS === "1") {
+		return { kind: "cdp", reason: "headless" };
+	}
+	if (!desktopBridgeAvailable()) {
+		return { kind: "cdp", reason: "no-desktop-bridge" };
+	}
+	return { kind: "in-app", reason: "in-app" };
+}
+
 export function resolveBrowserBackendKind(): BrowserBackendKind {
-	return inAppBackendAvailable() ? "in-app" : "cdp";
+	return resolveBrowserRoute().kind;
+}
+
+function inAppBackendAvailable(): boolean {
+	return resolveBrowserRoute().kind === "in-app";
+}
+
+/** Reason last reported per session, so a steady state stays quiet. */
+const routeReported = new Map<string, BrowserRouteReason>();
+
+/**
+ * Say which browser a session got, and why, ONCE — and again only when the
+ * answer changes (a mid-session mode flip, or the desktop bridge dropping).
+ * getBrowserManager is on the tool hot path, so this must never emit per call.
+ *
+ * Before this, every arm of the matrix was silent: a session that asked for the
+ * in-app browser and got external Chrome said nothing anywhere, and the only
+ * signal a user ever got was noticing a Chrome window appear on their desktop.
+ */
+function reportBrowserRoute(sessionId: string, route: BrowserRoute): void {
+	if (routeReported.get(sessionId) === route.reason) return;
+	routeReported.set(sessionId, route.reason);
+	const who = `(sessionId=${sessionId})`;
+	switch (route.reason) {
+		case "in-app":
+			logger.debug(`[browser-route] embedded in-app browser ${who}`);
+			return;
+		case "mode-not-in-app":
+			logger.info(
+				`[browser-route] external Chrome ${who} — browserMode="${getRuntimeConfig().browserMode}" ` +
+					`selects it. Set browserMode="in-app" for the embedded co-drivable browser.`,
+			);
+			return;
+		case "headless":
+			logger.info(
+				`[browser-route] external Chrome ${who} — LAX_BROWSER_HEADLESS=1, no desktop window to mount a view in.`,
+			);
+			return;
+		case "no-desktop-bridge":
+			logger.warn(
+				`[browser-route] external Chrome ${who} — browserMode="in-app" wants the embedded browser, ` +
+					`but the desktop bridge is unavailable (not running under the desktop app?). Falling back to CDP.`,
+			);
+			return;
+	}
 }
 
 /** Deterministic view id — one embedded view per (session, profile), so a
@@ -140,7 +205,9 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
 	// The CDP manager it returns is bound to the session's profile id, whose
 	// userDataDir is threaded into launchViaCDP at first getPage() — so every
 	// arm of this matrix carries the right profile identity.
-	if (resolveBrowserBackendKind() === "in-app") return ensureInAppBackend(key);
+	const route = resolveBrowserRoute();
+	reportBrowserRoute(key, route);
+	if (route.kind === "in-app") return ensureInAppBackend(key);
 	return ensureCdpManager(key);
 }
 
@@ -161,6 +228,7 @@ export function getCdpBrowserManager(sessionId: string = "default"): BrowserMana
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
 	const key = sessionId || "default";
+	routeReported.delete(key);
 	// A session can (rarely) have entries of both kinds — e.g. the mode flipped
 	// mid-session. Close whichever exist.
 	const inApp = inAppBackends.get(key);
@@ -193,6 +261,7 @@ export async function closeBrowser(sessionId: string = "default"): Promise<void>
  */
 export function resetWedgedBrowser(sessionId: string = "default"): void {
 	const key = sessionId || "default";
+	routeReported.delete(key);
 	const inApp = inAppBackends.get(key);
 	if (inApp) {
 		inAppBackends.delete(key);
@@ -211,6 +280,7 @@ export async function closeAllBrowsers(): Promise<void> {
 	];
 	inAppBackends.clear();
 	cdpManagers.clear();
+	routeReported.clear();
 	let teardownError: unknown;
 	for (const b of all) {
 		try { await b.close(); } catch (error) { teardownError ??= error; }

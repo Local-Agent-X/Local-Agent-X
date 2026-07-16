@@ -39,6 +39,26 @@ vi.mock("./session-owner-registry.js", async (importOriginal) => {
 	};
 });
 
+// Capture what the routing seam says. createLogger is mocked wholesale, so
+// sibling modules' loggers land here too — assertions filter on the
+// [browser-route] tag rather than trusting the array to hold only our lines.
+const logs = vi.hoisted(() => ({ debug: [] as string[], info: [] as string[], warn: [] as string[] }));
+
+vi.mock("../logger.js", async (importOriginal) => {
+	const original = await importOriginal<typeof import("../logger.js")>();
+	const sink = {
+		debug: (m: string) => { logs.debug.push(m); },
+		info: (m: string) => { logs.info.push(m); },
+		warn: (m: string) => { logs.warn.push(m); },
+		error: () => {},
+		child: () => sink,
+	};
+	return { ...original, createLogger: () => sink };
+});
+
+const routeLines = (level: "debug" | "info" | "warn") =>
+	logs[level].filter((m) => m.includes("[browser-route]"));
+
 const runtimeMocks = vi.hoisted(() => ({
 	closeSharedBrowser: vi.fn(async () => undefined),
 	forceKillSharedBrowser: vi.fn(),
@@ -57,6 +77,7 @@ import {
 	resetWedgedBrowser,
 	inAppViewId,
 	resolveBrowserBackendKind,
+	resolveBrowserRoute,
 	CdpOnlyOperationError,
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
@@ -71,6 +92,9 @@ beforeEach(() => {
 	state.browserMode = "isolated";
 	state.bridge = false;
 	state.profiles.clear();
+	logs.debug.length = 0;
+	logs.info.length = 0;
+	logs.warn.length = 0;
 	vi.clearAllMocks();
 });
 
@@ -166,6 +190,101 @@ describe("inAppViewId determinism", () => {
 	it("differs across profiles and across sessions", () => {
 		expect(inAppViewId("chat-1", "p1")).not.toBe(inAppViewId("chat-1", "p2"));
 		expect(inAppViewId("chat-1", "p1")).not.toBe(inAppViewId("chat-2", "p1"));
+	});
+});
+
+describe("resolveBrowserRoute reasons", () => {
+	it("names each arm of the fallback matrix", () => {
+		state.browserMode = "continuity";
+		expect(resolveBrowserRoute()).toEqual({ kind: "cdp", reason: "mode-not-in-app" });
+
+		setInApp();
+		process.env.LAX_BROWSER_HEADLESS = "1";
+		expect(resolveBrowserRoute()).toEqual({ kind: "cdp", reason: "headless" });
+
+		delete process.env.LAX_BROWSER_HEADLESS;
+		setInApp(false);
+		expect(resolveBrowserRoute()).toEqual({ kind: "cdp", reason: "no-desktop-bridge" });
+
+		setInApp();
+		expect(resolveBrowserRoute()).toEqual({ kind: "in-app", reason: "in-app" });
+	});
+
+	it("reports an explicit non-in-app mode ahead of any environment reason", () => {
+		// A user who picked external Chrome must be told THAT, not that some
+		// bridge was missing — otherwise the message sends them debugging the
+		// wrong thing.
+		state.browserMode = "continuity";
+		state.bridge = false;
+		process.env.LAX_BROWSER_HEADLESS = "1";
+		expect(resolveBrowserRoute().reason).toBe("mode-not-in-app");
+	});
+
+	it("keeps resolveBrowserBackendKind as the sign of the route", () => {
+		setInApp();
+		expect(resolveBrowserBackendKind()).toBe("in-app");
+		state.browserMode = "isolated";
+		expect(resolveBrowserBackendKind()).toBe("cdp");
+	});
+});
+
+describe("browser route reporting", () => {
+	it("warns when a session wanted in-app and silently got Chrome", () => {
+		setInApp(false);
+		getBrowserManager("chat-1");
+		expect(routeLines("warn")).toHaveLength(1);
+		expect(routeLines("warn")[0]).toContain("desktop bridge is unavailable");
+		expect(routeLines("warn")[0]).toContain("chat-1");
+	});
+
+	it("explains a config-selected external Chrome, naming the mode", () => {
+		// The exact case a user hits when an old browserMode is on disk: the
+		// answer to "why is Chrome opening?" must be in the log.
+		state.browserMode = "continuity";
+		getBrowserManager("chat-1");
+		expect(routeLines("info")).toHaveLength(1);
+		expect(routeLines("info")[0]).toContain('browserMode="continuity"');
+		expect(routeLines("warn")).toHaveLength(0);
+	});
+
+	it("treats a headless run as expected, not a warning", () => {
+		setInApp();
+		process.env.LAX_BROWSER_HEADLESS = "1";
+		getBrowserManager("chat-1");
+		expect(routeLines("info")[0]).toContain("LAX_BROWSER_HEADLESS=1");
+		expect(routeLines("warn")).toHaveLength(0);
+	});
+
+	it("reports once per session, never per call", () => {
+		// getBrowserManager is on the tool hot path — a per-call line would
+		// flood server.log on any real browsing session.
+		setInApp(false);
+		for (let i = 0; i < 5; i++) getBrowserManager("chat-1");
+		expect(routeLines("warn")).toHaveLength(1);
+	});
+
+	it("reports each session separately", () => {
+		setInApp(false);
+		getBrowserManager("chat-1");
+		getBrowserManager("chat-2");
+		expect(routeLines("warn")).toHaveLength(2);
+	});
+
+	it("speaks again when a session's answer changes mid-flight", () => {
+		setInApp(false);
+		getBrowserManager("chat-1");
+		expect(routeLines("warn")).toHaveLength(1);
+		state.bridge = true;
+		getBrowserManager("chat-1");
+		expect(routeLines("debug").some((m) => m.includes("embedded in-app browser"))).toBe(true);
+	});
+
+	it("re-reports a session that was closed and reopened", async () => {
+		setInApp(false);
+		getBrowserManager("chat-1");
+		await closeBrowser("chat-1");
+		getBrowserManager("chat-1");
+		expect(routeLines("warn")).toHaveLength(2);
 	});
 });
 

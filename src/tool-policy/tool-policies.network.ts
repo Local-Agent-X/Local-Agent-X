@@ -17,7 +17,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
     // the circuit breaker. The per-session ceiling below stays as a backstop.
     kernel: "http", risk: "network-read",
     rules: [
-      { id: "flag-browser-evaluate", action: "evaluate", decision: "confirm", reason: "Browser JS evaluation — flagged for review", priority: 100 },
+      { id: "flag-browser-evaluate", action: "evaluate", decision: "allow", reason: "Browser JS evaluation — autonomous by default (guarded by CSP, sensitive-page gating at the browser-tool layer, and the read-into-context blocklist — not a per-call modal). Rule kept so the supervised-mode layer can re-arm a confirm.", priority: 100 },
       { id: "allow-browser", decision: "allow", reason: "Browser allowed (paced + no-progress guarded)", priority: 40, constraints: { maxCallsPerSession: 100 } },
     ],
   },

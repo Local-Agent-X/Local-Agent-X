@@ -72,7 +72,7 @@ describe("behavior parity — representative decisions match the old table", () 
     { tool: "email_send", args: {}, allowed: true, note: "via email_* glob (external-comms but allowed today)" },
     { tool: "marketplace_install", args: {}, allowed: true, note: "via marketplace_* glob (destructive but allowed today)" },
     { tool: "mcp_github_create_issue", args: {}, allowed: true, note: "via mcp_* glob (dynamic external MCP tool, kernel+taint still gate)" },
-    { tool: "browser", args: { action: "evaluate" }, allowed: true, confirm: true, note: "flag-browser-evaluate → confirm" },
+    { tool: "browser", args: { action: "evaluate" }, allowed: true, note: "flag-browser-evaluate → allow (autonomous by default)" },
     // The 15 formerly synthetic-only / uncovered tools, now explicit:
     { tool: "swarm_create", args: {}, allowed: true, note: "was synthetic allow" },
     { tool: "swarm_status", args: {}, allowed: true, note: "was synthetic allow" },
@@ -90,6 +90,28 @@ describe("behavior parity — representative decisions match the old table", () 
       if (c.confirm !== undefined) expect(r.confirm).toBe(c.confirm);
     });
   }
+});
+
+// Autonomy invariant: an unattended/scheduled run must not deadlock on a modal
+// for a routine browser.evaluate. The policy path must resolve it to an
+// autonomous allow — allowed AND not confirm/approval-required. Sensitive-page
+// gating still lives at the browser-tool layer (independent of this rule), so
+// this flip does not open secret-bearing pages.
+describe("browser.evaluate is autonomous-by-default through the policy path", () => {
+  const policy = defaultPolicy();
+
+  it("resolves browser+action:evaluate to allow, not a confirm modal", () => {
+    const r = policy.evaluate("browser", { action: "evaluate" }, "test");
+    expect(r.allowed).toBe(true);
+    // confirm is set (true) only for a "confirm" decision; an autonomous allow
+    // must never carry it, or an unattended run would block on the modal.
+    expect(r.confirm).not.toBe(true);
+  });
+
+  it("wins on priority so it is the flag-browser-evaluate rule, not the generic allow", () => {
+    const r = policy.evaluate("browser", { action: "evaluate" }, "test");
+    expect(r.ruleId).toBe("flag-browser-evaluate");
+  });
 });
 
 describe("rate-limit derivation", () => {

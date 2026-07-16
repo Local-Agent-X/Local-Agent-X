@@ -186,7 +186,12 @@ export interface SensitivePageDecision {
 const MUTATING_BROWSER_ACTIONS = new Set([
   "click", "click_text", "fill", "select", "act", "dialog_accept",
 ]);
-const SECRET_READING_ACTIONS = new Set(["snapshot", "observe", "extract", "screenshot", "evaluate"]);
+// read_console/read_network belong here too: a secret-bearing page's console
+// output and request URLs are page-controlled channels that can carry the
+// same secrets its DOM does.
+const SECRET_READING_ACTIONS = new Set([
+  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network",
+]);
 
 function pageLabel(url: URL): string {
   return `${url.origin}${url.pathname}`;

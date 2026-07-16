@@ -238,6 +238,10 @@ describe("browser sensitive-page gates", () => {
     expect(JSON.stringify(decision)).not.toContain("token=secret");
     expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "snapshot").disposition).toBe("blocked");
     expect(sensitivePageActionDecision("https://example.com/account-recovery/token-value", "observe").disposition).toBe("blocked");
+    // Console output and request URLs are page-controlled channels — the
+    // perception reads are secret-reading actions on vault-ish pages too.
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "read_console").disposition).toBe("blocked");
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "read_network").disposition).toBe("blocked");
   });
 
   it("withholds navigation auto-snapshots, snapshots, and observations on secret-bearing pages", async () => {

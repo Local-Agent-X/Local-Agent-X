@@ -118,49 +118,35 @@
 		raf(function () { syncQueued = false; sync(); });
 	}
 
-	// ── Multi-view switcher ─────────
+	// ── Multi-view tab strip ─────────
 	// The pool may hold several views: the user's own foreground view plus any
-	// agent-driven per-(session,profile) views. The switcher lists them all and
-	// flips which one the anchor drives/shows; background views stay live.
-
-	function switcherLabel(v) {
-		var name = v.profileId || 'view';
-		return (v.agentDriven ? '🤖 ' : '') + name;
-	}
-
-	function renderSwitcher(views) {
-		var slot = document.getElementById('browser-view-switcher-slot');
-		if (!slot) return;
-		// One view (or none) → no switcher clutter.
-		if (!views || views.length <= 1) { slot.innerHTML = ''; return; }
-		slot.innerHTML = '';
-		slot.style.display = 'flex';
-		slot.style.gap = '4px';
-		for (var i = 0; i < views.length; i++) {
-			(function (v) {
-				var pill = document.createElement('button');
-				pill.className = 'artifact-filter' + (v.viewId === selectedViewId ? ' active' : '');
-				pill.textContent = switcherLabel(v);
-				pill.title = v.viewId + (v.url ? ('\n' + v.url) : '') +
-					(v.agentDriven ? '\n(agent-driven)' : '');
-				pill.setAttribute('data-view-id', v.viewId);
-				pill.addEventListener('click', function () { switchTo(v.viewId); });
-				slot.appendChild(pill);
-			})(views[i]);
-		}
-	}
+	// agent-driven per-(session,profile) views. Rendering + selection
+	// reconciliation live in browser-tab-strip.js (window.laxBrowserTabStrip,
+	// loaded just before this file); this module owns the state and the bridge.
 
 	function refreshSwitcher() {
 		if (!bridge || !bridge.listViews) return Promise.resolve();
 		return Promise.resolve(bridge.listViews()).then(function (views) {
-			// Adopt the attached view as selected if we don't have one yet (first
-			// paint, before any user switch or nav-state push).
-			if (selectedViewId == null && views && views.length) {
-				var attached = null;
-				for (var i = 0; i < views.length; i++) if (views[i].attached) { attached = views[i].viewId; break; }
-				selectedViewId = attached || views[0].viewId;
+			var strip = window.laxBrowserTabStrip || null;
+			if (!strip) return views; // strip script missing → no UI, state intact
+			// Follow main's retargets: on first paint adopt the attached (or
+			// first) view; afterwards, if main auto-surfaced a different view
+			// (attached flipped under us), re-adopt it and refill the nav UI
+			// from its pool entry — otherwise the address bar + active pill
+			// keep naming the OLD view while back/fwd/reload drive the new one.
+			var adopted = strip.reconcileSelection(views, selectedViewId);
+			if (adopted) {
+				var readopt = selectedViewId != null && adopted.viewId !== selectedViewId;
+				selectedViewId = adopted.viewId;
+				// updateNavUI's activeElement guard keeps a mid-typed URL intact.
+				if (readopt) updateNavUI({ viewId: adopted.viewId, url: adopted.url || '' });
 			}
-			renderSwitcher(views);
+			strip.render(views, {
+				slot: document.getElementById('browser-view-switcher-slot'),
+				selectedViewId: selectedViewId,
+				onSelect: switchTo,
+				onNewTab: newTab,
+			});
 			return views;
 		}).catch(swallow);
 	}
@@ -170,6 +156,18 @@
 		selectedViewId = viewId; // optimistic — pill highlights immediately
 		Promise.resolve(bridge.switchView(viewId)).then(function (state) {
 			if (state) updateNavUI(state);
+			refreshSwitcher();
+		}).catch(swallow);
+	}
+
+	// "+" button: mint a fresh user tab, adopt it, and mirror its nav state.
+	function newTab() {
+		if (!bridge || !bridge.newTab) return;
+		Promise.resolve(bridge.newTab()).then(function (state) {
+			if (state) {
+				selectedViewId = state.viewId;
+				updateNavUI(state);
+			}
 			refreshSwitcher();
 		}).catch(swallow);
 	}
@@ -238,6 +236,10 @@
 		}
 		bridge.onNavState(updateNavUI);
 		Promise.resolve(bridge.getNavState()).then(updateNavUI).catch(function () {});
+		// Pool-change poke (create/close/attach-flip, incl. main auto-surfacing
+		// an agent view): re-list immediately — refreshSwitcher also re-adopts
+		// the attached view. The 2s poll below stays as fallback while shown.
+		if (bridge.onViewsChanged) bridge.onViewsChanged(function () { refreshSwitcher(); });
 		refreshSwitcher();
 		// Rect changes: panel resize drag, window resize, layout shifts —
 		// the ResizeObserver on the anchor catches all of them without
@@ -280,9 +282,10 @@
 		goForward: function () { if (bridge) bridge.goForward(); },
 		reload: function () { if (bridge) bridge.reload(); },
 		navigateFromInput: navigateFromInput,
-		// Exposed for the switcher test + programmatic refresh.
+		// Exposed for the switcher/strip tests + programmatic refresh.
 		refreshSwitcher: refreshSwitcher,
 		switchTo: switchTo,
+		newTab: newTab,
 	};
 
 	if (document.readyState === 'loading') {

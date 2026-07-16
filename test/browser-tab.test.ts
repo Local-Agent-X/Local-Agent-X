@@ -190,6 +190,9 @@ beforeEach(() => {
 
   const artifactsSrc = readFileSync(join(here, "../public/js/chat-artifacts.js"), "utf8");
   new Function(`${artifactsSrc}\nwindow.switchSidePanelTab = switchSidePanelTab;`)();
+  // Strip module first, then the tab module — same order as app.html.
+  const stripSrc = readFileSync(join(here, "../public/js/browser-tab-strip.js"), "utf8");
+  new Function(stripSrc)();
   const browserTabSrc = readFileSync(join(here, "../public/js/browser-tab.js"), "utf8");
   new Function(browserTabSrc)();
 });

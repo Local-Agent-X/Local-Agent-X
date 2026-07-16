@@ -145,6 +145,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Category kill-switch — when false, blocks ALL computer (mouse/keyboard) tool calls at pre-dispatch. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
   },
   {
+    field: "enableUiEventBus",
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "UI activity context — when true, redacted user-interface activity (e.g. browser navigation while co-driving) is buffered and injected into the agent's turn context as a short digest. On by default; no field values are ever recorded",
+  },
+  {
     field: "enableRemoteControl",
     validate: z.boolean(),
     runtime: true,

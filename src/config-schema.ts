@@ -126,6 +126,12 @@ export const configSchema = z.object({
   // category that defaults OFF — it can drive the whole machine, so it's an
   // explicit opt-in (Settings → Security), gated further by the OS permission.
   enableComputerControl: z.boolean().default(false),
+  // UI event bus: lets user-interface activity (in-app browser navigation,
+  // page titles — hosts/paths only, values and credentials are redacted at
+  // the store) surface as a short digest in the agent's context. Default ON —
+  // deliberate product decision: browser-only events, redaction enforced in
+  // src/orchestrator/ui-event-store.ts, visible opt-out in Settings → Security.
+  enableUiEventBus: z.boolean().default(true),
   // Remote control from a paired phone over the live screen. Separate switch from
   // enableComputerControl (that gates the AGENT) — this gates the human operator
   // driving from mobile. Same risk profile: DEFAULT OFF, also needs the OS grant.

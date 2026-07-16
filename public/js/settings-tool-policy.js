@@ -14,6 +14,7 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('tp-toggle-shell',   s.enableShell   !== false);
     setToolPolicyToggle('tp-toggle-http',    s.enableHttp    !== false);
     setToolPolicyToggle('tp-toggle-browser', s.enableBrowser !== false);
+    setToolPolicyToggle('tp-toggle-ui-events', s.enableUiEventBus !== false);
     // Computer control + phone remote control both default OFF (=== true).
     setToolPolicyToggle('tp-toggle-computer', s.enableComputerControl === true);
     setToolPolicyToggle('tp-toggle-remote', s.enableRemoteControl === true);

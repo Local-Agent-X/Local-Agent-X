@@ -114,6 +114,11 @@ export interface LAXConfig {
    *  DEFAULT OFF — high-risk opt-in. When false, every `computer` call is
    *  blocked at pre-dispatch. The panic hotkey flips this off. */
   enableComputerControl: boolean;
+  /** UI activity context. When true (default), redacted UI events (browser
+   *  navigation, tab activity) are buffered per session and distilled into a
+   *  short digest signal in the agent's turn context. Never records field
+   *  values — see src/orchestrator/ui-event-store.ts redaction law. */
+  enableUiEventBus: boolean;
   /** Remote-control kill-switch (phone driving mouse/keyboard over the live
    *  screen). DEFAULT OFF — high-risk opt-in, separate from the agent's
    *  enableComputerControl. When false, the live-screen session drops every

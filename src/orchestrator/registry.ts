@@ -2,6 +2,7 @@ import type { CognitiveSignal, ModuleScope } from "./types.js";
 import { conversationalSignals } from "./signals-conversational.js";
 import { metaSignals } from "./signals-meta.js";
 import { backgroundSignals } from "./signals-background.js";
+import { uiEventSignals } from "./signals-ui-events.js";
 
 /**
  * The one cognitive-signal table. Every orchestrator facet — triage,
@@ -17,6 +18,7 @@ export const SIGNALS: CognitiveSignal[] = [
   ...conversationalSignals,
   ...metaSignals,
   ...backgroundSignals,
+  ...uiEventSignals,
 ];
 
 const BY_ID = new Map<string, CognitiveSignal>(SIGNALS.map(s => [s.id, s]));

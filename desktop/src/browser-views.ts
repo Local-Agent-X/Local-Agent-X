@@ -40,6 +40,23 @@ const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
 
 const pool = new Map<string, PoolEntry>();
 let attachedId: string | null = null;
+// Minimal pool-change seam: fired on membership changes (create/close) and
+// attach flips (show). No payload by design — the consumer re-lists; the pool
+// stays ignorant of who is watching.
+let poolChangedListener: (() => void) | null = null;
+
+export function setPoolChangedListener(fn: (() => void) | null): void {
+	poolChangedListener = fn;
+}
+
+function notifyPoolChanged(): void {
+	poolChangedListener?.();
+}
+
+/** The viewId currently attached to the main window, or null when detached. */
+export function getAttachedViewId(): string | null {
+	return attachedId;
+}
 
 function requireEntry(viewId: string): PoolEntry {
 	const entry = pool.get(viewId);
@@ -85,6 +102,7 @@ export function createBrowserView(
 		popups,
 	};
 	pool.set(viewId, entry);
+	notifyPoolChanged();
 	return describe(viewId, entry);
 }
 
@@ -102,9 +120,11 @@ export function showBrowserView(viewId: string): void {
 		if (prev) win.contentView.removeChildView(prev.view);
 		attachedId = null;
 	}
+	const flipped = attachedId !== viewId;
 	win.contentView.addChildView(entry.view);
 	entry.view.setBounds(entry.bounds);
 	attachedId = viewId;
+	if (flipped) notifyPoolChanged();
 }
 
 /** Detach from the main window. The view stays live in the pool. */
@@ -128,6 +148,7 @@ export function closeBrowserView(viewId: string): void {
 	entry.popups.closeAll();
 	if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
 	pool.delete(viewId);
+	notifyPoolChanged();
 }
 
 /** Liveness probe: does the view exist and is its renderer alive? */

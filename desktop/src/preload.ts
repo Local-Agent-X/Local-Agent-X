@@ -163,6 +163,17 @@ contextBridge.exposeInMainWorld("desktop", {
     openProfileView: (profileId: string, url?: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
     } | null> => ipcRenderer.invoke("browser-open-profile-view", profileId, url),
+    // New user tab: mint a fresh renderer-owned view on the currently selected
+    // view's partition and drive it from the anchor. url omitted → about:blank.
+    // Returns the new view's nav-state.
+    newTab: (url?: string): Promise<{
+      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+    } | null> => ipcRenderer.invoke("browser-new-tab", url),
+    // Pool-change poke: main sends "browser-views-changed" (no payload) when
+    // views are created/closed or the attached view flips — re-list on it.
+    onViewsChanged: (cb: () => void) => {
+      ipcRenderer.on("browser-views-changed", () => cb());
+    },
   },
 
   // Server-crash signal: main fires "server-crashed" when the spawned

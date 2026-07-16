@@ -23,10 +23,12 @@ import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContents, typ
 import { getMainWindow } from "./window";
 import {
 	createBrowserView,
+	getAttachedViewId,
 	getBrowserView,
 	hideBrowserView,
 	listBrowserViews,
 	setBrowserViewBounds,
+	setPoolChangedListener,
 	showBrowserView,
 } from "./browser-views";
 
@@ -67,6 +69,11 @@ let lastBoundsDip: Rectangle | null = null;
 // Nav-state pushes are wired once per webContents (survives viewId reuse: a
 // closed+recreated view gets a fresh webContents and re-wires).
 const navWired = new WeakSet<WebContents>();
+// Monotonic id source for renderer-minted "new tab" views (user-1, user-2, …).
+let userTabSeq = 0;
+// Microtask-level debounce for the no-payload pool-change poke: a burst of
+// pool mutations (create+show, close cascade) collapses into ONE re-list.
+let viewsChangedQueued = false;
 
 /**
  * CSS px (renderer) → window DIPs. getBoundingClientRect reports zoom-scaled
@@ -156,7 +163,57 @@ function ensureCurrentView(): { viewId: string; view: WebContentsView } {
 	return { viewId: FOREGROUND_ID, view: ensureForegroundView() };
 }
 
+/** Poke the renderer to re-list the pool ("browser-views-changed", no payload —
+ *  browser-list-views stays the single source of truth). */
+function sendViewsChanged(): void {
+	if (viewsChangedQueued) return;
+	viewsChangedQueued = true;
+	queueMicrotask(() => {
+		viewsChangedQueued = false;
+		const win = getMainWindow();
+		if (win && !win.isDestroyed()) win.webContents.send("browser-views-changed");
+	});
+}
+
+/** Blank = nothing the user could be looking at: the view doesn't exist (or its
+ *  webContents died), or it never left ""/about:blank. */
+function currentViewIsBlank(): boolean {
+	const view = getBrowserView(currentViewId);
+	if (!view || view.webContents.isDestroyed()) return true;
+	const url = view.webContents.getURL();
+	return url === "" || url === "about:blank";
+}
+
+/**
+ * Auto-surface policy, called by the server bridge after a successful AGENT
+ * navigate. If the anchor currently drives the foreground family (the user's
+ * own foreground/profile view) and that view is effectively blank, retarget the
+ * anchor to the agent's view so the user sees the agent working the moment the
+ * Browser tab opens. Attach only when something was ALREADY attached — when
+ * nothing is attached the user is on a non-browser tab and painting an overlay
+ * would cover it; the retarget alone means the next set-visible shows it.
+ * A non-blank current view is never stolen — the renderer just badges.
+ */
+export function autoSurfaceAgentView(viewId: string): void {
+	const foregroundFamily = currentViewId === FOREGROUND_ID || currentViewId.startsWith("profile-");
+	if (foregroundFamily && currentViewIsBlank()) {
+		const view = getBrowserView(viewId);
+		if (!view || view.webContents.isDestroyed()) return; // vanished between navigate and surface
+		currentViewId = viewId;
+		wireNavPushes(viewId, view.webContents);
+		if (getAttachedViewId() !== null) {
+			showBrowserView(viewId);
+			if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
+		}
+		pushNavState(viewId, view.webContents);
+	}
+	sendViewsChanged();
+}
+
 export function setupBrowserIPC(): void {
+	// Pool membership/attachment changes → poke the renderer to re-list.
+	setPoolChangedListener(sendViewsChanged);
+
 	ipcMain.handle("browser-set-bounds", (event: IpcMainInvokeEvent, rect: Rectangle) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
 		const { viewId } = ensureCurrentView();
@@ -264,6 +321,31 @@ export function setupBrowserIPC(): void {
 		// Snap to the last anchor geometry (a just-created view carries the pool's
 		// default 800×600 box until now).
 		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
+		const target = (typeof url === "string" && url.trim()) || "about:blank";
+		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
+		const state = readNavState(viewId, view.webContents);
+		pushNavState(viewId, view.webContents);
+		return state;
+	});
+
+	// New user tab: mint a fresh renderer-owned view (agentDriven:false) on the
+	// CURRENTLY selected view's partition, so "open a tab" stays inside the
+	// profile the user is looking at. Attach only if something is already
+	// attached — on a non-browser tab the retarget alone is enough (the next
+	// set-visible shows it).
+	ipcMain.handle("browser-new-tab", async (event: IpcMainInvokeEvent, url?: string): Promise<BrowserNavState | null> => {
+		if (!isTrustedBrowserSender(event.sender)) return null;
+		const viewId = `user-${++userTabSeq}`;
+		const partition =
+			listBrowserViews().find((v) => v.viewId === currentViewId)?.partition ?? FOREGROUND_PARTITION;
+		createBrowserView(viewId, { partition, agentDriven: false });
+		const view = getBrowserView(viewId)!;
+		wireNavPushes(viewId, view.webContents);
+		currentViewId = viewId;
+		if (getAttachedViewId() !== null) {
+			showBrowserView(viewId);
+			if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
+		}
 		const target = (typeof url === "string" && url.trim()) || "about:blank";
 		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
 		const state = readNavState(viewId, view.webContents);

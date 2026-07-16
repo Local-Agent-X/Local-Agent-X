@@ -27,6 +27,7 @@ import {
 	showBrowserView,
 	type BrowserViewInfo,
 } from "./browser-views";
+import { autoSurfaceAgentView } from "./browser-ipc";
 import { getHardenedPartitionSession, setEgressEvaluator, type EgressDecision } from "./browser-partition";
 import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
 
@@ -270,9 +271,15 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 		case "hide":
 			hideBrowserView(msg.viewId);
 			return {};
-		case "close":
+		case "close": {
+			// Bridge callers only own the views the bridge created (agentDriven).
+			// The renderer's foreground/profile/user views are the USER's — a
+			// server-side close of one would yank the page out from under them.
+			const info = listBrowserViews().find((v) => v.viewId === msg.viewId);
+			if (info && !info.agentDriven) throw new Error(`refusing to close non-agent view ${msg.viewId}`);
 			closeBrowserView(msg.viewId);
 			return {};
+		}
 		case "setBounds": {
 			if (!msg.bounds) throw new Error("setBounds requires bounds");
 			setBrowserViewBounds(msg.viewId, msg.bounds);
@@ -308,7 +315,16 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 			if (!isMainFrame || errorCode === -3) return;
 			finish({ ok: false, error: `${errorDescription || `load failed (${errorCode})`} (${validatedURL})` });
 		};
-		const onDone = () => finish({ ok: true, url: wc.getURL(), title: wc.getTitle() });
+		const onDone = () => {
+			if (settled) return;
+			finish({ ok: true, url: wc.getURL(), title: wc.getTitle() });
+			// Successful AGENT navigate → offer the view to the renderer's anchor.
+			// browser-ipc owns the policy (blank-foreground only); this path only
+			// fires for bridge-owned agentDriven views.
+			if (listBrowserViews().some((v) => v.viewId === msg.viewId && v.agentDriven)) {
+				autoSurfaceAgentView(msg.viewId);
+			}
+		};
 		const deadline = setTimeout(() => {
 			// Stop the still-loading page — the client has already given up,
 			// and a zombie load would race the NEXT navigate's did-stop-loading.

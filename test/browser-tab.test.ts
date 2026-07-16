@@ -19,6 +19,16 @@ const h = vi.hoisted(() => ({
   setBoundsCalls: [] as unknown[][],
   showCalls: 0,
   hideCalls: 0,
+  // Multi-view pool state for the mocked browser-views module: id-aware view
+  // lookup (falls back to fakeView for ids the test didn't register), the
+  // attached-view answer, the captured pool-change listener, and the list
+  // returned by listBrowserViews.
+  viewsById: new Map<string, unknown>(),
+  createCalls: [] as unknown[][],
+  closeCalls: [] as string[],
+  attachedId: null as string | null,
+  poolListener: null as null | (() => void),
+  poolList: [] as unknown[],
 }));
 
 // electron is installed only under desktop/node_modules — mock the resolved
@@ -30,17 +40,80 @@ vi.mock("../desktop/node_modules/electron", () => ({
       h.handlers.set(channel, fn);
     },
   },
+  // Used only by the REAL browser-views module (vi.importActual below).
+  WebContentsView: class {
+    webContents = {
+      isDestroyed: () => false,
+      close: () => {},
+      getURL: () => "",
+      getTitle: () => "",
+    };
+    setBounds() {}
+  },
 }));
 vi.mock("../desktop/src/window", () => ({ getMainWindow: () => h.mainWin }));
 vi.mock("../desktop/src/browser-views", () => ({
-  createBrowserView: () => {},
-  getBrowserView: () => h.fakeView,
+  createBrowserView: (viewId: string, opts: unknown) => {
+    h.createCalls.push([viewId, opts]);
+    // Auto-register a live fake view, mimicking the pool.
+    if (!h.viewsById.has(viewId)) {
+      h.viewsById.set(viewId, {
+        webContents: {
+          url: "",
+          isDestroyed() { return false; },
+          isLoading() { return false; },
+          getURL() { return (this as unknown as { url: string }).url; },
+          getTitle() { return ""; },
+          loadURL(u: string) { (this as unknown as { url: string }).url = u; return Promise.resolve(); },
+          on() {},
+          off() {},
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+        },
+      });
+    }
+  },
+  closeBrowserView: (viewId: string) => { h.closeCalls.push(viewId); },
+  getBrowserView: (viewId: string) => (h.viewsById.has(viewId) ? h.viewsById.get(viewId) : h.fakeView),
+  getAttachedViewId: () => h.attachedId,
+  setPoolChangedListener: (fn: (() => void) | null) => { h.poolListener = fn; },
+  listBrowserViews: () => h.poolList,
+  pingBrowserView: () => ({ ok: true }),
   hideBrowserView: () => { h.hideCalls++; },
   setBrowserViewBounds: (...args: unknown[]) => { h.setBoundsCalls.push(args); },
   showBrowserView: () => { h.showCalls++; },
 }));
+// server-bridge-browser + the REAL browser-views pull these in; keep them inert.
+vi.mock("../desktop/src/browser-partition", () => ({
+  getHardenedPartitionSession: () => ({ clearStorageData: async () => {} }),
+  hardenWebContents: () => {},
+  viewWebPreferences: () => ({}),
+  setEgressEvaluator: () => {},
+}));
+vi.mock("../desktop/src/browser-view-popups", () => ({
+  managePopups: () => ({ closeAll: () => {} }),
+}));
+vi.mock("../desktop/src/in-app-browser", () => ({
+  armCoDrive: () => {},
+  isUserActive: () => false,
+  markAgentInput: () => {},
+  showAgentCursor: () => {},
+}));
+// Partial mock: real browser-ipc behavior, but autoSurfaceAgentView wrapped in
+// a spy so the server-bridge hook can be asserted while still executing the
+// real policy against the mocked pool.
+vi.mock("../desktop/src/browser-ipc", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../desktop/src/browser-ipc")>();
+  return { ...actual, autoSurfaceAgentView: vi.fn(actual.autoSurfaceAgentView) };
+});
 
-import { isTrustedBrowserSender, scaleRectToDip, setupBrowserIPC } from "../desktop/src/browser-ipc";
+import { autoSurfaceAgentView, isTrustedBrowserSender, scaleRectToDip, setupBrowserIPC } from "../desktop/src/browser-ipc";
+import { handleBrowserBridgeMessage } from "../desktop/src/server-bridge-browser";
+
+// The REAL pool module (mocked deps): exercises getAttachedViewId + the
+// pool-change listener seam against actual pool state.
+const realViews = await vi.importActual<typeof import("../desktop/src/browser-views")>(
+  "../desktop/src/browser-views",
+);
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -342,6 +415,284 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
     });
     await h.handlers.get("browser-navigate")!({ sender: trustedWC }, "https://example.com/");
     expect(fakeWC.loadURL).toHaveBeenCalledWith("https://example.com/");
+  });
+});
+
+// ── Auto-surface, new-tab, views-changed, close guard ─────────────
+
+/** Live fake webContents whose URL tracks loadURL — enough for nav-state reads. */
+function makeWc(url = "") {
+  const wc = {
+    url,
+    destroyed: false,
+    loads: [] as string[],
+    isDestroyed: () => wc.destroyed,
+    isLoading: () => false,
+    getURL: () => wc.url,
+    getTitle: () => "",
+    loadURL: (u: string) => { wc.url = u; wc.loads.push(u); return Promise.resolve(); },
+    reload: () => {},
+    stop: () => {},
+    on: () => {},
+    off: () => {},
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+  };
+  return wc;
+}
+
+const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+function viewsChangedCount(send: Mock): number {
+  return send.mock.calls.filter((c) => c[0] === "browser-views-changed").length;
+}
+
+describe("auto-surface + new-tab (browser-ipc.ts)", () => {
+  let trustedWC: { getZoomFactor(): number; send: Mock };
+  let fgWc: ReturnType<typeof makeWc>;
+
+  beforeEach(async () => {
+    trustedWC = { getZoomFactor: () => 1, send: vi.fn() };
+    h.mainWin = { isDestroyed: () => false, webContents: trustedWC };
+    h.viewsById.clear();
+    h.poolList = [];
+    h.createCalls = [];
+    h.closeCalls = [];
+    h.attachedId = null;
+    h.setBoundsCalls = [];
+    h.showCalls = 0;
+    h.handlers.clear();
+    setupBrowserIPC();
+    // Reset module state deterministically: current view = foreground (blank),
+    // lastBoundsDip = a known rect.
+    fgWc = makeWc("");
+    h.viewsById.set("foreground", { webContents: fgWc });
+    h.handlers.get("browser-switch-view")!({ sender: trustedWC }, "foreground");
+    h.handlers.get("browser-set-bounds")!({ sender: trustedWC }, { x: 10, y: 20, width: 300, height: 400 });
+    await flush(); // drain any queued views-changed poke from earlier pool churn
+    h.setBoundsCalls = [];
+    h.showCalls = 0;
+    trustedWC.send.mockClear();
+    (autoSurfaceAgentView as unknown as Mock).mockClear();
+  });
+
+  function currentNavViewId(): string {
+    return (h.handlers.get("browser-get-nav-state")!({ sender: trustedWC }) as { viewId: string }).viewId;
+  }
+
+  it("retargets a blank foreground to the agent view and attaches when something was attached", async () => {
+    h.viewsById.set("agent-7", { webContents: makeWc("https://agent.example/run") });
+    h.attachedId = "foreground";
+    autoSurfaceAgentView("agent-7");
+    expect(currentNavViewId()).toBe("agent-7");
+    expect(h.showCalls).toBe(1);
+    expect(h.setBoundsCalls).toEqual([["agent-7", { x: 10, y: 20, width: 300, height: 400 }]]);
+    expect(trustedWC.send).toHaveBeenCalledWith(
+      "browser-nav-state",
+      expect.objectContaining({ viewId: "agent-7", url: "https://agent.example/run" }),
+    );
+    await flush();
+    expect(viewsChangedCount(trustedWC.send)).toBe(1);
+  });
+
+  it("retargets WITHOUT attaching when nothing was attached (non-browser tab stays visible)", async () => {
+    h.viewsById.set("agent-7", { webContents: makeWc("https://agent.example/run") });
+    h.attachedId = null;
+    autoSurfaceAgentView("agent-7");
+    expect(currentNavViewId()).toBe("agent-7");
+    expect(h.showCalls).toBe(0);
+    expect(h.setBoundsCalls).toEqual([]);
+    await flush();
+    expect(viewsChangedCount(trustedWC.send)).toBe(1);
+  });
+
+  it("never steals a foreground showing a real URL — views-changed poke only", async () => {
+    fgWc.url = "https://real.example/reading";
+    h.viewsById.set("agent-7", { webContents: makeWc("https://agent.example/run") });
+    h.attachedId = "foreground";
+    autoSurfaceAgentView("agent-7");
+    expect(currentNavViewId()).toBe("foreground");
+    expect(h.showCalls).toBe(0);
+    expect(trustedWC.send).not.toHaveBeenCalledWith("browser-nav-state", expect.anything());
+    await flush();
+    expect(viewsChangedCount(trustedWC.send)).toBe(1);
+  });
+
+  it("does not retarget when the current view is another agent view", async () => {
+    h.viewsById.set("agent-a", { webContents: makeWc("") });
+    h.viewsById.set("agent-b", { webContents: makeWc("https://agent.example/b") });
+    h.handlers.get("browser-switch-view")!({ sender: trustedWC }, "agent-a");
+    h.showCalls = 0;
+    autoSurfaceAgentView("agent-b");
+    expect(currentNavViewId()).toBe("agent-a");
+    expect(h.showCalls).toBe(0);
+  });
+
+  it("browser-new-tab mints user-N on the current view's partition and returns nav state", async () => {
+    h.attachedId = "foreground";
+    h.poolList = [{ viewId: "foreground", partition: "persist:lax-profile-work" }];
+    const state = await h.handlers.get("browser-new-tab")!({ sender: trustedWC }, undefined) as {
+      viewId: string; url: string;
+    };
+    const [mintedId, opts] = h.createCalls.at(-1)! as [string, { partition: string; agentDriven: boolean }];
+    expect(mintedId).toMatch(/^user-\d+$/);
+    expect(opts).toEqual({ partition: "persist:lax-profile-work", agentDriven: false });
+    expect(state.viewId).toBe(mintedId);
+    expect(state.url).toBe("about:blank");
+    expect(currentNavViewId()).toBe(mintedId);
+    expect(h.showCalls).toBe(1); // something was attached → the new tab is shown
+    expect(h.setBoundsCalls).toEqual([[mintedId, { x: 10, y: 20, width: 300, height: 400 }]]);
+  });
+
+  it("browser-new-tab falls back to the default partition, loads the url, and skips attach when detached", async () => {
+    h.attachedId = null;
+    h.poolList = []; // current view not listed → fallback partition
+    const state = await h.handlers.get("browser-new-tab")!({ sender: trustedWC }, "https://example.com/") as {
+      viewId: string; url: string;
+    };
+    const [, opts] = h.createCalls.at(-1)! as [string, { partition: string }];
+    expect(opts.partition).toBe("persist:lax-profile-default");
+    expect(state.url).toBe("https://example.com/");
+    expect(h.showCalls).toBe(0);
+  });
+
+  it("browser-new-tab is trusted-sender gated", async () => {
+    const before = h.createCalls.length;
+    const state = await h.handlers.get("browser-new-tab")!({ sender: {} }, "https://evil.example/");
+    expect(state).toBeNull();
+    expect(h.createCalls.length).toBe(before);
+  });
+
+  it("setupBrowserIPC wires the pool listener; bursts debounce into ONE views-changed", async () => {
+    expect(h.poolListener).toBeTypeOf("function");
+    h.poolListener!();
+    h.poolListener!();
+    h.poolListener!();
+    await flush();
+    expect(viewsChangedCount(trustedWC.send)).toBe(1);
+  });
+});
+
+describe("server bridge auto-surface hook + close guard (server-bridge-browser.ts)", () => {
+  let proc: { send: Mock; connected: boolean; killed: boolean };
+  let trustedWC: { getZoomFactor(): number; send: Mock };
+
+  beforeEach(() => {
+    trustedWC = { getZoomFactor: () => 1, send: vi.fn() };
+    h.mainWin = { isDestroyed: () => false, webContents: trustedWC };
+    h.viewsById.clear();
+    h.poolList = [];
+    h.closeCalls = [];
+    proc = { send: vi.fn(() => true), connected: true, killed: false };
+    (autoSurfaceAgentView as unknown as Mock).mockClear();
+  });
+
+  async function driveNavigate(viewId: string) {
+    const listeners = new Map<string, (...a: unknown[]) => void>();
+    const wc = makeWc("");
+    (wc as { on: unknown }).on = (ev: string, fn: (...a: unknown[]) => void) => { listeners.set(ev, fn); };
+    wc.getURL = () => "https://agent.example/done";
+    h.viewsById.set(viewId, { webContents: wc });
+    await handleBrowserBridgeMessage(
+      proc as never,
+      { type: "lax:browser-navigate", id: 7, viewId, url: "https://agent.example/" },
+    );
+    listeners.get("did-finish-load")!();
+    await flush();
+  }
+
+  it("a successful navigate on an agentDriven view calls autoSurfaceAgentView", async () => {
+    h.poolList = [{ viewId: "agent-1", agentDriven: true }];
+    await driveNavigate("agent-1");
+    expect(proc.send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "lax:browser-navigate-result", id: 7, ok: true }),
+    );
+    expect(autoSurfaceAgentView).toHaveBeenCalledWith("agent-1");
+  });
+
+  it("a successful navigate on a NON-agent view never auto-surfaces", async () => {
+    h.poolList = [{ viewId: "user-9", agentDriven: false }];
+    await driveNavigate("user-9");
+    expect(proc.send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "lax:browser-navigate-result", id: 7, ok: true }),
+    );
+    expect(autoSurfaceAgentView).not.toHaveBeenCalled();
+  });
+
+  it("lifecycle close REFUSES non-agentDriven views (ok:false reply, view untouched)", async () => {
+    h.poolList = [{ viewId: "foreground", agentDriven: false }];
+    await handleBrowserBridgeMessage(
+      proc as never,
+      { type: "lax:browser-lifecycle", id: 3, op: "close", viewId: "foreground" },
+    );
+    await flush();
+    expect(proc.send).toHaveBeenCalledWith(expect.objectContaining({
+      type: "lax:browser-lifecycle-result",
+      id: 3,
+      ok: false,
+      error: expect.stringContaining("refusing to close non-agent view"),
+    }));
+    expect(h.closeCalls).toEqual([]);
+  });
+
+  it("lifecycle close still closes agentDriven views", async () => {
+    h.poolList = [{ viewId: "agent-9", agentDriven: true }];
+    await handleBrowserBridgeMessage(
+      proc as never,
+      { type: "lax:browser-lifecycle", id: 4, op: "close", viewId: "agent-9" },
+    );
+    await flush();
+    expect(proc.send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "lax:browser-lifecycle-result", id: 4, ok: true }),
+    );
+    expect(h.closeCalls).toEqual(["agent-9"]);
+  });
+});
+
+describe("browser-views pool seams (real module)", () => {
+  beforeEach(() => {
+    h.mainWin = {
+      isDestroyed: () => false,
+      webContents: { send: () => {} },
+      contentView: { addChildView: () => {}, removeChildView: () => {} },
+    } as never;
+  });
+
+  it("fires the pool-change listener on create/show-flip/close and tracks the attached id", () => {
+    let fired = 0;
+    realViews.setPoolChangedListener(() => { fired++; });
+    try {
+      expect(realViews.getAttachedViewId()).toBeNull();
+      realViews.createBrowserView("pv-1", { partition: "persist:lax-profile-default" });
+      expect(fired).toBe(1);
+      realViews.showBrowserView("pv-1");
+      expect(realViews.getAttachedViewId()).toBe("pv-1");
+      expect(fired).toBe(2);
+      realViews.showBrowserView("pv-1"); // already attached — no flip, no fire
+      expect(fired).toBe(2);
+      realViews.closeBrowserView("pv-1");
+      expect(fired).toBe(3);
+      expect(realViews.getAttachedViewId()).toBeNull();
+    } finally {
+      realViews.setPoolChangedListener(null);
+    }
+  });
+
+  it("attach flips between two views fire the listener and re-point getAttachedViewId", () => {
+    realViews.createBrowserView("pv-a", { partition: "persist:lax-profile-default" });
+    realViews.createBrowserView("pv-b", { partition: "persist:lax-profile-default" });
+    let fired = 0;
+    realViews.setPoolChangedListener(() => { fired++; });
+    try {
+      realViews.showBrowserView("pv-a");
+      expect(realViews.getAttachedViewId()).toBe("pv-a");
+      realViews.showBrowserView("pv-b");
+      expect(realViews.getAttachedViewId()).toBe("pv-b");
+      expect(fired).toBe(2);
+    } finally {
+      realViews.setPoolChangedListener(null);
+      realViews.closeBrowserView("pv-a");
+      realViews.closeBrowserView("pv-b");
+    }
   });
 });
 

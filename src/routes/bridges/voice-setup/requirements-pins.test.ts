@@ -49,6 +49,17 @@ describe.each([
     expect(find(pins, "phonemizer-fork")?.spec).toBe("==3.3.2");
   });
 
+  it("caps huggingface_hub below 1.0 and declares requests explicitly", () => {
+    // faster-whisper 1.1.0 imports `requests` at module scope without declaring
+    // it, and inherited it transitively from huggingface_hub. hub 1.x dropped
+    // requests for httpx, so an unpinned hub resolves to 1.x, requests vanishes,
+    // and faster_whisper stops importing — an install that pip calls a success.
+    const hub = find(pins, "huggingface_hub") ?? find(pins, "huggingface-hub");
+    expect(hub, "huggingface_hub must be pinned, not inherited").toBeDefined();
+    expect(hub!.spec).toMatch(/<\s*1\.0/);
+    expect(find(pins, "requests"), "requests must be declared, not inherited").toBeDefined();
+  });
+
   it("does not cap numpy below kokoro-onnx 0.4.9's floor of 2.0.2", () => {
     const numpy = find(pins, "numpy");
     expect(numpy).toBeDefined();

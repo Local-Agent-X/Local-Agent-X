@@ -8,6 +8,15 @@
 # when available). All assume CUDA 12.x runtime libs from the wheels.
 
 faster-whisper==1.1.0
+# faster-whisper 1.1.0 (2024) predates huggingface_hub 1.x and does not pin it.
+# hub 1.x dropped its `requests` dependency for httpx, which silently removed
+# `requests` from the venv — and faster_whisper/utils.py imports requests at
+# module scope without declaring it, so an unpinned hub resolves to 1.x and
+# faster_whisper stops importing entirely. Cap the hub at the era this
+# faster-whisper was built against, and declare requests explicitly rather than
+# inheriting it by luck from whatever the hub happens to depend on.
+huggingface_hub>=0.13,<1.0
+requests>=2.31,<3.0
 kokoro-onnx==0.4.9
 # kokoro-onnx phonemizes via the `phonemizer-fork` distribution, NOT upstream
 # `phonemizer` — both install the same `phonemizer` import package, so pinning

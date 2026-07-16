@@ -99,15 +99,19 @@ if ($smokeExit -ne 0) {
     exit 1
 }
 
-if ($smokeOut -match "cuda: True") {
-    Write-Host ""
-    Write-Host "==> Install OK. CUDA detected." -ForegroundColor Green
-    Write-Host "    Start the sidecar:"
-    Write-Host "      $VenvPython python\voice\server.py"
+# Report GPU state from the engine that actually drives TTS. torch is NOT the
+# verdict here: the PyPI torch wheel is CPU-only on Windows and drives only
+# silero-vad, so "torch cuda: False" is normal and does not mean the sidecar
+# is on CPU. Pointing the user at nvidia-smi over it sends them debugging a
+# layer that was never broken - the per-engine report above is the real answer.
+Write-Host ""
+if ($smokeOut -match "kokoro TTS: GPU-capable") {
+    Write-Host "==> Install OK. TTS is GPU-capable (see the per-engine report above)." -ForegroundColor Green
 } else {
-    Write-Host ""
-    Write-Host "==> Install OK, but CUDA was not detected." -ForegroundColor Yellow
-    Write-Host "    Voice sidecar will fall back to CPU (slow). Check that:"
+    Write-Host "==> Install OK, but onnxruntime exposes no GPU provider." -ForegroundColor Yellow
+    Write-Host "    Kokoro TTS will run on CPU. Check that:"
     Write-Host "      - NVIDIA driver supports CUDA 12.x (run nvidia-smi)"
-    Write-Host "      - You haven't installed cpu-only onnxruntime on top of onnxruntime-gpu"
+    Write-Host "      - cpu-only onnxruntime didn't get installed over onnxruntime-gpu"
 }
+Write-Host "    Start the sidecar:"
+Write-Host "      $VenvPython python\voice\server.py"

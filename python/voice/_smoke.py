@@ -64,22 +64,30 @@ if failed:
     print("  - antivirus deleted a wheel mid-install (add ~/.lax to exclusions, retry)")
     sys.exit(1)
 
-# CUDA absence is NOT fatal - the sidecar falls back to CPU (slow but working).
-# Report it so the installer can tell the user which one they got.
+# GPU report. None of this is fatal - every path has a CPU fallback. Report
+# each engine SEPARATELY rather than reading torch.cuda as the verdict for the
+# whole sidecar: torch here is the PyPI wheel (CPU-only on Windows) and drives
+# only silero-vad, while STT (CTranslate2) and TTS (onnxruntime-gpu) reach the
+# GPU by their own routes. "torch.cuda is False" therefore does NOT mean the
+# sidecar runs on CPU, and saying so would send someone debugging the wrong
+# layer.
 try:
     import torch
 
     if torch.cuda.is_available():
-        print("cuda: True", torch.cuda.get_device_name(0))
+        print("torch cuda: True", torch.cuda.get_device_name(0), "(silero-vad)")
     else:
-        print("cuda: False (sidecar will run on CPU)")
+        print("torch cuda: False - silero-vad on CPU (cheap; the PyPI torch wheel is CPU-only on Windows)")
 except Exception as e:  # noqa: BLE001
-    print("cuda: unknown (%s: %s)" % (type(e).__name__, e))
+    print("torch cuda: unknown (%s: %s)" % (type(e).__name__, e))
 
 try:
     import onnxruntime as ort
 
-    print("onnxruntime providers:", ", ".join(ort.get_available_providers()))
+    providers = ort.get_available_providers()
+    gpu = [p for p in providers if p != "CPUExecutionProvider"]
+    print("onnxruntime providers:", ", ".join(providers))
+    print("kokoro TTS:", "GPU-capable" if gpu else "CPU only")
 except Exception:  # noqa: BLE001 - already proven importable above
     pass
 

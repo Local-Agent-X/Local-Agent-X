@@ -5,6 +5,11 @@
 # CoreML on Mac), drops the nvidia-* CUDA wheels (Windows-only).
 
 faster-whisper==1.1.0
+# See requirements.txt: hub 1.x dropped `requests`, which faster_whisper imports
+# at module scope without declaring it — an unpinned hub silently breaks the
+# import. Must match requirements.txt.
+huggingface_hub>=0.13,<1.0
+requests>=2.31,<3.0
 kokoro-onnx==0.4.9
 # See requirements.txt: kokoro-onnx pulls the `phonemizer-fork` distribution,
 # which provides the `phonemizer` import package that _server/models.py patches.

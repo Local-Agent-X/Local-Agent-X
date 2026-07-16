@@ -145,9 +145,25 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(out).toContain("⚠ REDIRECTED: requested example.com, landed on other.example.net");
 	});
 
-	it("newTab navigates the single view and returns the CDP newTab shape", async () => {
+	it("newTab as the FIRST action materializes the first view (no current tab to keep)", async () => {
 		const out = await backend.newTab(PAGE_URL);
 		expect(out).toBe(`Opened new tab (1 tabs total)\nURL: ${PAGE_URL}\nStatus: unknown\nTitle: ${PAGE_TITLE}`);
+		expect(browserLifecycle).toHaveBeenCalledWith("create", VIEW_ID, {
+			partition: "persist:lax-profile-work",
+		});
+	});
+
+	it("newTab opens a REAL second view (-t2), makes it active, and reports the tab count", async () => {
+		await backend.navigate(PAGE_URL);
+		const out = await backend.newTab(PAGE_URL);
+		expect(out).toBe(`Opened new tab (2 tabs total)\nURL: ${PAGE_URL}\nStatus: unknown\nTitle: ${PAGE_TITLE}`);
+		expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t2`, {
+			partition: "persist:lax-profile-work",
+		});
+		expect(browserNavigate).toHaveBeenLastCalledWith(`${VIEW_ID}-t2`, PAGE_URL);
+		// Active tab followed: subsequent ops target the NEW view.
+		await backend.screenshot();
+		expect(browserCapture).toHaveBeenCalledWith(`${VIEW_ID}-t2`);
 	});
 
 	// ── Observe round-trip / format parity ─────────
@@ -416,5 +432,135 @@ describe("ElectronInAppBackend (A1)", () => {
 		// No other channel that could carry a script: input events carry no code
 		// and were never used in A1; there is no main-world API on the bridge.
 		expect(browserInput).not.toHaveBeenCalled();
+	});
+
+	// ── Multi-tab + user-tab takeover (chunk B) ─────────
+
+	describe("multi-tab / user-tab takeover", () => {
+		const USER_URL = "https://user.example/inbox";
+		const USER_TITLE = "User Inbox";
+		const USER_VIEW = {
+			viewId: "view-user-main", partition: "persist:lax-profile-work",
+			url: USER_URL, title: USER_TITLE, attached: true, agentDriven: false,
+		};
+		const OTHER_AGENT_VIEW = {
+			viewId: "view-other-sess-work", partition: "persist:lax-profile-work",
+			url: "https://other-session.example/", title: "Other Session Page", attached: false, agentDriven: true,
+		};
+
+		/** Lifecycle mock with a populated desktop pool listing and per-view pings. */
+		function mockDesktopPool(views: Array<typeof USER_VIEW>): void {
+			vi.mocked(browserLifecycle).mockImplementation(async (op, viewId) => {
+				if (op === "list") return { views };
+				if (op === "ping") {
+					const v = views.find((x) => x.viewId === viewId);
+					return { ping: { ok: true, url: v?.url ?? PAGE_URL, title: v?.title ?? PAGE_TITLE } };
+				}
+				if (op === "create") {
+					return {
+						view: { viewId, partition: "persist:lax-profile-work", url: "", title: "", attached: false, agentDriven: true },
+					};
+				}
+				return {};
+			});
+		}
+
+		it("listTabs merges the user's own views (marked as takeover) and EXCLUDES other sessions' agent views", async () => {
+			mockDesktopPool([USER_VIEW, OTHER_AGENT_VIEW]);
+			await backend.navigate(PAGE_URL);
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("2 tab(s) open:");
+			expect(tabs).toContain(`[0] ${PAGE_TITLE} — ${PAGE_URL} ← active`);
+			expect(tabs).toContain(`[1] ${USER_TITLE} — ${USER_URL} [user tab — switch_tab(1) takes control]`);
+			expect(tabs).not.toContain("Other Session Page");
+			expect(tabs).not.toContain("view-other-sess-work");
+		});
+
+		it("switch_tab onto a user view ADOPTS it (owned:false): active follows, no create, no re-listing as user tab", async () => {
+			mockDesktopPool([USER_VIEW, OTHER_AGENT_VIEW]);
+			await backend.navigate(PAGE_URL);
+			const msg = await backend.switchTab(1);
+			expect(msg).toBe(`Switched to tab [1]: ${USER_TITLE} — ${USER_URL}`);
+			// Adoption, not creation: the user's view was never re-created.
+			const creates = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create");
+			expect(creates.map(([, id]) => id)).not.toContain("view-user-main");
+			// The active tab now IS the user's view: ops target it.
+			expect(backend.getCurrentUrl()).toBe(USER_URL);
+			await backend.screenshot();
+			expect(browserCapture).toHaveBeenCalledWith("view-user-main");
+			// And the listing shows it as an owned row (adopted — no takeover marker, not duplicated).
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("2 tab(s) open:");
+			expect(tabs).toContain(`[1] ${USER_TITLE} — ${USER_URL} ← active`);
+			expect(tabs).not.toContain("takes control");
+		});
+
+		it("switch_tab back to an agent tab retargets every viewId-keyed op, including secretOps (call-time resolution)", async () => {
+			mockDesktopPool([USER_VIEW]);
+			await backend.navigate(PAGE_URL);
+			await backend.newTab(PAGE_URL); // active: -t2
+			const ops = backend.secretOps();
+			await ops.currentOrigin();
+			expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe(`${VIEW_ID}-t2`);
+			await backend.switchTab(0); // back to the first tab
+			await ops.currentOrigin(); // SAME ops object — must follow the switch
+			expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe(VIEW_ID);
+		});
+
+		it("close() closes OWNED views only — the adopted user view is dropped, never closed", async () => {
+			mockDesktopPool([USER_VIEW]);
+			await backend.navigate(PAGE_URL);
+			await backend.newTab(PAGE_URL); // -t2 (owned)
+			await backend.switchTab(2); // merged: [0]=first, [1]=t2, [2]=user → adopt
+			expect(backend.getCurrentUrl()).toBe(USER_URL);
+			await backend.close();
+			const closed = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "close").map(([, id]) => id);
+			expect(closed.sort()).toEqual([VIEW_ID, `${VIEW_ID}-t2`].sort());
+			expect(closed).not.toContain("view-user-main");
+			expect(backend.isActive()).toBe(false);
+			expect(backend.getCurrentUrl()).toBe("");
+		});
+
+		it("never reuses a tab number within the backend's lifetime, even across close()", async () => {
+			await backend.navigate(PAGE_URL);
+			await backend.newTab(PAGE_URL); // -t2
+			await backend.close();
+			await backend.navigate(PAGE_URL);
+			await backend.newTab(PAGE_URL); // must be -t3, never -t2 again
+			const creates = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create").map(([, id]) => id);
+			expect(creates).toContain(`${VIEW_ID}-t3`);
+			expect(creates.filter((id) => id === `${VIEW_ID}-t2`)).toHaveLength(1);
+		});
+
+		it("a failed new_tab create rolls the minted tab back (no ghost row, N still not reused)", async () => {
+			await backend.navigate(PAGE_URL);
+			vi.mocked(browserLifecycle).mockImplementationOnce(async () => {
+				throw new Error("view pool exhausted");
+			});
+			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("view pool exhausted");
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("1 tab(s) open:");
+			expect(tabs).not.toContain("-t2");
+			await backend.newTab(PAGE_URL);
+			expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t3`, expect.anything());
+		});
+
+		it("sensitive user rows are withheld in the listing and on switch (same rule as page-ops)", async () => {
+			const vaultView = {
+				...USER_VIEW,
+				viewId: "view-user-vault",
+				url: "https://vault.bitwarden.com/passwords",
+				title: "My Vault",
+			};
+			mockDesktopPool([vaultView]);
+			await backend.navigate(PAGE_URL);
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("[1] [sensitive page withheld] [user tab — switch_tab(1) takes control]");
+			expect(tabs).not.toContain("bitwarden");
+			expect(tabs).not.toContain("My Vault");
+			const msg = await backend.switchTab(1);
+			expect(msg).toContain("[SENSITIVE PAGE CONTENT WITHHELD]");
+			expect(msg).not.toContain("My Vault");
+		});
 	});
 });

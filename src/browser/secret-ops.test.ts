@@ -2,10 +2,18 @@
 // that keep it from escaping: the verdict is computed in the page (so the value
 // never makes the return trip), unknown shapes fail closed, and the scripts both
 // backends run are the same text.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+vi.mock("./bridge-client.js", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("./bridge-client.js")>();
+	return { ...actual, browserExec: vi.fn(), browserInput: vi.fn() };
+});
+
+import { browserExec, browserInput } from "./bridge-client.js";
 import {
 	asElementDescriptor,
 	asFillOutcome,
+	createInAppSecretOps,
 	describeElementScript,
 	fillSecretScript,
 	readValueScript,
@@ -101,6 +109,27 @@ describe("asElementDescriptor", () => {
 		for (const raw of [null, undefined, {}, "nope"]) {
 			expect(asElementDescriptor(raw).found).toBe(false);
 		}
+	});
+});
+
+describe("createInAppSecretOps", () => {
+	it("resolves the viewId at CALL time — a tab switch between ops retargets them", async () => {
+		vi.mocked(browserExec).mockResolvedValue("https://a.example/");
+		vi.mocked(browserInput).mockResolvedValue(undefined);
+		let active = "view-a";
+		const ops = createInAppSecretOps({ viewId: () => active, ensureView: async () => { /* mounted */ } });
+
+		await ops.currentOrigin();
+		expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe("view-a");
+
+		active = "view-b"; // the backend's active tab changed (switch_tab)
+		await ops.currentOrigin();
+		expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe("view-b");
+
+		// pressEnter: the focus exec AND all three key events hit the same live view.
+		await ops.pressEnter("#pw");
+		expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe("view-b");
+		for (const call of vi.mocked(browserInput).mock.calls) expect(call[0]).toBe("view-b");
 	});
 });
 

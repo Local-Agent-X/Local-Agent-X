@@ -183,7 +183,9 @@ export function createCdpSecretOps(getPage: () => Promise<Page>): SecretBrowserO
 // ── In-app backend ──
 
 export interface InAppSecretDeps {
-	viewId: string;
+	/** Resolved at CALL time: the backend's ACTIVE tab can change between ops
+	 *  (switch_tab), and a secret must always land in the tab the agent is on. */
+	viewId: () => string;
 	/** Mount the view if it isn't already — the backend's lazy create. */
 	ensureView: () => Promise<void>;
 }
@@ -191,7 +193,7 @@ export interface InAppSecretDeps {
 export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
 	const exec = async (script: string): Promise<unknown> => {
 		await deps.ensureView();
-		return browserExec(deps.viewId, script);
+		return browserExec(deps.viewId(), script);
 	};
 	return {
 		async currentOrigin() {
@@ -216,9 +218,12 @@ export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
 			// somewhere else.
 			await exec(`(function(){ var el = document.querySelector(${JSON.stringify(selector)}); if (el && el.focus) el.focus(); })()`);
 			await deps.ensureView();
-			await browserInput(deps.viewId, { type: "keyDown", keyCode: "Enter" });
-			await browserInput(deps.viewId, { type: "char", keyCode: "Enter" });
-			await browserInput(deps.viewId, { type: "keyUp", keyCode: "Enter" });
+			// One resolution for the whole key sequence — all three events must
+			// hit the SAME view even if the active tab changes mid-flight.
+			const viewId = deps.viewId();
+			await browserInput(viewId, { type: "keyDown", keyCode: "Enter" });
+			await browserInput(viewId, { type: "char", keyCode: "Enter" });
+			await browserInput(viewId, { type: "keyUp", keyCode: "Enter" });
 		},
 	};
 }

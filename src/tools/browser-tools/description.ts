@@ -16,7 +16,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are DURABLE — [5] stays [5] across snapshots as long as the element is still on the page. Subsequent snapshots emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
   "Actions:\n" +
   "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
-  "- new_tab: Open a URL in a NEW tab (keeps current tab open).\n" +
+  "- new_tab: Open a URL in an additional co-drivable tab (keeps current tab open).\n" +
   "- snapshot: Observation with durable refs. First call after navigate → full list (viewport-first). Later calls → diff since last observation. Use 'observe' for structured buckets.\n" +
   "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
   "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
@@ -28,8 +28,8 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
   "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers.\n" +
   "- scroll: Scroll the page. value='up'|'down'|'top'|'bottom' OR ref=N to scroll that element into view.\n" +
-  "- tabs: List all open tabs with URLs and titles.\n" +
-  "- switch_tab: Switch to a tab by index (set 'value' to tab number).\n" +
+  "- tabs: List all open tabs with URLs and titles — including the user's own browser tabs, marked [user tab].\n" +
+  "- switch_tab: Switch to a tab by index (set 'value' to tab number). Switching onto a [user tab] row TAKES CONTROL of the user's own tab — use it when the user says they're already logged in, or asks you to act on the page they have open.\n" +
   "- info: Get current page URL, title, and engine.\n" +
   "- downloads: List released, quarantined, rejected, and failed browser downloads for this session.\n" +
   "- release_download: Release a quarantined archive or macro-enabled document after user approval (set 'download_id').\n" +
@@ -39,7 +39,8 @@ export const BROWSER_TOOL_DESCRIPTION =
   "TIPS:\n" +
   "- After navigate, ALWAYS take a snapshot before interacting.\n" +
   "- Use click_text for popups/modals where you can see the button text.\n" +
-  "- When a login opens a new tab, use 'tabs' then 'switch_tab'.\n\n" +
+  "- When a login opens a new tab, use 'tabs' then 'switch_tab'.\n" +
+  "- When the user says they're logged in on a page, use 'tabs' to find their tab and 'switch_tab' to take it over instead of logging in again.\n\n" +
   "OBSTRUCTIONS (overlays, consent/cookie banners, modals): a snapshot may report " +
   "'OBSTRUCTION DETECTED' with no accept/dismiss button. Do NOT hand the task back to " +
   "the user over this — clear it yourself, in order:\n" +

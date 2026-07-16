@@ -11,7 +11,10 @@
  *
  * Scope:
  *   - navigation, observe/snapshot/fingerprint, page reads, screenshot,
- *     evaluate (guarded), tabs (single-view), lifecycle — implemented.
+ *     evaluate (guarded), lifecycle — implemented.
+ *   - tabs (chunk B): real multi-view tabs (in-app-tabs.ts) — new_tab opens
+ *     an additional view; `tabs` also lists the user's own views and
+ *     switch_tab onto one ADOPTS it (owned:false — driven, never closed).
  *   - click/fill/select (by SELECTOR): simple isolated-world DOM-eval versions.
  *   - clickByRef/fillByRef/clickByText/scroll (A2): the full resolution chain
  *     (role+name → visible text → XPath → coords, hit-tested) executed via real
@@ -25,8 +28,16 @@
  */
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { browserExec, browserLifecycle, browserNavigate } from "./bridge-client.js";
-import { profilePartition } from "./profile-store.js";
+import { browserExec, browserNavigate } from "./bridge-client.js";
+import {
+	closeOwnedTabs,
+	ensureTabView,
+	formatTabsListing,
+	refreshTabState,
+	switchMergedTab,
+	TabList,
+	type InAppTab,
+} from "./in-app-tabs.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { redirectMessage, safeHost } from "./redirect.js";
 import { scanEvaluateScript, sensitivePageStub } from "./guards.js";
@@ -37,14 +48,9 @@ import {
 	extractTextFrom,
 	listTabs as listTabsOp,
 	pageInfo,
-	resolveSwitchTab,
 	screenshotAsBase64,
 } from "./page-ops.js";
-import {
-	asObservePage,
-	BridgeObservePage,
-	type BridgePageState,
-} from "./in-app-observe.js";
+import type { BridgePageState } from "./in-app-observe.js";
 import {
 	clickRefInApp,
 	clickTextInApp,
@@ -61,10 +67,7 @@ import {
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
 import type { BrowserEngine } from "./launcher.js";
 import type { Page } from "playwright";
-import { createLogger } from "../logger.js";
 import { createInAppSecretOps, type SecretBrowserOps } from "./secret-ops.js";
-
-const logger = createLogger("browser.in-app");
 
 /** The engine label surfaced in getInfo/screenshot output. */
 const IN_APP_ENGINE = "electron";
@@ -129,18 +132,39 @@ export class InAppDownloadsUnavailableError extends Error {
 // ── Backend ─────────
 
 export class ElectronInAppBackend implements BrowserBackend {
-	private created = false;
-	private closed = false;
-	private readonly state: BridgePageState = { url: "", title: "" };
-	private readonly registry = new ObservationRegistry();
-	private readonly page: Page;
+	/** All per-view state lives in the tabs; the first tab keeps the legacy
+	 *  `view-<sessionId>-<profileId>` id so prior sessions' views get adopted
+	 *  by ensureView's "already exists" path. */
+	private readonly tabs: TabList;
 
 	constructor(
 		private readonly sessionId: string,
 		private readonly profileId: string,
-		private readonly viewId: string,
+		viewId: string,
 	) {
-		this.page = asObservePage(new BridgeObservePage(viewId, this.state, () => this.closed));
+		this.tabs = new TabList(viewId);
+	}
+
+	// ── Active-tab accessors (every action routes through the active tab) ──
+
+	private get activeTab(): InAppTab {
+		return this.tabs.active;
+	}
+
+	private get state(): BridgePageState {
+		return this.activeTab.state;
+	}
+
+	private get registry(): ObservationRegistry {
+		return this.activeTab.registry;
+	}
+
+	private get page(): Page {
+		return this.activeTab.page;
+	}
+
+	private get viewId(): string {
+		return this.activeTab.viewId;
 	}
 
 	// ── Identity / state ──
@@ -154,39 +178,17 @@ export class ElectronInAppBackend implements BrowserBackend {
 	}
 
 	isActive(): boolean {
-		return this.created && !this.closed;
+		return this.activeTab.created && !this.activeTab.closed;
 	}
 
-	// ── View lifecycle plumbing ──
+	// ── View lifecycle plumbing (per-tab implementations in in-app-tabs.ts) ──
 
-	/** Lazily create the view on the profile's partition. Adopts a view that
-	 *  already exists (a prior backend instance for the same (session, profile)
-	 *  created it) instead of failing. */
-	private async ensureView(): Promise<void> {
-		if (this.created && !this.closed) return;
-		try {
-			await browserLifecycle("create", this.viewId, {
-				partition: profilePartition(this.profileId),
-			});
-		} catch (e) {
-			if (!(e instanceof Error) || !e.message.includes("already exists")) throw e;
-		}
-		this.created = true;
-		this.closed = false;
+	private ensureView(tab: InAppTab = this.activeTab): Promise<void> {
+		return ensureTabView(tab, this.profileId);
 	}
 
-	/** Refresh cached url/title from the live view. Advisory: a failed ping
-	 *  keeps the last-known values rather than wedging the caller. */
-	private async refreshState(): Promise<void> {
-		try {
-			const { ping } = await browserLifecycle("ping", this.viewId);
-			if (ping?.ok) {
-				if (typeof ping.url === "string") this.state.url = ping.url;
-				if (typeof ping.title === "string") this.state.title = ping.title;
-			}
-		} catch (e) {
-			logger.warn(`[in-app] ping failed (viewId=${this.viewId}): ${(e as Error).message}`);
-		}
+	private refreshState(tab: InAppTab = this.activeTab): Promise<void> {
+		return refreshTabState(tab);
 	}
 
 	// ── Navigation / observation ──
@@ -207,19 +209,28 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return `Navigated to: ${result.url}\nStatus: unknown\nTitle: ${result.title}${redirect}`;
 	}
 
-	/** Single-document view: newTab navigates the same view (parallelism comes
-	 *  from per-(session, profile) views, not tabs). Same shape as CDP newTab. */
+	/** Open a REAL additional view (viewId `<first>-t<N>`, N monotonic) and make
+	 *  it the active tab. Same output shape as CDP newTab. When the backend has
+	 *  no live view yet, this just materializes the first tab — there is no
+	 *  "current tab" to keep open. */
 	async newTab(url: string): Promise<string> {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
-		await this.ensureView();
-		const result = await browserNavigate(this.viewId, url);
-		this.state.url = result.url;
-		this.state.title = result.title;
+		const minted = this.isActive();
+		const tab = minted ? this.tabs.openOwned() : this.activeTab;
+		try {
+			await this.ensureView(tab);
+		} catch (e) {
+			if (minted) this.tabs.remove(tab); // roll back the tab that never materialized
+			throw e;
+		}
+		const result = await browserNavigate(tab.viewId, url);
+		tab.state.url = result.url;
+		tab.state.title = result.title;
 		const sensitive = sensitivePageStub(result.url);
 		if (sensitive) return sensitive;
 		const redirect = redirectMessage(requestedHost, safeHost(result.url));
-		return `Opened new tab (1 tabs total)\nURL: ${result.url}\nStatus: unknown\nTitle: ${result.title}${redirect}`;
+		return `Opened new tab (${this.tabs.all().length} tabs total)\nURL: ${result.url}\nStatus: unknown\nTitle: ${result.title}${redirect}`;
 	}
 
 	async observe(): Promise<BrowserObservation> {
@@ -264,7 +275,9 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  purpose — a secret must never take the formatted, value-echoing paths in
 	 *  BrowserBackend (see secret-ops.ts). */
 	secretOps(): SecretBrowserOps {
-		return createInAppSecretOps({ viewId: this.viewId, ensureView: () => this.ensureView() });
+		// viewId resolves at CALL time — a switch_tab between secret ops must
+		// retarget the ops to the newly active tab.
+		return createInAppSecretOps({ viewId: () => this.viewId, ensureView: () => this.ensureView() });
 	}
 
 	/** The A2 resolution-chain + real-input driver context. Shares this
@@ -326,15 +339,23 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return pageInfo(this.page, IN_APP_ENGINE);
 	}
 
+	/** This backend's tabs plus the user's own (non-agent-driven) views, which
+	 *  are marked as takeover candidates. Indexes are as-of this listing —
+	 *  switchTab recomputes the same merge. */
 	async listTabs(): Promise<string> {
 		if (!this.isActive()) return listTabsOp([], null);
-		return listTabsOp([this.page], this.page);
+		return formatTabsListing(this.tabs, (tab) => this.refreshState(tab));
 	}
 
+	/** Switch over the same combined ordering listTabs prints. A user view is
+	 *  ADOPTED (owned:false — driven, never closed) and becomes active. */
 	async switchTab(index: number): Promise<string> {
-		const pages = this.isActive() ? [this.page] : [];
-		const result = await resolveSwitchTab(pages, index);
-		return result.message;
+		if (!this.isActive()) return listTabsOp([], null); // "No browser session active."
+		const result = await switchMergedTab(this.tabs, index);
+		if (!result.ok) return result.message;
+		await this.refreshState(result.tab);
+		const sensitive = sensitivePageStub(this.state.url);
+		return sensitive ?? `Switched to tab [${index}]: ${this.state.title} — ${this.state.url}`;
 	}
 
 	// ── Dialogs (need desktop-side interception — A2/follow-up) ──
@@ -371,19 +392,8 @@ export class ElectronInAppBackend implements BrowserBackend {
 
 	// ── Lifecycle ──
 
+	/** Closes owned views only; adopted user tabs are dropped, never closed. */
 	async close(): Promise<void> {
-		this.registry.reset();
-		this.state.url = "";
-		this.state.title = "";
-		if (!this.created || this.closed) return;
-		this.closed = true;
-		this.created = false;
-		try {
-			await browserLifecycle("close", this.viewId);
-		} catch (e) {
-			// The view may already be gone (desktop teardown) — closing twice
-			// must not fail the caller's cleanup path.
-			logger.warn(`[in-app] close failed (viewId=${this.viewId}): ${(e as Error).message}`);
-		}
+		await closeOwnedTabs(this.tabs);
 	}
 }

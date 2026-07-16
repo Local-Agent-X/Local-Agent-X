@@ -78,6 +78,8 @@ function routeExec(view: DesktopView, script: string): unknown {
 interface DesktopView { url: string; title: string; elements: RawElement[]; created: boolean }
 
 const pool = new Map<string, DesktopView>();
+/** Views the DESKTOP created for the human (agentDriven:false in listings). */
+const userViewIds = new Set<string>();
 const sent: Array<Record<string, unknown>> = [];
 const inputEvents: Array<{ type: string }> = [];
 let prevSend: typeof process.send;
@@ -101,6 +103,12 @@ function respond(msg: Record<string, unknown>): void {
 			} else if (op === "close") {
 				pool.delete(viewId);
 				emit({ type: "lax:browser-lifecycle-result", ok: true });
+			} else if (op === "list") {
+				const views = [...pool.entries()].map(([id, v]) => ({
+					viewId: id, partition: "persist:lax-profile-work", url: v.url, title: v.title,
+					attached: false, agentDriven: !userViewIds.has(id),
+				}));
+				emit({ type: "lax:browser-lifecycle-result", ok: true, views });
 			} else {
 				emit({ type: "lax:browser-lifecycle-result", ok: true });
 			}
@@ -160,6 +168,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		prevLaxDir = process.env.LAX_DATA_DIR;
 		process.env.LAX_DATA_DIR = laxDir;
 		pool.clear();
+		userViewIds.clear();
 		sent.length = 0;
 		inputEvents.length = 0;
 		backend = new ElectronInAppBackend("contract-sess", "work", VIEW_ID);
@@ -261,5 +270,34 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		expect(creates.length).toBe(1);
 		const opViewIds = new Set(sent.map((m) => m.viewId).filter(Boolean));
 		expect([...opViewIds]).toEqual([VIEW_ID]);
+	});
+
+	it("multi-tab (chunk B): new_tab opens a second live view; tabs lists the user's view; switch_tab takes it over; close spares it", async () => {
+		userViewIds.add("view-user-main");
+		pool.set("view-user-main", { url: "https://user.example/inbox", title: "User Inbox", elements: [], created: true });
+
+		await handleNavigate(backend, { url: PAGE_URL }, undefined);
+		const opened = await backend.newTab(PAGE_URL);
+		expect(opened).toContain("Opened new tab (2 tabs total)");
+		const creates = sent.filter((m) => m.type === "lax:browser-lifecycle" && m.op === "create");
+		expect(creates.map((m) => m.viewId)).toEqual([VIEW_ID, `${VIEW_ID}-t2`]);
+
+		const tabs = await backend.listTabs();
+		expect(tabs).toContain("3 tab(s) open:");
+		expect(tabs).toContain(`[1] ${PAGE_TITLE} — ${PAGE_URL} ← active`);
+		expect(tabs).toContain("[2] User Inbox — https://user.example/inbox [user tab — switch_tab(2) takes control]");
+
+		const switched = await backend.switchTab(2);
+		expect(switched).toBe("Switched to tab [2]: User Inbox — https://user.example/inbox");
+		// Ops now drive the USER's view over the real bridge.
+		const shot = await handleScreenshot(backend);
+		expect(shot.isError).toBeFalsy();
+		expect(sent.some((m) => m.type === "lax:browser-capture" && m.viewId === "view-user-main")).toBe(true);
+
+		// close(): the agent's owned views die; the user's view survives in the pool.
+		await backend.close();
+		expect(pool.has(VIEW_ID)).toBe(false);
+		expect(pool.has(`${VIEW_ID}-t2`)).toBe(false);
+		expect(pool.has("view-user-main")).toBe(true);
 	});
 });

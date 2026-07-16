@@ -10,6 +10,7 @@ import { evaluateShellCommandAndPaths, evaluateShellPaths } from "./shell-path-g
 import { evaluateWebFetch } from "./network-policy.js";
 import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../../tool-registry.js";
 import { uploadsDir } from "../../config.js";
+import { platformRoot } from "../../platform-root.js";
 import { mapUploadsRef } from "../../workspace/paths.js";
 
 // All tests build a SecurityLayer with an explicit fileAccessMode so the
@@ -763,12 +764,18 @@ describe("SecurityLayer kernel-class dispatch", () => {
   });
 });
 
-// The platform-source write guard protects <repoRoot>/src and
-// <repoRoot>/public (the LAX platform itself) while leaving user apps under
+// The platform-source write guard protects <platformRoot>/src and
+// <platformRoot>/public (the LAX platform itself) while leaving user apps under
 // workspace/ free to use a src/ convention (Astro, Vite, Next, …). Before the
 // anchor fix a bare "/src/" substring blocked every framework scaffold built
 // in the workspace.
-describe("platform-source write guard (anchored to repo root)", () => {
+//
+// The platform cases below MUST address the real install root. Naming it
+// `resolve(ws, "..")` is what let the guard rot: that only equals the platform
+// while the workspace sits inside it, so once the workspace relocated (the
+// shipped default) the assertion proved nothing and the guard stopped firing
+// on real platform files with the suite still green.
+describe("platform-source write guard (anchored to the install root)", () => {
   const ws = resolve(WORKSPACE);
 
   it("allows writing src/ inside a workspace app (Astro scaffold)", () => {
@@ -783,16 +790,19 @@ describe("platform-source write guard (anchored to repo root)", () => {
     expect(d.allowed).toBe(true);
   });
 
+  // allowedPathCheck true: asserts the guard outranks explicit session standing,
+  // and clears unrestricted mode's outside-home check, which would otherwise
+  // answer first here (test-env.ts relocates HOME to a throwaway dir).
   it("blocks writing the platform's own src/ even in unrestricted mode", () => {
-    const path = resolve(ws, "../src/server/routes.ts");
-    const d = evaluateFileAccess(ws, "unrestricted", () => false, "write", path);
+    const path = resolve(platformRoot(), "src/server/routes.ts");
+    const d = evaluateFileAccess(ws, "unrestricted", () => true, "write", path);
     expect(d.allowed).toBe(false);
     expect(d.reason).toMatch(/platform files/i);
   });
 
   it("blocks writing the platform's own public/ even in unrestricted mode", () => {
-    const path = resolve(ws, "../public/app.html");
-    const d = evaluateFileAccess(ws, "unrestricted", () => false, "write", path);
+    const path = resolve(platformRoot(), "public/app.html");
+    const d = evaluateFileAccess(ws, "unrestricted", () => true, "write", path);
     expect(d.allowed).toBe(false);
     expect(d.reason).toMatch(/platform files/i);
   });

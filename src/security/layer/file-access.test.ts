@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { evaluateFileAccess, confineToDir, matchesSensitivePath, pathIsWithin, realpathDeep } from "./file-access.js";
+import { platformRoot } from "../../platform-root.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 import { isSensitivePath } from "../../data-lineage/index.js";
 import { SecurityLayer } from "./layer-core.js";
@@ -159,14 +160,11 @@ describe("platform-source protection is anchored — user apps & foreign project
   // from the platform-root-anchored check, so LAX's own src/ stays locked while
   // a user app's src/ is free. Credentials (.env, .lax secrets) stay global.
   const userAppSrc = join(WORKSPACE, "userapp", "src");
-  const platformSrc = join(ROOT, "src"); // sibling of workspace = the platform tree
 
   beforeAll(() => {
     mkdirSync(userAppSrc, { recursive: true });
-    mkdirSync(platformSrc, { recursive: true });
     writeFileSync(join(userAppSrc, "auth.ts"), "export const x = 1;\n");
     writeFileSync(join(userAppSrc, "security.ts"), "export const y = 1;\n");
-    writeFileSync(join(platformSrc, "auth.ts"), "export const z = 1;\n");
   });
 
   it("ALLOWS editing a user app's src/auth.ts under workspace/ (was a false positive)", () => {
@@ -177,12 +175,6 @@ describe("platform-source protection is anchored — user apps & foreign project
   it("ALLOWS editing a user app's src/security.ts under workspace/", () => {
     const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", join(userAppSrc, "security.ts"));
     expect(d.allowed).toBe(true);
-  });
-
-  it("still BLOCKS the platform's OWN src/ file (anchored, outside workspace)", () => {
-    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", join(platformSrc, "auth.ts"));
-    expect(d.allowed).toBe(false);
-    expect(d.reason).toMatch(/platform files|src\/ or public/i);
   });
 
   it("still BLOCKS a .env write inside a user app (credential secret stays global)", () => {
@@ -460,5 +452,56 @@ describe("work-root .env carve-out", () => {
   it("does not widen to unconventional .env.* names that match key patterns", () => {
     const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env.key"), SESSION);
     expect(d.allowed).toBe(false);
+  });
+});
+
+// The guard's anchor, not its pattern. Every WORKSPACE here is the hermetic
+// temp root — i.e. a RELOCATED workspace, which is the shipped reality (the
+// packaged app puts it under ~/Documents; a dev box can junction it there).
+// Anchored to resolve(workspace, "..") the guard asked whether the platform
+// lived under the temp dir, got no, and allowed every write to the real src/
+// and public/ — in unrestricted mode nothing else stood behind it, and an agent
+// overwrote public/css/app.css (2026-07-15). No test caught it because they all
+// passed a workspace whose parent WAS the tree under test.
+describe("platform-source guard is anchored to the install root, not workspace/..", () => {
+  // REAL platform paths — the point is that the guard finds this tree wherever
+  // the workspace happens to live, so a synthetic stand-in would test nothing.
+  // Read-only: a test must never write a fixture into the repo it runs from.
+  const PLATFORM_CSS = join(platformRoot(), "public", "css", "app.css");
+  const PLATFORM_SRC = join(platformRoot(), "src", "index.ts");
+
+  // allowedPathCheck returns TRUE throughout: it grants the path explicit
+  // session standing (what a worktree/work-root grant does), which is both the
+  // stronger invariant — platform source is unwritable even WITH standing — and
+  // necessary to reach the guard at all, since test-env.ts points HOME at a
+  // throwaway dir and unrestricted mode's outside-home check would fire first.
+  it.each([
+    ["public/", PLATFORM_CSS],
+    ["src/", PLATFORM_SRC],
+  ])("blocks an edit to platform %s while the workspace lives elsewhere", (_label, target) => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", target);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/platform files/);
+  });
+
+  it("blocks the write action too, not just edit", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "write", PLATFORM_CSS);
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/platform files/);
+  });
+
+  it("still reads platform source — the guard is write-side only", () => {
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "read", PLATFORM_CSS);
+    expect(d.allowed).toBe(true);
+  });
+
+  // The !inWorkspace carve-out: user apps legitimately use a src/ convention
+  // (Astro, Vite, Next). Re-anchoring must not start blocking their writes.
+  it("does not block a user app's own src/ inside the relocated workspace", () => {
+    const appSrc = join(WORKSPACE, "apps", "my-app", "src", "main.ts");
+    mkdirSync(join(WORKSPACE, "apps", "my-app", "src"), { recursive: true });
+    writeFileSync(appSrc, "// user code\n");
+    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => true, "edit", appSrc);
+    expect(d.allowed).toBe(true);
   });
 });

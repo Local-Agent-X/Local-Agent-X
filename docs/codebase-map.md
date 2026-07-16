@@ -136,6 +136,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/ota-extract.ts` | S |
 | `src/ota-update.ts` | M |
 | `src/pid-probe.ts` | S |
+| `src/platform-root.ts` | S |
 | `src/plugin-system.ts` | M |
 | `src/probe-self-destruct.ts` | S |
 | `src/process-tree-kill.ts` | S |

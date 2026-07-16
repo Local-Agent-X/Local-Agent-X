@@ -7,6 +7,7 @@ import { classifySensitivePath } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { platformRoot } from "../../platform-root.js";
 
 // ── Containment predicate (the ONE lexical "is `target` inside `root`") ──
 //
@@ -356,15 +357,14 @@ export function evaluateFileAccess(
       };
     }
 
-    // Block writes to the LAX platform's own source. <repoRoot>/src and
-    // <repoRoot>/public ARE the platform — but the check is anchored to the
-    // repo root, NOT a bare "/src/" substring. User apps live under workspace/
-    // and legitimately use a src/ convention (Astro mandates src/pages/; Vite,
-    // Next, Vue, SvelteKit all use src/) — those must NOT be caught. workspace/
-    // is the user-app sandbox; everything else under the repo is platform.
-    const projectRoot = resolve(workspace, "..");
+    // Block writes to the LAX platform's own source. <platformRoot>/src and
+    // <platformRoot>/public ARE the platform — anchored to the install root
+    // (see platform-root.ts for why NOT workspace/..), not a bare "/src/"
+    // substring. User apps live under workspace/ and legitimately use a src/
+    // convention (Astro mandates src/pages/; Vite, Next, Vue, SvelteKit all use
+    // src/) — those must NOT be caught. Everything else under the root is ours.
     const inWorkspace = pathIsWithin(workspace, realPath);
-    const inPlatform = pathIsWithin(projectRoot, realPath);
+    const inPlatform = pathIsWithin(platformRoot(), realPath);
     const touchesSrcOrPublic = /[/\\](src|public)[/\\]/i.test(realPath);
     if (inPlatform && !inWorkspace && touchesSrcOrPublic) {
       return {

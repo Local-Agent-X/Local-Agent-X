@@ -352,6 +352,19 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
   } catch (e) {
     logger.warn(`[ws-chat] failed to set session project: ${(e as Error).message}`);
   }
+  // Stamp the IDE app's dir as the session work root, the same way and for the
+  // same reason as projectId above: the App IDE frame carries appId, and
+  // without it every tool default (relative paths, bash cwd, glob's search
+  // base) anchored to the project root — an IDE turn for one app globbed the
+  // whole repo and edited the platform's own CSS (2026-07-15). Cleared for
+  // frames with no appId, so a non-IDE chat never inherits an anchor.
+  try {
+    const { stampIdeWorkRoot } = await import("../session/ide-work-root.js");
+    const anchored = stampIdeWorkRoot(sessionId, msg.appId);
+    if (anchored) logger.info(`[ws-chat] sess=${sessionId} anchored to ${anchored}`);
+  } catch (e) {
+    logger.warn(`[ws-chat] failed to set IDE work root: ${(e as Error).message}`);
+  }
   ctx.subscriptions.add(sessionId);
   if (handler) handler(sessionId, _msgText, _atts);
 }

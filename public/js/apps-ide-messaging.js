@@ -108,6 +108,13 @@ function ideSendToAgent(message, attachments) {
   if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify({
       type: 'chat', sessionId: _ideSessionId,
+      // appId is the load-bearing half of "Work in workspace/apps/<id>/". That
+      // sentence in ideContextPrefix() is only a request; this field is what
+      // actually anchors the turn's tool defaults to the app dir server-side
+      // (chat-ws/message-router → session/ide-work-root). Without it the agent
+      // globbed the repo root and edited LAX's own CSS. Keep both: the prose
+      // tells the model where it is, the field makes it true.
+      appId: _ideAppId,
       message: message, attachments: attachments || []
     }));
   }

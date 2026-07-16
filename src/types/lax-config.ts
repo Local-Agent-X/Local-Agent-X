@@ -7,7 +7,7 @@ import type { SandboxMode } from "../sandbox/types.js";
 // ── Deployment Profile Types ──
 
 export type DeploymentProfile = "home" | "dev" | "enterprise";
-export type BrowserMode = "isolated" | "continuity" | "advanced-shared";
+export type BrowserMode = "isolated" | "continuity" | "advanced-shared" | "in-app";
 
 export interface ProfileDefaults {
   sandboxMode: SandboxMode;
@@ -64,7 +64,9 @@ export interface LAXConfig {
   sdServerUrl: string;
   videoServerUrl: string;
 
-  /** Browser identity posture. Isolated is ephemeral per session; continuity
+  /** Browser identity posture. In-app (default) is the embedded co-drivable
+   *  WebContentsView browser, falling back to isolated CDP semantics when there
+   *  is no desktop window/bridge. Isolated is ephemeral per session; continuity
    *  persists one dedicated agent identity with single-session ownership;
    *  advanced-shared explicitly shares one live context across sessions. */
   browserMode: BrowserMode;

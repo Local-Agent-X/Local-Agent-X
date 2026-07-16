@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import { BrowserManager } from "./manager.js";
 import type { BrowserBackend } from "./backend.js";
+import type { BrowserMode } from "../types.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { browserAbort } from "./bridge-client.js";
 import { resolveSessionBrowserProfileId } from "./session-owner-registry.js";
@@ -34,14 +35,13 @@ export class CdpOnlyOperationError extends Error {
 }
 
 /**
- * Does this browserMode select the in-app backend? Typed on `string` rather
- * than BrowserMode because the "in-app" enum value does not exist yet — chunk
- * F2 adds it to BrowserMode (src/types/lax-config.ts). Until then no config
- * can produce it, so this predicate is inert in production; keeping it a
- * string comparison lets tsc pass today without casts and makes F2 a pure
- * enum extension (this helper needs no change).
+ * Does this browserMode select the in-app backend? The "in-app" enum value is
+ * now the default (chunk F2 added it to BrowserMode + made it the fresh-config
+ * default), so this predicate is live in production: a windowed desktop run
+ * routes to the embedded WebContentsView, and everything else falls back to
+ * CDP (see resolveBrowserBackendKind).
  */
-function wantsInAppBackend(mode: string): boolean {
+function wantsInAppBackend(mode: BrowserMode): boolean {
 	return mode === "in-app";
 }
 

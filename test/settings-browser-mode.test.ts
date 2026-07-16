@@ -9,6 +9,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 beforeEach(() => {
   document.body.innerHTML = `
     <select id="cfg-browser-mode">
+      <option value="in-app">In-app</option>
       <option value="isolated">Isolated</option>
       <option value="continuity">Continuity</option>
       <option value="advanced-shared">Shared</option>
@@ -20,6 +21,20 @@ beforeEach(() => {
 });
 
 describe("browser identity mode Security UI", () => {
+  it("describes in-app mode as the embedded co-drivable browser", () => {
+    window.renderBrowserMode("in-app");
+    expect(document.getElementById("browser-mode-status")?.textContent).toContain("embedded in-app browser");
+    expect(document.getElementById("browser-mode-warning")?.style.display).toBe("none");
+  });
+
+  it("falls back to in-app status for an unknown mode", () => {
+    window.renderBrowserMode("bogus-mode");
+    expect(document.getElementById("cfg-browser-mode") as HTMLSelectElement | null)
+      .toBeTruthy();
+    expect((document.getElementById("cfg-browser-mode") as HTMLSelectElement).value).toBe("in-app");
+    expect(document.getElementById("browser-mode-status")?.textContent).toContain("embedded in-app browser");
+  });
+
   it("describes isolated mode as ephemeral per session", () => {
     window.renderBrowserMode("isolated");
     expect(document.getElementById("browser-mode-status")?.textContent).toContain("separate ephemeral identity");

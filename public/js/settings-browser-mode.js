@@ -1,11 +1,12 @@
 const BROWSER_MODE_STATUS = {
+  'in-app': 'Active: the agent drives the embedded in-app browser you can watch and co-drive. Falls back to an isolated browser when no app window is available.',
   isolated: 'Active: each session gets a separate ephemeral identity. Sign-ins are discarded when that session closes.',
   continuity: 'Active: sign-ins persist in one dedicated agent identity. Only one session owns its live context at a time.',
   'advanced-shared': 'Active: all sessions share the same live browser context.',
 };
 
 function renderBrowserMode(mode) {
-  const canonical = BROWSER_MODE_STATUS[mode] ? mode : 'continuity';
+  const canonical = BROWSER_MODE_STATUS[mode] ? mode : 'in-app';
   const select = document.getElementById('cfg-browser-mode');
   const status = document.getElementById('browser-mode-status');
   const warning = document.getElementById('browser-mode-warning');
@@ -22,7 +23,7 @@ async function loadBrowserMode() {
     const response = await apiFetch('/api/settings');
     if (!response.ok) return;
     const settings = await response.json();
-    renderBrowserMode(settings.browserMode || 'continuity');
+    renderBrowserMode(settings.browserMode || 'in-app');
   } catch (error) {
     console.warn('[browser-mode] load failed', error);
   }
@@ -30,7 +31,7 @@ async function loadBrowserMode() {
 
 async function setBrowserMode(mode) {
   const select = document.getElementById('cfg-browser-mode');
-  const previous = select?.dataset.current || 'continuity';
+  const previous = select?.dataset.current || 'in-app';
   try {
     const response = await apiFetch('/api/settings', {
       method: 'POST',

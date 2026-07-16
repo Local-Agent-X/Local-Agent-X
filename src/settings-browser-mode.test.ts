@@ -7,7 +7,7 @@ describe("browserMode settings contract", () => {
     const field = publicSchema().find((entry) => entry.field === "browserMode");
     expect(field).toMatchObject({
       type: "enum",
-      values: ["isolated", "continuity", "advanced-shared"],
+      values: ["isolated", "continuity", "advanced-shared", "in-app"],
       runtime: true,
     });
     expect(RUNTIME_SETTINGS.some((entry) => entry.field === "browserMode")).toBe(true);
@@ -18,6 +18,6 @@ describe("browserMode settings contract", () => {
 
   it("is discoverable with enum values through the setting tool", async () => {
     const result = await settingTool.execute({ field: "?", value: null });
-    expect(result.content).toContain("browserMode (isolated|continuity|advanced-shared)");
+    expect(result.content).toContain("browserMode (isolated|continuity|advanced-shared|in-app)");
   });
 });

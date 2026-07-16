@@ -90,11 +90,14 @@ export const configSchema = z.object({
 
   // Explicit browser identity posture. The agent always uses a dedicated
   // profile and never touches the user's normal browser profile. Default is
-  // continuity: an everyday personal agent should stay logged into the sites
-  // the user has it operate (email, dashboards, suppliers) across sessions.
-  // Isolated (fresh disposable context) is a per-task opt-in for untrusted or
+  // in-app: the embedded, co-drivable WebContentsView browser (Waves 0-3).
+  // When the run has no desktop window/bridge (headless, CI, soak), in-app
+  // falls back to the CDP BrowserManager with isolated (ephemeral-per-session)
+  // semantics — see runtime.acquireSessionContext.
+  // Continuity persists one dedicated agent identity across sessions; isolated
+  // (fresh disposable context) is a per-task opt-in for untrusted or
   // privacy-sensitive work; advanced-shared is the explicit high-risk mode.
-  browserMode: z.enum(["isolated", "continuity", "advanced-shared"]).default("continuity"),
+  browserMode: z.enum(["isolated", "continuity", "advanced-shared", "in-app"]).default("in-app"),
 
   // Limits & timeouts
   browserCdpPort: z.number().int().min(1).max(65535).default(9800),

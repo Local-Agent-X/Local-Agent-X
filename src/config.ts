@@ -160,16 +160,20 @@ export function loadConfig(): LAXConfig {
     applyDiskMutation(updates);
   }
 
-  // Replace the ambiguous legacy boolean with one canonical mode. Only a false
-  // saved after the earlier migration represents an explicit shared choice and
-  // is preserved as advanced-shared; everyone else (unmarked legacy false, or
-  // no setting at all) adopts the current default so an everyday agent keeps
-  // its logins across sessions.
+  // Backfill the canonical mode only when NONE is saved. An explicit
+  // browserMode already on disk is honored verbatim (this block never runs for
+  // it), so a user who deliberately picked isolated/continuity/advanced-shared
+  // is never silently flipped to the new in-app default. For a config with no
+  // browserMode: a false saved after the earlier per-session migration is a
+  // genuine past shared choice and is preserved as advanced-shared; everyone
+  // else (fresh install, or an unmarked legacy false) adopts the current
+  // default — in-app, the embedded co-drivable browser (which falls back to
+  // isolated CDP semantics when there is no desktop window/bridge).
   if (diskRaw.browserMode === undefined) {
     config.browserMode = diskRaw.browserPerSessionContext === false
       && diskRaw.browserPerSessionContextMigrated === true
       ? "advanced-shared"
-      : "continuity";
+      : "in-app";
     applyDiskMutation({ browserMode: config.browserMode });
   }
   if ("browserPerSessionContext" in diskRaw || "browserPerSessionContextMigrated" in diskRaw) {

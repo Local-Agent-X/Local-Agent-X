@@ -219,7 +219,10 @@ describe.skipIf(!browserAvailable()).sequential("whole-system browser identity i
 
   it("isolates simultaneous sessions through the first-launch allocation race", async () => {
     setRuntimeConfig(configSchema.parse(runtimeConfigInput));
-    expect(configSchema.parse({}).browserMode).toBe("isolated");
+    // The default is in-app; on this CDP path (getCdpBrowserManager) in-app is
+    // interpreted as isolated (ephemeral-per-session), which is exactly the
+    // isolation this test asserts below.
+    expect(configSchema.parse({}).browserMode).toBe("in-app");
     const alice = getCdpBrowserManager("alice");
     const bob = getCdpBrowserManager("bob");
 

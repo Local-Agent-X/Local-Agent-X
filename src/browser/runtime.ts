@@ -204,7 +204,13 @@ export async function acquireSessionContext(
   userDataDir?: string,
 ): Promise<BrowserContext> {
   const b = await getSharedBrowser(engine, userDataDir);
-  if (mode === "isolated") {
+  // "in-app" reaching the CDP runtime means a session that WANTED the embedded
+  // WebContentsView backend fell back to CDP (headless/CI/no desktop bridge —
+  // see instance.resolveBrowserBackendKind). The safest CDP interpretation is
+  // isolated: an ephemeral per-session context, never the shared cookie jar.
+  // Mapping it here (rather than letting it fall through) keeps the 4th enum
+  // value off the advanced-shared else-branch below.
+  if (mode === "isolated" || mode === "in-app") {
     return engine === "chromium"
       ? createQuarantinedChromiumContext(b, CONTEXT_OPTS(engine))
       : b.newContext(CONTEXT_OPTS(engine));
@@ -264,6 +270,9 @@ export async function releaseSessionContext(
     await operation;
     return;
   }
+  // isolated and the "in-app" CDP fallback both own an ephemeral per-session
+  // context, so the release is a plain close (symmetric with acquire's
+  // isolated/in-app branch above).
   await context.close();
 }
 

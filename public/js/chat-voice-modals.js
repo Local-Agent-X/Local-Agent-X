@@ -31,6 +31,17 @@ function quickSwitchVoice(voice) {
     return;
   }
   localStorage.setItem('lax_voice', voice);
+  // Persist server-side too: settings.ttsVoice is the voice EVERY transport
+  // defaults to (mobile app over the broker never sends voice_settings, so
+  // without this it speaks the sidecar default instead of the picked clone).
+  // localStorage only reaches sessions this browser opens.
+  try {
+    apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttsVoice: voice }),
+    }).catch(() => {});
+  } catch {}
   // Browser-tier TTS uses speechSynthesis directly (no WS). The resolver in
   // _browserResolveVoice reads lax_browser_voice. The settings-page picker
   // writes that key; this chat-bar quick-pick is a parallel path so we need

@@ -51,6 +51,12 @@ export interface ResolvedVoiceSettings {
   /** alloy / echo / fable / onyx / nova / shimmer (only when mode=realtime). */
   realtimeVoice?: string;
   realtimeModel?: string;
+  /** The user's chosen speaking voice for the python-engine path (Kokoro id
+   *  or a vx:/cb: clone ref). Server-side default for EVERY transport —
+   *  browser sessions may still override live via voice_settings, but a
+   *  client that never sends one (the mobile app over the broker) gets the
+   *  same voice the user picked on desktop instead of the sidecar default. */
+  ttsVoice?: string;
 }
 
 export function resolveVoiceSettings(): ResolvedVoiceSettings {
@@ -65,6 +71,7 @@ export function resolveVoiceSettings(): ResolvedVoiceSettings {
     const saved = loadSettings() as {
       voiceEngine?: string;
       voiceMode?: string;
+      ttsVoice?: string;
       voiceTier4Device?: string;
       voiceTier4Dtype?: string;
       voiceTier4Voice?: string;
@@ -115,6 +122,8 @@ export function resolveVoiceSettings(): ResolvedVoiceSettings {
     if (rv) out.realtimeVoice = rv;
     const rm = saved.voiceRealtimeModel?.trim();
     if (rm) out.realtimeModel = rm;
+    const tts = typeof saved.ttsVoice === "string" ? saved.ttsVoice.trim() : "";
+    if (tts) out.ttsVoice = tts;
   } catch { /* settings file unreadable — fall through to env */ }
   if (savedEngine) {
     out.engine = savedEngine;

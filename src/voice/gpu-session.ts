@@ -13,6 +13,7 @@ import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
 import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./voice-session/turn-runner.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "./proactive-registry.js";
+import { resolveVoiceSettings } from "./voice-session/settings.js";
 import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
@@ -33,10 +34,21 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   let nextSentenceId = 1;
   const pendingFrames: Int16Array[] = [];
 
-  // Per-session voice settings, controlled live by the browser via the
-  // voice_settings WS message. Undefined = use sidecar's env defaults.
+  // Per-session voice settings. Initialized from the SERVER-side persisted
+  // choice (settings.json ttsVoice) so transports that never send a
+  // voice_settings message — the mobile app over the broker — still speak
+  // the user's picked voice (e.g. a vx: clone) instead of the sidecar
+  // default. Browser sessions override live via the voice_settings WS
+  // message as before. Undefined = sidecar env default.
   let voiceOverride: string | undefined;
   let speedOverride: number | undefined;
+  try {
+    const persisted = resolveVoiceSettings().ttsVoice;
+    if (persisted) {
+      voiceOverride = persisted;
+      logger.info(`[gpu-session] ${ctx.sessionId}: initial voice from settings → ${persisted}`);
+    }
+  } catch { /* unreadable settings — sidecar default */ }
 
   // GPU speaker: clause-split long sentences + early-flush the first clause so
   // time-to-first-audio stays low on the sidecar's RTF~1 hardware. Each chunk

@@ -3,14 +3,57 @@
 // driving the launcher into an infinite crash loop. The image-name check
 // in isOurServerProcess is what catches that.
 
-import { describe, it, expect } from "vitest";
-import { spawn } from "node:child_process";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const processImageMocks = vi.hoisted(() => ({
+  execSync: vi.fn(),
+  readFileSync: vi.fn(),
+  readlinkSync: vi.fn(),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
+  execSync: processImageMocks.execSync,
+}));
+
+vi.mock("node:fs", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:fs")>(),
+  readFileSync: processImageMocks.readFileSync,
+  readlinkSync: processImageMocks.readlinkSync,
+}));
+
 import { isPidAlive, isOurServerProcess } from "./pid-probe.js";
 
 // A PID we're confident is not assigned. Real PIDs on Windows fit in
 // 32-bit but the OS won't allocate values this high in practice; on Linux
 // the default pid_max is 32768.
 const UNASSIGNED_PID = 999_999_999;
+
+function mockProcessImage(image: string | null): void {
+  if (process.platform === "win32") {
+    const output = image
+      ? `"${image}","${process.pid}","Console","1","10,000 K"\r\n`
+      : "INFO: No tasks are running which match the specified criteria.\r\n";
+    processImageMocks.execSync.mockReturnValue(Buffer.from(output));
+    return;
+  }
+  if (process.platform === "linux") {
+    if (image) {
+      processImageMocks.readlinkSync.mockReturnValue(`/usr/bin/${image}`);
+    } else {
+      processImageMocks.readlinkSync.mockImplementation(() => { throw new Error("denied"); });
+      processImageMocks.readFileSync.mockReturnValue("");
+    }
+    return;
+  }
+  processImageMocks.execSync.mockReturnValue(
+    Buffer.from(image ? `/usr/local/bin/${image}\n` : ""),
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("isPidAlive", () => {
   it("returns true for the test process's own PID", () => {
@@ -30,32 +73,26 @@ describe("isPidAlive", () => {
 });
 
 describe("isOurServerProcess", () => {
-  it("returns true for a real (untitled) node process", async () => {
-    // Can't probe our own PID: vitest rewrites this worker's process.title and
-    // macOS `ps -o comm=` surfaces that title instead of "node". Spawn a plain
-    // node child (no title rewrite) and probe it — that's the contract that
-    // matters: a genuine node process reads as ours.
-    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
-    try {
-      const pid = child.pid!;
-      // ps may not see the exec'd image for a few ms after spawn; poll briefly.
-      let ok = false;
-      for (let i = 0; i < 40 && !ok; i++) {
-        if (isOurServerProcess(pid)) ok = true;
-        else await new Promise((r) => setTimeout(r, 25));
-      }
-      expect(ok).toBe(true);
-    } finally {
-      child.kill();
-    }
+  it.each(["node", "NODE.EXE"])("returns true for a live %s process", (image) => {
+    mockProcessImage(image);
+
+    expect(isOurServerProcess(process.pid)).toBe(true);
+  });
+
+  it("returns false when a live PID belongs to an unrelated process", () => {
+    mockProcessImage(process.platform === "win32" ? "chrome.exe" : "chrome");
+
+    expect(isPidAlive(process.pid)).toBe(true);
+    expect(isOurServerProcess(process.pid)).toBe(false);
+  });
+
+  it("returns false when a live process image cannot be inspected", () => {
+    mockProcessImage(null);
+
+    expect(isOurServerProcess(process.pid)).toBe(false);
   });
 
   it("returns false for an unassigned PID", () => {
     expect(isOurServerProcess(UNASSIGNED_PID)).toBe(false);
   });
-
-  // The recycled-PID case (alive, but the image isn't node) is what
-  // motivated this fix. We can't synthesize one portably — we'd need a
-  // long-lived non-node process at a known PID. The probe is exercised
-  // end-to-end at boot whenever a pidfile exists.
 });

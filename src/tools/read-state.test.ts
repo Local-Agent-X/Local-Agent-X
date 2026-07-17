@@ -2,8 +2,8 @@
 // fresh, and stale files per session — the logic the run-sandboxed guard uses
 // to decide whether an edit may proceed or must re-read first.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, utimesSync } from "node:fs";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync, utimesSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CAN_CREATE_WINDOWS_JUNCTION } from "../symlink-capabilities.test-helper.js";
@@ -18,8 +18,23 @@ import {
   _entryForTest,
 } from "./read-state.js";
 
+const statFault = vi.hoisted(() => ({ path: "" }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    statSync: (path: Parameters<typeof actual.statSync>[0]) => {
+      if (String(path) === statFault.path) {
+        throw Object.assign(new Error("synthetic stat failure"), { code: "EACCES" });
+      }
+      return actual.statSync(path);
+    },
+  };
+});
+
 const dirs = new Set<string>();
 afterEach(() => {
+  statFault.path = "";
   for (const d of dirs) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } }
   dirs.clear();
 });
@@ -285,19 +300,11 @@ describe("external-change sweep", () => {
     expect(checkFreshness(s, file)).toBe("unseen");
   });
 
-  it("never evicts on a non-ENOENT stat error (ENOTDIR shadow), no matter how many sweeps", () => {
+  it("never evicts on a non-ENOENT stat error, no matter how many sweeps", () => {
     const s = sess();
-    const dir = mkdtempSync(join(tmpdir(), "lax-rs-shadow-"));
-    dirs.add(dir);
-    const sub = join(dir, "sub");
-    mkdirSync(sub);
-    const file = join(sub, "f.txt");
-    writeFileSync(file, "v1\n", "utf-8");
+    const file = tmpFile("stat-error.txt", "v1\n");
     recordFileSeen(s, file);
-    // Replace the parent DIRECTORY with a plain file: stat(file) → ENOTDIR,
-    // a transient-shaped fault that must never evict the entry.
-    rmSync(sub, { recursive: true, force: true });
-    writeFileSync(sub, "not a dir\n", "utf-8");
+    statFault.path = realpathSync(file);
     for (let i = 0; i < 5; i++) expect(sweepExternalChanges(s)).toEqual([]);
     expect(_entryForTest(s, file)).toBeDefined();
   });

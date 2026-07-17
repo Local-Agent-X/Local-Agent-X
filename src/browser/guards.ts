@@ -6,6 +6,7 @@
 import type { BrowserContext } from "playwright";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
+import { isTopLevelDocument, fulfillWithAgentCsp } from "./csp-inject.js";
 
 /** Schemes that must never be reached via a top-level document navigation —
  *  click-induced, redirect, or JS. Sub-resources (a page's own data: image,
@@ -27,7 +28,15 @@ const guardInstallations = new WeakMap<BrowserContext, Promise<void>>();
  * URL of navigate/new_tab (R4-01 click-to-internal, R4-02 redirect).
  *
  * Playwright fires the route handler for the original request AND for each
- * redirected request, so per-hop coverage is automatic once installed.
+ * redirected request, so per-hop coverage is automatic for the continue()
+ * path (sub-resources and non-document navigations). NOTE the exception for
+ * the top-level document: it takes the route.fetch()+fulfill() path, and
+ * route.fetch() follows HTTP redirects INTERNALLY — so the guard's per-hop
+ * diagnostic evaluateEgressForUrl() is NOT re-run on a document's intermediate
+ * redirect hops. This stays SSRF-safe because the context launches behind the
+ * mandatory pinned egress proxy, which validates DNS and pins the socket for
+ * every hop regardless; only the extra diagnostic layer is skipped for the
+ * document redirect chain, not the enforcement.
  *
  * The guard is scoped to the agent's own context (the manager only ever calls
  * this on contexts it acquires from the dedicated agent Chrome — never the
@@ -79,6 +88,13 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
       const decision = evaluateEgressForUrl(url, selfPort);
       if (!decision.allowed) {
         await route.abort("blockedbyclient");
+        return;
+      }
+      // Only the top-level document response carries an enforceable document
+      // CSP, so only that one request pays the fetch+fulfill round-trip; every
+      // sub-resource keeps the cheap continue() path untouched.
+      if (isTopLevelDocument(request)) {
+        await fulfillWithAgentCsp(route, url);
         return;
       }
       await route.continue();

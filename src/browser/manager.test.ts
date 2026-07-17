@@ -270,17 +270,29 @@ describe("BrowserManager.navigate — single observation per navigation", () => 
 interface FakeRoute {
   abort: ReturnType<typeof vi.fn>;
   continue: ReturnType<typeof vi.fn>;
+  fetch: ReturnType<typeof vi.fn>;
+  fulfill: ReturnType<typeof vi.fn>;
 }
 
 function fakeRoute(): FakeRoute {
-  return { abort: vi.fn().mockResolvedValue(undefined), continue: vi.fn().mockResolvedValue(undefined) };
+  return {
+    abort: vi.fn().mockResolvedValue(undefined),
+    continue: vi.fn().mockResolvedValue(undefined),
+    fetch: vi.fn().mockResolvedValue({ headers: () => ({}) }),
+    fulfill: vi.fn().mockResolvedValue(undefined),
+  };
 }
 
-function fakeRequest(url: string, opts: { resourceType?: string; navigation?: boolean } = {}) {
+function fakeRequest(url: string, opts: { resourceType?: string; navigation?: boolean; parentFrame?: unknown } = {}) {
+  // Model Playwright's Request.frame(): a main-frame request has no parent frame
+  // (parentFrame() === null); an iframe request has one. The top-level-document
+  // predicate now reads this to avoid stamping frame-ancestors on embedded frames.
+  const parentFrame = opts.parentFrame ?? null;
   return {
     url: () => url,
     resourceType: () => opts.resourceType ?? "document",
     isNavigationRequest: () => opts.navigation ?? true,
+    frame: () => ({ parentFrame: () => parentFrame }),
   };
 }
 
@@ -352,13 +364,15 @@ describe("installRequestGuard — context-level SSRF/scheme guard", () => {
     expect(route.abort).not.toHaveBeenCalled();
   });
 
-  it("continues a navigation to a public host (literal public IP, no DNS)", async () => {
+  it("allows a navigation to a public host — fulfilled with CSP, never aborted (literal public IP, no DNS)", async () => {
     // Literal public IP is validated synchronously by the canonical gate, so
-    // this stays deterministic offline (no live DNS for a hostname).
+    // this stays deterministic offline (no live DNS for a hostname). A public
+    // top-level document takes the fetch+fulfill CSP-injection path rather than
+    // continue(); the point of this case is that it is ALLOWED (not aborted).
     const handler = await captureGuard();
     const route = fakeRoute();
     await handler(route, fakeRequest("http://93.184.216.34/"));
-    expect(route.continue).toHaveBeenCalled();
+    expect(route.fulfill).toHaveBeenCalled();
     expect(route.abort).not.toHaveBeenCalled();
   });
 });

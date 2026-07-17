@@ -16,9 +16,11 @@
 //     showing the tab attaches the current view and the next views-changed
 //     poke reconciles.)
 //
-// No ✕ close affordance: the desktop preload exposes no renderer-side close
-// channel for views (server-side closes of user views are refused; agent
-// views are the agent's) — parked until a close channel exists.
+// Close affordance: a ✕ rides each USER pill (agentDriven === false) and calls
+// opts.onClose(viewId). It mirrors the server bridge's close guard — the bridge
+// closes only agent views (its own), so the renderer closes only user views.
+// Agent 🤖 pills get NO ✕: closing one out from under a running agent would
+// break its browsing with no recovery, so those stay agent-managed.
 (function () {
 	function hostOf(url) {
 		if (!url) return '';
@@ -43,7 +45,7 @@
 		return null;
 	}
 
-	// opts: { slot, selectedViewId, onSelect(viewId), onNewTab() }
+	// opts: { slot, selectedViewId, onSelect(viewId), onNewTab(), onClose(viewId) }
 	function render(views, opts) {
 		var slot = opts && opts.slot;
 		if (!slot) return;
@@ -56,13 +58,31 @@
 				var pill = document.createElement('button');
 				pill.className = 'artifact-filter' +
 					(v.viewId === opts.selectedViewId ? ' active' : '');
-				pill.textContent = stripLabel(v);
 				pill.title = v.viewId + (v.url ? ('\n' + v.url) : '') +
 					(v.agentDriven ? '\n(agent-driven)' : '');
 				pill.setAttribute('data-view-id', v.viewId);
+				var name = document.createElement('span');
+				name.textContent = stripLabel(v);
+				pill.appendChild(name);
 				pill.addEventListener('click', function () {
 					if (opts.onSelect) opts.onSelect(v.viewId);
 				});
+				// Only user views are closable (agent 🤖 views are agent-managed).
+				if (!v.agentDriven && opts.onClose) {
+					var x = document.createElement('span');
+					x.className = 'browser-tab-close';
+					x.textContent = '✕';
+					x.setAttribute('data-close-view-id', v.viewId);
+					x.title = 'Close tab';
+					x.style.marginLeft = '6px';
+					x.style.opacity = '0.6';
+					x.addEventListener('click', function (e) {
+						// Don't let the close bubble into pill select.
+						e.stopPropagation();
+						opts.onClose(v.viewId);
+					});
+					pill.appendChild(x);
+				}
 				slot.appendChild(pill);
 			})(views[i]);
 		}

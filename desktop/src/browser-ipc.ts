@@ -22,6 +22,7 @@ import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContents, typ
 
 import { getMainWindow } from "./window";
 import {
+	closeBrowserView,
 	createBrowserView,
 	getAttachedViewId,
 	getBrowserView,
@@ -31,23 +32,17 @@ import {
 	setPoolChangedListener,
 	showBrowserView,
 } from "./browser-views";
+import {
+	type BrowserNavState,
+	emptyNavState,
+	pushNavState,
+	readNavState,
+	wireNavPushes,
+} from "./browser-ipc-navstate";
 
 const FOREGROUND_ID = "foreground";
 const FOREGROUND_PARTITION = "persist:lax-profile-default";
 const PARTITION_PREFIX = "persist:lax-profile-";
-
-interface BrowserNavState {
-	viewId: string;
-	url: string;
-	title: string;
-	canGoBack: boolean;
-	canGoForward: boolean;
-	loading: boolean;
-	/** Last MAIN-frame load failure, or null. Without this the renderer's pane
-	 *  sits silently white on e.g. ERR_CONNECTION_REFUSED — the view renders a
-	 *  blank error document and nothing tells the user the server is down. */
-	loadError: { code: number; description: string; url: string } | null;
-}
 
 interface BrowserViewListEntry {
 	viewId: string;
@@ -58,10 +53,6 @@ interface BrowserViewListEntry {
 	agentDriven: boolean;
 }
 
-function emptyNavState(viewId: string): BrowserNavState {
-	return { viewId, url: "", title: "", canGoBack: false, canGoForward: false, loading: false, loadError: null };
-}
-
 // The view the renderer's anchor currently drives (bounds/visibility/nav). The
 // renderer flips this with browser-switch-view; it defaults to the foreground
 // view the tab lazily creates for the user.
@@ -70,12 +61,6 @@ let currentViewId = FOREGROUND_ID;
 // to a view when the user switches to it so an agent-created view (default pool
 // bounds) snaps to the panel geometry instead of its 800×600 origin box.
 let lastBoundsDip: Rectangle | null = null;
-// Nav-state pushes are wired once per webContents (survives viewId reuse: a
-// closed+recreated view gets a fresh webContents and re-wires).
-const navWired = new WeakSet<WebContents>();
-// Last main-frame load failure per webContents; cleared the moment the next
-// load starts so a retry/navigation drops the error UI immediately.
-const loadErrors = new WeakMap<WebContents, { code: number; description: string; url: string }>();
 // Monotonic id source for renderer-minted "new tab" views (user-1, user-2, …).
 let userTabSeq = 0;
 // Microtask-level debounce for the no-payload pool-change poke: a burst of
@@ -110,49 +95,6 @@ export function isTrustedBrowserSender(sender: WebContents): boolean {
 /** `persist:lax-profile-work` → `work`; anything else → undefined. */
 function profileIdFromPartition(partition: string): string | undefined {
 	return partition.startsWith(PARTITION_PREFIX) ? partition.slice(PARTITION_PREFIX.length) : undefined;
-}
-
-function readNavState(viewId: string, wc: WebContents): BrowserNavState {
-	if (wc.isDestroyed()) return emptyNavState(viewId);
-	return {
-		viewId,
-		url: wc.getURL(),
-		title: wc.getTitle(),
-		canGoBack: wc.navigationHistory.canGoBack(),
-		canGoForward: wc.navigationHistory.canGoForward(),
-		loading: wc.isLoading(),
-		loadError: loadErrors.get(wc) ?? null,
-	};
-}
-
-function pushNavState(viewId: string, wc: WebContents): void {
-	const win = getMainWindow();
-	if (!win || win.isDestroyed()) return;
-	win.webContents.send("browser-nav-state", readNavState(viewId, wc));
-}
-
-/** Wire nav-state pushes for a pooled view's webContents, once. Works for ANY
- *  pool view — the renderer's foreground view AND agent-driven views the user
- *  switches to, so the address bar tracks whichever view is being shown. */
-function wireNavPushes(viewId: string, wc: WebContents): void {
-	if (navWired.has(wc)) return;
-	navWired.add(wc);
-	const push = () => pushNavState(viewId, wc);
-	wc.on("did-navigate", push);
-	wc.on("did-navigate-in-page", push);
-	wc.on("page-title-updated", push);
-	// A fresh load attempt clears any recorded failure BEFORE the push, so the
-	// renderer drops its error card the moment a retry/navigation starts.
-	wc.on("did-start-loading", () => { loadErrors.delete(wc); push(); });
-	wc.on("did-stop-loading", push);
-	// Main-frame load failures surface in nav-state; the view itself renders a
-	// blank error document, so this is the only signal the renderer gets.
-	// -3 = ERR_ABORTED (redirects, rapid re-navigation) is normal browsing.
-	wc.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
-		if (!isMainFrame || errorCode === -3) return;
-		loadErrors.set(wc, { code: errorCode, description: errorDescription, url: validatedURL });
-		push();
-	});
 }
 
 /** Lazily create the renderer's foreground view on first use and wire it. */
@@ -209,8 +151,10 @@ function currentViewIsBlank(): boolean {
  * anchor to the agent's view so the user sees the agent working the moment the
  * Browser tab opens. Attach only when something was ALREADY attached — when
  * nothing is attached the user is on a non-browser tab and painting an overlay
- * would cover it; the retarget alone means the next set-visible shows it.
- * A non-blank current view is never stolen — the renderer just badges.
+ * would cover it; the retarget alone means the next set-visible shows it, and
+ * the "browser-agent-surfaced" push below brings the Browser tab up so that
+ * next set-visible actually fires. A non-blank current view is never stolen —
+ * the renderer just badges.
  */
 export function autoSurfaceAgentView(viewId: string): void {
 	const foregroundFamily = currentViewId === FOREGROUND_ID || currentViewId.startsWith("profile-");
@@ -224,8 +168,22 @@ export function autoSurfaceAgentView(viewId: string): void {
 			if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
 		}
 		pushNavState(viewId, view.webContents);
+		// Tell the renderer to bring the Browser tab up (open the panel if
+		// collapsed, switch the side panel to browser). We only reach here when
+		// the user wasn't already watching a real page, so this can't yank them
+		// off something they were reading — it just surfaces the agent's browsing
+		// the moment it starts. On a non-browser tab this is what makes the view
+		// actually paint (onTabShown → set-visible → attach).
+		pushAgentSurfaced(viewId);
 	}
 	sendViewsChanged();
+}
+
+/** Ask the renderer to surface the Browser tab for an auto-surfaced agent view. */
+function pushAgentSurfaced(viewId: string): void {
+	const win = getMainWindow();
+	if (!win || win.isDestroyed()) return;
+	win.webContents.send("browser-agent-surfaced", { viewId });
 }
 
 export function setupBrowserIPC(): void {
@@ -315,6 +273,35 @@ export function setupBrowserIPC(): void {
 		const state = readNavState(viewId, view.webContents);
 		pushNavState(viewId, view.webContents); // mirror immediately for late subscribers
 		return state;
+	});
+
+	// Close a USER tab. The mirror of the server bridge's close guard: the bridge
+	// closes only agent-driven views (its own), so the renderer closes only
+	// user views (foreground / user-N / profile-*). Agent 🤖 views are the
+	// agent's — closing one out from under a running agent would break its
+	// in-flight browsing with no recovery (the backend wouldn't recreate), so
+	// those are refused here and stay agent-managed (they close with the session).
+	// Returns true when the view was closed, false when refused/absent.
+	ipcMain.handle("browser-close-view", (event: IpcMainInvokeEvent, viewId: string): boolean => {
+		if (!isTrustedBrowserSender(event.sender)) return false;
+		const info = listBrowserViews().find((v) => v.viewId === viewId);
+		if (!info || info.agentDriven) return false; // unknown, or an agent's view — refuse
+		const wasCurrent = currentViewId === viewId;
+		const wasAttached = getAttachedViewId() === viewId;
+		closeBrowserView(viewId); // fires the pool-change poke → renderer re-lists
+		if (wasCurrent) {
+			// The anchor's driven view just went away — fall back to the foreground
+			// view (recreated lazily). If the closed tab was on screen, show the
+			// fallback so the pane isn't left painting a destroyed view.
+			currentViewId = FOREGROUND_ID;
+			if (wasAttached) {
+				const view = ensureForegroundView();
+				showBrowserView(FOREGROUND_ID);
+				if (lastBoundsDip) setBrowserViewBounds(FOREGROUND_ID, lastBoundsDip);
+				pushNavState(FOREGROUND_ID, view.webContents);
+			}
+		}
+		return true;
 	});
 
 	// Profile manager "Log in once": open (or reuse) a foreground view on a

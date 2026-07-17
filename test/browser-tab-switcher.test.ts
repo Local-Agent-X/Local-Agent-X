@@ -283,6 +283,45 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(input.value).toBe("half-typed.example");
 	});
 
+	it("user pills carry a ✕ close affordance; agent 🤖 pills do not", async () => {
+		const bridge = makeBridge([fgView(), agentView()]) as ReturnType<typeof makeBridge> & { closeView: unknown };
+		bridge.closeView = vi.fn(() => Promise.resolve(true));
+		g.desktop = { browser: bridge };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		expect(slot().querySelector('[data-close-view-id="foreground"]')).toBeTruthy();
+		expect(slot().querySelector('[data-close-view-id="view-s1-work"]')).toBeNull();
+	});
+
+	it("no ✕ at all when the bridge can't close (no closeView channel)", async () => {
+		g.desktop = { browser: makeBridge([fgView()]) }; // makeBridge has no closeView
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		expect(slot().querySelector('[data-close-view-id]')).toBeNull();
+		// Label unaffected by the span wrapping.
+		expect(pills()[0].textContent).toBe("User");
+	});
+
+	it("clicking ✕ closes the view (not select) and re-lists", async () => {
+		const views = [fgView(), fgView({ viewId: "user-1", title: "Second", attached: false })];
+		const bridge = makeBridge(views) as ReturnType<typeof makeBridge> & { closeView: ReturnType<typeof vi.fn> };
+		bridge.closeView = vi.fn((id: string) => {
+			// Mimic main: the view is gone from the pool on the next listViews.
+			const i = views.findIndex((v) => v.viewId === id);
+			if (i >= 0) views.splice(i, 1);
+			return Promise.resolve(true);
+		});
+		g.desktop = { browser: bridge };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		const x = slot().querySelector('[data-close-view-id="user-1"]') as HTMLElement;
+		x.click();
+		await flushMicrotasks();
+		expect(bridge.closeView).toHaveBeenCalledWith("user-1");
+		expect(bridge.switchView).not.toHaveBeenCalled(); // ✕ must not fall through to select
+		expect(slot().querySelector('button[data-view-id="user-1"]')).toBeNull();
+	});
+
 	it("onTabShown starts polling; onTabHidden stops it", async () => {
 		const bridge = makeBridge([fgView(), agentView()]);
 		g.desktop = { browser: bridge };

@@ -160,6 +160,10 @@ contextBridge.exposeInMainWorld("desktop", {
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
       loadError: { code: number; description: string; url: string } | null;
     } | null> => ipcRenderer.invoke("browser-switch-view", viewId),
+    // Close a user tab (foreground / user-N / profile-*). Agent 🤖 views are
+    // refused main-side (they're the agent's) — resolves false for those and
+    // for unknown ids; true when the view was closed.
+    closeView: (viewId: string): Promise<boolean> => ipcRenderer.invoke("browser-close-view", viewId),
     // Profile manager "Log in once": open (or reuse) a FOREGROUND view on the
     // given profile's partition and navigate it, so the user can sign in by hand
     // — the partition persists the login. url omitted → about:blank.
@@ -178,6 +182,13 @@ contextBridge.exposeInMainWorld("desktop", {
     // views are created/closed or the attached view flips — re-list on it.
     onViewsChanged: (cb: () => void) => {
       ipcRenderer.on("browser-views-changed", () => cb());
+    },
+    // Agent auto-surface: main sends "browser-agent-surfaced" (with the viewId)
+    // when an agent opens a website while the user isn't watching a real page —
+    // the renderer opens the panel + switches to the Browser tab so the user
+    // sees the agent browsing without hunting for the tab.
+    onAgentSurfaced: (cb: (info: { viewId: string }) => void) => {
+      ipcRenderer.on("browser-agent-surfaced", (_e, info) => cb(info));
     },
   },
 

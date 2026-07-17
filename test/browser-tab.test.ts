@@ -558,6 +558,10 @@ function viewsChangedCount(send: Mock): number {
   return send.mock.calls.filter((c) => c[0] === "browser-views-changed").length;
 }
 
+function agentSurfacedCalls(send: Mock): unknown[] {
+  return send.mock.calls.filter((c) => c[0] === "browser-agent-surfaced").map((c) => c[1]);
+}
+
 describe("auto-surface + new-tab (browser-ipc.ts)", () => {
   let trustedWC: { getZoomFactor(): number; send: Mock };
   let fgWc: ReturnType<typeof makeWc>;
@@ -602,6 +606,8 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
       "browser-nav-state",
       expect.objectContaining({ viewId: "agent-7", url: "https://agent.example/run" }),
     );
+    // Surfacing pushes the renderer to bring the Browser tab up.
+    expect(agentSurfacedCalls(trustedWC.send)).toEqual([{ viewId: "agent-7" }]);
     await flush();
     expect(viewsChangedCount(trustedWC.send)).toBe(1);
   });
@@ -613,6 +619,9 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     expect(currentNavViewId()).toBe("agent-7");
     expect(h.showCalls).toBe(0);
     expect(h.setBoundsCalls).toEqual([]);
+    // Still surfaced: the push is what flips the renderer to the Browser tab,
+    // whose onTabShown → set-visible is what actually attaches the view.
+    expect(agentSurfacedCalls(trustedWC.send)).toEqual([{ viewId: "agent-7" }]);
     await flush();
     expect(viewsChangedCount(trustedWC.send)).toBe(1);
   });
@@ -625,6 +634,8 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     expect(currentNavViewId()).toBe("foreground");
     expect(h.showCalls).toBe(0);
     expect(trustedWC.send).not.toHaveBeenCalledWith("browser-nav-state", expect.anything());
+    // A page the user is actively reading is never yanked to the agent view.
+    expect(agentSurfacedCalls(trustedWC.send)).toEqual([]);
     await flush();
     expect(viewsChangedCount(trustedWC.send)).toBe(1);
   });
@@ -637,6 +648,8 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     autoSurfaceAgentView("agent-b");
     expect(currentNavViewId()).toBe("agent-a");
     expect(h.showCalls).toBe(0);
+    // Not foreground family → no retarget, no surface push.
+    expect(agentSurfacedCalls(trustedWC.send)).toEqual([]);
   });
 
   it("browser-new-tab mints user-N on the current view's partition and returns nav state", async () => {
@@ -672,6 +685,52 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     const state = await h.handlers.get("browser-new-tab")!({ sender: {} }, "https://evil.example/");
     expect(state).toBeNull();
     expect(h.createCalls.length).toBe(before);
+  });
+
+  it("browser-close-view closes a user view and returns true", async () => {
+    h.viewsById.set("user-3", { webContents: makeWc("https://x/") });
+    h.poolList = [{ viewId: "user-3", partition: "persist:lax-profile-default", agentDriven: false }];
+    const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "user-3");
+    expect(ok).toBe(true);
+    expect(h.closeCalls).toContain("user-3");
+  });
+
+  it("browser-close-view REFUSES an agent view (agent-managed, no user close)", async () => {
+    h.viewsById.set("agent-9", { webContents: makeWc("https://agent/") });
+    h.poolList = [{ viewId: "agent-9", partition: "persist:lax-profile-work", agentDriven: true }];
+    const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "agent-9");
+    expect(ok).toBe(false);
+    expect(h.closeCalls).not.toContain("agent-9");
+  });
+
+  it("browser-close-view returns false for an unknown view", async () => {
+    h.poolList = [];
+    const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "ghost");
+    expect(ok).toBe(false);
+    expect(h.closeCalls).toEqual([]);
+  });
+
+  it("closing the CURRENT attached view falls back to foreground and shows it", async () => {
+    // Make user-4 the current + attached view.
+    h.viewsById.set("user-4", { webContents: makeWc("https://x/") });
+    h.handlers.get("browser-switch-view")!({ sender: trustedWC }, "user-4");
+    h.attachedId = "user-4";
+    h.showCalls = 0;
+    h.setBoundsCalls = [];
+    h.poolList = [{ viewId: "user-4", partition: "persist:lax-profile-default", agentDriven: false }];
+    const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "user-4");
+    expect(ok).toBe(true);
+    expect(h.closeCalls).toContain("user-4");
+    // Anchor fell back to foreground and re-attached it (not left on a dead view).
+    expect(currentNavViewId()).toBe("foreground");
+    expect(h.showCalls).toBe(1);
+  });
+
+  it("browser-close-view is trusted-sender gated", () => {
+    h.poolList = [{ viewId: "user-3", partition: "persist:lax-profile-default", agentDriven: false }];
+    const ok = h.handlers.get("browser-close-view")!({ sender: {} }, "user-3");
+    expect(ok).toBe(false);
+    expect(h.closeCalls).not.toContain("user-3");
   });
 
   it("setupBrowserIPC wires the pool listener; bursts debounce into ONE views-changed", async () => {

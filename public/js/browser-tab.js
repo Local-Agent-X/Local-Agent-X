@@ -182,8 +182,23 @@
 				selectedViewId: selectedViewId,
 				onSelect: switchTo,
 				onNewTab: newTab,
+				// Only offer ✕ when the bridge can actually close (real desktop);
+				// a bridge without closeView renders pills unchanged.
+				onClose: (bridge.closeView ? closeTab : null),
 			});
 			return views;
+		}).catch(swallow);
+	}
+
+	// ✕ on a user pill: close the view main-side, then re-list. Main retargets
+	// the anchor to the foreground view when the closed tab was the current one,
+	// so we just drop our selection and let refreshSwitcher re-adopt whatever is
+	// attached. Agent views are refused main-side (their pills carry no ✕).
+	function closeTab(viewId) {
+		if (!bridge || !bridge.closeView) return;
+		Promise.resolve(bridge.closeView(viewId)).then(function (closed) {
+			if (closed && selectedViewId === viewId) selectedViewId = null;
+			refreshSwitcher();
 		}).catch(swallow);
 	}
 
@@ -319,6 +334,16 @@
 		// an agent view): re-list immediately — refreshSwitcher also re-adopts
 		// the attached view. The 2s poll below stays as fallback while shown.
 		if (bridge.onViewsChanged) bridge.onViewsChanged(function () { refreshSwitcher(); });
+		// Agent opened a website while the user wasn't watching a real page:
+		// bring the Browser tab up so the agent's browsing is visible. Open the
+		// right rail if collapsed, then flip it to BROWSER — same seam the local
+		// -service-link handler (shared-dom.js) uses. onTabShown attaches the
+		// native view, so this is also what makes the retargeted view paint.
+		if (bridge.onAgentSurfaced) bridge.onAgentSurfaced(function () {
+			if (typeof agentFeedsOpen !== 'undefined' && !agentFeedsOpen &&
+				typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
+			if (typeof switchSidePanelTab === 'function') switchSidePanelTab('browser');
+		});
 		refreshSwitcher();
 		// Rect changes: panel resize drag, window resize, layout shifts —
 		// the ResizeObserver on the anchor catches all of them without

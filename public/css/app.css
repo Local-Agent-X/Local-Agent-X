@@ -1231,6 +1231,8 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .artifact-filter:hover{border-color:var(--accent);color:var(--accent)}
 .artifact-filter.active{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb, var(--accent) 8%, transparent)}
 .artifact-filter-count{opacity:.7;font-size:.58rem}
+.browser-tab-close{opacity:.55;transition:opacity .12s,color .12s}
+.browser-tab-close:hover{opacity:1;color:var(--danger,#e5534b)}
 .artifacts-refresh{margin-left:auto}
 .artifacts-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
 .artifacts-empty{font-family:var(--mono);font-size:.7rem;color:var(--muted);text-align:center;padding:24px 8px}

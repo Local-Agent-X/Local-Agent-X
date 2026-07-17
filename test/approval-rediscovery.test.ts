@@ -157,9 +157,19 @@ beforeEach(() => {
 	loadOnce();
 	const g = globalThis as unknown as Record<string, unknown>;
 	g.activeChat = { id: SESSION, messages: [] };
-	// Fresh store per test — the IIFE's internal Map has no reset hook.
-	// eslint-disable-next-line no-new-func
-	new Function(readFileSync(join(here, "../public/js/chat-stream-store.js"), "utf8"))();
+	// Fresh store per test — load every split module in app.html order so the
+	// harness exercises the same reducer, finalizer, and approval extensions as
+	// production. The core IIFE's internal Map has no reset hook.
+	for (const file of [
+		"chat-stream-blocks.js",
+		"chat-stream-reducer.js",
+		"chat-stream-store.js",
+		"chat-stream-finalize.js",
+		"chat-stream-store-approvals.js",
+	]) {
+		// eslint-disable-next-line no-new-func
+		new Function(readFileSync(join(here, "../public/js", file), "utf8"))();
+	}
 	store = (g.window as { ChatStreamStore: Store }).ChatStreamStore;
 	// Sibling modules reference it as a bare global — pin it (window.X
 	// assignment alone doesn't create one in this harness).

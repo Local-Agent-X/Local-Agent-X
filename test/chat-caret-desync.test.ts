@@ -45,10 +45,19 @@ beforeEach(() => {
 		ChatStreamStore: Store;
 	};
 
-	// Load the real store IIFE fresh so its internal Map + subscriber set start
-	// empty (it closes over module state with no reset hook).
-	// eslint-disable-next-line no-new-func
-	new Function(readFileSync(join(here, "../public/js/chat-stream-store.js"), "utf8"))();
+	// Load every real store module in app.html order. The core IIFE is fresh so
+	// its internal Map + subscriber set start empty, while the split reducer and
+	// finalizer match the browser's production wiring.
+	for (const file of [
+		"chat-stream-blocks.js",
+		"chat-stream-reducer.js",
+		"chat-stream-store.js",
+		"chat-stream-finalize.js",
+		"chat-stream-store-approvals.js",
+	]) {
+		// eslint-disable-next-line no-new-func
+		new Function(readFileSync(join(here, "../public/js", file), "utf8"))();
+	}
 	ChatStreamStore = g.window.ChatStreamStore;
 
 	// chat-uploads.js registers its subscriber via a bare `ChatStreamStore`

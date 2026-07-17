@@ -1,9 +1,9 @@
 /**
  * Regression coverage for the CT-3/CT-4/CT-5/CT-7 chat-ws fixes.
  *
- *  CT-3  subscribe-replay must NOT duplicate streamed text — buffered deltas
- *        are coalesced into a single `replace` so a mid-turn re-subscribe
- *        can't append the whole partial onto the partial the client holds.
+ *  CT-3  subscribe-replay must NOT duplicate streamed text — it first wipes
+ *        the stale lane, then replays ordered run deltas so a mid-turn
+ *        re-subscribe rebuilds both exact text and timeline boundaries.
  *  CT-4  a Stop that races the turn's prep window (ActiveChat not registered
  *        yet) must terminate the turn the instant it registers — but must be
  *        DISCARDED if that turn dies before registering, so it can never
@@ -85,8 +85,8 @@ describe("CT-7 — non-object frame guard", () => {
   });
 });
 
-describe("CT-3 — subscribe replay sends accumulated text as one replace", () => {
-  it("replays the streamText accumulator as a single `replace`, never raw deltas", async () => {
+describe("CT-3 — subscribe replay wipes then rebuilds ordered runs", () => {
+  it("replays the streamText accumulator as a corrective wipe followed by its run delta", async () => {
     const sessionId = "sess-ct3";
     registerChat(sessionId, [], "Hello world");
     const r = makeRouter();
@@ -95,11 +95,13 @@ describe("CT-3 — subscribe replay sends accumulated text as one replace", () =
     const streamFrames = r.frames()
       .filter(f => f.type === "event" && f.event?.type === "stream")
       .map(f => f.event);
-    // Exactly one coalesced replace — pre-fix replayed both deltas raw, and
-    // the client's `content += delta` doubled the partial it already held.
-    expect(streamFrames).toHaveLength(1);
-    expect(streamFrames[0]).toMatchObject({ type: "stream", replace: true, text: "Hello world" });
-    expect(streamFrames.some(e => typeof e.delta === "string")).toBe(false);
+    // The empty replace clears any partial already held by a reconnecting
+    // client; ordered deltas then rebuild the canonical run timeline without
+    // duplicating text. The manager tests pin multi-run boundary ordering.
+    expect(streamFrames).toHaveLength(2);
+    expect(streamFrames[0]).toMatchObject({ type: "stream", replace: true, text: "" });
+    expect(streamFrames[1]).toMatchObject({ type: "stream", delta: "Hello world" });
+    expect(streamFrames[1].replace).toBeUndefined();
   });
 });
 
@@ -128,11 +130,15 @@ describe("CT-5 — terminateChat buffers the terminal + sweeps", () => {
     replayBufferedEvents(ws, sessionId);
 
     const events = sent.map(p => JSON.parse(p).event);
-    const streamIdx = events.findIndex(e => e.type === "stream" && e.replace === true && e.text === "abc");
+    const wipeIdx = events.findIndex(e => e.type === "stream" && e.replace === true && e.text === "");
+    const streamIdx = events.findIndex(e => e.type === "stream" && e.delta === "abc");
     const doneIdx = events.findIndex(e => e.type === "done");
+    expect(wipeIdx).toBeGreaterThanOrEqual(0);
     expect(streamIdx).toBeGreaterThanOrEqual(0);
     expect(doneIdx).toBeGreaterThanOrEqual(0);
-    // Coalesced text before the terminal so a trailing error/done can't wipe it.
+    // Corrective wipe, then rebuilt text, then the terminal: a trailing
+    // error/done cannot erase the replayed run or leave a phantom stream.
+    expect(wipeIdx).toBeLessThan(streamIdx);
     expect(streamIdx).toBeLessThan(doneIdx);
   });
 

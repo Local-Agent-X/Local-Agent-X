@@ -13,8 +13,14 @@
  *                  report it as the window.
  *   /api/ps      → context_length of each LOADED model = the real served
  *                  window (e.g. 32768). Ground truth when present.
- *   /v1/chat/completions silently DROPS options.num_ctx (measured), so
- *   chatExtraBody is {} — LAX reports the real window, it can't resize it.
+ *   /v1/chat/completions silently DROPS num_ctx (re-verified live
+ *   2026-07-17, Ollama 0.32.0: options.num_ctx 512 then 1024, and
+ *   top-level num_ctx 2048, all left /api/ps context_length at the box
+ *   default 131072; the sensitivity control — options.num_ctx 512 via
+ *   native /api/chat — resized the runner to 512). So chatExtraBody is
+ *   {}: LAX reports the real window, it can't resize it on this path.
+ *   Deliberate either way: LAX does not SET num_ctx anywhere yet —
+ *   per-request ctx sizing is a parked policy decision.
  */
 import type {
   LocalModel,

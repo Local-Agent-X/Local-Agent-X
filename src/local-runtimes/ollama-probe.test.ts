@@ -138,7 +138,12 @@ describe("ollamaProbe.probeModel", () => {
 });
 
 describe("ollamaProbe.chatExtraBody", () => {
-  it("{} — Ollama /v1 drops options.num_ctx (measured); we never ship a no-op param", () => {
+  // Wire-fact regression pin — re-verified live 2026-07-17 on Ollama 0.32.0
+  // (evidence in ollama-probe.ts header): /v1 drops num_ctx in both the
+  // options-nested and top-level spellings, so injecting it would ship a
+  // silent no-op param. If a future Ollama honors it, flipping this pin is
+  // a parked ctx-sizing policy decision, not a bug fix.
+  it("{} — Ollama /v1 drops num_ctx (re-verified 0.32.0); we never ship a no-op param", () => {
     expect(ollamaProbe.chatExtraBody("m", 4096)).toEqual({});
   });
 });

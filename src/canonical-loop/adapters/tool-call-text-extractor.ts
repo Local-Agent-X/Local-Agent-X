@@ -1,6 +1,6 @@
 /**
  * Tool-call-from-text extractor — fallback for models that emit tool
- * calls as raw JSON inside `content` instead of populating `tool_calls`.
+ * calls as TEXT inside `content` instead of populating `tool_calls`.
  *
  * Live failure pattern (2026-05-12, qwen3-next:80b + gpt-oss:20b on
  * Ollama Turbo): the model would correctly call `browser` for 7-9 turns
@@ -8,29 +8,47 @@
  * the same call as a string of JSON in `content.text`. The streaming
  * accumulator saw it as text; the canonical loop emitted a finalized
  * assistant message with that text in chat; no browser action fired.
- * Tool calls leaked into the user-visible chat output, and the agent
- * got stuck because nothing dispatched the click.
+ * Small local models widened the zoo: XML-ish wrapper tags
+ * (`<execute_tool>`, `<tool_call>`, …), bracket markers, channel-marker
+ * leaks, and plain-English narration.
  *
- * Patterns this catches (only — heuristic, not a general parser):
+ * Three layers, strongest signal first (heuristic, not a general parser):
  *
- *   1. **Full OpenAI envelope as text:**
- *      `{"name": "<tool>", "arguments": {...}}`
- *      Wire-correct shape, but in `content` instead of `tool_calls`.
+ *   1. **Explicit call syntax** (tool-call-text-syntaxes.ts): wrapper
+ *      tags / bracket markers / channel-marker leaks. The model MARKED
+ *      the call, so near-miss names (`web-search`, `functions.browser`)
+ *      are resolved against the offered tool set via a normalization +
+ *      bounded-edit-distance ladder.
  *
- *   2. **Browser shorthand:** `{"action": "X", "ref": N, ...}`
- *      Bare arg shape with no tool-name wrapper. Mapped to `browser`
- *      because `action` + `ref` is the browser tool's signature.
+ *   2. **Naked JSON objects:** the full wire envelope
+ *      `{"name": "<tool>", "arguments": {...}}` or the browser shorthand
+ *      `{"action": "X", "ref": N, ...}`. A bare object is a weaker
+ *      signal, so names must match the offered set EXACTLY — no fuzz.
  *
- * Heuristic-only — only fires when `tool_calls` is empty AND the text
- * matches a clear pattern. If a model correctly emits structured tool
- * calls, this never runs. If a model emits ambiguous text (mixed prose
- * with a JSON-shaped substring), the conservative pattern matching
- * leaves it alone.
+ *   3. **Prose narration** ("run tool bash with command is …"), strictly
+ *      last and only when the layers above found nothing.
+ *
+ * Only fires when `tool_calls` is empty AND the text matches a clear
+ * pattern; healthy providers never hit this path, and ambiguous text is
+ * left alone. Unpromoted-but-recognized syntax (unresolvable name,
+ * over-cap payload, structurally-truncated payload, `<execute_tool>None`)
+ * stays in the text untouched — scrubbing it is delivery-sanitization's
+ * job, not extraction's. Truncated payloads NEVER promote: a payload that
+ * needed unbalanced braces/strings closed was cut mid-write, and a
+ * partial write/command must not execute.
  *
  * Adapter integration: call AFTER `streamOnce` returns, BEFORE the
  * empty-response retry. If matches found, append to `pendingToolCalls`
- * and clear `assembledText` (so the JSON doesn't double-render to chat).
+ * and clear `assembledText` (so the payload doesn't double-render).
  */
+
+import { findJsonObjects, resolveToolName } from "./tool-call-text-repair.js";
+import {
+  escapeRegex,
+  isBrowserShorthand,
+  scanTextToolCallSyntaxes,
+  withinCaps,
+} from "./tool-call-text-syntaxes.js";
 
 export interface ExtractedToolCall {
   id: string;
@@ -64,86 +82,52 @@ export function extractToolCallsFromText(
 ): ExtractionResult {
   if (!text || typeof text !== "string") return { toolCalls: [], remainingText: text ?? "" };
 
-  // Strip common code-fence wrapping. Models often wrap tool-call JSON
+  // Strip common code-fence wrapping. Models often wrap tool-call payloads
   // in ```json ... ``` even when emitting as content.
   let working = text.replace(/```(?:json|tool_use|function)?\s*\n?/gi, "").replace(/\n?```/g, "");
 
-  const calls: ExtractedToolCall[] = [];
-
-  // Walk the string looking for balanced JSON objects.
-  const objects = findJsonObjects(working);
-
-  const consumedRanges: Array<[number, number]> = [];
-  for (const obj of objects) {
-    const synthesized = classify(obj.parsed, validToolNames);
-    if (synthesized) {
-      calls.push(synthesized);
-      consumedRanges.push([obj.start, obj.end]);
-    }
+  // Layer 1 — explicit call syntax. Candidates carry the name as the model
+  // wrote it; promote only those whose name resolves against the offered
+  // set and whose payload is within caps. Unpromoted hits stay in the text,
+  // but their bytes are off-limits to the naked-JSON layer below so a block
+  // rejected here (truncated, over-cap, unresolvable) can't sneak back in
+  // through its inner JSON.
+  const syntaxHits = scanTextToolCallSyntaxes(working);
+  const found: Array<{ start: number; end: number; call: ExtractedToolCall }> = [];
+  for (const hit of syntaxHits) {
+    if (!hit.candidate || !withinCaps(hit.candidate)) continue;
+    const resolved = resolveToolName(hit.candidate.name, validToolNames);
+    if (!resolved) continue;
+    found.push({
+      start: hit.start,
+      end: hit.end,
+      call: { id: nextId(), name: resolved, arguments: hit.candidate.argsJson },
+    });
   }
 
-  // Structured JSON wins. Only fall back to prose reconstruction when no JSON
-  // tool call was salvageable — keeps the cheap, unambiguous path first and
-  // the heuristic prose path strictly last.
-  if (calls.length === 0) {
+  // Layer 2 — naked JSON objects (full envelope / browser shorthand).
+  for (const obj of findJsonObjects(working)) {
+    if (syntaxHits.some((h) => obj.start < h.end && h.start < obj.end)) continue;
+    const synthesized = classify(obj.parsed, validToolNames);
+    if (synthesized) found.push({ start: obj.start, end: obj.end, call: synthesized });
+  }
+
+  // Layer 3 — prose reconstruction, strictly last: only when no marked
+  // syntax or JSON tool call was salvageable anywhere in the turn.
+  if (found.length === 0) {
     const prose = extractProseCalls(text, validToolNames);
     if (prose.calls.length > 0) return { toolCalls: prose.calls, remainingText: prose.remainingText };
     return { toolCalls: [], remainingText: text };
   }
 
-  // Remove consumed JSON blocks from the working text. Walk back-to-front
-  // so indices stay valid.
-  consumedRanges.sort((a, b) => b[0] - a[0]);
-  for (const [start, end] of consumedRanges) {
-    working = working.slice(0, start) + working.slice(end);
+  // Emit calls in source order; excise promoted ranges back-to-front so
+  // indices stay valid.
+  found.sort((a, b) => a.start - b.start);
+  const calls = found.map((f) => f.call);
+  for (let i = found.length - 1; i >= 0; i--) {
+    working = working.slice(0, found[i].start) + working.slice(found[i].end);
   }
   return { toolCalls: calls, remainingText: working.trim() };
-}
-
-interface JsonObjectHit {
-  start: number;
-  end: number;
-  parsed: Record<string, unknown>;
-}
-
-/**
- * Find balanced-brace JSON object substrings and JSON.parse each. Returns
- * the parse results with their string offsets so the caller can excise
- * consumed regions. Skips malformed JSON without throwing.
- */
-function findJsonObjects(s: string): JsonObjectHit[] {
-  const hits: JsonObjectHit[] = [];
-  let i = 0;
-  while (i < s.length) {
-    if (s[i] !== "{") { i++; continue; }
-    // Balanced-brace scan, respecting string literals.
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    let j = i;
-    for (; j < s.length; j++) {
-      const ch = s[j];
-      if (escape) { escape = false; continue; }
-      if (inString) {
-        if (ch === "\\") { escape = true; continue; }
-        if (ch === '"') inString = false;
-        continue;
-      }
-      if (ch === '"') { inString = true; continue; }
-      if (ch === "{") depth++;
-      else if (ch === "}") { depth--; if (depth === 0) { j++; break; } }
-    }
-    if (depth !== 0) { i++; continue; }
-    const candidate = s.slice(i, j);
-    try {
-      const parsed = JSON.parse(candidate);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        hits.push({ start: i, end: j, parsed: parsed as Record<string, unknown> });
-      }
-    } catch { /* skip malformed */ }
-    i = j;
-  }
-  return hits;
 }
 
 /**
@@ -172,30 +156,15 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
   // parse. It's handled by extractProseCalls, called from the top-level
   // extractor only after JSON classification finds nothing.
 
-  // Pattern 2: browser shorthand { action: "X", ref: N, ... }
-  // Only fires when "browser" is in validToolNames. We also accept the
-  // `coords`, `text`, `url`, `target` keys that the browser tool's other
-  // actions use, but the discriminator is `action` (required).
-  if (typeof obj.action === "string" && validToolNames.has("browser")) {
-    const hasBrowserShape =
-      "ref" in obj || "coords" in obj || "text" in obj ||
-      "url" in obj || "target" in obj || "key" in obj ||
-      "selector" in obj || obj.action === "snapshot" || obj.action === "back" ||
-      obj.action === "forward" || obj.action === "wait";
-    if (hasBrowserShape) {
-      return {
-        id: nextId(),
-        name: "browser",
-        arguments: JSON.stringify(obj),
-      };
-    }
+  // Pattern 2: browser shorthand { action: "X", ref: N, ... }. The shape
+  // rules live in isBrowserShorthand — shared with the syntax layer so
+  // wrapped shorthand promotes identically. Only fires when "browser" is
+  // in validToolNames.
+  if (validToolNames.has("browser") && isBrowserShorthand(obj)) {
+    return { id: nextId(), name: "browser", arguments: JSON.stringify(obj) };
   }
 
   return null;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Action verbs that open a narrated tool call ("run tool bash …"). */

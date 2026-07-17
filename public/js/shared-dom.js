@@ -25,6 +25,40 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ── Local-service links → in-app browser ──
+// Chat links to loopback URLs on a port other than LAX's own (a ComfyUI the
+// agent started on :8188, a dev server it stood up, a local model UI) used to
+// die silently in the desktop shell: the window-open handler classifies them
+// as neither external (hostname is loopback, so no system browser) nor ours
+// (different port, so no /files//apps handling) and denies them — the click
+// did nothing. Route them into the in-app browser instead: mint a user tab
+// through the canonical desktop.browser.newTab seam and surface the BROWSER
+// panel. In a plain browser tab (no desktop bridge) target=_blank already
+// works, so this handler stands down there.
+function isLocalServiceLink(href, appOrigin) {
+  let url;
+  try { url = new URL(href, appOrigin); } catch { return false; }
+  if (!/^https?:$/.test(url.protocol)) return false;
+  const h = url.hostname;
+  const loopback = h === '127.0.0.1' || h === 'localhost' || h === '::1' || h === '[::1]';
+  return loopback && url.origin !== new URL(appOrigin).origin;
+}
+window.isLocalServiceLink = isLocalServiceLink;
+
+document.addEventListener('click', (e) => {
+  if (e.defaultPrevented) return;
+  const link = e.target.closest?.('a[href]');
+  if (!link || link.classList.contains('file-download')) return;
+  if (!window.desktop?.isDesktop || !window.desktop.browser?.newTab) return;
+  if (!isLocalServiceLink(link.href, location.origin)) return;
+  e.preventDefault();
+  window.desktop.browser.newTab(link.href);
+  // Surface the new tab: open the right rail if it's collapsed, then flip it
+  // to BROWSER (which pokes laxBrowserTab.onTabShown to attach the native view).
+  if (typeof agentFeedsOpen !== 'undefined' && !agentFeedsOpen && typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
+  if (typeof switchSidePanelTab === 'function') switchSidePanelTab('browser');
+});
+
 // Apply syntax highlighting to code blocks (runs after md() output is inserted into DOM)
 function highlightCodeBlocks(container) {
   if (typeof hljs === 'undefined') return;

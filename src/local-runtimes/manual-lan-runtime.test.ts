@@ -40,7 +40,7 @@ import {
   getRuntimeForModel,
   invalidateLocalRuntimes,
 } from "./cache.js";
-import { resolveOpenAICompatTarget } from "../canonical-loop/adapters/openai-compat/resolve-target.js";
+import { resolveOpenAICompatTarget } from "../canonical-loop/public/resolve-target.js";
 
 const LAN = "http://192.168.1.50:11434";
 

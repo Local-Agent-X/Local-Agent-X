@@ -31,12 +31,15 @@ interface Store {
 let ChatStreamStore: Store;
 
 beforeEach(() => {
-  // The module is a browser IIFE that assigns window.ChatStreamStore. Load and
-  // execute the source fresh per test so the internal Map starts empty — it
+  // The store is browser IIFEs that assign window.ChatStreamStore — split
+  // across blocks/reducer/core (app.html load order). Load and execute the
+  // sources fresh per test so the internal Map starts empty — the core
   // closes over module-level state with no reset hook.
-  const src = readFileSync(join(here, "../public/js/chat-stream-store.js"), "utf8");
-  // eslint-disable-next-line no-new-func
-  new Function(src)();
+  for (const f of ["chat-stream-blocks.js", "chat-stream-reducer.js", "chat-stream-store.js", "chat-stream-finalize.js"]) {
+    const src = readFileSync(join(here, "../public/js/" + f), "utf8");
+    // eslint-disable-next-line no-new-func
+    new Function(src)();
+  }
   ChatStreamStore = (globalThis as unknown as { window: { ChatStreamStore: Store } }).window.ChatStreamStore;
 });
 

@@ -10,8 +10,10 @@
 //   - _swapLiveMessage / rerenderLiveMessage / flushLiveRenders
 //                                        — rAF-batched live bubble swap from store
 //   - finalizeLiveMessageInPlace         — terminal in-place swap (no thread wipe)
-//   - appendMessagesInPlace / insertInjectBubbleInPlace
-//                                        — incremental row add / mid-stream inject
+//   - appendMessagesInPlace              — incremental row add
+//
+// preserveOpenState / captureActivityScroll / restoreActivityScroll live in
+// chat-render-open-state.js (loads before this file).
 
 // Per-session pointer to the live .msg.assistant DOM node — the bubble that
 // rerenderLiveMessage swaps out on each WS event. Populated by the renderMessages
@@ -75,87 +77,7 @@ function _paintLiveSwap(sessionId) {
 //
 // Off-screen sessions, post-done events, and missing live nodes are no-ops —
 // renderMessages will catch up on next full render.
-// The live bubble is rebuilt from scratch on every WS event, which would
-// wipe any block the user manually expanded. Carry the .open state across
-// the swap, matching groups/cards by the data-key stamp
-// _renderAssistantToolArtifacts applies (toolCallId-derived) — NOT by
-// document order: `stream replace` events (tool-call-from-text extraction
-// sets content wholesale mid-turn) can shrink or restructure the rebuilt
-// bubble, shifting indices so open-state lands on the wrong card. Keyless
-// elements (legacy paints) still fall back to their index.
-function preserveOpenState(oldNode, fresh) {
-  for (const sel of ['.activity-group', '.tool-card']) {
-    const olds = oldNode.querySelectorAll(sel);
-    const news = fresh.querySelectorAll(sel);
-    // One pass over each list (this runs per animation frame): collect the
-    // open old elements' keys (or index when unkeyed), then match new ones.
-    const openKeys = new Set();
-    const openIdx = new Set();
-    olds.forEach((el, i) => {
-      if (!el.classList.contains('open')) return;
-      if (el.dataset.key) openKeys.add(el.dataset.key);
-      else openIdx.add(i);
-    });
-    if (!openKeys.size && !openIdx.size) continue;
-    news.forEach((el, i) => {
-      const open = el.dataset.key ? openKeys.has(el.dataset.key) : openIdx.has(i);
-      if (!open) return;
-      el.classList.add('open');
-      const chev = el.querySelector('.activity-chevron');
-      if (chev) chev.textContent = '▼';
-    });
-  }
-  // The reasoning block is a native <details> (open attribute, not .open
-  // class). Carry the user's collapse across the per-frame swap — otherwise a
-  // block they closed re-opens on the next reasoning delta.
-  const oldR = oldNode.querySelector('.reasoning-block');
-  const newR = fresh.querySelector('.reasoning-block');
-  if (oldR && newR) newR.open = oldR.open;
-}
-
-// The swap also rebuilds .activity-group-body (its own overflow-y scroller),
-// which resets scrollTop to 0 — mid-stream that yanked the reader back to the
-// first tool call on every WS event. Capture each visible body's position
-// before the swap; restore AFTER the fresh node is in the document (scrollTop
-// doesn't stick on detached/display:none elements). A reader parked at the
-// bottom keeps following new entries as they append.
-function captureActivityScroll(oldNode) {
-  const saved = [];
-  oldNode.querySelectorAll('.activity-group-body').forEach((body, i) => {
-    if (!body.clientHeight) return;
-    // Same identity rule as preserveOpenState: the enclosing group's data-key
-    // beats the index, which shifts when a `stream replace` restructures the
-    // rebuilt bubble. Index is kept only as the legacy keyless fallback.
-    const group = body.closest('.activity-group');
-    saved.push({
-      key: (group && group.dataset.key) || null,
-      i,
-      top: body.scrollTop,
-      atBottom: body.scrollTop + body.clientHeight >= body.scrollHeight - 8,
-    });
-  });
-  return saved;
-}
-
-function restoreActivityScroll(fresh, saved) {
-  if (!saved.length) return;
-  const bodies = fresh.querySelectorAll('.activity-group-body');
-  // Key → body map so each restore stays O(1) on the per-frame swap path.
-  const byKey = new Map();
-  bodies.forEach((body) => {
-    const group = body.closest('.activity-group');
-    const key = group && group.dataset.key;
-    if (key && !byKey.has(key)) byKey.set(key, body);
-  });
-  for (const s of saved) {
-    // A keyed capture must NOT fall back to index — landing the scroll on a
-    // different group is worse than dropping it (fresh bodies start at 0,
-    // which reads as "new group", not as a jump).
-    const body = s.key ? byKey.get(s.key) : bodies[s.i];
-    if (body) body.scrollTop = s.atBottom ? body.scrollHeight : s.top;
-  }
-}
-
+//
 // Synchronous swap of the live bubble from current store state. Returns true
 // if it painted. Shared by the rAF-coalesced rerender (foreground) and the
 // visibility-flush path (catch-up on refocus). Re-checks conditions itself so
@@ -306,6 +228,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   const store = {
     content: finalizedMsg.content || '',
     reasoning: finalizedMsg._reasoning || '',
+    blocks: finalizedMsg._blocks || [],
     toolEvents: finalizedMsg._tools || [],
     chips: finalizedMsg._chips || [],
     progressByTool: finalizedMsg._progressByTool || {},
@@ -314,10 +237,11 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   };
   const tmp = document.createElement('div');
   const fresh = _buildLiveAssistantInto(tmp, store);
-  // The finalized row's reasoning defaults to collapsed (the live build opens
-  // it); this is the terminal paint, so tuck it away.
-  if (fresh) { const rb = fresh.querySelector('.reasoning-block'); if (rb) rb.open = false; }
   if (!fresh) return false;
+  // Terminal paint: every Thinking block defaults to collapsed so the
+  // finished answer leads. preserveOpenState below re-applies any explicit
+  // user toggle (dataset.user) recorded on the old node.
+  fresh.querySelectorAll('.reasoning-block').forEach(rb => { rb.open = false; });
   preserveOpenState(oldNode, fresh);
   const activityScroll = captureActivityScroll(oldNode);
   if (oldNode.classList.contains('pin-bottom')) fresh.classList.add('pin-bottom');
@@ -345,9 +269,11 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
 // renderMessages() wipes #messages and re-parses markdown + re-highlights
 // code for EVERY row, which on long threads blocks the renderer main thread
 // for seconds — the intermittent whole-window freeze. The recurring triggers
-// (bg-op nudge, sync hydrate, mid-stream inject, inject_consumed) only ever
-// add or restyle a row, so they go through these in-place paths and fall
-// back to a full render only when the DOM isn't in a known-good state.
+// (bg-op nudge, sync hydrate) only ever add a row, so they go through this
+// in-place path and fall back to a full render only when the DOM isn't in a
+// known-good state. (Mid-stream injects no longer touch the thread: they are
+// blocks INSIDE the live bubble — chat-stream-blocks.js — painted by the
+// normal rerenderLiveMessage swap.)
 
 // Append rows for activeChat.messages[fromIndex..] to the existing thread.
 // Returns false when an append can't be trusted (container missing,
@@ -362,30 +288,5 @@ function appendMessagesInPlace(fromIndex) {
     renderMessage(activeChat.messages[i], {});
   }
   _applyPinBottom(el);
-  return true;
-}
-
-// Insert a mid-stream inject bubble directly before the live streaming
-// assistant row — the DOM mirror of the splice-at-anchor sendMessage applied
-// to activeChat.messages. Returns false (caller does a full render) when the
-// live node can't be located.
-function insertInjectBubbleInPlace(sessionId, injectMsg) {
-  const el = document.getElementById('messages');
-  if (!el || document.getElementById('empty')) return false;
-  let liveNode = _liveMessageNodes.get(sessionId);
-  if (!liveNode || !document.contains(liveNode)) {
-    // data-live gate: inserting the inject before an unmarked last bubble
-    // (a finished answer, or a worker bubble) would file it under the wrong
-    // turn. False → caller full-renders, which places it via the message
-    // array's splice-at-anchor ordering instead.
-    const all = el.querySelectorAll('.msg.assistant');
-    const last = all[all.length - 1] || null;
-    liveNode = (last && last.dataset.live === '1') ? last : null;
-  }
-  if (!liveNode) return false;
-  // renderMessage appends to #messages; relocate the bubble to the anchor slot.
-  const userEl = renderMessage(injectMsg, {});
-  if (!userEl) return false;
-  el.insertBefore(userEl, liveNode);
   return true;
 }

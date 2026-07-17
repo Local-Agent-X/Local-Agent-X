@@ -355,6 +355,17 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .reasoning-summary::before{content:'▸ ';font-size:.65rem}
 .reasoning-block[open] .reasoning-summary::before{content:'▾ '}
 .reasoning-body{margin-top:4px;font-size:.76rem;line-height:1.45;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;opacity:.9}
+/* Block timeline: one .block-text per uninterrupted text run — thinking
+   blocks, text, and inline injects render in arrival order instead of the
+   old fixed thinking-first layout. */
+.block-text{margin:2px 0}
+.block-text+.block-text{margin-top:8px}
+/* Mid-turn user message rendered INSIDE the live/finalized assistant bubble
+   at the point it was sent. Mirrors the .msg.user bubble look, right-aligned
+   and slightly compact so it reads as the user's interjection in the flow. */
+.inline-inject{display:flex;justify-content:flex-end;margin:10px 0}
+.inline-inject-bubble{background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:8px 16px;max-width:85%;white-space:pre-wrap;word-break:break-word;font-size:.92rem}
+.inline-inject.queued .inline-inject-bubble{opacity:.55;border-style:dashed}
 /* Inline notice rendered when the agent's turn stops early (middleware
    abort, ceiling, stale evidence). Small, muted, italic — distinct from
    message body text and never persisted into chat history. The full

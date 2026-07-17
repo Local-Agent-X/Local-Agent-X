@@ -117,7 +117,10 @@ function dispatchChatStreamEvent(msg) {
   switch (event.type) {
     case 'stream':
       // Side-effect-only: text painting is owned by the store + swap.
-      if (viewing && typeof event.delta === 'string') feedTTS(event.delta);
+      // _replay frames rebuild state after a reconnect (replay.ts sends the
+      // turn's text back as ordered run deltas) — feeding those to TTS
+      // would re-speak the whole turn.
+      if (viewing && !msg._replay && typeof event.delta === 'string') feedTTS(event.delta);
       break;
 
     case 'visual':

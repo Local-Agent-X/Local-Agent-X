@@ -41,6 +41,8 @@ function registerChat(sessionId: string): { events: ServerEvent[] } {
     reasoningText: "",
     sawReasoning: false,
     toolsSinceText: false,
+    runs: [],
+    runBoundary: false,
   };
   activeChats.set(sessionId, chat);
   return chat;

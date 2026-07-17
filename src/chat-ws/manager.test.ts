@@ -1,24 +1,30 @@
-/** Stream-accumulator replay tests (trim-truncation bug, 2026-07-13 audit).
+/** Stream-accumulator replay tests (trim-truncation bug, 2026-07-13 audit;
+ *  ordered-runs replay, 2026-07-16).
  *
  *  onEvent used to push every per-token stream delta into chat.events and
  *  trim the buffer to the last 400 past 500 — so on any long turn a mid-turn
- *  WS reconnect replayed a `replace` built from only the TAIL, clobbering the
- *  client's fuller partial (and `done` persisted the stub). The fix folds
- *  stream text into chat.streamText on the ActiveChat and keeps stream events
- *  out of chat.events entirely; these tests pin that contract:
- *    (a) 600 deltas replay as ONE replace with the FULL concatenation
- *    (b) a replace-shaped stream event resets the accumulator
+ *  WS reconnect replayed only the TAIL, clobbering the client's fuller
+ *  partial (and `done` persisted the stub). The fix folds stream text into
+ *  chat.streamText on the ActiveChat and keeps stream events out of
+ *  chat.events entirely. Replay now sends a per-lane WIPE ({replace,
+ *  text:""}) followed by the ordered chat.runs as delta frames
+ *  (boundary-stamped where a tool call split the text) so the client's
+ *  block timeline rebuilds the live layout; concatenating the replayed
+ *  deltas after the wipe must equal the accumulator exactly. These tests
+ *  pin that contract:
+ *    (a) 600 deltas replay as wipe + ONE merged delta with the FULL text
+ *    (b) a replace-shaped stream event resets the accumulator AND the runs
  *    (c) a tool event between deltas yields the client's "\n\n" break
- *    (d) non-stream events still replay in order, after the replace
+ *    (d) non-stream events still replay in order, after the text runs
  *    (e) terminateChat's error+done land in the replay
- *    (f) replace-to-EMPTY replays a corrective {replace, text:""} (sawStream
- *        gates the frame, not streamText truthiness)
+ *    (f) replace-to-EMPTY replays only the corrective wipe (sawStream gates
+ *        the frame, not streamText truthiness)
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { buildManager } from "./manager.js";
-import { activeChats, clients, terminateChat } from "./state.js";
+import { activeChats, clients, recordInjectRun, terminateChat } from "./state.js";
 import { replayBufferedEvents } from "./replay.js";
 
 interface Frame {
@@ -49,8 +55,21 @@ beforeEach(() => {
   clients.clear();
 });
 
+// Reassemble what a legacy client's flat lane would hold after the replay:
+// apply the wipe, then append every replayed delta of that lane.
+function laneTextFromReplay(frames: Frame[], lane: string): string {
+  let text = "";
+  for (const f of frames) {
+    const e = f.event as { type?: string; replace?: boolean; text?: string; delta?: string } | undefined;
+    if (!e || e.type !== lane) continue;
+    if (e.replace) text = e.text ?? "";
+    else text += e.delta ?? "";
+  }
+  return text;
+}
+
 describe("stream accumulator survives the 500/400 event trim", () => {
-  it("(a) 600 deltas replay as ONE replace containing the full concatenation", () => {
+  it("(a) 600 deltas replay as wipe + ONE merged delta with the full concatenation", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-long");
     let full = "";
@@ -66,12 +85,16 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-long");
     const streamFrames = frames().filter(f => f.event?.type === "stream");
-    expect(streamFrames).toHaveLength(1);
-    expect(streamFrames[0].event).toMatchObject({ replace: true, text: full });
+    // Uninterrupted deltas merge into a single run: wipe, then one delta.
+    expect(streamFrames).toHaveLength(2);
+    expect(streamFrames[0].event).toMatchObject({ replace: true, text: "" });
+    expect(streamFrames[1].event).toMatchObject({ delta: full });
     expect(streamFrames[0]._replay).toBe(true);
+    expect(streamFrames[1]._replay).toBe(true);
+    expect(laneTextFromReplay(frames(), "stream")).toBe(full);
   });
 
-  it("(b) a replace-shaped stream event resets the accumulator", () => {
+  it("(b) a replace-shaped stream event resets the accumulator and the runs", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-replace");
     onEvent(delta("draft one"));
@@ -81,9 +104,10 @@ describe("stream accumulator survives the 500/400 event trim", () => {
 
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-replace");
-    const streamFrames = frames().filter(f => f.event?.type === "stream");
-    expect(streamFrames).toHaveLength(1);
-    expect(streamFrames[0].event).toMatchObject({ replace: true, text: "clean tail" });
+    // The pre-replace draft never replays — the runs were reset with the
+    // accumulator.
+    expect(laneTextFromReplay(frames(), "stream")).toBe("clean tail");
+    expect(activeChats.get("s-replace")!.streamText).toBe("clean tail");
   });
 
   it("(c) a tool event between deltas produces the client's \\n\\n paragraph break", () => {
@@ -106,7 +130,7 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     expect(activeChats.get("s-tools-nl")!.streamText).toBe("line\nnext");
   });
 
-  it("(d) non-stream events replay in order, after the replace", () => {
+  it("(d) non-stream events replay in order, after the text runs; the post-tool run is boundary-stamped", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-order");
     onEvent(delta("hello "));
@@ -117,10 +141,18 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-order");
     const types = frames().map(f => (f.event as { type: string }).type);
-    expect(types).toEqual(["stream", "tool_start", "tool_end"]);
+    // wipe, run before the tool, run after the tool, then the tool events.
+    expect(types).toEqual(["stream", "stream", "stream", "tool_start", "tool_end"]);
+    const deltas = frames().filter(f => f.event?.type === "stream" && !f.event.replace)
+      .map(f => f.event as { delta: string; boundary?: boolean });
+    expect(deltas[0]).toMatchObject({ delta: "hello " });
+    expect(deltas[0].boundary).toBeUndefined();
+    // The paragraph break the accumulator inserted rides inside the run.
+    expect(deltas[1]).toMatchObject({ delta: "\n\nworld", boundary: true });
+    expect(laneTextFromReplay(frames(), "stream")).toBe("hello \n\nworld");
   });
 
-  it("(e) terminateChat's error + done end up in the replay, after the replace", () => {
+  it("(e) terminateChat's error + done end up in the replay, after the text", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-stop");
     onEvent(delta("partial answer"));
@@ -131,10 +163,11 @@ describe("stream accumulator survives the 500/400 event trim", () => {
 
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-stop");
-    const events = frames().map(f => f.event as { type: string; text?: string; message?: string });
-    expect(events[0]).toMatchObject({ type: "stream", replace: true, text: "partial answer" });
-    expect(events[1]).toMatchObject({ type: "error", message: "provider died" });
-    expect(events[2]).toMatchObject({ type: "done" });
+    const events = frames().map(f => f.event as { type: string; text?: string; message?: string; delta?: string });
+    expect(events[0]).toMatchObject({ type: "stream", replace: true, text: "" });
+    expect(events[1]).toMatchObject({ type: "stream", delta: "partial answer" });
+    expect(events[2]).toMatchObject({ type: "error", message: "provider died" });
+    expect(events[3]).toMatchObject({ type: "done" });
   });
 
   it("replace-to-EMPTY still replays exactly one corrective {replace, text:''}", () => {
@@ -211,15 +244,14 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     }
   });
 
-  it("(i) chat_op_started replays BEFORE the replace; replace before trailing error/done", () => {
+  it("(i) chat_op_started replays BEFORE the wipe; text before trailing error/done", () => {
     // The client wipes per-turn scratch on a done→streaming transition
-    // (chat-stream-store.js applyEvent 'chat_op_started'). Chronologically
-    // op_started precedes all stream text, but it's buffered in chat.events
-    // while the text is coalesced into the up-front replace — replaying it
-    // AFTER the replace made the wipe destroy the just-replayed content on
-    // same-tab reconnects. Pin the partition: op_started first, then the
-    // replace, then the rest in order (replace still ahead of error/done so
-    // they can't be wiped by it).
+    // (chat-stream-reducer.js 'chat_op_started'). Chronologically op_started
+    // precedes all stream text, but it's buffered in chat.events while the
+    // text replays up front — replaying it AFTER the text made the wipe
+    // destroy the just-replayed content on same-tab reconnects. Pin the
+    // partition: op_started first, then the wipe + runs, then the rest in
+    // order (text still ahead of error/done so the wipe can't eat them).
     const m = buildManager();
     const { onEvent } = m.startChat("s-op-order");
     onEvent({ type: "chat_op_started", opId: "op-1" } as ServerEvent);
@@ -232,9 +264,8 @@ describe("stream accumulator survives the 500/400 event trim", () => {
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-op-order");
     const types = frames().map(f => (f.event as { type: string }).type);
-    expect(types).toEqual(["chat_op_started", "stream", "tool_start", "tool_end", "error", "done"]);
-    const streamFrame = frames().find(f => f.event?.type === "stream")!;
-    expect(streamFrame.event).toMatchObject({ replace: true, text: "partial \n\nanswer" });
+    expect(types).toEqual(["chat_op_started", "stream", "stream", "stream", "tool_start", "tool_end", "error", "done"]);
+    expect(laneTextFromReplay(frames(), "stream")).toBe("partial \n\nanswer");
   });
 
   it("sends no stream frame when nothing was streamed (tool-only turn)", () => {
@@ -256,10 +287,10 @@ describe("reasoning accumulator mirrors the stream lane", () => {
   // 500/400 trim on any long thinking phase and EVICTED buffered tool events
   // from replays, and (b) double-counted on reconnect — the client APPENDS
   // replayed reasoning deltas onto the text it already holds. The fix folds
-  // them into chat.reasoningText and replays ONE coalesced replace.
+  // them into chat.reasoningText / chat.runs and replays wipe + run deltas.
   const reasoning = (d: string): ServerEvent => ({ type: "reasoning", delta: d });
 
-  it("(a) 600 reasoning deltas stay out of chat.events; buffered tool events survive; replay carries ONE replace with the full text", () => {
+  it("(a) 600 reasoning deltas stay out of chat.events; buffered tool events survive; replay carries the full text", () => {
     const m = buildManager();
     const { onEvent } = m.startChat("s-think");
     // Tool events land BEFORE the thinking flood — under the old buffering
@@ -279,21 +310,25 @@ describe("reasoning accumulator mirrors the stream lane", () => {
 
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-think");
+    expect(laneTextFromReplay(frames(), "reasoning")).toBe(full);
+    // Uninterrupted deltas merge into one run: wipe + one delta.
     const reasoningFrames = frames().filter(f => f.event?.type === "reasoning");
-    expect(reasoningFrames).toHaveLength(1);
-    expect(reasoningFrames[0].event).toMatchObject({ replace: true, text: full });
-    expect(reasoningFrames[0]._replay).toBe(true);
-    // The eviction half: the tool cards still replay.
+    expect(reasoningFrames).toHaveLength(2);
+    expect(reasoningFrames[0].event).toMatchObject({ replace: true, text: "" });
+    expect(reasoningFrames[1].event).toMatchObject({ delta: full });
+    expect(reasoningFrames.every(f => f._replay)).toBe(true);
+    // The eviction half: the tool cards still replay, after the text.
     const types = frames().map(f => (f.event as { type: string }).type);
-    expect(types).toEqual(["reasoning", "tool_start", "tool_end"]);
+    expect(types).toEqual(["reasoning", "reasoning", "tool_start", "tool_end"]);
   });
 
-  it("(b) frame order: op_started → stream replace → reasoning replace → rest", () => {
-    // op_started must precede both replaces — the client's done→streaming
-    // scratch wipe (applyEvent 'chat_op_started') resets content AND
-    // reasoning, and has to run before either refill. Reasoning and answer
-    // text interleave live but sit on separate client lanes, so one
-    // coalesced replace per lane reproduces the client state exactly.
+  it("(b) frame order: op_started → wipes → runs in ARRIVAL order → rest; interleave preserved", () => {
+    // op_started must precede both wipes — the client's done→streaming
+    // scratch wipe (chat-stream-reducer.js 'chat_op_started') resets content
+    // AND reasoning, and has to run before either refill. The runs then
+    // replay in cross-lane ARRIVAL order — this is what lets the client's
+    // block timeline reconstruct thinking→text→thinking→text instead of
+    // two flattened lane blobs (the 2026-07-16 wall-of-thinking fix).
     const m = buildManager();
     const { onEvent } = m.startChat("s-think-order");
     onEvent({ type: "chat_op_started", opId: "op-r" } as ServerEvent);
@@ -308,9 +343,20 @@ describe("reasoning accumulator mirrors the stream lane", () => {
     const { ws, frames } = makeWs();
     replayBufferedEvents(ws, "s-think-order");
     const types = frames().map(f => (f.event as { type: string }).type);
-    expect(types).toEqual(["chat_op_started", "stream", "reasoning", "tool_start", "tool_end", "error", "done"]);
-    const reasoningFrame = frames().find(f => f.event?.type === "reasoning")!;
-    expect(reasoningFrame.event).toMatchObject({ replace: true, text: "let me check the docs" });
+    expect(types).toEqual([
+      "chat_op_started",
+      "stream", "reasoning",                      // per-lane wipes
+      "reasoning", "stream", "reasoning", "stream", // runs, arrival order
+      "tool_start", "tool_end", "error", "done",
+    ]);
+    const runs = frames().slice(3, 7).map(f => f.event as Record<string, unknown>);
+    expect(runs[0]).toMatchObject({ type: "reasoning", delta: "let me check " });
+    expect(runs[1]).toMatchObject({ type: "stream", delta: "partial " });
+    expect(runs[2]).toMatchObject({ type: "reasoning", delta: "the docs" });
+    // Post-tool run is boundary-stamped and carries the paragraph break.
+    expect(runs[3]).toMatchObject({ type: "stream", delta: "\n\nanswer", boundary: true });
+    expect(laneTextFromReplay(frames(), "reasoning")).toBe("let me check the docs");
+    expect(laneTextFromReplay(frames(), "stream")).toBe("partial \n\nanswer");
   });
 
   it("(c) a turn with no reasoning sends no reasoning frame", () => {
@@ -324,7 +370,27 @@ describe("reasoning accumulator mirrors the stream lane", () => {
     replayBufferedEvents(ws, "s-no-think");
     expect(frames().some(f => f.event?.type === "reasoning")).toBe(false);
     const types = frames().map(f => (f.event as { type: string }).type);
-    expect(types).toEqual(["stream", "tool_start", "tool_end"]);
+    expect(types).toEqual(["stream", "stream", "tool_start", "tool_end"]);
+  });
+
+  it("(d) a consumed mid-turn inject replays as inject_consumed WITH the message, at its timeline position", () => {
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-inject");
+    onEvent(delta("working on it "));
+    // drainInjectsIntoTurn records the inject at consumption time.
+    recordInjectRun("s-inject", "inj-1", "actually make it blue");
+    onEvent(delta("switching to blue"));
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-inject");
+    const evs = frames().map(f => f.event as Record<string, unknown>);
+    expect(evs[0]).toMatchObject({ type: "stream", replace: true, text: "" });
+    expect(evs[1]).toMatchObject({ type: "stream", delta: "working on it " });
+    expect(evs[2]).toMatchObject({ type: "inject_consumed", injectId: "inj-1", message: "actually make it blue" });
+    // Text after the inject starts a NEW run (boundary), never merges into
+    // the pre-inject run — the inject visually splits the answer.
+    expect(evs[3]).toMatchObject({ type: "stream", delta: "switching to blue", boundary: true });
+    expect(laneTextFromReplay(frames(), "stream")).toBe("working on it switching to blue");
   });
 });
 

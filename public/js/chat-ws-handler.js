@@ -107,6 +107,20 @@ function handleChatWsMessage(e) {
 function handleInjectConsumed(msg) {
   try {
     const sid = msg.sessionId;
+    // Live-turn path: the inject is a block inside the streaming bubble
+    // (chat-stream-blocks.js). consumeInject flips its queued styling —
+    // or, when the event carries the text and the block is missing (replay
+    // after a mid-turn reload killed the local echo), materializes it at
+    // the tail of the timeline.
+    if (typeof ChatStreamStore !== 'undefined' && ChatStreamStore.consumeInject
+        && ChatStreamStore.consumeInject(sid, msg.event.injectId, msg.event.message)) {
+      if (typeof activeChat !== 'undefined' && activeChat && activeChat.id === sid
+          && typeof rerenderLiveMessage === 'function') rerenderLiveMessage(sid);
+      return;
+    }
+    // Row path: the inject became a standalone user row — a queued inject
+    // re-emitted by promoteLiveToMessages after its turn ended, or the
+    // legacy pre-timeline splice shape.
     const chat = (typeof chats !== 'undefined' && Array.isArray(chats)) ? chats.find(c => c.id === sid) : null;
     if (!chat || !Array.isArray(chat.messages)) return;
     const m = chat.messages.find(x => x && x._injectId === msg.event.injectId && x._queueState === 'queued');

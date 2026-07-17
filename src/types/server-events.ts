@@ -45,23 +45,32 @@ export type ActionPreview =
   | { kind: "money"; amount: number; currency: string; recipient: string; source: string; formatted: string };
 
 export type ServerEvent =
-  | { type: "stream"; delta: string }
+  /** `boundary` (optional, replay-only) marks that a tool ran immediately
+   *  before this delta. Live turns never carry it — the client marks the
+   *  boundary itself from the interleaved tool_start/tool_end events. On a
+   *  replay (replay.ts sends the turn back as wipe + ordered run deltas,
+   *  with the buffered tool events following AFTER the text) the stamp is
+   *  the only way the client's block timeline can rebuild where the text
+   *  was split. Additive: clients/bridges that don't know it ignore it. */
+  | { type: "stream"; delta: string; boundary?: true }
   /** Adapter-initiated stream replacement (tool-call-from-text extraction
    *  in openai-compat). Client swaps the bubble's text with `text` instead
-   *  of appending. `delta` is omitted on this variant. */
+   *  of appending. `delta` is omitted on this variant. Replay also uses it
+   *  with text:"" as the wipe frame before re-sending the run deltas. */
   | { type: "stream"; replace: true; text: string }
   /** Model-native chain-of-thought, normalized across providers (Grok/Cerebras/
    *  DeepSeek `reasoning`, Anthropic thinking blocks). Streamed live to a
-   *  collapsible "Thinking" affordance ABOVE the answer bubble — never appended
-   *  to message body and never persisted, so the reasoning stays out of chat
-   *  history. Silent for models that don't emit reasoning; the tool-lifecycle
-   *  events carry visibility for those. Clients that don't handle it ignore it. */
-  | { type: "reasoning"; delta: string }
-  /** Replay-coalescing frame for the reasoning lane (state.ts
-   *  replayBufferedEvents) — same duplication class as the stream lane's
-   *  `replace`: replaying raw deltas onto a client that already holds the
-   *  Thinking text double-counts it, so replay sends ONE replace built from
-   *  the ActiveChat.reasoningText accumulator. `delta` is omitted here. */
+   *  collapsible "Thinking" affordance rendered at its position in the turn's
+   *  block timeline — never appended to message body and never persisted, so
+   *  the reasoning stays out of chat history. Silent for models that don't
+   *  emit reasoning; the tool-lifecycle events carry visibility for those.
+   *  Clients that don't handle it ignore it. `boundary` as on stream deltas. */
+  | { type: "reasoning"; delta: string; boundary?: true }
+  /** Wipe/replace frame for the reasoning lane (replay.ts) — same
+   *  duplication class as the stream lane's `replace`: replaying raw deltas
+   *  onto a client that already holds the Thinking text double-counts it,
+   *  so replay wipes the lane first (text:"") and re-sends the accumulated
+   *  runs as ordered deltas. `delta` is omitted here. */
   | { type: "reasoning"; replace: true; text: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
@@ -135,8 +144,13 @@ export type ServerEvent =
   // server's inject queue (paired with the client-generated injectId echoed
   // on the local bubble); `inject_consumed` fires when drainInjectsIntoTurn
   // pulls it into a turn iteration so the UI can drop the "queued" styling.
+  // `message` (optional, additive) carries the inject's raw text so a client
+  // whose local echo died (mid-turn reload — the queued block lived only in
+  // renderer memory) can materialize the inline inject bubble at the right
+  // point when the event is replayed. Live consumers that already hold the
+  // echo ignore it.
   | { type: "inject_queued"; injectId: string }
-  | { type: "inject_consumed"; injectId: string }
+  | { type: "inject_consumed"; injectId: string; message?: string }
   // Enforced plan mode flipped for this session (user's Plan toggle over WS).
   // enforced:false is the user's approval event — the standing mutation ban
   // is lifted. The UI mirrors the flag onto the composer's Plan chip.

@@ -9,6 +9,17 @@ import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { hasChatHandlerPending } from "../ops/session-bridge.js";
 
+/** One uninterrupted run of same-lane turn output, in ARRIVAL order across
+ *  lanes — the ordered twin of the flat streamText/reasoningText
+ *  accumulators. Replay walks this so a reconnecting client can rebuild the
+ *  turn's block timeline (thinking / text / injects interleaved) instead of
+ *  receiving two flattened lane blobs. `boundary` marks a run whose text
+ *  followed a tool call — the client splits its timeline there because the
+ *  buffered tool events replay AFTER the text, not interleaved with it. */
+export type TurnRun =
+  | { lane: "stream" | "reasoning"; text: string; boundary?: boolean }
+  | { lane: "inject"; injectId: string; text: string };
+
 export interface ActiveChat {
   sessionId: string;
   events: ServerEvent[];       // Buffered NON-stream events for replay (see streamText)
@@ -40,13 +51,56 @@ export interface ActiveChat {
   sawReasoning: boolean;
   /** Mirrors the client store's toolsSinceText: a tool_start/tool_end landed
    *  since the last text delta. The client inserts "\n\n" before the next
-   *  delta in that case (chat-stream-store.js applyEvent); the accumulator
-   *  must do the same or the replayed replace differs from the live render
-   *  by exactly those paragraph breaks. */
+   *  delta in that case (chat-stream-reducer.js); the accumulator must do
+   *  the same or the replayed text differs from the live render by exactly
+   *  those paragraph breaks. */
   toolsSinceText: boolean;
+  /** Ordered runs for replay (see TurnRun). Run texts are EXACT slices of
+   *  the flat accumulators — the paragraph break the accumulator inserts at
+   *  a tool boundary is part of the run's text — so a legacy client that
+   *  just appends the replayed run deltas lands on byte-identical lane
+   *  text. */
+  runs: TurnRun[];
+  /** A tool event landed since the last run append: the next delta of
+   *  EITHER lane starts a new run (stamped boundary:true) instead of
+   *  merging into the tail. */
+  runBoundary: boolean;
   abortController: AbortController;
   startedAt: number;
   done: boolean;
+}
+
+/** Fold one delta's appended text into the ordered run list. `s` must be the
+ *  exact bytes appended to the flat accumulator (including any paragraph
+ *  break) so the two representations can't drift. */
+export function appendRun(chat: ActiveChat, lane: "stream" | "reasoning", s: string): void {
+  if (!s) return;
+  const tail = chat.runs[chat.runs.length - 1];
+  if (tail && tail.lane === lane && !chat.runBoundary) {
+    tail.text += s;
+    return;
+  }
+  chat.runs.push(chat.runBoundary ? { lane, text: s, boundary: true } : { lane, text: s });
+  chat.runBoundary = false;
+}
+
+/** Drop one lane's runs and re-seed it with the authoritative replacement
+ *  text at the tail (the extractor's `replace` means the streamed text was
+ *  wrong wholesale — positional history for that lane is void). */
+export function replaceRunLane(chat: ActiveChat, lane: "stream" | "reasoning", text: string): void {
+  chat.runs = chat.runs.filter(r => r.lane !== lane);
+  if (text) chat.runs.push({ lane, text, boundary: true });
+}
+
+/** Record a consumed mid-turn inject at its position in the turn's timeline
+ *  so replay can rebuild the inline inject bubble. Called by
+ *  drainInjectsIntoTurn (canonical-loop) — the inject event path bypasses
+ *  manager.onEvent, so it can't be folded there. No-op when no live entry. */
+export function recordInjectRun(sessionId: string, injectId: string, text: string): void {
+  const chat = activeChats.get(sessionId);
+  if (!chat || chat.done) return;
+  chat.runs.push({ lane: "inject", injectId, text });
+  chat.runBoundary = true;
 }
 
 export type ChatHandler = (sessionId: string, message: string, attachments: unknown[]) => void;

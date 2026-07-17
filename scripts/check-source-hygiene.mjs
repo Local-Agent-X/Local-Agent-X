@@ -30,11 +30,7 @@ const PARA_SEP = String.fromCharCode(0x2029);
 
 // Oversized files that predate the LOC gate. Do not add to this list to
 // silence the gate — split the file instead.
-const GRANDFATHERED = new Set([
-  // chat-stream-store.js is a single IIFE with private closure state; it can't
-  // be split into classic <script> siblings without a non-verbatim refactor.
-  "public/js/chat-stream-store.js",
-]);
+const GRANDFATHERED = new Set([]);
 
 const baseName = (rel) => rel.split("/").pop();
 const isTest = (rel) => /\.test\.(ts|js)$/.test(baseName(rel));

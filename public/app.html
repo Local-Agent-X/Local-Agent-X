@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb25"/>
+<link rel="stylesheet" href="/css/app.css?v=vb26"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -1422,8 +1422,15 @@
      isChatActive reads window.ChatStreamStore) AND before every chat-ws /
      chat-send module. Under the single-file serve-time bundle a boot throw in
      app.js halts the WHOLE bundle, so this forward-reference — harmless when
-     scripts were isolated — left ChatStreamStore permanently undefined. -->
-<script src="/js/chat-stream-store.js?v=v3"></script>
+     scripts were isolated — left ChatStreamStore permanently undefined.
+     Split order: blocks (timeline helpers) → reducer (applyEvent switch) →
+     core (state maps, exports _ChatStreamState) → approvals (attaches onto
+     the exported object). -->
+<script src="/js/chat-stream-blocks.js?v=v1"></script>
+<script src="/js/chat-stream-reducer.js?v=v1"></script>
+<script src="/js/chat-stream-store.js?v=v4"></script>
+<script src="/js/chat-stream-finalize.js?v=v1"></script>
+<script src="/js/chat-stream-store-approvals.js?v=v1"></script>
 <!-- App shell modules. Load order matters: state.js defines the `let`
      bindings (chats, projects, activeChat, …) used by every other module.
      app.js runs the top-level boot last, so it must come after all
@@ -1481,24 +1488,25 @@
 <script src="/js/chat-ws-handler-build-summary.js?v=v1"></script>
 <script src="/js/chat-ws-handler-bg-ops.js?v=v1"></script>
 <script src="/js/chat-ws-handler-misc.js?v=v1"></script>
-<script src="/js/chat-ws-handler-chat-events.js?v=v1"></script>
-<script src="/js/chat-ws-handler.js?v=v3"></script>
+<script src="/js/chat-ws-handler-chat-events.js?v=v2"></script>
+<script src="/js/chat-ws-handler.js?v=v4"></script>
 <!-- chat-ws.js split: durable-approval rediscovery must load BEFORE
      chat-ws.js so its onopen hook + onmessage intercept can reference
      rediscoverPendingApprovals / handleDurableApprovalReply. -->
 <script src="/js/chat-approval-rediscovery.js?v=v1"></script>
 <script src="/js/chat-ws.js?v=v3"></script>
-<script src="/js/chat-render-artifacts.js?v=v2"></script>
+<script src="/js/chat-render-artifacts.js?v=v3"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
-<script src="/js/chat-render.js?v=v5"></script>
-<script src="/js/chat-render-live.js?v=v1"></script>
+<script src="/js/chat-render.js?v=v6"></script>
+<script src="/js/chat-render-open-state.js?v=v1"></script>
+<script src="/js/chat-render-live.js?v=v2"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
 <script src="/js/chat-send-ws.js?v=v3"></script>
 <script src="/js/chat-send-http.js?v=v4"></script>
-<script src="/js/chat-send.js?v=v10"></script>
+<script src="/js/chat-send.js?v=v11"></script>
 <script src="/js/chat-uploads.js?v=v3"></script>
 <script src="/js/chat.js?v=vd5"></script>
 <script src="/js/secret-modal.js?v=v1"></script>

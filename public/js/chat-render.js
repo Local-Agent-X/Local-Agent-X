@@ -80,12 +80,20 @@ function renderMessage(msg, ctx) {
     // path so the agent's pin-bottom and tool-card logic doesn't apply.
     return appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
   }
-  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._stopNote || msg._reasoning)) {
-    const node = addMessageEl('assistant', msg.content || '', null, msg.timestamp);
+  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._stopNote || msg._reasoning || msg._blocks)) {
+    const hasBlocks = Array.isArray(msg._blocks) && msg._blocks.length > 0;
+    // Block-timeline rows carry their text inside _blocks — pass an empty
+    // body to addMessageEl so the content isn't rendered twice.
+    const node = addMessageEl('assistant', hasBlocks ? '' : (msg.content || ''), null, msg.timestamp);
     const lastBody = node ? node.querySelector('.msg-body') : null;
-    // Persisted "Thinking" block — collapsed by default so the finished answer
-    // reads clean, but there to expand later.
-    if (lastBody && msg._reasoning) prependReasoningBlock(lastBody, msg._reasoning, false);
+    if (lastBody && hasBlocks) {
+      // Persisted timeline: thinking / text / inline injects in arrival
+      // order, all Thinking blocks collapsed so the finished answer leads.
+      renderTimelineBlocks(lastBody, msg._blocks, { live: false });
+    } else if (lastBody && msg._reasoning) {
+      // Legacy flat row — one "Thinking" block pinned above the answer.
+      prependReasoningBlock(lastBody, msg._reasoning, false);
+    }
     _renderAssistantToolArtifacts(lastBody || node, {
       toolEvents: msg._tools || [],
       chips: msg._chips || [],

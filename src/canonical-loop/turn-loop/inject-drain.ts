@@ -14,7 +14,7 @@ import { appendOpMessage, readOpMessages } from "../store.js";
 import { emit } from "../event-emitter.js";
 import { drainInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
-import { broadcastToSession } from "../../chat-ws/state.js";
+import { broadcastToSession, recordInjectRun } from "../../chat-ws/state.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.turn-loop.inject-drain");
@@ -60,10 +60,16 @@ export function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
     appendOpMessage(row);
     emit(op.id, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
     // Tell the client this specific inject was consumed so its "queued"
-    // bubble styling can drop. Best-effort: a broadcast failure here
-    // doesn't affect the turn's correctness, the UI just stays "queued"
-    // visually until the next render pass.
-    try { broadcastToSession(sessionId, { type: "inject_consumed", injectId: item.id }); } catch {}
+    // bubble styling can drop. `message` carries the raw (unframed) text so
+    // a client whose local echo died can materialize the inline bubble on
+    // replay. Best-effort: a broadcast failure here doesn't affect the
+    // turn's correctness, the UI just stays "queued" visually until the
+    // next render pass. recordInjectRun pins the inject's position in the
+    // turn's replay timeline for late subscribers.
+    try {
+      recordInjectRun(sessionId, item.id, item.text);
+      broadcastToSession(sessionId, { type: "inject_consumed", injectId: item.id, message: item.text });
+    } catch {}
     seqInTurn += 1;
   }
 }

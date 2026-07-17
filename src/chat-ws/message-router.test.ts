@@ -55,6 +55,7 @@ function registerChat(sessionId: string, events: ServerEvent[] = [], streamText 
   activeChats.set(sessionId, {
     sessionId, events: [...events], abortController, startedAt: Date.now(), done: false,
     streamText, sawStream: streamText !== "", reasoningText: "", sawReasoning: false, toolsSinceText: false,
+    runs: streamText ? [{ lane: "stream" as const, text: streamText }] : [], runBoundary: false,
   });
   broadcastActiveChats();
   return abortController;
@@ -207,6 +208,7 @@ describe("CT-4 — stop during the prep window", () => {
     activeChats.set(sessionId, {
       sessionId, events: [], abortController: new AbortController(), startedAt: Date.now(), done: true,
       streamText: "", sawStream: false, reasoningText: "", sawReasoning: false, toolsSinceText: false,
+      runs: [], runBoundary: false,
     });
     markChatHandlerPending(sessionId); // new turn mid-prep
     try {

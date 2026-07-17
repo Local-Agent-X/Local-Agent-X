@@ -5,8 +5,18 @@
 // across chat-ws.js + chat-send.js). The drift between these maps was the
 // root cause of recurring stream/stop/badge bugs — fix it once at the source.
 //
+// Split across five files to stay under the 400-LOC gate (load order in
+// app.html): chat-stream-blocks.js (block-timeline helpers) →
+// chat-stream-reducer.js (the applyEvent switch) → THIS file (state maps,
+// turn start, subscriptions) → chat-stream-finalize.js (promote/endTurn) →
+// chat-stream-store-approvals.js (approval + sidebar methods); the last two
+// attach onto the exported object.
+//
 // Shape per entry (Map<sessionId, ChatStreamEntry>):
-//   content         accumulated stream text
+//   content         accumulated stream text (flat lane — persistence/TTS)
+//   reasoning       accumulated chain-of-thought (flat lane)
+//   blocks          ordered render timeline: text / reasoning / inject
+//                   blocks in ARRIVAL order (see chat-stream-blocks.js)
 //   toolEvents      tool_start/tool_end records, in order
 //   chips           out-of-band tool chips (op-id, kill button, etc.)
 //   progressByTool  toolName → { message } — latest tool_progress per tool
@@ -35,10 +45,16 @@
       sessionId,
       content: '',
       // Model chain-of-thought for the current turn, streamed on the
-      // `reasoning` event lane. Kept separate from `content` so it renders in
-      // a collapsible "Thinking" block and never pollutes the answer bubble or
-      // persisted history. Cleared at turn start and on promote-to-message.
+      // `reasoning` event lane. Kept separate from `content` so it never
+      // pollutes the answer text or persisted history. Cleared at turn
+      // start and on promote-to-message.
       reasoning: '',
+      // Ordered render timeline (chat-stream-blocks.js). The renderer walks
+      // this instead of the flat lanes so thinking, answer text, and
+      // mid-turn injects appear where they actually happened in the turn.
+      blocks: [],
+      blockBoundary: false,
+      blockSeq: 0,
       // Set when a tool event lands; the next stream delta is then the
       // first text of a NEW model turn, so we open a paragraph break before
       // it. Without this, turn N's trailing text and turn N+1's opening text
@@ -50,8 +66,7 @@
       // wins per tool card, append-only across the turn.
       chips: [],
       // toolName → { message } — latest progress event per tool name,
-      // overwritten by each new tool_progress event. Matches the prior
-      // surgical behavior (writes to the last card of that tool name).
+      // overwritten by each new tool_progress event.
       progressByTool: {},
       // Pending approval cards in arrival order. status flips to
       // 'timeout' when approval_timeout lands.
@@ -68,7 +83,7 @@
       lastActivityMs: 0,
       // Timestamp of the last event that produced VISIBLE progress — stream
       // text, reasoning, tool cards/chips/progress. Deliberately NOT bumped
-      // by applyEvent's default case: op_heartbeat lands there, and a
+      // by the reducer's default case: op_heartbeat lands there, and a
       // heartbeat proves the op is alive, not that anything new is on
       // screen. The content-idle thinking indicator
       // (chat-render-artifacts.js) keys off this; lastActivityMs stays the
@@ -150,6 +165,7 @@
     const e = ensure(sessionId);
     e.content = '';
     e.reasoning = '';
+    window._ChatBlocks.resetBlocks(e);
     e.toolsSinceText = false;
     e.toolEvents = [];
     e.chips = [];
@@ -166,274 +182,20 @@
     return e;
   }
 
-  // Splice the finalized live row into chat.messages at the captured anchor
-  // and clear the anchor. Single point of entry for "the live row enters
-  // persisted history" — replaces the dual-write upsert path that mirrored
-  // the row into messages[] mid-stream via the save-interval.
-  // Returns the inserted msg, or null if nothing was streamed.
-  function promoteLiveToMessages(sessionId, chat) {
-    const e = entries.get(sessionId);
-    if (!e || !chat || !Array.isArray(chat.messages)) return null;
-    const content = e.content || '';
-    const toolEvents = e.toolEvents || [];
-    // A stop before anything streamed must still promote a row — the
-    // stopNote is the only record that the turn happened and was stopped;
-    // without it the finalize early-returns, the placeholder keeps its
-    // thinking dots, and the turn vanishes on reload. Idempotency holds:
-    // the scratch-clear below nulls stopNote along with content/toolEvents,
-    // so a redundant second `done` (watchdog replay) finds all three empty
-    // and still returns null here.
-    if (!content.trim() && toolEvents.length === 0 && !e.stopNote) {
-      e.liveAnchorIndex = -1;
-      return null;
-    }
-    const msg = {
-      role: 'assistant',
-      content,
-      timestamp: Date.now(),
-      _tools: toolEvents.length ? [...toolEvents] : undefined,
-    };
-    // Carry the turn's reasoning onto the finalized row so the "Thinking" block
-    // survives past the live stream — collapsed, available to expand later.
-    if (e.reasoning) msg._reasoning = e.reasoning;
-    if (e.chips.length) msg._chips = [...e.chips];
-    if (Object.keys(e.progressByTool).length) msg._progressByTool = { ...e.progressByTool };
-    if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a }));
-    if (e.stopNote) msg._stopNote = { ...e.stopNote };
-    const raw = typeof e.liveAnchorIndex === 'number' ? e.liveAnchorIndex : chat.messages.length;
-    let idx = Math.max(0, Math.min(raw, chat.messages.length));
-    // Self-correct a stale anchor: if the array was rebuilt under us (a racing
-    // hydrate/sync) the captured index can land the reply before the user
-    // prompt that triggered it. An assistant reply must follow its user turn —
-    // if the clamped slot is at or before the trailing user message, drop the
-    // reply to the end so it can't render above the question.
-    let lastUserIdx = -1;
-    for (let i = chat.messages.length - 1; i >= 0; i--) {
-      if (chat.messages[i] && chat.messages[i].role === 'user') { lastUserIdx = i; break; }
-    }
-    if (lastUserIdx >= 0 && idx <= lastUserIdx) idx = chat.messages.length;
-    chat.messages.splice(idx, 0, msg);
-    e.liveAnchorIndex = -1;
-    // Clear the live scratch so a second promote (the stuck-stream watchdog's
-    // reconnect_op replays a redundant `done`, which re-fires finalize → here)
-    // has nothing to promote and the guard above returns null — otherwise the
-    // still-populated content + liveAnchorIndex === -1 re-splices THIS row at
-    // index 0, duplicating the assistant message at the top of the chat. Mirror
-    // exactly what startTurn resets so a subsequent turn starts clean too.
-    e.content = '';
-    e.reasoning = '';
-    e.toolEvents = [];
-    e.chips = [];
-    e.approvals = [];
-    e.progressByTool = {};
-    e.stopNote = null;
-    return msg;
-  }
-
-  // Mutate entry from a raw WS event and notify subscribers. Events not in
-  // the switch still fire notify so per-turn UI handlers see them (modals,
+  // Mutate entry from a raw WS event (the switch lives in
+  // chat-stream-reducer.js) and notify subscribers. Events not in the
+  // switch still fire notify so per-turn UI handlers see them (modals,
   // approval cards, voice visuals, etc.) without needing their own listener.
   function applyEvent(sessionId, event) {
     if (!sessionId || !event) return;
     const e = ensure(sessionId);
-    const now = Date.now();
-    switch (event.type) {
-      case 'chat_op_started':
-        if (event.opId && e.doneOpIds.has(event.opId)) {
-          // Stale start for an op we've already ended. Don't overwrite the
-          // current opId with the dead one and don't re-light streaming.
-          e.lastActivityMs = now;
-          break;
-        }
-        if (event.opId) e.opId = event.opId;
-        if (e.status === 'done') {
-          // A NEW op starting on a finished entry (the doneOpIds guard above
-          // already rejected stale replays). Adopted turns never ran
-          // startTurn, so scratch left behind after the last promote — a late
-          // '\n\nError: …' appended AFTER promote cleared content — would
-          // become the head of this turn and get persisted. Mirror startTurn's
-          // scratch resets; leave liveAnchorIndex/doneOpIds alone (adoption
-          // owns the anchor; doneOpIds must keep rejecting stale starts).
-          //
-          // Replay-ordering guarantee (state.ts replayBufferedEvents): on a
-          // subscribe replay the server sends ALL chat_op_started events
-          // FIRST, then the coalesced stream `replace`, then the remaining
-          // buffered events. Same-tab reconnect onto an entry still 'done'
-          // from its last turn: the new op's replayed chat_op_started fires
-          // this wipe BEFORE the replace refills content — a genuinely new
-          // op, nothing lost. Page reload: the entry is fresh ('idle'), the
-          // wipe doesn't fire, the replace lands untouched either way.
-          e.content = '';
-          e.reasoning = '';
-          e.toolsSinceText = false;
-          e.toolEvents = [];
-          e.chips = [];
-          e.progressByTool = {};
-          e.approvals = [];
-          e.stopNote = null;
-          e.abortReason = null;
-        }
-        if (e.status === 'idle' || e.status === 'done') e.status = 'streaming';
-        e.lastActivityMs = now;
-        break;
-      case 'stream':
-        if (event.replace === true) { e.content = event.text || ''; e.toolsSinceText = false; }
-        else if (typeof event.delta === 'string') {
-          if (e.toolsSinceText && e.content && !e.content.endsWith('\n')) e.content += '\n\n';
-          e.content += event.delta;
-          e.toolsSinceText = false;
-        }
-        e.lastActivityMs = now;
-        // Visible progress — see the lastContentMs comment in blank().
-        e.lastContentMs = now;
-        break;
-      case 'reasoning':
-        // Live chain-of-thought — accumulate on its own lane so the renderer
-        // shows a collapsible "Thinking" block. Never touches `content`, so it
-        // stays out of the answer bubble and the persisted message.
-        // `replace` is the replay-coalescing frame (state.ts
-        // replayBufferedEvents) — same duplication class as the stream lane's
-        // CT-3: appending replayed deltas onto reasoning this client already
-        // holds double-counts the Thinking text, so the server sends ONE
-        // replace built from its accumulator and we SET instead of append.
-        if (event.replace === true) e.reasoning = event.text || '';
-        else if (typeof event.delta === 'string') e.reasoning += event.delta;
-        e.lastActivityMs = now;
-        e.lastContentMs = now;
-        break;
-      case 'tool_start':
-        // Idempotent by call id. The same tool_start can reach the store more
-        // than once for a single dispatch (provider/transport replays, a
-        // resubscribed WS listener). A duplicate start would render a second
-        // tool card AND a second generate_image preview, so dedupe at the
-        // source of truth rather than papering over it downstream.
-        if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'start' && t.toolCallId === event.toolCallId)) {
-          e.toolEvents.push({ type: 'start', name: event.toolName, toolCallId: event.toolCallId, args: event.args, riskLevel: event.riskLevel });
-        }
-        e.toolsSinceText = true;
-        e.lastActivityMs = now;
-        e.lastContentMs = now;
-        break;
-      case 'tool_end': {
-        // Preserve the media URL line through the 500-char cap so
-        // chat-tool-cards.js attachMediaPreview can still render the
-        // <img>/<video>. Long video prompts routinely push the trailing
-        // `View: /videos/...` line past the cap, leaving the chat bubble
-        // with the tool-detail text but no inline player or link.
-        const raw = event.result || '';
-        let result = raw.slice(0, 500);
-        const mediaUrl = raw.match(/\/(?:images|videos)\/[A-Za-z0-9._-]+/);
-        if (mediaUrl && !result.includes(mediaUrl[0])) {
-          result = result.trimEnd() + '\nView: ' + mediaUrl[0];
-        }
-        // Idempotent by call id, same reasoning as tool_start above.
-        if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'end' && t.toolCallId === event.toolCallId)) {
-          e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result });
-        }
-        e.toolsSinceText = true;
-        e.lastActivityMs = now;
-        e.lastContentMs = now;
-        break;
-      }
-      case 'tool_chip':
-        if (event.chip) e.chips.push(event.chip);
-        e.lastActivityMs = now;
-        e.lastContentMs = now;
-        break;
-      case 'tool_progress':
-        if (event.toolName) {
-          e.progressByTool[event.toolName] = { message: event.message || '' };
-        }
-        e.lastActivityMs = now;
-        e.lastContentMs = now;
-        break;
-      case 'approval_requested':
-        // Idempotent by approvalId — the same ask can reach the store twice
-        // (live event + connect-time rediscovery hydration from
-        // /api/approvals/pending, or a replayed frame). A duplicate would
-        // render two actionable cards for one decision.
-        if (event.approvalId && !e.approvals.some(a => a.id === event.approvalId)) {
-          e.approvals.push({
-            id: event.approvalId,
-            toolName: event.toolName,
-            context: event.context,
-            argsPreview: event.argsPreview,
-            // Durable-sourced asks (chat-ws.js rediscovery) carry the op id +
-            // expiry so the answer can route via the durable-resolve path and
-            // the card can expire client-side; live asks omit both → null.
-            opId: event.opId || null,
-            expiresAt: typeof event.expiresAt === 'number' ? event.expiresAt : null,
-            status: 'pending',
-            resolvedAt: null,
-          });
-        }
-        e.lastActivityMs = now;
-        break;
-      case 'approval_timeout': {
-        if (event.approvalId) {
-          const ap = e.approvals.find(a => a.id === event.approvalId);
-          if (ap) { ap.status = 'timeout'; ap.resolvedAt = now; }
-        }
-        e.lastActivityMs = now;
-        break;
-      }
-      case 'approval_resolved': {
-        // Without this the store only ever knew pending/timeout, so any
-        // re-render during the turn resurrected a clicked card as a fresh
-        // actionable prompt.
-        if (event.approvalId) {
-          const ap = e.approvals.find(a => a.id === event.approvalId);
-          if (ap) {
-            ap.status = event.approved ? 'approved' : 'denied';
-            ap.resolvedAt = now;
-            // Durable-resolve reply: the decision was recorded on the op's
-            // durable column (server restarted since the ask) and applies
-            // when the agent resumes — render distinctly from a live settle.
-            if (event.delivery === 'recorded') ap.delivery = 'recorded';
-          }
-        }
-        e.lastActivityMs = now;
-        break;
-      }
-      case 'stopped':
-        e.stopNote = {
-          reason: event.reason || 'Stopped.',
-          debug: event.debug || null,
-          firedBy: event.firedBy || null,
-        };
-        e.lastActivityMs = now;
-        break;
-      case 'error':
-        if (event.message) {
-          e.abortReason = event.message;
-          // Mirror the error into the visible bubble text. Dedup guards
-          // against duplicate WS deliveries (server's emitErrorOnce dedups
-          // per-op, but accumulated subscribers can still re-deliver — see
-          // 2026-05-27 live trace: 4 identical error bubbles from one
-          // server event).
-          const errText = '\n\nError: ' + event.message;
-          if (!e.content.endsWith(errText)) e.content += errText;
-        }
-        e.lastActivityMs = now;
-        break;
-      case 'done':
-        rememberDoneOp(e, e.opId);
-        e.status = 'done';
-        e.opId = null;
-        e.lastActivityMs = now;
-        break;
-      default:
-        // Deliberately does NOT bump lastContentMs: op_heartbeat lands here,
-        // and heartbeats must not mask content-idleness — the idle thinking
-        // indicator exists precisely to show during heartbeat-only stretches.
-        e.lastActivityMs = now;
-    }
+    window._chatStreamReduce(e, event, Date.now(), { rememberDoneOp });
     notify(sessionId, event);
   }
 
   // Per-op activity bump — used by the dispatcher when it sees an event
   // envelope carrying _opId so the watchdog stays honest even for events
-  // that applyEvent doesn't otherwise touch. (No seq tracking: the server
+  // that the reducer doesn't otherwise touch. (No seq tracking: the server
   // never stamps _seq on live broadcast envelopes — only the reconnect_op
   // replay path does — so client-side seq was dead weight. 2026-07-13 audit.)
   function bumpActivity(sessionId) {
@@ -443,22 +205,38 @@
     e.lastActivityMs = Date.now();
   }
 
-  // Shift the live anchor by `delta`. Used by the inject path so the
-  // synthesized live assistant row (and the future finalized assistant from
-  // promoteLiveToMessages) stays AFTER any mid-stream inject we just spliced
-  // in before it. Caller passes 1 after splicing an inject at the current
-  // anchor index.
-  function bumpAnchor(sessionId, delta) {
-    if (!sessionId || typeof delta !== 'number') return;
+  // Mid-turn user message → a block at the tail of the live timeline, so it
+  // renders right under everything the agent has said so far and the
+  // agent's next output continues beneath it. (It used to splice into
+  // chat.messages ABOVE the whole live row, pinning the user's mid-turn
+  // message above text written before it.) Only valid on a streaming entry.
+  function addInject(sessionId, injectId, text) {
     const e = entries.get(sessionId);
-    if (!e || e.liveAnchorIndex < 0) return;
-    e.liveAnchorIndex += delta;
+    if (!e || e.status !== 'streaming' || !injectId) return false;
+    window._ChatBlocks.addInjectBlock(e, injectId, text, 'queued');
+    e.lastActivityMs = Date.now();
+    e.lastContentMs = Date.now();
+    notify(sessionId, null);
+    return true;
+  }
+
+  // Server confirmed the inject was drained into the turn. Flips the block's
+  // queued styling; when the block is missing but `text` is provided (replay
+  // after a mid-turn reload killed the local echo), the block is
+  // materialized at the tail — only while the turn is still streaming.
+  function consumeInject(sessionId, injectId, text) {
+    const e = entries.get(sessionId);
+    if (!e || !injectId) return false;
+    const changed = window._ChatBlocks.consumeInjectBlock(
+      e, injectId, text, e.status === 'streaming');
+    if (changed) notify(sessionId, null);
+    return changed;
   }
 
   // Adopt an in-flight turn this client never started — page reload mid-turn,
   // or switching into a chat whose turn began while unwatched. The server's
-  // subscribe replay has already refilled content/reasoning/toolEvents via
-  // applyEvent, so startTurn (which wipes all of that) is the wrong tool:
+  // subscribe replay has already refilled content/reasoning/blocks/toolEvents
+  // via applyEvent, so startTurn (which wipes all of that) is the wrong tool:
   // adoption only needs an anchor so renderMessages can synthesize the live
   // row and promoteLiveToMessages knows where to splice on `done`. No-op
   // when a live anchor already exists (a locally-started turn).
@@ -483,81 +261,6 @@
     if (!e || e.liveAnchorIndex < 0) return false;
     e.liveAnchorIndex = Math.max(0, anchorIdx);
     return true;
-  }
-
-  // Force-terminate from a local action (stop button, transport error). The
-  // dispatcher's `done` event normally clears state; this is for cases where
-  // we can't wait for it (force-closing the WS, never-arrived done frame).
-  function endTurn(sessionId, reason) {
-    const e = entries.get(sessionId);
-    if (!e) return false;
-    if (e.status === 'done') return false;
-    // Synthesize end events for orphan starts so a stopped/aborted turn
-    // doesn't promote a tool card with a stuck indicator. Mirrors the
-    // pre-refactor renderMessages cleanup that used to do this on the
-    // fly when stripping stale _streaming flags.
-    //
-    // Match closure by toolCallId when the start carries one — a name-only
-    // check considered a REPEATED tool's second start closed because the
-    // first run's end matched by name, leaving the second card stuck. Name
-    // matching remains only as the fallback for starts without an id
-    // (providers whose ids don't line up start↔end). Pushing into the array
-    // we iterate is safe: synthesized events are type 'end', so the
-    // `type === 'start'` guard skips them.
-    for (const te of e.toolEvents) {
-      if (te.type !== 'start') continue;
-      const closed = te.toolCallId
-        ? e.toolEvents.some(t => t.type === 'end' && t.toolCallId === te.toolCallId)
-        : e.toolEvents.some(t => t.type === 'end' && t.name === te.name);
-      if (!closed) {
-        e.toolEvents.push({ type: 'end', name: te.name, toolCallId: te.toolCallId, allowed: true, result: '(interrupted)' });
-      }
-    }
-    // Surface the local stop through the same stopNote lane a server
-    // `stopped` event uses, so promoteLiveToMessages carries it onto the
-    // finalized row and the finalize paint renders the stop notice.
-    // Previously stopChat hand-appended a '[stopped by user]' div via
-    // innerHTML+= AFTER finalize — re-parsing the finalized bubble's DOM
-    // (killing tool-card listeners) and duplicating what stopNote rendering
-    // owns. Don't clobber a note the server already delivered.
-    //
-    // ONLY when reason is truthy: endTurn is NOT stop-only — it doubles as
-    // the NORMAL completion finalizer for HTTP/SSE turns (chat-send-http.js
-    // passes null; end-of-stream IS the done signal there). A null reason
-    // means clean end, not a stop — stamping "Stopped." on it would persist
-    // a bogus notice onto every HTTP-fallback turn.
-    if (reason && !e.stopNote) {
-      e.stopNote = { reason: reason, debug: null, firedBy: 'local-stop' };
-    }
-    rememberDoneOp(e, e.opId);
-    e.status = 'done';
-    e.opId = null;
-    if (reason) e.abortReason = reason;
-    e.lastActivityMs = Date.now();
-    notify(sessionId, { type: 'done', _local: true, reason: reason || null });
-    return true;
-  }
-
-  function setSidebarActive(sessionId, active) {
-    if (!sessionId) return;
-    const e = ensure(sessionId);
-    if (e.sidebarActive === !!active) return;
-    e.sidebarActive = !!active;
-    notify(sessionId, null);
-  }
-
-  // Sync to the server's `active_chats` snapshot — sessions not in the list
-  // lose their sidebar marker (but keep their streaming state if any).
-  function setActiveSidebarSet(sessionIds) {
-    const set = new Set(sessionIds || []);
-    for (const [sid, e] of entries) {
-      const next = set.has(sid);
-      if (e.sidebarActive !== next) { e.sidebarActive = next; notify(sid, null); }
-    }
-    for (const sid of set) {
-      const e = ensure(sid);
-      if (!e.sidebarActive) { e.sidebarActive = true; notify(sid, null); }
-    }
   }
 
   function isStreaming(sessionId) {
@@ -597,47 +300,14 @@
     return function unsubscribe() { globalSubs.delete(cb); };
   }
 
-  // Locate an approval card across all entries by its id — card click
-  // handlers and the durable-resolve reply only know the approvalId.
-  function findApproval(approvalId) {
-    if (!approvalId) return null;
-    for (const [sessionId, e] of entries) {
-      const ap = e.approvals.find(a => a.id === approvalId);
-      if (ap) return { sessionId, approval: ap };
-    }
-    return null;
-  }
-
-  // Optimistic local flip when the user clicks Approve/Deny — the server's
-  // approval_resolved event confirms it, but a re-render in the gap between
-  // click and server echo must not resurrect an actionable card. Scans all
-  // entries because the card click only knows the approvalId.
-  function resolveApprovalLocal(approvalId, approved) {
-    const found = findApproval(approvalId);
-    if (!found) return;
-    found.approval.status = approved ? 'approved' : 'denied';
-    found.approval.resolvedAt = Date.now();
-    notify(found.sessionId, null);
-  }
-
-  // Server confirmed the decision was durably RECORDED (approval_resolved
-  // reply carrying delivery:"recorded") — the approval wasn't live
-  // in-process (server restarted since the ask); it applies when the agent
-  // resumes. Distinct from resolveApprovalLocal so renders can show the
-  // "Recorded" state instead of a normal live settle.
-  function resolveApprovalRecorded(approvalId, approved) {
-    const found = findApproval(approvalId);
-    if (!found) return;
-    found.approval.status = approved ? 'approved' : 'denied';
-    found.approval.delivery = 'recorded';
-    found.approval.resolvedAt = Date.now();
-    notify(found.sessionId, null);
-  }
+  // Internal state handle for chat-stream-store-approvals.js (loads after
+  // this file and attaches the approval + sidebar methods onto the export).
+  window._ChatStreamState = { entries, ensure, notify, rememberDoneOp };
 
   window.ChatStreamStore = {
     get, ensure,
-    startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity, bumpAnchor, endTurn, promoteLiveToMessages,
-    setSidebarActive, setActiveSidebarSet, resolveApprovalLocal, resolveApprovalRecorded, findApproval,
+    startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity,
+    addInject, consumeInject,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,
   };

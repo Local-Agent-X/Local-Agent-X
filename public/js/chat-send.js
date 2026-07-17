@@ -39,33 +39,28 @@ async function sendMessage() {
     if (chatWs && chatWs.readyState === WebSocket.OPEN) {
       chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text, injectId }));
     }
-    const injectMsg = { role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' };
-    // Splice the inject AT the live anchor (before the synthesized assistant
-    // row) and advance the anchor by 1 so the synth — and the future
-    // finalized assistant from promoteLiveToMessages — stays after the
-    // inject. Push-to-end placed inject AFTER the assistant slot, so the
-    // user's typed mid-stream message ended up below the response that
-    // addressed it. Preserves typed-before-response ordering both during
-    // streaming and after finalize.
-    const entry = ChatStreamStore.get(activeChat.id);
-    const anchor = entry && typeof entry.liveAnchorIndex === 'number' ? entry.liveAnchorIndex : -1;
-    // Paint the inject bubble in place — a full renderMessages() per
-    // interject rebuilt the entire thread mid-stream and froze the window
-    // on long chats.
-    let painted = false;
-    if (anchor >= 0 && anchor <= activeChat.messages.length) {
-      activeChat.messages.splice(anchor, 0, injectMsg);
-      ChatStreamStore.bumpAnchor(activeChat.id, 1);
-      painted = typeof insertInjectBubbleInPlace === 'function'
-        && insertInjectBubbleInPlace(activeChat.id, injectMsg);
+    // The inject lands INSIDE the live turn's block timeline — right under
+    // everything the agent has said so far; the agent's next output opens a
+    // new block beneath it. (It used to splice into chat.messages ABOVE the
+    // whole live row, which pinned the user's mid-turn message above text
+    // that was written before it.) promoteLiveToMessages folds consumed
+    // injects into the finalized row's _blocks and re-emits still-queued
+    // ones as standalone user rows for the next turn; the server's session
+    // log records the consumed inject at the same point in the transcript,
+    // so live view and reload agree.
+    const added = ChatStreamStore.addInject(activeChat.id, injectId, text);
+    if (added) {
+      if (typeof rerenderLiveMessage === 'function') rerenderLiveMessage(activeChat.id);
     } else {
-      activeChat.messages.push(injectMsg);
-      painted = typeof appendMessagesInPlace === 'function'
+      // Streaming flag raced off between the check above and here — fall
+      // back to a normal appended user row so the text is never dropped.
+      activeChat.messages.push({ role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' });
+      const painted = typeof appendMessagesInPlace === 'function'
         && appendMessagesInPlace(activeChat.messages.length - 1);
+      if (!painted && typeof renderMessages === 'function') renderMessages();
+      saveChats();
     }
-    if (!painted && typeof renderMessages === 'function') renderMessages();
     input.value = ''; input.style.height = 'auto';
-    saveChats();
     return;
   }
   // No cross-session guard: if a DIFFERENT session is streaming (e.g. IDE

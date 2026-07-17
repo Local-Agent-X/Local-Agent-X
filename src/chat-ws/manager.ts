@@ -9,8 +9,10 @@ import {
   activeChats,
   type ActiveChat,
   type ChatHandler,
+  appendRun,
   broadcastActiveChats,
   broadcastToSession,
+  replaceRunLane,
   setChatHandler,
   terminateChat,
 } from "./state.js";
@@ -91,6 +93,8 @@ export function buildManager(): ChatWsManager {
         reasoningText: "",
         sawReasoning: false,
         toolsSinceText: false,
+        runs: [],
+        runBoundary: false,
         abortController,
         startedAt: Date.now(),
         done: false,
@@ -178,19 +182,24 @@ export function buildManager(): ChatWsManager {
             // reconnect replayed only the TAIL as a `replace` and clobbered
             // the client's fuller partial (trim-truncation bug, 2026-07-13
             // audit — see replayBufferedEvents in replay.ts).
-            chat.sawStream = true; // gates the replay's replace frame — even for text:""
+            chat.sawStream = true; // gates the replay's wipe frame — even for text:""
             if ("replace" in event) {
               chat.streamText = event.text;
               chat.toolsSinceText = false;
+              replaceRunLane(chat, "stream", event.text);
             } else {
               // Mirror the client store: a tool card since the last text
               // means the next delta starts a new paragraph
-              // (chat-stream-store.js applyEvent).
+              // (chat-stream-reducer.js). The break is folded into `s` so
+              // the ordered runs and the flat accumulator stay
+              // byte-identical.
+              let s = event.delta;
               if (chat.toolsSinceText && chat.streamText && !chat.streamText.endsWith("\n")) {
-                chat.streamText += "\n\n";
+                s = "\n\n" + s;
               }
-              chat.streamText += event.delta;
+              chat.streamText += s;
               chat.toolsSinceText = false;
+              appendRun(chat, "stream", s);
             }
           } else if (event.type === "reasoning") {
             // Reasoning lane's twin of the stream fold above. Per-token
@@ -201,12 +210,20 @@ export function buildManager(): ChatWsManager {
             // reasoning). Plain append, no toolsSinceText paragraph logic:
             // the client's reasoning lane appends plainly too, so the
             // accumulator must match it byte-for-byte.
-            chat.sawReasoning = true; // gates the replay's coalesced replace
-            if ("replace" in event) chat.reasoningText = event.text;
-            else chat.reasoningText += event.delta;
+            chat.sawReasoning = true; // gates the replay's wipe frame
+            if ("replace" in event) {
+              chat.reasoningText = event.text;
+              replaceRunLane(chat, "reasoning", event.text);
+            } else {
+              chat.reasoningText += event.delta;
+              appendRun(chat, "reasoning", event.delta);
+            }
           } else {
             if (event.type === "tool_start" || event.type === "tool_end") {
               chat.toolsSinceText = true;
+              // Next delta of either lane opens a NEW run: the replayed
+              // block timeline splits where the tool actually ran.
+              chat.runBoundary = true;
             }
             chat.events.push(event);
             // Backstop only, now that stream deltas never land here — the

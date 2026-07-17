@@ -27,17 +27,79 @@
 // Mirrors the DOM shape addMessageEl produces for an assistant message plus
 // the streaming-class + thinking-dots + tool-card routing that the per-event
 // dispatcher (chat-ws-handler-chat-events.js) writes into the same bubble.
-// Prepend a collapsible "Thinking" block holding the model's chain-of-thought.
-// textContent (not innerHTML) — raw model thoughts are untrusted text, never
-// markup. `open` starts it expanded (live stream) or collapsed (finalized row).
-function prependReasoningBlock(bodyEl, reasoning, open) {
-  if (!bodyEl || !reasoning) return;
+
+// Build one collapsible "Thinking" <details>. textContent (not innerHTML) —
+// raw model thoughts are untrusted text, never markup. The summary click
+// listener records the user's explicit toggle intent on dataset.user so
+// preserveOpenState can tell a deliberate open/close apart from the
+// auto open-while-streaming / collapse-when-superseded defaults across the
+// per-frame live swaps.
+function _makeReasoningDetails(text, open, key) {
   const details = document.createElement('details');
   details.className = 'reasoning-block';
+  if (key) details.dataset.key = key;
   details.open = !!open;
   details.innerHTML = '<summary class="reasoning-summary">Thinking</summary><div class="reasoning-body"></div>';
-  details.querySelector('.reasoning-body').textContent = reasoning;
-  bodyEl.insertBefore(details, bodyEl.firstChild);
+  details.querySelector('.reasoning-body').textContent = text;
+  details.querySelector('.reasoning-summary').addEventListener('click', () => {
+    // The default toggle applies after the click handler returns; read the
+    // settled state a tick later.
+    setTimeout(() => { details.dataset.user = details.open ? 'open' : 'closed'; }, 0);
+  });
+  return details;
+}
+
+// Legacy shape: one flat reasoning string, pinned above the answer. Kept for
+// rows that predate the block timeline (msg._reasoning without msg._blocks).
+function prependReasoningBlock(bodyEl, reasoning, open) {
+  if (!bodyEl || !reasoning) return;
+  bodyEl.insertBefore(_makeReasoningDetails(reasoning, open, null), bodyEl.firstChild);
+}
+
+// Walk the turn's ordered block timeline (reasoning / text / inject) into
+// bodyEl, in ARRIVAL order — the fix for the "wall of thinking pinned to the
+// top" render. While live, only the TRAILING reasoning block starts open (it
+// is the thing currently streaming); every earlier one auto-collapses the
+// moment a later block starts, so finished thinking folds down to a one-line
+// "▸ Thinking" chip exactly where it happened in the answer. Injects render
+// as inline user bubbles at the point the user sent them; the agent's next
+// block continues beneath. Returns true when anything was rendered.
+function renderTimelineBlocks(bodyEl, blocks, opts) {
+  if (!bodyEl || !Array.isArray(blocks) || blocks.length === 0) return false;
+  const live = !!(opts && opts.live);
+  let rendered = false;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (!b) continue;
+    if (b.type === 'reasoning') {
+      // trimStart only: leading breaks come from the shared-lane paragraph
+      // logic; internal formatting is the model's own.
+      const text = (b.text || '').replace(/^\s+/, '');
+      if (!text) continue;
+      const open = live && i === blocks.length - 1;
+      bodyEl.appendChild(_makeReasoningDetails(text, open, b.id ? 'r:' + b.id : null));
+      rendered = true;
+    } else if (b.type === 'text') {
+      if (!(b.text || '').trim()) continue;
+      const div = document.createElement('div');
+      div.className = 'block-text';
+      if (b.id) div.dataset.key = 't:' + b.id;
+      div.innerHTML = mdPreviewMode ? md(b.text) : `<pre class="raw-md">${esc(b.text)}</pre>`;
+      bodyEl.appendChild(div);
+      rendered = true;
+    } else if (b.type === 'inject') {
+      const div = document.createElement('div');
+      div.className = 'inline-inject' + (b.queueState === 'queued' ? ' queued' : '');
+      if (b.injectId) div.dataset.injectId = b.injectId;
+      const bubble = document.createElement('div');
+      bubble.className = 'inline-inject-bubble';
+      bubble.textContent = b.text || '';
+      div.appendChild(bubble);
+      bodyEl.appendChild(div);
+      rendered = true;
+    }
+  }
+  return rendered;
 }
 
 // A streaming turn is "content-idle" when nothing VISIBLE has landed for a
@@ -55,6 +117,8 @@ function isContentIdle(store) {
 function _buildLiveAssistantInto(parent, store) {
   if (!parent) return null;
   const content = store ? (store.content || '') : '';
+  const blocks = store ? (store.blocks || []) : [];
+  const hasBlocks = blocks.some(b => b && (b.type === 'inject' || (b.text || '').trim()));
   // Content-idle mid-turn: suppress the 'streaming' class (that's what draws
   // the ▍ cursor via .msg-body.streaming::after — no CSS change needed) and
   // show the rotating thinking indicator under the content instead. Requires
@@ -62,7 +126,6 @@ function _buildLiveAssistantInto(parent, store) {
   // The finalize path synthesizes a store WITHOUT lastContentMs, so a
   // terminal paint can never render idle.
   const contentIdle = !!content && isContentIdle(store);
-  const bodyContent = mdPreviewMode ? md(content) : `<pre class="raw-md">${esc(content)}</pre>`;
   const div = document.createElement('div');
   div.className = 'msg assistant';
   // Explicit live marker. The in-place swap paths in chat-render-live.js fall
@@ -74,18 +137,30 @@ function _buildLiveAssistantInto(parent, store) {
   div.dataset.live = '1';
   div.setAttribute('role', 'article');
   div.setAttribute('aria-label', 'Assistant message');
-  div.innerHTML = `<div class="msg-label">Assistant</div><div class="msg-body${contentIdle ? '' : ' streaming'}">${bodyContent}</div><div class="msg-footer"></div>`;
+  div.innerHTML = `<div class="msg-label">Assistant</div><div class="msg-body${contentIdle ? '' : ' streaming'}"></div><div class="msg-footer"></div>`;
   parent.appendChild(div);
   const bodyEl = div.querySelector('.msg-body');
-  // Pre-delta render: thinking dots so the chat doesn't look frozen until
-  // the first token lands. Mirrors the manual bubble sendMessage creates.
-  if (bodyEl && !content) {
-    bodyEl.innerHTML = thinkingHTML();
-  }
-  // Live chain-of-thought block, above the answer. Open while streaming so the
-  // reasoning is visible as it flows in (collapsed on the finalized render).
   const reasoning = store ? (store.reasoning || '') : '';
-  if (bodyEl && reasoning) prependReasoningBlock(bodyEl, reasoning, true);
+  if (bodyEl) {
+    if (hasBlocks) {
+      // Block timeline: thinking / answer text / injects in arrival order.
+      renderTimelineBlocks(bodyEl, blocks, { live: true });
+    } else if (content) {
+      // Legacy flat shape (finalize reshape of a pre-timeline row, or a
+      // replay from a server without run support): answer text with the
+      // one flat reasoning block pinned above it.
+      const w = document.createElement('div');
+      w.className = 'block-text';
+      w.innerHTML = mdPreviewMode ? md(content) : `<pre class="raw-md">${esc(content)}</pre>`;
+      bodyEl.appendChild(w);
+      if (reasoning) prependReasoningBlock(bodyEl, reasoning, true);
+    } else {
+      // Pre-delta render: thinking dots so the chat doesn't look frozen
+      // until the first token lands. Mirrors sendMessage's manual bubble.
+      bodyEl.innerHTML = thinkingHTML();
+      if (reasoning) prependReasoningBlock(bodyEl, reasoning, true);
+    }
+  }
   const toolEvents = store ? (store.toolEvents || []) : [];
   _renderAssistantToolArtifacts(bodyEl || div, {
     toolEvents,

@@ -49,7 +49,7 @@ if ($LASTEXITCODE -ne 0) { Write-Error "voxcpm install failed (exit $LASTEXITCOD
 # 5) Force the CUDA 12.8 torch AFTER everything else. Blackwell GPUs
 #    (RTX 50-series, sm_120) need cu128 builds. --force-reinstall, not
 #    --upgrade: PyPI's torch can be NEWER than the cu128 index's latest
-#    (e.g. 2.13.0 cpu vs 2.11.0+cu128), and --upgrade won't downgrade —
+#    (e.g. 2.13.0 cpu vs 2.11.0+cu128), and --upgrade won't downgrade --
 #    that left a torch/torchaudio version mismatch where libtorchaudio.pyd
 #    refused to load. Force-reinstall always lands the matched pair from
 #    the CUDA index. Skipped on CI (LAX_FORCE_CPU_TORCH=1, no GPU).

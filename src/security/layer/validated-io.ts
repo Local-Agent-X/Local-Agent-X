@@ -15,6 +15,22 @@
 import { openSync, closeSync, lstatSync, readFileSync, writeFileSync, constants } from "node:fs";
 import { realpathDeep, matchesSensitivePath, isSanctionedWorkRootEnvFile } from "./file-access.js";
 
+/**
+ * Policy denial from the validated-I/O gate, thrown BEFORE any byte of the
+ * target is opened or read. Tool sinks convert it to a `blocked()` envelope
+ * (status:"blocked") instead of a generic error, which is a load-bearing
+ * contract: the delivery-point taint policy treats a blocked result as
+ * proof that no sensitive byte was read, so a denied read never taints the
+ * session. A denial that happens mid-read (partial bytes possibly in the
+ * error text) must NOT use this class.
+ */
+export class FileAccessDeniedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "FileAccessDeniedError";
+	}
+}
+
 // fs.constants.O_NOFOLLOW is POSIX-only; on Windows it is undefined and falls
 // back to 0 in the flag sets below. There the leaf check is emulated with an
 // lstat before open (assertLeafNotSymlink): not atomic like the kernel flag,
@@ -32,7 +48,7 @@ function assertLeafNotSymlink(absPath: string): void {
 	if (constants.O_NOFOLLOW !== undefined) return; // kernel flag handles it
 	try {
 		if (lstatSync(absPath).isSymbolicLink()) {
-			throw new Error(`Blocked: refusing to open symlinked leaf ${absPath} (no O_NOFOLLOW on this platform)`);
+			throw new FileAccessDeniedError(`Blocked: refusing to open symlinked leaf ${absPath} (no O_NOFOLLOW on this platform)`);
 		}
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -73,7 +89,7 @@ export function openValidatedRead(absPath: string, sessionId?: string): { fd: nu
 	} catch (e) {
 		// ELOOP = symlink cycle (attack). realpathDeep only rethrows this.
 		if ((e as NodeJS.ErrnoException).code === "ELOOP") {
-			throw new Error("Blocked: symlink loop detected (possible attack)");
+			throw new FileAccessDeniedError("Blocked: symlink loop detected (possible attack)");
 		}
 		throw e;
 	}
@@ -86,7 +102,7 @@ export function openValidatedRead(absPath: string, sessionId?: string): { fd: nu
 	// behavior unchanged.
 	const match = matchesSensitivePath(normalized);
 	if (match && !isSanctionedWorkRootEnvFile(sessionId, canonicalPath)) {
-		throw new Error(`Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`);
+		throw new FileAccessDeniedError(`Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`);
 	}
 
 	// O_NOFOLLOW on the leaf: a symlink swapped in at canonicalPath between the

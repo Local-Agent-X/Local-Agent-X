@@ -3,10 +3,10 @@ import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { moveToTrash } from "../safe-delete.js";
-import { readValidatedFile, writeValidatedFile } from "../security/layer/index.js";
+import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "../security/layer/index.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
-import { ok, err } from "./result-helpers.js";
+import { ok, err, blocked } from "./result-helpers.js";
 import { fileNotFoundError } from "./edit-recovery.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
@@ -57,6 +57,16 @@ export const readTool: ToolDefinition = {
     try {
       probe = readValidatedFile(filePath, sessionIdOf(args));
     } catch (e) {
+      // A gate denial happens BEFORE any byte is opened — surface it as the
+      // blocked envelope, not a generic error. The delivery-point taint policy
+      // keys on status:"blocked" to prove no bytes were read (a denied read
+      // must not taint the session). A mid-read failure stays a plain error.
+      if (e instanceof FileAccessDeniedError) {
+        return blocked(`Refused to read ${filePath}: ${e.message}`, {
+          path: filePath,
+          recovery: "This path is credential/secret material and may not be read. If a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user.",
+        });
+      }
       return err(`Failed to read ${filePath}: ${(e as Error).message}`, { path: filePath });
     }
 

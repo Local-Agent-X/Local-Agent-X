@@ -24,7 +24,9 @@ export const bashTool: ToolDefinition = {
     "Use bash ONLY for: build/test commands the project defines (npm/yarn/pytest/cargo), git operations beyond what tool surface covers, custom user-supplied scripts, OS-level operations no native tool exposes (process listing, env vars, services). " +
     "If you can do it with a native tool above, you MUST. Reaching for bash on something a native tool covers is a behavior bug — it's slower and the native tool returns cleaner, verifiable output.\n\n" +
     "When you DO use bash, prefer ONE focused command over piping multiple together. " +
-    "For processing large JSON/CSV files, use `python -c \"import json; ...\"` instead of reading them line by line.",
+    "For processing large JSON/CSV files, use `python -c \"import json; ...\"` instead of reading them line by line.\n\n" +
+    "PROBE HYGIENE: to check whether a tool is installed, use a targeted probe (`command -v ffmpeg`, `where node`, `Get-Command demucs`) — NEVER dump the environment or credential files (`printenv`, `env`, `set`, `Get-ChildItem env:`, `cat ~/.aws/*`). " +
+    "Secret-shaped output is redacted before you see it, so a dump wastes the call; read a specific variable by name only when you actually need it.",
   parameters: {
     type: "object",
     properties: {

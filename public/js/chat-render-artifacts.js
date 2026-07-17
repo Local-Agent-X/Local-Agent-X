@@ -291,6 +291,19 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
             : (endEvt.status === 'declined' ? '✋ Declined'
               : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
           card.querySelector('.tool-detail').textContent = detailText || fallback;
+          // Session-taint blocks are the one user-clearable block class:
+          // offer the one-click declassify-and-retry action instead of
+          // sending the user to Settings → Security. Keyed on the block's
+          // authoritative layer (single-gate `layer` or aggregate `layers`).
+          if (endEvt.status === 'blocked') {
+            const md = endEvt.metadata || {};
+            const TAINT_LAYERS = ['data-lineage', 'tainted-shell'];
+            const taintBlocked = TAINT_LAYERS.includes(md.layer)
+              || (Array.isArray(md.layers) && md.layers.some(l => TAINT_LAYERS.includes(l)));
+            if (taintBlocked && window.activeChat && activeChat.id) {
+              try { appendDeclassifyAction(card, activeChat.id); } catch (e) { console.error('[chat] declassify action render error:', e); }
+            }
+          }
           attachMediaPreview(card, te.name, rawResult);
         }
       }

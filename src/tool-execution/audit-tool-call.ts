@@ -187,7 +187,7 @@ export const auditPhase: Phase = async (ctx) => {
   applyBudget(ctx);
   firePostHook(ctx);
   recordUsage(ctx);
-  ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!) });
+  ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata });
   harvestChip(ctx);
   shapeMsg(ctx);
   return CONTINUE;

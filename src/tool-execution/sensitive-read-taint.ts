@@ -267,6 +267,16 @@ export function applyResultTaintPolicy(
     };
   }
 
+  // Policy denial (status:"blocked" per the 5-state envelope): the tool was
+  // refused BEFORE producing data — no sensitive byte was read, let alone
+  // delivered. Same invariant outcome as the stub: withdraw the provisional
+  // floor and drop the pending records. (Only gate-authored denials use this
+  // status; a mid-read failure is status:"error" and commits below.)
+  if (result?.isError && result.status === "blocked") {
+    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs);
+    return result;
+  }
+
   // No stub — whatever the tool returned (including an errored result's
   // output, which can echo sensitive content) is delivered. Commit the taint.
   if (pending.length > 0) {

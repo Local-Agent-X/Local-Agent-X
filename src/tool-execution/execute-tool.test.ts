@@ -172,13 +172,15 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     ]);
     const session = freshSession();
     clearSessionTaint(session);
+    const serverEvents: Array<Record<string, unknown>> = [];
     const msgs = await executeToolCalls(
       [
         { id: "1", name: "read", arguments: JSON.stringify({ path: SENSITIVE_PATH }) },
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: `look up ${deliveredText}` }) },
       ],
       toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
-      undefined, undefined, undefined, undefined, undefined, "local",
+      (e) => serverEvents.push(e as unknown as Record<string, unknown>),
+      undefined, undefined, undefined, undefined, "local",
     );
 
     // The delivered read committed the taint…
@@ -187,6 +189,16 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     expect(events).not.toContain("enter:web_search");
     const webMsg = msgs.find((m) => (m as { tool_call_id?: string }).tool_call_id === "2");
     expect(String(webMsg?.content)).toMatch(/BLOCKED by data lineage|tainted/i);
+
+    // The blocked tool_end event carries the envelope metadata naming the
+    // authoritative layer — the chat UI keys its one-click declassify-and-
+    // retry action off this (data-lineage in `layer` or aggregate `layers`).
+    const blockedEnd = serverEvents.find(
+      (e) => e.type === "tool_end" && e.toolCallId === "2",
+    ) as { metadata?: { layer?: string; layers?: string[] } } | undefined;
+    expect(blockedEnd?.metadata).toBeDefined();
+    const layers = [blockedEnd!.metadata!.layer, ...(blockedEnd!.metadata!.layers ?? [])];
+    expect(layers).toContain("data-lineage");
 
     clearSessionTaint(session);
   });

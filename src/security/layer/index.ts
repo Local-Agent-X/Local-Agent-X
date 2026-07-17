@@ -11,7 +11,7 @@ export {
 	realpathDeep,
 	isSanctionedWorkRootEnvFile,
 } from "./file-access.js";
-export { readValidatedFile, writeValidatedFile, openValidatedRead } from "./validated-io.js";
+export { readValidatedFile, writeValidatedFile, openValidatedRead, FileAccessDeniedError } from "./validated-io.js";
 export {
 	evaluateEgressForUrl,
 	resolveAndPinHost,

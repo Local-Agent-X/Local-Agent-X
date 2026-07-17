@@ -399,7 +399,7 @@ describe("work-root env read-taint carve-out", () => {
     }
   });
 
-  it("an env file read WITHOUT a work root is denied by the file gate and keeps the taint", async () => {
+  it("an env file read WITHOUT a work root is DENIED by the file gate — blocked envelope, no taint", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-envtaint-"));
     dirs.add(dir);
     const envFile = join(dir, ".env.local");
@@ -407,14 +407,14 @@ describe("work-root env read-taint carve-out", () => {
     const s = freshSession(); // no work root registered
     try {
       const res = await run(readTool, { path: envFile, _sessionId: s }, s);
-      // The file-access gate denies the read inside the tool (errored result,
-      // no redaction stub). An errored result's output is DELIVERED, and this
-      // layer can't prove an arbitrary tool's error text is free of file bytes
-      // — so the provisional floor stands (conservative side of the
-      // delivery-point invariant).
-      expect(res.isError).toBe(true);
+      // The validated-I/O gate refuses the read BEFORE any byte is opened and
+      // the tool surfaces it as status:"blocked" (typed FileAccessDeniedError
+      // → blocked envelope). No bytes read → no bytes delivered → the
+      // provisional floor is retracted: a DENIED read must not brick the
+      // session (delivery-point invariant).
+      expect(res.status).toBe("blocked");
       expect(String(res.content)).not.toContain("HARMLESS=placeholder");
-      expect(checkEgressTaint(s).blocked).toBe(true);
+      expect(checkEgressTaint(s).blocked).toBe(false);
     } finally {
       clearSessionTaint(s);
     }

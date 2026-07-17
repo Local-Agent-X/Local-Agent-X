@@ -126,8 +126,11 @@
           result = result.trimEnd() + '\nView: ' + mediaUrl[0];
         }
         // Idempotent by call id, same reasoning as tool_start above.
+        // `metadata` is the result envelope's metadata (layer/recovery/…) —
+        // kept so the renderer can key affordances off the blocking layer
+        // (declassify-and-retry on a data-lineage / tainted-shell block).
         if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'end' && t.toolCallId === event.toolCallId)) {
-          e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result });
+          e.toolEvents.push({ type: 'end', name: event.toolName, toolCallId: event.toolCallId, allowed: event.allowed, status: event.status, result, metadata: event.metadata });
         }
         e.toolsSinceText = true;
         B.markBlockBoundary(e);

@@ -85,7 +85,22 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // keeps working. See taintedShellBlockReason for the full rationale.
     const shellTaintBlock = taintedShellBlockReason(tc.name, taintLabels);
     if (shellTaintBlock) {
-      return terminate(ctx, { rendered: "raw", content: `User hint: ${USER_HINTS.policy}\n${shellTaintBlock}`, allowed: false });
+      // Envelope (not raw) so the block carries layer metadata: the chat UI
+      // keys its declassify-and-retry action off layer === "tainted-shell".
+      return terminate(ctx, {
+        rendered: "model",
+        result: {
+          content: shellTaintBlock,
+          isError: true,
+          status: "blocked",
+          metadata: {
+            layer: "tainted-shell",
+            userHint: USER_HINTS.policy,
+            recovery: "If the sensitive read that tainted this session was intended and safe, ask the user to declassify (one click on this card, or Settings → Security), then retry.",
+          },
+        },
+        allowed: false,
+      });
     }
     const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, taintLabels, ariScopeId);
     if (!ariResult.allowed) {

@@ -74,7 +74,10 @@ export type ServerEvent =
   | { type: "reasoning"; replace: true; text: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
-  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus }
+  /** `metadata` is the tool result's envelope metadata (layer/recovery/userHint,
+   *  …) so the UI can key affordances off the blocking layer — e.g. the
+   *  declassify-and-retry action on a data-lineage/tainted-shell block. */
+  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown> }
   // Internal onEvent-channel signal: the running per-op token total, relayed
   // from a canonical turn_committed's usage by the agent-runner so a caller's
   // onEvent closure (e.g. the agent-run driver in handler-events.ts) can key it

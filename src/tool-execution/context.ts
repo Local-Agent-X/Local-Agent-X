@@ -127,7 +127,7 @@ export function terminate(
   } else {
     ctx.allowed = payload.allowed;
     ctx.result = payload.result;
-    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.result.content, allowed: payload.allowed, status: statusOf(payload.result) });
+    ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: payload.result.content, allowed: payload.allowed, status: statusOf(payload.result), metadata: payload.result.metadata });
     ctx.msgs.push({ role: "tool", tool_call_id: ctx.tc.id, content: renderToolResultForModel(payload.result) } as ChatCompletionMessageParam);
   }
   return HALT;

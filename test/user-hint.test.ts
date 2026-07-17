@@ -8,6 +8,7 @@ import { evaluateFileAccess } from "../src/security/layer/index.js";
 import { evaluateShellCommand } from "../src/security/layer/index.js";
 import { evaluateWebFetch } from "../src/security/layer/index.js";
 import { SecurityLayer } from "../src/security/index.js";
+import { platformRoot } from "../src/platform-root.js";
 import { ToolPolicy } from "../src/tool-policy/index.js";
 import { makeThreatEnginePack } from "../src/tool-policy/packs/threat-engine-pack.js";
 import { makeDefaultPolicyPack } from "../src/tool-policy/packs/default-policy-pack.js";
@@ -98,16 +99,14 @@ describe("userHint on blocked-tool responses", () => {
       expect(d.userHint).toBe(USER_HINTS.secrets);
     });
 
-    it("write to platform source (repoRoot/src) is blocked with secrets hint", () => {
+    it("write to platform source is blocked with secrets hint", () => {
       // Per commit 7d024f80: the platform-source guard is anchored to the repo
       // root and exempts the workspace/ sandbox — user apps legitimately use a
       // src/ convention (Astro, Vite, Next) and must NOT be blocked. Only
-      // <repoRoot>/src and <repoRoot>/public (in-platform, NOT in-workspace) are
-      // protected. The workspace is <projectRoot>/workspace, so a sibling
-      // <projectRoot>/src path is in-platform but outside the workspace.
-      const projectRoot = join(ws, "..");
-      const target = join(projectRoot, "src", "anything.ts");
-      const d = evaluateFileAccess(ws, "unrestricted", allowNothing, "write", target);
+      // <platformRoot>/src and <platformRoot>/public (in-platform, NOT in-workspace) are
+      // protected regardless of where the user workspace lives.
+      const target = join(platformRoot(), "src", "anything.ts");
+      const d = evaluateFileAccess(ws, "unrestricted", () => true, "write", target);
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.secrets);
     });

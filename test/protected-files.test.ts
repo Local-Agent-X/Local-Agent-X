@@ -14,19 +14,19 @@
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { isProtectedFile, pathMatchesProtected } from "../src/config-loader.js";
+import { platformRoot } from "../src/platform-root.js";
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const manifest = JSON.parse(readFileSync(join(REPO_ROOT, "config/protected-files.json"), "utf-8"));
+const PLATFORM_ROOT = platformRoot();
+const manifest = JSON.parse(readFileSync(join(PLATFORM_ROOT, "config/protected-files.json"), "utf-8"));
 const entries: string[] = manifest.protected;
 
 describe("protected-files manifest (drift guard)", () => {
   it("every protected path still exists on disk with the right kind", () => {
     const missing: string[] = [];
     for (const entry of entries) {
-      const abs = join(REPO_ROOT, entry);
+      const abs = join(PLATFORM_ROOT, entry);
       const isDir = entry.endsWith("/");
       if (!existsSync(abs)) { missing.push(`${entry} (does not exist)`); continue; }
       const stat = statSync(abs);
@@ -46,17 +46,17 @@ describe("protected-files manifest (drift guard)", () => {
 describe("isProtectedFile — directory subtree protection", () => {
   it("protects a file inside a protected directory (repo-relative + absolute)", () => {
     expect(isProtectedFile("src/security/firewall.ts").protected).toBe(true);
-    expect(isProtectedFile("C:/Users/x/Local Agent X/src/auth/token.ts").protected).toBe(true);
+    expect(isProtectedFile(join(PLATFORM_ROOT, "src/auth/token.ts")).protected).toBe(true);
     expect(isProtectedFile("src/ari-kernel/grants.ts").protected).toBe(true);
   });
 
   it("protects exact core files repo-relative and via an in-tree absolute path", () => {
     expect(isProtectedFile("src/index.ts").protected).toBe(true);
     // An ABSOLUTE path is only protected when it falls INSIDE the platform tree
-    // (join(REPO_ROOT, …) does exactly that). A bare "/abs/repo/…" prefix is a
+    // (join(PLATFORM_ROOT, …) does exactly that). A bare "/abs/repo/…" prefix is a
     // DIFFERENT project and is deliberately NOT protected — see the anchor test
     // below.
-    expect(isProtectedFile(join(REPO_ROOT, "src/types.ts")).protected).toBe(true);
+    expect(isProtectedFile(join(PLATFORM_ROOT, "src/types.ts")).protected).toBe(true);
   });
 
   it("does NOT protect an identically-named file in a DIFFERENT project tree", () => {

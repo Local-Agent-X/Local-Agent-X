@@ -1,6 +1,7 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterAll } from "vitest";
 
 // Per-file test isolation. Runs before each test file (vitest setupFiles).
 //
@@ -21,3 +22,7 @@ process.env.USERPROFILE = home;
 // Never route a test's safe-delete into the developer's real OS Trash — force
 // the ~/.lax fallback so trash assertions are deterministic and self-contained.
 process.env.LAX_NO_NATIVE_TRASH = "1";
+
+afterAll(() => {
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});

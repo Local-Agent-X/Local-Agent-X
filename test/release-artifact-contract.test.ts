@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { buildSourceArchive } from "../scripts/build-source-archive.mjs";
 
@@ -60,7 +60,7 @@ describe("versioned source release contract", () => {
     const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf-8");
 
     expect(workflow).toContain(
-      'node scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"',
+      'node .release-tools/scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"',
     );
     expect(workflow).toContain("cd local-agent-x-${{ env.VERSION }}");
     expect(workflow).toContain("npm ci");
@@ -86,5 +86,51 @@ describe("versioned source release contract", () => {
     for (const ref of ["main", sha, "vbeta", "v\u0661.2.3"]) {
       expect(versionTag.test(ref), ref).toBe(false);
     }
+  });
+
+  it("loads release tooling outside a historical target tag before packaging", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf-8");
+    const targetCheckout = workflow.indexOf("ref: refs/tags/${{ env.RELEASE_TAG }}");
+    const toolCheckout = workflow.indexOf("- name: Check out release tooling");
+    const toolRef = workflow.indexOf("ref: ${{ github.sha }}", toolCheckout);
+    const toolPath = workflow.indexOf("path: .release-tools", toolCheckout);
+    const packageStep = workflow.indexOf("- name: Package release");
+
+    expect(targetCheckout).toBeGreaterThan(-1);
+    expect(toolCheckout).toBeGreaterThan(targetCheckout);
+    expect(toolRef).toBeGreaterThan(toolCheckout);
+    expect(toolPath).toBeGreaterThan(toolRef);
+    expect(packageStep).toBeGreaterThan(toolPath);
+  });
+
+  it("archives an older source ref that does not contain the release helper", () => {
+    const historical = join(outDir, "historical");
+    const historicalAsset = join(outDir, "historical.tar.gz");
+    const helper = resolve("scripts", "build-source-archive.mjs");
+    mkdirSync(historical);
+    writeFileSync(join(historical, "package.json"), '{"name":"historical-release"}\n');
+    execFileSync("git", ["init", "--quiet"], { cwd: historical });
+    execFileSync("git", ["add", "package.json"], { cwd: historical });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Release Contract",
+        "-c",
+        "user.email=release@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "historical",
+      ],
+      { cwd: historical },
+    );
+
+    execFileSync(process.execPath, [helper, "HEAD", historicalAsset, "historical-release"], { cwd: historical });
+    const historicalEntries = execFileSync("tar", ["tzf", historicalAsset], { encoding: "utf-8" })
+      .trim()
+      .split(/\r?\n/);
+    expect(historicalEntries).toContain("historical-release/package.json");
+    expect(historicalEntries.some((entry) => entry.includes("build-source-archive.mjs"))).toBe(false);
   });
 });

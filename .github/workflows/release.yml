@@ -35,6 +35,15 @@ jobs:
         with:
           ref: refs/tags/${{ env.RELEASE_TAG }}
 
+      # Historical tags predate the current release helper. Keep the tagged
+      # source at the workspace root, and load tooling from this workflow's
+      # commit into an untracked nested checkout.
+      - name: Check out release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -59,7 +68,7 @@ jobs:
         run: |
           VERSION=${RELEASE_TAG#v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          node scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"
+          node .release-tools/scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"
 
       - name: Generate checksums
         # Hashes the SAME local-agent-x-*.tar.gz asset uploaded below, so the

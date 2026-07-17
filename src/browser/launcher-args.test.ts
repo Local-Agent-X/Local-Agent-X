@@ -18,6 +18,16 @@ describe("buildChromeLaunchArgs", () => {
     expect(a).toContain("--user-data-dir=/tmp/ud");
   });
 
+  // Regression: without --use-mock-keychain, a raw-spawned Chrome creating a
+  // fresh profile hits macOS Keychain Services for its Safe Storage key and the
+  // OS pops a "Keychain Not Found" dialog at the user. --password-store=basic
+  // only covers Linux; the mock keychain is the macOS counterpart.
+  it("never touches the OS keychain", () => {
+    const a = args();
+    expect(a).toContain("--use-mock-keychain");
+    expect(a).toContain("--password-store=basic");
+  });
+
   it("only goes headless when asked", () => {
     expect(buildChromeLaunchArgs(9333, "/tmp/ud", "/tmp/dl", "", false)).not.toContain("--headless=new");
     expect(buildChromeLaunchArgs(9333, "/tmp/ud", "/tmp/dl", "", true)).toContain("--headless=new");

@@ -72,18 +72,31 @@ describe.each(workflows)("%s Windows release signing", (path) => {
 describe("versioned installer release tag contract", () => {
   it("requires an explicit existing tag for manual rebuilds", () => {
     const workflow = installerReleaseWorkflow();
+    const windowsPattern = workflow.match(
+      /\$env:RELEASE_TAG -cnotmatch '([^']+)'/,
+    )?.[1];
 
     expect(workflow).toMatch(/push:\s+tags:\s+- 'v\*'/);
     expect(workflow).toMatch(
       /workflow_dispatch:\s+inputs:\s+tag:\s+description: [^\n]*Existing v\* tag[^\n]*\s+required: true\s+type: string/,
     );
     expect(workflow).toContain("RELEASE_TAG: ${{ inputs.tag || github.ref_name }}");
+    expect(windowsPattern).toBe("^v.*$");
+    expect(workflow).toContain('[[ ! "$RELEASE_TAG" =~ ^v.*$ ]]');
+    const validTag = new RegExp(windowsPattern!);
+    expect(validTag.test("v0.5.3")).toBe(true);
+    expect(validTag.test("V0.5.3")).toBe(false);
+    expect(validTag.test("main")).toBe(false);
+    expect(validTag.test("24ae723f93286018")).toBe(false);
   });
 
   it("checks out and embeds the same canonical tag in both installers", () => {
     const workflow = installerReleaseWorkflow();
 
-    expect(workflow.match(/ref: \$\{\{ env\.RELEASE_TAG \}\}/g)).toHaveLength(2);
+    expect(
+      workflow.match(/ref: refs\/tags\/\$\{\{ env\.RELEASE_TAG \}\}/g),
+    ).toHaveLength(2);
+    expect(workflow).not.toMatch(/^\s+ref: \$\{\{ env\.RELEASE_TAG \}\}$/m);
     expect(workflow).toContain("-p:InstallerSourceTag=$env:RELEASE_TAG");
     expect(workflow).toContain("INSTALLER_SOURCE_TAG: ${{ env.RELEASE_TAG }}");
     expect(workflow).not.toContain("InstallerSourceTag=${{ github.ref_name }}");

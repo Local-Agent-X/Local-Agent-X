@@ -65,9 +65,17 @@ jobs:
       AZURE_SIGN_CERT_PROFILE: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
       WIN_SIGN_EXPECTED_SUBJECT: ${{ vars.WIN_SIGN_EXPECTED_SUBJECT }}
     steps:
+      - name: Require a version tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v.*$') {
+            Write-Error "Installer releases require a v* tag, got: $env:RELEASE_TAG"
+            exit 1
+          }
+
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Require Windows release signing configuration
         shell: pwsh
@@ -175,9 +183,16 @@ jobs:
       DMG_PATH: installer/dist-mac/Install Local Agent X Mac Installer.dmg
       APP_PATH: installer/dist-mac/Install Local Agent X Mac Installer.app
     steps:
+      - name: Require a version tag
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v.*$ ]]; then
+            echo "::error::Installer releases require a v* tag, got: $RELEASE_TAG"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5

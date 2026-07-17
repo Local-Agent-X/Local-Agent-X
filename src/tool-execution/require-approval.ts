@@ -21,9 +21,12 @@ import { terminate, CONTINUE } from "./context.js";
 import {
   cleanTurnForModelSelfSave,
   describeMemoryPromotionRequest,
+  isFactDbPromotion,
   stampApprovedMemoryPromotion,
   stampCleanModelPromotion,
+  stampTaintedModelPromotion,
   stampTrustedUserPromotion,
+  taintedPromotionQuotaExhausted,
   trustedCurrentUserEvidence,
 } from "../memory/promotion-gate.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
@@ -88,6 +91,32 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // through to interactive approval, same as any risky one.
   if (promotion && sessionClean && cleanTurnForModelSelfSave(ctx.priorMessages as unknown[] | undefined)) {
     stampCleanModelPromotion(ctx.args, promotion);
+    return CONTINUE;
+  }
+
+  // Tainted (or taint-marked-turn) FACT-DB promotion: proceeds without a
+  // human click — in chat and unattended runs alike — stamped with the
+  // `:tainted-external` provenance the sink persists and recall renders as
+  // untrusted (fact-provenance-label.ts). No approval is needed because no
+  // trust is being promoted: the saved fact stays exactly as untrusted as
+  // the external content it may paraphrase. Non-fact targets (profile files,
+  // project briefs, daily log) cannot carry per-item provenance, so they
+  // fall through to interactive approval as before.
+  if (promotion && isFactDbPromotion(promotion)) {
+    const quotaSession = ctx.sessionId || "default";
+    if (taintedPromotionQuotaExhausted(quotaSession)) {
+      const result: ToolResult = {
+        content:
+          `BLOCKED: ${ctx.tc.name} hit this session's tainted-memory write quota. ` +
+          `This session has read external content and already saved the maximum number of unreviewed facts. ` +
+          `Stop saving; existing facts are unaffected.`,
+        isError: true,
+        status: "blocked",
+        metadata: { layer: "approval", userHint: USER_HINTS.policy },
+      };
+      return terminate(ctx, { rendered: "model", result, allowed: false });
+    }
+    stampTaintedModelPromotion(ctx.args, promotion);
     return CONTINUE;
   }
 

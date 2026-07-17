@@ -4,6 +4,7 @@ import { relativeAge, memoryStaleCaveat } from "./relative-age.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
 import { readProjectBrief } from "./project-brief.js";
 import type { FactKind } from "./types.js";
+import { factTrustSuffix } from "./fact-provenance-label.js";
 import { extractKeywords, safeReadTextFile } from "./utils.js";
 
 function sanitizeDailyLogForModeration(log: string): string {
@@ -212,21 +213,7 @@ export async function buildContextBlockParts(
         prefix = `${new Date(f.timestamp).toISOString().slice(0, 10)}: `;
         if (todayNum - localDayNumber(f.timestamp, tz) < FRESH_WINDOW_DAYS) suffix = " — still fresh";
       }
-      if (f.sourceFile === "agent-tool:inference") {
-        suffix += " [unverified inference]";
-        suffix += " [source=retained-fact source_type=inference trust=untrusted taint=clean label=\"Unverified inference\"]";
-      } else if (f.sourceFile === "agent-tool:tool-observation") {
-        suffix += " [observed earlier; may be stale]";
-        suffix += " [source=retained-fact source_type=model_declared_tool_observation trust=unknown taint=unknown label=\"Unverified model-declared tool observation\"]";
-      } else if (f.sourceFile === "agent-tool:model-declared-tool-observation") {
-        suffix += " [unverified model-declared tool observation]";
-        suffix += " [source=retained-fact source_type=model_declared_tool_observation trust=unknown taint=unknown label=\"Unverified model-declared tool observation\"]";
-      } else if (f.sourceFile === "agent-tool:user-statement") {
-        suffix += " [reported by user]";
-        suffix += " [source=retained-fact source_type=user_statement trust=unknown taint=clean label=\"User-reported fact\"]";
-      } else {
-        suffix += " [source=retained-fact source_type=legacy trust=unknown taint=unknown label=\"Legacy retained fact\"]";
-      }
+      suffix += factTrustSuffix(f.sourceFile);
       const line = `- ${prefix}${f.content}${ents}${suffix}`;
       bodyBytes += line.length + 1;
       if (bodyBytes > MAX_BYTES) break;

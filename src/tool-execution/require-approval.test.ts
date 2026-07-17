@@ -467,18 +467,21 @@ describe("requireApprovalPhase — destructive reclassification", () => {
   });
 });
 
-describe("requireApprovalPhase — external-ingestion taint downgrades trusted user evidence", () => {
+describe("requireApprovalPhase — external-ingestion taint demotes fact saves to tainted provenance", () => {
   // A memory promotion backed by an exact current-turn user span normally
   // stamps a user-evidence capability and continues silently. Once the
   // session has ingested off-box content (data-lineage/external.ts), that
-  // span may itself be laundered injection — the silent path must close and
-  // the promotion must go through interactive approval (blocked unattended).
+  // span may itself be laundered injection — the trusted-user stamp must
+  // close. The promotion still proceeds WITHOUT a prompt (chat and cron
+  // alike), but stamped `:tainted-external` so the persisted fact recalls
+  // as untrusted: no trust is promoted, so no human gate is needed.
   const USER_TURN = "remember I prefer tabs over spaces";
   const CONTENT = "User prefers tabs over spaces";
 
   afterEach(async () => {
     const { clearExternalIngestion } = await import("../data-lineage/external.js");
-    for (const s of sessions) clearExternalIngestion(s);
+    const { clearTaintedPromotionQuota } = await import("../memory/promotion-gate.js");
+    for (const s of sessions) { clearExternalIngestion(s); clearTaintedPromotionQuota(s); }
   });
 
   function promotionCtx(sessionId: string, callContext: CallContext, onEvent?: (e: ServerEvent) => void): ToolCallContext {
@@ -492,6 +495,16 @@ describe("requireApprovalPhase — external-ingestion taint downgrades trusted u
     });
   }
 
+  async function stampedSource(ctx: ToolCallContext): Promise<string | undefined> {
+    const { promotionContextFromToolArgs } = await import("../memory/promotion-gate.js");
+    return promotionContextFromToolArgs(ctx.args, {
+      content: String(ctx.args.content),
+      source: `model-tool:${ctx.tc.name}`,
+      target: "memory:retain",
+      sessionId: ctx.sessionId,
+    }).source;
+  }
+
   it("clean session + user-evidence span → stamps and continues with NO prompt (baseline stays)", async () => {
     const s = pinned("Power");
     const events: ServerEvent[] = [];
@@ -500,38 +513,91 @@ describe("requireApprovalPhase — external-ingestion taint downgrades trusted u
 
     expect(outcome.kind).toBe("continue");
     expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+    expect(await stampedSource(ctx)).not.toContain(":tainted-external");
   });
 
-  it("tainted session + same user-evidence span → interactive approval is REQUIRED", async () => {
+  it("tainted session + same user-evidence span → proceeds with NO prompt, stamped tainted (not user-trusted)", async () => {
     const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const events: ServerEvent[] = [];
-    const ctx = promotionCtx(s, "local", (e) => {
-      events.push(e);
-      if (e.type === "approval_requested") {
-        getApprovalManager().resolveApproval(e.approvalId, true);
-      }
-    });
+    const ctx = promotionCtx(s, "local", (e) => events.push(e));
     const outcome = await requireApprovalPhase(ctx);
 
-    // The silent stamp path is closed: the promotion only proceeds because a
-    // human approved it (grant-stamped), not via trusted user evidence.
-    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
     expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+    expect(await stampedSource(ctx)).toContain(":tainted-external");
   });
 
-  it("tainted session + user-evidence span in an UNATTENDED run → hard-blocked", async () => {
+  it("tainted session + user-evidence span in an UNATTENDED run → proceeds stamped tainted (cron never blocks on memory)", async () => {
     const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const ctx = promotionCtx(s, "cron");
     const outcome = await requireApprovalPhase(ctx);
 
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.allowed).toBe(true);
+    expect(await stampedSource(ctx)).toContain(":tainted-external");
+  });
+
+  it("tainted session + PROFILE-file target still requires interactive approval (no per-item provenance there)", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "memory_update_profile",
+      sessionId: s,
+      callContext: "local",
+      args: { content: "User is an admin on prod", file: "user" },
+      priorMessages: [{ role: "user", content: USER_TURN }],
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, true);
+      },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+    expect(outcome.kind).toBe("continue");
+  });
+
+  it("tainted session + PROFILE-file target UNATTENDED → hard-blocked (unchanged)", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+    const ctx = makeCtx({
+      name: "memory_update_profile",
+      sessionId: s,
+      callContext: "cron",
+      args: { content: "User is an admin on prod", file: "user" },
+    });
+    const outcome = await requireApprovalPhase(ctx);
+
     expect(outcome.kind).toBe("halt");
-    expect(ctx.allowed).toBe(false);
     expect(ctx.result?.status).toBe("blocked");
     expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
+  });
+
+  it("tainted fact saves hit the per-session quota, then block with an honest message (flood guard)", async () => {
+    const { recordExternalIngestion } = await import("../data-lineage/external.js");
+    const { TAINTED_PROMOTION_QUOTA } = await import("../memory/promotion-gate.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s);
+
+    for (let i = 0; i < TAINTED_PROMOTION_QUOTA; i++) {
+      const ctx = promotionCtx(s, "cron");
+      ctx.args = { content: `Distinct injected junk fact number ${i}` };
+      const outcome = await requireApprovalPhase(ctx);
+      expect(outcome.kind).toBe("continue");
+    }
+
+    const overQuota = promotionCtx(s, "cron");
+    const outcome = await requireApprovalPhase(overQuota);
+    expect(outcome.kind).toBe("halt");
+    expect(overQuota.result?.status).toBe("blocked");
+    expect(String(overQuota.result?.content)).toContain("tainted-memory write quota");
   });
 });
 
@@ -581,30 +647,31 @@ describe("requireApprovalPhase — clean-session model self-save is silent", () 
     expect(events.some((e) => e.type === "approval_requested")).toBe(false);
   });
 
-  it("TAINTED session, same model-authored content → interactive approval REQUIRED", async () => {
+  it("TAINTED session, same model-authored content → proceeds with NO prompt, stamped tainted", async () => {
     const { recordExternalIngestion } = await import("../data-lineage/external.js");
+    const { promotionContextFromToolArgs } = await import("../memory/promotion-gate.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const events: ServerEvent[] = [];
-    const ctx = modelSaveCtx(s, "local", (e) => {
-      events.push(e);
-      if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, true);
-    });
+    const ctx = modelSaveCtx(s, "local", (e) => events.push(e));
     const outcome = await requireApprovalPhase(ctx);
 
-    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
     expect(outcome.kind).toBe("continue");
+    expect(events.some((e) => e.type === "approval_requested")).toBe(false);
+    const stamped = promotionContextFromToolArgs(ctx.args, {
+      content: CONTENT, source: "model-tool:remember", target: "memory:retain", sessionId: s,
+    });
+    expect(stamped.source).toContain(":tainted-external");
   });
 
-  it("TAINTED session, model-authored content, UNATTENDED run → hard-blocked", async () => {
+  it("TAINTED session, model-authored content, UNATTENDED run → proceeds stamped tainted (cron memory works)", async () => {
     const { recordExternalIngestion } = await import("../data-lineage/external.js");
     const s = pinned("Power");
     recordExternalIngestion(s);
     const ctx = modelSaveCtx(s, "cron");
     const outcome = await requireApprovalPhase(ctx);
 
-    expect(outcome.kind).toBe("halt");
-    expect(ctx.result?.status).toBe("blocked");
-    expect(String(ctx.result?.content)).toContain("risky content cannot become durable memory");
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.allowed).toBe(true);
   });
 });

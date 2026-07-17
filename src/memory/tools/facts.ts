@@ -2,7 +2,7 @@ import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
-import { promotionContextFromToolArgs, CLEAN_SELF_SOURCE_SUFFIX } from "../promotion-gate.js";
+import { promotionContextFromToolArgs, CLEAN_SELF_SOURCE_SUFFIX, TAINTED_SOURCE_SUFFIX } from "../promotion-gate.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
 
 // Agent-facing single-fact tools. Sit on top of the Facts DB primitives
@@ -38,6 +38,12 @@ function provenanceSource(provenance: FactProvenance): string {
 
 function authorizedSource(provenance: FactProvenance, promotion: MemoryPromotionContext): string {
   if (promotion.origin === "user_statement") return "agent-tool:user-statement";
+  // Tainted-session save: checked BEFORE the tool-observation branch so a
+  // tainted "tool observation" cannot shed the label. The prefix is what
+  // recall keys its untrusted rendering off — losing it here would launder.
+  if (promotion.source?.includes(TAINTED_SOURCE_SUFFIX)) {
+    return `agent-tool:tainted-external-${provenance.replace("_", "-")}`;
+  }
   if (provenance === "tool_observation") return provenanceSource(provenance);
   // Clean-session auto-allowed (no human click) vs interactively human-approved:
   // the audit label must not claim approval that never happened.

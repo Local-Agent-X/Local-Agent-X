@@ -129,16 +129,16 @@ describe("memory promotion through the canonical tool pipeline", () => {
     expect(memory.recallByKind("observation")).toHaveLength(1);
   });
 
-  it("prompts for external content and consumes the exact approval once", async () => {
+  it("external content saves WITHOUT a prompt as tainted, and the capability still binds + consumes exactly once", async () => {
     const prepared = await prepareRemember({
       content: "The remote service is permanently healthy",
       userMessage: '<<<EXTERNAL_UNTRUSTED_CONTENT id="x">>>service healthy<<<END_EXTERNAL_UNTRUSTED_CONTENT id="x">>>',
       provenance: "user_statement",
       confidence: 1,
-      approve: true,
     });
 
-    expect(prepared.events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
     const originalContent = String(prepared.args.content);
     prepared.args.content = "Different content";
     expect((await rememberTool().execute(prepared.args)).isError).toBe(true);
@@ -183,29 +183,31 @@ describe("memory promotion through the canonical tool pipeline", () => {
     expect(memory.recallByKind("observation")).toHaveLength(1);
   });
 
-  it("prompts when a current-turn tool result carries untrusted markers", async () => {
+  it("a turn carrying untrusted markers saves WITHOUT a prompt, demoted to tainted provenance", async () => {
     const prepared = await prepareRemember({
       content: "The service is healthy",
       userMessage: "Check on the service health.",
       toolResult: '<<<EXTERNAL_UNTRUSTED_CONTENT id="x">>>service healthy<<<END_EXTERNAL_UNTRUSTED_CONTENT id="x">>>',
       provenance: "tool_observation",
-      approve: true,
     });
-    expect(prepared.events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
     const result = await rememberTool().execute(prepared.args);
     expect(result.isError, result.content).toBeUndefined();
+    expect(memory.recallByKind("observation")[0].sourceFile).toBe("agent-tool:tainted-external-tool-observation");
   });
 
-  it("prompts on a session that has ingested external content", async () => {
+  it("a tainted session saves WITHOUT a prompt and the fact persists the tainted source label", async () => {
     const prepared = await prepareRemember({
       content: "The user named the assistant Nova",
       userMessage: "From now on I'll call you Nova.",
       taintSession: true,
-      approve: true,
     });
-    expect(prepared.events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
     const result = await rememberTool().execute(prepared.args);
     expect(result.isError, result.content).toBeUndefined();
+    expect(memory.recallByKind("observation")[0].sourceFile).toBe("agent-tool:tainted-external-inference");
   });
 
   it("binds approval to provenance, confidence, source, and session", async () => {

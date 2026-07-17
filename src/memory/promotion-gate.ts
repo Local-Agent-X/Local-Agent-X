@@ -227,6 +227,48 @@ export function stampApprovedMemoryPromotion(args: Record<string, unknown>, requ
   Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
 }
 
+export const TAINTED_SOURCE_SUFFIX = ":tainted-external";
+
+// Only the Facts DB can carry per-row provenance to recall time, so only
+// fact-DB targets are eligible for the silent tainted-write path. Profile
+// files / project briefs / the daily log render under trust labels that
+// per-item provenance cannot correct — a tainted write there WOULD launder,
+// so those targets stay on interactive approval.
+export function isFactDbPromotion(request: MemoryPromotionRequest): boolean {
+  return request.target === "memory:retain" || request.target.startsWith("memory:update:");
+}
+
+// Flood guard for the silent tainted-write path: an injected page that tells
+// the model to spam `remember` gets a hard per-session ceiling instead of an
+// unbounded write channel. Dedupe in retain() already rejects exact repeats;
+// this bounds distinct junk. In-memory and session-lifetime, like the
+// ingestion mark itself.
+export const TAINTED_PROMOTION_QUOTA = 25;
+const taintedWriteCounts = new Map<string, number>();
+
+export function taintedPromotionQuotaExhausted(sessionId: string): boolean {
+  return (taintedWriteCounts.get(sessionId) ?? 0) >= TAINTED_PROMOTION_QUOTA;
+}
+
+/** Test hook — quota state is per-session and process-lifetime, like clearExternalIngestion. */
+export function clearTaintedPromotionQuota(sessionId: string): void {
+  taintedWriteCounts.delete(sessionId);
+}
+
+// A promotion from a session that has ingested off-box content proceeds
+// WITHOUT a human click — but permanently second-class: the `:tainted-external`
+// source suffix survives into the persisted fact's source_file, and recall
+// renders it under an untrusted label (fact-provenance-label.ts). The
+// invariant this preserves: content never GAINS trust by passing through
+// memory — a web-tainted save is recalled no more trusted than the page it
+// may have been laundered from, so there is no trust promotion for a human
+// to gate.
+export function stampTaintedModelPromotion(args: Record<string, unknown>, request: MemoryPromotionRequest): void {
+  const capability = mint({ ...request, source: `${request.source}${TAINTED_SOURCE_SUFFIX}`, origin: "assistant" });
+  Object.defineProperty(args, CAPABILITY, { value: capability, enumerable: false });
+  taintedWriteCounts.set(request.sessionId, (taintedWriteCounts.get(request.sessionId) ?? 0) + 1);
+}
+
 export function promotionContextFromToolArgs(args: Record<string, unknown>, request: {
   content: string; target: string; source: string; sessionId?: string; provenance?: string; confidence?: number;
 }): MemoryPromotionContext {

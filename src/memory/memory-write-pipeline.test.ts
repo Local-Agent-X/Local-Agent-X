@@ -100,27 +100,40 @@ describe("memory writes through the full canonical dispatch pipeline", () => {
     expect(facts[0].content).toContain("Nova");
   });
 
-  it("tainted session: approval card fires, approved save is recallable", async () => {
+  it("tainted session: save is silent (no card) and persists with the tainted source label", async () => {
     const { events, msgs } = await dispatchRemember({
       content: "The user named the assistant Nova",
       userMessage: "From now on I'll call you Nova.",
       taintSession: true,
-      approve: true,
     });
-    expect(events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
+    expect(events.some((event) => event.type === "approval_requested")).toBe(false);
     expect(toolMessageText(msgs)).toMatch(/^Remembered/);
-    expect(memory.recallByKind("observation")).toHaveLength(1);
+    const facts = memory.recallByKind("observation");
+    expect(facts).toHaveLength(1);
+    expect(facts[0].sourceFile).toBe("agent-tool:tainted-external-inference");
   });
 
-  it("tainted session: declined save persists nothing", async () => {
-    const { events, msgs } = await dispatchRemember({
-      content: "The user named the assistant Nova",
-      userMessage: "From now on I'll call you Nova.",
-      taintSession: true,
-      approve: false,
-    });
-    expect(events.filter((event) => event.type === "approval_requested")).toHaveLength(1);
-    expect(toolMessageText(msgs)).toMatch(/DECLINED/);
-    expect(memory.recallByKind("observation")).toHaveLength(0);
+  it("tainted session over quota: dispatch returns BLOCKED and persists nothing", async () => {
+    const sessionId = `pipeline-${seq + 1}`; // the id dispatchRemember will mint next
+    const { stampTaintedModelPromotion, TAINTED_PROMOTION_QUOTA, clearTaintedPromotionQuota } =
+      await import("./promotion-gate.js");
+    for (let i = 0; i < TAINTED_PROMOTION_QUOTA; i++) {
+      stampTaintedModelPromotion({}, {
+        content: `junk ${i}`, target: "memory:retain", source: "model-tool:remember",
+        sessionId, provenance: "model-declared:inference", confidence: 0.6, origin: "assistant",
+      });
+    }
+    try {
+      const { events, msgs } = await dispatchRemember({
+        content: "The user named the assistant Nova",
+        userMessage: "From now on I'll call you Nova.",
+        taintSession: true,
+      });
+      expect(events.some((event) => event.type === "approval_requested")).toBe(false);
+      expect(toolMessageText(msgs)).toMatch(/tainted-memory write quota/);
+      expect(memory.recallByKind("observation")).toHaveLength(0);
+    } finally {
+      clearTaintedPromotionQuota(sessionId);
+    }
   });
 });

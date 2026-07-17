@@ -21,6 +21,7 @@ import { developerProtocols } from "./packs/developer.js";
 import { researchProtocols } from "./packs/research.js";
 import { communicationProtocols } from "./packs/communication.js";
 import { buildCaptionInjector, formatCaptionForInstagram, instagramPost } from "./packs/instagram.js";
+import { buildComposerToolContent, COMPOSER_SITES } from "./packs/composer-inject.js";
 import {
   loadBundledProtocols, loadImportedProtocols,
   stampBuiltinSource, stampCustomSource, mergeByName,
@@ -257,6 +258,28 @@ export function createCoreProtocolTools(): ToolDefinition[] {
             "⚠️ After inserting, ALWAYS take a snapshot to verify the caption appears exactly ONCE and is properly formatted.",
           ].join("\n"),
         };
+      },
+    },
+
+    {
+      name: "protocol_format_composer",
+      description: "Format text for ANY rich-text social composer (Instagram, X/Twitter, and future sites) and get the JavaScript to inject it via the browser 'evaluate' action without breaking line breaks or duplicating text. Use this instead of the structured 'fill' action for Lexical/contenteditable composers.",
+      parameters: {
+        type: "object",
+        properties: {
+          site: { type: "string", description: `Target site: ${Object.keys(COMPOSER_SITES).join(", ")}` },
+          text: { type: "string", description: "The raw text with line breaks to insert" },
+        },
+        required: ["site", "text"],
+      },
+      async execute(args) {
+        const site = String(args.site || "");
+        const text = String(args.text || "");
+        const content = buildComposerToolContent(site, text);
+        if (content == null) {
+          return { content: `Unknown composer site "${site}". Supported: ${Object.keys(COMPOSER_SITES).join(", ")}.` };
+        }
+        return { content };
       },
     },
 

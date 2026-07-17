@@ -32,6 +32,10 @@ export const twitterPostMission: Protocol = {
   triggers: ["tweet", "post on twitter", "post on x", "tweet this", "share on twitter", "post to x"],
   learnablePreferences: ["twitter_username", "tweet_style", "default_hashtags_twitter", "thread_style"],
   rules: [
+    // Composer formatting — X's tweet box is a Lexical editor that DESTROYS
+    // line breaks on a structured 'fill'. Mirror Instagram: inject via JS.
+    "CRITICAL: X's tweet composer is a Lexical editor ([data-testid=\"tweetTextarea_0\"]) that DESTROYS line breaks if you use the browser 'fill' action. To preserve formatting, get the injector via the 'protocol_format_composer' tool (site: 'twitter') and run it with the browser 'evaluate' action — NOT 'fill'.",
+    "NEVER paste the tweet body twice. After inserting, use 'snapshot' to verify it appears exactly once with formatting intact.",
     "X character limit is 280 per post (or 25,000 for premium).",
     "For threads: number each post mentally, aim for 1-3 key points per post.",
     "Check if user has X Premium for extended features (longer posts, edit).",
@@ -43,7 +47,7 @@ export const twitterPostMission: Protocol = {
     { id: "draft", instruction: "Draft the post(s). Show character count. Get approval." },
     { id: "open_x", instruction: "Navigate to x.com, verify login." },
     { id: "compose", instruction: "Open the post composer." },
-    { id: "insert_content", instruction: "Enter the post text. Attach media if any." },
+    { id: "insert_content", instruction: "Insert the tweet body using the 'protocol_format_composer' tool (site: 'twitter') to get the injector, then run it via the browser 'evaluate' action (NOT 'fill') so line breaks survive X's Lexical editor. Attach media if any. Take a snapshot to verify the text appears exactly once with formatting intact." },
     { id: "review", instruction: "Preview before posting.", validate: "Post content and media correct" },
     { id: "publish", instruction: "Click Post. Confirm the post is live.", requiresUserAction: true },
   ],

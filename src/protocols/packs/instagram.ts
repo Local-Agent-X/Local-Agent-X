@@ -1,4 +1,9 @@
 import type { Protocol } from "../types.js";
+import {
+  buildComposerInjector,
+  formatComposerText,
+  INSTAGRAM_COMPOSER_SELECTORS,
+} from "./composer-inject.js";
 
 export const instagramPost: Protocol = {
   name: "instagram_post",
@@ -93,77 +98,16 @@ export const instagramPost: Protocol = {
 };
 
 // ── Caption Formatting Helpers ──
-// Hard-won knowledge about Instagram's composer.
+// Hard-won knowledge about Instagram's composer, now delegated to the shared
+// composer-injector primitive (src/protocols/packs/composer-inject.ts). These
+// remain thin wrappers so existing import sites keep their names/signatures.
 
 export function formatCaptionForInstagram(caption: string): string {
-  // Instagram web composer needs actual newlines, not markdown breaks
-  // Replace any \r\n or \r with \n for consistency
-  let clean = caption.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  // Collapse 3+ newlines to 2 (Instagram ignores excessive spacing)
-  clean = clean.replace(/\n{3,}/g, "\n\n");
-  return clean;
+  return formatComposerText(caption);
 }
 
-// JavaScript code to inject caption into Instagram's composer
+// JavaScript code to inject a caption into Instagram's composer. Delegates to
+// the shared injector with Instagram's selector list — no bespoke logic here.
 export function buildCaptionInjector(caption: string): string {
-  // Escape for a JS string literal using JSON.stringify. Keep its outer double
-  // quotes and embed the whole literal — do NOT strip them and drop the result
-  // into single-quoted literals, because JSON.stringify does not escape ' and a
-  // caption like "Don't miss it" would produce a SyntaxError in the browser.
-  const escaped = JSON.stringify(caption); // a valid double-quoted JS literal
-
-  return `
-    (function() {
-      // Try multiple selectors — Instagram changes these
-      const selectors = [
-        'textarea',
-        '[contenteditable="true"]',
-        '[role="textbox"]',
-        '[aria-label="Write a caption..."]',
-        '[aria-label*="caption"]',
-        'div[data-lexical-editor="true"]',
-      ];
-      for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (!el) continue;
-
-        // Focus the element first
-        el.focus();
-        el.click();
-
-        if (el.tagName === 'TEXTAREA') {
-          // Native textarea — set value + dispatch events
-          const nativeSetter = Object.getOwnPropertyDescriptor(
-            window.HTMLTextAreaElement.prototype, 'value'
-          ).set;
-          nativeSetter.call(el, ${escaped});
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          return 'Caption inserted via textarea';
-        } else {
-          // ContentEditable / Lexical editor
-          // Clear existing content
-          el.innerHTML = '';
-          // Insert with line breaks as <br> or paragraphs
-          const lines = ${escaped}.split('\\n');
-          // Use execCommand for undo support
-          document.execCommand('selectAll', false, null);
-          document.execCommand('delete', false, null);
-
-          // Type each line with proper breaks
-          for (let i = 0; i < lines.length; i++) {
-            if (i > 0) {
-              // Insert line break
-              document.execCommand('insertParagraph', false, null);
-            }
-            if (lines[i]) {
-              document.execCommand('insertText', false, lines[i]);
-            }
-          }
-          return 'Caption inserted via contenteditable';
-        }
-      }
-      return 'ERROR: Could not find caption input element';
-    })()
-  `.trim();
+  return buildComposerInjector(caption, INSTAGRAM_COMPOSER_SELECTORS);
 }

@@ -250,7 +250,13 @@ describe("ElectronInAppBackend (A1)", () => {
 	// ── Evaluate guard ─────────
 
 	it("evaluate rejects blocked scripts before ANY bridge call", async () => {
-		await expect(backend.evaluate("fetch('https://evil.example/x')")).rejects.toBeInstanceOf(
+		// C6 RETIRED the network-egress regex: fetch/XHR/WebSocket are now denied
+		// by the per-document agent CSP, not this scanner (scanEvaluateScript on a
+		// bare fetch() returns null). What the evaluate guard STILL short-circuits
+		// before any bridge call is the read-into-model-context / dynamic-exec /
+		// WebRTC class — e.g. RTCPeerConnection (a known CSP connect-src bypass)
+		// and a document.cookie read.
+		await expect(backend.evaluate("new RTCPeerConnection()")).rejects.toBeInstanceOf(
 			EvaluateBlockedError,
 		);
 		await expect(backend.evaluate("document.cookie")).rejects.toThrow(/restricted pattern/);

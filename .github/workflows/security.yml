@@ -120,6 +120,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: npm run test:coverage
 
+      # Desktop (Electron main) tests run under their OWN vitest config
+      # (desktop/vitest.config.ts) via the root vitest binary — the desktop
+      # package ships no vitest of its own and the root config's setupFiles
+      # can't resolve from desktop/. Without this step the desktop CSP-lockstep
+      # and Chromium-flag guards never execute in CI. tldts + vitest resolve
+      # from the root node_modules that `npm ci` above already installed.
+      - name: Desktop tests (vitest, blocking)
+        run: npm run test:desktop
+
       - name: Replay regression check
         run: npm run test:replay
 

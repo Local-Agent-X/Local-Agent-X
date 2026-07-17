@@ -11,6 +11,7 @@
     "build:native:ffmpeg": "node native/ffmpeg/stage.mjs",
     "build:native": "node -e \"const p=process.platform;const cp=require('child_process');cp.execSync(p==='darwin'?'npm run build:native:mac':p==='win32'?'npm run build:native:win':'echo [native-speech] no helper for '+p,{stdio:'inherit'});cp.execSync('npm run build:native:whisper',{stdio:'inherit'});cp.execSync('npm run build:native:ripgrep',{stdio:'inherit'});cp.execSync('npm run build:native:ffmpeg',{stdio:'inherit'})\"",
     "build": "tsc && node ../scripts/write-built-ref.mjs dist && npm run build:native",
+    "test": "vitest run",
     "start": "electron dist/main.js",
     "dev": "npm run build && electron dist/main.js",
     "pack": "npm run build && electron-builder --dir",

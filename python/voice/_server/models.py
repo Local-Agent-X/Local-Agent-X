@@ -16,6 +16,31 @@ _stt = None
 _vad_model = None
 _tts = None
 
+# STT device state. Starts on cuda; drops to cpu for the rest of the process
+# when a GPU-crash signature fires mid-transcribe (e.g. cuBLAS built without
+# kernels for this GPU generation). The fallback reason is queued once so the
+# session layer can surface it to the user — degraded STT must be VISIBLE,
+# a silently slower mic is how "voice is broken" reports happen.
+_stt_device = "cuda"
+_stt_fallback_reason = None
+
+# Substrings that identify a CUDA-stack failure (as opposed to bad audio or
+# a genuine bug, which must still raise). Lowercase-matched.
+_GPU_CRASH_SIGNATURES = ("cublas", "cudnn", "cuda", "out of memory")
+
+
+def _is_gpu_crash(e: Exception) -> bool:
+    msg = str(e).lower()
+    return any(s in msg for s in _GPU_CRASH_SIGNATURES)
+
+
+def pop_stt_fallback() -> str:
+    """Returns the fallback reason ONCE (empty string after), so the session
+    layer can emit a single stt_fallback event instead of one per utterance."""
+    global _stt_fallback_reason
+    reason, _stt_fallback_reason = _stt_fallback_reason, None
+    return reason or ""
+
 
 def _load_stt():
     global _stt
@@ -25,10 +50,15 @@ def _load_stt():
     # large-v3-turbo: distilled 4-layer decoder version of large-v3.
     # ~810MB, ~5-6x faster decode, WER within 1% of large-v3.
     size = os.environ.get("LAX_STT_MODEL", "large-v3-turbo")
-    compute = os.environ.get("LAX_STT_COMPUTE", "int8_float16")
-    log.info(f"loading faster-whisper {size} {compute} on cuda...")
+    # int8_float16 is a CUDA-only compute type; the CPU fallback path forces
+    # plain int8 (respecting LAX_STT_COMPUTE there could re-crash the retry).
+    if _stt_device == "cuda":
+        compute = os.environ.get("LAX_STT_COMPUTE", "int8_float16")
+    else:
+        compute = "int8"
+    log.info(f"loading faster-whisper {size} {compute} on {_stt_device}...")
     t0 = time.time()
-    _stt = WhisperModel(size, device="cuda", compute_type=compute)
+    _stt = WhisperModel(size, device=_stt_device, compute_type=compute)
     log.info(f"  faster-whisper ready in {time.time() - t0:.2f}s")
     return _stt
 
@@ -85,9 +115,7 @@ def _load_tts():
     return _tts
 
 
-def _transcribe(samples: np.ndarray) -> str:
-    """Sync transcribe for use in executor. faster-whisper handles its own
-    CUDA threading internally."""
+def _transcribe_once(samples: np.ndarray) -> str:
     stt = _load_stt()
     segments, _info = stt.transcribe(
         samples,
@@ -97,6 +125,25 @@ def _transcribe(samples: np.ndarray) -> str:
         condition_on_previous_text=False,
     )
     return " ".join(s.text.strip() for s in segments).strip()
+
+
+def _transcribe(samples: np.ndarray) -> str:
+    """Sync transcribe for use in executor. faster-whisper handles its own
+    CUDA threading internally. On a CUDA-stack crash (cuBLAS/cuDNN without
+    kernels for this GPU, OOM), retries THIS utterance on CPU and stays on
+    CPU for the rest of the process — the mic keeps working, degraded, and
+    the session layer surfaces the switch via pop_stt_fallback()."""
+    global _stt, _stt_device, _stt_fallback_reason
+    try:
+        return _transcribe_once(samples)
+    except Exception as e:
+        if _stt_device != "cuda" or not _is_gpu_crash(e):
+            raise
+        log.warning(f"GPU transcribe failed ({e}); dropping STT to CPU for this process")
+        _stt = None
+        _stt_device = "cpu"
+        _stt_fallback_reason = str(e)[:300]
+        return _transcribe_once(samples)
 
 
 def _detect_gpu() -> str:

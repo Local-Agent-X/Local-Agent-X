@@ -220,19 +220,62 @@ function handleVoiceWsMessage(e) {
       }
       break;
     case 'tts_fallback':
-      // Clone engine was down/errored; the sidecar substituted the built-in
-      // Kokoro voice. Reply still plays — tell the user why it sounds
-      // different instead of silently switching voices.
+      // Clone engine was down/errored; the sidecar substituted a backup
+      // voice. Reply still plays — tell the user why it sounds different
+      // instead of silently switching voices.
       console.warn('[voice] tts fallback', msg.from, '→', msg.to, msg.reason);
-      if (typeof showVoiceToast === 'function') {
-        showVoiceToast('Clone voice unavailable — using built-in ' + (msg.to || 'voice'));
-      }
+      showVoiceIssueBanner(
+        'Clone voice unavailable — replies are using a backup voice (' + (msg.to || 'built-in') + '). ' +
+        'Settings → Media → Repair usually fixes this.');
+      break;
+    case 'stt_fallback':
+      // GPU transcription crashed; the sidecar switched speech-to-text to
+      // CPU. Mic still works (slower) — say so, with the repair path.
+      console.warn('[voice] stt fallback →', msg.to, msg.reason);
+      showVoiceIssueBanner(
+        'Voice input switched to CPU after a GPU error — the mic works but responds slower. ' +
+        'Settings → Media → Repair the Lite sidecar to fix permanently.');
       break;
     case 'voice_error':
     case 'agent_error':
     case 'stt_error':
     case 'tts_error':
+      // These used to be console-only, which made real failures (crashing
+      // GPU transcription) look like a dead mic. Anything the voice pipeline
+      // reports as an error is user-visible now.
       console.warn('[voice]', msg.type, msg.message);
+      showVoiceIssueBanner(
+        'Voice pipeline error: ' + String(msg.message || msg.type).slice(0, 140) + ' — ' +
+        'if this keeps happening, use Settings → Media → Repair.');
       break;
   }
+}
+
+// ── Voice issue banner ──
+// Persistent (dismissable) banner for voice-pipeline problems. A toast
+// disappears in 2s; a user whose mic "isn't working" needs the message to
+// still be there when they look up. Deduped: repeating errors update the
+// one banner instead of stacking. Rate-limited to one re-show per 30s after
+// dismiss so a crash-looping pipeline doesn't nag every utterance.
+let _voiceBannerDismissedAt = 0;
+function showVoiceIssueBanner(text) {
+  if (Date.now() - _voiceBannerDismissedAt < 30000) return;
+  let el = document.getElementById('voice-issue-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'voice-issue-banner';
+    el.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:9997;max-width:640px;width:92%;padding:10px 38px 10px 14px;border:1px solid #dba917;background:rgba(50,38,4,.95);color:#ffd977;border-radius:10px;font-size:.82rem;line-height:1.4;backdrop-filter:blur(6px);box-shadow:0 2px 14px rgba(219,169,23,.25)';
+    const x = document.createElement('button');
+    x.textContent = '×';
+    x.setAttribute('aria-label', 'Dismiss');
+    x.style.cssText = 'position:absolute;top:4px;right:8px;background:none;border:none;color:#ffd977;font-size:1.1rem;cursor:pointer;padding:2px 6px';
+    x.onclick = () => { _voiceBannerDismissedAt = Date.now(); el.remove(); };
+    el.appendChild(x);
+    const span = document.createElement('span');
+    span.id = 'voice-issue-banner-text';
+    el.appendChild(span);
+    document.body.appendChild(el);
+  }
+  const span = document.getElementById('voice-issue-banner-text');
+  if (span) span.textContent = text;
 }

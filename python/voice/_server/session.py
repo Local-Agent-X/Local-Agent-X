@@ -21,7 +21,7 @@ from .constants import (
     VAD_THRESH,
 )
 from .cuda_bootstrap import log
-from .models import _load_tts, _load_vad, _transcribe
+from .models import _load_tts, _load_vad, _transcribe, pop_stt_fallback
 
 
 class Session:
@@ -286,6 +286,7 @@ class Session:
         except Exception as e:
             log.warning(f"partial stt failed: {e}")
             return
+        await self._notify_stt_fallback()
         if text:
             await self._send({"type": "partial", "text": text})
 
@@ -301,6 +302,7 @@ class Session:
         except Exception as e:
             await self._send({"type": "error", "message": f"final stt: {e}"})
             return
+        await self._notify_stt_fallback()
         ms = int((time.time() - t0) * 1000)
         # Compact the audio buffer — we don't need previous utterance audio
         self.audio = self.audio[end_idx:]
@@ -316,6 +318,18 @@ class Session:
         self.utterance_start_idx = 0
         self._set_vad_consumed(0)
         await self.cancel_tts()
+
+    async def _notify_stt_fallback(self):
+        """Surface a GPU→CPU STT drop (models.pop_stt_fallback is one-shot,
+        so exactly one session sends exactly one event per process-level
+        fallback). Degraded-but-working must be visible, not silent."""
+        reason = pop_stt_fallback()
+        if reason:
+            await self._send({
+                "type": "stt_fallback",
+                "to": "cpu",
+                "reason": reason,
+            })
 
     async def _send(self, msg: dict):
         try:

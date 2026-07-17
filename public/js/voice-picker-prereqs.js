@@ -19,8 +19,11 @@ function _checkPrereq(p) {
     const id = p.kind.slice('sidecar:'.length);
     const t = (_setupStatus?.tiers || []).find(x => x.id === id);
     if (!t) return { ok: false, hint: 'Probing…', action: 'none', tierId: id };
-    if (t.healthy) return { ok: true, hint: 'Running', action: 'none', tierId: id };
-    if (t.installed) return { ok: false, hint: 'Installed, not running', action: 'start-sidecar', tierId: id };
+    // repairable: an installed tier can always be re-run through its
+    // idempotent installer — the escape hatch for "installed but broken at
+    // runtime" (stale CUDA wheels, AV-corrupted packages).
+    if (t.healthy) return { ok: true, hint: 'Running', action: 'none', tierId: id, repairable: true };
+    if (t.installed) return { ok: false, hint: 'Installed, not running', action: 'start-sidecar', tierId: id, repairable: true };
     return { ok: false, hint: 'Not installed', action: 'install-sidecar', tierId: id };
   }
   if (p.kind.startsWith('secret:')) {
@@ -81,6 +84,9 @@ function _renderPrereqRow(p, idx, tierId) {
     action = `<button class="action-btn primary" id="${btnId}" onclick="onTierPrereqAction('${tierId}','start-sidecar','${_esc(r.tierId)}',this)" style="font-size:.7rem;padding:4px 10px">Start</button>`;
   } else if (r.action === 'set-secret') {
     action = `<button class="action-btn" id="${btnId}" onclick="onTierPrereqAction('${tierId}','set-secret','${_esc(r.secretName)}',this)" style="font-size:.7rem;padding:4px 10px">Add ${_esc(r.secretName)}</button>`;
+  }
+  if (r.repairable) {
+    action += `<button class="action-btn" onclick="onTierPrereqAction('${tierId}','repair-sidecar','${_esc(r.tierId)}',this)" title="Stop, re-run the installer (fixes broken/outdated packages), and restart" style="font-size:.7rem;padding:4px 10px">Repair</button>`;
   }
 
   return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--border)"><div style="font-size:.78rem">${_esc(p.label)}${p.optional ? ' <span style="color:var(--muted);font-size:.7rem">(optional)</span>' : ''}</div><div style="display:flex;align-items:center;gap:8px">${pill}${action}</div></div>`;
@@ -163,11 +169,45 @@ function _renderTierStatus(tier) {
   if (!wrap) return;
   if (!effectivePrereqs.length) { wrap.innerHTML = ''; return; }
   const rows = effectivePrereqs.map((p, i) => _renderPrereqRow(p, i, tier.id)).join('');
+  // Voice check: end-to-end diagnosis (sidecar health + a real mic-path
+  // round-trip) with plain-English pass/fail per stage. Only meaningful
+  // for tiers that run sidecars.
+  const hasSidecars = effectivePrereqs.some(p => p.kind && p.kind.startsWith('sidecar:'));
+  const doctorBtn = hasSidecars
+    ? `<div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="action-btn" id="voice-doctor-btn" onclick="onVoiceDoctorRun(this)" style="font-size:.7rem;padding:4px 10px">Run voice check</button></div><div id="voice-doctor-results"></div>`
+    : '';
   wrap.innerHTML = `<div style="margin-top:6px;padding:10px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border)">`
     + `<div style="font-family:var(--mono);font-size:.62rem;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px">Prerequisites</div>`
     + rows
+    + doctorBtn
     + `</div>`;
 }
+
+async function onVoiceDoctorRun(btn) {
+  const results = document.getElementById('voice-doctor-results');
+  if (!results || !btn) return;
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Checking… (~30s)';
+  results.innerHTML = '';
+  try {
+    const d = await apiPost('/api/voices/doctor', {});
+    const stages = Array.isArray(d?.stages) ? d.stages : [];
+    if (!stages.length) throw new Error(d?.error || 'no results');
+    results.innerHTML = stages.map(s =>
+      `<div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--border);font-size:.75rem">`
+      + `<span style="min-width:14px">${s.ok ? '✅' : '❌'}</span>`
+      + `<span style="min-width:200px">${_esc(s.label)}</span>`
+      + `<span style="color:var(--muted)">${_esc(s.detail || '')}</span>`
+      + `</div>`).join('')
+      + `<div style="padding:6px 0 0;font-size:.75rem;color:${d.ok ? 'var(--accent)' : '#dba917'}">${d.ok ? 'Everything a working mic + voice needs is passing.' : 'Something is failing — the Repair button on the failing sidecar usually fixes it.'}</div>`;
+  } catch (e) {
+    results.innerHTML = `<div style="padding:6px 0;font-size:.75rem;color:#c0392b">Voice check failed to run: ${_esc(e?.message || String(e))}</div>`;
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+}
+window.onVoiceDoctorRun = onVoiceDoctorRun;
 
 async function onTierPrereqAction(tierId, action, target, btn) {
   const tier = getTierById(tierId);
@@ -200,6 +240,15 @@ async function onTierPrereqAction(tierId, action, target, btn) {
       btn.textContent = 'Starting…';
       const d = await apiPost('/api/voices/setup/start', { tier: target });
       if (!d?.ok && !d?.already) throw new Error(d?.error || 'sidecar did not start');
+    } else if (action === 'repair-sidecar') {
+      btn.textContent = 'Repairing… (5–15 min)';
+      const d = await apiPost('/api/voices/setup/repair', { tier: target });
+      if (!d?.ok) {
+        const tail = (d?.output || d?.error || '').toString().slice(-1200);
+        alert('Repair failed.' + (tail ? '\n\nLast output:\n' + tail : ''));
+        throw new Error('repair failed');
+      }
+      alert('Repaired' + (d.restarted ? ' and restarted.' : '.') + ' Voice should work now.');
     } else if (action === 'set-secret') {
       // Defer to existing secrets UI rather than building an inline form.
       if (typeof openSecretsModal === 'function') openSecretsModal();

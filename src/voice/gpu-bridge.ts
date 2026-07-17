@@ -24,10 +24,14 @@ export type GPUBridgeCallbacks = {
   onFinal?: (text: string, ms: number) => void;
   onAudioChunk?: (pcm: Int16Array, sampleRate: number, sentenceId: number, isFinal: boolean) => void;
   onAudioDone?: (sentenceId: number, ms: number, cancelled: boolean) => void;
-  /** Sidecar synthesized with a substitute voice (e.g. Chatterbox clone
+  /** Sidecar synthesized with a substitute voice (e.g. clone engine
    *  unreachable → built-in Kokoro). Audio still arrives; surface the
    *  substitution to the user instead of silently changing the voice. */
   onTtsFallback?: (from: string, to: string, reason: string) => void;
+  /** Sidecar dropped speech-to-text from GPU to CPU after a CUDA-stack
+   *  crash. The mic keeps working (slower); surface it so "voice feels
+   *  laggy" has a visible cause and a repair path. */
+  onSttFallback?: (to: string, reason: string) => void;
   onError?: (msg: string) => void;
   onDisconnect?: () => void;
 };
@@ -166,6 +170,10 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
       case "tts_fallback":
         logger.warn(`[gpu-bridge] tts fallback ${msg.from} -> ${msg.to}: ${msg.reason}`);
         cb.onTtsFallback?.(msg.from || "", msg.to || "", msg.reason || "");
+        break;
+      case "stt_fallback":
+        logger.warn(`[gpu-bridge] stt fallback -> ${msg.to}: ${msg.reason}`);
+        cb.onSttFallback?.(msg.to || "cpu", msg.reason || "");
         break;
       case "error":
         logger.warn(`[gpu-bridge] server error: ${msg.message}`);

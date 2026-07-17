@@ -1,13 +1,14 @@
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import type { RouteHandler } from "../../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../../server-utils.js";
 import { createLogger } from "../../../logger.js";
 import { kokoroVoiceList, tier4Readiness } from "../../../voice/tier4/index.js";
-import { IS_WIN, TIERS, tierById } from "./tiers.js";
+import { TIERS, tierById } from "./tiers.js";
 import { isInstalled, probeHealth, probeVoiceNpmDeps, tierStatus } from "./detection.js";
 import { killTier, sidecarLogPath, startTierAndWait, type StartOutcome } from "./process-control.js";
+import { runInstaller } from "./install-runner.js";
+import { runVoiceDoctor } from "./doctor.js";
 import { running } from "./state.js";
 
 const logger = createLogger("routes.bridges.voice-setup");
@@ -49,22 +50,45 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
         json(400, { error: `No installer for ${tier.label}. See docs.` }); return true;
       }
 
-      logger.info(`[voice-setup] Installing ${tier.id} via ${tier.installerPath}`);
-      const installerCmd = IS_WIN
-        ? { command: "powershell", args: ["-ExecutionPolicy", "Bypass", "-File", tier.installerPath] }
-        : { command: "bash", args: [tier.installerPath] };
-      const proc = spawn(installerCmd.command, installerCmd.args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      let out = "";
-      proc.stdout?.on("data", c => { out += c.toString(); });
-      proc.stderr?.on("data", c => { out += c.toString(); });
-      const exitCode: number = await new Promise(r => proc.on("exit", code => r(code ?? -1)));
-      const ok = exitCode === 0 && isInstalled(tier);
-      if (ok) logger.info(`[voice-setup] ${tier.id} installed (exit ${exitCode})`);
-      else logger.warn(`[voice-setup] ${tier.id} install failed (exit ${exitCode})`);
-      json(ok ? 200 : 500, { ok, exitCode, output: out.slice(-4000) });
+      const r = await runInstaller(tier);
+      json(r.ok ? 200 : 500, r);
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+
+  // Repair = stop → re-run installer → start. For users whose tier is
+  // "installed" but broken at runtime (stale CUDA wheels, AV-corrupted
+  // packages): the installers are idempotent with a verify pass, and the
+  // stop first releases the DLLs pip needs to replace — an in-place pip
+  // upgrade under a running sidecar fails on locked files.
+  if (method === "POST" && url.pathname === "/api/voices/setup/repair") {
+    try {
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+      const tierId = String((body as { tier?: string }).tier || "");
+      const tier = tierById(tierId);
+      if (!tier) { json(400, { error: `Unknown tier: ${tierId}` }); return true; }
+      if (tier.kind === "native") {
+        json(400, { error: "Tier 4 native is provisioned via npm install — run npm install to repair." }); return true;
+      }
+      if (!tier.installerPath || !existsSync(tier.installerPath)) {
+        json(400, { error: `No installer for ${tier.label}.` }); return true;
+      }
+
+      const wasRunning = !!running.get(tier.id) || (await probeHealth(tier.healthUrl)).ok;
+      logger.info(`[voice-setup] repairing ${tier.id} (wasRunning=${wasRunning})`);
+      killTier(tier.id);
+      const r = await runInstaller(tier);
+      if (!r.ok) { json(500, { ...r, restarted: false }); return true; }
+      let restarted = false;
+      if (wasRunning) {
+        const outcome = await startTierAndWait(tier);
+        restarted = outcome.ok;
+        if (!outcome.ok) {
+          json(502, { ...r, restarted, error: `Repaired, but ${tier.label} ${startFailureSummary(tier.id, outcome)}` });
+          return true;
+        }
+      }
+      json(200, { ...r, restarted });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
@@ -141,6 +165,16 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       }
       killTier(tier.id);
       json(200, { ok: true });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+
+  // One-click end-to-end checkup: health of every voice sidecar + a real
+  // mic-path round-trip (synthesized speech streamed back through the same
+  // WS the browser uses). POST because it exercises the GPU.
+  if (method === "POST" && url.pathname === "/api/voices/doctor") {
+    try {
+      json(200, await runVoiceDoctor());
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }

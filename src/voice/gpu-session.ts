@@ -153,6 +153,9 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     onTtsFallback: (from, to, reason) => {
       ctx.sendEvent({ type: "tts_fallback", from, to, reason });
     },
+    onSttFallback: (to, reason) => {
+      ctx.sendEvent({ type: "stt_fallback", to, reason });
+    },
     onError: (message) => {
       ctx.sendEvent({ type: "voice_error", message });
     },

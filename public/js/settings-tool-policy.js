@@ -15,6 +15,9 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('tp-toggle-http',    s.enableHttp    !== false);
     setToolPolicyToggle('tp-toggle-browser', s.enableBrowser !== false);
     setToolPolicyToggle('tp-toggle-ui-events', s.enableUiEventBus !== false);
+    // Supervised browser defaults OFF (=== true) — the browser is autonomous
+    // out of the box; supervision is the opt-in.
+    setToolPolicyToggle('tp-toggle-supervised-browser', s.supervisedBrowser === true);
     // Computer control + phone remote control both default OFF (=== true).
     setToolPolicyToggle('tp-toggle-computer', s.enableComputerControl === true);
     setToolPolicyToggle('tp-toggle-remote', s.enableRemoteControl === true);

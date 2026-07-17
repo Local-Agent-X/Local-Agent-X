@@ -25,7 +25,7 @@ import { makeEgressRefutationPack } from "../tool-policy/packs/egress-refutation
  *  category kill-switches + the strict local-only flag. */
 export type PreDispatchRuntimeFlags = Pick<
   LAXConfig,
-  "localOnlyMode" | "enableShell" | "enableHttp" | "enableBrowser" | "enableComputerControl"
+  "localOnlyMode" | "enableShell" | "enableHttp" | "enableBrowser" | "enableComputerControl" | "supervisedBrowser"
 >;
 
 /** The one ApprovalManager method the gate drives. Structural on purpose so
@@ -72,6 +72,13 @@ export interface PreDispatchDeps {
   /** Active autonomy-profile decisions (profile-store singleton). */
   getToolDecision?: typeof getToolDecision;
   getRiskDecision?: typeof getRiskDecision;
+  /** Current page URL of the session's live browser backend — read only when
+   *  supervised browser mode gates a browser.evaluate. Default reads the
+   *  existing backend via src/browser/instance.ts (lazy import: keeps the
+   *  browser subsystem off the hot path and avoids an import cycle). An
+   *  unknowable URL ("" / throw) fails SAFE toward approval in supervised
+   *  mode. */
+  getBrowserCurrentUrl?: (sessionId: string) => string | Promise<string>;
 }
 
 export type ResolvedPreDispatchDeps = Required<PreDispatchDeps>;
@@ -95,5 +102,15 @@ export function resolvePreDispatchDeps(deps: PreDispatchDeps = {}): ResolvedPreD
     getApprovalManager: deps.getApprovalManager ?? getApprovalManager,
     getToolDecision: deps.getToolDecision ?? getToolDecision,
     getRiskDecision: deps.getRiskDecision ?? getRiskDecision,
+    getBrowserCurrentUrl:
+      deps.getBrowserCurrentUrl ??
+      (async (sessionId: string) => {
+        try {
+          const { getBrowserManager } = await import("../browser/instance.js");
+          return await getBrowserManager(sessionId).getCurrentUrl();
+        } catch {
+          return "";
+        }
+      }),
   };
 }

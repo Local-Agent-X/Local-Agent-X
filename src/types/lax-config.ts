@@ -114,6 +114,12 @@ export interface LAXConfig {
    *  DEFAULT OFF — high-risk opt-in. When false, every `computer` call is
    *  blocked at pre-dispatch. The panic hotkey flips this off. */
   enableComputerControl: boolean;
+  /** Supervised browser mode. DEFAULT OFF — the in-app browser is autonomous
+   *  by default. When true, restores confirm-on-`browser.evaluate` for pages
+   *  whose origin is NOT on the general trusted-origin allowlist (see
+   *  src/browser/trusted-origins.ts). Supervision is the opt-in; nobody has to
+   *  turn autonomy ON. */
+  supervisedBrowser: boolean;
   /** UI activity context. When true (default), redacted UI events (browser
    *  navigation, tab activity) are buffered per session and distilled into a
    *  short digest signal in the agent's turn context. Never records field

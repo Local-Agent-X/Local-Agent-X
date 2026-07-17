@@ -22,6 +22,7 @@ import {
 import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/layer/index.js";
 import { isProtectedSetting } from "../settings-schema.js";
+import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
@@ -162,6 +163,25 @@ export async function assertToolCallAllowed(
       userHint: USER_HINTS.policy,
     });
   }
+  // Supervised browser mode. DEFAULT OFF — the in-app browser is autonomous,
+  // so browser.evaluate runs without a prompt (a sibling chunk sets the
+  // tool-policy default to allow). When the user opts INTO supervision, the gate
+  // restores confirm-on-evaluate EXCEPT on the general trusted-origin allowlist.
+  // The site-agnostic decision lives in supervised-browser-gate.ts (which
+  // consults src/browser/trusted-origins.ts); fail SAFE toward approval.
+  const supervised = await supervisedEvaluateBlock(cfg.supervisedBrowser, call, () =>
+    d.getBrowserCurrentUrl(ctx.sessionId),
+  );
+  if (supervised) {
+    throw new ToolBlocked({
+      stage: "approval",
+      disposition: "approval-required",
+      reason: supervised.reason,
+      recovery: supervised.recovery,
+      userHint: USER_HINTS.policy,
+    });
+  }
+
   // Computer control defaults OFF (high-risk opt-in). On macOS it ALSO needs
   // the Accessibility permission — but that's enforced in the driver; here we
   // gate on the user-facing kill-switch.

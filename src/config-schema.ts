@@ -126,6 +126,13 @@ export const configSchema = z.object({
   // category that defaults OFF — it can drive the whole machine, so it's an
   // explicit opt-in (Settings → Security), gated further by the OS permission.
   enableComputerControl: z.boolean().default(false),
+  // Supervised browser mode. DEFAULT OFF: the in-app browser is autonomous by
+  // default, so browser.evaluate runs without a prompt. Turning this ON is the
+  // opt-in that restores confirm-on-evaluate — except on the general trusted-
+  // origin allowlist (src/browser/trusted-origins.ts), where automations that
+  // drive social/composer sites stay unattended. Nobody turns autonomy on;
+  // supervision is the switch.
+  supervisedBrowser: z.boolean().default(false),
   // UI event bus: lets user-interface activity (in-app browser navigation,
   // page titles — hosts/paths only, values and credentials are redacted at
   // the store) surface as a short digest in the agent's context. Default ON —

@@ -145,6 +145,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Category kill-switch — when false, blocks ALL computer (mouse/keyboard) tool calls at pre-dispatch. Off by default (high-risk opt-in; also needs OS Accessibility permission)",
   },
   {
+    field: "supervisedBrowser",
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "Supervised browser mode. Off by default — the in-app browser is autonomous, so browser.evaluate runs without asking. When true, browser.evaluate requires your approval UNLESS the current page is on the trusted-origin allowlist (x.com, twitter.com, instagram.com, facebook.com, tiktok.com, linkedin.com and their subdomains). Supervision is the opt-in; you never have to turn autonomy on",
+  },
+  {
     field: "enableUiEventBus",
     validate: z.boolean(),
     runtime: true,

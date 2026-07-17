@@ -35,6 +35,9 @@ const ALL_ON: PreDispatchRuntimeFlags = {
   enableHttp: true,
   enableBrowser: true,
   enableComputerControl: true,
+  // Autonomous-by-default: supervision is OFF, so the browser.evaluate gate
+  // never fires for these rows.
+  supervisedBrowser: false,
 };
 
 function flags(over: Partial<PreDispatchRuntimeFlags> = {}): PreDispatchRuntimeFlags {

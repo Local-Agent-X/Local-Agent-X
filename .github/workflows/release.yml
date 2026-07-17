@@ -24,9 +24,16 @@ jobs:
       # Tag-push runs take the pushed tag; dispatch runs take the input.
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: Require a version tag
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]; then
+            echo "::error::Releases require a version tag beginning with v and a digit, got: $RELEASE_TAG"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - uses: actions/setup-node@v6
         with:
@@ -68,7 +75,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             local-agent-x-*.tar.gz
             checksums-sha256.txt

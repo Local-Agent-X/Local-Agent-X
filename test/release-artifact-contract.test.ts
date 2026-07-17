@@ -68,4 +68,23 @@ describe("versioned source release contract", () => {
     expect(workflow).not.toContain("npm install --production");
     expect(workflow).not.toContain("tar -czf local-agent-x-");
   });
+
+  it("requires an ASCII version tag and uses it as the immutable release ref", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf-8");
+    const validation = workflow.indexOf('if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]');
+    const checkout = workflow.indexOf("- uses: actions/checkout@v6");
+
+    expect(validation).toBeGreaterThan(-1);
+    expect(validation).toBeLessThan(checkout);
+    expect(workflow).toContain("ref: refs/tags/${{ env.RELEASE_TAG }}");
+    expect(workflow).toContain("tag_name: ${{ env.RELEASE_TAG }}");
+    expect(workflow).not.toContain("ref: ${{ inputs.tag || github.ref_name }}");
+    expect(workflow).not.toContain("tag_name: ${{ inputs.tag || github.ref_name }}");
+
+    const versionTag = /^v[0-9]/;
+    expect(versionTag.test("v1.2.3")).toBe(true);
+    for (const ref of ["main", sha, "vbeta", "v\u0661.2.3"]) {
+      expect(versionTag.test(ref), ref).toBe(false);
+    }
+  });
 });

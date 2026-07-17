@@ -260,8 +260,9 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       });
 
       if (turn.signal.aborted) {
-        // Barge-in landed mid-turn. runTurn returns updatedHistory with an
-        // "[interrupted by user]" marker so the next turn keeps the record.
+        // Barge-in landed mid-turn. runTurn returns updatedHistory whose last
+        // assistant row carries `_interrupted: true` (rendered for the model
+        // by providers/sanitize.ts) so the next turn keeps the record.
         history = result.updatedHistory;
         ctx.sendEvent({ type: "assistant_interrupted" });
         if (activeTurn === turn) activeTurn = null;

@@ -204,17 +204,21 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
     newChatMessages.push({ role: "assistant", content: assistantText });
   }
 
-  // A stopped turn ends without the model's natural closing reply. Leave a
-  // short, provider-safe boundary marker so the resume turn reads a coherent
-  // history (user → tool calls/results → "[interrupted]") and continues from
-  // there instead of re-deriving. Standalone assistant text is a valid
-  // continuation after the salvaged messages, so this never breaks the
-  // tool_use/tool_result pairing the providers require.
+  // A stopped turn ends without the model's natural closing reply. Leave the
+  // canonical boundary row (INTERRUPTED_TURN_BOUNDARY — owned by
+  // providers/sanitize.ts, which also scrubs any model echoes of it) so the
+  // resume turn reads a coherent history and continues from there instead of
+  // re-deriving. Standalone assistant text is a valid continuation after the
+  // salvaged messages, so this never breaks the tool_use/tool_result pairing
+  // the providers require. `_interrupted` marks it structurally so UI/replay
+  // can treat it as control-plane rather than speech.
   if (interrupted) {
+    const { INTERRUPTED_TURN_BOUNDARY } = await import("../../../providers/sanitize.js");
     newChatMessages.push({
       role: "assistant",
-      content: "[Previous turn was interrupted before it finished. The work above ran; continue from there.]",
-    });
+      content: INTERRUPTED_TURN_BOUNDARY,
+      _interrupted: true,
+    } as ChatCompletionMessageParam);
   }
 
   const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../../../types.js");

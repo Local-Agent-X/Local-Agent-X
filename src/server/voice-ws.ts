@@ -201,9 +201,9 @@ export async function setupVoiceWs(deps: {
       // options.signal. agent-runner wires it to opCancel — canonical
       // transitions running → cancelling → cancelled cleanly and the
       // returned AgentTurn carries stopReason="abort" instead of throwing.
-      // The aborted flag below reads stopReason OR signal.aborted so we
-      // build the same "[interrupted by user]" history marker the legacy
-      // throw-and-catch path produced.
+      // The aborted flag below reads stopReason OR signal.aborted so the
+      // stored assistant row carries the same `_interrupted` record the
+      // legacy throw-and-catch path produced (as an inline marker, then).
       let aborted = false;
       try {
         const result = await runAgentViaCanonical(text, prepared.cleanHistory, {
@@ -241,23 +241,28 @@ export async function setupVoiceWs(deps: {
         else activeOnEventBySession.delete(sessionId);
       }
 
-      // Compose the assistant message that goes back into history. We do NOT
-      // embed a tool-call trace: it used to be appended as a "[Tool calls this
-      // turn: …]" marker so the model could self-reference, but persisting that
-      // into history made the model echo the format back in its spoken reply
-      // (even fabricating "[Tool calls this turn: none]"). Giving the model
-      // tool self-knowledge belongs in structured tool_call round-tripping, not
-      // a text marker the model reads and imitates.
-      const interruptedMarker = aborted ? " [interrupted by user]" : "";
-      const finalAssistantText = (assistantText + interruptedMarker).trim();
+      // Compose the assistant message that goes back into history. Control-
+      // plane facts (interrupted, tool traces) must NOT be embedded as inline
+      // text: a "[Tool calls this turn: …]" marker used to be appended here
+      // and the model echoed the format back in its spoken reply; the
+      // " [interrupted by user]" marker that replaced it got echoed 763 times
+      // in one Grok reply. The interruption travels as `_interrupted: true`
+      // (structural, like `_ephemeral`) and providers/sanitize.ts renders it
+      // for the model at the one seam all provider-bound history crosses.
+      const finalAssistantText = assistantText.trim();
 
       // Commit this turn to the durable thread (same store + shape the
       // messaging bridges use). saveSession is queued and serialized per
       // session; the next turn flushSession's before reading it back.
+      const assistantRow = {
+        role: "assistant" as const,
+        content: finalAssistantText || "[no reply]",
+        ...(aborted ? { _interrupted: true } : {}),
+      };
       session.messages = [
         ...session.messages,
         { role: "user" as const, content: text },
-        { role: "assistant" as const, content: finalAssistantText || "[no reply]" },
+        assistantRow,
       ];
       session.updatedAt = Date.now();
       void saveSession(session);

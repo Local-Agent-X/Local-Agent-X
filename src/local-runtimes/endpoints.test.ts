@@ -70,6 +70,26 @@ describe("candidateEndpoints", () => {
     });
   });
 
+  it("Lemonade's 13305 candidate is pinned openai-compat so the first-running ollama probe can't claim it", () => {
+    // Lemonade also serves an Ollama-compatible surface; with kind:null the
+    // ollama probe would detect first and label the box "Ollama".
+    const at13305 = candidateEndpoints({}).filter((c) => c.endpoint.baseUrl.includes(":13305"));
+    expect(at13305).toHaveLength(1);
+    expect(at13305[0]).toMatchObject({
+      kind: "openai-compat",
+      endpoint: { baseUrl: "http://127.0.0.1:13305", origin: "auto" },
+    });
+  });
+
+  it("a manual ollama entry on 13305 overrides the auto openai-compat pin", () => {
+    const cands = candidateEndpoints({
+      localRuntimes: [{ kind: "ollama", baseUrl: "http://127.0.0.1:13305", label: "My Ollama" }],
+    });
+    const at13305 = cands.filter((c) => c.endpoint.baseUrl.includes(":13305"));
+    expect(at13305).toHaveLength(1);
+    expect(at13305[0]).toMatchObject({ kind: "ollama", endpoint: { origin: "manual" } });
+  });
+
   it("manual non-loopback entries are admitted via their own allowlist entry", () => {
     const cands = candidateEndpoints({
       localRuntimes: [{ kind: "openai-compat", baseUrl: "http://192.168.1.50:8000" }],

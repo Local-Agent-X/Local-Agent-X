@@ -95,6 +95,95 @@ describe("openaiCompatProbe.detect / identify", () => {
       { id: "ai/smollm2", contextWindow: null, tools: null },
     ]);
   });
+
+  it("identify: TGI via /info — needs BOTH model_id and version", async () => {
+    stubFetch({
+      "/v1/models": { object: "list", data: [{ id: "tgi" }] },
+      "/info": { model_id: "HuggingFaceH4/zephyr-7b-beta", version: "3.3.5", sha: "abc" },
+    });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("Text Generation Inference");
+    // A bare {version} shape (vLLM's /version lookalike) must never match.
+    stubFetch({ "/info": { version: "0.8.0" } });
+    expect(await openaiCompatProbe.identify!(EP)).toBeNull();
+  });
+
+  it("identify: Lemonade via /v1/health signature keys — generic {status:'ok'} never matches", async () => {
+    stubFetch({
+      "/v1/health": {
+        status: "ok", model_loaded: "Llama-3.2-1B-Instruct-Hybrid", all_models_loaded: [],
+      },
+    });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("Lemonade");
+    stubFetch({ "/v1/health": { status: "ok" } });
+    expect(await openaiCompatProbe.identify!(EP)).toBeNull();
+  });
+
+  it("identify: LocalAI via its well-known discovery doc", async () => {
+    stubFetch({ "/.well-known/localai.json": { version: "v3.7.0", endpoints: {} } });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("LocalAI");
+  });
+
+  it("identify: LiteLLM via the documented liveness literal — other strings never match", async () => {
+    stubFetch({ "/health/liveliness": "I'm alive!" });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("LiteLLM");
+    stubFetch({ "/health/liveliness": "ok" });
+    expect(await openaiCompatProbe.identify!(EP)).toBeNull();
+  });
+
+  it("identify: Xinference via owned_by on /v1/models entries; empty list stays generic", async () => {
+    stubFetch({
+      "/v1/models": {
+        object: "list",
+        data: [{ id: "qwen2-instruct", object: "model", created: 0, owned_by: "xinference" }],
+      },
+    });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("Xinference");
+    stubFetch({ "/v1/models": { object: "list", data: [] } });
+    expect(await openaiCompatProbe.identify!(EP)).toBeNull();
+    // owned_by from other servers (vLLM says "vllm") is not Xinference.
+    stubFetch({ "/v1/models": { object: "list", data: [{ id: "m", owned_by: "vllm" }] } });
+    expect(await openaiCompatProbe.identify!(EP)).toBeNull();
+  });
+
+  it("identify precedence: a real Lemonade box (prefix-aliased /api/v0/models AND /v1/health) is Lemonade, never LM Studio", async () => {
+    // Lemonade serves every endpoint under /v1, /v0, /api/v1, /api/v0
+    // (documented), so it ANSWERS LM Studio's signature route — its own
+    // /v1/health signature must win. Mislabeling it "LM Studio" would also
+    // suppress lmstudio-autostart (which keys on that label).
+    stubFetch({
+      "/api/v0/models": { object: "list", data: [{ id: "Llama-3.2-1B-Instruct-Hybrid" }] },
+      "/v1/health": { status: "ok", model_loaded: "Llama-3.2-1B-Instruct-Hybrid" },
+    });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("Lemonade");
+  });
+
+  it("identify precedence: a real LM Studio shape (no /v1/health) stays LM Studio, ahead of all later checks", async () => {
+    // Real LM Studio's documented surface has no /v1/health — the Lemonade
+    // check falls through. The /props and /info stubs are synthetic, only
+    // there to prove LM Studio still precedes the llama.cpp and TGI checks.
+    stubFetch({
+      "/api/v0/models": { object: "list", data: [{ id: "google/gemma-4-e4b" }] },
+      "/props": { default_generation_settings: { n_ctx: 4096 } },
+      "/info": { model_id: "x", version: "y" },
+    });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("LM Studio");
+  });
+
+  it("identify precedence: llama.cpp wins over later checks", async () => {
+    stubFetch({
+      "/props": { default_generation_settings: { n_ctx: 4096 } },
+      "/info": { model_id: "x", version: "y" },
+    });
+    expect(await openaiCompatProbe.identify!(EP)).toBe("llama.cpp");
+  });
+});
+
+describe("openaiCompatProbe.defaultPorts", () => {
+  it("sweeps the documented defaults — LM Studio, Jan, LiteLLM, GPT4All, text-generation-webui, KoboldCpp, vLLM, llama.cpp, Xinference, Lemonade, SGLang", () => {
+    expect(openaiCompatProbe.defaultPorts).toEqual([
+      1234, 1337, 4000, 4891, 5000, 5001, 8000, 8080, 9997, 13305, 30000,
+    ]);
+  });
 });
 
 describe("openaiCompatProbe.listModels", () => {

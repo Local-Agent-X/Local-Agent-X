@@ -106,6 +106,19 @@ export function candidateEndpoints(
     kind: "openai-compat",
   });
 
+  // Lemonade (documented default port 13305) also serves an OLLAMA-compatible
+  // surface, so a null-kind candidate would be claimed by the ollama probe
+  // (probe order: ollama detects first) and labeled "Ollama". Pin the kind —
+  // same rationale as Docker Model Runner above. This add() overwrites the
+  // null-kind 13305 the sweep loop just emitted (auto entries never survive a
+  // later add). A genuinely-Ollama server a user runs on 13305 stays
+  // reachable: manual entries (kind:"ollama") are added last and win the
+  // dedupe over this auto pin.
+  add({
+    endpoint: { baseUrl: "http://127.0.0.1:13305", origin: "auto" },
+    kind: "openai-compat",
+  });
+
   const ollamaUrl = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
   add({ endpoint: { baseUrl: ollamaUrl, origin: "auto" }, kind: "ollama" });
 

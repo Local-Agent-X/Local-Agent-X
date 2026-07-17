@@ -1,4 +1,4 @@
-import { executeToolCalls } from "../../tool-execution/execute-tool.js";
+import { executeToolCalls } from "../../tool-execution/index.js";
 import type { SecurityLayer } from "../../security/index.js";
 import type { ToolDefinition } from "../../types.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";

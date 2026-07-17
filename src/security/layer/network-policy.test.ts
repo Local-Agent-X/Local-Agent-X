@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { promises as dns } from "node:dns";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -67,6 +68,10 @@ describe("special-purpose IP classification", () => {
 });
 
 describe("resolveAndPinHost", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("returns { ok: true, pin: null } for a PUBLIC literal IPv4 (nothing to resolve)", async () => {
     const result = await resolveAndPinHost("93.184.216.34");
     expect(result).toEqual({ ok: true, pin: null });
@@ -98,21 +103,22 @@ describe("resolveAndPinHost", () => {
     if (!result.ok) expect(result.reason).toContain("SSRF protection");
   });
 
-  // 'localhost' must never pin to a usable address: depending on the resolver,
-  // it either resolves to loopback (rebinding block) or has no A/AAAA records
-  // (fail-closed). Both are ok: false — the only acceptable outcome.
-  it("blocks 'localhost' (loopback rebinding or fail-closed, never pinned)", async () => {
+  // Pin resolver outcomes so host-machine DNS cannot change this security contract.
+  it("blocks 'localhost' when DNS resolves it to loopback", async () => {
+    vi.spyOn(dns, "resolve4").mockResolvedValue(["127.0.0.1"]);
+    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+
     const result = await resolveAndPinHost("localhost");
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(
-        result.reason.includes("DNS rebinding protection") ||
-          result.reason.includes("fail-closed SSRF protection"),
-      ).toBe(true);
+      expect(result.reason).toContain("DNS rebinding protection");
     }
   });
 
   it("fails closed for a host that never resolves (.invalid TLD)", async () => {
+    vi.spyOn(dns, "resolve4").mockResolvedValue([]);
+    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+
     const result = await resolveAndPinHost("nonexistent-host-xyz.invalid");
     expect(result.ok).toBe(false);
     if (!result.ok) {

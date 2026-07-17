@@ -37,8 +37,13 @@ torchaudio==2.5.1
 # CUDA runtime DLLs (cublas + cudnn) bundled as Python wheels — no need to
 # install the full CUDA Toolkit. faster-whisper / CTranslate2 needs cublas64_12.dll
 # at runtime; server.py prepends the wheel's bin dir to PATH on startup.
-nvidia-cublas-cu12==12.4.5.8
-nvidia-cudnn-cu12==9.1.0.70
+# FLOOR, not exact pin: cuBLAS < 12.8 has no Blackwell (RTX 50-series,
+# sm_120) kernels — STT then dies on every utterance with
+# "cuBLAS failed with status CUBLAS_STATUS_NOT_SUPPORTED", which presents
+# to the user as "the mic isn't picking up my voice" (VAD fires, transcribe
+# crashes). Diagnosed on the 5090 box 2026-07-16.
+nvidia-cublas-cu12>=12.8,<13
+nvidia-cudnn-cu12>=9.8,<10
 # Voice cloning is the optional Pro tier (RVC sidecar at :7009) — its
 # dependencies (ultimate-rvc, torch+cu128) live in a separate venv at
 # ~/.lax/python-rvc/venv/, not here. Lite tier ships built-in voices only.

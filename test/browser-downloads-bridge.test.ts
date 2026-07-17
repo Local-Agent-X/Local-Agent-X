@@ -24,6 +24,7 @@ const h = vi.hoisted(() => {
         onBeforeRequest: () => {},
         onCompleted: () => {},
         onErrorOccurred: () => {},
+        onHeadersReceived: () => {},
       },
     },
     viewsById: new Map<string, unknown>(),

@@ -20,6 +20,7 @@ import { app, session, type DownloadItem, type Session, type WebContents, type W
 import { LAX_DIR, getLAXConfig } from "./config";
 import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { appendAgentCspHeaders } from "./browser-csp";
+import { shouldAllowUserLoopback, type ViewTrust } from "./browser-loopback-policy";
 
 const PARTITION_PREFIX = "persist:lax-profile-";
 
@@ -40,6 +41,19 @@ export function initBrowserNetworkHardening(): void {
 	void app.whenReady().then(() => {
 		app.configureHostResolver({ secureDnsMode: "off" });
 	});
+}
+
+// ── View-trust seam (user vs agent views) ─────────
+// browser-views.ts registers a resolver mapping a webContents id to whether
+// its pool view is user-driven or agent-driven. Setter pattern — importing
+// browser-views here would be a cycle (it imports this module). Used only by
+// the user-loopback carve-out below; unresolvable ids stay strict.
+export type ViewTrustResolver = (webContentsId: number) => ViewTrust | null;
+
+let viewTrustResolver: ViewTrustResolver | null = null;
+
+export function setViewTrustResolver(fn: ViewTrustResolver | null): void {
+	viewTrustResolver = fn;
 }
 
 // ── Egress evaluation seam (per-hop, fail-closed) ─────────
@@ -260,6 +274,37 @@ function hardenSession(sess: Session, partition: string): void {
 		noteRequestStart(partition, details.id);
 		if (SW_RESOURCE_TYPES.has(details.resourceType)) {
 			callback({ cancel: true });
+			return;
+		}
+		// USER-view loopback carve-out (browser-loopback-policy.ts): the user's
+		// own tabs may reach literal-loopback services (their ComfyUI, their dev
+		// server) the way Chrome allows — top-level navs + loopback-initiated
+		// subresources. Decided HERE, never through evaluateEgress: the decision
+		// cache is keyed by URL alone, so a user-view allow cached there would
+		// leak to an agent view requesting the same URL within the TTL.
+		// Electron's webRequest details carry no `initiator`; the requesting
+		// frame's URL is the equivalent (and page-unforgeable) signal, with the
+		// referrer as fallback (referrer-policy can only SHRINK it, so it can
+		// never fake a loopback origin — worst case we fail strict).
+		let requester: string | undefined;
+		try {
+			requester = details.frame?.url || details.referrer || undefined;
+		} catch {
+			requester = undefined;
+		}
+		if (
+			viewTrustResolver &&
+			shouldAllowUserLoopback(
+				{
+					url: details.url,
+					resourceType: details.resourceType,
+					initiator: requester,
+					webContentsId: details.webContentsId,
+				},
+				viewTrustResolver,
+			)
+		) {
+			callback({ cancel: false });
 			return;
 		}
 		void evaluateEgress(details.url).then(

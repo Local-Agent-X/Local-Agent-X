@@ -29,28 +29,33 @@ const h = vi.hoisted(() => ({
   attachedId: null as string | null,
   poolListener: null as null | (() => void),
   poolList: [] as unknown[],
+  trustResolver: null as null | ((id: number) => "user" | "agent" | null),
 }));
 
 // electron is installed only under desktop/node_modules — mock the resolved
 // package path (a bare "electron" here wouldn't match the id browser-ipc.ts
 // resolves to).
-vi.mock("../desktop/node_modules/electron", () => ({
-  ipcMain: {
-    handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
-      h.handlers.set(channel, fn);
+vi.mock("../desktop/node_modules/electron", () => {
+  let wcIdSeq = 100;
+  return {
+    ipcMain: {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+        h.handlers.set(channel, fn);
+      },
     },
-  },
-  // Used only by the REAL browser-views module (vi.importActual below).
-  WebContentsView: class {
-    webContents = {
-      isDestroyed: () => false,
-      close: () => {},
-      getURL: () => "",
-      getTitle: () => "",
-    };
-    setBounds() {}
-  },
-}));
+    // Used only by the REAL browser-views module (vi.importActual below).
+    WebContentsView: class {
+      webContents = {
+        id: ++wcIdSeq,
+        isDestroyed: () => false,
+        close: () => {},
+        getURL: () => "",
+        getTitle: () => "",
+      };
+      setBounds() {}
+    },
+  };
+});
 vi.mock("../desktop/src/window", () => ({ getMainWindow: () => h.mainWin }));
 vi.mock("../desktop/src/browser-views", () => ({
   createBrowserView: (viewId: string, opts: unknown) => {
@@ -88,6 +93,7 @@ vi.mock("../desktop/src/browser-partition", () => ({
   hardenWebContents: () => {},
   viewWebPreferences: () => ({}),
   setEgressEvaluator: () => {},
+  setViewTrustResolver: (fn: ((id: number) => "user" | "agent" | null) | null) => { h.trustResolver = fn; },
   // Chunk F seams (browser-downloads-bridge wires these on every respawn).
   setDownloadContextResolver: () => {},
   setDownloadDoneListener: () => {},
@@ -332,6 +338,38 @@ describe("browser tab in the right side panel", () => {
     expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
   });
 
+  it("a failed load hides the native view and shows the error card; Retry reloads", () => {
+    // Regression: a dead local server (ComfyUI stopped, dev server down) or an
+    // egress-blocked page left the pane silently WHITE — the native view renders
+    // a blank error document and nothing told the user what happened.
+    setAnchorRect({ left: 600, top: 40, width: 380, height: 500 });
+    window.laxBrowserTab.onTabShown();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+
+    navStateCb!({
+      url: "http://127.0.0.1:8188/", title: "", canGoBack: false, canGoForward: false, loading: false,
+      loadError: { code: -102, description: "ERR_CONNECTION_REFUSED", url: "http://127.0.0.1:8188/" },
+    });
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(false);
+    const anchor = document.getElementById("browser-view-anchor")!;
+    expect(anchor.textContent).toContain("Can't reach this page");
+    expect(anchor.textContent).toContain("ERR_CONNECTION_REFUSED");
+    expect(anchor.textContent).toContain("http://127.0.0.1:8188/");
+
+    document.getElementById("browser-load-error-retry")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(bridge.reload).toHaveBeenCalledTimes(1);
+
+    // The retry's load-start clears the error → card gone, view returns.
+    navStateCb!({
+      url: "http://127.0.0.1:8188/", title: "", canGoBack: false, canGoForward: false, loading: true,
+      loadError: null,
+    });
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+    expect(document.getElementById("browser-load-error-retry")).toBeNull();
+    expect(anchor.textContent).not.toContain("Can't reach this page");
+  });
+
   it("nav-state pushes update the URL field and button disabled states", () => {
     expect(navStateCb).toBeTypeOf("function");
     navStateCb!({
@@ -411,6 +449,41 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
     expect(h.handlers.get("browser-get-nav-state")!({ sender: appWindowWC })).toBeNull();
   });
 
+  it("main-frame load failures surface in nav-state and clear on the next load", async () => {
+    // Navigating wires nav pushes (incl. did-fail-load) onto the webContents.
+    await h.handlers.get("browser-navigate")!({ sender: trustedWC }, "http://127.0.0.1:8188/");
+    const handlerFor = (ev: string) =>
+      (fakeWC.on as Mock).mock.calls.filter((c) => c[0] === ev).map((c) => c[1] as (...a: unknown[]) => void);
+    const [onFail] = handlerFor("did-fail-load");
+    const [onStart] = handlerFor("did-start-loading");
+    expect(onFail).toBeTypeOf("function");
+    expect(onStart).toBeTypeOf("function");
+
+    // Subframe failures and ERR_ABORTED (-3, redirects/rapid re-nav) are
+    // normal browsing — never surfaced as a load error.
+    onFail({}, -102, "ERR_CONNECTION_REFUSED", "http://127.0.0.1:8188/", false);
+    onFail({}, -3, "ERR_ABORTED", "http://127.0.0.1:8188/", true);
+    expect(trustedWC.send).not.toHaveBeenCalledWith(
+      "browser-nav-state",
+      expect.objectContaining({ loadError: expect.anything() }),
+    );
+
+    onFail({}, -102, "ERR_CONNECTION_REFUSED", "http://127.0.0.1:8188/", true);
+    expect(trustedWC.send).toHaveBeenLastCalledWith(
+      "browser-nav-state",
+      expect.objectContaining({
+        loadError: { code: -102, description: "ERR_CONNECTION_REFUSED", url: "http://127.0.0.1:8188/" },
+      }),
+    );
+
+    // A retry/navigation clears the failure the moment the load starts.
+    onStart();
+    expect(trustedWC.send).toHaveBeenLastCalledWith(
+      "browser-nav-state",
+      expect.objectContaining({ loadError: null }),
+    );
+  });
+
   it("the trusted sender still gets full nav state and can navigate", async () => {
     expect(h.handlers.get("browser-get-nav-state")!({ sender: trustedWC })).toEqual({
       viewId: "foreground",
@@ -419,6 +492,7 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
       canGoBack: true,
       canGoForward: false,
       loading: false,
+      loadError: null,
     });
     await h.handlers.get("browser-navigate")!({ sender: trustedWC }, "https://example.com/");
     expect(fakeWC.loadURL).toHaveBeenCalledWith("https://example.com/");
@@ -681,6 +755,26 @@ describe("browser-views pool seams (real module)", () => {
       expect(realViews.getAttachedViewId()).toBeNull();
     } finally {
       realViews.setPoolChangedListener(null);
+    }
+  });
+
+  it("registers user/agent view trust for the loopback carve-out and cleans up on close", () => {
+    // browser-views registers the resolver with the partition layer at import;
+    // the mocked setViewTrustResolver captured it in h.trustResolver.
+    expect(h.trustResolver).toBeTypeOf("function");
+    realViews.createBrowserView("pv-user", { partition: "persist:lax-profile-default" });
+    realViews.createBrowserView("pv-agent", { partition: "persist:lax-profile-default", agentDriven: true });
+    try {
+      const userId = realViews.getBrowserView("pv-user")!.webContents.id;
+      const agentId = realViews.getBrowserView("pv-agent")!.webContents.id;
+      expect(h.trustResolver!(userId)).toBe("user");
+      expect(h.trustResolver!(agentId)).toBe("agent");
+      expect(h.trustResolver!(999999)).toBeNull();
+      realViews.closeBrowserView("pv-user");
+      expect(h.trustResolver!(userId)).toBeNull();
+    } finally {
+      if (realViews.getBrowserView("pv-user")) realViews.closeBrowserView("pv-user");
+      if (realViews.getBrowserView("pv-agent")) realViews.closeBrowserView("pv-agent");
     }
   });
 

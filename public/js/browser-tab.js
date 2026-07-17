@@ -27,6 +27,10 @@
 	var selectedViewId = null;
 	var switcherTimer = null;
 	var SWITCHER_POLL_MS = 2000;
+	// Last main-frame load failure of the SELECTED view (from nav-state), or
+	// null. While set, the native view hides and the anchor renders an error
+	// card — without this a dead local server is just a silent white pane.
+	var loadError = null;
 
 	function panelCollapsed() {
 		var panel = document.getElementById('agent-feeds');
@@ -40,7 +44,7 @@
 	// blur keeps the page visible so co-drive works while unfocused).
 	function shouldShow() {
 		return !!bridge && tabShown && !panelCollapsed() &&
-			document.visibilityState === 'visible';
+			document.visibilityState === 'visible' && !loadError;
 	}
 
 	// DOM overlays (global search, shortcuts help, modals, dropdown menus)
@@ -194,6 +198,39 @@
 		if (switcherTimer) { clearInterval(switcherTimer); switcherTimer = null; }
 	}
 
+	// Error card in the anchor while the selected view's last load failed. The
+	// native view is hidden by shouldShow() so the card is actually visible.
+	// Styling is inline — the card is built here and app.css stays untouched.
+	function renderLoadError() {
+		var anchor = document.getElementById('browser-view-anchor');
+		if (!anchor) return;
+		if (!loadError) {
+			if (anchor.dataset.loadError) { anchor.innerHTML = ''; delete anchor.dataset.loadError; }
+			return;
+		}
+		anchor.dataset.loadError = '1';
+		anchor.innerHTML = '';
+		var box = document.createElement('div');
+		box.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;padding:24px;text-align:center';
+		var title = document.createElement('div');
+		title.style.cssText = 'font-size:.85rem;font-weight:600;color:var(--text)';
+		title.textContent = "Can't reach this page";
+		var detail = document.createElement('div');
+		detail.style.cssText = 'font-family:var(--mono);font-size:.7rem;color:var(--muted);word-break:break-all';
+		detail.textContent = (loadError.url || '') +
+			(loadError.description ? ' — ' + loadError.description : '') +
+			(typeof loadError.code === 'number' ? ' (' + loadError.code + ')' : '');
+		var btn = document.createElement('button');
+		btn.className = 'artifact-filter';
+		btn.id = 'browser-load-error-retry';
+		btn.textContent = 'Retry';
+		btn.addEventListener('click', function () { if (bridge) bridge.reload(); });
+		box.appendChild(title);
+		box.appendChild(detail);
+		box.appendChild(btn);
+		anchor.appendChild(box);
+	}
+
 	function updateNavUI(state) {
 		if (!state) return;
 		// Tagged nav-state: only the currently shown view drives the address bar.
@@ -201,6 +238,16 @@
 		if (state.viewId) {
 			if (selectedViewId == null) selectedViewId = state.viewId;
 			if (state.viewId !== selectedViewId) return;
+		}
+		// Failure state: track it, repaint the card, and re-run the visibility
+		// rule (the native view hides while the card is up, returns on recovery).
+		var err = state.loadError || null;
+		var errKey = err ? err.url + '|' + err.code : '';
+		var prevKey = loadError ? loadError.url + '|' + loadError.code : '';
+		if (errKey !== prevKey) {
+			loadError = err;
+			renderLoadError();
+			sync();
 		}
 		var input = document.getElementById('browser-url-input');
 		var back = document.getElementById('browser-nav-back');

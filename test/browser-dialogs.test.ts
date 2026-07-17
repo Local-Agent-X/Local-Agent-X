@@ -30,6 +30,7 @@ vi.mock("../desktop/src/browser-views", () => ({
 vi.mock("../desktop/src/browser-partition", () => ({
   getHardenedPartitionSession: () => ({ clearStorageData: async () => {} }),
   setEgressEvaluator: () => {},
+  setViewTrustResolver: () => {},
   setDownloadContextResolver: () => {},
   setDownloadDoneListener: () => {},
   listQuarantinedDownloads: () => [],

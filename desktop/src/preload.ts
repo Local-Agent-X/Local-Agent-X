@@ -142,9 +142,11 @@ contextBridge.exposeInMainWorld("desktop", {
     reload: () => ipcRenderer.invoke("browser-reload"),
     getNavState: (): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      loadError: { code: number; description: string; url: string } | null;
     }> => ipcRenderer.invoke("browser-get-nav-state"),
     onNavState: (cb: (state: {
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      loadError: { code: number; description: string; url: string } | null;
     }) => void) => {
       ipcRenderer.on("browser-nav-state", (_e, state) => cb(state));
     },
@@ -156,18 +158,21 @@ contextBridge.exposeInMainWorld("desktop", {
     }>> => ipcRenderer.invoke("browser-list-views"),
     switchView: (viewId: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      loadError: { code: number; description: string; url: string } | null;
     } | null> => ipcRenderer.invoke("browser-switch-view", viewId),
     // Profile manager "Log in once": open (or reuse) a FOREGROUND view on the
     // given profile's partition and navigate it, so the user can sign in by hand
     // — the partition persists the login. url omitted → about:blank.
     openProfileView: (profileId: string, url?: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      loadError: { code: number; description: string; url: string } | null;
     } | null> => ipcRenderer.invoke("browser-open-profile-view", profileId, url),
     // New user tab: mint a fresh renderer-owned view on the currently selected
     // view's partition and drive it from the anchor. url omitted → about:blank.
     // Returns the new view's nav-state.
     newTab: (url?: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      loadError: { code: number; description: string; url: string } | null;
     } | null> => ipcRenderer.invoke("browser-new-tab", url),
     // Pool-change poke: main sends "browser-views-changed" (no payload) when
     // views are created/closed or the attached view flips — re-list on it.

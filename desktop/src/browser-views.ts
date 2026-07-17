@@ -11,7 +11,7 @@
 import { WebContentsView, type Rectangle, type WebContents } from "electron";
 
 import { getMainWindow } from "./window";
-import { getHardenedPartitionSession, hardenWebContents, viewWebPreferences } from "./browser-partition";
+import { getHardenedPartitionSession, hardenWebContents, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
 import { managePopups, type PopupTracker } from "./browser-view-popups";
 import { armCoDrive } from "./in-app-browser";
 
@@ -34,11 +34,20 @@ interface PoolEntry {
 	bounds: Rectangle;
 	agentDriven: boolean;
 	popups: PopupTracker;
+	/** webContents.id captured at creation — cleanup must not read it off a
+	 *  possibly-destroyed webContents. */
+	wcId: number;
 }
 
 const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
 
 const pool = new Map<string, PoolEntry>();
+// webContents.id → agentDriven, for the partition layer's per-request
+// user-vs-agent trust question (the user-loopback egress carve-out). Only
+// pool views are listed — popups and unknown webContents resolve to null,
+// which the policy treats as strict.
+const wcTrust = new Map<number, boolean>();
+setViewTrustResolver((id) => (wcTrust.has(id) ? (wcTrust.get(id) ? "agent" : "user") : null));
 let attachedId: string | null = null;
 // Minimal pool-change seam: fired on membership changes (create/close) and
 // attach flips (show). No payload by design — the consumer re-lists; the pool
@@ -116,8 +125,10 @@ export function createBrowserView(
 		bounds: opts.bounds ?? { ...DEFAULT_BOUNDS },
 		agentDriven: opts.agentDriven === true,
 		popups,
+		wcId: view.webContents.id,
 	};
 	pool.set(viewId, entry);
+	wcTrust.set(entry.wcId, entry.agentDriven);
 	try {
 		viewObserver?.onViewCreated(viewId, view.webContents, entry.agentDriven);
 	} catch {
@@ -176,6 +187,7 @@ export function closeBrowserView(viewId: string): void {
 	}
 	if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
 	pool.delete(viewId);
+	wcTrust.delete(entry.wcId);
 	notifyPoolChanged();
 }
 

@@ -43,6 +43,10 @@ interface BrowserNavState {
 	canGoBack: boolean;
 	canGoForward: boolean;
 	loading: boolean;
+	/** Last MAIN-frame load failure, or null. Without this the renderer's pane
+	 *  sits silently white on e.g. ERR_CONNECTION_REFUSED — the view renders a
+	 *  blank error document and nothing tells the user the server is down. */
+	loadError: { code: number; description: string; url: string } | null;
 }
 
 interface BrowserViewListEntry {
@@ -55,7 +59,7 @@ interface BrowserViewListEntry {
 }
 
 function emptyNavState(viewId: string): BrowserNavState {
-	return { viewId, url: "", title: "", canGoBack: false, canGoForward: false, loading: false };
+	return { viewId, url: "", title: "", canGoBack: false, canGoForward: false, loading: false, loadError: null };
 }
 
 // The view the renderer's anchor currently drives (bounds/visibility/nav). The
@@ -69,6 +73,9 @@ let lastBoundsDip: Rectangle | null = null;
 // Nav-state pushes are wired once per webContents (survives viewId reuse: a
 // closed+recreated view gets a fresh webContents and re-wires).
 const navWired = new WeakSet<WebContents>();
+// Last main-frame load failure per webContents; cleared the moment the next
+// load starts so a retry/navigation drops the error UI immediately.
+const loadErrors = new WeakMap<WebContents, { code: number; description: string; url: string }>();
 // Monotonic id source for renderer-minted "new tab" views (user-1, user-2, …).
 let userTabSeq = 0;
 // Microtask-level debounce for the no-payload pool-change poke: a burst of
@@ -114,6 +121,7 @@ function readNavState(viewId: string, wc: WebContents): BrowserNavState {
 		canGoBack: wc.navigationHistory.canGoBack(),
 		canGoForward: wc.navigationHistory.canGoForward(),
 		loading: wc.isLoading(),
+		loadError: loadErrors.get(wc) ?? null,
 	};
 }
 
@@ -133,8 +141,18 @@ function wireNavPushes(viewId: string, wc: WebContents): void {
 	wc.on("did-navigate", push);
 	wc.on("did-navigate-in-page", push);
 	wc.on("page-title-updated", push);
-	wc.on("did-start-loading", push);
+	// A fresh load attempt clears any recorded failure BEFORE the push, so the
+	// renderer drops its error card the moment a retry/navigation starts.
+	wc.on("did-start-loading", () => { loadErrors.delete(wc); push(); });
 	wc.on("did-stop-loading", push);
+	// Main-frame load failures surface in nav-state; the view itself renders a
+	// blank error document, so this is the only signal the renderer gets.
+	// -3 = ERR_ABORTED (redirects, rapid re-navigation) is normal browsing.
+	wc.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+		if (!isMainFrame || errorCode === -3) return;
+		loadErrors.set(wc, { code: errorCode, description: errorDescription, url: validatedURL });
+		push();
+	});
 }
 
 /** Lazily create the renderer's foreground view on first use and wire it. */

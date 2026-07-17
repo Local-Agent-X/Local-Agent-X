@@ -12,8 +12,14 @@ import type { StreamEvent } from "./types.js";
 const spawnMock = vi.fn();
 // stream-cli.ts imports "child_process"; warm-pool/spawn.ts imports
 // "node:child_process" — mock both specifiers onto the same fake.
-vi.mock("child_process", () => ({ spawn: (...args: unknown[]) => spawnMock(...args) }));
-vi.mock("node:child_process", () => ({ spawn: (...args: unknown[]) => spawnMock(...args) }));
+vi.mock("child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("child_process")>();
+  return { ...actual, spawn: (...args: unknown[]) => spawnMock(...args) };
+});
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: (...args: unknown[]) => spawnMock(...args) };
+});
 // Cold-spawn probes runtime config for MCP wiring; there is none in tests.
 vi.mock("../config.js", () => ({
   getRuntimeConfig: () => { throw new Error("no runtime config in test"); },

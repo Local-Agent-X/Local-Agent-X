@@ -116,8 +116,8 @@ describe("resolveAndPinHost", () => {
   });
 
   it("fails closed for a host that never resolves (.invalid TLD)", async () => {
-    vi.spyOn(dns, "resolve4").mockResolvedValue([]);
-    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    vi.spyOn(dns, "resolve4").mockRejectedValue(new Error("ENOTFOUND"));
+    vi.spyOn(dns, "resolve6").mockRejectedValue(new Error("ENOTFOUND"));
 
     const result = await resolveAndPinHost("nonexistent-host-xyz.invalid");
     expect(result.ok).toBe(false);

@@ -18,6 +18,12 @@ export interface OpenAICompatAdapterOptions {
   apiKey: string;
   systemPrompt?: string;
   temperature?: number;
+  /** Hard output-token cap forwarded as ProviderRequest.maxTokens →
+   *  `max_tokens` on the wire. Same contract as the Anthropic/Codex adapter
+   *  options (callers like a voice lane cap their replies). Absent = the
+   *  adapter's own policy (local endpoints get a runaway default, cloud
+   *  endpoints stay uncapped — see providers/adapters/openai-http.ts). */
+  maxTokens?: number;
   /** User-selected thinking depth — forwarded as reasoning_effort on
    *  reasoning-capable models (xhigh clamps to high on Chat Completions). */
   reasoningEffort?: ReasoningEffort;
@@ -50,6 +56,11 @@ export interface StreamOnceResult {
   /** Mid-stream user-inject interrupt — caller should set its own aborted
    *  flag so post-stream handling treats the turn as aborted. */
   interruptedByInject: boolean;
+  /** Degenerate-output guard tripped mid-stream (local endpoints only) and
+   *  the stream was cut early; value is the detector detail. Caller treats
+   *  the turn as cleanly DONE with the partial text — never error, never
+   *  retried. See stream-guards.ts. */
+  stoppedByGuard?: string;
 }
 
 export interface OpenAICompatTarget {

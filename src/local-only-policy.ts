@@ -1,5 +1,6 @@
 import { getRuntimeConfig } from "./config.js";
 import type { LAXConfig } from "./types.js";
+import { isPrivateIPv4, isPrivateIPv6 } from "./security/layer/ip-classification.js";
 
 export const LOCAL_ONLY_BLOCK_MESSAGE =
   "Blocked by strict local-only mode: only loopback network access and local models are allowed.";
@@ -24,6 +25,30 @@ export function isLoopbackUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Loopback OR private-range (RFC1918/ULA/link-local…) endpoint URL — "is this
+ * a machine the user runs themselves" for guard-rail TARGETING (local-model
+ * token caps, degenerate-stream guards). NOT a security gate: unknown or
+ * unparseable hosts classify as NOT local (fail toward "cloud, leave the
+ * request untouched"), the opposite failure direction from the SSRF layer's
+ * fail-closed classifiers this reuses. DNS names other than localhost — even
+ * LAN ones like `myserver.lan` — classify as not local: never cap a hostname
+ * we can't prove is private.
+ */
+export function isLoopbackOrPrivateUrl(value: string): boolean {
+  if (isLoopbackUrl(value)) return true;
+  let host: string;
+  try {
+    host = new URL(value).hostname;
+  } catch {
+    return false;
+  }
+  const bare = host.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(bare)) return isPrivateIPv4(bare);
+  if (bare.includes(":")) return isPrivateIPv6(bare);
+  return false;
 }
 
 export function localProviderDecision(

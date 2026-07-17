@@ -11,14 +11,14 @@
 
 import OpenAI, { type ClientOptions } from "openai";
 import { BaseAdapter } from "../adapter/base-adapter.js";
-import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
+import { LOCAL_DEFAULT_MAX_TOKENS, type ProviderRequest, type StreamChunk } from "../adapter/types.js";
 import { toOpenAITools } from "../shared/tool-shape.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { PROVIDERS, isHttpProvider } from "../registry.js";
 import { effortForChatCompletions, DEFAULT_REASONING_EFFORT } from "../reasoning-effort.js";
 import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
-import { isLocalOnlyMode, isLoopbackUrl } from "../../local-only-policy.js";
+import { isLocalOnlyMode, isLoopbackUrl, isLoopbackOrPrivateUrl } from "../../local-only-policy.js";
 
 const logger = createLogger("providers.adapters.openai-http");
 
@@ -79,6 +79,25 @@ export function isResponseFormatRejection(message: string | undefined): boolean 
   );
 }
 
+// Runaway guard rail for LOCAL endpoints — see the constant's doc in
+// ../adapter/types.ts (declared there so the window-aware clamp in
+// canonical-loop/adapters/openai-compat/local-cap.ts shares it without
+// loading this module's SDK import). Re-exported for existing consumers.
+export { LOCAL_DEFAULT_MAX_TOKENS } from "../adapter/types.js";
+
+// o-series models 400 the whole request on `max_tokens` ("Unsupported
+// parameter: 'max_tokens' is not supported with this model. Use
+// 'max_completion_tokens' instead."), and a strict OpenAI-compat server may
+// not implement the param at all. Match UNSUPPORTED phrasing only — a VALUE
+// 400 ("max_tokens is too large: …") is a sizing problem that must propagate
+// untouched and never latch the learned store, same discipline as the
+// matchers above.
+export function isMaxTokensRejection(message: string | undefined): boolean {
+  return /unsupported parameter:?\s*'?max_tokens|does not support(?: parameter)?\s+'?max_tokens|'?max_tokens'?\s+is\s+not\s+supported/i.test(
+    message ?? "",
+  );
+}
+
 // stream_options.include_usage makes an OpenAI-compatible stream emit a final
 // usage-only chunk (it's omitted otherwise), which soak-metrics needs to price
 // the op. Only request it from KNOWN cloud http providers (xAI, OpenAI,
@@ -117,6 +136,18 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     // (baseURL, model) hasn't already rejected the param.
     const responseFormatAllowed =
       !!req.responseFormat && !hasParamUnsupported(req.baseURL, req.model, "response_format");
+    // Output-token cap: explicit req.maxTokens wins on any endpoint; local
+    // endpoints (loopback or private-range — LAN runtimes) fall back to the
+    // runaway default unless the caller measured the window and found no
+    // completion budget (omitDefaultMaxTokens — see local-cap.ts); cloud
+    // endpoints get NO default. See LOCAL_DEFAULT_MAX_TOKENS for why.
+    const resolvedMaxTokens =
+      req.maxTokens ??
+      (!req.omitDefaultMaxTokens && req.baseURL && isLoopbackOrPrivateUrl(req.baseURL)
+        ? LOCAL_DEFAULT_MAX_TOKENS
+        : undefined);
+    const maxTokensAllowed =
+      resolvedMaxTokens !== undefined && !hasParamUnsupported(req.baseURL, req.model, "max_tokens");
 
     // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
     // shape. Only meaningful when we're shipping tools this turn.
@@ -140,6 +171,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       includeReasoningEffort: boolean;
       includeTemperature: boolean;
       includeResponseFormat: boolean;
+      includeMaxTokens: boolean;
     }) => ({
       model: req.model,
       messages: [
@@ -149,6 +181,9 @@ export class OpenAIHttpAdapter extends BaseAdapter {
       ...(opts.includeTools ? { tools: toOpenAITools(req.tools) } : {}),
       ...(opts.includeTools && openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
       ...(opts.includeTemperature ? { temperature: req.temperature ?? 0.7 } : {}),
+      ...(opts.includeMaxTokens && resolvedMaxTokens !== undefined
+        ? { max_tokens: resolvedMaxTokens }
+        : {}),
       stream: true as const,
       ...(streamUsage ? { stream_options: { include_usage: true } } : {}),
       // Cast: the installed SDK's ReasoningEffort union predates "minimal",
@@ -180,6 +215,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           includeReasoningEffort: reasoningCapable,
           includeTemperature: temperatureAllowed,
           includeResponseFormat: responseFormatAllowed,
+          includeMaxTokens: maxTokensAllowed,
         }),
         { signal: req.signal || undefined },
       ).catch(async (err: Error) => {
@@ -193,6 +229,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           includeReasoningEffort: boolean;
           includeTemperature: boolean;
           includeResponseFormat: boolean;
+          includeMaxTokens: boolean;
         }) =>
           client.chat.completions.create(buildParams(opts), { signal: req.signal || undefined });
 
@@ -208,6 +245,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeReasoningEffort: reasoningCapable,
             includeTemperature: temperatureAllowed,
             includeResponseFormat: responseFormatAllowed,
+            includeMaxTokens: maxTokensAllowed,
           });
         }
         // reasoning_effort 400 — only when WE sent the param and the server
@@ -220,6 +258,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeReasoningEffort: false,
             includeTemperature: temperatureAllowed,
             includeResponseFormat: responseFormatAllowed,
+            includeMaxTokens: maxTokensAllowed,
           });
         }
         // temperature 400 — o-series models reject a non-default temperature.
@@ -232,6 +271,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeReasoningEffort: reasoningCapable,
             includeTemperature: false,
             includeResponseFormat: responseFormatAllowed,
+            includeMaxTokens: maxTokensAllowed,
           });
         }
         // response_format 400 — some OpenAI-compatible servers don't support
@@ -247,6 +287,23 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             includeReasoningEffort: reasoningCapable,
             includeTemperature: temperatureAllowed,
             includeResponseFormat: false,
+            includeMaxTokens: maxTokensAllowed,
+          });
+        }
+        // max_tokens 400 — the cap is a best-effort guard rail, so when a
+        // server names the param as UNSUPPORTED (o-series wants
+        // max_completion_tokens; some strict compat servers implement
+        // neither), drop it and retry once. Value errors ("too large")
+        // propagate — see isMaxTokensRejection.
+        if (maxTokensAllowed && isMaxTokensRejection(err.message)) {
+          markParamUnsupported(req.baseURL, req.model, "max_tokens");
+          logger.info(`model ${req.model} rejected max_tokens — retrying without it`);
+          return retry({
+            includeTools: useTools,
+            includeReasoningEffort: reasoningCapable,
+            includeTemperature: temperatureAllowed,
+            includeResponseFormat: responseFormatAllowed,
+            includeMaxTokens: false,
           });
         }
         throw err;

@@ -12,6 +12,22 @@ import type { ToolDefinition, ServerEvent } from "../../types.js";
 import type { ReasoningEffort } from "../reasoning-effort.js";
 
 /**
+ * Runaway guard rail for LOCAL endpoints: a degenerate local model (observed:
+ * a local Gemma looping one sentence verbatim for 41s until user abort) can
+ * otherwise generate unbounded — the streaming path historically sent NO
+ * token cap at all. 16384 output tokens is far past any legitimate single
+ * reply yet bounds a runaway to minutes-not-forever even when the
+ * degenerate-stream guard misses the pattern. Cloud endpoints deliberately
+ * get NO default — this is a guard rail, never a style cap; an explicit
+ * `maxTokens` from the caller always wins on any endpoint. Applied by the
+ * OpenAI-http transport; window-aware clamping lives in
+ * canonical-loop/adapters/openai-compat/local-cap.ts. Declared here (a
+ * runtime-weightless module — every import above is type-only) so both
+ * layers share one constant without loading the SDK.
+ */
+export const LOCAL_DEFAULT_MAX_TOKENS = 16384;
+
+/**
  * Normalized request shape that every adapter accepts. The dispatcher
  * builds this once from AgentOptions; adapters translate it into their
  * provider-specific format internally.
@@ -25,6 +41,13 @@ export interface ProviderRequest {
   tools: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  /** Suppress LOCAL_DEFAULT_MAX_TOKENS for this request: the caller measured
+   *  the loaded window and found no completion budget left (see
+   *  canonical-loop/adapters/openai-compat/local-cap.ts). A vLLM-class engine
+   *  would 400 on any cap it can't grant, and prompt-side pressure is the
+   *  preflight/compaction's job — so send NO cap rather than a stub one.
+   *  Explicit `maxTokens` is unaffected by this flag. */
+  omitDefaultMaxTokens?: boolean;
   /** User-selected thinking depth for reasoning models. Adapters map it to
    *  their wire param (reasoning_effort / reasoning.effort); absent = medium. */
   reasoningEffort?: ReasoningEffort;

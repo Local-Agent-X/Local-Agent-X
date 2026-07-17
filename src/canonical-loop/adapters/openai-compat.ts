@@ -44,6 +44,7 @@ import {
 } from "./openai-compat/types.js";
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
+import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessRequestFit, describeUnfittableRequest } from "../../context-manager/request-fit.js";
 import { resolveContextWindow } from "../../context-manager/model-windows.js";
@@ -129,6 +130,7 @@ export class OpenAICompatAdapter implements Adapter {
         parameters: (t.inputSchema as Record<string, unknown>) ?? {},
       })) as ProviderRequest["tools"],
       temperature: this.opts.temperature ?? 0.7,
+      maxTokens: this.opts.maxTokens,
       reasoningEffort: this.opts.reasoningEffort,
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
@@ -185,13 +187,23 @@ export class OpenAICompatAdapter implements Adapter {
       delete req.toolChoice;
     }
 
+    // Window-aware output cap. vLLM-class engines validate prompt+max_tokens
+    // against max_model_len, so on a MEASURED window the local default (and
+    // any explicit cap) clamps down to the real completion budget — or is
+    // omitted entirely when none is left. See local-cap.ts for the policy.
+    const cap = resolveLocalCap({ baseURL, explicitMaxTokens: this.opts.maxTokens, window, fit });
+    req.maxTokens = cap.maxTokens;
+    if (cap.omitDefault) req.omitDefaultMaxTokens = true;
+
     this.inflight = this.runStreamOnce(req, report);
     let result = await this.inflight;
 
     // Tool-call-in-text fallback: some models emit tool calls as raw JSON
     // inside `content` instead of populating tool_calls. Detect + rewrite.
+    // Never mine a guard-stopped stream for tool calls — degenerate output
+    // must not be able to dispatch anything.
     const toolNameSet = new Set(req.tools.map(t => t.name));
-    applyToolCallTextFallback(result, report, model, toolNameSet);
+    if (!result.stoppedByGuard) applyToolCallTextFallback(result, report, model, toolNameSet);
 
     // Layer 2: prose-narration recovery. If extraction couldn't salvage a
     // call but the text READS like a narrated tool call (e.g. Grok's "run
@@ -204,6 +216,7 @@ export class OpenAICompatAdapter implements Adapter {
     const narratedToolCall =
       !this.aborted &&
       !result.interruptedByInject &&
+      !result.stoppedByGuard &&
       !result.firstError &&
       result.pendingToolCalls.length === 0 &&
       req.tools.length > 0 &&
@@ -225,14 +238,22 @@ export class OpenAICompatAdapter implements Adapter {
       };
       this.inflight = this.runStreamOnce(nudgeReq, report);
       result = await this.inflight;
-      applyToolCallTextFallback(result, report, model, toolNameSet);
-      // Retry didn't yield a structured call and the text still reads like
-      // narration → make the no-op visible instead of letting the
-      // false-confident prose stand as a clean reply.
-      const annotated = annotatePersistentNarration(result.assembledText, result.pendingToolCalls.length, toolNameSet);
-      if (annotated !== null) {
-        result.assembledText = annotated;
-        logger.info(`${model} re-narrated a tool call after the wire-format nudge — annotated the reply so the no-op is visible`);
+      // The RETRY stream can guard-stop too — a degenerate retry can be a
+      // verbatim loop of VALID tool-call JSON (tool_choice:"required" pushes
+      // weak local models exactly there), and mining it dispatched N
+      // identical calls. Same invariant as the first call site: a
+      // guard-stopped stream is never mined and never annotated — the
+      // stopped notice already explains the cut.
+      if (!result.stoppedByGuard) {
+        applyToolCallTextFallback(result, report, model, toolNameSet);
+        // Retry didn't yield a structured call and the text still reads like
+        // narration → make the no-op visible instead of letting the
+        // false-confident prose stand as a clean reply.
+        const annotated = annotatePersistentNarration(result.assembledText, result.pendingToolCalls.length, toolNameSet);
+        if (annotated !== null) {
+          result.assembledText = annotated;
+          logger.info(`${model} re-narrated a tool call after the wire-format nudge — annotated the reply so the no-op is visible`);
+        }
       }
     }
 
@@ -247,6 +268,7 @@ export class OpenAICompatAdapter implements Adapter {
     const noOutput =
       !this.aborted &&
       !result.interruptedByInject &&
+      !result.stoppedByGuard &&
       !result.firstError &&
       result.assembledText.length === 0 &&
       result.pendingToolCalls.length === 0;
@@ -296,6 +318,10 @@ export class OpenAICompatAdapter implements Adapter {
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) terminalReason = "error";
     else if (result.interruptedByInject) terminalReason = "done";
+    // Degenerate-stream cut: the guard already surfaced its `stopped` notice
+    // and the partial text finalizes above — the turn ends CLEANLY, never as
+    // an error (an error terminal would fail the op and eat the partial).
+    else if (result.stoppedByGuard) terminalReason = "done";
     else if (firstError) terminalReason = "error";
     else if (pendingToolCalls.length > 0) terminalReason = undefined;
     else terminalReason = "done";

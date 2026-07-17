@@ -40,13 +40,31 @@ export function createEventPump(opId: string): EventPump {
   };
 
   const offStream = subscribeOpStream(opId, (chunk) => {
-    const c = chunk as { delta?: string; replace?: boolean; text?: string; reasoning?: boolean } | null;
+    const c = chunk as {
+      delta?: string; replace?: boolean; text?: string; reasoning?: boolean;
+      stopped?: boolean; reason?: string; debug?: string; firedBy?: string;
+    } | null;
     // Adapter-initiated text replacement (e.g. tool-call-from-text
     // extractor stripping JSON that was already streamed). Forward to
     // the client as a stream event with replace:true so it swaps the
     // bubble's text rather than appending.
     if (c?.replace === true) {
       eventQueue.push({ type: "stream", replace: true, text: c.text ?? "" });
+      wake();
+      return;
+    }
+    // Adapter-level early-stop notice (degenerate-output stream guard).
+    // The adapter contract has no "stopped" report kind, so the notice rides
+    // the op-stream bus as a marker chunk; map it to the same `stopped`
+    // ServerEvent shape the iteration-budget path emits below. Consumers
+    // that only read delta/replace chunks ignore the marker by invariant.
+    if (c?.stopped === true) {
+      eventQueue.push({
+        type: "stopped",
+        reason: typeof c.reason === "string" && c.reason.length > 0 ? c.reason : "Stream stopped early.",
+        ...(typeof c.debug === "string" ? { debug: c.debug } : {}),
+        ...(typeof c.firedBy === "string" ? { firedBy: c.firedBy } : {}),
+      });
       wake();
       return;
     }

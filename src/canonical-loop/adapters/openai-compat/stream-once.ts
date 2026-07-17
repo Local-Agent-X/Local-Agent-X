@@ -16,8 +16,10 @@
 import type { AdapterReport } from "../../adapter-contract.js";
 import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { hasInjects } from "../../../agent-loop/inject-queue.js";
+import { isLoopbackOrPrivateUrl } from "../../../local-only-policy.js";
 import { createLogger } from "../../../logger.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
+import { createDegenerateStreamGuard, DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
 import { withTransportRetry } from "../transport-retry.js";
 import { parseArgs } from "./helpers.js";
 import type { StreamOnceResult } from "./types.js";
@@ -43,7 +45,15 @@ export async function streamOnce(
     usagePromptTokens: undefined,
     usageCompletionTokens: undefined,
     interruptedByInject: false,
+    stoppedByGuard: undefined,
   };
+  // Degenerate-output guard — LOCAL endpoints only (a local model can loop
+  // verbatim or emit garble indefinitely; cloud frontier models don't, and
+  // a false trip there would cut a healthy paid stream). Watches answer-text
+  // deltas only: reasoning models legitimately produce repetitive
+  // chain-of-thought, and thinking is bounded by max_tokens regardless.
+  const guard =
+    req.baseURL && isLoopbackOrPrivateUrl(req.baseURL) ? createDegenerateStreamGuard() : null;
   try {
     // The OpenAI Chat Completions client every provider in this family
     // shares — OpenAI, xAI, Gemini compat, and local + cloud Ollama. They
@@ -67,6 +77,33 @@ export async function streamOnce(
         if (!ev.delta) continue;
         out.assembledText += ev.delta;
         report({ kind: "stream_chunk", body: { delta: ev.delta } });
+        if (guard) {
+          const verdict = guard.feed(ev.delta);
+          if (verdict.tripped) {
+            // Same teardown mechanism as the inject interrupt below: breaking
+            // the loop return()s the generator chain, which aborts the SDK's
+            // in-flight HTTP request via its own AbortController. Text
+            // streamed so far stays in assembledText, so the partial reply
+            // still finalizes. Surface exactly ONE user-visible notice: the
+            // adapter contract has no "stopped" report kind, so it rides the
+            // op-stream bus as a marker chunk (stream_chunk bodies pass
+            // through turn-loop verbatim); the chat event pump maps it to the
+            // standard `stopped` ServerEvent, and every other stream consumer
+            // ignores chunks without delta/replace by invariant.
+            out.stoppedByGuard = verdict.reason;
+            logger.warn(`[stream-guard] ${req.model}: ${verdict.reason} — stopping local stream early`);
+            report({
+              kind: "stream_chunk",
+              body: {
+                stopped: true,
+                reason: DEGENERATE_STREAM_STOP_REASON,
+                debug: verdict.reason,
+                firedBy: "stream-guard",
+              },
+            });
+            break;
+          }
+        }
         continue;
       }
       if (ev.type === "thinking") {

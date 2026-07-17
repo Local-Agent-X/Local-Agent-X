@@ -58,12 +58,13 @@ function lineTextAt(sf: ts.SourceFile, lineIdx: number): string {
 /** Map one compiler hit to a ReferenceHit; null for node_modules/.d.ts hits
  *  (implementation surface, not the caller's code) or unknown files. */
 function toHit(project: TsProject, fileName: string, start: number, isDefinition: boolean): ReferenceHit | null {
-  if (fileName.includes("node_modules") || DECLARATION_FILE_RE.test(fileName)) return null;
-  const sf = project.service.getProgram()?.getSourceFile(fileName);
+  const file = resolve(fileName);
+  if (file.includes("node_modules") || DECLARATION_FILE_RE.test(file)) return null;
+  const sf = project.service.getProgram()?.getSourceFile(file);
   if (sf === undefined) return null;
   const { line, character } = sf.getLineAndCharacterOfPosition(start);
   return {
-    file: sf.fileName,
+    file,
     line: line + 1,
     column: character + 1,
     lineText: lineTextAt(sf, line),

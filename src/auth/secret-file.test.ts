@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
+import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 import { writeSecretFileAtomic, _writeSecretFileAtomicForTests } from "./secret-file.js";
 
 let dir: string;
@@ -35,7 +36,7 @@ describe("writeSecretFileAtomic", () => {
     }
   });
 
-  it("refuses to write through a symlinked temp path (no redirect)", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("refuses to write through a symlinked temp path (no redirect)", () => {
     const target = join(dir, "auth.json");
     const decoy = join(dir, "decoy.txt");
     writeFileSync(decoy, "original");

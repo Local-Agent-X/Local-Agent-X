@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { OTAManager, assertSha256 } from "./ota-update.js";
 import { resolveTarBinaries } from "./ota-extract.js";
 import { createHash } from "node:crypto";
+import { CAN_CREATE_FILE_SYMLINK } from "./symlink-capabilities.test-helper.js";
 
 describe("resolveTarBinaries — extract must not depend on the inherited PATH", () => {
   // Field failure (Win11): the installed app inherited a PATH without
@@ -97,19 +98,16 @@ describe("OTAManager — installed commit marker", () => {
 });
 
 describe("OTAManager — applyUpdate is userData-safe", () => {
-  it("applies the update, backs up only overlapping source, and ignores install-only/special files", async () => {
+  it("applies the update, backs up only overlapping source, and preserves install-only files", async () => {
     const root = mkdtempSync(join(tmpdir(), "lax-ota-apply-"));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(join(installDir, "src"), { recursive: true });
     mkdirSync(join(pkgDir, "src"), { recursive: true });
 
-    // Install state: an overlapping source file (old content), an install-only
-    // file, and a broken symlink standing in for Electron's SingletonLock —
-    // the file that made the old whole-dir backup crash with copyfile ENOENT.
+    // Install state: an overlapping source file and an install-only file.
     writeFileSync(join(installDir, "src", "app.ts"), "OLD");
     writeFileSync(join(installDir, "keep.marker"), "keep me");
-    symlinkSync("/nonexistent/target", join(installDir, "SingletonLock"));
 
     // Release payload (a single top dir so --strip-components=1 lands clean).
     writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
@@ -128,19 +126,38 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     // Update applied.
     expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("NEW");
     expect(readFileSync(join(installDir, "added.txt"), "utf-8")).toBe("added");
-    // Install-only + special files survived untouched (no crash).
+    // Install-only files survived untouched.
     expect(readFileSync(join(installDir, "keep.marker"), "utf-8")).toBe("keep me");
-    // lstat, not existsSync — the dangling symlink survived; existsSync would
-    // follow it to the missing target and wrongly report false.
-    expect(lstatSync(join(installDir, "SingletonLock")).isSymbolicLink()).toBe(true);
 
-    // Backup holds the OLD overlapping source only — not the symlink/install-only.
+    // Backup holds the OLD overlapping source only — not the install-only file.
     const backupRoot = join(root, "lax", "backups");
     const backupDir = join(backupRoot, readdirSync(backupRoot)[0]);
     expect(readFileSync(join(backupDir, "src", "app.ts"), "utf-8")).toBe("OLD");
     expect(existsSync(join(backupDir, "keep.marker"))).toBe(false);
-    expect(existsSync(join(backupDir, "SingletonLock"))).toBe(false);
 
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("ignores broken install-only symlinks during apply", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-ota-symlink-"));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(join(installDir, "src"), { recursive: true });
+    mkdirSync(join(pkgDir, "src"), { recursive: true });
+    writeFileSync(join(installDir, "src", "app.ts"), "OLD");
+    writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
+    symlinkSync(join(root, "missing-target"), join(installDir, "SingletonLock"));
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
+
+    const m = new OTAManager("o", "r", join(root, "lax"));
+    await expect(
+      m.applyUpdate(join(root, "rel.tar.gz"), installDir, "v0", "deadbeefcafebabe0000000000000000feedface")
+    ).resolves.toEqual({ depsChanged: false });
+
+    expect(lstatSync(join(installDir, "SingletonLock")).isSymbolicLink()).toBe(true);
+    const backupRoot = join(root, "lax", "backups");
+    const backupDir = join(backupRoot, readdirSync(backupRoot)[0]);
+    expect(existsSync(join(backupDir, "SingletonLock"))).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
 

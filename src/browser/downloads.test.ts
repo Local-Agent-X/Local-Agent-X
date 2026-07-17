@@ -19,6 +19,7 @@ import type { ServerEvent } from "../types.js";
 import { handleNavigate, handleSnapshot } from "../tools/browser-tools/navigation.js";
 import { handleObserve } from "../tools/browser-tools/observe.js";
 import type { BrowserManager } from "./manager.js";
+import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 
 const roots: string[] = [];
 
@@ -181,7 +182,7 @@ describe("browser download quarantine", () => {
     }
   });
 
-  it("binds release to exact metadata and rejects changed or symlinked quarantine bytes", async () => {
+  it("binds release to exact metadata and rejects changed quarantine bytes", async () => {
     const changedPaths = dirs();
     const changed = await inspectBrowserDownload({
       ...changedPaths, sessionId: "changed", sourceUrl: "https://files.test/a.zip", pageUrl: "https://files.test/",
@@ -199,7 +200,9 @@ describe("browser download quarantine", () => {
     writeFileSync(tampered.quarantinePath!, Buffer.alloc(tampered.size, 0x41));
     await expect(releaseQuarantinedDownload("tampered", tampered.id, tamperedBinding, tamperedPaths.releaseDir)).rejects.toThrow(/digest|changed/i);
     expect(existsSync(join(tamperedPaths.releaseDir, "a.zip"))).toBe(false);
+  });
 
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("rejects symlinked quarantine bytes", async () => {
     const symlinkPaths = dirs();
     const symlinked = await inspectBrowserDownload({
       ...symlinkPaths, sessionId: "symlink", sourceUrl: "https://files.test/a.zip", pageUrl: "https://files.test/",
@@ -208,12 +211,8 @@ describe("browser download quarantine", () => {
     const symlinkBinding = getDownloadApprovalBinding("symlink", symlinked.id);
     const moved = `${symlinked.quarantinePath}.moved`;
     renameSync(symlinked.quarantinePath!, moved);
-    try {
-      symlinkSync(moved, symlinked.quarantinePath!);
-      await expect(releaseQuarantinedDownload("symlink", symlinked.id, symlinkBinding, symlinkPaths.releaseDir)).rejects.toThrow(/regular file|symbolic/i);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
-    }
+    symlinkSync(moved, symlinked.quarantinePath!);
+    await expect(releaseQuarantinedDownload("symlink", symlinked.id, symlinkBinding, symlinkPaths.releaseDir)).rejects.toThrow(/regular file|symbolic/i);
   });
 
   it("releases a normal safe file only after checks pass", async () => {

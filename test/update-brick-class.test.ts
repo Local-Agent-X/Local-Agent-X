@@ -20,8 +20,8 @@
  *      next-launch reconcile) from a real dependency error (revert), so the git
  *      and rolling update paths defer identically instead of one bricking.
  *
- * Symlinks stand in for Windows junctions: realpath follows both the same way,
- * which is the property under test.
+ * The fixtures use Windows junctions and POSIX directory symlinks: realpath
+ * follows both the same way, which is the property under test.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -31,6 +31,9 @@ import { join } from "node:path";
 
 import { escapesSandbox, unlinkSharedJunctions } from "../src/agency/worktree-junctions.js";
 import { isDeferrableFileLock } from "../src/update-pipeline.js";
+import { CAN_CREATE_DIRECTORY_LINK } from "../src/symlink-capabilities.test-helper.js";
+
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
 describe("escapesSandbox — the junction-traversal guard", () => {
   let root: string, install: string, installNm: string, sandbox: string;
@@ -47,14 +50,14 @@ describe("escapesSandbox — the junction-traversal guard", () => {
 
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it("flags a node_modules link that resolves into the live install", () => {
-    symlinkSync(installNm, join(sandbox, "node_modules"), "dir");
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("flags a node_modules link that resolves into the live install", () => {
+    symlinkSync(installNm, join(sandbox, "node_modules"), DIRECTORY_LINK_TYPE);
     expect(escapesSandbox(join(sandbox, "node_modules"), sandbox)).toBe(true);
   });
 
-  it("flags a nested packages/<pkg>/node_modules link into the install", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("flags a nested packages/<pkg>/node_modules link into the install", () => {
     mkdirSync(join(sandbox, "packages", "ari"), { recursive: true });
-    symlinkSync(installNm, join(sandbox, "packages", "ari", "node_modules"), "dir");
+    symlinkSync(installNm, join(sandbox, "packages", "ari", "node_modules"), DIRECTORY_LINK_TYPE);
     expect(escapesSandbox(join(sandbox, "packages", "ari", "node_modules"), sandbox)).toBe(true);
   });
 
@@ -63,9 +66,9 @@ describe("escapesSandbox — the junction-traversal guard", () => {
     expect(escapesSandbox(join(sandbox, "node_modules"), sandbox)).toBe(false);
   });
 
-  it("does NOT flag a link that stays inside the sandbox", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("does NOT flag a link that stays inside the sandbox", () => {
     mkdirSync(join(sandbox, "real-nm"), { recursive: true });
-    symlinkSync(join(sandbox, "real-nm"), join(sandbox, "node_modules"), "dir");
+    symlinkSync(join(sandbox, "real-nm"), join(sandbox, "node_modules"), DIRECTORY_LINK_TYPE);
     expect(escapesSandbox(join(sandbox, "node_modules"), sandbox)).toBe(false);
   });
 
@@ -85,12 +88,12 @@ describe("unlinkSharedJunctions — drops the link without traversing into the i
     mkdirSync(join(installNm, "sqlite-vec"), { recursive: true });
     writeFileSync(marker, "loaded-native-module");
     mkdirSync(sandbox, { recursive: true });
-    symlinkSync(installNm, join(sandbox, "node_modules"), "dir");
+    symlinkSync(installNm, join(sandbox, "node_modules"), DIRECTORY_LINK_TYPE);
   });
 
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it("reports no stuck links and leaves the live install's native module intact", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("reports no stuck links and leaves the live install's native module intact", () => {
     const stuck = unlinkSharedJunctions(sandbox);
     expect(stuck).toEqual([]);
     expect(lstatSync(sandbox).isDirectory()).toBe(true);
@@ -98,7 +101,7 @@ describe("unlinkSharedJunctions — drops the link without traversing into the i
     expect(existsSync(marker)).toBe(true); // parent NOT traversed
   });
 
-  it("a full sandbox wipe AFTER the drop cannot reach the install", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("a full sandbox wipe AFTER the drop cannot reach the install", () => {
     expect(unlinkSharedJunctions(sandbox)).toEqual([]);
     rmSync(sandbox, { recursive: true, force: true });
     expect(existsSync(marker)).toBe(true);

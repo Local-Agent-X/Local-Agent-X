@@ -16,6 +16,9 @@ import { platformRoot } from "../../platform-root.js";
 import { openValidatedRead, readValidatedFile } from "./validated-io.js";
 import { isSensitivePath } from "../../data-lineage/index.js";
 import { SecurityLayer } from "./layer-core.js";
+import { CAN_CREATE_DIRECTORY_LINK, CAN_CREATE_FILE_SYMLINK } from "../../symlink-capabilities.test-helper.js";
+
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
 // Hermetic temp root, realpath-resolved so the test's lexical paths and the
 // gate's realpath'd paths agree (collapses the macOS /var → /private/var
@@ -53,7 +56,7 @@ describe("evaluateFileAccess returns canonicalPath", () => {
 });
 
 describe("openValidatedRead / readValidatedFile — R4-19 symlink-swap TOCTOU", () => {
-  it("reads the benign target when notes.txt → safe.txt (gate would ALLOW)", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("reads the benign target when notes.txt → safe.txt (gate would ALLOW)", () => {
     try { unlinkSync(LINK); } catch { /* not present */ }
     symlinkSync(SAFE, LINK);
     // The gate ALLOWs this — the realpath is safe.txt, not sensitive.
@@ -64,7 +67,7 @@ describe("openValidatedRead / readValidatedFile — R4-19 symlink-swap TOCTOU", 
     expect(readValidatedFile(LINK).toString("utf-8")).toBe("safe contents\n");
   });
 
-  it("does NOT return the sensitive bytes after the leaf is repointed to id_rsa", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("does NOT return the sensitive bytes after the leaf is repointed to id_rsa", () => {
     // Simulate the swap: between gate-ALLOW and open, notes.txt is repointed at
     // the sensitive target. The read helper re-canonicalizes + re-checks the
     // inode against SENSITIVE_PATTERNS, so it must refuse the sensitive bytes.
@@ -82,7 +85,7 @@ describe("openValidatedRead / readValidatedFile — R4-19 symlink-swap TOCTOU", 
     expect(bytes).not.toContain("PRIVATE KEY BYTES");
   });
 
-  it("opens the canonical regular file and returns its fd + canonicalPath", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("opens the canonical regular file and returns its fd + canonicalPath", () => {
     // A benign-named leaf that is itself a symlink to a benign-named target:
     // realpathDeep resolves past it, then O_NOFOLLOW opens the regular canonical
     // file (the race O_NOFOLLOW closes is the *canonical* leaf becoming a symlink
@@ -219,21 +222,21 @@ describe("confineToDir — symlink-safe HTTP file-route containment (round-7)", 
     expect(confineToDir(WORKSPACE, "../id_rsa")).toBeNull();
   });
 
-  it("rejects a symlink whose target escapes the root (symlink-follow containment)", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("rejects a symlink whose target escapes the root (symlink-follow containment)", () => {
     const link = join(WORKSPACE, "escape.txt");
     try { unlinkSync(link); } catch { /* not present */ }
     symlinkSync(SAFE, link); // SAFE lives in ROOT, outside WORKSPACE
     expect(confineToDir(WORKSPACE, "escape.txt")).toBeNull();
   });
 
-  it("rejects a symlink pointing at a sensitive file (the planted-symlink exfil)", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("rejects a symlink pointing at a sensitive file (the planted-symlink exfil)", () => {
     const link = join(WORKSPACE, "leak.txt");
     try { unlinkSync(link); } catch { /* not present */ }
     symlinkSync(SENSITIVE, link); // → id_rsa
     expect(confineToDir(WORKSPACE, "leak.txt")).toBeNull();
   });
 
-  it("allows an in-root symlink that stays inside the root (resolved to its target)", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("allows an in-root symlink that stays inside the root (resolved to its target)", () => {
     const link = join(WORKSPACE, "alias.txt");
     try { unlinkSync(link); } catch { /* not present */ }
     symlinkSync(join(WORKSPACE, "plain.txt"), link);
@@ -320,7 +323,7 @@ describe("sensitive-path gate matches by anchored shape, not keyword substring",
 describe("worktree under a symlinked base (macOS /var→/private/var) matches the realpath'd target", () => {
   let realBase: string;  // the canonical on-disk worktree-parent
   let linkParent: string; // a symlink → realBase's parent (the spelling registered)
-  let linkable = true;
+  const linkable = CAN_CREATE_DIRECTORY_LINK;
   const SESSION = "chunk-agent-1";
 
   beforeAll(() => {
@@ -331,11 +334,7 @@ describe("worktree under a symlinked base (macOS /var→/private/var) matches th
     realBase = join(realWtParent, "chunk-1");
     mkdirSync(realBase, { recursive: true });
     linkParent = join(base, "link-lax-worktrees"); // symlink → realWtParent
-    try {
-      symlinkSync(realWtParent, linkParent, "dir");
-    } catch {
-      linkable = false; // unprivileged host without symlink rights
-    }
+    if (linkable) symlinkSync(realWtParent, linkParent, DIRECTORY_LINK_TYPE);
   });
 
   // The worktree the chunk agent is granted, spelled THROUGH the symlink (the
@@ -344,8 +343,7 @@ describe("worktree under a symlinked base (macOS /var→/private/var) matches th
   const writeTarget = () => join(linkParent, "chunk-1", "app", "layout.tsx");
 
   for (const mode of ["unrestricted", "common", "workspace"] as const) {
-    it(`${mode} mode: ALLOWS a write to the realpath'd target of a symlink-registered worktree`, () => {
-      if (!linkable) return; // OS-specific scenario unavailable — see always-run test below
+    it.skipIf(!CAN_CREATE_DIRECTORY_LINK)(`${mode} mode: ALLOWS a write to the realpath'd target of a symlink-registered worktree`, () => {
       const sec = new SecurityLayer(WORKSPACE, mode);
       sec.addAllowedPath(registeredWorktree(), SESSION);
       const d = sec.evaluate({ toolName: "write", args: { path: writeTarget(), content: "x" }, sessionId: SESSION });

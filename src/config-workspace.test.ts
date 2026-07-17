@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { stripOneDriveDocuments, isCloudStoragePath, migrateWorkspace, ensureWorkspaceLink } from "./workspace/lifecycle.js";
 import { loadConfig } from "./config.js";
+import { CAN_CREATE_DIRECTORY_LINK } from "./symlink-capabilities.test-helper.js";
 
 function withEnvironment(overrides: Record<string, string | undefined>, run: () => void): void {
   const previous = new Map<string, string | undefined>();
@@ -328,7 +329,7 @@ describe("ensureWorkspaceLink retargets + migrates on a workspace change", () =>
   const mk = () => { const d = mkdtempSync(join(tmpdir(), "ws-link-")); temps.push(d); return d; };
   afterEach(() => { for (const d of temps.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch {} } });
 
-  it("relinks the cwd workspace to the new location AND migrates the old contents", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("relinks the cwd workspace to the new location AND migrates the old contents", () => {
     const base = mk();
     const oldWs = join(base, "old-workspace");
     const newWs = join(base, "new-workspace");
@@ -336,10 +337,7 @@ describe("ensureWorkspaceLink retargets + migrates on a workspace change", () =>
     mkdirSync(join(oldWs, "apps", "demo"), { recursive: true });
     writeFileSync(join(oldWs, "apps", "demo", "index.html"), "<h1>old</h1>");
 
-    let linkable = true;
-    try { symlinkSync(oldWs, link, process.platform === "win32" ? "junction" : "dir"); }
-    catch { linkable = false; } // unprivileged POSIX symlink — skip assertions
-    if (!linkable) return;
+    symlinkSync(oldWs, link, process.platform === "win32" ? "junction" : "dir");
 
     ensureWorkspaceLink(newWs, link);
 

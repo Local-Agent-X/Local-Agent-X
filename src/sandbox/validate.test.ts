@@ -5,23 +5,9 @@ import { join } from "node:path";
 
 import { validateSandboxConfig } from "./validate.js";
 import type { SandboxConfig } from "./types.js";
+import { CAN_CREATE_DIRECTORY_LINK, CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 
-// Windows blocks symlink creation without Developer Mode / elevation (EPERM).
-// The symlink-resolution cases below can't be ARRANGED without it (the test
-// itself must create a symlink), so probe once and skip them on an
-// under-privileged host. They still run on POSIX and in CI.
-const CAN_CREATE_SYMLINK: boolean = (() => {
-  let probe: string | undefined;
-  try {
-    probe = mkdtempSync(join(tmpdir(), "lax-symlink-probe-"));
-    symlinkSync(join(probe, "target"), join(probe, "link"));
-    return true;
-  } catch {
-    return false;
-  } finally {
-    if (probe) { try { rmSync(probe, { recursive: true, force: true }); } catch { /* ignore */ } }
-  }
-})();
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
 // Focused tests for the validator's repo-root rule. sandbox.test.ts covers
 // the breadth of deny rules (~/.ssh, /etc/shadow, segment names, suffixes,
@@ -118,11 +104,11 @@ describe("validateSandboxConfig — symlink resolution (Bug 6)", () => {
     try { rmSync(scratchHost, { recursive: true, force: true }); } catch { /* best-effort */ }
   });
 
-  it.skipIf(!CAN_CREATE_SYMLINK)("rejects mount whose symlink resolves into the LAX repo root", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("rejects mount whose symlink resolves into the LAX repo root", () => {
     const targetInRepo = join(scratchRepo, "subdir");
     mkdirSync(targetInRepo);
     const link = join(scratchHost, "looks-safe");
-    symlinkSync(targetInRepo, link);
+    symlinkSync(targetInRepo, link, DIRECTORY_LINK_TYPE);
 
     const r = validateSandboxConfig(baseConfig({ extraMounts: [`${link}:/container/x`] }));
     expect(r.ok).toBe(false);
@@ -132,11 +118,11 @@ describe("validateSandboxConfig — symlink resolution (Bug 6)", () => {
     }
   });
 
-  it.skipIf(!CAN_CREATE_SYMLINK)("accepts mount whose symlink resolves to another safe location", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("accepts mount whose symlink resolves to another safe location", () => {
     const target = realpathSync(mkdtempSync(join(tmpdir(), "lax-symlink-target-")));
     try {
       const link = join(scratchHost, "safe-link");
-      symlinkSync(target, link);
+      symlinkSync(target, link, DIRECTORY_LINK_TYPE);
       const r = validateSandboxConfig(baseConfig({ extraMounts: [`${link}:/container/x`] }));
       expect(r.ok).toBe(true);
     } finally {
@@ -151,7 +137,7 @@ describe("validateSandboxConfig — symlink resolution (Bug 6)", () => {
     if (!r.ok) expect(r.reason).toMatch(/does not exist/i);
   });
 
-  it.skipIf(!CAN_CREATE_SYMLINK)("rejects dangling symlink (target absent) with does-not-exist error", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("rejects dangling symlink (target absent) with does-not-exist error", () => {
     const link = join(scratchHost, "dangling");
     symlinkSync(join(scratchHost, "missing-target"), link);
     const r = validateSandboxConfig(baseConfig({ extraMounts: [`${link}:/container/x`] }));

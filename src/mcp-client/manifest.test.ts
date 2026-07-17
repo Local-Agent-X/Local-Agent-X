@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { MCPPackageIdentity, MCPServerConfig, MCPSignedManifest } from "./types.js";
+import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 
 let dataDir: string;
 let binaryPath: string;
@@ -148,7 +149,7 @@ describe("signed MCP publisher manifests", () => {
     expect(manifestApi.assessMcpManifest(dataDir, "package-moved", movedConfig)).toMatchObject({ trust: "invalid", reason: expect.stringMatching(/package-manager path/) });
   });
 
-  it.skipIf(process.platform === "win32")("rejects same-byte package-manager symlink retargeting", () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("rejects same-byte package-manager symlink retargeting", () => {
     const targetA = join(dataDir, "npx-a");
     const targetB = join(dataDir, "npx-b");
     const managerLink = join(dataDir, "npx");

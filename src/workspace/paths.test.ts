@@ -6,6 +6,7 @@ import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
 import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep } from "./paths.js";
 import { isSensitivePath } from "../data-lineage/index.js";
+import { CAN_CREATE_WINDOWS_JUNCTION } from "../symlink-capabilities.test-helper.js";
 
 // resolveAgentPath is the single source of truth for turning an agent's raw
 // `path` argument into an absolute path. It must anchor RELATIVE paths to the
@@ -139,12 +140,7 @@ describe("session work-root anchor", () => {
 // hands downstream keyers (stale-read guard, security gate) the junction-TARGET
 // spelling regardless of which spelling the caller registered.
 describe("work-root canonicalization through junctions", () => {
-  const canJunction = (() => {
-    const base = mkdtempSync(join(tmpdir(), "lax-wr-probe-"));
-    try { symlinkSync(join(base, "x"), join(base, "link"), "junction"); return true; }
-    catch { return false; }
-    finally { try { rmSync(base, { recursive: true, force: true }); } catch { /* ignore */ } }
-  })();
+  const canJunction = process.platform === "win32" ? CAN_CREATE_WINDOWS_JUNCTION : true;
 
   it.skipIf(!canJunction)("a work root registered via a junction spelling anchors at the target spelling", () => {
     const realProj = mkdtempSync(join(tmpdir(), "lax-wr-real-"));

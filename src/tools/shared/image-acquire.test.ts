@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { CAN_CREATE_FILE_SYMLINK } from "../../symlink-capabilities.test-helper.js";
 import { acquireImages } from "./image-acquire.js";
 
 // 1×1 PNG (transparent) — hoisted so the web-egress mock factory (which runs
@@ -101,7 +102,7 @@ describe("acquireImages", () => {
   // resolve()+startsWith left this hole open; realpath containment closes it —
   // even though the target IS a valid image (so the mime gate alone wouldn't
   // catch it), it lives outside the workspace and must not round-trip.
-  it("blocks a workspace symlink that escapes to an outside image (realpath containment)", async () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("blocks a workspace symlink that escapes to an outside image (realpath containment)", async () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "img-acq-escape-"));
     const outside = join(outsideDir, "real.png");
     writeFileSync(outside, PNG_1x1);

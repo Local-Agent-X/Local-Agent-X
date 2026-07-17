@@ -12,6 +12,9 @@ import { CAPABILITY_CLASS_MEMBERS, TOOL_PATH_ARGS } from "../../tool-registry.js
 import { uploadsDir } from "../../config.js";
 import { platformRoot } from "../../platform-root.js";
 import { mapUploadsRef } from "../../workspace/paths.js";
+import { CAN_CREATE_DIRECTORY_LINK } from "../../symlink-capabilities.test-helper.js";
+
+const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
 // All tests build a SecurityLayer with an explicit fileAccessMode so the
 // constructor doesn't read ~/.lax/security.json and produce host-dependent
@@ -824,7 +827,7 @@ describe("platform-source write guard (anchored to the install root)", () => {
 describe("relocated-workspace junction is transparent to containment", () => {
   let realWs: string;
   let bridge: string; // a link that points INTO realWs, sitting elsewhere
-  let linkable = true;
+  const linkable = CAN_CREATE_DIRECTORY_LINK;
 
   beforeAll(() => {
     const base = mkdtempSync(join(tmpdir(), "ws-junction-"));
@@ -832,24 +835,17 @@ describe("relocated-workspace junction is transparent to containment", () => {
     mkdirSync(join(realWs, "apps", "demo"), { recursive: true });
     writeFileSync(join(realWs, "apps", "demo", "index.html"), "<h1>hi</h1>", "utf-8");
     bridge = join(base, "bridge-workspace");
-    try {
-      // "junction" on Windows mirrors the real ensureWorkspaceLink; "dir" symlink elsewhere.
-      symlinkSync(realWs, bridge, process.platform === "win32" ? "junction" : "dir");
-    } catch {
-      linkable = false; // unprivileged POSIX without symlink rights — skip assertions
-    }
+    if (linkable) symlinkSync(realWs, bridge, DIRECTORY_LINK_TYPE);
   });
 
-  it("allows a read through the junction into the real workspace", () => {
-    if (!linkable) return;
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("allows a read through the junction into the real workspace", () => {
     // config.workspace is the REAL location; the agent's path traverses the bridge.
     const viaBridge = join(bridge, "apps", "demo", "index.html");
     const d = evaluateFileAccess(realWs, "common", () => false, "read", viaBridge);
     expect(d.allowed).toBe(true);
   });
 
-  it("still blocks a read that genuinely escapes the workspace", () => {
-    if (!linkable) return;
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("still blocks a read that genuinely escapes the workspace", () => {
     const outside = join(bridge, "..", "..", "elsewhere", "secret.txt");
     const d = evaluateFileAccess(realWs, "common", () => false, "read", outside);
     expect(d.allowed).toBe(false);
@@ -1393,17 +1389,13 @@ describe("delegated worktree gate — canonical classification + work-root provi
     expect(d.reason).toContain("worktree isolation");
   });
 
-  it("classifies a symlink/junction spelling of the workspace consistently", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("classifies a symlink/junction spelling of the workspace consistently", () => {
     // Configured workspace is a LINK; the write path uses the TARGET
     // spelling. Same physical dir — must classify as user content.
     const realWs = join(WORKSPACE_ROOT, "actual-ws");
     mkdirSync(realWs, { recursive: true });
     const linkWs = join(WORKSPACE_ROOT, "ws-link");
-    try {
-      symlinkSync(realWs, linkWs, "junction");
-    } catch {
-      return; // symlink creation unavailable in this sandbox — nothing to assert
-    }
+    symlinkSync(realWs, linkWs, DIRECTORY_LINK_TYPE);
     const sec = new SecurityLayer(linkWs, "common");
     const d = delegated(sec, "write", { path: join(realWs, "apps", "p", "a.txt"), content: "x" }, "agent-j");
     expect(d.allowed).toBe(true);
@@ -1432,15 +1424,11 @@ describe("delegated worktree gate — canonical classification + work-root provi
   // under its /var spelling has to satisfy the allowed-path set for a target the
   // gate realpath'd to the /private/var form (the macOS WORKTREE_BASE case that
   // blocked every parallel-build chunk write). addAllowedPath stores both forms.
-  it("honors a worktree registered under a SYMLINKED base for a realpath'd write target", () => {
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("honors a worktree registered under a SYMLINKED base for a realpath'd write target", () => {
     const realWt = join(WORKSPACE_ROOT, "sym-real-wt");
     mkdirSync(realWt, { recursive: true });
     const linkWt = join(WORKSPACE_ROOT, "sym-link-wt");
-    try {
-      symlinkSync(realWt, linkWt, "dir");
-    } catch {
-      return; // symlink creation unavailable — nothing to assert
-    }
+    symlinkSync(realWt, linkWt, DIRECTORY_LINK_TYPE);
     const sec = new SecurityLayer(WORKSPACE, "common");
     // Register the worktree via the SYMLINK spelling (the un-realpath'd form the
     // worktree creator hands us); the write target is spelled the same way but

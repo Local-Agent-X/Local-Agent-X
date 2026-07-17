@@ -6,6 +6,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { CAN_CREATE_WINDOWS_JUNCTION } from "../symlink-capabilities.test-helper.js";
 import {
   recordFileSeen,
   checkFreshness,
@@ -31,16 +32,7 @@ function tmpFile(name: string, body: string): string {
   return file;
 }
 
-// Does this environment allow creating a dir junction/symlink (Windows dir
-// junctions need no admin; CI without symlink privilege does)? Detected once so
-// the junction regression skips cleanly instead of failing where unsupported.
-function junctionSupported(): boolean {
-  const base = mkdtempSync(join(tmpdir(), "lax-rs-probe-"));
-  dirs.add(base);
-  try { symlinkSync(join(base, "real"), join(base, "link"), "junction"); return true; }
-  catch { return false; }
-}
-const JUNCTIONS_OK = junctionSupported();
+const JUNCTIONS_OK = process.platform === "win32" ? CAN_CREATE_WINDOWS_JUNCTION : true;
 
 describe("read-state freshness", () => {
   it("reports unseen until the session records the file", () => {

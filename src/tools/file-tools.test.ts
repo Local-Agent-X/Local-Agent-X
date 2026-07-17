@@ -8,6 +8,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, symlinkSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 import { writeTool, editTool, editLinesTool, multiEditTool } from "./file-tools.js";
 import { processStartTool, processKillTool, processStatusTool } from "./process-tools.js";
 
@@ -114,7 +115,7 @@ describe("file-tools connector manifest guard", () => {
 // OUTSIDE the workspace. The write must FAIL and the outside target must be
 // left untouched.
 describe("file-tools write O_NOFOLLOW (symlink-target redirect blocked)", () => {
-  it("refuses to write through a symlinked target (does not overwrite the link's destination)", async () => {
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("refuses to write through a symlinked target (does not overwrite the link's destination)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-nofollow-"));
     dirs.add(dir);
     // The off-target file the symlink points at. Pre-seed it; it must survive.

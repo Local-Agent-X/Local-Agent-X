@@ -79,7 +79,7 @@ describe("installRequestGuard — document CSP injection (CDP/Playwright backend
 		expect(route.abort).not.toHaveBeenCalled();
 
 		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp(PUBLIC_DOC_URL));
+		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
 	});
 
 	it("APPENDS (never replaces) a site's own Content-Security-Policy, and preserves other headers", async () => {
@@ -94,7 +94,7 @@ describe("installRequestGuard — document CSP injection (CDP/Playwright backend
 
 		const arg = route.fulfill.mock.calls[0][0];
 		// Comma-joined: the site's policy is still present AND ours is appended.
-		expect(arg.headers["content-security-policy"]).toBe(`${siteCsp}, ${buildAgentCsp(PUBLIC_DOC_URL)}`);
+		expect(arg.headers["content-security-policy"]).toBe(`${siteCsp}, ${buildAgentCsp()}`);
 		// Unrelated upstream headers survive verbatim.
 		expect(arg.headers["content-type"]).toBe("text/html; charset=utf-8");
 		expect(arg.headers["x-frame-options"]).toBe("DENY");
@@ -158,7 +158,7 @@ describe("installRequestGuard — document CSP injection (CDP/Playwright backend
 		expect(route.fulfill).toHaveBeenCalledTimes(1);
 		expect(route.continue).not.toHaveBeenCalled();
 		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp(PUBLIC_DOC_URL));
+		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
 	});
 
 	it("applies CSP to the FINAL document of a redirect chain (route.fetch follows redirects internally)", async () => {
@@ -175,7 +175,7 @@ describe("installRequestGuard — document CSP injection (CDP/Playwright backend
 		expect(route.fetch).toHaveBeenCalledTimes(1);
 		expect(route.fulfill).toHaveBeenCalledTimes(1);
 		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp(PUBLIC_DOC_URL));
+		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
 	});
 
 	it("preserves an upstream Set-Cookie header through the fulfill (multi-cookie \\n-folded value passes verbatim)", async () => {
@@ -190,7 +190,7 @@ describe("installRequestGuard — document CSP injection (CDP/Playwright backend
 		const arg = route.fulfill.mock.calls[0][0];
 		expect(arg.headers["set-cookie"]).toBe(setCookie);
 		// CSP still injected alongside the preserved cookie.
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp(PUBLIC_DOC_URL));
+		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
 	});
 
 	it("does NOT inject CSP on a main-frame navigation whose response is an attachment download (fulfilled through unchanged, no re-issue)", async () => {

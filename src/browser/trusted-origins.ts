@@ -14,12 +14,11 @@
  * eTLD+1-correct for the defaults: it trusts every subdomain (mobile.x.com) and
  * rejects look-alikes (x.com.evil.com) without a public-suffix table.
  *
- * TODO(csp-policy convergence): sibling chunk C2 is landing
- * src/browser/csp-policy.ts with a public-suffix-aware eTLD+1 helper. It lands
- * in parallel, so we may NOT import it yet. Once both land, an integration pass
- * should replace the local `registrableDomain`/suffix compare below with that
- * shared helper (DRY) — needed only if a future trusted entry is a bare public
- * suffix or a non-registrable host, which the default set is not.
+ * NOTE(csp-policy convergence): src/browser/csp-policy.ts exports a
+ * public-suffix-aware `registrableDomain` (eTLD+1) helper. The local
+ * suffix-compare below is eTLD+1-correct for the registrable-domain default set,
+ * so it is retained as-is; converge onto the shared helper (DRY) only if a
+ * future trusted entry is a bare public suffix or a non-registrable host.
  */
 
 /** The out-of-box trusted origins — registrable domains (eTLD+1). Frozen so no

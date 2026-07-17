@@ -98,14 +98,14 @@ function isHtmlDocumentResponse(headers: Record<string, string>): boolean {
  * response-stage header override could append the CSP without buffering the
  * body at all; not built here.
  */
-export async function fulfillWithAgentCsp(route: Route, url: string): Promise<void> {
+export async function fulfillWithAgentCsp(route: Route): Promise<void> {
 	const response = await route.fetch();
 	const headers: Record<string, string> = { ...response.headers() };
 	if (!isHtmlDocumentResponse(headers)) {
 		await route.fulfill({ response });
 		return;
 	}
-	const agentCsp = buildAgentCsp(url);
+	const agentCsp = buildAgentCsp();
 	const existing = headers[CSP_HEADER];
 	headers[CSP_HEADER] = existing ? `${existing}, ${agentCsp}` : agentCsp;
 	await route.fulfill({ response, headers });

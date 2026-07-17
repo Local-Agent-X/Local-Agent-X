@@ -33,7 +33,8 @@ import {
 import { autoSurfaceAgentView } from "./browser-ipc";
 import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
 import { wireDownloadBridge } from "./browser-downloads-bridge";
-import { getHardenedPartitionSession, setEgressEvaluator, type EgressDecision } from "./browser-partition";
+import { getHardenedPartitionSession, setEgressEvaluator } from "./browser-partition";
+import { askServerEgress, settleEgressAsk } from "./server-bridge-egress";
 import {
 	attachViewPerception,
 	detachViewPerception,
@@ -49,7 +50,6 @@ import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser"
 const EXEC_ISOLATED_WORLD_ID = 1901;
 const NAVIGATE_DEFAULT_TIMEOUT_MS = 25_000;
 const CAPTURE_MAX_B64 = 2 * 1024 * 1024; // mirrors PROBE_MAX_SCREENSHOT_B64
-const EGRESS_ASK_DEADLINE_MS = 250;      // per-hop policy ask; fail closed past this
 
 // ── Wire types (server-bridge-browser-wire.ts; re-exported for callers) ─────────
 import type {
@@ -61,31 +61,11 @@ import type {
 export { isBrowserBridgeMessage } from "./server-bridge-browser-wire";
 export type { BridgeInputEvent, BrowserBridgeMessage, BrowserLifecycleOp } from "./server-bridge-browser-wire";
 
-// ── Egress evaluator (desktop→server ask, fail-closed) ─────────
-let egressSeq = 0;
-const pendingEgressAsks = new Map<number, (allowed: boolean) => void>();
-
-function askServerEgress(proc: ChildProcess, url: string): Promise<EgressDecision> {
-	if (!proc.connected || proc.killed) return Promise.resolve({ allowed: false });
-	const id = ++egressSeq;
-	return new Promise<EgressDecision>((resolve) => {
-		let timer: ReturnType<typeof setTimeout>;
-		const finish = (allowed: boolean) => { clearTimeout(timer); pendingEgressAsks.delete(id); resolve({ allowed }); };
-		pendingEgressAsks.set(id, finish);
-		timer = setTimeout(() => finish(false), EGRESS_ASK_DEADLINE_MS);
-		try {
-			if (!proc.send({ type: "lax:browser-egress-ask", id, url })) finish(false);
-		} catch {
-			finish(false); // channel just closed — deny
-		}
-	});
-}
-
 /** Point the partition egress guard at the server child. Called from
  *  attachServerBridge on every (re)spawn so the closure always holds the
  *  live process; a dead/replaced child fails closed inside the ask. */
 export function wireBrowserEgressEvaluator(proc: ChildProcess): void {
-	setEgressEvaluator((url) => askServerEgress(proc, url));
+	setEgressEvaluator((req) => askServerEgress(proc, req));
 	// Same (re)spawn moment arms perception (console rings + UI events) and
 	// beforeunload-dialog interception on every view's lifecycle.
 	setViewLifecycleObserver({
@@ -120,7 +100,7 @@ export function wireBrowserEgressEvaluator(proc: ChildProcess): void {
 export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: BrowserBridgeMessage): Promise<void> {
 	switch (msg.type) {
 		case "lax:browser-egress-ask-result": {
-			pendingEgressAsks.get(msg.id)?.(msg.allowed === true);
+			settleEgressAsk(msg.id, msg.allowed === true);
 			return;
 		}
 		case "lax:browser-abort": {

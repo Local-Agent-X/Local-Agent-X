@@ -20,6 +20,13 @@ import { app, session, type DownloadItem, type Session, type WebContents, type W
 import { LAX_DIR, getLAXConfig } from "./config";
 import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { shouldAllowUserLoopback, type ViewTrust } from "./browser-loopback-policy";
+import {
+	buildHardeningCspHeaders,
+	cacheGet,
+	cacheSet,
+	clearDecisionCache,
+	extractUploadBody,
+} from "./browser-partition-net";
 
 const PARTITION_PREFIX = "persist:lax-profile-";
 
@@ -56,8 +63,28 @@ export function setViewTrustResolver(fn: ViewTrustResolver | null): void {
 }
 
 // ── Egress evaluation seam (per-hop, fail-closed) ─────────
+// The seam carries a REQUEST (not just a URL) so the server-side evaluator can
+// run its taint/canary payload scan: it needs the outbound body, the requesting
+// page origin (to tell a first-party hop from a cross-domain one), and the
+// webContents (→ owning view → session). URL-only SSRF policy still runs first.
+export interface EgressRequest {
+	/** The outbound request URL. */
+	url: string;
+	/** HTTP method (GET/POST/…); undefined treated as GET. */
+	method?: string;
+	/** Requesting frame/page URL — the first-party origin the request issues
+	 *  from. Only a CROSS-registrable-domain hop carrying tainted bytes is exfil;
+	 *  a first-party hop is always allowed by the taint gate. */
+	pageUrl?: string;
+	/** Decoded outbound body bytes (POST/PUT/PATCH), size-capped; undefined for
+	 *  bodyless requests. The primary exfil payload channel. */
+	body?: string;
+	/** webContents that issued the request. The server resolves it to the owning
+	 *  view → session so the taint/canary scan runs against the right session. */
+	webContentsId?: number;
+}
 export type EgressDecision = { allowed: boolean };
-export type EgressEvaluator = (url: string) => Promise<EgressDecision> | EgressDecision;
+export type EgressEvaluator = (req: EgressRequest) => Promise<EgressDecision> | EgressDecision;
 
 let egressEvaluator: EgressEvaluator | null = null;
 
@@ -68,36 +95,12 @@ let egressEvaluator: EgressEvaluator | null = null;
  */
 export function setEgressEvaluator(fn: EgressEvaluator): void {
 	egressEvaluator = fn;
-	decisionCache.clear();
+	clearDecisionCache();
 }
 
-// Small LRU over egress decisions — Map iteration order is insertion
-// order, so the first key is the least recently used.
-const CACHE_MAX_ENTRIES = 512;
-const CACHE_TTL_MS = 30_000;
-const decisionCache = new Map<string, { allowed: boolean; expiresAt: number }>();
-
-function cacheGet(url: string): boolean | null {
-	const entry = decisionCache.get(url);
-	if (!entry) return null;
-	if (Date.now() > entry.expiresAt) {
-		decisionCache.delete(url);
-		return null;
-	}
-	decisionCache.delete(url); // refresh recency
-	decisionCache.set(url, entry);
-	return entry.allowed;
-}
-
-function cacheSet(url: string, allowed: boolean): void {
-	if (decisionCache.has(url)) decisionCache.delete(url);
-	else if (decisionCache.size >= CACHE_MAX_ENTRIES) {
-		const oldest = decisionCache.keys().next().value;
-		if (oldest !== undefined) decisionCache.delete(oldest);
-	}
-	decisionCache.set(url, { allowed, expiresAt: Date.now() + CACHE_TTL_MS });
-}
-
+// The app's own loopback origin — the only destination allowed before the real
+// server-side evaluator is wired (fail-closed default). Coupled to getLAXConfig,
+// so it stays here rather than in the pure browser-partition-net leaf.
 function isLoopbackAppUrl(url: string): boolean {
 	try {
 		const u = new URL(url);
@@ -110,21 +113,29 @@ function isLoopbackAppUrl(url: string): boolean {
 	}
 }
 
-async function evaluateEgress(url: string): Promise<boolean> {
-	const cached = cacheGet(url);
-	if (cached !== null) return cached;
+async function evaluateEgress(req: EgressRequest): Promise<boolean> {
+	// Cache only BODYLESS requests: their decision is keyed by the full URL (which
+	// already carries any query/path-encoded payload), so a cache hit is the same
+	// payload. A request WITH a body carries its exfil payload out-of-band from the
+	// URL, so its decision must be recomputed each time (never cached, never a hit)
+	// — otherwise two POSTs to the same URL with different bodies would collide.
+	const cacheable = !req.body;
+	if (cacheable) {
+		const cached = cacheGet(req.url);
+		if (cached !== null) return cached;
+	}
 	let allowed = false;
 	if (egressEvaluator) {
 		try {
-			allowed = (await egressEvaluator(url)).allowed === true;
+			allowed = (await egressEvaluator(req)).allowed === true;
 		} catch {
 			allowed = false; // evaluator failure = fail closed
 		}
 	} else {
 		// No evaluator wired yet: allow only the loopback app origin.
-		allowed = isLoopbackAppUrl(url);
+		allowed = isLoopbackAppUrl(req.url);
 	}
-	cacheSet(url, allowed);
+	if (cacheable) cacheSet(req.url, allowed);
 	return allowed;
 }
 
@@ -306,7 +317,17 @@ function hardenSession(sess: Session, partition: string): void {
 			callback({ cancel: false });
 			return;
 		}
-		void evaluateEgress(details.url).then(
+		// Hand the server evaluator everything its taint/canary scan needs: the
+		// URL (SSRF/host policy), the requesting page origin (first-party vs
+		// cross-domain), the outbound body (primary exfil channel), and the
+		// webContents (→ owning view → session).
+		void evaluateEgress({
+			url: details.url,
+			method: details.method,
+			pageUrl: requester,
+			body: extractUploadBody(details.uploadData),
+			webContentsId: details.webContentsId,
+		}).then(
 			(allowed) => callback({ cancel: !allowed }),
 			() => callback({ cancel: true }),
 		);
@@ -322,16 +343,25 @@ function hardenSession(sess: Session, partition: string): void {
 		noteRequestFailed(partition, { id: details.id, url: details.url, method: details.method, error: details.error });
 	});
 
-	// NOTE: no same-site CSP is injected on in-app browser responses. A CSP that
-	// scopes script/style/img/font/connect to the page's own registrable domain
-	// is irreconcilable with modern multi-domain sites — x.com needs abs.twimg.com
-	// (CSS/JS) + api.x.com (data), instagram needs cdninstagram.com, google needs
-	// gstatic.com — so it doesn't just strip visual polish, it stops the SPA's own
-	// CDN JS from loading and the page never functions (for the agent OR the user
-	// watching it). Cross-origin EXFIL is governed at the per-hop egress evaluator
-	// (onBeforeRequest above → server-side network-policy) and the data-flow taint
-	// layer, which can allow legitimate CDN/API reads while blocking exfil — the
-	// right seam for it. A blunt engine-level CSP is the wrong tool here.
+	// Hardening-only CSP on the TOP-LEVEL document. A same-site *fetch-scoping* CSP
+	// (script/style/img/connect pinned to the page's own domain) was tried and
+	// reverted — it broke every multi-CDN site (x.com's JS lives on abs.twimg.com,
+	// google's on gstatic.com), stopping the SPA from booting. What IS safe to
+	// stamp is the zero-rendering-cost hardening trio (object-src/base-uri/
+	// frame-ancestors), which never gates where a page loads its own subresources
+	// from. APPEND (never replace) so Chromium enforces the intersection — it can
+	// only tighten. MAIN-FRAME only: on a sub-frame, frame-ancestors 'none' makes
+	// Chromium refuse legit embeds (Stripe/OAuth/maps). Cross-origin EXFIL is
+	// governed separately by the taint-aware payload scan in the egress evaluator
+	// above (server-side page-egress-taint.ts), which allows CDN/API reads while
+	// blocking a cross-domain hop that actually carries tainted bytes.
+	sess.webRequest.onHeadersReceived((details, callback) => {
+		if (details.resourceType !== "mainFrame") {
+			callback({});
+			return;
+		}
+		callback({ responseHeaders: buildHardeningCspHeaders(details.responseHeaders as Record<string, string[]> | undefined) });
+	});
 }
 
 // ── Per-view helpers (called by browser-views.ts) ─────────

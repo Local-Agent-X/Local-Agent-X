@@ -12,8 +12,7 @@
  */
 
 import { createLogger } from "../logger.js";
-import { evaluateEgressForUrl } from "../security/layer/index.js";
-import { getRuntimeConfig } from "../config.js";
+import { answerEgressAsk } from "./bridge-egress.js";
 import {
 	handleBrowserDownloadEvent,
 	handleBrowserUiEvent,
@@ -174,32 +173,21 @@ export function browserBridgeAvailable(): boolean {
 	return process.env.LAX_DESKTOP_BRIDGE === "1" && typeof process.send === "function";
 }
 
-/** Answer the desktop egress guard from the canonical URL policy. Any
- *  failure answers allowed:false — the guard is fail-closed on both ends. */
-function answerEgressAsk(id: number, url: string): void {
-	let allowed = false;
-	try {
-		const selfPort = process.env.LAX_PORT ?? String(getRuntimeConfig().port);
-		allowed = evaluateEgressForUrl(url, selfPort).allowed === true;
-	} catch (e) {
-		logger.warn(`[browser-bridge] egress evaluation failed for ${url}: ${(e as Error).message}`);
-		allowed = false;
-	}
-	try {
-		process.send!({ type: "lax:browser-egress-ask-result", id, allowed });
-	} catch (e) {
-		logger.warn(`[browser-bridge] egress-ask reply send failed: ${(e as Error).message}`);
-	}
-}
-
 function ensureListener(): void {
 	if (listenerAttached) return;
 	listenerAttached = true;
-	process.on("message", (msg: BridgeReply & { url?: string }) => {
+	process.on("message", (msg: BridgeReply & { url?: string; method?: string; pageUrl?: string; body?: string; viewId?: string }) => {
 		if (!msg || typeof msg.type !== "string") return;
 		if (msg.type === "lax:browser-egress-ask") {
 			if (typeof msg.id !== "number" || typeof msg.url !== "string") return;
-			answerEgressAsk(msg.id, msg.url);
+			answerEgressAsk({
+				id: msg.id,
+				url: msg.url,
+				method: typeof msg.method === "string" ? msg.method : undefined,
+				pageUrl: typeof msg.pageUrl === "string" ? msg.pageUrl : undefined,
+				body: typeof msg.body === "string" ? msg.body : undefined,
+				viewId: typeof msg.viewId === "string" ? msg.viewId : undefined,
+			});
 			return;
 		}
 		if (msg.type === "lax:browser-ui-event") {

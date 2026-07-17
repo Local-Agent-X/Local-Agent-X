@@ -94,7 +94,7 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
       // CSP, so only that one request pays the fetch+fulfill round-trip; every
       // sub-resource keeps the cheap continue() path untouched.
       if (isTopLevelDocument(request)) {
-        await fulfillWithAgentCsp(route, url);
+        await fulfillWithAgentCsp(route);
         return;
       }
       await route.continue();
@@ -116,29 +116,33 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
  * Patterns that must be blocked in `browser evaluate` scripts.
  *
  * SCOPE: this list is deliberately NOT the network-egress defense. Cross-origin
- * egress primitives (fetch / XHR / WebSocket / sendBeacon / img-src / form-action
- * / importScripts / dynamic <script> src) are now blocked BY CONSTRUCTION by the
- * per-document agent CSP that both backends stamp on every top-level document —
- * see src/browser/csp-policy.ts (buildAgentCsp) and desktop/src/browser-csp.ts.
- * Chromium's connect-src / img-src / form-action / script-src / worker-src
- * enforce those by construction, so re-encoding them as a public, bypassable
- * regex denylist here added only false positives (createElement, `.src =`,
- * `.submit(` appear in tons of legit DOM scripts) and a false sense that the
- * regex was doing the work. Those egress patterns have been RETIRED.
+ * egress primitives (fetch / XHR / WebSocket / sendBeacon / dynamic <script> src)
+ * are governed at the per-hop request evaluator: a taint-aware payload scan
+ * (src/browser/page-egress-taint.ts) blocks a cross-registrable-domain request
+ * that actually carries tainted / canary bytes for the session, on BOTH backends
+ * (in-app WebContentsView session.webRequest, and the CDP guard below). Re-encoding
+ * those primitives as a public, bypassable regex denylist here added only false
+ * positives (createElement, `.src =`, `.submit(` appear in tons of legit DOM
+ * scripts) and a false sense that the regex was doing the work — an evaluate
+ * script's fetch rides the SAME session network stack as the page, so the
+ * request-layer gate already covers it. Those egress patterns stay RETIRED.
+ * (An earlier same-site CSP was tried for this and reverted — it broke every
+ * multi-CDN site; see src/browser/csp-policy.ts for why.)
  *
- * What remains here is exactly what CSP does NOT cover:
+ * What remains here is exactly what the request-layer gate does NOT cover:
  *   1. Read-into-model-context leaks — a script can read a secret (cookie,
  *      storage, password field) and RETURN it as the evaluate result straight
- *      to the model provider with ZERO network egress. CSP is irrelevant to
+ *      to the model provider with ZERO network egress. No network gate can see
  *      that channel, so these reads must still be blocked.
  *   2. Dynamic code execution — eval / Function / string-timer / indirect-eval /
  *      bracket global access / dynamic import / Reflect.apply / new Proxy. These
  *      manufacture new code contexts the static scanner (and CSP posture) can't
  *      reason about; they stay blocked, guarded against escape-obfuscation by
  *      the \uXXXX/\xXX normalization below plus the string-concat pattern.
- *   3. WebRTC — RTCPeerConnection. WebRTC data channels are a KNOWN CSP bypass:
- *      connect-src does NOT reliably gate them, so this is the one egress-ish
- *      primitive that must stay in the regex. EventSource kept conservatively.
+ *   3. WebRTC — RTCPeerConnection. WebRTC data channels bypass the HTTP-stack
+ *      request evaluator (raw UDP, not an onBeforeRequest hop), so they are the
+ *      one egress-ish primitive that must stay in the regex (belt-and-suspenders
+ *      with the partition's disable_non_proxied_udp). EventSource kept conservatively.
  *   4. Worker / alternate code contexts and nav/origin manipulation.
  *
  * Obfuscation bypass is mitigated by normalizing `\uXXXX` and `\xXX` escapes

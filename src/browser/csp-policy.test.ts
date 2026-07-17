@@ -92,268 +92,44 @@ describe("registrableDomain", () => {
 	});
 });
 
-describe("buildAgentCsp — default deny", () => {
-	it("(a) denies by default", () => {
-		const d = parse(buildAgentCsp("https://app.example.com/page"));
-		expect(d.get("default-src")).toEqual(["'none'"]);
+describe("buildAgentCsp — hardening-only (rendering-safe)", () => {
+	// The policy is URL-independent now: the same-site fetch-scoping was reverted
+	// (it broke every multi-CDN site). Only the zero-rendering-cost hardening
+	// directives remain; cross-origin exfil is covered by page-egress-taint.ts.
+	const d = parse(buildAgentCsp());
+
+	it("emits exactly the three hardening directives", () => {
+		expect([...d.keys()].sort()).toEqual(["base-uri", "frame-ancestors", "object-src"]);
+	});
+
+	it("object-src and frame-ancestors are 'none'; base-uri is 'self'", () => {
 		expect(d.get("object-src")).toEqual(["'none'"]);
 		expect(d.get("frame-ancestors")).toEqual(["'none'"]);
-		expect(d.get("base-uri")).toEqual(["'none'"]);
+		// 'self' (not 'none') so a same-origin <base href="/"> keeps working while
+		// an injected cross-origin <base> hijack is still blocked.
+		expect(d.get("base-uri")).toEqual(["'self'"]);
 	});
-});
 
-describe("buildAgentCsp — same-site allowed", () => {
-	const csp = buildAgentCsp("https://app.example.com/dashboard");
-	const d = parse(csp);
-
-	it("(b) allows same eTLD+1 (and subdomains) for connect/img/form", () => {
-		for (const name of ["connect-src", "img-src", "form-action"]) {
-			const sources = d.get(name)!;
-			expect(sources).toContain("'self'");
-			expect(sources).toContain("example.com");
-			expect(sources).toContain("*.example.com");
+	it("sets NO default-src and NO fetch directives — subresources render freely", () => {
+		// The whole point of the revert: nothing here may gate where a page loads
+		// its own script/style/img/font/connect from, or multi-CDN sites break.
+		for (const name of [
+			"default-src", "connect-src", "script-src", "style-src",
+			"img-src", "font-src", "media-src", "frame-src", "worker-src", "form-action",
+		]) {
+			expect(d.has(name)).toBe(false);
 		}
 	});
 
-	it("scopes to registrable domain, not the exact subdomain only", () => {
-		// api.example.com is same-site with app.example.com -> must be allowed
-		// via the *.example.com wildcard.
-		expect(d.get("connect-src")).toContain("*.example.com");
-	});
-});
-
-describe("buildAgentCsp — cross-origin denied (the exfil class)", () => {
-	const d = parse(buildAgentCsp("https://app.example.com/x"));
-
-	it("(c) does NOT allow an arbitrary attacker host in exfil directives", () => {
-		const attacker = "evil.attacker-exfil.com";
-		for (const name of ["connect-src", "img-src", "form-action", "frame-src", "media-src", "script-src"]) {
-			const joined = d.get(name)!.join(" ");
-			expect(joined).not.toContain(attacker);
-			expect(joined).not.toContain("attacker");
-			// No wildcard-everything and no scheme-wide network grant.
-			expect(d.get(name)).not.toContain("*");
-			expect(d.get(name)).not.toContain("https:");
-			expect(d.get(name)).not.toContain("http:");
+	it("carries no host tokens at all (purely 'none'/'self' hardening)", () => {
+		const allSources = [...d.values()].flat();
+		for (const s of allSources) {
+			expect(s === "'none'" || s === "'self'").toBe(true);
 		}
 	});
 
-	it("connect-src carries no data:/blob: and no third-party host", () => {
-		const sources = d.get("connect-src")!;
-		expect(sources).not.toContain("data:");
-		// Only 'self' + own-domain tokens.
-		for (const s of sources) {
-			expect(
-				s === "'self'" || s === "example.com" || s === "*.example.com",
-			).toBe(true);
-		}
-	});
-});
-
-describe("buildAgentCsp — documented concessions", () => {
-	const d = parse(buildAgentCsp("https://app.example.com/x"));
-
-	it("allows inline+eval script (execution) but still same-site egress only", () => {
-		const script = d.get("script-src")!;
-		expect(script).toContain("'unsafe-inline'");
-		expect(script).toContain("'unsafe-eval'");
-		// ...yet no cross-origin host: a running script has no remote sink.
-		expect(script).toContain("'self'");
-		expect(script).toContain("example.com");
-		expect(script.join(" ")).not.toContain("attacker");
-	});
-
-	it("allows safe schemes on img/media/font only", () => {
-		expect(d.get("img-src")).toContain("data:");
-		expect(d.get("img-src")).toContain("blob:");
-		expect(d.get("font-src")).toContain("data:");
-		expect(d.get("worker-src")).toContain("blob:");
-	});
-});
-
-describe("buildAgentCsp — edge cases never throw", () => {
-	const cases = [
-		"http://localhost:3000/app",
-		"http://127.0.0.1:8080/",
-		"https://[::1]:9000/",
-		"about:blank",
-		"data:text/html,<h1>hi</h1>",
-		"not a url",
-		"",
-		"https://foo.co.uk/path",
-	];
-
-	for (const c of cases) {
-		it(`handles ${JSON.stringify(c)} without throwing`, () => {
-			let csp = "";
-			expect(() => {
-				csp = buildAgentCsp(c);
-			}).not.toThrow();
-			// Always at least a default-deny baseline.
-			expect(csp).toContain("default-src 'none'");
-			expect(parse(csp).get("connect-src")).toContain("'self'");
-		});
-	}
-
-	it("multi-part suffix site scopes to eTLD+1 in the CSP", () => {
-		const d = parse(buildAgentCsp("https://api.foo.co.uk/v1"));
-		expect(d.get("connect-src")).toContain("foo.co.uk");
-		expect(d.get("connect-src")).toContain("*.foo.co.uk");
-	});
-
-	it("localhost/IP pin to the exact host with any port, no wildcard subdomain", () => {
-		const local = parse(buildAgentCsp("http://localhost:3000/app"));
-		const conn = local.get("connect-src")!;
-		expect(conn).toContain("localhost");
-		expect(conn).toContain("localhost:*");
-		expect(conn.some((s) => s.startsWith("*."))).toBe(false);
-
-		const ip = parse(buildAgentCsp("http://127.0.0.1:8080/"));
-		expect(ip.get("connect-src")).toContain("127.0.0.1");
-		expect(ip.get("connect-src")).toContain("127.0.0.1:*");
-	});
-
-	it("opaque origins (about:blank) expose only 'self'", () => {
-		const d = parse(buildAgentCsp("about:blank"));
-		expect(d.get("connect-src")).toEqual(["'self'"]);
-		expect(d.get("form-action")).toEqual(["'self'"]);
-	});
-});
-
-// Every directive that can move bytes off the box. If a bare public-suffix
-// wildcard ever appears in any of these, cross-registrant exfil is possible.
-const EXFIL_DIRECTIVES = [
-	"connect-src", "img-src", "form-action", "frame-src", "child-src",
-	"media-src", "font-src", "worker-src", "script-src", "style-src",
-];
-
-describe("buildAgentCsp — public-suffix wildcard is never emitted (the fixed hole)", () => {
-	// suffix -> a victim host under it, and the public-suffix wildcards that must
-	// NOT appear anywhere in the exfil directives.
-	const cases: Array<{ url: string; reg: string; forbidden: string[] }> = [
-		{ url: "https://shop.example.com.pl/x", reg: "example.com.pl", forbidden: ["com.pl", "*.com.pl", "*.pl", "pl"] },
-		{ url: "https://foo.com.ua/x", reg: "foo.com.ua", forbidden: ["com.ua", "*.com.ua", "*.ua"] },
-		{ url: "https://bar.org.pl/x", reg: "bar.org.pl", forbidden: ["org.pl", "*.org.pl", "*.pl"] },
-		{ url: "https://x.co.th/x", reg: "x.co.th", forbidden: ["co.th", "*.co.th", "*.th"] },
-	];
-
-	for (const { url, reg, forbidden } of cases) {
-		it(`${url} scopes to ${reg} with no public-suffix wildcard`, () => {
-			const d = parse(buildAgentCsp(url));
-			for (const name of EXFIL_DIRECTIVES) {
-				const sources = d.get(name)!;
-				// The correct eTLD+1 wildcard IS present in same-site directives.
-				expect(sources).toContain(`*.${reg}`);
-				// None of the public-suffix wildcards/hosts may appear.
-				for (const bad of forbidden) {
-					expect(sources).not.toContain(bad);
-					expect(sources).not.toContain(`*.${bad}`);
-				}
-			}
-		});
-	}
-
-	it("evil.<suffix> is NOT reachable from a victim on the same public suffix", () => {
-		// For each real public suffix: a victim registrant and a DIFFERENT
-		// attacker registrant sharing the suffix. The victim's CSP must not grant
-		// any source that matches the attacker host.
-		const pairs: Array<{ victim: string; attacker: string }> = [
-			{ victim: "https://app.example.com.pl/x", attacker: "evil.com.pl" },
-			{ victim: "https://app.example.com.ua/x", attacker: "evil.com.ua" },
-			{ victim: "https://app.example.org.pl/x", attacker: "evil.org.pl" },
-			{ victim: "https://app.example.co.th/x", attacker: "evil.co.th" },
-			{ victim: "https://app.example.co.uk/x", attacker: "evil.co.uk" },
-			{ victim: "https://app.example.com/x", attacker: "evil.com" },
-		];
-		for (const { victim, attacker } of pairs) {
-			const d = parse(buildAgentCsp(victim));
-			const attackerReg = registrableDomain(attacker); // e.g. evil.com.pl or null
-			for (const name of EXFIL_DIRECTIVES) {
-				const sources = d.get(name)!;
-				// The attacker host, its registrable, and every public-suffix
-				// wildcard that would cover it must all be absent.
-				expect(sources).not.toContain(attacker);
-				if (attackerReg) {
-					expect(sources).not.toContain(attackerReg);
-					expect(sources).not.toContain(`*.${attackerReg}`);
-				}
-				// No wildcard in the list may match the attacker host.
-				for (const s of sources) {
-					if (s.startsWith("*.")) {
-						const wildBase = s.slice(2); // e.g. example.com.pl
-						expect(attacker.endsWith(`.${wildBase}`)).toBe(false);
-					}
-				}
-			}
-		}
-	});
-
-	it("2-char ccTLD host scopes to the PSL eTLD+1 (weird.mz is a registrant apex)", () => {
-		const d = parse(buildAgentCsp("https://foo.weird.mz/x"));
-		for (const name of EXFIL_DIRECTIVES) {
-			const sources = d.get(name)!;
-			// weird.mz IS the registrable domain per the PSL -> wildcard is safe.
-			expect(sources).toContain("weird.mz");
-			expect(sources).toContain("*.weird.mz");
-			// The bare public suffix must never be wildcarded.
-			expect(sources).not.toContain("mz");
-			expect(sources).not.toContain("*.mz");
-		}
-	});
-});
-
-describe("buildAgentCsp — PSL private-suffix (multi-tenant SaaS) is tenant-scoped", () => {
-	// Each private suffix + a victim tenant. The bare `*.<suffix>` wildcard would
-	// be a CROSS-TENANT exfil grant; only the tenant-scoped `*.<tenant>.<suffix>`
-	// may appear, and a DIFFERENT tenant must be unreachable.
-	const cases: Array<{ url: string; tenant: string; suffix: string }> = [
-		{ url: "https://victim.herokuapp.com/x", tenant: "victim.herokuapp.com", suffix: "herokuapp.com" },
-		{ url: "https://bucket.s3.amazonaws.com/x", tenant: "bucket.s3.amazonaws.com", suffix: "amazonaws.com" },
-		{ url: "https://app.vercel.app/x", tenant: "app.vercel.app", suffix: "vercel.app" },
-		{ url: "https://site.pages.dev/x", tenant: "site.pages.dev", suffix: "pages.dev" },
-		{ url: "https://proj.web.app/x", tenant: "proj.web.app", suffix: "web.app" },
-		{ url: "https://blog.blogspot.com/x", tenant: "blog.blogspot.com", suffix: "blogspot.com" },
-		{ url: "https://svc.azurewebsites.net/x", tenant: "svc.azurewebsites.net", suffix: "azurewebsites.net" },
-		{ url: "https://app.netlify.app/x", tenant: "app.netlify.app", suffix: "netlify.app" },
-		{ url: "https://svc.onrender.com/x", tenant: "svc.onrender.com", suffix: "onrender.com" },
-		{ url: "https://edge.workers.dev/x", tenant: "edge.workers.dev", suffix: "workers.dev" },
-		{ url: "https://dist.cloudfront.net/x", tenant: "dist.cloudfront.net", suffix: "cloudfront.net" },
-	];
-
-	for (const { url, tenant, suffix } of cases) {
-		it(`${url} → *.${tenant}, never *.${suffix}`, () => {
-			const attacker = `attacker.${suffix}`;
-			const d = parse(buildAgentCsp(url));
-			for (const name of EXFIL_DIRECTIVES) {
-				const sources = d.get(name)!;
-				// Tenant-scoped wildcard IS present (first-party subdomains work).
-				expect(sources).toContain(`*.${tenant}`);
-				expect(sources).toContain(tenant);
-				// The bare private-suffix wildcard/host must NOT appear.
-				expect(sources).not.toContain(suffix);
-				expect(sources).not.toContain(`*.${suffix}`);
-				// Reachability: a DIFFERENT tenant is not matched by any source.
-				expect(sources).not.toContain(attacker);
-				expect(sources).not.toContain(registrableDomain(attacker)!);
-				for (const s of sources) {
-					if (s.startsWith("*.")) {
-						const wildBase = s.slice(2);
-						// attacker.<suffix> must not be a subdomain of any wildcard,
-						// and must not equal the wildcard base itself.
-						expect(attacker === wildBase || attacker.endsWith(`.${wildBase}`)).toBe(false);
-					}
-				}
-			}
-		});
-	}
-
-	it("getDomain sanity: private suffix stays tenant-scoped, bare suffix is null", () => {
-		// Guards against a future tldts option regression (e.g. dropping
-		// allowPrivateDomains) silently reopening the cross-tenant hole.
-		expect(registrableDomain("victim.herokuapp.com")).toBe("victim.herokuapp.com");
-		expect(registrableDomain("attacker.herokuapp.com")).toBe("attacker.herokuapp.com");
-		expect(registrableDomain("victim.herokuapp.com"))
-			.not.toBe(registrableDomain("attacker.herokuapp.com"));
-		expect(registrableDomain("herokuapp.com")).toBeNull();
+	it("is a stable constant (no args, deterministic)", () => {
+		expect(buildAgentCsp()).toBe(buildAgentCsp());
+		expect(buildAgentCsp()).toBe("object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
 	});
 });

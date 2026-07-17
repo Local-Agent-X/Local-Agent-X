@@ -94,33 +94,25 @@ describe("C8 cross-seam contract — autonomous browser + CSP egress defense com
 		});
 	});
 
-	// ── Seam 4: CSP present + registrable-domain scoped (C2) ─────────
-	describe("buildAgentCsp scopes exfil sinks to the registrable domain", () => {
-		function connectSrc(csp: string): string[] {
-			const part = csp.split(";").map((s) => s.trim()).find((s) => s.startsWith("connect-src "))!;
-			return part.split(/\s+/).slice(1);
-		}
-
-		it("sub.example.com ⇒ connect-src covers example.com + *.example.com and NOT an attacker host", () => {
-			const csp = buildAgentCsp("https://sub.example.com/");
-			const sources = connectSrc(csp);
-			expect(sources).toContain("example.com");
-			expect(sources).toContain("*.example.com");
-			expect(sources).not.toContain("attacker.com");
-			expect(sources).not.toContain("*");
-			// default-deny baseline is present.
-			expect(csp).toContain("default-src 'none'");
+	// ── Seam 4: CSP is hardening-only; egress moved to the taint gate ─────────
+	// The same-site fetch-scoping CSP was reverted (it broke every multi-CDN
+	// site). The CSP must NOT scope connect-src/img-src/etc. anymore — a page's
+	// own CDN loads have to render — and cross-origin exfil is covered instead by
+	// src/browser/page-egress-taint.ts (a payload-inspecting per-hop gate).
+	describe("buildAgentCsp is hardening-only and never scopes fetch sinks", () => {
+		it("stamps object-src/base-uri/frame-ancestors and NO fetch directive", () => {
+			const csp = buildAgentCsp();
+			expect(csp).toContain("object-src 'none'");
+			expect(csp).toContain("base-uri 'self'");
+			expect(csp).toContain("frame-ancestors 'none'");
+			// The reverted breakers must be absent so multi-CDN sites render.
+			for (const dir of ["default-src", "connect-src", "script-src", "img-src", "style-src", "form-action"]) {
+				expect(csp).not.toContain(`${dir} `);
+			}
 		});
 
-		it("victim.herokuapp.com (PSL private suffix) ⇒ tenant-scoped, NEVER *.herokuapp.com", () => {
-			const csp = buildAgentCsp("https://victim.herokuapp.com/");
-			const sources = connectSrc(csp);
-			// The tenant's own registrable domain + wildcard.
-			expect(sources).toContain("victim.herokuapp.com");
-			expect(sources).toContain("*.victim.herokuapp.com");
-			// The cross-tenant grant must be absent — this is the PSL-private win.
-			expect(sources).not.toContain("herokuapp.com");
-			expect(sources).not.toContain("*.herokuapp.com");
+		it("is URL-independent (no per-site branch that could break a CDN)", () => {
+			expect(buildAgentCsp()).toBe(buildAgentCsp());
 		});
 	});
 

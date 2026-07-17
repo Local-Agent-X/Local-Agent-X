@@ -60,6 +60,12 @@ export function registerAdoptedView(viewId: string, sessionId: string): void {
 	adoptedViewSessions.set(viewId, sessionId);
 }
 
+/** The session that adopted this (user-origin) viewId, if any. Lets the egress
+ *  gate attribute a taken-over tab's page requests to the driving session. */
+export function adoptedViewSession(viewId: string): string | undefined {
+	return adoptedViewSessions.get(viewId);
+}
+
 /** Drop every adoption a session holds (backend close). */
 export function unregisterAdoptedViews(sessionId: string): void {
 	for (const [viewId, sess] of adoptedViewSessions) {

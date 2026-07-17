@@ -202,6 +202,17 @@ export function listBrowserViews(): BrowserViewInfo[] {
 	return [...pool.entries()].map(([viewId, entry]) => describe(viewId, entry));
 }
 
+/** Reverse lookup: the pool viewId owning a webContents id, or null. The egress
+ *  evaluator uses it to attribute a request's webContents to its view so the
+ *  server can resolve the owning session for the taint scan. Matches the cached
+ *  wcId (stable for the entry's life); a destroyed view is skipped. */
+export function viewIdForWebContents(webContentsId: number): string | null {
+	for (const [viewId, entry] of pool) {
+		if (entry.wcId === webContentsId && !entry.view.webContents.isDestroyed()) return viewId;
+	}
+	return null;
+}
+
 function describe(viewId: string, entry: PoolEntry): BrowserViewInfo {
 	const wc = entry.view.webContents;
 	const alive = !wc.isDestroyed();

@@ -30,6 +30,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildSourceArchive } from "./build-source-archive.mjs";
+
 /**
  * Generate the verified source asset + sidecar for a resolved commit.
  * Returns the on-disk paths and the hash so callers can log/upload them.
@@ -43,15 +45,9 @@ export function buildRollingSource(sha, outDir) {
   const assetName = `lax-source-${sha}.tar.gz`;
   const assetPath = join(outDir, assetName);
 
-  // `git archive` emits ONLY tracked files at <sha> (no node_modules / dist) —
-  // exactly the buildable source the OTA validation re-builds. The --prefix
-  // gives the single top-level dir that --strip-components=1 strips on extract,
-  // matching GitHub's own archive/<sha>.tar.gz shape.
-  execFileSync(
-    "git",
-    ["archive", "--format=tar.gz", `--prefix=lax-source-${sha}/`, "-o", assetPath, sha],
-    { stdio: ["ignore", "ignore", "inherit"] },
-  );
+  // The shared source-archive seam emits only tracked files at <sha> (no
+  // node_modules / dist) beneath the one prefix applyUpdate strips on extract.
+  buildSourceArchive(sha, assetPath, `lax-source-${sha}`);
 
   const buf = readFileSync(assetPath);
   const hash = createHash("sha256").update(buf).digest("hex");

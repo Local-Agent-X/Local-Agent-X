@@ -52,7 +52,7 @@ jobs:
         run: |
           VERSION=${RELEASE_TAG#v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          tar -czf local-agent-x-${VERSION}.tar.gz dist/ public/ package.json package-lock.json SECURITY.md THREAT-MODEL.md LICENSE
+          node scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"
 
       - name: Generate checksums
         # Hashes the SAME local-agent-x-*.tar.gz asset uploaded below, so the
@@ -83,7 +83,8 @@ jobs:
             ### Install
             ```bash
             tar -xzf local-agent-x-${{ env.VERSION }}.tar.gz
-            npm install --production
+            cd local-agent-x-${{ env.VERSION }}
+            npm ci
             npm run dev
             ```
           draft: false

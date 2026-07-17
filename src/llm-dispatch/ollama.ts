@@ -12,6 +12,7 @@
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import { getLocalRuntimes, refreshLocalRuntimes } from "../local-runtimes/index.js";
+import { MODEL_KEEP_ALIVE } from "../local-runtimes/residency.js";
 import { isEmbeddingModel } from "../canonical-loop/public/op-facts.js";
 
 // Same channel name as llm-dispatch.ts: these lines were emitted under
@@ -67,7 +68,15 @@ export async function callOllama(
     const res = await fetch(`${base}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false, options: { temperature, num_predict: maxTokens } }),
+      // keep_alive holds the model in memory past Ollama's 5m default. The
+      // first call after idle pays the full cold load INSIDE the caller's
+      // timeout (16.5s observed 2026-07 — the classifier's whole wallclock),
+      // so every keep-alive we skip converts a future fast call into a
+      // timeout. Same knob the residency warm path uses.
+      body: JSON.stringify({
+        model, prompt, stream: false, keep_alive: MODEL_KEEP_ALIVE,
+        options: { temperature, num_predict: maxTokens },
+      }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {

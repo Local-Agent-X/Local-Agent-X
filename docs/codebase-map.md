@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1283 non-test source files · 0 god files (>400 LOC).
+**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1285 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/canonical-loop/` | 44 | 141 | XL |  |
 | `src/providers/` | 42 | 18 | L |  |
 | `src/memory/` | 40 | 118 | XL |  |
-| `src/classifiers/` | 33 | 16 | L |  |
+| `src/classifiers/` | 33 | 17 | L |  |
 | `src/workspace/` | 28 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
@@ -48,9 +48,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |
+| `src/local-runtimes/` | 9 | 12 | L |  |
 | `src/self-edit/` | 9 | 19 | L |  |
 | `src/whatsapp-bridge/` | 9 | 6 | M |  |
-| `src/local-runtimes/` | 8 | 11 | L |  |
 | `src/sandbox/` | 8 | 6 | L |  |
 | `src/screen-stream/` | 8 | 8 | L |  |
 | `src/sync/` | 8 | 18 | L |  |

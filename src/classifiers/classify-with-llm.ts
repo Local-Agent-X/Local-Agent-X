@@ -33,7 +33,8 @@
  */
 
 import { createLogger } from "../logger.js";
-import { stripCodeFences } from "./strip-code-fences.js";
+import { getRuntimeConfig } from "../config.js";
+import { isModelResident, warmModel } from "../local-runtimes/residency.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { resolveBackgroundModel } from "../providers/background-model.js";
 import type { ProviderId } from "../providers/provider-ids.js";
@@ -53,6 +54,15 @@ import type { ProviderId } from "../providers/provider-ids.js";
 // every Anthropic chat turn — observed in soak logs 2026-05-14.
 const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RESPONSE_CHARS = 800;
+
+// Budgets below this cold-skip a non-resident local model instead of
+// dispatching: a cold model load measured 16.5s on this box (2026-07), so a
+// shorter wallclock would only burn out waiting for it. At/above 20s the
+// caller can sit through the load and still get a real verdict — compaction
+// (30s), the scenario judge (20s), and other long-budget callers keep their
+// pre-cold-skip behavior (and their call's keep_alive warms the model for
+// every short-budget caller that follows).
+const COLD_SKIP_MAX_BUDGET_MS = 20_000;
 
 export interface ClassifyOptions<T> {
   /** Logical name for telemetry / env-disable. e.g. "follow-up", "claim-verify". */
@@ -225,6 +235,25 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
         });
       })();
     } else if (provider === "ollama" || provider === "local") {
+      // Cold-start fast-skip (2026-07): the first local call after idle pays
+      // the model cold-load INSIDE our wallclock — 16.5s observed against
+      // classifier budgets of 3s, where dispatching a non-resident model can
+      // only ever time out. Short-budget callers degrade NOW exactly like
+      // the wallclock-timeout path (null → caller's regex fallback) and kick
+      // a background keep_alive warm so the next call runs hot. Long-budget
+      // callers (>= COLD_SKIP_MAX_BUDGET_MS) can afford the load and proceed
+      // as they always did. Residency unknown (unreachable / older runtime)
+      // → proceed as before; the probe itself gets only a slice of the
+      // budget so a hung /api/ps can never eat a sub-2s wallclock.
+      if (timeoutMs < COLD_SKIP_MAX_BUDGET_MS) {
+        const ollamaBase = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+        const probeMs = Math.min(2000, Math.max(500, Math.floor(timeoutMs / 3)));
+        if ((await isModelResident(ollamaBase, model, probeMs)) === false) {
+          logger.info(`cold-skip: model not resident (cold or not installed) — background warm attempted (provider=${provider}, model=${model})`);
+          warmModel(ollamaBase, model);
+          return null;
+        }
+      }
       providerCall = (async () => {
         const { dispatch } = await import("../llm-dispatch.js");
         return await dispatch({
@@ -293,100 +322,16 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   }
 }
 
-/**
- * Convenience: yes/no classifier. Caller's prompt should ask the model to
- * reply with YES or NO on the first line. Returns boolean or null on failure.
- */
-export async function classifyYesNo(args: {
-  category: string;
-  systemPrompt: string;
-  userPrompt: string;
-  timeoutMs?: number;
-  model?: string;
-  envDisableVar?: string;
-  signal?: AbortSignal;
-}): Promise<boolean | null> {
-  return classifyWithLLM<boolean>({
-    ...args,
-    parse: (raw) => {
-      const m = raw.trim().match(/^\s*(YES|NO)\b/i);
-      if (!m) return null;
-      return m[1].toUpperCase() === "YES";
-    },
-  });
-}
-
-/**
- * Parse a "YES/NO + brief reason" reply into its verdict and justification.
- * Pure + exported for direct testing. The reason is everything after the
- * leading YES/NO token (and any separator), whitespace-collapsed and capped.
- * Returns null when the reply doesn't start with a YES/NO verdict.
- */
-export function parseYesNoReason(raw: string): { verdict: boolean; reason: string } | null {
-  const t = (raw ?? "").trim();
-  const m = t.match(/^(YES|NO)\b/i);
-  if (!m) return null;
-  const verdict = m[1].toUpperCase() === "YES";
-  const reason = t
-    .slice(m[0].length)
-    .replace(/^[\s:.\-–—]+/, "") // drop the separator between verdict and reason
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 240);
-  return { verdict, reason };
-}
-
-/**
- * Convenience: yes/no classifier that ALSO captures the model's one-line
- * reason. Same call shape as classifyYesNo, but the prompt should ask for a
- * brief reason after the verdict (e.g. "YES or NO followed by a brief reason").
- * Returns {verdict, reason} or null on failure/unavailability.
- */
-export async function classifyYesNoWithReason(args: {
-  category: string;
-  systemPrompt: string;
-  userPrompt: string;
-  timeoutMs?: number;
-  model?: string;
-  envDisableVar?: string;
-  signal?: AbortSignal;
-}): Promise<{ verdict: boolean; reason: string } | null> {
-  return classifyWithLLM<{ verdict: boolean; reason: string }>({
-    ...args,
-    parse: parseYesNoReason,
-  });
-}
-
-/**
- * Convenience: classifier that returns parsed JSON. Strips the common
- * markdown-fence wrap models sometimes emit even when told not to.
- */
-export async function classifyJson<T>(args: {
-  category: string;
-  systemPrompt: string;
-  userPrompt: string;
-  timeoutMs?: number;
-  model?: string;
-  maxResponseChars?: number;
-  envDisableVar?: string;
-  signal?: AbortSignal;
-  /** Optional shape validator. Return T to accept, null to reject. Defaults to accept-as-is. */
-  validate?: (parsed: unknown) => T | null;
-}): Promise<T | null> {
-  return classifyWithLLM<T>({
-    ...args,
-    parse: (raw) => {
-      const cleaned = stripCodeFences(raw);
-      try {
-        const obj = JSON.parse(cleaned);
-        if (args.validate) return args.validate(obj);
-        return obj as T;
-      } catch {
-        return null;
-      }
-    },
-  });
-}
+// Convenience wrappers (classifyYesNo / parseYesNoReason /
+// classifyYesNoWithReason / classifyJson) moved to classify-conveniences.ts —
+// this file sat AT the 400-LOC source-hygiene ceiling. Re-exported so existing
+// `import { classifyYesNo } from "./classify-with-llm.js"` sites keep working.
+export {
+  classifyYesNo,
+  parseYesNoReason,
+  classifyYesNoWithReason,
+  classifyJson,
+} from "./classify-conveniences.js";
 
 function linkAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
   const ac = new AbortController();

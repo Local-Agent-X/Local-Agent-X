@@ -2,12 +2,15 @@ import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent } from "../../../types.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import { ThreatEngine } from "../../../threat/threat-engine.js";
+import { sanitizeModelOutput, stripLeakedSpecialTokensStreaming } from "../../../providers/output-sanitize.js";
 import { DIRECTIVE_VERB_RE, type SseSink } from "./types.js";
 
 export interface EventWiring {
   wsChat: ReturnType<ServerContext["chatWs"]["startChat"]>;
   threatEngine: ThreatEngine;
-  /** Wrapped onEvent — runs canary check on `stream` deltas, then forwards. */
+  /** Wrapped onEvent — runs the canary check + delivery hygiene
+   *  (output-sanitize.ts) on assistant stream text, then forwards. Every
+   *  other event type passes through untouched. */
   wrappedOnEvent: (event: ServerEvent) => void;
   /**
    * Wrap onEvent so `done` events from the PRIMARY provider are swallowed
@@ -82,6 +85,16 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
 
   let canaryBuffer = "";
   let fullResponseText = "";
+  // Mirror of the CLIENT's visible answer text — the reducer's flat lane
+  // (public/js/chat-stream-reducer.js `e.content`): forwarded deltas plus the
+  // reducer's own edits (the "\n\n" break it inserts after tool events, the
+  // "\n\nError: …" it appends on error events). The done intercept below runs
+  // the full delivery pass over this mirror and emits a repair replace ONLY
+  // when the pass changed something — so the mirror must be byte-exact, or
+  // clean turns would pay a spurious replace (and the replace would clobber
+  // the reducer's break/error bytes).
+  let deliveredText = "";
+  let deliveredToolsSinceText = false;
 
   const wrappedOnEvent = (event: ServerEvent) => {
     if (event.type === "stream" && "delta" in event && event.delta) {
@@ -89,6 +102,48 @@ export async function installEventWiring(input: InstallEventWiringInput): Promis
       if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
       const canaryTrip = threatEngine.checkOutput(canaryBuffer) || (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);
       if (canaryTrip) { emitSse({ type: "error", message: "Security alert: prompt injection detected." }); abortController.abort(); return; }
+      // Live answer deltas get ONLY the stateless special-token strip — the
+      // full pass needs whole-document context (code spans, tag pairing) a
+      // delta lacks. Whatever this misses (split tokens, reasoning tags,
+      // hallucinated tool markup) the done intercept repairs on final text.
+      // Reasoning-lane events are a different type and pass through below.
+      const stripped = stripLeakedSpecialTokensStreaming(event.delta);
+      // Junk-only delta: drop it. The pump never emits empty deltas, and
+      // forwarding "" would let the reducer's tool-boundary rule insert a
+      // paragraph break for text that doesn't exist.
+      if (stripped.length === 0) return;
+      if (deliveredToolsSinceText && deliveredText && !deliveredText.endsWith("\n")) deliveredText += "\n\n";
+      deliveredText += stripped;
+      deliveredToolsSinceText = false;
+      onEvent(stripped === event.delta ? event : { ...event, delta: stripped });
+      return;
+    }
+    if (event.type === "stream" && "replace" in event && event.replace === true) {
+      // Adapter-initiated full-text replacement — rare and final-shaped, so
+      // the full delivery pass is both affordable and safe here.
+      const clean = sanitizeModelOutput(event.text, "delivery");
+      deliveredText = clean;
+      deliveredToolsSinceText = false;
+      onEvent(clean === event.text ? event : { ...event, text: clean });
+      return;
+    }
+    if (event.type === "tool_start" || event.type === "tool_end") {
+      deliveredToolsSinceText = true;
+    } else if (event.type === "error" && event.message) {
+      const errText = `\n\nError: ${event.message}`;
+      if (!deliveredText.endsWith(errText)) deliveredText += errText;
+    } else if (event.type === "done") {
+      // Turn end. The client renders the ACCUMULATED deltas — there is no
+      // final full-text event (`done` carries only usage; the reducer just
+      // flips status) — so this is where the final text gets the full
+      // delivery pass. When it differs from what streamed, emit ONE repair
+      // replace (the reducer swaps the bubble text) before done; clean turns
+      // hit the identity fast path and cost nothing extra.
+      const finalText = sanitizeModelOutput(deliveredText, "delivery");
+      if (finalText !== deliveredText) {
+        deliveredText = finalText;
+        onEvent({ type: "stream", replace: true, text: finalText });
+      }
     }
     onEvent(event);
   };

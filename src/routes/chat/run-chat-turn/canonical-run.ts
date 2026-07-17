@@ -4,6 +4,7 @@ import type { ServerEvent, Session } from "../../../types.js";
 import type { Role } from "../../../rbac.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import { ThreatEngine } from "../../../threat/threat-engine.js";
+import { sanitizeModelOutput } from "../../../providers/output-sanitize.js";
 import { createLogger } from "../../../logger.js";
 
 const logger = createLogger("routes.chat.canonical-run");
@@ -151,10 +152,30 @@ interface PersistInput {
   abortSignal?: AbortSignal;
 }
 
+/** Persist-profile hygiene over ONE committed row's param. Assistant SPEECH
+ *  only: user rows and tool rows are not model output — a tool result that
+ *  legitimately contains `<think>` must persist verbatim — and each assistant
+ *  row is a complete message (opMessageRowToChatParam), never a fragment of
+ *  one, so per-row is the correct granularity. Clean text returns the same
+ *  object, keeping the stored turn byte-identical on the fast path. */
+function sanitizeAssistantRowParam(param: ChatCompletionMessageParam): ChatCompletionMessageParam {
+  if (param.role !== "assistant" || typeof param.content !== "string" || !param.content) return param;
+  const clean = sanitizeModelOutput(param.content, "persist");
+  return clean === param.content ? param : { ...param, content: clean };
+}
+
 // Exported for the salvage regression test (an interrupted turn must persist
 // its work + boundary marker instead of erasing the turn).
 export async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, assistantText, session, ctx, sessionId, images, interrupted, abortSignal } = input;
+  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, abortSignal } = input;
+  // Persist-profile pass over what the MODEL said this turn (leaked template
+  // tokens, reasoning tags, hallucinated tool markup, whole-reply repeats —
+  // providers/output-sanitize.ts). Applied to this turn's NEW text only: the
+  // streamed-accumulation fallback here and each committed assistant row
+  // below. Prior-session history is never re-touched, and the _interrupted
+  // boundary row pushed further down stays verbatim — this pass COMPOSES with
+  // providers/sanitize.ts's control-marker handling, it doesn't replace it.
+  const assistantText = sanitizeModelOutput(input.assistantText, "persist");
 
   // Write-generation check. A wedged turn that the turn lock force-released
   // (5s safety net) can un-wedge AFTER a replacement turn has acquired the
@@ -179,7 +200,7 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
       for (const row of rows) {
         if (row.messageId.startsWith("hist-")) continue;
         const param = opMessageRowToChatParam(row);
-        if (param) newChatMessages.push(param);
+        if (param) newChatMessages.push(sanitizeAssistantRowParam(param));
       }
     } catch (e) {
       logger.warn(`[chat] canonical op-messages read failed: ${(e as Error).message}`);

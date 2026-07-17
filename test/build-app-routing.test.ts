@@ -11,10 +11,22 @@
  *   - buildAppTool.execute returns the canonical-shape result (op-submitted
  *     chip + opId; the op lands in the store with type "app_build").
  */
-import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect, afterAll, afterEach, beforeAll, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+
+const configMock = vi.hoisted(() => ({ workspace: "" }));
+vi.mock("../src/config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/config.js")>();
+  const { join: joinPath } = await import("node:path");
+  return {
+    ...actual,
+    workspaceRoot: () => configMock.workspace,
+    workspacePath: (...segments: string[]) => joinPath(configMock.workspace, ...segments),
+  };
+});
+
 import {
   buildAppTool,
   builderToolsForTier,
@@ -32,8 +44,16 @@ import {
   resetCanonicalRuntime,
   resetScheduler,
 } from "../src/canonical-loop/index.js";
+import { workspacePath } from "../src/config.js";
 
 const submittedOpIds: string[] = [];
+
+beforeAll(() => {
+  configMock.workspace = mkdtempSync(join(tmpdir(), "lax-build-app-routing-"));
+  // Force the AgentTemplateStore singleton to load the seeded `app-builder`
+  // template (its constructor seeds defaults on first instantiation).
+  AgentTemplateStore.getInstance();
+});
 
 afterEach(() => {
   for (const id of submittedOpIds) {
@@ -44,10 +64,8 @@ afterEach(() => {
   resetScheduler();
 });
 
-beforeAll(() => {
-  // Force the AgentTemplateStore singleton to load the seeded `app-builder`
-  // template (its constructor seeds defaults on first instantiation).
-  AgentTemplateStore.getInstance();
+afterAll(() => {
+  rmSync(configMock.workspace, { recursive: true, force: true });
 });
 
 describe("resolveBuildProvider — backend arg + settings fallback", () => {
@@ -195,7 +213,7 @@ describe("checkBuildCollision — overwrite guard", () => {
 
   it("build_app.execute returns isError when colliding without update flag", async () => {
     const appName = `routing-collide-${Date.now()}`;
-    const appDir = resolve("workspace", "apps", appName);
+    const appDir = workspacePath("apps", appName);
     try {
       mkdirSync(appDir, { recursive: true });
       writeFileSync(join(appDir, "index.html"), "<html>existing</html>", "utf-8");
@@ -232,7 +250,7 @@ describe("build_app — canonical-shape result", () => {
     const op = chip.opId ? readOp(chip.opId) : null;
     expect(op?.type).toBe(APP_BUILD_OP_TYPE);
 
-    try { rmSync(resolve("workspace", "apps", appName), { recursive: true, force: true }); } catch { /* swallow */ }
+    try { rmSync(workspacePath("apps", appName), { recursive: true, force: true }); } catch { /* swallow */ }
   });
 });
 

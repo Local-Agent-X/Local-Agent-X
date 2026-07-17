@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
 
 import { setAriRequired } from "../ari-kernel/state.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
+import { workspacePath as configuredWorkspacePath } from "../config.js";
 import { SecurityLayer } from "../security/index.js";
 import { ToolPolicy } from "../tool-policy/index.js";
 import { DEFAULT_POLICY } from "../tool-policy/default-rules.js";
@@ -75,10 +75,6 @@ function mutationTool(executions: string[]): ToolDefinition {
   };
 }
 
-function workspacePath(name: string): string {
-  return join(process.cwd(), "workspace", name);
-}
-
 function approvalEvents(events: ServerEvent[]): ServerEvent[] {
   return events.filter((event) =>
     event.type === "approval_requested" || event.type === "approval_resolved",
@@ -107,7 +103,7 @@ describe("canonical dispatcher approval contract", () => {
     const events: ServerEvent[] = [];
     const dispatcher = makeChatToolDispatcher({
       tools: [mutationTool(executions)],
-      security: new SecurityLayer(process.cwd(), "unrestricted"),
+      security: new SecurityLayer(configuredWorkspacePath(), "unrestricted"),
       toolPolicy: new ToolPolicy(DEFAULT_POLICY),
       sessionId,
       callContext: "delegated",
@@ -118,7 +114,7 @@ describe("canonical dispatcher approval contract", () => {
     const result = await dispatcher.dispatch({
       toolCallId: "tc-autonomous-write",
       tool: "write",
-      args: { path: workspacePath("autonomous.txt"), value: "autonomous" },
+      args: { path: configuredWorkspacePath("autonomous.txt"), value: "autonomous" },
     });
 
     expect(result.status).toBe("ok");
@@ -140,7 +136,7 @@ describe("canonical dispatcher approval contract", () => {
 
     const dispatcher = makeChatToolDispatcher({
       tools: [mutationTool(executions)],
-      security: new SecurityLayer(process.cwd(), "unrestricted"),
+      security: new SecurityLayer(configuredWorkspacePath(), "unrestricted"),
       toolPolicy: new ToolPolicy({
         defaultDecision: "deny",
         rules: [{
@@ -170,12 +166,12 @@ describe("canonical dispatcher approval contract", () => {
     const approved = await dispatcher.dispatch({
       toolCallId: "tc-confirmed-write-1",
       tool: "write",
-      args: { path: workspacePath("approved.txt"), value: "approved" },
+      args: { path: configuredWorkspacePath("approved.txt"), value: "approved" },
     });
     const rejected = await dispatcher.dispatch({
       toolCallId: "tc-confirmed-write-2",
       tool: "write",
-      args: { path: workspacePath("rejected.txt"), value: "rejected" },
+      args: { path: configuredWorkspacePath("rejected.txt"), value: "rejected" },
     });
 
     expect(approved.status).toBe("ok");

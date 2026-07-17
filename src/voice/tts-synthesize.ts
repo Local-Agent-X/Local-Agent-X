@@ -16,7 +16,7 @@ import { synthesizeXai } from "./tts-xai.js";
 
 const logger = createLogger("voice");
 
-type EngineId = "sovits" | "chatterbox" | "lite" | "xai";
+type EngineId = "chatterbox" | "lite" | "xai";
 
 export async function synthesize(
   text: string,
@@ -24,26 +24,25 @@ export async function synthesize(
   speed?: number,
 ): Promise<Buffer> {
   const cbPort = Number(process.env.LAX_CHATTERBOX_PORT) || 7010;
-  const svPort = Number(process.env.LAX_SOVITS_PORT) || 7012;
   const litePort = Number(process.env.LAX_VOICE_PORT) || 7008;
 
   const ENGINE: Record<EngineId, () => Promise<Buffer | null>> = {
-    sovits:     () => trySidecarSynth(svPort, "sovits", text),
     chatterbox: () => trySidecarSynth(cbPort, "chatterbox", text),
     lite:       () => tryLiteSynth(litePort, text, voice, speed),
     xai:        () => synthesizeXai(text, voice),
   };
 
-  // Default chain (auto) is sovits→chatterbox→lite — clones first, then built-in.
-  // xAI is opt-in only (bridgeVoicePreference="xai"); not in the auto chain
-  // because remote round-trips lose to local sidecars on the dev setup.
+  // Default chain (auto) is chatterbox→lite — clones first, then the
+  // built-in Kokoro voice as the backup. xAI is opt-in only
+  // (bridgeVoicePreference="xai"); not in the auto chain because remote
+  // round-trips lose to local sidecars on the dev setup.
   let preference: "auto" | EngineId = "auto";
   try {
     const { getRuntimeConfig } = await import("../config.js");
     preference = getRuntimeConfig().bridgeVoicePreference ?? "auto";
   } catch {}
 
-  const baseOrder: EngineId[] = ["sovits", "chatterbox", "lite"];
+  const baseOrder: EngineId[] = ["chatterbox", "lite"];
   const order: EngineId[] = preference === "auto"
     ? baseOrder
     : [preference, ...baseOrder.filter(e => e !== preference)];

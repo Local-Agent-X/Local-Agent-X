@@ -6,7 +6,6 @@ the venv exists (leaving a venv with nothing but pip in it), and on Windows
 Defender can delete a wheel mid-extract while pip still reports success. Only
 an actual import proves the venv can run the sidecar, so this exits non-zero
 if any critical module is missing and the installer propagates that failure.
-Mirrors the $VerifyImports pass in python/sovits/install.ps1.
 
 Exit codes:
   0 - every critical module imported (CUDA may or may not be present)

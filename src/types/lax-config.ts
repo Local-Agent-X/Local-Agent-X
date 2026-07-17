@@ -93,13 +93,12 @@ export interface LAXConfig {
   /** Preferred voice engine for Telegram/WhatsApp bridge replies. The bridge
    *  TTS chain tries the preferred engine first, then falls back through the
    *  others so a missing/unhealthy preference doesn't silence the bridge.
-   *  - "auto"       — clones first (sovits→chatterbox), then lite kokoro
-   *  - "sovits"     — fine-tuned clone (best when trained weights exist)
+   *  - "auto"       — chatterbox clone first, then lite kokoro backup
    *  - "chatterbox" — zero-shot reference-clip clone
    *  - "lite"       — built-in kokoro voice (fastest, no clone needed)
    *  - "xai"        — xAI Grok TTS via SuperGrok / X Premium+ OAuth (remote,
    *                   slower than local sidecars, included with subscription) */
-  bridgeVoicePreference?: "auto" | "sovits" | "chatterbox" | "lite" | "xai";
+  bridgeVoicePreference?: "auto" | "chatterbox" | "lite" | "xai";
 
   /** Category-level tool toggles surfaced as the Tool Policy switches in
    *  Settings → Security. Default-on. When false, every tool in the

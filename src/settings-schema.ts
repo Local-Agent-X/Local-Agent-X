@@ -64,9 +64,15 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   },
   {
     field: "bridgeVoicePreference",
-    validate: z.enum(["auto", "sovits", "chatterbox", "lite", "xai"]),
+    // Keep the "sovits"→"auto" coercion in lockstep with config-schema.ts:
+    // both parse the same persisted value, and only one accepting it means
+    // the setting flips depending on which path validated it.
+    validate: z.preprocess(
+      v => (v === "sovits" ? "auto" : v),
+      z.enum(["auto", "chatterbox", "lite", "xai"]),
+    ),
     runtime: true,
-    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available; xai needs the SuperGrok OAuth login",
+    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available (Chatterbox clone, then Lite Kokoro); xai needs the SuperGrok OAuth login",
   },
   {
     field: "maxIterations",

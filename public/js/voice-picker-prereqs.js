@@ -21,16 +21,6 @@ function _checkPrereq(p) {
     if (!t) return { ok: false, hint: 'Probing…', action: 'none', tierId: id };
     if (t.healthy) return { ok: true, hint: 'Running', action: 'none', tierId: id };
     if (t.installed) return { ok: false, hint: 'Installed, not running', action: 'start-sidecar', tierId: id };
-    // Studio-trained partial-state nuance: if the GPT-SoVITS repo + trained
-    // weights are on disk but the venv is missing, surface that explicitly
-    // so users with a wiped venv know their voices (Optimus etc.) survived
-    // and they just need to click Install to rebuild the venv.
-    if (id === 'studio-trained' && t.weightsPresent) {
-      return { ok: false, hint: 'Weights found — click Install to rebuild venv', action: 'install-sidecar', tierId: id };
-    }
-    if (id === 'studio-trained' && t.repoPresent) {
-      return { ok: false, hint: 'Repo present, no trained voices yet', action: 'install-sidecar', tierId: id };
-    }
     return { ok: false, hint: 'Not installed', action: 'install-sidecar', tierId: id };
   }
   if (p.kind.startsWith('secret:')) {

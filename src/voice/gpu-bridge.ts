@@ -24,6 +24,10 @@ export type GPUBridgeCallbacks = {
   onFinal?: (text: string, ms: number) => void;
   onAudioChunk?: (pcm: Int16Array, sampleRate: number, sentenceId: number, isFinal: boolean) => void;
   onAudioDone?: (sentenceId: number, ms: number, cancelled: boolean) => void;
+  /** Sidecar synthesized with a substitute voice (e.g. Chatterbox clone
+   *  unreachable → built-in Kokoro). Audio still arrives; surface the
+   *  substitution to the user instead of silently changing the voice. */
+  onTtsFallback?: (from: string, to: string, reason: string) => void;
   onError?: (msg: string) => void;
   onDisconnect?: () => void;
 };
@@ -62,6 +66,10 @@ interface ServerMsg {
   cancelled?: boolean;
   // error
   message?: string;
+  // tts_fallback
+  from?: string;
+  to?: string;
+  reason?: string;
 }
 
 const DEFAULT_PORT = parseInt(process.env.LAX_VOICE_PORT || "7008", 10);
@@ -154,6 +162,10 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
       }
       case "audio_done":
         cb.onAudioDone?.(msg.id || 0, msg.ms || 0, !!msg.cancelled);
+        break;
+      case "tts_fallback":
+        logger.warn(`[gpu-bridge] tts fallback ${msg.from} -> ${msg.to}: ${msg.reason}`);
+        cb.onTtsFallback?.(msg.from || "", msg.to || "", msg.reason || "");
         break;
       case "error":
         logger.warn(`[gpu-bridge] server error: ${msg.message}`);

@@ -136,8 +136,8 @@ function handleVoiceWsMessage(e) {
       isSpeaking = true; updateVoiceUI();
       // Sphere stays in 'thinking' here — it transitions to 'speaking' when
       // the first audio frame actually arrives at the playback worklet,
-      // which is when the user hears anything (the SoVITS synth + sentence
-      // buffering adds 1-3s of lag after text starts streaming).
+      // which is when the user hears anything (clone synth + sentence
+      // buffering adds lag after text starts streaming).
       break;
     }
     case 'assistant_delta':
@@ -217,6 +217,15 @@ function handleVoiceWsMessage(e) {
         VoiceSphere.handleDirective({
           kind: msg.kind, value: msg.value, durationMs: msg.durationMs,
         });
+      }
+      break;
+    case 'tts_fallback':
+      // Clone engine was down/errored; the sidecar substituted the built-in
+      // Kokoro voice. Reply still plays — tell the user why it sounds
+      // different instead of silently switching voices.
+      console.warn('[voice] tts fallback', msg.from, '→', msg.to, msg.reason);
+      if (typeof showVoiceToast === 'function') {
+        showVoiceToast('Clone voice unavailable — using built-in ' + (msg.to || 'voice'));
       }
       break;
     case 'voice_error':

@@ -1,25 +1,19 @@
 // ── Chat: Manage Clones Modal ──
 //
-// Modal listing all trained SoVITS / Chatterbox clones, allowing rename
-// or delete. Calls into /api/voices/sovits and /api/voices/chatterbox.
+// Modal listing all Chatterbox clones, allowing rename or delete.
+// Calls into /api/voices/chatterbox.
 
 function openManageClonesModal() {
   const existing = document.getElementById('manage-clones-modal');
   if (existing) existing.remove();
 
-  // Show clones from both providers — sovits (trained ★) first, then
-  // chatterbox (zero-shot). Each row is tagged with its provider so the
-  // rename/delete buttons hit the right /api/voices/<provider>/ endpoint.
-  const sv = (Array.isArray(window._sovitsVoices) ? window._sovitsVoices : [])
-    .map(c => ({ ...c, provider: 'sovits' }));
-  const cb = (Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [])
+  // Each row is tagged with its provider so the rename/delete buttons hit
+  // the right /api/voices/<provider>/ endpoint.
+  const all = (Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [])
     .map(c => ({ ...c, provider: 'chatterbox' }));
-  const all = [...sv, ...cb];
 
   const renderRow = (c) => {
-    const tag = c.provider === 'sovits'
-      ? (c.fine_tuned ? '<span style="font-size:.7rem;color:#3fcf6f">★ trained</span>' : '<span style="font-size:.7rem;color:#9ed3ff">zero-shot</span>')
-      : '<span style="font-size:.7rem;color:#9ed3ff">chatterbox</span>';
+    const tag = '<span style="font-size:.7rem;color:#9ed3ff">chatterbox</span>';
     return `
       <div class="mc-row" data-id="${esc(c.id)}" data-provider="${esc(c.provider)}" data-name="${esc(c.name)}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
         <div style="flex:1;min-width:0">
@@ -104,7 +98,7 @@ function openManageClonesModal() {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
         row.remove();
-        const fullId = (provider === 'sovits' ? 'sv:' : 'cb:') + id;
+        const fullId = 'cb:' + id;
         if (localStorage.getItem('lax_voice') === fullId) {
           localStorage.setItem('lax_voice', 'am_michael');
         }

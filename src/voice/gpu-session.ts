@@ -150,6 +150,9 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       // an active turn internally and schedules the real end-of-playback).
       if (pendingTtsCount === 0) machine.markTtsDrained();
     },
+    onTtsFallback: (from, to, reason) => {
+      ctx.sendEvent({ type: "tts_fallback", from, to, reason });
+    },
     onError: (message) => {
       ctx.sendEvent({ type: "voice_error", message });
     },

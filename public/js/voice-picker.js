@@ -57,7 +57,7 @@ window.getActiveVoiceTier = getActiveVoiceTier;
 function voiceFitsTier(voiceId, tier) {
   if (!voiceId || !tier) return false;
   const pool = tier.voicePool || [];
-  if (pool.includes('clones') && (voiceId.startsWith('sv:') || voiceId.startsWith('cb:'))) return true;
+  if (pool.includes('clones') && voiceId.startsWith('cb:')) return true;
   if (pool.includes('kokoro') && /^[abm]?[fmb]?_/.test(voiceId)) return true;
   if (pool.includes('edge') && /^en-[A-Z]{2}-.+Neural$/.test(voiceId)) return true;
   if (pool.includes('browser')) return true; // browser SR returns OS voices, can't validate
@@ -200,16 +200,15 @@ window.switchVoiceTier = onTierChange;
 
 async function onVoicePickChange(voice) {
   const tierId = document.getElementById('cfg-voice-tier')?.value || C.DEFAULT_TIER_ID;
-  if (voice === '__train_voice__' || voice === '__add_chatterbox__' || voice === '__manage_clones__') {
-    if (voice === '__train_voice__' && typeof openTrainVoiceModal === 'function') openTrainVoiceModal();
-    else if (voice === '__add_chatterbox__' && typeof openAddChatterboxModal === 'function') openAddChatterboxModal();
+  if (voice === '__add_chatterbox__' || voice === '__manage_clones__') {
+    if (voice === '__add_chatterbox__' && typeof openAddChatterboxModal === 'function') openAddChatterboxModal();
     else if (voice === '__manage_clones__' && typeof openManageClonesModal === 'function') openManageClonesModal();
     let prev = ''; try { prev = localStorage.getItem('lax_voice') || ''; } catch {}
     const sel = document.getElementById('cfg-voice-voice'); if (sel && prev) sel.value = prev;
     return;
   }
   if (!voice) return;
-  if (tierId === 'kokoro' || tierId === 'studio' || tierId === 'studio-trained') { try { localStorage.setItem('lax_voice', voice); } catch {} }
+  if (tierId === 'kokoro' || tierId === 'studio') { try { localStorage.setItem('lax_voice', voice); } catch {} }
   // Browser tier reads the chosen voice synchronously from localStorage at
   // utterance-build time (chat.js _browserResolveVoice). Server settings are
   // persisted async via _persist() below — that round-trip is too slow for

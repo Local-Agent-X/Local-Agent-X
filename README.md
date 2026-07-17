@@ -115,6 +115,6 @@ file is the binding text.
 
 ## Credits
 
-Local Agent X is built on a lot of open-source work — Whisper, Kokoro, GPT-SoVITS,
+Local Agent X is built on a lot of open-source work — Whisper, Kokoro,
 Chatterbox, PyTorch, Playwright, Electron, and many more. See
 [docs/CREDITS.md](docs/CREDITS.md) for the full acknowledgments.

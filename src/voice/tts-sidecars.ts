@@ -1,16 +1,16 @@
-// HTTP probes to the three voice sidecars (Chatterbox at :7010, SoVITS at
-// :7012, Lite at :7008). Used by synthesize() so bridges (Telegram,
-// WhatsApp) can hit the clone-tier engines without going through Lite's
-// WebSocket — Lite is WS-only and server-to-server audio over WS is
-// overkill for a one-shot text-to-WAV call.
+// HTTP probes to the voice sidecars (Chatterbox at :7010, Lite at :7008).
+// Used by synthesize() so bridges (Telegram, WhatsApp) can hit the
+// clone-tier engine without going through Lite's WebSocket — Lite is
+// WS-only and server-to-server audio over WS is overkill for a one-shot
+// text-to-WAV call.
 //
 // Two probe shapes:
-//   - trySidecarSynth: clone-tier (Chatterbox/SoVITS). Health → /clones list
+//   - trySidecarSynth: clone-tier (Chatterbox). Health → /clones list
 //     → POST to /clones/{id}/synth. Skips with no clones loaded.
 //   - tryLiteSynth: Lite sidecar (Kokoro+Whisper). Flat /synth that takes
-//     {text, voice?, speed?} and returns WAV. The no-clone fallback so
-//     bridges still get a real human-quality voice when neither
-//     clone-tier engine has a clone loaded.
+//     {text, voice?, speed?} and returns WAV. The no-clone backup so
+//     bridges still get a real human-quality voice when the clone-tier
+//     engine has no clone loaded.
 
 import { createLogger } from "../logger.js";
 

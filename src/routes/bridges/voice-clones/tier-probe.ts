@@ -1,14 +1,13 @@
-import { CB_BASE, SV_BASE, probeSidecar } from "./sidecar-proxy.js";
+import { CB_BASE, probeSidecar } from "./sidecar-proxy.js";
 
-// SoVITS is preferred when available (supports trained voices); Chatterbox
-// remains as zero-shot fallback.
+// Chatterbox (zero-shot reference-clip clones) is the only clone engine;
+// when it isn't up the voice stack is on Lite's built-in Kokoro voices.
 export async function handleTierProbe(
   json: (status: number, data: unknown) => void,
 ): Promise<void> {
-  const [cb, sv] = await Promise.all([probeSidecar(CB_BASE()), probeSidecar(SV_BASE())]);
+  const cb = await probeSidecar(CB_BASE());
   json(200, {
-    tier: sv?.ready ? "studio-trained" : (cb?.ready ? "studio" : "lite"),
+    tier: cb?.ready ? "studio" : "lite",
     chatterbox: cb ? { ready: !!cb.ready, ...cb } : { ready: false },
-    sovits: sv ? { ready: !!sv.ready, ...sv } : { ready: false },
   });
 }

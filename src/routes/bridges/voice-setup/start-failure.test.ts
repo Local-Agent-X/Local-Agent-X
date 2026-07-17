@@ -38,8 +38,8 @@ describe("startFailureSummary", () => {
   });
 
   it("names the tier's own log, not a hardcoded one", () => {
-    const msg = startFailureSummary("studio-trained", { ok: false, reason: "exited", exitCode: 9, logTail: "" });
-    expect(msg).toContain("studio-trained.log");
+    const msg = startFailureSummary("studio", { ok: false, reason: "exited", exitCode: 9, logTail: "" });
+    expect(msg).toContain("studio.log");
     expect(msg).not.toContain("lite.log");
   });
 

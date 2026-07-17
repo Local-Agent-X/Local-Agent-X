@@ -7,7 +7,7 @@
 // `prerequisites`: array of { kind, label } — UI renders inline status + an
 // install/start/check button next to the tier card when the prerequisite is
 // missing. Kinds:
-//   sidecar:<id>      Python sidecar from voice-setup.ts (lite/studio/studio-trained)
+//   sidecar:<id>      Python sidecar from voice-setup.ts (lite/studio)
 //   npm:<package>     Node package the runtime can require (kokoro-js, msedge-tts)
 //   secret:<name>     Secret in the encrypted vault (GROQ_API_KEY, OPENAI_API_KEY)
 //   model:<key>       Local model file the runtime expects to find
@@ -88,13 +88,12 @@ window.LAX_VOICE_CATALOG = {
     {
       id: 'studio',
       label: 'Studio local',
-      tagline: 'Voice cloning · trained voices · GPU recommended',
-      detail: 'Python Lite sidecar with Kokoro + faster-whisper. Routes sv:/cb: voices to the Studio-Trained (SoVITS) and Studio (Chatterbox) sidecars internally. This is where Optimus and other trained voices live.',
+      tagline: 'Voice cloning · zero-shot clones · GPU recommended',
+      detail: 'Python Lite sidecar with Kokoro + faster-whisper. Routes cb: voices to the Studio (Chatterbox) sidecar internally; if Chatterbox is down, the reply falls back to the built-in Kokoro voice. This is where cloned voices live.',
       settings: { voiceMode: 'standard', voiceEngine: 'python', voiceTier4Provider: '', voiceSttProvider: '' },
       voicePool: ['kokoro', 'clones'],
       prerequisites: [
         { kind: 'sidecar:lite', label: 'Lite sidecar (~3–4 GB venv)' },
-        { kind: 'sidecar:studio-trained', label: 'GPT-SoVITS sidecar (optional — for trained clones like Optimus)', optional: true },
         { kind: 'sidecar:studio', label: 'Chatterbox sidecar (optional — for zero-shot clones)', optional: true },
       ],
     },

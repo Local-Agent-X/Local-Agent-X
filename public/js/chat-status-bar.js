@@ -1,10 +1,10 @@
 // ── Chat: Status Bar + Context Bar ──
 //
 // Bottom-of-chat status bar (provider/model/voice/speed pickers, context
-// usage indicator, training pill). Polls the server for provider list,
-// reflects voice-tier changes, classifies model strength so weak models
-// surface a warning chip. Extracted from chat.js as part of the 400-LOC
-// god-file split.
+// usage indicator). Polls the server for provider list, reflects
+// voice-tier changes, classifies model strength so weak models surface a
+// warning chip. Extracted from chat.js as part of the 400-LOC god-file
+// split.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc                      (shared.js)
@@ -12,9 +12,9 @@
 //     voiceListForTier
 //   - LAX_VOICE_CATALOG                  (voice-picker-catalog.js)
 //   - lastContextStatus                  (window — read by updateStatusBar)
-//   - openTrainVoiceModal, openAddChatterboxModal, openManageClonesModal
+//   - openAddChatterboxModal, openManageClonesModal
 //                                        (chat-voice-modals.js — referenced via
-//                                         onclick attributes / pollTrainingStatus)
+//                                         onclick attributes)
 
 // ── Status bar (feature 97) ──
 let serverStartTime = Date.now();
@@ -62,17 +62,10 @@ function initStatusBar() {
   }).catch(() => {});
   // Studio tier detection: only fetch the cloned-voice library if the
   // Chatterbox sidecar is up. Re-renders the picker once we know.
+  // 10s poll so newly-added clones (manage modal, manual API registration)
+  // appear in the picker within ~10s, no server restart needed.
   refreshClonedVoices();
-  // Persistent training-status pill: polls /api/voices/sovits/training/list
-  // every 30s. Shows a small indicator near the top of the chat when a
-  // pipeline is running so the user knows training is still alive after
-  // they navigate away and come back. Auto-hides + refreshes the voice
-  // picker when training completes.
-  // 10s poll instead of 30s so newly-registered clones (or stalled
-  // orchestrators that the user manually nudged) appear in the picker
-  // within ~10s, no server restart needed.
-  pollTrainingStatus();
-  setInterval(pollTrainingStatus, 10000);
+  setInterval(() => refreshClonedVoices(), 10000);
 }
 
 // A providers payload is "complete" once the active provider has a model
@@ -227,9 +220,8 @@ function updateStatusBar(force) {
     // Tier-aware quick actions: only relevant when the active tier supports clones.
     if ((activeTier.voicePool || []).includes('clones')) {
       voiceOpts += `<optgroup label=" ">`;
-      if (window._sovitsTierReady) voiceOpts += `<option value="__train_voice__">+ Train a new voice (30 min)…</option>`;
-      if (window._studioTierReady) voiceOpts += `<option value="__add_chatterbox__">+ Add a quick zero-shot voice…</option>`;
-      if ((window._sovitsVoices?.length || window._chatterboxVoices?.length)) {
+      if (window._studioTierReady) voiceOpts += `<option value="__add_chatterbox__">+ Clone a new voice (10-30s clip)…</option>`;
+      if (window._chatterboxVoices?.length) {
         voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
       }
       voiceOpts += `</optgroup>`;

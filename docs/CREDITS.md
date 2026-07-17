@@ -26,7 +26,6 @@ project's own LICENSE is authoritative.
 | Project | Author / Org | License | Powers |
 |---|---|---|---|
 | [Kokoro TTS](https://github.com/hexgrad/kokoro) ([kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), [kokoro-js](https://github.com/hexgrad/kokoro)) | hexgrad / thewh1teagle | Apache-2.0 | Lite-tier built-in voices |
-| [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) | RVC-Boss | MIT | Studio-Trained voice tier |
 | [Chatterbox](https://github.com/resemble-ai/chatterbox) (chatterbox-streaming) | Resemble AI | MIT | Studio tier reference-clip cloning |
 | [Ultimate RVC](https://github.com/JackismyShephard/ultimate-rvc) / [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) | community | MIT | Legacy Pro RVC tier (:7009) |
 | [msedge-tts](https://github.com/Migushthe2nd/MsEdgeTTS) | Migushthe2nd | MIT | Microsoft Edge cloud TTS voices |
@@ -52,7 +51,7 @@ project's own LICENSE is authoritative.
 | [FastAPI](https://github.com/fastapi/fastapi) | Sebastián Ramírez | MIT | Sidecar HTTP/WS servers |
 | [Uvicorn](https://github.com/encode/uvicorn) | Encode | BSD-3-Clause | ASGI server |
 | [websockets](https://github.com/python-websockets/websockets) | Aymeric Augustin | BSD-3-Clause | Streaming audio transport |
-| [HTTPX](https://github.com/encode/httpx) | Encode | BSD-3-Clause | SoVITS server shim HTTP client |
+| [HTTPX](https://github.com/encode/httpx) | Encode | BSD-3-Clause | Voice sidecar HTTP client |
 
 ## Core agent runtime (Node)
 

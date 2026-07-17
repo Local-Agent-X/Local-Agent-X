@@ -1,18 +1,16 @@
-// ── Chat: Status Bar indicators (context bar + training/clone probes) ──
+// ── Chat: Status Bar indicators (context bar + clone probes) ──
 //
 // Sibling to chat-status-bar.js, carrying the read-only/indicator side of the
-// bottom bar: the context-usage progress bar above the composer, the persistent
-// training-status pill, and the voice-clone tier/clone probe that feeds the
-// voice picker. Split out of chat-status-bar.js as part of the 400-LOC god-file
-// split. Classic browser script — these symbols stay top-level globals shared
-// with chat-status-bar.js.
+// bottom bar: the context-usage progress bar above the composer and the
+// voice-clone tier/clone probe that feeds the voice picker. Split out of
+// chat-status-bar.js as part of the 400-LOC god-file split. Classic browser
+// script — these symbols stay top-level globals shared with chat-status-bar.js.
 //
 // External deps (runtime callbacks, all original-file-or-shared globals; this
 // file is safe to load BEFORE chat-status-bar.js because every reference below
 // lives inside a function body, never at load time):
 //   - apiFetch                            (shared.js)
 //   - updateStatusBar                     (chat-status-bar.js — runtime callback)
-//   - openTrainVoiceModal                 (chat-voice-modals.js — pill onclick)
 
 // ── Context usage indicator ──
 //
@@ -70,64 +68,12 @@ function updateContextBar(event) {
   `;
 }
 
-let _lastTrainingRunCount = 0;
-async function pollTrainingStatus() {
-  let runs = [];
-  try {
-    const r = await apiFetch('/api/voices/sovits/training/list');
-    if (r.ok) {
-      const d = await r.json();
-      runs = (d.runs || []).filter(x => x.stage !== 'register');
-    }
-  } catch { return; }
-  // Always refresh the clone list — cheap call (one /tier probe + at most
-  // two list calls), and it covers cases the running→idle transition
-  // misses (orchestrator died before registering, user added a clone via
-  // the manage modal, manual API registration, etc.).
-  refreshClonedVoices().then(() => updateStatusBar?.());
-  _lastTrainingRunCount = runs.length;
-
-  let pill = document.getElementById('training-pill');
-  if (runs.length === 0) {
-    if (pill) pill.remove();
-    return;
-  }
-  if (!pill) {
-    pill = document.createElement('div');
-    pill.id = 'training-pill';
-    pill.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;padding:6px 14px;border:1px solid #4a9eff;background:rgba(8,18,38,.9);color:#9fdcff;border-radius:18px;font-size:.78rem;font-family:var(--mono,monospace);cursor:pointer;backdrop-filter:blur(6px);box-shadow:0 2px 12px rgba(74,158,255,.3)';
-    pill.title = 'Click to open training panel';
-    pill.addEventListener('click', () => { if (typeof openTrainVoiceModal === 'function') openTrainVoiceModal(); });
-    document.body.appendChild(pill);
-  }
-  const stageLabels = {
-    download: 'downloading', slice: 'slicing', asr: 'transcribing',
-    ref: 'picking ref', format: 'extracting features',
-    train_sovits: 'training SoVITS', train_gpt: 'training GPT',
-  };
-  const r0 = runs[0];
-  const stage = stageLabels[r0.stage] || r0.stage;
-  const more = runs.length > 1 ? ` +${runs.length - 1} more` : '';
-  pill.textContent = `🎤 Training ${r0.name} · ${stage}${more}`;
-}
-
 async function refreshClonedVoices() {
   try {
     const tierRes = await apiFetch('/api/voices/tier');
     const tier = await tierRes.json();
     window._studioTierReady = !!(tier.chatterbox && tier.chatterbox.ready);
-    window._sovitsTierReady = !!(tier.sovits && tier.sovits.ready);
-    // SoVITS clones (trained or zero-shot) — best quality when fine-tuned
-    if (window._sovitsTierReady) {
-      const r = await apiFetch('/api/voices/sovits');
-      if (r.ok) {
-        const data = await r.json();
-        window._sovitsVoices = Array.isArray(data?.clones) ? data.clones : [];
-      }
-    } else {
-      window._sovitsVoices = [];
-    }
-    // Chatterbox clones (single-stage zero-shot TTS, fallback / parallel)
+    // Chatterbox clones (single-stage zero-shot TTS)
     if (window._studioTierReady) {
       const r = await apiFetch('/api/voices/chatterbox');
       if (r.ok) {

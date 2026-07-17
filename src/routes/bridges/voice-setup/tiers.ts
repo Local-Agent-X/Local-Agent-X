@@ -83,31 +83,6 @@ export const TIERS: VoiceTier[] = [
     installMarkers: ["torch", "fastapi"],
   },
   {
-    id: "studio-trained",
-    label: "Studio-Trained (GPT-SoVITS)",
-    port: Number(process.env.LAX_SOVITS_PORT) || 7012,
-    venvDir: join(HOME, ".lax", "sovits", "venv"),
-    // The installer rebuilds the venv on top of an existing GPT-SoVITS
-    // checkout (~/.lax/sovits/repo). Trained voice weights survive a venv
-    // wipe but the picker said "Not installed" with no recovery path —
-    // this is the recovery path. If the repo isn't present, the installer
-    // exits cleanly with instructions to run the training pipeline first.
-    installerPath: join(REPO_ROOT, "python", "sovits", INSTALLER_EXT),
-    startCmd: () => ({
-      command: join(HOME, ".lax", "sovits", "venv", PYTHON_EXE),
-      args: [join(REPO_ROOT, "python", "sovits", "server.py")],
-      cwd: join(REPO_ROOT, "python", "sovits"),
-      env: { ...process.env },
-    }),
-    healthUrl: `http://127.0.0.1:${process.env.LAX_SOVITS_PORT || "7012"}/healthz`,
-    description: "Fine-tuned voice cloning via GPT-SoVITS v2Pro. Train your own voices (~30–45 min on RTX 3060).",
-    diskFootprint: "~5 GB (per trained voice: ~50–100 MB)",
-    procMatch: ["sovits", "server.py"],
-    // Subset of $VerifyImports in python/sovits/install.ps1 — that installer
-    // already refuses to succeed without these.
-    installMarkers: ["torch", "fastapi"],
-  },
-  {
     id: "native",
     label: "Native ONNX (Kokoro)",
     kind: "native",
@@ -122,3 +97,13 @@ export const TIERS: VoiceTier[] = [
 ];
 
 export const tierById = (id: string) => TIERS.find(t => t.id === id);
+
+// What users type in the bridge /voice command → tier ids in TIERS above.
+// Lives next to the registry so the two can't drift apart silently (the map
+// once pointed at ids like "studio-sovits" that no tier ever had, making
+// /voice start a guaranteed "Unknown tier" error).
+export const VOICE_COMMAND_TIER_MAP: Record<string, string> = {
+  lite: "lite",
+  studio: "studio",
+  chatterbox: "studio",
+};

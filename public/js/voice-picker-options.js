@@ -1,8 +1,8 @@
 // ── Media tab voice picker — voice-list option builders ──
 // Per-tier <option> HTML for the Voice dropdown. Reads catalog (window.C
 // → C.EDGE_VOICES) and _kokoroCatalog from
-// voice-picker.js, plus window._sovitsVoices / window._chatterboxVoices
-// populated by chat-voice-modals.js after the user trains/imports clones.
+// voice-picker.js, plus window._chatterboxVoices populated by
+// chat-voice-modals.js after the user imports clones.
 
 function _kokoroOptions(current) {
   const voices = (_kokoroCatalog?.voices || []).slice().sort((a, b) => {
@@ -47,15 +47,8 @@ function _browserOptions(current) {
 }
 
 function _studioOptions(current) {
-  const sv = Array.isArray(window._sovitsVoices) ? window._sovitsVoices : [];
   const cb = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
   let html = `<optgroup label="Kokoro built-ins">${_kokoroOptions(current)}</optgroup>`;
-  if (sv.length) {
-    html += `<optgroup label="Trained voices (SoVITS)">` + sv.map(c => {
-      const star = c.fine_tuned ? ' ★' : ''; const v = 'sv:' + c.id;
-      return `<option value="${_esc(v)}"${v === current ? ' selected' : ''}>${_esc(c.name || c.id)}${star}</option>`;
-    }).join('') + `</optgroup>`;
-  }
   if (cb.length) {
     html += `<optgroup label="Zero-shot clones (Chatterbox)">` + cb.map(c => {
       const v = 'cb:' + c.id;

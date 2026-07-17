@@ -1,7 +1,7 @@
 // ── Chat: Voice + Clone Modals ──
 //
-// Modal builders for: train a new SoVITS voice, add a Chatterbox zero-shot
-// voice, manage trained clones. Plus the chat-bar voice picker handler
+// Modal builders for: add a Chatterbox zero-shot voice, manage clones.
+// Plus the chat-bar voice picker handler
 // (quickSwitchVoice) and the speed slider handler (quickSwitchSpeed) — both
 // route through window.sendVoiceWsMessage so this module never holds a
 // voiceWS reference. Extracted from chat.js as part of the 400-LOC split.
@@ -22,9 +22,8 @@ function quickSwitchVoice(voice) {
     }
     return;
   }
-  if (voice === '__manage_clones__' || voice === '__add_chatterbox__' || voice === '__train_voice__') {
+  if (voice === '__manage_clones__' || voice === '__add_chatterbox__') {
     if (voice === '__add_chatterbox__') openAddChatterboxModal();
-    else if (voice === '__train_voice__') openTrainVoiceModal();
     else openManageClonesModal();
     // Reset picker visual to whatever was actually selected before
     const sel = document.getElementById('voice-quick-select');
@@ -55,7 +54,7 @@ function quickSwitchVoice(voice) {
 
 
 
-// 3 modal builders moved to per-modal files (chat-voice-modal-train/chatterbox/manage.js).
+// Modal builders live in per-modal files (chat-voice-modal-chatterbox/manage.js).
 
 function showVoiceToast(msg) {
   let el = document.getElementById('voice-toast');

@@ -1,7 +1,7 @@
 // Local voice-engine binaries + model paths. Windows whisper.cpp builds put
 // the binary under Release/ (MSVC layout) and use .exe; Mac/Linux builds
-// drop a plain binary alongside the build dir. Kokoro / Piper / Chatterbox /
-// SoVITS all live under ~/.lax/workspace/voice-chat/.
+// drop a plain binary alongside the build dir. Kokoro / Piper / Chatterbox
+// all live under ~/.lax/workspace/voice-chat/.
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";

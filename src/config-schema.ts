@@ -111,7 +111,13 @@ export const configSchema = z.object({
   authLockoutMs: z.number().int().min(1000).default(60000),
   agentTimeoutMs: z.number().int().min(10000).default(300000),
   maxCachedSessions: z.number().int().min(1).default(200),
-  bridgeVoicePreference: z.enum(["auto", "sovits", "chatterbox", "lite", "xai"]).default("auto"),
+  // "sovits" was a valid engine until the GPT-SoVITS tier was removed
+  // (2026-07); configs that still carry it coerce to "auto" instead of
+  // failing the whole config parse.
+  bridgeVoicePreference: z.preprocess(
+    v => (v === "sovits" ? "auto" : v),
+    z.enum(["auto", "chatterbox", "lite", "xai"]).default("auto"),
+  ),
 
   /** Category-level kill-switches behind the Tool Policy toggles in
    *  Settings → Security. Default-on so the out-of-box agent has full

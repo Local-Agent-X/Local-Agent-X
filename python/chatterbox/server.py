@@ -49,6 +49,11 @@ log = logging.getLogger("lax-chatterbox")
 VOICES_DIR = os.path.expanduser("~/.lax/voices-chatterbox")
 os.makedirs(VOICES_DIR, exist_ok=True)
 
+# Where the removed GPT-SoVITS engine kept its clones. Its ref.wav clips are
+# directly usable as Chatterbox zero-shot references, so on first boot after
+# the removal we import them — users keep their voices without retraining.
+SOVITS_VOICES_DIR = os.path.expanduser("~/.lax/voices-sovits")
+
 
 def _detect_gpu() -> str:
     try:
@@ -108,6 +113,7 @@ def _load_model():
 @asynccontextmanager
 async def lifespan(app):
     log.info("lax-chatterbox sidecar starting")
+    _migrate_sovits_refs()
     gpu = _detect_gpu()
     if gpu:
         log.info(f"cuda available: {gpu}")
@@ -171,6 +177,64 @@ def _ref_path(voice_id: str) -> Path:
 
 def _meta_path(voice_id: str) -> Path:
     return _voice_dir(voice_id) / "meta.json"
+
+
+def _migration_marker() -> Path:
+    return Path(VOICES_DIR) / ".sovits-migrated"
+
+
+def _migrate_sovits_refs():
+    """One-time import of GPT-SoVITS reference clips as Chatterbox clones.
+    Runs before pre-warm so an imported clone can serve as the warm-up voice.
+    The marker file makes this once-ever: re-running after a user deletes a
+    migrated clone must not resurrect it. Failures are per-clone and
+    non-fatal — a corrupt ref clip shouldn't block the sidecar boot."""
+    import shutil
+
+    if _migration_marker().exists() or not os.path.isdir(SOVITS_VOICES_DIR):
+        return
+    migrated = 0
+    for entry in sorted(os.listdir(SOVITS_VOICES_DIR)):
+        if not _is_safe_voice_id(entry):
+            continue
+        src_ref = Path(SOVITS_VOICES_DIR) / entry / "ref.wav"
+        if not src_ref.is_file():
+            continue
+        if _voice_dir(entry).is_dir():
+            continue  # id already registered as a Chatterbox clone
+        name = entry
+        try:
+            src_meta = Path(SOVITS_VOICES_DIR) / entry / "meta.json"
+            if src_meta.is_file():
+                name = json.loads(src_meta.read_text(encoding="utf-8")).get("name") or entry
+        except Exception:
+            pass
+        duration = 0.0
+        try:
+            import soundfile as sf
+            info = sf.info(str(src_ref))
+            duration = round(info.frames / float(info.samplerate), 2)
+        except Exception:
+            pass
+        try:
+            _voice_dir(entry).mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src_ref, _ref_path(entry))
+            _meta_path(entry).write_text(json.dumps({
+                "name": name,
+                "created_at": int(time.time()),
+                "duration_s": duration,
+                "migrated_from": "sovits",
+            }), encoding="utf-8")
+            migrated += 1
+            log.info(f"migrated SoVITS ref clip {entry!r} '{name}' -> chatterbox clone")
+        except Exception as e:
+            log.warning(f"could not migrate SoVITS clone {entry!r}: {e}")
+    try:
+        _migration_marker().write_text(str(int(time.time())), encoding="utf-8")
+    except Exception as e:
+        log.warning(f"could not write sovits migration marker: {e}")
+    if migrated:
+        log.info(f"migrated {migrated} GPT-SoVITS voice(s) to Chatterbox zero-shot clones")
 
 
 def _list_clones() -> list:

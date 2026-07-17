@@ -8,6 +8,7 @@ import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session/router.js";
 import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
+import { VOICE_COMMAND_TIER_MAP } from "../routes/bridges/voice-setup/tiers.js";
 import { sendRestartPingIfPending } from "../restart-notify.js";
 import { forwardBridgeMedia } from "./bridge-media-forward.js";
 import { COMPACTION_PREFIX } from "../types.js";
@@ -93,7 +94,7 @@ export function createBridgeHandler(deps: {
     }
 
     // /voice start|stop|status [tier] — remote control of the voice
-    // sidecar processes (Lite / Studio Chatterbox / SoVITS). Lets the user
+    // sidecar processes (Lite / Studio Chatterbox). Lets the user
     // bring an engine up from their phone when they're away from the
     // computer, without needing the Settings UI. Hits the same
     // /api/voices/setup/start | /stop endpoints the UI uses, just from
@@ -105,14 +106,8 @@ export function createBridgeHandler(deps: {
       const parts = trimmed.split(/\s+/);
       const action = parts[1] as "start" | "stop" | "status";
       const tierArg = (parts[2] || "lite").toLowerCase();
-      const tierMap: Record<string, string> = {
-        lite: "lite",
-        studio: "studio-chatterbox",
-        chatterbox: "studio-chatterbox",
-        sovits: "studio-sovits",
-      };
-      const tierId = tierMap[tierArg];
-      if (!tierId) return "Unknown tier. Use: lite (default) | studio | sovits.";
+      const tierId = VOICE_COMMAND_TIER_MAP[tierArg];
+      if (!tierId) return "Unknown tier. Use: lite (default) | studio.";
 
       const port = process.env.LAX_PORT || "7007";
       const base = `http://127.0.0.1:${port}`;
@@ -122,7 +117,7 @@ export function createBridgeHandler(deps: {
 
       try {
         if (action === "status") {
-          const r = await fetch(`${base}/api/voices/setup`, { headers });
+          const r = await fetch(`${base}/api/voices/setup/status`, { headers });
           if (!r.ok) return `Status check failed: HTTP ${r.status}`;
           const data = await r.json() as { tiers?: Array<{ id: string; label: string; running: boolean; installed: boolean }> };
           const t = (data.tiers ?? []).find(x => x.id === tierId);
@@ -130,7 +125,7 @@ export function createBridgeHandler(deps: {
           return `${t.label}: ${t.running ? "running" : t.installed ? "installed, not running" : "not installed"}.`;
         }
         if (action === "stop") {
-          const r = await fetch(`${base}/api/voices/setup/stop`, { method: "POST", headers, body: JSON.stringify({ tierId }) });
+          const r = await fetch(`${base}/api/voices/setup/stop`, { method: "POST", headers, body: JSON.stringify({ tier: tierId }) });
           if (!r.ok) return `Stop failed: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`;
           return `Stopped ${tierArg}.`;
         }
@@ -139,7 +134,7 @@ export function createBridgeHandler(deps: {
         // exceed bridge handler timeouts. Fire-and-forget here, return
         // immediately with a "kicked off" message; the user can /voice
         // status to poll.
-        void fetch(`${base}/api/voices/setup/start`, { method: "POST", headers, body: JSON.stringify({ tierId }) })
+        void fetch(`${base}/api/voices/setup/start`, { method: "POST", headers, body: JSON.stringify({ tier: tierId }) })
           .then(async r => {
             if (!r.ok) logger.warn(`[bridge:${platform}] /voice start ${tierArg} failed: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
             else logger.info(`[bridge:${platform}] /voice start ${tierArg} succeeded`);

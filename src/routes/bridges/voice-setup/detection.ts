@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { HOME, IS_WIN, PYTHON_EXE, REPO_ROOT, type VoiceTier } from "./tiers.js";
+import { IS_WIN, PYTHON_EXE, REPO_ROOT, type VoiceTier } from "./tiers.js";
 import { running } from "./state.js";
 
 /**
@@ -36,7 +36,7 @@ export function sitePackagesDir(venvDir: string): string | null {
  * The picker then enabled Start, the sidecar booted, and the user got a
  * ModuleNotFoundError crash instead of the install error that actually
  * explained it. Markers are the same modules each tier's installer verifies
- * (python/voice/_smoke.py, python/sovits/install.ps1 $VerifyImports).
+ * (python/voice/_smoke.py).
  *
  * Conservative by design: a tier with no markers, or a venv whose
  * site-packages we can't locate, falls back to the interpreter check rather
@@ -49,32 +49,6 @@ export function isInstalled(tier: VoiceTier): boolean {
   const sp = sitePackagesDir(tier.venvDir);
   if (!sp) return true;
   return markers.every(m => existsSync(join(sp, m)) || existsSync(join(sp, `${m}.py`)));
-}
-
-// Studio-trained-specific: detect partial state where the GPT-SoVITS repo
-// + trained voice weights are on disk but the venv isn't. This is the
-// "venv got wiped, weights survived" state — picker shows "Weights present,
-// click Rebuild" instead of the misleading "Not installed".
-function studioTrainedAssetState(): { repoPresent: boolean; weightsPresent: boolean } {
-  const repoDir = join(HOME, ".lax", "sovits", "repo");
-  const repoPresent = existsSync(repoDir);
-  if (!repoPresent) return { repoPresent: false, weightsPresent: false };
-  // Any *.pth file in the SoVITS_weights* sibling dirs counts as a trained voice.
-  const weightDirs = ["SoVITS_weights", "SoVITS_weights_v2", "SoVITS_weights_v2Pro", "SoVITS_weights_v2ProPlus", "SoVITS_weights_v3", "SoVITS_weights_v4"];
-  let weightsPresent = false;
-  for (const d of weightDirs) {
-    const candidate = join(repoDir, d);
-    if (!existsSync(candidate)) continue;
-    try {
-      if (!statSync(candidate).isDirectory()) continue;
-      const items = readdirSync(candidate);
-      if (items.some(name => name.toLowerCase().endsWith(".pth"))) {
-        weightsPresent = true;
-        break;
-      }
-    } catch { /* ignore unreadable dirs */ }
-  }
-  return { repoPresent, weightsPresent };
 }
 
 export async function probeHealth(url: string): Promise<{ ok: boolean; ready?: boolean; payload?: unknown }> {
@@ -120,11 +94,6 @@ export async function tierStatus(tier: VoiceTier) {
   const proc = running.get(tier.id);
   const trackedRunning = !!(proc && proc.exitCode === null);
   const health = installed ? await probeHealth(tier.healthUrl) : { ok: false };
-  // Studio-trained gets extra fields so the picker can distinguish:
-  //   - venv missing + weights present → "Weights found, click Install to rebuild"
-  //   - venv missing + no weights      → "Not installed (run training pipeline)"
-  // For other tiers, leave undefined.
-  const studioAssets = tier.id === "studio-trained" ? studioTrainedAssetState() : undefined;
   return {
     id: tier.id,
     label: tier.label,
@@ -137,7 +106,6 @@ export async function tierStatus(tier: VoiceTier) {
     healthy: !!health.ok && !!health.ready,
     pid: proc?.pid || null,
     healthPayload: health.payload || null,
-    ...(studioAssets ? { repoPresent: studioAssets.repoPresent, weightsPresent: studioAssets.weightsPresent } : {}),
   };
 }
 

@@ -2,13 +2,14 @@
 
 import asyncio
 import json
+import os
 import time
 from typing import Optional
 
 import numpy as np
 
 from .audio import f32_to_b64_int16
-from .clones import synth_via_chatterbox, synth_via_sovits
+from .clones import synth_via_chatterbox
 from .constants import (
     MIC_SR,
     MIN_UTTERANCE_S,
@@ -88,32 +89,52 @@ class Session:
                 continue
             await self._stream_audio(samples, sample_rate, sentence_id, prep_ms)
 
+    async def _synth_kokoro(self, text: str, voice: str, speed: float):
+        """Built-in Kokoro voice (Lite tier). `voice` must be a Kokoro voice
+        id (am_onyx, af_bella, ...), not a cb:-prefixed clone string."""
+        loop = asyncio.get_running_loop()
+        tts = _load_tts()
+        return await loop.run_in_executor(
+            None,
+            lambda: tts.create(text, voice=voice, speed=speed, lang="en-us"),
+        )
+
     async def _prep_one(self, text: str, sentence_id: int, voice: str, speed: float, fut):
-        """Generate audio for one sentence. Three voice routing modes:
-          * voice == "sv:<id>"  -> GPT-SoVITS clone (trained or zero-shot)
-                                   via the SoVITS sidecar (:7012).
-          * voice == "cb:<id>"  -> single-stage Chatterbox (Studio tier);
-                                   zero-shot fallback when no SoVITS clone exists.
+        """Generate audio for one sentence. Two voice routing modes:
+          * voice == "cb:<id>"  -> Chatterbox zero-shot clone (Studio tier)
+                                   via the Chatterbox sidecar (:7010). If the
+                                   sidecar is down or errors, falls back to the
+                                   built-in Kokoro voice and tells the client
+                                   (tts_fallback) — degraded voice beats a
+                                   silent reply, but the user must know.
           * else                -> straight Kokoro built-in voice (Lite tier).
         Resolves the Future with (samples, sample_rate, prep_ms_int)."""
         async with self.tts_prep_sem:
             t0 = time.time()
             try:
-                if voice.startswith("sv:"):
-                    samples, sample_rate = await synth_via_sovits(
-                        voice.split(":", 1)[1], text, sentence_id,
-                    )
-                elif voice.startswith("cb:"):
-                    samples, sample_rate = await synth_via_chatterbox(
-                        voice.split(":", 1)[1], text, sentence_id,
-                    )
+                if voice.startswith("cb:"):
+                    try:
+                        samples, sample_rate = await synth_via_chatterbox(
+                            voice.split(":", 1)[1], text, sentence_id,
+                        )
+                    except Exception as e:
+                        fallback_voice = os.environ.get("LAX_TTS_VOICE", "am_onyx")
+                        log.warning(
+                            f"chatterbox synth failed for id={sentence_id} "
+                            f"({e}); falling back to kokoro voice={fallback_voice}"
+                        )
+                        await self._send({
+                            "type": "tts_fallback",
+                            "id": sentence_id,
+                            "from": voice,
+                            "to": fallback_voice,
+                            "reason": str(e)[:300],
+                        })
+                        samples, sample_rate = await self._synth_kokoro(
+                            text, fallback_voice, speed,
+                        )
                 else:
-                    loop = asyncio.get_running_loop()
-                    tts = _load_tts()
-                    samples, sample_rate = await loop.run_in_executor(
-                        None,
-                        lambda: tts.create(text, voice=voice, speed=speed, lang="en-us"),
-                    )
+                    samples, sample_rate = await self._synth_kokoro(text, voice, speed)
             except Exception as e:
                 log.exception(f"tts synth failed for id={sentence_id}")
                 if not fut.done():

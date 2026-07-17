@@ -80,16 +80,16 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       }
       if (!isInstalled(tier)) { json(400, { error: `${tier.label} is not installed yet.` }); return true; }
 
-      // Studio (Chatterbox) and Studio-Trained (SoVITS) are clone WORKERS —
-      // they synthesize from reference clips but have no STT, no VAD, and
-      // no internal routing. Lite is the API frontdoor that web voice mode
-      // talks to over WS, and Lite proxies trained/clone synth requests
-      // INTO Studio/SoVITS at synth time. Starting Studio without Lite
-      // gives you a worker with nothing to dispatch to it. Auto-start
-      // Lite as a hard prereq so the user doesn't have to remember the
-      // dependency order. Skipped if Lite isn't installed (no recovery
-      // path from here — surface that as a clear error).
-      if (tier.id === "studio" || tier.id === "studio-trained") {
+      // Studio (Chatterbox) is a clone WORKER — it synthesizes from
+      // reference clips but has no STT, no VAD, and no internal routing.
+      // Lite is the API frontdoor that web voice mode talks to over WS,
+      // and Lite proxies clone synth requests INTO Studio at synth time.
+      // Starting Studio without Lite gives you a worker with nothing to
+      // dispatch to it. Auto-start Lite as a hard prereq so the user
+      // doesn't have to remember the dependency order. Skipped if Lite
+      // isn't installed (no recovery path from here — surface that as a
+      // clear error).
+      if (tier.id === "studio") {
         const lite = tierById("lite");
         if (lite && isInstalled(lite)) {
           const lh = await probeHealth(lite.healthUrl);

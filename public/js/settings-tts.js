@@ -8,17 +8,17 @@
 //
 // Replaces the legacy XTTS Record/Upload UI (dead — :7862 standalone server
 // was removed). Voice cloning now lives in the chat-page voice picker
-// (+ Add zero-shot, + Train new voice). Settings just lets the user pick
-// which engine + which clone they want for chat replies.
+// (+ Add zero-shot). Settings just lets the user pick which engine +
+// which clone they want for chat replies.
 
 // Toggle the right sub-picker based on the selected engine. Built-in engines
-// (kokoro/piper) show the Kokoro voice list; cloning engines show the clone
-// picker populated from window._chatterboxVoices / _sovitsVoices (refreshed
-// by refreshTtsClonePicker below). Browser/none hide both — nothing to pick.
+// (kokoro/piper) show the Kokoro voice list; Chatterbox shows the clone
+// picker populated from window._chatterboxVoices (refreshed by
+// refreshTtsClonePicker below). Browser/none hide both — nothing to pick.
 function onTtsEngineChange(engine) {
   const builtin = document.getElementById('tts-voice-field');
   const clone = document.getElementById('tts-clone-field');
-  const isClone = engine === 'chatterbox' || engine === 'sovits';
+  const isClone = engine === 'chatterbox';
   const isBuiltin = engine === 'kokoro' || engine === 'piper';
   if (builtin) builtin.style.display = isBuiltin ? '' : 'none';
   if (clone) clone.style.display = isClone ? '' : 'none';
@@ -31,15 +31,12 @@ function onTtsEngineChange(engine) {
 function refreshTtsClonePicker(engine) {
   const sel = document.getElementById('cfg-tts-clone');
   if (!sel) return;
-  const list = engine === 'chatterbox'
-    ? (window._chatterboxVoices || [])
-    : (window._sovitsVoices || []);
-  const prefix = engine === 'chatterbox' ? 'cb:' : 'sv:';
+  const list = window._chatterboxVoices || [];
+  const prefix = 'cb:';
   sel.innerHTML = '<option value="">-- pick a clone --</option>' +
     list.map(c => {
-      const star = c.fine_tuned ? ' ★' : '';
       const v = prefix + c.id;
-      return `<option value="${v}">${(c.name || c.id).replace(/[<>"']/g, '')}${star}</option>`;
+      return `<option value="${v}">${(c.name || c.id).replace(/[<>"']/g, '')}</option>`;
     }).join('');
   // Restore previous selection if it matches the current engine
   try {
@@ -56,10 +53,8 @@ async function initVoiceSettings() {
     if (!r.ok) return;
     const tier = await r.json();
     const cbReady = !!(tier.chatterbox && tier.chatterbox.ready);
-    const svReady = !!(tier.sovits && tier.sovits.ready);
     window._studioTierReady = cbReady;
-    window._sovitsTierReady = svReady;
-    // Pull the actual clone lists if their sidecars are up
+    // Pull the actual clone list if the sidecar is up
     if (cbReady) {
       try {
         const cr = await apiFetch('/api/voices/chatterbox');
@@ -69,28 +64,17 @@ async function initVoiceSettings() {
         }
       } catch {}
     }
-    if (svReady) {
-      try {
-        const sr = await apiFetch('/api/voices/sovits');
-        if (sr.ok) {
-          const d = await sr.json();
-          window._sovitsVoices = Array.isArray(d?.clones) ? d.clones : [];
-        }
-      } catch {}
-    }
-    // Enable the clone-engine options if either sidecar is up
+    // Enable the clone-engine option if the sidecar is up
     const group = document.getElementById('cfg-tts-clone-group');
     const cbOpt = document.getElementById('cfg-tts-engine-cb');
-    const svOpt = document.getElementById('cfg-tts-engine-sv');
-    if (group && (cbReady || svReady)) group.style.display = '';
+    if (group && cbReady) group.style.display = '';
     if (cbOpt) cbOpt.disabled = !cbReady;
-    if (svOpt) svOpt.disabled = !svReady;
     // Re-trigger engine-change to refresh the sub-picker if a cloning engine
     // was already saved from a prior session.
     const engSel = document.getElementById('cfg-tts-engine');
     if (engSel) onTtsEngineChange(engSel.value);
     // Re-render the unified Media-tab picker once clone lists landed so
-    // sv:/cb: voices (e.g. "Optimus") show up under Python sidecar.
+    // cb: voices show up under Python sidecar.
     if (typeof loadVoicePicker === 'function') {
       try {
         const r2 = await (typeof apiFetch === 'function' ? apiFetch('/api/settings') : fetch('/api/settings'));
@@ -144,12 +128,12 @@ async function initBridgeVoicePreference() {
     if (r.ok) {
       const s = await r.json();
       const v = s.bridgeVoicePreference;
-      if (v === 'auto' || v === 'sovits' || v === 'chatterbox' || v === 'lite' || v === 'xai') el.value = v;
+      if (v === 'auto' || v === 'chatterbox' || v === 'lite' || v === 'xai') el.value = v;
     }
   } catch { /* leave default 'auto' */ }
 }
 function onBridgeVoicePreferenceChange(value) {
-  if (!['auto','sovits','chatterbox','lite','xai'].includes(value)) return;
+  if (!['auto','chatterbox','lite','xai'].includes(value)) return;
   const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '');
   fetch('/api/settings', {
     method: 'POST',

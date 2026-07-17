@@ -39,8 +39,8 @@ LAX is a local-first agent — most of it runs fine on CPU. A few subsystems lea
 - **GPU (8–12 GB)**: 7B–13B at usable speed.
 - **CPU**: 7B models are 2–10 tokens/sec — unusably slow for agent use. Don't bother; use a cloud chat provider.
 
-### Voice cloning — Studio tiers (Chatterbox / GPT-SoVITS)
-- **GPU required in practice.** Chatterbox has CPU-fallback code, but the bundled installs pull GPU-only wheels, and SoVITS depends on upstream GPU packages — on a CPU-only machine these sidecars fail to import their CUDA deps. Switch to a non-Studio voice tier on GPU-less machines.
+### Voice cloning — Studio tier (Chatterbox)
+- **GPU required in practice.** Chatterbox has CPU-fallback code, but the bundled installs pull GPU-only wheels — on a CPU-only machine the sidecar fails to import its CUDA deps. Switch to a non-Studio voice tier on GPU-less machines.
 
 ### Image / video generation
 - **GPU only.** Falls back to error if no compatible device.
@@ -71,7 +71,7 @@ Open the Media tab and pick one of:
 - **Edge cloud** — Microsoft's edge-tts (no API key) for ~22 neural voices, paired with bundled local Whisper STT by default (no key). Ships with the app — no manual install. Optionally swap STT to cloud Groq/OpenAI/Mistral via the dropdown (needs the matching API key) for lower latency.
 - **OpenAI Realtime** — full-duplex, lowest latency, ~$0.06/min. Pay-per-minute. Needs `OPENAI_API_KEY` (or `OPENAI_REALTIME_KEY`).
 
-Don't pick "Studio local" without a GPU — its Python sidecars (Kokoro + faster-whisper, optional SoVITS/Chatterbox) are slow or won't start without CUDA.
+Don't pick "Studio local" without a GPU — its Python sidecars (Kokoro + faster-whisper, optional Chatterbox) are slow or won't start without CUDA.
 
 ### 3. Chat LLM → cloud provider (default)
 

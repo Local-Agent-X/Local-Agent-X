@@ -2,12 +2,14 @@
 
 Three install paths, in order of preference for non-tech users.
 
-> **Scope:** the artifact, lockfile, and verify-imports machinery below is
-> currently implemented only in the **GPT-SoVITS** installer
-> (`python/sovits/install.ps1`). The Lite (`python/voice/`) and Chatterbox
+> **Scope:** the artifact, lockfile, and verify-imports machinery below was
+> fully implemented in the GPT-SoVITS installer, which was removed along with
+> that engine (2026-07). The Lite (`python/voice/`) and Chatterbox
 > (`python/chatterbox/`) installers are single-pass pip installs — they do a
-> CUDA smoke test / 2-line import sanity check, not the full pipeline. Treat
-> paths #1 and #2 as the sovits design until the others are wired.
+> CUDA smoke test / import sanity check, not the full pipeline. Treat paths
+> #1 and #2 as the target design until those installers are wired; the
+> removed implementation is recoverable from git history
+> (`python/sovits/install.ps1` before the removal commit).
 
 ## 1. Pre-built artifact (production, recommended)
 
@@ -16,13 +18,14 @@ How it works:
 - GitHub Actions ([build-voice-artifacts.yml](../.github/workflows/build-voice-artifacts.yml))
   builds each sidecar venv on a clean Windows runner, packs it as a zip,
   uploads to the matching release
-- User-side `python/sovits/install.ps1` reads the `LAX_SOVITS_VENV_ARTIFACT_URL`
-  env var (or `~/.lax/voice-bundles.json`); when set, install becomes:
+- An installer that implements this path reads its
+  `LAX_<SIDECAR>_VENV_ARTIFACT_URL` env var (or `~/.lax/voice-bundles.json`);
+  when set, install becomes:
   1. Download the zip (single ~3-5 GB file)
   2. Verify SHA-256
   3. Extract to the sidecar's venv dir (`~/.lax/python-voice/venv` for Lite,
-     `~/.lax/python-chatterbox/venv` for Chatterbox, `~/.lax/sovits/venv` for
-     SoVITS — the dir name is not the tier id)
+     `~/.lax/python-chatterbox/venv` for Chatterbox — the dir name is not
+     the tier id)
   4. Run verify-imports pass
   5. Done
 
@@ -36,24 +39,22 @@ To configure on a fresh box, drop `~/.lax/voice-bundles.json`:
 
 ```json
 {
-  "sovits":     { "url": "https://github.com/.../sovits-venv-cpu-py311.zip",     "sha256": "..." },
   "lite":       { "url": "https://github.com/.../lite-venv-cpu-py311.zip",       "sha256": "..." },
   "chatterbox": { "url": "https://github.com/.../chatterbox-venv-cpu-py311.zip", "sha256": "..." }
 }
 ```
 
-Only the `sovits` key is currently read (by `python/sovits/install.ps1`). The
-`lite` and `chatterbox` keys are reserved — no installer consumes them yet.
+The `lite` and `chatterbox` keys are reserved — no installer consumes them
+yet (the only consumer was the removed GPT-SoVITS installer).
 
 ## 2. Lockfile install (deterministic from-source)
 
 How it works:
 - The design: a `requirements.lock` frozen by `pip freeze` after a clean
   bootstrap on a clean runner. **Note:** no `requirements.lock` is committed
-  for any sidecar today — only `sovits/install.ps1` checks for one, and it
-  currently always falls through to the bootstrap path
-- `install.ps1` prefers the lockfile when present — every dep version
-  is pinned exactly, no upstream drift
+  for any sidecar today, and no current installer checks for one
+- An installer implementing this path prefers the lockfile when present —
+  every dep version is pinned exactly, no upstream drift
 - Verify-imports pass at the end catches AV-corrupted wheels
 
 Why this is the second-best option:
@@ -67,25 +68,18 @@ Lock-update workflow:
 3. `pip freeze > python/<sidecar>/requirements.lock` from the venv
 4. Commit the new lock + tag a release
 
-## 3. Bootstrap from upstream (fallback)
+## 3. Bootstrap from upstream (what Lite + Chatterbox do today)
 
 How it works:
-- No lockfile, no artifact URL — install.ps1 falls back to:
-  1. `pip install torch==2.6.0 torchaudio==2.6.0` from PyTorch CDN with the
-     right CUDA index (pinned in both `install.ps1` and `install.sh` — see the
-     installer comments on the torchcodec/FFmpeg issue and why 2.6.0 was
-     chosen over 2.5.1)
-  2. `pip install -r requirements.txt` from the upstream model repo
-  3. `pip install -r server-requirements.txt` for our wrapper deps
-  4. Pin `numpy<2.0` (GPT-SoVITS specific)
-  5. Verify-imports pass
+- No lockfile, no artifact URL — install.ps1 / install.sh run pip directly:
+  - Lite: pinned torch + `pip install -r requirements.txt`, then the
+    `python/voice/_smoke.py` verify-imports pass
+  - Chatterbox: `pip install chatterbox-streaming` from the cu128 index +
+    fastapi/uvicorn/soundfile, then an `import chatterbox` smoke test
 
 When this path runs:
-- Dev machines (us, contributors) doing a fresh bootstrap to GENERATE
-  a new lock or artifact
-- New supported scenarios where neither lock nor artifact has been built
-  yet
-- Last resort if artifact download fails
+- Every user install today (it's the only implemented path)
+- Dev machines doing a fresh bootstrap to GENERATE a new lock or artifact
 
 Why it's the worst option for users:
 - Floats with whatever upstream pushed
@@ -93,8 +87,8 @@ Why it's the worst option for users:
 - Slow (pip resolution + many small downloads = 10-30 min)
 - Vulnerable to mid-stream AV interference
 
-The verify-imports pass at the end of every sovits install path catches the
-common silent failure (AV deletes wheels mid-extract, pip says success
+The Lite installer's verify-imports pass (`python/voice/_smoke.py`) catches
+the common silent failure (AV deletes wheels mid-extract, pip says success
 anyway). When it fires, the script outputs explicit Windows Defender
 exclusion instructions — no traceback, just "Add %USERPROFILE%\.lax to
 exclusions and click Reinstall."

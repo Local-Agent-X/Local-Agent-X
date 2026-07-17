@@ -141,9 +141,9 @@ function parseProcLines(stdout: string): SidecarProc[] {
 /**
  * Expand a set of root pids to include their descendants WITHIN `procs`. The
  * venv launcher LAX tracks (`running` pid) spawns the real python worker as a
- * child; for SoVITS both match the same signature because "sovits" is in the
- * script path, so a naive keep-the-tracked-pid kills the worker. Keeping the
- * tracked pid's subtree spares the worker the launcher actually owns.
+ * child; launcher and worker can match the same signature when the tier name
+ * is in the script path, so a naive keep-the-tracked-pid kills the worker.
+ * Keeping the tracked pid's subtree spares the worker the launcher owns.
  */
 function withDescendants(procs: SidecarProc[], roots: Iterable<number>): Set<number> {
   const keep = new Set<number>();

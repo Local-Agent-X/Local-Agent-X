@@ -113,38 +113,58 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
 }
 
 /**
- * Patterns that must be blocked in `browser evaluate` scripts. Covers
- * credential extraction, network exfiltration, dynamic code execution, and
- * common indirect-eval obfuscations. Obfuscation bypass is mitigated by
- * normalizing `\uXXXX` and `\xXX` escapes before pattern matching.
+ * Patterns that must be blocked in `browser evaluate` scripts.
+ *
+ * SCOPE: this list is deliberately NOT the network-egress defense. Cross-origin
+ * egress primitives (fetch / XHR / WebSocket / sendBeacon / img-src / form-action
+ * / importScripts / dynamic <script> src) are now blocked BY CONSTRUCTION by the
+ * per-document agent CSP that both backends stamp on every top-level document —
+ * see src/browser/csp-policy.ts (buildAgentCsp) and desktop/src/browser-csp.ts.
+ * Chromium's connect-src / img-src / form-action / script-src / worker-src
+ * enforce those by construction, so re-encoding them as a public, bypassable
+ * regex denylist here added only false positives (createElement, `.src =`,
+ * `.submit(` appear in tons of legit DOM scripts) and a false sense that the
+ * regex was doing the work. Those egress patterns have been RETIRED.
+ *
+ * What remains here is exactly what CSP does NOT cover:
+ *   1. Read-into-model-context leaks — a script can read a secret (cookie,
+ *      storage, password field) and RETURN it as the evaluate result straight
+ *      to the model provider with ZERO network egress. CSP is irrelevant to
+ *      that channel, so these reads must still be blocked.
+ *   2. Dynamic code execution — eval / Function / string-timer / indirect-eval /
+ *      bracket global access / dynamic import / Reflect.apply / new Proxy. These
+ *      manufacture new code contexts the static scanner (and CSP posture) can't
+ *      reason about; they stay blocked, guarded against escape-obfuscation by
+ *      the \uXXXX/\xXX normalization below plus the string-concat pattern.
+ *   3. WebRTC — RTCPeerConnection. WebRTC data channels are a KNOWN CSP bypass:
+ *      connect-src does NOT reliably gate them, so this is the one egress-ish
+ *      primitive that must stay in the regex. EventSource kept conservatively.
+ *   4. Worker / alternate code contexts and nav/origin manipulation.
+ *
+ * Obfuscation bypass is mitigated by normalizing `\uXXXX` and `\xXX` escapes
+ * before matching. canonical-check: this is the ONE evaluate blocklist.
  */
 export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
-  // Password / credential extraction
+  // (1) Read-into-model-context leaks — password field READS. A script can read
+  // the value and return it as the evaluate result with no network egress, so
+  // CSP cannot help here; the read itself must be blocked.
   /\[\s*type\s*=\s*['"]?password['"]?\s*\]/i,
   /input\[\s*type\s*=\s*['"]?password['"]?/i,
   /\btype\s*===?\s*['"]password['"]/i,
-  // Network exfiltration
-  /\bfetch\s*\(/i,
-  /\bXMLHttpRequest\b/i,
-  /\bnew\s+WebSocket\b/i,
-  /\bnavigator\.sendBeacon\b/i,
-  /\bwindow\.open\b/i,
-  /\bimportScripts\b/i,
-  // Image/form-based exfiltration
-  /\bnew\s+Image\b/i,
-  /\.src\s*=/i,
-  /\.submit\s*\(/i,
-  /\.action\s*=/i,
-  /createElement\s*\(/i,
-  // Storage / credential theft
+  // (1) Read-into-model-context leaks — credential / storage READS. Same reason:
+  // read a secret, RETURN it to the model — no network hop for CSP to catch.
   /\bdocument\.cookie\b/i,
   /\blocalStorage\b/i,
   /\bsessionStorage\b/i,
   /\bindexedDB\b/i,
   /\bcredentials\b/i,
-  // Dynamic code execution (direct + indirect)
+  // (2) Dynamic code execution (direct + indirect). NOTE: `Function` is
+  // CASE-SENSITIVE on purpose — the real constructor is always capital-F
+  // (`new Function(...)`, `Function(...)()`); a case-insensitive match here
+  // also caught the benign lowercase `function` keyword and blocked every
+  // function declaration/expression/IIFE in legit evaluate scripts.
   /\beval\s*\(/i,
-  /\bFunction\s*\(/i,
+  /\bFunction\s*\(/,
   /\bsetTimeout\s*\(\s*['"]/i,
   /\bsetInterval\s*\(\s*['"]/i,
   /\(\s*\d\s*,\s*eval\s*\)/i,
@@ -152,20 +172,23 @@ export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   /\bwindow\s*\[\s*['"]/i,
   /\bglobalThis\s*\[\s*['"]/i,
   /\bself\s*\[\s*['"]/i,
-  // Reflect / Proxy
   /\bReflect\s*\.\s*apply\b/i,
   /\bnew\s+Proxy\b/i,
-  // Dynamic import
   /\bimport\s*\(/i,
-  // Workers / alt transports
+  // (3) WebRTC — CRITICAL keep. Data channels are a known CSP connect-src
+  // bypass, so this is the one egress-ish primitive the regex must still own.
+  // EventSource kept conservatively alongside it.
+  /\bnew\s+EventSource\b/i,
+  /\bRTCPeerConnection\b/i,
+  // (4) Worker / alternate code contexts.
   /\bnew\s+Worker\b/i,
   /\bServiceWorker\b/i,
   /\bSharedWorker\b/i,
-  /\bnew\s+EventSource\b/i,
-  /\bRTCPeerConnection\b/i,
-  // document.domain manipulation
+  // (4) Nav / origin manipulation.
+  /\bwindow\.open\b/i,
   /\bdocument\.domain\b/i,
-  // String concatenation bypass
+  // Obfuscation guard: string-concatenation bypass of the kept eval/Function
+  // patterns (works with the \uXXXX/\xXX normalization above).
   /\+\s*['"][a-z]{1,5}['"]\s*\+/i,
 ];
 

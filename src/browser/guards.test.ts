@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { installRequestGuard } from "./guards.js";
+import { installRequestGuard, scanEvaluateScript } from "./guards.js";
 import { buildAgentCsp } from "./csp-policy.js";
 
 // The guard registers its handler via context.route(); we capture that handler
@@ -231,5 +231,69 @@ describe("installRequestGuard — document CSP injection (CDP/Playwright backend
 		expect(route.fetch).not.toHaveBeenCalled();
 		expect(route.fulfill).not.toHaveBeenCalled();
 		expect(route.continue).not.toHaveBeenCalled();
+	});
+});
+
+describe("scanEvaluateScript — evaluate() blocklist (CSP owns egress; this owns read-leak + dynamic-exec + WebRTC)", () => {
+	// --- The Function false-positive fix (the composer-injector class) ---------
+	// The `Function` constructor pattern is now case-SENSITIVE, so the benign
+	// lowercase `function` keyword no longer trips it. This unblocks every legit
+	// function declaration / expression / IIFE inside an evaluate script.
+	it("does NOT block a benign IIFE `(function(){})()`", () => {
+		expect(scanEvaluateScript("(function(){})()")).toBeNull();
+	});
+	it("does NOT block a benign function declaration", () => {
+		expect(scanEvaluateScript("function foo(){ return 1 }")).toBeNull();
+	});
+	// The real `Function` constructor (always capital-F) is still blocked.
+	it("STILL blocks `new Function(...)`", () => {
+		expect(scanEvaluateScript('new Function("x","return x")')).not.toBeNull();
+	});
+	it("STILL blocks `Function(...)()` invoked-constructor form", () => {
+		expect(scanEvaluateScript('Function("alert(1)")()')).not.toBeNull();
+	});
+
+	// --- Read-into-model-context leaks: STILL blocked (CSP irrelevant) ---------
+	// A script can read a secret and RETURN it to the model with zero network
+	// egress, so CSP cannot cover these — the read itself must stay blocked.
+	it.each([
+		["document.cookie", "return document.cookie"],
+		["localStorage", 'localStorage.getItem("token")'],
+		["sessionStorage", "return sessionStorage.length"],
+		["indexedDB", "indexedDB.open('x')"],
+		["password field selector", 'document.querySelector("[type=password]").value'],
+	])("STILL blocks read-leak: %s", (_label, script) => {
+		expect(scanEvaluateScript(script)).not.toBeNull();
+	});
+
+	// --- Egress primitives: NOW allowed by the scanner ------------------------
+	// These are enforced BY CONSTRUCTION by the per-document agent CSP on BOTH
+	// backends (csp-policy.ts / desktop/src/browser-csp.ts: connect-src /
+	// img-src / form-action / script-src / worker-src). CSP — not this regex —
+	// is the egress enforcement layer for them, so the scanner returns null.
+	it.each([
+		["fetch", 'fetch("https://x")'],
+		["XMLHttpRequest", "new XMLHttpRequest()"],
+		["WebSocket", 'new WebSocket("wss://x")'],
+		["sendBeacon", 'navigator.sendBeacon("/x", d)'],
+		["element .src assignment", 'el.src = "https://x/track.gif"'],
+		["createElement", 'document.createElement("script")'],
+		["form.submit", "form.submit()"],
+	])("does NOT block egress primitive (CSP owns it): %s", (_label, script) => {
+		expect(scanEvaluateScript(script)).toBeNull();
+	});
+
+	// --- WebRTC: STILL blocked (known CSP connect-src bypass) ------------------
+	it("STILL blocks `new RTCPeerConnection()` (WebRTC data channels bypass CSP)", () => {
+		expect(scanEvaluateScript("new RTCPeerConnection()")).not.toBeNull();
+	});
+
+	// --- Dynamic code execution + workers: STILL blocked ----------------------
+	it.each([
+		["eval", 'eval("1+1")'],
+		["dynamic import", 'import("https://x/m.js")'],
+		["Worker", 'new Worker("w.js")'],
+	])("STILL blocks dynamic-exec/worker: %s", (_label, script) => {
+		expect(scanEvaluateScript(script)).not.toBeNull();
 	});
 });

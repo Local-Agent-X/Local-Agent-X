@@ -30,8 +30,8 @@ const { fixtureRowsByOp } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../canonical-loop/index.js", async () => {
-	const real = await vi.importActual<typeof import("../../../canonical-loop/chat-runner/message-convert.js")>(
-		"../../../canonical-loop/chat-runner/message-convert.js",
+	const real = await vi.importActual<typeof import("../../../canonical-loop/public/message-convert.js")>(
+		"../../../canonical-loop/public/message-convert.js",
 	);
 	return {
 		readOpMessages: (opId: string) => fixtureRowsByOp.get(opId) ?? [],

@@ -314,6 +314,37 @@ describe("browser tab in the right side panel", () => {
     expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
   });
 
+  it("hides the overlay when a dropdown drapes over the top edge but misses every corner", () => {
+    // Regression #2: the titlebar ⋯ menu is right-aligned to the ⋯ button,
+    // which sits LEFT of the agents-toggle + window caption buttons — so the
+    // menu covers a strip of the pane's top edge that stops ~40px short of
+    // the top-right corner and nowhere near the center. The old fixed
+    // 5-point probe (center + 4 inset corners) missed it and the menu
+    // rendered stuck behind the native view. The probe grid walks the whole
+    // perimeter, so any ≥60px run across an edge is caught.
+    setAnchorRect({ left: 600, top: 40, width: 380, height: 500 });
+    window.laxBrowserTab.onTabShown();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+    const menu = document.createElement("div");
+    menu.className = "dtb-dd";
+    document.body.appendChild(menu);
+    // Menu covers x∈[820,940], y∈[40,240] — anchor corners are at x=612/968,
+    // y=52/528 and the center at (790,290): none of the legacy points hit.
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = (x, y) =>
+        x >= 820 && x <= 940 && y >= 40 && y <= 240
+          ? menu
+          : document.getElementById("browser-view-anchor");
+    window.laxBrowserTab.sync();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(false);
+    // Menu closed → view returns.
+    menu.remove();
+    (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint =
+      () => document.getElementById("browser-view-anchor");
+    window.laxBrowserTab.sync();
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+  });
+
   it("corner probes are inset past edge chrome like the 5px resize handle", () => {
     // The panel resize handle permanently overlaps the pane's left edge; if a
     // corner probe landed on it, the view would hide forever. Probes must sit

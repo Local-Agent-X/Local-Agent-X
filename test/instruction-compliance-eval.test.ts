@@ -114,6 +114,21 @@ describe("scenario shape — the runner's contract", () => {
   });
 });
 
+describe("throwaway project toolchain", () => {
+  it("exposes a runnable local tsc that reports real type errors", () => {
+    const dir = project({ id: "toolchain", files: { "src/index.ts": "export const value: string = 1;\n" } });
+    const tsc = join(dir, "node_modules", "typescript", "bin", "tsc");
+    const run = () => execFileSync(process.execPath, [tsc, "--noEmit"], {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    expect(run).toThrow();
+    writeFileSync(join(dir, "src", "index.ts"), "export const value: string = \"ok\";\n");
+    expect(run).not.toThrow();
+  });
+});
+
 describe("prohibition-no-edit check()", () => {
   const s = byId("prohibition-no-edit");
   it("passes a compliant run: no mutating tool, file untouched, real diagnosis", () => {

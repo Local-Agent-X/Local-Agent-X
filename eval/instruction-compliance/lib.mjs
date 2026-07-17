@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, "..", "..");
-const TSC_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsc");
+const TSC_JS = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
 
 // ── Server config (LAZY, unlike grok-coding-parity's import-time load) ──
 // Resolved on the first live call so the pure scoring helpers stay importable
@@ -95,12 +95,12 @@ export async function driveChat(message, sessionId, timeoutMs) {
 // ── Throwaway project helpers ──
 
 /** A fresh temp project dir UNDER $HOME (the guarded sandbox blocks writes to
- *  /tmp), with a strict tsconfig and a local tsc symlinked to the repo's. */
+ *  /tmp), with a strict tsconfig and the repo's toolchain junctioned in. */
 export function makeProject(id, files) {
   const dir = mkdtempSync(join(homedir(), `lax-icomp-${id}-`));
   mkdirSync(join(dir, "src"), { recursive: true });
-  mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
-  try { symlinkSync(TSC_BIN, join(dir, "node_modules", ".bin", "tsc")); } catch { /* exists */ }
+  symlinkSync(join(REPO_ROOT, "node_modules"), join(dir, "node_modules"), "junction");
+  writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
   writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `icomp-${id}`, version: "1.0.0", type: "module" }, null, 2));
   writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({
     compilerOptions: { target: "ES2020", module: "NodeNext", moduleResolution: "NodeNext", strict: true, noEmit: true, skipLibCheck: true },
@@ -119,7 +119,7 @@ export function cleanup(dir) { try { rmSync(dir, { recursive: true, force: true 
 /** Run the project's own tsc; ok=true on a clean exit. */
 export function runTsc(dir) {
   try {
-    execFileSync(join(dir, "node_modules", ".bin", "tsc"), ["--noEmit"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync(process.execPath, [TSC_JS, "--noEmit"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
     return { ok: true, output: "" };
   } catch (e) {
     return { ok: false, output: `${e.stdout || ""}${e.stderr || ""}`.trim() };

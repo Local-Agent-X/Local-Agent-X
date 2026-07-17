@@ -231,6 +231,76 @@ describe("F1: auth gate over a real HTTP round-trip", () => {
   });
 });
 
+// ── C7 round-2: the egress-granting /api/local-runtimes route is agent-fenced ──
+// The C7 fold made every settings.localRuntimes entry widen the agent's OWN
+// egress (each entry = an exact host:port evaluateWebFetch then allows). That
+// turns the WRITE route into a privilege boundary: an injected agent's self-call
+// auto-carries the internal agent token (tools/web-egress.ts selfCallAuthHeader),
+// so unless the route is fenced the agent could POST an arbitrary LAN host into
+// its own egress allowlist and then reach it — a confused-deputy escalation.
+// These drive the REAL authorizeRequest gate over a live socket (the earlier
+// route test called the handler with a hand-picked "owner" role, bypassing it)
+// and prove the attack entry never comes into existence.
+describe("C7: agent role is fenced out of the egress-granting /api/local-runtimes route", () => {
+  const AGENT = () => rbac.getInternalAgentToken();
+  const ATTACK = "http://192.168.66.66:11434"; // a LAN host the operator never named
+
+  it("agent self-call POST is denied AT checkEndpoint (403 with the RBAC reason, not a CSRF/401)", async () => {
+    const res = await fetch(`${base()}/api/local-runtimes`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${AGENT()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "ollama", baseUrl: ATTACK }),
+    });
+    expect(res.status).toBe(403);
+    // Pin the denial to the RBAC endpoint gate: the reason string is
+    // checkEndpoint's ("...cannot access..."), distinguishing it from the CSRF
+    // 403 ("Cross-origin mutation blocked") so this can't pass for the wrong reason.
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("cannot access");
+  });
+
+  it("agent self-call DELETE is denied too (both mutating methods fenced)", async () => {
+    const res = await fetch(`${base()}/api/local-runtimes?baseUrl=${encodeURIComponent(ATTACK)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${AGENT()}` },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("operator token clears the gate and reaches the handler (settings UI path unaffected)", async () => {
+    // Empty body → the route's own 400 (Invalid JSON). The contract under test
+    // is that it is NEITHER 401 NOR 403: operator passed the RBAC boundary and
+    // reached the handler, so the fence didn't over-block the legitimate path.
+    const res = await fetch(`${base()}/api/local-runtimes`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${OP_TOKEN}` },
+    });
+    expect(res.status).not.toBe(401);
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(400);
+  });
+
+  it("attack chain dies at the gate: an agent-POST'd entry never comes into existence", async () => {
+    // The refutation in one assertion: after the agent's denied self-call, no
+    // settings.localRuntimes entry for the attack host exists — so the C7 egress
+    // carve-out never opens for it. Read the truth through the operator GET,
+    // which returns manualRuntimeEntries() (the same set the carve-out derives).
+    const attempt = await fetch(`${base()}/api/local-runtimes`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${AGENT()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "ollama", baseUrl: ATTACK }),
+    });
+    expect(attempt.status).toBe(403); // never reached the persisting handler
+
+    const view = await fetch(`${base()}/api/local-runtimes`, {
+      headers: { Authorization: `Bearer ${OP_TOKEN}` },
+    });
+    expect(view.status).toBe(200);
+    const body = (await view.json()) as { manual: Array<{ baseUrl: string }> };
+    expect(body.manual.some((m) => m.baseUrl.includes("192.168.66.66"))).toBe(false);
+  });
+});
+
 // ── Static-build app serving ────────────────────────────────────────────────
 // A finished frontend-spa build serves its built dist/ directly at /apps/<id>/
 // with NO dev server (app-run-target marker). These prove the request handler

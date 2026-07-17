@@ -13,7 +13,8 @@ import {
   isPrivateIPv6,
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
-import { ollamaLoopbackPort, localRuntimeLoopbackPorts } from "./security-config.js";
+import { ollamaLoopbackPort, localRuntimeLoopbackPorts, manualRuntimeHostPorts } from "./security-config.js";
+import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
 const logger = createLogger("security.network-policy");
@@ -52,6 +53,7 @@ export function evaluateWebFetch(
   url: string,
   egressMode: EgressMode = "permissive",
   localServicePorts: ReadonlySet<string> = new Set<string>(),
+  manualHostPorts: ReadonlySet<string> = new Set<string>(),
 ): SecurityDecision {
   let parsed: URL;
   try {
@@ -66,6 +68,12 @@ export function evaluateWebFetch(
   }
 
   const host = canonicalizeHost(parsed.hostname);
+
+  // Operator-added local runtime (settings.localRuntimes)? Normalized via the
+  // admission gate's endpointHostPort so both sides match exactly. Exempts ONLY
+  // the private-range blocks; blocked hostnames + metadata stay blocked.
+  const hostPort = endpointHostPort(url);
+  const operatorNamed = hostPort !== null && manualHostPorts.has(hostPort);
 
   // Strict local-only mode sits above the configurable egress policy. It is a
   // user-owned hard boundary: allow every literal loopback port (local apps,
@@ -102,7 +110,7 @@ export function evaluateWebFetch(
   // Check if it's a literal IP address
   // IPv4 — strict decimal only; octal (0177.0.0.1) and hex (0x7f.0.0.1) are blocked
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || /^0x[0-9a-f]/i.test(host) || /^0[0-7]+\./.test(host)) {
-    if (isPrivateIPv4(host)) {
+    if (isPrivateIPv4(host) && !operatorNamed) {
       return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
     }
   }
@@ -121,7 +129,7 @@ export function evaluateWebFetch(
     if (host.startsWith("[") && !host.includes("]")) {
       return { allowed: false, reason: `Blocked: malformed IPv6 address brackets in ${host}`, userHint: USER_HINTS.network };
     }
-    if (isPrivateIPv6(cleanHost)) {
+    if (isPrivateIPv6(cleanHost) && !operatorNamed) {
       return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
     }
   }
@@ -130,6 +138,11 @@ export function evaluateWebFetch(
   if (host === "169.254.169.254" || host.endsWith(".internal") || host.endsWith(".metadata")) {
     return { allowed: false, reason: `Blocked: ${host} is a cloud metadata endpoint`, userHint: USER_HINTS.network };
   }
+
+  // Exact operator-named runtime endpoint: same carve-out semantics as the
+  // loopback local-service allow above, strict mode included — admission.ts
+  // routes LAX's own chat there, so the agent's HTTP tools must agree.
+  if (operatorNamed) return { allowed: true, reason: `Allowed operator-added local runtime ${hostPort}` };
 
   // ── Egress policy ──
   // Permissive (default): all public hosts allowed. SSRF/private-IP/cloud-metadata
@@ -163,6 +176,7 @@ export interface EgressConfig {
   configured: boolean;
   mode: EgressMode;
   localServicePorts: Set<string>;
+  manualHostPorts: Set<string>;
 }
 
 /**
@@ -221,12 +235,13 @@ export function loadEgressConfig(): EgressConfig {
   // Fold in the configured ollama loopback port + DISCOVERED local-runtime
   // ports (plus loopback manual adds) so a redirect re-check (this path)
   // agrees with the pre-dispatch gate's localServicePorts. Same
-  // validate-as-loopback guarantee.
+  // validate-as-loopback guarantee. Manual runtime entries fold in as exact
+  // host:port identities so operator-named (incl. LAN) endpoints agree too.
   const ollama = ollamaLoopbackPort();
   if (ollama) localServicePorts.add(ollama);
   for (const p of localRuntimeLoopbackPorts()) localServicePorts.add(p);
 
-  return { allowlist, configured, mode, localServicePorts };
+  return { allowlist, configured, mode, localServicePorts, manualHostPorts: manualRuntimeHostPorts() };
 }
 
 /**
@@ -250,6 +265,7 @@ export function evaluateEgressForUrl(url: string, selfPort = "7007"): SecurityDe
     url,
     cfg.mode,
     cfg.localServicePorts,
+    cfg.manualHostPorts,
   );
 }
 
@@ -357,9 +373,10 @@ export async function validateUrlWithDns(
   url: string,
   egressMode: EgressMode = "permissive",
   localServicePorts: ReadonlySet<string> = new Set<string>(),
+  manualHostPorts: ReadonlySet<string> = new Set<string>(),
 ): Promise<SecurityDecision> {
   // First do the synchronous check
-  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url, egressMode, localServicePorts);
+  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url, egressMode, localServicePorts, manualHostPorts);
   if (!syncResult.allowed) return syncResult;
 
   const parsed = new URL(url);

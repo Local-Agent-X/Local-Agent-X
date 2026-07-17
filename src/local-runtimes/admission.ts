@@ -46,8 +46,9 @@ export function endpointHostPort(baseUrl: string): string | null {
  * May LAX probe / route chat to this endpoint?
  *
  * @param manualAllowlist exact "host:port" entries the operator added by
- *   hand (persisted in settings; folded into security.json's local-service
- *   carve-out separately so the agent's own HTTP tools agree).
+ *   hand (persisted in settings; folded into the agent-tool egress gate
+ *   separately — security/layer/security-config.ts manualRuntimeHostPorts —
+ *   so the agent's own HTTP tools agree).
  */
 export function admitEndpoint(
   baseUrl: string,

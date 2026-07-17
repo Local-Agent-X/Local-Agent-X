@@ -18,6 +18,34 @@ describe("RBAC agent role", () => {
     expect(rbac.checkEndpoint("agent", "POST", "/api/auth/rotate").allowed).toBe(false);
   });
 
+  // C7 round-2: /api/local-runtimes is egress-granting — a POST/DELETE there
+  // rewrites settings.localRuntimes, and every entry becomes an exact host:port
+  // the agent's own HTTP tools may reach (security-config manualRuntimeHostPorts
+  // → evaluateWebFetch carve-out). It MUST be denied to the agent self-call
+  // principal or the fold becomes an agent-controlled egress allowlist. This is
+  // the linchpin the whole attack chain dies on.
+  it("agent role is DENIED /api/local-runtimes for the mutating methods (egress-granting)", () => {
+    expect(rbac.checkEndpoint("agent", "POST", "/api/local-runtimes").allowed).toBe(false);
+    expect(rbac.checkEndpoint("agent", "DELETE", "/api/local-runtimes").allowed).toBe(false);
+    expect(rbac.checkEndpoint("agent", "PUT", "/api/local-runtimes").allowed).toBe(false);
+  });
+
+  it("agent role is DENIED /api/local-runtimes for GET too (path-only denial; agent never needs it)", () => {
+    // deniedEndpoints carries no method scoping, so the read-only GET is denied
+    // by the same path entry — the agent reads runtimes from the in-process
+    // cache, not this route, so nothing legitimate breaks.
+    expect(rbac.checkEndpoint("agent", "GET", "/api/local-runtimes").allowed).toBe(false);
+    // Prefix boundary: subpaths are denied, siblings are not falsely swept in.
+    expect(rbac.checkEndpoint("agent", "GET", "/api/local-runtimes/anything").allowed).toBe(false);
+    expect(rbac.checkEndpoint("agent", "GET", "/api/local-runtimes-sibling").allowed).toBe(true);
+  });
+
+  it("operator role CAN reach /api/local-runtimes (the settings UI path is unaffected)", () => {
+    expect(rbac.checkEndpoint("operator", "POST", "/api/local-runtimes").allowed).toBe(true);
+    expect(rbac.checkEndpoint("operator", "DELETE", "/api/local-runtimes").allowed).toBe(true);
+    expect(rbac.checkEndpoint("operator", "GET", "/api/local-runtimes").allowed).toBe(true);
+  });
+
   it("agent role CAN make benign self-calls", () => {
     expect(rbac.checkEndpoint("agent", "GET", "/api/settings").allowed).toBe(true);
   });

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { getLocalRuntimes } from "../../local-runtimes/cache.js";
+import { manualAllowlist } from "../../local-runtimes/endpoints.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
@@ -93,13 +94,12 @@ export function loopbackPortFromUrl(url: string): string | null {
  * config-based carve-out (ollamaLoopbackPort), so the primary runtime
  * never waits on discovery.
  *
- * Non-loopback runtimes (discovered or manual — a LAN GPU box) are
- * deliberately NOT folded in: the loopback-host guard in network-policy
- * makes port entries meaningless for them, and agent egress to a LAN box
- * is a separate authorization from chat routing (LAX's own chat/probe
- * fetch reaches it via the admission gate instead). settings.json is read
- * raw from disk, not via the settings cache, so a security decision never
- * runs on a stale allowlist.
+ * Non-loopback runtimes never fold in HERE: the loopback-host guard in
+ * network-policy makes bare-port entries meaningless for them. A named
+ * LAN box gets agent egress through the SEPARATE exact host:port fold —
+ * manualRuntimeHostPorts() below — never through this port set.
+ * settings.json is read raw from disk, not via the settings cache, so a
+ * security decision never runs on a stale allowlist.
  */
 export function localRuntimeLoopbackPorts(): Set<string> {
   const ports = new Set<string>();
@@ -123,6 +123,41 @@ export function localRuntimeLoopbackPorts(): Set<string> {
     }
   } catch {}
   return ports;
+}
+
+/**
+ * Exact "host:port" identities of operator manual-add runtime entries
+ * (settings.localRuntimes) — the SAME validated set the admission gate
+ * matches (endpoints.ts manualAllowlist), so chat routing and agent-tool
+ * egress agree by construction, never via a second parallel allowlist.
+ * Non-loopback entries are the point: a hand-named LAN GPU box clears the
+ * private-range egress block in network-policy for the agent's own HTTP
+ * tools. Loopback-only invariants are untouched — the discovery sweep and
+ * the port carve-out above stay loopback-only; this set only ever admits
+ * a host:port the operator typed. Read raw from disk (not the settings
+ * cache) and re-derived per decision, so an operator add/remove takes
+ * effect immediately and never runs on a stale allowlist.
+ *
+ * SECURITY / keep-in-sync: entries here GRANT agent egress to their exact
+ * host:port. The endpoint that writes them, POST/DELETE /api/local-runtimes,
+ * is therefore agent-role-DENIED (rbac.ts ROLE_PERMISSIONS.agent.deniedEndpoints)
+ * for exactly that reason — otherwise a self-calling injected agent could name
+ * its own egress targets (confused-deputy escalation). This derivation trusts
+ * that only the operator populates settings.localRuntimes. If you ever open the
+ * route to the agent role, this carve-out becomes an agent-controlled allowlist —
+ * update both sites together.
+ */
+export function manualRuntimeHostPorts(): Set<string> {
+  try {
+    const sPath = join(getLaxDir(), "settings.json");
+    if (existsSync(sPath)) {
+      const s: unknown = JSON.parse(readFileSync(sPath, "utf-8"));
+      if (s && typeof s === "object") {
+        return new Set(manualAllowlist(s as Record<string, unknown>));
+      }
+    }
+  } catch {}
+  return new Set();
 }
 
 export function loadLocalServicePorts(): Set<string> {

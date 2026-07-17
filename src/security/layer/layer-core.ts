@@ -16,7 +16,7 @@ import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network
 import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
-import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy } from "./security-config.js";
+import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
 
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
@@ -256,6 +256,8 @@ export class SecurityLayer {
         sessionId: ctx.sessionId,
       });
     } else if (toolName === "web_fetch" || toolName === "http_request") {
+      // manualRuntimeHostPorts() is read fresh per call (like the connect-time
+      // re-check path) so a Settings add/remove takes effect without a restart.
       decision = evaluateWebFetch(
         this.egressAllowlist,
         this.egressAllowlistConfigured,
@@ -263,6 +265,7 @@ export class SecurityLayer {
         String(args.url || ""),
         this.egressMode,
         this.localServicePorts,
+        manualRuntimeHostPorts(),
       );
     } else {
       // kernelClassForTool (not raw TOOL_CLASS_MAP) so dynamic MCP tools resolve
@@ -342,6 +345,7 @@ export class SecurityLayer {
           browserUrl,
           this.egressMode,
           this.localServicePorts,
+          manualRuntimeHostPorts(),
         );
       } catch {
         return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
@@ -368,6 +372,7 @@ export class SecurityLayer {
       egressMode: this.egressMode,
       selfPort: String(SecurityLayer._selfPort || "7007"),
       localServicePorts: this.localServicePorts,
+      manualHostPorts: manualRuntimeHostPorts(),
       workspace: this.workspace,
       fileAccessMode: this.fileAccessMode,
       inlineEvalPolicy: this.inlineEvalPolicy,
@@ -388,6 +393,7 @@ export class SecurityLayer {
       url,
       this.egressMode,
       this.localServicePorts,
+      manualRuntimeHostPorts(),
     );
   }
 }

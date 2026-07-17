@@ -86,7 +86,22 @@ const ROLE_PERMISSIONS: Record<Role, {
     allowedTools: "*",
     // Deny every sensitive sink reachable over HTTP. Benign self-calls
     // (/api/settings, theme, orgs) are not under any of these prefixes.
-    deniedEndpoints: ["/api/secrets", "/api/tokens", "/api/plugins", "/api/auth", "/api/audit", "/api/logs"],
+    //
+    // /api/local-runtimes is EGRESS-GRANTING: a POST/DELETE there rewrites
+    // settings.localRuntimes, and every entry becomes an exact host:port the
+    // agent's own HTTP tools may then reach (security/layer/security-config.ts
+    // manualRuntimeHostPorts → evaluateWebFetch carve-out). Without this denial
+    // an injected agent could self-call POST /api/local-runtimes — self-calls
+    // auto-carry the internal agent token (tools/web-egress.ts selfCallAuthHeader)
+    // — to allowlist an arbitrary LAN host, then egress to it: a confused-deputy
+    // privilege escalation that turns "chat may route to a named runtime" into
+    // "the agent may name its own egress targets". Denied for ALL methods,
+    // matching the path-only shape of the sinks above (deniedEndpoints carries no
+    // method scoping); the read-only GET is denied too only because the agent
+    // never needs it — its chat/routing path reads runtimes from the in-process
+    // cache (local-runtimes getLocalRuntimes), not this route, which exists for
+    // the operator settings UI. Keep this in sync with manualRuntimeHostPorts.
+    deniedEndpoints: ["/api/secrets", "/api/tokens", "/api/plugins", "/api/auth", "/api/audit", "/api/logs", "/api/local-runtimes"],
   },
 };
 

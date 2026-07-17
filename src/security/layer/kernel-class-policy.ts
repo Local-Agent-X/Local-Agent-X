@@ -13,6 +13,8 @@ export interface KernelClassPolicyCtx {
   egressMode: EgressMode;
   selfPort: string;
   localServicePorts: ReadonlySet<string>;
+  /** Exact host:port identities of operator manual-add runtime entries. */
+  manualHostPorts: ReadonlySet<string>;
   workspace: string;
   fileAccessMode: FileAccessMode;
   inlineEvalPolicy: InlineEvalPolicy;
@@ -69,6 +71,7 @@ export function evaluateByKernelClass(
           args.url,
           policy.egressMode,
           policy.localServicePorts,
+          policy.manualHostPorts,
         );
       }
       return {

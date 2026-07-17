@@ -86,6 +86,7 @@ function init_settings() {
   loadUploadsStats();
   // loadSelfModify removed — platform files always protected
   loadIntegrations();
+  if (typeof loadLocalRuntimesEditor === 'function') loadLocalRuntimesEditor();
   if (typeof loadMcpServers === 'function') loadMcpServers();
   waCheckStatus();
   tgCheckStatus();
@@ -121,6 +122,7 @@ function switchTab(id) {
   const pill = (event?.target?.classList?.contains('tab-pill') ? event.target : null)
     || document.querySelector('.tab-pill[data-tab="' + id + '"]');
   if (pill) pill.classList.add('active');
+  if (id === 'ai' && typeof loadLocalRuntimesEditor === 'function') loadLocalRuntimesEditor();
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();
   if (id === 'usage' && typeof loadUsage === 'function') loadUsage();

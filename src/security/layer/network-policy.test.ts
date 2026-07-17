@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { resolveAndPinHost, validateUrlWithDns, evaluateWebFetch } from "./network-policy.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { resolveAndPinHost, validateUrlWithDns, evaluateWebFetch, evaluateEgressForUrl } from "./network-policy.js";
 import {
   BLOCKED_HOSTNAMES,
   SPECIAL_USE_IPV4_RANGES,
@@ -223,5 +226,113 @@ describe("evaluateWebFetch — trailing-dot host canonicalization (R4-17)", () =
     const allowlist = new Set<string>(["example.com"]);
     const decision = evaluateWebFetch(allowlist, true, "7007", "http://example.com./", "strict");
     expect(decision.allowed).toBe(true);
+  });
+});
+
+// ── C7: operator-added local runtime host:port carve-out ──────────────────
+// settings.localRuntimes entries are the operator's exact-host:port statement
+// "LAX may talk to this inference endpoint". The admission gate consumes them
+// for LAX's own probe/chat fetches; evaluateWebFetch consumes the SAME
+// validated set (security-config manualRuntimeHostPorts → endpoints.ts
+// manualAllowlist) so the agent's HTTP tools agree. These pin the boundaries:
+// exact host:port only, no range widening, SSRF-shape blocks unaffected.
+describe("evaluateWebFetch — operator-named local runtime carve-out (C7)", () => {
+  const named = (url: string, entries: string[], mode: "permissive" | "strict" = "permissive") =>
+    evaluateWebFetch(EMPTY_ALLOWLIST, mode === "strict", "7007", url, mode, new Set(), new Set(entries));
+
+  it("allows an exact-named private IPv4 host:port (the LAN GPU box case)", () => {
+    const d = named("http://192.168.1.50:11434/api/tags", ["192.168.1.50:11434"]);
+    expect(d.allowed).toBe(true);
+    expect(d.reason).toContain("operator-added local runtime");
+  });
+
+  it("blocks the same host on a DIFFERENT port — exact matching, no host-wide widening", () => {
+    expect(named("http://192.168.1.50:8080/", ["192.168.1.50:11434"]).allowed).toBe(false);
+  });
+
+  it("blocks OTHER private hosts when one is named — no range admission", () => {
+    expect(named("http://192.168.1.51:11434/", ["192.168.1.50:11434"]).allowed).toBe(false);
+    expect(named("http://10.0.0.7:11434/", ["192.168.1.50:11434"]).allowed).toBe(false);
+  });
+
+  it("empty set preserves the existing private-range block exactly", () => {
+    const d = webFetch("http://192.168.1.50:11434/");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toContain("private/reserved IPv4");
+  });
+
+  it("cloud metadata stays blocked even when named (link-local IP and .internal alias)", () => {
+    expect(named("http://169.254.169.254:80/", ["169.254.169.254:80"]).allowed).toBe(false);
+    expect(named("http://metadata.google.internal:80/", ["metadata.google.internal:80"]).allowed).toBe(false);
+  });
+
+  it("blocked hostnames stay blocked even when named (localhost is not a nameable entry)", () => {
+    expect(named("http://localhost:11434/", ["localhost:11434"]).allowed).toBe(false);
+  });
+
+  it("strict egress mode: a named runtime passes without an egress-allowlist entry", () => {
+    const d = named("http://192.168.1.50:11434/v1/chat/completions", ["192.168.1.50:11434"], "strict");
+    expect(d.allowed).toBe(true);
+    // ...and strict mode still blocks unnamed public hosts in the same call shape.
+    expect(named("http://example.org/", ["192.168.1.50:11434"], "strict").allowed).toBe(false);
+  });
+
+  it("default ports normalize identically on both sides (entry without explicit port)", () => {
+    expect(named("http://192.168.1.50/", ["192.168.1.50:80"]).allowed).toBe(true);
+  });
+
+  it("IPv6 unique-local literals match via bracketed WHATWG normalization", () => {
+    expect(named("http://[fd12:3456::7]:8000/v1/models", ["[fd12:3456::7]:8000"]).allowed).toBe(true);
+    expect(named("http://[fd12:3456::8]:8000/", ["[fd12:3456::7]:8000"]).allowed).toBe(false);
+  });
+});
+
+// The full contract the admission-gate header promises: an operator entry in
+// settings.localRuntimes ⇒ the AGENT's HTTP tools may egress to that exact
+// host:port. Exercises the real disk seam (loadEgressConfig → evaluateWebFetch)
+// against an isolated LAX_DATA_DIR — the same per-call path the connect-time
+// re-checks (web-egress, browser guards, egress proxy, integrations) run.
+describe("egress fold contract — settings.localRuntimes ⇒ evaluateEgressForUrl (C7)", () => {
+  let dir: string;
+  let prev: string | undefined;
+  beforeEach(() => {
+    prev = process.env.LAX_DATA_DIR;
+    dir = mkdtempSync(join(tmpdir(), "lax-c7-"));
+    process.env.LAX_DATA_DIR = dir;
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a manual non-loopback entry becomes agent-egress-allowed; removing it re-blocks", () => {
+    // Before the entry exists: blocked (private range).
+    expect(evaluateEgressForUrl("http://192.168.1.50:11434/api/tags").allowed).toBe(false);
+
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({
+      localRuntimes: [{ kind: "ollama", baseUrl: "http://192.168.1.50:11434", label: "GPU box" }],
+    }));
+    const d = evaluateEgressForUrl("http://192.168.1.50:11434/api/tags");
+    expect(d.allowed).toBe(true);
+    expect(d.reason).toContain("192.168.1.50:11434");
+    // Sibling host / other port stay blocked — one entry admits ONE host:port.
+    expect(evaluateEgressForUrl("http://192.168.1.51:11434/").allowed).toBe(false);
+    expect(evaluateEgressForUrl("http://192.168.1.50:8080/").allowed).toBe(false);
+
+    // Operator delete re-blocks immediately — the set is re-read per decision.
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ localRuntimes: [] }));
+    expect(evaluateEgressForUrl("http://192.168.1.50:11434/api/tags").allowed).toBe(false);
+  });
+
+  it("malformed settings entries never admit anything (validation lives in endpoints.ts alone)", () => {
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({
+      localRuntimes: [
+        { kind: "bogus", baseUrl: "http://192.168.1.50:11434" },
+        { kind: "ollama", baseUrl: "not a url" },
+        "garbage",
+      ],
+    }));
+    expect(evaluateEgressForUrl("http://192.168.1.50:11434/").allowed).toBe(false);
   });
 });

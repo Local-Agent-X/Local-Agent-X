@@ -497,6 +497,19 @@
           <div class="field-row"><div class="field"><label class="field-label">Temperature</label><input class="field-input" id="cfg-temperature" type="number" step="0.1" min="0" max="2" value="0.7"/><div class="field-hint">Controls creativity vs accuracy. Lower (0.1-0.3) = focused and precise, less hallucination. Higher (0.7-1.5) = more creative but may make things up. Default 0.7 is a good balance.</div></div><div class="field"><label class="field-label">Max Iterations</label><input class="field-input" id="cfg-maxiter" type="number" min="120" max="300" value="160"/><div class="field-hint">How many tool calls the agent can make per message before pausing at a checkpoint (you can always say "continue" to keep going). Minimum 120 — long agentic tasks need room. Default 160.</div></div></div>
           <div class="field-row"><div class="field"><label class="field-label">Max Sub-Agents</label><input class="field-input" id="cfg-maxsubagents" type="number" min="1" max="20" value="5"/><div class="field-hint">How many sub-agents (spawned workers) can run at the same time. Each is a full agent with its own model stream and tools, so higher = more parallel work but more local CPU/RAM. Reasoning/research agents are light; several running builds or browsers at once is what you'd actually feel. Default 5.</div></div></div>
         </div>
+        <div class="section-card">
+          <div class="section-title">Local Runtimes</div>
+          <div class="section-desc">Register inference servers the automatic loopback scan can't see — LM Studio on a custom port, or an Ollama / OpenAI-compatible server on another machine (a LAN GPU box). Exact host and port only.</div>
+          <div id="local-runtimes-list" style="margin-bottom:10px"></div>
+          <div class="field-row">
+            <div class="field" style="max-width:170px"><label class="field-label">Kind</label><select class="field-select" id="lr-add-kind"><option value="ollama">Ollama</option><option value="openai-compat">OpenAI-compatible</option></select></div>
+            <div class="field"><label class="field-label">Base URL</label><input class="field-input" id="lr-add-url" placeholder="http://192.168.1.50:11434"/></div>
+            <div class="field" style="max-width:150px"><label class="field-label">Label (optional)</label><input class="field-input" id="lr-add-label" placeholder="GPU box"/></div>
+            <div class="field" style="max-width:80px"><label class="field-label">&nbsp;</label><button class="action-btn primary" id="lr-add-btn" onclick="addLocalRuntime()">Add</button></div>
+          </div>
+          <div class="field-hint">A non-loopback entry extends what the agent itself may reach: the exact host:port you add is admitted for chat routing <em>and</em> for the agent's own HTTP tools. Nothing else on that network is.</div>
+          <div id="lr-add-status" style="font-size:.75rem;margin-top:4px"></div>
+        </div>
       </div>
       <!-- Usage & Spending limits -->
       <div id="stab-usage" class="tab-pane">
@@ -1519,6 +1532,7 @@
 <script src="/js/settings-xai.js?v=v3"></script>
 <script src="/js/settings-providers.js?v=v1"></script>
 <script src="/js/settings-ollama.js?v=v1"></script>
+<script src="/js/settings-local-runtimes.js?v=v1"></script>
 <script src="/js/settings-save-load.js?v=v1"></script>
 <script src="/js/settings-voice-tier4.js?v=v1"></script>
 <script src="/js/settings-embedding.js?v=v1"></script>

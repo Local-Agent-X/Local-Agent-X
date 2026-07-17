@@ -1,5 +1,14 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { buildSanitizedEnv, resolveWindowsShell, isLikelyAvKill, portableGitBashPath } from "../src/tools/shell-env.js";
+import {
+  _resetWindowsShellCache,
+  buildSanitizedEnv,
+  resolveWindowsShell,
+  isLikelyAvKill,
+  portableGitBashPath,
+} from "../src/tools/shell-env.js";
 import { detectTargetShell, translateForShell } from "../src/tools/shell-translate.js";
 
 const isWin = process.platform === "win32";
@@ -68,10 +77,34 @@ describe("resolveWindowsShell — deterministic POSIX shell, never the WSL launc
     expect(lower).not.toContain("\\windowsapps\\");
   });
 
-  it.runIf(isWin)("selects a real Git Bash on Windows (Git for Windows is installed here)", () => {
-    const s = resolveWindowsShell();
-    expect(s.kind).toBe("bash");
-    expect(s.path.toLowerCase()).toMatch(/bash\.exe$/);
+  it.runIf(isWin)("selects Git Bash from a Git-for-Windows installation on PATH", () => {
+    const gitRoot = mkdtempSync(join(tmpdir(), "lax-git-bash-"));
+    const gitCmd = join(gitRoot, "cmd");
+    const gitBin = join(gitRoot, "bin");
+    const isolatedLocalAppData = join(gitRoot, "local-app-data");
+    mkdirSync(gitCmd);
+    mkdirSync(gitBin);
+    mkdirSync(isolatedLocalAppData);
+    writeFileSync(join(gitCmd, "git.exe"), "");
+    writeFileSync(join(gitBin, "bash.exe"), "");
+    const previousPath = process.env.PATH;
+    const previousLocalAppData = process.env.LOCALAPPDATA;
+
+    try {
+      process.env.PATH = gitCmd;
+      process.env.LOCALAPPDATA = isolatedLocalAppData;
+      _resetWindowsShellCache();
+      const s = resolveWindowsShell();
+      expect(s.kind).toBe("bash");
+      expect(s.path).toBe(join(gitBin, "bash.exe"));
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = previousLocalAppData;
+      _resetWindowsShellCache();
+      rmSync(gitRoot, { recursive: true, force: true });
+    }
   });
 
   it("a bash shell path skips POSIX→PS translation so commands run natively", () => {

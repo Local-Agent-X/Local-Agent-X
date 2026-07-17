@@ -32,9 +32,23 @@ import { MODEL_CAPABILITY_SEED, type ModelCapabilitySeedEntry } from "./model-ca
 
 const logger = createLogger("providers.model-capabilities");
 
+/** Result of a LIVE behavioral tool-call check (see tool-capability-probe). */
+export interface ToolsVerified {
+  ok: boolean;
+  /** ISO timestamp of the observation. */
+  at: string;
+}
+
 interface CapabilityEntry {
   noTools?: boolean;
   unsupportedParams?: string[];
+  /**
+   * Live-verified tool-calling: did a structured tool_call actually come back
+   * from this (baseURL, model)? Vendor metadata lies both ways — a model can
+   * advertise "tools" and still be terrible, or lack the flag and work.
+   * LEARNED-only (an observation made on THIS machine — never seeded).
+   */
+  toolsVerified?: ToolsVerified;
 }
 
 interface StoreShape {
@@ -82,6 +96,10 @@ function ensureLoaded(): Map<string, CapabilityEntry> {
           if (v.noTools === true) entry.noTools = true;
           if (Array.isArray(v.unsupportedParams)) {
             entry.unsupportedParams = v.unsupportedParams.filter((p): p is string => typeof p === "string");
+          }
+          const tv = v.toolsVerified;
+          if (tv && typeof tv === "object" && typeof tv.ok === "boolean" && typeof tv.at === "string") {
+            entry.toolsVerified = { ok: tv.ok, at: tv.at };
           }
           next.set(k, entry);
         }
@@ -148,6 +166,30 @@ export function recordUnsupportedParam(baseURL: string | undefined, model: strin
   const params = entry.unsupportedParams ?? [];
   if (params.includes(param)) return; // already known — no redundant write
   entry.unsupportedParams = [...params, param];
+  map.set(key, entry);
+  persist();
+}
+
+/**
+ * The live-verified tool-calling observation for (baseURL, model), if any.
+ * undefined = never verified. LEARNED-only — the seed carries no live
+ * observations, so (unlike hasNoTools) there is no seed layer to consult.
+ */
+export function getToolsVerified(baseURL: string | undefined, model: string): ToolsVerified | undefined {
+  const tv = ensureLoaded().get(storeKey(baseURL, model))?.toolsVerified;
+  return tv ? { ...tv } : undefined;
+}
+
+/**
+ * Record a live tool-verification observation. Persists through to disk.
+ * Always writes: a re-verification is a fresh observation with a fresh
+ * timestamp, not a redundant one.
+ */
+export function recordToolsVerified(baseURL: string | undefined, model: string, ok: boolean): void {
+  const map = ensureLoaded();
+  const key = storeKey(baseURL, model);
+  const entry = map.get(key) ?? {};
+  entry.toolsVerified = { ok, at: new Date().toISOString() };
   map.set(key, entry);
   persist();
 }

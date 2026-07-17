@@ -17,6 +17,8 @@ import {
   recordNoTools,
   hasUnsupportedParam,
   recordUnsupportedParam,
+  getToolsVerified,
+  recordToolsVerified,
   _resetForTests,
 } from "./model-capabilities-store.js";
 import {
@@ -24,6 +26,8 @@ import {
   markNoToolSupport,
   hasParamUnsupported,
   markParamUnsupported,
+  getToolsVerified as getToolsVerifiedViaWrapper,
+  markToolsVerified,
 } from "./types.js";
 
 const LOCAL = "http://localhost:11434/v1";
@@ -99,6 +103,45 @@ describe("resilience — a bad file never breaks a turn", () => {
   });
 });
 
+describe("toolsVerified — the live-verified tool-calling layer", () => {
+  it("roundtrips through disk and merges with facts already on the key", () => {
+    recordUnsupportedParam(LOCAL, "verified-model", "reasoning_effort");
+    recordToolsVerified(LOCAL, "verified-model", true);
+
+    _resetForTests(); // simulate a restart
+    const tv = getToolsVerified(LOCAL, "verified-model");
+    expect(tv?.ok).toBe(true);
+    expect(Number.isNaN(Date.parse(tv?.at ?? ""))).toBe(false); // ISO timestamp
+    // The pre-existing fact on the same key survived the merge...
+    expect(hasUnsupportedParam(LOCAL, "verified-model", "reasoning_effort")).toBe(true);
+    // ...and a positive verification is NOT a noTools verdict.
+    expect(hasNoTools(LOCAL, "verified-model")).toBe(false);
+  });
+
+  it("ok:false coexists with the noTools negative on the same key", () => {
+    recordToolsVerified(LOCAL, "failed-verify", false);
+    recordNoTools(LOCAL, "failed-verify");
+    _resetForTests();
+    expect(getToolsVerified(LOCAL, "failed-verify")?.ok).toBe(false);
+    expect(hasNoTools(LOCAL, "failed-verify")).toBe(true);
+  });
+
+  it("keying: a verification on one endpoint says nothing about another", () => {
+    recordToolsVerified(LOCAL, "same-name-model", true);
+    expect(getToolsVerified(CLOUD, "same-name-model")).toBeUndefined();
+  });
+
+  it("a malformed toolsVerified blob on disk is dropped, not crashed on", () => {
+    writeFileSync(
+      join(dir, "model-capabilities.json"),
+      JSON.stringify({ version: 1, entries: { [`${LOCAL}::junk-tv`]: { toolsVerified: { ok: "yes" } } } }),
+      "utf-8",
+    );
+    _resetForTests();
+    expect(getToolsVerified(LOCAL, "junk-tv")).toBeUndefined();
+  });
+});
+
 describe("types.ts wrappers delegate to the same persistent store", () => {
   it("markNoToolSupport persists through and reloads via hasNoToolSupport", () => {
     markNoToolSupport(LOCAL, "llama3");
@@ -110,5 +153,11 @@ describe("types.ts wrappers delegate to the same persistent store", () => {
     markParamUnsupported("https://api.openai.com/v1", "o3-pro", "temperature");
     _resetForTests();
     expect(hasParamUnsupported("https://api.openai.com/v1", "o3-pro", "temperature")).toBe(true);
+  });
+
+  it("markToolsVerified persists through and reloads via the getToolsVerified wrapper", () => {
+    markToolsVerified(LOCAL, "wrapped-verify", true);
+    _resetForTests();
+    expect(getToolsVerifiedViaWrapper(LOCAL, "wrapped-verify")?.ok).toBe(true);
   });
 });

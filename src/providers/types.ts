@@ -52,6 +52,23 @@ export function markNoToolSupport(baseURL: string | undefined, model: string): v
   capStore.recordNoTools(baseURL, model);
 }
 
+/**
+ * The LIVE-verified tool-calling observation for (baseURL, model) — did a
+ * structured tool_call actually come back when we asked for one? undefined =
+ * never verified (see tool-capability-probe for who records this and when).
+ */
+export function getToolsVerified(
+  baseURL: string | undefined,
+  model: string,
+): capStore.ToolsVerified | undefined {
+  return capStore.getToolsVerified(baseURL, model);
+}
+
+/** Record a live tool-verification observation. Persists through to disk. */
+export function markToolsVerified(baseURL: string | undefined, model: string, ok: boolean): void {
+  capStore.recordToolsVerified(baseURL, model, ok);
+}
+
 export function hasParamUnsupported(baseURL: string | undefined, model: string, param: string): boolean {
   return capStore.hasUnsupportedParam(baseURL, model, param);
 }

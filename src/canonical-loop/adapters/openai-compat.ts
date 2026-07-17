@@ -32,6 +32,7 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-c
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { markNoToolSupport } from "../../providers/types.js";
+import { maybeVerifyToolSupport, noteLiveToolCallEvidence } from "../../providers/tool-capability-probe.js";
 import { createLogger } from "../../logger.js";
 
 import {
@@ -260,6 +261,21 @@ export class OpenAICompatAdapter implements Adapter {
     this.inflight = null;
 
     const { assembledText, pendingToolCalls, firstError, providerStop, usagePromptTokens, usageCompletionTokens } = result;
+
+    // Live tool-capability evidence — AFTER the turn settled, gated on the
+    // SAME policy helper as the no-tool latch (shouldLatchNoToolSupport):
+    // loopback endpoints, where behavioral facts about the engine are ours
+    // to record. A turn that already produced structured tool calls IS the
+    // evidence — record it for free, never spending an HTTP probe on the
+    // key. Only evidence-less keys get the background probe: fire-and-forget,
+    // at most one per (baseURL, model) per process, and ADVISORY only — the
+    // probe never strips tools; only the real failure latches above do.
+    // Nothing here is awaited, so no turn ever pays latency for it.
+    if (!this.aborted && !firstError && shouldLatchNoToolSupport(baseURL)) {
+      if (pendingToolCalls.length > 0) noteLiveToolCallEvidence(baseURL, model);
+      else void maybeVerifyToolSupport(baseURL, model, apiKey);
+    }
+
     let finalizedMessageId: string | null = null;
 
     // Finalize an assistant CanonicalMessage when there's text OR tool

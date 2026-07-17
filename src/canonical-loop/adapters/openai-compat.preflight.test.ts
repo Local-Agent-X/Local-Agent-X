@@ -16,6 +16,13 @@ vi.mock("../../context-manager/model-windows.js", () => ({
 vi.mock("../../providers/types.js", () => ({
   markNoToolSupport: vi.fn(),
 }));
+// The adapter records live tool-capability evidence after successful turns
+// on loopback baseURLs (which these are). Stub it out — a preflight unit test
+// must never send a live probe fetch. Covered in openai-compat.tool-verify.test.ts.
+vi.mock("../../providers/tool-capability-probe.js", () => ({
+  maybeVerifyToolSupport: vi.fn(),
+  noteLiveToolCallEvidence: vi.fn(),
+}));
 
 import { createOpenAICompatAdapter } from "./openai-compat.js";
 import { streamOnce } from "./openai-compat/stream-once.js";

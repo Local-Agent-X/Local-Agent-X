@@ -31,8 +31,8 @@ name: Installer Release
 #   https://github.com/<owner>/<repo>/releases/latest/download/<asset>
 #
 # Trigger: push a tag matching v*  (e.g. `git tag v0.2.0 && git push --tags`).
-# Manually re-run an existing v* tag via workflow_dispatch if a release needs
-# to be rebuilt without moving the tag.
+# Manually re-run an existing version tag (lowercase v followed by a digit)
+# via workflow_dispatch if a release needs to be rebuilt without moving it.
 
 on:
   push:
@@ -41,7 +41,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing v* tag to rebuild installers for"
+        description: "Existing version tag (lowercase v followed by a digit)"
         required: true
         type: string
 
@@ -68,8 +68,8 @@ jobs:
       - name: Require a version tag
         shell: pwsh
         run: |
-          if ($env:RELEASE_TAG -cnotmatch '^v.*$') {
-            Write-Error "Installer releases require a v* tag, got: $env:RELEASE_TAG"
+          if ($env:RELEASE_TAG -cnotmatch '^v\d') {
+            Write-Error "Installer releases require a version tag beginning with v and a digit, got: $env:RELEASE_TAG"
             exit 1
           }
 
@@ -185,8 +185,8 @@ jobs:
     steps:
       - name: Require a version tag
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v.*$ ]]; then
-            echo "::error::Installer releases require a v* tag, got: $RELEASE_TAG"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]; then
+            echo "::error::Installer releases require a version tag beginning with v and a digit, got: $RELEASE_TAG"
             exit 1
           fi
 

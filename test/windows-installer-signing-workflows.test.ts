@@ -72,20 +72,28 @@ describe.each(workflows)("%s Windows release signing", (path) => {
 describe("versioned installer release tag contract", () => {
   it("requires an explicit existing tag for manual rebuilds", () => {
     const workflow = installerReleaseWorkflow();
+    const installerProject = readFileSync(resolve("installer/Installer.csproj"), "utf8");
+    const canonicalPattern = installerProject.match(
+      /Regex\]::IsMatch\('\$\(InstallerSourceTag\)', '([^']+)'\)/,
+    )?.[1];
     const windowsPattern = workflow.match(
       /\$env:RELEASE_TAG -cnotmatch '([^']+)'/,
     )?.[1];
 
     expect(workflow).toMatch(/push:\s+tags:\s+- 'v\*'/);
     expect(workflow).toMatch(
-      /workflow_dispatch:\s+inputs:\s+tag:\s+description: [^\n]*Existing v\* tag[^\n]*\s+required: true\s+type: string/,
+      /workflow_dispatch:\s+inputs:\s+tag:\s+description: [^\n]*lowercase v followed by a digit[^\n]*\s+required: true\s+type: string/,
     );
     expect(workflow).toContain("RELEASE_TAG: ${{ inputs.tag || github.ref_name }}");
-    expect(windowsPattern).toBe("^v.*$");
-    expect(workflow).toContain('[[ ! "$RELEASE_TAG" =~ ^v.*$ ]]');
+    expect(canonicalPattern).toBe("^v\\d");
+    expect(windowsPattern).toBe(canonicalPattern);
+    expect(workflow).toContain('[[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]');
     const validTag = new RegExp(windowsPattern!);
     expect(validTag.test("v0.5.3")).toBe(true);
     expect(validTag.test("V0.5.3")).toBe(false);
+    expect(validTag.test("v")).toBe(false);
+    expect(validTag.test("vbeta")).toBe(false);
+    expect(validTag.test("version-1")).toBe(false);
     expect(validTag.test("main")).toBe(false);
     expect(validTag.test("24ae723f93286018")).toBe(false);
   });

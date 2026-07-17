@@ -1,0 +1,45 @@
+{
+	"_comment": "Shared golden CSP fixtures for the two agent-browser CSP builders: src/browser/csp-policy.ts (buildAgentCsp) and desktop/src/browser-csp.ts (buildAgentCsp). Both resolve eTLD+1 via tldts+PSL, so their output is byte-identical. INTENDED contract: both builders' tests assert byte-exact equality against expectedCsp so any drift fails. CURRENT STATE: only the desktop test reads these fixtures, and it is not yet wired into CI — the root csp-policy test asserts invariants, not these strings. The integration chunk (C8) closes that gap (root test reads fixtures + desktop tests run in CI). Do not edit expectedCsp by hand to make a test pass — regenerate from the canonical builder.",
+	"fixtures": [
+		{
+			"url": "https://app.example.com/dashboard",
+			"note": "gTLD, subdomain collapses to eTLD+1",
+			"expectedCsp": "default-src 'none'; connect-src 'self' example.com *.example.com; form-action 'self' example.com *.example.com; img-src 'self' example.com *.example.com data: blob:; media-src 'self' example.com *.example.com data: blob:; font-src 'self' example.com *.example.com data:; frame-src 'self' example.com *.example.com; child-src 'self' example.com *.example.com; worker-src 'self' example.com *.example.com blob:; script-src 'self' example.com *.example.com 'unsafe-inline' 'unsafe-eval'; style-src 'self' example.com *.example.com 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "https://api.foo.co.uk/v1",
+			"note": "multi-part ccTLD suffix (co.uk) -> foo.co.uk",
+			"expectedCsp": "default-src 'none'; connect-src 'self' foo.co.uk *.foo.co.uk; form-action 'self' foo.co.uk *.foo.co.uk; img-src 'self' foo.co.uk *.foo.co.uk data: blob:; media-src 'self' foo.co.uk *.foo.co.uk data: blob:; font-src 'self' foo.co.uk *.foo.co.uk data:; frame-src 'self' foo.co.uk *.foo.co.uk; child-src 'self' foo.co.uk *.foo.co.uk; worker-src 'self' foo.co.uk *.foo.co.uk blob:; script-src 'self' foo.co.uk *.foo.co.uk 'unsafe-inline' 'unsafe-eval'; style-src 'self' foo.co.uk *.foo.co.uk 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "https://shop.example.com.pl/x",
+			"note": "public second level not in any hardcoded list -> example.com.pl, no bare *.com.pl",
+			"expectedCsp": "default-src 'none'; connect-src 'self' example.com.pl *.example.com.pl; form-action 'self' example.com.pl *.example.com.pl; img-src 'self' example.com.pl *.example.com.pl data: blob:; media-src 'self' example.com.pl *.example.com.pl data: blob:; font-src 'self' example.com.pl *.example.com.pl data:; frame-src 'self' example.com.pl *.example.com.pl; child-src 'self' example.com.pl *.example.com.pl; worker-src 'self' example.com.pl *.example.com.pl blob:; script-src 'self' example.com.pl *.example.com.pl 'unsafe-inline' 'unsafe-eval'; style-src 'self' example.com.pl *.example.com.pl 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "https://example.io/x",
+			"note": "flat 2-label registration under a gTLD-as-registry -> last 2 labels",
+			"expectedCsp": "default-src 'none'; connect-src 'self' example.io *.example.io; form-action 'self' example.io *.example.io; img-src 'self' example.io *.example.io data: blob:; media-src 'self' example.io *.example.io data: blob:; font-src 'self' example.io *.example.io data:; frame-src 'self' example.io *.example.io; child-src 'self' example.io *.example.io; worker-src 'self' example.io *.example.io blob:; script-src 'self' example.io *.example.io 'unsafe-inline' 'unsafe-eval'; style-src 'self' example.io *.example.io 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "http://localhost:3000/app",
+			"note": "no registrable domain -> exact-host pin with any-port, no subdomain wildcard",
+			"expectedCsp": "default-src 'none'; connect-src 'self' localhost localhost:*; form-action 'self' localhost localhost:*; img-src 'self' localhost localhost:* data: blob:; media-src 'self' localhost localhost:* data: blob:; font-src 'self' localhost localhost:* data:; frame-src 'self' localhost localhost:*; child-src 'self' localhost localhost:*; worker-src 'self' localhost localhost:* blob:; script-src 'self' localhost localhost:* 'unsafe-inline' 'unsafe-eval'; style-src 'self' localhost localhost:* 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "http://127.0.0.1:8080/",
+			"note": "IPv4 literal -> exact-host pin, no eTLD+1",
+			"expectedCsp": "default-src 'none'; connect-src 'self' 127.0.0.1 127.0.0.1:*; form-action 'self' 127.0.0.1 127.0.0.1:*; img-src 'self' 127.0.0.1 127.0.0.1:* data: blob:; media-src 'self' 127.0.0.1 127.0.0.1:* data: blob:; font-src 'self' 127.0.0.1 127.0.0.1:* data:; frame-src 'self' 127.0.0.1 127.0.0.1:*; child-src 'self' 127.0.0.1 127.0.0.1:*; worker-src 'self' 127.0.0.1 127.0.0.1:* blob:; script-src 'self' 127.0.0.1 127.0.0.1:* 'unsafe-inline' 'unsafe-eval'; style-src 'self' 127.0.0.1 127.0.0.1:* 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "about:blank",
+			"note": "opaque origin -> only 'self' is same-site",
+			"expectedCsp": "default-src 'none'; connect-src 'self'; form-action 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self'; child-src 'self'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		},
+		{
+			"url": "not a url",
+			"note": "unparseable -> strictest posture, never throws",
+			"expectedCsp": "default-src 'none'; connect-src 'self'; form-action 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; frame-src 'self'; child-src 'self'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+		}
+	]
+}

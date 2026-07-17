@@ -11,7 +11,15 @@ import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { RBACManager } from "../rbac.js";
 import { createLogger } from "../logger.js";
+import { VoiceTurnHygiene } from "./voice-turn-hygiene.js";
+import { warmModel } from "../local-runtimes/residency.js";
 const logger = createLogger("server.lifecycle");
+
+// A spoken reply is a few sentences; this caps a voice turn's output so a
+// degenerate local model can't loop for the full wall-clock ceiling (the
+// original incident ran 41s until the user aborted). Explicit caps are never
+// raised by the local-window clamp, so a small window stays safe too.
+const VOICE_MAX_TOKENS = 600;
 
 export async function setupVoiceWs(deps: {
   server: Server;
@@ -95,6 +103,13 @@ export async function setupVoiceWs(deps: {
         throw new Error(`No API key configured for ${prepared.provider}.`);
       }
 
+      // Keep a local voice model resident across the conversation: fire-and-
+      // forget warm (deduped, 30m keep-alive) so turns after the first don't
+      // pay a cold load, and the current turn's own request keeps it warm. The
+      // very first turn of a cold session can still load-wait; a connect-time
+      // prewarm is a follow-up. No-op / harmless 404 for non-Ollama runtimes.
+      if (prepared.provider === "local") warmModel(config.ollamaUrl, prepared.model);
+
       // Voice has the SAME tools as text chat (full parity). The old "tools
       // mostly off" policy was a vestige of a weaker harness: it was meant to
       // stop a runaway tool-loop and a mid-conversation setting change, but the
@@ -159,14 +174,23 @@ export async function setupVoiceWs(deps: {
         "context — open with it (\"That search came back — …\").\n" +
         "Never say you did something you didn't." + visualPromptTail;
 
-      let assistantText = "";
+      // TTS + transcript hygiene: strips leaked template tokens from each
+      // spoken delta and runs the full pass on the stored text (see the class).
+      const hygiene = new VoiceTurnHygiene();
       const onEvent = (event: ServerEvent) => {
         if (event.type === "stream" && "delta" in event && event.delta) {
-          assistantText += event.delta;
-          onDelta(event.delta);
+          const spoken = hygiene.delta(event.delta);
+          if (spoken !== null) onDelta(spoken);
         } else if (event.type === "visual" && onVisual) {
           // Forward the visual directive through to the voice WebSocket.
           onVisual(event.kind, event.value, event.durationMs);
+        } else if (event.type === "stopped" && event.firedBy === "stream-guard") {
+          // The degenerate-output guard tore a local stream down mid-reply.
+          // Voice has no card surface, so speak a short honest notice instead
+          // of ending in abrupt silence. Never fires on user barge-in — that
+          // path sets `aborted` via the abort signal, not this event.
+          logger.info(`[voice-ws] stream guard stopped a degenerate local reply (${sessionId}); spoke a notice`);
+          onDelta(hygiene.guardStopped());
         } else if (event.type === "approval_requested") {
           // Voice has no approval UI yet, and the approval timeout is 5 min —
           // letting it ride would hang the turn in silence. Decline immediately
@@ -223,6 +247,7 @@ export async function setupVoiceWs(deps: {
           // work delegates to a worker, so a voice turn still stays shallow).
           maxIterations: 8,
           temperature: prepared.temperature,
+          maxTokens: VOICE_MAX_TOKENS,
           signal,
           onEvent,
           opType: "voice_turn",
@@ -249,7 +274,11 @@ export async function setupVoiceWs(deps: {
       // in one Grok reply. The interruption travels as `_interrupted: true`
       // (structural, like `_ephemeral`) and providers/sanitize.ts renders it
       // for the model at the one seam all provider-bound history crosses.
-      const finalAssistantText = assistantText.trim();
+      // Persist-profile hygiene over the full turn text (leaked tokens,
+      // reasoning tags, hallucinated tool markup, whole-reply repeats) before
+      // it enters the durable thread — the streaming strip above only cleaned
+      // what TTS spoke. The `_interrupted` record stays structural below.
+      const finalAssistantText = hygiene.finalize();
 
       // Commit this turn to the durable thread (same store + shape the
       // messaging bridges use). saveSession is queued and serialized per

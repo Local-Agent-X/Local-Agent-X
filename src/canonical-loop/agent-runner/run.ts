@@ -183,7 +183,21 @@ export async function runAgentViaCanonical(
   // sidebar sits silent during a spawned agent's reply (P4.C4 finding).
   const offStream = options.onEvent
     ? subscribeOpStream(op.id, (chunk) => {
-        const c = chunk as { delta?: string; replace?: boolean; text?: string; reasoning?: boolean } | null;
+        const c = chunk as { delta?: string; replace?: boolean; text?: string; reasoning?: boolean; stopped?: boolean; reason?: string; debug?: string; firedBy?: string } | null;
+        // Out-of-band stop notice (e.g. the degenerate-output stream guard)
+        // rides the bus as a marker chunk with no delta; map it to the same
+        // `stopped` ServerEvent the chat-runner's event-pump emits so this
+        // lane's consumers (voice, spawned agents) can react instead of just
+        // going silent. Mirrors chat-runner/event-pump.ts.
+        if (c?.stopped === true) {
+          options.onEvent!({
+            type: "stopped",
+            reason: typeof c.reason === "string" && c.reason.length > 0 ? c.reason : "Stream stopped early.",
+            ...(typeof c.debug === "string" ? { debug: c.debug } : {}),
+            ...(typeof c.firedBy === "string" ? { firedBy: c.firedBy } : {}),
+          });
+          return;
+        }
         if (c?.replace === true) {
           options.onEvent!({ type: "stream", replace: true, text: c.text ?? "" });
           return;

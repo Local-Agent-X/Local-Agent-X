@@ -28,6 +28,11 @@ export interface AgentOptions {
   sessionId?: string;
   maxIterations?: number;
   temperature?: number;
+  /** Hard output-token cap for this run, forwarded to the OpenAI-compat
+   *  adapter (→ ProviderRequest.maxTokens, then the local-window clamp). Voice
+   *  turns set a small cap so a spoken reply can't run away; unset = the
+   *  adapter's own local default / no cap for cloud. */
+  maxTokens?: number;
   images?: ImageAttachment[];
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;

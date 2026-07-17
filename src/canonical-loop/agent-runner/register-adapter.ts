@@ -7,7 +7,7 @@ export async function registerProviderAdapter(
   options: CanonicalAgentOptions,
   sessionId: string,
 ): Promise<void> {
-  const { provider, model, systemPrompt, temperature, apiKey } = options;
+  const { provider, model, systemPrompt, temperature, apiKey, maxTokens } = options;
 
   if (provider === "anthropic") {
     registerAdapterForOp(opId, () =>
@@ -67,6 +67,7 @@ export async function registerProviderAdapter(
       baseURL: finalTarget.baseURL,
       apiKey: finalTarget.apiKey,
       temperature,
+      maxTokens,
       sessionId,
       // Spawned field agents are expected to act. Force a real tool call on
       // turn 0 so weaker OpenAI-compat models (xAI Grok) can't open by

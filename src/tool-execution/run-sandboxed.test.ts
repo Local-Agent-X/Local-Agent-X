@@ -13,7 +13,7 @@ import { runSandboxedPhase } from "./run-sandboxed.js";
 import type { CallContext, ToolCallContext } from "./context.js";
 import { readTool, editTool } from "../tools/file-tools.js";
 import type { ToolDefinition } from "../types.js";
-import { checkEgressTaint, clearSessionTaint, detectSecretsInOutput } from "../data-lineage/index.js";
+import { checkEgressTaint, clearSessionTaint, detectSecretsInOutput, getKernelTaintSources } from "../data-lineage/index.js";
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 
 const dirs = new Set<string>();
@@ -267,20 +267,32 @@ describe("unattended shell effective-sandbox gate", () => {
   });
 });
 
-describe("bash-output taint respects isError (the ARI over-block fix)", () => {
+// Delivery-point invariant: a session is tainted iff sensitive bytes actually
+// entered the model context. A SUCCESSFUL bash whose stdout holds a structured
+// secret gets the whole-result redaction stub — the model never sees the bytes
+// — so the session must NOT be tainted (the live brick: an env/path probe that
+// surfaced one real key quarantined the shell for the rest of the session even
+// though the model only ever received the stub).
+describe("bash-output secret handling (delivery-point invariant)", () => {
   // Secret-shaped output (canonical AWS example key). The first test pins that
-  // the scanner really matches it, so the two taint assertions are meaningful.
+  // the scanner really matches it, so the assertions below are meaningful.
   const SECRET = "config dump: AKIAIOSFODNN7EXAMPLE region=us-east-1";
 
   it("sanity: the sample is detected as secret-shaped", () => {
     expect(detectSecretsInOutput(SECRET).matched).toBe(true);
   });
 
-  it("a SUCCESSFUL bash with secret-shaped output still taints the session", async () => {
+  it("a SUCCESSFUL bash with secret-shaped output is stubbed and does NOT taint", async () => {
     const s = freshSession();
     clearSessionTaint(s);
-    await run(fakeBash(SECRET, false), { command: "cat config" }, s);
-    expect(checkEgressTaint(s).blocked).toBe(true);   // real read → egress blocked
+    const res = await run(fakeBash(SECRET, false), { command: "printenv" }, s);
+    // The model's view is the stub, never the key…
+    expect(res.metadata?.redacted).toBe(true);
+    expect(String(res.content)).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    // …so nothing entered context and the session stays clean: egress is open
+    // and the kernel sees no taint labels (shell is NOT denied next turn).
+    expect(checkEgressTaint(s).blocked).toBe(false);
+    expect(getKernelTaintSources(s)).toEqual([]);
     clearSessionTaint(s);
   });
 
@@ -288,10 +300,18 @@ describe("bash-output taint respects isError (the ARI over-block fix)", () => {
     const s = freshSession();
     clearSessionTaint(s);
     await run(fakeBash(SECRET, true), { command: "cat config" }, s);
-    // The bug: a benign nonzero-exit command whose stderr happened to contain a
-    // secret-shaped token tainted the session and locked the run out of editing.
+    // A benign nonzero-exit command whose stderr happened to contain a
+    // secret-shaped token must not taint the session either.
     expect(checkEgressTaint(s).blocked).toBe(false);
     clearSessionTaint(s);
+  });
+
+  it("cross-seam: the secret is still blocked at SEND time by the outbound scan (taint not needed)", async () => {
+    // The invariant trades session-wide quarantine for send-time enforcement:
+    // even with the session clean, an outbound payload carrying the secret
+    // must be denied by the egress guard's independent secret scan.
+    const { checkOutboundPayload } = await import("../tools/http-egress-guard.js");
+    expect(checkOutboundPayload("email_send", `here is the key: ${SECRET}`)).not.toBeNull();
   });
 });
 
@@ -319,11 +339,13 @@ describe("bash-output taint requires a STRUCTURED secret (high-entropy-only FP f
     clearSessionTaint(s);
   });
 
-  it("a SUCCESSFUL bash whose output carries a STRUCTURED credential still taints", async () => {
+  it("a SUCCESSFUL bash whose output carries a STRUCTURED credential is stubbed (delivery-point: no taint)", async () => {
     const s = freshSession();
     clearSessionTaint(s);
-    await run(fakeBash(STRUCTURED, false), { command: "cat config" }, s);
-    expect(checkEgressTaint(s).blocked).toBe(true);
+    const res = await run(fakeBash(STRUCTURED, false), { command: "cat config" }, s);
+    expect(res.metadata?.redacted).toBe(true);
+    expect(String(res.content)).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(checkEgressTaint(s).blocked).toBe(false);
     clearSessionTaint(s);
   });
 });
@@ -354,7 +376,7 @@ describe("work-root env read-taint carve-out", () => {
     }
   });
 
-  it("a REAL structured secret inside the work-root .env.local still taints", async () => {
+  it("a REAL structured secret inside the work-root .env.local is stubbed (delivery-point: no taint)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-envtaint-"));
     dirs.add(dir);
     const envFile = join(dir, ".env.local");
@@ -365,22 +387,52 @@ describe("work-root env read-taint carve-out", () => {
     const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");
     setSessionWorkRoot(s, dir);
     try {
-      await run(readTool, { path: envFile, _sessionId: s }, s);
-      expect(checkEgressTaint(s).blocked).toBe(true);
+      const res = await run(readTool, { path: envFile, _sessionId: s }, s);
+      // The key must never reach the model — but a stub delivered means
+      // nothing entered context, so the session stays clean.
+      expect(res.metadata?.redacted).toBe(true);
+      expect(String(res.content)).not.toContain(fakeJwt);
+      expect(checkEgressTaint(s).blocked).toBe(false);
     } finally {
       clearSessionWorkRoot(s);
       clearSessionTaint(s);
     }
   });
 
-  it("an env file read WITHOUT a work root still path-taints as before", async () => {
+  it("an env file read WITHOUT a work root is denied by the file gate and keeps the taint", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-envtaint-"));
     dirs.add(dir);
     const envFile = join(dir, ".env.local");
     writeFileSync(envFile, "HARMLESS=placeholder\n", "utf-8");
     const s = freshSession(); // no work root registered
     try {
-      await run(readTool, { path: envFile, _sessionId: s }, s);
+      const res = await run(readTool, { path: envFile, _sessionId: s }, s);
+      // The file-access gate denies the read inside the tool (errored result,
+      // no redaction stub). An errored result's output is DELIVERED, and this
+      // layer can't prove an arbitrary tool's error text is free of file bytes
+      // — so the provisional floor stands (conservative side of the
+      // delivery-point invariant).
+      expect(res.isError).toBe(true);
+      expect(String(res.content)).not.toContain("HARMLESS=placeholder");
+      expect(checkEgressTaint(s).blocked).toBe(true);
+    } finally {
+      clearSessionTaint(s);
+    }
+  });
+
+  it("a FAILED sensitive read keeps the taint (error output was delivered)", async () => {
+    // An errored result skips the redaction stub, so whatever the tool
+    // returned — which can echo sensitive content — reached the model. The
+    // provisional floor must stand.
+    const failingRead = {
+      name: "read",
+      description: "fake failing read",
+      parameters: { type: "object", properties: { path: { type: "string" } } },
+      async execute() { return { content: "EACCES: permission denied", isError: true }; },
+    } as unknown as ToolDefinition;
+    const s = freshSession();
+    try {
+      await run(failingRead, { path: join(tmpdir(), ".env.local") }, s);
       expect(checkEgressTaint(s).blocked).toBe(true);
     } finally {
       clearSessionTaint(s);

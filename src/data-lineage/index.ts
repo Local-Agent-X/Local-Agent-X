@@ -22,18 +22,22 @@ export type { TaintSource } from "./fingerprint.js";
 
 export {
   recordSensitiveRead,
+  retractProvisionalTaint,
   checkEgressTaint,
   findTaintInPayload,
   checkEgressTaintWithPayload,
   clearSessionTaint,
-  _setDeclassifyAuditTrail,
-  declassifySession,
-  declassifyTaintSource,
   getKernelTaintSources,
   propagateTaint,
   getTaintSummary,
 } from "./taint.js";
-export type { DeclassifyOptions, DeclassifyResult } from "./taint.js";
+
+export {
+  _setDeclassifyAuditTrail,
+  declassifySession,
+  declassifyTaintSource,
+} from "./declassify.js";
+export type { DeclassifyOptions, DeclassifyResult } from "./declassify.js";
 
 export {
   isSensitivePath,

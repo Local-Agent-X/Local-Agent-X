@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   extractSensitivePathsFromCommand,
   recordSensitiveRead,
+  retractProvisionalTaint,
   checkEgressTaint,
   clearSessionTaint,
   isSensitivePath,
@@ -544,12 +545,59 @@ describe("secret-taint integration", () => {
   });
 });
 
-// Regression test for the taint-race bug: when a tool reads a sensitive
-// path the result must NOT contain the raw bytes by the time it lands in
-// ctx.result. Without redaction, dataLineageGate only fires on the NEXT
-// egress call — meaning the model already has the secret bytes in its
-// context and can exfil through any non-gated channel.
-describe("run-sandboxed redacts result content when taint fires", () => {
+// retractProvisionalTaint is the delivery-point invariant's registry primitive:
+// the execute phase sets an arg-derived floor BEFORE a sensitive read, then
+// withdraws it when the result was fully stubbed (nothing entered context).
+describe("retractProvisionalTaint", () => {
+  const PAIR = { source: "sensitive_file" as const, target: "/Users/x/.ssh/id_rsa" };
+
+  it("removes a content-less floor entry, unblocking egress", () => {
+    const sid = "retract-basic";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, PAIR.source, PAIR.target); // provisional (no content)
+    expect(checkEgressTaint(sid).blocked).toBe(true);
+    expect(retractProvisionalTaint(sid, [PAIR])).toBe(1);
+    expect(checkEgressTaint(sid).blocked).toBe(false);
+  });
+
+  it("NEVER removes a content-bearing entry — delivered bytes stay provable", () => {
+    const sid = "retract-content";
+    clearSessionTaint(sid);
+    // A content-bearing record means bytes WERE delivered on some call.
+    recordSensitiveRead(sid, PAIR.source, PAIR.target, "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----");
+    expect(retractProvisionalTaint(sid, [PAIR])).toBe(0);
+    expect(checkEgressTaint(sid).blocked).toBe(true);
+    clearSessionTaint(sid);
+  });
+
+  it("removes only the named pairs — other floor entries keep blocking", () => {
+    const sid = "retract-scoped";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, PAIR.source, PAIR.target);
+    recordSensitiveRead(sid, "sensitive_file", "/Users/x/.aws/credentials");
+    expect(retractProvisionalTaint(sid, [PAIR])).toBe(1);
+    expect(checkEgressTaint(sid).blocked).toBe(true); // .aws floor still up
+    clearSessionTaint(sid);
+  });
+
+  it("is a no-op on a clean session or an empty pair list", () => {
+    const sid = "retract-noop";
+    clearSessionTaint(sid);
+    expect(retractProvisionalTaint(sid, [PAIR])).toBe(0);
+    recordSensitiveRead(sid, PAIR.source, PAIR.target);
+    expect(retractProvisionalTaint(sid, [])).toBe(0);
+    expect(checkEgressTaint(sid).blocked).toBe(true);
+    clearSessionTaint(sid);
+  });
+});
+
+// Regression tests for the redaction seam, updated for the delivery-point
+// invariant: when a tool reads a sensitive source the result must NOT contain
+// the raw bytes by the time it lands in ctx.result (the model never gets first
+// sight) — and BECAUSE the stub is what got delivered, the session must NOT be
+// tainted (nothing sensitive entered context, so there is nothing to quarantine;
+// outbound sends are still independently scanned by the egress guard).
+describe("run-sandboxed redacts sensitive results before delivery (no taint on stub)", () => {
   function makeCtx(input: {
     name: string;
     args: Record<string, unknown>;
@@ -602,8 +650,9 @@ describe("run-sandboxed redacts result content when taint fires", () => {
       expect(ctx.result!.content).not.toContain(sentinel);
       expect(ctx.result!.status).toBe("blocked");
       expect(ctx.result!.metadata?.redacted).toBe(true);
-      // Session is still tainted so a follow-up egress call would be blocked.
-      expect(checkEgressTaint(sessionId).blocked).toBe(true);
+      // Delivery-point invariant: the stub is what reached the model, so the
+      // session stays clean — the provisional pre-execute floor is retracted.
+      expect(checkEgressTaint(sessionId).blocked).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -639,10 +688,10 @@ describe("run-sandboxed redacts result content when taint fires", () => {
 
   // F4 defense-in-depth: confinement (the file-access gate) is the primary
   // control for sql_query, but a secret-shaped value sitting in an in-workspace
-  // SQLite row must still taint + redact like web_fetch/http_request output —
-  // not pass through untainted. Guards run-sandboxed.ts:85 keeping sql_query in
-  // the output scan.
-  it("sql_query output containing a secret: result redacted and session tainted", async () => {
+  // SQLite row must still be redacted like web_fetch/http_request output — not
+  // pass through to the model. The stub delivery means no taint (delivery-point
+  // invariant). Guards keeping sql_query in the output scan.
+  it("sql_query output containing a secret: result redacted, session NOT tainted", async () => {
     const secret = "AKIA0000000000000000"; // aws-access-key shape
     const sqlStub: ToolDefinition = {
       name: "sql_query",
@@ -668,7 +717,7 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     expect(ctx.result!.content).not.toContain(secret);
     expect(ctx.result!.status).toBe("blocked");
     expect(ctx.result!.metadata?.redacted).toBe(true);
-    expect(checkEgressTaint(sessionId).blocked).toBe(true);
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
   });
 
   // The run-killer fix: a secret-shaped span in UNTRUSTED INBOUND web content
@@ -756,9 +805,10 @@ describe("run-sandboxed redacts result content when taint fires", () => {
   });
 
   // Capability-class re-keying: sensitive reads via SYNONYMS (ari_file path,
-  // email_read / memory_search output) must record the sensitive read (arming
-  // the egress gate) AND trigger redaction — exactly like read/sql_query.
-  it("ari_file read of a sensitive path: records sensitive read + redacts", async () => {
+  // email_read / memory_search output) must trigger the same redaction stub as
+  // read/sql_query — and, per the delivery-point invariant, the same no-taint
+  // outcome when the stub is what got delivered.
+  it("ari_file read of a sensitive path: redacts, session NOT tainted", async () => {
     const sentinel = "ARI_FILE_SENTINEL_77c2";
     const dir = mkdtempSync(join(tmpdir(), "lineage-arifile-"));
     const file = join(dir, "secrets.json");
@@ -777,13 +827,13 @@ describe("run-sandboxed redacts result content when taint fires", () => {
       expect(ctx.result!.content).not.toContain(sentinel);
       expect(ctx.result!.status).toBe("blocked");
       expect(ctx.result!.metadata?.redacted).toBe(true);
-      expect(checkEgressTaint(sessionId).blocked).toBe(true);
+      expect(checkEgressTaint(sessionId).blocked).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it("email_read output containing a secret: records sensitive read + redacts", async () => {
+  it("email_read output containing a secret: redacts, session NOT tainted", async () => {
     const secret = "AKIA0000000000000000";
     const stub: ToolDefinition = {
       name: "email_read",
@@ -797,10 +847,10 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     await runSandboxedPhase(ctx);
     expect(ctx.result!.content).not.toContain(secret);
     expect(ctx.result!.status).toBe("blocked");
-    expect(checkEgressTaint(sessionId).blocked).toBe(true);
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
   });
 
-  it("memory_search output containing a secret: records sensitive read + redacts", async () => {
+  it("memory_search output containing a secret: redacts, session NOT tainted", async () => {
     const secret = "AKIA0000000000000000";
     const stub: ToolDefinition = {
       name: "memory_search",
@@ -814,7 +864,7 @@ describe("run-sandboxed redacts result content when taint fires", () => {
     await runSandboxedPhase(ctx);
     expect(ctx.result!.content).not.toContain(secret);
     expect(ctx.result!.status).toBe("blocked");
-    expect(checkEgressTaint(sessionId).blocked).toBe(true);
+    expect(checkEgressTaint(sessionId).blocked).toBe(false);
   });
 
   it("memory_search output containing only a high-entropy identifier does not taint", async () => {

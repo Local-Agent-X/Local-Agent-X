@@ -18,7 +18,7 @@ over 400 LOC (the source-hygiene ceiling).
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/security/` | 71 | 28 | XL |  |
+| `src/security/` | 70 | 28 | XL |  |
 | `src/ops/` | 69 | 22 | XL |  |
 | `src/tools/` | 57 | 146 | XL |  |
 | `src/canonical-loop/` | 44 | 141 | XL |  |
@@ -42,9 +42,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/app-runtime/` | 14 | 12 | L |  |
 | `src/context-manager/` | 13 | 10 | M |  |
 | `src/anthropic-client/` | 12 | 19 | L |  |
-| `src/data-lineage/` | 12 | 6 | L |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/autonomy/` | 11 | 4 | M |  |
+| `src/data-lineage/` | 11 | 6 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
 | `src/integrations/` | 10 | 15 | M |  |

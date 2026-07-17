@@ -111,12 +111,14 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     expect(events).toEqual(["enter:read", "exit:read", "enter:web_search", "exit:web_search"]);
   });
 
-  it("the sensitive read taints BEFORE web_search's egress gate runs → web_search is blocked", async () => {
-    // The round-4 repro: [read('<sensitive>'), web_search(...)]. The read of a
-    // sensitive path sets the taint floor (pre-execute, from args); because the
-    // batcher keeps web_search in a later batch, web_search's real dataLineageGate
-    // sees the floor and blocks. The web_search stub's execute must therefore
-    // NEVER run.
+  it("a STUBBED sensitive read retracts the floor — web_search in the later batch runs clean", async () => {
+    // The round-4 repro shape [read('<sensitive>'), web_search(...)], updated
+    // for the delivery-point invariant. The read's result is fully replaced by
+    // the redaction stub, so the model never received the bytes; the
+    // provisional floor is retracted and web_search — whose query was authored
+    // BEFORE the read returned, so it cannot carry the file's bytes — proceeds.
+    // Batch separation (previous test) still guarantees the floor is never
+    // transiently empty mid-read.
     const events: string[] = [];
     const toolMap = new Map<string, ToolDefinition>([
       ["read", makeTracked("read", { readOnly: true, concurrencySafe: true }, events)],
@@ -133,13 +135,56 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
       undefined, undefined, undefined, undefined, undefined, "local",
     );
 
-    // The read tainted the session (floor set from args, pre-execute).
+    // The read was stubbed (bytes withheld from the model)…
+    const readMsg = msgs.find((m) => (m as { tool_call_id?: string }).tool_call_id === "1");
+    expect(String(readMsg?.content)).toMatch(/redacted by data-lineage gate/i);
+    expect(String(readMsg?.content)).not.toContain("ok");
+    // …so nothing entered context: floor retracted, web_search ran.
+    expect(getTaintSummary(session).count).toBe(0);
+    expect(events).toContain("enter:web_search");
+
+    clearSessionTaint(session);
+  });
+
+  it("a DELIVERED sensitive read keeps the floor — egress CARRYING the delivered bytes is blocked", async () => {
+    // The enforcement half of R4-09 under the invariant: when the read's
+    // output IS delivered (an errored result skips the redaction stub, and
+    // error text can echo file bytes), the taint commits with the delivered
+    // content fingerprinted. Under the B+ completeness guard an unrelated
+    // payload may still egress — but a payload that CARRIES the delivered
+    // bytes must be blocked, and its execute must never run.
+    const deliveredText = "read failed after partial read: SGVsbG8gc2VjcmV0IGJ5dGVzIGZyb20gaWRfcnNh trailing";
+    const events: string[] = [];
+    const erroringRead: ToolDefinition = {
+      name: "read",
+      description: "",
+      parameters: { type: "object", properties: {} },
+      readOnly: true,
+      concurrencySafe: true,
+      execute: async (): Promise<ToolResult> => {
+        events.push("enter:read");
+        return { content: deliveredText, isError: true };
+      },
+    } as unknown as ToolDefinition;
+    const toolMap = new Map<string, ToolDefinition>([
+      ["read", erroringRead],
+      ["web_search", makeTracked("web_search", { readOnly: true, concurrencySafe: true }, events)],
+    ]);
+    const session = freshSession();
+    clearSessionTaint(session);
+    const msgs = await executeToolCalls(
+      [
+        { id: "1", name: "read", arguments: JSON.stringify({ path: SENSITIVE_PATH }) },
+        { id: "2", name: "web_search", arguments: JSON.stringify({ query: `look up ${deliveredText}` }) },
+      ],
+      toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      undefined, undefined, undefined, undefined, undefined, "local",
+    );
+
+    // The delivered read committed the taint…
     expect(getTaintSummary(session).count).toBeGreaterThan(0);
-
-    // web_search's execute never ran — its egress gate blocked it first.
+    // …and the payload carrying the delivered bytes was blocked before execute.
     expect(events).not.toContain("enter:web_search");
-
-    // The web_search tool message is the data-lineage block.
     const webMsg = msgs.find((m) => (m as { tool_call_id?: string }).tool_call_id === "2");
     expect(String(webMsg?.content)).toMatch(/BLOCKED by data lineage|tainted/i);
 

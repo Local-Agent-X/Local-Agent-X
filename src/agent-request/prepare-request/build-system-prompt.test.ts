@@ -40,6 +40,61 @@ describe("fileAccessGroundingBlock", () => {
   });
 });
 
+describe("local model-family rider wiring", () => {
+  const inputFor = (provider: string, model: string): BuildSystemPromptInput => ({
+    message: "hi there", // must not trip COLD_START_VERBS
+    sessionId: `family-rider-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
+    memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
+    integrations: { getAgentContext: () => "" } as BuildSystemPromptInput["integrations"],
+    allAgentTools: [],
+    resolvedProvider: provider,
+    resolvedModel: model,
+    contextBlock: "",
+    relevantMemories: "",
+    smartContext: "",
+    memoryContext: "",
+    memoryNotifications: [],
+    memoryCurateBlock: "",
+    forceBuildIntent: false,
+  });
+
+  it("provider local + gemma model → base family rider present, no reasoning addition", async () => {
+    const prompt = await buildSystemPrompt(inputFor("local", "gemma3:27b"));
+    expect(prompt).toContain("[LOCAL MODEL RIDER");
+    expect(prompt).toContain("[END LOCAL MODEL RIDER]");
+    expect(prompt).not.toContain("DELIBERATE BRIEFLY");
+  });
+
+  it("provider local + qwen model → reasoning addition present", async () => {
+    const prompt = await buildSystemPrompt(inputFor("local", "qwen3:32b"));
+    expect(prompt).toContain("[LOCAL MODEL RIDER");
+    expect(prompt).toContain("DELIBERATE BRIEFLY, ANSWER FIRST");
+  });
+
+  it("non-local providers never get the family rider, even for the same model id", async () => {
+    for (const provider of ["anthropic", "codex", "xai", "openai", "gemini", "ollama-cloud"]) {
+      const prompt = await buildSystemPrompt(inputFor(provider, "gemma3:27b"));
+      expect(prompt).not.toContain("[LOCAL MODEL RIDER");
+    }
+  });
+
+  it("rider sits in the dynamic tail, after the file-access block", async () => {
+    const prompt = await buildSystemPrompt(inputFor("local", "qwen3:32b"));
+    const fileAccessAt = prompt.indexOf("[HARNESS NOTE: FILE ACCESS]");
+    const riderAt = prompt.indexOf("[LOCAL MODEL RIDER");
+    expect(fileAccessAt).toBeGreaterThanOrEqual(0);
+    expect(riderAt).toBeGreaterThan(fileAccessAt);
+  });
+
+  it("sub-agent override branch gets the rider too — local only", async () => {
+    const local = { ...inputFor("local", "qwen3:32b"), systemPromptOverride: "You are a focused sub-agent." };
+    expect(await buildSystemPrompt(local)).toContain("[LOCAL MODEL RIDER");
+    const cloud = { ...inputFor("anthropic", "qwen3:32b"), systemPromptOverride: "You are a focused sub-agent." };
+    expect(await buildSystemPrompt(cloud)).not.toContain("[LOCAL MODEL RIDER");
+  });
+});
+
 describe("unified harness-notice format", () => {
   // Regression for the five-wrapper unification: every first-party harness
   // notice (background completions, memory notification, turn directive,

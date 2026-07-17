@@ -1,6 +1,9 @@
-// Per-provider behavioral riders, dispatched on resolved.provider. Mutually
-// exclusive (a turn runs on one provider). Both are long string templates
-// kept here so the rest of the prepare-request flow stays readable.
+// Behavioral riders appended to the system prompt's dynamic tail. Two
+// dispatch axes: per-PROVIDER riders on resolved.provider (mutually
+// exclusive — a turn runs on one provider), and a per-MODEL-FAMILY rider for
+// local models (base + optional family addition, local provider only). All
+// are string templates kept here so the rest of the prepare-request flow
+// stays readable.
 
 /**
  * Codex-specific behavioral rider. Vague tone-shift instructions ("be a
@@ -64,4 +67,63 @@ export function providerRiderFor(provider: string): string {
   if (provider === "codex") return codexBehaviorRider();
   if (provider === "xai") return grokUnleashedRider();
   return "";
+}
+
+/*
+ * ── Local model-family riders ──────────────────────────────────────────────
+ * Dispatched on the resolved MODEL id, not the provider: every local runtime
+ * shares provider "local", so provider-level dispatch can't target family
+ * failure modes. The local-only gate lives at the call site
+ * (build-system-prompt.ts). Live failure modes these rules target, all
+ * observed on this box:
+ *   - small instruction-tuned models emit tool-call syntax as PLAIN TEXT
+ *     ("<execute_tool>", "<tool_call>", bracket forms) instead of native
+ *     calls, leak reasoning tags ("<thought>") into replies, and repeat
+ *     themselves verbatim when unsure how to stop;
+ *   - some families narrate tool use in prose ("I will now use the web_search
+ *     tool") without ever calling anything;
+ *   - reasoning-trained families burn the whole token budget thinking before
+ *     answering — fatal in voice, where only the final answer is heard.
+ * Kept deliberately SHORT: these ship to small-context models where every
+ * rider token displaces the user's context.
+ */
+
+const BASE_LOCAL_RIDER =
+  `\n\n[LOCAL MODEL RIDER — concrete rules, follow strictly]\n` +
+  `1. **TOOL CALLS USE THE NATIVE MECHANISM ONLY.** Never write tool-call syntax in your reply text — no XML-style tags, bracket blocks, or JSON envelopes (\`<tool_call>\`, \`<execute_tool>\`, \`[TOOL_REQUEST]\`). Typed-out syntax runs NOTHING. If you cannot make a native tool call, say what you would do in plain language.\n` +
+  `2. **CALL OR ANSWER — NEVER NARRATE.** "I will now use the web_search tool" is not a tool call. Either actually call the tool, or answer directly. Prose about a tool runs nothing.\n` +
+  `3. **NO CONTROL TOKENS OR REASONING TAGS.** Chat-template markers and thinking tags (\`<thought>\`, \`<think>\`, role/end-of-turn tokens) are machinery — they must never appear in your reply.\n` +
+  `4. **ANSWER ONCE, THEN STOP.** One complete, self-contained reply. Do not restate it or loop on the same sentences — when the answer is done, end the message.\n`;
+
+const REASONING_FAMILY_ADDITION =
+  `5. **DELIBERATE BRIEFLY, ANSWER FIRST.** In interactive chat and voice, keep internal thinking to a few sentences — never spend the whole reply deliberating. The user only sees or hears the final answer; get to it at conversational length.\n`;
+
+const LOCAL_RIDER_END = `[END LOCAL MODEL RIDER]\n`;
+
+/**
+ * Per-family ADDITIONS on top of the shared base, matched by lowercase
+ * substring against the model id (robust to runtime prefixes and distill/
+ * quant compounds: "lmstudio/gemma-3-27b", "deepseek-r1-distill-qwen-14b").
+ * Scan order = table order, FIRST matching entry wins, result = base +
+ * addition — so a compound id never gets an addition twice. Families with no
+ * entry (gemma/phi/llama/mistral today) and unknown models get the base
+ * alone; add an entry only when a live incident shows a family failure mode
+ * the base rules don't already cover.
+ */
+const FAMILY_ADDITIONS: ReadonlyArray<{ match: readonly string[]; addition: string }> = [
+  // Reasoning-trained families: default to long hidden deliberation, which
+  // starves interactive/voice turns of the actual answer.
+  { match: ["qwen", "deepseek", "glm", "gpt-oss", "harmony"], addition: REASONING_FAMILY_ADDITION },
+];
+
+/**
+ * Family-guidance rider for a LOCAL model id. Always returns the base rider
+ * (every local model shares the plain-text-tool-syntax / leaked-tags /
+ * repetition failure class) plus the first matching family addition. Callers
+ * gate on provider === "local" — this function never sees cloud turns.
+ */
+export function modelFamilyRiderFor(model: string): string {
+  const id = (model || "").toLowerCase();
+  const family = FAMILY_ADDITIONS.find((f) => f.match.some((m) => id.includes(m)));
+  return BASE_LOCAL_RIDER + (family?.addition ?? "") + LOCAL_RIDER_END;
 }

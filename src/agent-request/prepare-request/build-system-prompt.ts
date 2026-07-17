@@ -9,7 +9,7 @@ import type { MemoryIndex } from "../../memory/index.js";
 import type { IntegrationRegistry } from "../../integrations/index.js";
 import { loadSystemPrompt } from "../../config-loader.js";
 import { createLogger } from "../../logger.js";
-import { providerRiderFor } from "./provider-riders.js";
+import { modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 import type { FileAccessMode } from "../../security/layer/index.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
@@ -149,6 +149,17 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
 
   const providerRider = providerRiderFor(input.resolvedProvider);
 
+  // Local models also get a model-family rider: provider "local" spans every
+  // local runtime and model family, so provider-level dispatch alone can't
+  // target family failure modes (plain-text tool syntax, leaked reasoning
+  // tags, think-budget burnout). Joins the same dynamic tail as providerRider,
+  // after it. This seam runs fresh every turn, downstream of the turn-context
+  // cache (which stores only memory context keyed on session+mode, never
+  // prompt bytes), so a model-varying rider can't poison any cache; and being
+  // local-only it never touches cloud providers' stable prompt-cache prefix.
+  const modelFamilyRider =
+    input.resolvedProvider === "local" ? modelFamilyRiderFor(input.resolvedModel) : "";
+
   // Per-turn file-access grounding — see fileAccessGroundingBlock. Appended in
   // BOTH branches so sub-agents reading files are grounded too. Best-effort:
   // a config read failure must never break prompt assembly.
@@ -160,7 +171,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   let systemPrompt: string;
   if (input.systemPromptOverride) {
     // Sub-agents provide their own prompt
-    systemPrompt = input.systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider;
+    systemPrompt = input.systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -182,7 +193,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider;
+    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
   }
 
   // build_app hand-off directive. Fires for EVERY provider (not just the

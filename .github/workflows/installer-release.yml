@@ -68,7 +68,7 @@ jobs:
       - name: Require a version tag
         shell: pwsh
         run: |
-          if ($env:RELEASE_TAG -cnotmatch '^v\d') {
+          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]') {
             Write-Error "Installer releases require a version tag beginning with v and a digit, got: $env:RELEASE_TAG"
             exit 1
           }

@@ -16,6 +16,10 @@ function windowsJob(path: string): string {
   return workflow.slice(start, end);
 }
 
+function installerReleaseWorkflow(): string {
+  return readFileSync(resolve(".github/workflows/installer-release.yml"), "utf8");
+}
+
 describe.each(workflows)("%s Windows release signing", (path) => {
   it("requires every signing input before building", () => {
     const job = windowsJob(path);
@@ -62,6 +66,42 @@ describe.each(workflows)("%s Windows release signing", (path) => {
     expect(job).not.toContain("$subj -notlike");
     expect(job).toContain("timestamp-rfc3161: http://timestamp.acs.microsoft.com");
     expect(job).toContain("timestamp-digest: SHA256");
+  });
+});
+
+describe("versioned installer release tag contract", () => {
+  it("requires an explicit existing tag for manual rebuilds", () => {
+    const workflow = installerReleaseWorkflow();
+
+    expect(workflow).toMatch(/push:\s+tags:\s+- 'v\*'/);
+    expect(workflow).toMatch(
+      /workflow_dispatch:\s+inputs:\s+tag:\s+description: [^\n]*Existing v\* tag[^\n]*\s+required: true\s+type: string/,
+    );
+    expect(workflow).toContain("RELEASE_TAG: ${{ inputs.tag || github.ref_name }}");
+  });
+
+  it("checks out and embeds the same canonical tag in both installers", () => {
+    const workflow = installerReleaseWorkflow();
+
+    expect(workflow.match(/ref: \$\{\{ env\.RELEASE_TAG \}\}/g)).toHaveLength(2);
+    expect(workflow).toContain("-p:InstallerSourceTag=$env:RELEASE_TAG");
+    expect(workflow).toContain("INSTALLER_SOURCE_TAG: ${{ env.RELEASE_TAG }}");
+    expect(workflow).not.toContain("InstallerSourceTag=${{ github.ref_name }}");
+    expect(workflow).not.toContain("INSTALLER_SOURCE_TAG: ${{ github.ref_name }}");
+  });
+
+  it("attaches signed artifacts to that exact versioned release", () => {
+    const workflow = installerReleaseWorkflow();
+    const attachJob = workflow.slice(workflow.indexOf("  attach-to-release:"));
+
+    expect(attachJob).toContain("tag_name: ${{ env.RELEASE_TAG }}");
+    expect(attachJob).toContain("make_latest: false");
+    expect(attachJob).toContain(
+      "dist/windows-installer/Install Local Agent X Windows Installer.exe",
+    );
+    expect(attachJob).toContain(
+      "dist/macos-installer/Install Local Agent X Mac Installer.dmg",
+    );
   });
 });
 

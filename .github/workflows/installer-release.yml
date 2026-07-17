@@ -31,17 +31,26 @@ name: Installer Release
 #   https://github.com/<owner>/<repo>/releases/latest/download/<asset>
 #
 # Trigger: push a tag matching v*  (e.g. `git tag v0.2.0 && git push --tags`).
-# Manually re-run via workflow_dispatch if a release needs to be rebuilt
-# without bumping the tag.
+# Manually re-run an existing v* tag via workflow_dispatch if a release needs
+# to be rebuilt without moving the tag.
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to rebuild installers for"
+        required: true
+        type: string
 
 permissions:
   contents: write   # softprops/action-gh-release needs write to attach assets
+
+env:
+  # Tag-push runs take the pushed tag; dispatch runs take the required input.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build-windows:
@@ -57,6 +66,8 @@ jobs:
       WIN_SIGN_EXPECTED_SUBJECT: ${{ vars.WIN_SIGN_EXPECTED_SUBJECT }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Require Windows release signing configuration
         shell: pwsh
@@ -98,9 +109,8 @@ jobs:
 
       - name: Publish single-file self-contained .exe
         # -p:InstallerSourceTag pins the source version this installer
-        # downloads at runtime. github.ref_name is the tag for tag-triggered
-        # runs and the branch name for workflow_dispatch runs ("main" for
-        # the default branch).
+        # downloads at runtime. RELEASE_TAG is the pushed tag or the explicit
+        # existing tag selected for a manual rebuild.
         shell: pwsh
         run: |
           dotnet publish installer/Installer.csproj `
@@ -108,7 +118,7 @@ jobs:
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishTrimmed=false `
-            -p:InstallerSourceTag=${{ github.ref_name }} `
+            -p:InstallerSourceTag=$env:RELEASE_TAG `
             --nologo
 
       - name: Stage release artifact
@@ -166,6 +176,8 @@ jobs:
       APP_PATH: installer/dist-mac/Install Local Agent X Mac Installer.app
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5
@@ -212,7 +224,7 @@ jobs:
 
       - name: Build + sign .app bundle
         env:
-          INSTALLER_SOURCE_TAG: ${{ github.ref_name }}
+          INSTALLER_SOURCE_TAG: ${{ env.RELEASE_TAG }}
           APPLE_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
           chmod +x scripts/build-mac-installer.sh
@@ -420,6 +432,7 @@ jobs:
           # The companion release.yml workflow already creates the release
           # with the source tarball and generated release notes; this run
           # appends the two installer binaries to that same release.
+          tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: false
           draft: false
           prerelease: false

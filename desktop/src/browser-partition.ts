@@ -19,7 +19,6 @@ import { app, session, type DownloadItem, type Session, type WebContents, type W
 
 import { LAX_DIR, getLAXConfig } from "./config";
 import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
-import { appendAgentCspHeaders } from "./browser-csp";
 import { shouldAllowUserLoopback, type ViewTrust } from "./browser-loopback-policy";
 
 const PARTITION_PREFIX = "persist:lax-profile-";
@@ -323,25 +322,16 @@ function hardenSession(sess: Session, partition: string): void {
 		noteRequestFailed(partition, { id: details.id, url: details.url, method: details.method, error: details.error });
 	});
 
-	// Inject the agent-browser CSP on the MAIN DOCUMENT response only.
-	// Chromium then enforces the ALLOWLIST policy (default-deny + same-site
-	// egress) so the cross-origin exfil class is blocked by the engine, not by
-	// a bypassable denylist. We APPEND (never replace) — browsers enforce the
-	// intersection of all CSP headers, so the page can't loosen ours. The
-	// append/preserve/mainFrame-only logic is a pure function in browser-csp.ts
-	// (unit-tested there without Electron); sub-resources inherit the document
-	// CSP and are returned untouched. Scoped to agent partitions only (see
-	// getHardenedPartitionSession) — never the user's real browser session.
-	sess.webRequest.onHeadersReceived((details, callback) => {
-		callback({
-			cancel: false,
-			responseHeaders: appendAgentCspHeaders(
-				details.responseHeaders as Record<string, string[]> | undefined,
-				details.resourceType,
-				details.url,
-			),
-		});
-	});
+	// NOTE: no same-site CSP is injected on in-app browser responses. A CSP that
+	// scopes script/style/img/font/connect to the page's own registrable domain
+	// is irreconcilable with modern multi-domain sites — x.com needs abs.twimg.com
+	// (CSS/JS) + api.x.com (data), instagram needs cdninstagram.com, google needs
+	// gstatic.com — so it doesn't just strip visual polish, it stops the SPA's own
+	// CDN JS from loading and the page never functions (for the agent OR the user
+	// watching it). Cross-origin EXFIL is governed at the per-hop egress evaluator
+	// (onBeforeRequest above → server-side network-policy) and the data-flow taint
+	// layer, which can allow legitimate CDN/API reads while blocking exfil — the
+	// right seam for it. A blunt engine-level CSP is the wrong tool here.
 }
 
 // ── Per-view helpers (called by browser-views.ts) ─────────

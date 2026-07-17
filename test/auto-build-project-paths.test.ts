@@ -54,12 +54,12 @@ describe("resolveProjectDir", () => {
     expect(r.replace(/\\/g, "/")).not.toMatch(/workspace\/apps/);
   });
 
-  it("canonicalizes an absolute POSIX path (realpath), not redirected to workspace/apps", () => {
+  it("preserves POSIX absolute paths on Windows and canonicalizes them elsewhere", () => {
     const posix = "/tmp/some-project";
-    // Absolute → routed through realpathDeep (symlink-canonical), NOT treated as
-    // a bare name (→ workspace/apps) or a relative path (→ cwd). On macOS /tmp
-    // resolves to /private/tmp, so assert against realpathDeep, not the raw input.
-    expect(resolveProjectDir(posix)).toBe(realpathDeep(posix));
+    // Windows must not reinterpret a caller-supplied POSIX path as C:\tmp\... .
+    // Other platforms canonicalize it; on macOS /tmp resolves to /private/tmp.
+    const expected = process.platform === "win32" ? posix : realpathDeep(posix);
+    expect(resolveProjectDir(posix)).toBe(expected);
   });
 
   it("resolves a relative path against cwd (legacy fallback)", () => {

@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBuildVerifyGate, _resetBuildVerifyState } from "./build-verify.js";
+import { bashTool } from "../../tools/shell-tool.js";
+import { statusOf } from "../../tools/result-helpers.js";
 import type { Op } from "../../ops/types.js";
 
 // End-to-end: real filesystem detection + real command execution through the
@@ -12,6 +14,7 @@ import type { Op } from "../../ops/types.js";
 // verdict — which is exactly what a live Grok run exercises when it fires.
 
 let dir: string;
+let externalExecSkipReason: string | null = null;
 
 function writeProject(scriptExit: number): void {
   writeFileSync(
@@ -21,14 +24,21 @@ function writeProject(scriptExit: number): void {
 }
 
 describe("runBuildVerifyGate — real fs + real exec (integration)", () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "lax-bv-"));
     mkdirSync(join(dir, "src"), { recursive: true });
     writeFileSync(join(dir, "src", "a.ts"), "export const x = 1;\n");
-  });
+    const probe = await bashTool.execute({ command: "npm --version", _cwd: dir, timeout: 5000 });
+    externalExecSkipReason = null;
+    if (statusOf(probe) !== "ok") {
+      const detail = probe.content.split(/\r?\n/, 1)[0].slice(0, 200);
+      externalExecSkipReason = `real build execution unavailable through bashTool: ${detail}`;
+    }
+  }, 15000);
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("detects the project's own typecheck script and lets 'done' stand on a clean exit", async () => {
+  it("detects the project's own typecheck script and lets 'done' stand on a clean exit", async (ctx) => {
+    if (externalExecSkipReason) ctx.skip(externalExecSkipReason);
     _resetBuildVerifyState();
     writeProject(0);
     const op = { id: "op-integ-green" } as unknown as Op;
@@ -37,7 +47,8 @@ describe("runBuildVerifyGate — real fs + real exec (integration)", () => {
     expect(r.nudge).toBe("");
   }, 30000);
 
-  it("runs the real command, maps a non-zero exit to red, and injects the failure", async () => {
+  it("runs the real command, maps a non-zero exit to red, and injects the failure", async (ctx) => {
+    if (externalExecSkipReason) ctx.skip(externalExecSkipReason);
     _resetBuildVerifyState();
     writeProject(1);
     const op = { id: "op-integ-red" } as unknown as Op;

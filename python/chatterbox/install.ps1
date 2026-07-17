@@ -35,21 +35,45 @@ if (-not (Test-Path "$venvDir\Scripts\python.exe")) {
 }
 $pyExe = "$venvDir\Scripts\python.exe"
 
-# 3) Upgrade pip
-Write-Host "Upgrading pip ..."
-& $pyExe -m pip install --upgrade pip
+# 3) Upgrade pip + setuptools (librosa needs pkg_resources; Python 3.12
+#    venvs no longer ship setuptools by default)
+Write-Host "Upgrading pip + setuptools ..."
+& $pyExe -m pip install --upgrade pip setuptools
+if ($LASTEXITCODE -ne 0) { Write-Error "pip/setuptools upgrade failed (exit $LASTEXITCODE)" }
 
-# 4) Install chatterbox-streaming with CUDA 12.8 wheels
-Write-Host "Installing chatterbox-streaming (~3 GB of torch wheels) ..."
+# 4) Install chatterbox-streaming FIRST. It hard-pins torch==2.6.0, and no
+#    CUDA-12.8 wheel exists for 2.6.0 — so on this step pip lands the CPU
+#    torch no matter which index we point it at.
+Write-Host "Installing chatterbox-streaming ..."
 & $pyExe -m pip install chatterbox-streaming --extra-index-url https://download.pytorch.org/whl/cu128
+if ($LASTEXITCODE -ne 0) { Write-Error "chatterbox-streaming install failed (exit $LASTEXITCODE)" }
 
-# 5) FastAPI runtime + audio helpers (most likely already pulled in by chatterbox)
+# 5) THEN force the CUDA torch over the pin. Blackwell GPUs (RTX 50-series,
+#    sm_120) need torch>=2.7 cu128; chatterbox works fine on newer torch —
+#    the ==2.6.0 pin is upstream conservatism, and pip's resolver warning
+#    about it is expected and harmless here. Order matters: torch must be
+#    installed AFTER chatterbox so the CUDA build wins. Skipped on CI
+#    (LAX_FORCE_CPU_TORCH=1, no GPU on runners) where the pinned CPU torch
+#    is exactly right.
+if ($env:LAX_FORCE_CPU_TORCH -ne "1") {
+    Write-Host "Overriding torch with CUDA 12.8 build (~3 GB; upstream pin lags Blackwell) ..."
+    & $pyExe -m pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    if ($LASTEXITCODE -ne 0) { Write-Error "CUDA torch override failed (exit $LASTEXITCODE)" }
+}
+
+# 6) FastAPI runtime + audio helpers (most likely already pulled in by chatterbox)
 & $pyExe -m pip install fastapi "uvicorn[standard]" soundfile
+if ($LASTEXITCODE -ne 0) { Write-Error "fastapi/uvicorn/soundfile install failed (exit $LASTEXITCODE)" }
 
-# 6) Sanity check
+# 7) Sanity check. MUST fail the script on a bad import: PowerShell 5.1 does
+#    not stop on a native command's non-zero exit even with
+#    ErrorActionPreference=Stop, and this installer once printed "Studio tier
+#    installed" over a venv whose `import chatterbox` had just tracebacked.
 Write-Host "Verifying install ..."
 & $pyExe -c "import chatterbox; print('chatterbox: OK')"
+if ($LASTEXITCODE -ne 0) { Write-Error "verify failed: 'import chatterbox' does not work; the venv is NOT usable" }
 & $pyExe -c "import torch; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available())"
+if ($LASTEXITCODE -ne 0) { Write-Error "verify failed: 'import torch' does not work; the venv is NOT usable" }
 
 Write-Host ""
 Write-Host "Studio tier installed. Start the Chatterbox sidecar with:"

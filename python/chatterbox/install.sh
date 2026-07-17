@@ -44,9 +44,10 @@ if [ ! -f "$VENV_DIR/bin/python" ]; then
 fi
 PY="$VENV_DIR/bin/python"
 
-# 3) Upgrade pip
-echo "Upgrading pip..."
-"$PY" -m pip install --upgrade pip --quiet
+# 3) Upgrade pip + setuptools (librosa needs pkg_resources; Python 3.12
+#    venvs no longer ship setuptools by default)
+echo "Upgrading pip + setuptools..."
+"$PY" -m pip install --upgrade pip setuptools --quiet
 
 # 4) Install chatterbox-streaming. CPU/MPS torch is the default index — no
 #    cu128 wheel index like Windows. Apple Silicon gets MPS automatically;

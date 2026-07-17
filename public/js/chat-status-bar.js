@@ -220,8 +220,8 @@ function updateStatusBar(force) {
     // Tier-aware quick actions: only relevant when the active tier supports clones.
     if ((activeTier.voicePool || []).includes('clones')) {
       voiceOpts += `<optgroup label=" ">`;
-      if (window._studioTierReady) voiceOpts += `<option value="__add_chatterbox__">+ Clone a new voice (10-30s clip)…</option>`;
-      if (window._chatterboxVoices?.length) {
+      if (window._voxTierReady || window._studioTierReady) voiceOpts += `<option value="__add_chatterbox__">+ Clone a new voice (10-30s clip)…</option>`;
+      if (window._voxcpmVoices?.length || window._chatterboxVoices?.length) {
         voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
       }
       voiceOpts += `</optgroup>`;

@@ -57,7 +57,7 @@ window.getActiveVoiceTier = getActiveVoiceTier;
 function voiceFitsTier(voiceId, tier) {
   if (!voiceId || !tier) return false;
   const pool = tier.voicePool || [];
-  if (pool.includes('clones') && voiceId.startsWith('cb:')) return true;
+  if (pool.includes('clones') && (voiceId.startsWith('vx:') || voiceId.startsWith('cb:'))) return true;
   if (pool.includes('kokoro') && /^[abm]?[fmb]?_/.test(voiceId)) return true;
   if (pool.includes('edge') && /^en-[A-Z]{2}-.+Neural$/.test(voiceId)) return true;
   if (pool.includes('browser')) return true; // browser SR returns OS voices, can't validate

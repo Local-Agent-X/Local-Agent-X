@@ -69,10 +69,10 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     // the setting flips depending on which path validated it.
     validate: z.preprocess(
       v => (v === "sovits" ? "auto" : v),
-      z.enum(["auto", "chatterbox", "lite", "xai"]),
+      z.enum(["auto", "voxcpm", "chatterbox", "lite", "xai"]),
     ),
     runtime: true,
-    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available (Chatterbox clone, then Lite Kokoro); xai needs the SuperGrok OAuth login",
+    description: "Preferred TTS engine for Telegram/WhatsApp bridge replies. auto chooses best available (VoxCPM clone, then Chatterbox, then Lite Kokoro); xai needs the SuperGrok OAuth login",
   },
   {
     field: "maxIterations",

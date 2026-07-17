@@ -83,6 +83,26 @@ export const TIERS: VoiceTier[] = [
     installMarkers: ["torch", "fastapi"],
   },
   {
+    id: "studio-vox",
+    label: "Studio-Vox (VoxCPM)",
+    port: Number(process.env.LAX_VOXCPM_PORT) || 7013,
+    venvDir: join(HOME, ".lax", "python-voxcpm", "venv"),
+    installerPath: join(REPO_ROOT, "python", "voxcpm", INSTALLER_EXT),
+    startCmd: () => ({
+      command: join(HOME, ".lax", "python-voxcpm", "venv", PYTHON_EXE),
+      args: [join(REPO_ROOT, "python", "voxcpm", "server.py")],
+      cwd: join(REPO_ROOT, "python", "voxcpm"),
+      env: { ...process.env },
+    }),
+    healthUrl: `http://127.0.0.1:${process.env.LAX_VOXCPM_PORT || "7013"}/healthz`,
+    description: "VoxCPM2 — primary voice-clone engine (won the 2026-07 listening bake-off). Zero-shot cloning from a 10-30s clip, 48kHz output.",
+    diskFootprint: "~7 GB (model auto-downloads on first use)",
+    procMatch: ["python-voxcpm", "server.py"],
+    // Both are installed unconditionally by python/voxcpm/install.ps1 and
+    // are what that installer's verify pass refuses to succeed without.
+    installMarkers: ["voxcpm", "fastapi"],
+  },
+  {
     id: "native",
     label: "Native ONNX (Kokoro)",
     kind: "native",
@@ -104,6 +124,8 @@ export const tierById = (id: string) => TIERS.find(t => t.id === id);
 // /voice start a guaranteed "Unknown tier" error).
 export const VOICE_COMMAND_TIER_MAP: Record<string, string> = {
   lite: "lite",
-  studio: "studio",
+  studio: "studio-vox",
+  vox: "studio-vox",
+  voxcpm: "studio-vox",
   chatterbox: "studio",
 };

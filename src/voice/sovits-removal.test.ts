@@ -24,7 +24,7 @@ describe("bridgeVoicePreference after sovits removal", () => {
   });
 
   it("still accepts every live engine and defaults to auto", () => {
-    for (const v of ["auto", "chatterbox", "lite", "xai"]) {
+    for (const v of ["auto", "voxcpm", "chatterbox", "lite", "xai"]) {
       expect(field.parse(v)).toBe(v);
     }
     expect(field.parse(undefined)).toBe("auto");
@@ -36,7 +36,7 @@ describe("bridgeVoicePreference after sovits removal", () => {
 
   it("settings-schema validates the same value set the same way (lockstep)", () => {
     const validate = settingsValidate();
-    for (const v of ["auto", "chatterbox", "lite", "xai", "sovits"]) {
+    for (const v of ["auto", "voxcpm", "chatterbox", "lite", "xai", "sovits"]) {
       expect(validate.parse(v)).toBe(field.parse(v));
     }
     expect(() => validate.parse("piper")).toThrow();
@@ -52,8 +52,8 @@ describe("voice tier registry after sovits removal", () => {
     }
   });
 
-  it("keeps the surviving tiers intact", () => {
-    expect(TIERS.map(t => t.id)).toEqual(["lite", "studio", "native"]);
+  it("keeps the live tiers intact (VoxCPM primary + Chatterbox backup)", () => {
+    expect(TIERS.map(t => t.id)).toEqual(["lite", "studio", "studio-vox", "native"]);
   });
 
   it("maps every /voice command tier onto a real, startable sidecar tier", () => {

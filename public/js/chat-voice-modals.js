@@ -54,7 +54,7 @@ function quickSwitchVoice(voice) {
 
 
 
-// Modal builders live in per-modal files (chat-voice-modal-chatterbox/manage.js).
+// Modal builders live in per-modal files (chat-voice-modal-clone/manage.js).
 
 function showVoiceToast(msg) {
   let el = document.getElementById('voice-toast');

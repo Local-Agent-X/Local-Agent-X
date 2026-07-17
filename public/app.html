@@ -645,8 +645,9 @@
           <div class="section-title">Bridge Voice (Telegram &amp; WhatsApp)</div>
           <div class="section-desc">Which engine speaks for replies sent over the messaging bridges. The chain falls back automatically if your preferred engine isn't running, so this is a preference, not a hard switch.</div>
           <div class="field"><label class="field-label">Preferred engine</label><select class="field-select" id="cfg-bridge-voice-preference" onchange="onBridgeVoicePreferenceChange(this.value)">
-            <option value="auto">Auto — Chatterbox clone first, then Lite Kokoro</option>
-            <option value="chatterbox">Chatterbox (zero-shot clone)</option>
+            <option value="auto">Auto — VoxCPM clone first, then Chatterbox, then Lite Kokoro</option>
+            <option value="voxcpm">VoxCPM (primary zero-shot clone)</option>
+            <option value="chatterbox">Chatterbox (backup zero-shot clone)</option>
             <option value="lite">Lite Kokoro (built-in, fastest)</option>
             <option value="xai">xAI Grok voice (cloud, needs SuperGrok login)</option>
           </select><div class="field-hint">Falls through to the next available engine if the chosen one isn't reachable. Voice you hear in the browser is set above; this only affects bridge messages.</div></div>
@@ -1466,7 +1467,7 @@
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
 <script src="/js/chat-status-bar.js?v=v5"></script>
 <script src="/js/chat-composer-menus.js?v=v1"></script>
-<script src="/js/chat-voice-modal-chatterbox.js?v=v1"></script>
+<script src="/js/chat-voice-modal-clone.js?v=v1"></script>
 <script src="/js/chat-voice-modal-manage.js?v=v1"></script>
 <script src="/js/chat-voice-modals.js?v=v2"></script>
 <script src="/js/chat-voice.js?v=v3"></script>

@@ -9,7 +9,7 @@ from typing import Optional
 import numpy as np
 
 from .audio import f32_to_b64_int16
-from .clones import synth_via_chatterbox
+from .clones import synth_via_chatterbox, synth_via_voxcpm
 from .constants import (
     MIC_SR,
     MIN_UTTERANCE_S,
@@ -100,38 +100,54 @@ class Session:
         )
 
     async def _prep_one(self, text: str, sentence_id: int, voice: str, speed: float, fut):
-        """Generate audio for one sentence. Two voice routing modes:
-          * voice == "cb:<id>"  -> Chatterbox zero-shot clone (Studio tier)
-                                   via the Chatterbox sidecar (:7010). If the
-                                   sidecar is down or errors, falls back to the
-                                   built-in Kokoro voice and tells the client
-                                   (tts_fallback) — degraded voice beats a
-                                   silent reply, but the user must know.
+        """Generate audio for one sentence. Three voice routing modes:
+          * voice == "vx:<id>"  -> VoxCPM zero-shot clone (Studio-Vox tier,
+                                   the primary clone engine) via :7013.
+          * voice == "cb:<id>"  -> Chatterbox zero-shot clone (Studio tier,
+                                   the backup clone engine) via :7010.
           * else                -> straight Kokoro built-in voice (Lite tier).
+        If a clone sidecar is down or errors, falls back to the built-in
+        Kokoro voice and tells the client (tts_fallback) — degraded voice
+        beats a silent reply, but the user must know.
         Resolves the Future with (samples, sample_rate, prep_ms_int)."""
         async with self.tts_prep_sem:
             t0 = time.time()
             try:
-                if voice.startswith("cb:"):
-                    try:
-                        samples, sample_rate = await synth_via_chatterbox(
-                            voice.split(":", 1)[1], text, sentence_id,
-                        )
-                    except Exception as e:
-                        fallback_voice = os.environ.get("LAX_TTS_VOICE", "am_onyx")
-                        log.warning(
-                            f"chatterbox synth failed for id={sentence_id} "
-                            f"({e}); falling back to kokoro voice={fallback_voice}"
-                        )
-                        await self._send({
-                            "type": "tts_fallback",
-                            "id": sentence_id,
-                            "from": voice,
-                            "to": fallback_voice,
-                            "reason": str(e)[:300],
-                        })
+                # Clone chain: vx:<id> → cb:<id> (imported clones share ids,
+                # so the same voice can be tried on the backup engine) →
+                # built-in Kokoro. Each hop is surfaced via tts_fallback.
+                chain = []
+                if voice.startswith("vx:"):
+                    clone_id = voice.split(":", 1)[1]
+                    chain = [("vx:" + clone_id, synth_via_voxcpm),
+                             ("cb:" + clone_id, synth_via_chatterbox)]
+                elif voice.startswith("cb:"):
+                    chain = [(voice, synth_via_chatterbox)]
+                if chain:
+                    kokoro_voice = os.environ.get("LAX_TTS_VOICE", "am_onyx")
+                    samples = sample_rate = None
+                    for i, (label, engine) in enumerate(chain):
+                        try:
+                            samples, sample_rate = await engine(
+                                label.split(":", 1)[1], text, sentence_id,
+                            )
+                            break
+                        except Exception as e:
+                            nxt = chain[i + 1][0] if i + 1 < len(chain) else kokoro_voice
+                            log.warning(
+                                f"clone synth ({label}) failed for id={sentence_id} "
+                                f"({e}); falling back to {nxt}"
+                            )
+                            await self._send({
+                                "type": "tts_fallback",
+                                "id": sentence_id,
+                                "from": label,
+                                "to": nxt,
+                                "reason": str(e)[:300],
+                            })
+                    if samples is None:
                         samples, sample_rate = await self._synth_kokoro(
-                            text, fallback_voice, speed,
+                            text, kokoro_voice, speed,
                         )
                 else:
                     samples, sample_rate = await self._synth_kokoro(text, voice, speed)

@@ -1,19 +1,24 @@
 // ── Chat: Manage Clones Modal ──
 //
-// Modal listing all Chatterbox clones, allowing rename or delete.
-// Calls into /api/voices/chatterbox.
+// Modal listing all VoxCPM / Chatterbox clones, allowing rename or delete.
+// Calls into /api/voices/voxcpm and /api/voices/chatterbox.
 
 function openManageClonesModal() {
   const existing = document.getElementById('manage-clones-modal');
   if (existing) existing.remove();
 
   // Each row is tagged with its provider so the rename/delete buttons hit
-  // the right /api/voices/<provider>/ endpoint.
-  const all = (Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [])
+  // the right /api/voices/<provider>/ endpoint. VoxCPM (primary) first.
+  const vx = (Array.isArray(window._voxcpmVoices) ? window._voxcpmVoices : [])
+    .map(c => ({ ...c, provider: 'voxcpm' }));
+  const cb = (Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [])
     .map(c => ({ ...c, provider: 'chatterbox' }));
+  const all = [...vx, ...cb];
 
   const renderRow = (c) => {
-    const tag = '<span style="font-size:.7rem;color:#9ed3ff">chatterbox</span>';
+    const tag = c.provider === 'voxcpm'
+      ? '<span style="font-size:.7rem;color:#3fcf6f">voxcpm</span>'
+      : '<span style="font-size:.7rem;color:#9ed3ff">chatterbox</span>';
     return `
       <div class="mc-row" data-id="${esc(c.id)}" data-provider="${esc(c.provider)}" data-name="${esc(c.name)}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
         <div style="flex:1;min-width:0">
@@ -98,7 +103,7 @@ function openManageClonesModal() {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
         row.remove();
-        const fullId = 'cb:' + id;
+        const fullId = (provider === 'voxcpm' ? 'vx:' : 'cb:') + id;
         if (localStorage.getItem('lax_voice') === fullId) {
           localStorage.setItem('lax_voice', 'am_michael');
         }

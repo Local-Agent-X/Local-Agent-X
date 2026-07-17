@@ -116,7 +116,7 @@ export const configSchema = z.object({
   // failing the whole config parse.
   bridgeVoicePreference: z.preprocess(
     v => (v === "sovits" ? "auto" : v),
-    z.enum(["auto", "chatterbox", "lite", "xai"]).default("auto"),
+    z.enum(["auto", "voxcpm", "chatterbox", "lite", "xai"]).default("auto"),
   ),
 
   /** Category-level kill-switches behind the Tool Policy toggles in

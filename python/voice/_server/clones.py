@@ -1,7 +1,8 @@
-"""Voice-clone TTS routing: the Chatterbox (Studio) sidecar.
+"""Voice-clone TTS routing: the VoxCPM (Studio-Vox, primary) and
+Chatterbox (Studio, backup) sidecars.
 
-An HTTP sidecar on localhost; this module wraps the round-trip
-and audio normalization (mono float32, target sample rate)."""
+HTTP sidecars on localhost; this module wraps the round-trip and audio
+normalization (mono float32, 24kHz to match the playback worklet)."""
 
 import io
 import os
@@ -45,3 +46,45 @@ async def synth_via_chatterbox(clone_id: str, text: str, sentence_id: int):
     # Chatterbox is 24kHz native — same as Kokoro/playback worklet, no resample.
     log.info(f"  chatterbox synth id={sentence_id} clone={clone_id} -> {len(out_samples)}sa@{out_sr}Hz ({r.headers.get('X-Synth-Ms')}ms)")
     return out_samples, int(out_sr)
+
+
+def _to_24k(samples: np.ndarray, sr: int) -> tuple:
+    """Resample to the browser playback worklet's fixed 24kHz. Without this
+    a 48kHz clip plays 2x fast and an octave up. scipy polyphase when
+    available; numpy linear interp as the always-available fallback."""
+    if int(sr) == 24000:
+        return samples, 24000
+    try:
+        from math import gcd
+        from scipy.signal import resample_poly
+        g = gcd(int(sr), 24000)
+        return resample_poly(samples, 24000 // g, int(sr) // g).astype(np.float32), 24000
+    except Exception:
+        n_out = int(round(len(samples) * 24000 / int(sr)))
+        x_out = np.linspace(0.0, len(samples) - 1, n_out, dtype=np.float64)
+        return np.interp(x_out, np.arange(len(samples)), samples).astype(np.float32), 24000
+
+
+async def synth_via_voxcpm(clone_id: str, text: str, sentence_id: int):
+    """Studio-Vox tier: VoxCPM sidecar at :7013 — the primary clone engine.
+    Native output is 48kHz mono WAV; resampled to 24kHz for the playback
+    worklet. Returns (samples_float32, 24000). Raises on failure so the
+    caller can fall back."""
+    import httpx
+    import soundfile as sf
+
+    vx_port = os.environ.get("LAX_VOXCPM_PORT", "7013")
+    url = f"http://127.0.0.1:{vx_port}/clones/{_safe_clone_id(clone_id)}/synth"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.post(url, json={"text": text})
+    if r.status_code == 404:
+        raise RuntimeError(f"voxcpm clone {clone_id!r} not installed")
+    if r.status_code != 200:
+        raise RuntimeError(f"voxcpm returned {r.status_code}: {r.text[:200]}")
+    out_samples, out_sr = sf.read(io.BytesIO(r.content))
+    if out_samples.ndim > 1:
+        out_samples = out_samples.mean(axis=1)
+    out_samples = out_samples.astype(np.float32)
+    out_samples, out_sr = _to_24k(out_samples, int(out_sr))
+    log.info(f"  voxcpm synth id={sentence_id} clone={clone_id} -> {len(out_samples)}sa@{out_sr}Hz ({r.headers.get('X-Synth-Ms')}ms)")
+    return out_samples, out_sr

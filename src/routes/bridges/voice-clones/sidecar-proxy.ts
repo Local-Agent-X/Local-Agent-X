@@ -1,4 +1,5 @@
 export const CB_BASE = () => `http://127.0.0.1:${process.env.LAX_CHATTERBOX_PORT || "7010"}`;
+export const VX_BASE = () => `http://127.0.0.1:${process.env.LAX_VOXCPM_PORT || "7013"}`;
 export const MAX_BODY = 25 * 1024 * 1024;
 
 export async function readBodyBytes(req: any): Promise<Buffer> {

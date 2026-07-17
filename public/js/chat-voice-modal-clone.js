@@ -1,19 +1,20 @@
-// ── Chat: Add Chatterbox Modal (zero-shot voice) ──
+// ── Chat: Add Clone Modal (zero-shot voice) ──
 //
-// Modal for adding a quick zero-shot voice clone via the Chatterbox
-// sidecar. Single-step: name + sample upload → POST /api/voices/chatterbox.
+// Modal for adding a zero-shot voice clone. Posts to the PRIMARY clone
+// engine (VoxCPM, /api/voices/voxcpm); the sidecar auto-transcribes the
+// clip. Single-step: name + sample upload.
 
-function openAddChatterboxModal() {
-  const existing = document.getElementById('add-chatterbox-modal');
+function openAddCloneModal() {
+  const existing = document.getElementById('add-clone-modal');
   if (existing) existing.remove();
 
   const modal = document.createElement('div');
-  modal.id = 'add-chatterbox-modal';
+  modal.id = 'add-clone-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
   modal.innerHTML = `
     <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:24px;max-width:480px;width:92%">
-      <h3 style="margin:0 0 6px;font-size:1.1rem">Add a Chatterbox voice</h3>
-      <p style="margin:0 0 14px;color:var(--muted, #666);font-size:.83rem">Upload a clean 10-30s WAV/MP3 of one person speaking. Chatterbox clones the voice in real time — no training step needed. Local-only, nothing leaves this machine.</p>
+      <h3 style="margin:0 0 6px;font-size:1.1rem">Clone a voice</h3>
+      <p style="margin:0 0 14px;color:var(--muted, #666);font-size:.83rem">Upload a clean 10-30s WAV/MP3 of one person speaking. VoxCPM clones the voice in real time — no training step needed. Local-only, nothing leaves this machine.</p>
       <div style="margin-bottom:12px">
         <label style="display:block;font-size:.78rem;color:var(--muted, #666);margin-bottom:4px">Voice name</label>
         <input id="acb-name" type="text" placeholder="My Voice" style="width:100%;padding:8px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.9rem"/>
@@ -41,7 +42,7 @@ function openAddChatterboxModal() {
     const file = document.getElementById('acb-file').files[0];
     if (!file) { setStatus('Pick an audio file first.', true); return; }
     if (file.size > 18 * 1024 * 1024) { setStatus('File too big (max ~18MB).', true); return; }
-    setStatus('Uploading…', false);
+    setStatus('Uploading… (transcribing the clip takes a few seconds)', false);
     try {
       const arrayBuf = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuf);
@@ -50,17 +51,16 @@ function openAddChatterboxModal() {
         binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
       }
       const b64 = btoa(binary);
-      const r = await apiFetch('/api/voices/chatterbox', {
+      const r = await apiFetch('/api/voices/voxcpm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, audio_b64: b64 }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { setStatus('Failed: ' + (data.error || data.detail || ('HTTP ' + r.status)), true); return; }
-      setStatus(`✓ Installed "${data.name || name}". Selected as your voice.`, false);
       await refreshClonedVoices();
       // Auto-select the new voice
-      const newId = 'cb:' + data.id;
+      const newId = 'vx:' + data.id;
       localStorage.setItem('lax_voice', newId);
       const sel = document.getElementById('voice-quick-select');
       if (sel) sel.value = newId;
@@ -81,3 +81,5 @@ function openAddChatterboxModal() {
   };
 }
 
+// Back-compat alias — callers still reference the Chatterbox-era name.
+function openAddChatterboxModal() { openAddCloneModal(); }

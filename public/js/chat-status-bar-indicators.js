@@ -72,9 +72,20 @@ async function refreshClonedVoices() {
   try {
     const tierRes = await apiFetch('/api/voices/tier');
     const tier = await tierRes.json();
-    window._studioTierReady = !!(tier.chatterbox && tier.chatterbox.ready);
-    // Chatterbox clones (single-stage zero-shot TTS)
-    if (window._studioTierReady) {
+    window._voxTierReady = !!(tier.voxcpm && tier.voxcpm.ready);
+    window._studioTierReady = !!(tier.chatterbox && tier.chatterbox.ready) || window._voxTierReady;
+    // VoxCPM clones (primary zero-shot engine)
+    if (window._voxTierReady) {
+      const r = await apiFetch('/api/voices/voxcpm');
+      if (r.ok) {
+        const data = await r.json();
+        window._voxcpmVoices = Array.isArray(data?.clones) ? data.clones : [];
+      }
+    } else {
+      window._voxcpmVoices = [];
+    }
+    // Chatterbox clones (backup zero-shot engine)
+    if (tier.chatterbox && tier.chatterbox.ready) {
       const r = await apiFetch('/api/voices/chatterbox');
       if (r.ok) {
         const data = await r.json();

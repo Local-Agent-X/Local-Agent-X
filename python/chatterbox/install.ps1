@@ -57,7 +57,10 @@ if ($LASTEXITCODE -ne 0) { Write-Error "chatterbox-streaming install failed (exi
 #    is exactly right.
 if ($env:LAX_FORCE_CPU_TORCH -ne "1") {
     Write-Host "Overriding torch with CUDA 12.8 build (~3 GB; upstream pin lags Blackwell) ..."
-    & $pyExe -m pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    # --force-reinstall, not --upgrade: PyPI's torch can be NEWER than the
+    # cu128 index's latest, and --upgrade won't downgrade — leaving a
+    # torch/torchaudio mismatch. Force-reinstall lands the matched pair.
+    & $pyExe -m pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
     if ($LASTEXITCODE -ne 0) { Write-Error "CUDA torch override failed (exit $LASTEXITCODE)" }
 }
 

@@ -26,7 +26,8 @@ project's own LICENSE is authoritative.
 | Project | Author / Org | License | Powers |
 |---|---|---|---|
 | [Kokoro TTS](https://github.com/hexgrad/kokoro) ([kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx), [kokoro-js](https://github.com/hexgrad/kokoro)) | hexgrad / thewh1teagle | Apache-2.0 | Lite-tier built-in voices |
-| [Chatterbox](https://github.com/resemble-ai/chatterbox) (chatterbox-streaming) | Resemble AI | MIT | Studio tier reference-clip cloning |
+| [VoxCPM](https://github.com/OpenBMB/VoxCPM) | OpenBMB | Apache-2.0 | Studio-Vox tier — primary reference-clip cloning |
+| [Chatterbox](https://github.com/resemble-ai/chatterbox) (chatterbox-streaming) | Resemble AI | MIT | Studio tier reference-clip cloning (backup) |
 | [Ultimate RVC](https://github.com/JackismyShephard/ultimate-rvc) / [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) | community | MIT | Legacy Pro RVC tier (:7009) |
 | [msedge-tts](https://github.com/Migushthe2nd/MsEdgeTTS) | Migushthe2nd | MIT | Microsoft Edge cloud TTS voices |
 | [mpg123-decoder](https://github.com/eshaz/mpg123-decoder) | eshaz | LGPL-2.1 | MP3 decoding for audio playback |

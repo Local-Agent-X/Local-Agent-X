@@ -18,7 +18,7 @@
 function onTtsEngineChange(engine) {
   const builtin = document.getElementById('tts-voice-field');
   const clone = document.getElementById('tts-clone-field');
-  const isClone = engine === 'chatterbox';
+  const isClone = engine === 'voxcpm' || engine === 'chatterbox';
   const isBuiltin = engine === 'kokoro' || engine === 'piper';
   if (builtin) builtin.style.display = isBuiltin ? '' : 'none';
   if (clone) clone.style.display = isClone ? '' : 'none';
@@ -31,8 +31,10 @@ function onTtsEngineChange(engine) {
 function refreshTtsClonePicker(engine) {
   const sel = document.getElementById('cfg-tts-clone');
   if (!sel) return;
-  const list = window._chatterboxVoices || [];
-  const prefix = 'cb:';
+  const list = engine === 'voxcpm'
+    ? (window._voxcpmVoices || [])
+    : (window._chatterboxVoices || []);
+  const prefix = engine === 'voxcpm' ? 'vx:' : 'cb:';
   sel.innerHTML = '<option value="">-- pick a clone --</option>' +
     list.map(c => {
       const v = prefix + c.id;
@@ -52,9 +54,20 @@ async function initVoiceSettings() {
     const r = await (typeof apiFetch === 'function' ? apiFetch('/api/voices/tier') : fetch('/api/voices/tier'));
     if (!r.ok) return;
     const tier = await r.json();
+    const vxReady = !!(tier.voxcpm && tier.voxcpm.ready);
     const cbReady = !!(tier.chatterbox && tier.chatterbox.ready);
-    window._studioTierReady = cbReady;
-    // Pull the actual clone list if the sidecar is up
+    window._voxTierReady = vxReady;
+    window._studioTierReady = cbReady || vxReady;
+    // Pull the actual clone lists if their sidecars are up
+    if (vxReady) {
+      try {
+        const vr = await apiFetch('/api/voices/voxcpm');
+        if (vr.ok) {
+          const d = await vr.json();
+          window._voxcpmVoices = Array.isArray(d?.clones) ? d.clones : [];
+        }
+      } catch {}
+    }
     if (cbReady) {
       try {
         const cr = await apiFetch('/api/voices/chatterbox');
@@ -64,10 +77,12 @@ async function initVoiceSettings() {
         }
       } catch {}
     }
-    // Enable the clone-engine option if the sidecar is up
+    // Enable the clone-engine options if their sidecars are up
     const group = document.getElementById('cfg-tts-clone-group');
+    const vxOpt = document.getElementById('cfg-tts-engine-vx');
     const cbOpt = document.getElementById('cfg-tts-engine-cb');
-    if (group && cbReady) group.style.display = '';
+    if (group && (vxReady || cbReady)) group.style.display = '';
+    if (vxOpt) vxOpt.disabled = !vxReady;
     if (cbOpt) cbOpt.disabled = !cbReady;
     // Re-trigger engine-change to refresh the sub-picker if a cloning engine
     // was already saved from a prior session.
@@ -128,12 +143,12 @@ async function initBridgeVoicePreference() {
     if (r.ok) {
       const s = await r.json();
       const v = s.bridgeVoicePreference;
-      if (v === 'auto' || v === 'chatterbox' || v === 'lite' || v === 'xai') el.value = v;
+      if (v === 'auto' || v === 'voxcpm' || v === 'chatterbox' || v === 'lite' || v === 'xai') el.value = v;
     }
   } catch { /* leave default 'auto' */ }
 }
 function onBridgeVoicePreferenceChange(value) {
-  if (!['auto','chatterbox','lite','xai'].includes(value)) return;
+  if (!['auto','voxcpm','chatterbox','lite','xai'].includes(value)) return;
   const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('lax_token') || '');
   fetch('/api/settings', {
     method: 'POST',

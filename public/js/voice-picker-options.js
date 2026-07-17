@@ -47,10 +47,21 @@ function _browserOptions(current) {
 }
 
 function _studioOptions(current) {
+  const vx = Array.isArray(window._voxcpmVoices) ? window._voxcpmVoices : [];
   const cb = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
   let html = `<optgroup label="Kokoro built-ins">${_kokoroOptions(current)}</optgroup>`;
-  if (cb.length) {
-    html += `<optgroup label="Zero-shot clones (Chatterbox)">` + cb.map(c => {
+  if (vx.length) {
+    html += `<optgroup label="Cloned voices (VoxCPM)">` + vx.map(c => {
+      const v = 'vx:' + c.id;
+      return `<option value="${_esc(v)}"${v === current ? ' selected' : ''}>${_esc(c.name || c.id)}</option>`;
+    }).join('') + `</optgroup>`;
+  }
+  // Chatterbox is the backup engine — only list ids VoxCPM doesn't already
+  // have, so imported clones don't show up twice in the picker.
+  const vxIds = new Set(vx.map(c => c.id));
+  const cbOnly = cb.filter(c => !vxIds.has(c.id));
+  if (cbOnly.length) {
+    html += `<optgroup label="Clones (Chatterbox backup)">` + cbOnly.map(c => {
       const v = 'cb:' + c.id;
       return `<option value="${_esc(v)}"${v === current ? ' selected' : ''}>${_esc(c.name || c.id)}</option>`;
     }).join('') + `</optgroup>`;

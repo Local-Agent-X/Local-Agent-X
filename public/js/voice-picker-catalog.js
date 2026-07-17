@@ -89,12 +89,13 @@ window.LAX_VOICE_CATALOG = {
       id: 'studio',
       label: 'Studio local',
       tagline: 'Voice cloning · zero-shot clones · GPU recommended',
-      detail: 'Python Lite sidecar with Kokoro + faster-whisper. Routes cb: voices to the Studio (Chatterbox) sidecar internally; if Chatterbox is down, the reply falls back to the built-in Kokoro voice. This is where cloned voices live.',
+      detail: 'Python Lite sidecar with Kokoro + faster-whisper. Routes vx: voices to the VoxCPM sidecar (primary clone engine) and cb: to Chatterbox (backup); if a clone engine is down, the reply falls back down the chain to the built-in Kokoro voice. This is where cloned voices live.',
       settings: { voiceMode: 'standard', voiceEngine: 'python', voiceTier4Provider: '', voiceSttProvider: '' },
       voicePool: ['kokoro', 'clones'],
       prerequisites: [
         { kind: 'sidecar:lite', label: 'Lite sidecar (~3–4 GB venv)' },
-        { kind: 'sidecar:studio', label: 'Chatterbox sidecar (optional — for zero-shot clones)', optional: true },
+        { kind: 'sidecar:studio-vox', label: 'VoxCPM sidecar (primary clone engine)', optional: true },
+        { kind: 'sidecar:studio', label: 'Chatterbox sidecar (optional — backup clone engine)', optional: true },
       ],
     },
     // NOTE: "OpenAI Realtime" (voiceMode=realtime) was removed from the picker.

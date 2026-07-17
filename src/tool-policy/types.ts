@@ -17,6 +17,12 @@ export interface ToolPolicyRule {
    *  All specified patterns must match for the rule to apply. */
   argMatch?: Record<string, string>;
   priority?: number;     // Higher = evaluated first (default: 0)
+  /** Set only on rules written from code defaults into ~/.lax/tool-policy.json:
+   *  hash of the user-ownable fields (decision/priority/constraints) as code
+   *  wrote them. Lets the boot merge tell "untouched snapshot of a default"
+   *  (refresh when the default changes in code) from "user-edited rule"
+   *  (preserve). See merge-defaults.ts. */
+  snapshotHash?: string;
 }
 
 export interface ToolPolicyConfig {

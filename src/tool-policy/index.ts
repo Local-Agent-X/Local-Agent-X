@@ -3,14 +3,15 @@ import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { checkRegexSafety } from "../safe-regex.js";
-import { DEFAULT_POLICY } from "./default-rules.js";
 import { matchArgPattern, matchGlob, matchHost } from "./matchers.js";
+import { mergeWithDefaults, stampedDefaultPolicy } from "./merge-defaults.js";
 import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./types.js";
 import { USER_HINTS } from "../types.js";
 
 const logger = createLogger("tool-policy");
 
 export type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./types.js";
+export { mergeWithDefaults, snapshotHashOf, stampedDefaultPolicy } from "./merge-defaults.js";
 
 /**
  * Tool Policy System
@@ -272,53 +273,6 @@ export class LiveToolPolicy extends ToolPolicy {
   }
 }
 
-/** Merge user policy with defaults — user rules take priority, but missing
- *  default rules are added AND the matching pattern of an existing default rule
- *  is refreshed from code. */
-export function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPolicyConfig {
-  const defaultsById = new Map(DEFAULT_POLICY.rules.map(r => [r.id, r]));
-  const userIds = new Set(user.rules.map(r => r.id));
-
-  // The on-disk file is a snapshot of the defaults at first run, plus any
-  // decision toggles the user has made (the Settings UI edits a rule's
-  // allow/deny by id; it never edits the `tool` matching pattern). So when a
-  // default rule's matching key changes in code under a stable id — e.g. the
-  // office-tool collapse repointed allow-presentation from the glob
-  // "presentation_*" (old presentation_create/_add_slide tools) to the single
-  // "presentation" tool — the stale snapshot would pin the old pattern forever
-  // and the tool silently hits deny-by-default. Refresh the code-owned matching
-  // key (`tool`, `action`) from the default for any shared id; keep everything
-  // the user owns (decision, constraints, priority). Ids with no default are
-  // genuinely user-authored rules and pass through untouched.
-  let refreshed = 0;
-  const reconciled = user.rules.map(u => {
-    const def = defaultsById.get(u.id);
-    if (!def || (def.tool === u.tool && def.action === u.action)) return u;
-    refreshed++;
-    return { ...u, tool: def.tool, action: def.action };
-  });
-
-  const missing = DEFAULT_POLICY.rules.filter(r => !userIds.has(r.id));
-  if (missing.length > 0) {
-    logger.info(`[policy] Merging ${missing.length} default rules not in user policy`);
-  }
-  if (refreshed > 0) {
-    logger.info(`[policy] Refreshed ${refreshed} default rule(s) whose matching pattern changed in code`);
-  }
-  const merged = {
-    defaultDecision: user.defaultDecision,
-    rules: [...reconciled, ...missing],
-  };
-  // Persist so new/refreshed rules survive restarts and self-heal the snapshot.
-  if ((missing.length > 0 || refreshed > 0) && policyPath) {
-    try {
-      writeFileSync(policyPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
-      logger.info(`[policy] Saved merged policy (${merged.rules.length} rules) to ${policyPath}`);
-    } catch {}
-  }
-  return merged;
-}
-
 /** Load tool policy from ~/.lax/tool-policy.json or use defaults */
 export function loadToolPolicy(dataDir: string): LiveToolPolicy {
   const policyPath = join(dataDir, "tool-policy.json");
@@ -340,12 +294,15 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
       logger.warn(`[policy] Failed to parse ${policyPath}: ${(e as Error).message}, using defaults`);
     }
   }
-  // Write default policy to disk on first run (so audit doesn't warn about missing file)
+  // Write default policy to disk on first run (so audit doesn't warn about
+  // missing file) — STAMPED, so future default-decision changes in code can
+  // tell this snapshot apart from a user edit and refresh it (merge-defaults.ts).
+  const stamped = stampedDefaultPolicy();
   try {
-    writeFileSync(policyPath, JSON.stringify(DEFAULT_POLICY, null, 2), { encoding: "utf-8", mode: 0o600 });
+    writeFileSync(policyPath, JSON.stringify(stamped, null, 2), { encoding: "utf-8", mode: 0o600 });
     logger.info(`[policy] Created default policy at ${policyPath}`);
   } catch {}
-  return new LiveToolPolicy(new ToolPolicy(DEFAULT_POLICY), policyPath);
+  return new LiveToolPolicy(new ToolPolicy(stamped), policyPath);
 }
 
 // ── Boot-time coverage audit ─────────────────────────────────────────────

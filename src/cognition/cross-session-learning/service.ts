@@ -14,7 +14,11 @@ import {
   getVersionEffectiveness,
   listCommittedLearnedOutcomes,
 } from "../../protocols/learned-effectiveness.js";
-import { isStrongerRefinement, selectSafetyRecovery } from "../../protocols/learned-refinement.js";
+import {
+  isSafeRefinementVersion,
+  isStrongerRefinement,
+  selectSafetyRecovery,
+} from "../../protocols/learned-refinement.js";
 import { CrossSessionLearner } from "./learner.js";
 import type { LearnedCandidate, LearnedCandidateState } from "./types.js";
 
@@ -165,6 +169,29 @@ export class CrossSessionLearningService {
         candidate = this.requireCandidate(candidate.id);
       }
       changed = this.healState(candidate, record, now, "Recovered cross-store state") || changed;
+      if (mode === "autonomous" && record.state === "active" && !safetyRecoveredIds.has(candidate.id)) {
+        const target = this.newestVersion(record);
+        const activeVersionId = record.activeVersionId;
+        const current = record.versions.find((version) => version.id === activeVersionId);
+        if (
+          current
+          && target.id !== current.id
+          && isSafeRefinementVersion(current, target, candidate.id)
+          && !this.wasSafetyRejected(record, target.id)
+        ) {
+          record = activateLearnedProtocol({
+            slug: candidate.id,
+            versionId: target.id,
+            expectedActiveVersionId: record.activeVersionId,
+            reason: "Activated stronger refinement automatically",
+            timestamp: now,
+          });
+          changed = this.healState(this.requireCandidate(candidate.id), record, now, "Activated automatically") || changed;
+          signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
+          signaledIds.add(candidate.id);
+          changed = true;
+        }
+      }
       if (mode === "autonomous" && record.state === "draft") {
         const active = activateLearnedProtocol({
           slug: candidate.id,

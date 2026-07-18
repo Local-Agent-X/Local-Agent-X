@@ -141,16 +141,68 @@ describe("cross-session learning management service", () => {
     expect(service.list()[0].state).toBe("active");
   });
 
-  it("drafts a stronger refinement in assisted mode without activating it", async () => {
+  it("activates an assisted-drafted safe refinement autonomously after restart and cooldown", async () => {
+    let current = await system();
+    addEvidence(current.learner);
+    current.service.reconcile("autonomous", BASE + 10);
+    const firstVersion = current.service.list()[0].activeVersionId;
+
+    addEvidence(current.learner, 6);
+    current.service.reconcile("assisted", BASE + 8 * DAY);
+    const secondVersion = current.service.detail(current.service.list()[0].id)!.versions.at(-1)!.id;
+    expect(current.service.list()[0]).toMatchObject({ activeVersionId: firstVersion, versionCount: 2, state: "active" });
+
+    vi.resetModules();
+    current = await system();
+    const activated = current.service.reconcile("autonomous", BASE + 8 * DAY + 1);
+    expect(activated.signals).toEqual([expect.objectContaining({ category: "learning-activity", priority: 1 })]);
+    expect(current.service.list()[0]).toMatchObject({ activeVersionId: secondVersion, versionCount: 2, state: "active" });
+    const lifecycle = await import("../../protocols/learned-lifecycle.js");
+    expect(lifecycle.loadLearnedProtocol(current.service.list()[0].id).activationHistory?.at(-1)).toMatchObject({
+      kind: "activate", versionId: secondVersion, previousVersionId: firstVersion,
+      reason: "Activated stronger refinement automatically",
+    });
+    expect(current.service.reconcile("autonomous", BASE + 8 * DAY + 2)).toEqual({ signals: [], changed: false });
+  });
+
+  it("rejects a weak pre-policy inactive version without mutating the active record", async () => {
     const { learner, service } = await system();
     addEvidence(learner);
     service.reconcile("autonomous", BASE + 10);
-    const firstVersion = service.list()[0].activeVersionId;
+    const id = service.list()[0].id;
+    const active = service.list()[0].activeVersionId!;
+    const lifecycle = await import("../../protocols/learned-lifecycle.js");
+    const record = lifecycle.loadLearnedProtocol(id);
+    const metadata = structuredClone(record.versions[0].metadata) as Record<string, unknown>;
+    metadata.confidence = 0.80;
+    lifecycle.createLearnedProtocolDraft({
+      slug: id,
+      skillMd: readFileSync(join(workspace, "protocols", "imported", id, "SKILL.md"), "utf8"),
+      metadata,
+    });
+    const before = readFileSync(join(workspace, "protocols", "imported", id, "learned.json"), "utf8");
 
+    expect(service.reconcile("autonomous", BASE + 20)).toEqual({ signals: [], changed: false });
+    expect(service.list()[0].activeVersionId).toBe(active);
+    expect(readFileSync(join(workspace, "protocols", "imported", id, "learned.json"), "utf8")).toBe(before);
+  });
+
+  it("fails closed on a tampered inactive refinement without changing the active selection", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("autonomous", BASE + 10);
+    const id = service.list()[0].id;
+    const first = service.list()[0].activeVersionId;
     addEvidence(learner, 6);
     service.reconcile("assisted", BASE + 8 * DAY);
+    const target = service.detail(id)!.versions.at(-1)!.id;
+    const lifecyclePath = join(workspace, "protocols", "imported", id, "learned.json");
+    const before = readFileSync(lifecyclePath, "utf8");
+    writeFileSync(join(workspace, "protocols", "imported", id, "versions", target, "meta.json"), "{}\n");
 
-    expect(service.list()[0]).toMatchObject({ activeVersionId: firstVersion, versionCount: 2, state: "active" });
+    expect(() => service.reconcile("autonomous", BASE + 8 * DAY + 1)).toThrow(/hash mismatch/);
+    expect(readFileSync(lifecyclePath, "utf8")).toBe(before);
+    expect(JSON.parse(before)).toMatchObject({ activeVersionId: first });
   });
 
   it.each(["assisted", "autonomous"] as const)("applies hard safety rollback in %s mode", async (mode) => {
@@ -173,6 +225,29 @@ describe("cross-session learning management service", () => {
       kind: "rollback", versionId: healthy, reason: "Safety rollback: hard regression",
     });
     expect(service.reconcile(mode, BASE + 8 * DAY + 21)).toEqual({ signals: [], changed: false });
+  });
+
+  it("rolls back an active regression instead of forward-activating a safe inactive draft", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("autonomous", BASE + 10);
+    const id = service.list()[0].id;
+    const first = service.list()[0].activeVersionId!;
+    await commitOutcomes(id, first, ["clean", "clean", "clean", "clean", "clean"], BASE + 20);
+
+    addEvidence(learner, 6);
+    service.reconcile("assisted", BASE + 8 * DAY);
+    const second = service.detail(id)!.versions.at(-1)!.id;
+    service.action(id, { action: "activate", versionId: second, expectedActiveVersionId: first }, BASE + 8 * DAY + 1);
+    addEvidence(learner, 9);
+    service.reconcile("assisted", BASE + 16 * DAY);
+    const third = service.detail(id)!.versions.at(-1)!.id;
+    expect(third).not.toBe(second);
+    await commitOutcomes(id, second, ["aborted", "clean", "aborted"], BASE + 8 * DAY + 10);
+
+    service.reconcile("autonomous", BASE + 16 * DAY + 1);
+    expect(service.list()[0]).toMatchObject({ activeVersionId: first, versionCount: 3 });
+    expect(service.list()[0].activeVersionId).not.toBe(third);
   });
 
   it("archives a regressing activation when no healthy prior exists and ignores unrelated or uncommitted events", async () => {

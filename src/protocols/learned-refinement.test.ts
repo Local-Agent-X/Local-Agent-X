@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
 import type { LearnedOutcomeReceipt, VersionEffectiveness } from "./learned-effectiveness.js";
 import type { LearnedProtocolRecord, LearnedProtocolVersion } from "./learned-lifecycle.js";
-import { isStrongerRefinement, selectSafetyRecovery } from "./learned-refinement.js";
+import { isSafeRefinementVersion, isStrongerRefinement, selectSafetyRecovery } from "./learned-refinement.js";
 
 const ID = "learned-0123456789abcdefabcd";
 
@@ -25,6 +25,17 @@ function version(id: string, occurrences = 3, sessions = 1, confidence = 0.85): 
     metadata: {
       candidateId: ID, confidence, toolSequence: ["read_file", "run_tests"],
       evidenceSnapshot: { occurrences, outcomeStats: { distinctSessions: sessions } },
+    },
+  };
+}
+
+function targetVersion(overrides: Record<string, unknown> = {}): LearnedProtocolVersion {
+  const evidence = candidate().evidence;
+  return {
+    id: "target", sha256: "b".repeat(64), createdAt: new Date(2).toISOString(),
+    metadata: {
+      candidateId: ID, confidence: 0.85, toolSequence: ["read_file", "run_tests"],
+      evidenceSnapshot: evidence, ...overrides,
     },
   };
 }
@@ -66,6 +77,22 @@ describe("learned refinement policy", () => {
     const noisy = candidate();
     noisy.evidence.outcomeStats = { clean: 5, partial: 0, aborted: 1, successRate: 5 / 6, weightedSuccessRate: 5 / 6, distinctSessions: 3 };
     expect(isStrongerRefinement(noisy, version("old", 3, 1))).toBe(false);
+  });
+
+  it("applies the same gate to persisted inactive versions", () => {
+    expect(isSafeRefinementVersion(version("active", 3, 1), targetVersion(), ID)).toBe(true);
+    expect(isSafeRefinementVersion(version("active", 3, 1), targetVersion({ confidence: 0.80 }), ID)).toBe(false);
+    expect(isSafeRefinementVersion(version("active", 3, 1), targetVersion({ toolSequence: ["shell"] }), ID)).toBe(false);
+    expect(isSafeRefinementVersion(version("active", 4, 2), targetVersion(), ID)).toBe(false);
+    expect(isSafeRefinementVersion(version("active", 3, 1), targetVersion({ candidateId: "learned-aaaaaaaaaaaaaaaaaaaa" }), ID)).toBe(false);
+    const wrongActive = version("active", 3, 1);
+    wrongActive.metadata.candidateId = "learned-aaaaaaaaaaaaaaaaaaaa";
+    expect(isSafeRefinementVersion(
+      wrongActive, targetVersion({ candidateId: "learned-aaaaaaaaaaaaaaaaaaaa" }), ID,
+    )).toBe(false);
+    const fabricated = candidate().evidence;
+    fabricated.outcomeStats!.successRate = 0.99;
+    expect(isSafeRefinementVersion(version("active", 3, 1), targetVersion({ evidenceSnapshot: fabricated }), ID)).toBe(false);
   });
 
   it("waits for three probation outcomes and rolls hard regression to newest healthy prior", () => {

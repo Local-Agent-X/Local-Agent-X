@@ -100,5 +100,5 @@ export function computeAuthWallPrefix(snapshot: string): string {
   // Observability: mark the block moment so a route-around reads as
   // "navigate X -> auth-wall detected -> navigate Y" in the logs.
   log.info("auth-wall detected on page snapshot");
-  return `[AUTH-WALL DETECTED] This page has a primary login form. STOP. Tell the user what they need to log into and wait for them to handle it. Do NOT call more browser actions hoping to bypass it. Do NOT type passwords yourself — the user enters credentials in the browser themselves.\n\n`;
+  return `[AUTH-WALL DETECTED] This page has a primary login form that only the user can complete. Do NOT attempt to bypass it, and do NOT type credentials yourself — the user enters credentials in the browser themselves. This applies to THIS page only and does not block other work: if you have other sites to open or unrelated actions pending, continue with those now, and tell the user which page is waiting on their login.\n\n`;
 }

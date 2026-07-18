@@ -120,4 +120,45 @@ describe("learned protocol lifecycle", () => {
     expect(reloaded.versions[0].metadata).toEqual({ evidenceId: "evidence-1" });
     expect(() => archiveLearnedProtocol({ slug: "durable", expectedActiveVersionId: null })).toThrow(/version changed/);
   });
+
+  it("migrates old records in memory and persists bounded activation reasons without changing versions", () => {
+    const draft = createLearnedProtocolDraft({ slug: "history", skillMd: skill("history", "Immutable body"), metadata: { proof: "fixed" } });
+    const versionDir = join(importedProtocolsDir(), "history", "versions", draft.version.id);
+    const bodyBefore = readFileSync(join(versionDir, "SKILL.md"), "utf8");
+    const metaBefore = readFileSync(join(versionDir, "meta.json"), "utf8");
+    const path = join(importedProtocolsDir(), "history", "learned.json");
+    const old = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    delete old.activationHistory;
+    writeFileSync(path, JSON.stringify(old, null, 2));
+
+    expect(loadLearnedProtocol("history").activationHistory).toBeUndefined();
+    activateLearnedProtocol({
+      slug: "history", versionId: draft.version.id, expectedActiveVersionId: null,
+      reason: "Automatic initial activation", timestamp: 123,
+    });
+
+    const reloaded = loadLearnedProtocol("history");
+    expect(reloaded.activationHistory).toEqual([{
+      kind: "activate", versionId: draft.version.id, previousVersionId: null,
+      reason: "Automatic initial activation", timestamp: 123,
+    }]);
+    expect(readFileSync(join(versionDir, "SKILL.md"), "utf8")).toBe(bodyBefore);
+    expect(readFileSync(join(versionDir, "meta.json"), "utf8")).toBe(metaBefore);
+  });
+
+  it("fails closed on activation history with broken version linkage or ordering", () => {
+    const draft = createLearnedProtocolDraft({ slug: "history-integrity", skillMd: skill("history-integrity", "Trusted") });
+    activateLearnedProtocol({
+      slug: "history-integrity", versionId: draft.version.id, expectedActiveVersionId: null,
+      timestamp: 200,
+    });
+    const path = join(importedProtocolsDir(), "history-integrity", "learned.json");
+    const record = JSON.parse(readFileSync(path, "utf8")) as { activationHistory: Array<Record<string, unknown>> };
+    record.activationHistory.push({
+      ...record.activationHistory[0], previousVersionId: "00000000-0000-0000-0000-000000000000", timestamp: 100,
+    });
+    writeFileSync(path, JSON.stringify(record, null, 2));
+
+    expect(() => loadLearnedProtocol("history-integrity")).toThrow(/activation history/);
+  });
 });

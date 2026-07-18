@@ -328,6 +328,14 @@ export function getVersionEffectiveness(slug: string, versionId: string): Versio
   return withLedgerLock(() => metrics(slug, versionId, committedReceipts()));
 }
 
+/** Chronological, committed-only structural outcomes for safety-window policy. */
+export function listCommittedLearnedOutcomes(slug: string, versionId: string): LearnedOutcomeReceipt[] {
+  return withLedgerLock(() => committedReceipts()
+    .filter((receipt) => receipt.slug === slug && receipt.versionId === versionId)
+    .sort((a, b) => a.timestamp - b.timestamp || a.opId.localeCompare(b.opId))
+    .map((receipt) => structuredClone(receipt)));
+}
+
 export function listCandidateEffectiveness(candidateId: string): VersionEffectiveness[] {
   return withLedgerLock(() => {
     const receipts = committedReceipts().filter((receipt) => receipt.candidateId === candidateId);

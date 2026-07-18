@@ -23,18 +23,34 @@ export interface ActiveLearnedProtocolProvenance {
   allowedTools: string[];
 }
 
+export type LearnedActivationKind = "activate" | "restore" | "rollback" | "archive";
+
+export interface LearnedActivationHistoryEntry {
+  kind: LearnedActivationKind;
+  versionId: string;
+  previousVersionId: string | null;
+  timestamp: number;
+  reason: string;
+}
+
 export interface LearnedProtocolRecord {
   schemaVersion: 1;
   slug: string;
   state: LearnedProtocolState;
   activeVersionId: string | null;
   versions: LearnedProtocolVersion[];
+  activationHistory?: LearnedActivationHistoryEntry[];
 }
 
 export interface LearnedMutation {
   slug: string;
   expectedActiveVersionId: string | null;
+  reason?: string;
+  timestamp?: number;
 }
+
+const MAX_ACTIVATION_HISTORY = 100;
+const ACTIVATION_KINDS = new Set<LearnedActivationKind>(["activate", "restore", "rollback", "archive"]);
 
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -93,7 +109,60 @@ function readRecord(slug: string): { dir: string; record: LearnedProtocolRecord 
   if (record.schemaVersion !== 1 || record.slug !== slug || !Array.isArray(record.versions)) {
     throw new Error(`Invalid learned protocol record: ${slug}`);
   }
+  if (record.activationHistory !== undefined) validateActivationHistory(record, slug);
   return { dir, record };
+}
+
+function validateActivationHistory(record: LearnedProtocolRecord, slug: string): void {
+  const value = record.activationHistory;
+  if (!Array.isArray(value) || value.length > MAX_ACTIVATION_HISTORY) {
+    throw new Error(`Invalid learned protocol activation history: ${slug}`);
+  }
+  const versionIds = new Set(record.versions.map((version) => version.id));
+  let priorTimestamp = 0;
+  let trackedVersion: string | null | undefined;
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error(`Invalid learned protocol activation history: ${slug}`);
+    const item = entry as unknown as Record<string, unknown>;
+    if (
+      Object.keys(item).sort().join(",") !== "kind,previousVersionId,reason,timestamp,versionId"
+      || !ACTIVATION_KINDS.has(item.kind as LearnedActivationKind)
+      || typeof item.versionId !== "string"
+      || !versionIds.has(item.versionId)
+      || (item.previousVersionId !== null && (typeof item.previousVersionId !== "string" || !versionIds.has(item.previousVersionId)))
+      || typeof item.timestamp !== "number"
+      || !Number.isFinite(item.timestamp)
+      || item.timestamp <= 0
+      || typeof item.reason !== "string"
+      || item.reason.trim().length === 0
+      || item.reason.length > 200
+      || (item.kind === "archive" && item.previousVersionId !== item.versionId)
+      || (trackedVersion !== undefined && item.previousVersionId !== trackedVersion)
+      || (item.timestamp as number) < priorTimestamp
+    ) throw new Error(`Invalid learned protocol activation history: ${slug}`);
+    trackedVersion = item.versionId as string;
+    priorTimestamp = item.timestamp as number;
+  }
+  if (value.length > 0 && trackedVersion !== record.activeVersionId) {
+    throw new Error(`Invalid learned protocol activation history: ${slug}`);
+  }
+}
+
+function recordActivation(
+  record: LearnedProtocolRecord,
+  kind: LearnedActivationKind,
+  versionId: string,
+  previousVersionId: string | null,
+  reason: string | undefined,
+  timestamp: number | undefined,
+): void {
+  const at = timestamp ?? Date.now();
+  const why = reason?.trim() || `${kind[0].toUpperCase()}${kind.slice(1)} learned protocol`;
+  if (!Number.isFinite(at) || at <= 0 || why.length > 200) throw new Error("Invalid learned protocol activation history entry");
+  record.activationHistory = [
+    ...(record.activationHistory ?? []),
+    { kind, versionId, previousVersionId, timestamp: at, reason: why },
+  ].slice(-MAX_ACTIVATION_HISTORY);
 }
 
 function readVerifiedVersion(dir: string, version: LearnedProtocolVersion): string {
@@ -215,17 +284,26 @@ export function hasLearnedProtocol(slug: string): boolean {
   return existsSync(path);
 }
 
-export function activateLearnedProtocol(input: LearnedMutation & { versionId: string }): LearnedProtocolRecord {
+function activateVersion(
+  input: LearnedMutation & { versionId: string },
+  kind: Exclude<LearnedActivationKind, "archive">,
+): LearnedProtocolRecord {
   loadLearnedProtocol(input.slug);
   const { dir, record } = readRecord(input.slug);
   compareActive(record, input.expectedActiveVersionId);
   const version = record.versions.find((candidate) => candidate.id === input.versionId);
   if (!version) throw new Error(`Unknown learned protocol version: ${input.versionId}`);
   const body = readVerifiedVersion(dir, version);
+  const previousVersionId = record.activeVersionId;
   record.state = "active";
   record.activeVersionId = version.id;
+  recordActivation(record, kind, version.id, previousVersionId, input.reason, input.timestamp);
   materializeAndSave(dir, record, body);
   return record;
+}
+
+export function activateLearnedProtocol(input: LearnedMutation & { versionId: string }): LearnedProtocolRecord {
+  return activateVersion(input, "activate");
 }
 
 export function archiveLearnedProtocol(input: LearnedMutation): LearnedProtocolRecord {
@@ -239,6 +317,7 @@ export function archiveLearnedProtocol(input: LearnedMutation): LearnedProtocolR
   const hidden = join(dir, `.SKILL.md.archive-${randomUUID()}`);
   renameSync(rootSkill, hidden);
   record.state = "archived";
+  recordActivation(record, "archive", record.activeVersionId, record.activeVersionId, input.reason, input.timestamp);
   try {
     saveRecord(dir, record);
   } catch (error) {
@@ -250,16 +329,16 @@ export function archiveLearnedProtocol(input: LearnedMutation): LearnedProtocolR
 }
 
 export function restoreLearnedProtocol(input: LearnedMutation): LearnedProtocolRecord {
-  const { record } = readRecord(input.slug);
+  const record = loadLearnedProtocol(input.slug);
   compareActive(record, input.expectedActiveVersionId);
   if (record.state !== "archived" || !record.activeVersionId) throw new Error(`Learned protocol is not archived: ${input.slug}`);
-  return activateLearnedProtocol({ ...input, versionId: record.activeVersionId });
+  return activateVersion({ ...input, versionId: record.activeVersionId }, "restore");
 }
 
 export function rollbackLearnedProtocol(input: LearnedMutation & { versionId: string }): LearnedProtocolRecord {
-  const { record } = readRecord(input.slug);
+  const record = loadLearnedProtocol(input.slug);
   if (record.state !== "active") throw new Error(`Learned protocol is not active: ${input.slug}`);
-  return activateLearnedProtocol(input);
+  return activateVersion(input, "rollback");
 }
 
 export function activeLearnedProtocolProvenance(slug: string): ActiveLearnedProtocolProvenance {

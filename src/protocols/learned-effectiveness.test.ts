@@ -9,6 +9,7 @@ import {
   _setLearnedEffectivenessWriteHookForTests,
   commitLearnedOutcome,
   getVersionEffectiveness,
+  listCommittedLearnedOutcomes,
   listCandidateEffectiveness,
   prepareLearnedOutcome,
   reconcilePendingLearnedOutcomes,
@@ -131,6 +132,21 @@ describe("learned effectiveness ledger", () => {
     const listed = listCandidateEffectiveness(older.candidateId);
     expect(listed.map((entry) => entry.versionId)).toEqual(["version-new", "version-old"]);
     expect(listed.map((entry) => entry.total)).toEqual([1, 1]);
+  });
+
+  it("reads only committed receipts in deterministic chronological order", () => {
+    const later = input("op-later", "partial", { timestamp: 300 });
+    const earlier = input("op-earlier", "clean", { timestamp: 100 });
+    const pending = input("op-pending-window", "aborted", { timestamp: 50 });
+    for (const receipt of [later, earlier]) {
+      prepareLearnedOutcome(receipt);
+      commitLearnedOutcome(receipt.opId);
+    }
+    prepareLearnedOutcome(pending);
+
+    expect(listCommittedLearnedOutcomes(later.slug, later.versionId).map((entry) => entry.opId)).toEqual([
+      earlier.opId, later.opId,
+    ]);
   });
 
   it("reconciles terminal pending receipts and retains nonterminal work", () => {

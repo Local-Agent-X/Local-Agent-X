@@ -10,6 +10,11 @@ import {
   type LearnedProtocolRecord,
   type LearnedProtocolVersion,
 } from "../../protocols/learned-lifecycle.js";
+import {
+  getVersionEffectiveness,
+  listCommittedLearnedOutcomes,
+} from "../../protocols/learned-effectiveness.js";
+import { isStrongerRefinement, selectSafetyRecovery } from "../../protocols/learned-refinement.js";
 import { CrossSessionLearner } from "./learner.js";
 import type { LearnedCandidate, LearnedCandidateState } from "./types.js";
 
@@ -80,19 +85,30 @@ export class CrossSessionLearningService {
     const record = this.requireRecord(id);
     if (input.action === "activate") {
       const versionId = input.versionId ?? this.newestVersion(record).id;
-      const active = activateLearnedProtocol({ slug: id, versionId, expectedActiveVersionId: input.expectedActiveVersionId });
+      const active = activateLearnedProtocol({
+        slug: id, versionId, expectedActiveVersionId: input.expectedActiveVersionId,
+        reason: "Activated by user", timestamp: now,
+      });
       this.healState(candidate, active, now, "Activated by user");
     } else if (input.action === "archive") {
-      const archived = archiveLearnedProtocol({ slug: id, expectedActiveVersionId: input.expectedActiveVersionId });
+      const archived = archiveLearnedProtocol({
+        slug: id, expectedActiveVersionId: input.expectedActiveVersionId,
+        reason: "Archived by user", timestamp: now,
+      });
       this.healState(candidate, archived, now, "Archived by user");
     } else if (input.action === "restore") {
-      const active = restoreLearnedProtocol({ slug: id, expectedActiveVersionId: input.expectedActiveVersionId });
+      const active = restoreLearnedProtocol({
+        slug: id, expectedActiveVersionId: input.expectedActiveVersionId,
+        reason: "Restored by user", timestamp: now,
+      });
       this.healState(candidate, active, now, "Restored by user");
     } else {
       const active = rollbackLearnedProtocol({
         slug: id,
         versionId: input.versionId,
         expectedActiveVersionId: input.expectedActiveVersionId,
+        reason: "Rolled back by user",
+        timestamp: now,
       });
       this.recordRollback(id, now);
       this.healState(this.requireCandidate(id), active, now, "Rollback reconciled");
@@ -104,15 +120,46 @@ export class CrossSessionLearningService {
     let changed = false;
     const signals: ModuleSignal[] = [];
     const signaledIds = new Set<string>();
+    const safetyRecoveredIds = new Set<string>();
 
     for (let candidate of this.learner.getCandidates()) {
       let record = this.recordFor(candidate.id);
       if (!record) continue;
+      if (record.state === "active") {
+        const recovery = this.safetyRecovery(record);
+        if (recovery?.kind === "rollback") {
+          record = rollbackLearnedProtocol({
+            slug: candidate.id,
+            versionId: recovery.targetVersionId,
+            expectedActiveVersionId: record.activeVersionId,
+            reason: recovery.reason,
+            timestamp: now,
+          });
+          this.recordRollback(candidate.id, now, recovery.reason);
+          changed = this.healState(this.requireCandidate(candidate.id), record, now, recovery.reason) || changed;
+          changed = true;
+          safetyRecoveredIds.add(candidate.id);
+          candidate = this.requireCandidate(candidate.id);
+        } else if (recovery?.kind === "archive") {
+          record = archiveLearnedProtocol({
+            slug: candidate.id,
+            expectedActiveVersionId: record.activeVersionId,
+            reason: recovery.reason,
+            timestamp: now,
+          });
+          changed = this.healState(candidate, record, now, recovery.reason) || changed;
+          changed = true;
+          safetyRecoveredIds.add(candidate.id);
+          continue;
+        }
+      }
       if (record.state === "draft" && ["approved", "active"].includes(candidate.state)) {
         record = activateLearnedProtocol({
           slug: candidate.id,
           versionId: this.newestVersion(record).id,
           expectedActiveVersionId: record.activeVersionId,
+          reason: "Resumed approved activation",
+          timestamp: now,
         });
         changed = this.healState(candidate, record, now, "Resumed approved activation") || changed;
         candidate = this.requireCandidate(candidate.id);
@@ -123,6 +170,8 @@ export class CrossSessionLearningService {
           slug: candidate.id,
           versionId: this.newestVersion(record).id,
           expectedActiveVersionId: record.activeVersionId,
+          reason: "Activated automatically",
+          timestamp: now,
         });
         changed = this.healState(this.requireCandidate(candidate.id), active, now, "Activated automatically") || changed;
         signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
@@ -134,15 +183,22 @@ export class CrossSessionLearningService {
     const opportunity = this.learner.nextLearningOpportunity(now);
     if (!opportunity) return { signals, changed };
     const candidate = opportunity.candidate;
+    if (safetyRecoveredIds.has(candidate.id)) return { signals, changed };
+    const existing = this.recordFor(candidate.id);
+    if (existing && existing.versions.length > 0 && !isStrongerRefinement(opportunity.draftCandidate, this.newestVersion(existing))) {
+      return { signals, changed };
+    }
     const drafted = this.learner.draftCandidate(candidate.id, opportunity.draftCandidate);
     changed = drafted.created || changed;
     if (mode === "autonomous") {
       const before = loadLearnedProtocol(drafted.slug);
-      if (before.activeVersionId !== drafted.version.id) {
+      if (before.activeVersionId !== drafted.version.id && !this.wasSafetyRejected(before, drafted.version.id)) {
         const active = activateLearnedProtocol({
           slug: drafted.slug,
           versionId: drafted.version.id,
           expectedActiveVersionId: before.activeVersionId,
+          reason: before.activeVersionId ? "Activated stronger refinement automatically" : "Activated automatically",
+          timestamp: now,
         });
         changed = this.healState(this.requireCandidate(candidate.id), active, now, "Activated automatically") || changed;
       }
@@ -225,10 +281,34 @@ export class CrossSessionLearningService {
     return from === "candidate" ? [] : ["candidate"];
   }
 
-  private recordRollback(id: string, now: number): void {
+  private safetyRecovery(record: LearnedProtocolRecord) {
+    const activeId = record.activeVersionId;
+    if (!activeId) return null;
+    const activation = [...(record.activationHistory ?? [])].reverse()
+      .find((entry) => entry.versionId === activeId && entry.kind !== "archive");
+    const activeVersion = record.versions.find((version) => version.id === activeId);
+    if (!activeVersion) throw new Error(`Active learned protocol version is missing: ${record.slug}`);
+    const boundary = activation?.timestamp ?? Date.parse(activeVersion.createdAt);
+    if (!Number.isFinite(boundary) || boundary <= 0) throw new Error(`Invalid learned protocol activation boundary: ${record.slug}`);
+    const outcomes = listCommittedLearnedOutcomes(record.slug, activeId)
+      .filter((receipt) => receipt.timestamp >= boundary);
+    const priorMetrics = new Map(record.versions
+      .filter((version) => version.id !== activeId)
+      .map((version) => [version.id, getVersionEffectiveness(record.slug, version.id)]));
+    return selectSafetyRecovery(record, outcomes, priorMetrics);
+  }
+
+  private wasSafetyRejected(record: LearnedProtocolRecord, versionId: string): boolean {
+    return (record.activationHistory ?? []).some((entry) =>
+      entry.kind === "rollback"
+      && entry.previousVersionId === versionId
+      && entry.reason.startsWith("Safety rollback:"));
+  }
+
+  private recordRollback(id: string, now: number, reason = "Rolled back by user"): void {
     const candidate = this.requireCandidate(id);
     if (candidate.state === "active") {
-      this.learner.setCandidateState(id, "rolled-back", "Rolled back by user", now);
+      this.learner.setCandidateState(id, "rolled-back", reason, now);
       this.learner.setCandidateState(id, "candidate", "Rollback retained active workflow", now);
     }
   }

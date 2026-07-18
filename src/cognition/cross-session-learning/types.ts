@@ -48,6 +48,42 @@ export interface AutomationSuggestion {
   config: Record<string, unknown>;
 }
 
+export type LearnedCandidateState =
+  | "candidate"
+  | "approved"
+  | "active"
+  | "rejected"
+  | "archived"
+  | "rolled-back";
+
+export interface CandidateEvidenceSnapshot {
+  patternType: DetectedPattern["type"];
+  description: string;
+  occurrences: number;
+  lastSeen: number;
+  examples: string[];
+  outcomeStats?: NonNullable<DetectedPattern["outcomeStats"]>;
+}
+
+export interface CandidateTransition {
+  from: LearnedCandidateState;
+  to: LearnedCandidateState;
+  timestamp: number;
+  reason?: string;
+}
+
+export interface LearnedCandidate {
+  id: string;
+  state: LearnedCandidateState;
+  confidence: number;
+  suggestion: AutomationSuggestion;
+  evidence: CandidateEvidenceSnapshot;
+  createdAt: number;
+  updatedAt: number;
+  rejectionCooldownUntil?: number;
+  transitions: CandidateTransition[];
+}
+
 export interface SessionInsight {
   type: string;
   description: string;
@@ -58,6 +94,7 @@ export interface SessionInsight {
 // Type alias (not interface) so it satisfies json-store's Record constraint.
 export type SessionData = {
   actions: ActionEntry[];
+  candidates: LearnedCandidate[];
   lastPrune: number;
 };
 
@@ -66,6 +103,7 @@ export const DATA_FILE = join(LAX_DIR, "cross-session-data.json");
 export const MAX_ACTIONS = 5000;
 export const DEFAULT_MIN_OCCURRENCES = 3;
 export const PRUNE_AGE_DAYS = 30;
+export const REJECTION_COOLDOWN_DAYS = 30;
 export const MS_PER_DAY = 86400000;
 
 export const STOP_WORDS = new Set([

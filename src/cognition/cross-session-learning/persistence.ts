@@ -10,12 +10,18 @@ export const MAX_STALE_PER_TYPE = 10;
 
 const store = createJsonStore<SessionData>(DATA_FILE, {
   // Missing/corrupt file → lastPrune = now (fresh start, no immediate prune).
-  defaults: () => ({ actions: [], lastPrune: Date.now() }),
+  defaults: () => ({ actions: [], candidates: [], lastPrune: Date.now() }),
   // Existing file with a missing/falsy lastPrune → 0 (prune-eligible),
   // matching the old `parsed.lastPrune || 0` read.
   upgrade: (parsed) =>
     parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? { ...parsed, lastPrune: (parsed as Partial<SessionData>).lastPrune || 0 }
+      ? {
+          ...parsed,
+          candidates: Array.isArray((parsed as Partial<SessionData>).candidates)
+            ? (parsed as Partial<SessionData>).candidates
+            : [],
+          lastPrune: (parsed as Partial<SessionData>).lastPrune || 0,
+        }
       : parsed,
 });
 

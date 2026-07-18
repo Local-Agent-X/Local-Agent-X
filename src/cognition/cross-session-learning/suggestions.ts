@@ -1,11 +1,109 @@
+import { createHash } from "node:crypto";
 import type {
   ActionEntry,
   AutomationSuggestion,
+  CandidateEvidenceSnapshot,
   DetectedPattern,
+  LearnedCandidate,
+  LearnedCandidateState,
   SessionInsight,
 } from "./types.js";
-import { MS_PER_DAY } from "./types.js";
+import { MS_PER_DAY, REJECTION_COOLDOWN_DAYS } from "./types.js";
 import { slugify } from "./text-utils.js";
+
+const TRANSITIONS: Record<LearnedCandidateState, LearnedCandidateState[]> = {
+  candidate: ["approved", "rejected", "archived"],
+  approved: ["active", "rejected", "archived"],
+  active: ["archived", "rolled-back"],
+  rejected: ["candidate", "archived"],
+  archived: ["candidate"],
+  "rolled-back": ["archived", "candidate"],
+};
+
+function identityFor(pattern: DetectedPattern): string {
+  const description = pattern.description.trim().toLowerCase();
+  let anchor: string;
+  switch (pattern.type) {
+    case "workflow":
+    case "question":
+    case "task":
+    case "topic":
+      anchor = description.match(/"([^"]+)"/)?.[1]
+        ?? pattern.examples[0]?.trim().toLowerCase()
+        ?? description;
+      break;
+    case "time":
+      anchor = description.replace(/ \(\d+ times\)$/, "");
+      break;
+  }
+  return JSON.stringify([pattern.type, anchor]);
+}
+
+export function candidateIdFor(pattern: DetectedPattern): string {
+  return `learned-${createHash("sha256").update(identityFor(pattern)).digest("hex").slice(0, 20)}`;
+}
+
+export function confidenceFor(pattern: DetectedPattern): number {
+  if (pattern.outcomeStats) {
+    const sessionFactor = Math.min(1, pattern.outcomeStats.distinctSessions / 3);
+    return Math.round(pattern.outcomeStats.weightedSuccessRate * sessionFactor * 1000) / 1000;
+  }
+  return Math.round(Math.min(1, pattern.occurrences / 10) * 1000) / 1000;
+}
+
+function snapshot(pattern: DetectedPattern): CandidateEvidenceSnapshot {
+  return {
+    patternType: pattern.type,
+    description: pattern.description,
+    occurrences: pattern.occurrences,
+    lastSeen: pattern.lastSeen,
+    examples: [...pattern.examples],
+    ...(pattern.outcomeStats ? { outcomeStats: { ...pattern.outcomeStats } } : {}),
+  };
+}
+
+export function createLearnedCandidate(
+  pattern: DetectedPattern,
+  suggestion: AutomationSuggestion,
+  now = Date.now(),
+): LearnedCandidate {
+  return {
+    id: candidateIdFor(pattern),
+    state: "candidate",
+    confidence: confidenceFor(pattern),
+    suggestion: structuredClone(suggestion),
+    evidence: snapshot(pattern),
+    createdAt: now,
+    updatedAt: now,
+    transitions: [],
+  };
+}
+
+export function transitionCandidate(
+  candidate: LearnedCandidate,
+  to: LearnedCandidateState,
+  now = Date.now(),
+  reason?: string,
+): LearnedCandidate {
+  if (now < candidate.updatedAt) {
+    throw new Error(`Learned candidate transition predates current state: ${candidate.id}`);
+  }
+  if (!TRANSITIONS[candidate.state].includes(to)) {
+    throw new Error(`Invalid learned candidate transition: ${candidate.state} -> ${to}`);
+  }
+  return {
+    ...candidate,
+    state: to,
+    updatedAt: now,
+    ...(to === "rejected"
+      ? { rejectionCooldownUntil: now + REJECTION_COOLDOWN_DAYS * MS_PER_DAY }
+      : { rejectionCooldownUntil: undefined }),
+    transitions: [
+      ...candidate.transitions,
+      { from: candidate.state, to, timestamp: now, ...(reason ? { reason } : {}) },
+    ],
+  };
+}
 
 export function suggestAutomation(
   pattern: DetectedPattern

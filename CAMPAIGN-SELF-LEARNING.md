@@ -28,7 +28,7 @@ Build a native Local-Agent-X closed learning loop that turns successful repeated
 |---|---|---|---|
 | C1 | Outcome evidence bridge | none | green |
 | C2 | Outcome-aware pattern mining | C1 | green |
-| C3 | Learned-candidate lifecycle | C2 | pending |
+| C3 | Learned-candidate lifecycle | C2 | green |
 | C4 | Learned protocol drafting | C3 | pending |
 | C5 | Provenance and capability envelope | C4 | pending |
 | C6 | Learning modes and management API | C5 | pending |
@@ -47,6 +47,7 @@ None.
 
 - C1 adversarial review drove lifecycle, identity, and ordering fixes: session identity is captured before terminal release; unknown sessions remain unknown rather than manufacturing conversation provenance; receipts preserve repeated ordered steps; op-id upsert makes writes idempotent; and evidence persists only after a successful terminal transition. Core 56 tests, forced-terminal 5 tests, TypeScript, diff checks, and final refutation passed.
 - C2 verification: 14 focused tests, TypeScript, diff checks, and final adversarial refutation passed. Failure receipts cannot leak into parallel automation detectors; recent regressions lower confidence.
+- C3 verification: 19 focused tests, TypeScript, diff checks, persistence reload, and adversarial refutation passed. Refutation caught unstable evidence-count IDs and meaningless archive revival; identities now use semantic anchors, rejected candidates observe a 30-day cooldown, and archived candidates require explicit restoration.
 
 ## Completion buckets
 
@@ -54,6 +55,7 @@ None.
 
 - C1: committed outcome evidence with stable session provenance, ordered tool receipts, forced-terminal coverage, and op-id idempotency. Focused tests and independent refutation green.
 - C2: outcome-aware pattern mining with distinct-session confidence, recency weighting, failure exclusion, and collision-safe workflow grouping.
+- C3: durable learned-candidate records with stable IDs, evidence snapshots, confidence, validated lifecycle transitions, rejection cooldowns, archive suppression, and transition history.
 
 ### Parked for user
 

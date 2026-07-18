@@ -39,7 +39,7 @@ describe("autoPrune — bounded keep for stale recurring types", () => {
     for (let i = 0; i < 4900; i++) {
       actions.push(action("tool", STALE_TS + i, i));
     }
-    const data: SessionData = { actions, lastPrune: 0 };
+    const data: SessionData = { actions, candidates: [], lastPrune: 0 };
 
     const modified = autoPrune(data);
 
@@ -60,6 +60,7 @@ describe("autoPrune — bounded keep for stale recurring types", () => {
         action("tool", STALE_TS + 3, 3),
         action("question", FRESH_TS, 4), // fresh → always kept
       ],
+      candidates: [],
       lastPrune: 0,
     };
 
@@ -77,7 +78,7 @@ describe("autoPrune — bounded keep for stale recurring types", () => {
     const actions = Array.from({ length: 50 }, (_, i) =>
       action("tool", STALE_TS + i, i)
     );
-    const data: SessionData = { actions, lastPrune: NOW };
+    const data: SessionData = { actions, candidates: [], lastPrune: NOW };
     expect(autoPrune(data)).toBe(false);
     expect(data.actions.length).toBe(50);
   });

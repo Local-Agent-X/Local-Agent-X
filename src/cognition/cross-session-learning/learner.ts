@@ -2,6 +2,8 @@ import type {
   ActionEntry,
   AutomationSuggestion,
   DetectedPattern,
+  LearnedCandidate,
+  LearnedCandidateState,
   OutcomeEvidence,
   SessionData,
   SessionInsight,
@@ -20,7 +22,12 @@ import {
   detectTimePatterns,
   detectWorkflowPatterns,
 } from "./detectors.js";
-import { getInsights, suggestAutomation } from "./suggestions.js";
+import {
+  createLearnedCandidate,
+  getInsights,
+  suggestAutomation,
+  transitionCandidate,
+} from "./suggestions.js";
 import { fuzzyMatch } from "./text-utils.js";
 import type { ModuleSignal } from "../../orchestrator/types.js";
 
@@ -105,6 +112,58 @@ export class CrossSessionLearner {
   suggestAutomation(pattern: DetectedPattern): AutomationSuggestion | null {
     if (pattern.automationEligible === false) return null;
     return suggestAutomation(pattern);
+  }
+
+  getCandidates(): LearnedCandidate[] {
+    return structuredClone(this.data.candidates);
+  }
+
+  captureCandidate(pattern: DetectedPattern, now = Date.now()): LearnedCandidate | null {
+    const suggestion = this.suggestAutomation(pattern);
+    if (!suggestion) return null;
+    const next = createLearnedCandidate(pattern, suggestion, now);
+    const index = this.data.candidates.findIndex((candidate) => candidate.id === next.id);
+    if (index < 0) {
+      this.data.candidates.push(next);
+      persistData(this.data);
+      return structuredClone(next);
+    }
+
+    const current = this.data.candidates[index];
+    if (
+      current.state === "rejected"
+      && current.rejectionCooldownUntil !== undefined
+      && now < current.rejectionCooldownUntil
+    ) {
+      return structuredClone(current);
+    }
+    if (current.state !== "rejected") {
+      return structuredClone(current);
+    }
+
+    const revived = transitionCandidate(current, "candidate", now, "New evidence after suppression period");
+    this.data.candidates[index] = {
+      ...revived,
+      confidence: next.confidence,
+      suggestion: next.suggestion,
+      evidence: next.evidence,
+    };
+    persistData(this.data);
+    return structuredClone(this.data.candidates[index]);
+  }
+
+  setCandidateState(
+    id: string,
+    state: LearnedCandidateState,
+    reason?: string,
+    now = Date.now(),
+  ): LearnedCandidate {
+    const index = this.data.candidates.findIndex((candidate) => candidate.id === id);
+    if (index < 0) throw new Error(`Unknown learned candidate: ${id}`);
+    const updated = transitionCandidate(this.data.candidates[index], state, now, reason);
+    this.data.candidates[index] = updated;
+    persistData(this.data);
+    return structuredClone(updated);
   }
 
   getInsights(): SessionInsight[] {

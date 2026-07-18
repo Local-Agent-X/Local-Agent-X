@@ -11,6 +11,10 @@ export type {
   OutcomeEvidence,
   DetectedPattern,
   AutomationSuggestion,
+  CandidateEvidenceSnapshot,
+  CandidateTransition,
+  LearnedCandidate,
+  LearnedCandidateState,
   SessionInsight,
 } from "./types.js";
 

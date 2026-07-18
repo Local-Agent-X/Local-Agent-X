@@ -9,15 +9,39 @@ async function classifyRaw(raw: unknown) {
 
 describe("classifyIntent schema — graded verdict (kind + mode)", () => {
   it("honors an explicit force mode on a non-free kind", async () => {
-    expect(await classifyRaw({ kind: "build_app", mode: "force", reason: "specified" })).toEqual({
-      kind: "build_app", mode: "force", reason: "specified",
+    expect(await classifyRaw({ kind: "build_app", mode: "force", buildRoute: "quick", reason: "specified" })).toEqual({
+      kind: "build_app", mode: "force", buildRoute: "quick", reason: "specified",
     });
   });
 
-  it("fails soft: a missing mode defaults to lean, never force", async () => {
+  it("fails soft: a missing route clarifies and can never force", async () => {
     expect(await classifyRaw({ kind: "build_app", reason: "thin" })).toEqual({
-      kind: "build_app", mode: "lean", reason: "thin",
+      kind: "build_app", mode: "lean", buildRoute: "clarify", reason: "thin",
     });
+  });
+
+  it("normalizes valid Product Build routing", async () => {
+    expect(await classifyRaw({ kind: "build_app", mode: " Force ", buildRoute: " Product ", reason: "durable" })).toEqual({
+      kind: "build_app", mode: "force", buildRoute: "product", reason: "durable",
+    });
+  });
+
+  it("forces clarify verdicts to lean even when the model says force", async () => {
+    expect(await classifyRaw({ kind: "build_app", mode: "force", buildRoute: "clarify", reason: "unclear" })).toEqual({
+      kind: "build_app", mode: "lean", buildRoute: "clarify", reason: "unclear",
+    });
+  });
+
+  it("does not call a lifecycle-ambiguous kanban request build-ready", async () => {
+    let classifierPrompt = "";
+    await classifyIntent("build me a kanban app", {
+      _llm: async (systemPrompt) => {
+        classifierPrompt = systemPrompt;
+        return JSON.stringify({ kind: "build_app", mode: "lean", buildRoute: "clarify", reason: "lifecycle unclear" });
+      },
+    });
+    expect(classifierPrompt).toContain("build me a kanban app\" → build_app / lean / clarify");
+    expect(classifierPrompt).not.toContain("kanban IS the spec");
   });
 
   it("fails soft: a garbled mode defaults to lean", async () => {
@@ -55,17 +79,17 @@ describe("classifyIntent schema — graded verdict (kind + mode)", () => {
     const llm = vi
       .fn()
       .mockResolvedValueOnce(`{"kind":"build_everything","mode":"force","reason":"nope"}`)
-      .mockResolvedValueOnce(`{"kind":"build_app","mode":"force","reason":"ok"}`);
+      .mockResolvedValueOnce(`{"kind":"build_app","mode":"force","buildRoute":"product","reason":"ok"}`);
     expect(await classifyIntent("build me something", { _llm: llm })).toEqual({
-      kind: "build_app", mode: "force", reason: "ok",
+      kind: "build_app", mode: "force", buildRoute: "product", reason: "ok",
     });
     expect(llm).toHaveBeenCalledTimes(2);
   });
 
   it("caps a runaway reason at 240 chars and coerces a non-string reason", async () => {
-    expect((await classifyRaw({ kind: "build_app", mode: "force", reason: "r".repeat(500) }))?.reason)
+    expect((await classifyRaw({ kind: "build_app", mode: "force", buildRoute: "quick", reason: "r".repeat(500) }))?.reason)
       .toBe("r".repeat(240));
-    expect((await classifyRaw({ kind: "build_app", mode: "force", reason: 42 }))?.reason).toBe("");
+    expect((await classifyRaw({ kind: "build_app", mode: "force", buildRoute: "quick", reason: 42 }))?.reason).toBe("");
   });
 });
 

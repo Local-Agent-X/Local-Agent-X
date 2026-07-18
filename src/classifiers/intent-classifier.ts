@@ -44,10 +44,12 @@ import { classifySchema } from "./schema-output.js";
 
 export type IntentKind = "build_app" | "agent_spawn" | "self_edit" | "free";
 export type IntentMode = "force" | "lean";
+export type BuildRoute = "quick" | "product" | "clarify";
 
 export interface IntentVerdict {
   kind: IntentKind;
   mode: IntentMode;
+  buildRoute?: BuildRoute;
   reason: string;
 }
 
@@ -57,6 +59,10 @@ const VALID_KINDS: ReadonlySet<IntentKind> = new Set<IntentKind>([
 
 const VALID_MODES: ReadonlySet<IntentMode> = new Set<IntentMode>([
   "force", "lean",
+]);
+
+const VALID_BUILD_ROUTES: ReadonlySet<BuildRoute> = new Set<BuildRoute>([
+  "quick", "product", "clarify",
 ]);
 
 /**
@@ -75,16 +81,22 @@ const IntentVerdictSchema: z.ZodType<IntentVerdict> = z
     { message: "kind must be one of: build_app | agent_spawn | self_edit | free" },
   )
   .transform((parsed): IntentVerdict => {
-    const obj = parsed as { kind?: unknown; mode?: unknown; reason?: unknown };
+    const obj = parsed as { kind?: unknown; mode?: unknown; buildRoute?: unknown; reason?: unknown };
     const kind = (obj.kind as string).trim().toLowerCase() as IntentKind;
     const modeRaw = typeof obj.mode === "string" ? obj.mode.trim().toLowerCase() : "";
+    const routeRaw = typeof obj.buildRoute === "string" ? obj.buildRoute.trim().toLowerCase() : "";
+    const buildRoute: BuildRoute | undefined = kind === "build_app"
+      ? (VALID_BUILD_ROUTES.has(routeRaw as BuildRoute) ? routeRaw as BuildRoute : "clarify")
+      : undefined;
     const mode: IntentMode =
-      kind !== "free" && VALID_MODES.has(modeRaw as IntentMode) ? (modeRaw as IntentMode) : "lean";
+      kind !== "free" && buildRoute !== "clarify" && VALID_MODES.has(modeRaw as IntentMode)
+        ? (modeRaw as IntentMode)
+        : "lean";
     const reason = typeof obj.reason === "string" ? obj.reason.slice(0, 240) : "";
-    return { kind, mode, reason };
+    return buildRoute ? { kind, mode, buildRoute, reason } : { kind, mode, reason };
   });
 
-const SYSTEM_PROMPT = `You classify the user's message into an intent KIND and a confidence MODE. Reply with a JSON object: {"kind": "<one of: build_app | agent_spawn | self_edit | free>", "mode": "<force | lean>", "reason": "<short reason>"}
+const SYSTEM_PROMPT = `You classify the user's message into an intent KIND, a confidence MODE, and (for build_app only) a BUILD ROUTE. Reply with a JSON object: {"kind": "<one of: build_app | agent_spawn | self_edit | free>", "mode": "<force | lean>", "buildRoute": "<quick | product | clarify; build_app only>", "reason": "<short reason>"}
 
 THE DEFAULT IS "free". A non-free kind requires an EXPLICIT ask: an action verb applied to a concrete object ("build me a kanban app", "research X and write a summary", "the dark-mode toggle doesn't flip"). Aspirations, questions, discussion, and ambiguous phrasing are all "free". When in doubt, return "free" — acting on the wrong kind is far worse than missing one.
 
@@ -94,6 +106,14 @@ MODE — how complete the ask is. Only meaningful for non-free kinds; always use
 
 - "force" — the ask is explicit AND carries enough specification to execute immediately with no clarifying question. For build_app that means both the artifact AND its purpose/content are stated ("build a BMI calculator with metric units", "make a landing page for my gym with pricing and a signup form"). For agent_spawn the task and deliverable are concrete. For self_edit a specific feature/behavior of THIS app is named as broken.
 - "lean" — the kind is right but the ask is thin or one-line, and a good assistant would ask 1-3 clarifying questions (purpose, audience, must-haves) before executing. Examples: "build me a page for my gym", "make me an app", "build a project management app". The assistant keeps the matching tool available but decides for itself whether to ask first or build.
+
+BUILD ROUTE — required when kind is build_app. This chooses the build workflow, not the artifact type.
+
+- "quick" — a bounded utility or intentionally disposable build that can be delivered in one focused pass: prototype, mockup, demo, throwaway experiment, simple calculator/converter/form, static landing page, or a small local-only tool. Use quick when the request is clearly bounded and has no durable-product signals.
+- "product" — a real product that merits discovery, a written spec, phased implementation, hidden acceptance scenarios, and an orchestrated build. Signals include explicit production/customer/business use, multiple user roles, accounts/auth, persistent shared data, backend services, integrations, payments, deployment, or an explicit request for Product Build/app-build/spec-first planning.
+- "clarify" — the user asked for an app but its intended lifecycle is genuinely unclear. Generic asks such as "build me an app", "make a project management app", "build a social site", or "create a marketplace" do not reveal whether the user wants a quick prototype or a real product. Choose clarify and mode "lean". Do not guess from apparent complexity alone.
+
+The routing question is separate from missing feature details. A clearly quick calculator may still be mode "lean" if its units/content are unspecified. A clearly production app may be route "product" even though discovery is expected; use mode "force" only when it is appropriate to enter that workflow immediately.
 
 KINDS:
 
@@ -155,7 +175,7 @@ KINDS:
 DISTINCTIONS (kind / mode):
 - "create a project" / "new project called X" → free (LAX project container → project_create, NOT a standalone app)
 - "build a project management app" → build_app / lean (explicit artifact verb, but nothing about what it must do)
-- "build me a kanban app" → build_app / force (kanban IS the spec)
+- "build me a kanban app" → build_app / lean / clarify (artifact is clear; intended lifecycle is not)
 - "create a dashboard that imports our fastmail" → build_app / force (artifact + data source stated)
 - "build me a page for my gym" → build_app / lean (explicit ask, thin spec — purpose/sections unknown)
 - "make me an app" → build_app / lean (explicit but empty spec)
@@ -179,6 +199,16 @@ DISTINCTIONS (kind / mode):
 - "my todo app's reorder is broken" → free (workspace app, agent uses edit/write)
 - "none of the IPs worked" → free (network/external, not LAX)
 - "3 things tried, nothing responded" → free (vague failure — external thing, not LAX)
+
+BUILD ROUTE EXAMPLES:
+- "prototype a habit tracker" → build_app / force / quick
+- "make a BMI calculator with metric units" → build_app / force / quick
+- "build a static landing page for my gym with pricing" → build_app / force / quick
+- "build a production CRM for my sales team with accounts and persistent customer data" → build_app / force / product
+- "create a customer-facing marketplace with sellers, buyers, auth, and Stripe" → build_app / force / product
+- "use Product Build to make a scheduling platform" → build_app / force / product
+- "build me an app" → build_app / lean / clarify
+- "make a project management app" → build_app / lean / clarify
 
 Reply with JSON only. No prose, no markdown fences.`;
 
@@ -217,14 +247,14 @@ export async function classifyIntent(
   const userPrompt =
     contextBlock +
     `Current user message:\n"${trimmed.slice(0, 1200)}"\n\n` +
-    `Return JSON only: {"kind": "build_app" | "agent_spawn" | "self_edit" | "free", "mode": "force" | "lean", "reason": "..."}`;
+    `Return JSON only: {"kind": "build_app" | "agent_spawn" | "self_edit" | "free", "mode": "force" | "lean", "buildRoute": "quick" | "product" | "clarify", "reason": "..."}`;
 
   const verdict = await classifySchema<IntentVerdict>({
     category: "intent",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     schema: IntentVerdictSchema,
-    shapeHint: `{"kind":"build_app","mode":"lean","reason":"..."}`,
+    shapeHint: `{"kind":"build_app","mode":"lean","buildRoute":"clarify","reason":"..."}`,
     timeoutMs: opts?.timeoutMs ?? 8000,
     model: opts?.model,
     envDisableVar: "LAX_INTENT_CLASSIFIER",

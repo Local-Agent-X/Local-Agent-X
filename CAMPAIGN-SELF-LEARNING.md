@@ -30,12 +30,12 @@ Build a native Local-Agent-X closed learning loop that turns successful repeated
 | C2 | Outcome-aware pattern mining | C1 | green |
 | C3 | Learned-candidate lifecycle | C2 | green |
 | C4 | Learned protocol drafting | C3 | green |
-| C5 | Provenance and capability envelope | C4 | in-flight |
-| C6 | Learning modes and management API | C5 | in-flight |
-| C7 | Usage and effectiveness feedback | C5 | pending |
+| C5 | Provenance and capability envelope | C4 | green |
+| C6 | Learning modes and management API | C5 | green |
+| C7 | Usage and effectiveness feedback | C5 | in-flight |
 | C8 | Safe refinement and rollback | C7 | pending |
 | C9 | Learning nudges | C3 | green |
-| C10 | Learning graph API | C6 | pending |
+| C10 | Learning graph API | C6 | green |
 | C11 | Learning graph UI | C10 | green |
 | C12 | Cross-seam integration and final gate | C6-C11 | pending |
 
@@ -51,6 +51,9 @@ None.
 - C9 verification: 45 focused tests, TypeScript, diff checks, live-mode routing, and adversarial refutation passed. Assisted learning surfaces only reliable workflow candidates, requires stronger evidence plus an expired cooldown before resurfacing, and respects rejection state; autonomous learning emits at most one low-priority activity note and never requests review.
 - C4 verification: durable learned-protocol storage and candidate drafting passed 14 focused tests, TypeScript, restart/tamper/traversal checks, idempotency checks, and adversarial refutation. Only outcome-proven workflow candidates draft; drafts remain undiscoverable; ordered tool identities, confidence, and immutable evidence provenance are preserved; unchanged evidence does not create versions and stronger evidence does.
 - C11 verification: 4 focused happy-dom tests, TypeScript, optimistic-failure recovery, websocket refresh, and adversarial refutation passed. The learned-workflow card stays outside the 3D atlas and reuses the existing inspector for evidence, history, versions, and lifecycle controls.
+- C5 verification: operation-scoped learned-protocol envelopes passed 28 focused tests, TypeScript, source hygiene, restart persistence, conflict detection, per-tool provenance revalidation, and independent refutation. Learned allowlists only narrow the normal authorization path; forged operation IDs, stale versions, modified bodies, and removed protocols fail closed while ordinary imported protocols remain compatible.
+- C6 verification: the assisted/autonomous coordinator, immutable-evidence repair, and automatic learned-workflow selector passed 54 combined focused tests, TypeScript, source hygiene, and independent refutation. Assisted mode drafts and waits; autonomous mode activates quietly; every-message selection admits only verified active candidate-linked protocols and injects a short canonical loading hint without bodies, evidence, or permissions.
+- C10 verification: the authenticated learning graph API passed 15 route-and-UI contract tests, TypeScript, source hygiene, and adversarial payload review. Read endpoints expose the service view, mutations require operator role, payloads are strict, stale version writes return conflicts, and the exact UI reject payload is accepted without weakening validation.
 
 ## Completion buckets
 
@@ -62,6 +65,9 @@ None.
 - C4: verified immutable learned-protocol storage plus deterministic, outcome-proven candidate drafting with active-only discovery and exact tool-order provenance.
 - C9: quiet mode-aware learning nudges with durable deduplication, evidence-growth gating, cooldowns, rejection memory, and low-priority autonomous activity signals.
 - C11: compact Memory-tab learned-workflow management UI with assisted/autonomous presentation, existing-inspector detail, lifecycle controls, websocket refresh, and optimistic rollback.
+- C5: restart-safe, operation-scoped learned-protocol provenance and capability envelopes that fail closed and can only narrow existing gates.
+- C6: seamless assisted/autonomous coordination plus conservative automatic selection of verified active learned workflows on every message.
+- C10: authenticated list, detail, and lifecycle-action routes with operator-only mutation, strict validation, conflict handling, and live refresh broadcasts.
 
 ### Parked for user
 

@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "../types.js";
-import type { ToolPlugin } from "./plugin.js";
+import type { ToolPlugin, ToolPluginContext } from "./plugin.js";
 import { allTools, createHttpRequestTool, buildToolRegistry } from "../tools.js";
 import { appTools } from "./app-tools/index.js";
 import { issueTools } from "./issue-tools/index.js";
@@ -17,6 +17,34 @@ import { createMemoryTools } from "../memory/index.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
 
 const SESSION_ONEVENT_TOOLS = new Set(["request_secret", "request_secrets"]);
+const ORIGINAL_BUILD_APP_EXECUTE = Symbol("originalBuildAppExecute");
+
+type RuntimeBoundBuildApp = ToolDefinition & {
+  [ORIGINAL_BUILD_APP_EXECUTE]?: ToolDefinition["execute"];
+};
+
+export function bindBuildAppRuntime(
+  tool: ToolDefinition,
+  activeRuntimeBySession: ToolPluginContext["activeRuntimeBySession"],
+): ToolDefinition {
+  if (tool.name !== "build_app") return tool;
+  const bound = tool as RuntimeBoundBuildApp;
+  const originalExecute = bound[ORIGINAL_BUILD_APP_EXECUTE] ?? tool.execute;
+  const runtimeBound: RuntimeBoundBuildApp = {
+    ...tool,
+    [ORIGINAL_BUILD_APP_EXECUTE]: originalExecute,
+    execute: async (args, signal) => {
+      const sessionId = args._sessionId ? String(args._sessionId) : "";
+      const runtime = sessionId ? activeRuntimeBySession.get(sessionId) : undefined;
+      if (!runtime) return originalExecute(args, signal);
+      const enrichedArgs = { ...args };
+      if (enrichedArgs._runtimeProvider === undefined) enrichedArgs._runtimeProvider = runtime.provider;
+      if (enrichedArgs._runtimeModel === undefined) enrichedArgs._runtimeModel = runtime.model;
+      return originalExecute(enrichedArgs, signal);
+    },
+  };
+  return runtimeBound;
+}
 
 const ARI_BRIDGE_CLASS: Record<string, "file" | "http" | "shell" | "database" | "retrieval"> = {
   ari_file: "file",
@@ -34,6 +62,19 @@ export const plugins: ToolPlugin[] = [
       // The bootstrap loop's "already registered? skip" check then leaves
       // those entries alone; the three extras below land with defer:true.
       buildToolRegistry();
+      const buildAppIdx = allTools.findIndex((tool) => tool.name === "build_app");
+      if (buildAppIdx >= 0) {
+        const runtimeBound = bindBuildAppRuntime(allTools[buildAppIdx], ctx.activeRuntimeBySession);
+        allTools[buildAppIdx] = runtimeBound;
+        const entry = ctx.registry.getEntry("build_app");
+        ctx.registry.register(runtimeBound, entry ? {
+          defer: entry.defer,
+          tags: entry.tags,
+          searchHint: entry.searchHint,
+          toolClass: entry.toolClass,
+          mcpSource: entry.mcpSource,
+        } : undefined);
+      }
       const { settingTool } = await import("./setting-tool.js");
       return [...allTools, createHttpRequestTool(ctx.secretsStore), settingTool];
     },
@@ -140,28 +181,8 @@ export const plugins: ToolPlugin[] = [
   },
   {
     id: "apps",
-    register(ctx) {
-      // build_app picks its subprocess provider via resolveBuildProvider,
-      // which by default falls back to ~/.lax/settings.json. The chat's
-      // active CLI choice (per-session) should win — inject
-      // _runtimeProvider/_runtimeModel from activeRuntimeBySession so the
-      // tool's executor can forward them as forcedProvider.
-      return appTools.map((t): ToolDefinition => {
-        if (t.name !== "build_app") return t;
-        const original = t;
-        return {
-          ...original,
-          execute: async (args, signal) => {
-            const sessionId = args._sessionId ? String(args._sessionId) : "";
-            const runtime = sessionId ? ctx.activeRuntimeBySession.get(sessionId) : undefined;
-            if (runtime && args._runtimeProvider === undefined) {
-              args._runtimeProvider = runtime.provider;
-              args._runtimeModel = runtime.model;
-            }
-            return original.execute(args, signal);
-          },
-        };
-      });
+    register() {
+      return appTools;
     },
   },
   {

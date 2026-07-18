@@ -73,6 +73,7 @@ describe("cross-session learning management service", () => {
     addEvidence(current.learner);
     const first = current.service.reconcile("autonomous", BASE + 10);
     const originalVersion = current.service.list()[0].activeVersionId;
+    const originalEvidence = current.learner.getCandidates()[0].evidence;
 
     expect(first.signals[0]).toMatchObject({ category: "learning-activity", priority: 1 });
     expect(current.service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
@@ -88,6 +89,7 @@ describe("cross-session learning management service", () => {
     expect(stronger.signals[0]).toMatchObject({ category: "learning-activity", priority: 1 });
     expect(current.service.list()[0].versionCount).toBe(2);
     expect(current.service.list()[0].activeVersionId).not.toBe(originalVersion);
+    expect(current.learner.getCandidates()[0].evidence).toEqual(originalEvidence);
   });
 
   it("enforces stale CAS and drives legal activate, archive, restore, and rollback transitions", async () => {
@@ -114,6 +116,10 @@ describe("cross-session learning management service", () => {
     expect(service.detail(id)!.history.some((entry) => entry.reason === "Rolled back by user")).toBe(true);
     service.action(id, { action: "archive", expectedActiveVersionId: firstVersion }, BASE + 8 * DAY + 3);
     expect(service.list()[0].state).toBe("archived");
+    const archivedVersions = service.list()[0].versionCount;
+    addEvidence(learner, 5);
+    expect(service.reconcile("autonomous", BASE + 16 * DAY)).toEqual({ signals: [], changed: false });
+    expect(service.list()[0]).toMatchObject({ state: "archived", versionCount: archivedVersions });
     service.action(id, { action: "restore", expectedActiveVersionId: firstVersion }, BASE + 8 * DAY + 4);
     expect(service.list()[0].state).toBe("active");
   });

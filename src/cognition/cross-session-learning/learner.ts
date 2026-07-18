@@ -140,20 +140,7 @@ export class CrossSessionLearner {
     ) {
       return structuredClone(current);
     }
-    if (current.state !== "rejected") {
-      const stronger = next.evidence.occurrences > current.evidence.occurrences
-        && next.confidence >= current.confidence;
-      if (!stronger) return structuredClone(current);
-      this.data.candidates[index] = {
-        ...current,
-        confidence: next.confidence,
-        suggestion: next.suggestion,
-        evidence: next.evidence,
-        updatedAt: now,
-      };
-      persistData(this.data);
-      return structuredClone(this.data.candidates[index]);
-    }
+    if (current.state !== "rejected") return structuredClone(current);
 
     const revived = transitionCandidate(current, "candidate", now, "New evidence after suppression period");
     this.data.candidates[index] = {
@@ -180,10 +167,19 @@ export class CrossSessionLearner {
     return structuredClone(updated);
   }
 
-  draftCandidate(id: string): LearnedCandidateDraftResult {
+  draftCandidate(id: string, opportunity?: LearnedCandidate): LearnedCandidateDraftResult {
     const candidate = this.data.candidates.find((entry) => entry.id === id);
     if (!candidate) throw new Error(`Unknown learned candidate: ${id}`);
-    return draftLearnedCandidate(structuredClone(candidate));
+    if (!opportunity) return draftLearnedCandidate(structuredClone(candidate));
+    if (
+      opportunity.id !== candidate.id
+      || opportunity.state !== candidate.state
+      || opportunity.evidence.occurrences < candidate.evidence.occurrences
+      || opportunity.confidence < candidate.confidence
+    ) {
+      throw new Error(`Invalid learned refinement opportunity: ${id}`);
+    }
+    return draftLearnedCandidate(structuredClone(opportunity));
   }
 
   getInsights(): SessionInsight[] {
@@ -194,7 +190,7 @@ export class CrossSessionLearner {
     return fuzzyMatch(a, b);
   }
 
-  nextLearningCandidate(now = Date.now()): LearnedCandidate | null {
+  nextLearningOpportunity(now = Date.now()): { candidate: LearnedCandidate; draftCandidate: LearnedCandidate } | null {
     const patterns = this.detectPatterns(3);
     const staleCutoff = now - PRUNE_AGE_DAYS * MS_PER_DAY;
     for (const pattern of patterns) {
@@ -204,7 +200,10 @@ export class CrossSessionLearner {
         || pattern.automationEligible !== true
       ) continue;
       const candidate = this.captureCandidate(pattern, now);
-      if (!candidate || !["candidate", "active"].includes(candidate.state) || candidate.confidence < 0.75) continue;
+      const suggestion = this.suggestAutomation(pattern);
+      if (!candidate || !suggestion || !["candidate", "active"].includes(candidate.state)) continue;
+      const live = createLearnedCandidate(pattern, suggestion, now);
+      if (live.confidence < 0.75) continue;
       if (candidate.surfaceCooldownUntil && now < candidate.surfaceCooldownUntil) continue;
       if (
         candidate.lastSurfacedOccurrences !== undefined
@@ -220,14 +219,24 @@ export class CrossSessionLearner {
       };
       this.data.candidates[index] = surfaced;
       persistData(this.data);
-      return structuredClone(surfaced);
+      const draftCandidate: LearnedCandidate = {
+        ...live,
+        state: surfaced.state,
+        createdAt: surfaced.createdAt,
+        transitions: structuredClone(surfaced.transitions),
+      };
+      return { candidate: structuredClone(surfaced), draftCandidate };
     }
     return null;
   }
 
+  nextLearningCandidate(now = Date.now()): LearnedCandidate | null {
+    return this.nextLearningOpportunity(now)?.candidate ?? null;
+  }
+
   /** Quiet, deduplicated learning signal for the orchestrator prompt path. */
   signalsFor(mode: "assisted" | "autonomous" = "assisted", now = Date.now()): ModuleSignal[] {
-    const candidate = this.nextLearningCandidate(now);
-    return candidate ? [formatLearningCandidateNudge(candidate, mode)] : [];
+    const opportunity = this.nextLearningOpportunity(now);
+    return opportunity ? [formatLearningCandidateNudge(opportunity.draftCandidate, mode)] : [];
   }
 }

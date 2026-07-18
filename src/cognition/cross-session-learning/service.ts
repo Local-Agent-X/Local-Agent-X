@@ -131,9 +131,10 @@ export class CrossSessionLearningService {
       }
     }
 
-    const candidate = this.learner.nextLearningCandidate(now);
-    if (!candidate) return { signals, changed };
-    const drafted = this.learner.draftCandidate(candidate.id);
+    const opportunity = this.learner.nextLearningOpportunity(now);
+    if (!opportunity) return { signals, changed };
+    const candidate = opportunity.candidate;
+    const drafted = this.learner.draftCandidate(candidate.id, opportunity.draftCandidate);
     changed = drafted.created || changed;
     if (mode === "autonomous") {
       const before = loadLearnedProtocol(drafted.slug);

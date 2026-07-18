@@ -114,6 +114,40 @@ function fullTurnOp(): Op {
   };
 }
 
+function narratedBrowserAdapter(turns: number[]): Adapter {
+  return {
+    name: "fake-narrated-browser",
+    version: "1",
+    async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
+      turns.push(input.turnIdx);
+      const providerState = { adapterName: "fake-narrated-browser", adapterVersion: "1", providerPayload: null };
+      if (input.turnIdx === 0) {
+        const call: ToolCall = {
+          toolCallId: "browser-scroll-1",
+          tool: "browser",
+          args: { action: "scroll", direction: "down" },
+        };
+        report({ kind: "tool_call_requested", call });
+        report({
+          kind: "message_finalized",
+          message: {
+            messageId: "am-browser-scroll",
+            role: "assistant",
+            content: { text: "I'll scroll this page, then continue comparing the sites.", toolCalls: [call] },
+          },
+        });
+        return { providerState, modelStop: "continue" };
+      }
+      report({
+        kind: "message_finalized",
+        message: { messageId: "am-browser-final", role: "assistant", content: { text: "The comparison is complete." } },
+      });
+      return { providerState, terminalReason: "done", modelStop: "ended" };
+    },
+    async abort(): Promise<void> { /* scripted turns unwind immediately */ },
+  };
+}
+
 function resumableBuildAdapter(): Adapter {
   return {
     name: "fake-resumable-build",
@@ -185,6 +219,37 @@ describe("canonical-loop full turn — entry → scheduler → worker → turn-l
     // (3) The dispatcher ran exactly once, with the model's requested call.
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith(TOOL_CALL);
+  }, 15_000);
+
+  it("continues after a narrated silent browser action when the model explicitly requests the next turn", async () => {
+    const dispatch = vi.fn(async () => ({
+      status: "ok" as const,
+      result: { action: "scroll", scrolled: true },
+    }));
+    setToolDispatcher(functionToolDispatcher(dispatch));
+
+    const turns: number[] = [];
+    const op = fullTurnOp();
+    op.id = `op-browser-continue-${randomUUID().slice(0, 8)}`;
+    registerAdapterForOp(op.id, () => narratedBrowserAdapter(turns));
+    canonicalLoopEntry(op);
+
+    const result = await awaitCanonicalOp(op.id, 10_000);
+    expect(result?.status, `adapter turns: ${turns.join(",")}`).toBe("completed");
+    await awaitIdle(5_000);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+    expect(turns).toEqual([0, 1]);
+
+    const rows = readOpMessages(op.id);
+    expect(rows.map(row => row.role)).toEqual(["user", "assistant", "tool_result", "assistant"]);
+    expect((rows[1].content as { text: string }).text).toContain("continue comparing");
+    expect(rows[2].content).toEqual({
+      toolCallId: "browser-scroll-1",
+      result: { action: "scroll", scrolled: true },
+      status: "ok",
+    });
+    expect((rows[3].content as { text: string }).text).toBe("The comparison is complete.");
+    expect(dispatch).toHaveBeenCalledTimes(1);
   }, 15_000);
 
   it("suspends a blocked build and resumes the same op from its next turn", async () => {

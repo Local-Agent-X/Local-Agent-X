@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { OrchestratorState } from "./orchestrator/state.js";
 import type { RegistryEntry } from "./orchestrator/registry.js";
 import { listAll as listRegisteredOrchestrators } from "./orchestrator/registry.js";
@@ -65,6 +67,7 @@ export interface AppBuildContinuationSources {
   listRegistered(): RegistryEntry[];
   listActive(): ActiveOrchestrationSummary[];
   readProjectState(projectDir: string): ProjectStateSummary | null;
+  planExists(projectDir: string): boolean;
 }
 
 const defaultSources: AppBuildContinuationSources = {
@@ -73,6 +76,7 @@ const defaultSources: AppBuildContinuationSources = {
   listRegistered: listRegisteredOrchestrators,
   listActive,
   readProjectState,
+  planExists: projectDir => existsSync(join(projectDir, "spec", "plan.md")),
 };
 
 interface ProjectEvidence {
@@ -80,6 +84,58 @@ interface ProjectEvidence {
   workflows: AppBuildWorkflow[];
   registered: RegistryEntry[];
   active: ActiveOrchestrationSummary[];
+}
+
+const WORKFLOW_PHASES = new Set<AppBuildWorkflow["phase"]>([
+  "planning", "finalized", "running", "halted", "complete",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isTimestamp(value: unknown): value is string {
+  return isNonEmptyString(value) && !Number.isNaN(Date.parse(value));
+}
+
+function sanitizeWorkflow(value: unknown): AppBuildWorkflow | null {
+  if (!isRecord(value)
+    || value.kind !== "app-build"
+    || !isNonEmptyString(value.sessionId)
+    || !WORKFLOW_PHASES.has(value.phase as AppBuildWorkflow["phase"])
+    || !isTimestamp(value.createdAt)
+    || !isTimestamp(value.updatedAt)
+    || (value.projectDir !== undefined && !isNonEmptyString(value.projectDir))
+    || (value.opId !== undefined && !isNonEmptyString(value.opId))) return null;
+  return value as unknown as AppBuildWorkflow;
+}
+
+function sanitizeRegistryEntry(value: unknown): RegistryEntry | null {
+  if (!isRecord(value)
+    || !isNonEmptyString(value.projectDir)
+    || !isNonEmptyString(value.opId)
+    || !isNonEmptyString(value.sessionId)
+    || !isTimestamp(value.registeredAt)) return null;
+  return value as unknown as RegistryEntry;
+}
+
+function sanitizeActive(value: unknown): ActiveOrchestrationSummary | null {
+  if (!isRecord(value)
+    || !isNonEmptyString(value.projectDir)
+    || !isNonEmptyString(value.opId)
+    || !isNonEmptyString(value.sessionId)
+    || typeof value.startedAt !== "number"
+    || !Number.isFinite(value.startedAt)) return null;
+  return value as unknown as ActiveOrchestrationSummary;
+}
+
+function sanitizeList<T>(values: unknown, sanitize: (value: unknown) => T | null): T[] {
+  if (!Array.isArray(values)) return [];
+  return values.map(sanitize).filter((value): value is T => value !== null);
 }
 
 function sameProject(left: string, right: string): boolean {
@@ -137,16 +193,16 @@ function candidateFromEvidence(
   const projectState = sources.readProjectState(evidence.projectDir);
   if (projectState) {
     const { state, planExists } = projectState;
-    if (state.phase === "starting" || state.phase === "running") {
+    if ((state.phase === "starting" || state.phase === "running") && planExists) {
       return {
-        action: "build_plan_status",
+        action: "build_plan_resume",
         phase: state.phase,
         projectDir: state.projectDir,
         opId: state.opId,
         sessionIds: unique([...sessionIds, state.sessionId]),
-        resumable: false,
+        resumable: true,
         adoptable: true,
-        reason: `Persisted orchestration state is ${state.phase}.`,
+        reason: `Persisted orchestration state is ${state.phase}, but no live orchestration exists.`,
       };
     }
     if ((state.phase === "halted" || state.phase === "abandoned") && planExists) {
@@ -179,15 +235,21 @@ function candidateFromEvidence(
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (!workflow) return null;
   if (workflow.phase === "finalized") {
+    const planExists = sources.planExists(evidence.projectDir);
+    const launchable = planExists && workflow.opId === undefined;
     return {
-      action: "run_build_plan",
+      action: launchable ? "run_build_plan" : "conversation",
       phase: "finalized",
       projectDir: evidence.projectDir,
       opId: workflow.opId,
       sessionIds,
       resumable: false,
-      adoptable: true,
-      reason: "The Product Build is finalized and has no orchestration state yet.",
+      adoptable: launchable,
+      reason: workflow.opId
+        ? "The finalized workflow has a kickoff opId, but no live orchestration state remains."
+        : planExists
+          ? "The Product Build is finalized and its plan is ready to launch."
+          : "The Product Build is finalized, but spec/plan.md is missing.",
     };
   }
   return {
@@ -266,10 +328,13 @@ export function resolveAppBuildContinuation(
   sessionId: string,
   sources: AppBuildContinuationSources = defaultSources,
 ): AppBuildContinuationResolution {
-  const workflow = sources.readWorkflow(sessionId);
-  const workflows = sources.listWorkflows();
-  const registered = sources.listRegistered();
-  const active = sources.listActive();
+  const workflow = sanitizeWorkflow(sources.readWorkflow(sessionId));
+  const workflows = sanitizeList(sources.listWorkflows(), sanitizeWorkflow);
+  if (workflow && !workflows.some(item => item.sessionId === workflow.sessionId)) {
+    workflows.push(workflow);
+  }
+  const registered = sanitizeList(sources.listRegistered(), sanitizeRegistryEntry);
+  const active = sanitizeList(sources.listActive(), sanitizeActive);
 
   if (workflow) {
     const candidate = candidateForWorkflow(workflow, sources, workflows, registered, active);

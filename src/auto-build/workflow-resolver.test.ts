@@ -11,12 +11,14 @@ function workflow(
   sessionId: string,
   phase: AppBuildWorkflow["phase"],
   projectDir?: string,
+  opId?: string,
 ): AppBuildWorkflow {
   return {
     kind: "app-build",
     sessionId,
     phase,
     ...(projectDir ? { projectDir } : {}),
+    ...(opId ? { opId } : {}),
     createdAt: "2026-07-17T12:00:00.000Z",
     updatedAt: "2026-07-17T12:00:00.000Z",
   };
@@ -53,6 +55,7 @@ function sources(input: {
   registered?: RegistryEntry[];
   active?: Array<{ opId: string; projectDir: string; sessionId: string; startedAt: number }>;
   states?: Array<{ state: OrchestratorState; planExists: boolean }>;
+  plans?: string[];
 } = {}): AppBuildContinuationSources {
   const workflows = input.workflows ?? [];
   const states = input.states ?? [];
@@ -64,6 +67,7 @@ function sources(input: {
     listActive: () => input.active ?? [],
     readProjectState: projectDir =>
       states.find(item => normalize(item.state.projectDir) === normalize(projectDir)) ?? null,
+    planExists: projectDir => (input.plans ?? []).some(plan => normalize(plan) === normalize(projectDir)),
   };
 }
 
@@ -81,15 +85,38 @@ describe("Product Build continuation resolver", () => {
     });
   });
 
-  it("uses restarted running state instead of a stale bridge phase", () => {
-    const projectDir = "C:\\Apps\\Calendar";
+  it("resumes persisted starting or running state when no live orchestration survived restart", () => {
+    for (const phase of ["starting", "running"] as const) {
+      const projectDir = `C:\\Apps\\${phase}`;
+      const result = resolveAppBuildContinuation("owner", sources({
+        workflows: [workflow("owner", "finalized", projectDir.toLowerCase())],
+        registered: [{
+          projectDir,
+          opId: `op-${phase}`,
+          sessionId: "owner",
+          registeredAt: "2026-07-17T12:00:00.000Z",
+        }],
+        states: [{ state: state(projectDir, phase), planExists: true }],
+      }));
+
+      expect(result).toMatchObject({
+        kind: "resolved",
+        action: "build_plan_resume",
+        adopted: false,
+        candidate: { phase, projectDir, opId: `op-${phase}`, resumable: true },
+      });
+    }
+  });
+
+  it("reports status when the persisted running orchestration is still live", () => {
+    const projectDir = "C:\\Apps\\Live";
     const result = resolveAppBuildContinuation("owner", sources({
-      workflows: [workflow("owner", "finalized", "c:/apps/calendar/")],
-      registered: [{
+      workflows: [workflow("owner", "running", projectDir, "op-running")],
+      active: [{
         projectDir,
         opId: "op-running",
         sessionId: "owner",
-        registeredAt: "2026-07-17T12:00:00.000Z",
+        startedAt: Date.now(),
       }],
       states: [{ state: state(projectDir, "running"), planExists: true }],
     }));
@@ -97,8 +124,7 @@ describe("Product Build continuation resolver", () => {
     expect(result).toMatchObject({
       kind: "resolved",
       action: "build_plan_status",
-      adopted: false,
-      candidate: { phase: "running", projectDir, opId: "op-running" },
+      candidate: { phase: "running", resumable: false },
     });
   });
 
@@ -136,6 +162,7 @@ describe("Product Build continuation resolver", () => {
     const projectDir = "C:\\Apps\\Finalized";
     const result = resolveAppBuildContinuation("owner", sources({
       workflows: [workflow("owner", "finalized", projectDir)],
+      plans: [projectDir],
     }));
 
     expect(result).toMatchObject({
@@ -144,6 +171,42 @@ describe("Product Build continuation resolver", () => {
       adopted: false,
       candidate: { phase: "finalized", projectDir },
     });
+  });
+
+  it("does not launch or adopt finalized workflows without a plan", () => {
+    const projectDir = "C:\\Apps\\NoFinalPlan";
+    const linked = resolveAppBuildContinuation("owner", sources({
+      workflows: [workflow("owner", "finalized", projectDir)],
+    }));
+    const fresh = resolveAppBuildContinuation("fresh", sources({
+      workflows: [workflow("owner", "finalized", projectDir)],
+    }));
+
+    expect(linked).toMatchObject({
+      kind: "resolved",
+      action: "conversation",
+      candidate: { adoptable: false },
+    });
+    expect(fresh).toEqual({ kind: "none", action: null, candidates: [] });
+  });
+
+  it("does not relaunch a finalized workflow whose kickoff opId is stale", () => {
+    const projectDir = "C:\\Apps\\AlreadyKickedOff";
+    const linked = resolveAppBuildContinuation("owner", sources({
+      workflows: [workflow("owner", "finalized", projectDir, "op-prior")],
+      plans: [projectDir],
+    }));
+    const fresh = resolveAppBuildContinuation("fresh", sources({
+      workflows: [workflow("owner", "finalized", projectDir, "op-prior")],
+      plans: [projectDir],
+    }));
+
+    expect(linked).toMatchObject({
+      kind: "resolved",
+      action: "conversation",
+      candidate: { opId: "op-prior", adoptable: false },
+    });
+    expect(fresh).toEqual({ kind: "none", action: null, candidates: [] });
   });
 
   it("adopts exactly one actionable candidate into a fresh chat", () => {
@@ -174,6 +237,7 @@ describe("Product Build continuation resolver", () => {
         workflow("old-one", "finalized", first),
         workflow("old-two", "finalized", second),
       ],
+      plans: [first, second],
     }));
 
     expect(result).toMatchObject({ kind: "ambiguous", action: null });
@@ -217,6 +281,29 @@ describe("Product Build continuation resolver", () => {
 
     expect(linked).toMatchObject({ kind: "resolved", action: "conversation" });
     expect(fresh).toEqual({ kind: "none", action: null, candidates: [] });
+  });
+
+  it("skips malformed source records before path normalization", () => {
+    const projectDir = "C:\\Apps\\Valid";
+    const valid = workflow("valid-owner", "finalized", projectDir);
+    const malformed = [
+      null,
+      { kind: "app-build", sessionId: "bad", phase: "finalized", projectDir: 42 },
+      { projectDir: {}, opId: "op-bad", sessionId: "bad", registeredAt: "invalid" },
+    ];
+    const source = sources({ workflows: [valid], plans: [projectDir] });
+    source.readWorkflow = () => malformed[1] as unknown as AppBuildWorkflow;
+    source.listWorkflows = () => [malformed[0], malformed[1], valid] as AppBuildWorkflow[];
+    source.listRegistered = () => [malformed[2]] as RegistryEntry[];
+    source.listActive = () => [{ projectDir: null }] as never;
+
+    expect(() => resolveAppBuildContinuation("fresh", source)).not.toThrow();
+    expect(resolveAppBuildContinuation("fresh", source)).toMatchObject({
+      kind: "resolved",
+      action: "run_build_plan",
+      adopted: true,
+      candidate: { projectDir },
+    });
   });
 
   it("does not adopt an invalid halted candidate into a fresh chat", () => {

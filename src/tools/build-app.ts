@@ -267,12 +267,6 @@ export const buildAppTool: ToolDefinition = {
       attemptCount: 0,
     };
 
-    if (sessionId) trackOpForSession(op.id, sessionId, op.task);
-
-    // Stash the mandated design spec so the vision judges score token adherence
-    // (feeds the design-verify refine nudge). Create-only, like the prompt brief.
-    if (!isUpdate) recordDesignSpec(op.id, selectDesignBrief(prompt).brief);
-
     const personaPrompt = renderPersonaPrompt();
     op.runtimeDescriptor = {
       kind: "app-build",
@@ -288,6 +282,20 @@ export const buildAppTool: ToolDefinition = {
       model: buildModel,
       tier,
     };
+
+    const runtime = registerAppBuildRuntime(op, op.runtimeDescriptor);
+    if (!runtime.registered) {
+      return {
+        content: runtime.errorMessage ?? "Product Build owns this project.",
+        isError: true,
+      };
+    }
+
+    if (sessionId) trackOpForSession(op.id, sessionId, op.task);
+
+    // Stash the mandated design spec so the vision judges score token adherence
+    // (feeds the design-verify refine nudge). Create-only, like the prompt brief.
+    if (!isUpdate) recordDesignSpec(op.id, selectDesignBrief(prompt).brief);
 
     // Pre-seed the turn-0 user message with the per-build context so the
     // in-canonical agent sees the exact prompt the legacy CLI received. The
@@ -306,8 +314,6 @@ export const buildAppTool: ToolDefinition = {
       },
       createdAt: new Date().toISOString(),
     });
-
-    registerAppBuildRuntime(op, op.runtimeDescriptor);
 
     canonicalLoopEntry(op, sessionId ? { sessionId } : {});
 

@@ -12,7 +12,7 @@
  *     chip + opId; the op lands in the store with type "app_build").
  */
 import { describe, it, expect, afterAll, afterEach, beforeAll, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -45,6 +45,11 @@ import {
   resetScheduler,
 } from "../src/canonical-loop/index.js";
 import { workspacePath } from "../src/config.js";
+import {
+  makeInitial as makeOrchestratorState,
+  ORCHESTRATOR_STATE_FILENAME,
+  write as writeOrchestratorState,
+} from "../src/auto-build/orchestrator/state.js";
 
 const submittedOpIds: string[] = [];
 
@@ -208,6 +213,101 @@ describe("checkBuildCollision — overwrite guard", () => {
       expect(r.isUpdate).toBe(false);
       expect(r.errorMessage).toContain("update: true");
       expect(r.errorMessage).toContain(`${name}-v2`);
+    } finally { cleanup(); }
+  });
+
+  it("spec/plan.md blocks a new Quick Build before it seeds files", async () => {
+    const appName = `routing-product-plan-${Date.now()}`;
+    const appDir = workspacePath("apps", appName);
+    try {
+      mkdirSync(join(appDir, "spec"), { recursive: true });
+      writeFileSync(join(appDir, "spec", "plan.md"), "# Product plan\n", "utf-8");
+
+      const r = await buildAppTool.execute({
+        name: appName,
+        prompt: "make a calculator",
+        backend: "auto",
+        _sessionId: "test-session-product-plan",
+      });
+
+      expect(r.isError).toBe(true);
+      expect(String(r.content)).toContain("owned by Product Build");
+      expect(String(r.content)).toContain("run_build_plan");
+      expect(checkBuildCollision(appDir, appName, false).blocked).toBe(true);
+      expect(() => readFileSync(join(appDir, "index.html"), "utf-8")).toThrow();
+    } finally {
+      try { rmSync(appDir, { recursive: true, force: true }); } catch { /* swallow */ }
+    }
+  });
+
+  it(`${ORCHESTRATOR_STATE_FILENAME} blocks Quick Build updates and points to status/resume`, async () => {
+    const appName = `routing-product-state-${Date.now()}`;
+    const appDir = workspacePath("apps", appName);
+    try {
+      mkdirSync(appDir, { recursive: true });
+      writeOrchestratorState(makeOrchestratorState({
+        opId: "op-product-build",
+        sessionId: "session-product-build",
+        projectDir: appDir,
+        planPath: join(appDir, "spec", "plan.md"),
+        totalChunks: 3,
+        startingChunk: 1,
+      }));
+      writeFileSync(join(appDir, "index.html"), "<html>product build</html>", "utf-8");
+
+      const r = await buildAppTool.execute({
+        name: appName,
+        prompt: "update the calculator",
+        backend: "auto",
+        update: true,
+        _sessionId: "test-session-product-state",
+      });
+
+      expect(r.isError).toBe(true);
+      expect(String(r.content)).toContain("owned by Product Build");
+      expect(String(r.content)).toContain("build_plan_status");
+      expect(String(r.content)).toContain("build_plan_resume");
+      expect(readFileSync(join(appDir, "index.html"), "utf-8")).toBe("<html>product build</html>");
+    } finally {
+      try { rmSync(appDir, { recursive: true, force: true }); } catch { /* swallow */ }
+    }
+  });
+
+  it("malformed orchestrator state gives cleanup guidance and unlocks after removal", () => {
+    const { dir, name, cleanup } = freshAppDir();
+    const marker = join(dir, ORCHESTRATOR_STATE_FILENAME);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(marker, "{}", "utf-8");
+
+      const blocked = checkBuildCollision(dir, name, true);
+      expect(blocked.blocked).toBe(true);
+      expect(blocked.errorMessage).toContain("malformed or stale");
+      expect(blocked.errorMessage).toContain("delete that stale marker");
+      expect(blocked.errorMessage).toContain(ORCHESTRATOR_STATE_FILENAME);
+      expect(blocked.errorMessage).not.toContain("call build_plan_resume");
+
+      rmSync(marker);
+      expect(checkBuildCollision(dir, name, true)).toEqual({ blocked: false, isUpdate: false });
+    } finally { cleanup(); }
+  });
+
+  it("spec/plan.md stays blocked when a malformed state marker is removed", () => {
+    const { dir, name, cleanup } = freshAppDir();
+    const marker = join(dir, ORCHESTRATOR_STATE_FILENAME);
+    try {
+      mkdirSync(join(dir, "spec"), { recursive: true });
+      writeFileSync(join(dir, "spec", "plan.md"), "# Product plan\n", "utf-8");
+      writeFileSync(marker, "{}", "utf-8");
+
+      const stale = checkBuildCollision(dir, name, true);
+      expect(stale.errorMessage).toContain("delete that stale marker");
+      expect(stale.errorMessage).toContain("run_build_plan");
+
+      rmSync(marker);
+      const planned = checkBuildCollision(dir, name, true);
+      expect(planned.blocked).toBe(true);
+      expect(planned.errorMessage).toContain("owned by Product Build (spec/plan.md)");
     } finally { cleanup(); }
   });
 

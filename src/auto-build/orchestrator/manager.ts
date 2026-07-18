@@ -30,8 +30,26 @@ import type { OrchestratorState } from "./state.js";
 import * as registry from "./registry.js";
 import { createLogger } from "../../logger.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
+import { updateAppBuildWorkflow } from "../workflow-state.js";
 
 const logger = createLogger("auto-build.orchestrator");
+
+function syncWorkflowPhase(
+  orch: Pick<ActiveOrchestration, "sessionId" | "projectDir" | "opId">,
+  phase: "running" | "halted" | "complete",
+): void {
+  try {
+    updateAppBuildWorkflow(orch.sessionId, {
+      phase,
+      projectDir: orch.projectDir,
+      opId: orch.opId,
+    });
+  } catch (error) {
+    logger.error(
+      `[orchestrator] ${orch.opId} could not persist workflow phase ${phase}: ${(error as Error).message}`,
+    );
+  }
+}
 
 /** In-memory registry of active orchestrations. Key = opId. */
 const active = new Map<string, ActiveOrchestration>();
@@ -141,6 +159,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     scopeChunks,
   };
   active.set(opId, orch);
+  syncWorkflowPhase(orch, "running");
 
   broadcastToSession(opts.sessionId, {
     type: "bg_op_started",
@@ -231,6 +250,7 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
     orch.liveState = state.markComplete(orch.liveState);
   }
   state.write(orch.liveState);
+  syncWorkflowPhase(orch, isHalted ? "halted" : "complete");
 
   // For clean completions, clear the state file so the next run starts
   // fresh. For halts, leave the file so resume works.
@@ -256,6 +276,7 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
 function onLoopCrash(orch: ActiveOrchestration, err: Error): void {
   orch.liveState = state.markHalted(orch.liveState, orch.liveState.currentChunk, "crash", err.message);
   state.write(orch.liveState);
+  syncWorkflowPhase(orch, "halted");
   broadcastToSession(orch.sessionId, {
     type: "bg_op_completed",
     opId: orch.opId,

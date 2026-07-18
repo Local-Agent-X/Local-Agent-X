@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAppBuildWorkflowStore } from "./workflow-state.js";
@@ -113,5 +113,13 @@ describe("app-build workflow state", () => {
     expect(() => store.update("validated", { projectDir: "" })).toThrow(/projectDir/);
     expect(() => store.update("validated", { opId: "   " })).toThrow(/opId/);
     expect(store.read("validated")).toMatchObject({ phase: "planning" });
+  });
+
+  it("does not create a store file when updating an unknown session", () => {
+    const filePath = makeStorePath();
+    const store = createAppBuildWorkflowStore(filePath);
+
+    expect(store.update("missing", { phase: "running" })).toBeNull();
+    expect(existsSync(filePath)).toBe(false);
   });
 });

@@ -25,7 +25,7 @@ vi.mock("../src/auto-build/loop.js", () => ({
 
 const unregisterSpy = vi.fn();
 vi.mock("../src/auto-build/orchestrator/registry.js", () => ({
-  register: vi.fn(),
+  register: vi.fn(() => true),
   unregister: (projectDir: string) => unregisterSpy(projectDir),
 }));
 

@@ -193,6 +193,9 @@ export function createAppBuildWorkflowStore(
     if (Object.hasOwn(patch, "opId")) {
       validated.opId = requireOptionalString("opId", patch.opId);
     }
+    if (!store.load().workflows.some(workflow => workflow.sessionId === sessionId)) {
+      return null;
+    }
     let updated: AppBuildWorkflow | null = null;
     store.mutate(file => {
       const index = file.workflows.findIndex(workflow => workflow.sessionId === sessionId);

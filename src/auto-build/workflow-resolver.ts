@@ -89,6 +89,9 @@ interface ProjectEvidence {
 const WORKFLOW_PHASES = new Set<AppBuildWorkflow["phase"]>([
   "planning", "finalized", "running", "halted", "complete",
 ]);
+const ORCHESTRATOR_PHASES = new Set<OrchestratorState["phase"]>([
+  "starting", "running", "halted", "complete", "abandoned",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -131,6 +134,25 @@ function sanitizeActive(value: unknown): ActiveOrchestrationSummary | null {
     || typeof value.startedAt !== "number"
     || !Number.isFinite(value.startedAt)) return null;
   return value as unknown as ActiveOrchestrationSummary;
+}
+
+function sanitizeProjectState(value: unknown): ProjectStateSummary | null {
+  if (!isRecord(value)
+    || typeof value.planExists !== "boolean"
+    || !isRecord(value.state)
+    || !isNonEmptyString(value.state.projectDir)
+    || !isNonEmptyString(value.state.opId)
+    || !isNonEmptyString(value.state.sessionId)
+    || !ORCHESTRATOR_PHASES.has(value.state.phase as OrchestratorState["phase"])) return null;
+  return value as unknown as ProjectStateSummary;
+}
+
+function readSafely<T>(read: () => T, fallback: T): T {
+  try {
+    return read();
+  } catch {
+    return fallback;
+  }
 }
 
 function sanitizeList<T>(values: unknown, sanitize: (value: unknown) => T | null): T[] {
@@ -190,7 +212,9 @@ function candidateFromEvidence(
     };
   }
 
-  const projectState = sources.readProjectState(evidence.projectDir);
+  const projectState = sanitizeProjectState(
+    readSafely(() => sources.readProjectState(evidence.projectDir), null),
+  );
   if (projectState) {
     const { state, planExists } = projectState;
     if ((state.phase === "starting" || state.phase === "running") && planExists) {
@@ -235,7 +259,7 @@ function candidateFromEvidence(
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
   if (!workflow) return null;
   if (workflow.phase === "finalized") {
-    const planExists = sources.planExists(evidence.projectDir);
+    const planExists = readSafely(() => sources.planExists(evidence.projectDir), false);
     const launchable = planExists && workflow.opId === undefined;
     return {
       action: launchable ? "run_build_plan" : "conversation",
@@ -344,13 +368,13 @@ export function resolveAppBuildContinuation(
   sessionId: string,
   sources: AppBuildContinuationSources = defaultSources,
 ): AppBuildContinuationResolution {
-  const workflow = sanitizeWorkflow(sources.readWorkflow(sessionId));
-  const workflows = sanitizeList(sources.listWorkflows(), sanitizeWorkflow);
+  const workflow = sanitizeWorkflow(readSafely(() => sources.readWorkflow(sessionId), null));
+  const workflows = sanitizeList(readSafely(() => sources.listWorkflows(), []), sanitizeWorkflow);
   if (workflow && !workflows.some(item => item.sessionId === workflow.sessionId)) {
     workflows.push(workflow);
   }
-  const registered = sanitizeList(sources.listRegistered(), sanitizeRegistryEntry);
-  const active = sanitizeList(sources.listActive(), sanitizeActive);
+  const registered = sanitizeList(readSafely(() => sources.listRegistered(), []), sanitizeRegistryEntry);
+  const active = sanitizeList(readSafely(() => sources.listActive(), []), sanitizeActive);
 
   const liveSessionCandidates = collectLiveSessionCandidates(
     sessionId, sources, workflows, registered, active,

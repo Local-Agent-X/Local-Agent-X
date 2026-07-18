@@ -329,6 +329,32 @@ describe("Product Build continuation resolver", () => {
     });
   });
 
+  it("does not crash on malformed or unreadable persisted orchestration state", () => {
+    const projectDir = "C:\\Apps\\CorruptState";
+    const malformed = sources({
+      workflows: [workflow("owner", "running", projectDir)],
+    });
+    malformed.readProjectState = () => ({
+      state: { phase: "running", projectDir, opId: "op-bad" },
+      planExists: true,
+    }) as unknown as ReturnType<AppBuildContinuationSources["readProjectState"]>;
+
+    expect(() => resolveAppBuildContinuation("owner", malformed)).not.toThrow();
+    expect(resolveAppBuildContinuation("owner", malformed)).toMatchObject({
+      kind: "resolved",
+      action: "conversation",
+      candidate: { phase: "running", adoptable: false },
+    });
+
+    const unreadable = sources({
+      workflows: [workflow("owner", "running", projectDir)],
+    });
+    unreadable.readProjectState = () => {
+      throw new TypeError("invalid persisted planPath");
+    };
+    expect(() => resolveAppBuildContinuation("owner", unreadable)).not.toThrow();
+  });
+
   it("does not adopt an invalid halted candidate into a fresh chat", () => {
     const projectDir = "C:\\Apps\\MissingPlan";
     const result = resolveAppBuildContinuation("fresh", sources({

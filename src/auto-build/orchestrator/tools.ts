@@ -9,7 +9,7 @@ import type { ToolDefinition, ToolResult } from "../../types.js";
 import { parsePlanFile } from "../plan-parser.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
 import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
-import { startOrchestration, listActive } from "./manager.js";
+import { isActiveForProject, startOrchestration, listActive } from "./manager.js";
 import { computeResumeWindow, finalizeCompletedResume, readProjectState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
 import { resolveProjectDir } from "../project-paths.js";
@@ -96,7 +96,7 @@ export const buildPlanResumeTool: ToolDefinition = {
       },
       starting_chunk: {
         type: "number",
-        description: "Optional override for which chunk to resume at. Defaults to the persisted resume_at_chunk (last committed + 1).",
+        description: "Optional plan chunk to resume at. Must stay inside the original scope and cannot move behind committed progress.",
       },
     },
     required: ["project_dir"],
@@ -106,6 +106,9 @@ export const buildPlanResumeTool: ToolDefinition = {
 
     const projectDir = resolveProjectDir(args.project_dir);
     if (!projectDir) return { content: "build_plan_resume requires 'project_dir'.", isError: true };
+    if (isActiveForProject(projectDir)) {
+      return { content: `Build at ${projectDir} is already running. Nothing to resume.`, isError: true };
+    }
 
     const info = readProjectState(projectDir);
     if (!info) {
@@ -129,12 +132,16 @@ export const buildPlanResumeTool: ToolDefinition = {
       return { content: `plan parse failed: ${(e as Error).message}`, isError: true };
     }
 
+    const hasOverride = args.starting_chunk != null;
     const overrideArg = Number(args.starting_chunk);
-    const startingChunk = Number.isFinite(overrideArg) && overrideArg > 0
-      ? Math.floor(overrideArg)
-      : s.resumeAtChunk;
+    if (hasOverride && (!Number.isInteger(overrideArg) || overrideArg <= 0)) {
+      return { content: "starting_chunk must be a positive plan chunk number.", isError: true };
+    }
 
-    const window = computeResumeWindow({ ...s, resumeAtChunk: startingChunk }, plan.chunks);
+    const window = computeResumeWindow(s, plan.chunks, hasOverride ? overrideArg : undefined);
+    if (window.kind === "invalid") {
+      return { content: window.reason, isError: true };
+    }
     if (window.kind === "complete") {
       finalizeCompletedResume(s);
       return {

@@ -57,9 +57,9 @@ import { autoResumeOrchestrations, computeResumeWindow } from "../src/auto-build
 import { buildPlanResumeTool } from "../src/auto-build/orchestrator/tools.js";
 import * as state from "../src/auto-build/orchestrator/state.js";
 
-function makePlan(nChunks: number): string {
+function makePlanChunks(chunkNumbers: number[]): string {
   const lines = ["# Test plan", ""];
-  for (let n = 1; n <= nChunks; n++) {
+  for (const n of chunkNumbers) {
     lines.push(
       `### Chunk ${n} — Feature ${n}`,
       `- **Class:** leaf`,
@@ -77,17 +77,21 @@ function seedProject(opts: {
   startingChunkOverride: number;
   maxChunks: number | null;
   resumeAtChunk: number;
+  chunkNumbers?: number[];
+  currentChunk?: number;
+  chunksCommitted?: number;
 }): string {
   const dir = mkdtempSync(join(tmpdir(), "lax-resume-"));
   const planPath = join(dir, "plan.md");
-  writeFileSync(planPath, makePlan(opts.totalChunks));
+  const chunkNumbers = opts.chunkNumbers ?? Array.from({ length: opts.totalChunks }, (_, i) => i + 1);
+  writeFileSync(planPath, makePlanChunks(chunkNumbers));
 
   const s = state.makeInitial({
     opId: "op_seed",
     sessionId: "sess_seed",
     projectDir: dir,
     planPath,
-    totalChunks: opts.totalChunks,
+    totalChunks: chunkNumbers.length,
     startingChunk: opts.startingChunkOverride,
     maxChunks: opts.maxChunks ?? undefined,
   });
@@ -95,9 +99,9 @@ function seedProject(opts: {
   state.write({
     ...s,
     phase: "running",
-    currentChunk: opts.resumeAtChunk - 1,
+    currentChunk: opts.currentChunk ?? opts.resumeAtChunk - 1,
     resumeAtChunk: opts.resumeAtChunk,
-    chunksCommitted: opts.resumeAtChunk - opts.startingChunkOverride,
+    chunksCommitted: opts.chunksCommitted ?? opts.resumeAtChunk - opts.startingChunkOverride,
   });
   return dir;
 }
@@ -115,7 +119,7 @@ describe("computeResumeWindow (AB-8)", () => {
   const chunks = Array.from({ length: 10 }, (_, i) => ({ number: i + 1 }));
 
   it("clamps maxChunks to the user's original window — 1-10 dying at 7 resumes as 7-10, not 7-16", () => {
-    const s = { startingChunkOverride: 1, maxChunks: 10, resumeAtChunk: 7 } as state.OrchestratorState;
+    const s = { startingChunkOverride: 1, maxChunks: 10, currentChunk: 6, resumeAtChunk: 7, chunksCommitted: 6 } as state.OrchestratorState;
     const w = computeResumeWindow(s, chunks);
     expect(w.kind).toBe("resume");
     expect(w.startingChunk).toBe(7);
@@ -124,24 +128,24 @@ describe("computeResumeWindow (AB-8)", () => {
 
   it("keeps the window stable across a SECOND resume", () => {
     // After the first resume startOrchestration re-seeds override=7, maxChunks=4.
-    const s = { startingChunkOverride: 7, maxChunks: 4, resumeAtChunk: 9 } as state.OrchestratorState;
+    const s = { startingChunkOverride: 7, maxChunks: 4, currentChunk: 8, resumeAtChunk: 9, chunksCommitted: 2 } as state.OrchestratorState;
     const w = computeResumeWindow(s, chunks);
     expect(w.maxChunks).toBe(2); // 9,10 — still ends at chunk 10
   });
 
   it("recognizes completion when resumeAtChunk is past the plan end (crash before complete event)", () => {
-    const s = { startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 11 } as state.OrchestratorState;
+    const s = { startingChunkOverride: 1, maxChunks: null, currentChunk: 10, resumeAtChunk: 11, chunksCommitted: 10 } as state.OrchestratorState;
     expect(computeResumeWindow(s, chunks).kind).toBe("complete");
   });
 
   it("recognizes completion when every SCOPED chunk was committed but plan has more", () => {
     // Scope was chunks 1-6; resumeAtChunk=7 is outside scope though chunk 7 exists.
-    const s = { startingChunkOverride: 1, maxChunks: 6, resumeAtChunk: 7 } as state.OrchestratorState;
+    const s = { startingChunkOverride: 1, maxChunks: 6, currentChunk: 6, resumeAtChunk: 7, chunksCommitted: 6 } as state.OrchestratorState;
     expect(computeResumeWindow(s, chunks).kind).toBe("complete");
   });
 
   it("runs to plan end when no maxChunks cap was set", () => {
-    const s = { startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 4 } as state.OrchestratorState;
+    const s = { startingChunkOverride: 1, maxChunks: null, currentChunk: 3, resumeAtChunk: 4, chunksCommitted: 3 } as state.OrchestratorState;
     const w = computeResumeWindow(s, chunks);
     expect(w.kind).toBe("resume");
     expect(w.maxChunks).toBeUndefined();
@@ -175,6 +179,25 @@ describe("autoResumeOrchestrations — window clamp (AB-8)", () => {
     expect(report.cleared).toBe(1);
     expect(state.read(dir)).toBeNull(); // state cleared on completion
   });
+
+  it("resumes the next plan index when sparse numbering makes resumeAtChunk absent", () => {
+    const dir = seedProject({
+      totalChunks: 3,
+      chunkNumbers: [1, 3, 5],
+      startingChunkOverride: 1,
+      maxChunks: 3,
+      currentChunk: 1,
+      resumeAtChunk: 2,
+      chunksCommitted: 1,
+    });
+    mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
+
+    const report = autoResumeOrchestrations();
+
+    expect(report.resumed).toBe(1);
+    expect(report.cleared).toBe(0);
+    expect(startSpy).toHaveBeenCalledWith(expect.objectContaining({ startingChunk: 3, maxChunks: 2 }));
+  });
 });
 
 describe("build_plan_resume — window clamp (AB-8)", () => {
@@ -201,6 +224,56 @@ describe("build_plan_resume — window clamp (AB-8)", () => {
     expect(result.metadata?.complete).toBe(true);
     expect(state.read(dir)).toBeNull();
     expect(unregisterSpy).toHaveBeenCalledWith(dir);
+  });
+
+  it("rejects a starting_chunk typo without altering persisted recovery state", async () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 10, resumeAtChunk: 7 });
+    const before = state.read(dir);
+
+    const result = await buildPlanResumeTool.execute({ project_dir: dir, starting_chunk: 999 });
+
+    expect(result.isError).toBe(true);
+    expect(state.read(dir)).toEqual(before);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(unregisterSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a backward starting_chunk override without altering state", async () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 10, resumeAtChunk: 7 });
+    const before = state.read(dir);
+
+    const result = await buildPlanResumeTool.execute({ project_dir: dir, starting_chunk: 5 });
+
+    expect(result.isError).toBe(true);
+    expect(state.read(dir)).toEqual(before);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(unregisterSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects an override outside the original scoped window without altering state", async () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 6, resumeAtChunk: 5 });
+    const before = state.read(dir);
+
+    const result = await buildPlanResumeTool.execute({ project_dir: dir, starting_chunk: 7 });
+
+    expect(result.isError).toBe(true);
+    expect(state.read(dir)).toEqual(before);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(unregisterSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not finalize or clear a completed window while its orchestration is live", async () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 6, resumeAtChunk: 7 });
+    const before = state.read(dir);
+    mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
+    mockActive = true;
+
+    const result = await buildPlanResumeTool.execute({ project_dir: dir });
+
+    expect(result.isError).toBe(true);
+    expect(state.read(dir)).toEqual(before);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(unregisterSpy).not.toHaveBeenCalled();
   });
 });
 

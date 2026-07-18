@@ -135,10 +135,14 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
 
   // AB-8: resume must stay inside the user's original chunk window. Passing
   // the raw maxChunks would slide the window (chunks 1-10 dying at 7 would
-  // resume as 7-16). And a crash between the final commit and the complete
-  // event leaves resumeAtChunk past the window — recognize that as done
-  // instead of starting a phantom chunk that halts with "not found".
+  // resume as 7-16). Completion is based on committed plan indexes so sparse
+  // chunk numbers cannot turn a missing resumeAtChunk into false completion.
   const window = computeResumeWindow(s, plan.chunks);
+  if (window.kind === "invalid") {
+    state.write(state.markAbandoned(s, window.reason));
+    unregister(projectDir);
+    return { outcome: "abandoned", reason: window.reason };
+  }
   if (window.kind === "complete") {
     finalizeCompletedResume(s);
     return { outcome: "cleared", reason: "all scoped chunks already committed — completed on resume" };
@@ -160,9 +164,9 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
     broadcastToSession(sessionId, {
       type: "bg_op_progress",
       opId: kick.opId,
-      line: `[auto-resume] LAX restarted mid-build. Continuing from chunk ${s.resumeAtChunk}/${s.totalChunks}.`,
+      line: `[auto-resume] LAX restarted mid-build. Continuing from chunk ${window.startingChunk}/${s.totalChunks}.`,
     });
-    return { outcome: "resumed", reason: `restarted at chunk ${s.resumeAtChunk}` };
+    return { outcome: "resumed", reason: `restarted at chunk ${window.startingChunk}` };
   } catch (e) {
     state.write(state.markAbandoned(s, `resume failed: ${(e as Error).message}`));
     unregister(projectDir);
@@ -177,13 +181,10 @@ export function finalizeCompletedResume(s: state.OrchestratorState): void {
   unregister(s.projectDir);
 }
 
-export interface ResumeWindow {
-  /** "complete" ⇒ every chunk in the user's scope was already committed. */
-  kind: "resume" | "complete";
-  startingChunk: number;
-  /** Chunks remaining IN SCOPE (undefined ⇒ run to the end of the plan). */
-  maxChunks: number | undefined;
-}
+export type ResumeWindow =
+  | { kind: "resume"; startingChunk: number; maxChunks: number | undefined }
+  | { kind: "complete"; startingChunk: number; maxChunks: undefined }
+  | { kind: "invalid"; reason: string };
 
 /**
  * Compute the correct resume window from persisted state + the plan's chunks.
@@ -192,30 +193,75 @@ export interface ResumeWindow {
  * against the user's ORIGINAL scope — [startingChunkOverride, +maxChunks) — not
  * the raw maxChunks (which would slide the window forward on every resume).
  *
- * When resumeAtChunk lands past the scoped window (or off the plan entirely),
- * every scoped chunk is already committed: return kind:"complete" so the caller
- * finalizes instead of starting a chunk number that doesn't exist.
+ * Progress is derived from the number of committed chunks inside that index
+ * window. This survives sparse plan numbering: committing chunk 1 in [1,3,5]
+ * persists resumeAtChunk=2, but the next plan-index is correctly chunk 3.
+ * Completion requires the committed count to prove progress past the scope end.
  */
 export function computeResumeWindow(
   s: state.OrchestratorState,
   chunks: Array<{ number: number }>,
+  requestedStartingChunk?: number,
 ): ResumeWindow {
-  const overrideIdx = s.startingChunkOverride != null
-    ? chunks.findIndex(c => c.number === s.startingChunkOverride)
-    : 0;
-  const origStartIdx = overrideIdx >= 0 ? overrideIdx : 0;
+  if (chunks.length === 0) return { kind: "invalid", reason: "build plan has no chunks" };
+
+  const originalStart = s.startingChunkOverride ?? chunks[0].number;
+  const origStartIdx = chunks.findIndex(c => c.number === originalStart);
+  if (origStartIdx < 0) {
+    return { kind: "invalid", reason: `original starting chunk ${originalStart} is not in the plan` };
+  }
+  if (s.maxChunks != null && (!Number.isInteger(s.maxChunks) || s.maxChunks <= 0)) {
+    return { kind: "invalid", reason: "persisted max_chunks is invalid" };
+  }
+  if (!Number.isInteger(s.chunksCommitted) || s.chunksCommitted < 0) {
+    return { kind: "invalid", reason: "persisted committed chunk count is invalid" };
+  }
   const windowEndIdx = s.maxChunks != null
     ? Math.min(origStartIdx + s.maxChunks - 1, chunks.length - 1)
     : chunks.length - 1;
-  const resumeIdx = chunks.findIndex(c => c.number === s.resumeAtChunk);
+  const committedNextIdx = origStartIdx + s.chunksCommitted;
 
-  if (resumeIdx === -1 || resumeIdx > windowEndIdx) {
+  if (requestedStartingChunk != null) {
+    const requestedIdx = chunks.findIndex(c => c.number === requestedStartingChunk);
+    if (requestedIdx < 0) {
+      return { kind: "invalid", reason: `starting_chunk ${requestedStartingChunk} is not in the plan` };
+    }
+    if (requestedIdx < origStartIdx || requestedIdx > windowEndIdx) {
+      return { kind: "invalid", reason: `starting_chunk ${requestedStartingChunk} is outside the original build scope` };
+    }
+    if (requestedIdx < committedNextIdx) {
+      return { kind: "invalid", reason: `starting_chunk ${requestedStartingChunk} is behind already committed progress` };
+    }
+    return {
+      kind: "resume",
+      startingChunk: requestedStartingChunk,
+      maxChunks: s.maxChunks != null ? windowEndIdx - requestedIdx + 1 : undefined,
+    };
+  }
+
+  if (committedNextIdx > windowEndIdx) {
     return { kind: "complete", startingChunk: s.resumeAtChunk, maxChunks: undefined };
   }
+
+  const currentIdx = chunks.findIndex(c => c.number === s.currentChunk);
+  const resumeIdx = chunks.findIndex(c => c.number === s.resumeAtChunk);
+  let nextWorkIdx = committedNextIdx;
+  if (resumeIdx >= 0 && resumeIdx !== committedNextIdx) {
+    return { kind: "invalid", reason: "persisted resume chunk disagrees with committed progress" };
+  }
+  if (resumeIdx < 0) {
+    if (currentIdx === committedNextIdx) nextWorkIdx = currentIdx;
+    else if (currentIdx === committedNextIdx - 1) nextWorkIdx = currentIdx + 1;
+    else return { kind: "invalid", reason: "persisted sparse-plan progress is inconsistent" };
+  }
+  if (nextWorkIdx < origStartIdx || nextWorkIdx > windowEndIdx) {
+    return { kind: "invalid", reason: "persisted chunk progress is inconsistent with the original build scope" };
+  }
+
   return {
     kind: "resume",
-    startingChunk: s.resumeAtChunk,
-    maxChunks: s.maxChunks != null ? windowEndIdx - resumeIdx + 1 : undefined,
+    startingChunk: chunks[nextWorkIdx].number,
+    maxChunks: s.maxChunks != null ? windowEndIdx - nextWorkIdx + 1 : undefined,
   };
 }
 

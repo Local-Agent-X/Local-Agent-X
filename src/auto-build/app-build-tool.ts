@@ -35,6 +35,7 @@ import { loadSkillBody } from "./skill-bodies.js";
 import { parsePlanText } from "./plan-parser.js";
 import { projectsDir, resolveProjectDir } from "./project-paths.js";
 import { verifyWriteLanded } from "../tools/verify.js";
+import { upsertAppBuildWorkflow } from "./workflow-state.js";
 
 const FEATURE_FLAG_BLOCK_MESSAGE =
   `BLOCKED — explicitly disabled via the ${FEATURE_FLAG_ENV} env flag (set to 0/false/no/off). ` +
@@ -82,6 +83,7 @@ export const startAppBuildTool: ToolDefinition = {
     }
 
     const concept = String(args.concept || "").trim();
+    const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
     let methodology: string;
     try {
       methodology = loadSkillBody("app-build");
@@ -90,6 +92,17 @@ export const startAppBuildTool: ToolDefinition = {
         content: `start_app_build failed: ${(e as Error).message}`,
         isError: true,
       };
+    }
+
+    if (sessionId) {
+      try {
+        upsertAppBuildWorkflow({ sessionId, phase: "planning" });
+      } catch (e) {
+        return {
+          content: `start_app_build failed to persist workflow state: ${(e as Error).message}`,
+          isError: true,
+        };
+      }
     }
 
     const framing =
@@ -327,6 +340,20 @@ export const finalizeAppBuildTool: ToolDefinition = {
         };
       }
       written.push(item.rel.replace(/\\/g, "/"));
+    }
+
+    const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
+    if (sessionId) {
+      try {
+        upsertAppBuildWorkflow({ sessionId, phase: "finalized", projectDir });
+      } catch (e) {
+        return {
+          content:
+            `App-build artifacts were written to ${projectDir}, but workflow state could not be persisted: ` +
+            `${(e as Error).message}`,
+          isError: true,
+        };
+      }
     }
 
     return {

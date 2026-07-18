@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FEATURE_FLAG_ENV } from "../src/auto-build/tool.js";
 import { startAppBuildTool, finalizeAppBuildTool } from "../src/auto-build/app-build-tool.js";
+import { createAppBuildWorkflowStore } from "../src/auto-build/workflow-state.js";
 
 const originalFlag = process.env[FEATURE_FLAG_ENV];
 // Flag is opt-out (default ON). To DISABLE, set to "0"/"false"/etc.
@@ -68,6 +69,25 @@ describe("start_app_build — happy path", () => {
   it("reminds the agent to capture facts to memory", async () => {
     const r = await startAppBuildTool.execute({ concept: "a tiny inventory app" });
     expect(r.content).toContain("memory");
+  });
+
+  it("persists planning workflow identity for the injected session", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "app-build-start-state-"));
+    const previousDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dataDir;
+    try {
+      const r = await startAppBuildTool.execute({
+        concept: "a tiny inventory app",
+        _sessionId: "planning-session",
+      });
+      expect(r.isError).toBeFalsy();
+      expect(createAppBuildWorkflowStore(join(dataDir, "app-build-workflows.json"))
+        .read("planning-session")).toMatchObject({ phase: "planning" });
+    } finally {
+      if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = previousDataDir;
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   // Regression (Jul 2026 food-truck-tracker run): grok announced next steps in
@@ -148,6 +168,31 @@ describe("finalize_app_build — happy path", () => {
     });
     expect(existsSync(join(projectDir, "spec", "architecture.md"))).toBe(true);
     expect(readFileSync(join(projectDir, "spec", "architecture.md"), "utf-8")).toContain("Adapters");
+  });
+
+  it("persists finalized workflow identity after materialization", async () => {
+    const dataDir = join(baseDir, "lax-data");
+    const projectDir = join(baseDir, "finalized-project");
+    const previousDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dataDir;
+    try {
+      const r = await finalizeAppBuildTool.execute({
+        project_dir: projectDir,
+        project_name: "Finalized",
+        product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
+        scenarios: [{ filename: "01-x.md", content: "x" }],
+        _sessionId: "finalized-session",
+      });
+      expect(r.isError).toBeFalsy();
+      expect(createAppBuildWorkflowStore(join(dataDir, "app-build-workflows.json"))
+        .read("finalized-session")).toMatchObject({
+          phase: "finalized",
+          projectDir,
+        });
+    } finally {
+      if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = previousDataDir;
+    }
   });
 
   it("writes twins/ when supplied", async () => {

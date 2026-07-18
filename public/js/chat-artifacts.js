@@ -31,6 +31,7 @@ function switchSidePanelTab(tab) {
   // AUTO (auto-open on agent spawn) only makes sense on the agents tab.
   if (autoBtn) autoBtn.style.display = tab === 'agents' ? '' : 'none';
   if (tab === 'artifacts') loadArtifacts(false);
+  if (typeof applyAgentFeedsTabWidth === 'function') applyAgentFeedsTabWidth(tab);
   // The browser pane hosts a native overlay (browser-tab.js) that must be
   // hidden the moment its tab is not the visible one.
   if (window.laxBrowserTab) {

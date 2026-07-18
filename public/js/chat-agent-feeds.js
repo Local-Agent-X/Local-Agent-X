@@ -45,8 +45,8 @@ function toggleAgentFeeds() {
     // (#dtb-agents-toggle / #sidebar-agents-btn accent highlight).
     document.body.classList.add('agents-panel-open');
     panel.style.overflow = 'hidden';
-    // Desktop: open to the user's persisted width (default 320), not a hardcoded
-    // 320, and pin width+minWidth inline in onDone so the final state wins over
+    // Desktop: open to the current tab's persisted or responsive default width,
+    // and pin width+minWidth inline in onDone so the final state wins over
     // the CSS .agent-feeds.active fallback in every path — including
     // reduced-motion (safeAnimate skips onUpdate) and a width < the CSS min-width.
     // Mobile: the panel is a fixed 300px overlay driven by CSS (:1036). Never pin

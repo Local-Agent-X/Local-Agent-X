@@ -1,11 +1,10 @@
 // ── Agent Feeds: right-rail drag-to-resize + persist ──
 //
-// The Agents panel (#agent-feeds) opens to a user-chosen width (default 320)
-// instead of a hardcoded 320. A thin handle on the panel's LEFT edge (the panel
-// is anchored to the right of the layout, so its left border is the draggable
-// one) lets the user widen / narrow it; the chosen width persists to
-// localStorage under `lax_agent_feeds_width` and is read back as the open
-// target by toggleAgentFeeds (chat-agent-feeds.js) via getAgentFeedsWidth().
+// The Agents panel (#agent-feeds) opens to a mode-aware responsive width: about
+// one-third of the window for ordinary tabs and about two-thirds for Browser.
+// A thin handle on the panel's inner edge lets the user resize it; ordinary and
+// Browser choices persist independently and are read by toggleAgentFeeds via
+// getAgentFeedsWidth().
 //
 // Why this is a self-contained sibling rather than reusing apps-ide-resize.js:
 // that component's restore() force-applies the saved width to its panels on
@@ -20,7 +19,9 @@
 // time (long after all scripts parse), so cross-file load order is not tight.
 
 var AGENT_FEEDS_MIN = 260, AGENT_FEEDS_DEFAULT = 320;
+var AGENT_FEEDS_DEFAULT_RATIO = 0.33, AGENT_FEEDS_BROWSER_RATIO = 0.62;
 var AGENT_FEEDS_WIDTH_KEY = 'lax_agent_feeds_width';
+var AGENT_FEEDS_BROWSER_WIDTH_KEY = 'lax_browser_panel_width';
 
 // Ceiling of last resort — used only when there is no viewport to measure
 // (headless tests, pre-layout). The real ceiling is agentFeedsMaxWidth().
@@ -67,13 +68,39 @@ function clampAgentFeedsWidth(w, max) {
   return w;
 }
 
-// The persisted open width (falls back to default when unset/invalid). Clamped
-// against the CURRENT viewport, so a width dragged wide on a big monitor comes
-// back sane on a smaller window instead of burying the chat.
-function getAgentFeedsWidth() {
+function agentFeedsTab(tab) {
+  if (tab) return tab;
+  try { return typeof sidePanelTab === 'string' ? sidePanelTab : 'agents'; }
+  catch (e) { return 'agents'; }
+}
+
+function agentFeedsDefaultWidth(tab, viewportWidth, max) {
+  var browser = agentFeedsTab(tab) === 'browser';
+  var vw = parseInt(viewportWidth, 10);
+  if (!isFinite(vw) || vw <= 0) {
+    try { vw = window.innerWidth || 0; } catch (e) { vw = 0; }
+  }
+  var fallback = browser ? AGENT_FEEDS_MAX : AGENT_FEEDS_DEFAULT;
+  var target = vw > 0 ? Math.round(vw * (browser ? AGENT_FEEDS_BROWSER_RATIO : AGENT_FEEDS_DEFAULT_RATIO)) : fallback;
+  return clampAgentFeedsWidth(target, max);
+}
+
+function agentFeedsWidthKey(tab) {
+  return agentFeedsTab(tab) === 'browser' ? AGENT_FEEDS_BROWSER_WIDTH_KEY : AGENT_FEEDS_WIDTH_KEY;
+}
+
+// The persisted open width (falls back to the tab's responsive default when
+// unset/invalid). Clamped against the CURRENT viewport, so a width dragged wide
+// on a big monitor comes back sane on a smaller window instead of burying chat.
+function getAgentFeedsWidth(tab) {
+  tab = agentFeedsTab(tab);
   var raw = null;
-  try { raw = localStorage.getItem(AGENT_FEEDS_WIDTH_KEY); } catch (e) {}
-  return clampAgentFeedsWidth(raw, agentFeedsMaxWidth());
+  try { raw = localStorage.getItem(agentFeedsWidthKey(tab)); } catch (e) {}
+  var max = agentFeedsMaxWidth();
+  if (raw === null || raw === '' || !isFinite(parseInt(raw, 10)) || parseInt(raw, 10) <= 0) {
+    return agentFeedsDefaultWidth(tab, 0, max);
+  }
+  return clampAgentFeedsWidth(raw, max);
 }
 
 // Mobile = the fixed-overlay breakpoint in app.css (@media max-width:768px).
@@ -94,6 +121,13 @@ function agentFeedsIsMobile() {
 function _applyAgentFeedsWidth(panel, w) {
   panel.style.width = w + 'px';
   panel.style.minWidth = w + 'px';
+}
+
+function applyAgentFeedsTabWidth(tab) {
+  if (agentFeedsIsMobile()) return;
+  var panel = document.getElementById('agent-feeds');
+  if (!panel || panel.classList.contains('collapsed')) return;
+  _applyAgentFeedsWidth(panel, getAgentFeedsWidth(tab));
 }
 
 function _initAgentFeedsResize() {
@@ -137,7 +171,7 @@ function _initAgentFeedsResize() {
       handle.removeEventListener('pointercancel', onUp);
       panel.style.transition = '';
       var w = parseInt(panel.style.width, 10);
-      if (w > 0) { try { localStorage.setItem(AGENT_FEEDS_WIDTH_KEY, String(w)); } catch (e2) {} }
+      if (w > 0) { try { localStorage.setItem(agentFeedsWidthKey(), String(w)); } catch (e2) {} }
     }
     handle.addEventListener('pointermove', onMove);
     handle.addEventListener('pointerup', onUp);
@@ -147,8 +181,9 @@ function _initAgentFeedsResize() {
   // Double-click resets to the default width and forgets the saved width.
   handle.addEventListener('dblclick', function() {
     if (panel.classList.contains('collapsed')) return;
-    _applyAgentFeedsWidth(panel, AGENT_FEEDS_DEFAULT);
-    try { localStorage.removeItem(AGENT_FEEDS_WIDTH_KEY); } catch (e) {}
+    var tab = agentFeedsTab();
+    _applyAgentFeedsWidth(panel, agentFeedsDefaultWidth(tab, 0, agentFeedsMaxWidth()));
+    try { localStorage.removeItem(agentFeedsWidthKey(tab)); } catch (e) {}
   });
 }
 

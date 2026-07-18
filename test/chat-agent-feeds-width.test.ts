@@ -20,6 +20,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 let clampAgentFeedsWidth: (w: unknown, max?: number) => number;
 let agentFeedsMaxWidth: () => number;
+let agentFeedsDefaultWidth: (tab: string, viewportWidth?: number, max?: number) => number;
+let getAgentFeedsWidth: (tab?: string) => number;
+let applyAgentFeedsTabWidth: (tab: string) => void;
 let MIN: number, MAX: number, DEFAULT: number, CHAT_MIN: number;
 
 beforeAll(() => {
@@ -27,12 +30,16 @@ beforeAll(() => {
   // eslint-disable-next-line no-new-func
   const factory = new Function(
     src +
-      "\nreturn { clampAgentFeedsWidth, agentFeedsMaxWidth, AGENT_FEEDS_MIN, AGENT_FEEDS_MAX," +
+      "\nreturn { clampAgentFeedsWidth, agentFeedsMaxWidth, agentFeedsDefaultWidth," +
+      " getAgentFeedsWidth, applyAgentFeedsTabWidth, AGENT_FEEDS_MIN, AGENT_FEEDS_MAX," +
       " AGENT_FEEDS_DEFAULT, CHAT_MIN_VISIBLE };"
   );
   const m = factory();
   clampAgentFeedsWidth = m.clampAgentFeedsWidth;
   agentFeedsMaxWidth = m.agentFeedsMaxWidth;
+  agentFeedsDefaultWidth = m.agentFeedsDefaultWidth;
+  getAgentFeedsWidth = m.getAgentFeedsWidth;
+  applyAgentFeedsTabWidth = m.applyAgentFeedsTabWidth;
   MIN = m.AGENT_FEEDS_MIN;
   MAX = m.AGENT_FEEDS_MAX;
   DEFAULT = m.AGENT_FEEDS_DEFAULT;
@@ -54,6 +61,37 @@ function makeSidebar(width: number): HTMLElement {
 
 afterEach(() => {
   document.getElementById("sidebar")?.remove();
+  document.getElementById("agent-feeds")?.remove();
+  localStorage.clear();
+});
+
+describe("tab-aware right-panel defaults", () => {
+  it("opens ordinary tabs near one-third width and Browser near two-thirds", () => {
+    expect(agentFeedsDefaultWidth("agents", 1920, 1560)).toBe(634);
+    expect(agentFeedsDefaultWidth("artifacts", 1920, 1560)).toBe(634);
+    expect(agentFeedsDefaultWidth("terminal", 1920, 1560)).toBe(634);
+    expect(agentFeedsDefaultWidth("browser", 1920, 1560)).toBe(1190);
+  });
+
+  it("keeps manual widths separate between Browser and ordinary tabs", () => {
+    setViewport(1920);
+    localStorage.setItem("lax_agent_feeds_width", "700");
+    localStorage.setItem("lax_browser_panel_width", "1100");
+    expect(getAgentFeedsWidth("agents")).toBe(700);
+    expect(getAgentFeedsWidth("artifacts")).toBe(700);
+    expect(getAgentFeedsWidth("browser")).toBe(1100);
+  });
+
+  it("resizes an open panel when its tab changes", () => {
+    setViewport(1920);
+    const panel = document.createElement("div");
+    panel.id = "agent-feeds";
+    document.body.appendChild(panel);
+    applyAgentFeedsTabWidth("browser");
+    expect(panel.style.width).toBe("1190px");
+    applyAgentFeedsTabWidth("agents");
+    expect(panel.style.width).toBe("634px");
+  });
 });
 
 describe("clampAgentFeedsWidth (C7 right-rail resize)", () => {

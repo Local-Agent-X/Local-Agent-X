@@ -32,12 +32,12 @@ Build a native Local-Agent-X closed learning loop that turns successful repeated
 | C4 | Learned protocol drafting | C3 | green |
 | C5 | Provenance and capability envelope | C4 | green |
 | C6 | Learning modes and management API | C5 | green |
-| C7 | Usage and effectiveness feedback | C5 | in-flight |
-| C8 | Safe refinement and rollback | C7 | pending |
+| C7 | Usage and effectiveness feedback | C5 | green |
+| C8 | Safe refinement and rollback | C7 | green |
 | C9 | Learning nudges | C3 | green |
 | C10 | Learning graph API | C6 | green |
 | C11 | Learning graph UI | C10 | green |
-| C12 | Cross-seam integration and final gate | C6-C11 | pending |
+| C12 | Cross-seam integration and final gate | C6-C11 | in-flight |
 
 ## Decisions queue
 
@@ -54,6 +54,8 @@ None.
 - C5 verification: operation-scoped learned-protocol envelopes passed 28 focused tests, TypeScript, source hygiene, restart persistence, conflict detection, per-tool provenance revalidation, and independent refutation. Learned allowlists only narrow the normal authorization path; forged operation IDs, stale versions, modified bodies, and removed protocols fail closed while ordinary imported protocols remain compatible.
 - C6 verification: the assisted/autonomous coordinator, immutable-evidence repair, and automatic learned-workflow selector passed 54 combined focused tests, TypeScript, source hygiene, and independent refutation. Assisted mode drafts and waits; autonomous mode activates quietly; every-message selection admits only verified active candidate-linked protocols and injects a short canonical loading hint without bodies, evidence, or permissions.
 - C10 verification: the authenticated learning graph API passed 15 route-and-UI contract tests, TypeScript, source hygiene, and adversarial payload review. Read endpoints expose the service view, mutations require operator role, payloads are strict, stale version writes return conflicts, and the exact UI reject payload is accepted without weakening validation.
+- C7 verification: the terminal feedback bridge passed 120 focused and forced-path checks across normal completion, iteration checkpoints, token and deadline exhaustion, adapter and worker exceptions, cancellation, restart recovery, and state mismatch quarantine. Provenance is captured before terminal cleanup, pending receipts precede durable terminal writes, committed receipts follow them, ordinary work still feeds candidate mining, and replay preserves original timestamps.
+- C8 verification: safe refinement passed 72 cross-concern tests plus combined campaign refutation. Promotion requires stronger high-quality evidence; assisted mode waits; autonomous mode uses compare-and-swap; committed activation-scoped regression windows trigger rollback in both modes or archival when no healthy prior exists. Mutable bounded activation history remains separate from immutable protocol versions.
 
 ## Completion buckets
 
@@ -68,6 +70,8 @@ None.
 - C5: restart-safe, operation-scoped learned-protocol provenance and capability envelopes that fail closed and can only narrow existing gates.
 - C6: seamless assisted/autonomous coordination plus conservative automatic selection of verified active learned workflows on every message.
 - C10: authenticated list, detail, and lifecycle-action routes with operator-only mutation, strict validation, conflict handling, and live refresh broadcasts.
+- C7: restart-repairable, envelope-attributed effectiveness receipts with pending-before-terminal and commit-after-terminal ordering, while preserving ordinary candidate mining and excluding user cancellation.
+- C8: thresholded refinement, assisted waiting, autonomous compare-and-swap activation, and mode-independent safety rollback with healthy-prior selection and archival fallback.
 
 ### Parked for user
 

@@ -119,6 +119,7 @@ describe("Browser full-page workspace", () => {
     (window as any).BroadcastChannel = FakeBroadcastChannel;
     const setChatOverlay = vi.fn().mockResolvedValue(undefined);
     (window as any).desktop = { browser: { setChatOverlay } };
+    document.querySelector("#messages .msg.assistant")?.remove();
     loadWorkspace();
     const rect = (left: number, top: number, width: number, height: number) => ({
       left, top, width, height, right: left + width, bottom: top + height,
@@ -130,7 +131,7 @@ describe("Browser full-page workspace", () => {
     (window as any).laxBrowserWorkspace.setActive(true);
 
     channels[0].onmessage?.({ data: {
-      type: "browser-workspace-control", control: "latestOpen", value: true,
+      type: "browser-workspace-control", control: "latestOpen", value: true, hasLatest: true,
     } });
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(document.body.classList.contains("browser-chat-latest-open")).toBe(true);
@@ -156,10 +157,13 @@ describe("Browser full-page workspace", () => {
     (document.getElementById("browser-chat-collapse") as HTMLButtonElement).click();
 
     expect(channels[0].postMessage).toHaveBeenNthCalledWith(1, {
-      type: "browser-workspace-control", control: "latestOpen", value: true,
+      type: "browser-workspace-control", control: "latestAvailable", value: true,
     });
     expect(channels[0].postMessage).toHaveBeenNthCalledWith(2, {
-      type: "browser-workspace-control", control: "collapsed", value: true,
+      type: "browser-workspace-control", control: "latestOpen", value: true, hasLatest: true,
+    });
+    expect(channels[0].postMessage).toHaveBeenNthCalledWith(3, {
+      type: "browser-workspace-control", control: "collapsed", value: true, hasLatest: true,
     });
     (window as any).BroadcastChannel = OriginalBroadcastChannel;
   });

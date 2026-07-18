@@ -15,10 +15,16 @@
   var lastOverlayKey = '';
   var overlaySessionId = null;
   var overlaySelectingId = null;
+  var overlayLatestAvailable = false;
+  var overlayLatestKnown = false;
+  var lastReportedLatestAvailable = null;
 
   function requestHostControl(control, value) {
     if (!overlayRenderer || !workspaceChannel) return false;
-    workspaceChannel.postMessage({ type: 'browser-workspace-control', control: control, value: !!value });
+    workspaceChannel.postMessage({
+      type: 'browser-workspace-control', control: control, value: !!value,
+      hasLatest: !!latestTurnNode(),
+    });
     return true;
   }
 
@@ -143,11 +149,16 @@
     if (!messages) return null;
     var previous = messages.querySelector('.browser-latest-turn');
     var latest = latestTurnNode();
+    var hasLatest = overlayLatestKnown ? overlayLatestAvailable : !!latest;
     if (previous && previous !== latest) previous.classList.remove('browser-latest-turn');
     if (latest) latest.classList.add('browser-latest-turn');
-    document.body.classList.toggle('browser-chat-has-latest', active && !!latest);
-    if (latestButton) latestButton.hidden = !active || collapsed || !latest;
-    if (!latest && latestOpen) {
+    document.body.classList.toggle('browser-chat-has-latest', active && hasLatest);
+    if (latestButton) latestButton.hidden = !active || collapsed || !hasLatest;
+    if (overlayRenderer && workspaceChannel && lastReportedLatestAvailable !== !!latest) {
+      lastReportedLatestAvailable = !!latest;
+      workspaceChannel.postMessage({ type: 'browser-workspace-control', control: 'latestAvailable', value: !!latest });
+    }
+    if (!hasLatest && latestOpen) {
       latestOpen = false;
       document.body.classList.remove('browser-chat-latest-open');
       syncMessagesVisibility();
@@ -160,7 +171,8 @@
   function setLatestOpen(next) {
     if (requestHostControl('latestOpen', next)) return;
     var latest = markLatestTurn();
-    latestOpen = !!next && active && !collapsed && !!latest;
+    var hasLatest = overlayLatestKnown ? overlayLatestAvailable : !!latest;
+    latestOpen = !!next && active && !collapsed && hasLatest;
     document.body.classList.toggle('browser-chat-latest-open', latestOpen);
     syncMessagesVisibility();
     renderControls();
@@ -190,6 +202,8 @@
     if (!active) {
       collapsed = false;
       latestOpen = false;
+      overlayLatestAvailable = false;
+      overlayLatestKnown = false;
     }
     document.body.classList.toggle('browser-workspace', active);
     document.body.classList.toggle('browser-chat-collapsed', active && collapsed);
@@ -263,6 +277,16 @@
       workspaceChannel.onmessage = function (event) {
         var data = event.data;
         if (!data || data.type !== 'browser-workspace-control') return;
+        if (typeof data.hasLatest === 'boolean') {
+          overlayLatestAvailable = data.hasLatest;
+          overlayLatestKnown = true;
+        }
+        if (data.control === 'latestAvailable') {
+          overlayLatestAvailable = !!data.value;
+          overlayLatestKnown = true;
+          markLatestTurn();
+          scheduleBrowserSync();
+        }
         if (data.control === 'latestOpen') setLatestOpen(data.value);
         if (data.control === 'collapsed') setCollapsed(data.value);
       };

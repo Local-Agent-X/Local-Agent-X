@@ -110,6 +110,17 @@ describe("3-place sync: enum, prose, read-only classification", () => {
     }
   });
 
+  it("new_tab accepts a 'urls' array (C4 multi-open) and the prose sells the one-call form", () => {
+    const urls = BROWSER_TOOL_PARAMETERS.properties.urls as { type: string; items: { type: string }; description: string };
+    expect(urls.type).toBe("array");
+    expect(urls.items).toEqual({ type: "string" });
+    expect(urls.description).toContain("new_tab");
+    // Single-url form stays intact for backward compatibility.
+    expect((BROWSER_TOOL_PARAMETERS.properties.url as { type: string }).type).toBe("string");
+    expect(BROWSER_TOOL_DESCRIPTION).toContain("MULTIPLE urls at once via 'urls'");
+    expect(BROWSER_TOOL_DESCRIPTION).toContain("make ONE call with all of them in 'urls'");
+  });
+
   it("history/bookmarks classify read-only; bookmark_add stays non-idempotent", () => {
     const [tool] = createBrowserTools(() => "test-session");
     const effect = tool.effect as (args: Record<string, unknown>) => { class: string };

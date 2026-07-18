@@ -49,6 +49,7 @@ import {
 	IN_APP_NO_DIALOG,
 } from "./in-app-backend.js";
 import { ingestInAppDownload } from "./downloads.js";
+import { handleNewTab } from "../tools/browser-tools/navigation.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
 import { ObservationRegistry, type DurableRef } from "./observation.js";
 import type { RawElement } from "./extract.js";
@@ -183,6 +184,55 @@ describe("ElectronInAppBackend (A1)", () => {
 		// Active tab followed: subsequent ops target the NEW view.
 		await backend.screenshot();
 		expect(browserCapture).toHaveBeenCalledWith(`${VIEW_ID}-t2`);
+	});
+
+	// ── Multi-URL new_tab fan-out (C4) — handler-level, real backend ──
+
+	it("ONE new_tab call with multiple urls opens one REAL view per url and lists them all", async () => {
+		await backend.navigate(PAGE_URL);
+		const result = await handleNewTab(backend, {
+			urls: ["https://one.example/", "https://two.example/", "https://three.example/"],
+		});
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toContain("Opened 3 of 3 tabs.");
+		// Rows in input order.
+		const i1 = result.content.indexOf("[1/3] https://one.example/");
+		const i2 = result.content.indexOf("[2/3] https://two.example/");
+		const i3 = result.content.indexOf("[3/3] https://three.example/");
+		expect(i1).toBeGreaterThanOrEqual(0);
+		expect(i2).toBeGreaterThan(i1);
+		expect(i3).toBeGreaterThan(i2);
+		// One REAL view per url (monotonic -tN ids), each navigated to its url.
+		const creates = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create").map(([, id]) => id);
+		expect(creates).toEqual(expect.arrayContaining([`${VIEW_ID}-t2`, `${VIEW_ID}-t3`, `${VIEW_ID}-t4`]));
+		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t2`, "https://one.example/");
+		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t3`, "https://two.example/");
+		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t4`, "https://three.example/");
+		// Tab count via the backend's own tab list: first tab + 3 opened.
+		const tabs = await backend.listTabs();
+		expect(tabs).toContain("4 tab(s) open:");
+		// The deep snapshot rides once, at the end (active = last opened tab).
+		expect(result.content).toContain("--- Page snapshot ---");
+		expect(result.content.split("--- Page snapshot ---")).toHaveLength(2);
+	});
+
+	it("a url whose view fails to create does not prevent the other tabs (per-URL isolation)", async () => {
+		await backend.navigate(PAGE_URL);
+		// The SECOND minted view (-t3) fails to materialize; -t2 and -t4 succeed.
+		const base = vi.mocked(browserLifecycle).getMockImplementation()!;
+		vi.mocked(browserLifecycle).mockImplementation(async (op, id, opts) => {
+			if (op === "create" && id === `${VIEW_ID}-t3`) throw new Error("view pool exhausted");
+			return base(op, id, opts);
+		});
+		const result = await handleNewTab(backend, {
+			urls: ["https://one.example/", "https://broken.example/", "https://three.example/"],
+		});
+		expect(result.isError).toBeFalsy();
+		expect(result.content).toContain("Opened 2 of 3 tabs.");
+		expect(result.content).toMatch(/\[2\/3\] https:\/\/broken\.example\/\nError: view pool exhausted/);
+		// The failed tab rolled back — the survivors are listed, no ghost row.
+		const tabs = await backend.listTabs();
+		expect(tabs).toContain("3 tab(s) open:");
 	});
 
 	// ── Observe round-trip / format parity ─────────

@@ -3,6 +3,7 @@ import type { Page } from "playwright";
 import { BrowserManager } from "./manager.js";
 import { installRequestGuard } from "./guards.js";
 import { installDownloadHandler } from "./downloads.js";
+import { handleNewTab } from "../tools/browser-tools/navigation.js";
 
 // Post-fill readback policy contract (per Chunk C / fill-mask refactor):
 //   1. value matches    → returns "Filled ... with value (N chars)"
@@ -217,6 +218,134 @@ describe("BrowserManager.newTab — HTTP ≥400 guard (parity with navigate)", (
     const result = await mgr.newTab("https://example.com/account-recovery/private-token");
     expect(result).toContain("SENSITIVE PAGE CONTENT WITHHELD");
     expect(page.title).not.toHaveBeenCalled();
+  });
+});
+
+// ── handleNewTab multi-URL fan-out (C4) ──
+// One tool call opens N tabs so multi-site opens are deterministic regardless
+// of model looping behavior; a failing URL never aborts the others.
+
+describe("handleNewTab — multi-URL fan-out (C4)", () => {
+  function makeMultiTabManager(pages: NavFakePage[]) {
+    const mgr = new BrowserManager("test-session");
+    (mgr as unknown as { getPage: () => Promise<unknown> }).getPage = vi
+      .fn()
+      .mockResolvedValue(pages[0]);
+    const newPage = vi.fn();
+    for (const page of pages) newPage.mockResolvedValueOnce(page);
+    (mgr as unknown as { context: unknown }).context = { newPage };
+    const snapshotSpy = vi.fn().mockResolvedValue("SNAPSHOT");
+    (mgr as unknown as { snapshot: () => Promise<string> }).snapshot = snapshotSpy;
+    return { mgr, snapshotSpy, newPage };
+  }
+
+  it("one call with three urls opens three tabs, rows in input order, ONE trailing snapshot", async () => {
+    const pages = [
+      navFakePage(200, "https://one.example/"),
+      navFakePage(200, "https://two.example/"),
+      navFakePage(200, "https://three.example/"),
+    ];
+    const { mgr, snapshotSpy } = makeMultiTabManager(pages);
+
+    const result = await handleNewTab(mgr, {
+      urls: ["https://one.example/", "https://two.example/", "https://three.example/"],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mgr.listOwnedPages()).toHaveLength(3);
+    expect(result.content).toContain("Opened 3 of 3 tabs.");
+    // Per-URL sections appear in INPUT order.
+    const i1 = result.content.indexOf("[1/3] https://one.example/");
+    const i2 = result.content.indexOf("[2/3] https://two.example/");
+    const i3 = result.content.indexOf("[3/3] https://three.example/");
+    expect(i1).toBeGreaterThanOrEqual(0);
+    expect(i2).toBeGreaterThan(i1);
+    expect(i3).toBeGreaterThan(i2);
+    // Only the ACTIVE (last-opened) tab gets the deep snapshot — exactly one.
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+    expect(result.content).toContain("--- Page snapshot ---");
+  });
+
+  it("one bad URL does not prevent the other tabs (per-URL isolation)", async () => {
+    const pages = [
+      navFakePage(200, "https://one.example/"),
+      navFakePage(404, "https://broken.example/missing"),
+      navFakePage(200, "https://three.example/"),
+    ];
+    const { mgr } = makeMultiTabManager(pages);
+
+    const result = await handleNewTab(mgr, {
+      urls: ["https://one.example/", "https://broken.example/missing", "https://three.example/"],
+    });
+
+    // Partial success is SUCCESS — the error is reported per-row, not globally.
+    expect(result.isError).toBeFalsy();
+    expect(mgr.listOwnedPages()).toHaveLength(2); // the 404 tab was closed by newTab
+    expect(result.content).toContain("Opened 2 of 3 tabs.");
+    expect(result.content).toMatch(/\[2\/3\] https:\/\/broken\.example\/missing\nError: Navigation failed: HTTP 404/);
+    expect(result.content).toContain("[1/3] https://one.example/");
+    expect(result.content).toContain("[3/3] https://three.example/");
+  });
+
+  it("all urls failing returns an error result with every per-URL row", async () => {
+    const pages = [
+      navFakePage(500, "https://a.example/boom"),
+      navFakePage(404, "https://b.example/missing"),
+    ];
+    const { mgr, snapshotSpy } = makeMultiTabManager(pages);
+
+    const result = await handleNewTab(mgr, {
+      urls: ["https://a.example/boom", "https://b.example/missing"],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Opened 0 of 2 tabs.");
+    expect(result.content).toContain("HTTP 500");
+    expect(result.content).toContain("HTTP 404");
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it("'urls' takes precedence over 'url' when both are set", async () => {
+    const pages = [navFakePage(200, "https://one.example/"), navFakePage(200, "https://two.example/")];
+    const { mgr } = makeMultiTabManager(pages);
+
+    const result = await handleNewTab(mgr, {
+      url: "https://ignored.example/",
+      urls: ["https://one.example/", "https://two.example/"],
+    });
+
+    expect(result.content).toContain("Opened 2 of 2 tabs.");
+    expect(pages[0].goto).toHaveBeenCalledWith("https://one.example/", expect.any(Object));
+    expect(pages[1].goto).toHaveBeenCalledWith("https://two.example/", expect.any(Object));
+    for (const page of pages) {
+      expect(page.goto).not.toHaveBeenCalledWith("https://ignored.example/", expect.any(Object));
+    }
+  });
+
+  it("single-url path is unchanged: bare tab report + one appended snapshot, no fan-out framing", async () => {
+    const page = navFakePage(200, "https://one.example/");
+    const { mgr, snapshotSpy } = makeMultiTabManager([page]);
+
+    const result = await handleNewTab(mgr, { url: "https://one.example/" });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content).toContain("Opened new tab (1 tabs total)");
+    expect(result.content).toContain("--- Page snapshot ---");
+    expect(result.content).not.toContain("[1/1]");
+    expect(result.content).not.toContain("Opened 1 of 1");
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("neither 'url' nor 'urls' is an error, and an all-blank urls array falls back to 'url'", async () => {
+    const { mgr } = makeMultiTabManager([navFakePage(200, "https://one.example/")]);
+
+    const missing = await handleNewTab(mgr, {});
+    expect(missing.isError).toBe(true);
+    expect(missing.content).toContain("'url' (or 'urls')");
+
+    const fallback = await handleNewTab(mgr, { urls: ["", "  "], url: "https://one.example/" });
+    expect(fallback.isError).toBeFalsy();
+    expect(fallback.content).toContain("Opened new tab (1 tabs total)");
   });
 });
 

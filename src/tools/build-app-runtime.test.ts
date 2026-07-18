@@ -3,15 +3,22 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getToolDispatcher,
   getToolsForOp,
   resetCanonicalRuntime,
   resolveAdapterFactory,
+  type ToolDispatcher,
 } from "../canonical-loop/index.js";
-import type { AdapterReport } from "../canonical-loop/adapter-contract.js";
+import type { AdapterReport, ToolCall } from "../canonical-loop/adapter-contract.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
 import { clearSessionWorkRoot, sessionWorkRootOf } from "../workspace/paths.js";
 import { ORCHESTRATOR_STATE_FILENAME } from "../auto-build/orchestrator/state.js";
-import { registerAppBuildRuntime, restorePersistedAppBuildRuntimes } from "./build-app-runtime.js";
+import {
+  guardAppBuildDispatcher,
+  ProductBuildOwnershipChangedError,
+  registerAppBuildRuntime,
+  restorePersistedAppBuildRuntimes,
+} from "./build-app-runtime.js";
 
 const descriptor: AppBuildRuntimeDescriptor = {
   kind: "app-build",
@@ -45,6 +52,24 @@ function op(
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     canonical: { state },
+  };
+}
+
+function call(tool: string, toolCallId = `call-${tool}`): ToolCall {
+  return { toolCallId, tool, args: {} };
+}
+
+function successfulDispatcher(onDispatch?: (call: ToolCall) => void): ToolDispatcher {
+  return {
+    async dispatch(toolCall) {
+      onDispatch?.(toolCall);
+      return {
+        toolCallId: toolCall.toolCallId,
+        status: "ok",
+        result: { ok: true },
+        durationMs: 0,
+      };
+    },
   };
 }
 
@@ -157,6 +182,99 @@ describe("restorePersistedAppBuildRuntimes", () => {
         kind: "error",
         message: expect.stringContaining("delete that stale marker"),
       }));
+      expect(getToolsForOp(id)).toEqual([]);
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps normal Quick Build mutations on the canonical dispatcher", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "lax-build-dispatch-normal-"));
+    const dispatched: string[] = [];
+    try {
+      const guarded = guardAppBuildDispatcher(
+        successfulDispatcher((toolCall) => dispatched.push(toolCall.tool)),
+        { appName: "normal-app", appDir },
+      );
+
+      await expect(guarded.dispatch(call("write"))).resolves.toMatchObject({ status: "ok" });
+      expect(dispatched).toEqual(["write"]);
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks mutation when ownership appears after adapter construction", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "lax-build-dispatch-adapter-race-"));
+    const id = "ownership-after-adapter-construction";
+    workRootIds.add(id);
+    const runtimeDescriptor = { ...descriptor, appName: "adapter-race-app", appDir };
+    const paused = op(id, "paused", runtimeDescriptor);
+    try {
+      expect(registerAppBuildRuntime(paused, runtimeDescriptor)).toEqual({ registered: true });
+      const adapter = await resolveAdapterFactory(paused)!();
+      expect(adapter.name).not.toBe("app-build-product-owned");
+
+      mkdirSync(join(appDir, "spec"), { recursive: true });
+      writeFileSync(join(appDir, "spec", "plan.md"), "# Product plan\n", "utf-8");
+
+      await expect(getToolDispatcher(id).dispatch(call("write"))).rejects.toBeInstanceOf(
+        ProductBuildOwnershipChangedError,
+      );
+      expect(getToolsForOp(id)).toEqual([]);
+      expect(sessionWorkRootOf(id)).toBeUndefined();
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks each mixed-batch call and blocks a mid-turn mutation", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "lax-build-dispatch-mid-turn-"));
+    const dispatched: string[] = [];
+    try {
+      const delegate = successfulDispatcher((toolCall) => {
+        dispatched.push(toolCall.tool);
+        if (toolCall.tool === "read") {
+          mkdirSync(join(appDir, "spec"), { recursive: true });
+          writeFileSync(join(appDir, "spec", "plan.md"), "# Product plan\n", "utf-8");
+        }
+      });
+      delegate.dispatchBatch = async () => {
+        throw new Error("guard must serialize a batch containing mutations");
+      };
+      const guarded = guardAppBuildDispatcher(delegate, { appName: "mid-turn-app", appDir });
+
+      await expect(guarded.dispatchBatch!([
+        call("read", "call-read"),
+        call("bash", "call-bash"),
+      ])).rejects.toMatchObject({
+        name: "ProductBuildOwnershipChangedError",
+        message: expect.stringContaining("Quick Build mutation \"bash\" blocked"),
+      });
+      expect(dispatched).toEqual(["read"]);
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks mutation after a restored adapter has already been constructed", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "lax-build-dispatch-restored-race-"));
+    const id = "ownership-after-restored-adapter";
+    workRootIds.add(id);
+    const runtimeDescriptor = { ...descriptor, appName: "restored-race-app", appDir };
+    const paused = op(id, "paused", runtimeDescriptor);
+    try {
+      expect(restorePersistedAppBuildRuntimes([paused])).toEqual([id]);
+      const adapter = await resolveAdapterFactory(paused)!();
+      expect(adapter.name).not.toBe("app-build-product-owned");
+
+      mkdirSync(join(appDir, "spec"), { recursive: true });
+      writeFileSync(join(appDir, "spec", "plan.md"), "# Product plan\n", "utf-8");
+
+      await expect(getToolDispatcher(id).dispatch(call("connector_create"))).rejects.toMatchObject({
+        name: "ProductBuildOwnershipChangedError",
+        message: expect.stringContaining("Product Build now owns this project"),
+      });
       expect(getToolsForOp(id)).toEqual([]);
     } finally {
       rmSync(appDir, { recursive: true, force: true });

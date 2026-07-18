@@ -7,9 +7,11 @@ import {
   unregisterAdapterForOp,
   unregisterToolDispatcherForOp,
   unregisterToolsForOp,
+  type ToolDispatchResult,
+  type ToolDispatcher,
 } from "../canonical-loop/index.js";
 import { createAppBuildAdapter } from "../canonical-loop/public/build-adapters.js";
-import type { Adapter } from "../canonical-loop/adapter-contract.js";
+import type { Adapter, ToolCall } from "../canonical-loop/adapter-contract.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
@@ -25,6 +27,16 @@ import type { AppTier } from "./app-tier.js";
 import { checkProductBuildOwnership } from "./build-app-collision.js";
 
 const BASE_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
+const MUTATING_APP_BUILD_TOOLS = new Set([
+  writeTool.name,
+  editTool.name,
+  bashTool.name,
+  connectorCreateTool.name,
+  processStartTool.name,
+  processKillTool.name,
+  appServeBackendTool.name,
+  appServeFrontendTool.name,
+]);
 
 export function builderToolsForTier(tier: AppTier): typeof BASE_TOOLS {
   if (tier === "quick-html") return BASE_TOOLS;
@@ -38,6 +50,49 @@ export function builderToolsForTier(tier: AppTier): typeof BASE_TOOLS {
 export interface AppBuildRuntimeRegistration {
   registered: boolean;
   errorMessage?: string;
+}
+
+export class ProductBuildOwnershipChangedError extends Error {
+  constructor(tool: string, ownershipMessage: string) {
+    super(`Quick Build mutation "${tool}" blocked because Product Build now owns this project. ${ownershipMessage}`);
+    this.name = "ProductBuildOwnershipChangedError";
+  }
+}
+
+export function guardAppBuildDispatcher(
+  delegate: ToolDispatcher,
+  target: Pick<AppBuildRuntimeDescriptor, "appDir" | "appName">,
+  onBlocked?: () => void,
+): ToolDispatcher {
+  const dispatch = async (call: ToolCall) => {
+    if (MUTATING_APP_BUILD_TOOLS.has(call.tool)) {
+      const ownership = checkProductBuildOwnership(target.appDir, target.appName);
+      if (ownership.blocked) {
+        onBlocked?.();
+        throw new ProductBuildOwnershipChangedError(
+          call.tool,
+          ownership.errorMessage ?? "Product Build owns this project.",
+        );
+      }
+    }
+    return delegate.dispatch(call);
+  };
+
+  return {
+    dispatch,
+    ...(delegate.dispatchBatch
+      ? {
+          async dispatchBatch(calls: ToolCall[]) {
+            if (calls.every((call) => !MUTATING_APP_BUILD_TOOLS.has(call.tool))) {
+              return delegate.dispatchBatch!(calls);
+            }
+            const results: ToolDispatchResult[] = [];
+            for (const call of calls) results.push(await dispatch(call));
+            return results;
+          },
+        }
+      : {}),
+  };
 }
 
 function clearAppBuildRuntime(opId: string): void {
@@ -96,13 +151,18 @@ export function registerAppBuildRuntime(
   if (descriptor.strategy === "in-canonical-sub-agent") {
     const security = new SecurityLayer(workspaceRoot(), loadFileAccessModeAtLeast("common"));
     security.addAllowedPath(descriptor.appDir, op.id);
-    registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({
       tools,
       security,
       sessionId: op.id,
       callContext: "delegated",
       opId: op.id,
-    }));
+    });
+    registerToolDispatcherForOp(op.id, guardAppBuildDispatcher(
+      dispatcher,
+      descriptor,
+      () => clearAppBuildRuntime(op.id),
+    ));
   }
 
   registerAdapterForOp(op.id, () => {

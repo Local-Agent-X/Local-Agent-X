@@ -330,28 +330,47 @@ export class SecurityLayer {
   }
 
   private evaluateBrowser(args: Record<string, unknown>): SecurityDecision {
-    if ((args.action === "navigate" || args.action === "new_tab") && args.url) {
-      const browserUrl = String(args.url);
-      // Allow localhost/127.0.0.1 for browser — user's own dev servers
-      try {
-        const host = new URL(browserUrl).hostname;
-        if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
-          return { allowed: true, reason: "Browser navigation to localhost allowed" };
+    if (args.action === "navigate" || args.action === "new_tab") {
+      // new_tab may carry a batch (`urls: string[]`, which takes precedence over
+      // `url`). Pre-check EVERY entry through the same per-URL gate; deny wins.
+      // This tool-layer pre-flight is defense-in-depth + consistent early-denial
+      // UX — the request-layer per-hop egress guards (CDP installRequestGuard;
+      // in-app browser-partition egress-ask) still cover every navigation
+      // fail-closed even without it.
+      if (Array.isArray(args.urls) && args.urls.length > 0) {
+        for (const entry of args.urls) {
+          const decision = this.evaluateBrowserUrl(String(entry));
+          if (!decision.allowed) {
+            return { ...decision, reason: `${decision.reason} (url: ${String(entry)})` };
+          }
         }
-        return evaluateWebFetch(
-          this.egressAllowlist,
-          this.egressAllowlistConfigured,
-          String(SecurityLayer._selfPort || "7007"),
-          browserUrl,
-          this.egressMode,
-          this.localServicePorts,
-          manualRuntimeHostPorts(),
-        );
-      } catch {
-        return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
+        return { allowed: true, reason: "Browser navigation allowed" };
       }
+      if (args.url) return this.evaluateBrowserUrl(String(args.url));
     }
     return { allowed: true, reason: "Browser action allowed" };
+  }
+
+  /** Per-URL browser navigation gate: localhost carve-out, then the egress policy. */
+  private evaluateBrowserUrl(browserUrl: string): SecurityDecision {
+    // Allow localhost/127.0.0.1 for browser — user's own dev servers
+    try {
+      const host = new URL(browserUrl).hostname;
+      if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+        return { allowed: true, reason: "Browser navigation to localhost allowed" };
+      }
+      return evaluateWebFetch(
+        this.egressAllowlist,
+        this.egressAllowlistConfigured,
+        String(SecurityLayer._selfPort || "7007"),
+        browserUrl,
+        this.egressMode,
+        this.localServicePorts,
+        manualRuntimeHostPorts(),
+      );
+    } catch {
+      return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
+    }
   }
 
   /**

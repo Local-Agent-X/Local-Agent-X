@@ -16,7 +16,13 @@ export function buildApprovalContext(toolName: string, args: Record<string, unkn
       return `Read file: ${String(args.path || "").split(/[/\\]/).pop()}`;
     case "browser": {
       const a = String(args.action || "");
-      if (a === "navigate" || a === "new_tab") return `Open website: ${args.url || ""}`;
+      if (a === "navigate" || a === "new_tab") {
+        // new_tab may carry a batch (`urls` takes precedence over `url`).
+        if (Array.isArray(args.urls) && args.urls.length > 0) {
+          return `Open websites: ${args.urls.map((u) => String(u)).join(", ").slice(0, 150)}`;
+        }
+        return `Open website: ${args.url || ""}`;
+      }
       if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
       return `Browser: ${a}`;
     }

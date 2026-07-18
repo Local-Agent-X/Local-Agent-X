@@ -140,6 +140,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       tier: classifyModel(resolved.model) as ToolSelectionResult["tier"],
       intentVerdict: null,
       forceBuildIntent: false,
+      productBuildTurn: null,
       isBridge: false,
     };
   } else {
@@ -159,6 +160,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     end = stepStart("selectTools");
     toolSel = await selectTools({
       message: input.message,
+      sessionId: input.sessionId,
       channel: input.channel,
       allAgentTools: input.allAgentTools,
       bridgeTools: input.bridgeTools,
@@ -242,6 +244,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     forceBuildIntent: toolSel.forceBuildIntent,
     buildMode: toolSel.intentVerdict?.kind === "build_app" ? toolSel.intentVerdict.mode : undefined,
     intentReason: toolSel.intentVerdict?.reason,
+    buildTurnDirective: toolSel.productBuildTurn?.directive,
   });
   end();
 
@@ -270,13 +273,15 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // Force/lean rule lives in shouldPinIntentToolChoice: a "lean" verdict narrows
   // + keeps the tool loaded (forceBuildIntent=kind, tool-selection.ts) but does
   // NOT pin, so the model can ask clarifying questions before executing.
-  if (shouldPinIntentToolChoice(toolSel.intentVerdict)) {
-    const forcedName = toolSel.intentVerdict!.kind;
+  const forcedName = toolSel.forcedToolName
+    ?? (shouldPinIntentToolChoice(toolSel.intentVerdict) ? toolSel.intentVerdict!.kind : undefined);
+  if (forcedName) {
     const inToolList = toolSel.tools.some(t => t.name === forcedName);
     if (inToolList) {
       toolChoice = { type: "tool", name: forcedName };
       const t = recordIntentOutcome(true);
-      logger.info(`[intent] forcing ${forcedName} mode=force pinned=${t.forced}/${t.forced + t.leaned} (${t.pinnedPct}%) (reason="${toolSel.intentVerdict!.reason}")`);
+      const reason = toolSel.productBuildTurn?.reason ?? toolSel.intentVerdict?.reason ?? "resolved route";
+      logger.info(`[intent] forcing ${forcedName} pinned=${t.forced}/${t.forced + t.leaned} (${t.pinnedPct}%) (reason="${reason}")`);
     } else {
       logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
     }

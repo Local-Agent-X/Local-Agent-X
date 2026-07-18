@@ -9,6 +9,13 @@ import { classifyIntent, hasLiteralToolCall, mightNeedToolForcing, NO_SPAWN_OVER
 import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { providerUndercallsTools } from "../../providers/provider-ids.js";
 import { createLogger } from "../../logger.js";
+import {
+  applyProductBuildToolRoute,
+  productBuildTurnFromIntent,
+  resolveProductBuildContinuationTurn,
+  type ContinuationResolver,
+  type ProductBuildTurn,
+} from "./product-build-routing.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
 
@@ -17,6 +24,7 @@ export type Tier = "weak" | "medium" | "strong";
 
 export interface ToolSelectionInput {
   message: string;
+  sessionId: string;
   channel: "web" | "telegram" | "whatsapp" | "cron" | "agent";
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
@@ -30,6 +38,9 @@ export interface ToolSelectionInput {
    *  "build" mid-discovery and "yes, build it" after a spec convo classify
    *  correctly instead of from the bare message. Built by buildHistoryDigest. */
   historyDigest?: string;
+  /** Test seams for the two decisions owned by this canonical pipeline. */
+  classifyIntentFn?: typeof classifyIntent;
+  continuationResolver?: ContinuationResolver;
 }
 
 export interface ToolSelectionResult {
@@ -37,6 +48,8 @@ export interface ToolSelectionResult {
   tier: Tier;
   intentVerdict: IntentVerdict;
   forceBuildIntent: boolean;
+  productBuildTurn: ProductBuildTurn | null;
+  forcedToolName?: string;
   isBridge: boolean;
 }
 
@@ -75,6 +88,17 @@ export function stripInlineBuildTools(
 export async function selectTools(input: ToolSelectionInput): Promise<ToolSelectionResult> {
   const isBridge = input.channel === "telegram" || input.channel === "whatsapp";
 
+  // Durable Product Build state has precedence, but only on an explicit
+  // continuation/status/resume turn. This keeps the main agent conversational
+  // while a build runs and prevents "build another app" from adopting it.
+  const continuationTurn = isBridge
+    ? null
+    : resolveProductBuildContinuationTurn(
+        input.message,
+        input.sessionId,
+        input.continuationResolver,
+      );
+
   // Run the intent classifier UP FRONT so its verdict drives both the
   // tool-filter strip-down (here) AND the tool_choice forcing later.
   // Regex alone misses phrasings like "build a log counting app" where
@@ -95,6 +119,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   const inMethodology = isSlashCommandExpansion(input.message) || input.priorMethodology === true;
   const skipClassifier =
     isBridge ||
+    continuationTurn !== null ||
     inMethodology ||
     NO_SPAWN_OVERRIDE_RE.test(input.message) ||
     hasLiteralToolCall(input.message) ||
@@ -112,11 +137,15 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // defaulting the warm pool on (warm-pool.ts). Reverted to the selected
     // model so verdicts are valid; the warm pool keeps the classify process
     // hot after its first call.
-    try { intentVerdict = await classifyIntent(input.message, { historyDigest: input.historyDigest }); }
+    try {
+      const classifier = input.classifyIntentFn ?? classifyIntent;
+      intentVerdict = await classifier(input.message, { historyDigest: input.historyDigest });
+    }
     catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
     logger.info(`[step] classifyIntent ${Date.now() - t0}ms verdict=${intentVerdict?.kind || "null"}`);
   }
-  const forceBuildIntent = intentVerdict?.kind === "build_app";
+  const productBuildTurn = continuationTurn ?? productBuildTurnFromIntent(intentVerdict);
+  const forceBuildIntent = productBuildTurn !== null;
 
   // Tier gates how hard we shrink the schema. Weak/medium models are paralyzed
   // by 100+ tool catalogs (0-token responses), so they get filter → shrink →
@@ -215,9 +244,24 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // main agent the tools to build it inline (the dual-build fix). Last step, so
   // it applies on every selection path — including the Anthropic-strong full
   // inventory and the Grok strong-tool-shy path that both skip the narrowing.
-  if (forceBuildIntent && !isBridge) {
+  if (productBuildTurn && !isBridge) {
     tools = stripInlineBuildTools(tools, input.allAgentTools);
   }
 
-  return { tools, tier, intentVerdict, forceBuildIntent, isBridge };
+  // Exact Product Build routing is the final authority after every filter,
+  // tier shrink, RAG union, provider cap, and inline-build strip. Remove all
+  // sibling workflow tools and re-add only the selected target.
+  if (!isBridge) {
+    tools = applyProductBuildToolRoute(tools, input.allAgentTools, productBuildTurn);
+  }
+
+  return {
+    tools,
+    tier,
+    intentVerdict,
+    forceBuildIntent,
+    productBuildTurn,
+    forcedToolName: productBuildTurn?.targetTool,
+    isBridge,
+  };
 }

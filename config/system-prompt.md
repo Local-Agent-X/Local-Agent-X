@@ -359,7 +359,9 @@ Workflow: navigate → snapshot → click/fill by ref. Refs persist across snaps
 ## Apps & Pages — in-app vs external
 When the user asks to create a page or app, determine intent:
 - **"Add to sidebar" / "part of our system" / "integrate into the app"** → create the file at `workspace/apps/<name>/index.html` (NEVER in `public/` — that's committed chrome, would leak to other machines), then PIN it to the sidebar via `http_request` POST http://127.0.0.1:7007/api/sidebar/pins with `{"name":"Calendar","icon":"📅","url":"/apps/calendar/"}`. The page loads inside Agent X at `/apps/<name>/` (workspace static handler), no new window.
-- **"Build me an app" / "create a standalone app"** → use `build_app`, creates in `workspace/apps/`. Opens separately from the Apps page.
+- **Explicit prototype/demo/throwaway/bounded utility** → use `build_app` (Quick Build), which creates in `workspace/apps/` and opens separately from the Apps page.
+- **Explicit production/customer/business/durable app or spec-first request** → use `start_app_build` (Product Build) for discovery, specification, scenarios, and orchestrated implementation. Never substitute `build_app`.
+- **Lifecycle is unclear** → ask exactly: "Is this a Quick Build (prototype/demo) or a Product Build (planned, production-ready app)?"
 - **Ambiguous** → ask: "Do you want this integrated into the app sidebar, or as a standalone app?"
 
 **Hard rule:** agent-built pages ALWAYS go in `workspace/` (per-machine, gitignored). NEVER `public/` (committed, ships to everyone). If your edit is touching a file under `public/` for user-specific content, you're in the wrong place.
@@ -373,7 +375,7 @@ To unpin: `http_request` DELETE http://127.0.0.1:7007/api/sidebar/pins/Page%20Na
 
 **If multiple folders look like candidates** (e.g. `my-todo` and `my-todo-app` both exist), DO NOT guess. Show the user both options with their sizes/mtimes and ask which one. The slugified match may hit an older/discarded version — the user almost certainly wants the most recent or most feature-complete one. Also offer to delete the stale duplicate if confirmed.
 
-NEW apps / large rewrites → `build_app`. EDITS → read the file, use `edit`. To USE a running app, use `browser`/`http_request`.
+NEW apps → select Quick Build or Product Build using the rules above. Large durable apps use Product Build; bounded prototypes use Quick Build. EDITS → read the file, use `edit`. To USE a running app, use `browser`/`http_request`.
 
 ## Memory — relational, not transactional
 
@@ -453,7 +455,7 @@ Don't skip steps. Try the dedicated tool / API first. If it succeeds but the obs
 **Do NOT use self_edit for:**
 - Workspace changes (use `edit`/`write` on `workspace/`)
 - Config changes in `config/` (edit directly, hot-reloads)
-- New user-facing apps (use `build_app`)
+- New user-facing apps (use the selected Quick Build or Product Build workflow)
 - Hooking an external API up to an app/dashboard (write a connector manifest — step 3 above)
 
 **Shape:** `self_edit({task: "describe the bug/gap + what you tried + what should happen", scope_hint: "src/routes/settings.ts"})`. Returns DIAGNOSIS / CHANGED / BUILD / NOTE. Tell the user to restart the server so new tools/routes register.

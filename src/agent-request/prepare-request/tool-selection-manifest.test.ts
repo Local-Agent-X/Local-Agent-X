@@ -32,6 +32,7 @@ const BENIGN = "Hello, how are you today?";
 async function selectForAnthropicStrong(all: ToolDefinition[]) {
   return selectTools({
     message: BENIGN,
+    sessionId: "manifest-test-session",
     channel: "web",
     allAgentTools: all,
     bridgeTools: [],

@@ -155,3 +155,33 @@ describe("unified harness-notice format", () => {
     expect(prompt).not.toContain("[COLD-START HINT]");
   });
 });
+
+describe("Product Build turn directive", () => {
+  it("injects the canonical resolved action, project, and reason", async () => {
+    const directive =
+      'Product Build continuation resolved to action=build_plan_resume with project_dir="C:/apps/crm". ' +
+      'Reason: the persisted build is halted. Call build_plan_resume with project_dir="C:/apps/crm" now.';
+    const prompt = await buildSystemPrompt({
+      message: "continue the build",
+      sessionId: "product-build-directive",
+      config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
+      memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
+      integrations: { getAgentContext: () => "" } as BuildSystemPromptInput["integrations"],
+      allAgentTools: [],
+      resolvedProvider: "openai",
+      resolvedModel: "gpt-5",
+      contextBlock: "",
+      relevantMemories: "",
+      smartContext: "",
+      memoryContext: "",
+      memoryNotifications: [],
+      memoryCurateBlock: "",
+      forceBuildIntent: true,
+      buildTurnDirective: directive,
+      systemPromptOverride: "Base prompt.",
+    });
+    expect(prompt).toContain("[HARNESS NOTE: TURN DIRECTIVE]");
+    expect(prompt).toContain(directive);
+    expect(prompt).not.toContain("Call the build_app tool");
+  });
+});

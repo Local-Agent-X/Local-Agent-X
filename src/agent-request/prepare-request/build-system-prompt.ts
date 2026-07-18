@@ -74,6 +74,8 @@ export interface BuildSystemPromptInput {
   // Only set when forceBuildIntent is true.
   buildMode?: "force" | "lean";
   intentReason?: string;
+  /** Canonical Quick/Product/continuation decision for this turn. */
+  buildTurnDirective?: string;
 }
 
 export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<string> {
@@ -204,7 +206,9 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   // worker's build. The inline-build tools are also stripped from this turn's
   // toolset (tool-selection.ts) as the hard guarantee; this directive explains
   // WHY they're gone so the model hands off cleanly instead of flailing.
-  if (input.forceBuildIntent && input.buildMode !== "lean") {
+  if (input.buildTurnDirective) {
+    systemPrompt += harnessNotice("TURN DIRECTIVE", input.buildTurnDirective);
+  } else if (input.forceBuildIntent && input.buildMode !== "lean") {
     systemPrompt += harnessNotice("TURN DIRECTIVE",
       `Intent classifier identified this turn as a build_app request: ${input.intentReason ?? "(no reason)"}.\n` +
       `Call the build_app tool — that is the ONLY way to build this. The build then runs as a background op (the "side agent") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. ` +

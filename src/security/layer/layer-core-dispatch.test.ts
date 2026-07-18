@@ -205,6 +205,74 @@ describe("SecurityLayer kernel-class dispatch", () => {
     });
   });
 
+  // ── 4b: new_tab urls[] batch gets the same per-URL pre-check ──
+
+  describe("browser new_tab urls[] batch", () => {
+    it("denied entry in urls is denied, reason names the offending url", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", urls: ["http://192.168.1.1"] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toContain("http://192.168.1.1");
+    });
+
+    it("mixed allowed + denied array is denied (deny wins), naming the denied url", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", urls: ["https://example.com", "http://192.168.1.1"] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toContain("http://192.168.1.1");
+      expect(d.reason).not.toContain("example.com");
+    });
+
+    it("all-allowed array is allowed (public + localhost carve-out per URL)", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", urls: ["https://example.com", "http://localhost:3000"] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(true);
+    });
+
+    it("invalid URL entry in urls is blocked", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", urls: ["not-a-url"] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toContain("not-a-url");
+    });
+
+    it("urls takes precedence over url: denied urls entry blocks even with allowed url", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", url: "https://example.com", urls: ["http://192.168.1.1"] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+    });
+
+    it("empty urls array falls back to url path unchanged", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", url: "http://192.168.1.1", urls: [] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+    });
+  });
+
   // ── 5: delete_file now goes through file-access (was default-allow) ──
 
   describe("delete_file (file-class, path-arg)", () => {

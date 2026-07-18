@@ -38,17 +38,11 @@ function syncWorkflowPhase(
   orch: Pick<ActiveOrchestration, "sessionId" | "projectDir" | "opId">,
   phase: "running" | "halted" | "complete",
 ): void {
-  try {
-    updateAppBuildWorkflow(orch.sessionId, {
-      phase,
-      projectDir: orch.projectDir,
-      opId: orch.opId,
-    });
-  } catch (error) {
-    logger.error(
-      `[orchestrator] ${orch.opId} could not persist workflow phase ${phase}: ${(error as Error).message}`,
-    );
-  }
+  updateAppBuildWorkflow(orch.sessionId, {
+    phase,
+    projectDir: orch.projectDir,
+    opId: orch.opId,
+  });
 }
 
 /** In-memory registry of active orchestrations. Key = opId. */
@@ -158,8 +152,21 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     landedChunks: new Set(),
     scopeChunks,
   };
+  try {
+    syncWorkflowPhase(orch, "running");
+  } catch (error) {
+    const unregistered = registry.unregister(opts.projectDir);
+    const restored = previousState
+      ? state.write(previousState)
+      : state.clear(opts.projectDir);
+    throw new Error(
+      `Build orchestration did not start: failed to persist Product Build running state: ${(error as Error).message}` +
+      (unregistered ? "" : " The active-orchestrator registry could not be rolled back.") +
+      (restored ? "" : " The previous project state could not be restored."),
+    );
+  }
+
   active.set(opId, orch);
-  syncWorkflowPhase(orch, "running");
 
   broadcastToSession(opts.sessionId, {
     type: "bg_op_started",
@@ -250,11 +257,19 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
     orch.liveState = state.markComplete(orch.liveState);
   }
   state.write(orch.liveState);
-  syncWorkflowPhase(orch, isHalted ? "halted" : "complete");
+  let workflowPersisted = true;
+  try {
+    syncWorkflowPhase(orch, isHalted ? "halted" : "complete");
+  } catch (error) {
+    workflowPersisted = false;
+    logger.error(
+      `[orchestrator] ${orch.opId} failed to persist workflow phase ${isHalted ? "halted" : "complete"}: ${(error as Error).message}`,
+    );
+  }
 
   // For clean completions, clear the state file so the next run starts
   // fresh. For halts, leave the file so resume works.
-  if (!isHalted) {
+  if (!isHalted && workflowPersisted) {
     state.clear(orch.projectDir);
     registry.unregister(orch.projectDir);
   }
@@ -276,7 +291,13 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
 function onLoopCrash(orch: ActiveOrchestration, err: Error): void {
   orch.liveState = state.markHalted(orch.liveState, orch.liveState.currentChunk, "crash", err.message);
   state.write(orch.liveState);
-  syncWorkflowPhase(orch, "halted");
+  try {
+    syncWorkflowPhase(orch, "halted");
+  } catch (workflowError) {
+    logger.error(
+      `[orchestrator] ${orch.opId} failed to persist workflow phase halted: ${(workflowError as Error).message}`,
+    );
+  }
   broadcastToSession(orch.sessionId, {
     type: "bg_op_completed",
     opId: orch.opId,

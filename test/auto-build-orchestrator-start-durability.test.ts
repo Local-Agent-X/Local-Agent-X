@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   registryRegister: vi.fn(),
   registryUnregister: vi.fn(),
   runBuildLoop: vi.fn(),
+  updateWorkflow: vi.fn(),
+  broadcast: vi.fn(),
 }));
 
 vi.mock("../src/auto-build/orchestrator/state.js", async importOriginal => {
@@ -29,7 +31,11 @@ vi.mock("../src/auto-build/loop.js", () => ({
 }));
 
 vi.mock("../src/ops/session-bridge.js", () => ({
-  broadcastToSession: vi.fn(),
+  broadcastToSession: mocks.broadcast,
+}));
+
+vi.mock("../src/auto-build/workflow-state.js", () => ({
+  updateAppBuildWorkflow: mocks.updateWorkflow,
 }));
 
 import {
@@ -58,6 +64,8 @@ describe("orchestrator startup durability gate", () => {
     mocks.stateWrite.mockReturnValue(true);
     mocks.stateClear.mockReturnValue(true);
     mocks.registryRegister.mockReturnValue(true);
+    mocks.registryUnregister.mockReturnValue(true);
+    mocks.runBuildLoop.mockReturnValue(new Promise(() => {}));
   });
 
   it("does not register, activate, or run when initial state persistence fails", () => {
@@ -68,6 +76,7 @@ describe("orchestrator startup durability gate", () => {
       .toThrow("failed to persist .lax-build-run.json");
     expect(mocks.registryRegister).not.toHaveBeenCalled();
     expect(mocks.runBuildLoop).not.toHaveBeenCalled();
+    expect(mocks.broadcast).not.toHaveBeenCalled();
     expect(listActive().some(active => active.projectDir === projectDir)).toBe(false);
   });
 
@@ -80,5 +89,134 @@ describe("orchestrator startup durability gate", () => {
     expect(mocks.stateClear).toHaveBeenCalledWith(projectDir);
     expect(mocks.runBuildLoop).not.toHaveBeenCalled();
     expect(listActive().some(active => active.projectDir === projectDir)).toBe(false);
+    expect(mocks.updateWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("links a persisted Product Build only after startup durability gates pass", () => {
+    const projectDir = resolve("durable-start");
+
+    const started = startOrchestration(options(projectDir));
+
+    expect(mocks.updateWorkflow).toHaveBeenCalledWith("durability-session", {
+      phase: "running",
+      projectDir,
+      opId: started.opId,
+    });
+  });
+
+  it("rolls back state and registry before launch when the running workflow transition fails", () => {
+    const projectDir = resolve("workflow-running-failure");
+    mocks.updateWorkflow.mockImplementationOnce(() => {
+      throw new Error("workflow store unavailable");
+    });
+
+    expect(() => startOrchestration(options(projectDir)))
+      .toThrow("failed to persist Product Build running state");
+    expect(mocks.registryUnregister).toHaveBeenCalledWith(projectDir);
+    expect(mocks.stateClear).toHaveBeenCalledWith(projectDir);
+    expect(mocks.runBuildLoop).not.toHaveBeenCalled();
+    expect(mocks.broadcast).not.toHaveBeenCalled();
+    expect(listActive().some(active => active.projectDir === projectDir)).toBe(false);
+  });
+
+  it("retains complete state and registry when the complete workflow transition fails", async () => {
+    const projectDir = resolve("workflow-complete-failure");
+    mocks.updateWorkflow
+      .mockReturnValueOnce({ phase: "running" })
+      .mockImplementationOnce(() => {
+        throw new Error("workflow store unavailable");
+      });
+    mocks.runBuildLoop.mockResolvedValueOnce({
+      status: "complete",
+      lastChunk: 1,
+      chunksCommitted: 1,
+      haltReason: "",
+      outcomes: [],
+      events: [],
+    });
+
+    startOrchestration(options(projectDir));
+
+    await vi.waitFor(() => {
+      expect(mocks.updateWorkflow).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.stateWrite).toHaveBeenLastCalledWith(expect.objectContaining({
+      phase: "complete",
+      projectDir,
+    }));
+    expect(mocks.stateClear).not.toHaveBeenCalled();
+    expect(mocks.registryUnregister).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["halted", () => Promise.resolve({
+      status: "halted" as const,
+      lastChunk: 1,
+      chunksCommitted: 0,
+      haltReason: "gate failed",
+      outcomes: [],
+      events: [],
+    })],
+    ["crash", () => Promise.reject(new Error("boom"))],
+  ])("retains authoritative state and registry when the %s workflow transition fails", async (_kind, outcome) => {
+    const projectDir = resolve(`workflow-${_kind}-failure`);
+    mocks.updateWorkflow
+      .mockReturnValueOnce({ phase: "running" })
+      .mockImplementationOnce(() => {
+        throw new Error("workflow store unavailable");
+      });
+    mocks.runBuildLoop.mockReturnValueOnce(outcome());
+
+    startOrchestration(options(projectDir));
+
+    await vi.waitFor(() => {
+      expect(mocks.updateWorkflow).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.stateWrite).toHaveBeenLastCalledWith(expect.objectContaining({
+      phase: "halted",
+      projectDir,
+    }));
+    expect(mocks.stateClear).not.toHaveBeenCalled();
+    expect(mocks.registryUnregister).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["complete", "complete", ""],
+    ["halted", "halted", "gate failed"],
+  ] as const)("persists the %s terminal workflow phase", async (status, phase, haltReason) => {
+    const projectDir = resolve(`terminal-${status}`);
+    mocks.runBuildLoop.mockResolvedValueOnce({
+      status,
+      lastChunk: 1,
+      chunksCommitted: status === "complete" ? 1 : 0,
+      haltReason,
+      outcomes: [],
+      events: [],
+    });
+
+    const started = startOrchestration(options(projectDir));
+
+    await vi.waitFor(() => {
+      expect(mocks.updateWorkflow).toHaveBeenCalledWith("durability-session", {
+        phase,
+        projectDir,
+        opId: started.opId,
+      });
+    });
+  });
+
+  it("marks the Product Build halted when the loop crashes", async () => {
+    const projectDir = resolve("terminal-crash");
+    mocks.runBuildLoop.mockRejectedValueOnce(new Error("boom"));
+
+    const started = startOrchestration(options(projectDir));
+
+    await vi.waitFor(() => {
+      expect(mocks.updateWorkflow).toHaveBeenCalledWith("durability-session", {
+        phase: "halted",
+        projectDir,
+        opId: started.opId,
+      });
+    });
   });
 });

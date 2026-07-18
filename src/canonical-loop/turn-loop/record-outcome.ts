@@ -9,6 +9,8 @@ import type { Op } from "../../ops/types.js";
 import { readOpTurns } from "../store.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
+import { getSessionForOp } from "../../ops/session-bridge.js";
+import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
 
 export type { OpOutcome };
 
@@ -26,11 +28,43 @@ export function recordTerminalOutcome(
   outcome: OpOutcome,
   extraToolNames: Iterable<string> = [],
 ): void {
-  const opToolNames = new Set<string>();
-  for (const turn of readOpTurns(op.id)) {
-    for (const s of turn.toolCallSummary ?? []) opToolNames.add(s.tool);
-    for (const t of turn.observedTools ?? []) opToolNames.add(t);
+  const toolSequence = collectToolSequence(op.id, extraToolNames);
+  const category = classifyOpCategory(new Set(toolSequence));
+  recordOpOutcome(category, outcome, resolveOpModel(op));
+}
+
+function collectToolSequence(opId: string, extraToolNames: Iterable<string> = []): string[] {
+  const toolSequence: string[] = [];
+  for (const turn of readOpTurns(opId)) {
+    for (const s of turn.toolCallSummary ?? []) toolSequence.push(s.tool);
+    for (const t of turn.observedTools ?? []) toolSequence.push(t);
   }
-  for (const t of extraToolNames) opToolNames.add(t);
-  recordOpOutcome(classifyOpCategory(opToolNames), outcome, resolveOpModel(op));
+  for (const t of extraToolNames) toolSequence.push(t);
+  return toolSequence;
+}
+
+/** Persist learning evidence only after commitTurn succeeds. Unlike aggregate
+ *  telemetry, learned evidence must never observe a provisional terminal state:
+ *  cancellation and commit failure can still invalidate it. */
+export function recordCommittedLearningOutcome(op: Op, outcome: OpOutcome, sessionId: string): void {
+  const toolSequence = collectToolSequence(op.id);
+  const category = classifyOpCategory(new Set(toolSequence));
+  const model = resolveOpModel(op);
+  crossSessionLearner.recordOutcome({
+    opId: op.id,
+    sessionId,
+    outcome,
+    category,
+    tools: toolSequence,
+    model,
+    timestamp: Date.now(),
+  });
+}
+
+/** Capture before terminal commit releases the live session binding. */
+export function resolveLearningSessionId(op: Op): string {
+  // An op id is unique work identity, not conversation provenance. Keep the
+  // session unknown when no live binding exists so later distinct-session
+  // confidence cannot count detached ops as separate conversations.
+  return getSessionForOp(op.id) ?? "";
 }

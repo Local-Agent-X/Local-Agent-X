@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -142,5 +142,56 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
 
     expect(signals.length).toBe(1);
     expect(signals[0].signal).toContain("Recurring pattern");
+  });
+
+  it("persists only structural outcome evidence", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    CrossSessionLearner.getInstance().recordOutcome({
+      opId: "op-7",
+      sessionId: "session-7",
+      outcome: "partial",
+      category: "coding",
+      tools: [" read ", "", "bash"],
+      model: "model-x",
+      timestamp: 1234,
+    });
+
+    const persisted = JSON.parse(
+      readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8")
+    ) as SessionData;
+    expect(persisted.actions).toEqual([{
+      opId: "op-7",
+      sessionId: "session-7",
+      type: "op_outcome",
+      details: "coding:read -> bash",
+      timestamp: 1234,
+      outcome: "partial",
+      category: "coding",
+      tools: ["read", "bash"],
+      model: "model-x",
+    }]);
+    expect(JSON.stringify(persisted)).not.toContain("args");
+    expect(JSON.stringify(persisted)).not.toContain("result");
+
+    CrossSessionLearner.getInstance().recordOutcome({
+      opId: "op-7",
+      sessionId: "session-7",
+      outcome: "clean",
+      category: "coding",
+      tools: ["read"],
+      timestamp: 5678,
+    });
+    const replaced = JSON.parse(
+      readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8")
+    ) as SessionData;
+    expect(replaced.actions).toHaveLength(1);
+    expect(replaced.actions[0]).toMatchObject({
+      opId: "op-7",
+      outcome: "clean",
+      tools: ["read"],
+      timestamp: 5678,
+    });
   });
 });

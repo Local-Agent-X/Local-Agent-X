@@ -2,9 +2,24 @@ import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 
 export interface ActionEntry {
+  opId?: string;
   sessionId: string;
   type: string;
   details: string;
+  timestamp: number;
+  outcome?: "clean" | "partial" | "aborted";
+  category?: "browser" | "computer" | "coding" | "connector" | "research" | "general";
+  tools?: string[];
+  model?: string;
+}
+
+export interface OutcomeEvidence {
+  opId: string;
+  sessionId: string;
+  outcome: NonNullable<ActionEntry["outcome"]>;
+  category: NonNullable<ActionEntry["category"]>;
+  tools: string[];
+  model?: string;
   timestamp: number;
 }
 

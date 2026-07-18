@@ -57,7 +57,7 @@ export async function driveTurn(
     middlewareAbortResult, buildTurnInput, readPendingRedirect,
     drainInjectsIntoTurn, opConsumesInjects, dispatchTools, createIdleWatchdog,
     readIdleTimeoutMs, snapshotTouchedApps, decideTurnOutcome,
-    createTurnContextComposer,
+    createTurnContextComposer, recordCommittedLearningOutcome, resolveLearningSessionId,
   } = resolveTurnLoopDeps(depsIn);
 
   // Snapshot the redirect column from disk BEFORE emitting `turn_started`.
@@ -322,7 +322,7 @@ export async function driveTurn(
   // Decide terminal reason + assemble the commit-message list, running the
   // retract / failure-nudge / continuation-guard / render-verify side
   // effects. See turn-loop/decide-outcome.ts.
-  const { terminalReason, allMessages } = await decideTurnOutcome({
+  const { terminalReason, allMessages, terminalOutcome } = await decideTurnOutcome({
     op,
     turnIdx,
     middlewareDirective,
@@ -348,6 +348,7 @@ export async function driveTurn(
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
   }
 
+  const learningSessionId = terminalOutcome ? resolveLearningSessionId(op) : null;
   commitTurn({
     op,
     turnIdx,
@@ -362,6 +363,10 @@ export async function driveTurn(
     modelMs,
     toolDispatchMs,
   });
+
+  if (terminalOutcome) {
+    recordCommittedLearningOutcome(op, terminalOutcome, learningSessionId!);
+  }
 
   // Tier 1.C: per-turn snapshot of any app files this turn wrote/edited.
   // Powers the IDE topbar's ↺ Revert dropdown so the user can undo a bad

@@ -37,7 +37,7 @@ export interface TerminalEpilogueInput {
 export function applyTerminalEpilogue(
   in_: TerminalEpilogueInput,
   allMessages: CommitTurnMessage[],
-): void {
+): OpOutcome | null {
   const { op, turnIdx, terminalReason, assistantText, buildVerifyConfirmation, toolCalls, observedTools } = in_;
 
   // Loud-partial guarantee: when the op truly ends here but its task list still
@@ -119,5 +119,7 @@ export function applyTerminalEpilogue(
         : opDeletedTestDodge(op.id) ? "partial"
         : "clean";
     recordTerminalOutcome(op, outcome, [...toolCalls.map(tc => tc.tool), ...observedTools]);
+    return outcome;
   }
+  return null;
 }

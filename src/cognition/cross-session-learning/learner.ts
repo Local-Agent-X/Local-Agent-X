@@ -2,6 +2,7 @@ import type {
   ActionEntry,
   AutomationSuggestion,
   DetectedPattern,
+  OutcomeEvidence,
   SessionData,
   SessionInsight,
 } from "./types.js";
@@ -59,6 +60,31 @@ export class CrossSessionLearner {
       );
     }
 
+    persistData(this.data);
+  }
+
+  /** Record only the structural receipt of a completed operation. Tool names
+   *  are safe capability identifiers; arguments and result text are excluded
+   *  so learning cannot become a second transcript or sensitive-data store. */
+  recordOutcome(evidence: OutcomeEvidence): void {
+    const tools = evidence.tools.map((tool) => tool.trim()).filter(Boolean);
+    const entry: ActionEntry = {
+      opId: evidence.opId,
+      sessionId: evidence.sessionId,
+      type: "op_outcome",
+      details: `${evidence.category}:${tools.join(" -> ") || "no-tools"}`,
+      timestamp: evidence.timestamp,
+      outcome: evidence.outcome,
+      category: evidence.category,
+      tools,
+      ...(evidence.model ? { model: evidence.model } : {}),
+    };
+    const existing = this.data.actions.findIndex((action) => action.opId === evidence.opId);
+    if (existing >= 0) this.data.actions[existing] = entry;
+    else this.data.actions.push(entry);
+    if (this.data.actions.length > MAX_ACTIONS) {
+      this.data.actions = this.data.actions.slice(-MAX_ACTIONS);
+    }
     persistData(this.data);
   }
 

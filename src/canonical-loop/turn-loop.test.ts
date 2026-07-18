@@ -66,7 +66,9 @@ function makeDeps() {
     createIdleWatchdog: vi.fn(() => ({ noteActivity: vi.fn(), disarm: vi.fn() })),
     readIdleTimeoutMs: vi.fn(() => 600000),
     snapshotTouchedApps: vi.fn(async () => {}),
-    decideTurnOutcome: vi.fn(async () => ({ terminalReason: "done" as const, allMessages: [] })),
+    decideTurnOutcome: vi.fn(async () => ({ terminalReason: "done" as const, allMessages: [], terminalOutcome: "clean" as const })),
+    recordCommittedLearningOutcome: vi.fn(),
+    resolveLearningSessionId: vi.fn(() => "session-stable"),
     createTurnContextComposer: vi.fn(() => ({
       middlewareStack: [],
       build: () => ({ toolCalls: [] }) as unknown as CanonicalLoopContext,
@@ -87,6 +89,7 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     const isCancelled = vi.fn(() => ++calls >= 3);
     const res = await driveTurn(freshOp(), okAdapter(), 0, { isCancelled }, deps);
     expect(deps.commitTurn).not.toHaveBeenCalled();
+    expect(deps.recordCommittedLearningOutcome).not.toHaveBeenCalled();
     expect(res.cancelled).toBe(true);
     expect(res.terminalReason).toBeNull();
   });
@@ -95,7 +98,24 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     const deps = makeDeps();
     const res = await driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps);
     expect(deps.commitTurn).toHaveBeenCalledTimes(1);
+    expect(deps.recordCommittedLearningOutcome).toHaveBeenCalledTimes(1);
+    expect(deps.recordCommittedLearningOutcome).toHaveBeenCalledWith(
+      expect.any(Object), "clean", "session-stable",
+    );
+    expect(deps.commitTurn.mock.invocationCallOrder[0]).toBeLessThan(
+      deps.recordCommittedLearningOutcome.mock.invocationCallOrder[0],
+    );
     expect(res.cancelled).toBe(false);
+  });
+
+  it("does not learn a provisional success when commitTurn fails", async () => {
+    const deps = makeDeps();
+    deps.commitTurn.mockImplementationOnce(() => { throw new Error("disk full"); });
+
+    await expect(
+      driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps),
+    ).rejects.toThrow("disk full");
+    expect(deps.recordCommittedLearningOutcome).not.toHaveBeenCalled();
   });
 });
 

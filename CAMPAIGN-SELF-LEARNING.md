@@ -1,0 +1,67 @@
+# Self-Learning Campaign Ledger
+
+## Goal
+
+Build a native Local-Agent-X closed learning loop that turns successful repeated workflows into automatically selected, versioned, outcome-scored learned protocols while preserving existing security boundaries.
+
+## Product policy
+
+- `assisted`: draft learned protocols and wait for activation.
+- `autonomous`: create, activate, select, refine, demote, and roll back learned protocols without per-protocol prompts.
+- Existing trusted protocols may be selected automatically in either mode.
+- A learned protocol cannot expand the user's existing capability or permission envelope.
+- Underlying actions retain their existing Ari, policy, approval, sandbox, workspace, and egress gates.
+
+## Campaign invariants
+
+- Extend canonical Local-Agent-X seams; do not create parallel subsystems.
+- New campaign material uses only native Local-Agent-X terminology.
+- Existing repository references outside campaign changes are out of scope.
+- Every production change has focused behavioral tests.
+- Every green chunk receives independent verification and adversarial review.
+- Every campaign commit ends with the exact trailer `Assisted-by: Codex`.
+- Never push.
+
+## Status
+
+| Chunk | Responsibility | Dependencies | Status |
+|---|---|---|---|
+| C1 | Outcome evidence bridge | none | green |
+| C2 | Outcome-aware pattern mining | C1 | pending |
+| C3 | Learned-candidate lifecycle | C2 | pending |
+| C4 | Learned protocol drafting | C3 | pending |
+| C5 | Provenance and capability envelope | C4 | pending |
+| C6 | Learning modes and management API | C5 | pending |
+| C7 | Usage and effectiveness feedback | C5 | pending |
+| C8 | Safe refinement and rollback | C7 | pending |
+| C9 | Learning nudges | C3 | pending |
+| C10 | Learning graph API | C6 | pending |
+| C11 | Learning graph UI | C10 | pending |
+| C12 | Cross-seam integration and final gate | C6-C11 | pending |
+
+## Decisions queue
+
+None.
+
+## Verification log
+
+- C1 adversarial review drove lifecycle, identity, and ordering fixes: session identity is captured before terminal release; unknown sessions remain unknown rather than manufacturing conversation provenance; receipts preserve repeated ordered steps; op-id upsert makes writes idempotent; and evidence persists only after a successful terminal transition. Core 56 tests, forced-terminal 5 tests, TypeScript, and diff checks pass. Final refutation pending.
+
+## Completion buckets
+
+### Shipped
+
+- C1: committed outcome evidence with stable session provenance, ordered tool receipts, forced-terminal coverage, and op-id idempotency. Focused tests and independent refutation green.
+
+### Parked for user
+
+None.
+
+### Failed and abandoned
+
+None.
+
+### Descoped
+
+- Existing repository references unrelated to campaign changes.
+- New messaging channels, mobile applications, marketplace commerce, licensing changes, push, and deployment.

@@ -8,6 +8,7 @@
 
 export type {
   ActionEntry,
+  OutcomeEvidence,
   DetectedPattern,
   AutomationSuggestion,
   SessionInsight,

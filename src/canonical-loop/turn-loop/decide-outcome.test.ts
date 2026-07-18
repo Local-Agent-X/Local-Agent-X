@@ -28,6 +28,9 @@ vi.mock("../../tool-tracker.js", () => ({
   classifyOpCategory: vi.fn(() => "coding"),
   recordOpOutcome: vi.fn(),
 }));
+vi.mock("../../cognition/cross-session-learning/index.js", () => ({
+  default: { recordOutcome: vi.fn() },
+}));
 vi.mock("../middlewares/browser-handoff.js", () => ({
   opGaveUpUnrecovered: vi.fn(() => false),
 }));
@@ -59,16 +62,17 @@ vi.mock("../../logger.js", () => {
 vi.mock("./p1-metrics.js", () => ({ recordP1Outcome: vi.fn() }));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
-import { recordTerminalOutcome } from "./record-outcome.js";
+import { recordCommittedLearningOutcome, recordTerminalOutcome } from "./record-outcome.js";
 import { publishStreamChunk } from "../event-emitter.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
+import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
 import { readOpTurns } from "../store.js";
 import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import type { Op } from "../../ops/types.js";
 
-const op = { id: "op-test", type: "chat_turn" } as unknown as Op;
+const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
 
 // A successful (non-mutating, non-silent) bash READ: data-returning, so the
 // shape heuristic treats it as needing a wrap-up. This is the exact turn shape
@@ -538,8 +542,37 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
 
   it("records a clean outcome on a terminal done with no open steps", async () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
-    await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+    const result = await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean", "grok-4.3");
+    expect(result.terminalOutcome).toBe("clean");
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("does not persist learning evidence before the terminal commit", () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
+      toolCallSummary: [{ tool: "read" }, { tool: "edit" }, { tool: "edit" }],
+      observedTools: ["WebSearch"],
+    }]);
+
+    recordTerminalOutcome(op, "clean", ["bash", "bash"]);
+
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("preserves repeated tool order when committed evidence is recorded", () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
+      toolCallSummary: [{ tool: "read" }, { tool: "edit" }, { tool: "edit" }],
+      observedTools: ["WebSearch", "bash", "bash"],
+    }]);
+
+    recordCommittedLearningOutcome(op, "clean", "session-stable");
+
+    expect(crossSessionLearner.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      // A missing live session binding must fall back to the distinct op id,
+      // never the shared local-user owner principal.
+      sessionId: "session-stable",
+      tools: ["read", "edit", "edit", "WebSearch", "bash", "bash"],
+    }));
   });
 
   it("records partial when terminal done but open steps remain", async () => {

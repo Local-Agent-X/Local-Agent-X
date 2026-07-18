@@ -79,6 +79,7 @@ export interface DecideOutcomeInput {
 export interface DecideOutcomeResult {
   terminalReason: "done" | "error" | null;
   allMessages: CommitTurnMessage[];
+  terminalOutcome: import("../../tool-tracker.js").OpOutcome | null;
 }
 
 function replaceAssistantText(messages: CommitTurnMessage[], text: string): CommitTurnMessage[] {
@@ -303,10 +304,10 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,
   // reconcile-on-green confirmation, ground-truth sizes note, and the
   // clean/partial/aborted outcome record. Appends to allMessages in place.
-  applyTerminalEpilogue(
+  const terminalOutcome = applyTerminalEpilogue(
     { op, turnIdx, terminalReason, assistantText, buildVerifyConfirmation, toolCalls, observedTools },
     allMessages,
   );
 
-  return { terminalReason, allMessages };
+  return { terminalReason, allMessages, terminalOutcome };
 }

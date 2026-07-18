@@ -26,6 +26,7 @@ export interface BuildPlanKickoffInput {
   startingChunk?: unknown;
   maxChunks?: unknown;
   sessionId?: unknown;
+  signal?: AbortSignal;
 }
 
 export type BuildPlanKickoff = (input: BuildPlanKickoffInput) => Promise<ToolResult>;
@@ -67,6 +68,7 @@ export function createBuildPlanKickoff(
   };
 
   return async input => {
+    if (input.signal?.aborted) return cancelledKickoff();
     if (!isFeatureEnabled()) {
       return {
         content:
@@ -109,6 +111,7 @@ export function createBuildPlanKickoff(
     } catch (error) {
       return { content: `plan parse failed: ${(error as Error).message}`, isError: true };
     }
+    if (input.signal?.aborted) return cancelledKickoff();
 
     const buildState = readBuildState(projectDir);
     const systemic = checkSystemic(buildState);
@@ -146,6 +149,7 @@ export function createBuildPlanKickoff(
 
     let kick: StartOrchestrationResult;
     try {
+      if (input.signal?.aborted) return cancelledKickoff();
       kick = deps.start({
         sessionId,
         projectDir,
@@ -184,3 +188,12 @@ export function createBuildPlanKickoff(
 }
 
 export const kickoffBuildPlan = createBuildPlanKickoff();
+
+function cancelledKickoff(): ToolResult {
+  return {
+    content: "Build plan kickoff was cancelled before the orchestrator started.",
+    isError: true,
+    status: "error",
+    metadata: { cancelled: true },
+  };
+}

@@ -53,13 +53,14 @@ export function createRunBuildPlanTool(
       },
       required: ["project_dir"],
     },
-    async execute(args): Promise<ToolResult> {
+    async execute(args, signal): Promise<ToolResult> {
       return kickoff({
         projectDir: args.project_dir,
         planPath: args.plan_path,
         startingChunk: args.starting_chunk,
         maxChunks: args.max_chunks,
         sessionId: args._sessionId,
+        signal,
       });
     },
   };

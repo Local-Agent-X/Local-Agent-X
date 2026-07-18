@@ -234,6 +234,21 @@ describe("run_build_plan — arg validation", () => {
     expect(res.metadata?.systemic_gate).toBe("done-when");
     expect(startSpy).not.toHaveBeenCalled();
   });
+
+  it("propagates cancellation through the public tool before orchestration", async () => {
+    mkdirSync(join(tmp, "spec"));
+    writeFileSync(join(tmp, "spec", "plan.md"), MIN_PLAN);
+    const controller = new AbortController();
+    controller.abort();
+
+    const res = await testRunBuildPlanTool.execute(
+      { project_dir: tmp, _sessionId: "cancelled-session" },
+      controller.signal,
+    );
+
+    expect(res.metadata?.cancelled).toBe(true);
+    expect(startSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("run_build_plan — tool definition", () => {

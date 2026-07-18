@@ -24,13 +24,26 @@ import { resolveAgentPath, sessionIdOf, setSessionWorkRoot, clearSessionWorkRoot
 import { searchBase } from "../tools/glob-tool.js";
 import { searchRoot } from "../tools/grep-tool.js";
 import { setAriRequired } from "../ari-kernel/state.js";
-import { startAppBuildTool, finalizeAppBuildTool } from "../auto-build/app-build-tool.js";
+import {
+  createFinalizeAppBuildTool,
+  startAppBuildTool,
+} from "../auto-build/app-build-tool.js";
+import type { BuildPlanKickoff } from "../auto-build/kickoff.js";
 import { readAppBuildWorkflow } from "../auto-build/workflow-state.js";
 import { FEATURE_FLAG_ENV } from "../auto-build/tool.js";
 
 const SESSION = "agent-seam-test-1";
 // Pure path math — nothing touches disk, so the root doesn't need to exist.
 const WORK_ROOT = resolve(process.cwd(), "seam-test-project");
+const dispatchKickoff: BuildPlanKickoff = async input => ({
+  content: "Build orchestrator started without launching a test worker.",
+  status: "running",
+  session_id: "op_dispatch_test",
+  metadata: { op_id: "op_dispatch_test", project_dir: input.projectDir },
+});
+const dispatchFinalizeAppBuildTool = createFinalizeAppBuildTool({
+  kickoff: dispatchKickoff,
+});
 
 afterEach(() => clearSessionWorkRoot(SESSION));
 
@@ -115,7 +128,9 @@ describe("app-build trusted session stamping (canonical dispatch seam)", () => {
     name: "start_app_build" | "finalize_app_build",
     args: Record<string, unknown>,
   ) {
-    const tool = name === "start_app_build" ? startAppBuildTool : finalizeAppBuildTool;
+    const tool = name === "start_app_build"
+      ? startAppBuildTool
+      : dispatchFinalizeAppBuildTool;
     return dispatchSingleToolCall(
       { id: `call-${name}`, name, args },
       {
@@ -142,9 +157,11 @@ describe("app-build trusted session stamping (canonical dispatch seam)", () => {
       scenarios: [{ filename: "01-happy.md", content: "# Happy path" }],
     });
     expect(finalized.isError).toBe(false);
+    expect(finalized.status).toBe("running");
     expect(readAppBuildWorkflow(SESSION_ID)).toMatchObject({
-      phase: "finalized",
+      phase: "running",
       projectDir,
+      opId: "op_dispatch_test",
     });
   });
 });

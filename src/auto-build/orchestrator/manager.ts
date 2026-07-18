@@ -86,6 +86,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     );
   }
 
+  const previousState = state.read(opts.projectDir);
   const opId = "op_" + randomBytes(8).toString("hex");
   const initialState = state.makeInitial({
     opId,
@@ -96,7 +97,30 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     startingChunk: opts.startingChunk,
     maxChunks: opts.maxChunks,
   });
-  state.write(initialState);
+  if (!state.write(initialState)) {
+    throw new Error(
+      `Build orchestration did not start: failed to persist ${state.ORCHESTRATOR_STATE_FILENAME}.`,
+    );
+  }
+
+  // Add to the cross-restart registry so the boot scanner can auto-
+  // resume if LAX dies mid-build.
+  const registered = registry.register({
+    projectDir: opts.projectDir,
+    opId,
+    sessionId: opts.sessionId,
+    registeredAt: new Date().toISOString(),
+  });
+  if (!registered) {
+    const restored = previousState
+      ? state.write(previousState)
+      : state.clear(opts.projectDir);
+    if (!restored) state.clear(opts.projectDir);
+    throw new Error(
+      "Build orchestration did not start: failed to persist the active-orchestrator registry." +
+      (restored ? "" : " The previous project state could not be restored."),
+    );
+  }
 
   const ac = new AbortController();
   const scopeStartIdx = opts.plan.chunks.findIndex(chunk => chunk.number === opts.startingChunk);
@@ -117,15 +141,6 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     scopeChunks,
   };
   active.set(opId, orch);
-
-  // Add to the cross-restart registry so the boot scanner can auto-
-  // resume if LAX dies mid-build.
-  registry.register({
-    projectDir: opts.projectDir,
-    opId,
-    sessionId: opts.sessionId,
-    registeredAt: new Date().toISOString(),
-  });
 
   broadcastToSession(opts.sessionId, {
     type: "bg_op_started",

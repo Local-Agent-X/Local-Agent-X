@@ -21,7 +21,11 @@ import {
   startAppBuildTool,
   finalizeAppBuildTool,
 } from "../src/auto-build/app-build-tool.js";
-import type { BuildPlanKickoff } from "../src/auto-build/kickoff.js";
+import {
+  createBuildPlanKickoff,
+  type BuildPlanKickoff,
+} from "../src/auto-build/kickoff.js";
+import { materializeAppBuild } from "../src/auto-build/materialize.js";
 import { createAppBuildWorkflowStore } from "../src/auto-build/workflow-state.js";
 
 const originalFlag = process.env[FEATURE_FLAG_ENV];
@@ -48,7 +52,7 @@ const noWorkerKickoff: BuildPlanKickoff = async input => ({
   session_id: "op_test",
   metadata: { op_id: "op_test", project_dir: input.projectDir },
 });
-const testFinalizeAppBuildTool = createFinalizeAppBuildTool(noWorkerKickoff);
+const testFinalizeAppBuildTool = createFinalizeAppBuildTool({ kickoff: noWorkerKickoff });
 
 describe("start_app_build — feature flag", () => {
   it("is BLOCKED when LAX_AUTO_BUILD_ENABLED is off", async () => {
@@ -197,7 +201,7 @@ describe("finalize_app_build — happy path", () => {
         phaseAtKickoff = store.read("finalized-session")?.phase;
         return noWorkerKickoff(input);
       });
-      const tool = createFinalizeAppBuildTool(kickoff);
+      const tool = createFinalizeAppBuildTool({ kickoff });
       const r = await tool.execute({
         project_dir: projectDir,
         project_name: "Finalized",
@@ -206,10 +210,10 @@ describe("finalize_app_build — happy path", () => {
         _sessionId: "finalized-session",
       });
       expect(r.isError).toBeFalsy();
-      expect(kickoff).toHaveBeenCalledWith({
+      expect(kickoff).toHaveBeenCalledWith(expect.objectContaining({
         projectDir,
         sessionId: "finalized-session",
-      });
+      }));
       expect(phaseAtKickoff).toBe("finalized");
       expect(store.read("finalized-session")).toMatchObject({
         phase: "running",
@@ -234,7 +238,7 @@ describe("finalize_app_build — happy path", () => {
       metadata: { recovery: "Use build_plan_status." },
     }));
     try {
-      const tool = createFinalizeAppBuildTool(blockedKickoff);
+      const tool = createFinalizeAppBuildTool({ kickoff: blockedKickoff });
       const r = await tool.execute({
         project_dir: projectDir,
         project_name: "Blocked",
@@ -258,6 +262,57 @@ describe("finalize_app_build — happy path", () => {
       if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
       else process.env.LAX_DATA_DIR = previousDataDir;
     }
+  });
+
+  it("cancels before materialization without creating a project or starting", async () => {
+    const projectDir = join(baseDir, "cancelled-before");
+    const kickoff = vi.fn(noWorkerKickoff);
+    const tool = createFinalizeAppBuildTool({ kickoff });
+    const controller = new AbortController();
+    controller.abort();
+
+    const r = await tool.execute({
+      project_dir: projectDir,
+      project_name: "Cancelled",
+      product_md: "x",
+      constitution_md: "x",
+      plan_md: VALID_PLAN,
+      scenarios: [{ filename: "01-x.md", content: "x" }],
+    }, controller.signal);
+
+    expect(r.metadata?.cancelled).toBe(true);
+    expect(existsSync(projectDir)).toBe(false);
+    expect(kickoff).not.toHaveBeenCalled();
+  });
+
+  it("propagates cancellation immediately before kickoff and never starts", async () => {
+    const projectDir = join(baseDir, "cancelled-before-kickoff");
+    const controller = new AbortController();
+    const start = vi.fn(() => ({
+      opId: "must-not-start",
+      initialMessage: "must not start",
+    }));
+    const tool = createFinalizeAppBuildTool({
+      kickoff: createBuildPlanKickoff({ start }),
+      materialize(input) {
+        const result = materializeAppBuild(input);
+        controller.abort();
+        return result;
+      },
+    });
+
+    const r = await tool.execute({
+      project_dir: projectDir,
+      project_name: "Cancelled",
+      product_md: "x",
+      constitution_md: "x",
+      plan_md: VALID_PLAN,
+      scenarios: [{ filename: "01-x.md", content: "x" }],
+    }, controller.signal);
+
+    expect(r.metadata?.cancelled).toBe(true);
+    expect(existsSync(join(projectDir, "spec", "plan.md"))).toBe(true);
+    expect(start).not.toHaveBeenCalled();
   });
 
   it("writes twins/ when supplied", async () => {

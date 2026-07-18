@@ -10,14 +10,14 @@
  * pointer list so the boot scanner doesn't have to scan the entire
  * filesystem looking for state files.
  *
- * Best-effort: file IO failures don't halt the build. Worst case, a
- * server restart loses the auto-resume hint and the user has to call
- * build_plan_resume manually.
+ * Registration is load-bearing: a build cannot report running unless
+ * this discovery pointer is durably written.
  */
 
-import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { join } from "node:path";
+import { atomicWriteFileSync, ensureDirFor } from "../../util/json-store.js";
 
 export interface RegistryEntry {
   projectDir: string;
@@ -45,29 +45,30 @@ function read(): RegistryFile {
   }
 }
 
-function write(file: RegistryFile): void {
+function write(file: RegistryFile): boolean {
   const p = registryPath();
-  const tmp = p + ".tmp";
   try {
-    writeFileSync(tmp, JSON.stringify(file, null, 2));
-    renameSync(tmp, p);
-  } catch {
-    /* best-effort */
+    ensureDirFor(p);
+    atomicWriteFileSync(p, JSON.stringify(file, null, 2));
+    return true;
+  } catch (error) {
+    process.stderr.write(`[orchestrator-registry] write failed: ${(error as Error).message}\n`);
+    return false;
   }
 }
 
-export function register(entry: RegistryEntry): void {
+export function register(entry: RegistryEntry): boolean {
   const f = read();
   // Replace any existing entry for the same projectDir (one build per dir at a time).
   const filtered = f.entries.filter(e => e.projectDir !== entry.projectDir);
   filtered.push(entry);
-  write({ entries: filtered });
+  return write({ entries: filtered });
 }
 
-export function unregister(projectDir: string): void {
+export function unregister(projectDir: string): boolean {
   const f = read();
   const filtered = f.entries.filter(e => e.projectDir !== projectDir);
-  write({ entries: filtered });
+  return write({ entries: filtered });
 }
 
 export function listAll(): RegistryEntry[] {

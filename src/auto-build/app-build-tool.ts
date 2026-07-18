@@ -26,16 +26,20 @@
  * memory system without us doing anything here.
  */
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, dirname, basename } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
 import { kickoffBuildPlan, type BuildPlanKickoff } from "./kickoff.js";
 import { loadSkillBody } from "./skill-bodies.js";
 import { parsePlanText } from "./plan-parser.js";
 import { projectsDir, resolveProjectDir } from "./project-paths.js";
-import { verifyWriteLanded } from "../tools/verify.js";
 import { upsertAppBuildWorkflow } from "./workflow-state.js";
+import {
+  materializeAppBuild,
+  type AppBuildMaterializer,
+  type ArtifactInput,
+} from "./materialize.js";
 
 const FEATURE_FLAG_BLOCK_MESSAGE =
   `BLOCKED — explicitly disabled via the ${FEATURE_FLAG_ENV} env flag (set to 0/false/no/off). ` +
@@ -81,7 +85,6 @@ export const startAppBuildTool: ToolDefinition = {
     if (!isFeatureEnabled()) {
       return { content: FEATURE_FLAG_BLOCK_MESSAGE, isError: true, status: "blocked" };
     }
-
     const concept = String(args.concept || "").trim();
     const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
     let methodology: string;
@@ -139,19 +142,14 @@ export const startAppBuildTool: ToolDefinition = {
 
 // ── finalize_app_build ────────────────────────────────────────────────────
 
-interface ScenarioInput {
-  filename: string;
-  content: string;
-}
-
-interface TwinInput {
-  filename: string;
-  content: string;
-}
-
 export function createFinalizeAppBuildTool(
-  kickoff: BuildPlanKickoff = kickoffBuildPlan,
+  overrides: {
+    kickoff?: BuildPlanKickoff;
+    materialize?: AppBuildMaterializer;
+  } = {},
 ): ToolDefinition {
+  const kickoff = overrides.kickoff ?? kickoffBuildPlan;
+  const materialize = overrides.materialize ?? materializeAppBuild;
   return {
   name: "finalize_app_build",
   description:
@@ -218,10 +216,11 @@ export function createFinalizeAppBuildTool(
     },
     required: ["project_dir", "project_name", "product_md", "constitution_md", "plan_md", "scenarios"],
   },
-  async execute(args): Promise<ToolResult> {
+  async execute(args, signal): Promise<ToolResult> {
     if (!isFeatureEnabled()) {
       return { content: FEATURE_FLAG_BLOCK_MESSAGE, isError: true, status: "blocked" };
     }
+    if (signal?.aborted) return cancellationResult();
 
     const projectDir = resolveProjectDir(args.project_dir);
     if (!projectDir) return { content: "finalize_app_build requires 'project_dir' (bare name resolves to workspace/apps/<name>, or absolute path).", isError: true };
@@ -257,11 +256,11 @@ export function createFinalizeAppBuildTool(
     if (!constitutionMd) return { content: "finalize_app_build requires 'constitution_md'.", isError: true };
     if (!planMd) return { content: "finalize_app_build requires 'plan_md'.", isError: true };
 
-    const scenarios = Array.isArray(args.scenarios) ? (args.scenarios as ScenarioInput[]) : [];
+    const scenarios = Array.isArray(args.scenarios) ? (args.scenarios as ArtifactInput[]) : [];
     if (scenarios.length === 0) {
       return { content: "finalize_app_build requires at least one scenario in 'scenarios'.", isError: true };
     }
-    const twins = Array.isArray(args.twins) ? (args.twins as TwinInput[]) : [];
+    const twins = Array.isArray(args.twins) ? (args.twins as ArtifactInput[]) : [];
 
     // Validate plan_md with the SAME parser the build loop uses. A plan
     // that can't parse here would fail at build kickoff anyway — reject it
@@ -281,65 +280,28 @@ export function createFinalizeAppBuildTool(
       };
     }
 
-    const written: string[] = [];
-    const queued: Array<{ rel: string; content: string }> = [];
-
+    let written: string[];
     try {
-      mkdirSync(projectDir, { recursive: true });
-      mkdirSync(join(projectDir, "spec"), { recursive: true });
-      mkdirSync(join(projectDir, "scenarios"), { recursive: true });
-      if (twins.length > 0) mkdirSync(join(projectDir, "twins"), { recursive: true });
-
-      queued.push({ rel: "spec/product.md", content: productMd });
-      queued.push({ rel: "spec/constitution.md", content: constitutionMd });
-      queued.push({ rel: "spec/plan.md", content: planMd });
-      if (architectureMd) queued.push({ rel: "spec/architecture.md", content: architectureMd });
-
-      for (const s of scenarios) {
-        validateRelPath(s.filename, "scenarios/");
-        queued.push({ rel: join("scenarios", s.filename), content: s.content });
-      }
-      for (const t of twins) {
-        validateRelPath(t.filename, "twins/");
-        queued.push({ rel: join("twins", t.filename), content: t.content });
-      }
-
-      const readme =
-        `# ${projectName}\n\n` +
-        `Project initialized via \`finalize_app_build\` from a /app-build planning session.\n\n` +
-        `## Build\n\n` +
-        `Product Build owns orchestration after finalization; use \`build_plan_status\` to inspect it.\n\n` +
-        `## Layout\n\n` +
-        `- \`spec/\` — product, constitution, plan; the source of truth the building agents read.\n` +
-        `- \`scenarios/\` — held-out user-flow tests. **Building agents must never read this.**\n` +
-        (twins.length > 0 ? `- \`twins/\` — in-process fakes for external services.\n` : "");
-      queued.push({ rel: "README.md", content: readme });
+      signal?.throwIfAborted();
+      ({ written } = materialize({
+        projectDir,
+        projectName,
+        productMd,
+        constitutionMd,
+        planMd,
+        architectureMd,
+        scenarios,
+        twins,
+        signal,
+      }));
     } catch (e) {
+      if (signal?.aborted) return cancellationResult(projectDir);
       return {
-        content: `finalize_app_build failed during mkdir: ${(e as Error).message}. Partial files may remain at ${projectDir}.`,
+        content:
+          `finalize_app_build materialization failed: ${(e as Error).message}. ` +
+          "No project files were committed; fix the input and retry.",
         isError: true,
       };
-    }
-
-    for (const item of queued) {
-      const abs = join(projectDir, item.rel);
-      try {
-        mkdirSync(dirname(abs), { recursive: true });
-        writeFileSync(abs, item.content);
-      } catch (e) {
-        return {
-          content: `finalize_app_build failed writing ${item.rel}: ${(e as Error).message}. Partial files may remain at ${projectDir}.`,
-          isError: true,
-        };
-      }
-      const verified = verifyWriteLanded(abs);
-      if (!verified.ok) {
-        return {
-          content: `finalize_app_build verify failed for ${item.rel}: ${verified.reason}. Partial files may remain at ${projectDir}.`,
-          isError: true,
-        };
-      }
-      written.push(item.rel.replace(/\\/g, "/"));
     }
 
     const sessionId = typeof args._sessionId === "string" ? args._sessionId.trim() : "";
@@ -356,7 +318,7 @@ export function createFinalizeAppBuildTool(
       }
     }
 
-    const kick = await kickoff({ projectDir, sessionId });
+    const kick = await kickoff({ projectDir, sessionId, signal });
     if (kick.isError || kick.status === "blocked" || kick.status === "error") {
       return {
         content:
@@ -414,14 +376,13 @@ export const finalizeAppBuildTool = createFinalizeAppBuildTool();
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-/**
- * Reject filenames with path traversal (../, absolute paths). Each
- * scenario/twin filename must be a single relative path component or
- * a forward path under the given prefix — no escaping the project dir.
- */
-function validateRelPath(name: string, prefix: string): void {
-  if (!name || typeof name !== "string") throw new Error(`${prefix} entry: filename missing`);
-  if (name.includes("..")) throw new Error(`${prefix}${name}: path traversal not allowed`);
-  if (isAbsolute(name)) throw new Error(`${prefix}${name}: absolute paths not allowed`);
-  if (name.startsWith("/") || name.startsWith("\\")) throw new Error(`${prefix}${name}: leading slash not allowed`);
+function cancellationResult(projectDir?: string): ToolResult {
+  return {
+    content: projectDir
+      ? `finalize_app_build was cancelled. No partial project was committed at ${projectDir}.`
+      : "finalize_app_build was cancelled before materialization.",
+    isError: true,
+    status: "error",
+    metadata: { cancelled: true, ...(projectDir ? { project_dir: projectDir } : {}) },
+  };
 }

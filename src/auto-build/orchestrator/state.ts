@@ -8,8 +8,8 @@
  * of progress. The state file IS the contract for resumability.
  *
  * Location: `<project_dir>/.lax-build-run.json`. Per-project
- * so different concurrent builds keep independent state. Best-effort:
- * file write failures don't halt the build; resume just won't work.
+ * so different concurrent builds keep independent state. The initial
+ * write is load-bearing; the manager refuses to start without it.
  *
  * Distinct from `.lax-build-history.json` (failure-recovery halt
  * history). That file accumulates across runs; this one is per-run.
@@ -98,8 +98,8 @@ export function read(projectDir: string): OrchestratorState | null {
 
 /**
  * Atomic write: write to a `.tmp` sibling, then rename. Prevents a partial
- * file from being read mid-write if the process dies. Best-effort: on any
- * IO error we log to stderr and return false; the orchestrator continues.
+ * file from being read mid-write if the process dies. On any IO error we
+ * clean up the temp file, log, and return false for the caller to handle.
  */
 export function write(state: OrchestratorState): boolean {
   const final = statePath(state.projectDir);
@@ -109,6 +109,7 @@ export function write(state: OrchestratorState): boolean {
     renameSync(tmp, final);
     return true;
   } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort cleanup */ }
     process.stderr.write(`[orchestrator-state] write failed: ${(e as Error).message}\n`);
     return false;
   }
@@ -119,14 +120,17 @@ export function write(state: OrchestratorState): boolean {
  * abandon. Resume logic relies on the file's presence to detect in-flight
  * runs; leaving a complete file would cause spurious resume attempts.
  */
-export function clear(projectDir: string): void {
+export function clear(projectDir: string): boolean {
+  let cleared = true;
   for (const p of [statePath(projectDir), join(projectDir, LEGACY_STATE_FILENAME)]) {
     try {
       if (existsSync(p)) unlinkSync(p);
-    } catch {
-      /* best-effort */
+    } catch (error) {
+      cleared = false;
+      process.stderr.write(`[orchestrator-state] clear failed: ${(error as Error).message}\n`);
     }
   }
+  return cleared;
 }
 
 export function makeInitial(opts: {

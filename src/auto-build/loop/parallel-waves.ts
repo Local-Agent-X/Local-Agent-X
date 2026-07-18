@@ -236,6 +236,10 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
       }
       chunksCommitted++;
       emit({ type: "commit", chunkNumber: d.chunk.number, totalChunks, message: `Merged chunk ${d.chunk.number} back to base (${res.files} file(s) from '${d.branch}').` });
+      emit({
+        type: "chunk-landed", chunkNumber: d.chunk.number, totalChunks,
+        message: `Chunk ${d.chunk.number} landed in the base project after worktree merge.`,
+      });
 
       // S4 footprint-subset DIAGNOSTIC — warn (never halt) if this chunk's ACTUAL
       // changed files escaped its DECLARED footprint (the latent cause of a real

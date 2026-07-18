@@ -191,6 +191,13 @@ describe("parallel auto-build engine — REAL worktrees, REAL merge, REAL waves,
     expect(result.status).toBe("complete");
     expect(result.chunksCommitted).toBe(3);
     expect(result.events.some((e) => e.type === "halt")).toBe(false);
+    for (const chunkNumber of [1, 2, 3]) {
+      const commits = result.events.filter(e => e.chunkNumber === chunkNumber && e.type === "commit");
+      const landed = result.events.filter(e => e.chunkNumber === chunkNumber && e.type === "chunk-landed");
+      expect(commits).toHaveLength(2); // worktree commit, then base merge
+      expect(landed).toHaveLength(1);
+      expect(result.events.indexOf(landed[0])).toBeGreaterThan(result.events.indexOf(commits[1]));
+    }
 
     // Sanity: the stub really ran once per chunk (three real chunk builds).
     expect(shared.builds.map((b) => b.chunk).sort()).toEqual([1, 2, 3]);

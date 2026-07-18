@@ -44,6 +44,10 @@ interface ActiveOrchestration {
   abortController: AbortController;
   /** Snapshot of latest state — written to disk on every event. */
   liveState: OrchestratorState;
+  /** Logical completions already applied; guards duplicate landed events. */
+  landedChunks: Set<number>;
+  /** Ordered run scope; durable counts may advance only across its landed prefix. */
+  scopeChunks: number[];
 }
 
 export interface StartOrchestrationOptions {
@@ -95,6 +99,13 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
   state.write(initialState);
 
   const ac = new AbortController();
+  const scopeStartIdx = opts.plan.chunks.findIndex(chunk => chunk.number === opts.startingChunk);
+  const scopeEndIdx = opts.maxChunks
+    ? Math.min(scopeStartIdx + opts.maxChunks, opts.plan.chunks.length)
+    : opts.plan.chunks.length;
+  const scopeChunks = scopeStartIdx < 0
+    ? []
+    : opts.plan.chunks.slice(scopeStartIdx, scopeEndIdx).map(chunk => chunk.number);
   const orch: ActiveOrchestration = {
     opId,
     sessionId: opts.sessionId,
@@ -102,6 +113,8 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     startedAt: Date.now(),
     abortController: ac,
     liveState: initialState,
+    landedChunks: new Set(),
+    scopeChunks,
   };
   active.set(opId, orch);
 
@@ -171,7 +184,14 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   // Update in-memory state + persist on chunk-state-changing events.
   let newState = orch.liveState;
   if (event.type === "chunk-start") newState = state.markChunkStarted(newState, event.chunkNumber);
-  else if (event.type === "commit") newState = state.markChunkCommitted(newState, event.chunkNumber);
+  else if (event.type === "chunk-landed") {
+    orch.landedChunks.add(event.chunkNumber);
+    let nextScopeIdx = newState.chunksCommitted;
+    while (nextScopeIdx < orch.scopeChunks.length && orch.landedChunks.has(orch.scopeChunks[nextScopeIdx])) {
+      newState = state.markChunkLanded(newState, orch.scopeChunks[nextScopeIdx]);
+      nextScopeIdx++;
+    }
+  }
   else if (event.type === "halt") newState = state.markHalted(newState, event.chunkNumber, "loop", event.message);
   orch.liveState = newState;
   state.write(newState);

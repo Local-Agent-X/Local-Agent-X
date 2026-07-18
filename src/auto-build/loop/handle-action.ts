@@ -57,6 +57,10 @@ export async function handleAction(opts: HandleActionOptions): Promise<HandleAct
         type: "commit", chunkNumber: chunk.number, totalChunks,
         message: `Committed: chunk ${chunk.number} ${commit.value.committed ? "(new sha " + commit.value.sha.slice(0, 8) + ")" : "(no changes to commit — review proceeded but tree was clean)"}`,
       });
+      emit({
+        type: "chunk-landed", chunkNumber: chunk.number, totalChunks,
+        message: `Chunk ${chunk.number} landed in the base project.`,
+      });
       return { kind: "advance", chunksCommitted };
     }
 
@@ -88,6 +92,10 @@ export async function handleAction(opts: HandleActionOptions): Promise<HandleAct
       }
       chunksCommitted++;
       emit({ type: "commit", chunkNumber: chunk.number, totalChunks, message: `Committed: chunk ${chunk.number} code (sha ${codeCommit.value.sha.slice(0, 8)})` });
+      emit({
+        type: "chunk-landed", chunkNumber: chunk.number, totalChunks,
+        message: `Chunk ${chunk.number} and its spec amendment landed in the base project.`,
+      });
       return { kind: "advance", chunksCommitted };
     }
 

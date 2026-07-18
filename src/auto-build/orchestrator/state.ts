@@ -169,7 +169,7 @@ export function markChunkStarted(state: OrchestratorState, chunkNumber: number):
   };
 }
 
-export function markChunkCommitted(state: OrchestratorState, chunkNumber: number): OrchestratorState {
+export function markChunkLanded(state: OrchestratorState, chunkNumber: number): OrchestratorState {
   return {
     ...state,
     phase: "running",

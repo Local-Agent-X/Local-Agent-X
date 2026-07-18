@@ -34,12 +34,13 @@ const { __queue, __pushReport } = vi.hoisted(() => {
 // by call count so concurrent chunks get distinct paths.
 let __callCount = 0;
 let __projectDirForMock = "";
+let __writeAgentChanges = true;
 function __setProjectDirForMock(dir: string) { __projectDirForMock = dir; __callCount = 0; }
 
 vi.mock("../src/auto-build/agents/chunk-runner.js", () => ({
   runChunkAgent: vi.fn(async () => {
     const next = __queue.shift() || "STATUS: unknown\nDONE_WHEN: unknown\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: queue empty";
-    if (__projectDirForMock) {
+    if (__projectDirForMock && __writeAgentChanges) {
       const { writeFileSync, mkdirSync } = await import("node:fs");
       const { join } = await import("node:path");
       __callCount++;
@@ -54,6 +55,10 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", () => ({
       durationMs: 50,
     };
   }),
+}));
+
+vi.mock("../src/auto-build/advisor/index.js", () => ({
+  consultAdvisor: vi.fn(async () => null),
 }));
 
 
@@ -105,6 +110,7 @@ beforeEach(() => {
   // (auto-build-preflight.test.ts).
   process.env.LAX_BUILD_PREFLIGHT = "0";
   __queue.length = 0;
+  __writeAgentChanges = true;
   projectDir = mkdtempSync(join(tmpdir(), "auto-build-loop-test-"));
   __setProjectDirForMock(projectDir);
   // Initialize a real git repo so the loop's git helpers work.
@@ -216,12 +222,14 @@ describe("runBuildLoop — amend_spec path", () => {
     };
 
     const plan = parsePlanText(TWO_CHUNK_PLAN);
+    const events: Array<{ type: string; chunkNumber: number }> = [];
     const result = await runBuildLoop({
       projectDir,
       planPath: join(projectDir, "spec", "plan.md"),
       plan,
       startingChunk: 1,
       judgmentHook: mockHook,
+      onEvent: e => events.push(e),
     });
 
     expect(result.status).toBe("complete");
@@ -236,6 +244,8 @@ describe("runBuildLoop — amend_spec path", () => {
     expect(log).toContain("spec: chunk-1 learned");
     expect(log).toContain("chunk 1: Skeleton");
     expect(log).toContain("chunk 2: Feature");
+    expect(events.filter(e => e.chunkNumber === 1 && e.type === "commit")).toHaveLength(2);
+    expect(events.filter(e => e.chunkNumber === 1 && e.type === "chunk-landed")).toHaveLength(1);
   });
 
   it("with a judgmentHook returning null, no amend_spec fires", async () => {
@@ -331,9 +341,35 @@ describe("runBuildLoop — event stream", () => {
     });
 
     expect(events).toEqual([
-      "1:chunk-start", "1:subprocess-spawned", "1:subprocess-returned", "1:review-result", "1:commit",
-      "2:chunk-start", "2:subprocess-spawned", "2:subprocess-returned", "2:review-result", "2:commit",
+      "1:chunk-start", "1:subprocess-spawned", "1:subprocess-returned", "1:review-result", "1:commit", "1:chunk-landed",
+      "2:chunk-start", "2:subprocess-spawned", "2:subprocess-returned", "2:review-result", "2:commit", "2:chunk-landed",
       "2:complete",
     ]);
+  });
+
+  it("lands a clean no-change chunk exactly once", async () => {
+    __writeAgentChanges = false;
+    __pushReport(CLEAN_REPORT("none"));
+    const plan = parsePlanText(TWO_CHUNK_PLAN);
+    const result = await runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan,
+      startingChunk: 1, maxChunks: 1,
+    });
+    expect(result.chunksCommitted).toBe(1);
+    expect(result.events.filter(e => e.type === "commit")).toHaveLength(1);
+    expect(result.events.filter(e => e.type === "chunk-landed")).toHaveLength(1);
+  });
+
+  it("lands a chunk once after a push-back retry succeeds", async () => {
+    __pushReport("not a chunk report");
+    __pushReport(CLEAN_REPORT("src/skeleton.ts"));
+    const plan = parsePlanText(TWO_CHUNK_PLAN);
+    const result = await runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan,
+      startingChunk: 1, maxChunks: 1,
+    });
+    expect(result.status).toBe("complete");
+    expect(result.events.filter(e => e.type === "subprocess-spawned")).toHaveLength(2);
+    expect(result.events.filter(e => e.type === "chunk-landed")).toHaveLength(1);
   });
 });

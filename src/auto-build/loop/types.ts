@@ -10,6 +10,7 @@ export type LoopEventType =
   | "subprocess-returned"
   | "review-result"
   | "commit"
+  | "chunk-landed"
   | "spec-amended"
   | "launch-readiness-emitted"
   | "push-back"

@@ -60,6 +60,13 @@ describe("home empty-state parity (no first-paint flash of stale markup)", () =>
     expect(staticStarters).toEqual(generatorStarters);
   });
 
+  it("routes the Build starter through the explicit app-build methodology", () => {
+    expect(staticEmpty).toMatch(/data-starter="build"[^>]*data-prompt="\/app-build Build me "/);
+    expect(launcherJs).toContain(`card('build', 'data-prompt="/app-build Build me "'`);
+    expect(staticEmpty).not.toContain('data-prompt="Build me an app that "');
+    expect(launcherJs).not.toContain('data-prompt="Build me an app that "');
+  });
+
   it("static #empty paints no <img> before JS runs — the background owns the art", () => {
     expect(staticEmpty).not.toMatch(/<img/);
   });

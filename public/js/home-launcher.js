@@ -27,7 +27,7 @@
       +     '<h2 class="hl-title">What\'s next?</h2>'
       +     '<div class="hl-starters" role="list">'
       +       card('research', 'data-prompt="Research: "', '&#9673;', 'Research', 'Deep-dive a question, cited')
-      +       card('build', 'data-prompt="Build me an app that "', '&#9650;', 'Build', 'Ship an app from an idea')
+      +       card('build', 'data-prompt="/app-build Build me "', '&#9650;', 'Build', 'Ship an app from an idea')
       +       card('automate', 'data-nav="missions"', '&#8635;', 'Automate', 'Schedule a recurring job')
       +       card('apps', 'data-nav="apps"', '&#9638;', 'Open app', 'Pick up where you left off')
       +     '</div>'

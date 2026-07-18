@@ -18,6 +18,7 @@ function loadWorkspace(): void {
 }
 
 beforeEach(() => {
+  history.replaceState({}, "", "/");
   document.head.innerHTML = "";
   document.body.className = "";
   document.body.innerHTML = `
@@ -105,6 +106,62 @@ describe("Browser full-page workspace", () => {
     (window as any).laxBrowserWorkspace.setActive(false);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(setChatOverlay).toHaveBeenLastCalledWith(null);
+  });
+
+  it("routes overlay controls to the host that owns native bounds", async () => {
+    const OriginalBroadcastChannel = (window as any).BroadcastChannel;
+    const channels: Array<{ onmessage?: (event: { data: any }) => void; postMessage: ReturnType<typeof vi.fn> }> = [];
+    class FakeBroadcastChannel {
+      onmessage?: (event: { data: any }) => void;
+      postMessage = vi.fn();
+      constructor(_name: string) { channels.push(this); }
+    }
+    (window as any).BroadcastChannel = FakeBroadcastChannel;
+    const setChatOverlay = vi.fn().mockResolvedValue(undefined);
+    (window as any).desktop = { browser: { setChatOverlay } };
+    loadWorkspace();
+    const rect = (left: number, top: number, width: number, height: number) => ({
+      left, top, width, height, right: left + width, bottom: top + height,
+    });
+    (document.getElementById("input-area") as any).getBoundingClientRect = () => rect(540, 950, 840, 50);
+    (document.getElementById("browser-chat-latest") as any).getBoundingClientRect = () => rect(600, 920, 720, 28);
+    (document.getElementById("messages") as any).getBoundingClientRect = () =>
+      document.body.classList.contains("browser-chat-latest-open") ? rect(600, 600, 720, 320) : rect(0, 0, 0, 0);
+    (window as any).laxBrowserWorkspace.setActive(true);
+
+    channels[0].onmessage?.({ data: {
+      type: "browser-workspace-control", control: "latestOpen", value: true,
+    } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(document.body.classList.contains("browser-chat-latest-open")).toBe(true);
+    expect(setChatOverlay.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+      bounds: { x: 540, y: 600, width: 840, height: 400 }, latestOpen: true,
+    }));
+    (window as any).BroadcastChannel = OriginalBroadcastChannel;
+  });
+
+  it("sends expanded and collapsed overlay clicks back to the host", () => {
+    const OriginalBroadcastChannel = (window as any).BroadcastChannel;
+    const channels: Array<{ postMessage: ReturnType<typeof vi.fn> }> = [];
+    class FakeBroadcastChannel {
+      postMessage = vi.fn();
+      constructor(_name: string) { channels.push(this); }
+    }
+    history.replaceState({}, "", "/?browserChatOverlay=1");
+    (window as any).BroadcastChannel = FakeBroadcastChannel;
+    (window as any).desktop = { browser: { onChatOverlayState: vi.fn() } };
+    loadWorkspace();
+
+    (document.getElementById("browser-chat-latest") as HTMLButtonElement).click();
+    (document.getElementById("browser-chat-collapse") as HTMLButtonElement).click();
+
+    expect(channels[0].postMessage).toHaveBeenNthCalledWith(1, {
+      type: "browser-workspace-control", control: "latestOpen", value: true,
+    });
+    expect(channels[0].postMessage).toHaveBeenNthCalledWith(2, {
+      type: "browser-workspace-control", control: "collapsed", value: true,
+    });
+    (window as any).BroadcastChannel = OriginalBroadcastChannel;
   });
 
   it("hands user messages from the overlay renderer back to the host chat", () => {

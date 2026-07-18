@@ -3,6 +3,8 @@
 (function () {
   var overlayRenderer = new URLSearchParams(window.location.search).has('browserChatOverlay');
   var browserBridge = window.desktop && window.desktop.browser;
+  var workspaceChannel = typeof BroadcastChannel === 'function'
+    ? new BroadcastChannel('lax-browser-workspace') : null;
   var active = false;
   var collapsed = false;
   var latestOpen = false;
@@ -13,6 +15,12 @@
   var lastOverlayKey = '';
   var overlaySessionId = null;
   var overlaySelectingId = null;
+
+  function requestHostControl(control, value) {
+    if (!overlayRenderer || !workspaceChannel) return false;
+    workspaceChannel.postMessage({ type: 'browser-workspace-control', control: control, value: !!value });
+    return true;
+  }
 
   function chatOverlayBounds() {
     var ids = collapsed
@@ -150,6 +158,7 @@
   }
 
   function setLatestOpen(next) {
+    if (requestHostControl('latestOpen', next)) return;
     var latest = markLatestTurn();
     latestOpen = !!next && active && !collapsed && !!latest;
     document.body.classList.toggle('browser-chat-latest-open', latestOpen);
@@ -164,6 +173,7 @@
   }
 
   function setCollapsed(next) {
+    if (requestHostControl('collapsed', next)) return;
     if (!active) return;
     collapsed = !!next;
     if (collapsed) latestOpen = false;
@@ -249,6 +259,14 @@
     var page = document.getElementById('page-chat');
     var browserTab = document.getElementById('side-tab-browser');
     var messages = document.getElementById('messages');
+    if (workspaceChannel && !overlayRenderer) {
+      workspaceChannel.onmessage = function (event) {
+        var data = event.data;
+        if (!data || data.type !== 'browser-workspace-control') return;
+        if (data.control === 'latestOpen') setLatestOpen(data.value);
+        if (data.control === 'collapsed') setCollapsed(data.value);
+      };
+    }
     if (overlayRenderer) {
       active = true;
       document.body.classList.add('browser-workspace', 'browser-chat-overlay-renderer');

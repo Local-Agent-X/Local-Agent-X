@@ -10,7 +10,7 @@ import { parsePlanFile } from "../plan-parser.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
 import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
 import { startOrchestration, listActive } from "./manager.js";
-import { readProjectState } from "./resume.js";
+import { computeResumeWindow, finalizeCompletedResume, readProjectState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
 import { resolveProjectDir } from "../project-paths.js";
 
@@ -134,6 +134,15 @@ export const buildPlanResumeTool: ToolDefinition = {
       ? Math.floor(overrideArg)
       : s.resumeAtChunk;
 
+    const window = computeResumeWindow({ ...s, resumeAtChunk: startingChunk }, plan.chunks);
+    if (window.kind === "complete") {
+      finalizeCompletedResume(s);
+      return {
+        content: `All chunks in the original build scope at ${projectDir} are already complete. Nothing to resume.`,
+        metadata: { project_dir: projectDir, resumed: false, complete: true },
+      };
+    }
+
     const sessionId = typeof args._sessionId === "string" ? args._sessionId : s.sessionId;
 
     const kick = startOrchestration({
@@ -141,8 +150,8 @@ export const buildPlanResumeTool: ToolDefinition = {
       projectDir,
       planPath: s.planPath,
       plan,
-      startingChunk,
-      maxChunks: s.maxChunks ?? undefined,
+      startingChunk: window.startingChunk,
+      maxChunks: window.maxChunks,
       judgmentHook: defaultJudgmentHook,
     });
 
@@ -154,7 +163,8 @@ export const buildPlanResumeTool: ToolDefinition = {
         op_id: kick.opId,
         project_dir: projectDir,
         resumed: true,
-        starting_chunk: startingChunk,
+        starting_chunk: window.startingChunk,
+        max_chunks: window.maxChunks,
         prior_halt_reason: s.haltReason,
       },
     };

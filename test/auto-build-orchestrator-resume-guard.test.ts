@@ -30,6 +30,7 @@ const startSpy = vi.fn((opts: { startingChunk: number; maxChunks?: number }) => 
 vi.mock("../src/auto-build/orchestrator/manager.js", () => ({
   startOrchestration: (opts: unknown) => startSpy(opts as never),
   isActiveForProject: () => mockActive,
+  listActive: () => [],
 }));
 
 let mockRegistry: Array<{ projectDir: string; opId: string; sessionId: string; registeredAt: string }> = [];
@@ -53,6 +54,7 @@ vi.mock("../src/auto-build/chunk-review/judgment-hook.js", () => ({
 }));
 
 import { autoResumeOrchestrations, computeResumeWindow } from "../src/auto-build/orchestrator/resume.js";
+import { buildPlanResumeTool } from "../src/auto-build/orchestrator/tools.js";
 import * as state from "../src/auto-build/orchestrator/state.js";
 
 function makePlan(nChunks: number): string {
@@ -175,6 +177,33 @@ describe("autoResumeOrchestrations — window clamp (AB-8)", () => {
   });
 });
 
+describe("build_plan_resume — window clamp (AB-8)", () => {
+  it("passes only the chunks remaining in the original max_chunks scope", async () => {
+    const dir = seedProject({ totalChunks: 16, startingChunkOverride: 1, maxChunks: 10, resumeAtChunk: 7 });
+
+    const result = await buildPlanResumeTool.execute({ project_dir: dir, _sessionId: "sess_resume" });
+
+    expect(result.isError).not.toBe(true);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    const passed = startSpy.mock.calls[0][0];
+    expect(passed.startingChunk).toBe(7);
+    expect(passed.maxChunks).toBe(4);
+    expect(result.metadata?.max_chunks).toBe(4);
+  });
+
+  it("recognizes an already-complete scoped window without starting a phantom chunk", async () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 6, resumeAtChunk: 7 });
+    mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
+
+    const result = await buildPlanResumeTool.execute({ project_dir: dir });
+
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(result.metadata?.complete).toBe(true);
+    expect(state.read(dir)).toBeNull();
+    expect(unregisterSpy).toHaveBeenCalledWith(dir);
+  });
+});
+
 // ── AB-2 through the resume path ─────────────────────────────────────────
 
 describe("autoResumeOrchestrations — idempotency guard (AB-2)", () => {
@@ -188,5 +217,23 @@ describe("autoResumeOrchestrations — idempotency guard (AB-2)", () => {
     expect(startSpy).not.toHaveBeenCalled(); // pre-fix started a duplicate loop
     expect(report.skipped).toBe(1);
     expect(report.resumed).toBe(0);
+  });
+});
+
+describe("autoResumeOrchestrations — deliberate halt reporting", () => {
+  it("reports a halted build as waiting and leaves it resumable", () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 10, resumeAtChunk: 7 });
+    const persisted = state.read(dir)!;
+    state.write(state.markHalted(persisted, 6, "phase-gate", "user review required"));
+    mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
+
+    const report = autoResumeOrchestrations();
+
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(report.waiting).toBe(1);
+    expect(report.abandoned).toBe(0);
+    expect(report.details[0]).toMatchObject({ outcome: "waiting" });
+    expect(state.read(dir)?.phase).toBe("halted");
+    expect(unregisterSpy).not.toHaveBeenCalled();
   });
 });

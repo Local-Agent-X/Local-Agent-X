@@ -16,8 +16,8 @@
  *   - state file missing / malformed — registry entry is stale; remove
  *   - project_dir no longer exists — same, remove
  *
- * Marks any unresumable entries as "abandoned" in the state file so the
- * user can see what happened.
+ * Marks genuinely unresumable entries as "abandoned" in the state file.
+ * Deliberately halted entries remain waiting for explicit user action.
  */
 
 import { existsSync } from "node:fs";
@@ -33,11 +33,13 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("auto-build.orchestrator.resume");
 
-type ResumeOutcome = "resumed" | "abandoned" | "cleared" | "skipped";
+type ResumeOutcome = "resumed" | "waiting" | "abandoned" | "cleared" | "skipped";
 
 export interface ResumeReport {
   attempted: number;
   resumed: number;
+  /** Deliberately halted and left resumable for explicit user action. */
+  waiting: number;
   abandoned: number;
   cleared: number;
   /** Already live in this process — a duplicate resume was correctly skipped. */
@@ -54,7 +56,7 @@ export interface ResumeReport {
  * operator has explicitly turned off).
  */
 export function autoResumeOrchestrations(): ResumeReport {
-  const report: ResumeReport = { attempted: 0, resumed: 0, abandoned: 0, cleared: 0, skipped: 0, details: [] };
+  const report: ResumeReport = { attempted: 0, resumed: 0, waiting: 0, abandoned: 0, cleared: 0, skipped: 0, details: [] };
 
   if (!isFeatureEnabled()) {
     logger.info("[resume] feature flag disabled — skipping auto-resume scan");
@@ -67,13 +69,14 @@ export function autoResumeOrchestrations(): ResumeReport {
     const outcome = tryResumeOne(entry.projectDir, entry.sessionId);
     report.details.push({ projectDir: entry.projectDir, outcome: outcome.outcome, reason: outcome.reason });
     if (outcome.outcome === "resumed") report.resumed++;
+    else if (outcome.outcome === "waiting") report.waiting++;
     else if (outcome.outcome === "abandoned") report.abandoned++;
     else if (outcome.outcome === "cleared") report.cleared++;
     else if (outcome.outcome === "skipped") report.skipped++;
   }
 
   if (report.attempted > 0) {
-    logger.info(`[resume] scanned ${report.attempted} orchestrators: ${report.resumed} resumed, ${report.abandoned} abandoned, ${report.cleared} cleared, ${report.skipped} skipped`);
+    logger.info(`[resume] scanned ${report.attempted} orchestrators: ${report.resumed} resumed, ${report.waiting} waiting, ${report.abandoned} abandoned, ${report.cleared} cleared, ${report.skipped} skipped`);
   }
   return report;
 }
@@ -110,7 +113,7 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
     // Don't auto-resume halts — user needs to see the reason. Leave the
     // state + registry in place so build_plan_resume can pick it up
     // when the user asks.
-    return { outcome: "abandoned", reason: `halted before restart — reason: ${s.haltReason.slice(0, 100)}` };
+    return { outcome: "waiting", reason: `halted before restart — resumable after explicit user action; reason: ${s.haltReason.slice(0, 100)}` };
   }
 
   // phase === "starting" or "running" — try to resume from resumeAtChunk
@@ -137,9 +140,7 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
   // instead of starting a phantom chunk that halts with "not found".
   const window = computeResumeWindow(s, plan.chunks);
   if (window.kind === "complete") {
-    state.write(state.markComplete(s));
-    state.clear(projectDir);
-    unregister(projectDir);
+    finalizeCompletedResume(s);
     return { outcome: "cleared", reason: "all scoped chunks already committed — completed on resume" };
   }
 
@@ -167,6 +168,13 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
     unregister(projectDir);
     return { outcome: "abandoned", reason: `resume threw: ${(e as Error).message}` };
   }
+}
+
+/** Finalize persisted state when a resume window has no work remaining. */
+export function finalizeCompletedResume(s: state.OrchestratorState): void {
+  state.write(state.markComplete(s));
+  state.clear(s.projectDir);
+  unregister(s.projectDir);
 }
 
 export interface ResumeWindow {

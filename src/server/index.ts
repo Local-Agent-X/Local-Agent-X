@@ -96,7 +96,7 @@ export async function startServer(config: LAXConfig) {
       const { autoResumeOrchestrations } = await import("../auto-build/orchestrator/resume.js");
       const report = autoResumeOrchestrations();
       if (report.attempted > 0) {
-        bootLogger.info(`[orchestrator-resume] scanned ${report.attempted}: ${report.resumed} resumed, ${report.abandoned} abandoned, ${report.cleared} cleared`);
+        bootLogger.info(`[orchestrator-resume] scanned ${report.attempted}: ${report.resumed} resumed, ${report.waiting} waiting, ${report.abandoned} abandoned, ${report.cleared} cleared, ${report.skipped} skipped`);
       }
     } catch (e) {
       bootLogger.warn(`[orchestrator-resume] scan failed: ${(e as Error).message}`);

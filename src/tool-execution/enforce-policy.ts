@@ -32,6 +32,7 @@ import { lookupTool, validateArgs } from "./arg-validation.js";
 // their `from "./enforce-policy.js"` imports.
 export { ARI_ACTION_MAP, deriveAriAction } from "./ari-action-map.js";
 import { deriveAriAction } from "./ari-action-map.js";
+import { learnedProtocolEnvelopeGate } from "./learned-protocol-envelope.js";
 
 // Side-effect-free "what-else-would-block" probe of the gates a kernel-denied
 // egress request would traverse NEXT in the pre-dispatch chain, so their
@@ -328,6 +329,9 @@ export const enforcePolicyPhase: Phase = async (ctx) => {
     outcome = await securityAndValidationGates(ctx);
     if (outcome.kind !== "continue") return outcome;
   }
+
+  outcome = await learnedProtocolEnvelopeGate(ctx);
+  if (outcome.kind !== "continue") return outcome;
 
   outcome = circuitBreakerGate(ctx);
   if (outcome.kind !== "continue") return outcome;

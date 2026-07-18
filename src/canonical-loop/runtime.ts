@@ -11,6 +11,11 @@
  * resetCanonicalRuntime() to drop registrations between tests.
  */
 import type { Op } from "../ops/types.js";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { opDir } from "../ops/event-log.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { atomicWriteFileSync } from "../server-utils.js";
 import type { Adapter, AdapterReport, ToolDescriptor, TurnInput, TurnResult } from "./adapter-contract.js";
 import { NotConfiguredToolDispatcher, type ToolDispatcher } from "./tool-dispatch.js";
 import type { CanonicalLane } from "./types.js";
@@ -22,7 +27,35 @@ const laneAdapters = new Map<CanonicalLane, AdapterFactory>();
 const opDispatchers = new Map<string, ToolDispatcher>();
 const opTools = new Map<string, ToolDescriptor[]>();
 const opBaselineTokens = new Map<string, number>();
+const learnedProtocolEnvelopes = new Map<string, LearnedProtocolEnvelope>();
 let toolDispatcher: ToolDispatcher = new NotConfiguredToolDispatcher();
+
+export interface LearnedProtocolEnvelope {
+  slug: string;
+  versionId: string;
+  candidateId: string;
+  allowedTools: readonly string[];
+}
+
+const LEARNED_ENVELOPE_FILE = "learned-protocol-envelope.json";
+
+function learnedEnvelopePath(opId: string, createDir = false): string {
+  if (createDir) return join(opDir(opId), LEARNED_ENVELOPE_FILE);
+  const base = resolve(getLaxDir(), "operations");
+  const candidate = resolve(base, opId, LEARNED_ENVELOPE_FILE);
+  if (!candidate.startsWith(base + sep)) throw new Error("Invalid canonical operation id");
+  return candidate;
+}
+
+function parseLearnedEnvelope(raw: string): LearnedProtocolEnvelope {
+  const value = JSON.parse(raw) as Partial<LearnedProtocolEnvelope>;
+  if (
+    typeof value.slug !== "string" || typeof value.versionId !== "string"
+    || typeof value.candidateId !== "string" || !Array.isArray(value.allowedTools)
+    || value.allowedTools.some((tool) => typeof tool !== "string")
+  ) throw new Error("Invalid persisted learned protocol envelope");
+  return { slug: value.slug, versionId: value.versionId, candidateId: value.candidateId, allowedTools: value.allowedTools };
+}
 
 /** Register a factory that produces the adapter for a specific op_id. */
 export function registerAdapterForOp(opId: string, factory: AdapterFactory): void {
@@ -54,6 +87,48 @@ export function registerToolDispatcherForOp(opId: string, d: ToolDispatcher): vo
 
 export function unregisterToolDispatcherForOp(opId: string): void {
   opDispatchers.delete(opId);
+  clearLearnedProtocolEnvelopeForOp(opId);
+}
+
+export function registerLearnedProtocolEnvelopeForOp(
+  opId: string,
+  envelope: LearnedProtocolEnvelope,
+): void {
+  // Include the durable sidecar in the conflict check: after a process
+  // restart, selecting a different protocol must not overwrite/expand the
+  // envelope that already governs the resumed operation.
+  const existing = getLearnedProtocolEnvelopeForOp(opId);
+  if (existing) {
+    if (
+      existing.slug === envelope.slug
+      && existing.versionId === envelope.versionId
+      && existing.candidateId === envelope.candidateId
+      && JSON.stringify(existing.allowedTools) === JSON.stringify(envelope.allowedTools)
+    ) return;
+    throw new Error(`A learned protocol is already selected for operation ${opId}`);
+  }
+  const persisted = {
+    ...envelope,
+    allowedTools: Object.freeze([...envelope.allowedTools]),
+  };
+  atomicWriteFileSync(learnedEnvelopePath(opId, true), JSON.stringify(envelope), { mode: 0o600 });
+  learnedProtocolEnvelopes.set(opId, persisted);
+}
+
+export function getLearnedProtocolEnvelopeForOp(opId: string): LearnedProtocolEnvelope | null {
+  let envelope = learnedProtocolEnvelopes.get(opId);
+  if (!envelope) {
+    const path = learnedEnvelopePath(opId);
+    if (!existsSync(path)) return null;
+    envelope = parseLearnedEnvelope(readFileSync(path, "utf8"));
+    learnedProtocolEnvelopes.set(opId, { ...envelope, allowedTools: Object.freeze([...envelope.allowedTools]) });
+  }
+  return envelope ? { ...envelope, allowedTools: [...envelope.allowedTools] } : null;
+}
+
+export function clearLearnedProtocolEnvelopeForOp(opId: string): void {
+  learnedProtocolEnvelopes.delete(opId);
+  rmSync(learnedEnvelopePath(opId), { force: true });
 }
 
 /**
@@ -223,5 +298,6 @@ export function resetCanonicalRuntime(): void {
   opDispatchers.clear();
   opTools.clear();
   opBaselineTokens.clear();
+  learnedProtocolEnvelopes.clear();
   toolDispatcher = new NotConfiguredToolDispatcher();
 }

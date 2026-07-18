@@ -22,7 +22,6 @@ import type { CanonicalMessage, ToolCall } from "./contract-types.js";
 import type { ProviderStateEnvelope } from "./types.js";
 import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
-import type { CanonicalToolResultView } from "./middlewares/types.js";
 
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
@@ -53,7 +52,7 @@ export async function driveTurn(
   // names as the imports they default to; the body below is unchanged.
   const {
     emit, emitErrorOnce, publishStreamChunk, commitTurn, runMiddlewarePhase,
-    extractText, extractToolResultText, appendNudgeAsUserMessage,
+    extractText, extractToolResultText, buildToolResultsView, appendNudgeAsUserMessage,
     middlewareAbortResult, buildTurnInput, readPendingRedirect,
     drainInjectsIntoTurn, opConsumesInjects, dispatchTools, createIdleWatchdog,
     readIdleTimeoutMs, snapshotTouchedApps, decideTurnOutcome,
@@ -274,12 +273,7 @@ export async function driveTurn(
   // first non-continue verdict from afterModelCall wins; afterToolExecution
   // only refines (not overrides) — matches agent-loop's per-phase ordering.
   if (middlewareDirective === null) {
-    const toolResultsView: CanonicalToolResultView[] = toolMessages.map((tm, i) => ({
-      toolName: toolSummary[i]?.tool ?? "unknown",
-      toolCallId: (tm.content as { toolCallId?: string })?.toolCallId ?? "",
-      content: extractToolResultText(tm.content),
-      status: toolSummary[i]?.resultStatus,
-    }));
+    const toolResultsView = buildToolResultsView(toolMessages, toolSummary, extractToolResultText);
     const afterToolCtx = contextComposer.build({
       toolCalls,
       toolResults: toolResultsView,

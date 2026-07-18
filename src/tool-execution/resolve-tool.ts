@@ -55,6 +55,10 @@ const SESSION_SCOPED_TOOLS = new Set([
   "structural_search", // searchRoot(args) is session-anchored like grep's
 ]);
 
+// `protocol` is the model-facing collapsed family. Keep the inner name for
+// direct/core callers, but never trust either a flat or nested model value.
+const OPERATION_SCOPED_TOOLS = new Set(["protocol", "protocol_get"]);
+
 const SESSION_REPEAT_SKIP_TOOLS = new Set([
   "request_secret", "request_secrets",
   // State-sensitive mutations must re-dispatch. A repeated edit/write is often
@@ -118,6 +122,12 @@ async function injectSessionState(ctx: ToolCallContext): Promise<PhaseOutcome> {
 
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";
+  }
+  if (OPERATION_SCOPED_TOOLS.has(tc.name)) {
+    args._operationId = ctx.operationId;
+    if (args.params && typeof args.params === "object" && !Array.isArray(args.params)) {
+      (args.params as Record<string, unknown>)._operationId = ctx.operationId;
+    }
   }
 
   // Inject the chat's current project into agent_* tool calls so the

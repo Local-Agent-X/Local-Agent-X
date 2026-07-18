@@ -19,6 +19,7 @@ const fireDetached = vi.fn();
 vi.mock("../hooks/hook-engine.js", () => ({ getHookEngine: () => ({ fireDetached }) }));
 
 import { transitionOp } from "./state-machine.js";
+import { getLearnedProtocolEnvelopeForOp, registerLearnedProtocolEnvelopeForOp } from "./runtime.js";
 import type { Op } from "../ops/types.js";
 
 const makeOp = (state: string) =>
@@ -28,6 +29,10 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("Stop hook event on op terminal", () => {
   it("fires detached with opId/status/session when the op reaches a terminal state", () => {
+    registerLearnedProtocolEnvelopeForOp("op-1", {
+      slug: "learned-0123456789abcdefabcd", versionId: "version-1",
+      candidateId: "learned-0123456789abcdefabcd", allowedTools: ["read"],
+    });
     transitionOp(makeOp("running"), "succeeded", "done");
     expect(fireDetached).toHaveBeenCalledWith({
       event: "Stop",
@@ -35,11 +40,17 @@ describe("Stop hook event on op terminal", () => {
       opStatus: "succeeded",
       sessionId: "sess-1",
     });
+    expect(getLearnedProtocolEnvelopeForOp("op-1")).toBeNull();
   });
 
   it("fires on failure too, with the failed status", () => {
+    registerLearnedProtocolEnvelopeForOp("op-1", {
+      slug: "learned-0123456789abcdefabcd", versionId: "version-1",
+      candidateId: "learned-0123456789abcdefabcd", allowedTools: ["read"],
+    });
     transitionOp(makeOp("running"), "failed", "boom");
     expect(fireDetached).toHaveBeenCalledWith(expect.objectContaining({ event: "Stop", opStatus: "failed" }));
+    expect(getLearnedProtocolEnvelopeForOp("op-1")).toBeNull();
   });
 
   it("does NOT fire on non-terminal transitions", () => {

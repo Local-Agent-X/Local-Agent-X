@@ -38,6 +38,8 @@ import { createProtocolSearchTool } from "./search.js";
 import { createProtocolStatsTools } from "./stats-tools.js";
 import { createCuratorTools } from "./curator.js";
 import type { Protocol } from "./types.js";
+import { resolveActiveLearnedProtocolProvenance } from "./learned-lifecycle.js";
+import { registerLearnedProtocolEnvelopeForOp } from "../canonical-loop/runtime.js";
 
 // ── Re-exports ────────────────────────────────────────────────
 
@@ -58,7 +60,9 @@ export { loadVariables, saveVariables, getVariable, setVariable, deleteVariable,
 export {
   createLearnedProtocolDraft, loadLearnedProtocol, activateLearnedProtocol,
   archiveLearnedProtocol, restoreLearnedProtocol, rollbackLearnedProtocol,
-  type LearnedProtocolRecord, type LearnedProtocolState, type LearnedProtocolVersion,
+  activeLearnedProtocolProvenance, resolveActiveLearnedProtocolProvenance,
+  type ActiveLearnedProtocolProvenance, type LearnedProtocolRecord,
+  type LearnedProtocolState, type LearnedProtocolVersion,
 } from "./learned-lifecycle.js";
 export {
   draftLearnedCandidate, learnedProtocolSlug, renderLearnedCandidateSkill,
@@ -168,6 +172,16 @@ export function createCoreProtocolTools(): ToolDefinition[] {
         const pb = findProtocol(String(args.name || ""));
         if (!pb) {
           return { content: `No protocol found for "${args.name}". Use protocol(action:'list') to see all available protocols.` };
+        }
+        if (pb.source?.type === "imported" && pb.source.sourcePath) {
+          const provenance = resolveActiveLearnedProtocolProvenance(pb.source.sourcePath, pb.name);
+          if (provenance) {
+            const operationId = (args as { _operationId?: unknown })._operationId;
+            if (typeof operationId !== "string" || operationId.length === 0) {
+              throw new Error("Learned protocols require an active canonical operation");
+            }
+            registerLearnedProtocolEnvelopeForOp(operationId, provenance);
+          }
         }
         // Record the invocation — strongest signal of actual use. Drives the
         // never-used / least-used reports that protocol(action:'prune') consumes.

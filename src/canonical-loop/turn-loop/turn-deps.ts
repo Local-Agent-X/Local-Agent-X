@@ -14,7 +14,7 @@
 import { emit, emitErrorOnce, publishStreamChunk } from "../event-emitter.js";
 import { commitTurn } from "../checkpoint.js";
 import { runMiddlewarePhase } from "../middlewares/host.js";
-import { extractText, extractToolResultText } from "./content-extract.js";
+import { buildToolResultsView, extractText, extractToolResultText } from "./content-extract.js";
 import { appendNudgeAsUserMessage, middlewareAbortResult } from "./nudges.js";
 import { buildTurnInput, readPendingRedirect } from "./build-input.js";
 import { drainInjectsIntoTurn } from "./inject-drain.js";
@@ -44,6 +44,7 @@ export interface TurnLoopDeps {
   /** Message-content text extraction for middleware context views. */
   extractText?: typeof extractText;
   extractToolResultText?: typeof extractToolResultText;
+  buildToolResultsView?: typeof buildToolResultsView;
   /** Middleware nudge/abort write-back into op_messages / op_events. */
   appendNudgeAsUserMessage?: typeof appendNudgeAsUserMessage;
   middlewareAbortResult?: typeof middlewareAbortResult;
@@ -87,6 +88,7 @@ export function resolveTurnLoopDeps(deps: TurnLoopDeps = {}): ResolvedTurnLoopDe
     runMiddlewarePhase: deps.runMiddlewarePhase ?? runMiddlewarePhase,
     extractText: deps.extractText ?? extractText,
     extractToolResultText: deps.extractToolResultText ?? extractToolResultText,
+    buildToolResultsView: deps.buildToolResultsView ?? buildToolResultsView,
     appendNudgeAsUserMessage: deps.appendNudgeAsUserMessage ?? appendNudgeAsUserMessage,
     middlewareAbortResult: deps.middlewareAbortResult ?? middlewareAbortResult,
     buildTurnInput: deps.buildTurnInput ?? buildTurnInput,

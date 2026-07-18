@@ -5,6 +5,7 @@ import {
 import { basename, join, resolve, sep } from "node:path";
 import { atomicWriteFileSync } from "../server-utils.js";
 import { importedProtocolsDir } from "./loader.js";
+import { parseSkillMd } from "./skill-md-parser.js";
 
 export type LearnedProtocolState = "draft" | "active" | "archived";
 
@@ -13,6 +14,13 @@ export interface LearnedProtocolVersion {
   sha256: string;
   createdAt: string;
   metadata: Record<string, unknown>;
+}
+
+export interface ActiveLearnedProtocolProvenance {
+  slug: string;
+  versionId: string;
+  candidateId: string;
+  allowedTools: string[];
 }
 
 export interface LearnedProtocolRecord {
@@ -252,4 +260,62 @@ export function rollbackLearnedProtocol(input: LearnedMutation & { versionId: st
   const { record } = readRecord(input.slug);
   if (record.state !== "active") throw new Error(`Learned protocol is not active: ${input.slug}`);
   return activateLearnedProtocol(input);
+}
+
+export function activeLearnedProtocolProvenance(slug: string): ActiveLearnedProtocolProvenance {
+  const record = loadLearnedProtocol(slug);
+  if (record.state !== "active" || !record.activeVersionId) {
+    throw new Error(`Learned protocol is not active: ${slug}`);
+  }
+  const version = record.versions.find((candidate) => candidate.id === record.activeVersionId);
+  if (!version) throw new Error(`Active learned protocol version is missing: ${slug}`);
+  const candidateId = version.metadata.candidateId;
+  const allowedTools = version.metadata.allowedTools;
+  const toolSequence = version.metadata.toolSequence;
+  if (typeof candidateId !== "string" || candidateId !== slug || !/^learned-[a-f0-9]{20}$/.test(candidateId)) {
+    throw new Error(`Learned protocol candidate provenance is missing: ${slug}`);
+  }
+  if (
+    !Array.isArray(allowedTools)
+    || allowedTools.some((tool) => typeof tool !== "string")
+    || !Array.isArray(toolSequence)
+    || toolSequence.some((tool) => typeof tool !== "string")
+  ) {
+    throw new Error(`Learned protocol capability metadata is invalid: ${slug}`);
+  }
+  const normalized = [...new Set(toolSequence.map((tool) => tool.trim()).filter(Boolean))];
+  if (JSON.stringify(allowedTools) !== JSON.stringify(normalized)) {
+    throw new Error(`Learned protocol capability metadata does not match its evidence: ${slug}`);
+  }
+  const { dir } = readRecord(slug);
+  const body = readVerifiedVersion(dir, version);
+  const parsed = parseSkillMd(body, { source: { type: "imported" }, fallbackName: slug });
+  if (!parsed || parsed.name !== slug || JSON.stringify(parsed.allowedTools ?? []) !== JSON.stringify(allowedTools)) {
+    throw new Error(`Learned protocol capability metadata does not match its verified body: ${slug}`);
+  }
+  return {
+    slug,
+    versionId: version.id,
+    candidateId,
+    allowedTools: normalized,
+  };
+}
+
+export function resolveActiveLearnedProtocolProvenance(
+  sourcePath: string,
+  protocolName: string,
+): ActiveLearnedProtocolProvenance | null {
+  const base = resolve(importedProtocolsDir());
+  const dir = resolve(sourcePath, "..");
+  const slug = basename(dir);
+  assertContained(base, dir);
+  rejectSymlink(base);
+  rejectSymlink(dir);
+  if (resolve(sourcePath) !== join(dir, "SKILL.md")) throw new Error("Imported protocol source path is invalid");
+  rejectSymlink(sourcePath);
+  if (!existsSync(lifecyclePath(dir))) return null;
+  const expectedDir = protocolDir(slug);
+  if (dir !== expectedDir) throw new Error("Learned protocol source path does not match its managed slug");
+  if (protocolName !== slug) throw new Error(`Learned protocol name does not match its slug: ${slug}`);
+  return activeLearnedProtocolProvenance(slug);
 }

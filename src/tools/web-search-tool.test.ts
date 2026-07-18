@@ -3,6 +3,7 @@
 // real execute() path with a mocked global fetch — no network.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { collectArgViolations } from "../tool-execution/arg-validation.js";
 import { webSearchTool, dedupeResults, canonicalUrl } from "./web-search-tool.js";
 
 function ddgHtml(items: { url: string; title: string; snippet: string }[]): string {
@@ -87,6 +88,33 @@ describe("web_search execute", () => {
     const sharedCount = (res.content.match(/shared\.com/g) || []).length;
     expect(sharedCount).toBe(1);
     expect(res.content).toContain("only2.com");
+  });
+
+  it("accepts queries without a redundant query field", async () => {
+    const schema = webSearchTool.parameters as {
+      properties: Record<string, { type?: string; enum?: unknown[] }>;
+      required: string[];
+    };
+    expect(collectArgViolations({ queries: ["q1", "q2"] }, schema)).toEqual([]);
+
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      const query = new URL(String(input)).searchParams.get("q");
+      return new Response(ddgHtml([{ url: `https://${query}.example/result`, title: String(query), snippet: "ok" }]), {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+    }) as typeof fetch;
+
+    const res = await webSearchTool.execute({ queries: ["q1", "q2"] });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toContain("q1.example");
+    expect(res.content).toContain("q2.example");
+  });
+
+  it("rejects empty input at runtime", async () => {
+    const res = await webSearchTool.execute({});
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("query or queries is required");
   });
 
   it("errors only when every query fails", async () => {

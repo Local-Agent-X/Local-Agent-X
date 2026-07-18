@@ -92,17 +92,17 @@ export const webSearchTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      query: { type: "string", description: "Search query" },
+      query: { type: "string", description: "Single search query. Use this or `queries`." },
       queries: { type: "array", items: { type: "string" }, description: "Multiple queries to run in parallel (fan-out). Use for broad or deep research; results merge and dedupe by URL." },
       max_results: { type: "number", description: "Max results to return (default 8, max 20)" },
     },
-    required: ["query"],
+    required: [],
   },
   async execute(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     const single = String(args.query ?? "").trim();
     const multi = Array.isArray(args.queries) ? args.queries.map(q => String(q ?? "").trim()) : [];
     const queries = [...new Set([single, ...multi].filter(Boolean))];
-    if (!queries.length) return { content: "Error: query is required.", isError: true };
+    if (!queries.length) return { content: "Error: query or queries is required.", isError: true };
     const max = Math.min(Math.max(Number(args.max_results) || 8, 1), 20);
     const timeout = AbortSignal.timeout(15_000);
     const merged = signal ? AbortSignal.any([signal, timeout]) : timeout;

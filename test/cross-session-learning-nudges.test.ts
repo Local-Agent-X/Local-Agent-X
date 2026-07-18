@@ -94,7 +94,10 @@ describe("cross-session learning nudges", () => {
   });
 
   it("reads the learning mode live in the orchestrator signal seam", async () => {
-    const runtime = { learningMode: "autonomous" as "assisted" | "autonomous" };
+    const runtime = {
+      learningMode: "autonomous" as "assisted" | "autonomous",
+      workspace: join(dataDir, "workspace"),
+    };
     const getRuntimeConfig = vi.fn(() => runtime);
     vi.doMock("../src/config.js", () => ({ getRuntimeConfig }));
     await learnerWithEvidence();
@@ -110,7 +113,7 @@ describe("cross-session learning nudges", () => {
       dayOfWeek: 1,
     }, out);
 
-    expect(getRuntimeConfig).toHaveBeenCalledOnce();
+    expect(getRuntimeConfig).toHaveBeenCalled();
     expect(out[0]).toMatchObject({ category: "learning-activity", priority: 1 });
   });
 });

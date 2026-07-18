@@ -7,7 +7,7 @@ import type { LAXConfig } from "../types.js";
 import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
 import { importedProtocolsDir, loadImportedProtocols } from "./loader.js";
 import { draftLearnedCandidate, renderLearnedCandidateSkill } from "./learned-drafting.js";
-import { loadLearnedProtocol } from "./learned-lifecycle.js";
+import { activateLearnedProtocol, createLearnedProtocolDraft, loadLearnedProtocol } from "./learned-lifecycle.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 
 const ORIGINAL_CONFIG = getRuntimeConfig();
@@ -143,6 +143,34 @@ describe("learned protocol drafting", () => {
     expect(second.created).toBe(true);
     expect(second.version.id).not.toBe(first.version.id);
     expect(loadLearnedProtocol(first.slug).versions).toHaveLength(2);
+  });
+
+  it("allows active refinements only for the matching managed candidate history", () => {
+    const unmanaged = workflowCandidate();
+    unmanaged.state = "active";
+    expect(() => draftLearnedCandidate(unmanaged)).toThrow(/no managed protocol history/);
+
+    createLearnedProtocolDraft({
+      slug: unmanaged.id,
+      skillMd: renderLearnedCandidateSkill({ ...unmanaged, state: "candidate" }),
+      metadata: { candidateId: "learned-ffffffffffffffffffff" },
+    });
+    expect(() => draftLearnedCandidate(unmanaged)).toThrow(/does not match its managed candidate history/);
+
+    const original = workflowCandidate();
+    original.id = "learned-0123456789abcdefabce";
+    const first = draftLearnedCandidate(original);
+    activateLearnedProtocol({ slug: first.slug, versionId: first.version.id, expectedActiveVersionId: null });
+    const stronger = workflowCandidate();
+    stronger.id = original.id;
+    stronger.state = "active";
+    stronger.evidence.occurrences = 5;
+    stronger.evidence.description = "Workflow \"coding:read_file -> write_file -> run_tests\" completed cleanly 4/5 times";
+    stronger.evidence.outcomeStats = { clean: 4, partial: 1, aborted: 0, successRate: 0.8, weightedSuccessRate: 0.85, distinctSessions: 4 };
+    stronger.suggestion.config.occurrences = 5;
+    stronger.confidence = 0.85;
+
+    expect(draftLearnedCandidate(stronger).created).toBe(true);
   });
 
   it("keeps drafted candidates undiscoverable until another layer activates them", () => {

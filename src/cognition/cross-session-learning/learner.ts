@@ -141,7 +141,18 @@ export class CrossSessionLearner {
       return structuredClone(current);
     }
     if (current.state !== "rejected") {
-      return structuredClone(current);
+      const stronger = next.evidence.occurrences > current.evidence.occurrences
+        && next.confidence >= current.confidence;
+      if (!stronger) return structuredClone(current);
+      this.data.candidates[index] = {
+        ...current,
+        confidence: next.confidence,
+        suggestion: next.suggestion,
+        evidence: next.evidence,
+        updatedAt: now,
+      };
+      persistData(this.data);
+      return structuredClone(this.data.candidates[index]);
     }
 
     const revived = transitionCandidate(current, "candidate", now, "New evidence after suppression period");
@@ -183,7 +194,7 @@ export class CrossSessionLearner {
     return fuzzyMatch(a, b);
   }
 
-  private nextLearningCandidate(now: number): LearnedCandidate | null {
+  nextLearningCandidate(now = Date.now()): LearnedCandidate | null {
     const patterns = this.detectPatterns(3);
     const staleCutoff = now - PRUNE_AGE_DAYS * MS_PER_DAY;
     for (const pattern of patterns) {
@@ -193,7 +204,7 @@ export class CrossSessionLearner {
         || pattern.automationEligible !== true
       ) continue;
       const candidate = this.captureCandidate(pattern, now);
-      if (!candidate || candidate.state !== "candidate" || candidate.confidence < 0.75) continue;
+      if (!candidate || !["candidate", "active"].includes(candidate.state) || candidate.confidence < 0.75) continue;
       if (candidate.surfaceCooldownUntil && now < candidate.surfaceCooldownUntil) continue;
       if (
         candidate.lastSurfacedOccurrences !== undefined

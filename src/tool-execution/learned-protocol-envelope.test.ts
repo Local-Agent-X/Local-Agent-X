@@ -14,8 +14,9 @@ import {
 import { importedProtocolsDir } from "../protocols/loader.js";
 import {
   clearLearnedProtocolEnvelopeForOp, getLearnedProtocolEnvelopeForOp,
-  registerLearnedProtocolEnvelopeForOp, resetCanonicalRuntime, unregisterToolDispatcherForOp,
-} from "../canonical-loop/runtime.js";
+  registerLearnedProtocolEnvelopeForOp,
+} from "../canonical-loop/public/learned-protocols.js";
+import { resetCanonicalRuntime, unregisterToolDispatcherForOp } from "../canonical-loop/index.js";
 import { createContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";

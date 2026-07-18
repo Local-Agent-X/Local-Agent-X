@@ -39,7 +39,7 @@ import { createProtocolStatsTools } from "./stats-tools.js";
 import { createCuratorTools } from "./curator.js";
 import type { Protocol } from "./types.js";
 import { resolveActiveLearnedProtocolProvenance } from "./learned-lifecycle.js";
-import { registerLearnedProtocolEnvelopeForOp } from "../canonical-loop/runtime.js";
+import { registerLearnedProtocolEnvelopeForOp } from "../canonical-loop/public/learned-protocols.js";
 
 // ── Re-exports ────────────────────────────────────────────────
 

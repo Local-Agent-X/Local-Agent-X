@@ -1,5 +1,5 @@
 import { USER_HINTS } from "../types.js";
-import { getLearnedProtocolEnvelopeForOp, type LearnedProtocolEnvelope } from "../canonical-loop/runtime.js";
+import { getLearnedProtocolEnvelopeForOp, type LearnedProtocolEnvelope } from "../canonical-loop/public/learned-protocols.js";
 import { activeLearnedProtocolProvenance } from "../protocols/learned-lifecycle.js";
 import type { Phase } from "./context.js";
 import { CONTINUE, terminate } from "./context.js";

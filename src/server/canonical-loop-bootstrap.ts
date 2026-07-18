@@ -15,10 +15,10 @@ import {
   type CanonicalLane,
   type PreviewRuntimeError,
 } from "../canonical-loop/index.js";
+import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/public/learned-protocols.js";
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
-import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/learned-effectiveness.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 

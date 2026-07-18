@@ -4,7 +4,7 @@
 .browser-workspace-toggle{font-size:.9rem;min-width:30px;margin-left:auto;margin-right:38px}
 
 body.browser-workspace{
-  --browser-chat-dock-height:min(34vh,320px);
+  --browser-chat-dock-height:96px;
   --browser-chat-dock-gap:12px;
 }
 body.browser-workspace #page-chat{position:relative;flex-direction:row}
@@ -22,33 +22,45 @@ body.browser-workspace.sidebar-right #browser-view-anchor{margin-left:0;margin-r
 body.browser-workspace #chat-main{
   position:absolute;left:var(--browser-chat-dock-gap);right:var(--browser-chat-dock-gap);
   bottom:var(--browser-chat-dock-gap);z-index:9;height:var(--browser-chat-dock-height);
-  flex:none;min-width:0;border:1px solid var(--border);border-radius:12px;
-  background:var(--surface);box-shadow:0 12px 36px rgba(0,0,0,.28);
+  flex:none;min-width:0;overflow:visible;justify-content:flex-end;border:0;
+  background:transparent;box-shadow:none;
 }
 body.browser-workspace #chat-main #chat-bg,
 body.browser-workspace #chat-main #chat-toolbar,
-body.browser-workspace #chat-main #empty{display:none}
-body.browser-workspace #chat-main #messages{padding:10px 16px;gap:12px}
-body.browser-workspace #chat-main #input-area{padding:6px 12px 9px}
-body.browser-workspace #browser-chat-dock-bar{
-  display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;
-  flex:0 0 34px;border-bottom:1px solid var(--border);font-family:var(--mono);
-  font-size:.62rem;letter-spacing:1.5px;color:var(--muted);
+body.browser-workspace #chat-main #empty,
+body.browser-workspace #chat-main #messages,
+body.browser-workspace #chat-main #context-bar,
+body.browser-workspace #chat-main #status-bar{display:none!important}
+body.browser-workspace #chat-main #input-area{
+  width:min(100%,840px);margin:0 auto;padding:0 12px 4px;border-top:0;background:transparent;
 }
+body.browser-workspace #browser-chat-dock-bar{
+  display:block;position:absolute;top:12px;right:max(0px,calc(50% - 430px));
+  width:26px;height:24px;padding:0;border:0;z-index:2;
+}
+body.browser-workspace #browser-chat-dock-bar > span{display:none}
 #browser-chat-collapse{
-  display:grid;place-items:center;width:26px;height:24px;margin-left:auto;padding:0;
+  display:grid;place-items:center;width:26px;height:24px;margin:0;padding:0;
   border:1px solid var(--border);border-radius:7px;background:transparent;
   color:var(--muted);cursor:pointer;font-size:.8rem;
 }
 #browser-chat-collapse:hover{border-color:var(--accent);color:var(--accent)}
 
 body.browser-workspace.browser-chat-collapsed{--browser-chat-dock-height:42px}
+body.browser-workspace.browser-chat-collapsed #chat-main{
+  overflow:hidden;justify-content:initial;border:1px solid var(--border);border-radius:12px;
+  background:var(--surface);box-shadow:0 12px 36px rgba(0,0,0,.28);
+}
 body.browser-workspace.browser-chat-collapsed #chat-main > :not(#browser-chat-dock-bar){display:none!important}
 body.browser-workspace.browser-chat-collapsed #browser-chat-dock-bar{
-  height:100%;flex-basis:100%;border-bottom:0;
+  display:flex;position:static;align-items:center;gap:8px;width:auto;height:100%;
+  padding:0 10px;border:0;flex:1;font-family:var(--mono);font-size:.62rem;
+  letter-spacing:1.5px;color:var(--muted);
 }
+body.browser-workspace.browser-chat-collapsed #browser-chat-dock-bar > span{display:inline}
+body.browser-workspace.browser-chat-collapsed #browser-chat-collapse{margin-left:auto}
 
 @media (max-width:760px){
-  body.browser-workspace{--browser-chat-dock-gap:8px;--browser-chat-dock-height:min(40vh,280px)}
+  body.browser-workspace{--browser-chat-dock-gap:8px;--browser-chat-dock-height:96px}
   body.browser-workspace.browser-chat-collapsed{--browser-chat-dock-height:42px}
 }

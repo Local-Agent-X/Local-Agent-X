@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(here, "../public/js/browser-workspace.js"), "utf8");
+const CSS = readFileSync(join(here, "../public/css/browser-workspace.css"), "utf8");
 const ARTIFACTS_SRC = readFileSync(join(here, "../public/js/chat-artifacts.js"), "utf8");
 
 function loadWorkspace(): void {
@@ -58,6 +59,15 @@ describe("Browser full-page workspace", () => {
     collapse.click();
     expect(document.body.classList.contains("browser-chat-collapsed")).toBe(false);
     expect(collapse.title).toBe("Collapse chat");
+  });
+
+  it("keeps only the compact composer visible over the Browser workspace", () => {
+    expect(CSS).toContain("--browser-chat-dock-height:96px");
+    expect(CSS).toContain("body.browser-workspace #chat-main #messages,");
+    expect(CSS).toContain("body.browser-workspace #chat-main #context-bar,");
+    expect(CSS).toContain("body.browser-workspace #chat-main #status-bar{display:none!important}");
+    expect(CSS).toContain("background:transparent;box-shadow:none");
+    expect(CSS).toContain("width:min(100%,840px)");
   });
 
   it("restores the ordinary split when Browser is hidden", () => {

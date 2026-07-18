@@ -176,6 +176,12 @@ export function createCoreProtocolTools(): ToolDefinition[] {
           ? "\n\nUser Preferences:\n" + Object.entries(prefs).map(([k, v]) => `  ${k}: ${v}`).join("\n")
           : "\n\nNo user preferences saved yet.";
 
+        if (pb.body !== undefined) {
+          return {
+            content: `# Protocol: ${pb.name}\n${pb.description}\n\n${pb.body}${prefsText}`,
+          };
+        }
+
         const rulesText = pb.rules.map((r, i) => `  ${i + 1}. ${r}`).join("\n");
         const stepsText = pb.steps.map((s, i) =>
           `  Step ${i + 1} [${s.id}]: ${s.instruction}${s.requiresUserAction ? " ⏸️ (needs user action)" : ""}${s.validate ? `\n    ✓ Validate: ${s.validate}` : ""}`,

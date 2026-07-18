@@ -39,7 +39,6 @@ export function createVoiceVisualTool(): ToolDefinition {
       "Render a transient visual on the user's particle sphere. Use whenever " +
       "an emoji, short word, shape, or mood would land. Never narrate the " +
       "call (\"let me show you\"); just call it.",
-    readOnly: true,
     parameters: {
       type: "object",
       properties: {

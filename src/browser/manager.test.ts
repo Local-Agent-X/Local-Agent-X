@@ -347,6 +347,17 @@ describe("handleNewTab — multi-URL fan-out (C4)", () => {
     expect(fallback.isError).toBeFalsy();
     expect(fallback.content).toContain("Opened new tab (1 tabs total)");
   });
+
+  it("rejects an oversized batch before opening any tab", async () => {
+    const { mgr, newPage } = makeMultiTabManager([navFakePage(200, "https://one.example/")]);
+    const result = await handleNewTab(mgr, {
+      urls: Array.from({ length: 11 }, (_, i) => `https://site-${i}.example/`),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("at most 10 URLs");
+    expect(newPage).not.toHaveBeenCalled();
+  });
 });
 
 describe("BrowserManager.navigate — single observation per navigation", () => {

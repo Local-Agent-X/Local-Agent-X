@@ -194,6 +194,7 @@ export async function executeToolCalls(
 
   let i = 0;
   while (i < toolCalls.length) {
+    if (signal?.aborted) break;
     const tc = toolCalls[i];
     const tool = toolMap.get(tc.name);
 

@@ -1,4 +1,5 @@
 import type { SecurityLayer } from "../security/index.js";
+import { resolveNewTabUrls } from "../security/layer/browser-egress-eval.js";
 
 export function getRiskLevel(_toolName: string, _args: Record<string, unknown>, _security?: SecurityLayer): "low" | "medium" | "high" {
   return "low";
@@ -16,13 +17,14 @@ export function buildApprovalContext(toolName: string, args: Record<string, unkn
       return `Read file: ${String(args.path || "").split(/[/\\]/).pop()}`;
     case "browser": {
       const a = String(args.action || "");
-      if (a === "navigate" || a === "new_tab") {
-        // new_tab may carry a batch (`urls` takes precedence over `url`).
-        if (Array.isArray(args.urls) && args.urls.length > 0) {
-          return `Open websites: ${args.urls.map((u) => String(u)).join(", ").slice(0, 150)}`;
+      if (a === "new_tab") {
+        const resolved = resolveNewTabUrls(args);
+        if (!resolved.error && resolved.urls.length > 1) {
+          return `Open ${resolved.urls.length} websites: ${resolved.urls.join(", ")}`;
         }
-        return `Open website: ${args.url || ""}`;
+        if (!resolved.error && resolved.urls.length === 1) return `Open website: ${resolved.urls[0]}`;
       }
+      if (a === "navigate") return `Open website: ${args.url || ""}`;
       if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
       return `Browser: ${a}`;
     }

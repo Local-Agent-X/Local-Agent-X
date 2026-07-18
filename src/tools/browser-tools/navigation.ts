@@ -10,6 +10,7 @@ import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
 import { ok, err, computeAuthWallPrefix, appendPostActionSnapshot } from "./shared.js";
 import { safeBrowserPageLabel, sensitivePageStub } from "../../browser/guards.js";
+import { resolveNewTabUrls } from "../../security/layer/browser-egress-eval.js";
 
 // Navigations were invisible in the logs — only browser *spawns* logged, never
 // where the agent went. That made route-arounds (X login wall -> navigate to a
@@ -37,21 +38,13 @@ export async function handleNavigate(
   return ok(await appendPostActionSnapshot(manager, navResult));
 }
 
-/** The new_tab URL list from args: a non-empty 'urls' array wins over 'url'. */
-function newTabUrls(args: Record<string, unknown>): string[] {
-  if (Array.isArray(args.urls)) {
-    const urls = args.urls.map((u) => String(u ?? "").trim()).filter((u) => u.length > 0);
-    if (urls.length > 0) return urls;
-  }
-  const url = String(args.url || "");
-  return url ? [url] : [];
-}
-
 export async function handleNewTab(
   manager: BrowserBackend,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const urls = newTabUrls(args);
+  const resolved = resolveNewTabUrls(args);
+  if (resolved.error) return err(resolved.error);
+  const urls = resolved.urls;
   if (urls.length === 0) return err("'url' (or 'urls') parameter is required for new_tab action.");
 
   if (urls.length === 1) {

@@ -3,6 +3,8 @@
  * schema. Split out so the dispatcher file stays focused on behavior.
  */
 
+import { MAX_BROWSER_URL_LENGTH, MAX_NEW_TAB_URLS } from "../../security/layer/browser-egress-eval.js";
+
 export const BROWSER_TOOL_NAME = "browser";
 
 export const BROWSER_TOOL_DESCRIPTION =
@@ -67,11 +69,13 @@ export const BROWSER_TOOL_PARAMETERS = {
     },
     url: {
       type: "string",
+      maxLength: MAX_BROWSER_URL_LENGTH,
       description: "URL to navigate to (required for 'navigate')",
     },
     urls: {
       type: "array",
-      items: { type: "string" },
+      maxItems: MAX_NEW_TAB_URLS,
+      items: { type: "string", maxLength: MAX_BROWSER_URL_LENGTH },
       description:
         "Multiple URLs for 'new_tab' — ONE call opens one tab per URL. " +
         "Prefer this over repeated new_tab calls when the user asks for several sites. " +

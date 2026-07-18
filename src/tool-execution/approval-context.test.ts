@@ -16,7 +16,7 @@ describe("buildApprovalContext — browser navigate/new_tab", () => {
       action: "new_tab",
       urls: ["https://a.com", "https://b.com", "https://c.com"],
     });
-    expect(s).toBe("Open websites: https://a.com, https://b.com, https://c.com");
+    expect(s).toBe("Open 3 websites: https://a.com, https://b.com, https://c.com");
   });
 
   it("urls[] takes precedence over url", () => {
@@ -25,7 +25,7 @@ describe("buildApprovalContext — browser navigate/new_tab", () => {
       url: "https://ignored.com",
       urls: ["https://a.com", "https://b.com"],
     });
-    expect(s).toBe("Open websites: https://a.com, https://b.com");
+    expect(s).toBe("Open 2 websites: https://a.com, https://b.com");
     expect(s).not.toContain("ignored.com");
   });
 
@@ -35,10 +35,12 @@ describe("buildApprovalContext — browser navigate/new_tab", () => {
     expect(s).toContain("https://a.com");
   });
 
-  it("huge urls list is truncated (matches the file's slice idiom)", () => {
-    const urls = Array.from({ length: 40 }, (_, i) => `https://site-${i}.example.com`);
+  it("the full bounded urls list is disclosed", () => {
+    const urls = Array.from({ length: 10 }, (_, i) => `https://site-${i}.example.com`);
     const s = buildApprovalContext("browser", { action: "new_tab", urls });
-    expect(s.length).toBeLessThanOrEqual("Open websites: ".length + 150);
+    expect(s).toContain("Open 10 websites:");
+    expect(s).toContain("https://site-0.example.com");
+    expect(s).toContain("https://site-9.example.com");
   });
 
   it("empty urls array falls back to url", () => {

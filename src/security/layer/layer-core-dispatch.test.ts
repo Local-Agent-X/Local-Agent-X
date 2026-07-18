@@ -271,6 +271,51 @@ describe("SecurityLayer kernel-class dispatch", () => {
       });
       expect(d.allowed).toBe(false);
     });
+
+    it("blank urls entries are normalized away before falling back to url", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", url: "https://example.com", urls: ["", "  "] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(true);
+    });
+
+    it("blank entries do not block otherwise valid batch urls", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", urls: ["", "https://example.com", "  "] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(true);
+    });
+
+    it("more than ten normalized urls is blocked before navigation", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: {
+          action: "new_tab",
+          urls: Array.from({ length: 11 }, (_, i) => `https://example.com/${i}`),
+        },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toContain("at most 10 URLs");
+    });
+
+    it("an overlong url is blocked before navigation", () => {
+      const sec = makeLayer();
+      const d = sec.evaluate({
+        toolName: "browser",
+        args: { action: "new_tab", urls: [`https://example.com/${"a".repeat(2048)}`] },
+        sessionId: "t",
+      });
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toContain("2048-character limit");
+    });
   });
 
   // ── 5: delete_file now goes through file-access (was default-allow) ──

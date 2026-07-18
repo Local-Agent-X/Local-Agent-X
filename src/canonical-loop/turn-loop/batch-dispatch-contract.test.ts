@@ -55,6 +55,7 @@ import { allTools } from "../../tools/registry-build.js";
 import { webFetchTool } from "../../tools/web-fetch.js";
 import { createHttpRequestTool } from "../../tools/http-request.js";
 import { createBrowserTools } from "../../tools/browser-tools/index.js";
+import { createVoiceVisualTool } from "../../voice/voice-visual-tool.js";
 import type { ToolCall } from "../contract-types.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 
@@ -92,7 +93,7 @@ describe("registry invariants — no sink tool is parallel-flagged", () => {
     expect(registered?.concurrencySafe).toBeUndefined();
   });
 
-  it("bash / self_edit / write / http_request / browser are not parallel-flagged", () => {
+  it("bash / self_edit / write / http_request / browser / voice_visual are not parallel-flagged", () => {
     // Statically-bundled sinks: anchor to the live allTools list.
     for (const name of ["bash", "self_edit", "write"]) {
       const tool = allTools.find((t) => t.name === name);
@@ -112,6 +113,10 @@ describe("registry invariants — no sink tool is parallel-flagged", () => {
     expect(browser.name).toBe("browser");
     expect(browser.readOnly).toBeFalsy();
     expect(browser.concurrencySafe).toBeFalsy();
+    const voiceVisual = createVoiceVisualTool();
+    expect(voiceVisual.name).toBe("voice_visual");
+    expect(voiceVisual.readOnly).toBeFalsy();
+    expect(voiceVisual.concurrencySafe).toBeFalsy();
   });
 
   it("no parallel-flagged tool in the live registry is a shell or workspace-write sink", () => {

@@ -56,13 +56,14 @@ function fakeTool(
   } as unknown as ToolDefinition;
 }
 
-function registerChatDispatcher(opId: string, tools: ToolDefinition[]): void {
+function registerChatDispatcher(opId: string, tools: ToolDefinition[], signal?: AbortSignal): void {
   registerToolDispatcherForOp(opId, makeChatToolDispatcher({
     tools,
     security: undefined as never,
     sessionId: `s-${opId}`,
     callContext: "local",
     opId,
+    signal,
   }));
 }
 
@@ -153,6 +154,30 @@ describe("dispatchTools batch lane through the real executeToolCalls batcher", (
     expect(order).toEqual(["safe:start", "safe:end", "bash:start"]);
     expect(out.toolMessages.map(m => (m.content as { toolCallId: string }).toolCallId))
       .toEqual(["c-1", "c-2"]);
+  });
+
+  it("cancellation between executor batches prevents later tools from starting", async () => {
+    const opId = trackOp(freshOpId());
+    const abort = new AbortController();
+    let mutationRan = false;
+    const safe = fakeTool("safe_read", async () => {
+      abort.abort();
+      return { content: "SAFE", isError: false };
+    }, { readOnly: true });
+    const mutation = fakeTool("queued_mutation", async () => {
+      mutationRan = true;
+      return { content: "MUTATED", isError: false };
+    });
+
+    registerChatDispatcher(opId, [safe, mutation], abort.signal);
+    await dispatchTools(
+      opId,
+      0,
+      [call("c-1", "safe_read"), call("c-2", "queued_mutation")],
+      () => abort.signal.aborted,
+    );
+
+    expect(mutationRan).toBe(false);
   });
 
   it("per-call statuses survive the batch: one ok + one error, correct tool_finished events", async () => {

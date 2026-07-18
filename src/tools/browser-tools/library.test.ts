@@ -111,9 +111,15 @@ describe("3-place sync: enum, prose, read-only classification", () => {
   });
 
   it("new_tab accepts a 'urls' array (C4 multi-open) and the prose sells the one-call form", () => {
-    const urls = BROWSER_TOOL_PARAMETERS.properties.urls as { type: string; items: { type: string }; description: string };
+    const urls = BROWSER_TOOL_PARAMETERS.properties.urls as {
+      type: string;
+      maxItems: number;
+      items: { type: string; maxLength: number };
+      description: string;
+    };
     expect(urls.type).toBe("array");
-    expect(urls.items).toEqual({ type: "string" });
+    expect(urls.maxItems).toBe(10);
+    expect(urls.items).toEqual({ type: "string", maxLength: 2048 });
     expect(urls.description).toContain("new_tab");
     // Single-url form stays intact for backward compatibility.
     expect((BROWSER_TOOL_PARAMETERS.properties.url as { type: string }).type).toBe("string");

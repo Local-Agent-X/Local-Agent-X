@@ -46,8 +46,8 @@ import {
 import {
 	ElectronInAppBackend,
 	EvaluateBlockedError,
-	IN_APP_NO_DIALOG,
 } from "./in-app-backend.js";
+import { IN_APP_NO_DIALOG } from "./in-app-page-io.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { handleNewTab } from "../tools/browser-tools/navigation.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";

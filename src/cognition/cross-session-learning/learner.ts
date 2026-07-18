@@ -10,6 +10,7 @@ import type {
 } from "./types.js";
 import {
   DEFAULT_MIN_OCCURRENCES,
+  CANDIDATE_SURFACE_COOLDOWN_DAYS,
   MAX_ACTIONS,
   MS_PER_DAY,
   PRUNE_AGE_DAYS,
@@ -30,6 +31,7 @@ import {
 } from "./suggestions.js";
 import { fuzzyMatch } from "./text-utils.js";
 import type { ModuleSignal } from "../../orchestrator/types.js";
+import { formatLearningCandidateNudge } from "../../memory/curate-nudge.js";
 
 export class CrossSessionLearner {
   private static instance: CrossSessionLearner;
@@ -174,14 +176,40 @@ export class CrossSessionLearner {
     return fuzzyMatch(a, b);
   }
 
-  /** Orchestrator signal: the most-recurring cross-session pattern, if any. */
-  signalsFor(): ModuleSignal[] {
+  private nextLearningCandidate(now: number): LearnedCandidate | null {
     const patterns = this.detectPatterns(3);
-    // Only surface patterns with recent evidence — a frozen legacy data file
-    // must never be injected as live user behavior.
-    const staleCutoff = Date.now() - PRUNE_AGE_DAYS * MS_PER_DAY;
-    const top = patterns.find((p) => p.lastSeen > staleCutoff);
-    if (!top) return [];
-    return [{ source: "cross-session-learning", signal: `Recurring pattern: ${top.description} (seen ${top.occurrences}x)`, priority: 3, category: "pattern", confidence: 1.0 }];
+    const staleCutoff = now - PRUNE_AGE_DAYS * MS_PER_DAY;
+    for (const pattern of patterns) {
+      if (
+        pattern.lastSeen <= staleCutoff
+        || pattern.type !== "workflow"
+        || pattern.automationEligible !== true
+      ) continue;
+      const candidate = this.captureCandidate(pattern, now);
+      if (!candidate || candidate.state !== "candidate" || candidate.confidence < 0.75) continue;
+      if (candidate.surfaceCooldownUntil && now < candidate.surfaceCooldownUntil) continue;
+      if (
+        candidate.lastSurfacedOccurrences !== undefined
+        && pattern.occurrences <= candidate.lastSurfacedOccurrences
+      ) continue;
+
+      const index = this.data.candidates.findIndex((entry) => entry.id === candidate.id);
+      const surfaced = {
+        ...this.data.candidates[index],
+        lastSurfacedAt: now,
+        lastSurfacedOccurrences: pattern.occurrences,
+        surfaceCooldownUntil: now + CANDIDATE_SURFACE_COOLDOWN_DAYS * MS_PER_DAY,
+      };
+      this.data.candidates[index] = surfaced;
+      persistData(this.data);
+      return structuredClone(surfaced);
+    }
+    return null;
+  }
+
+  /** Quiet, deduplicated learning signal for the orchestrator prompt path. */
+  signalsFor(mode: "assisted" | "autonomous" = "assisted", now = Date.now()): ModuleSignal[] {
+    const candidate = this.nextLearningCandidate(now);
+    return candidate ? [formatLearningCandidateNudge(candidate, mode)] : [];
   }
 }

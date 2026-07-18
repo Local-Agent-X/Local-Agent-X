@@ -81,6 +81,9 @@ export interface LearnedCandidate {
   createdAt: number;
   updatedAt: number;
   rejectionCooldownUntil?: number;
+  lastSurfacedAt?: number;
+  lastSurfacedOccurrences?: number;
+  surfaceCooldownUntil?: number;
   transitions: CandidateTransition[];
 }
 
@@ -104,6 +107,7 @@ export const MAX_ACTIONS = 5000;
 export const DEFAULT_MIN_OCCURRENCES = 3;
 export const PRUNE_AGE_DAYS = 30;
 export const REJECTION_COOLDOWN_DAYS = 30;
+export const CANDIDATE_SURFACE_COOLDOWN_DAYS = 7;
 export const MS_PER_DAY = 86400000;
 
 export const STOP_WORDS = new Set([

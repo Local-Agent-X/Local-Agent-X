@@ -131,9 +131,16 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
   });
 
   it("still emits a signal for a genuinely recent recurring pattern", async () => {
-    const fresh = Array.from({ length: 20 }, (_, i) =>
-      action("tool", FRESH_TS + i, i)
-    );
+    const fresh: ActionEntry[] = Array.from({ length: 3 }, (_, i) => ({
+      opId: `fresh-${i}`,
+      sessionId: `session-${i}`,
+      type: "op_outcome",
+      details: "coding:read -> edit",
+      timestamp: FRESH_TS + i,
+      outcome: "clean",
+      category: "coding",
+      tools: ["read", "edit"],
+    }));
     writeDataFile(fresh, NOW);
 
     const { CrossSessionLearner } = await import(
@@ -142,7 +149,7 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
     const signals = CrossSessionLearner.getInstance().signalsFor();
 
     expect(signals.length).toBe(1);
-    expect(signals[0].signal).toContain("Recurring pattern");
+    expect(signals[0].signal).toContain("ready for review");
   });
 
   it("persists only structural outcome evidence", async () => {

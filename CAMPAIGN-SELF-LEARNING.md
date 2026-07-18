@@ -34,7 +34,7 @@ Build a native Local-Agent-X closed learning loop that turns successful repeated
 | C6 | Learning modes and management API | C5 | pending |
 | C7 | Usage and effectiveness feedback | C5 | pending |
 | C8 | Safe refinement and rollback | C7 | pending |
-| C9 | Learning nudges | C3 | pending |
+| C9 | Learning nudges | C3 | green |
 | C10 | Learning graph API | C6 | pending |
 | C11 | Learning graph UI | C10 | pending |
 | C12 | Cross-seam integration and final gate | C6-C11 | pending |
@@ -48,6 +48,7 @@ None.
 - C1 adversarial review drove lifecycle, identity, and ordering fixes: session identity is captured before terminal release; unknown sessions remain unknown rather than manufacturing conversation provenance; receipts preserve repeated ordered steps; op-id upsert makes writes idempotent; and evidence persists only after a successful terminal transition. Core 56 tests, forced-terminal 5 tests, TypeScript, diff checks, and final refutation passed.
 - C2 verification: 14 focused tests, TypeScript, diff checks, and final adversarial refutation passed. Failure receipts cannot leak into parallel automation detectors; recent regressions lower confidence.
 - C3 verification: 19 focused tests, TypeScript, diff checks, persistence reload, and adversarial refutation passed. Refutation caught unstable evidence-count IDs and meaningless archive revival; identities now use semantic anchors, rejected candidates observe a 30-day cooldown, and archived candidates require explicit restoration.
+- C9 verification: 45 focused tests, TypeScript, diff checks, live-mode routing, and adversarial refutation passed. Assisted learning surfaces only reliable workflow candidates, requires stronger evidence plus an expired cooldown before resurfacing, and respects rejection state; autonomous learning emits at most one low-priority activity note and never requests review.
 
 ## Completion buckets
 
@@ -56,6 +57,7 @@ None.
 - C1: committed outcome evidence with stable session provenance, ordered tool receipts, forced-terminal coverage, and op-id idempotency. Focused tests and independent refutation green.
 - C2: outcome-aware pattern mining with distinct-session confidence, recency weighting, failure exclusion, and collision-safe workflow grouping.
 - C3: durable learned-candidate records with stable IDs, evidence snapshots, confidence, validated lifecycle transitions, rejection cooldowns, archive suppression, and transition history.
+- C9: quiet mode-aware learning nudges with durable deduplication, evidence-growth gating, cooldowns, rejection memory, and low-priority autonomous activity signals.
 
 ### Parked for user
 

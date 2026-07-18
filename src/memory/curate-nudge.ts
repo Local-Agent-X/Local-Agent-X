@@ -35,6 +35,8 @@
  */
 
 import { createLogger } from "../logger.js";
+import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
+import type { ModuleSignal } from "../orchestrator/types.js";
 
 const logger = createLogger("memory.curate-nudge");
 
@@ -159,6 +161,28 @@ export function hasCurateSignal(sessionId: string): boolean {
  */
 export function resetSession(sessionId: string): void {
   sessions.delete(sessionId);
+}
+
+export function formatLearningCandidateNudge(
+  candidate: LearnedCandidate,
+  mode: "assisted" | "autonomous",
+): ModuleSignal {
+  if (mode === "autonomous") {
+    return {
+      source: "cross-session-learning",
+      signal: `Learning activity: identified reusable workflow "${candidate.suggestion.name}". Continue silently.`,
+      priority: 1,
+      category: "learning-activity",
+      confidence: candidate.confidence,
+    };
+  }
+  return {
+    source: "cross-session-learning",
+    signal: `Reusable workflow ready for review: "${candidate.suggestion.name}". Mention it once without interrupting the current task.`,
+    priority: 3,
+    category: "learning-candidate",
+    confidence: candidate.confidence,
+  };
 }
 
 // ── Nudge formatting ──

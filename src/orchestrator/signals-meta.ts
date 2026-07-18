@@ -4,13 +4,14 @@ import { MilestoneCelebrator } from "../cognition/milestone-celebrations.js";
 import { CorrectionLearner } from "../cognition/correction-learning.js";
 import { ContradictionDetector } from "../cognition/contradiction-detector.js";
 import type { CognitiveSignal } from "./types.js";
+import { getRuntimeConfig } from "../config.js";
 
 export const metaSignals: CognitiveSignal[] = [
   {
     id: "cross-session-learning",
     scope: "profile",
     triage: ({ msgCount }) => (msgCount % 5 === 0 ? "conditional" : null),
-    run: (_input, out) => out.push(...crossSessionLearner.signalsFor()),
+    run: (_input, out) => out.push(...crossSessionLearner.signalsFor(getRuntimeConfig().learningMode)),
     health: () => CrossSessionLearner.getInstance(),
   },
 

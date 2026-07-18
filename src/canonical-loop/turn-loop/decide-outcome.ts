@@ -176,8 +176,15 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // turn that emits a JSON-only tool call ends with end_turn but empty text —
   // this guard keeps that case on the wrap-up path so its result feeds back.
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
+  const hasSilentBrowser = allSilent && toolCalls.some(call => call.tool === "browser");
   const noTools = toolCalls.length === 0;
   const mutationCommitted = failureSummary.hadSuccessfulMutation;
+  // Browser actions are only no-signal fallback terminators. `tool_use` /
+  // `tool_calls` means the model wants their result, so ending here cuts off
+  // multi-step work after navigate/click/scroll. Other silent tools are truly
+  // fire-and-forget: voice_visual must not trigger duplicate speech, and
+  // memory writes need no follow-up turn even if a weak provider says continue.
+  const silentTerminates = allSilent && !(hasSilentBrowser && modelWantsToContinue);
   // P-1 FIX — honor the model's explicit continue signal. When the model
   // emitted a tool_use / tool_calls (modelWantsToContinue), it is asking for
   // another turn; a mutation that committed this turn must NOT terminate the op,
@@ -203,7 +210,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     terminalReason === null &&
     !middlewareAborted &&
     !middlewareSuspended &&
-    (modelSignaledDone || allSilent || noTools || mutationTerminates) &&
+    (modelSignaledDone || silentTerminates || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
   ) {
     terminalReason = "done";

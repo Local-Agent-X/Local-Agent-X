@@ -305,6 +305,116 @@ describe("decideTurnOutcome — P-1 FIX: honor the model's continue signal", () 
   });
 });
 
+describe("decideTurnOutcome — silent browser actions honor explicit continuation", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const scrollCall: ToolCall = {
+    toolCallId: "browser-scroll-1",
+    tool: "browser",
+    args: { action: "scroll", direction: "down" },
+  };
+  const scrollOk: CommitTurnMessage = {
+    messageId: "tr-browser-scroll-1",
+    role: "tool",
+    content: { toolCallId: "browser-scroll-1", text: "[ok]\nscrolled" },
+  } as unknown as CommitTurnMessage;
+  const scrollSummary = [{ tool: "browser", toolCallId: "browser-scroll-1" }] as unknown as ToolCallSummary[];
+  const browserScroll = (over: Partial<DecideOutcomeInput> = {}) =>
+    input({
+      toolCalls: [scrollCall],
+      toolMessages: [scrollOk],
+      toolSummary: scrollSummary,
+      assistantText: "I opened the three sites. I'll scroll this page and continue comparing them.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+      ...over,
+    });
+
+  it("keeps running after a narrated scroll when the model paused for the tool result", async () => {
+    const r = await decideTurnOutcome(browserScroll());
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("preserves the silent-tool shortcut when the adapter supplied no continue signal", async () => {
+    const r = await decideTurnOutcome(browserScroll({ modelWantsToContinue: false }));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("still trusts an explicit end signal for a narrated silent browser action", async () => {
+    const r = await decideTurnOutcome(browserScroll({
+      modelSignaledDone: true,
+      modelWantsToContinue: false,
+    }));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("keeps voice_visual fire-and-forget even when the provider says continue", async () => {
+    const visualCall: ToolCall = {
+      toolCallId: "voice-visual-1",
+      tool: "voice_visual",
+      args: { kind: "mood", value: "happy" },
+    };
+    const r = await decideTurnOutcome(input({
+      toolCalls: [visualCall],
+      toolMessages: [{
+        messageId: "tr-voice-visual-1",
+        role: "tool",
+        content: { toolCallId: "voice-visual-1", text: "[ok]" },
+      } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "voice_visual", toolCallId: "voice-visual-1" }] as unknown as ToolCallSummary[],
+      assistantText: "That sounds wonderful.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    }));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("keeps running when a mixed silent batch includes a browser action", async () => {
+    const visualCall: ToolCall = {
+      toolCallId: "voice-visual-mixed-1",
+      tool: "voice_visual",
+      args: { kind: "mood", value: "focused" },
+    };
+    const r = await decideTurnOutcome(browserScroll({
+      toolCalls: [scrollCall, visualCall],
+      toolMessages: [
+        scrollOk,
+        {
+          messageId: "tr-voice-visual-mixed-1",
+          role: "tool",
+          content: { toolCallId: "voice-visual-mixed-1", text: "[ok]" },
+        } as unknown as CommitTurnMessage,
+      ],
+      toolSummary: [
+        { tool: "browser", toolCallId: "browser-scroll-1" },
+        { tool: "voice_visual", toolCallId: "voice-visual-mixed-1" },
+      ] as unknown as ToolCallSummary[],
+    }));
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("keeps memory writes fire-and-forget even when the provider says continue", async () => {
+    const memoryCall: ToolCall = {
+      toolCallId: "memory-save-1",
+      tool: "memory_save",
+      args: { fact: "The user prefers concise answers." },
+    };
+    const r = await decideTurnOutcome(input({
+      toolCalls: [memoryCall],
+      toolMessages: [{
+        messageId: "tr-memory-save-1",
+        role: "tool",
+        content: { toolCallId: "memory-save-1", text: "[ok]\nsaved" },
+      } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "memory_save", toolCallId: "memory-save-1" }] as unknown as ToolCallSummary[],
+      assistantText: "I'll remember that.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    }));
+    expect(r.terminalReason).toBe("done");
+  });
+});
+
 describe("decideTurnOutcome — live-UI warnings reach the stream (CL-6)", () => {
   beforeEach(() => vi.clearAllMocks());
 

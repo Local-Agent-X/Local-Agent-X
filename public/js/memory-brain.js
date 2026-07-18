@@ -4,5 +4,6 @@
 // ./memory-brain/; this file exposes the public window.MemoryBrain surface.
 
 import { ensure, pause, resume } from './memory-brain/lifecycle.js';
+import { openLearningInspector } from './memory-brain/inspector.js';
 
-window.MemoryBrain = { ensure, pause, resume };
+window.MemoryBrain = { ensure, pause, resume, openLearningInspector };

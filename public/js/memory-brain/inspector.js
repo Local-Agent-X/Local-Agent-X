@@ -55,6 +55,72 @@ export function closeInspector() {
   if (panel) panel.style.display = 'none';
 }
 
+export function openLearningInspector(item, onAction) {
+  panel = panel || document.getElementById('mb-inspector');
+  if (!panel) return;
+  panel.replaceChildren();
+
+  const head = el('div', 'mbi-head');
+  const title = el('div', 'mbi-title');
+  title.textContent = item.name;
+  const sub = el('div', 'mbi-sub');
+  sub.textContent = [item.state, confidenceLabel(item.confidence)].filter(Boolean).join(' · ');
+  const close = el('button', 'mbi-close');
+  close.textContent = '×';
+  close.onclick = closeInspector;
+  head.append(title, sub, close);
+  panel.append(head);
+
+  appendDetailSection(panel, 'Evidence', item.evidence);
+  appendDetailSection(panel, 'History', item.history);
+
+  const versions = Array.isArray(item.versions) ? item.versions : [];
+  const versionsSection = el('div', 'learned-inspector-section');
+  const versionsLabel = el('div', 'learned-inspector-label');
+  versionsLabel.textContent = 'Versions';
+  versionsSection.append(versionsLabel);
+  for (const version of versions) {
+    const row = el('div', 'learned-inspector-version');
+    const label = el('span');
+    label.textContent = version.name || version.id || 'Version';
+    row.append(label);
+    if (version.id !== item.activeVersionId && item.state !== 'archived') {
+      const rollback = el('button', 'learned-inspector-action');
+      rollback.textContent = 'Roll back';
+      rollback.onclick = () => onAction('rollback', version.id);
+      row.append(rollback);
+    }
+    versionsSection.append(row);
+  }
+  if (!versions.length) {
+    const empty = el('div', 'learned-inspector-copy');
+    empty.textContent = 'No prior versions.';
+    versionsSection.append(empty);
+  }
+  panel.append(versionsSection);
+  panel.style.display = '';
+}
+
+function appendDetailSection(parent, label, value) {
+  const section = el('div', 'learned-inspector-section');
+  const heading = el('div', 'learned-inspector-label');
+  heading.textContent = label;
+  const copy = el('div', 'learned-inspector-copy');
+  copy.textContent = detailText(value);
+  section.append(heading, copy);
+  parent.append(section);
+}
+
+function detailText(value) {
+  if (Array.isArray(value)) return value.map((entry) => typeof entry === 'string' ? entry : JSON.stringify(entry)).join('\n');
+  if (value && typeof value === 'object') return JSON.stringify(value, null, 2);
+  return value ? String(value) : 'None recorded.';
+}
+
+function confidenceLabel(value) {
+  return Number.isFinite(value) ? Math.round(value * 100) + '% confidence' : '';
+}
+
 async function expandRow(row, id, textEl) {
   if (row.dataset.expanded) {
     textEl.textContent = textEl.dataset.snippet;

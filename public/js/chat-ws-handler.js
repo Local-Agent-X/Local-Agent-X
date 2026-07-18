@@ -84,6 +84,9 @@ function handleChatWsMessage(e) {
   }
 
   if (msg.type === 'settings_changed' && msg.settings) handleSettingsChanged(msg);
+  if (msg.type === 'learning_changed' && typeof window.refreshLearnedWorkflows === 'function') {
+    window.refreshLearnedWorkflows();
+  }
   if (msg.type === 'sidebar_pins_changed' && msg.pins) handleSidebarPinsChanged(msg);
   if (msg.type === 'sidebar_clear_chats') handleSidebarClearChats(msg);
 

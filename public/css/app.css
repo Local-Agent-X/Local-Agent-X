@@ -654,6 +654,27 @@ body.platform-win .settings-overlay{top:32px}
 .learning-mode-control button{font-family:var(--mono);font-size:.7rem;padding:7px 12px;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
 .learning-mode-control button[aria-checked="true"]{background:var(--active);color:var(--accent)}
 .learning-mode-card>.field-hint{flex-basis:100%;margin-top:-10px}
+.learned-workflows-card{padding-bottom:14px}
+.learned-workflows-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.learned-workflows-status{font-family:var(--mono);font-size:.62rem;color:var(--muted);white-space:nowrap;padding-top:3px}
+.learned-workflows-list{display:grid;gap:7px;margin-top:12px}
+.learned-workflow-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);cursor:pointer}
+.learned-workflow-row:hover{border-color:var(--accent)}
+.learned-workflow-main{flex:1;min-width:0}
+.learned-workflow-name{font-size:.76rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.learned-workflow-meta{font-family:var(--mono);font-size:.59rem;color:var(--muted);margin-top:3px}
+.learned-workflow-state{font-family:var(--mono);font-size:.58rem;color:var(--accent);text-transform:uppercase;letter-spacing:.5px}
+.learned-workflow-actions{display:flex;gap:5px;flex-shrink:0}
+.learned-workflow-actions button,.learned-inspector-action{font-family:var(--mono);font-size:.58rem;padding:4px 7px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);cursor:pointer}
+.learned-workflow-actions button:hover,.learned-inspector-action:hover{border-color:var(--accent);color:var(--accent)}
+.learned-workflow-actions .reject:hover{border-color:var(--danger);color:var(--danger)}
+.learned-workflows-empty{padding:12px 2px;font-size:.72rem;color:var(--muted)}
+.learned-inspector-section{padding:12px 18px;border-bottom:1px solid var(--border)}
+.learned-inspector-label{font-family:var(--mono);font-size:.59rem;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:7px}
+.learned-inspector-copy{font-size:.7rem;color:var(--text);line-height:1.5;white-space:pre-wrap}
+.learned-inspector-version{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--border)}
+.learned-inspector-version:first-of-type{border-top:0}
+.learned-inspector-version span{flex:1;font-family:var(--mono);font-size:.62rem;color:var(--text)}
 .settings-content{flex:1;overflow-y:auto;padding:24px 28px}
 /* Narrow viewports: modal goes fullscreen, nav rail becomes a horizontal
    scroller across the top. */

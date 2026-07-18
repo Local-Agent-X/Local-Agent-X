@@ -28,7 +28,7 @@
  */
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { browserDialogs, browserExec, browserNavigate, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
+import { browserDialogs, browserExec, browserLifecycle, browserNavigate, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
 import { formatConsoleReport, formatNetworkReport } from "./bridge-perception.js";
 import {
 	closeOwnedTabs,
@@ -70,6 +70,9 @@ import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend
 import type { BrowserEngine } from "./launcher.js";
 import type { Page } from "playwright";
 import { createInAppSecretOps, type SecretBrowserOps } from "./secret-ops.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("browser.in-app-backend");
 
 /** The engine label surfaced in getInfo/screenshot output. */
 const IN_APP_ENGINE = "electron";
@@ -208,17 +211,52 @@ export class ElectronInAppBackend implements BrowserBackend {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
 		const minted = this.isActive();
+		const prevActive = this.activeTab; // rollback target — openOwned moves the active pointer
 		const tab = minted ? this.tabs.openOwned() : this.activeTab;
 		try {
 			await this.ensureView(tab);
 		} catch (e) {
-			if (minted) this.tabs.remove(tab); // roll back the tab that never materialized
+			if (minted) this.rollbackMintedTab(tab, prevActive); // roll back the tab that never materialized
 			throw e;
 		}
-		const result = await browserNavigate(tab.viewId, url);
+		let result;
+		try {
+			result = await browserNavigate(tab.viewId, url);
+		} catch (e) {
+			// The view materialized but the navigation itself failed (bridge
+			// timeout, DNS): without rollback a ghost blank tab would stay in
+			// the list AND remain active. Close the created view (tolerating an
+			// already-gone view, like closeOwnedTabs), drop the tab, restore
+			// the previous active pointer, and rethrow — callers (including
+			// multi-URL new_tab's per-URL loop) rely on the throw.
+			// minted === false is the first-tab materialization: today's
+			// behavior stands — the first tab is never rolled back.
+			if (minted) {
+				tab.closed = true;
+				tab.created = false;
+				try {
+					await browserLifecycle("close", tab.viewId);
+				} catch (closeErr) {
+					logger.warn(`[in-app] rollback close failed (viewId=${tab.viewId}): ${(closeErr as Error).message}`);
+				}
+				this.rollbackMintedTab(tab, prevActive);
+			}
+			throw e;
+		}
 		tab.state.url = result.url;
 		tab.state.title = result.title;
 		return navigationReport(`Opened new tab (${this.tabs.all().length} tabs total)\nURL: `, result, requestedHost);
+	}
+
+	/** Drop a tab minted by openOwned for a new_tab that failed, and put the
+	 *  active pointer back on the tab that was active before the call.
+	 *  TabList.remove only CLAMPS activeIdx (it would land on the new last
+	 *  tab, not necessarily the previous active), so the restore is explicit.
+	 *  Minted tabs are never index 0 — openOwned pushes onto a non-empty
+	 *  list — so remove's never-remove-the-first-tab guard cannot fire here. */
+	private rollbackMintedTab(tab: InAppTab, prevActive: InAppTab): void {
+		this.tabs.remove(tab);
+		this.tabs.setActive(prevActive);
 	}
 
 	async observe(): Promise<BrowserObservation> {

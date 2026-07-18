@@ -744,6 +744,61 @@ describe("ElectronInAppBackend (A1)", () => {
 			expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t3`, expect.anything());
 		});
 
+		it("a navigate failure on a minted tab rolls it back: view closed, no ghost row, previous tab active, error propagates", async () => {
+			await backend.navigate(PAGE_URL);
+			vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("bridge timeout"));
+			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("bridge timeout");
+			// The view DID materialize — rollback must close it.
+			const closed = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "close").map(([, id]) => id);
+			expect(closed).toEqual([`${VIEW_ID}-t2`]);
+			// Tab count back to pre-call — no ghost blank tab.
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("1 tab(s) open:");
+			// Active pointer back on the tab that was active BEFORE the call.
+			await backend.screenshot();
+			expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
+		});
+
+		it("navigate-failure rollback restores the tab active BEFORE the call, not just the last tab", async () => {
+			await backend.navigate(PAGE_URL); // first tab
+			await backend.newTab(PAGE_URL); // -t2 becomes active
+			await backend.switchTab(0); // back to the FIRST tab (not the last)
+			vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("bridge timeout"));
+			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("bridge timeout");
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("2 tab(s) open:");
+			// A clamp-only rollback would leave -t2 (the new last tab) active;
+			// the FIRST tab was active before the call and must be active again.
+			await backend.screenshot();
+			expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
+		});
+
+		it("multi-URL sequence: the LAST url's navigate failure leaves the last SUCCESSFUL tab active and the count honest", async () => {
+			// Backend-level regression for multi-URL new_tab's per-URL loop:
+			// three urls, the last fails with a navigate throw → 2 tabs open
+			// ("Opened 2 of 3"), listing agrees, trailing snapshot targets the
+			// last successful tab — never a ghost blank tab.
+			await backend.newTab(PAGE_URL); // materializes the first tab
+			await backend.newTab(PAGE_URL); // -t2
+			vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("dns failure"));
+			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("dns failure");
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("2 tab(s) open:");
+			await backend.screenshot();
+			expect(browserCapture).toHaveBeenCalledWith(`${VIEW_ID}-t2`);
+		});
+
+		it("a navigate failure while materializing the FIRST tab keeps today's behavior — no rollback of the first tab", async () => {
+			vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("bridge timeout"));
+			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("bridge timeout");
+			// The first tab stays materialized and active — never closed.
+			const closed = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "close");
+			expect(closed).toHaveLength(0);
+			expect(backend.isActive()).toBe(true);
+			const tabs = await backend.listTabs();
+			expect(tabs).toContain("1 tab(s) open:");
+		});
+
 		it("sensitive user rows are withheld in the listing and on switch (same rule as page-ops)", async () => {
 			const vaultView = {
 				...USER_VIEW,

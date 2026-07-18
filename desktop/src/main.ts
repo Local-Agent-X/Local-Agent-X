@@ -27,6 +27,7 @@ import { createWindow, getMainWindow, isStuckOnSplash, showWindow, toggleWindow,
 import { setupApplicationMenu } from "./app-menu";
 import { registerHotkey, registerPanicHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
+import { disposeAllTerminals } from "./terminal-pty";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
 import { runReconcile, killReconcileStepsSync } from "./reconcile";
@@ -373,6 +374,7 @@ app.on("activate", () => showWindow());
 
 app.on("before-quit", () => {
   setQuitting(true);
+  disposeAllTerminals();
 });
 
 app.on("will-quit", () => {

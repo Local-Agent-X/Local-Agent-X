@@ -14,16 +14,20 @@ function switchSidePanelTab(tab) {
   var agentsBody = document.getElementById('agents-tab-body');
   var artifactsBody = document.getElementById('artifacts-tab-body');
   var browserBody = document.getElementById('browser-tab-body');
+  var terminalBody = document.getElementById('terminal-tab-body');
   var agentsTab = document.getElementById('side-tab-agents');
   var artifactsTab = document.getElementById('side-tab-artifacts');
   var browserTab = document.getElementById('side-tab-browser');
+  var terminalTab = document.getElementById('side-tab-terminal');
   var autoBtn = document.getElementById('agent-feeds-autoopen-toggle');
   if (agentsBody) agentsBody.style.display = tab === 'agents' ? '' : 'none';
   if (artifactsBody) artifactsBody.style.display = tab === 'artifacts' ? '' : 'none';
   if (browserBody) browserBody.style.display = tab === 'browser' ? '' : 'none';
+  if (terminalBody) terminalBody.style.display = tab === 'terminal' ? '' : 'none';
   if (agentsTab) agentsTab.classList.toggle('active', tab === 'agents');
   if (artifactsTab) artifactsTab.classList.toggle('active', tab === 'artifacts');
   if (browserTab) browserTab.classList.toggle('active', tab === 'browser');
+  if (terminalTab) terminalTab.classList.toggle('active', tab === 'terminal');
   // AUTO (auto-open on agent spawn) only makes sense on the agents tab.
   if (autoBtn) autoBtn.style.display = tab === 'agents' ? '' : 'none';
   if (tab === 'artifacts') loadArtifacts(false);
@@ -33,6 +37,7 @@ function switchSidePanelTab(tab) {
     if (tab === 'browser') window.laxBrowserTab.onTabShown();
     else window.laxBrowserTab.onTabHidden();
   }
+  if (tab === 'terminal' && window.laxTerminalPanel) window.laxTerminalPanel.onTabShown();
 }
 
 function loadArtifacts(force) {

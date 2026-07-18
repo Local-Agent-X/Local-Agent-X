@@ -26,9 +26,11 @@ import {
   stopNativeSpeech,
 } from "./native-speech";
 import { setupBrowserIPC } from "./browser-ipc";
+import { setupTerminalIPC } from "./terminal-pty";
 
 export function setupIPC(): void {
   setupBrowserIPC();
+  setupTerminalIPC();
   ipcMain.handle("get-server-status", async () => {
     return {
       running: await isServerRunning(),

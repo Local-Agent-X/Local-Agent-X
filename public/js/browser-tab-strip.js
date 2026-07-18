@@ -51,17 +51,18 @@
 		if (!slot) return;
 		views = views || [];
 		slot.innerHTML = '';
-		slot.style.display = 'flex';
-		slot.style.gap = '4px';
 		for (var i = 0; i < views.length; i++) {
 			(function (v) {
 				var pill = document.createElement('button');
-				pill.className = 'artifact-filter' +
+				pill.className = 'browser-strip-tab' +
 					(v.viewId === opts.selectedViewId ? ' active' : '');
 				pill.title = v.viewId + (v.url ? ('\n' + v.url) : '') +
 					(v.agentDriven ? '\n(agent-driven)' : '');
 				pill.setAttribute('data-view-id', v.viewId);
+				pill.setAttribute('role', 'tab');
+				pill.setAttribute('aria-selected', v.viewId === opts.selectedViewId ? 'true' : 'false');
 				var name = document.createElement('span');
+				name.className = 'browser-tab-label';
 				name.textContent = stripLabel(v);
 				pill.appendChild(name);
 				pill.addEventListener('click', function () {
@@ -74,8 +75,6 @@
 					x.textContent = '✕';
 					x.setAttribute('data-close-view-id', v.viewId);
 					x.title = 'Close tab';
-					x.style.marginLeft = '6px';
-					x.style.opacity = '0.6';
 					x.addEventListener('click', function (e) {
 						// Don't let the close bubble into pill select.
 						e.stopPropagation();
@@ -87,7 +86,7 @@
 			})(views[i]);
 		}
 		var plus = document.createElement('button');
-		plus.className = 'artifact-filter';
+		plus.className = 'browser-new-tab';
 		plus.textContent = '+';
 		plus.title = 'New tab';
 		plus.setAttribute('data-strip-new-tab', '');

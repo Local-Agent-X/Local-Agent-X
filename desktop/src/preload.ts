@@ -192,6 +192,25 @@ contextBridge.exposeInMainWorld("desktop", {
     },
   },
 
+  terminal: {
+    create: (cols: number, rows: number): Promise<void> =>
+      ipcRenderer.invoke("terminal-create", cols, rows),
+    write: (data: string): Promise<void> => ipcRenderer.invoke("terminal-write", data),
+    resize: (cols: number, rows: number): Promise<void> =>
+      ipcRenderer.invoke("terminal-resize", cols, rows),
+    dispose: (): Promise<void> => ipcRenderer.invoke("terminal-dispose"),
+    onData: (cb: (data: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: string) => cb(data);
+      ipcRenderer.on("terminal-data", listener);
+      return () => ipcRenderer.removeListener("terminal-data", listener);
+    },
+    onExit: (cb: (event: { exitCode: number; signal?: number }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, exit: { exitCode: number; signal?: number }) => cb(exit);
+      ipcRenderer.on("terminal-exit", listener);
+      return () => ipcRenderer.removeListener("terminal-exit", listener);
+    },
+  },
+
   // Server-crash signal: main fires "server-crashed" when the spawned
   // node server exits uncleanly (OOM / SIGKILL / nonzero code). The
   // renderer can subscribe to clear stuck "typing…" state and show a

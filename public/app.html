@@ -37,7 +37,8 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb26"/>
+<link rel="stylesheet" href="/css/app.css?v=vb27"/>
+<link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
      Import map lets `import * as THREE from 'three'` resolve cleanly in
@@ -313,6 +314,7 @@
         <button class="side-panel-tab active" id="side-tab-agents" onclick="switchSidePanelTab('agents')">AGENTS <span id="agent-count" class="agent-count">0</span></button>
         <button class="side-panel-tab" id="side-tab-artifacts" onclick="switchSidePanelTab('artifacts')">ARTIFACTS</button>
         <button class="side-panel-tab" id="side-tab-browser" onclick="switchSidePanelTab('browser')">BROWSER</button>
+        <button class="side-panel-tab" id="side-tab-terminal" onclick="switchSidePanelTab('terminal')">TERMINAL</button>
         <button id="agent-feeds-autoopen-toggle" class="agent-feeds-autoopen on" onclick="toggleAgentFeedsAutoOpen()" title="Auto-open this panel when an agent spawns. Click to toggle.">AUTO</button>
       </div>
       <div id="agents-tab-body" class="side-tab-body">
@@ -330,7 +332,8 @@
            by Electron main; #browser-view-anchor only reserves space and
            browser-tab.js reports its rect + visibility over window.desktop.browser. -->
       <div id="browser-tab-body" class="side-tab-body" style="display:none;position:relative">
-        <div id="browser-address-bar" style="display:flex;align-items:center;gap:6px;padding:8px;border-bottom:1px solid var(--border);flex-shrink:0">
+        <div id="browser-view-switcher-slot" class="browser-tab-strip" role="tablist" aria-label="Browser tabs"></div>
+        <div id="browser-address-bar" class="browser-toolbar">
           <button id="browser-nav-back" class="artifact-filter" onclick="window.laxBrowserTab&&laxBrowserTab.goBack()" title="Back" disabled>&#8592;</button>
           <button id="browser-nav-fwd" class="artifact-filter" onclick="window.laxBrowserTab&&laxBrowserTab.goForward()" title="Forward" disabled>&#8594;</button>
           <button id="browser-nav-reload" class="artifact-filter" onclick="window.laxBrowserTab&&laxBrowserTab.reload()" title="Reload">&#8635;</button>
@@ -338,7 +341,6 @@
           <!-- Address-bar suggestions: recent history urls, refreshed by browser-library.js
                on tab-shown + panel open (no per-keystroke queries). -->
           <datalist id="browser-url-suggestions"></datalist>
-          <div id="browser-view-switcher-slot"></div>
           <button id="browser-profiles-btn" class="artifact-filter" onclick="window.laxBrowserProfiles&&laxBrowserProfiles.toggle()" title="Browser profiles &amp; saved logins">Profiles</button>
           <button id="browser-library-btn" class="artifact-filter" onclick="window.laxBrowserLibrary&&laxBrowserLibrary.toggle()" title="Bookmarks &amp; history">Library</button>
         </div>
@@ -350,6 +352,14 @@
         <!-- Library (bookmarks + history) overlay — same occlusion contract as the
              profiles panel above. Populated by browser-library.js. -->
         <div id="browser-library-panel" style="display:none;position:absolute;inset:0;z-index:5;background:var(--bg);overflow:auto"></div>
+      </div>
+      <div id="terminal-tab-body" class="side-tab-body terminal-panel" style="display:none">
+        <div class="terminal-tab-strip">
+          <div class="terminal-strip-tab active"><span class="terminal-status-dot"></span><span>Terminal</span></div>
+          <button id="terminal-restart" class="terminal-new-session" type="button" title="Start a fresh terminal" aria-label="Start a fresh terminal">+</button>
+        </div>
+        <div id="terminal-host" class="terminal-host" aria-label="Terminal"></div>
+        <div id="terminal-unavailable" class="terminal-unavailable" style="display:none">Terminal requires the desktop app</div>
       </div>
     </div>
   </div>
@@ -1473,11 +1483,14 @@
 <script src="/js/chat-agent-feeds-autoopen.js?v=v1"></script>
 <script src="/js/chat-agent-feeds.js?v=v6"></script>
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
-<script src="/js/chat-artifacts.js?v=v1"></script>
+<script src="/js/chat-artifacts.js?v=v2"></script>
 <script src="/js/browser-tab-strip.js?v=v1"></script>
 <script src="/js/browser-tab.js?v=v1"></script>
 <script src="/js/browser-profiles.js?v=v1"></script>
 <script src="/js/browser-library.js?v=v1"></script>
+<script src="/vendor/xterm/xterm.js?v=v1"></script>
+<script src="/vendor/xterm/addon-fit.js?v=v1"></script>
+<script src="/js/terminal-panel.js?v=v1"></script>
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
 <script src="/js/chat-status-bar.js?v=v5"></script>
 <script src="/js/chat-composer-menus.js?v=v1"></script>

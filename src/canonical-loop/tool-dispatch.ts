@@ -35,6 +35,18 @@ export function envelopeStatusToDispatchStatus(status: ToolResultStatus): ToolDi
 
 export interface ToolDispatcher {
   dispatch(call: ToolCall): Promise<ToolDispatchResult>;
+  /**
+   * OPTIONAL turn-level batch dispatch. When present, the turn loop hands the
+   * whole tool_call_requested list here in ONE call so the underlying runtime
+   * (tool-execution's executeToolCalls) can apply its own parallel/serial
+   * batching — adjacent parallel-safe grouping, R4-09 gate-atomicity splits.
+   * Contract: results come back in the SAME ORDER as `calls`, one result per
+   * call, and the method never throws (per-call failures surface as
+   * status:"error" results). Implementations that only ever see one call at a
+   * time (agent-runner fakes, NotConfiguredToolDispatcher, tests) simply omit
+   * it and the turn loop falls back to the per-call `dispatch` loop.
+   */
+  dispatchBatch?(calls: ToolCall[]): Promise<ToolDispatchResult[]>;
 }
 
 export class NotConfiguredToolDispatcher implements ToolDispatcher {

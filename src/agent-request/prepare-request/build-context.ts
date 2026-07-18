@@ -11,6 +11,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { MemoryManager } from "../../memory/index.js";
 import { buildTurnContextCached } from "../turn-context-cache.js";
 import { createLogger } from "../../logger.js";
+import { getLearnedProtocolSuggestion } from "../../protocols/learned-suggestion.js";
 
 const logger = createLogger("agent-request.prepare-request.context");
 
@@ -104,6 +105,14 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     memoryContext = "";
     knownProjectsFound = false;
     logger.info(`[chat] weak tier ${input.resolvedModel} — stripped memory/profile context to prevent roleplay drift`);
+  }
+
+  // Learned workflow selection runs for every user turn. Keep the hint separate
+  // from memory stripping and intentionally omit the protocol body: the model
+  // must load the canonical, verified protocol through the protocol tool.
+  const learnedSuggestion = getLearnedProtocolSuggestion(input.message);
+  if (learnedSuggestion) {
+    smartContext = [smartContext, learnedSuggestion.nudge].filter(Boolean).join("\n\n");
   }
 
   return { contextBlock, relevantMemories, smartContext, memoryContext, notifications, knownProjectsFound };

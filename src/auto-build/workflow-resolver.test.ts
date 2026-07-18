@@ -128,6 +128,29 @@ describe("Product Build continuation resolver", () => {
     });
   });
 
+  it("prefers authoritative live session state over a stale workflow bridge", () => {
+    const result = resolveAppBuildContinuation("owner", sources({
+      workflows: [workflow("owner", "running", "C:\\Apps\\Old", "op-stale")],
+      active: [{
+        projectDir: "C:\\Apps\\Actual",
+        opId: "op-live",
+        sessionId: "owner",
+        startedAt: Date.now(),
+      }],
+    }));
+
+    expect(result).toMatchObject({
+      kind: "resolved",
+      action: "build_plan_status",
+      adopted: false,
+      candidate: {
+        phase: "running",
+        projectDir: "C:\\Apps\\Actual",
+        opId: "op-live",
+      },
+    });
+  });
+
   it("routes valid halted and abandoned states to resume", () => {
     for (const phase of ["halted", "abandoned"] as const) {
       const projectDir = `C:\\Apps\\${phase}`;

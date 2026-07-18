@@ -320,6 +320,22 @@ function collectCandidates(
     .filter((candidate): candidate is AppBuildContinuationCandidate => candidate?.adoptable === true);
 }
 
+function collectLiveSessionCandidates(
+  sessionId: string,
+  sources: AppBuildContinuationSources,
+  workflows: AppBuildWorkflow[],
+  registered: RegistryEntry[],
+  active: ActiveOrchestrationSummary[],
+): AppBuildContinuationCandidate[] {
+  const projects = new Map<string, string>();
+  active.filter(item => item.sessionId === sessionId).forEach(item => {
+    projects.set(normalizeAppBuildProjectDir(item.projectDir), item.projectDir);
+  });
+  return [...projects.values()].map(projectDir =>
+    candidateFromEvidence(evidenceForProject(projectDir, workflows, registered, active), sources),
+  ).filter((candidate): candidate is AppBuildContinuationCandidate => candidate !== null);
+}
+
 /**
  * Resolve durable Product Build state only. Message intent remains owned by
  * request preparation; callers use this result before generic app routing.
@@ -335,6 +351,17 @@ export function resolveAppBuildContinuation(
   }
   const registered = sanitizeList(sources.listRegistered(), sanitizeRegistryEntry);
   const active = sanitizeList(sources.listActive(), sanitizeActive);
+
+  const liveSessionCandidates = collectLiveSessionCandidates(
+    sessionId, sources, workflows, registered, active,
+  );
+  if (liveSessionCandidates.length === 1) {
+    const candidate = liveSessionCandidates[0];
+    return { kind: "resolved", action: candidate.action, candidate, adopted: false };
+  }
+  if (liveSessionCandidates.length > 1) {
+    return { kind: "ambiguous", action: null, candidates: liveSessionCandidates };
+  }
 
   if (workflow) {
     const candidate = candidateForWorkflow(workflow, sources, workflows, registered, active);

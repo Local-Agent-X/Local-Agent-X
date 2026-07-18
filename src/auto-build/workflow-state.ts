@@ -83,8 +83,8 @@ function requireOptionalString(field: "projectDir" | "opId", value: unknown): st
   return value.trim();
 }
 
-function normalizeProjectDirForMatch(projectDir: string): string {
-  const normalized = projectDir.replace(/\\/g, "/").replace(/\/+$/, "");
+export function normalizeAppBuildProjectDir(projectDir: string): string {
+  const normalized = projectDir.trim().replace(/\\/g, "/").replace(/\/+$/, "");
   const windowsPath = /^[a-z]:\//i.test(normalized) || normalized.startsWith("//");
   return windowsPath ? normalized.toLowerCase() : normalized;
 }
@@ -130,13 +130,13 @@ export function createAppBuildWorkflowStore(
   function query(filters: AppBuildWorkflowQuery = {}): AppBuildWorkflow[] {
     const projectDir = filters.projectDir === undefined
       ? undefined
-      : normalizeProjectDirForMatch(filters.projectDir);
+      : normalizeAppBuildProjectDir(filters.projectDir);
     return store.load().workflows.filter(workflow =>
       (filters.sessionId === undefined || workflow.sessionId === filters.sessionId)
       && (filters.phase === undefined || workflow.phase === filters.phase)
       && (projectDir === undefined || (
         workflow.projectDir !== undefined
-        && normalizeProjectDirForMatch(workflow.projectDir) === projectDir
+        && normalizeAppBuildProjectDir(workflow.projectDir) === projectDir
       ))
       && (filters.opId === undefined || workflow.opId === filters.opId));
   }

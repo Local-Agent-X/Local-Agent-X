@@ -17,6 +17,7 @@ import {
 } from "../canonical-loop/index.js";
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
+import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 
@@ -100,6 +101,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   setImmediate(() => {
     const t = Date.now();
     try {
+      const restored = restorePersistedAppBuildRuntimes();
       const recovered = sweepStaleCanonicalOps();
       const dt = Date.now() - t;
       if (recovered.length > 0) {
@@ -108,7 +110,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
           .join(", ");
         logger.info(`[canonical-loop] background sweep recovered ${recovered.length} stale op(s) in ${dt}ms: ${summary}`);
       } else {
-        logger.info(`[canonical-loop] background sweep completed in ${dt}ms (no stale ops)`);
+        logger.info(`[canonical-loop] background sweep completed in ${dt}ms (restored ${restored.length} app build runtime(s), no stale ops)`);
       }
     } catch (e) {
       logger.warn(`[canonical-loop] background sweep failed: ${(e as Error).message}`);

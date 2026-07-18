@@ -3,18 +3,21 @@ import { hasCapability } from "../tool-registry.js";
 import { blocked } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
 import type { CallContext } from "./context.js";
+import { sessionWorkRootOf } from "../workspace/paths.js";
 
 export function unattendedShellBlock(
   toolName: string,
   callContext: CallContext,
+  sessionId?: string,
 ): ToolResult | null {
   if (!hasCapability(toolName, "shell") || callContext === "local") return null;
 
   const sandbox = getSandboxStatus();
+  const scopedDelegatedRun = callContext === "delegated" && !!sessionId && !!sessionWorkRootOf(sessionId);
   const contextAllowed = callContext === "cron"
     ? sandbox.cronShellAllowed
     : callContext === "delegated"
-      ? sandbox.delegatedShellAllowed
+      ? sandbox.delegatedShellAllowed || scopedDelegatedRun
       : sandbox.apiShellAllowed;
   if (contextAllowed) return null;
 

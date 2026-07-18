@@ -8,9 +8,10 @@ function opId(): string { return `op-rf-test-${++_op}`; }
 function ctxFor(
   op: string,
   results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled" }>,
+  lane: "interactive" | "build" = "build",
 ): CanonicalLoopContext {
   return {
-    op: { id: op },
+    op: { id: op, lane },
     toolResults: results.map((r) => ({ ...r, toolCallId: "tc" })),
   } as unknown as CanonicalLoopContext;
 }
@@ -30,14 +31,14 @@ describe("repeat-failure breaker", () => {
     expect((await run(op, [fail()])).kind).toBe("continue");
     const r3 = await run(op, [fail()]);
     expect(r3.kind).toBe("nudge");
-    expect((r3 as { message: string }).message).toContain("3 times in a row");
+    expect((r3 as { message: string }).message).toContain("unresolved failure 3 times");
   });
 
-  it("aborts at 5 consecutive identical failures", async () => {
+  it("suspends an autonomous worker at 5 unresolved identical failures", async () => {
     const op = opId();
     for (let i = 0; i < 4; i++) await run(op, [fail()]);
     const r5 = await run(op, [fail()]);
-    expect(r5.kind).toBe("abort");
+    expect(r5.kind).toBe("suspend");
   });
 
   it("a success resets the streak", async () => {
@@ -48,6 +49,41 @@ describe("repeat-failure breaker", () => {
     // Two more failures: streak restarts at 1, no nudge yet.
     await run(op, [fail()]);
     expect((await run(op, [fail()])).kind).toBe("continue");
+  });
+
+  it("an unrelated successful read does not hide an unresolved shell block", async () => {
+    const op = opId();
+    const blocked = {
+      toolName: "bash",
+      content: "[blocked, layer=\"sandbox\"] BLOCKED (unattended): bash cannot execute",
+      status: "blocked" as const,
+    };
+    for (let i = 0; i < 4; i++) {
+      await run(op, [blocked]);
+      await run(op, [{ toolName: "read", content: "file contents", status: "ok" }]);
+    }
+    expect((await run(op, [blocked])).kind).toBe("suspend");
+  });
+
+  it("groups shell-backed tools under one unresolved capability failure", async () => {
+    const op = opId();
+    const names = ["bash", "app_serve_frontend", "process_start", "bash", "app_serve_frontend"];
+    let result: Awaited<ReturnType<typeof run>> | undefined;
+    for (const toolName of names) {
+      result = await run(op, [{
+        toolName,
+        content: `[blocked, layer=\"sandbox\"] BLOCKED (unattended): ${toolName} cannot execute`,
+        status: "blocked",
+      }]);
+    }
+    expect(result?.kind).toBe("suspend");
+  });
+
+  it("keeps abort semantics for interactive turns", async () => {
+    const op = opId();
+    for (let i = 0; i < 4; i++) await run(op, [fail()]);
+    const r5 = await repeatFailureMiddleware.afterToolExecution!(ctxFor(op, [fail()], "interactive"));
+    expect(r5.kind).toBe("abort");
   });
 
   it("a DIFFERENT error restarts the count (progressing retries aren't punished)", async () => {

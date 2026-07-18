@@ -90,6 +90,21 @@ export interface OpRetryPolicy {
   backoffMs: number[];
 }
 
+export interface AppBuildRuntimeDescriptor {
+  kind: "app-build";
+  strategy: "cli-subprocess" | "in-canonical-sub-agent";
+  provider: string;
+  appName: string;
+  appDir: string;
+  appUrl: string;
+  prompt: string;
+  brief: string;
+  systemPrompt: string;
+  adapterSessionId?: string;
+  model?: string;
+  tier?: "quick-html" | "frontend-spa" | "full-stack" | "compiled-native";
+}
+
 export interface Op {
   id: string;
   type: string;                           // "build_app" | "research" | "self_edit" | freeform
@@ -97,6 +112,7 @@ export interface Op {
   contextPack: ContextPack;
   lane: OpLane;
   retryPolicy: OpRetryPolicy;
+  runtimeDescriptor?: AppBuildRuntimeDescriptor;
   ownerId: string;
   visibility: OpVisibility;
   projectId?: string;

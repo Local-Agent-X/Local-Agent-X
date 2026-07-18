@@ -249,7 +249,7 @@ function renderAgentCard(agent, childrenHtml) {
   var outputLines = output.split('\n').filter(function(l) { return l.trim().length > 0; });
   var initialToolCount = outputLines.length;
   var latestLine = outputLines.length > 0 ? outputLines[outputLines.length - 1] : '';
-  var isPaused = status === 'paused';
+  var isPaused = status === 'paused' || status === 'blocked' || status === 'stalled';
   // Terminal cards fold to a one-line row by default (the "calm" feature). The
   // full body stays in the DOM (CSS hides it) so updateAgentFeed's targeted
   // writes + the 1s resync never miss their selectors — a late trailing event

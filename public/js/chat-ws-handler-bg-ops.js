@@ -86,6 +86,7 @@ function handleBgOpProgress(msg) {
       // turn_committed's usage. Drives the card's token bar. Absent for ops
       // that don't emit canonical turn usage → the bar simply stays empty.
       var upd = { output: (msg.event.line || '') + '\n', lastActivityMs: Date.now() };
+      if (msg.event.status) upd.status = msg.event.status;
       if (typeof msg.event.totalTokens === 'number') upd.totalTokens = msg.event.totalTokens;
       updateAgentFeed(msg.event.opId, upd);
     }

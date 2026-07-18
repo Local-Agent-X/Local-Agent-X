@@ -8,9 +8,10 @@
  * timer — could overrun their budget indefinitely (the 2026-06-01 nudge
  * runaway that ran ~6 minutes past a 5-minute cap).
  *
- * A long-streaming adapter that never finishes naturally is submitted with a
- * tiny budget; the worker must fire opCancel("wall-clock-ceiling") and the op
- * must reach `cancelled`.
+ * A long-streaming interactive adapter that never finishes naturally is
+ * submitted with a tiny budget. The worker must classify the deadline as a
+ * failure, not misreport it as a user cancellation. Autonomous lanes are
+ * governed by progress watchdogs and suspend resumable work instead.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, rmSync } from "node:fs";
@@ -71,7 +72,7 @@ function mkOp(maxWallTimeMs: number): Op {
   };
 }
 
-async function awaitState(opId: string, target: "cancelled", timeoutMs = 3_000): Promise<void> {
+async function awaitState(opId: string, target: "failed", timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const op = readOp(opId);
@@ -85,7 +86,7 @@ async function awaitState(opId: string, target: "cancelled", timeoutMs = 3_000):
 }
 
 describe("canonical-loop — wall-clock ceiling", () => {
-  it("cancels an overrunning op via the worker using the op's budget", async () => {
+  it("fails an overrunning interactive op without classifying it as user-cancelled", async () => {
     const op = mkOp(100);
     const adapter = new FakeAdapter({
       script: [scriptLongStreamingTurn({ chunkIntervalMs: 25, maxChunks: 200 })],
@@ -93,12 +94,11 @@ describe("canonical-loop — wall-clock ceiling", () => {
     registerAdapterForOp(op.id, () => adapter);
 
     canonicalLoopEntry(op);
-    await awaitState(op.id, "cancelled", 3_000);
+    await awaitState(op.id, "failed", 3_000);
 
     const events = readCanonicalEvents(op.id);
-    const cancelReq = events.find(e => e.type === "cancel_requested");
-    expect(cancelReq, "cancel_requested missing — ceiling never fired").toBeDefined();
-    const body = (cancelReq?.body ?? {}) as { actor?: string };
-    expect(body.actor).toBe("wall-clock-ceiling");
+    expect(events.some(e => e.type === "cancel_requested")).toBe(false);
+    const deadline = events.find(e => e.type === "error" && e.body?.code === "deadline_exceeded");
+    expect(deadline, "deadline_exceeded error missing").toBeDefined();
   });
 });

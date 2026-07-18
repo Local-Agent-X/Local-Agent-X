@@ -28,6 +28,7 @@ import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./t
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak, recoverContextOverflow, clearOverflowAttempts } from "./turn-loop/adapter-throw-recovery.js";
 import { classify } from "../errors/classifier.js";
+import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
@@ -39,7 +40,6 @@ export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
 // turn). In-memory by design: a worker crash/recovery resets the count, and
 // op recovery has its own bound (heartbeat.ts retryPolicy). Cleared on any
 // successful model call and when the cap is hit.
-
 export async function driveTurn(
   op: Op,
   adapter: Adapter,
@@ -93,6 +93,8 @@ export async function driveTurn(
   if (beforeRes.kind === "abort") {
     return middlewareAbortResult(op, turnIdx, beforeRes);
   }
+  const beforeSuspension = suspendedTurn(beforeRes);
+  if (beforeSuspension) return beforeSuspension;
   if (beforeRes.kind === "nudge") {
     appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message);
     // Fall through — next read of op_messages (buildTurnInput, below) picks
@@ -123,7 +125,6 @@ export async function driveTurn(
     onTimeout: () => {
       idleFired = true;
       adapterError = { code: "stalled", message: `no adapter reports for ${idleMs}ms — model presumed stuck` };
-      emit(op.id, "error", { code: "stalled", message: adapterError.message, retryable: false });
       // Fire-and-forget — don't await; runTurn may still need a beat to
       // unwind. The reason propagates through the abort signal so
       // transports that watch reason (warm-pool kill on /idle|stalled|stop/)
@@ -251,7 +252,10 @@ export async function driveTurn(
       firedBy: afterModelRes.firedBy ?? "unknown",
       message: afterModelRes.message,
     };
+  } else {
+    middlewareDirective = middlewareSuspension(afterModelRes);
   }
+  middlewareDirective ??= idleSuspension(op.lane, reportedError);
 
   const toolDispatchStart = Date.now();
   // If a middleware aborted, skip tool dispatch — same effect as agent-
@@ -296,6 +300,8 @@ export async function driveTurn(
         firedBy: afterToolRes.firedBy ?? "unknown",
         message: afterToolRes.message,
       };
+    } else {
+      middlewareDirective = middlewareSuspension(afterToolRes);
     }
   }
 
@@ -387,9 +393,7 @@ export async function driveTurn(
           kind: middlewareDirective.kind,
           reason: middlewareDirective.reason,
           firedBy: middlewareDirective.firedBy,
-          message: middlewareDirective.kind === "nudge"
-            ? middlewareDirective.message
-            : middlewareDirective.message,
+          message: middlewareDirective.message,
         }
       : undefined,
   };

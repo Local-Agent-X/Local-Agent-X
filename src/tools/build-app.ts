@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSetting } from "../settings.js";
-import { workspacePath, workspaceRoot } from "../config.js";
+import { workspacePath } from "../config.js";
 import type { ToolDefinition } from "../types.js";
 import { PROVIDERS } from "../providers/registry.js";
 import {
@@ -41,53 +41,17 @@ import { getRetryPolicy } from "../ops/heartbeat.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
 import {
   canonicalLoopEntry,
-  registerAdapterForOp,
-  registerToolDispatcherForOp,
-  registerToolsForOp,
   appendOpMessage,
-  makeChatToolDispatcher,
 } from "../canonical-loop/index.js";
-import { createAppBuildAdapter } from "../canonical-loop/public/build-adapters.js";
-import { SecurityLayer } from "../security/index.js";
-import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import type { Op, OpVisibility } from "../ops/types.js";
-import { readTool, writeTool, editTool } from "./file-tools.js";
-import { bashTool } from "./shell-tools.js";
-import { globTool } from "./glob-tool.js";
-import { connectorCreateTool } from "./connector-tools.js";
-import { processStartTool, processStatusTool, processKillTool } from "./process-tools-defs.js";
-import { appServeBackendTool, appServeFrontendTool } from "./dev-server-tools.js";
 import { resolveAppTier, tierLabel, formatClarify, type AppTier } from "./app-tier.js";
 import { checkBuildCollision } from "./build-app-collision.js";
 import { selectDesignBrief } from "./design-brief.js";
 import { recordDesignSpec } from "../canonical-loop/index.js";
-
-/** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
- *  the app-builder template's allowedTools verbatim. */
-const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool, connectorCreateTool];
-
-/**
- * Tools for the in-canonical builder, by tier. Real-build tiers (full-stack,
- * compiled-native) additionally get the process_* tools so the agent can run a
- * long-lived dev server or a multi-minute compile without blocking the turn on
- * bash. No new security surface: the agent already has bash (arbitrary shell),
- * so process_start can't reach anything bash couldn't.
- */
-export function builderToolsForTier(tier: AppTier): typeof BUILDER_AGENT_TOOLS {
-  if (tier === "quick-html") return BUILDER_AGENT_TOOLS;
-  const withProcess = [...BUILDER_AGENT_TOOLS, processStartTool, processStatusTool, processKillTool];
-  // Full-stack and frontend-spa both get the turnkey dev-server primitives: a
-  // real backend (app_serve_backend, connector-wired) and/or a build-step
-  // frontend dev server (app_serve_frontend, reverse-proxied at /apps/<id>/).
-  // A frontend-spa app can also need a backend; a full-stack app can serve a
-  // build-step frontend — so both tiers get both tools.
-  if (tier === "full-stack" || tier === "frontend-spa") {
-    return [...withProcess, appServeBackendTool, appServeFrontendTool];
-  }
-  return withProcess;
-}
+import { registerAppBuildRuntime } from "./build-app-runtime.js";
 
 export const APP_BUILD_OP_TYPE = "app_build";
+export const BUILD_APP_BUDGET = { maxIterations: 50, maxWallTimeMs: 0 } as const;
 
 export interface BuildAppResolveOptions {
   /** ~/.lax/settings.json lookup path — override for tests. */
@@ -285,10 +249,7 @@ export const buildAppTool: ToolDefinition = {
       constraints: [],
       lane: "build",
       preferredProvider: provider,
-      budget: {
-        maxIterations: 50,
-        maxWallTimeMs: 10 * 60 * 1000,
-      },
+      budget: BUILD_APP_BUDGET,
     });
 
     const op: Op = {
@@ -313,6 +274,20 @@ export const buildAppTool: ToolDefinition = {
     if (!isUpdate) recordDesignSpec(op.id, selectDesignBrief(prompt).brief);
 
     const personaPrompt = renderPersonaPrompt();
+    op.runtimeDescriptor = {
+      kind: "app-build",
+      strategy,
+      provider,
+      appName,
+      appDir,
+      appUrl,
+      prompt: cliPrompt,
+      brief: prompt,
+      systemPrompt: personaPrompt,
+      adapterSessionId: sessionId || undefined,
+      model: buildModel,
+      tier,
+    };
 
     // Pre-seed the turn-0 user message with the per-build context so the
     // in-canonical agent sees the exact prompt the legacy CLI received. The
@@ -332,42 +307,7 @@ export const buildAppTool: ToolDefinition = {
       createdAt: new Date().toISOString(),
     });
 
-    if (strategy === "in-canonical-sub-agent") {
-      const builderTools = builderToolsForTier(tier);
-      registerToolsForOp(op.id, builderTools.map(t => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.parameters,
-      })));
-      // Anchor the sandbox at the WORKSPACE ROOT (the same value the main chat
-      // path uses), NOT appDir — evaluateFileAccess resolves relative agent
-      // paths as `resolve(workspace, "..", rawPath)`, so passing appDir made a
-      // relative `workspace/apps/<name>/index.html` write resolve to a phantom
-      // doubled path and get blocked. Writes stay confined to appDir via
-      // addAllowedPath; only the relative-path anchor is corrected.
-      const security = new SecurityLayer(workspaceRoot(), loadFileAccessModeAtLeast("common"));
-      security.addAllowedPath(appDir, sessionId || op.id);
-      registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
-        tools: builderTools,
-        security,
-        sessionId: sessionId || op.id,
-        callContext: "delegated",
-        opId: op.id,
-      }));
-    }
-    registerAdapterForOp(op.id, () => createAppBuildAdapter({
-      strategy,
-      provider,
-      appName,
-      appDir,
-      appUrl,
-      prompt: cliPrompt,
-      brief: prompt,
-      systemPrompt: personaPrompt,
-      sessionId: sessionId || undefined,
-      model: buildModel,
-      tier,
-    }));
+    registerAppBuildRuntime(op, op.runtimeDescriptor);
 
     canonicalLoopEntry(op, sessionId ? { sessionId } : {});
 

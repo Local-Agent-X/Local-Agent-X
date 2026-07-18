@@ -127,6 +127,7 @@ export type CanonicalMiddlewareResult =
   | { kind: "continue" }
   | { kind: "nudge"; message: string; reason: string }
   | { kind: "abort"; reason: string; message?: string }
+  | { kind: "suspend"; reason: string; message: string }
   | { kind: "retry-iteration"; reason?: string };
 
 export interface CanonicalMiddleware {

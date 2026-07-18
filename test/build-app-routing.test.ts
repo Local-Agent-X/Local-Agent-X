@@ -29,12 +29,12 @@ vi.mock("../src/config.js", async (importOriginal) => {
 
 import {
   buildAppTool,
-  builderToolsForTier,
   pickForcedProviderFromRuntime,
   resolveBuildProvider,
   resolveBuildStrategy,
   APP_BUILD_OP_TYPE,
 } from "../src/tools/build-app.js";
+import { builderToolsForTier } from "../src/tools/build-app-runtime.js";
 import { checkBuildCollision } from "../src/tools/build-app-collision.js";
 import { AgentTemplateStore } from "../src/agent-store/index.js";
 import { TOOLS } from "../src/tool-registry.js";

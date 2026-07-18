@@ -31,7 +31,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
   if (!tool) return CONTINUE;
 
-  const shellBlock = unattendedShellBlock(tc.name, ctx.callContext);
+  const shellBlock = unattendedShellBlock(tc.name, ctx.callContext, sessionId);
   if (shellBlock) {
     ctx.result = shellBlock;
     return CONTINUE;

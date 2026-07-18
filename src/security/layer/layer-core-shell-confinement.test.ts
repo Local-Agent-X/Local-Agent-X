@@ -54,6 +54,11 @@ describe("bash obeys the file-access mode (shell path guard)", () => {
     }
   });
 
+  it.runIf(process.platform === "win32")("does not mistake native slash switches for root paths", () => {
+    const sec = new SecurityLayer(WORKSPACE, "common");
+    expect(bash(sec, 'findstr /s /i /n "logout" *.ts').allowed).toBe(true);
+  });
+
   it("workspace mode: redirect to /dev/null is not mistaken for an escape", () => {
     const sec = new SecurityLayer(WORKSPACE, "workspace");
     expect(bash(sec, "echo hi > /dev/null").allowed).toBe(true);

@@ -41,12 +41,16 @@ const {
   readOpMessages,
   resetCanonicalRuntime,
   resetScheduler,
+  opResume,
 } = await import("./index.js");
 const { readOp } = await import("../ops/op-store.js");
+const { setMiddlewareStack, _resetMiddlewareStack } = await import("./middlewares/host.js");
+const { repeatFailureMiddleware } = await import("./middlewares/repeat-failure.js");
 
 afterAll(() => {
   resetCanonicalRuntime();
   resetScheduler();
+  _resetMiddlewareStack();
 });
 
 const TOOL_CALL: ToolCall = {
@@ -110,6 +114,42 @@ function fullTurnOp(): Op {
   };
 }
 
+function resumableBuildAdapter(): Adapter {
+  return {
+    name: "fake-resumable-build",
+    version: "1",
+    async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
+      const providerState = { adapterName: "fake-resumable-build", adapterVersion: "1", providerPayload: null };
+      if (input.turnIdx < 5) {
+        const call: ToolCall = { toolCallId: `shell-${input.turnIdx}`, tool: "bash", args: { command: "npm run build" } };
+        report({ kind: "tool_call_requested", call });
+        report({
+          kind: "message_finalized",
+          message: { messageId: `am-shell-${input.turnIdx}`, role: "assistant", content: { text: "", toolCalls: [call] } },
+        });
+        return { providerState, modelStop: "continue" };
+      }
+      report({
+        kind: "message_finalized",
+        message: { messageId: "am-resumed", role: "assistant", content: { text: "Build complete after resume." } },
+      });
+      return { providerState, terminalReason: "done", modelStop: "ended" };
+    },
+    async abort(): Promise<void> { /* scripted turns unwind immediately */ },
+  };
+}
+
+async function waitForState(opId: string, state: string): Promise<Op> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const current = readOp(opId);
+    if (current?.canonical?.state === state) return current;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const current = readOp(opId);
+  throw new Error(`op ${opId} did not reach ${state}; current=${current?.canonical?.state}, turn=${current?.canonical?.currentTurnIdx}`);
+}
+
 describe("canonical-loop full turn — entry → scheduler → worker → turn-loop → terminal", () => {
   it("drives a tool-call turn plus a wrap-up turn to succeeded with the full transcript persisted", async () => {
     const dispatch = vi.fn(async (_call: ToolCall) => ({
@@ -145,5 +185,35 @@ describe("canonical-loop full turn — entry → scheduler → worker → turn-l
     // (3) The dispatcher ran exactly once, with the model's requested call.
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith(TOOL_CALL);
+  }, 15_000);
+
+  it("suspends a blocked build and resumes the same op from its next turn", async () => {
+    setMiddlewareStack([repeatFailureMiddleware]);
+    setToolDispatcher(functionToolDispatcher(async () => ({
+      status: "blocked" as const,
+      result: { error: "BLOCKED (unattended): sandbox unavailable" },
+    })));
+
+    const op = fullTurnOp();
+    op.id = `op-resumable-build-${randomUUID().slice(0, 8)}`;
+    op.type = "app_build";
+    op.lane = "build";
+    op.contextPack.routing.lane = "build";
+    registerAdapterForOp(op.id, resumableBuildAdapter);
+    canonicalLoopEntry(op);
+
+    const paused = await waitForState(op.id, "paused");
+    expect(paused.canonical?.suspension?.reason).toBe("blocked");
+    expect(paused.canonical?.currentTurnIdx).toBe(4);
+
+    expect(opResume(op.id, "test")).toEqual({ ok: true });
+    const result = await awaitCanonicalOp(op.id, 10_000);
+    expect(result?.status).toBe("completed");
+    await awaitIdle(5_000);
+
+    const completed = readOp(op.id);
+    expect(completed?.canonical?.state).toBe("succeeded");
+    expect(completed?.canonical?.suspension).toBeNull();
+    expect(completed?.canonical?.currentTurnIdx).toBe(5);
   }, 15_000);
 });

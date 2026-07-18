@@ -27,6 +27,13 @@ import { getSessionForOp } from "../ops/session-bridge.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import type { Op, OpStatus } from "../ops/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
+import {
+  unregisterAdapterForOp,
+  unregisterToolDispatcherForOp,
+  unregisterToolsForOp,
+  unregisterOpBaselineTokens,
+} from "./runtime.js";
+import { clearSessionWorkRoot } from "../workspace/paths.js";
 
 const TRANSITIONS: Record<CanonicalState, ReadonlySet<CanonicalState>> = {
   // queued → failed covers system-level fast-fail (no adapter configured for
@@ -114,6 +121,11 @@ export function transitionOp(
     clearSpecAuditStateForOp(op.id);
     clearEarnedDoneStateForOp(op.id);
     clearOpLedger(op.id);
+    unregisterAdapterForOp(op.id);
+    unregisterToolDispatcherForOp(op.id);
+    unregisterToolsForOp(op.id);
+    unregisterOpBaselineTokens(op.id);
+    clearSessionWorkRoot(op.id);
     // User-configured Stop hooks (~/.lax/hooks.json): the op reached a terminal
     // state — the LAX analog of "the agent finished". Fully detached: a Stop
     // hook observes (notify, log, kick a CI run), it can never block or delay

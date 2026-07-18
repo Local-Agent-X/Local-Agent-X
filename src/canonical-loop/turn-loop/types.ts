@@ -17,7 +17,7 @@ export interface DriveTurnResult {
    * forces the worker to exit and transition the op to failed.
    */
   middlewareDirective?: {
-    kind: "nudge" | "abort";
+    kind: "nudge" | "abort" | "suspend";
     reason: string;
     firedBy: string;
     message?: string;
@@ -42,4 +42,5 @@ export interface DriveTurnOptions {
  *  injected into THIS turn); we don't bubble them up. */
 export type MiddlewareDirective =
   | { kind: "nudge"; reason: string; firedBy: string; message: string }
-  | { kind: "abort"; reason: string; firedBy: string; message?: string };
+  | { kind: "abort"; reason: string; firedBy: string; message?: string }
+  | { kind: "suspend"; reason: string; firedBy: string; message: string };

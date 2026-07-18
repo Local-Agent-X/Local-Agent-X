@@ -191,6 +191,20 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}),
             ...(op?.type ? { opType: op.type } : {}),
           } as ServerEvent);
+        } else if (to === "paused") {
+          const suspension = op?.canonical?.suspension;
+          const status = suspension?.reason === "blocked"
+            ? "blocked"
+            : suspension?.reason === "stalled"
+              ? "stalled"
+              : "paused";
+          broadcastToSession(sessionId, {
+            type: "bg_op_progress",
+            opId: event.opId,
+            status,
+            line: suspension?.detail || "Operation paused",
+            resumable: true,
+          } as ServerEvent);
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
           const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;
           // Surface the worker's ACTUAL final message, not a bare "task

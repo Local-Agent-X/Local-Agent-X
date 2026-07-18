@@ -109,6 +109,11 @@ export interface CanonicalOpFields {
   currentTurnIdx?: number | null;
   currentCheckpointId?: string | null;
   sessionId?: string | null;
+  suspension?: {
+    reason: "blocked" | "stalled" | "interrupted" | "user-paused";
+    detail: string;
+    suspendedAt: string;
+  } | null;
 }
 
 // ── op_turns row (PRD §11) ────────────────────────────────────────────────

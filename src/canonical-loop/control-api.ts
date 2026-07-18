@@ -269,6 +269,7 @@ export function opResume(opId: string, actor: string): ControlResult {
   const now = new Date().toISOString();
   emit(opId, "resume_requested", { actor });
   publishSignal({ kind: "resume", opId, actor, ts: now });
+  if (op.canonical) op.canonical.suspension = null;
   transitionOp(op, "queued", "resumed");
   enqueueOp(op.id, op.lane as CanonicalLane);
   pumpScheduler();

@@ -133,9 +133,12 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // A middleware abort forces the turn to terminal=error so the worker
   // breaks the drive loop.
   const middlewareAborted = middlewareDirective?.kind === "abort";
+  const middlewareSuspended = middlewareDirective?.kind === "suspend";
   let terminalReason: "done" | "error" | null = middlewareAborted
     ? "error"
-    : (adapterTerminalReason ?? (adapterError ? "error" : null));
+    : middlewareSuspended
+      ? null
+      : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
   // Compute the failure summary up front — both the short-circuit below
   // and the gaslighting-nudge block below depend on whether at least one
@@ -193,11 +196,13 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const mutationWasSoleDecider =
     terminalReason === null &&
     !middlewareAborted &&
+    !middlewareSuspended &&
     assistantText.trim().length > 0 &&
     mutationTerminates && !modelSignaledDone && !allSilent && !noTools;
   if (
     terminalReason === null &&
     !middlewareAborted &&
+    !middlewareSuspended &&
     (modelSignaledDone || allSilent || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
   ) {
@@ -211,7 +216,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // the model iterated and ultimately changed something on disk. The
   // existing per-op turn cap bounds the retry.
   let failureNudged = false;
-  if (!middlewareAborted) {
+  if (!middlewareAborted && !middlewareSuspended) {
     if (shouldNudgeForFailures(failureSummary)) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary));
       failureNudged = true;

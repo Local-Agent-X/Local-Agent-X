@@ -48,6 +48,10 @@ const BENIGN_PATHS = new Set([
   "nul", "con", "/dev/fd/1", "/dev/fd/2",
 ]);
 
+const WINDOWS_SLASH_SWITCH_COMMANDS = new Set([
+  "attrib", "cmd", "find", "findstr", "icacls", "reg", "robocopy", "taskkill", "tasklist", "where", "xcopy",
+]);
+
 interface PathToken {
   path: string;
   action: "read" | "write"; // redirect targets gate as writes; everything else as reads
@@ -274,10 +278,16 @@ function extractPathTokens(command: string): PathToken[] {
   const out: PathToken[] = [];
   for (const segment of command.split("|")) {
     const words = segment.trim().split(/\s+/);
+    const verb = (stripQuotes(words[0] ?? "").split(/[\\/]/).pop() || "").toLowerCase().replace(/\.exe$/, "");
     // i starts at 1: skip the executable name (a system binary path is fine).
     for (let i = 1; i < words.length; i++) {
       let raw = words[i];
       if (!raw) continue;
+      if (
+        process.platform === "win32" &&
+        WINDOWS_SLASH_SWITCH_COMMANDS.has(verb) &&
+        /^\/[A-Za-z?][A-Za-z0-9?-]*(?::[^\\/]*)?$/.test(raw)
+      ) continue;
 
       // Redirect operator glued to (or standing before) a path: >f >>f 2>f <f.
       // Capture whether this token is a WRITE target.

@@ -97,6 +97,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   // during turn 0 is caught by the bus subscription.
   const tracker: CancelTracker = startCancelTracker(op, adapter);
   let leaseLost = false;
+  let deadlineExceeded = false;
   let wallClockTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Heartbeat interval: extend the lease periodically. If the lease was
@@ -119,19 +120,14 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
 
   transitionOp(op, "running", "leased");
 
-  // Wall-clock ceiling. Enforced HERE — the one place every entry path
-  // (chat-runner, agent-runner, cron, sub-agents) converges — by reading the
-  // budget the entry runner stamped onto the op. Firing opCancel routes the
-  // stop through the same authority as a user Stop, so the running →
-  // cancelling → cancelled transition and mid-stream adapter.abort() are
-  // identical. Dynamic import avoids the worker → control-api → scheduler →
-  // worker static cycle; the timer path is cold (only fires on overrun).
+  // Interactive requests retain their wall-clock deadline. Autonomous lanes
+  // are governed by progress middleware: long useful work is allowed, while
+  // repeated failures and idle turns suspend the resumable operation.
   const wallClockMs = op.contextPack?.budget?.maxWallTimeMs;
-  if (typeof wallClockMs === "number" && Number.isFinite(wallClockMs) && wallClockMs > 0) {
+  if (op.lane === "interactive" && typeof wallClockMs === "number" && Number.isFinite(wallClockMs) && wallClockMs > 0) {
     wallClockTimer = setTimeout(() => {
-      void import("./control-api.js")
-        .then(({ opCancel }) => opCancel(op.id, "wall-clock-ceiling"))
-        .catch(() => undefined);
+      deadlineExceeded = true;
+      void adapter.abort(new Error("deadline-exceeded")).catch(() => undefined);
     }, wallClockMs);
   }
 
@@ -179,7 +175,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       }
       count++;
       const r = await driveTurn(op, adapter, turnIdx, {
-        isCancelled: () => tracker.cancelled || leaseLost,
+        isCancelled: () => tracker.cancelled || leaseLost || deadlineExceeded,
       });
 
       if (leaseLost) {
@@ -195,6 +191,30 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       if (tracker.cancelled) {
         await finalizeCancel(op, tracker);
         releaseReason = "cancelled";
+        break;
+      }
+
+      if (deadlineExceeded) {
+        releaseReason = "deadline_exceeded";
+        emit(op.id, "error", {
+          code: "deadline_exceeded",
+          message: `interactive operation exceeded maxWallTimeMs=${wallClockMs}`,
+          retryable: true,
+        });
+        recordTerminalOutcome(op, "aborted");
+        transitionOp(op, "failed", "deadline_exceeded");
+        break;
+      }
+
+      if (r.middlewareDirective?.kind === "suspend") {
+        if (!op.canonical) op.canonical = {};
+        op.canonical.suspension = {
+          reason: r.middlewareDirective.reason === "repeat-failure" ? "blocked" : "stalled",
+          detail: r.middlewareDirective.message ?? r.middlewareDirective.reason,
+          suspendedAt: new Date().toISOString(),
+        };
+        transitionOp(op, "paused", `suspended:${r.middlewareDirective.reason}`);
+        releaseReason = "suspended";
         break;
       }
 

@@ -23,6 +23,7 @@ import { setAriRequired } from "../ari-kernel/state.js";
 import { clearSessionTaint, getTaintSummary } from "../data-lineage/index.js";
 import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-store.js";
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
+import { clearSessionWorkRoot, setSessionWorkRoot } from "../workspace/paths.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
 
 // A sensitive path knowable from args: basename `id_rsa` is flagged by
@@ -371,10 +372,11 @@ describe("canonical unattended shell capability gate", () => {
 
   beforeEach(() => setUnconfinedHostAcknowledgement(false));
 
-  async function dispatch(name: string, sessionId: string, callContext: "api" | "delegated" | "cron", acknowledged: boolean) {
+  async function dispatch(name: string, sessionId: string, callContext: "api" | "delegated" | "cron", acknowledged: boolean, workRooted = false) {
     if (acknowledged) setUnconfinedHostAcknowledgement(true);
     sessionId = `${sessionId}-${seq++}`;
     setSessionProfile(sessionId, "Power");
+    if (workRooted) setSessionWorkRoot(sessionId, dataDir);
     const execute = vi.fn(async (): Promise<ToolResult> => ({ content: `executed:${name}` }));
     const tool = {
       name,
@@ -401,6 +403,7 @@ describe("canonical unattended shell capability gate", () => {
       );
       return { execute, content: String(messages[0]?.content ?? "") };
     } finally {
+      clearSessionWorkRoot(sessionId);
       clearSessionProfile(sessionId);
     }
   }
@@ -424,6 +427,12 @@ describe("canonical unattended shell capability gate", () => {
       expect(result.content).toContain(`executed:${name}`);
     });
   }
+
+  it.each(SHELL_BACKENDS)("allows %s for an unacknowledged delegated run confined to a registered work root", async (name) => {
+    const result = await dispatch(name, "worker-app-scoped", "delegated", false, true);
+    expect(result.execute).toHaveBeenCalledOnce();
+    expect(result.content).toContain(`executed:${name}`);
+  });
 
   it("defaults omitted origin metadata to API even for a chat-style session id", async () => {
     const execute = vi.fn(async (): Promise<ToolResult> => ({ content: "executed:shell" }));

@@ -59,6 +59,12 @@ const RECEIPT_KEYS = new Set([
 const MISSING_OP_TTL_MS = 24 * 60 * 60 * 1000;
 let writeHook: ((phase: WritePhase, receipt: Readonly<LearnedOutcomeReceipt>) => void) | undefined;
 
+function terminalAcceptsOutcome(state: string, outcome: LearnedOutcome): boolean {
+  if (state === "succeeded" || state === "completed") return outcome === "clean" || outcome === "partial";
+  if (state === "failed") return outcome === "aborted";
+  return false;
+}
+
 function ledgerDir(): string {
   return resolve(getRuntimeConfig().workspace, "protocols", "effectiveness");
 }
@@ -160,8 +166,7 @@ function sameInput(receipt: LearnedOutcomeReceipt, input: LearnedOutcomeInput): 
     && receipt.slug === input.slug
     && receipt.versionId === input.versionId
     && receipt.candidateId === input.candidateId
-    && receipt.outcome === input.outcome
-    && receipt.timestamp === input.timestamp;
+    && receipt.outcome === input.outcome;
 }
 
 function quarantine(path: string, reason: string): string {
@@ -229,9 +234,21 @@ export function commitLearnedOutcome(opId: string): LearnedOutcomeReceipt {
   });
 }
 
+export function readLearnedOutcome(opId: string): LearnedOutcomeReceipt | null {
+  return withLedgerLock(() => {
+    const path = receiptPath(opId);
+    try { return readReceipt(path); }
+    catch (error) {
+      if (existsSync(path)) quarantine(path, "integrity");
+      throw new Error(`Learned outcome integrity check failed: ${(error as Error).message}`);
+    }
+  });
+}
+
 export function reconcilePendingLearnedOutcomes(
   readOp: (opId: string) => OpSnapshot | null,
   now = Date.now(),
+  onCommitted?: (receipt: Readonly<LearnedOutcomeReceipt>) => void,
 ): EffectivenessReconcileReport {
   return withLedgerLock(() => {
     const report: EffectivenessReconcileReport = { committed: [], retained: [], quarantined: [] };
@@ -242,13 +259,27 @@ export function reconcilePendingLearnedOutcomes(
         report.quarantined.push(quarantine(path, "integrity"));
         continue;
       }
-      if (receipt.status === "committed") continue;
+      if (receipt.status === "committed") {
+        const op = readOp(receipt.opId);
+        const state = op?.canonical?.state ?? op?.status;
+        if (state && TERMINAL.has(state) && !terminalAcceptsOutcome(state, receipt.outcome)) {
+          report.quarantined.push(quarantine(path, "terminal-mismatch"));
+          continue;
+        }
+        onCommitted?.(receipt);
+        continue;
+      }
       const op = readOp(receipt.opId);
       const state = op?.canonical?.state ?? op?.status;
       if (state && TERMINAL.has(state)) {
+        if (!terminalAcceptsOutcome(state, receipt.outcome)) {
+          report.quarantined.push(quarantine(path, "terminal-mismatch"));
+          continue;
+        }
         const committed: LearnedOutcomeReceipt = { ...receipt, status: "committed" };
         writeReceipt(path, committed);
         report.committed.push(receipt.opId);
+        onCommitted?.(committed);
       } else if (!op && now - receipt.timestamp > MISSING_OP_TTL_MS) {
         report.quarantined.push(quarantine(path, "missing-op"));
       } else {

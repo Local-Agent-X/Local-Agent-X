@@ -24,7 +24,7 @@ import { createIdleWatchdog, readIdleTimeoutMs } from "./idle-watchdog.js";
 import { snapshotTouchedApps } from "./snapshot-apps.js";
 import { decideTurnOutcome } from "./decide-outcome.js";
 import { createTurnContextComposer } from "./context-composition.js";
-import { recordCommittedLearningOutcome, resolveLearningSessionId } from "./record-outcome.js";
+import { resolveLearningSessionId } from "./record-outcome.js";
 
 /** Overrides for the collaborators the conductor drives. Every field is
  *  optional; an absent field means "the real module function, resolved at
@@ -66,7 +66,6 @@ export interface TurnLoopDeps {
   /** Terminal-reason decision + commit-message assembly (verify gates live here). */
   decideTurnOutcome?: typeof decideTurnOutcome;
   /** Durable self-learning receipt. Called only after commitTurn succeeds. */
-  recordCommittedLearningOutcome?: typeof recordCommittedLearningOutcome;
   resolveLearningSessionId?: typeof resolveLearningSessionId;
   /** Per-turn CanonicalLoopContext factory — wraps the middleware stack,
    *  evidence history, and per-op tool registry reads. */
@@ -100,7 +99,6 @@ export function resolveTurnLoopDeps(deps: TurnLoopDeps = {}): ResolvedTurnLoopDe
     readIdleTimeoutMs: deps.readIdleTimeoutMs ?? readIdleTimeoutMs,
     snapshotTouchedApps: deps.snapshotTouchedApps ?? snapshotTouchedApps,
     decideTurnOutcome: deps.decideTurnOutcome ?? decideTurnOutcome,
-    recordCommittedLearningOutcome: deps.recordCommittedLearningOutcome ?? recordCommittedLearningOutcome,
     resolveLearningSessionId: deps.resolveLearningSessionId ?? resolveLearningSessionId,
     createTurnContextComposer: deps.createTurnContextComposer ?? createTurnContextComposer,
   };

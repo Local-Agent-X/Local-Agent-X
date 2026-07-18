@@ -56,7 +56,7 @@ export async function driveTurn(
     middlewareAbortResult, buildTurnInput, readPendingRedirect,
     drainInjectsIntoTurn, opConsumesInjects, dispatchTools, createIdleWatchdog,
     readIdleTimeoutMs, snapshotTouchedApps, decideTurnOutcome,
-    createTurnContextComposer, recordCommittedLearningOutcome, resolveLearningSessionId,
+    createTurnContextComposer, resolveLearningSessionId,
   } = resolveTurnLoopDeps(depsIn);
 
   // Snapshot the redirect column from disk BEFORE emitting `turn_started`.
@@ -356,11 +356,9 @@ export async function driveTurn(
     redirectText: pendingRedirect?.text,
     modelMs,
     toolDispatchMs,
+    learnedOutcome: terminalOutcome ?? undefined,
+    learningSessionId: learningSessionId ?? undefined,
   });
-
-  if (terminalOutcome) {
-    recordCommittedLearningOutcome(op, terminalOutcome, learningSessionId!);
-  }
 
   // Tier 1.C: per-turn snapshot of any app files this turn wrote/edited.
   // Powers the IDE topbar's ↺ Revert dropdown so the user can undo a bad

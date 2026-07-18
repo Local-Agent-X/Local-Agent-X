@@ -21,8 +21,7 @@ import { readOp, writeOp, withOpLock } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, isTerminalCanonicalState, IllegalTransitionError } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
-import { recordCommittedLearningOutcome, recordTerminalOutcome } from "./turn-loop/record-outcome.js";
-import { getSessionForOp } from "../ops/session-bridge.js";
+import { recordTerminalOutcome } from "./turn-loop/record-outcome.js";
 import { seedInitialUserMessage } from "./initial-prompt.js";
 import {
   startCancelTracker,
@@ -120,11 +119,6 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   try { ensureAriKernelScope(op.id); } catch { /* the evaluate path still fail-closes */ }
 
   transitionOp(op, "running", "leased");
-  // Terminal transitions synchronously release the live session binding.
-  // Capture its stable identity once while the op is running, then carry it
-  // into every committed forced-terminal learning receipt.
-  const learningSessionId = getSessionForOp(op.id) ?? "";
-
   // Interactive requests retain their wall-clock deadline. Autonomous lanes
   // are governed by progress middleware: long useful work is allowed, while
   // repeated failures and idle turns suspend the resumable operation.
@@ -170,8 +164,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         if (!continuing) {
           releaseReason = "iteration_checkpoint";
           recordTerminalOutcome(op, "partial");
-          transitionOp(op, "succeeded", "iteration_checkpoint");
-          recordCommittedLearningOutcome(op, "partial", learningSessionId);
+          transitionOp(op, "succeeded", "iteration_checkpoint", { learnedOutcome: "partial" });
           break;
         }
         // Autonomous lanes treat maxIterations as a checkpoint cadence. Keep
@@ -208,8 +201,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
           retryable: true,
         });
         recordTerminalOutcome(op, "aborted");
-        transitionOp(op, "failed", "deadline_exceeded");
-        recordCommittedLearningOutcome(op, "aborted", learningSessionId);
+        transitionOp(op, "failed", "deadline_exceeded", { learnedOutcome: "aborted" });
         break;
       }
 
@@ -264,8 +256,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
             retryable: false,
           });
           recordTerminalOutcome(op, "aborted");
-          transitionOp(op, "failed", "max_tokens_exceeded");
-          recordCommittedLearningOutcome(op, "aborted", learningSessionId);
+          transitionOp(op, "failed", "max_tokens_exceeded", { learnedOutcome: "aborted" });
           break;
         }
       }
@@ -344,8 +335,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
           await finalizeCancel(op, tracker);
         } else {
           recordTerminalOutcome(op, "aborted");
-          transitionOp(op, "failed", "worker_exception");
-          recordCommittedLearningOutcome(op, "aborted", learningSessionId);
+          transitionOp(op, "failed", "worker_exception", { learnedOutcome: "aborted" });
         }
       } catch (finalizeErr) {
         // IllegalTransitionError = the op raced to terminal between the guard

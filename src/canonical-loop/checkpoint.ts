@@ -43,6 +43,7 @@ import type {
   ProviderStateEnvelope,
   ToolCallSummary,
 } from "./types.js";
+import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
 
 export interface CommitTurnMessage {
   /** Stable id from the adapter when it finalized the message; auto-generated otherwise. */
@@ -61,6 +62,8 @@ export interface CommitTurnInput {
    *  OpTurnRow.observedTools for categorization; NOT folded into toolCallSummary. */
   observedTools?: string[];
   terminalReason: "done" | "error" | null;
+  learnedOutcome?: LearnedOutcome;
+  learningSessionId?: string;
   /** True if a `pending_redirect` was folded into this turn's prompt. */
   redirectConsumed?: boolean;
   /**
@@ -282,9 +285,15 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   }
 
   if (input.terminalReason === "done") {
-    transitionOp(op, "succeeded", "turn_done");
+    transitionOp(op, "succeeded", "turn_done", {
+      learnedOutcome: input.learnedOutcome,
+      learningSessionId: input.learningSessionId,
+    });
   } else if (input.terminalReason === "error") {
-    transitionOp(op, "failed", "turn_error");
+    transitionOp(op, "failed", "turn_error", {
+      learnedOutcome: input.learnedOutcome,
+      learningSessionId: input.learningSessionId,
+    });
   }
 
   return { turn: turnRow, messages: persistedMsgs, inserted };

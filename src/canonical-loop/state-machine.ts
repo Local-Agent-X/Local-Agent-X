@@ -34,6 +34,13 @@ import {
   unregisterOpBaselineTokens,
 } from "./runtime.js";
 import { clearSessionWorkRoot } from "../workspace/paths.js";
+import {
+  prepareCanonicalLearnedOutcome, commitCanonicalLearnedOutcome, recordCanonicalLearningOutcome,
+} from "./learned-effectiveness.js";
+import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("canonical-loop.state-machine");
 
 const TRANSITIONS: Record<CanonicalState, ReadonlySet<CanonicalState>> = {
   // queued → failed covers system-level fast-fail (no adapter configured for
@@ -83,6 +90,8 @@ export interface TransitionOptions {
    * columns and must not clobber a live worker's heartbeated lease.
    */
   clearLeaseFromOp?: boolean;
+  learnedOutcome?: LearnedOutcome;
+  learningSessionId?: string;
 }
 
 /**
@@ -106,7 +115,25 @@ export function transitionOp(
   op.status = LEGACY_STATUS[to];
   if (to === "running" && !op.startedAt) op.startedAt = new Date().toISOString();
   if (TERMINAL.has(to) && !op.completedAt) op.completedAt = new Date().toISOString();
+  let learnedReceipt: ReturnType<typeof prepareCanonicalLearnedOutcome> = null;
+  const learningSessionId = opts.learnedOutcome
+    ? opts.learningSessionId ?? getSessionForOp(op.id) ?? ""
+    : "";
   if (TERMINAL.has(to)) {
+    // Only callers that explicitly classified the outcome may feed learning.
+    // Generic terminal transitions and user cancellation carry no quality
+    // signal and must not be guessed into clean/aborted evidence.
+    if (opts.learnedOutcome) {
+      try {
+        learnedReceipt = prepareCanonicalLearnedOutcome(
+          op,
+          opts.learnedOutcome,
+          learningSessionId,
+        );
+      } catch (error) {
+        logger.warn(`[learned-effectiveness] prepare failed for ${op.id}: ${(error as Error).message}`);
+      }
+    }
     // Drop per-op middleware state + evidence history on terminal so the
     // canonical-loop registries don't grow unbounded across the process
     // lifetime. Safe to call repeatedly (no-op if state was never set for
@@ -143,6 +170,25 @@ export function transitionOp(
   // (recovery-only) inverts the default lease preservation so the
   // transition's writeOp clears the stale lease atomically.
   persistOpKeepingSignals(op, { preserveLeaseFromDisk: !opts.clearLeaseFromOp });
+
+  if (learnedReceipt) {
+    try { commitCanonicalLearnedOutcome(op, learnedReceipt); }
+    catch (error) {
+      logger.warn(`[learned-effectiveness] commit failed for ${op.id}: ${(error as Error).message}`);
+    }
+  }
+  if (opts.learnedOutcome) {
+    try {
+      recordCanonicalLearningOutcome(
+        op,
+        opts.learnedOutcome,
+        learningSessionId,
+        learnedReceipt?.timestamp,
+      );
+    } catch (error) {
+      logger.warn(`[cross-session-learning] outcome failed for ${op.id}: ${(error as Error).message}`);
+    }
+  }
 
   return emit(op.id, "state_changed", { from, to, reason });
 }

@@ -98,6 +98,6 @@ export function recoverAdapterThrow(op: Op, e: unknown, turnIdx: number): DriveT
   // commitTurn (the normal terminal path) is what transitions running →
   // failed, and this early return skips it — so fail the op explicitly here,
   // or it would stay "running" and re-create the very hang this fixes.
-  transitionOp(op, "failed", "adapter_error_exhausted");
+  transitionOp(op, "failed", "adapter_error_exhausted", { learnedOutcome: "aborted" });
   return { terminalReason: "error", toolCount: 0, messageCount: 0, cancelled: false };
 }

@@ -67,7 +67,6 @@ function makeDeps() {
     readIdleTimeoutMs: vi.fn(() => 600000),
     snapshotTouchedApps: vi.fn(async () => {}),
     decideTurnOutcome: vi.fn(async () => ({ terminalReason: "done" as const, allMessages: [], terminalOutcome: "clean" as const })),
-    recordCommittedLearningOutcome: vi.fn(),
     resolveLearningSessionId: vi.fn(() => "session-stable"),
     createTurnContextComposer: vi.fn(() => ({
       middlewareStack: [],
@@ -89,7 +88,6 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     const isCancelled = vi.fn(() => ++calls >= 3);
     const res = await driveTurn(freshOp(), okAdapter(), 0, { isCancelled }, deps);
     expect(deps.commitTurn).not.toHaveBeenCalled();
-    expect(deps.recordCommittedLearningOutcome).not.toHaveBeenCalled();
     expect(res.cancelled).toBe(true);
     expect(res.terminalReason).toBeNull();
   });
@@ -98,14 +96,28 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     const deps = makeDeps();
     const res = await driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps);
     expect(deps.commitTurn).toHaveBeenCalledTimes(1);
-    expect(deps.recordCommittedLearningOutcome).toHaveBeenCalledTimes(1);
-    expect(deps.recordCommittedLearningOutcome).toHaveBeenCalledWith(
-      expect.any(Object), "clean", "session-stable",
-    );
-    expect(deps.commitTurn.mock.invocationCallOrder[0]).toBeLessThan(
-      deps.recordCommittedLearningOutcome.mock.invocationCallOrder[0],
-    );
+    expect(deps.commitTurn).toHaveBeenCalledWith(expect.objectContaining({
+      learnedOutcome: "clean",
+      learningSessionId: "session-stable",
+    }));
     expect(res.cancelled).toBe(false);
+  });
+
+  it.each([
+    ["partial", "done"],
+    ["aborted", "error"],
+  ] as const)("passes the normal %s outcome into the terminal commit", async (outcome, terminalReason) => {
+    const deps = makeDeps();
+    deps.decideTurnOutcome.mockResolvedValueOnce({
+      terminalReason,
+      allMessages: [],
+      terminalOutcome: outcome,
+    } as never);
+    await driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps);
+    expect(deps.commitTurn).toHaveBeenCalledWith(expect.objectContaining({
+      learnedOutcome: outcome,
+      learningSessionId: "session-stable",
+    }));
   });
 
   it("does not learn a provisional success when commitTurn fails", async () => {
@@ -115,7 +127,6 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     await expect(
       driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps),
     ).rejects.toThrow("disk full");
-    expect(deps.recordCommittedLearningOutcome).not.toHaveBeenCalled();
   });
 });
 

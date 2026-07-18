@@ -46,7 +46,12 @@ function collectToolSequence(opId: string, extraToolNames: Iterable<string> = []
 /** Persist learning evidence only after commitTurn succeeds. Unlike aggregate
  *  telemetry, learned evidence must never observe a provisional terminal state:
  *  cancellation and commit failure can still invalidate it. */
-export function recordCommittedLearningOutcome(op: Op, outcome: OpOutcome, sessionId: string): void {
+export function recordCommittedLearningOutcome(
+  op: Op,
+  outcome: OpOutcome,
+  sessionId: string,
+  timestamp = Date.now(),
+): void {
   const toolSequence = collectToolSequence(op.id);
   const category = classifyOpCategory(new Set(toolSequence));
   const model = resolveOpModel(op);
@@ -57,7 +62,7 @@ export function recordCommittedLearningOutcome(op: Op, outcome: OpOutcome, sessi
     category,
     tools: toolSequence,
     model,
-    timestamp: Date.now(),
+    timestamp,
   });
 }
 

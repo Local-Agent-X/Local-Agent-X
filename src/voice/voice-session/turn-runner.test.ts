@@ -130,4 +130,31 @@ describe("voice turn machine", () => {
 
     expect(h.types()).toContain("playback_complete");
   });
+
+  it("latches an early TTS drain until the LLM finishes", async () => {
+    vi.useFakeTimers();
+    const h = harness({ queued: true });
+    let machine: ReturnType<typeof createVoiceTurnMachine>;
+    const fastTtsRun: VoiceTurnRunner = async ({ onDelta, history }) => {
+      onDelta("Hi.");
+      machine.markTtsDrained();
+      return {
+        assistantText: "Hi.",
+        updatedHistory: [
+          ...history,
+          { role: "user", content: "hello" },
+          { role: "assistant", content: "Hi." },
+        ],
+      };
+    };
+    machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: fastTtsRun, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    await machine.handleFinalTranscript("hello");
+    expect(h.types()).toContain("tts_idle");
+    vi.runAllTimers();
+    expect(h.types()).toContain("playback_complete");
+
+    await machine.handleFinalTranscript("again");
+    expect(h.types().filter((type) => type === "agent_start")).toHaveLength(2);
+  });
 });

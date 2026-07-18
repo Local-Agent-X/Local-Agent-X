@@ -11,7 +11,13 @@ export async function registerProviderAdapter(
 
   if (provider === "anthropic") {
     registerAdapterForOp(opId, () =>
-      createAnthropicAdapter({ systemPrompt, model, sessionId }),
+      createAnthropicAdapter({
+        systemPrompt,
+        model,
+        sessionId,
+        maxTokens,
+        preferDirectHttp: options.preferAnthropicDirectHttp,
+      }),
     );
     return;
   }

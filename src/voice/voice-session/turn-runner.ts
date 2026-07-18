@@ -101,6 +101,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
 
   let activeTurn: AbortController | null = null;
   let llmDone = false;
+  let ttsDrained = false;
+  let drainHandled = false;
   let history: ChatCompletionMessageParam[] = [];
 
   // Proactive utterances (a background op finished / needs input) queued for
@@ -128,6 +130,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   function finishTurn(): void {
     activeTurn = null;
     llmDone = false;
+    ttsDrained = false;
+    drainHandled = false;
     expectedPlaybackEndMs = 0;
   }
 
@@ -148,7 +152,10 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   }
 
   function markTtsDrained(): void {
-    if (isClosed() || !llmDone || !activeTurn) return;
+    if (isClosed() || !activeTurn) return;
+    ttsDrained = true;
+    if (!llmDone || drainHandled) return;
+    drainHandled = true;
     ctx.sendEvent({ type: "tts_idle" });
     clearTimer();
     const delay = Math.max(0, expectedPlaybackEndMs - Date.now() + PLAYBACK_TAIL_MS);
@@ -171,6 +178,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     const turn = new AbortController();
     activeTurn = turn;
     llmDone = false;
+    ttsDrained = false;
+    drainHandled = false;
     turnStartTs = Date.now();
     ttftMs = 0;
     firstAudioMs = 0;
@@ -187,7 +196,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       return;
     }
     llmDone = true;
-    if (speaker.pendingCount && speaker.pendingCount() === 0) markTtsDrained();
+    if (ttsDrained || (speaker.pendingCount && speaker.pendingCount() === 0)) markTtsDrained();
   }
 
   function tryDrainProactive(): void {
@@ -236,6 +245,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     const turn = new AbortController();
     activeTurn = turn;
     llmDone = false;
+    ttsDrained = false;
+    drainHandled = false;
     turnStartTs = Date.now();
     ttftMs = 0;
     firstAudioMs = 0;
@@ -291,7 +302,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       // If the engine can see its queue already emptied (short reply whose TTS
       // outpaced the LLM), finalize now instead of waiting for a drain signal
       // that already fired.
-      if (speaker.pendingCount && speaker.pendingCount() === 0) markTtsDrained();
+      if (ttsDrained || (speaker.pendingCount && speaker.pendingCount() === 0)) markTtsDrained();
     } catch (e) {
       const msg = (e as Error).message || String(e);
       if (turn.signal.aborted) {

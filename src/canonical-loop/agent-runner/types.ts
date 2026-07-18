@@ -3,6 +3,9 @@ import type { AgentOptions } from "../../providers/types.js";
 import type { CallContext } from "../../tool-execution/context.js";
 
 export interface CanonicalAgentOptions extends AgentOptions {
+  /** Interactive surfaces such as voice may use Anthropic's direct HTTP OAuth
+   * transport, matching chat. Background agents omit this and stay on the CLI. */
+  preferAnthropicDirectHttp?: boolean;
   /** Trusted dispatch origin. Omitted non-chat callers default to API. */
   callContext?: CallContext;
   /** Op-level wall-clock ceiling. Replaces caller-side setTimeout-driven

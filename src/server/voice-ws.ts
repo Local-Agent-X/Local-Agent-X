@@ -248,6 +248,11 @@ export async function setupVoiceWs(deps: {
           maxIterations: 8,
           temperature: prepared.temperature,
           maxTokens: VOICE_MAX_TOKENS,
+          // Anthropic text chat already uses direct HTTP OAuth for interactive
+          // turns. Voice must do the same: the CLI warm-pool path is for
+          // background agentic work and can sit silent while a subprocess
+          // starts or wedges, leaving the user with no spoken response.
+          preferAnthropicDirectHttp: true,
           signal,
           onEvent,
           opType: "voice_turn",

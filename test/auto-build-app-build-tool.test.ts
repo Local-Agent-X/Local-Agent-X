@@ -11,12 +11,17 @@
  *   - Required-field validation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FEATURE_FLAG_ENV } from "../src/auto-build/tool.js";
-import { startAppBuildTool, finalizeAppBuildTool } from "../src/auto-build/app-build-tool.js";
+import {
+  createFinalizeAppBuildTool,
+  startAppBuildTool,
+  finalizeAppBuildTool,
+} from "../src/auto-build/app-build-tool.js";
+import type { BuildPlanKickoff } from "../src/auto-build/kickoff.js";
 import { createAppBuildWorkflowStore } from "../src/auto-build/workflow-state.js";
 
 const originalFlag = process.env[FEATURE_FLAG_ENV];
@@ -36,6 +41,14 @@ afterEach(() => {
 // plan_md with the same parser run_build_plan uses).
 const VALID_PLAN =
   "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk\n- **Slice:** initialize the app.\n- **Done when:** boots.";
+
+const noWorkerKickoff: BuildPlanKickoff = async input => ({
+  content: "Build orchestrator started. The chat is free to use.",
+  status: "running",
+  session_id: "op_test",
+  metadata: { op_id: "op_test", project_dir: input.projectDir },
+});
+const testFinalizeAppBuildTool = createFinalizeAppBuildTool(noWorkerKickoff);
 
 describe("start_app_build — feature flag", () => {
   it("is BLOCKED when LAX_AUTO_BUILD_ENABLED is off", async () => {
@@ -104,7 +117,7 @@ describe("start_app_build — happy path", () => {
 describe("finalize_app_build — feature flag", () => {
   it("is BLOCKED when LAX_AUTO_BUILD_ENABLED is off", async () => {
     setFlag(false);
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: "/tmp/nope",
       project_name: "X",
       product_md: "x",
@@ -129,7 +142,7 @@ describe("finalize_app_build — happy path", () => {
 
   it("writes spec/product, constitution, plan, scenarios, README atomically", async () => {
     const projectDir = join(baseDir, "new-project");
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: projectDir,
       project_name: "TestApp",
       product_md: "# Product\n\nA test app.",
@@ -154,12 +167,14 @@ describe("finalize_app_build — happy path", () => {
 
     const readme = readFileSync(join(projectDir, "README.md"), "utf-8");
     expect(readme).toContain("TestApp");
-    expect(readme).toContain("run_build_plan");
+    expect(readme).toContain("Product Build owns orchestration");
+    expect(r.status).toBe("running");
+    expect(r.metadata?.op_id).toBe("op_test");
   });
 
   it("writes architecture.md when supplied", async () => {
     const projectDir = join(baseDir, "p2");
-    await finalizeAppBuildTool.execute({
+    await testFinalizeAppBuildTool.execute({
       project_dir: projectDir,
       project_name: "P2",
       product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
@@ -170,13 +185,20 @@ describe("finalize_app_build — happy path", () => {
     expect(readFileSync(join(projectDir, "spec", "architecture.md"), "utf-8")).toContain("Adapters");
   });
 
-  it("persists finalized workflow identity after materialization", async () => {
+  it("persists running workflow identity only after kickoff succeeds", async () => {
     const dataDir = join(baseDir, "lax-data");
     const projectDir = join(baseDir, "finalized-project");
     const previousDataDir = process.env.LAX_DATA_DIR;
     process.env.LAX_DATA_DIR = dataDir;
     try {
-      const r = await finalizeAppBuildTool.execute({
+      const store = createAppBuildWorkflowStore(join(dataDir, "app-build-workflows.json"));
+      let phaseAtKickoff: string | undefined;
+      const kickoff = vi.fn<BuildPlanKickoff>(async input => {
+        phaseAtKickoff = store.read("finalized-session")?.phase;
+        return noWorkerKickoff(input);
+      });
+      const tool = createFinalizeAppBuildTool(kickoff);
+      const r = await tool.execute({
         project_dir: projectDir,
         project_name: "Finalized",
         product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
@@ -184,8 +206,51 @@ describe("finalize_app_build — happy path", () => {
         _sessionId: "finalized-session",
       });
       expect(r.isError).toBeFalsy();
+      expect(kickoff).toHaveBeenCalledWith({
+        projectDir,
+        sessionId: "finalized-session",
+      });
+      expect(phaseAtKickoff).toBe("finalized");
+      expect(store.read("finalized-session")).toMatchObject({
+        phase: "running",
+        projectDir,
+        opId: "op_test",
+      });
+    } finally {
+      if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = previousDataDir;
+    }
+  });
+
+  it("preserves finalized workflow state when kickoff is blocked", async () => {
+    const dataDir = join(baseDir, "blocked-lax-data");
+    const projectDir = join(baseDir, "blocked-project");
+    const previousDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dataDir;
+    const blockedKickoff = vi.fn<BuildPlanKickoff>(async () => ({
+      content: "Build plan kickoff blocked: an orchestration is already running.",
+      isError: true,
+      status: "blocked",
+      metadata: { recovery: "Use build_plan_status." },
+    }));
+    try {
+      const tool = createFinalizeAppBuildTool(blockedKickoff);
+      const r = await tool.execute({
+        project_dir: projectDir,
+        project_name: "Blocked",
+        product_md: "x",
+        constitution_md: "x",
+        plan_md: VALID_PLAN,
+        scenarios: [{ filename: "01-x.md", content: "x" }],
+        _sessionId: "blocked-session",
+      });
+
+      expect(r.isError).toBe(true);
+      expect(r.status).toBe("blocked");
+      expect(r.content).toContain("workflow is preserved");
+      expect(existsSync(join(projectDir, "spec", "plan.md"))).toBe(true);
       expect(createAppBuildWorkflowStore(join(dataDir, "app-build-workflows.json"))
-        .read("finalized-session")).toMatchObject({
+        .read("blocked-session")).toMatchObject({
           phase: "finalized",
           projectDir,
         });
@@ -197,7 +262,7 @@ describe("finalize_app_build — happy path", () => {
 
   it("writes twins/ when supplied", async () => {
     const projectDir = join(baseDir, "p3");
-    await finalizeAppBuildTool.execute({
+    await testFinalizeAppBuildTool.execute({
       project_dir: projectDir,
       project_name: "P3",
       product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
@@ -210,7 +275,7 @@ describe("finalize_app_build — happy path", () => {
   it("accepts an existing empty project_dir instead of pushing the agent into raw writes", async () => {
     const projectDir = join(baseDir, "already-there");
     mkdirSync(projectDir, { recursive: true });
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: projectDir, project_name: "X",
       product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
       scenarios: [{ filename: "01-x.md", content: "x" }],
@@ -224,7 +289,7 @@ describe("finalize_app_build — happy path", () => {
     const projectDir = join(baseDir, "already-has-work");
     mkdirSync(projectDir, { recursive: true });
     mkdirSync(join(projectDir, "src"));
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: projectDir, project_name: "X",
       product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
       scenarios: [{ filename: "01-x.md", content: "x" }],
@@ -239,7 +304,7 @@ describe("finalize_app_build — happy path", () => {
   // run_build_plan kickoff. finalize must validate with the same parser.
   it("rejects plan_md the build-loop parser cannot chunk", async () => {
     const projectDir = join(baseDir, "bad-plan");
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: projectDir,
       project_name: "X", product_md: "x", constitution_md: "x",
       plan_md: "# Plan\n\nJust prose, phases described in paragraphs. No chunk headings.",
@@ -253,7 +318,7 @@ describe("finalize_app_build — happy path", () => {
 
   it("rejects path-traversal in scenario filenames", async () => {
     const projectDir = join(baseDir, "p4");
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: projectDir,
       project_name: "X", product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
       scenarios: [{ filename: "../escape.md", content: "x" }],
@@ -264,7 +329,7 @@ describe("finalize_app_build — happy path", () => {
 
   it("rejects absolute-path scenario filenames", async () => {
     const projectDir = join(baseDir, "p5");
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: projectDir,
       project_name: "X", product_md: "x", constitution_md: "x", plan_md: VALID_PLAN,
       scenarios: [{ filename: "/tmp/evil.md", content: "x" }],
@@ -278,13 +343,13 @@ describe("finalize_app_build — required-field validation", () => {
   beforeEach(() => setFlag(true));
 
   it("requires project_dir", async () => {
-    const r = await finalizeAppBuildTool.execute({ project_dir: "" });
+    const r = await testFinalizeAppBuildTool.execute({ project_dir: "" });
     expect(r.isError).toBe(true);
     expect(r.content).toContain("project_dir");
   });
 
   it("requires project_name", async () => {
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: join(tmpdir(), `pdoesnotexist-${Date.now()}`),
       project_name: "",
     });
@@ -293,7 +358,7 @@ describe("finalize_app_build — required-field validation", () => {
   });
 
   it("requires at least one scenario", async () => {
-    const r = await finalizeAppBuildTool.execute({
+    const r = await testFinalizeAppBuildTool.execute({
       project_dir: join(tmpdir(), `pnoscen-${Date.now()}`),
       project_name: "X",
       product_md: "x", constitution_md: "x", plan_md: "x",

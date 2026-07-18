@@ -15,8 +15,7 @@
  *   4. When planning is complete, the agent calls `finalize_app_build`
  *      with the structured payload (spec docs + scenarios + plan).
  *      The tool writes the four artifacts atomically into a new
- *      project_dir. After this, the user can run
- *      `run_build_plan({project_dir})` to start the build.
+ *      project_dir and immediately starts the durable orchestrator.
  *
  * Both tools gated behind LAX_AUTO_BUILD_ENABLED — same flag the
  * build-plan tool uses. The /app-build half + build half share one
@@ -31,6 +30,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, dirname, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
+import { kickoffBuildPlan, type BuildPlanKickoff } from "./kickoff.js";
 import { loadSkillBody } from "./skill-bodies.js";
 import { parsePlanText } from "./plan-parser.js";
 import { projectsDir, resolveProjectDir } from "./project-paths.js";
@@ -56,8 +56,8 @@ export const startAppBuildTool: ToolDefinition = {
     "the methodology: gather Goal, Constraints, Files-to-touch, Scenarios, Plan, Out-of-scope. " +
     "Capture durable project facts to long-term memory as they surface. When planning is " +
     "complete and the user has signed off, call `finalize_app_build` to materialize the four " +
-    "artifacts (spec/, scenarios/, twins/, plan.md) into a new project directory. After that, " +
-    "call `run_build_plan` to start the actual code build.\n\n" +
+    "artifacts (spec/, scenarios/, twins/, plan.md) into a new project directory and start " +
+    "the durable background orchestrator in the same tool call.\n\n" +
     "Disambiguation:\n" +
     "- User says `/app-build` or `/appbuild` or 'start an app-build session' → THIS TOOL.\n" +
     "- User says 'plan a new app spec-first', 'kick off a directed build', 'build me a new " +
@@ -128,8 +128,8 @@ export const startAppBuildTool: ToolDefinition = {
       `conversation. When planning is complete (all sections covered + user signs off), ` +
       `call \`finalize_app_build\` with the full structured payload — that tool ` +
       `materializes the four artifacts atomically into the project directory.\n` +
-      `- **After finalize**, suggest the user run \`run_build_plan\` to start ` +
-      `the actual code build.\n\n` +
+      `- **Finalize starts the build.** Do not ask the user to run another tool after ` +
+      `\`finalize_app_build\`; it launches the orchestrator and leaves chat free.\n\n` +
       `---\n\n` +
       `# /app-build methodology\n\n${methodology}`;
 
@@ -149,16 +149,17 @@ interface TwinInput {
   content: string;
 }
 
-export const finalizeAppBuildTool: ToolDefinition = {
+export function createFinalizeAppBuildTool(
+  kickoff: BuildPlanKickoff = kickoffBuildPlan,
+): ToolDefinition {
+  return {
   name: "finalize_app_build",
   description:
     "Materialize an app-build planning conversation into project artifacts. Call this " +
     "AFTER the planning conversation (opened with `start_app_build`) is complete and the " +
     "user has signed off on the plan. Writes the spec docs, scenarios, optional twins, " +
-    "and plan.md atomically into a new project directory.\n\n" +
-    "The project directory must NOT already exist — this tool will not overwrite. After " +
-    "successful finalize, suggest the user run `run_build_plan({project_dir})` to " +
-    "start the build loop.\n\n" +
+    "and plan.md atomically into a new project directory, then starts the durable background " +
+    "orchestrator. The project directory must NOT already exist — this tool will not overwrite.\n\n" +
     "Gated behind LAX_AUTO_BUILD_ENABLED env flag.",
   parameters: {
     type: "object",
@@ -306,9 +307,8 @@ export const finalizeAppBuildTool: ToolDefinition = {
       const readme =
         `# ${projectName}\n\n` +
         `Project initialized via \`finalize_app_build\` from a /app-build planning session.\n\n` +
-        `## Next step\n\n` +
-        `Run the build loop:\n\n` +
-        `\`\`\`\nrun_build_plan({ project_dir: "${projectDir.replace(/\\/g, "/")}" })\n\`\`\`\n\n` +
+        `## Build\n\n` +
+        `Product Build owns orchestration after finalization; use \`build_plan_status\` to inspect it.\n\n` +
         `## Layout\n\n` +
         `- \`spec/\` — product, constitution, plan; the source of truth the building agents read.\n` +
         `- \`scenarios/\` — held-out user-flow tests. **Building agents must never read this.**\n` +
@@ -356,16 +356,61 @@ export const finalizeAppBuildTool: ToolDefinition = {
       }
     }
 
+    const kick = await kickoff({ projectDir, sessionId });
+    if (kick.isError || kick.status === "blocked" || kick.status === "error") {
+      return {
+        content:
+          `App-build artifacts were finalized at ${projectDir}, but orchestration did not start.\n\n` +
+          `${kick.content}\n\nThe finalized workflow is preserved. Fix the reported blocker, then use ` +
+          `\`run_build_plan({ project_dir: "${projectDir.replace(/\\/g, "/")}" })\`.`,
+        isError: true,
+        status: kick.status,
+        metadata: {
+          ...kick.metadata,
+          project_dir: projectDir,
+          files_written: written.length,
+          workflow_phase: "finalized",
+        },
+      };
+    }
+
+    const opId = String(kick.metadata?.op_id || kick.session_id || "").trim();
+    if (sessionId) {
+      try {
+        upsertAppBuildWorkflow({ sessionId, phase: "running", projectDir, opId });
+      } catch (e) {
+        return {
+          content:
+            `${kick.content}\n\nThe orchestrator started, but its chat workflow link could not be persisted: ` +
+            `${(e as Error).message}. Use build_plan_status with ${projectDir} to reconnect.`,
+          status: "running",
+          session_id: kick.session_id,
+          metadata: { ...kick.metadata, workflow_link_error: (e as Error).message },
+        };
+      }
+    }
+
     return {
       content:
         `App-build artifacts written to ${projectDir}.\n\n` +
         `Wrote ${written.length} files:\n` +
         written.map(w => `  - ${w}`).join("\n") + `\n\n` +
-        `Next: call \`run_build_plan({ project_dir: "${projectDir.replace(/\\/g, "/")}" })\` to start the build loop.`,
-      metadata: { project_dir: projectDir, files_written: written.length, scenario_count: scenarios.length, twin_count: twins.length },
+        `${kick.content}`,
+      status: "running",
+      session_id: kick.session_id,
+      metadata: {
+        ...kick.metadata,
+        project_dir: projectDir,
+        files_written: written.length,
+        scenario_count: scenarios.length,
+        twin_count: twins.length,
+      },
     };
   },
-};
+  };
+}
+
+export const finalizeAppBuildTool = createFinalizeAppBuildTool();
 
 // ── helpers ───────────────────────────────────────────────────────────────
 

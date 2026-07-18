@@ -1,6 +1,7 @@
 export { handleSessionRoutes } from "./sessions.js";
 export { handleSecurityRoutes } from "./security.js";
 export { handleMemoryRoutes } from "./memory.js";
+export { handleMemoryLearningRoutes } from "./memory-learning.js";
 export { handleAgentRoutes } from "./agents.js";
 export { handleApprovalRoutes } from "./approvals.js";
 export { handleIssueRoutes } from "./issues.js";

@@ -30,7 +30,7 @@ export type ContinuationResolver = (sessionId: string) => AppBuildContinuationRe
 const CONTINUATION_ACTION_RE = /\b(?:continue|resume|restart|pick\s+(?:it|this|that|the\s+build)\s+up|keep\s+(?:building|going)|status|progress)\b/i;
 const BUILD_OBJECT_RE = /\b(?:app|build|product|project|orchestrat(?:or|ion))\b/i;
 const BUILD_STATUS_RE = /\b(?:how(?:'s|\s+is)|what(?:'s|\s+is))\s+(?:the\s+|my\s+|that\s+)?(?:app|build|product|project)\b/i;
-const NEW_BUILD_RE = /\b(?:another|new|different|separate)\s+(?:app|build|product|project)\b/i;
+const NEW_BUILD_RE = /\b(?:(?:another|different|separate)\b(?:\s+[\w-]+){0,3}|(?:a|an)\s+(?:[\w-]+\s+){0,2}new\b(?:\s+[\w-]+){0,3})\s+(?:app|build|product|project)\b/i;
 
 export function isProductBuildContinuationRequest(message: string): boolean {
   if (NEW_BUILD_RE.test(message)) return false;

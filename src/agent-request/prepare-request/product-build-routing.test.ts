@@ -64,6 +64,7 @@ describe("Product Build continuation trigger", () => {
   it.each([
     "continue the build",
     "resume my app build",
+    "continue the new build",
     "what is the build status",
     "show progress on the product build",
   ])("recognizes %s", message => {
@@ -75,6 +76,9 @@ describe("Product Build continuation trigger", () => {
     "tell me a joke while the build runs",
     "build another app",
     "continue building another app",
+    "continue by building a totally different app",
+    "continue by building a totally new app",
+    "resume with a separate customer portal project",
     "make a new product",
   ])("does not hijack %s", message => {
     expect(isProductBuildContinuationRequest(message)).toBe(false);

@@ -42,7 +42,7 @@ import {
 	type InAppActionContext,
 	type ResolvedTarget,
 } from "./in-app-actions.js";
-import { CREDENTIAL_FOCUS_SCRIPT } from "./in-app-backend.js";
+import { CREDENTIAL_FOCUS_SCRIPT } from "./in-app-page-io.js";
 import { ObservationRegistry, type BrowserObservation, type DurableRef } from "./observation.js";
 import type { Page } from "playwright";
 

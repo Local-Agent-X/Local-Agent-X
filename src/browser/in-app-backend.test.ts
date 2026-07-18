@@ -46,8 +46,8 @@ import {
 import {
 	ElectronInAppBackend,
 	EvaluateBlockedError,
-	IN_APP_NO_DIALOG,
 } from "./in-app-backend.js";
+import { IN_APP_NO_DIALOG } from "./in-app-page-io.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
 import { ObservationRegistry, type DurableRef } from "./observation.js";

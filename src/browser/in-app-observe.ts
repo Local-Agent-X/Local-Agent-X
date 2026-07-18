@@ -8,7 +8,7 @@
  *      so both backends share one source of truth for observation semantics.
  *   2. The isolated-world page scripts (A1 click/fill/select, the A2 resolution
  *      chain), kept out of the backend for the LOC cap. The KB1 credential
- *      probe lives with screenshot() in in-app-backend.ts (its sole caller).
+ *      probe lives with the screenshot capture in in-app-page-io.ts.
  *
  * Every script goes through browserExec, which runs ONLY in the view's isolated
  * world (1901, enforced in desktop/src/server-bridge-browser.ts) — page JS can

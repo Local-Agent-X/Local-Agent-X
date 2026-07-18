@@ -14,6 +14,34 @@ let projects = loadProjects();
 // selector) can read the live list without redoing the API call.
 try { window.projects = projects; window.activeChat = null; } catch {}
 let activeChat = null;
+const chatRendererChannel = typeof BroadcastChannel === 'function'
+  ? new BroadcastChannel('lax-chat-renderers') : null;
+
+function broadcastChatUserMessage(sessionId, message) {
+  if (!chatRendererChannel || !sessionId || !message) return;
+  if (!message._rendererSyncId) {
+    message._rendererSyncId = (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : 'sync-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+  const chat = chats.find(c => c.id === sessionId);
+  chatRendererChannel.postMessage({ type: 'user-message', sessionId, title: chat?.title, message });
+}
+try { window.broadcastChatUserMessage = broadcastChatUserMessage; } catch {}
+
+if (chatRendererChannel) {
+  chatRendererChannel.onmessage = function (event) {
+    const data = event.data;
+    if (!data || data.type !== 'user-message' || !data.sessionId || !data.message) return;
+    const chat = chats.find(c => c.id === data.sessionId);
+    if (!chat || chat.messages.some(m => m._rendererSyncId === data.message._rendererSyncId)) return;
+    chat.messages.push(data.message);
+    if (data.title) chat.title = data.title;
+    chat.updatedAt = Math.max(chat.updatedAt || 0, data.message.timestamp || Date.now());
+    if (typeof renderSidebar === 'function') renderSidebar();
+    if (activeChat && activeChat.id === chat.id && typeof renderMessages === 'function') renderMessages();
+  };
+}
 let expandedProjects = new Set();
 let projectsCollapsed = (() => { try { return localStorage.getItem('lax_projects_collapsed') === '1'; } catch { return false; } })();
 let projectLastAccessed = (() => { try { return JSON.parse(localStorage.getItem('lax_project_last_accessed') || '{}'); } catch { return {}; } })();

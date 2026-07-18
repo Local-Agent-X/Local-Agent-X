@@ -28,6 +28,7 @@ import {
 	getBrowserView,
 	hideBrowserView,
 	listBrowserViews,
+	setBrowserChatOverlay,
 	setBrowserViewBounds,
 	setPoolChangedListener,
 	showBrowserView,
@@ -51,6 +52,14 @@ interface BrowserViewListEntry {
 	profileId?: string;
 	attached: boolean;
 	agentDriven: boolean;
+}
+
+interface BrowserChatOverlayPayload {
+	bounds: Rectangle;
+	overlayUrl: string;
+	sessionId: string | null;
+	collapsed: boolean;
+	latestOpen: boolean;
 }
 
 // The view the renderer's anchor currently drives (bounds/visibility/nav). The
@@ -198,6 +207,26 @@ export function setupBrowserIPC(): void {
 		setBrowserViewBounds(viewId, lastBoundsDip);
 	});
 
+	ipcMain.handle("browser-set-chat-overlay", (
+		event: IpcMainInvokeEvent,
+		payload: BrowserChatOverlayPayload | null,
+	) => {
+		if (!isTrustedBrowserSender(event.sender)) return;
+		if (!payload) {
+			setBrowserChatOverlay(null, null, null);
+			return;
+		}
+		const senderOrigin = new URL(event.sender.getURL()).origin;
+		const overlayUrl = new URL(payload.overlayUrl);
+		if (overlayUrl.origin !== senderOrigin || overlayUrl.searchParams.get("browserChatOverlay") !== "1") return;
+		const zoom = getMainWindow()?.webContents.getZoomFactor() ?? 1;
+		setBrowserChatOverlay(scaleRectToDip(payload.bounds, zoom), {
+			sessionId: payload.sessionId,
+			collapsed: payload.collapsed,
+			latestOpen: payload.latestOpen,
+		}, overlayUrl.toString());
+	});
+
 	ipcMain.handle("browser-set-visible", (event: IpcMainInvokeEvent, visible: boolean) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
 		if (visible) {
@@ -207,6 +236,7 @@ export function setupBrowserIPC(): void {
 			// Don't create a view just to hide it — hiding a non-existent view is a
 			// no-op, not an error.
 			hideBrowserView(currentViewId);
+			setBrowserChatOverlay(null, null, null);
 		}
 	});
 

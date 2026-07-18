@@ -88,7 +88,7 @@
 		}
 		for (i = 0; i < points.length; i++) {
 			var hit = document.elementFromPoint(points[i][0], points[i][1]);
-			if (hit && hit !== anchor && !anchor.contains(hit)) return true;
+			if (hit && hit !== anchor && !anchor.contains(hit) && !(document.body.classList.contains('browser-workspace') && hit.closest && hit.closest('#chat-main'))) return true;
 		}
 		return false;
 	}

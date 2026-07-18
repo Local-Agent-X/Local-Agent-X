@@ -54,7 +54,9 @@ async function sendMessage() {
     } else {
       // Streaming flag raced off between the check above and here — fall
       // back to a normal appended user row so the text is never dropped.
-      activeChat.messages.push({ role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' });
+      const userMessage = { role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' };
+      activeChat.messages.push(userMessage);
+      if (typeof broadcastChatUserMessage === 'function') broadcastChatUserMessage(activeChat.id, userMessage);
       const painted = typeof appendMessagesInPlace === 'function'
         && appendMessagesInPlace(activeChat.messages.length - 1);
       if (!painted && typeof renderMessages === 'function') renderMessages();
@@ -104,7 +106,9 @@ async function sendMessage() {
   const empty = document.getElementById('empty'); if (empty) empty.remove();
   const msgTime = Date.now();
   const userMsgEl = addMessageEl('user', displayText, msgAttachments, msgTime);
-  activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
+  const userMessage = { role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime };
+  activeChat.messages.push(userMessage);
+  if (typeof broadcastChatUserMessage === 'function') broadcastChatUserMessage(activeChat.id, userMessage);
   const msgEl = addMessageEl('assistant', '');
   // Mark the placeholder as the live bubble. The in-place swap fallbacks in
   // chat-render-live.js only adopt a last .msg.assistant stamped data-live="1"

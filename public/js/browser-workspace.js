@@ -1,6 +1,8 @@
 // Browser workspace layout. This reuses the existing Browser panel and live
 // #chat-main; browser-tab.js remains the sole owner of native view bounds.
 (function () {
+  var overlayRenderer = new URLSearchParams(window.location.search).has('browserChatOverlay');
+  var browserBridge = window.desktop && window.desktop.browser;
   var active = false;
   var collapsed = false;
   var latestOpen = false;
@@ -8,12 +10,87 @@
   var dockButton = null;
   var latestButton = null;
   var latestCaret = null;
+  var lastOverlayKey = '';
+  var overlaySessionId = null;
+  var overlaySelectingId = null;
+
+  function chatOverlayBounds() {
+    var ids = collapsed
+      ? ['browser-chat-dock-bar']
+      : ['browser-chat-latest', 'messages', 'input-area', 'browser-chat-dock-bar'];
+    var rects = ids.map(function (id) {
+      var el = document.getElementById(id);
+      return el && !el.hidden ? el.getBoundingClientRect() : null;
+    }).filter(function (rect) { return rect && rect.width > 0 && rect.height > 0; });
+    if (!rects.length) return null;
+    var left = Math.min.apply(null, rects.map(function (rect) { return rect.left; }));
+    var top = Math.min.apply(null, rects.map(function (rect) { return rect.top; }));
+    var right = Math.max.apply(null, rects.map(function (rect) { return rect.right; }));
+    var bottom = Math.max.apply(null, rects.map(function (rect) { return rect.bottom; }));
+    return {
+      x: Math.floor(left), y: Math.floor(top),
+      width: Math.ceil(right - left), height: Math.ceil(bottom - top),
+    };
+  }
+
+  function syncChatOverlay() {
+    if (overlayRenderer || !browserBridge || !browserBridge.setChatOverlay) return;
+    var bounds = active ? chatOverlayBounds() : null;
+    var sessionId = window.activeChat && window.activeChat.id || null;
+    var url = new URL(window.location.href);
+    url.pathname = '/';
+    url.searchParams.set('browserChatOverlay', '1');
+    url.hash = 'chat';
+    var payload = bounds ? {
+      bounds: bounds, overlayUrl: url.toString(), sessionId: sessionId,
+      collapsed: collapsed, latestOpen: latestOpen,
+    } : null;
+    var key = JSON.stringify(payload);
+    if (key === lastOverlayKey) return;
+    lastOverlayKey = key;
+    Promise.resolve(browserBridge.setChatOverlay(payload)).catch(function () {});
+  }
 
   function scheduleBrowserSync() {
     var raf = window.requestAnimationFrame || function (cb) { setTimeout(cb, 16); };
     raf(function () {
       if (window.laxBrowserTab) window.laxBrowserTab.sync();
+      syncChatOverlay();
     });
+  }
+
+  function selectOverlaySession() {
+    if (!overlaySessionId || window.activeChat && window.activeChat.id === overlaySessionId) {
+      overlaySelectingId = null;
+      return;
+    }
+    if (overlaySelectingId === overlaySessionId) return;
+    if (typeof window.selectChat !== 'function' && typeof selectChat !== 'function') {
+      setTimeout(selectOverlaySession, 100);
+      return;
+    }
+    overlaySelectingId = overlaySessionId;
+    var sync = typeof syncChatsFromServer === 'function'
+      ? Promise.resolve(syncChatsFromServer()) : Promise.resolve();
+    sync.then(function () {
+      if (overlaySessionId) selectChat(overlaySessionId);
+      overlaySelectingId = null;
+    }).catch(function () { overlaySelectingId = null; });
+  }
+
+  function applyOverlayState(state) {
+    if (!state) return;
+    active = true;
+    collapsed = !!state.collapsed;
+    latestOpen = !!state.latestOpen && !collapsed;
+    overlaySessionId = state.sessionId || null;
+    document.body.classList.add('browser-workspace', 'browser-chat-overlay-renderer');
+    document.body.classList.toggle('browser-chat-collapsed', collapsed);
+    document.body.classList.toggle('browser-chat-latest-open', latestOpen);
+    syncMessagesVisibility();
+    markLatestTurn();
+    renderControls();
+    selectOverlaySession();
   }
 
   function renderControls() {
@@ -116,7 +193,7 @@
   function createControls() {
     var host = document.querySelector('.agent-feeds-header') ||
       document.getElementById('browser-address-bar');
-    if (host && !document.getElementById('browser-workspace-toggle')) {
+    if (!overlayRenderer && host && !document.getElementById('browser-workspace-toggle')) {
       fullButton = document.createElement('button');
       fullButton.id = 'browser-workspace-toggle';
       fullButton.type = 'button';
@@ -172,6 +249,19 @@
     var page = document.getElementById('page-chat');
     var browserTab = document.getElementById('side-tab-browser');
     var messages = document.getElementById('messages');
+    if (overlayRenderer) {
+      active = true;
+      document.body.classList.add('browser-workspace', 'browser-chat-overlay-renderer');
+      syncMessagesVisibility();
+      if (browserBridge && browserBridge.onChatOverlayState) {
+        browserBridge.onChatOverlayState(applyOverlayState);
+      }
+      if (typeof MutationObserver !== 'undefined' && messages) {
+        new MutationObserver(markLatestTurn).observe(messages, { childList: true, subtree: true });
+      }
+      renderControls();
+      return;
+    }
     if (typeof MutationObserver !== 'undefined' && panel) {
       new MutationObserver(function () {
         if (active && panel.classList.contains('collapsed')) setActive(false);
@@ -187,8 +277,12 @@
         .observe(browserTab, { attributes: true, attributeFilter: ['class'] });
     }
     if (typeof MutationObserver !== 'undefined' && messages) {
-      new MutationObserver(markLatestTurn).observe(messages, { childList: true, subtree: true });
+      new MutationObserver(function () {
+        markLatestTurn();
+        scheduleBrowserSync();
+      }).observe(messages, { childList: true, subtree: true });
     }
+    window.addEventListener('resize', scheduleBrowserSync);
   }
 
   window.laxBrowserWorkspace = {

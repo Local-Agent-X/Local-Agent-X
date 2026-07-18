@@ -136,6 +136,20 @@ contextBridge.exposeInMainWorld("desktop", {
     setBounds: (rect: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke("browser-set-bounds", rect),
     setVisible: (visible: boolean) => ipcRenderer.invoke("browser-set-visible", visible),
+    setChatOverlay: (payload: {
+      bounds: { x: number; y: number; width: number; height: number };
+      overlayUrl: string;
+      sessionId: string | null;
+      collapsed: boolean;
+      latestOpen: boolean;
+    } | null) => ipcRenderer.invoke("browser-set-chat-overlay", payload),
+    onChatOverlayState: (cb: (state: {
+      sessionId: string | null;
+      collapsed: boolean;
+      latestOpen: boolean;
+    }) => void) => {
+      ipcRenderer.on("browser-chat-overlay-state", (_e, state) => cb(state));
+    },
     navigate: (url: string) => ipcRenderer.invoke("browser-navigate", url),
     goBack: () => ipcRenderer.invoke("browser-go-back"),
     goForward: () => ipcRenderer.invoke("browser-go-forward"),

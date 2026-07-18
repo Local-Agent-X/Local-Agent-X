@@ -8,6 +8,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(here, "../public/js/browser-workspace.js"), "utf8");
 const CSS = readFileSync(join(here, "../public/css/browser-workspace.css"), "utf8");
 const ARTIFACTS_SRC = readFileSync(join(here, "../public/js/chat-artifacts.js"), "utf8");
+const APP_STATE_SRC = readFileSync(join(here, "../public/js/app-state.js"), "utf8");
+const CHAT_SEND_SRC = readFileSync(join(here, "../public/js/chat-send.js"), "utf8");
+const VOICE_HANDLER_SRC = readFileSync(join(here, "../public/js/chat-voice-ws-handler.js"), "utf8");
 
 function loadWorkspace(): void {
   // eslint-disable-next-line no-new-func
@@ -27,6 +30,7 @@ beforeEach(() => {
     </div>`;
   Object.defineProperty(document, "readyState", { configurable: true, value: "complete" });
   (window as any).laxBrowserTab = { sync: vi.fn() };
+  delete (window as any).desktop;
   delete (window as any).laxBrowserWorkspace;
 });
 
@@ -76,6 +80,66 @@ describe("Browser full-page workspace", () => {
     expect(CSS).toContain("#stop-btn{grid-column:8");
     expect(CSS).toContain("#send-btn{grid-column:9");
     expect(CSS).toContain("browser-chat-latest-open{--browser-chat-dock-height:min(38vh,380px)}");
+    expect(CSS).toContain("body.browser-workspace #browser-tab-body{\n  padding-bottom:0");
+    expect(CSS).toContain("body.browser-chat-overlay-renderer");
+  });
+
+  it("reserves a native overlay only for the compact chat card", async () => {
+    const setChatOverlay = vi.fn().mockResolvedValue(undefined);
+    (window as any).desktop = { browser: { setChatOverlay } };
+    loadWorkspace();
+    const rect = (left: number, top: number, width: number, height: number) => ({
+      left, top, width, height, right: left + width, bottom: top + height, x: left, y: top,
+    });
+    (document.getElementById("input-area") as any).getBoundingClientRect = () => rect(540, 950, 840, 50);
+    (document.getElementById("browser-chat-dock-bar") as any).getBoundingClientRect = () => rect(1354, 952, 26, 24);
+
+    (window as any).laxBrowserWorkspace.setActive(true);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const payload = setChatOverlay.mock.calls.at(-1)?.[0];
+    expect(payload.bounds).toEqual({ x: 540, y: 950, width: 840, height: 50 });
+    expect(payload.overlayUrl).toContain("browserChatOverlay=1");
+    expect(payload.bounds.width).toBeLessThan(1000);
+
+    (window as any).laxBrowserWorkspace.setActive(false);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(setChatOverlay).toHaveBeenLastCalledWith(null);
+  });
+
+  it("hands user messages from the overlay renderer back to the host chat", () => {
+    expect(CHAT_SEND_SRC).toContain("broadcastChatUserMessage(activeChat.id, userMessage)");
+    expect(VOICE_HANDLER_SRC).toContain("broadcastChatUserMessage(activeChat.id, userMessage)");
+    const OriginalBroadcastChannel = (window as any).BroadcastChannel;
+    const channels: Array<{ onmessage?: (event: { data: unknown }) => void; postMessage: ReturnType<typeof vi.fn> }> = [];
+    class FakeBroadcastChannel {
+      onmessage?: (event: { data: unknown }) => void;
+      postMessage = vi.fn();
+      constructor(_name: string) { channels.push(this); }
+    }
+    (window as any).BroadcastChannel = FakeBroadcastChannel;
+    localStorage.setItem("lax_chats_v2", JSON.stringify([{
+      id: "chat-1", title: "New Chat", createdAt: 1, updatedAt: 1, messages: [],
+    }]));
+    (window as any).renderMessages = vi.fn();
+    (window as any).renderSidebar = vi.fn();
+
+    new Function(APP_STATE_SRC)();
+    const message = { role: "user", content: "keep this turn", timestamp: 2 };
+    (window as any).broadcastChatUserMessage("chat-1", message);
+
+    expect(channels[0].postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "user-message", sessionId: "chat-1", message: expect.objectContaining({ _rendererSyncId: expect.any(String) }),
+    }));
+    channels[0].onmessage?.({ data: {
+      type: "user-message", sessionId: "chat-1", title: "Keep this turn", message: { ...message, _rendererSyncId: "remote-1" },
+    } });
+    expect((window as any).renderMessages).not.toHaveBeenCalled();
+    expect((window as any).renderSidebar).toHaveBeenCalledOnce();
+    (window as any).BroadcastChannel = OriginalBroadcastChannel;
+    delete (window as any).broadcastChatUserMessage;
+    delete (window as any).renderMessages;
+    delete (window as any).renderSidebar;
   });
 
   it("expands the existing latest assistant turn and closes it on collapse", () => {

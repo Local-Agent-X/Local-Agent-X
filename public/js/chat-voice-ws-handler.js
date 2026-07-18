@@ -82,8 +82,10 @@ function handleVoiceWsMessage(e) {
         userEl.scrollIntoView({ block: 'start' });
       }
       if (typeof activeChat !== 'undefined' && activeChat) {
-        activeChat.messages.push({ role: 'user', content: msg.text });
-        activeChat.updatedAt = Date.now();
+        const userMessage = { role: 'user', content: msg.text, timestamp: Date.now() };
+        activeChat.messages.push(userMessage);
+        activeChat.updatedAt = userMessage.timestamp;
+        if (typeof broadcastChatUserMessage === 'function') broadcastChatUserMessage(activeChat.id, userMessage);
       }
       break;
     }

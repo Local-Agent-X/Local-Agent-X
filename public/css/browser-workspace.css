@@ -1,5 +1,5 @@
-/* Full-page Browser workspace. The native view ends above the chat dock because
-   WebContentsView always paints above DOM content regardless of z-index. */
+/* Full-page Browser workspace. Desktop paints the compact chat in its own
+   tightly bounded WebContentsView above the full-height Browser view. */
 #browser-chat-dock-bar{display:none}
 .browser-workspace-toggle{font-size:.9rem;min-width:30px;margin-left:auto;margin-right:38px}
 body.platform-win .browser-workspace-toggle{margin-right:0;transform:translateY(3px)}
@@ -23,7 +23,7 @@ body.browser-workspace .browser-strip-tab{height:27px}
 body.browser-workspace .browser-new-tab{height:26px}
 body.browser-workspace .browser-toolbar{padding:5px 8px}
 body.browser-workspace #browser-tab-body{
-  padding-bottom:calc(var(--browser-chat-dock-height) + (2 * var(--browser-chat-dock-gap)));
+  padding-bottom:0;
 }
 body.browser-workspace #browser-view-anchor,
 body.browser-workspace.sidebar-right #browser-view-anchor{margin-left:0;margin-right:0}
@@ -113,6 +113,25 @@ body.browser-workspace.browser-chat-collapsed #browser-chat-collapse{margin-left
 body.browser-workspace:has(#upload-previews.has-items){--browser-chat-dock-height:142px}
 body.browser-workspace.browser-chat-has-latest:has(#upload-previews.has-items){--browser-chat-dock-height:174px}
 body.browser-workspace.browser-chat-latest-open:has(#upload-previews.has-items){--browser-chat-dock-height:min(44vh,440px)}
+
+body.browser-chat-overlay-renderer{
+  margin:0!important;height:100vh!important;background:transparent!important;overflow:hidden!important;
+}
+body.browser-chat-overlay-renderer > :not(#main){display:none!important}
+body.browser-chat-overlay-renderer #main{
+  position:fixed!important;inset:0!important;width:100%!important;height:100%!important;
+  margin:0!important;background:transparent!important;
+}
+body.browser-chat-overlay-renderer #main > :not(#page-chat){display:none!important}
+body.browser-chat-overlay-renderer #page-chat{position:fixed!important;inset:0!important}
+body.browser-chat-overlay-renderer #agent-feeds{display:none!important}
+body.browser-chat-overlay-renderer #chat-main{
+  left:0!important;right:0!important;bottom:0!important;height:100%!important;
+}
+body.browser-chat-overlay-renderer #browser-chat-latest,
+body.browser-chat-overlay-renderer.browser-chat-latest-open #chat-main #messages{
+  width:calc(100% - 120px);
+}
 
 @media (max-width:760px){
   body.browser-workspace{--browser-chat-dock-gap:8px;--browser-chat-dock-height:52px}

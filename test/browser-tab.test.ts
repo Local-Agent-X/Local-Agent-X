@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   setBoundsCalls: [] as unknown[][],
   showCalls: 0,
   hideCalls: 0,
+  chatOverlayCalls: [] as unknown[][],
   // Multi-view pool state for the mocked browser-views module: id-aware view
   // lookup (falls back to fakeView for ids the test didn't register), the
   // attached-view answer, the captured pool-change listener, and the list
@@ -38,6 +39,7 @@ const h = vi.hoisted(() => ({
 vi.mock("../desktop/node_modules/electron", () => {
   let wcIdSeq = 100;
   return {
+    shell: { openExternal: vi.fn() },
     ipcMain: {
       handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
         h.handlers.set(channel, fn);
@@ -51,8 +53,14 @@ vi.mock("../desktop/node_modules/electron", () => {
         close: () => {},
         getURL: () => "",
         getTitle: () => "",
+        loadURL: () => Promise.resolve(),
+        send: () => {},
+        setWindowOpenHandler: () => {},
+        on: () => {},
       };
       setBounds() {}
+      setBackgroundColor() {}
+      setBorderRadius() {}
     },
   };
 });
@@ -84,6 +92,7 @@ vi.mock("../desktop/src/browser-views", () => ({
   listBrowserViews: () => h.poolList,
   pingBrowserView: () => ({ ok: true }),
   hideBrowserView: () => { h.hideCalls++; },
+  setBrowserChatOverlay: (...args: unknown[]) => { h.chatOverlayCalls.push(args); },
   setBrowserViewBounds: (...args: unknown[]) => { h.setBoundsCalls.push(args); },
   showBrowserView: () => { h.showCalls++; },
 }));
@@ -425,7 +434,11 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
 
   beforeEach(() => {
     zoom = 1;
-    trustedWC = { getZoomFactor: () => zoom, send: vi.fn() };
+    trustedWC = {
+      getZoomFactor: () => zoom,
+      getURL: () => "http://127.0.0.1:7007/?token=test",
+      send: vi.fn(),
+    };
     h.mainWin = { isDestroyed: () => false, webContents: trustedWC };
     fakeWC = {
       isDestroyed: () => false,
@@ -441,6 +454,7 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
     h.setBoundsCalls = [];
     h.showCalls = 0;
     h.hideCalls = 0;
+    h.chatOverlayCalls = [];
     h.handlers.clear();
     setupBrowserIPC();
   });
@@ -456,6 +470,43 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
     zoom = 1.25;
     h.handlers.get("browser-set-bounds")!({ sender: trustedWC }, { x: 100, y: 40, width: 400, height: 600 });
     expect(h.setBoundsCalls).toEqual([["foreground", { x: 125, y: 50, width: 500, height: 750 }]]);
+  });
+
+  it("keeps the Browser visible behind the native full-page chat overlay", () => {
+    setAnchorRect({ left: 0, top: 80, width: 1200, height: 640 });
+    document.body.classList.add("browser-workspace");
+    const chat = document.createElement("div");
+    chat.id = "chat-main";
+    document.body.appendChild(chat);
+    (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => chat;
+
+    window.laxBrowserTab.onTabShown();
+
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  it("bounds the chat overlay to its card and rejects a foreign overlay origin", () => {
+    zoom = 1.25;
+    const payload = {
+      bounds: { x: 560, y: 620, width: 840, height: 380 },
+      overlayUrl: "http://127.0.0.1:7007/?token=test&browserChatOverlay=1#chat",
+      sessionId: "chat-1",
+      collapsed: false,
+      latestOpen: true,
+    };
+    h.handlers.get("browser-set-chat-overlay")!({ sender: trustedWC }, payload);
+    expect(h.chatOverlayCalls).toEqual([[
+      { x: 700, y: 775, width: 1050, height: 475 },
+      { sessionId: "chat-1", collapsed: false, latestOpen: true },
+      "http://127.0.0.1:7007/?token=test&browserChatOverlay=1#chat",
+    ]]);
+
+    h.chatOverlayCalls = [];
+    h.handlers.get("browser-set-chat-overlay")!({ sender: trustedWC }, {
+      ...payload,
+      overlayUrl: "https://evil.example/?browserChatOverlay=1",
+    });
+    expect(h.chatOverlayCalls).toEqual([]);
   });
 
   it("isTrustedBrowserSender accepts only the live main window's webContents", () => {
@@ -883,6 +934,32 @@ describe("browser-views pool seams (real module)", () => {
       realViews.setPoolChangedListener(null);
       realViews.closeBrowserView("pv-a");
       realViews.closeBrowserView("pv-b");
+    }
+  });
+
+  it("stacks the chat overlay above the Browser and removes only that overlay", () => {
+    const addChildView = vi.fn();
+    const removeChildView = vi.fn();
+    h.mainWin = {
+      isDestroyed: () => false,
+      webContents: { send: () => {} },
+      contentView: { addChildView, removeChildView },
+    } as never;
+    realViews.createBrowserView("pv-overlay", { partition: "persist:lax-profile-default" });
+    try {
+      realViews.showBrowserView("pv-overlay");
+      realViews.setBrowserChatOverlay(
+        { x: 500, y: 600, width: 840, height: 380 },
+        { sessionId: "chat-1", collapsed: false, latestOpen: true },
+        "http://127.0.0.1:7007/?token=test&browserChatOverlay=1#chat",
+      );
+      expect(addChildView).toHaveBeenCalledTimes(2);
+      expect(addChildView.mock.calls[1][0]).not.toBe(addChildView.mock.calls[0][0]);
+
+      realViews.setBrowserChatOverlay(null, null, null);
+      expect(removeChildView).toHaveBeenCalledWith(addChildView.mock.calls[1][0]);
+    } finally {
+      realViews.closeBrowserView("pv-overlay");
     }
   });
 });

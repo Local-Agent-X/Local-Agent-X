@@ -102,7 +102,8 @@ export class CrossSessionLearner {
     return patterns.sort((a, b) => b.occurrences - a.occurrences);
   }
 
-  suggestAutomation(pattern: DetectedPattern): AutomationSuggestion {
+  suggestAutomation(pattern: DetectedPattern): AutomationSuggestion | null {
+    if (pattern.automationEligible === false) return null;
     return suggestAutomation(pattern);
   }
 

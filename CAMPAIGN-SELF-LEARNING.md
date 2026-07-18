@@ -27,7 +27,7 @@ Build a native Local-Agent-X closed learning loop that turns successful repeated
 | Chunk | Responsibility | Dependencies | Status |
 |---|---|---|---|
 | C1 | Outcome evidence bridge | none | green |
-| C2 | Outcome-aware pattern mining | C1 | pending |
+| C2 | Outcome-aware pattern mining | C1 | green |
 | C3 | Learned-candidate lifecycle | C2 | pending |
 | C4 | Learned protocol drafting | C3 | pending |
 | C5 | Provenance and capability envelope | C4 | pending |
@@ -45,13 +45,15 @@ None.
 
 ## Verification log
 
-- C1 adversarial review drove lifecycle, identity, and ordering fixes: session identity is captured before terminal release; unknown sessions remain unknown rather than manufacturing conversation provenance; receipts preserve repeated ordered steps; op-id upsert makes writes idempotent; and evidence persists only after a successful terminal transition. Core 56 tests, forced-terminal 5 tests, TypeScript, and diff checks pass. Final refutation pending.
+- C1 adversarial review drove lifecycle, identity, and ordering fixes: session identity is captured before terminal release; unknown sessions remain unknown rather than manufacturing conversation provenance; receipts preserve repeated ordered steps; op-id upsert makes writes idempotent; and evidence persists only after a successful terminal transition. Core 56 tests, forced-terminal 5 tests, TypeScript, diff checks, and final refutation passed.
+- C2 verification: 14 focused tests, TypeScript, diff checks, and final adversarial refutation passed. Failure receipts cannot leak into parallel automation detectors; recent regressions lower confidence.
 
 ## Completion buckets
 
 ### Shipped
 
 - C1: committed outcome evidence with stable session provenance, ordered tool receipts, forced-terminal coverage, and op-id idempotency. Focused tests and independent refutation green.
+- C2: outcome-aware pattern mining with distinct-session confidence, recency weighting, failure exclusion, and collision-safe workflow grouping.
 
 ### Parked for user
 

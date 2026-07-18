@@ -9,7 +9,8 @@ import { slugify } from "./text-utils.js";
 
 export function suggestAutomation(
   pattern: DetectedPattern
-): AutomationSuggestion {
+): AutomationSuggestion | null {
+  if (pattern.automationEligible === false) return null;
   switch (pattern.type) {
     case "question":
       return {

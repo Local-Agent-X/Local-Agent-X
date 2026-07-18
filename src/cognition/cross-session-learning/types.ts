@@ -30,6 +30,15 @@ export interface DetectedPattern {
   lastSeen: number;
   examples: string[];
   suggestedAction?: string;
+  automationEligible?: boolean;
+  outcomeStats?: {
+    clean: number;
+    partial: number;
+    aborted: number;
+    successRate: number;
+    weightedSuccessRate: number;
+    distinctSessions: number;
+  };
 }
 
 export interface AutomationSuggestion {

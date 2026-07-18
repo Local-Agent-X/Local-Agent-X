@@ -75,6 +75,7 @@ export function detectRepeatedTopics(
   actions: ActionEntry[],
   min: number
 ): DetectedPattern[] {
+  actions = actions.filter((action) => action.type !== "op_outcome");
   const sessionTopics = new Map<string, Set<string>>();
 
   for (const a of actions) {
@@ -115,6 +116,7 @@ export function detectTimePatterns(
   actions: ActionEntry[],
   min: number
 ): DetectedPattern[] {
+  actions = actions.filter((action) => action.type !== "op_outcome");
   const hourBuckets = new Map<
     number,
     { count: number; types: Map<string, number> }
@@ -164,8 +166,10 @@ export function detectWorkflowPatterns(
   actions: ActionEntry[],
   min: number
 ): DetectedPattern[] {
+  const outcomePatterns = detectOutcomeWorkflows(actions, min);
+  const legacyActions = actions.filter((action) => action.type !== "op_outcome");
   const sessionActions = new Map<string, ActionEntry[]>();
-  for (const a of actions) {
+  for (const a of legacyActions) {
     if (!sessionActions.has(a.sessionId)) {
       sessionActions.set(a.sessionId, []);
     }
@@ -204,7 +208,7 @@ export function detectWorkflowPatterns(
     }
   }
 
-  return Array.from(sequenceCounts.entries())
+  const legacyPatterns = Array.from(sequenceCounts.entries())
     .filter(([, v]) => v.count >= min)
     .map(([key, v]) => ({
       type: "workflow" as const,
@@ -214,4 +218,61 @@ export function detectWorkflowPatterns(
       examples: [key],
       suggestedAction: `Bundle "${key}" into a single mission or shortcut`,
     }));
+  return [...outcomePatterns, ...legacyPatterns];
+}
+
+function detectOutcomeWorkflows(actions: ActionEntry[], min: number): DetectedPattern[] {
+  const groups = new Map<string, {
+    category: NonNullable<ActionEntry["category"]>;
+    tools: string[];
+    entries: ActionEntry[];
+  }>();
+  for (const action of actions) {
+    if (action.type !== "op_outcome" || !action.category || !action.outcome || !action.tools) continue;
+    const key = JSON.stringify([action.category, action.tools]);
+    const group = groups.get(key);
+    if (group) group.entries.push(action);
+    else groups.set(key, { category: action.category, tools: action.tools, entries: [action] });
+  }
+
+  const patterns: DetectedPattern[] = [];
+  for (const group of groups.values()) {
+    if (group.entries.length < min) continue;
+    const clean = group.entries.filter((entry) => entry.outcome === "clean").length;
+    const partial = group.entries.filter((entry) => entry.outcome === "partial").length;
+    const aborted = group.entries.filter((entry) => entry.outcome === "aborted").length;
+    const successRate = clean / group.entries.length;
+    const latest = Math.max(...group.entries.map((entry) => entry.timestamp));
+    const halfLifeMs = 14 * 24 * 60 * 60 * 1000;
+    let cleanWeight = 0;
+    let totalWeight = 0;
+    for (const entry of group.entries) {
+      const weight = Math.exp(-(latest - entry.timestamp) / halfLifeMs);
+      totalWeight += weight;
+      if (entry.outcome === "clean") cleanWeight += weight;
+    }
+    const weightedSuccessRate = totalWeight > 0 ? cleanWeight / totalWeight : 0;
+    const distinctSessions = new Set(
+      group.entries.map((entry) => entry.sessionId).filter(Boolean)
+    ).size;
+    const automationEligible = group.tools.length > 0
+      && clean >= min
+      && successRate >= 0.75
+      && weightedSuccessRate >= 0.75
+      && distinctSessions >= 2;
+    const label = `${group.category}:${group.tools.join(" -> ") || "no-tools"}`;
+    patterns.push({
+      type: "workflow",
+      description: `Workflow "${label}" completed cleanly ${clean}/${group.entries.length} times`,
+      occurrences: group.entries.length,
+      lastSeen: latest,
+      examples: [group.tools.join(" -> ") || "no-tools"],
+      suggestedAction: automationEligible
+        ? `Bundle "${label}" into a reusable workflow`
+        : `Review "${label}" before automation because its evidence is not yet reliable`,
+      automationEligible,
+      outcomeStats: { clean, partial, aborted, successRate, weightedSuccessRate, distinctSessions },
+    });
+  }
+  return patterns;
 }

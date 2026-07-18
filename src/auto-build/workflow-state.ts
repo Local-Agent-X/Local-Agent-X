@@ -2,6 +2,9 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createJsonStore } from "../util/json-store.js";
 
+// This routing bridge is owned by the single LAX server process. Workflow
+// lifecycle integration supplies explicit transitions and cleanup, so it does
+// not need cross-process locking or time-based expiry.
 const STORE_VERSION = 1;
 const STORE_FILENAME = "app-build-workflows.json";
 
@@ -66,6 +69,26 @@ function isTimestamp(value: unknown): value is string {
   return isNonEmptyString(value) && !Number.isNaN(Date.parse(value));
 }
 
+function requirePhase(value: unknown): AppBuildWorkflowPhase {
+  if (!PHASES.has(value as AppBuildWorkflowPhase)) {
+    throw new Error(`Invalid app-build workflow phase: ${String(value)}`);
+  }
+  return value as AppBuildWorkflowPhase;
+}
+
+function requireOptionalString(field: "projectDir" | "opId", value: unknown): string {
+  if (!isNonEmptyString(value)) {
+    throw new Error(`App-build workflow ${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function normalizeProjectDirForMatch(projectDir: string): string {
+  const normalized = projectDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  const windowsPath = /^[a-z]:\//i.test(normalized) || normalized.startsWith("//");
+  return windowsPath ? normalized.toLowerCase() : normalized;
+}
+
 function isWorkflow(value: unknown): value is AppBuildWorkflow {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const record = value as Partial<AppBuildWorkflow>;
@@ -105,10 +128,16 @@ export function createAppBuildWorkflowStore(
   });
 
   function query(filters: AppBuildWorkflowQuery = {}): AppBuildWorkflow[] {
+    const projectDir = filters.projectDir === undefined
+      ? undefined
+      : normalizeProjectDirForMatch(filters.projectDir);
     return store.load().workflows.filter(workflow =>
       (filters.sessionId === undefined || workflow.sessionId === filters.sessionId)
       && (filters.phase === undefined || workflow.phase === filters.phase)
-      && (filters.projectDir === undefined || workflow.projectDir === filters.projectDir)
+      && (projectDir === undefined || (
+        workflow.projectDir !== undefined
+        && normalizeProjectDirForMatch(workflow.projectDir) === projectDir
+      ))
       && (filters.opId === undefined || workflow.opId === filters.opId));
   }
 
@@ -124,6 +153,13 @@ export function createAppBuildWorkflowStore(
   }): AppBuildWorkflow {
     const sessionId = input.sessionId.trim();
     if (!sessionId) throw new Error("App-build workflow requires a sessionId");
+    const phase = requirePhase(input.phase);
+    const projectDir = input.projectDir === undefined
+      ? undefined
+      : requireOptionalString("projectDir", input.projectDir);
+    const opId = input.opId === undefined
+      ? undefined
+      : requireOptionalString("opId", input.opId);
     const now = new Date().toISOString();
     let saved!: AppBuildWorkflow;
     store.mutate(file => {
@@ -131,9 +167,11 @@ export function createAppBuildWorkflowStore(
       saved = {
         kind: "app-build",
         sessionId,
-        phase: input.phase,
-        ...(input.projectDir ? { projectDir: input.projectDir } : {}),
-        ...(input.opId ? { opId: input.opId } : {}),
+        phase,
+        ...(existing?.projectDir ? { projectDir: existing.projectDir } : {}),
+        ...(existing?.opId ? { opId: existing.opId } : {}),
+        ...(projectDir ? { projectDir } : {}),
+        ...(opId ? { opId } : {}),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
@@ -147,13 +185,21 @@ export function createAppBuildWorkflowStore(
     sessionId: string,
     patch: Partial<Pick<AppBuildWorkflow, "phase" | "projectDir" | "opId">>,
   ): AppBuildWorkflow | null {
+    const validated: typeof patch = {};
+    if (Object.hasOwn(patch, "phase")) validated.phase = requirePhase(patch.phase);
+    if (Object.hasOwn(patch, "projectDir")) {
+      validated.projectDir = requireOptionalString("projectDir", patch.projectDir);
+    }
+    if (Object.hasOwn(patch, "opId")) {
+      validated.opId = requireOptionalString("opId", patch.opId);
+    }
     let updated: AppBuildWorkflow | null = null;
     store.mutate(file => {
       const index = file.workflows.findIndex(workflow => workflow.sessionId === sessionId);
       if (index < 0) return;
       updated = {
         ...file.workflows[index],
-        ...patch,
+        ...validated,
         updatedAt: new Date().toISOString(),
       };
       file.workflows[index] = updated;

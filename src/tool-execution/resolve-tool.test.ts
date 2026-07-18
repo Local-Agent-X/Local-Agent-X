@@ -12,14 +12,21 @@
  * and asserts the full seam: dispatch → arg stamp → resolver anchor.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
-import { resolve } from "node:path";
+import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { resolvePhase } from "./resolve-tool.js";
+import { dispatchSingleToolCall } from "./execute-tool.js";
 import { createContext } from "./context.js";
 import type { SecurityLayer } from "../security/index.js";
 import { resolveAgentPath, sessionIdOf, setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
 import { searchBase } from "../tools/glob-tool.js";
 import { searchRoot } from "../tools/grep-tool.js";
+import { setAriRequired } from "../ari-kernel/state.js";
+import { startAppBuildTool, finalizeAppBuildTool } from "../auto-build/app-build-tool.js";
+import { readAppBuildWorkflow } from "../auto-build/workflow-state.js";
+import { FEATURE_FLAG_ENV } from "../auto-build/tool.js";
 
 const SESSION = "agent-seam-test-1";
 // Pure path math — nothing touches disk, so the root doesn't need to exist.
@@ -77,6 +84,68 @@ describe("work-rooted session tool anchoring (dispatch → resolver seam)", () =
     expect(searchBase(undefined, SESSION)).toBe(WORK_ROOT);
     expect(searchRoot({ path: "src", _sessionId: SESSION })).toBe(resolve(WORK_ROOT, "src"));
     expect(searchRoot({ _sessionId: SESSION })).toBe(WORK_ROOT);
+  });
+});
+
+describe("app-build trusted session stamping (canonical dispatch seam)", () => {
+  const SESSION_ID = "app-build-dispatch-session";
+  let dataDir: string;
+  let previousDataDir: string | undefined;
+  let previousFeatureFlag: string | undefined;
+
+  beforeAll(() => {
+    setAriRequired(false);
+    previousDataDir = process.env.LAX_DATA_DIR;
+    previousFeatureFlag = process.env[FEATURE_FLAG_ENV];
+    dataDir = mkdtempSync(join(tmpdir(), "app-build-dispatch-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    delete process.env[FEATURE_FLAG_ENV];
+  });
+
+  afterAll(() => {
+    setAriRequired(true);
+    if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = previousDataDir;
+    if (previousFeatureFlag === undefined) delete process.env[FEATURE_FLAG_ENV];
+    else process.env[FEATURE_FLAG_ENV] = previousFeatureFlag;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  async function dispatchAppBuild(
+    name: "start_app_build" | "finalize_app_build",
+    args: Record<string, unknown>,
+  ) {
+    const tool = name === "start_app_build" ? startAppBuildTool : finalizeAppBuildTool;
+    return dispatchSingleToolCall(
+      { id: `call-${name}`, name, args },
+      {
+        toolMap: new Map([[name, tool]]),
+        security: undefined as never,
+        sessionId: SESSION_ID,
+        callContext: "local",
+      },
+    );
+  }
+
+  it("stamps start_app_build and finalize_app_build with the trusted session", async () => {
+    const started = await dispatchAppBuild("start_app_build", { concept: "a calendar" });
+    expect(started.isError).toBe(false);
+    expect(readAppBuildWorkflow(SESSION_ID)).toMatchObject({ phase: "planning" });
+
+    const projectDir = join(dataDir, "calendar-project");
+    const finalized = await dispatchAppBuild("finalize_app_build", {
+      project_dir: projectDir,
+      project_name: "Calendar",
+      product_md: "# Product\n\nCalendar.",
+      constitution_md: "# Constitution\n\nNo silent failures.",
+      plan_md: "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk\n- **Slice:** initialize.\n- **Done when:** boots.",
+      scenarios: [{ filename: "01-happy.md", content: "# Happy path" }],
+    });
+    expect(finalized.isError).toBe(false);
+    expect(readAppBuildWorkflow(SESSION_ID)).toMatchObject({
+      phase: "finalized",
+      projectDir,
+    });
   });
 });
 

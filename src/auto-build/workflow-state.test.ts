@@ -42,6 +42,7 @@ describe("app-build workflow state", () => {
 
     const reloaded = createAppBuildWorkflowStore(filePath);
     expect(reloaded.query({ projectDir: "C:\\projects\\calendar" })).toHaveLength(1);
+    expect(reloaded.query({ projectDir: "c:/PROJECTS/calendar/" })).toHaveLength(1);
     expect(reloaded.read("session-finalized")).toMatchObject({
       phase: "finalized",
       projectDir: "C:\\projects\\calendar",
@@ -83,5 +84,34 @@ describe("app-build workflow state", () => {
 
     const persisted = JSON.parse(readFileSync(filePath, "utf-8"));
     expect(persisted.workflows).toHaveLength(1);
+  });
+
+  it("preserves routing coordinates when an upsert omits them", () => {
+    const store = createAppBuildWorkflowStore(makeStorePath());
+    store.upsert({
+      sessionId: "coordinate-session",
+      phase: "running",
+      projectDir: "C:\\projects\\calendar",
+      opId: "op-7",
+    });
+
+    const updated = store.upsert({ sessionId: "coordinate-session", phase: "halted" });
+    expect(updated).toMatchObject({
+      phase: "halted",
+      projectDir: "C:\\projects\\calendar",
+      opId: "op-7",
+    });
+  });
+
+  it("rejects invalid update patches before persistence", () => {
+    const store = createAppBuildWorkflowStore(makeStorePath());
+    store.upsert({ sessionId: "validated", phase: "planning" });
+
+    expect(() => store.update("validated", {
+      phase: "unknown" as never,
+    })).toThrow(/invalid.*phase/i);
+    expect(() => store.update("validated", { projectDir: "" })).toThrow(/projectDir/);
+    expect(() => store.update("validated", { opId: "   " })).toThrow(/opId/);
+    expect(store.read("validated")).toMatchObject({ phase: "planning" });
   });
 });

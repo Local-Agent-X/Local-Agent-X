@@ -40,7 +40,7 @@ const SESSION_SCOPED_TOOLS = new Set([
   "memory_set_user_field", "memory_update_profile",
   "project_brief_update", "project_create",
   "self_edit",
-  "build_app",
+  "build_app", "start_app_build", "finalize_app_build",
   "agent_escalate",
   // AriKernel bridge synonyms: stamp the trusted `_sessionId` so the bridge
   // derives runId/principal from trusted context (arikernel-bridge.ts), not

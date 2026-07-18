@@ -50,7 +50,7 @@ export function bundledProtocolsDir(): string {
 /** Synced user protocol dir — lives in workspace/protocols/imported/.
  *  Picked up by workspace git sync so user-added SKILL.md packs propagate
  *  to all of the user's machines. The ONLY location loaded post-migration. */
-function workspaceImportedDir(): string {
+export function importedProtocolsDir(): string {
   const cfg = getRuntimeConfig();
   return resolve(cfg.workspace, "protocols", "imported");
 }
@@ -83,7 +83,7 @@ function runProtocolMigrations(): void {
 
   let target: string;
   try {
-    target = workspaceImportedDir();
+    target = importedProtocolsDir();
   } catch {
     // Config not initialized yet (rare early-boot path) — defer.
     _migrationRan = false;
@@ -168,7 +168,7 @@ export function invalidateBundledCache(): void {
 
 export function loadImportedProtocols(): Protocol[] {
   runProtocolMigrations();
-  return scanSkillMdDir(workspaceImportedDir(), "imported");
+  return scanSkillMdDir(importedProtocolsDir(), "imported");
 }
 
 // ── Stamping helpers ──────────────────────────────────────────────────────

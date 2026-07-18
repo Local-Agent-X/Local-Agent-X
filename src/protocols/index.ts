@@ -55,6 +55,11 @@ export { createChain, startChain, advanceChain, getChainState, resolveInputs, fa
 export { startExecution, completeStep, failStep, skipStep, pauseExecution, resumeExecution, getProgress, getAllExecutions, createProgressTools } from "./progress.js";
 export { createRollbackSession, saveSnapshot, rollbackToStep, rollbackLast, getSnapshots, getSession, createRollbackTools } from "./rollback.js";
 export { loadVariables, saveVariables, getVariable, setVariable, deleteVariable, listVariables, interpolateVariables, createVariableTools } from "./variables.js";
+export {
+  createLearnedProtocolDraft, loadLearnedProtocol, activateLearnedProtocol,
+  archiveLearnedProtocol, restoreLearnedProtocol, rollbackLearnedProtocol,
+  type LearnedProtocolRecord, type LearnedProtocolState, type LearnedProtocolVersion,
+} from "./learned-lifecycle.js";
 
 // Protocol packs
 export { socialProtocols } from "./packs/social.js";

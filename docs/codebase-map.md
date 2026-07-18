@@ -12,13 +12,13 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1294 non-test source files · 0 god files (>400 LOC).
+**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1296 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/security/` | 71 | 28 | XL |  |
+| `src/security/` | 71 | 29 | XL |  |
 | `src/ops/` | 69 | 22 | XL |  |
 | `src/tools/` | 57 | 146 | XL |  |
 | `src/providers/` | 45 | 20 | L |  |
@@ -28,7 +28,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/workspace/` | 28 | 2 | M |  |
 | `src/agency/` | 25 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/browser/` | 24 | 49 | XL |  |
+| `src/browser/` | 24 | 50 | XL |  |
 | `src/auth/` | 23 | 10 | L |  |
 | `src/tool-policy/` | 23 | 20 | L |  |
 | `src/threat/` | 22 | 11 | L |  |

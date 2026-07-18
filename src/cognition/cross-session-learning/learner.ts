@@ -32,6 +32,7 @@ import {
 import { fuzzyMatch } from "./text-utils.js";
 import type { ModuleSignal } from "../../orchestrator/types.js";
 import { formatLearningCandidateNudge } from "../../memory/curate-nudge.js";
+import { draftLearnedCandidate, type LearnedCandidateDraftResult } from "../../protocols/learned-drafting.js";
 
 export class CrossSessionLearner {
   private static instance: CrossSessionLearner;
@@ -166,6 +167,12 @@ export class CrossSessionLearner {
     this.data.candidates[index] = updated;
     persistData(this.data);
     return structuredClone(updated);
+  }
+
+  draftCandidate(id: string): LearnedCandidateDraftResult {
+    const candidate = this.data.candidates.find((entry) => entry.id === id);
+    if (!candidate) throw new Error(`Unknown learned candidate: ${id}`);
+    return draftLearnedCandidate(structuredClone(candidate));
   }
 
   getInsights(): SessionInsight[] {

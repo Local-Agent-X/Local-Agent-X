@@ -97,7 +97,7 @@ function readVerifiedVersion(dir: string, version: LearnedProtocolVersion): stri
   if (!existsSync(skillPath) || !existsSync(metaPath)) throw new Error(`Incomplete learned protocol version: ${version.id}`);
   const meta = JSON.parse(readFileSync(metaPath, "utf8")) as LearnedProtocolVersion;
   const body = readFileSync(skillPath, "utf8");
-  if (meta.id !== version.id || meta.sha256 !== version.sha256 || sha256(body) !== version.sha256) {
+  if (JSON.stringify(meta) !== JSON.stringify(version) || sha256(body) !== version.sha256) {
     throw new Error(`Learned protocol version hash mismatch: ${version.id}`);
   }
   return body;
@@ -198,6 +198,13 @@ export function loadLearnedProtocol(slug: string): LearnedProtocolRecord {
     throw new Error(`Archived learned protocol has no restorable version: ${slug}`);
   }
   return record;
+}
+
+export function hasLearnedProtocol(slug: string): boolean {
+  const dir = protocolDir(slug);
+  const path = lifecyclePath(dir);
+  rejectSymlink(path);
+  return existsSync(path);
 }
 
 export function activateLearnedProtocol(input: LearnedMutation & { versionId: string }): LearnedProtocolRecord {

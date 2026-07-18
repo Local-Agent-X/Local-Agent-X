@@ -81,7 +81,7 @@ describe("Browser full-page workspace", () => {
     expect(CSS).toContain("#stop-btn{grid-column:8");
     expect(CSS).toContain("#send-btn{grid-column:9");
     expect(CSS).toContain("browser-chat-latest-open{--browser-chat-dock-height:min(38vh,380px)}");
-    expect(CSS).toContain("body.browser-workspace #browser-tab-body{\n  padding-bottom:0");
+    expect(CSS).toMatch(/body\.browser-workspace #browser-tab-body\{\r?\n  padding-bottom:0/);
     expect(CSS).toContain("body.browser-chat-overlay-renderer");
   });
 

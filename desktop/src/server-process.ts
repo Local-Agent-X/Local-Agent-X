@@ -67,18 +67,10 @@ export function panicAbortServer(): void {
   catch (e) { console.warn("[desktop] panic-abort send failed:", e); }
 }
 
-// GUI-launched apps inherit a PATH that misses the node we provision.
-// macOS (Finder/Launchpad/Spotlight): a minimal launchd PATH that excludes
-// Homebrew, nvm, and asdf — augment so `node` resolves whether via the
-// app-owned runtime (node-runtime.ts), brew, nvm, or system pkg.
-// ~/.lax/runtime/bin is FIRST so the stable Developer-ID-signed node wins
-// over brew's. Windows: the installer and the in-app upgrade unpack a
-// portable node under %LOCALAPPDATA%\LocalAgentX\node-v* and persist it to
-// the USER registry PATH — which this already-running process never re-reads
-// — so discover that dir directly; without it the post-upgrade recheck said
-// "node still missing" forever and the boot gate looped. Merging always uses
-// the platform delimiter (the old ":" join corrupted Windows PATHs).
-// Exported so the node-floor check resolves the SAME node spawned.
+// GUI-launched macOS apps miss brew/nvm/asdf paths. Windows upgrades install
+// portable Node under LOCALAPPDATA and update the registry PATH, which the
+// running process never reloads. Use the same augmented PATH for the node-floor
+// check and the spawned server so a successful upgrade passes its recheck.
 export function buildAugmentedPath(): string {
   // Parity-tested against RUNTIME_NODE_PATH_AUGMENTS in install-common.mjs
   // (test/native-node-path-parity.test.ts) — edit both together.

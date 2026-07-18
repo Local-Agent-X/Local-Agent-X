@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Adapter, AdapterReport, ToolCall, TurnInput, TurnResult } from "../canonical-loop/adapter-contract.js";
+import type { Adapter, AdapterReport, ToolCall, TurnInput, TurnResult } from "../canonical-loop/public/build-adapters.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
 
 const previousLaxDir = process.env.LAX_DATA_DIR;

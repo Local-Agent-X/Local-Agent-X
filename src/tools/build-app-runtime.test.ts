@@ -9,7 +9,7 @@ import {
   resolveAdapterFactory,
   type ToolDispatcher,
 } from "../canonical-loop/index.js";
-import type { AdapterReport, ToolCall } from "../canonical-loop/adapter-contract.js";
+import type { AdapterReport, ToolCall } from "../canonical-loop/public/build-adapters.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
 import { clearSessionWorkRoot, sessionWorkRootOf } from "../workspace/paths.js";
 import { ORCHESTRATOR_STATE_FILENAME } from "../auto-build/orchestrator/state.js";

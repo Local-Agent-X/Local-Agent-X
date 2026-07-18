@@ -16,6 +16,14 @@ export {
 	type AppBuildAdapterOptions,
 } from "../adapters/app-build-adapter.js";
 
+export type {
+	Adapter,
+	AdapterReport,
+	ToolCall,
+	TurnInput,
+	TurnResult,
+} from "../adapter-contract.js";
+
 export { VERIFY_EVIDENCE_MARKER } from "../adapters/app-build-verify-adapter.js";
 
 export { withTransportRetry } from "../adapters/transport-retry.js";

@@ -10,8 +10,11 @@ import {
   type ToolDispatchResult,
   type ToolDispatcher,
 } from "../canonical-loop/index.js";
-import { createAppBuildAdapter } from "../canonical-loop/public/build-adapters.js";
-import type { Adapter, ToolCall } from "../canonical-loop/adapter-contract.js";
+import {
+  createAppBuildAdapter,
+  type Adapter,
+  type ToolCall,
+} from "../canonical-loop/public/build-adapters.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";

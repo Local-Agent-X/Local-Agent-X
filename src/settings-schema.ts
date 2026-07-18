@@ -63,6 +63,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "When the AI must ask for permission before running tools. auto=never, confirm-risky=bash/write/edit, confirm-all=every tool",
   },
   {
+    field: "learningMode",
+    validate: z.enum(["assisted", "autonomous"]),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "How newly learned skills become active. assisted waits for user review; autonomous activates qualified skills within existing permissions",
+  },
+  {
     field: "bridgeVoicePreference",
     // Keep the "sovits"→"auto" coercion in lockstep with config-schema.ts:
     // both parse the same persisted value, and only one accepting it means

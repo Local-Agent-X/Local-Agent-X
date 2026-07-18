@@ -41,6 +41,9 @@ function handleSettingsChanged(msg) {
   if ('browserMode' in msg.settings && typeof renderBrowserMode === 'function') {
     renderBrowserMode(msg.settings.browserMode);
   }
+  if ('learningMode' in msg.settings && typeof renderLearningMode === 'function') {
+    renderLearningMode(msg.settings.learningMode);
+  }
 }
 
 function handleSidebarPinsChanged(msg) {

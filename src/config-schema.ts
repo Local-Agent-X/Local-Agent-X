@@ -41,6 +41,7 @@ export const configSchema = z.object({
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),
+  learningMode: z.enum(["assisted", "autonomous"]).default("assisted"),
   retentionDays: z.number().int().min(7).max(365).default(90),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
   /** Bash sandbox mode. "guarded" (default, macOS/Linux) runs bash under a

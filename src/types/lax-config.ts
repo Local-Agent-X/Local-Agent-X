@@ -47,6 +47,8 @@ export interface LAXConfig {
   systemPrompt: string;
   profile: DeploymentProfile;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
+  /** Whether newly learned skills wait for review or may activate automatically. */
+  learningMode: "assisted" | "autonomous";
   retentionDays: number;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;

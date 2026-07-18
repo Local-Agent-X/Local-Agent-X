@@ -560,6 +560,17 @@
       </div>
       <!-- Memory & Embeddings -->
       <div id="stab-memory" class="tab-pane">
+        <div class="section-card learning-mode-card">
+          <div>
+            <div class="section-title">Skill learning</div>
+            <div class="section-desc">Choose whether qualified new skills wait for your review or become available automatically. Existing action permissions still apply.</div>
+          </div>
+          <div class="learning-mode-control" id="learning-mode-control" role="radiogroup" aria-label="Skill learning mode">
+            <button type="button" data-learning-mode="assisted" role="radio" aria-checked="true">Assisted</button>
+            <button type="button" data-learning-mode="autonomous" role="radio" aria-checked="false">Autonomous</button>
+          </div>
+          <div class="field-hint" id="learning-mode-status" aria-live="polite">New skills wait for your review.</div>
+        </div>
         <div id="mem-core-card" class="mem-core-fullrow"></div>
         <div class="mem-brain" id="mem-brain">
           <canvas id="mb-canvas"></canvas>
@@ -1562,6 +1573,7 @@
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-browser-mode.js?v=v2"></script>
 <script src="/js/settings-usage.js?v=v1"></script>
+<script src="/js/settings-learning-mode.js?v=v1"></script>
 <script src="/js/settings-permissions.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>

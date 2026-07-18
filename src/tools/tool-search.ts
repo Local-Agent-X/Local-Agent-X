@@ -80,6 +80,9 @@ function resolveMainChat(req: ResolveRequest, all: ToolDefinition[]): ToolDefini
   const literalCalls = req.literalCallDetector
     ? req.literalCallDetector(msg, all)
     : new Set<string>();
+  const keyworded = req.keywordRouter
+    ? req.keywordRouter(msg, all)
+    : new Set<string>();
 
   // Build-intent strip-down. If the user message is "build me X" AND they
   // didn't paste a literal tool call, narrow to build-intent audience.
@@ -89,7 +92,6 @@ function resolveMainChat(req: ResolveRequest, all: ToolDefinition[]): ToolDefini
   // schema even when the build classifier (mis)fires, or the model's only
   // visible "make something" tool is build_app (2026-06-10 misroute).
   if (req.buildIntentTest && req.buildIntentTest(msg) && literalCalls.size === 0) {
-    const keyworded = req.keywordRouter ? req.keywordRouter(msg, all) : new Set<string>();
     return all.filter(t => t.audiences?.includes("build-intent") || keyworded.has(t.name));
   }
 
@@ -98,11 +100,13 @@ function resolveMainChat(req: ResolveRequest, all: ToolDefinition[]): ToolDefini
     if (t.audiences?.includes("main-chat")) included.add(t.name);
   }
   for (const name of literalCalls) included.add(name);
-  if (req.keywordRouter) {
-    for (const name of req.keywordRouter(msg, all)) included.add(name);
-  }
+  for (const name of keyworded) included.add(name);
 
-  return all.filter(t => included.has(t.name));
+  const prioritized = new Set([...literalCalls, ...keyworded]);
+  return [
+    ...all.filter(t => prioritized.has(t.name)),
+    ...all.filter(t => included.has(t.name) && !prioritized.has(t.name)),
+  ];
 }
 
 export const toolSearchEnhancements = {

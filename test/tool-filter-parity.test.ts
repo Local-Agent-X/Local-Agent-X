@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { filterToolsForMessage } from "../src/agent-request/tool-filter.js";
+import { ESSENTIAL_TOOLS_ORDER, shrinkToolsForTier } from "../src/model-tiers.js";
 import type { Audience, ToolDefinition } from "../src/types.js";
 
 // Stub tool list mirroring real tools, with audiences pre-set the same
@@ -180,5 +181,30 @@ describe("filterToolsForMessage — slash-command turns bypass build-intent narr
     const full = filterToolsForMessage(tools, "build me a tracker app", { skipBuildIntent: true }).map(t => t.name);
     expect(full).toContain("memory_search"); // core survives — methodology has its tools
     expect(full).toContain("build_app");      // still available, just not narrowed-TO
+  });
+});
+
+describe("filterToolsForMessage — desktop screenshot routing", () => {
+  const tools = [
+    ...ESSENTIAL_TOOLS_ORDER.map(name => mkTool(name, ["main-chat"])),
+    mkTool("screen_capture", ["main-chat"]),
+    mkTool("unrelated_eager", ["main-chat"]),
+  ];
+
+  it.each([
+    "take a screen shot of my screen",
+    "capture my desktop",
+    "show me monitor 2",
+  ])("keeps screen_capture through the medium-model cap for %j", message => {
+    const filtered = filterToolsForMessage(tools, message);
+    const capped = shrinkToolsForTier(filtered, "medium", tools);
+    expect(capped.map(t => t.name)).toContain("screen_capture");
+  });
+
+  it("keeps browser for an explicit page screenshot", () => {
+    const filtered = filterToolsForMessage(tools, "take a screenshot of this browser page");
+    const capped = shrinkToolsForTier(filtered, "medium", tools);
+    expect(capped.map(t => t.name)).toContain("browser");
+    expect(filtered[0]?.name).not.toBe("screen_capture");
   });
 });

@@ -9,6 +9,8 @@ export const BROWSER_TOOL_NAME = "browser";
 
 export const BROWSER_TOOL_DESCRIPTION =
   "Control a REAL Chrome browser (visible window on user's desktop) to interact with web pages. " +
+  "Its screenshot action captures ONLY the current WEB PAGE/TAB, never the user's physical desktop, monitor, taskbar, or other apps. " +
+  "For requests like 'screenshot my screen', 'capture my desktop', or 'show my monitor', use `screen_capture` instead. " +
   "This is NOT headless — the user can see the browser window. " +
   "Use this for sites that require JavaScript rendering, form filling, authentication flows, " +
   "scraping dynamic content, or any task that web_fetch/http_request cannot handle. " +

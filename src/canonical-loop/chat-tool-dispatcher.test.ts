@@ -95,4 +95,25 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
     expect(text).toContain("FRESH");
     expect(calls.n).toBe(1);
   });
+
+  it("re-executes an identical call after a prior error so recovery can run", async () => {
+    const opId = freshOpId();
+    seedPriorCall(opId, JSON.stringify({ v: 1 }), "[error]\ntransient bridge timeout");
+
+    const calls = { n: 0 };
+    const dispatcher = makeChatToolDispatcher({
+      tools: [echoTool(calls)],
+      security: undefined as never,
+      sessionId: "s-error-retry",
+      callContext: "local",
+      opId,
+    });
+
+    const res = await dispatcher.dispatch({ toolCallId: "call-retry", tool: "echo", args: { v: 1 } });
+
+    const text = typeof res.result === "string" ? res.result : JSON.stringify(res.result);
+    expect(text).toContain("FRESH");
+    expect(text).not.toContain("[REPEATED CALL");
+    expect(calls.n).toBe(1);
+  });
 });

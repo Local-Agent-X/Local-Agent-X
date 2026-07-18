@@ -11,7 +11,7 @@ import { resolveToolsForRequest } from "../tools/tool-search.js";
 // injects into resolveToolsForRequest.
 
 // Keywords that trigger including specific tool groups
-const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
+const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; exclude?: RegExp; toolPrefixes: string[] }> = [
   { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet"] },
   { keywords: /\bdocs?\b|document|docx|\bword\b/i, toolPrefixes: ["document"] },
   // "power point" (spaced), "ppt", and "slide deck"/"deck" are how users
@@ -24,6 +24,11 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /clipboard|copy|paste/i, toolPrefixes: ["clipboard_"] },
   { keywords: /sql|database|query.*table|postgres|sqlite/i, toolPrefixes: ["sql_"] },
   { keywords: /image|photo|generate.*image|draw|picture|\bedit\b/i, toolPrefixes: ["generate_image", "edit_image", "generate_video", "ocr"] },
+  {
+    keywords: /screen\s*shot|\bdesktop\b|\bmonitor\b|whole screen|my screen/i,
+    exclude: /\b(browser|web\s*page|tab|site|website)\b/i,
+    toolPrefixes: ["screen_capture"],
+  },
   { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
   // App tools surface on "app/dashboard/tracker" mentions. Sidebar tools are a
   // SEPARATE rule that requires an explicit sidebar/pin/unpin keyword — the
@@ -99,8 +104,8 @@ function detectLiteralToolCalls(message: string, allTools: ToolDefinition[]): Se
  */
 function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string> {
   const out = new Set<string>();
-  for (const { keywords, toolPrefixes } of TOOL_KEYWORD_MAP) {
-    if (keywords.test(message)) {
+  for (const { keywords, exclude, toolPrefixes } of TOOL_KEYWORD_MAP) {
+    if (keywords.test(message) && !exclude?.test(message)) {
       for (const tool of allTools) {
         for (const prefix of toolPrefixes) {
           if (tool.name.startsWith(prefix) || tool.name === prefix) {

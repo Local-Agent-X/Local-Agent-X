@@ -85,6 +85,7 @@ function findPriorIdenticalResult(
       if (r.role !== "tool") continue;
       const rid = (r as unknown as { tool_call_id?: string }).tool_call_id;
       if (rid === match.id && typeof r.content === "string") {
+        if (/(^|\n)\[error\](\r?\n|$)/i.test(r.content)) return null;
         return { result: r.content, turnIndex: i };
       }
     }

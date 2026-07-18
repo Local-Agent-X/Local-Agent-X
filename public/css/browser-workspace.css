@@ -2,11 +2,14 @@
    WebContentsView always paints above DOM content regardless of z-index. */
 #browser-chat-dock-bar{display:none}
 .browser-workspace-toggle{font-size:.9rem;min-width:30px;margin-left:auto;margin-right:38px}
+body.platform-win .browser-workspace-toggle{margin-right:0;transform:translateY(3px)}
 
 body.browser-workspace{
-  --browser-chat-dock-height:96px;
+  --browser-chat-dock-height:52px;
   --browser-chat-dock-gap:12px;
 }
+body.browser-workspace.browser-chat-has-latest{--browser-chat-dock-height:84px}
+body.browser-workspace.browser-chat-latest-open{--browser-chat-dock-height:min(38vh,380px)}
 body.browser-workspace #page-chat{position:relative;flex-direction:row}
 body.browser-workspace #agent-feeds{
   position:absolute;inset:0;z-index:7;width:100%!important;min-width:0!important;
@@ -14,6 +17,11 @@ body.browser-workspace #agent-feeds{
 }
 body.browser-workspace #agent-feeds.collapsed{width:0!important}
 body.browser-workspace .agent-feeds-resize-handle{display:none}
+body.browser-workspace .agent-feeds-header{padding:7px 12px}
+body.browser-workspace .browser-tab-strip{min-height:30px;padding:3px 8px 0}
+body.browser-workspace .browser-strip-tab{height:27px}
+body.browser-workspace .browser-new-tab{height:26px}
+body.browser-workspace .browser-toolbar{padding:5px 8px}
 body.browser-workspace #browser-tab-body{
   padding-bottom:calc(var(--browser-chat-dock-height) + (2 * var(--browser-chat-dock-gap)));
 }
@@ -28,11 +36,54 @@ body.browser-workspace #chat-main{
 body.browser-workspace #chat-main #chat-bg,
 body.browser-workspace #chat-main #chat-toolbar,
 body.browser-workspace #chat-main #empty,
-body.browser-workspace #chat-main #messages,
 body.browser-workspace #chat-main #context-bar,
 body.browser-workspace #chat-main #status-bar{display:none!important}
+body.browser-workspace #chat-main #messages{display:none}
 body.browser-workspace #chat-main #input-area{
-  width:min(100%,840px);margin:0 auto;padding:0 12px 4px;border-top:0;background:transparent;
+  width:min(100%,840px);margin:0 auto;padding:0 12px 2px;border-top:0;background:transparent;
+}
+body.browser-workspace #chat-main #input-box{
+  display:grid;grid-template-columns:auto minmax(100px,1fr) auto auto auto auto auto auto auto;
+  align-items:center;gap:4px;padding:6px 10px;border-radius:14px;
+}
+body.browser-workspace #chat-main #upload-previews{grid-column:1/-1;grid-row:1}
+body.browser-workspace #chat-main #msg-input{
+  grid-column:2;grid-row:2;height:28px!important;min-height:28px;max-height:28px;
+  padding:3px 0;line-height:1.4;
+}
+body.browser-workspace #chat-main #composer-bar{display:contents}
+body.browser-workspace #chat-main #plus-btn{grid-column:1;grid-row:2}
+body.browser-workspace #chat-main #composer-chips{grid-column:3;grid-row:2}
+body.browser-workspace #chat-main #composer-bar > span[style*="flex:1"]{display:none}
+body.browser-workspace #chat-main #stream-indicator{grid-column:4;grid-row:2}
+body.browser-workspace #chat-main #dictate-btn{grid-column:5;grid-row:2}
+body.browser-workspace #chat-main #mic-btn{grid-column:6;grid-row:2}
+body.browser-workspace #chat-main #voice-cfg-btn{grid-column:7;grid-row:2}
+body.browser-workspace #chat-main #stop-btn{grid-column:8;grid-row:2;margin:0}
+body.browser-workspace #chat-main #send-btn{grid-column:9;grid-row:2;margin:0}
+#browser-chat-latest{
+  display:none;align-items:center;justify-content:space-between;width:min(calc(100% - 144px),720px);
+  min-height:28px;margin:0 auto 2px;padding:5px 12px;border:1px solid var(--border);
+  border-radius:12px;background:var(--surface);color:var(--muted);font-family:var(--mono);
+  font-size:.62rem;cursor:pointer;text-align:left;
+}
+#browser-chat-latest[hidden]{display:none!important}
+body.browser-workspace:not(.browser-chat-collapsed) #browser-chat-latest{display:flex}
+#browser-chat-latest:hover{border-color:var(--accent);color:var(--text)}
+.browser-chat-latest-caret{margin-left:auto}
+body.browser-workspace.browser-chat-latest-open #browser-chat-latest{
+  margin-bottom:0;border-radius:12px 12px 0 0;
+}
+body.browser-workspace.browser-chat-latest-open #chat-main #messages{
+  display:flex;flex:1;width:min(calc(100% - 144px),720px);margin:0 auto 6px;
+  padding:10px 12px;align-items:stretch;gap:0;border:1px solid var(--border);
+  border-top:0;border-radius:0 0 12px 12px;background:var(--surface);
+  box-shadow:0 14px 40px rgba(0,0,0,.28);overflow-y:auto;
+}
+body.browser-workspace.browser-chat-latest-open #chat-main #messages > *{display:none!important}
+body.browser-workspace.browser-chat-latest-open #chat-main #messages > .browser-latest-turn{display:block!important}
+body.browser-workspace.browser-chat-latest-open #chat-main #messages .msg.assistant.pin-bottom{
+  min-height:0;padding-bottom:0;
 }
 body.browser-workspace #browser-chat-dock-bar{
   display:block;position:absolute;top:12px;right:max(0px,calc(50% - 430px));
@@ -46,7 +97,7 @@ body.browser-workspace #browser-chat-dock-bar > span{display:none}
 }
 #browser-chat-collapse:hover{border-color:var(--accent);color:var(--accent)}
 
-body.browser-workspace.browser-chat-collapsed{--browser-chat-dock-height:42px}
+body.browser-workspace.browser-chat-collapsed{--browser-chat-dock-height:42px!important}
 body.browser-workspace.browser-chat-collapsed #chat-main{
   overflow:hidden;justify-content:initial;border:1px solid var(--border);border-radius:12px;
   background:var(--surface);box-shadow:0 12px 36px rgba(0,0,0,.28);
@@ -59,8 +110,15 @@ body.browser-workspace.browser-chat-collapsed #browser-chat-dock-bar{
 }
 body.browser-workspace.browser-chat-collapsed #browser-chat-dock-bar > span{display:inline}
 body.browser-workspace.browser-chat-collapsed #browser-chat-collapse{margin-left:auto}
+body.browser-workspace:has(#upload-previews.has-items){--browser-chat-dock-height:142px}
+body.browser-workspace.browser-chat-has-latest:has(#upload-previews.has-items){--browser-chat-dock-height:174px}
+body.browser-workspace.browser-chat-latest-open:has(#upload-previews.has-items){--browser-chat-dock-height:min(44vh,440px)}
 
 @media (max-width:760px){
-  body.browser-workspace{--browser-chat-dock-gap:8px;--browser-chat-dock-height:96px}
+  body.browser-workspace{--browser-chat-dock-gap:8px;--browser-chat-dock-height:52px}
+  body.browser-workspace.browser-chat-has-latest{--browser-chat-dock-height:84px}
   body.browser-workspace.browser-chat-collapsed{--browser-chat-dock-height:42px}
+  #browser-chat-latest,
+  body.browser-workspace.browser-chat-latest-open #chat-main #messages{width:calc(100% - 56px)}
+  body.browser-workspace #chat-main #composer-chips{max-width:220px}
 }

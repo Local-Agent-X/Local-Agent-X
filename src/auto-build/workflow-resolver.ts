@@ -212,9 +212,13 @@ function candidateFromEvidence(
     };
   }
 
-  const projectState = sanitizeProjectState(
+  const storedProjectState = sanitizeProjectState(
     readSafely(() => sources.readProjectState(evidence.projectDir), null),
   );
+  const projectState = storedProjectState
+    && sameProject(storedProjectState.state.projectDir, evidence.projectDir)
+    ? storedProjectState
+    : null;
   if (projectState) {
     const { state, planExists } = projectState;
     if ((state.phase === "starting" || state.phase === "running") && planExists) {

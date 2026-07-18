@@ -355,6 +355,29 @@ describe("Product Build continuation resolver", () => {
     expect(() => resolveAppBuildContinuation("owner", unreadable)).not.toThrow();
   });
 
+  it("rejects persisted state that claims a different project directory", () => {
+    const linkedProject = "C:\\Apps\\Linked";
+    const foreignProject = "C:\\Apps\\Foreign";
+    const source = sources({
+      workflows: [workflow("owner", "running", linkedProject)],
+      states: [{ state: state(foreignProject, "halted"), planExists: true }],
+    });
+    source.readProjectState = () => ({
+      state: state(foreignProject, "halted"),
+      planExists: true,
+    });
+
+    expect(resolveAppBuildContinuation("owner", source)).toMatchObject({
+      kind: "resolved",
+      action: "conversation",
+      candidate: {
+        phase: "running",
+        projectDir: linkedProject,
+        adoptable: false,
+      },
+    });
+  });
+
   it("does not adopt an invalid halted candidate into a fresh chat", () => {
     const projectDir = "C:\\Apps\\MissingPlan";
     const result = resolveAppBuildContinuation("fresh", sources({

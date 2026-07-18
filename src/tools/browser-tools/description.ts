@@ -16,7 +16,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are DURABLE — [5] stays [5] across snapshots as long as the element is still on the page. Subsequent snapshots emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
   "Actions:\n" +
   "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
-  "- new_tab: Open a URL in an additional co-drivable tab (keeps current tab open).\n" +
+  "- new_tab: Open a URL — or MULTIPLE urls at once via 'urls' — in additional co-drivable tabs (keeps current tab open). When the user asks to open several sites, make ONE call with all of them in 'urls'.\n" +
   "- snapshot: Observation with durable refs. First call after navigate → full list (viewport-first). Later calls → diff since last observation. Use 'observe' for structured buckets.\n" +
   "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
   "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
@@ -68,6 +68,14 @@ export const BROWSER_TOOL_PARAMETERS = {
     url: {
       type: "string",
       description: "URL to navigate to (required for 'navigate')",
+    },
+    urls: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "Multiple URLs for 'new_tab' — ONE call opens one tab per URL. " +
+        "Prefer this over repeated new_tab calls when the user asks for several sites. " +
+        "Takes precedence over 'url' when both are set.",
     },
     engine: {
       type: "string",

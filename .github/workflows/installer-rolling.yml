@@ -10,7 +10,7 @@ name: Rolling Installer (tracks main)
 #   https://github.com/<owner>/<repo>/releases/download/rolling/Install.Local.Agent.X.Windows.Installer.exe
 #   https://github.com/<owner>/<repo>/releases/download/rolling/Install.Local.Agent.X.Mac.Installer.dmg
 #
-# Re-run this workflow ONLY when the installer itself changes (this csproj /
+# This workflow runs when the installer itself changes (this csproj /
 # SourceDownloader / install-common.mjs / build-mac-installer.sh), NOT on
 # ordinary app updates — the built installers already serve latest main.
 #
@@ -38,9 +38,18 @@ name: Rolling Installer (tracks main)
 # frozen per-commit `lax-source-<sha>.tar.gz` + `.sha256` to the same `rolling`
 # release on every push to main; downloadMainTarball fetches + verifies that
 # asset. This installer workflow only builds the .exe/.dmg and is intentionally
-# NOT on the per-commit path (it's heavy + manual-dispatch).
+# path-filtered instead of running on every main push.
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "installer/**"
+      - "scripts/install-common.mjs"
+      - "scripts/build-mac-installer.sh"
+      - "scripts/fetch-electron-bundle.mjs"
+      - ".github/workflows/installer-rolling.yml"
   workflow_dispatch:
 
 permissions:

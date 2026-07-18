@@ -110,9 +110,16 @@ export async function promptAndUpgradeNode(status: NodeFloorStatus): Promise<{ o
   if (exit !== 0) {
     return { ok: false, detail: `Automatic upgrade failed — see ${logPath}. Install Node.js ${status.requiredMajor}+ from nodejs.org, then relaunch.` };
   }
-  // Re-resolve from the same PATH the server spawn will use — "the script
-  // succeeded" is not the invariant, "the spawnable node meets the floor" is.
-  const recheck = await checkNodeFloor(status.projectRoot, status.pathEnv);
+  // Re-resolve from a FRESHLY-BUILT PATH, not status.pathEnv — that snapshot
+  // predates the install, so on Windows it can't contain the portable node
+  // dir the upgrade just unpacked; rechecking against it reported "node still
+  // missing" after every successful install and looped the boot gate forever.
+  // buildAugmentedPath() re-discovers %LOCALAPPDATA%\LocalAgentX\node-v* now
+  // that it exists, and it's the same PATH the startServer() retry will use —
+  // "the script succeeded" is not the invariant, "the spawnable node meets
+  // the floor" is. (Dynamic import: server-process statically imports us.)
+  const { buildAugmentedPath } = await import("./server-process");
+  const recheck = await checkNodeFloor(status.projectRoot, buildAugmentedPath());
   return recheck.ok
     ? { ok: true, detail: `Node.js ${recheck.foundMajor} installed.` }
     : { ok: false, detail: `Upgrade ran but the node on PATH is still ${recheck.foundMajor === -1 ? "missing" : `v${recheck.foundMajor}`} — see ${logPath}.` };

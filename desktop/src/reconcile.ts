@@ -19,27 +19,17 @@
 import { ChildProcess, execSync, spawn } from "child_process";
 import { existsSync, readFileSync, readdirSync, statSync, cpSync, rmSync } from "fs";
 import { join, relative } from "path";
-import { homedir } from "os";
 import { Script } from "vm";
 import { serverDistIsFresh, desktopDistIsFresh } from "./dist-freshness";
 import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState } from "./reconcile-hash";
 
-// GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
-// PATH that excludes Homebrew, nvm, and asdf. Without this augment, our
-// runStep() invocations of `npm` ENOENT — the splash hangs with
-// "Update failed — spawn npm ENOENT" and the user is stuck. Same set of
-// paths as server-process.ts uses when spawning `node`. Kept duplicated
-// here rather than extracted because a third spawning site doesn't exist
-// yet (the abstraction would have only two callers).
-function buildAugmentedPath(): string {
-  const augments = [
-    "/opt/homebrew/bin", "/opt/homebrew/sbin",
-    "/usr/local/bin", "/usr/local/sbin",
-    join(homedir(), ".nvm/versions/node/current/bin"),
-  ];
-  const existing = (process.env.PATH || "").split(":");
-  return [...augments, ...existing].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
-}
+// GUI-launched apps inherit a PATH that can't see the node/npm we provision
+// (minimal launchd PATH on macOS; stale pre-install env on Windows). Without
+// the augment, our runStep() invocations of `npm` ENOENT — the splash hangs
+// with "Update failed — spawn npm ENOENT" and the user is stuck. The one
+// shared builder (server-process.ts) also discovers the Windows portable
+// node dir, whose npm.cmd is the only npm on a portable-only box.
+import { buildAugmentedPath } from "./server-process";
 
 export interface ReconcileResult {
   /** Whether desktop/src was rebuilt. When true, caller MUST app.relaunch()

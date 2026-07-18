@@ -21,6 +21,7 @@ import { getProjectRoot, reloadLAXConfig, type LAXConfig } from "./config";
 import { PID_FILE, readServerPidFile, waitForServer } from "./server-probe";
 import { checkNodeFloor } from "./node-floor";
 import { ensureManagedNode } from "./node-runtime";
+import { mergeAugmentedPath, portableNodeDirs, defaultPortableNodeRoot } from "./path-augment";
 import { serverDistIsFresh } from "./dist-freshness";
 
 export { reclaimOrphanServer, isServerRunning, waitForServer } from "./server-probe";
@@ -66,20 +67,31 @@ export function panicAbortServer(): void {
   catch (e) { console.warn("[desktop] panic-abort send failed:", e); }
 }
 
-// GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
-// PATH that excludes Homebrew, nvm, and asdf. Augment so `node` resolves
-// whether via the app-owned runtime (node-runtime.ts), brew, nvm, or system
-// pkg. ~/.lax/runtime/bin is FIRST so the stable Developer-ID-signed node wins
-// over brew's. Exported so the node-floor check resolves the SAME node spawned.
+// GUI-launched apps inherit a PATH that misses the node we provision.
+// macOS (Finder/Launchpad/Spotlight): a minimal launchd PATH that excludes
+// Homebrew, nvm, and asdf — augment so `node` resolves whether via the
+// app-owned runtime (node-runtime.ts), brew, nvm, or system pkg.
+// ~/.lax/runtime/bin is FIRST so the stable Developer-ID-signed node wins
+// over brew's. Windows: the installer and the in-app upgrade unpack a
+// portable node under %LOCALAPPDATA%\LocalAgentX\node-v* and persist it to
+// the USER registry PATH — which this already-running process never re-reads
+// — so discover that dir directly; without it the post-upgrade recheck said
+// "node still missing" forever and the boot gate looped. Merging always uses
+// the platform delimiter (the old ":" join corrupted Windows PATHs).
+// Exported so the node-floor check resolves the SAME node spawned.
 export function buildAugmentedPath(): string {
+  // Parity-tested against RUNTIME_NODE_PATH_AUGMENTS in install-common.mjs
+  // (test/native-node-path-parity.test.ts) — edit both together.
   const PATH_AUGMENTS = [
     join(homedir(), ".lax/runtime/bin"),
     "/opt/homebrew/bin", "/opt/homebrew/sbin",
     "/usr/local/bin", "/usr/local/sbin",
     join(homedir(), ".nvm/versions/node/current/bin"),
   ];
-  const existingPath = (process.env.PATH || "").split(":");
-  return [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
+  const augments = process.platform === "win32"
+    ? portableNodeDirs(defaultPortableNodeRoot())
+    : PATH_AUGMENTS;
+  return mergeAugmentedPath(augments, process.env.PATH);
 }
 
 // Async on purpose: the freshness sweep and the node-floor check both await

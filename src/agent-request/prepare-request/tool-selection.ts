@@ -11,6 +11,7 @@ import { providerUndercallsTools } from "../../providers/provider-ids.js";
 import { createLogger } from "../../logger.js";
 import {
   applyProductBuildToolRoute,
+  productBuildMethodologyTurn,
   productBuildTurnFromIntent,
   resolveProductBuildContinuationTurn,
   type ContinuationResolver,
@@ -144,7 +145,10 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
     logger.info(`[step] classifyIntent ${Date.now() - t0}ms verdict=${intentVerdict?.kind || "null"}`);
   }
-  const productBuildTurn = continuationTurn ?? productBuildTurnFromIntent(intentVerdict);
+  const methodologyTurn = inMethodology
+    ? productBuildMethodologyTurn(isSlashCommandExpansion(input.message))
+    : null;
+  const productBuildTurn = continuationTurn ?? methodologyTurn ?? productBuildTurnFromIntent(intentVerdict);
   const forceBuildIntent = productBuildTurn !== null;
 
   // Tier gates how hard we shrink the schema. Weak/medium models are paralyzed

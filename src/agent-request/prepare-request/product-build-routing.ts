@@ -17,9 +17,10 @@ export type ProductBuildAction =
   | "conversation";
 
 export interface ProductBuildTurn {
-  kind: "quick" | "product" | "clarify" | "continuation" | "ambiguous";
+  kind: "quick" | "product" | "clarify" | "continuation" | "ambiguous" | "methodology";
   action: ProductBuildAction | null;
   targetTool?: Exclude<ProductBuildAction, "conversation">;
+  allowedWorkflowTools?: string[];
   projectDir?: string;
   reason: string;
   directive: string;
@@ -133,6 +134,31 @@ export function productBuildTurnFromIntent(verdict: IntentVerdict | null): Produ
   };
 }
 
+export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTurn {
+  if (firstTurn) {
+    return {
+      kind: "methodology",
+      action: "start_app_build",
+      targetTool: "start_app_build",
+      allowedWorkflowTools: ["start_app_build"],
+      reason: "The user explicitly invoked /app-build.",
+      directive:
+        "The user explicitly invoked /app-build. Call start_app_build now with the user's concept. " +
+        "Do not call build_app and do not build inline.",
+    };
+  }
+  return {
+    kind: "methodology",
+    action: "conversation",
+    allowedWorkflowTools: ["start_app_build", "finalize_app_build"],
+    reason: "This session is already running the /app-build methodology.",
+    directive:
+      "The /app-build Product Build methodology is active. Continue its spec-first planning conversation. " +
+      "When the user signs off, call finalize_app_build; it starts the orchestrator automatically. " +
+      "Never call build_app and never build inline.",
+  };
+}
+
 const BUILD_WORKFLOW_TOOLS = new Set([
   "build_app",
   "start_app_build",
@@ -149,7 +175,7 @@ export function applyProductBuildToolRoute(
 ): ToolDefinition[] {
   if (!turn) return tools;
   const kept = tools.filter(tool => !BUILD_WORKFLOW_TOOLS.has(tool.name));
-  if (!turn.targetTool) return kept;
-  const target = allTools.find(tool => tool.name === turn.targetTool);
-  return target ? [target, ...kept] : kept;
+  const allowed = turn.allowedWorkflowTools ?? (turn.targetTool ? [turn.targetTool] : []);
+  const routed = allTools.filter(tool => allowed.includes(tool.name));
+  return [...routed, ...kept];
 }

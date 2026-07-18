@@ -9,6 +9,7 @@ import {
   resolveProductBuildContinuationTurn,
 } from "./product-build-routing.js";
 import { selectTools } from "./tool-selection.js";
+import { SLASH_COMMAND_MARKER } from "../../slash-commands.js";
 
 function tool(name: string): ToolDefinition {
   return {
@@ -149,6 +150,34 @@ describe("durable continuation action mapping", () => {
 });
 
 describe("canonical tool selection routing", () => {
+  it("forces /app-build into Product Build and structurally removes Quick Build", async () => {
+    const classifier = vi.fn();
+    const result = await selection({
+      message: `${SLASH_COMMAND_MARKER} \`/app-build\`. The user's argument: Build me a CRM`,
+      classifyIntentFn: classifier,
+    });
+    const names = result.tools.map(item => item.name);
+    expect(classifier).not.toHaveBeenCalled();
+    expect(result.forcedToolName).toBe("start_app_build");
+    expect(names).toContain("start_app_build");
+    expect(names).not.toContain("build_app");
+    expect(names).not.toContain("write");
+  });
+
+  it("keeps later /app-build planning turns Product-only through sign-off", async () => {
+    const result = await selection({
+      message: "Everything is locked in",
+      priorMethodology: true,
+    });
+    const names = result.tools.map(item => item.name);
+    expect(result.forcedToolName).toBeUndefined();
+    expect(names).toContain("start_app_build");
+    expect(names).toContain("finalize_app_build");
+    expect(names).not.toContain("build_app");
+    expect(names).not.toContain("write");
+    expect(result.productBuildTurn?.directive).toContain("call finalize_app_build");
+  });
+
   it("exposes and forces only start_app_build for Product Build", async () => {
     const result = await selection({
       classifyIntentFn: async () => ({

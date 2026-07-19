@@ -15,7 +15,7 @@
  * {@link smokeUrl}.
  */
 
-import { chromium, type Browser, type BrowserContext, type Page, type ConsoleMessage } from "playwright";
+import type { Browser, BrowserContext, Page, ConsoleMessage } from "playwright";
 
 export interface OpenedPage {
   browser: Browser;
@@ -38,6 +38,7 @@ export interface OpenedPage {
 export async function openPageWithConsoleCapture(): Promise<OpenedPage> {
   const errors: string[] = [];
   const pageErrors: string[] = [];
+  const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { atomicWriteFileSync, ensureDirFor } from "../util/json-store.js";
 import {
   parsePluginManifestMetadata,
@@ -20,6 +20,42 @@ export interface PluginRegistry {
 export interface PluginRegistryStore {
   read(): PluginRegistry;
   write(registry: PluginRegistry): void;
+}
+
+const REGISTRY_ERROR_KIND = Symbol.for("local-agent-x.plugin-registry-error");
+type RegistryErrorKind = "content-invalid" | "read-unavailable" | "write-unavailable";
+
+function systemErrorCode(cause: unknown): string | undefined {
+  if (!cause || typeof cause !== "object" || !("code" in cause)) return undefined;
+  return typeof cause.code === "string" ? cause.code : undefined;
+}
+
+abstract class PluginRegistryStoreError extends Error {
+  readonly [REGISTRY_ERROR_KIND]: RegistryErrorKind;
+  readonly code: string | undefined;
+  constructor(message: string, kind: RegistryErrorKind, cause?: unknown) {
+    super(message, { cause });
+    this.name = "PluginRegistryStoreError";
+    this[REGISTRY_ERROR_KIND] = kind;
+    this.code = systemErrorCode(cause);
+  }
+}
+
+export class PluginRegistryContentError extends PluginRegistryStoreError {
+  constructor(cause?: unknown) { super("Plugin registry is invalid", "content-invalid", cause); }
+}
+
+export class PluginRegistryUnavailableError extends PluginRegistryStoreError {
+  readonly operation: "read" | "write";
+  constructor(operation: "read" | "write", cause?: unknown) {
+    super(`Plugin registry ${operation} is temporarily unavailable`, `${operation}-unavailable`, cause);
+    this.operation = operation;
+  }
+}
+
+export function isPluginRegistryContentError(error: unknown): boolean {
+  return !!error && typeof error === "object" &&
+    (error as Record<symbol, unknown>)[REGISTRY_ERROR_KIND] === "content-invalid";
 }
 
 function parseRegistry(raw: string): PluginRegistry {
@@ -59,23 +95,30 @@ function parseRegistry(raw: string): PluginRegistry {
 }
 
 type RegistryWriter = (path: string, data: string) => void;
+type RegistryReader = (path: string, encoding: "utf-8") => string;
 
 export function createPluginRegistryStore(
   path: string,
   writeAtomic: RegistryWriter = atomicWriteFileSync,
+  readCommitted: RegistryReader = readFileSync,
 ): PluginRegistryStore {
   return {
     read(): PluginRegistry {
-      if (!existsSync(path)) return {};
+      let raw: string;
       try {
-        return parseRegistry(readFileSync(path, "utf-8"));
-      } catch {
-        throw new Error("Plugin registry is invalid");
+        raw = readCommitted(path, "utf-8");
+      } catch (cause) {
+        if (systemErrorCode(cause) === "ENOENT") return {};
+        throw new PluginRegistryUnavailableError("read", cause);
       }
+      try { return parseRegistry(raw); }
+      catch (cause) { throw new PluginRegistryContentError(cause); }
     },
     write(registry: PluginRegistry): void {
-      ensureDirFor(path);
-      writeAtomic(path, JSON.stringify(registry, null, 2));
+      try {
+        ensureDirFor(path);
+        writeAtomic(path, JSON.stringify(registry, null, 2));
+      } catch (cause) { throw new PluginRegistryUnavailableError("write", cause); }
     },
   };
 }

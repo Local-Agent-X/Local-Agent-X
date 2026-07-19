@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PluginRegistry, PluginRegistryStore } from "../src/plugin-system/registry-store.js";
+import { PluginRegistryContentError, type PluginRegistry, type PluginRegistryStore } from "../src/plugin-system/registry-store.js";
 
 let root: string;
 let pluginsDir: string;
@@ -366,7 +366,7 @@ describe("PluginManager lifecycle transactions", () => {
     let corrupt = true;
     const store: PluginRegistryStore = {
       read() {
-        if (corrupt) throw new Error("Unexpected token at C:\\private\\registry.json");
+        if (corrupt) throw new PluginRegistryContentError(new SyntaxError("private registry detail"));
         return clone(repaired);
       },
       write() { throw new Error("test store is read-only"); },

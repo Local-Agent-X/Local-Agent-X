@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { registeredPluginItem, safeLifecyclePersistenceError, safePluginId, safeRestoreError, type PluginListItem } from "./plugin-system/lifecycle-status.js";
 import { parsePluginManifest, pluginManifestMetadata, type PluginManifest } from "./plugin-system/manifest.js";
-import { createPluginRegistryStore, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
+import { createPluginRegistryStore, isPluginRegistryContentError, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
 import { verifyPublisherSignature, type TrustLevel } from "./plugin-system/publisher-trust.js";
 import { assessTrustLevel } from "./plugin-system/integrity.js";
 import { buildPluginList } from "./plugin-system/list-items.js";
@@ -32,31 +32,31 @@ function ensurePluginsDir(): void {
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
   private restoreErrors = new Map<string, PluginRestoreFailure>();
-  private registryError: string | undefined;
+  private lastRegistry: PluginRegistry | undefined;
+  private registryFailure: "invalid" | "unavailable" | undefined;
   private toolSurface: PluginToolSurfacePort | undefined;
   private secretLifecycle = new PluginSecretLifecycle();
   constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(REGISTRY_PATH)) {}
   private readRegistry(): PluginRegistry {
-    try { const registry = this.registryStore.read(); this.registryError = undefined; return registry; }
-    catch {
-      this.registryError = "Plugin registry is invalid";
+    try { const registry = this.registryStore.read(); this.lastRegistry = registry; this.registryFailure = undefined; return registry; }
+    catch (error) {
+      this.registryFailure = isPluginRegistryContentError(error) ? "invalid" : "unavailable";
+      if (this.registryFailure !== "invalid") throw error;
       for (const id of this.loaded.keys()) {
         try { this.toolSurface?.deactivate(id); } catch { /* canonical surface revokes before reporting cleanup errors */ }
         this.secretLifecycle.clear(id);
       }
       this.loaded.clear();
-      throw new Error(this.registryError);
+      throw error;
     }
   }
   bindToolSurface(surface: PluginToolSurfacePort): void {
     if (this.toolSurface && this.toolSurface !== surface) throw new Error("Plugin tool surface is already bound");
-    this.toolSurface = surface;
-  }
+    this.toolSurface = surface; }
   bindSecretAvailability(availability: SecretAvailabilityPort): void {
     this.secretLifecycle.bind(availability);
     availability.onAvailabilityChange?.((change) => {
-      if (change.type === "deleted") this.onSecretDeleted(change.name);
-      else void this.onSecretAdded(change.name);
+      if (change.type === "deleted") this.onSecretDeleted(change.name); else void this.onSecretAdded(change.name);
     });
   }
   async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
@@ -253,9 +253,12 @@ export class PluginManager {
     try {
       registry = this.readRegistry();
     } catch {
-      this.registryError = "Plugin registry is invalid";
-      logger.warn("[plugin] Plugin registry is invalid; lifecycle operations are unavailable");
-      return [registeredPluginItem("plugin-registry", false, this.registryError)];
+      const error = this.registryFailure === "invalid" ? "Plugin registry is invalid" : "Plugin registry is temporarily unavailable";
+      logger.warn(`[plugin] ${error}; lifecycle operations are unavailable`);
+      const unavailable = registeredPluginItem("plugin-registry", false, error);
+      if (this.registryFailure !== "unavailable" || !this.lastRegistry) return [unavailable];
+      return [unavailable, ...buildPluginList(this.lastRegistry, this.loaded, this.restoreErrors, this.secretLifecycle.blocked,
+        (id) => this.toolSurface?.listActive(id) ?? [], (requirements) => this.secretLifecycle.missing(requirements))];
     }
     return buildPluginList(registry, this.loaded, this.restoreErrors, this.secretLifecycle.blocked,
       (id) => this.toolSurface?.listActive(id) ?? [], (requirements) => this.secretLifecycle.missing(requirements));
@@ -272,9 +275,7 @@ export class PluginManager {
     return [...plugin.manifest.tools];
   }
 
-  getActivePluginTools(id: string): string[] {
-    return (this.toolSurface?.listActive(id) ?? []).map((tool) => tool.name);
-  }
+  getActivePluginTools(id: string): string[] { return (this.toolSurface?.listActive(id) ?? []).map((tool) => tool.name); }
   getPluginModule(id: string): Record<string, unknown> | null {
     const plugin = this.loaded.get(id);
     if (!plugin || plugin.manifest.contributions?.tools) return null;
@@ -293,8 +294,7 @@ export class PluginManager {
     try {
       registry = this.readRegistry();
     } catch {
-      this.registryError = "Plugin registry is invalid";
-      logger.warn("[plugin] Plugin registry is invalid; enabled plugins were not restored");
+      logger.warn(`[plugin] Plugin registry is ${this.registryFailure === "invalid" ? "invalid" : "temporarily unavailable"}; enabled plugins were not restored`);
       return [];
     }
     const results: PluginManifest[] = [];

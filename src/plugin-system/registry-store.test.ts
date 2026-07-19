@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPluginRegistryStore, type PluginRegistry } from "./registry-store.js";
+import {
+  createPluginRegistryStore,
+  isPluginRegistryContentError,
+  PluginRegistryUnavailableError,
+  type PluginRegistry,
+} from "./registry-store.js";
 
 const dirs: string[] = [];
 
@@ -17,17 +22,27 @@ afterEach(() => {
 });
 
 describe("plugin registry persistence", () => {
+  it("treats only a typed missing file as an empty first-install registry", () => {
+    const path = tempRegistryPath();
+    expect(createPluginRegistryStore(path).read()).toEqual({});
+  });
+
   it.each(["write", "rename"])("keeps the valid target when an atomic %s fails", (stage) => {
     const path = tempRegistryPath();
     const original: PluginRegistry = {
       sample: { enabled: true, path: "/plugins/sample", entryHash: "a".repeat(64) },
     };
     writeFileSync(path, JSON.stringify(original), "utf-8");
+    const cause = Object.assign(new Error(`${stage} failed at private path`), { code: "EBUSY" });
     const store = createPluginRegistryStore(path, () => {
-      throw new Error(`${stage} failed`);
+      throw cause;
     });
 
-    expect(() => store.write({ ...original, sample: { ...original.sample, enabled: false } })).toThrow();
+    try { store.write({ ...original, sample: { ...original.sample, enabled: false } }); throw new Error("expected write failure"); }
+    catch (error) {
+      expect(error).toBeInstanceOf(PluginRegistryUnavailableError);
+      expect(error).toMatchObject({ operation: "write", code: "EBUSY", cause });
+    }
     expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual(original);
   });
 
@@ -57,5 +72,29 @@ describe("plugin registry persistence", () => {
     writeFileSync(path, JSON.stringify({ broken: { enabled: "yes", path: "" } }), "utf-8");
 
     expect(() => createPluginRegistryStore(path).read()).toThrow("Plugin registry is invalid");
+  });
+
+  it.each(["EAGAIN", "EBUSY", "EACCES"])("preserves typed cause and code for %s read unavailability", (code) => {
+    const path = tempRegistryPath();
+    writeFileSync(path, "{}", "utf-8");
+    const cause = Object.assign(new Error("private path"), { code });
+    const store = createPluginRegistryStore(path, undefined, () => { throw cause; });
+
+    try { store.read(); throw new Error("expected read failure"); }
+    catch (error) {
+      expect(error).toBeInstanceOf(PluginRegistryUnavailableError);
+      expect(error).toMatchObject({ operation: "read", code, cause });
+      expect((error as Error).message).not.toContain("private");
+      expect(isPluginRegistryContentError(error)).toBe(false);
+    }
+  });
+
+  it("brands malformed durable content separately from transient I/O", () => {
+    const path = tempRegistryPath();
+    writeFileSync(path, '{"broken":', "utf-8");
+    let error: unknown;
+    try { createPluginRegistryStore(path).read(); } catch (caught) { error = caught; }
+    expect(isPluginRegistryContentError(error)).toBe(true);
+    expect(error).toMatchObject({ message: "Plugin registry is invalid", cause: expect.any(SyntaxError) });
   });
 });

@@ -27,9 +27,7 @@ interface LoadedPlugin {
 const PLUGINS_DIR = join(getLaxDir(), "plugins");
 const REGISTRY_PATH = join(PLUGINS_DIR, "registry.json");
 function ensurePluginsDir(): void {
-  if (!existsSync(PLUGINS_DIR)) {
-    mkdirSync(PLUGINS_DIR, { recursive: true });
-  }
+  if (!existsSync(PLUGINS_DIR)) mkdirSync(PLUGINS_DIR, { recursive: true });
 }
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
@@ -38,6 +36,18 @@ export class PluginManager {
   private toolSurface: PluginToolSurfacePort | undefined;
   private secretLifecycle = new PluginSecretLifecycle();
   constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(REGISTRY_PATH)) {}
+  private readRegistry(): PluginRegistry {
+    try { const registry = this.registryStore.read(); this.registryError = undefined; return registry; }
+    catch {
+      this.registryError = "Plugin registry is invalid";
+      for (const id of this.loaded.keys()) {
+        try { this.toolSurface?.deactivate(id); } catch { /* canonical surface revokes before reporting cleanup errors */ }
+        this.secretLifecycle.clear(id);
+      }
+      this.loaded.clear();
+      throw new Error(this.registryError);
+    }
+  }
   bindToolSurface(surface: PluginToolSurfacePort): void {
     if (this.toolSurface && this.toolSurface !== surface) throw new Error("Plugin tool surface is already bound");
     this.toolSurface = surface;
@@ -50,11 +60,9 @@ export class PluginManager {
     });
   }
   async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
-  private async loadPluginAtPath(
-    pluginPath: string,
+  private async loadPluginAtPath(pluginPath: string,
     expectedRegistration?: { id: string; entryHash: string; manifestHash?: string; enable?: boolean },
-    inspectSecretRequirements = false,
-  ): Promise<PluginManifest> {
+    inspectSecretRequirements = false): Promise<PluginManifest> {
     const resolvedPath = resolve(pluginPath);
     const realPluginsDir = realpathSync(PLUGINS_DIR);
     const rel = relative(realPluginsDir, resolvedPath);
@@ -81,10 +89,8 @@ export class PluginManager {
     try {
       manifest = parsePluginManifest(raw);
     } catch {
-      throw new Error(
-        `Invalid manifest at ${manifestPath}. ` +
-          "Required fields: id, name, version, description, entryPoint, and tools[] or contributions.tools[]"
-      );
+      throw new Error(`Invalid manifest at ${manifestPath}. ` +
+        "Required fields: id, name, version, description, entryPoint, and tools[] or contributions.tools[]");
     }
     if (expectedRegistration && manifest.id !== expectedRegistration.id) {
       throw new Error(`Registered plugin ID "${expectedRegistration.id}" does not match manifest ID`);
@@ -93,7 +99,7 @@ export class PluginManager {
 
     const currentManifestHash = createHash("sha256").update(manifestContent).digest("hex");
     try {
-    const registry = this.registryStore.read();
+    const registry = this.readRegistry();
     const registeredManifestHash = expectedRegistration?.manifestHash ?? registry[manifest.id]?.manifestHash;
     if (expectedRegistration && manifest.contributions && !registeredManifestHash) {
       throw new Error(`Plugin bundle "${manifest.id}" manifest is not integrity-pinned`);
@@ -152,17 +158,14 @@ export class PluginManager {
     this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel, currentManifestHash);
 
     const loadedPlugin: LoadedPlugin = {
-      manifest,
-      module: pluginModule,
-      path: pluginPath,
-      trustLevel: trust.trustLevel,
-      manifestHash: currentManifestHash,
+      manifest, module: pluginModule, path: pluginPath,
+      trustLevel: trust.trustLevel, manifestHash: currentManifestHash,
     };
 
     if (!expectedRegistration) {
       try {
         const nextRegistry: PluginRegistry = {
-          ...this.registryStore.read(),
+          ...this.readRegistry(),
           [manifest.id]: {
             enabled: true,
             path: pluginPath,
@@ -178,7 +181,7 @@ export class PluginManager {
         throw new Error(reason);
       }
     } else {
-      const currentRegistry = this.registryStore.read();
+      const currentRegistry = this.readRegistry();
       const current = currentRegistry[manifest.id];
       const unchanged = current?.path === pluginPath &&
         current.entryHash === expectedRegistration.entryHash &&
@@ -219,7 +222,7 @@ export class PluginManager {
   }
 
   disablePlugin(id: string): boolean {
-    const registry = this.registryStore.read();
+    const registry = this.readRegistry();
     if (!registry[id]) return false;
     const loaded = this.loaded.get(id);
     const nextRegistry: PluginRegistry = {
@@ -227,7 +230,7 @@ export class PluginManager {
       [id]: {
         ...registry[id],
         enabled: false,
-        ...(loaded ? { manifest: pluginManifestMetadata(loaded.manifest) } : {}),
+        ...(loaded ? { manifest: pluginManifestMetadata(loaded.manifest), manifestHash: loaded.manifestHash } : {}),
       },
     };
     try {
@@ -248,8 +251,7 @@ export class PluginManager {
   listPlugins(): PluginListItem[] {
     let registry: PluginRegistry;
     try {
-      registry = this.registryStore.read();
-      this.registryError = undefined;
+      registry = this.readRegistry();
     } catch {
       this.registryError = "Plugin registry is invalid";
       logger.warn("[plugin] Plugin registry is invalid; lifecycle operations are unavailable");
@@ -289,8 +291,7 @@ export class PluginManager {
   async loadAllEnabled(): Promise<PluginManifest[]> {
     let registry: PluginRegistry;
     try {
-      registry = this.registryStore.read();
-      this.registryError = undefined;
+      registry = this.readRegistry();
     } catch {
       this.registryError = "Plugin registry is invalid";
       logger.warn("[plugin] Plugin registry is invalid; enabled plugins were not restored");
@@ -325,7 +326,7 @@ export class PluginManager {
 
   async discoverSecretRequirements(): Promise<void> {
     let registry: PluginRegistry;
-    try { registry = this.registryStore.read(); } catch { return; }
+    try { registry = this.readRegistry(); } catch { return; }
     for (const path of this.discoverPlugins()) {
       try {
         const raw = JSON.parse(readFileSync(join(path, "manifest.json"), "utf-8")) as unknown;
@@ -351,7 +352,7 @@ export class PluginManager {
   }
   async enablePlugin(id: string): Promise<PluginManifest> {
     return this.secretLifecycle.serializeRetry(id, async () => {
-      const entry = this.registryStore.read()[id];
+      const entry = this.readRegistry()[id];
       if (!entry || entry.enabled) throw new Error(`Plugin "${id}" is not disabled`);
       if (entry.manifest?.id !== id || !entry.entryHash || !entry.manifestHash) {
         throw new Error("Plugin is not fully integrity-pinned");
@@ -366,7 +367,7 @@ export class PluginManager {
     const loaded = this.loaded.get(id);
     if (loaded) return loaded.manifest;
     const blocked = this.secretLifecycle.blocked.get(id);
-    const entry = this.registryStore.read()[id];
+    const entry = this.readRegistry()[id];
     const path = blocked?.path ?? entry?.path;
     if (!path) throw new Error(`Plugin "${id}" is not waiting for secrets`);
     if (entry?.enabled === false) throw new Error(`Plugin "${id}" is disabled`);
@@ -390,8 +391,7 @@ export class PluginManager {
 
   discoverPlugins(): string[] {
     ensurePluginsDir();
-    const entries = readdirSync(PLUGINS_DIR, { withFileTypes: true });
-    return entries
+    return readdirSync(PLUGINS_DIR, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => join(PLUGINS_DIR, e.name))
       .filter((dir) => existsSync(join(dir, "manifest.json")));

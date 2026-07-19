@@ -229,26 +229,39 @@ describe("canonical plugin metadata projection", () => {
     });
   });
 
-  it("re-enables a disabled bundle from its pinned durable identity after restart", async () => {
+  it("backfills a restored legacy bundle so disable, restart, and enable preserve autonomy", async () => {
     const root = mkdtempSync(join(tmpdir(), "lax-plugin-enable-"));
     dirs.push(root);
     const pluginsDir = join(root, "plugins");
     const pluginDir = join(pluginsDir, "durable-enable");
     mkdirSync(pluginDir, { recursive: true });
-    writeFileSync(join(pluginDir, "index.mjs"), "export const ready = true;\n", "utf-8");
-    writeFileSync(join(pluginDir, "manifest.json"), JSON.stringify({
+    const entry = "export const ready = true;\n";
+    const manifestContent = JSON.stringify({
       id: "durable-enable", name: "Durable Enable", version: "1.0.0",
       description: "enable test", entryPoint: "index.mjs", tools: ["durable_status"],
-    }), "utf-8");
+    });
+    writeFileSync(join(pluginDir, "index.mjs"), entry, "utf-8");
+    writeFileSync(join(pluginDir, "manifest.json"), manifestContent, "utf-8");
     const previous = process.env.LAX_DATA_DIR;
     process.env.LAX_DATA_DIR = root;
     vi.resetModules();
     try {
       const { PluginManager } = await import("../src/plugin-system.js");
       const store = createPluginRegistryStore(join(pluginsDir, "registry.json"));
+      store.write({ "durable-enable": {
+        enabled: true,
+        path: pluginDir,
+        entryHash: createHash("sha256").update(entry).digest("hex"),
+      } });
       const installer = new PluginManager(store);
-      await installer.loadPlugin(pluginDir);
+      await expect(installer.loadAllEnabled()).resolves.toEqual([
+        expect.objectContaining({ id: "durable-enable" }),
+      ]);
       expect(installer.disablePlugin("durable-enable")).toBe(true);
+      expect(store.read()["durable-enable"]).toMatchObject({
+        manifestHash: createHash("sha256").update(manifestContent).digest("hex"),
+        manifest: { id: "durable-enable", version: "1.0.0" },
+      });
       expect(installer.listPlugins()[0].actions).toEqual({
         enable: true, disable: false, retry: false, configureSecrets: false,
       });
@@ -260,6 +273,67 @@ describe("canonical plugin metadata projection", () => {
       expect(restarted.listPlugins()[0].actions).toEqual({
         enable: false, disable: true, retry: false, configureSecrets: false,
       });
+    } finally {
+      if (previous === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = previous;
+    }
+  });
+
+  it("revokes every live surface on detected registry corruption and recovers after repair", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-plugin-runtime-corrupt-"));
+    dirs.push(root);
+    const pluginsDir = join(root, "plugins");
+    const pluginDir = join(pluginsDir, "runtime-corrupt");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(join(pluginDir, "index.mjs"), `export const corruption_probe = {
+  name: "corruption_probe", description: "corruption probe",
+  parameters: { type: "object", properties: {}, required: [] },
+  async execute() { return { content: "executed" }; }
+};\n`, "utf-8");
+    writeFileSync(join(pluginDir, "manifest.json"), JSON.stringify({
+      id: "runtime-corrupt", name: "Runtime Corrupt", version: "1.0.0",
+      description: "corruption test", entryPoint: "index.mjs",
+      contributions: { tools: ["corruption_probe"] },
+    }), "utf-8");
+    const previous = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = root;
+    vi.resetModules();
+    try {
+      const { PluginManager } = await import("../src/plugin-system.js");
+      const registryPath = join(pluginsDir, "registry.json");
+      const store = createPluginRegistryStore(registryPath);
+      const toolRegistry = new UnifiedToolRegistry();
+      const live: ToolDefinition[] = [];
+      const surface = new PluginToolSurface(toolRegistry, live, new ToolPolicy({
+        defaultDecision: "deny",
+        rules: [{ id: "corruption", tool: "corruption_probe", decision: "allow", reason: "test" }],
+      }));
+      const manager = new PluginManager(store);
+      manager.bindToolSurface(surface);
+      await manager.loadPlugin(pluginDir);
+      const durable = store.read();
+      const stale = toolRegistry.get("corruption_probe")!;
+      expect(await stale.execute({})).toEqual({ content: "executed" });
+      expect(JSON.parse((await createToolSearchTool(toolRegistry).execute({ query: "corruption_probe" })).content)).toHaveLength(1);
+
+      writeFileSync(registryPath, '{"private-canary":', "utf-8");
+      const failed = manager.listPlugins();
+      expect(failed).toEqual([expect.objectContaining({ id: "plugin-registry", status: "failed", activeTools: [] })]);
+      expect(JSON.stringify(failed)).not.toContain("private-canary");
+      expect(manager.isLoaded("runtime-corrupt")).toBe(false);
+      expect(toolRegistry.get("corruption_probe")).toBeUndefined();
+      expect(live).toEqual([]);
+      expect(await stale.execute({})).toEqual(expect.objectContaining({ status: "blocked", isError: true }));
+      expect((await createToolSearchTool(toolRegistry).execute({ query: "corruption_probe" })).content).toBe("No tools matched the query.");
+
+      store.write(durable);
+      await expect(manager.loadAllEnabled()).resolves.toEqual([expect.objectContaining({ id: "runtime-corrupt" })]);
+      expect(manager.listPlugins()).toEqual([expect.objectContaining({
+        id: "runtime-corrupt", status: "loaded", actions: expect.objectContaining({ disable: true }),
+      })]);
+      expect(JSON.parse((await createToolSearchTool(toolRegistry).execute({ query: "corruption_probe" })).content)).toHaveLength(1);
+      expect(await toolRegistry.get("corruption_probe")!.execute({})).toEqual({ content: "executed" });
+      surface.deactivate("runtime-corrupt");
     } finally {
       if (previous === undefined) delete process.env.LAX_DATA_DIR;
       else process.env.LAX_DATA_DIR = previous;

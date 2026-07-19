@@ -20,6 +20,7 @@ import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
 import { registerSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
 import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
+import { requiredPromptPlan } from "../context/system-prompt-builder.js";
 const logger = createLogger("server.handler-events");
 
 interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string; templateId?: string | null }
@@ -218,8 +219,10 @@ export function registerHandlerEvents(deps: {
       // aborted via signal — out-of-band from the loop). The
       // invokeDefinition-supplied AbortSignal also routes through canonical
       // via this options.signal, so Handler.cancelAgent → opCancel works.
+      const agentSystemPrompt = (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock;
       const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
-        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
+        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: agentSystemPrompt,
+        renderedPromptSections: requiredPromptPlan("spawned-agent", "Spawned Agent", agentSystemPrompt),
         tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature,
         callContext: "delegated",
         wallClockMs: config.agentTimeoutMs,

@@ -77,8 +77,8 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     enableDefaultMiddlewareStack();
   }
 
-  const { op, wallClockMs } = await createChatOp(ctx);
-  const lifecycle = await createChatLifecycle(op.id, ctx);
+  const { op, wallClockMs, resolvedTarget } = await createChatOp(ctx);
+  const lifecycle = await createChatLifecycle(op.id, ctx, resolvedTarget);
   const { pump } = lifecycle;
   const usageInputTokens = 0;
   const usageOutputTokens = 0;

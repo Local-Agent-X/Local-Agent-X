@@ -46,16 +46,15 @@ import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
 import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { createLogger } from "../../logger.js";
-import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
-import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 
 import { type CanonicalAgentOptions, DEFAULT_WALL_CLOCK_MS } from "./types.js";
-import { registerProviderAdapter } from "./register-adapter.js";
+import { registerProviderAdapter, resolveAgentProviderRuntime } from "./register-adapter.js";
 import { buildAgentRuntimeSurface, persistRuntimeSurface, toolFingerprint } from "./runtime-surface.js";
 import { sealDelegatedRuntime } from "../runtime-integrity.js";
 import { seedOpMessages } from "./seed-messages.js";
 import { collectMessages, mapStopReason } from "./collect-result.js";
+import { prepareCanonicalAgentPrompt } from "./prompt.js";
 
 const logger = createLogger("canonical-loop.agent-runner");
 
@@ -88,6 +87,13 @@ export async function runAgentViaCanonical(
   const wallClockMs = options.wallClockMs ?? DEFAULT_WALL_CLOCK_MS;
   const sessionId = options.sessionId ?? `agent-${randomUUID().slice(0, 8)}`;
 
+  const preparedRuntime = await resolveAgentProviderRuntime(options);
+  await prepareCanonicalAgentPrompt(
+    options,
+    history,
+    preparedRuntime.resolvedRuntime.localModelCapabilityProfile,
+  );
+
   const contextPack = await buildContextPack({
     description: userMessage,
     successCriteria: [],
@@ -99,20 +105,7 @@ export async function runAgentViaCanonical(
       maxWallTimeMs: wallClockMs,
     },
   });
-  if (options.promptTelemetry) {
-    const toolSchemaFormat = toolSchemaFormatForDispatch(
-      options.provider,
-      options.promptTelemetry.toolSchemaFormat,
-      options.preferAnthropicDirectHttp === true,
-    );
-    contextPack.promptTelemetry = remeasurePromptTelemetry({
-      baseline: options.promptTelemetry,
-      prompt: options.systemPrompt,
-      tools: options.tools,
-      historyMessageCount: history.length,
-      toolSchemaFormat,
-    });
-  }
+  contextPack.promptTelemetry = options.promptTelemetry;
 
   const op: Op = {
     id: newOpId(`op_${opType}`),
@@ -131,7 +124,7 @@ export async function runAgentViaCanonical(
   // Resolve and install every non-durable runtime dependency before the op is
   // visible to session tracking or the durable stores. A failed credential,
   // endpoint, adapter, or surface admission must not leave a ghost operation.
-  await registerProviderAdapter(op, options, sessionId);
+  await registerProviderAdapter(op, options, sessionId, preparedRuntime);
   if (op.runtimeDescriptor?.kind !== "delegated-op" || op.runtimeDescriptor.adapter !== "provider-exact") {
     throw new Error("agent runtime did not produce an exact delegated descriptor");
   }

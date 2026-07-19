@@ -10,11 +10,13 @@
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
 import { registerAdapterForOp } from "../runtime.js";
 import { createAnthropicAdapter } from "../adapters/anthropic.js";
+import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 
 export async function registerAdapterForChat(
   opId: string,
   prepared: PreparedAgentRequest,
   sessionId: string,
+  resolvedTarget?: OpenAICompatTarget | null,
 ): Promise<void> {
   const forcedToolChoice = prepared.toolChoice;
 
@@ -80,7 +82,8 @@ export async function registerAdapterForChat(
     await import("../adapters/openai-compat/resolve-target.js");
   // Local per-model routing (Turbo cloud override, LM Studio/vLLM/llama.cpp
   // runtime lookup) lives inside resolveOpenAICompatTarget — one seam.
-  const target = await resolveOpenAICompatTarget(prepared.provider, prepared, prepared.model);
+  const target = resolvedTarget
+    ?? await resolveOpenAICompatTarget(prepared.provider, prepared, prepared.model);
   if (!target) {
     // No usable target (e.g. ollama-cloud picked but no key configured,
     // or custom provider without baseURL). Surface the failure cleanly

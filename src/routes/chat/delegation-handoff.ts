@@ -15,6 +15,7 @@ import type { Op, OpVisibility } from "../../ops/types.js";
 import type { PromptTelemetry } from "../../prompt-telemetry.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
+import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
 async function submitDelegationOp(message: string, sessionId: string): Promise<{ opId: string }> {
   const lane = "build" as const;
@@ -62,6 +63,7 @@ interface PreparedAgentRequest {
   images?: unknown[];
   temperature?: number;
   promptTelemetry: PromptTelemetry;
+  renderedPromptSections: RenderedPromptSection[];
 }
 
 interface SessionLike {
@@ -130,6 +132,16 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
     `Good shape: "Starting on the [thing user asked for] now — I'll let you know when it's ready."\n` +
     `Bad shape: "Built it: created at workspace/apps/X/index.html and pinned." (Lies — worker hasn't built anything yet.)`;
   const delegationSystemPrompt = prepared.systemPrompt + delegationContext;
+  const renderedPromptSections = [
+    ...prepared.renderedPromptSections,
+    renderPromptSection({
+      id: "delegation-ack",
+      label: "Delegation Acknowledgement",
+      type: "dynamic",
+      policy: "required",
+      text: delegationContext,
+    }),
+  ];
   const promptTelemetry = remeasurePromptTelemetry({
     baseline: prepared.promptTelemetry,
     prompt: delegationSystemPrompt,
@@ -140,7 +152,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
       prepared.promptTelemetry.toolSchemaFormat,
       false,
     ),
-    appendedSection: { id: "delegation-ack", type: "dynamic", text: delegationContext },
+    sections: renderedPromptSections.map((section) => section.measurement),
   });
 
   logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider} — routing notice now agent-voiced`);
@@ -190,6 +202,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
       opType: "delegation_ack",
       lane: "interactive",
       promptTelemetry,
+      renderedPromptSections,
     });
 
     const { stripEphemeralMessages } = await import("../../providers/sanitize.js");

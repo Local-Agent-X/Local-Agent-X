@@ -7,6 +7,7 @@ import type { CanonicalChatContext } from "../src/canonical-loop/chat-runner.js"
 import type { CanonicalEvent } from "../src/canonical-loop/types.js";
 import type { SecurityLayer } from "../src/security/index.js";
 import type { ServerEvent, ToolDefinition } from "../src/types.js";
+import { createPromptTelemetry, measurePromptSection } from "../src/prompt-telemetry.js";
 
 const adapterFactories = vi.hoisted(() => new Map<string, () => Adapter>());
 
@@ -77,6 +78,15 @@ function tool(name: string): ToolDefinition {
 
 function context(sessionId: string, toolName: string, signal?: AbortSignal): CanonicalChatContext {
   const tools = [tool(toolName)];
+  const systemPrompt = `system ${sessionId}`;
+  const renderedPromptSections = [{
+    id: "test-system",
+    label: "Test System",
+    type: "static" as const,
+    policy: "required" as const,
+    text: systemPrompt,
+    measurement: measurePromptSection("test-system", "static", systemPrompt),
+  }];
   return {
     message: `message for ${sessionId}`,
     sessionId,
@@ -84,12 +94,25 @@ function context(sessionId: string, toolName: string, signal?: AbortSignal): Can
       provider: "anthropic",
       apiKey: "test",
       model: "claude-sonnet-4-5",
-      systemPrompt: `system ${sessionId}`,
+      systemPrompt,
       tools,
       cleanHistory: [],
       images: [],
       temperature: 0,
       maxIterations: 3,
+      reasoningEffort: "medium",
+      renderedPromptSections,
+      localModelCapabilityProfile: null,
+      promptTelemetry: createPromptTelemetry({
+        profile: "full",
+        provider: "anthropic",
+        model: "claude-sonnet-4-5",
+        prompt: systemPrompt,
+        tools,
+        allToolCount: tools.length,
+        historyMessageCount: 0,
+        sections: renderedPromptSections.map((section) => section.measurement),
+      }),
     },
     tools,
     security: {} as SecurityLayer,

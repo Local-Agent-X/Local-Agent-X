@@ -9,6 +9,7 @@ import { createLogger } from "../../logger.js";
 import { DREAM_SYSTEM_PROMPT, DREAM_TOOL_NAMES } from "./prompts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { registerDreamRunner, type DreamRunResult } from "../../memory/dream.js";
+import { renderPromptSection } from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("server.background-jobs.dream");
 
@@ -64,7 +65,15 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
       if (batches.length === 0) {
         const result = await runAgentViaCanonical(buildDreamPrompt(), [], {
           apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
-          systemPrompt: DREAM_SYSTEM_PROMPT, tools: dreamTools, security, toolPolicy,
+          systemPrompt: DREAM_SYSTEM_PROMPT,
+          renderedPromptSections: [renderPromptSection({
+            id: "memory-dream",
+            label: "Memory Dream",
+            type: "static",
+            policy: "required",
+            text: DREAM_SYSTEM_PROMPT,
+          })],
+          tools: dreamTools, security, toolPolicy,
           sessionId: dreamSession.id, maxIterations: 10, temperature: 0.3,
           callContext: "delegated",
           opType: "memory_consolidation", lane: "background",
@@ -75,7 +84,15 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
           const prompt = buildDreamPromptForBatch(batches[i], i, batches.length);
           const result = await runAgentViaCanonical(prompt, [], {
             apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
-            systemPrompt: DREAM_SYSTEM_PROMPT, tools: dreamTools, security, toolPolicy,
+            systemPrompt: DREAM_SYSTEM_PROMPT,
+            renderedPromptSections: [renderPromptSection({
+              id: "memory-dream",
+              label: "Memory Dream",
+              type: "static",
+              policy: "required",
+              text: DREAM_SYSTEM_PROMPT,
+            })],
+            tools: dreamTools, security, toolPolicy,
             sessionId: `${dreamSession.id}-b${i}`, maxIterations: 15, temperature: 0.3,
             callContext: "delegated",
             opType: "memory_consolidation", lane: "background",

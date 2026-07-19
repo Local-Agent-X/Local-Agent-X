@@ -1,17 +1,25 @@
+import type { CredentialResolution } from "../../auth/resolve.js";
 import { resolveCredential } from "../../auth/resolve.js";
 import { getRuntimeConfig } from "../../config.js";
 import type { Op } from "../../ops/types.js";
 import { registerAdapterForOp } from "../runtime.js";
-import { createProviderAdapterFactory, resolveProviderRuntime } from "../provider-adapter-factory.js";
+import {
+  createProviderAdapterFactory,
+  resolveProviderRuntime,
+  type ResolvedProviderRuntime,
+} from "../provider-adapter-factory.js";
 import { sealDelegatedRuntime } from "../runtime-integrity.js";
 import type { CanonicalAgentOptions } from "./types.js";
 
-export async function registerProviderAdapter(
-  op: Op,
+export interface PreparedAgentProviderRuntime {
+  resolvedRuntime: ResolvedProviderRuntime;
+  credential: CredentialResolution;
+}
+
+export async function resolveAgentProviderRuntime(
   options: CanonicalAgentOptions,
-  sessionId: string,
-): Promise<void> {
-  const { provider, model, systemPrompt, temperature, maxTokens } = options;
+): Promise<PreparedAgentProviderRuntime> {
+  const { provider, model } = options;
   const configuredKey = provider === "openai" ? getRuntimeConfig().openaiApiKey : undefined;
   const admittedCredential = await resolveCredential(provider, {
     configOpenAIKey: configuredKey,
@@ -35,9 +43,18 @@ export async function registerProviderAdapter(
     }
     credential = targetCredential;
   }
+  return { resolvedRuntime, credential };
+}
 
-  // Ollama (local + cloud) reports model capabilities via /api/show. Probe once
-  // before the first turn; the resolver above already selected the exact target.
+export async function registerProviderAdapter(
+  op: Op,
+  options: CanonicalAgentOptions,
+  sessionId: string,
+  prepared?: PreparedAgentProviderRuntime,
+): Promise<void> {
+  const { provider, model, systemPrompt, temperature, maxTokens } = options;
+  const { resolvedRuntime, credential } = prepared ?? await resolveAgentProviderRuntime(options);
+
   if ((provider === "local" || provider === "ollama-cloud") && resolvedRuntime.baseURL) {
     const { probeOllamaCapabilities } = await import("../../providers/ollama-capability-probe.js");
     await probeOllamaCapabilities(resolvedRuntime.baseURL, model, resolvedRuntime.apiKey || "ollama");

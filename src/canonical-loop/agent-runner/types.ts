@@ -1,8 +1,15 @@
 import type { OpLane } from "../../ops/types.js";
 import type { AgentOptions } from "../../providers/types.js";
 import type { CallContext } from "../../tool-execution/context.js";
+import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
+import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js";
 
 export interface CanonicalAgentOptions extends AgentOptions {
+  /** Exact ordered model-visible prompt plan. Every caller must classify its
+   * content explicitly so local degradation never guesses from telemetry. */
+  renderedPromptSections: RenderedPromptSection[];
+  /** Filled from the exact resolved local endpoint during preflight. */
+  localModelCapabilityProfile?: LocalModelCapabilityProfile | null;
   /** Interactive surfaces such as voice may use Anthropic's direct HTTP OAuth
    * transport, matching chat. Background agents omit this and stay on the CLI. */
   preferAnthropicDirectHttp?: boolean;

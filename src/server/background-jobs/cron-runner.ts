@@ -18,8 +18,9 @@ import { CRON_SYSTEM_PROMPT } from "./prompts.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
 import { registerSessionOwner, clearSessionOwner } from "../../browser/session-owner-registry.js";
-import { measurePromptSection, remeasurePromptTelemetry } from "../../prompt-telemetry.js";
+import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
+import { renderPromptSection } from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("server.background-jobs.cron");
 
@@ -91,6 +92,13 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
     // no recursive scheduling, no file writes — agent's returned text IS the report
     const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_") && t.name !== "write" && t.name !== "edit");
+    const renderedPromptSections = [renderPromptSection({
+      id: "scheduled-mission",
+      label: "Scheduled Mission",
+      type: "static",
+      policy: "required",
+      text: CRON_SYSTEM_PROMPT,
+    })];
     const promptTelemetry = remeasurePromptTelemetry({
       baseline: prepared.promptTelemetry,
       prompt: CRON_SYSTEM_PROMPT,
@@ -102,7 +110,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         false,
       ),
       historyMessageCount: 0,
-      sections: [measurePromptSection("scheduled-mission", "static", CRON_SYSTEM_PROMPT)],
+      sections: renderedPromptSections.map((section) => section.measurement),
     });
     const externalCancelController = new AbortController();
     cronService.registerRunAbort(jobId, externalCancelController);
@@ -132,6 +140,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         opType: "scheduled_mission",
         lane: "background",
         promptTelemetry,
+        renderedPromptSections,
       });
     } finally {
       cronService.unregisterRunAbort(jobId);

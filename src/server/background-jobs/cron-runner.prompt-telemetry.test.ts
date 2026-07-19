@@ -6,6 +6,7 @@ import {
   type PromptTelemetry,
 } from "../../prompt-telemetry.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
+import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
 const { prepareAgentRequest, runAgentViaCanonical } = vi.hoisted(() => ({
   prepareAgentRequest: vi.fn(),
@@ -97,7 +98,7 @@ describe("scheduled mission prompt telemetry", () => {
     const calls = runAgentViaCanonical.mock.calls as unknown as Array<[
       string,
       unknown[],
-      { systemPrompt: string; tools: ToolDefinition[]; promptTelemetry: PromptTelemetry },
+      { systemPrompt: string; tools: ToolDefinition[]; promptTelemetry: PromptTelemetry; renderedPromptSections: RenderedPromptSection[] },
     ]>;
     const options = calls[0][2];
     expect(options.systemPrompt).toBe(CRON_SYSTEM_PROMPT);
@@ -113,6 +114,11 @@ describe("scheduled mission prompt telemetry", () => {
     });
     expect(options.promptTelemetry.sections).toHaveLength(1);
     expect(options.promptTelemetry.sections[0].id).toBe("scheduled-mission");
+    expect(options.renderedPromptSections).toMatchObject([{
+      id: "scheduled-mission",
+      policy: "required",
+      text: CRON_SYSTEM_PROMPT,
+    }]);
     expect(JSON.stringify(options.promptTelemetry)).not.toContain(preparedPrompt);
     expect(JSON.stringify(options.promptTelemetry)).not.toContain("research the market");
   });

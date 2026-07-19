@@ -12,6 +12,7 @@ import {
 } from "../runtime.js";
 import type { CanonicalChatContext } from "../chat-runner.js";
 import { registerAdapterForChat } from "./register-adapter.js";
+import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 
 export interface ChatRuntimeRegistration {
   dispose(): void;
@@ -21,6 +22,7 @@ export async function registerChatRuntime(
   opId: string,
   ctx: CanonicalChatContext,
   signal: AbortSignal,
+  resolvedTarget: OpenAICompatTarget | null,
 ): Promise<ChatRuntimeRegistration> {
   const toolDescriptors = ctx.tools.map(tool => ({
     name: tool.name,
@@ -39,7 +41,7 @@ export async function registerChatRuntime(
   };
 
   try {
-    await registerAdapterForChat(opId, ctx.prepared, ctx.sessionId);
+    await registerAdapterForChat(opId, ctx.prepared, ctx.sessionId, resolvedTarget);
     registerToolDispatcherForOp(opId, makeChatToolDispatcher({
       tools: ctx.tools,
       security: ctx.security,

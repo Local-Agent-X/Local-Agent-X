@@ -10,6 +10,7 @@ import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { WORKER_SYSTEM_PROMPT_TEMPLATE } from "./prompts.js";
+import { renderPromptSection } from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("server.background-jobs.workers");
 
@@ -42,7 +43,15 @@ export function registerWorkerRunnerForServer(deps: WorkerRunnerDeps): void {
       const result = await runAgentViaCanonical(message, history, {
         apiKey, model,
         provider: provider as AgentOptions["provider"],
-        systemPrompt: workerPrompt, tools: workerTools,
+        systemPrompt: workerPrompt,
+        renderedPromptSections: [renderPromptSection({
+          id: "app-builder-worker",
+          label: "App Builder Worker",
+          type: "static",
+          policy: "required",
+          text: workerPrompt,
+        })],
+        tools: workerTools,
         security, toolPolicy, sessionId,
         callContext: "delegated",
         maxIterations: 15,

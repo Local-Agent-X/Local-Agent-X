@@ -17,6 +17,32 @@ export interface PromptSectionTelemetry {
   estimatedTokens: number;
 }
 
+export interface PromptDegradationTelemetry {
+  mode: "full" | "constrained-local";
+  contextEvidence: "not-local" | "unknown" | "measured";
+  toolEvidence: "not-local" | "unknown" | "advertised" | "verified" | "rejected";
+  reason:
+    | "not-local-target"
+    | "unknown-context-within-conservative-budget"
+    | "unknown-context-conservative-budget"
+    | "capability-not-constrained"
+    | "within-prompt-budget"
+    | "measured-context-budget"
+    | "required-sections-exceed-budget";
+  localTarget: {
+    runtimeId: string | null;
+    model: string;
+    contextWindow: number | null;
+  } | null;
+  promptBudgetTokens?: number;
+  assumedContextWindowTokens?: number;
+  includedSectionIds: string[];
+  degradedSections: Array<{
+    id: string;
+    reason: "measured-context-budget" | "unknown-context-conservative-budget";
+  }>;
+}
+
 export interface PromptTelemetry {
   version: 2;
   recordedAt: string;
@@ -32,6 +58,8 @@ export interface PromptTelemetry {
   deferredToolCount: number;
   historyMessageCount: number;
   sections: PromptSectionTelemetry[];
+  /** Content-free record of capability-aware prompt rendering. */
+  degradation?: PromptDegradationTelemetry;
 }
 
 export function measurePromptSection(
@@ -59,6 +87,7 @@ export function createPromptTelemetry(input: {
   allToolCount: number;
   historyMessageCount: number;
   sections: PromptSectionTelemetry[];
+  degradation?: PromptDegradationTelemetry;
 }): PromptTelemetry {
   const toolSchemaFormat = input.toolSchemaFormat
     ?? toolSchemaFormatForProvider(input.provider, input.authSource);
@@ -86,6 +115,7 @@ export function createPromptTelemetry(input: {
     deferredToolCount: Math.max(0, input.allToolCount - input.tools.length),
     historyMessageCount: input.historyMessageCount,
     sections: input.sections,
+    ...(input.degradation ? { degradation: input.degradation } : {}),
   };
 }
 
@@ -99,6 +129,7 @@ export function remeasurePromptTelemetry(input: {
   historyMessageCount?: number;
   sections?: PromptSectionTelemetry[];
   appendedSection?: { id: string; type: PromptSectionTelemetry["type"]; text: string };
+  degradation?: PromptDegradationTelemetry;
 }): PromptTelemetry {
   const baselineSections = input.sections ?? input.baseline.sections;
   const sections = input.appendedSection?.text
@@ -123,5 +154,6 @@ export function remeasurePromptTelemetry(input: {
     allToolCount: input.baseline.loadedToolCount + input.baseline.deferredToolCount,
     historyMessageCount: input.historyMessageCount ?? input.baseline.historyMessageCount,
     sections,
+    degradation: input.degradation ?? input.baseline.degradation,
   });
 }

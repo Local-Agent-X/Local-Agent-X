@@ -7,6 +7,7 @@ import type {
   ExactDelegatedRuntimeDescriptor,
 } from "../ops/types.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
+import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { AdapterFactory } from "./runtime.js";
 import { API_BASE as ANTHROPIC_API_BASE } from "../anthropic-client/request.js";
 import { CODEX_URL } from "../codex-client/types.js";
@@ -40,11 +41,18 @@ function identityMismatch(code: string): never {
 
 type RuntimeIdentity = Omit<ExactDelegatedRuntimeDescriptor, "kind" | "adapter" | "sessionId" | "surface" | "integrity">;
 
+export interface ResolvedProviderRuntime {
+  identity: RuntimeIdentity;
+  apiKey: string;
+  baseURL?: string;
+  localModelCapabilityProfile: LocalModelCapabilityProfile | null;
+}
+
 export async function resolveProviderRuntime(
   provider: ProviderId,
   model: string,
   options: ProviderRuntimeOptions,
-): Promise<{ identity: RuntimeIdentity; apiKey: string; baseURL?: string }> {
+): Promise<ResolvedProviderRuntime> {
   if (!model.trim()) throw new Error(`provider ${provider} resolved an empty model`);
   if (provider === "anthropic") return directIdentity(provider, model, "anthropic", options);
   if (provider === "codex") return directIdentity(provider, model, "codex", options);
@@ -64,6 +72,7 @@ export async function resolveProviderRuntime(
     },
     apiKey: target.apiKey,
     baseURL: target.baseURL,
+    localModelCapabilityProfile: provider === "local" ? target.modelProfile ?? null : null,
   };
 }
 
@@ -72,7 +81,7 @@ function directIdentity(
   model: string,
   runtime: DelegatedProviderRuntime,
   options: ProviderRuntimeOptions,
-): { identity: RuntimeIdentity; apiKey: string } {
+): ResolvedProviderRuntime {
   return {
     identity: {
       provider,
@@ -86,6 +95,7 @@ function directIdentity(
       },
     },
     apiKey: options.apiKey,
+    localModelCapabilityProfile: null,
   };
 }
 
@@ -209,7 +219,7 @@ async function resolveOpenAITarget(
   provider: ProviderId,
   model: string,
   options: Pick<ProviderRuntimeOptions, "apiKey" | "customBaseURL">,
-): Promise<{ baseURL: string; apiKey: string; identity: DelegatedRuntimeTarget; cloud: boolean } | null> {
+): Promise<{ baseURL: string; apiKey: string; modelProfile?: LocalModelCapabilityProfile; identity: DelegatedRuntimeTarget; cloud: boolean } | null> {
   const { resolveOpenAICompatTarget } = await import("./adapters/openai-compat.js");
   const target = await resolveOpenAICompatTarget(provider, options, model);
   if (!target) return null;

@@ -17,6 +17,7 @@ import {
   measurePromptSection,
   type PromptTelemetry,
 } from "../../prompt-telemetry.js";
+import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
 const { runAgentViaCanonical } = vi.hoisted(() => ({
   runAgentViaCanonical: vi.fn(async () => ({
@@ -73,6 +74,9 @@ function makeArgs(ctx: unknown) {
     prepared: {
       apiKey: "k", model: "grok", provider: "xai",
       systemPrompt: "sys", cleanHistory: [] as unknown[],
+      renderedPromptSections: [renderPromptSection({
+        id: "core", label: "Core", type: "static", policy: "required", text: "sys",
+      })],
       promptTelemetry: createPromptTelemetry({
         profile: "full", provider: "xai", model: "grok", prompt: "sys",
         tools: [], allToolCount: 0, historyMessageCount: 0,
@@ -121,12 +125,16 @@ describe("delegation-handoff orphaned-ActiveChat net", () => {
     const calls = runAgentViaCanonical.mock.calls as unknown as Array<[
       string,
       unknown[],
-      { systemPrompt: string; promptTelemetry: PromptTelemetry },
+      { systemPrompt: string; promptTelemetry: PromptTelemetry; renderedPromptSections: RenderedPromptSection[] },
     ]>;
     const options = calls.at(-1)![2];
     expect(options.promptTelemetry.characters).toBe(options.systemPrompt.length);
     expect(options.promptTelemetry.loadedToolCount).toBe(0);
     expect(options.promptTelemetry.sections.at(-1)?.id).toBe("delegation-ack");
+    expect(options.renderedPromptSections.at(-1)).toMatchObject({
+      id: "delegation-ack",
+      policy: "required",
+    });
     expect(JSON.stringify(options.promptTelemetry)).not.toContain("op_freeform_test");
     expect(JSON.stringify(options.promptTelemetry)).not.toContain("build me a thing");
   });

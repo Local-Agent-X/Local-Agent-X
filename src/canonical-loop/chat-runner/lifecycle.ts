@@ -4,6 +4,7 @@ import type { CanonicalChatContext } from "../chat-runner.js";
 import { createLogger } from "../../logger.js";
 import { createEventPump, type EventPump } from "./event-pump.js";
 import { registerChatRuntime, type ChatRuntimeRegistration } from "./runtime-registration.js";
+import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 
 const logger = createLogger("canonical-loop.chat-runner");
 
@@ -12,7 +13,11 @@ export interface ChatLifecycle {
   dispose(): void;
 }
 
-export async function createChatLifecycle(opId: string, ctx: CanonicalChatContext): Promise<ChatLifecycle> {
+export async function createChatLifecycle(
+  opId: string,
+  ctx: CanonicalChatContext,
+  resolvedTarget: OpenAICompatTarget | null,
+): Promise<ChatLifecycle> {
   const cancelBridge = bridgeOpCancelToToolSignal(opId, ctx.signal);
   let externalAbortListener: (() => void) | null = null;
   let runtime: ChatRuntimeRegistration | null = null;
@@ -36,7 +41,7 @@ export async function createChatLifecycle(opId: string, ctx: CanonicalChatContex
       if (ctx.signal.aborted) externalAbortListener();
       else ctx.signal.addEventListener("abort", externalAbortListener, { once: true });
     }
-    runtime = await registerChatRuntime(opId, ctx, cancelBridge.signal);
+    runtime = await registerChatRuntime(opId, ctx, cancelBridge.signal, resolvedTarget);
     pump = createEventPump(opId);
     return { pump, dispose };
   } catch (error) {

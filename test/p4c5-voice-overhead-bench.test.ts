@@ -30,6 +30,7 @@ import {
 import { enableDefaultMiddlewareStack } from "../src/canonical-loop/middlewares/host.js";
 import { runAgentViaCanonical } from "../src/canonical-loop/agent-runner.js";
 import type { SecurityLayer } from "../src/security/index.js";
+import { renderPromptSection } from "../src/context/system-prompt-builder.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 
@@ -47,6 +48,12 @@ function median(xs: number[]): number {
 }
 
 const trackedOps: string[] = [];
+
+function requiredPlan(text: string) {
+  return [renderPromptSection({
+    id: "bench-system", label: "Bench System", type: "static", policy: "required", text,
+  })];
+}
 
 afterAll(() => {
   resetCanonicalRuntime();
@@ -89,7 +96,7 @@ describe("P4.C5 — canonical-runner structural overhead", () => {
       // Warm-up run (cache file descriptors, JIT)
       const warmup = await runAgentViaCanonical("warmup", [], {
         apiKey: "x", model: "fake", provider: "anthropic",
-        systemPrompt: "voice", tools: [], security: makeFakeSecurity(),
+        systemPrompt: "voice", renderedPromptSections: requiredPlan("voice"), tools: [], security: makeFakeSecurity(),
         sessionId: "voice-bench-warm", maxIterations: 1, temperature: 0.7,
         opType: "voice_turn", lane: "interactive",
       });
@@ -105,7 +112,7 @@ describe("P4.C5 — canonical-runner structural overhead", () => {
         const t0 = performance.now();
         const r = await runAgentViaCanonical(`trial ${i}`, [], {
           apiKey: "x", model: "fake", provider: "anthropic",
-          systemPrompt: "voice", tools: [], security: makeFakeSecurity(),
+          systemPrompt: "voice", renderedPromptSections: requiredPlan("voice"), tools: [], security: makeFakeSecurity(),
           sessionId: `voice-bench-${i}`, maxIterations: 1, temperature: 0.7,
           opType: "voice_turn", lane: "interactive",
         });
@@ -149,7 +156,7 @@ describe("P4.C5 — canonical-runner structural overhead", () => {
       );
       await runAgentViaCanonical("warm", history, {
         apiKey: "x", model: "fake", provider: "anthropic",
-        systemPrompt: "delegation ack", tools: [], security: makeFakeSecurity(),
+        systemPrompt: "delegation ack", renderedPromptSections: requiredPlan("delegation ack"), tools: [], security: makeFakeSecurity(),
         sessionId: "deleg-bench-warm", maxIterations: 1, temperature: 0.7,
         opType: "delegation_ack", lane: "interactive",
       });
@@ -161,7 +168,7 @@ describe("P4.C5 — canonical-runner structural overhead", () => {
         const t0 = performance.now();
         await runAgentViaCanonical(`build me a thing (trial ${i})`, history, {
           apiKey: "x", model: "fake", provider: "anthropic",
-          systemPrompt: "delegation ack", tools: [], security: makeFakeSecurity(),
+          systemPrompt: "delegation ack", renderedPromptSections: requiredPlan("delegation ack"), tools: [], security: makeFakeSecurity(),
           sessionId: `deleg-bench-${i}`, maxIterations: 1, temperature: 0.7,
           opType: "delegation_ack", lane: "interactive",
         });

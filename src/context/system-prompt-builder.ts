@@ -77,6 +77,21 @@ export interface SectionAwareSystemPrompt {
   renderedPromptSections: RenderedPromptSection[];
 }
 
+export function renderPromptSection(
+  section: Pick<PromptSection, "id" | "label" | "type" | "policy"> & { text: string },
+): RenderedPromptSection {
+  return { ...section, measurement: measurePromptSection(section.id, section.type, section.text) };
+}
+
+export function requiredPromptPlan(
+  id: string,
+  label: string,
+  text: string,
+  type: PromptSection["type"] = "static",
+): RenderedPromptSection[] {
+  return [renderPromptSection({ id, label, type, policy: "required", text })];
+}
+
 export function appendSystemPromptSection(
   target: SectionAwareSystemPrompt,
   section: Pick<PromptSection, "id" | "label" | "type" | "policy"> & { text: string },
@@ -85,9 +100,8 @@ export function appendSystemPromptSection(
   if (target.renderedPromptSections.some((candidate) => candidate.id === section.id)) {
     throw new Error(`Duplicate system-prompt section id: ${section.id}`);
   }
-  const measurement = measurePromptSection(section.id, section.type, section.text);
   target.systemPrompt += section.text;
-  target.renderedPromptSections.push({ ...section, measurement });
+  target.renderedPromptSections.push(renderPromptSection(section));
 }
 
 export class SystemPromptBuilder {

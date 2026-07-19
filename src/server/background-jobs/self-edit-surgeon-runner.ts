@@ -20,6 +20,7 @@ import type { LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
+import { renderPromptSection } from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("server.background-jobs.self-edit-surgeon");
 
@@ -58,10 +59,18 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
       const security = new SecurityLayer(worktreePath, loadFileAccessModeAtLeast("common"));
       security.addAllowedPath(worktreePath, sessionId);
       const tools = allAgentTools.filter(t => SURGEON_TOOLS.includes(t.name));
+      const systemPrompt = surgeonPersona(worktreePath);
       const result = await runAgentViaCanonical(message, [], {
         apiKey, model,
         provider: provider as AgentOptions["provider"],
-        systemPrompt: surgeonPersona(worktreePath),
+        systemPrompt,
+        renderedPromptSections: [renderPromptSection({
+          id: "self-edit-surgeon",
+          label: "Self Edit Surgeon",
+          type: "static",
+          policy: "required",
+          text: systemPrompt,
+        })],
         tools, security, toolPolicy, sessionId,
         callContext: "delegated",
         maxIterations: 30,

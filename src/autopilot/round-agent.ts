@@ -16,6 +16,7 @@ import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { registerAutopilotSession, unregisterAutopilotSession, getSelfEditCount } from "./registry.js";
 import { buildAutopilotNudge, type NudgeContext } from "./nudge.js";
+import { renderPromptSection } from "../context/system-prompt-builder.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.round-agent");
@@ -102,6 +103,13 @@ export async function runAutopilotRound(
       model: deps.model,
       provider: deps.provider,
       systemPrompt,
+      renderedPromptSections: [renderPromptSection({
+        id: "autopilot-round",
+        label: "Autopilot Round",
+        type: "static",
+        policy: "required",
+        text: systemPrompt,
+      })],
       tools,
       security,
       sessionId,

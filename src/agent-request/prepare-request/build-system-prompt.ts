@@ -12,8 +12,10 @@ import { createLogger } from "../../logger.js";
 import { modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 import type { FileAccessMode } from "../../security/layer/index.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
-import { harnessNotice } from "../../context/system-prompt-builder.js";
-import { measurePromptSection, type PromptSectionTelemetry } from "../../prompt-telemetry.js";
+import {
+  harnessNotice,
+  type SystemPromptBuildResult,
+} from "../../context/system-prompt-builder.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -81,7 +83,7 @@ export interface BuildSystemPromptInput {
 
 export async function buildSystemPromptWithTelemetry(
   input: BuildSystemPromptInput,
-): Promise<{ prompt: string; sections: PromptSectionTelemetry[] }> {
+): Promise<SystemPromptBuildResult> {
   const providerHint = `\n\n[System: You are currently powered by ${PROVIDER_NAMES[input.resolvedProvider] || input.resolvedProvider}, model: ${input.resolvedModel}.]`;
   const integrationsContext = input.integrations.getAgentContext();
 
@@ -173,12 +175,17 @@ export async function buildSystemPromptWithTelemetry(
     fileAccessBlock = fileAccessGroundingBlock(loadFileAccessMode());
   } catch { /* best-effort */ }
 
-  let systemPrompt: string;
-  let sections: PromptSectionTelemetry[];
+  const { SystemPromptBuilder, createSystemPromptBuilder } =
+    await import("../../context/system-prompt-builder.js");
+  let contextBuilder: InstanceType<typeof SystemPromptBuilder>;
   if (input.systemPromptOverride) {
-    // Sub-agents provide their own prompt
-    systemPrompt = input.systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
-    sections = [measurePromptSection("system-prompt-override", "static", input.systemPromptOverride)];
+    contextBuilder = new SystemPromptBuilder().addSection({
+      id: "system-prompt-override",
+      label: "System Prompt Override",
+      type: "static",
+      policy: "required",
+      build: () => input.systemPromptOverride!,
+    });
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -186,8 +193,7 @@ export async function buildSystemPromptWithTelemetry(
     // Prefer hot-reloadable config file over static config object
     const basePrompt = loadSystemPrompt() || input.config.systemPrompt;
 
-    const { createSystemPromptBuilder } = await import("../../context/system-prompt-builder.js");
-    const contextBuilder = createSystemPromptBuilder({
+    contextBuilder = createSystemPromptBuilder({
       basePrompt,
       providerHint,
       toolPromptSection,
@@ -200,22 +206,21 @@ export async function buildSystemPromptWithTelemetry(
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    const built = await contextBuilder.buildWithTelemetry();
-    systemPrompt = built.prompt + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
-    sections = built.sections;
   }
 
-  for (const [id, text] of [
-    ["background-completions", backgroundCompletionsBlock],
-    ["memory-curate", input.memoryCurateBlock],
-    ["file-access", fileAccessBlock],
-    ["provider-rider", providerRider],
-    ["model-family-rider", modelFamilyRider],
+  for (const [id, label, policy, text] of [
+    ["background-completions", "Background Completions", "required", backgroundCompletionsBlock],
+    ["short-reply-context", "Short Reply Context", "required", shortReplyContextBlock],
+    ["memory-curate", "Memory Curate", "degradable", input.memoryCurateBlock],
+    ["file-access", "File Access", "required", fileAccessBlock],
+    ["provider-rider", "Provider Rider", "required", providerRider],
+    ["model-family-rider", "Model Family Rider", "required", modelFamilyRider],
   ] as const) {
-    if (text) sections.push(measurePromptSection(id, "dynamic", text));
+    if (!text) continue;
+    contextBuilder.addSection({ id, label, type: "dynamic", policy, build: () => text });
   }
 
-  const beforeTurnDirectiveLength = systemPrompt.length;
+  let turnDirective = "";
 
   // build_app hand-off directive. Fires for EVERY provider (not just the
   // Anthropic CLI/OAuth path that ignores tool_choice) because the failure it
@@ -226,9 +231,9 @@ export async function buildSystemPromptWithTelemetry(
   // toolset (tool-selection.ts) as the hard guarantee; this directive explains
   // WHY they're gone so the model hands off cleanly instead of flailing.
   if (input.buildTurnDirective) {
-    systemPrompt += harnessNotice("TURN DIRECTIVE", input.buildTurnDirective);
+    turnDirective = harnessNotice("TURN DIRECTIVE", input.buildTurnDirective);
   } else if (input.forceBuildIntent && input.buildMode !== "lean") {
-    systemPrompt += harnessNotice("TURN DIRECTIVE",
+    turnDirective = harnessNotice("TURN DIRECTIVE",
       `Intent classifier identified this turn as a build_app request: ${input.intentReason ?? "(no reason)"}.\n` +
       `Call the build_app tool — that is the ONLY way to build this. The build then runs as a background op (the "side agent") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. ` +
       `Do NOT build it yourself this turn — no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. ` +
@@ -238,16 +243,24 @@ export async function buildSystemPromptWithTelemetry(
     // first — a one-line ask ("build me a page for my gym") shipped a generic
     // page with zero discovery when it hard-forced. No pin fires this turn, so
     // the model is free to ask before building.
-    systemPrompt += harnessNotice("TURN DIRECTIVE",
+    turnDirective = harnessNotice("TURN DIRECTIVE",
       `The user is asking to build something (${input.intentReason ?? "runnable app/page/tool"}), but the ask is thin — the specifics aren't stated. ` +
       `If you want to build a runnable app, build_app is the right tool (the build runs as a background op that owns the whole build — don't build it inline with bash/write/edit). ` +
       `But do NOT build blind: if the spec is one line, first ask 2-3 short clarifying questions (purpose, audience, must-have features), then call build_app once you know what to make. ` +
       `A generic page nobody asked for is worse than one clarifying question.`);
   }
 
-  const turnDirective = systemPrompt.slice(beforeTurnDirectiveLength);
-  if (turnDirective) sections.push(measurePromptSection("turn-directive", "dynamic", turnDirective));
-  return { prompt: systemPrompt, sections };
+  if (turnDirective) {
+    contextBuilder.addSection({
+      id: "turn-directive",
+      label: "Turn Directive",
+      type: "dynamic",
+      policy: "required",
+      build: () => turnDirective,
+    });
+  }
+  const built = await contextBuilder.buildWithTelemetry();
+  return built;
 }
 
 export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<string> {

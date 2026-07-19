@@ -7,6 +7,7 @@ import type { CanonicalChatContext } from "../chat-runner.js";
 import { seedOpMessages } from "./seed-messages.js";
 import { measurePromptSection, remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { foldSystemRowsIntoPrompt } from "./message-convert.js";
+import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
 
 function readChatWallClockMs(): number {
   const raw = parseInt(process.env.LAX_CHAT_WALLCLOCK_MS ?? "7200000", 10);
@@ -21,10 +22,18 @@ export interface CreatedChatOp {
 export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedChatOp> {
   const wallClockMs = readChatWallClockMs();
   const promptBeforeSystemHistory = ctx.prepared.systemPrompt;
-  ctx.prepared.systemPrompt = foldSystemRowsIntoPrompt(
+  const foldedSystemPrompt = foldSystemRowsIntoPrompt(
     promptBeforeSystemHistory,
     ctx.prepared.cleanHistory,
   );
+  const systemHistory = foldedSystemPrompt.slice(promptBeforeSystemHistory.length);
+  appendSystemPromptSection(ctx.prepared, {
+    id: "system-history",
+    label: "System History",
+    type: "dynamic",
+    policy: "required",
+    text: systemHistory,
+  });
   const contextPack = await buildContextPack({
     description: ctx.message,
     successCriteria: [],
@@ -36,7 +45,6 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   });
   if (ctx.prepared.promptTelemetry) {
     const chatAugmentations = promptBeforeSystemHistory.slice(ctx.prepared.promptTelemetry.characters);
-    const systemHistory = ctx.prepared.systemPrompt.slice(promptBeforeSystemHistory.length);
     const sections = [...ctx.prepared.promptTelemetry.sections];
     if (chatAugmentations) {
       sections.push(measurePromptSection("chat-augmentations", "dynamic", chatAugmentations));

@@ -6,6 +6,8 @@ import type { SecretsStore } from "../secrets.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import type { ReasoningEffort } from "../providers/reasoning-effort.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
+import type { RenderedPromptSection } from "../context/system-prompt-builder.js";
+import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 
 export type ChannelKind = "web" | "telegram" | "whatsapp" | "cron" | "agent";
 
@@ -95,4 +97,10 @@ export interface PreparedAgentRequest {
   toolChoice?: ForcedToolChoice;
   /** Content-free prompt sizing persisted with the canonical operation. */
   promptTelemetry: PromptTelemetry;
+  /** Exact ordered model-visible sections. Kept in memory for capability-aware
+   * rendering; prompt telemetry remains content-free. */
+  renderedPromptSections: RenderedPromptSection[];
+  /** Evidence from the exact resolved OpenAI-compatible target. null for
+   * cloud/non-local targets and before target resolution. */
+  localModelCapabilityProfile: LocalModelCapabilityProfile | null;
 }

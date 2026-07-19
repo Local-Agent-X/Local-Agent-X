@@ -41,6 +41,24 @@ describe("createChatOp prompt telemetry", () => {
         { role: "user", content: "continue" },
       ],
       images: [],
+      renderedPromptSections: [
+        {
+          id: "core",
+          label: "Core",
+          type: "static" as const,
+          policy: "required" as const,
+          text: basePrompt,
+          measurement: measurePromptSection("core", "static", basePrompt),
+        },
+        {
+          id: "security-canary",
+          label: "Security Canary",
+          type: "dynamic" as const,
+          policy: "required" as const,
+          text: augmentation,
+          measurement: measurePromptSection("security-canary", "dynamic", augmentation),
+        },
+      ],
       promptTelemetry: createPromptTelemetry({
         profile: "full",
         provider: "local",
@@ -70,6 +88,12 @@ describe("createChatOp prompt telemetry", () => {
     expect(prepared.systemPrompt).toBe(finalPrompt);
     expect(prepared.systemPrompt.match(/COMPACTED HISTORY/g)).toHaveLength(1);
     expect(prepared.systemPrompt.match(/prior_conversation/g)).toHaveLength(2);
+    expect(prepared.renderedPromptSections.map((section) => section.text).join(""))
+      .toBe(finalPrompt);
+    expect(prepared.renderedPromptSections.at(-1)).toMatchObject({
+      id: "system-history",
+      policy: "required",
+    });
 
     const persisted = writeOp.mock.calls[0][0] as {
       contextPack: { promptTelemetry: ReturnType<typeof createPromptTelemetry> };

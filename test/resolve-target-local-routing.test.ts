@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { resolveOpenAICompatTarget } from "../src/canonical-loop/adapters/openai-compat/resolve-target.js";
+import {
+  localModelEvidenceForResolvedTarget,
+  resolveOpenAICompatTarget,
+} from "../src/canonical-loop/adapters/openai-compat/resolve-target.js";
 import type { LocalRuntimeInfo } from "../src/local-runtimes/types.js";
 
 const LMSTUDIO_RT: LocalRuntimeInfo = {
@@ -77,12 +80,28 @@ describe("resolveOpenAICompatTarget local per-model routing", () => {
         tools: { advertised: null, verified: null, rejectsTools: false },
       },
     });
+    expect(localModelEvidenceForResolvedTarget("local", t!)).toMatchObject({
+      runtimeId: null,
+      baseURL: "http://127.0.0.1:11434/v1",
+      model: "qwen2:7b",
+    });
   });
 
   it("cloud (Turbo) models still override to the cloud target", async () => {
     cloudModels.add("google/gemma-4-e4b");
     const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
     expect(t).toEqual({ baseURL: "https://cloud.example/v1", apiKey: "ck" });
+    expect(localModelEvidenceForResolvedTarget("local", t!)).toBeNull();
+  });
+
+  it("derives capability evidence only from the exact resolved local target", async () => {
+    const local = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
+    expect(localModelEvidenceForResolvedTarget("local", local!)).toMatchObject({
+      runtimeId: LMSTUDIO_RT.id,
+      baseURL: LMSTUDIO_RT.chatBaseUrl,
+      model: "google/gemma-4-e4b",
+    });
+    expect(localModelEvidenceForResolvedTarget("openai", local!)).toBeNull();
   });
 
   it("boot race: null cache triggers ONE awaited sweep, then routes correctly", async () => {

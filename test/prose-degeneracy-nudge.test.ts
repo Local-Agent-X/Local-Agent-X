@@ -17,6 +17,7 @@ import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ThreatEngine } from "../src/threat/threat-engine.js";
 import { augmentSystemPrompt } from "../src/routes/chat/system-prompt-augmentations.js";
+import { measurePromptSection } from "../src/prompt-telemetry.js";
 
 // Stub threat engine — only `getCanaryBlock` is touched in the augmenter's
 // first line. Everything else this test cares about is the Layer 4 path.
@@ -33,10 +34,22 @@ function mkUser(text: string): ChatCompletionMessageParam {
   return { role: "user", content: text };
 }
 
+function baseSection(text: string) {
+  return [{
+    id: "base",
+    label: "Base",
+    type: "static" as const,
+    policy: "required" as const,
+    text,
+    measurement: measurePromptSection("base", "static", text),
+  }];
+}
+
 describe("Layer 4 — prose-degeneracy nudge", () => {
   it("injects TOOL-CALL REQUIRED when 3+ prose-only assistant turns + action verb", async () => {
     const prepared = {
       systemPrompt: "Base prompt.",
+      renderedPromptSections: baseSection("Base prompt."),
       messages: [
         mkUser("hi"),
         mkAssistant("hello"),
@@ -50,11 +63,18 @@ describe("Layer 4 — prose-degeneracy nudge", () => {
     expect(prepared.systemPrompt).toContain("[TOOL-CALL REQUIRED THIS TURN]");
     expect(prepared.systemPrompt).toMatch(/Your last 3 assistant turns/);
     expect(prepared.systemPrompt).toContain("navigate");
+    expect(prepared.renderedPromptSections.map((section) => section.text).join(""))
+      .toBe(prepared.systemPrompt);
+    expect(prepared.renderedPromptSections.at(-1)).toMatchObject({
+      id: "tool-call-required",
+      policy: "required",
+    });
   });
 
   it("does NOT inject when fewer than 3 prose-only turns", async () => {
     const prepared = {
       systemPrompt: "Base prompt.",
+      renderedPromptSections: baseSection("Base prompt."),
       messages: [
         mkUser("hi"),
         mkAssistant("hi"),
@@ -70,6 +90,7 @@ describe("Layer 4 — prose-degeneracy nudge", () => {
     const tc = [{ id: "1", type: "function" as const, function: { name: "browser", arguments: "{}" } }];
     const prepared = {
       systemPrompt: "Base prompt.",
+      renderedPromptSections: baseSection("Base prompt."),
       messages: [
         mkUser("a"), mkAssistant("a"),
         mkUser("b"), mkAssistant("b"),
@@ -84,6 +105,7 @@ describe("Layer 4 — prose-degeneracy nudge", () => {
   it("does NOT inject when user message has no action verb", async () => {
     const prepared = {
       systemPrompt: "Base prompt.",
+      renderedPromptSections: baseSection("Base prompt."),
       messages: [
         mkUser("a"), mkAssistant("a"),
         mkUser("b"), mkAssistant("b"),
@@ -101,7 +123,7 @@ describe("Layer 4 — prose-degeneracy nudge", () => {
       mkUser("c"), mkAssistant("c"),
     ];
     for (const verb of ["click", "open", "submit", "navigate", "search", "run", "save", "delete"]) {
-      const prepared = { systemPrompt: "p", messages: [...baseMessages] };
+      const prepared = { systemPrompt: "p", renderedPromptSections: baseSection("p"), messages: [...baseMessages] };
       await augmentSystemPrompt(prepared, stubThreatEngine, "sess-test", `please ${verb} the thing`);
       expect(prepared.systemPrompt, `expected nudge for verb '${verb}'`).toContain("[TOOL-CALL REQUIRED");
     }
@@ -110,6 +132,7 @@ describe("Layer 4 — prose-degeneracy nudge", () => {
   it("instructs the model to call exit_plan_mode if blocked", async () => {
     const prepared = {
       systemPrompt: "p",
+      renderedPromptSections: baseSection("p"),
       messages: [
         mkUser("a"), mkAssistant("a"),
         mkUser("b"), mkAssistant("b"),

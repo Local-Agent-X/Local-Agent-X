@@ -75,7 +75,9 @@ export async function registerAdapterForChat(
 
   // OpenAI-compat providers: local, ollama-cloud, xai, openai, custom.
   // One adapter, one wire shape — only the baseURL + apiKey swap per provider.
-  const { createOpenAICompatAdapter, resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
+  const { createOpenAICompatAdapter } = await import("../adapters/openai-compat.js");
+  const { localModelEvidenceForResolvedTarget, resolveOpenAICompatTarget } =
+    await import("../adapters/openai-compat/resolve-target.js");
   // Local per-model routing (Turbo cloud override, LM Studio/vLLM/llama.cpp
   // runtime lookup) lives inside resolveOpenAICompatTarget — one seam.
   const target = await resolveOpenAICompatTarget(prepared.provider, prepared, prepared.model);
@@ -86,6 +88,10 @@ export async function registerAdapterForChat(
     throw new Error(`provider ${prepared.provider} has no usable OpenAI-compat target — check API key and base URL config`);
   }
   const finalTarget = target;
+  prepared.localModelCapabilityProfile = localModelEvidenceForResolvedTarget(
+    prepared.provider,
+    finalTarget,
+  );
   registerAdapterForOp(opId, () =>
     createOpenAICompatAdapter({
       systemPrompt: prepared.systemPrompt,

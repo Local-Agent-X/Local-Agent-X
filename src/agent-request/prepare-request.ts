@@ -22,7 +22,8 @@ import { isSlashCommandExpansion } from "../slash-commands.js";
 import { buildHistoryDigest } from "../classifiers/intent-classifier.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
-import { createPromptTelemetry, measurePromptSection } from "../prompt-telemetry.js";
+import { createPromptTelemetry } from "../prompt-telemetry.js";
+import { appendSystemPromptSection } from "../context/system-prompt-builder.js";
 
 const logger = createLogger("agent-request.prepare-request");
 
@@ -254,11 +255,18 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // "/uploads/<f>" PATH. One tested unit (attachments.ts) owns this — it used to
   // be inline and silently dropped non-images, 404'ing every PDF/doc upload.
   const { images, fileAttachmentNote } = processAttachments(input.attachments, input.uploadsDir);
-  const systemPrompt = promptBuild.prompt + fileAttachmentNote;
-  const promptSections = [...promptBuild.sections];
-  if (fileAttachmentNote) {
-    promptSections.push(measurePromptSection("file-attachments", "dynamic", fileAttachmentNote));
-  }
+  const sectionAwarePrompt = {
+    systemPrompt: promptBuild.prompt,
+    renderedPromptSections: [...promptBuild.renderedSections],
+  };
+  appendSystemPromptSection(sectionAwarePrompt, {
+    id: "file-attachments",
+    label: "File Attachments",
+    type: "dynamic",
+    policy: "required",
+    text: fileAttachmentNote,
+  });
+  const { systemPrompt, renderedPromptSections } = sectionAwarePrompt;
   const promptTelemetry = createPromptTelemetry({
     profile: "full",
     provider: resolved.provider,
@@ -268,7 +276,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     tools: toolSel.tools,
     allToolCount: input.allAgentTools.length,
     historyMessageCount: cleanHistory.length,
-    sections: promptSections,
+    sections: renderedPromptSections.map((section) => section.measurement),
   });
 
   // 8. Intent-classifier tool_choice forcing. Verdict was computed in
@@ -339,5 +347,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     authSource: resolved.authSource,
     toolChoice,
     promptTelemetry,
+    renderedPromptSections,
+    localModelCapabilityProfile: null,
   };
 }

@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { buildSystemPrompt, fileAccessGroundingBlock } from "./build-system-prompt.js";
+import {
+  buildSystemPrompt,
+  buildSystemPromptWithTelemetry,
+  fileAccessGroundingBlock,
+} from "./build-system-prompt.js";
 import { pushPendingNotification } from "../../ops/pending-notifications.js";
 import type { BuildSystemPromptInput } from "./build-system-prompt.js";
+import { harnessNotice } from "../../context/system-prompt-builder.js";
+import { loadFileAccessMode } from "../../security/layer/index.js";
+import { modelFamilyRiderFor } from "./provider-riders.js";
 
 describe("fileAccessGroundingBlock", () => {
   it("unrestricted tells the model it can read ANY file", () => {
@@ -92,6 +99,43 @@ describe("local model-family rider wiring", () => {
     expect(await buildSystemPrompt(local)).toContain("[LOCAL MODEL RIDER");
     const cloud = { ...inputFor("anthropic", "qwen3:32b"), systemPromptOverride: "You are a focused sub-agent." };
     expect(await buildSystemPrompt(cloud)).not.toContain("[LOCAL MODEL RIDER");
+  });
+
+  it("keeps cloud and local prompt assembly byte-exact and section-complete", async () => {
+    const localBase = {
+      ...inputFor("local", "qwen3:32b"),
+      systemPromptOverride: "Canonical prompt bytes.",
+      forceBuildIntent: true,
+      buildMode: "force" as const,
+      intentReason: "golden build route",
+    };
+    const local = await buildSystemPromptWithTelemetry(localBase);
+    const cloud = await buildSystemPromptWithTelemetry({
+      ...localBase,
+      resolvedProvider: "openai",
+    });
+
+    const expectedLocalPrompt =
+      "Canonical prompt bytes." +
+      fileAccessGroundingBlock(loadFileAccessMode()) +
+      modelFamilyRiderFor("qwen3:32b") +
+      harnessNotice(
+        "TURN DIRECTIVE",
+        "Intent classifier identified this turn as a build_app request: golden build route.\n" +
+        "Call the build_app tool \u2014 that is the ONLY way to build this. The build then runs as a background op (the \"side agent\") that owns the ENTIRE build: it runs the real toolchain, produces the artifact, and delivers the result to the user itself when done. " +
+        "Do NOT build it yourself this turn \u2014 no bash/cargo/compiler, no write/edit of source files, no send_image of a result you produced. Building it twice wastes minutes of compute and confuses the user with a duplicate output. " +
+        "After calling build_app, just briefly tell the user it's building and they'll see it when it's ready.",
+      );
+    expect(local.prompt).toBe(expectedLocalPrompt);
+    for (const result of [local, cloud]) {
+      expect(result.renderedSections.map((section) => section.text).join("")).toBe(result.prompt);
+      expect(new Set(result.renderedSections.map((section) => section.id)).size)
+        .toBe(result.renderedSections.length);
+      expect(result.renderedSections.find((section) => section.id === "file-access")?.policy)
+        .toBe("required");
+      expect(result.renderedSections.find((section) => section.id === "turn-directive")?.policy)
+        .toBe("required");
+    }
   });
 });
 

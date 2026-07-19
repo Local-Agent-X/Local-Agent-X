@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createSystemPromptBuilder } from "./system-prompt-builder.js";
+import { createSystemPromptBuilder, SystemPromptBuilder } from "./system-prompt-builder.js";
 
 const MOCK_INPUTS = {
   basePrompt: "You are a personal AI companion.",
@@ -34,6 +34,63 @@ describe("Context Builder", () => {
     expect(result.sections.reduce((sum, section) => sum + section.utf8Bytes, 0)).toBe(Buffer.byteLength(result.prompt, "utf8"));
     expect(JSON.stringify(result.sections)).not.toContain("personal AI companion");
     expect(JSON.stringify(result.sections)).not.toContain("User works on Local Agent X");
+  });
+
+  it("renders the canonical section plan byte-for-byte with stable policy", async () => {
+    const builder = createSystemPromptBuilder(MOCK_INPUTS);
+    const result = await builder.buildWithTelemetry();
+
+    expect(result.renderedSections.map((section) => section.text).join("")).toBe(result.prompt);
+    expect(builder.getSectionPolicy().map(({ id, policy }) => ({ id, policy }))).toEqual([
+      { id: "core-identity", policy: "required" },
+      { id: "runtime-context", policy: "required" },
+      { id: "app-manifest", policy: "degradable" },
+      { id: "agents-md", policy: "required" },
+      { id: "provider-hint", policy: "required" },
+      { id: "tool-guidance", policy: "required" },
+      { id: "recall-reflex", policy: "required" },
+      { id: "integrations", policy: "degradable" },
+      { id: "context-block", policy: "degradable" },
+      { id: "relevant-memories", policy: "degradable" },
+      { id: "memory-orchestrator", policy: "degradable" },
+      { id: "canary", policy: "required" },
+    ]);
+    expect(result.renderedSections.map(({ id, policy }) => ({ id, policy }))).toEqual([
+      { id: "core-identity", policy: "required" },
+      { id: "runtime-context", policy: "required" },
+      { id: "agents-md", policy: "required" },
+      { id: "provider-hint", policy: "required" },
+      { id: "tool-guidance", policy: "required" },
+      { id: "recall-reflex", policy: "required" },
+      { id: "integrations", policy: "degradable" },
+      { id: "context-block", policy: "degradable" },
+      { id: "relevant-memories", policy: "degradable" },
+      { id: "memory-orchestrator", policy: "degradable" },
+      { id: "canary", policy: "required" },
+    ]);
+    expect(new Set(result.renderedSections.map((section) => section.id)).size)
+      .toBe(result.renderedSections.length);
+    for (const section of result.renderedSections) {
+      expect(section.measurement.id).toBe(section.id);
+      expect(section.measurement.characters).toBe(section.text.length);
+    }
+  });
+
+  it("rejects duplicate section identities at registration", () => {
+    const builder = new SystemPromptBuilder().addSection({
+      id: "identity",
+      label: "Identity",
+      type: "static",
+      policy: "required",
+      build: () => "one",
+    });
+    expect(() => builder.addSection({
+      id: "identity",
+      label: "Duplicate",
+      type: "dynamic",
+      policy: "degradable",
+      build: () => "two",
+    })).toThrow("Duplicate system-prompt section id: identity");
   });
 
   it("places all static sections before all dynamic sections", async () => {

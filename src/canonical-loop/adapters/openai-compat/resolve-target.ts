@@ -7,6 +7,14 @@
 // their own adapters) or when required config is missing.
 
 import type { OpenAICompatTarget } from "./types.js";
+import type { LocalModelCapabilityProfile } from "../../../local-runtimes/index.js";
+
+export function localModelEvidenceForResolvedTarget(
+  provider: string,
+  target: OpenAICompatTarget,
+): LocalModelCapabilityProfile | null {
+  return provider === "local" ? target.modelProfile ?? null : null;
+}
 
 export async function resolveOpenAICompatTarget(
   provider: string,

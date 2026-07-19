@@ -52,14 +52,51 @@ export interface PromptSection {
   id: string;
   label: string;
   type: "static" | "dynamic";
+  policy: "required" | "degradable";
   build: () => string | Promise<string>;
   shouldInclude?: () => boolean;
+}
+
+export interface RenderedPromptSection {
+  id: string;
+  label: string;
+  type: PromptSection["type"];
+  policy: PromptSection["policy"];
+  text: string;
+  measurement: PromptSectionTelemetry;
+}
+
+export interface SystemPromptBuildResult {
+  prompt: string;
+  sections: PromptSectionTelemetry[];
+  renderedSections: RenderedPromptSection[];
+}
+
+export interface SectionAwareSystemPrompt {
+  systemPrompt: string;
+  renderedPromptSections: RenderedPromptSection[];
+}
+
+export function appendSystemPromptSection(
+  target: SectionAwareSystemPrompt,
+  section: Pick<PromptSection, "id" | "label" | "type" | "policy"> & { text: string },
+): void {
+  if (!section.text) return;
+  if (target.renderedPromptSections.some((candidate) => candidate.id === section.id)) {
+    throw new Error(`Duplicate system-prompt section id: ${section.id}`);
+  }
+  const measurement = measurePromptSection(section.id, section.type, section.text);
+  target.systemPrompt += section.text;
+  target.renderedPromptSections.push({ ...section, measurement });
 }
 
 export class SystemPromptBuilder {
   private sections: PromptSection[] = [];
 
   addSection(section: PromptSection): this {
+    if (this.sections.some((candidate) => candidate.id === section.id)) {
+      throw new Error(`Duplicate system-prompt section id: ${section.id}`);
+    }
     this.sections.push(section);
     return this;
   }
@@ -69,17 +106,27 @@ export class SystemPromptBuilder {
     return (await this.buildWithTelemetry()).prompt;
   }
 
-  async buildWithTelemetry(): Promise<{ prompt: string; sections: PromptSectionTelemetry[] }> {
+  async buildWithTelemetry(): Promise<SystemPromptBuildResult> {
     const staticParts: string[] = [];
     const dynamicParts: string[] = [];
     const metrics: PromptSectionTelemetry[] = [];
+    const renderedSections: RenderedPromptSection[] = [];
 
     for (const section of this.sections) {
       if (section.shouldInclude && !section.shouldInclude()) continue;
       const content = await section.build();
       if (!content) continue;
 
-      metrics.push(measurePromptSection(section.id, section.type, content));
+      const measurement = measurePromptSection(section.id, section.type, content);
+      metrics.push(measurement);
+      renderedSections.push({
+        id: section.id,
+        label: section.label,
+        type: section.type,
+        policy: section.policy,
+        text: content,
+        measurement,
+      });
 
       if (section.type === "static") {
         staticParts.push(content);
@@ -88,11 +135,19 @@ export class SystemPromptBuilder {
       }
     }
 
-    return { prompt: staticParts.join("") + dynamicParts.join(""), sections: metrics };
+    return {
+      prompt: staticParts.join("") + dynamicParts.join(""),
+      sections: metrics,
+      renderedSections,
+    };
   }
 
   getSectionOrder(): string[] {
     return this.sections.map(s => s.id);
+  }
+
+  getSectionPolicy(): Array<Pick<PromptSection, "id" | "label" | "type" | "policy">> {
+    return this.sections.map(({ id, label, type, policy }) => ({ id, label, type, policy }));
   }
 }
 
@@ -122,7 +177,7 @@ export function createSystemPromptBuilder(opts: {
   // ── Static sections (cacheable across turns) ──
 
   builder.addSection({
-    id: "core-identity", label: "System Prompt", type: "static",
+    id: "core-identity", label: "System Prompt", type: "static", policy: "required",
     build: () => opts.basePrompt,
   });
 
@@ -133,7 +188,7 @@ export function createSystemPromptBuilder(opts: {
   // from prior tool output, which on a fresh install means it guesses wrong.
   // Static (process-lifetime stable) so it caches with the base prompt.
   builder.addSection({
-    id: "runtime-context", label: "Runtime", type: "static",
+    id: "runtime-context", label: "Runtime", type: "static", policy: "required",
     build: () => {
       const plat = process.platform;
       const friendly = plat === "darwin" ? "macOS" : plat === "win32" ? "Windows" : plat === "linux" ? "Linux" : plat;
@@ -153,7 +208,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
 
   // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({
-    id: "app-manifest", label: "App Map", type: "static",
+    id: "app-manifest", label: "App Map", type: "static", policy: "degradable",
     build: async () => {
       try {
         const { getManifestSummary } = await import("../manifest-generator/index.js");
@@ -168,7 +223,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // invariants). Injected verbatim so the agent reads the canonical rules
   // rather than a drifty paraphrase.
   builder.addSection({
-    id: "agents-md", label: "Rules", type: "static",
+    id: "agents-md", label: "Rules", type: "static", policy: "required",
     build: async () => {
       try {
         const { readFileSync, existsSync } = await import("node:fs");
@@ -188,13 +243,13 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   });
 
   builder.addSection({
-    id: "provider-hint", label: "Provider", type: "static",
+    id: "provider-hint", label: "Provider", type: "static", policy: "required",
     build: () => opts.providerHint,
   });
 
   if (opts.toolPromptSection) {
     builder.addSection({
-      id: "tool-guidance", label: "Tool Guidance", type: "static",
+      id: "tool-guidance", label: "Tool Guidance", type: "static", policy: "required",
       build: () => opts.toolPromptSection!,
       shouldInclude: () => opts.toolPromptSection!.length > 0,
     });
@@ -206,7 +261,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
   // instead of checking what's actually been built or discussed before.
   // Sits in the static section so it's cacheable.
   builder.addSection({
-    id: "recall-reflex", label: "Recall Reflex", type: "static",
+    id: "recall-reflex", label: "Recall Reflex", type: "static", policy: "required",
     build: () => `## Memory-Recall Reflex
 When the user references a project, website, person, or topic you don't recognize from THIS conversation — INCLUDING brand/project names you can read from an attached IMAGE:
 - Your default reflex is to call \`search_past_sessions\` BEFORE answering.
@@ -223,7 +278,7 @@ When the user references a project, website, person, or topic you don't recogniz
   // a known name comes up." Cached for 60s in the catalog module.
   if (opts.memoryDir) {
     builder.addSection({
-      id: "project-catalog", label: "Project Catalog", type: "static",
+      id: "project-catalog", label: "Project Catalog", type: "static", policy: "degradable",
       build: async () => {
         try {
           const { getProjectCatalogSection } = await import("../memory/project-catalog.js");
@@ -236,7 +291,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.integrationsContext) {
     builder.addSection({
-      id: "integrations", label: "Connected APIs", type: "static",
+      id: "integrations", label: "Connected APIs", type: "static", policy: "degradable",
       build: () => opts.integrationsContext!,
       shouldInclude: () => opts.integrationsContext!.length > 0,
     });
@@ -246,7 +301,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.contextBlock) {
     builder.addSection({
-      id: "context-block", label: "Memory Context", type: "dynamic",
+      id: "context-block", label: "Memory Context", type: "dynamic", policy: "degradable",
       build: () => asRecalledData("context-block", opts.contextBlock!),
       shouldInclude: () => opts.contextBlock!.length > 0,
     });
@@ -254,7 +309,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.relevantMemories) {
     builder.addSection({
-      id: "relevant-memories", label: "Relevant Memories", type: "dynamic",
+      id: "relevant-memories", label: "Relevant Memories", type: "dynamic", policy: "degradable",
       build: () => asRecalledData("relevant-memories", opts.relevantMemories!),
       shouldInclude: () => opts.relevantMemories!.length > 0,
     });
@@ -262,7 +317,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.smartContext) {
     builder.addSection({
-      id: "smart-context", label: "Related Sessions", type: "dynamic",
+      id: "smart-context", label: "Related Sessions", type: "dynamic", policy: "degradable",
       build: () => asRecalledData("smart-context", opts.smartContext!),
       shouldInclude: () => opts.smartContext!.length > 0,
     });
@@ -270,7 +325,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.memoryContext) {
     builder.addSection({
-      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic",
+      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic", policy: "degradable",
       build: () => asRecalledData("memory-orchestrator", opts.memoryContext!),
       shouldInclude: () => opts.memoryContext!.length > 0,
     });
@@ -278,7 +333,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.notificationHint) {
     builder.addSection({
-      id: "notifications", label: "Notifications", type: "dynamic",
+      id: "notifications", label: "Notifications", type: "dynamic", policy: "required",
       build: () => opts.notificationHint!,
       shouldInclude: () => opts.notificationHint!.length > 0,
     });
@@ -286,7 +341,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.bridgeContext) {
     builder.addSection({
-      id: "bridge-context", label: "Bridge Context", type: "dynamic",
+      id: "bridge-context", label: "Bridge Context", type: "dynamic", policy: "required",
       build: () => opts.bridgeContext!,
       shouldInclude: () => opts.bridgeContext!.length > 0,
     });
@@ -294,7 +349,7 @@ When the user references a project, website, person, or topic you don't recogniz
 
   if (opts.canaryBlock) {
     builder.addSection({
-      id: "canary", label: "Security Canary", type: "dynamic",
+      id: "canary", label: "Security Canary", type: "dynamic", policy: "required",
       build: () => opts.canaryBlock!,
       shouldInclude: () => opts.canaryBlock!.length > 0,
     });

@@ -44,6 +44,6 @@ export interface DriveTurnOptions {
  *  commit. beforeTurn nudges are already consumed (synthetic message
  *  injected into THIS turn); we don't bubble them up. */
 export type MiddlewareDirective =
-  | { kind: "nudge"; reason: string; firedBy: string; message: string }
+  | { kind: "nudge"; reason: string; firedBy: string; message: string; metadata?: import("../middlewares/types.js").NudgeMetadata; skipToolDispatch?: boolean }
   | { kind: "abort"; reason: string; firedBy: string; message?: string }
   | { kind: "suspend"; reason: string; firedBy: string; message: string };

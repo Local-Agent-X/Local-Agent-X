@@ -127,23 +127,21 @@ describe("loop-detection middleware", () => {
     expect(r.kind).toBe("continue");
   });
 
-  it("aborts repeated identical calls that keep producing the SAME result", async () => {
-    // Non-interactive lane: the hard-abort path only runs when no human is
-    // watching (interactive lanes are nudge-only). This exercises that branch.
+  it("autonomously pivots repeated identical worker calls with the SAME result", async () => {
     const op = mkOp("loop-abort", "chat_turn", "background");
     const tc = mkToolCall("read", { path: "x" });
     const sameResult: CanonicalToolResultView[] = [{ toolName: "read", toolCallId: tc.toolCallId, content: "unchanged output" }];
     const turn = async () => {
       const verdict = await loopDetectionMiddleware.afterModelCall!(mkCtx({ op, toolCalls: [tc] }));
-      await loopDetectionMiddleware.afterToolExecution!(mkCtx({ op, toolCalls: [tc], toolResults: sameResult }));
-      return verdict;
+      const completed = await loopDetectionMiddleware.afterToolExecution!(mkCtx({ op, toolCalls: [tc], toolResults: sameResult }));
+      return { beforeDispatch: verdict, completed };
     };
-    // Result-awareness needs ≥2 observed results to confirm non-progress, so the
-    // abort lands one turn later than a result-blind check (strong model).
-    expect((await turn()).kind).toBe("continue");
-    expect((await turn()).kind).toBe("continue");
-    expect((await turn()).kind).toBe("continue");
-    expect((await turn()).kind).toBe("abort");
+    expect((await turn()).beforeDispatch.kind).toBe("continue");
+    expect((await turn()).beforeDispatch.kind).toBe("continue");
+    const pivot = await turn();
+    expect(pivot.beforeDispatch.kind).toBe("continue");
+    expect(pivot.completed.kind).toBe("nudge");
+    expect((pivot.completed as { reason: string }).reason).toBe("strategy-pivot");
   });
 
   it("does NOT abort repeated identical calls whose RESULT changes each time (user-requested repetition / polling)", async () => {
@@ -376,7 +374,7 @@ describe("mid-turn-stale middleware", () => {
     expect((r as { kind: string }).kind).toBe("continue");
   });
 
-  it("worker op: first strike nudges; second strike aborts", () => {
+  it("worker op: every flat-evidence strike continues through an autonomous pivot", () => {
     const op = mkOp("stale-worker", "agent_turn", "agent");
     const r1 = midTurnStaleMiddleware.beforeTurn!(mkCtx({
       op, turnIdx: 6, evidenceHistory: [3, 3, 3],
@@ -385,7 +383,8 @@ describe("mid-turn-stale middleware", () => {
     const r2 = midTurnStaleMiddleware.beforeTurn!(mkCtx({
       op, turnIdx: 7, evidenceHistory: [3, 3, 3],
     }));
-    expect((r2 as { kind: string }).kind).toBe("abort");
+    expect((r2 as { kind: string }).kind).toBe("nudge");
+    expect((r2 as { reason: string }).reason).toBe("strategy-pivot");
   });
 
   it("interactive op: first strike is silent (no leaked nudge) but the circuit-breaker still aborts", () => {

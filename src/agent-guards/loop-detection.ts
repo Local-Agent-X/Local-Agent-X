@@ -7,19 +7,11 @@
 //
 // Progress (signals 2 + 3) is result-delta, not tool-identity: a turn made
 // progress if it surfaced a tool result not seen before (the agent learned or
-// changed something) OR it committed a mutation (isMutationTool — the floor
-// that keeps fire-and-forget side effects like email_send from reading as a
-// spin even when their ack is a constant string). A read returning new info is
+// changed something) OR it completed a successful mutation signature not seen
+// before. A read returning new info is
 // progress; a read/click returning the same bytes is not, regardless of the
 // tool's class. The result-delta is the same sha1 signal the exact-repeat
 // detector already uses, generalized across varied tools and across the op.
-//
-// Residual (intentional): a MUTATION-class tool that returns identical results
-// forever (a dead-button browser click, an idempotent POST) still resets via
-// the mutation floor and is NOT caught by no-progress — distinguishing it from
-// a real constant-ack mutation (email_send) by result bytes alone would
-// false-abort the latter. That spin is the exact-repeat detector's job (it's
-// already result-aware) plus the per-op turn cap.
 //
 // Weak/medium models loop harder and faster, so thresholds halve when the
 // caller passes modelTier="weak"|"medium".
@@ -31,7 +23,13 @@
 import { createHash } from "node:crypto";
 import { logRetry } from "../retry-telemetry.js";
 import { isMutationTool, isProgressTool } from "../tool-mutation-check.js";
+import { isCommittingTool } from "../committing-tool-check.js";
 import { normalizeGrepPattern } from "./cleanup-verify.js";
+import { chooseStrategyPivot, successfulCommittingCallKey, type StrategyPivotPattern, type ToolResultObservation } from "./strategy-pivot-pattern.js";
+
+function isProtectedCommittingCall(name: string): boolean {
+  return isCommittingTool(name) && isMutationTool(name);
+}
 
 export interface LoopState {
   lastToolKey: string;
@@ -46,23 +44,11 @@ export interface LoopState {
   lastResultSig: string | null;
   identicalResultRepeats: number;
   toolNameCounts: Map<string, number>;
-  // Result signatures (sha1) seen so far this op — the memory behind the
-  // result-delta progress signal. A turn whose results are ALL already in here
-  // surfaced nothing new. Insertion-ordered + FIFO-bounded (RESULT_SIG_MEMORY)
-  // so a long op can't grow it without limit; an evicted-then-repeated result
-  // only delays an abort, never causes a false one.
   seenResultSigs: Set<string>;
-  // Whether the PRIOR turn surfaced a novel result. Set by noteToolResults
-  // (post-dispatch, when results are known) and read by the next checkToolLoops
-  // (pre-dispatch) — the same one-turn lag the exact-repeat detector runs on.
+  seenSuccessfulMutationKeys: Set<string>;
   lastTurnHadNovelResult: boolean;
-  // Iterations elapsed since the last PROGRESS (a novel result OR a committed
-  // mutation). Build_app worker spun 96 bash calls + 0 progress for 5 min
-  // before kill. No-progress detector: if this exceeds NO_PROGRESS_LIMIT, abort.
+  lastTurnHadNovelMutation: boolean;
   iterationsSinceProgress: number;
-  // Set to true on the iteration AFTER a successful `git commit` is observed
-  // in a bash tool result. Next iteration the agent gets a nudge to wrap up.
-  // The perma-fix mandate keeps agents going past their commit; this caps it.
   postCommitNudgePending: boolean;
   // Per normalized SEARCH PATTERN, how many times it's been searched this op.
   // The discovery counter resets on any edit/novel-result, so a model that
@@ -81,6 +67,7 @@ export interface LoopState {
   // runaway and ending the turn beats spinning. (The user keeps the chat and
   // can just send another message.)
   nudgeCount: number;
+  pendingStrategyPivot: StrategyPivotPattern | null;
 }
 
 export function createLoopState(): LoopState {
@@ -91,11 +78,14 @@ export function createLoopState(): LoopState {
     identicalResultRepeats: 0,
     toolNameCounts: new Map(),
     seenResultSigs: new Set(),
+    seenSuccessfulMutationKeys: new Set(),
     lastTurnHadNovelResult: false,
+    lastTurnHadNovelMutation: false,
     iterationsSinceProgress: 0,
     postCommitNudgePending: false,
     searchKeyCounts: new Map(),
     nudgeCount: 0,
+    pendingStrategyPivot: null,
   };
 }
 
@@ -183,7 +173,7 @@ export const SPIRALABLE_TOOLS = new Set([
 export function checkToolLoops(
   toolCalls: Array<{ name: string; arguments: string }>,
   state: LoopState,
-  opts?: { modelTier?: "weak" | "medium" | "strong"; nudgeOnly?: boolean },
+  opts?: { modelTier?: "weak" | "medium" | "strong"; nudgeOnly?: boolean; deferWorkerPivot?: boolean },
 ): { abort: boolean; nudge: string | null } {
   const isWeakOrMedium = opts?.modelTier === "weak" || opts?.modelTier === "medium";
   const repeatLimit = isWeakOrMedium ? 2 : 3;
@@ -215,6 +205,7 @@ export function checkToolLoops(
   if (key === state.lastToolKey) {
     state.sameToolCount++;
     if (state.identicalResultRepeats >= repeatLimit - 1) {
+      if (opts?.deferWorkerPivot) return { abort: false, nudge: null };
       logRetry({ kind: "loop-abort", tool: toolCalls[0]?.name, detail: { repeatLimit, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
       if (opts?.nudgeOnly) {
         // Interactive chat: never kill the turn out from under the user. Break
@@ -239,7 +230,6 @@ export function checkToolLoops(
   // NOT spiralable — they do progressive work and 8+ sequential calls is normal
   // multi-step automation, not a spiral. Exact-repeat detection above catches
   // true action loops.
-  //
   // Two progress signals reset the spiralable counts: isProgressTool (local
   // work incl. bash — the audit-then-edit-then-verify pattern would otherwise
   // accumulate reads across phases and falsely trip the gate) and a novel
@@ -247,9 +237,8 @@ export function checkToolLoops(
   // reads were exploration, not a spiral). A discovery tool spun on the SAME
   // result keeps neither signal, so its count climbs to the nudge. isProgressTool
   // derives from the risk taxonomy (tool-mutation-check.ts); the novelty signal
-  // is the result-delta below. isMutationTool drives the no-progress counter.
-  let madeProgress = false;
-  let madeMutation = false;
+  // is the completed-result delta below.
+  let madeProgress = false, madeMutation = false;
   for (const tc of toolCalls) {
     if (isProgressTool(tc.name)) madeProgress = true;
     if (isMutationTool(tc.name)) madeMutation = true;
@@ -261,20 +250,14 @@ export function checkToolLoops(
     // counts intact (they don't gate anything anyway).
     for (const name of SPIRALABLE_TOOLS) state.toolNameCounts.delete(name);
   }
-  // No-progress detector: count iterations since the last PROGRESS — a
-  // committed mutation (this turn) OR a novel result (the prior turn surfaced
-  // information not seen before). Anything else (re-reading the same file,
-  // git-status spin, a dead-button click whose page doesn't change) ticks.
-  // When the counter exceeds NO_PROGRESS_LIMIT, abort — the agent is either
-  // done (and stalling) or stuck (and spinning). madeMutation is this turn's
-  // tool identity; lastTurnHadNovelResult is the prior turn's result-delta
-  // (one-turn lag, same as the exact-repeat detector).
-  if (madeMutation || state.lastTurnHadNovelResult) {
+  // Current mutations count immediately; result novelty arrives after dispatch.
+  if (madeMutation || state.lastTurnHadNovelResult || state.lastTurnHadNovelMutation) {
     state.iterationsSinceProgress = 0;
   } else {
     state.iterationsSinceProgress++;
     const noProgLimit = isWeakOrMedium ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
     if (state.iterationsSinceProgress >= noProgLimit) {
+      if (opts?.deferWorkerPivot) return { abort: false, nudge: null };
       logRetry({ kind: "loop-abort", tool: "no-progress", detail: { iterations: state.iterationsSinceProgress, limit: noProgLimit, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
       // Reset so the next turn starts clean whether we abort or just nudge.
       state.iterationsSinceProgress = 0;
@@ -302,6 +285,7 @@ export function checkToolLoops(
     }
   }
   if (redundant) {
+    if (opts?.deferWorkerPivot) return { abort: false, nudge: null };
     logRetry({ kind: "loop-abort", tool: "redundant-search", detail: { term: redundant.term, count: redundant.count, modelTier: opts?.modelTier } });
     return emitNudge(`SYSTEM: you've run the same search (${redundant.term}) ${redundant.count}× this op — re-running it won't change the answer. Stop re-searching: act on the matches you already have (edit the files), or if the search came back clean, move on. Re-run the search only ONCE after you've actually changed files, to confirm.`);
   }
@@ -311,6 +295,7 @@ export function checkToolLoops(
   );
   if (stuck) {
     const [toolName, count] = stuck;
+    if (opts?.deferWorkerPivot) return { abort: false, nudge: null };
     state.toolNameCounts.set(toolName, 0);
     // Pivot-toward-action nudge, not a dead-end "STOP." The model usually
     // has enough context by call N — what it needs is permission to switch
@@ -325,39 +310,53 @@ export function checkToolLoops(
   return { abort: false, nudge: null };
 }
 
-/**
- * Record a turn's tool results so the next checkToolLoops can read two
- * result-delta signals. Call after dispatch with the same tool calls passed to
- * checkToolLoops.
- *   - Exact-repeat: while the SAME {tool,args} key holds, tell a stuck spin
- *     (same call, same result) from legitimate repetition (changing result).
- *   - Progress (no-progress + discovery): across ANY tools, whether the turn
- *     surfaced a result not seen before this op. A novel result means the agent
- *     learned/changed something; an all-seen turn made no progress.
- */
 export function noteToolResults(
   toolCalls: Array<{ name: string; arguments: string }>,
   state: LoopState,
-  results: Array<{ content: string }>,
-): void {
-  // Progress signal — runs every turn, independent of the exact-repeat key.
+  results: Array<{ content: string; status?: string }>,
+  opts?: { modelTier?: "weak" | "medium" | "strong"; armWorkerPivot?: boolean },
+): ToolResultObservation {
+  let successfulMutation = false;
+  let repeatedMutation = false;
+  const committingResultIndexes = new Set<number>();
+  for (const [index, tc] of toolCalls.entries()) {
+    const result = results[index];
+    if (!result || !isProtectedCommittingCall(tc.name)) continue;
+    if (result.status !== undefined && result.status !== "ok") continue;
+    committingResultIndexes.add(index);
+    const key = successfulCommittingCallKey(tc);
+    if (state.seenSuccessfulMutationKeys.has(key)) {
+      repeatedMutation = true;
+      continue;
+    }
+    successfulMutation = true;
+    state.seenSuccessfulMutationKeys.add(key);
+    if (state.seenSuccessfulMutationKeys.size > RESULT_SIG_MEMORY) {
+      state.seenSuccessfulMutationKeys.delete(state.seenSuccessfulMutationKeys.values().next().value!);
+    }
+  }
+
   let novel = false;
-  for (const r of results) {
-    const rsig = createHash("sha1").update(r.content).digest("hex");
-    if (!state.seenResultSigs.has(rsig)) {
-      novel = true;
-      state.seenResultSigs.add(rsig);
-      if (state.seenResultSigs.size > RESULT_SIG_MEMORY) {
-        // Set preserves insertion order — the first key is the oldest.
-        state.seenResultSigs.delete(state.seenResultSigs.values().next().value!);
-      }
+  for (const [index, result] of results.entries()) {
+    if (result.status !== undefined && result.status !== "ok") continue;
+    if (committingResultIndexes.has(index)) continue;
+    const signature = createHash("sha1").update(result.content).digest("hex");
+    if (state.seenResultSigs.has(signature)) continue;
+    novel = true;
+    state.seenResultSigs.add(signature);
+    if (state.seenResultSigs.size > RESULT_SIG_MEMORY) {
+      state.seenResultSigs.delete(state.seenResultSigs.values().next().value!);
     }
   }
   state.lastTurnHadNovelResult = novel;
+  state.lastTurnHadNovelMutation = successfulMutation;
+  if (novel || successfulMutation) state.pendingStrategyPivot = null;
 
   // Exact-repeat signal — only while the repeated {tool,args} key holds.
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
-  if (key !== state.lastToolKey) return;
+  if (key !== state.lastToolKey) {
+    return { novel, successfulMutation, pendingPivot: state.pendingStrategyPivot };
+  }
   const sig = createHash("sha1")
     .update(results.map(r => r.content).join("\x00"))
     .digest("hex");
@@ -365,4 +364,37 @@ export function noteToolResults(
     state.identicalResultRepeats = sig === state.lastResultSig ? state.identicalResultRepeats + 1 : 0;
   }
   state.lastResultSig = sig;
+
+  if (opts?.armWorkerPivot && !novel && !successfulMutation) {
+    const weak = opts.modelTier === "weak" || opts.modelTier === "medium";
+    const repeatLimit = weak ? 2 : 3;
+    const noProgressLimit = weak ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
+    const searchLimit = weak ? REDUNDANT_SEARCH_LIMIT_WEAK : REDUNDANT_SEARCH_LIMIT;
+    const discoveryLimit = weak ? DISCOVERY_LOOP_THRESHOLD_WEAK : DISCOVERY_LOOP_THRESHOLD;
+    state.pendingStrategyPivot = chooseStrategyPivot({
+      exactRepeat: state.identicalResultRepeats >= repeatLimit - 1,
+      mutationRepeat: repeatedMutation,
+      noProgress: state.iterationsSinceProgress >= noProgressLimit,
+      redundantSearch: toolCalls.some(tc => {
+        const key = searchKeyOf(tc.name, tc.arguments);
+        return key !== null && (state.searchKeyCounts.get(key) ?? 0) >= searchLimit;
+      }),
+      discoveryLoop: toolCalls.some(tc =>
+        SPIRALABLE_TOOLS.has(tc.name) && (state.toolNameCounts.get(tc.name) ?? 0) >= discoveryLimit
+      ),
+    });
+  }
+
+  return { novel, successfulMutation, pendingPivot: state.pendingStrategyPivot };
+}
+
+export type { StrategyPivotPattern, ToolResultObservation } from "./strategy-pivot-pattern.js";
+
+export function hasSeenSuccessfulCommittingCall(
+  toolCalls: Array<{ name: string; arguments: string }>,
+  state: LoopState,
+): boolean {
+  return toolCalls.some(call =>
+    isProtectedCommittingCall(call.name) && state.seenSuccessfulMutationKeys.has(successfulCommittingCallKey(call))
+  );
 }

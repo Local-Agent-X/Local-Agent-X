@@ -90,6 +90,8 @@ export interface CommitTurnInput {
   modelMs?: number;
   /** Wall-clock ms inside `dispatchTools`. Recorded for soak telemetry. */
   toolDispatchMs?: number;
+  /** Durable next-turn strategy pivot, committed atomically with the turn. */
+  nextTurnPivot?: OpTurnRow["nextTurnPivot"];
 }
 
 export interface CommitTurnOutput {
@@ -141,6 +143,7 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     ...(input.observedTools && input.observedTools.length > 0 ? { observedTools: input.observedTools } : {}),
     ...(input.modelMs !== undefined ? { modelMs: input.modelMs } : {}),
     ...(input.toolDispatchMs !== undefined ? { toolDispatchMs: input.toolDispatchMs } : {}),
+    ...(input.nextTurnPivot ? { nextTurnPivot: input.nextTurnPivot } : {}),
   };
 
   // CRASH-SAFETY ORDER (fix): write the op_turns row FIRST, then append

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { classifyToolRisk } from "../autonomy/risk.js";
 import { kernelClassForTool } from "../ari-kernel/tool-class-map.js";
 import { isCommittingTool } from "../committing-tool-check.js";
-import { checkToolLoops, createLoopState, NO_PROGRESS_LIMIT } from "../agent-guards/loop-detection.js";
+import { checkToolLoops, createLoopState, NO_PROGRESS_LIMIT, noteToolResults } from "../agent-guards/loop-detection.js";
 import { hasCapability } from "../tool-registry.js";
 import { isMutationTool, isProgressTool } from "../tool-mutation-check.js";
 import { ToolPolicy } from "../tool-policy/index.js";
@@ -145,6 +145,14 @@ describe("PluginToolSurface", () => {
     );
     expect(activeVerdict.abort).toBe(false);
     expect(activeState.iterationsSinceProgress).toBe(0);
+    const observed = noteToolResults(
+      [{ name: "loop_action", arguments: "{}" }],
+      activeState,
+      [{ content: "plugin mutation completed", status: "ok" }],
+      { armWorkerPivot: true },
+    );
+    expect(observed.successfulMutation).toBe(true);
+    expect(observed.pendingPivot).toBeNull();
 
     surface.deactivate(owner);
     const inactiveState = createLoopState();

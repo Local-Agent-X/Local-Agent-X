@@ -9,20 +9,29 @@
 import { randomUUID } from "node:crypto";
 import type { Op } from "../../ops/types.js";
 import type { OpMessageRow } from "../types.js";
-import { appendOpMessage, readOpMessages } from "../store.js";
+import { appendOpMessage, readOpMessages, readOpTurn } from "../store.js";
 import { emit, emitErrorOnce } from "../event-emitter.js";
 import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { DriveTurnResult } from "./types.js";
+import type { NudgeMetadata } from "../middlewares/types.js";
 
 /** Append a synthetic user-role op_message carrying a middleware nudge.
  *  Sits in op_messages at (turnIdx, seqInTurn=N) where N is one past any
  *  existing row in that turn. The next driveTurn(turnIdx) — or this turn,
  *  for a beforeTurn nudge — sees it via the standard buildTurnInput
  *  history read. */
-export function appendNudgeAsUserMessage(opId: string, turnIdx: number, message: string): void {
-  const existing = readOpMessages(opId).filter(m => m.turnIdx === turnIdx).length;
+export function appendNudgeAsUserMessage(
+  opId: string,
+  turnIdx: number,
+  message: string,
+  metadata?: NudgeMetadata,
+  stableMessageId?: string,
+): boolean {
+  const messages = readOpMessages(opId);
+  if (stableMessageId && messages.some(row => row.messageId === stableMessageId)) return false;
+  const existing = messages.filter(m => m.turnIdx === turnIdx).length;
   const row: OpMessageRow = {
-    messageId: `nudge-${opId}-${turnIdx}-${existing}-${randomUUID().slice(0, 6)}`,
+    messageId: stableMessageId ?? `nudge-${opId}-${turnIdx}-${existing}-${randomUUID().slice(0, 6)}`,
     opId,
     turnIdx,
     seqInTurn: existing,
@@ -34,11 +43,27 @@ export function appendNudgeAsUserMessage(opId: string, turnIdx: number, message:
     // the user typed it. Adapters' canonicalToTransport only emits
     // `content.text` so the `kind` marker stays on our side of the wire.
     role: "user",
-    content: { text: message, kind: "nudge" },
+    content: { text: message, kind: "nudge", ...metadata },
     createdAt: new Date().toISOString(),
   };
   appendOpMessage(row);
   emit(opId, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
+  return true;
+}
+
+/** Materialize a pivot intent only after its source turn is durable. The
+ * deterministic message id makes retries and restart recovery exactly-once. */
+export function recoverCommittedStrategyPivot(opId: string, sourceTurnIdx: number): boolean {
+  if (sourceTurnIdx < 0) return false;
+  const pivot = readOpTurn(opId, sourceTurnIdx)?.nextTurnPivot;
+  if (!pivot) return false;
+  return appendNudgeAsUserMessage(
+    opId,
+    sourceTurnIdx + 1,
+    pivot.message,
+    pivot.metadata,
+    `strategy-pivot-${opId}-${sourceTurnIdx}`,
+  );
 }
 
 export function middlewareAbortResult(

@@ -15,7 +15,7 @@ import { emit, emitErrorOnce, publishStreamChunk } from "../event-emitter.js";
 import { commitTurn } from "../checkpoint.js";
 import { runMiddlewarePhase } from "../middlewares/host.js";
 import { buildToolResultsView, extractText, extractToolResultText } from "./content-extract.js";
-import { appendNudgeAsUserMessage, middlewareAbortResult } from "./nudges.js";
+import { appendNudgeAsUserMessage, middlewareAbortResult, recoverCommittedStrategyPivot } from "./nudges.js";
 import { buildTurnInput, readPendingRedirect } from "./build-input.js";
 import { drainInjectsIntoTurn } from "./inject-drain.js";
 import { opConsumesInjects } from "../../agent-loop/inject-queue.js";
@@ -47,6 +47,7 @@ export interface TurnLoopDeps {
   buildToolResultsView?: typeof buildToolResultsView;
   /** Middleware nudge/abort write-back into op_messages / op_events. */
   appendNudgeAsUserMessage?: typeof appendNudgeAsUserMessage;
+  recoverCommittedStrategyPivot?: typeof recoverCommittedStrategyPivot;
   middlewareAbortResult?: typeof middlewareAbortResult;
   /** Turn input assembly from op_messages + prior providerState. */
   buildTurnInput?: typeof buildTurnInput;
@@ -89,6 +90,7 @@ export function resolveTurnLoopDeps(deps: TurnLoopDeps = {}): ResolvedTurnLoopDe
     extractToolResultText: deps.extractToolResultText ?? extractToolResultText,
     buildToolResultsView: deps.buildToolResultsView ?? buildToolResultsView,
     appendNudgeAsUserMessage: deps.appendNudgeAsUserMessage ?? appendNudgeAsUserMessage,
+    recoverCommittedStrategyPivot: deps.recoverCommittedStrategyPivot ?? recoverCommittedStrategyPivot,
     middlewareAbortResult: deps.middlewareAbortResult ?? middlewareAbortResult,
     buildTurnInput: deps.buildTurnInput ?? buildTurnInput,
     readPendingRedirect: deps.readPendingRedirect ?? readPendingRedirect,

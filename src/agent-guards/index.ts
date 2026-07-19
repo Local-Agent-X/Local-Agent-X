@@ -43,9 +43,12 @@ export {
 } from "./claim-grounding.js";
 export {
   checkToolLoops,
+  hasSeenSuccessfulCommittingCall,
   noteToolResults,
   createLoopState,
   type LoopState,
+  type StrategyPivotPattern,
+  type ToolResultObservation,
   NO_PROGRESS_LIMIT,
   NO_PROGRESS_LIMIT_WEAK,
 } from "./loop-detection.js";

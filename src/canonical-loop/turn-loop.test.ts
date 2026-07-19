@@ -25,11 +25,13 @@ vi.mock("./event-emitter.js", () => ({
 }));
 vi.mock("./turn-loop/nudges.js", () => ({
   appendNudgeAsUserMessage: vi.fn(),
+  recoverCommittedStrategyPivot: vi.fn(() => false),
   middlewareAbortResult: vi.fn(() => ({ terminalReason: "error", toolCount: 0, messageCount: 0, cancelled: false })),
 }));
 
 import { driveTurn, type TurnLoopDeps } from "./turn-loop.js";
 import { publishStreamChunk } from "./event-emitter.js";
+import { appendNudgeAsUserMessage } from "./turn-loop/nudges.js";
 import type { Adapter, TurnInput } from "./adapter-contract.js";
 import type { CanonicalLoopContext } from "./middlewares/types.js";
 import type { Op } from "../ops/types.js";
@@ -50,6 +52,7 @@ function okAdapter(): Adapter {
 function makeDeps() {
   return {
     commitTurn: vi.fn(),
+    recoverCommittedStrategyPivot: vi.fn(() => false),
     runMiddlewarePhase: vi.fn(async () => ({ kind: "continue" as const })),
     extractText: vi.fn(() => ""),
     extractToolResultText: vi.fn(() => ""),
@@ -127,6 +130,64 @@ describe("driveTurn — cancel that lands during verify gates (CL-2)", () => {
     await expect(
       driveTurn(freshOp(), okAdapter(), 0, { isCancelled: () => false }, deps),
     ).rejects.toThrow("disk full");
+  });
+});
+
+describe("driveTurn — completed-result pivot durability", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("persists an after-tool pivot for the next turn before returning", async () => {
+    const deps = makeDeps();
+    const metadata = { strategyPivot: { pattern: "exact-repeat", strategyId: "alternate-route", epoch: 2 } };
+    deps.runMiddlewarePhase
+      .mockResolvedValueOnce({ kind: "continue" })
+      .mockResolvedValueOnce({ kind: "continue" })
+      .mockResolvedValueOnce({ kind: "nudge", reason: "strategy-pivot", message: "pivot now", metadata } as never);
+    await driveTurn(freshOp(), okAdapter(), 7, { isCancelled: () => false }, deps);
+    expect(deps.commitTurn).toHaveBeenCalledTimes(1);
+    expect(deps.commitTurn).toHaveBeenCalledWith(expect.objectContaining({
+      nextTurnPivot: { message: "pivot now", metadata },
+    }));
+    expect(deps.recoverCommittedStrategyPivot).toHaveBeenLastCalledWith(expect.any(String), 7);
+    expect(deps.commitTurn.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.recoverCommittedStrategyPivot.mock.invocationCallOrder[1]);
+  });
+
+  it("does not persist the next-turn pivot when the current turn commit fails", async () => {
+    const deps = makeDeps();
+    deps.runMiddlewarePhase
+      .mockResolvedValueOnce({ kind: "continue" })
+      .mockResolvedValueOnce({ kind: "continue" })
+      .mockResolvedValueOnce({
+        kind: "nudge",
+        reason: "strategy-pivot",
+        message: "pivot after commit",
+        metadata: { strategyPivot: { pattern: "no-progress", strategyId: "evidence-synthesis", epoch: 1 } },
+      } as never);
+    deps.commitTurn.mockImplementationOnce(() => { throw new Error("commit failed"); });
+    await expect(driveTurn(freshOp(), okAdapter(), 4, { isCancelled: () => false }, deps))
+      .rejects.toThrow("commit failed");
+    expect(deps.recoverCommittedStrategyPivot).not.toHaveBeenCalledWith(expect.any(String), 4);
+  });
+
+  it("does not invoke the dispatcher for an after-model committing-key pivot", async () => {
+    const deps = makeDeps();
+    deps.runMiddlewarePhase
+      .mockResolvedValueOnce({ kind: "continue" })
+      .mockResolvedValueOnce({
+        kind: "nudge",
+        reason: "strategy-pivot",
+        message: "duplicate committing call blocked",
+        metadata: { strategyPivot: { pattern: "mutation-repeat", strategyId: "alternate-route", epoch: 1 } },
+        skipToolDispatch: true,
+      } as never);
+    await driveTurn(freshOp(), okAdapter(), 3, { isCancelled: () => false }, deps);
+    expect(deps.dispatchTools).not.toHaveBeenCalled();
+    expect(deps.commitTurn).toHaveBeenCalledWith(expect.objectContaining({
+      nextTurnPivot: expect.objectContaining({ message: "duplicate committing call blocked" }),
+    }));
+    expect(deps.recoverCommittedStrategyPivot).toHaveBeenLastCalledWith(expect.any(String), 3);
+    expect(appendNudgeAsUserMessage).not.toHaveBeenCalled();
   });
 });
 

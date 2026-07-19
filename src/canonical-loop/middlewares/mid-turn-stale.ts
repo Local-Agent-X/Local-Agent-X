@@ -6,7 +6,8 @@
  *
  *   Branch 1 — flat evidence: the per-turn evidence count (maintained across
  *   turns in ctx.evidenceHistory) is unchanged for STALE_WINDOW turns. Same
- *   tools, same args, same empty results. Two-strike: nudge, then abort.
+ *   tools, same args, same empty results. Workers pivot autonomously; the
+ *   interactive circuit-breaker retains its existing two-strike behavior.
  *
  *   Branch 2 — monotonous action: evidence is GROWING, but every turn in the
  *   window did nothing but call one non-committing external-action tool
@@ -24,6 +25,8 @@ import { isWorkerOp, type CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
 import { createLogger } from "../../logger.js";
+import { autonomousStrategyPivot, restorePersistedPivot } from "./strategy-pivot.js";
+import { createHash } from "node:crypto";
 
 const logger = createLogger("canonical-loop.mid-turn-stale");
 
@@ -52,14 +55,6 @@ function createState(): MidTurnStaleState {
   return { nudged: false, spinNudged: false, recentDominantTools: [] };
 }
 
-const STALE_NUDGE = [
-  "Your last 3 actions produced no new evidence — same tools, same arguments, same empty results. You're spinning. Change approach NOW:",
-  "  - If you're using browser.evaluate or browser.click on a new page, FIRST call browser.snapshot to see the actual DOM and find correct selectors.",
-  "  - If a tool keeps returning the same error, read the error text and use a different tool / different arguments.",
-  "  - If you're stuck on auth / captcha / login, ask the user to help instead of retrying.",
-  "If the next iteration also produces no new evidence, the turn will be aborted automatically.",
-].join("\n");
-
 function spinNudge(tool: string): string {
   return [
     `You've used the ${tool} tool on every one of the last ${STALE_WINDOW} turns and committed nothing.`,
@@ -76,6 +71,7 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
   // that caps a spinning interactive/voice turn. Gating it off let a looping
   // voice turn spam to max-iterations.
   beforeTurn(ctx) {
+    if (isWorkerOp(ctx) && restorePersistedPivot(ctx)) return { kind: "continue" };
     if (ctx.turnIdx < MIN_ITERATION) return { kind: "continue" };
     if (ctx.committingToolsThisOp.size > 0) return { kind: "continue" };
 
@@ -98,10 +94,14 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
           // turn stays intact.
           if (isWorkerOp(ctx)) {
             logger.warn(`first-strike nudge: evidence flat for ${STALE_WINDOW} turns`);
-            return { kind: "nudge", message: STALE_NUDGE, reason: "stale-warning" };
+            return autonomousStrategyPivot(ctx, "flat-evidence");
           }
           logger.warn(`first-strike (interactive, silent): evidence flat for ${STALE_WINDOW} turns`);
           return { kind: "continue" };
+        }
+        if (isWorkerOp(ctx)) {
+          logger.warn(`strategy pivot: evidence still flat after prior recovery`);
+          return autonomousStrategyPivot(ctx, "flat-evidence");
         }
         logger.warn(`second-strike abort: evidence still flat after nudge`);
         return {
@@ -121,8 +121,9 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
       state.recentDominantTools.every(t => t !== "" && t === state.recentDominantTools[0])
     ) {
       state.spinNudged = true;
-      const tool = state.recentDominantTools[0];
+      const tool = state.recentDominantTools[0].split(":", 1)[0];
       logger.warn(`monotonous-action nudge: ${tool} dominated ${STALE_WINDOW} turns with no commit`);
+      if (isWorkerOp(ctx)) return autonomousStrategyPivot(ctx, "monotonous-action");
       return { kind: "nudge", message: spinNudge(tool), reason: "no-progress-spin" };
     }
 
@@ -139,16 +140,21 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
       "mid-turn-stale",
       createState,
     );
-    const okTools = new Set<string>();
+    const okResults = [] as typeof ctx.toolResults;
     for (const tr of ctx.toolResults) {
       // Failed (any flavor) or cancelled results don't count as successes.
       if (tr.status === "cancelled" || isDispatchFailure(tr.status)) continue;
-      okTools.add(tr.toolName);
+      okResults.push(tr);
     }
     let dominant = "";
-    if (okTools.size === 1) {
+    const okTools = new Set(okResults.map(result => result.toolName));
+    if (okTools.size === 1 && SPIN_PRONE_ACTION_TOOLS.has([...okTools][0])) {
       const only = [...okTools][0];
-      if (SPIN_PRONE_ACTION_TOOLS.has(only)) dominant = only;
+      const fingerprint = okResults.map(result => {
+        const call = ctx.toolCalls.find(candidate => candidate.toolCallId === result.toolCallId);
+        return `${JSON.stringify(call?.args ?? null)}\x00${result.content}`;
+      }).join("\x00");
+      dominant = `${only}:${createHash("sha1").update(fingerprint).digest("hex")}`;
     }
     state.recentDominantTools.push(dominant);
     if (state.recentDominantTools.length > STALE_WINDOW) state.recentDominantTools.shift();

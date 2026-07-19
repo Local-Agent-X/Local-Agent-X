@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { checkToolLoops, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, NUDGE_CEILING, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
+import { checkToolLoops, hasSeenSuccessfulCommittingCall, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, NUDGE_CEILING, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
 import { TOOLS } from "../tool-registry.js";
 
 type Call = { name: string; arguments: string };
@@ -99,6 +99,104 @@ describe("checkToolLoops — exact-repeat", () => {
       if (v.abort || v.nudge) flagged = true;
     }
     expect(flagged).toBe(false);
+  });
+
+  it("worker pivot mode arms only after completed unchanged results and never returns a terminal verdict", () => {
+    const state = createLoopState();
+    for (let i = 0; i < 3; i++) {
+      const verdict = checkToolLoops([lsCall], state, { modelTier: "strong", deferWorkerPivot: true });
+      expect(verdict).toEqual({ abort: false, nudge: null });
+      const observation = noteToolResults([lsCall], state, [{ content: "identical-output", status: "ok" }], {
+        modelTier: "strong",
+        armWorkerPivot: true,
+      });
+      if (i < 2) expect(observation.pendingPivot).toBeNull();
+    }
+    expect(state.pendingStrategyPivot).toBe("exact-repeat");
+  });
+
+  it("novel evidence and successful mutations clear an armed worker pivot", () => {
+    const state = createLoopState();
+    state.pendingStrategyPivot = "no-progress";
+    noteToolResults([lsCall], state, [{ content: "fresh-output", status: "ok" }], {
+      modelTier: "strong",
+      armWorkerPivot: true,
+    });
+    expect(state.pendingStrategyPivot).toBeNull();
+
+    state.pendingStrategyPivot = "exact-repeat";
+    const write = { name: "write", arguments: JSON.stringify({ path: "x", content: "y" }) };
+    checkToolLoops([write], state, { modelTier: "strong", deferWorkerPivot: true });
+    noteToolResults([write], state, [{ content: "ok", status: "ok" }], {
+      modelTier: "strong",
+      armWorkerPivot: true,
+    });
+    expect(state.pendingStrategyPivot).toBeNull();
+  });
+
+  it("distinct blocked, declined, error, and cancelled payloads never count as novel progress", () => {
+    const state = createLoopState();
+    const statuses = ["blocked", "declined", "error", "cancelled"];
+    for (let i = 0; i < NO_PROGRESS_LIMIT; i++) {
+      const call = { name: "bash", arguments: JSON.stringify({ cmd: `probe-${i}` }) };
+      expect(checkToolLoops([call], state, { modelTier: "strong", deferWorkerPivot: true }).abort).toBe(false);
+      const observation = noteToolResults([call], state, [{ content: `failure-${i}`, status: statuses[i % statuses.length] }], {
+        modelTier: "strong",
+        armWorkerPivot: true,
+      });
+      expect(observation.novel).toBe(false);
+    }
+    expect(state.seenResultSigs.size).toBe(0);
+    expect(state.pendingStrategyPivot).toBe("no-progress");
+  });
+
+  it("repeated identical successful mutations arm exact-repeat", () => {
+    const state = createLoopState();
+    const call = { name: "write", arguments: JSON.stringify({ path: "same", content: "same" }) };
+    for (let i = 0; i < 3; i++) {
+      checkToolLoops([call], state, { modelTier: "strong", deferWorkerPivot: true });
+      noteToolResults([call], state, [{ content: "written", status: "ok" }], {
+        modelTier: "strong",
+        armWorkerPivot: true,
+      });
+    }
+    expect(state.seenSuccessfulMutationKeys.size).toBe(1);
+    expect(state.pendingStrategyPivot).toBe("exact-repeat");
+  });
+
+  it("successful mutation batches with different arguments remain progress", () => {
+    const state = createLoopState();
+    for (let i = 0; i < 20; i++) {
+      const call = { name: "write", arguments: JSON.stringify({ path: `file-${i}`, content: "same" }) };
+      checkToolLoops([call], state, { modelTier: "weak", deferWorkerPivot: true });
+      const observation = noteToolResults([call], state, [{ content: "written", status: "ok" }], {
+        modelTier: "weak",
+        armWorkerPivot: true,
+      });
+      expect(observation.successfulMutation).toBe(true);
+      expect(observation.pendingPivot).toBeNull();
+    }
+  });
+
+  it("blocks same committing args before changing IDs can trigger another side effect", () => {
+    const state = createLoopState();
+    const first = {
+      name: "calendar_create_event",
+      arguments: JSON.stringify({ title: "Review", when: "tomorrow", attendees: ["a@example.com"] }),
+    };
+    checkToolLoops([first], state, { modelTier: "strong", deferWorkerPivot: true });
+    noteToolResults([first], state, [{ content: "created-id-1", status: "ok" }], {
+      modelTier: "strong",
+      armWorkerPivot: true,
+    });
+    expect(state.seenResultSigs.size).toBe(0);
+    for (let id = 2; id <= 8; id++) {
+      const reordered = {
+        name: "calendar_create_event",
+        arguments: JSON.stringify({ attendees: ["a@example.com"], when: "tomorrow", title: "Review" }),
+      };
+      expect(hasSeenSuccessfulCommittingCall([reordered], state), `created-id-${id}`).toBe(true);
+    }
   });
 });
 

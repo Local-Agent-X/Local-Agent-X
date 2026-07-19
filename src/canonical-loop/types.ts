@@ -151,6 +151,19 @@ export interface OpTurnRow {
    * dispatch duration this turn). Soak telemetry sums across rounds.
    */
   toolDispatchMs?: number;
+  /** A strategy pivot selected from this turn's completed tool results.
+   *  Stored in the turn row so a crash after commit cannot lose the next-turn
+   *  instruction. Materialization into op_messages is idempotent. */
+  nextTurnPivot?: {
+    message: string;
+    metadata: {
+      strategyPivot: {
+        pattern: string;
+        strategyId: string;
+        epoch: number;
+      };
+    };
+  };
 }
 
 /**

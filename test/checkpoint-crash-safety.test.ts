@@ -28,7 +28,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { commitTurn } from "../src/canonical-loop/index.js";
-import { insertOpTurn, appendOpMessage, readOpMessages } from "../src/canonical-loop/store.js";
+import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "../src/canonical-loop/store.js";
+import { recoverCommittedStrategyPivot } from "../src/canonical-loop/turn-loop/nudges.js";
 import { opMessagesPath, opTurnPath } from "../src/canonical-loop/schema.js";
 import { opDir } from "../src/ops/event-log.js";
 import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
@@ -177,6 +178,44 @@ describe("commitTurn — a failed message write does NOT report succeeded", () =
 // ── Problem 1: op_turns written before op_messages (no orphan on crash) ───
 
 describe("commitTurn — crash mid-commit cannot orphan op_messages", () => {
+  it("recovers a committed pivot intent exactly once after a commit-to-nudge crash", () => {
+    const op = mkOp("pivot-recovery");
+    writeOp(op);
+    const nextTurnPivot = {
+      message: "take the alternate route",
+      metadata: {
+        strategyPivot: { pattern: "exact-repeat", strategyId: "context-refresh", epoch: 2 },
+      },
+    };
+
+    commitTurn(commitInput(op, { nextTurnPivot }));
+
+    expect(readOpTurn(op.id, 0)?.nextTurnPivot).toEqual(nextTurnPivot);
+    expect(readOpMessages(op.id).filter(row => row.turnIdx === 1)).toHaveLength(0);
+    expect(recoverCommittedStrategyPivot(op.id, 0)).toBe(true);
+    expect(recoverCommittedStrategyPivot(op.id, 0)).toBe(false);
+    const recovered = readOpMessages(op.id).filter(row => row.turnIdx === 1);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].content).toEqual({ text: nextTurnPivot.message, kind: "nudge", ...nextTurnPivot.metadata });
+  });
+
+  it("writes no recoverable pivot when the source turn commit fails", () => {
+    const op = mkOp("pivot-commit-failure");
+    writeOp(op);
+    failTurnWrite(op.id, 0);
+
+    expect(() => commitTurn(commitInput(op, {
+      nextTurnPivot: {
+        message: "must not survive",
+        metadata: { strategyPivot: { pattern: "no-progress", strategyId: "alternate-route", epoch: 1 } },
+      },
+    }))).toThrow();
+
+    expect(readOpTurn(op.id, 0)).toBeNull();
+    expect(recoverCommittedStrategyPivot(op.id, 0)).toBe(false);
+    expect(readOpMessages(op.id).filter(row => row.turnIdx === 1)).toHaveLength(0);
+  });
+
   it("writes the op_turns row BEFORE op_messages: a failed message write leaves the row committed and zero messages", () => {
     const op = mkOp("row-first");
     writeOp(op);

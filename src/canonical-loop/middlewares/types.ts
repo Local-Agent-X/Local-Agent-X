@@ -28,6 +28,14 @@ import type { ServerEvent } from "../../types.js";
 import type { CanonicalMessage, ToolCall, ToolDescriptor } from "../contract-types.js";
 import type { ToolDispatchStatus } from "../types.js";
 
+export interface NudgeMetadata {
+  strategyPivot?: {
+    pattern: string;
+    strategyId: string;
+    epoch: number;
+  };
+}
+
 /**
  * Lightweight, provider-agnostic representation of one tool result a turn's
  * dispatch produced. Used by afterToolExecution hooks to scan output text
@@ -125,7 +133,7 @@ export function isWorkerOp(ctx: CanonicalLoopContext): boolean {
 
 export type CanonicalMiddlewareResult =
   | { kind: "continue" }
-  | { kind: "nudge"; message: string; reason: string }
+  | { kind: "nudge"; message: string; reason: string; metadata?: NudgeMetadata; skipToolDispatch?: boolean }
   | { kind: "abort"; reason: string; message?: string }
   | { kind: "suspend"; reason: string; message: string }
   | { kind: "retry-iteration"; reason?: string };

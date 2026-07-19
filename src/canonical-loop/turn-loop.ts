@@ -1,28 +1,17 @@
 /**
  * turn_loop — the inner per-turn driver (PRD §5 / §15).
  *
- * One driveTurn call assembles input from history, hands it to the adapter,
- * forwards stream chunks to the bus, captures finalized messages and
- * tool_call_requested adapter_reports, dispatches tool calls via the
- * canonical tool-dispatcher boundary, then hands all of it to commitTurn
- * for the atomic post-turn write.
+ * Assembles history, runs the adapter and canonical dispatcher, then commits
+ * the finalized turn.
  *
- * Boundary rules:
- *   - The loop never executes tools itself — every tool round-trip goes
- *     through `getToolDispatcher().dispatch(call)`.
- *   - The loop never writes `op_events` directly — every event goes through
- *     `emit()`.
- *   - The adapter never writes anything; it only emits adapter_report items
- *     through the report callback.
- *
- * Helpers split into ./turn-loop/* — this file is the orchestrator.
+ * Tools, events, and persistence stay behind their canonical boundaries;
+ * adapters only emit reports.
  */
 import type { Adapter, AdapterReport, TurnResult } from "./adapter-contract.js";
 import type { CanonicalMessage, ToolCall } from "./contract-types.js";
 import type { ProviderStateEnvelope } from "./types.js";
 import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
-
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
@@ -31,7 +20,6 @@ import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
-
 // Consecutive THROWN adapter errors per op — provider hangs/timeouts the
 // adapter couldn't convert into a kind:"error" report. Bounds the feed-back-
 // and-continue recovery (below) so a hard-down provider gives up after a few
@@ -53,11 +41,15 @@ export async function driveTurn(
   const {
     emit, emitErrorOnce, publishStreamChunk, commitTurn, runMiddlewarePhase,
     extractText, extractToolResultText, buildToolResultsView, appendNudgeAsUserMessage,
+    recoverCommittedStrategyPivot,
     middlewareAbortResult, buildTurnInput, readPendingRedirect,
     drainInjectsIntoTurn, opConsumesInjects, dispatchTools, createIdleWatchdog,
     readIdleTimeoutMs, snapshotTouchedApps, decideTurnOutcome,
     createTurnContextComposer, resolveLearningSessionId,
   } = resolveTurnLoopDeps(depsIn);
+
+  // Recover a preceding committed pivot before composing this turn.
+  recoverCommittedStrategyPivot(op.id, turnIdx - 1);
 
   // Snapshot the redirect column from disk BEFORE emitting `turn_started`.
   // The bus dispatch is synchronous, so a `turn_started` subscriber that
@@ -95,7 +87,7 @@ export async function driveTurn(
   const beforeSuspension = suspendedTurn(beforeRes);
   if (beforeSuspension) return beforeSuspension;
   if (beforeRes.kind === "nudge") {
-    appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message);
+    appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message, beforeRes.metadata);
     // Fall through — next read of op_messages (buildTurnInput, below) picks
     // the nudge up and ships it to the adapter on this turn.
   }
@@ -253,20 +245,20 @@ export async function driveTurn(
       reason: afterModelRes.reason,
       firedBy: afterModelRes.firedBy ?? "unknown",
       message: afterModelRes.message,
+      metadata: afterModelRes.metadata,
+      skipToolDispatch: afterModelRes.skipToolDispatch,
     };
   } else {
     middlewareDirective = middlewareSuspension(afterModelRes);
   }
   middlewareDirective ??= idleSuspension(op.lane, reportedError);
-
   const toolDispatchStart = Date.now();
-  // If a middleware aborted, skip tool dispatch — same effect as agent-
-  // loop's runPhase short-circuit before tool execution.
-  const { toolMessages, toolSummary } = middlewareDirective?.kind === "abort"
+  const skipToolDispatch = middlewareDirective?.kind === "abort"
+    || (middlewareDirective?.kind === "nudge" && middlewareDirective.skipToolDispatch === true);
+  const { toolMessages, toolSummary } = skipToolDispatch
     ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] }
     : await dispatchTools(op.id, turnIdx, toolCalls, opts.isCancelled);
   const toolDispatchMs = Date.now() - toolDispatchStart;
-
   if (opts.isCancelled?.()) {
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
   }
@@ -296,6 +288,8 @@ export async function driveTurn(
         reason: afterToolRes.reason,
         firedBy: afterToolRes.firedBy ?? "unknown",
         message: afterToolRes.message,
+        metadata: afterToolRes.metadata,
+        skipToolDispatch: afterToolRes.skipToolDispatch,
       };
     } else {
       middlewareDirective = middlewareSuspension(afterToolRes);
@@ -361,6 +355,9 @@ export async function driveTurn(
     toolDispatchMs,
     learnedOutcome: terminalOutcome ?? undefined,
     learningSessionId: learningSessionId ?? undefined,
+    nextTurnPivot: middlewareDirective?.kind === "nudge" && middlewareDirective.metadata?.strategyPivot
+      ? { message: middlewareDirective.message, metadata: { strategyPivot: middlewareDirective.metadata.strategyPivot } }
+      : undefined,
   });
 
   // Tier 1.C: per-turn snapshot of any app files this turn wrote/edited.
@@ -368,12 +365,13 @@ export async function driveTurn(
   // edit without asking the agent to fix what it just broke.
   void snapshotTouchedApps(toolCalls, turnIdx);
 
-  // For nudges, append the synthetic user message at turnIdx+1 so the next
-  // driveTurn sees it via buildTurnInput's op_messages read. For aborts,
-  // emit a stopped event so chat UI surfaces a one-line reason instead of a
-  // frozen cursor. Mirrors agent-loop/run.ts:surfaceMiddlewareAbort.
+  // Materialize nudges only after commit; pivot writes are replay-safe.
   if (middlewareDirective?.kind === "nudge") {
-    appendNudgeAsUserMessage(op.id, turnIdx + 1, middlewareDirective.message);
+    if (middlewareDirective.metadata?.strategyPivot) {
+      recoverCommittedStrategyPivot(op.id, turnIdx);
+    } else {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, middlewareDirective.message, middlewareDirective.metadata);
+    }
   }
   if (middlewareAborted) {
     emitErrorOnce(op.id, {

@@ -23,7 +23,10 @@ function ctxFor(
 const browserOk = () => ({ toolName: "browser", content: "clicked", status: "ok" as const, toolCallId: "tc" });
 
 function recordTurn(op: string, results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled"; toolCallId: string }>) {
-  return midTurnStaleMiddleware.afterToolExecution!(ctxFor(op, { toolResults: results }));
+  return midTurnStaleMiddleware.afterToolExecution!(ctxFor(op, {
+    toolResults: results,
+    toolCalls: results.map(result => ({ toolCallId: result.toolCallId, tool: result.toolName, args: { selector: "#stable" } })),
+  }));
 }
 
 describe("mid-turn-stale — monotonous-action branch", () => {
@@ -31,7 +34,9 @@ describe("mid-turn-stale — monotonous-action branch", () => {
     _resetMiddlewareStates();
     const op = opId();
     // Growing evidence (so the flat-evidence branch can't fire) + browser-only turns.
-    for (let i = 0; i < STALE_WINDOW(); i++) await recordTurn(op, [browserOk()]);
+    for (let i = 0; i < STALE_WINDOW(); i++) {
+      await recordTurn(op, [{ ...browserOk(), toolCallId: `tc-${i}` }]);
+    }
     const r = await midTurnStaleMiddleware.beforeTurn!(ctxFor(op, { evidenceHistory: [3, 5, 7] }));
     expect(r.kind).toBe("nudge");
     expect((r as { reason: string }).reason).toBe("no-progress-spin");
@@ -81,6 +86,32 @@ describe("mid-turn-stale — monotonous-action branch", () => {
     for (let i = 0; i < STALE_WINDOW(); i++) await recordTurn(op, [browserOk()]);
     const r = await midTurnStaleMiddleware.beforeTurn!(ctxFor(op, { turnIdx: 2, evidenceHistory: [3, 5, 7] }));
     expect(r.kind).toBe("continue");
+  });
+
+  it("distinct successful browser page fingerprints break the monotony streak", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    for (let i = 0; i < STALE_WINDOW(); i++) {
+      await recordTurn(op, [{ ...browserOk(), content: `page-${i}`, toolCallId: `page-tc-${i}` }]);
+    }
+    const r = await midTurnStaleMiddleware.beforeTurn!(ctxFor(op, { evidenceHistory: [3, 5, 7] }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("worker flat evidence autonomously pivots instead of aborting", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const worker = ctxFor(op, {
+      op: { id: op, lane: "build" } as CanonicalLoopContext["op"],
+      evidenceHistory: [4, 4, 4],
+      toolNames: new Set<string>(),
+    });
+    const first = await midTurnStaleMiddleware.beforeTurn!(worker);
+    expect(first.kind).toBe("nudge");
+    expect((first as { reason: string }).reason).toBe("strategy-pivot");
+    const second = await midTurnStaleMiddleware.beforeTurn!(worker);
+    expect(second.kind).toBe("nudge");
+    expect(second.kind).not.toBe("abort");
   });
 });
 

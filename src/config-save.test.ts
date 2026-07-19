@@ -6,7 +6,7 @@
 // merge over the on-disk JSON: unknown keys survive, server-known keys take
 // the runtime value.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveConfig } from "./config.js";
@@ -74,5 +74,15 @@ describe("saveConfig() foreign-key preservation", () => {
     rmSync(configPath);
     saveConfig(runtimeConfig({ model: "after-missing" }));
     expect(JSON.parse(readFileSync(configPath, "utf-8")).model).toBe("after-missing");
+  });
+
+  it("uses a writer-private temp path so concurrent writers cannot steal each other's rename", () => {
+    const legacySharedTemp = `${configPath}.tmp`;
+    mkdirSync(legacySharedTemp);
+
+    saveConfig(runtimeConfig({ model: "private-temp" }));
+
+    expect(JSON.parse(readFileSync(configPath, "utf-8")).model).toBe("private-temp");
+    expect(existsSync(legacySharedTemp)).toBe(true);
   });
 });

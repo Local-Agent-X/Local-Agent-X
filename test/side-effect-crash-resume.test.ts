@@ -33,18 +33,29 @@ function runAsync(
   opId: string,
   phase = "",
   effectClass: "keyed-mutation" | "non-idempotent" = "keyed-mutation",
-): Promise<number | null> {
+): Promise<{ status: number | null; stderr: string }> {
   return new Promise((resolveExit, reject) => {
     const child = spawn(process.execPath, [
       "--import=tsx", fixture, "dispatch", ledger, opId, `call-${opId}`, effectClass, phase,
     ], {
       cwd: process.cwd(),
       env: { ...process.env, LAX_DATA_DIR: root, LAX_DISABLE_OS_KEYCHAIN: "1" },
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
     });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", chunk => { stderr += chunk; });
     child.once("error", reject);
-    child.once("exit", resolveExit);
+    child.once("exit", status => resolveExit({ status, stderr }));
   });
+}
+
+async function expectAsyncStatuses(
+  processes: Array<Promise<{ status: number | null; stderr: string }>>,
+  expected: number[],
+): Promise<void> {
+  const results = await Promise.all(processes);
+  expect(results.map(result => result.status), results.map(result => result.stderr).join("\n")).toEqual(expected);
 }
 
 function ledgerRows(): Array<{ opId: string; key?: string }> {
@@ -87,10 +98,10 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 describe("persisted side-effect journal crash/restart/resume", () => {
   it("executes one non-idempotent effect across concurrent runtimes", async () => {
-    expect(await Promise.all([
+    await expectAsyncStatuses([
       runAsync("same-operation", "", "non-idempotent"),
       runAsync("same-operation", "", "non-idempotent"),
-    ])).toEqual([0, 0]);
+    ], [0, 0]);
     expect(ledgerRows().filter(row => row.opId === "same-operation")).toHaveLength(1);
   });
 
@@ -137,10 +148,10 @@ describe("persisted side-effect journal crash/restart/resume", () => {
   });
 
   it("preserves two concurrent operation journals through the restart sweep", async () => {
-    expect(await Promise.all([
+    await expectAsyncStatuses([
       runAsync("concurrent-a", "effect_returned"),
       runAsync("concurrent-b", "effect_returned"),
-    ])).toEqual([86, 86]);
+    ], [86, 86]);
     seedRecoverableOp("concurrent-a");
     seedRecoverableOp("concurrent-b");
 
@@ -155,7 +166,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
     expect(outcomes.filter(row => row.opId.startsWith("concurrent-")).map(row => row.outcome.kind).sort())
       .toEqual(["recovered", "recovered"]);
 
-    expect(await Promise.all([runAsync("concurrent-a"), runAsync("concurrent-b")])).toEqual([0, 0]);
+    await expectAsyncStatuses([runAsync("concurrent-a"), runAsync("concurrent-b")], [0, 0]);
     expect(ledgerRows().filter(row => row.opId === "concurrent-a")).toHaveLength(1);
     expect(ledgerRows().filter(row => row.opId === "concurrent-b")).toHaveLength(1);
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync, createJsonStore } from "./json-store.js";
@@ -109,6 +109,51 @@ describe("mutate", () => {
 });
 
 describe("atomicity", () => {
+  it("retries transient destination contention without rewriting the temp file", () => {
+    const target = join(dir, "contended.json");
+    const waits: number[] = [];
+    let writes = 0;
+    let renames = 0;
+
+    atomicWriteFileSync(target, '{"complete":true}', undefined, {
+      write(temp, data, opts) {
+        writes += 1;
+        writeFileSync(temp, data, opts);
+      },
+      rename(source, destination) {
+        renames += 1;
+        if (renames < 3) throw Object.assign(new Error("destination busy"), { code: "EPERM" });
+        renameSync(source, destination);
+      },
+      unlink: rmSync,
+      wait(ms) { waits.push(ms); },
+    });
+
+    expect(JSON.parse(readFileSync(target, "utf-8"))).toEqual({ complete: true });
+    expect({ writes, renames, waits }).toEqual({ writes: 1, renames: 3, waits: [2, 4] });
+  });
+
+  it("bounds destination-contention retries and cleans the private temp", () => {
+    const target = join(dir, "persistently-busy.json");
+    writeFileSync(target, "original", "utf8");
+    const waits: number[] = [];
+    let renames = 0;
+
+    expect(() => atomicWriteFileSync(target, "replacement", undefined, {
+      write: writeFileSync,
+      rename() {
+        renames += 1;
+        throw Object.assign(new Error("still busy"), { code: "EBUSY" });
+      },
+      unlink: rmSync,
+      wait(ms) { waits.push(ms); },
+    })).toThrow("still busy");
+
+    expect(readFileSync(target, "utf8")).toBe("original");
+    expect({ renames, waits }).toEqual({ renames: 7, waits: [2, 4, 8, 16, 32, 64] });
+    expect(readdirSync(dir).filter(name => name.includes(".tmp."))).toEqual([]);
+  });
+
   it("a failed write throws, leaves the target untouched, and litters no tmp files", () => {
     // Force the rename to fail: the target path is an existing non-empty
     // directory (fails on POSIX and Windows alike).

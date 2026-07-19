@@ -9,13 +9,13 @@
  * is fail-OPEN (bash/http/browser default-allow), a security downgrade.
  *
  * The fix routes every one of these writes through atomicWriteFileSync
- * (src/server-utils.ts), which writes `<path>.tmp` then renameSync()s it into
+ * (src/server-utils.ts), which writes a private same-directory temp then renameSync()s it into
  * place — on POSIX an atomic swap, so a reader always sees either the whole
  * old file or the whole new one, never a truncated one.
  *
  * This suite asserts the INVARIANT, not an implementation detail we control:
  * for each target file T, the final path T is NEVER handed to writeFileSync
- * directly, and the bytes arrive via renameSync(`${T}.tmp`, T). On the pre-fix
+ * directly, and the bytes arrive via renameSync(privateTemp, T). On the pre-fix
  * code (plain writeFileSync(T, ...) with no rename) both assertions fail.
  *
  * We intercept node:fs by wrapping writeFileSync/renameSync as pass-throughs
@@ -57,7 +57,7 @@ vi.mock("node:fs", async (importActual) => {
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ServerContext } from "../src/server-context.js";
 import { mockJsonRequest, mockResponse } from "./helpers/http-mocks.js";
 
@@ -90,12 +90,15 @@ afterAll(() => {
 function expectAtomic(target: string): void {
   // The final path must never be handed to writeFileSync directly…
   expect(rec.writes).not.toContain(target);
-  // …the bytes land via a rename of `<target>.tmp` → target…
-  expect(rec.renames).toContainEqual({ src: `${target}.tmp`, dest: target });
-  // …and the tmp file itself is what got written.
-  expect(rec.writes).toContain(`${target}.tmp`);
-  // Success path leaves no stray tmp behind.
-  expect(existsSync(`${target}.tmp`)).toBe(false);
+  const landings = rec.renames.filter(({ dest }) => dest === target);
+  expect(landings.length).toBeGreaterThan(0);
+  expect(new Set(landings.map(({ src }) => src)).size).toBe(landings.length);
+  for (const { src } of landings) {
+    expect(dirname(src)).toBe(dirname(target));
+    expect(src).not.toBe(target);
+    expect(rec.writes).toContain(src);
+    expect(existsSync(src)).toBe(false);
+  }
 }
 
 describe("db-migrations writes migration-version.json atomically", () => {

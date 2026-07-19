@@ -24,10 +24,9 @@ import { dirname } from "node:path";
 
 /**
  * Atomic file write: write to a random-suffixed `<path>.tmp.<hex>` then
- * rename over the target. On POSIX, rename within one filesystem is atomic,
- * so a concurrent reader never sees a half-written file. On failure the tmp
- * file is unlinked best-effort and the underlying error is rethrown so
- * callers can log meaningfully.
+ * rename over the target. A bounded retry handles transient destination
+ * contention from concurrent writers; other failures are immediate. The tmp
+ * file is unlinked best-effort when the rename cannot complete.
  */
 export function atomicWriteFileSync(
   filePath: string,
@@ -38,7 +37,7 @@ export function atomicWriteFileSync(
   const tmp = filePath + ".tmp." + randomBytes(4).toString("hex");
   try {
     operations.write(tmp, data, { encoding: opts?.encoding ?? "utf-8", mode: opts?.mode });
-    operations.rename(tmp, filePath);
+    renameAfterContention(tmp, filePath, operations);
   } catch (e) {
     try { operations.unlink(tmp); } catch { /* best-effort */ }
     throw e;
@@ -49,6 +48,27 @@ export interface AtomicWriteOperations {
   write(path: string, data: string, opts: { mode?: number; encoding: BufferEncoding }): void;
   rename(source: string, destination: string): void;
   unlink(path: string): void;
+  wait?(ms: number): void;
+}
+
+const RENAME_CONTENTION_DELAYS_MS = [2, 4, 8, 16, 32, 64] as const;
+
+function waitSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function renameAfterContention(source: string, destination: string, operations: AtomicWriteOperations): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      operations.rename(source, destination);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const delay = RENAME_CONTENTION_DELAYS_MS[attempt];
+      if (!delay || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+      (operations.wait ?? waitSync)(delay);
+    }
+  }
 }
 
 const defaultAtomicWriteOperations: AtomicWriteOperations = {

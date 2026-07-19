@@ -1,8 +1,9 @@
-import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { MIN_MAX_ITERATIONS, type LAXConfig } from "./types.js";
 import { getLaxDir } from "./lax-data-dir.js";
+import { atomicWriteFileSync } from "./util/json-store.js";
 import {
   deOneDrive,
   isCloudStoragePath,
@@ -257,19 +258,9 @@ export function loadConfig(): LAXConfig {
 
 function writeConfigFile(config: object): void {
   const configPath = getConfigPath();
-  // Atomic write — write to .tmp then rename. Prevents a concurrent
-  // reader (server boot, settings POST handler, hot-reload) from
-  // seeing a half-written config.json and crashing on JSON.parse.
-  // Inline here (rather than the shared server-utils helper) because
-  // server-utils imports from config, so the dep would be circular.
-  const tmp = `${configPath}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
-    renameSync(tmp, configPath);
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
-    throw e;
-  }
+  // The canonical writer gives every process a private temp file and handles
+  // transient destination contention without exposing partial JSON to readers.
+  atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
 export function saveConfig(config: LAXConfig): void {

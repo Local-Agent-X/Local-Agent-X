@@ -1,5 +1,8 @@
 import { fileURLToPath } from "node:url";
+import { availableParallelism } from "node:os";
 import { defineConfig, configDefaults } from "vitest/config";
+
+const TEST_WORKERS = Math.max(1, Math.min(6, Math.floor(availableParallelism() / 4)));
 
 export default defineConfig({
   // The @arikernel/* packages are consumed via their built dist/ in production,
@@ -44,6 +47,10 @@ export default defineConfig({
     // fork-per-file behavior we need is now the default for pool:"forks".
     pool: "forks",
     isolate: true,
+    // Process-integration files launch their own Node children. Leaving Vitest
+    // at one worker per logical CPU can multiply 24 forks into dozens more
+    // child boots and starve otherwise healthy restart proofs past deadlines.
+    maxWorkers: TEST_WORKERS,
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "lcov"],

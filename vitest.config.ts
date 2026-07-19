@@ -12,6 +12,7 @@ export default defineConfig({
       "@arikernel/policy-engine": fileURLToPath(
         new URL("./packages/arikernel/policy-engine/src/index.ts", import.meta.url),
       ),
+      electron: fileURLToPath(new URL("./test/setup/electron-mock.ts", import.meta.url)),
     },
   },
   test: {

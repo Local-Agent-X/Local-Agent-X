@@ -33,10 +33,9 @@ const h = vi.hoisted(() => ({
   trustResolver: null as null | ((id: number) => "user" | "agent" | null),
 }));
 
-// electron is installed only under desktop/node_modules — mock the resolved
-// package path (a bare "electron" here wouldn't match the id browser-ipc.ts
-// resolves to).
-vi.mock("../desktop/node_modules/electron", () => {
+// Root Vitest resolves Electron to its test-only alias; desktop's own config
+// retains the real Electron package for desktop coverage.
+vi.mock("electron", () => {
   let wcIdSeq = 100;
   return {
     shell: { openExternal: vi.fn() },

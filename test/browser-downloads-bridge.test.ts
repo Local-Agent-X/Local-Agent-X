@@ -32,7 +32,7 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("../desktop/node_modules/electron", () => ({
+vi.mock("electron", () => ({
   app: {
     commandLine: { appendSwitch: () => {} },
     whenReady: () => Promise.resolve(),

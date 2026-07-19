@@ -6,7 +6,7 @@ import { getLaxDir } from "./lax-data-dir.js";
 import { createLogger } from "./logger.js";
 const logger = createLogger("test-suite");
 
-const BASE = "http://127.0.0.1:7007";
+const BASE = `http://127.0.0.1:${process.env.LAX_PORT ?? "7007"}`;
 
 interface TestResult {
   name: string;
@@ -224,7 +224,7 @@ async function testWebSocket(token: string): Promise<void> {
       }, 5000);
 
       const ws = new WebSocket(
-        `ws://127.0.0.1:7007/ws/chat?token=${encodeURIComponent(token)}`,
+        `${BASE.replace("http://", "ws://")}/ws/chat?token=${encodeURIComponent(token)}`,
       );
 
       ws.on("open", () => {

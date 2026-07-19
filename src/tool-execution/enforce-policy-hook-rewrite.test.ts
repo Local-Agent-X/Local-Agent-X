@@ -13,7 +13,10 @@ vi.mock("../ari-kernel/index.js", () => ({
 }));
 vi.mock("../session/policy.js", () => ({ checkSessionPolicy: vi.fn(() => null) }));
 vi.mock("../data-lineage/index.js", () => ({ getKernelTaintSources: vi.fn(() => []) }));
-vi.mock("../tool-registry.js", () => ({ WORKTREE_PATH_TOOLS: new Set(), hasCapability: vi.fn(() => false) }));
+vi.mock("../tool-registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../tool-registry.js")>();
+  return { ...actual, WORKTREE_PATH_TOOLS: new Set(), hasCapability: vi.fn(() => false) };
+});
 vi.mock("./ari-action-map.js", () => ({ ARI_ACTION_MAP: {}, deriveAriAction: vi.fn(() => "read") }));
 vi.mock("./egress-gates.js", () => ({
   egressAggregateGate: vi.fn(() => ({ kind: "continue" })),

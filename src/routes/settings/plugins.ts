@@ -35,6 +35,16 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/plugins/enable") {
+    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    try {
+      const manifest = await pluginManager.enablePlugin(String(body.id));
+      const plugin = pluginManager.getPluginStatus(manifest.id);
+      ctx.broadcastAll({ type: "settings_changed", settings: { plugins: true } });
+      json(200, { ok: true, plugin });
+    } catch { json(400, { error: "Plugin enable could not be completed" }); }
+    return true;
+  }
   if (method === "POST" && url.pathname === "/api/plugins/retry") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {

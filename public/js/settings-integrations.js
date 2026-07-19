@@ -20,7 +20,7 @@ async function loadPluginBundles() {
     }
     el.innerHTML = pluginBundles.map(plugin => {
       const needsSecrets = plugin.status === 'needs_secrets';
-      const repairable = needsSecrets || plugin.status === 'ready' || (plugin.status === 'failed' && Array.isArray(plugin.requiredSecrets));
+      const actions = plugin.actions && typeof plugin.actions === 'object' ? plugin.actions : {};
       const missing = Array.isArray(plugin.missingSecrets) ? plugin.missingSecrets : [];
       const declared = Array.isArray(plugin.declaredTools) ? plugin.declaredTools : (Array.isArray(plugin.tools) ? plugin.tools : []);
       const active = Array.isArray(plugin.activeTools) ? plugin.activeTools : [];
@@ -37,9 +37,10 @@ async function loadPluginBundles() {
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <span style="font-size:.65rem;padding:3px 8px;border-radius:4px;background:${needsSecrets ? 'var(--warn)' : 'var(--border)'};color:${needsSecrets ? '#000' : 'var(--muted)'}">${needsSecrets ? 'NEEDS SECRETS' : esc(String(plugin.status || '').toUpperCase())}</span>
-            ${needsSecrets ? `<button class="btn" data-plugin-id="${esc(plugin.id)}" onclick="openPluginSecrets(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Add Secrets</button>` : ''}
-            ${repairable ? `<button class="btn" data-plugin-id="${esc(plugin.id)}" onclick="retryPluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem">Retry</button>` : ''}
-            ${plugin.enabled ? `<button class="btn" data-plugin-disable data-plugin-id="${esc(registryId)}" onclick="disablePluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--danger)">Disable</button>` : ''}
+            ${actions.configureSecrets ? `<button class="btn" data-plugin-configure-secrets data-plugin-id="${esc(plugin.id)}" onclick="openPluginSecrets(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Add Secrets</button>` : ''}
+            ${actions.retry ? `<button class="btn" data-plugin-retry data-plugin-id="${esc(plugin.id)}" onclick="retryPluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem">Retry</button>` : ''}
+            ${actions.enable ? `<button class="btn" data-plugin-enable data-plugin-id="${esc(registryId)}" onclick="enablePluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Enable</button>` : ''}
+            ${actions.disable ? `<button class="btn" data-plugin-disable data-plugin-id="${esc(registryId)}" onclick="disablePluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--danger)">Disable</button>` : ''}
           </div>
         </div>`;
     }).join('');
@@ -49,7 +50,7 @@ async function loadPluginBundles() {
 }
 
 function openPluginSecrets(id) {
-  const plugin = pluginBundles.find(item => item.id === id && item.status === 'needs_secrets');
+  const plugin = pluginBundles.find(item => item.id === id && item.actions?.configureSecrets === true);
   if (!plugin) return;
   const requirements = Array.isArray(plugin.requiredSecrets) ? plugin.requiredSecrets : [];
   const missing = new Set(Array.isArray(plugin.missingSecrets) ? plugin.missingSecrets : []);
@@ -68,7 +69,7 @@ function openPluginSecrets(id) {
         <div data-plugin-secret-error style="display:none;color:var(--danger);font-size:.72rem;margin-bottom:10px"></div>
         <div style="display:flex;gap:8px;justify-content:flex-end">
           <button class="action-btn secondary" onclick="document.getElementById('plugin-secret-modal').remove()">Cancel</button>
-          <button class="action-btn primary" data-plugin-save data-plugin-id="${esc(plugin.id)}" onclick="savePluginSecrets(this.dataset.pluginId)">Save &amp; Retry</button>
+          <button class="action-btn primary" data-plugin-save data-plugin-id="${esc(plugin.id)}" onclick="savePluginSecrets(this.dataset.pluginId)">${plugin.enabled === false ? 'Save' : 'Save &amp; Retry'}</button>
         </div>
       </div>
     </div>`);
@@ -87,6 +88,8 @@ function showPluginSecretError(modal) {
 }
 
 async function savePluginSecrets(id) {
+  const plugin = pluginBundles.find(item => item.id === id && item.actions?.configureSecrets === true);
+  if (!plugin) return;
   const modal = document.getElementById('plugin-secret-modal');
   const inputs = [...(modal?.querySelectorAll('[data-plugin-secret]') || [])];
   if (inputs.some(input => !input.value.trim())) { alert('Enter every required secret.'); return; }
@@ -101,8 +104,10 @@ async function savePluginSecrets(id) {
       });
       if (!pluginPostSucceeded(result)) { showPluginSecretError(modal); return; }
     }
-    const retry = await apiPost('/api/plugins/retry', { id });
-    if (!pluginPostSucceeded(retry)) { showPluginSecretError(modal); return; }
+    if (plugin.enabled !== false) {
+      const retry = await apiPost('/api/plugins/retry', { id });
+      if (!pluginPostSucceeded(retry)) { showPluginSecretError(modal); return; }
+    }
     modal?.remove();
     await loadPluginBundles();
   } catch {
@@ -129,6 +134,16 @@ async function disablePluginBundle(id) {
     await loadPluginBundles();
   } catch {
     alert('Plugin disable could not be completed.');
+  }
+}
+
+async function enablePluginBundle(id) {
+  try {
+    const result = await apiPost('/api/plugins/enable', { id });
+    if (!pluginPostSucceeded(result)) throw new Error("enable failed");
+    await loadPluginBundles();
+  } catch {
+    alert('Plugin enable could not be completed.');
   }
 }
 

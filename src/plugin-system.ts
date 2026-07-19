@@ -1,5 +1,3 @@
-// ── Plugin System ── Load/unload capability modules dynamically
-
 import { readFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
@@ -14,14 +12,11 @@ import { buildPluginList } from "./plugin-system/list-items.js";
 import type { PluginRestoreFailure } from "./plugin-system/list-items.js";
 import { MissingPluginSecretsError, PluginSecretLifecycle, type SecretAvailabilityPort } from "./plugin-system/secret-requirements.js";
 import type { PluginToolSurfacePort, PreparedPluginToolActivation } from "./plugin-system/tool-surface.js";
-
 export type { PluginListItem, PluginLifecycleStatus } from "./plugin-system/lifecycle-status.js";
 export type { PluginContributions, PluginManifest } from "./plugin-system/manifest.js";
 export { readTrustedPublishers, verifyPublisherSignature, type PublisherSignatureVerdict, type TrustedPublisher, type TrustedPublishersFile, type TrustLevel } from "./plugin-system/publisher-trust.js";
-
 import { createLogger } from "./logger.js";
 const logger = createLogger("plugin-system");
-
 interface LoadedPlugin {
   manifest: PluginManifest;
   module: Record<string, unknown>;
@@ -29,30 +24,24 @@ interface LoadedPlugin {
   trustLevel: TrustLevel;
   manifestHash: string;
 }
-
 const PLUGINS_DIR = join(getLaxDir(), "plugins");
 const REGISTRY_PATH = join(PLUGINS_DIR, "registry.json");
-
 function ensurePluginsDir(): void {
   if (!existsSync(PLUGINS_DIR)) {
     mkdirSync(PLUGINS_DIR, { recursive: true });
   }
 }
-
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
   private restoreErrors = new Map<string, PluginRestoreFailure>();
   private registryError: string | undefined;
   private toolSurface: PluginToolSurfacePort | undefined;
   private secretLifecycle = new PluginSecretLifecycle();
-
   constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(REGISTRY_PATH)) {}
-
   bindToolSurface(surface: PluginToolSurfacePort): void {
     if (this.toolSurface && this.toolSurface !== surface) throw new Error("Plugin tool surface is already bound");
     this.toolSurface = surface;
   }
-
   bindSecretAvailability(availability: SecretAvailabilityPort): void {
     this.secretLifecycle.bind(availability);
     availability.onAvailabilityChange?.((change) => {
@@ -60,15 +49,12 @@ export class PluginManager {
       else void this.onSecretAdded(change.name);
     });
   }
-
   async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
-
   private async loadPluginAtPath(
     pluginPath: string,
-    expectedRegistration?: { id: string; entryHash: string; manifestHash?: string },
+    expectedRegistration?: { id: string; entryHash: string; manifestHash?: string; enable?: boolean },
     inspectSecretRequirements = false,
   ): Promise<PluginManifest> {
-    // Security: restrict plugins to the designated plugins directory
     const resolvedPath = resolve(pluginPath);
     const realPluginsDir = realpathSync(PLUGINS_DIR);
     const rel = relative(realPluginsDir, resolvedPath);
@@ -125,7 +111,6 @@ export class PluginManager {
       throw new Error(`Entry point not found: ${entryPath}`);
     }
 
-    // ── Integrity & signature verification ──
     const registeredHash = expectedRegistration?.entryHash ?? registry[manifest.id]?.entryHash;
 
     const trust = assessTrustLevel(manifest, entryPath, registeredHash);
@@ -151,7 +136,6 @@ export class PluginManager {
       throw error;
     }
 
-    // Load plugin module
     let pluginModule: Record<string, unknown>;
     try {
       const fileUrl = pathToFileURL(entryPath).href;
@@ -194,12 +178,22 @@ export class PluginManager {
         throw new Error(reason);
       }
     } else {
-      const current = this.registryStore.read()[manifest.id];
+      const currentRegistry = this.registryStore.read();
+      const current = currentRegistry[manifest.id];
+      const unchanged = current?.path === pluginPath &&
+        current.entryHash === expectedRegistration.entryHash &&
+        current.manifestHash === expectedRegistration.manifestHash;
+      if (expectedRegistration.enable) {
+        if (!current || !unchanged || current.enabled) throw new Error("Plugin lifecycle state changed during enable");
+        try {
+          this.registryStore.write({
+            ...currentRegistry,
+            [manifest.id]: { ...current, enabled: true, manifest: pluginManifestMetadata(manifest) },
+          });
+        } catch { throw new Error(safeLifecyclePersistenceError("load")); }
+      }
       if (
-        !current?.enabled ||
-        current.path !== pluginPath ||
-        current.entryHash !== expectedRegistration.entryHash ||
-        current.manifestHash !== expectedRegistration.manifestHash
+        (!expectedRegistration.enable && !current?.enabled) || !unchanged
       ) {
         if (preparedTools) this.toolSurface?.abort(preparedTools);
         return manifest;
@@ -214,7 +208,7 @@ export class PluginManager {
     return manifest;
     } catch (error) {
       if (preparedTools) this.toolSurface?.abort(preparedTools);
-      if (!(error instanceof MissingPluginSecretsError) && !expectedRegistration && !this.loaded.has(manifest.id)) {
+      if (!(error instanceof MissingPluginSecretsError) && (!expectedRegistration || expectedRegistration.enable) && !this.loaded.has(manifest.id)) {
         const reason = safeRestoreError(error);
         if (!this.secretLifecycle.markFailure(manifest.id, reason)) {
           this.restoreErrors.set(manifest.id, { error: reason, manifest, manifestHash: currentManifestHash });
@@ -251,7 +245,6 @@ export class PluginManager {
     this.restoreErrors.delete(id);
     return true;
   }
-
   listPlugins(): PluginListItem[] {
     let registry: PluginRegistry;
     try {
@@ -263,13 +256,12 @@ export class PluginManager {
       return [registeredPluginItem("plugin-registry", false, this.registryError)];
     }
     return buildPluginList(registry, this.loaded, this.restoreErrors, this.secretLifecycle.blocked,
-      (id) => this.toolSurface?.listActive(id) ?? []);
+      (id) => this.toolSurface?.listActive(id) ?? [], (requirements) => this.secretLifecycle.missing(requirements));
   }
 
   getPluginStatus(id: string): PluginListItem | undefined {
     return this.listPlugins().find((plugin) => plugin.registryId === id);
   }
-
   getPluginTools(id: string): string[] {
     const plugin = this.loaded.get(id);
     if (!plugin) {
@@ -281,7 +273,6 @@ export class PluginManager {
   getActivePluginTools(id: string): string[] {
     return (this.toolSurface?.listActive(id) ?? []).map((tool) => tool.name);
   }
-
   getPluginModule(id: string): Record<string, unknown> | null {
     const plugin = this.loaded.get(id);
     if (!plugin || plugin.manifest.contributions?.tools) return null;
@@ -291,7 +282,6 @@ export class PluginManager {
   isLoaded(id: string): boolean {
     return this.loaded.has(id);
   }
-
   getPluginTrust(id: string): TrustLevel | null {
     return this.loaded.get(id)?.trustLevel ?? null;
   }
@@ -359,6 +349,18 @@ export class PluginManager {
       throw error;
     }
   }
+  async enablePlugin(id: string): Promise<PluginManifest> {
+    return this.secretLifecycle.serializeRetry(id, async () => {
+      const entry = this.registryStore.read()[id];
+      if (!entry || entry.enabled) throw new Error(`Plugin "${id}" is not disabled`);
+      if (entry.manifest?.id !== id || !entry.entryHash || !entry.manifestHash) {
+        throw new Error("Plugin is not fully integrity-pinned");
+      }
+      return this.loadPluginAtPath(entry.path, {
+        id, entryHash: entry.entryHash, manifestHash: entry.manifestHash, enable: true,
+      });
+    });
+  }
 
   private async retryPluginNow(id: string): Promise<PluginManifest> {
     const loaded = this.loaded.get(id);
@@ -367,6 +369,7 @@ export class PluginManager {
     const entry = this.registryStore.read()[id];
     const path = blocked?.path ?? entry?.path;
     if (!path) throw new Error(`Plugin "${id}" is not waiting for secrets`);
+    if (entry?.enabled === false) throw new Error(`Plugin "${id}" is disabled`);
     if (entry?.enabled) {
       if (!entry.entryHash) throw new Error("Plugin is not integrity-pinned");
       return this.loadPluginAtPath(path, {
@@ -381,7 +384,6 @@ export class PluginManager {
   async onSecretAdded(name: string): Promise<void> {
     await this.secretLifecycle.restoreForAddedSecret(name, (id) => this.retryPlugin(id));
   }
-
   onSecretDeleted(name: string): void {
     this.secretLifecycle.handleDeletedSecret(name, this.loaded, (id) => this.toolSurface?.deactivate(id));
   }
@@ -395,5 +397,4 @@ export class PluginManager {
       .filter((dir) => existsSync(join(dir, "manifest.json")));
   }
 }
-
 export const pluginManager = new PluginManager();

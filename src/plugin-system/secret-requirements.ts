@@ -36,7 +36,14 @@ export function missingSecrets(
   manifest: PluginManifest,
   availability: SecretAvailabilityPort | undefined,
 ): string[] {
-  return requiredSecrets(manifest)
+  return missingRequiredSecrets(requiredSecrets(manifest), availability);
+}
+
+function missingRequiredSecrets(
+  requirements: PluginSecretRequirement[],
+  availability: SecretAvailabilityPort | undefined,
+): string[] {
+  return requirements
     .filter((item) => !availability?.has(item.name))
     .map((item) => item.name);
 }
@@ -51,6 +58,10 @@ export class PluginSecretLifecycle {
       throw new Error("Plugin secret availability is already bound");
     }
     this.availability = availability;
+  }
+
+  missing(requirements: PluginSecretRequirement[]): string[] {
+    return missingRequiredSecrets(requirements, this.availability);
   }
 
   assertAvailable(manifest: PluginManifest, path: string, trustLevel: TrustLevel, manifestHash?: string): void {

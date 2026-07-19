@@ -17,14 +17,15 @@ const plugin = {
   activeTools: [],
   requiredSecrets: [{ name: "FIRST_TOKEN" }, { name: "SECOND_TOKEN" }],
   missingSecrets: ["FIRST_TOKEN", "SECOND_TOKEN"],
+  actions: { enable: false, disable: false, retry: false, configureSecrets: true },
 };
 
-async function setup(results: unknown[]) {
+async function setup(results: unknown[], projected = plugin) {
   const window = new Window({ url: "http://127.0.0.1" });
   window.document.body.innerHTML = '<div id="plugin-bundles-list"></div>';
   const calls: Array<{ path: string; body: unknown }> = [];
   const runtime = window as unknown as Record<string, unknown>;
-  runtime.apiJson = vi.fn(async () => [plugin]);
+  runtime.apiJson = vi.fn(async () => [projected]);
   runtime.apiPost = vi.fn(async (path: string, body: unknown) => {
     calls.push({ path, body });
     return results.shift();
@@ -46,7 +47,7 @@ describe("plugin secret settings UI", () => {
   it("renders repairable prerequisites in Tools & Integrations without paths or logging", () => {
     expect(html).toContain('id="plugin-bundles-list"');
     expect(script).toContain("status === 'needs_secrets'");
-    expect(script).toContain("status === 'ready'");
+    expect(script).toContain("actions.configureSecrets");
     expect(script).toContain('type="password"');
     expect(script).not.toContain("plugin.path");
     expect(script).not.toContain("console.log");
@@ -61,15 +62,36 @@ describe("plugin secret settings UI", () => {
   });
 
   it("renders canonical identity/tool metadata and disables by registry identity", async () => {
-    const { window, calls } = await setup([{ ok: true }]);
+    const enabled = { ...plugin, actions: { ...plugin.actions, disable: true } };
+    const { window, calls } = await setup([{ ok: true }], enabled);
     const list = window.document.getElementById("plugin-bundles-list")!;
 
     expect(list.textContent).toContain("v1.2.3");
     expect(list.textContent).toContain("example.publisher");
     expect(list.textContent).toContain("Needs FIRST_TOKEN, SECOND_TOKEN");
+    expect(list.querySelector("[data-plugin-disable]")).not.toBeNull();
     await window.eval("disablePluginBundle('secret-plugin')") as Promise<void>;
 
     expect(calls).toContainEqual({ path: "/api/plugins/unload", body: { id: "secret-plugin" } });
+  });
+
+  it("does not advertise disable or retry for a first-install secret candidate", async () => {
+    const { window } = await setup([]);
+    const list = window.document.getElementById("plugin-bundles-list")!;
+
+    expect(list.querySelector("[data-plugin-configure-secrets]")).not.toBeNull();
+    expect(list.querySelector("[data-plugin-disable]")).toBeNull();
+    expect(list.querySelector("[data-plugin-retry]")).toBeNull();
+  });
+
+  it("saves disabled-plugin secrets without retrying or silently enabling it", async () => {
+    const disabled = { ...plugin, enabled: false };
+    const { window, calls } = await setup([{ ok: true }, { ok: true }], disabled);
+
+    await window.eval("savePluginSecrets('secret-plugin')") as Promise<void>;
+
+    expect(calls.map(call => call.path)).toEqual(["/api/secrets", "/api/secrets"]);
+    expect(window.document.getElementById("plugin-secret-modal")).toBeNull();
   });
 
   it("renders the active-to-declared count from the canonical API projection", async () => {

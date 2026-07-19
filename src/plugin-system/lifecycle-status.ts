@@ -4,6 +4,13 @@ import type { ActivePluginToolProjection } from "./tool-surface.js";
 
 export type PluginLifecycleStatus = "loaded" | "registered" | "disabled" | "failed" | "needs_secrets" | "ready";
 
+export interface PluginLifecycleActions {
+  enable: boolean;
+  disable: boolean;
+  retry: boolean;
+  configureSecrets: boolean;
+}
+
 export interface PluginListItem {
   id: string;
   registryId: string;
@@ -21,6 +28,7 @@ export interface PluginListItem {
   requiredSecrets: PluginSecretRequirement[];
   missingSecrets: string[];
   secretsReady: boolean;
+  actions: PluginLifecycleActions;
   error?: string;
 }
 
@@ -31,6 +39,7 @@ export interface PluginProjectionSource {
   enabled: boolean;
   status: PluginLifecycleStatus;
   trustLevel: TrustLevel | null;
+  actions: PluginLifecycleActions;
   activeTools?: ActivePluginToolProjection[];
   missingSecrets?: string[];
   error?: string;
@@ -58,6 +67,7 @@ export function pluginListItem(source: PluginProjectionSource): PluginListItem {
     requiredSecrets,
     missingSecrets,
     secretsReady: missingSecrets.length === 0,
+    actions: { ...source.actions },
     ...(source.error ? { error: source.error } : {}),
   };
 }
@@ -68,8 +78,15 @@ export function registeredPluginItem(id: string, enabled: boolean, error?: strin
     enabled,
     status: error ? "failed" : !enabled ? "disabled" : "registered",
     trustLevel: null,
+    actions: pluginLifecycleActions(),
     ...(error ? { error } : {}),
   });
+}
+
+export function pluginLifecycleActions(
+  overrides: Partial<PluginLifecycleActions> = {},
+): PluginLifecycleActions {
+  return { enable: false, disable: false, retry: false, configureSecrets: false, ...overrides };
 }
 
 export function safeLifecyclePersistenceError(action: "load" | "disable"): string {

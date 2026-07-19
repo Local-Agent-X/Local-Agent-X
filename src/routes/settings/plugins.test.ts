@@ -7,6 +7,7 @@ const routeMocks = vi.hoisted(() => ({
     getPluginStatus: vi.fn(),
     loadPlugin: vi.fn(),
     disablePlugin: vi.fn(),
+    enablePlugin: vi.fn(),
     retryPlugin: vi.fn(),
   },
 }));
@@ -52,11 +53,13 @@ beforeEach(() => {
   routeMocks.pluginManager.getPluginStatus.mockReset();
   routeMocks.pluginManager.loadPlugin.mockReset();
   routeMocks.pluginManager.disablePlugin.mockReset();
+  routeMocks.pluginManager.enablePlugin.mockReset();
   routeMocks.pluginManager.retryPlugin.mockReset();
   routeMocks.pluginManager.listPlugins.mockReturnValue([]);
   routeMocks.pluginManager.getPluginStatus.mockReturnValue({ id: "sample", registryId: "sample", status: "loaded" });
   routeMocks.pluginManager.loadPlugin.mockResolvedValue({ id: "sample" });
   routeMocks.pluginManager.disablePlugin.mockReturnValue(true);
+  routeMocks.pluginManager.enablePlugin.mockResolvedValue({ id: "sample" });
   routeMocks.pluginManager.retryPlugin.mockResolvedValue({ id: "sample" });
 });
 
@@ -104,6 +107,27 @@ describe("plugin lifecycle routes", () => {
     });
     expect(serialized).not.toContain("private-plugin");
     expect(serialized).not.toContain("SECRET_CANARY_7fd3");
+    expect(result.broadcastAll).not.toHaveBeenCalled();
+  });
+
+  it("enables through the canonical manager and broadcasts only success", async () => {
+    const result = await request("POST", "/api/plugins/enable", { id: "sample" });
+
+    expect(result).toMatchObject({ handled: true, status: 200, body: { ok: true } });
+    expect(routeMocks.pluginManager.enablePlugin).toHaveBeenCalledWith("sample");
+    expect(result.broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { plugins: true } });
+  });
+
+  it("contains enable failures without leaking durable paths or broadcasting", async () => {
+    routeMocks.pluginManager.enablePlugin.mockRejectedValue(
+      new Error("C:\\private\\plugin SECRET_CANARY_enable"),
+    );
+
+    const result = await request("POST", "/api/plugins/enable", { id: "sample" });
+
+    expect(result).toMatchObject({ status: 400, body: { error: "Plugin enable could not be completed" } });
+    expect(JSON.stringify(result.body)).not.toContain("private");
+    expect(JSON.stringify(result.body)).not.toContain("SECRET_CANARY");
     expect(result.broadcastAll).not.toHaveBeenCalled();
   });
 

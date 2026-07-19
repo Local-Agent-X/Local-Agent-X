@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildPluginList } from "../src/plugin-system/list-items.js";
 import { pluginManifestMetadata, type PluginManifest } from "../src/plugin-system/manifest.js";
 import { createPluginRegistryStore, type PluginRegistry } from "../src/plugin-system/registry-store.js";
@@ -127,6 +127,7 @@ describe("canonical plugin metadata projection", () => {
       enabled: true,
       declaredTools: ["weather_lookup"],
       activeTools: [],
+      actions: { enable: false, disable: true, retry: true, configureSecrets: false },
       error: "Plugin tool surface is invalid",
     });
     surface.abort(prepared);
@@ -141,6 +142,7 @@ describe("canonical plugin metadata projection", () => {
       version: "2.1.0",
       declaredTools: ["weather_lookup"],
       activeTools: [],
+      actions: { enable: true, disable: false, retry: false, configureSecrets: false },
     });
   });
 
@@ -161,6 +163,7 @@ describe("canonical plugin metadata projection", () => {
       missingSecrets: ["WEATHER_TOKEN"],
       secretsReady: false,
       activeTools: [],
+      actions: { enable: false, disable: true, retry: false, configureSecrets: true },
     });
     expect(serialized).not.toContain("C:\\\\private");
     expect(serialized).not.toContain("signature");
@@ -187,5 +190,79 @@ describe("canonical plugin metadata projection", () => {
     expect(fallback).toMatchObject({ id: "plugin-registry", status: "failed", activeTools: [] });
     expect(JSON.stringify(fallback)).not.toContain("private");
     expect(JSON.stringify(fallback)).not.toContain("SECRET_CANARY");
+  });
+
+  it("offers only lifecycle actions backed by the projected durable identity", () => {
+    const blocked = new Map<string, SecretBlockedPlugin>([[manifest.id, {
+      manifest, path: "C:\\private\\candidate", trustLevel: "signed",
+      missingSecrets: ["WEATHER_TOKEN"], manifestHash: "b".repeat(64),
+    }]]);
+    const firstInstall = buildPluginList({}, new Map(), new Map(), blocked)[0];
+    expect(firstInstall.actions).toEqual({
+      enable: false, disable: false, retry: false, configureSecrets: true,
+    });
+
+    const noPathFailure = buildPluginList({}, new Map(), new Map([[
+      manifest.id, { error: "Plugin tool surface is invalid", manifest },
+    ]]), new Map(), () => [], () => ["WEATHER_TOKEN"])[0];
+    expect(noPathFailure.actions).toEqual({
+      enable: false, disable: false, retry: false, configureSecrets: false,
+    });
+
+    const alias = buildPluginList({ alias: {
+      enabled: true, path: "C:\\private\\candidate",
+      entryHash: "a".repeat(64), manifestHash: "b".repeat(64),
+    } }, new Map(), new Map([[
+      "alias", { error: "Registry identity does not match manifest", manifest },
+    ]]), new Map())[0];
+    expect(alias.actions).toEqual({
+      enable: false, disable: true, retry: false, configureSecrets: false,
+    });
+
+    const disabledBlocked = buildPluginList(registry(false), new Map(), new Map(), blocked)[0];
+    expect(disabledBlocked.actions).toEqual({
+      enable: false, disable: false, retry: false, configureSecrets: true,
+    });
+    blocked.get(manifest.id)!.missingSecrets = [];
+    expect(buildPluginList(registry(false), new Map(), new Map(), blocked)[0].actions).toEqual({
+      enable: true, disable: false, retry: false, configureSecrets: false,
+    });
+  });
+
+  it("re-enables a disabled bundle from its pinned durable identity after restart", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-plugin-enable-"));
+    dirs.push(root);
+    const pluginsDir = join(root, "plugins");
+    const pluginDir = join(pluginsDir, "durable-enable");
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(join(pluginDir, "index.mjs"), "export const ready = true;\n", "utf-8");
+    writeFileSync(join(pluginDir, "manifest.json"), JSON.stringify({
+      id: "durable-enable", name: "Durable Enable", version: "1.0.0",
+      description: "enable test", entryPoint: "index.mjs", tools: ["durable_status"],
+    }), "utf-8");
+    const previous = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = root;
+    vi.resetModules();
+    try {
+      const { PluginManager } = await import("../src/plugin-system.js");
+      const store = createPluginRegistryStore(join(pluginsDir, "registry.json"));
+      const installer = new PluginManager(store);
+      await installer.loadPlugin(pluginDir);
+      expect(installer.disablePlugin("durable-enable")).toBe(true);
+      expect(installer.listPlugins()[0].actions).toEqual({
+        enable: true, disable: false, retry: false, configureSecrets: false,
+      });
+
+      const restarted = new PluginManager(store);
+      await expect(restarted.enablePlugin("durable-enable")).resolves.toMatchObject({ id: "durable-enable" });
+      expect(store.read()["durable-enable"].enabled).toBe(true);
+      expect(restarted.isLoaded("durable-enable")).toBe(true);
+      expect(restarted.listPlugins()[0].actions).toEqual({
+        enable: false, disable: true, retry: false, configureSecrets: false,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = previous;
+    }
   });
 });

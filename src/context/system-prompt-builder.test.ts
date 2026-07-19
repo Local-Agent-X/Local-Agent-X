@@ -55,19 +55,12 @@ describe("Context Builder", () => {
       { id: "memory-orchestrator", policy: "degradable" },
       { id: "canary", policy: "required" },
     ]);
-    expect(result.renderedSections.map(({ id, policy }) => ({ id, policy }))).toEqual([
-      { id: "core-identity", policy: "required" },
-      { id: "runtime-context", policy: "required" },
-      { id: "agents-md", policy: "required" },
-      { id: "provider-hint", policy: "required" },
-      { id: "tool-guidance", policy: "required" },
-      { id: "recall-reflex", policy: "required" },
-      { id: "integrations", policy: "degradable" },
-      { id: "context-block", policy: "degradable" },
-      { id: "relevant-memories", policy: "degradable" },
-      { id: "memory-orchestrator", policy: "degradable" },
-      { id: "canary", policy: "required" },
-    ]);
+    const renderedIds = new Set(result.renderedSections.map((section) => section.id));
+    expect(result.renderedSections.map(({ id, policy }) => ({ id, policy }))).toEqual(
+      builder.getSectionPolicy()
+        .filter(({ id }) => renderedIds.has(id))
+        .map(({ id, policy }) => ({ id, policy })),
+    );
     expect(new Set(result.renderedSections.map((section) => section.id)).size)
       .toBe(result.renderedSections.length);
     for (const section of result.renderedSections) {

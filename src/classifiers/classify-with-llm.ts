@@ -132,10 +132,19 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   // stays on a fast non-reasoning model — a yes/no verdict must not burn a
   // reasoner's chain-of-thought (grok-4.3 EVERY call, 2026-06-26; qwen3.6:27b,
   // 2026-07-15). Never cross-provider. Which model: background-model.ts.
-  const model =
-    opts.model ||
-    (opts.modelTier === "active" && ctx.model) ||
-    (await resolveBackgroundModel(provider as ProviderId, ctx.model || MODEL_FALLBACKS[provider] || ""));
+  const legacyFallbackModel = ctx.model || MODEL_FALLBACKS[provider] || "";
+  const explicitModel = opts.model || (opts.modelTier === "active" && ctx.model) || "";
+  const background = explicitModel
+    ? null
+    : await resolveBackgroundModel(provider as ProviderId, legacyFallbackModel);
+  let model = explicitModel || background!.model;
+  let certifiedLocalTarget = background?.certifiedLocalTarget;
+  if (certifiedLocalTarget) {
+    const { isCertifiedLocalClassifierTargetCurrent } = await import("../local-runtimes/index.js");
+    if (!isCertifiedLocalClassifierTargetCurrent(certifiedLocalTarget)) {
+      return null;
+    }
+  }
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;
@@ -245,12 +254,20 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
       // as they always did. Residency unknown (unreachable / older runtime)
       // → proceed as before; the probe itself gets only a slice of the
       // budget so a hung /api/ps can never eat a sub-2s wallclock.
-      if (timeoutMs < COLD_SKIP_MAX_BUDGET_MS) {
-        const ollamaBase = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+      const ollamaBase = certifiedLocalTarget?.kind === "ollama"
+        ? certifiedLocalTarget.endpointBaseUrl.replace(/\/+$/, "")
+        : getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+      if (timeoutMs < COLD_SKIP_MAX_BUDGET_MS
+        && (!certifiedLocalTarget || certifiedLocalTarget.kind === "ollama")) {
         const probeMs = Math.min(2000, Math.max(500, Math.floor(timeoutMs / 3)));
-        if ((await isModelResident(ollamaBase, model, probeMs)) === false) {
+        const exactRedirect = certifiedLocalTarget?.kind === "ollama" ? "manual" : undefined;
+        const resident = exactRedirect
+          ? await isModelResident(ollamaBase, model, probeMs, exactRedirect)
+          : await isModelResident(ollamaBase, model, probeMs);
+        if (resident === false) {
           logger.info(`cold-skip: model not resident (cold or not installed) — background warm attempted (provider=${provider}, model=${model})`);
-          warmModel(ollamaBase, model);
+          if (exactRedirect) warmModel(ollamaBase, model, exactRedirect);
+          else warmModel(ollamaBase, model);
           return null;
         }
       }
@@ -258,8 +275,11 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
         const { dispatch } = await import("../llm-dispatch.js");
         return await dispatch({
           prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
-          provider: "ollama",
+          provider: certifiedLocalTarget ? "local" : "ollama",
           ollamaModel: model,
+          ...(certifiedLocalTarget
+            ? { localTarget: { ...certifiedLocalTarget, apiKey } }
+            : {}),
           temperature: 0, maxTokens, timeoutMs,
         });
       })();

@@ -25,6 +25,12 @@
  */
 import { PROVIDERS, backgroundModelFor } from "./registry.js";
 import type { ProviderId } from "./provider-ids.js";
+import type { CertifiedLocalClassifierTarget } from "../local-runtimes/classifier-model.js";
+
+export interface BackgroundModelResolution {
+  model: string;
+  certifiedLocalTarget?: CertifiedLocalClassifierTarget;
+}
 
 /** True for providers whose model list is populated at runtime, not declared. */
 export function hasDynamicCatalog(provider: ProviderId): boolean {
@@ -35,29 +41,34 @@ export function hasDynamicCatalog(provider: ProviderId): boolean {
 export async function resolveBackgroundModel(
   provider: ProviderId,
   fallback: string,
-): Promise<string> {
+): Promise<BackgroundModelResolution> {
   // A declared backgroundModel is the provider author's explicit choice — it
   // wins outright, and keeps every cloud provider on exactly its current path.
   const declared = PROVIDERS[provider]?.backgroundModel;
-  if (declared) return declared;
+  if (declared) return { model: declared };
 
   if (hasDynamicCatalog(provider)) {
     try {
       const { getSetting } = await import("../settings.js");
       const pinned = getSetting<string>("localClassifierModel");
-      if (typeof pinned === "string" && pinned.trim()) return pinned.trim();
+      // This setting predates multi-runtime evidence and stores only a model
+      // string. Keep its legacy default-Ollama transport; model-id lookup would
+      // guess when two runtimes expose the same id.
+      if (typeof pinned === "string" && pinned.trim()) return { model: pinned.trim() };
     } catch { /* settings unreadable — fall through to discovery */ }
 
     try {
       const localRuntimes = await import("../local-runtimes/index.js");
       if (provider === "local") {
-        const certified = localRuntimes.pickCertifiedLocalClassifierModel();
-        if (certified) return certified;
+        const certifiedLocalTarget = localRuntimes.pickCertifiedLocalClassifierTarget();
+        if (certifiedLocalTarget) {
+          return { model: certifiedLocalTarget.model, certifiedLocalTarget };
+        }
       }
       const auto = localRuntimes.pickLocalClassifierModel();
-      if (auto) return auto;
+      if (auto) return { model: auto };
     } catch { /* discovery unavailable — fall through to the caller's fallback */ }
   }
 
-  return backgroundModelFor(provider, fallback);
+  return { model: backgroundModelFor(provider, fallback) };
 }

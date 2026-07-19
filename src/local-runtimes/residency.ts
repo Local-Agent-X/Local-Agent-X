@@ -55,10 +55,12 @@ export async function isModelResident(
   baseUrl: string,
   model: string,
   timeoutMs: number = PS_TIMEOUT_MS,
+  redirect?: "follow" | "error" | "manual",
 ): Promise<boolean | null> {
   try {
     const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/ps`, {
       signal: AbortSignal.timeout(timeoutMs),
+      ...(redirect ? { redirect } : {}),
     });
     if (!res.ok) return null;
     const data: unknown = await res.json();
@@ -90,9 +92,9 @@ const inflightWarms = new Map<string, Promise<void>>();
  * caller. A warm is advisory — its failure is debug-noise, not a hidden
  * outage: the next REAL call still surfaces any genuine failure loudly.
  */
-export function warmModel(baseUrl: string, model: string): void {
+export function warmModel(baseUrl: string, model: string, redirect?: "follow" | "error" | "manual"): void {
   const base = baseUrl.replace(/\/+$/, "");
-  const key = `${base}|${model}`;
+  const key = `${base}|${model}|${redirect ?? "follow"}`;
   if (inflightWarms.has(key)) return;
   const run = (async () => {
     try {
@@ -101,6 +103,7 @@ export function warmModel(baseUrl: string, model: string): void {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE }),
         signal: AbortSignal.timeout(WARM_TIMEOUT_MS),
+        ...(redirect ? { redirect } : {}),
       });
       logger.debug(res.ok
         ? `warm completed (model=${model})`

@@ -33,7 +33,18 @@ import { callOllama, resolveOllamaDispatchModel } from "./llm-dispatch/ollama.js
 
 const logger = createLogger("llm-dispatch");
 
-export type LLMProvider = "ollama" | "anthropic" | "openai" | "xai" | "codex";
+export type LLMProvider = "ollama" | "local" | "anthropic" | "openai" | "xai" | "codex";
+
+type RegistryDispatchProvider = Exclude<LLMProvider, "ollama" | "local">;
+
+export interface LocalDispatchTarget {
+  runtimeId: string;
+  kind: "ollama" | "openai-compat";
+  endpointBaseUrl: string;
+  chatBaseUrl: string;
+  model: string;
+  apiKey: string;
+}
 
 export interface DispatchOptions {
   prompt: string;
@@ -44,6 +55,8 @@ export interface DispatchOptions {
   openaiModel?: string;
   xaiModel?: string;
   codexModel?: string;
+  /** Exact, already-admitted local runtime selected from current certification evidence. */
+  localTarget?: LocalDispatchTarget;
   /** Sampling temperature (default 0). */
   temperature?: number;
   /** Max output tokens (default 200). */
@@ -80,10 +93,10 @@ const DEFAULTS = {
 
 // The four non-ollama dispatch providers map 1:1 onto registry ProviderIds.
 // ollama isn't a separate registry provider, so its model stays a local default.
-const DISPATCH_REGISTRY_ID: Record<Exclude<LLMProvider, "ollama">, ProviderId> = {
+const DISPATCH_REGISTRY_ID: Record<RegistryDispatchProvider, ProviderId> = {
   anthropic: "anthropic", openai: "openai", xai: "xai", codex: "codex",
 };
-const DISPATCH_MODEL_FALLBACK: Record<Exclude<LLMProvider, "ollama">, string> = {
+const DISPATCH_MODEL_FALLBACK: Record<RegistryDispatchProvider, string> = {
   anthropic: "claude-haiku-4-5", openai: "gpt-4o-mini",
   xai: "grok-4.20-0309-non-reasoning", codex: "gpt-5.4-mini",
 };
@@ -92,7 +105,7 @@ const DISPATCH_MODEL_FALLBACK: Record<Exclude<LLMProvider, "ollama">, string> = 
  *  background model. Falls back to a local literal only if the registry lacks one.
  *  xAI's entry is non-reasoning so a short single-shot completion isn't consumed
  *  by hidden chain-of-thought (which returns empty → null). */
-export function dispatchBackgroundModel(provider: Exclude<LLMProvider, "ollama">): string {
+export function dispatchBackgroundModel(provider: RegistryDispatchProvider): string {
   return backgroundModelFor(DISPATCH_REGISTRY_ID[provider], DISPATCH_MODEL_FALLBACK[provider]);
 }
 
@@ -100,11 +113,11 @@ export function dispatchBackgroundModel(provider: Exclude<LLMProvider, "ollama">
  *  structured output (capabilities.structuredOutput). The registry is the
  *  single source of truth — dispatch consults it instead of hardcoding a
  *  provider list, so flipping the flag there is enough to change routing. */
-export function dispatchStructuredOutputEnabled(provider: Exclude<LLMProvider, "ollama">): boolean {
+export function dispatchStructuredOutputEnabled(provider: RegistryDispatchProvider): boolean {
   return PROVIDERS[DISPATCH_REGISTRY_ID[provider]]?.capabilities.structuredOutput === true;
 }
 
-const DISPATCHABLE = new Set<LLMProvider>(["ollama", "anthropic", "openai", "xai", "codex"]);
+const DISPATCHABLE = new Set<LLMProvider>(["ollama", "local", "anthropic", "openai", "xai", "codex"]);
 
 /**
  * Resolve which provider to call. Defers to the canonical store-aware resolver
@@ -146,6 +159,21 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
       return null;
     }
     return callOllama(opts.prompt, ollamaModel, temp, maxTokens, timeout);
+  }
+  if (provider === "local") {
+    const target = opts.localTarget;
+    if (!target || !opts.ollamaModel || opts.ollamaModel !== target.model) return null;
+    const { isCertifiedLocalClassifierTargetCurrent } = await import("./local-runtimes/index.js");
+    if (!isCertifiedLocalClassifierTargetCurrent(target)) return null;
+    if (target.kind === "ollama") {
+      return callOllama(
+        opts.prompt, opts.ollamaModel, temp, maxTokens, timeout, target.endpointBaseUrl,
+      );
+    }
+    return callOpenAICompatible(
+      "local", null, target.chatBaseUrl, opts.prompt, opts.ollamaModel,
+      temp, maxTokens, timeout, undefined, target.apiKey,
+    );
   }
   if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
   if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
@@ -263,15 +291,16 @@ async function callAnthropicViaCliProxy(token: string, prompt: string, model: st
 // dispatch switch reads the same as the other providers.
 async function callOpenAICompatible(
   label: string,
-  credentialProvider: ProviderId,
+  credentialProvider: ProviderId | null,
   baseURL: string,
   prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number,
   responseFormat?: ProviderRequest["responseFormat"],
+  explicitApiKey?: string,
 ): Promise<string | null> {
   try {
-    const resolved = await resolveCredential(credentialProvider);
-    if (!resolved) return null;
-    const apiKey = resolved.credential;
+    const resolved = credentialProvider ? await resolveCredential(credentialProvider) : null;
+    const apiKey = explicitApiKey ?? resolved?.credential;
+    if (!apiKey) return null;
     const send = (rf: ProviderRequest["responseFormat"]) =>
       fetch(`${baseURL}/chat/completions`, {
         method: "POST",
@@ -295,6 +324,7 @@ async function callOpenAICompatible(
             : {}),
         }),
         signal: AbortSignal.timeout(timeoutMs),
+        ...(credentialProvider === null ? { redirect: "manual" as const } : {}),
       });
     let res = await send(responseFormat);
     if (!res.ok && res.status === 400 && responseFormat) {

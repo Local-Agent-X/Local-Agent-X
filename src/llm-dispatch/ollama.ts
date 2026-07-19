@@ -62,9 +62,10 @@ export async function callOllama(
   temperature: number,
   maxTokens: number,
   timeoutMs: number,
+  exactBaseUrl?: string,
 ): Promise<string | null> {
   try {
-    const base = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
+    const base = (exactBaseUrl ?? getRuntimeConfig().ollamaUrl).replace(/\/+$/, "");
     const res = await fetch(`${base}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -78,6 +79,7 @@ export async function callOllama(
         options: { temperature, num_predict: maxTokens },
       }),
       signal: AbortSignal.timeout(timeoutMs),
+      ...(exactBaseUrl ? { redirect: "manual" as const } : {}),
     });
     if (!res.ok) {
       logger.warn(`ollama call failed: HTTP ${res.status} (model=${model})`);

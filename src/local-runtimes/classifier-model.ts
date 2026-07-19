@@ -22,8 +22,19 @@
  * The user's explicit `localClassifierModel` setting outranks everything here;
  * this module only answers "what should we pick if they haven't said?".
  */
-import { getLocalRuntimes, getRuntimeForModel } from "./cache.js";
+import { getLocalRuntimes } from "./cache.js";
 import { hasPublishedCertification } from "./certification-runner.js";
+import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
+import type { LocalRuntimeInfo, LocalRuntimeKind } from "./types.js";
+
+export interface CertifiedLocalClassifierTarget {
+  /** Routing identity only. Credentials/placeholders are attached at dispatch. */
+  runtimeId: string;
+  kind: LocalRuntimeKind;
+  endpointBaseUrl: string;
+  chatBaseUrl: string;
+  model: string;
+}
 
 /**
  * Upper bound for an auto-picked classifier model. A classifier emits a ~50-token
@@ -78,23 +89,55 @@ function isBetterCandidate(
  * certification contract. This only reads discovery and publication caches;
  * it never reads persisted evidence or initiates a certification probe.
  */
-export function pickCertifiedLocalClassifierModel(): string | null {
+export function pickCertifiedLocalClassifierTarget(): CertifiedLocalClassifierTarget | null {
   const runtimes = getLocalRuntimes();
   if (!runtimes) return null;
 
-  let best: { id: string; sizeBytes: number; runtimeId: string } | null = null;
+  let best: {
+    id: string;
+    sizeBytes: number;
+    runtimeId: string;
+    runtime: LocalRuntimeInfo;
+  } | null = null;
   for (const runtime of runtimes) {
     for (const model of runtime.models) {
       if (!isEligibleClassifierModel(model.id, model.sizeBytes)) continue;
       if (!hasPublishedCertification(runtime, model)) continue;
-      const resolvedRuntime = getRuntimeForModel(model.id);
-      const resolvedModel = resolvedRuntime?.models.find((candidate) => candidate.id === model.id);
-      if (resolvedRuntime !== runtime || resolvedModel !== model) continue;
-      const candidate = { id: model.id, sizeBytes: model.sizeBytes!, runtimeId: runtime.id };
+      const candidate = {
+        id: model.id,
+        sizeBytes: model.sizeBytes!,
+        runtimeId: runtime.id,
+        runtime,
+      };
       if (isBetterCandidate(candidate, best)) best = candidate;
     }
   }
-  return best?.id ?? null;
+  if (!best) return null;
+  return {
+    runtimeId: best.runtime.id,
+    kind: best.runtime.kind,
+    endpointBaseUrl: best.runtime.endpoint.baseUrl,
+    chatBaseUrl: best.runtime.chatBaseUrl,
+    model: best.id,
+  };
+}
+
+/**
+ * Cache-only proof that a previously selected endpoint/model pair is still the
+ * exact published target. Invalidation, discovery drift, or a certification
+ * retry makes this false without initiating identity or scenario probes.
+ */
+export function isCertifiedLocalClassifierTargetCurrent(
+  target: CertifiedLocalClassifierTarget,
+): boolean {
+  if (isLocalOnlyMode() && !isLoopbackUrl(target.endpointBaseUrl)) return false;
+  const runtime = getLocalRuntimes()?.find((candidate) => candidate.id === target.runtimeId);
+  if (!runtime
+    || runtime.kind !== target.kind
+    || runtime.endpoint.baseUrl !== target.endpointBaseUrl
+    || runtime.chatBaseUrl !== target.chatBaseUrl) return false;
+  const model = runtime.models.find((candidate) => candidate.id === target.model);
+  return !!model && hasPublishedCertification(runtime, model);
 }
 
 /**

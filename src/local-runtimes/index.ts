@@ -53,7 +53,9 @@ export {
   type LocalModelCapabilityProfile,
 } from "./cache.js";
 export {
-  pickCertifiedLocalClassifierModel,
+  pickCertifiedLocalClassifierTarget,
   pickLocalClassifierModel,
+  isCertifiedLocalClassifierTargetCurrent,
   isEligibleClassifierModel,
+  type CertifiedLocalClassifierTarget,
 } from "./classifier-model.js";

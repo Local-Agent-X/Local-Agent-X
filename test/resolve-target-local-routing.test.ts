@@ -27,7 +27,19 @@ vi.mock("../src/config.js", () => ({
 }));
 vi.mock("../src/local-runtimes/index.js", () => ({
   getLocalRuntimes: () => runtimes,
-  pickCertifiedLocalClassifierModel: () => certifiedBackgroundModel,
+  pickCertifiedLocalClassifierTarget: () => {
+    if (!certifiedBackgroundModel) return null;
+    const runtime = runtimes?.find((candidate) => (
+      candidate.models.some((model) => model.id === certifiedBackgroundModel)
+    ));
+    return runtime ? {
+      runtimeId: runtime.id,
+      kind: runtime.kind,
+      endpointBaseUrl: runtime.endpoint.baseUrl,
+      chatBaseUrl: runtime.chatBaseUrl,
+      model: certifiedBackgroundModel,
+    } : null;
+  },
   pickLocalClassifierModel: () => discoveredBackgroundModel,
   getRuntimeForModel: (m: string) =>
     runtimes?.find(r => r.models.some(x => x.id === m)) ?? null,
@@ -145,7 +157,7 @@ describe("resolveOpenAICompatTarget local per-model routing", () => {
     };
     runtimes = [first, second];
     discoveredBackgroundModel = "shared:3b";
-    expect(await resolveBackgroundModel("local", "chat:27b")).toBe("shared:3b");
+    expect(await resolveBackgroundModel("local", "chat:27b")).toEqual({ model: "shared:3b" });
     expect(await resolveOpenAICompatTarget("local", { apiKey: "" }, "shared:3b")).toMatchObject({
       baseURL: first.chatBaseUrl,
       modelProfile: { runtimeId: first.id },

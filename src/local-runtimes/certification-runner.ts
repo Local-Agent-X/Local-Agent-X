@@ -86,6 +86,11 @@ export interface CertificationRunnerDeps {
   ) => Promise<CertificationIdentity>;
 }
 
+export interface CertificationRestoreDeps {
+  store?: Pick<LocalCertificationStore, "read">;
+  resolveIdentity?: CertificationRunnerDeps["resolveIdentity"];
+}
+
 export interface CertificationRunInput {
   runtime: LocalRuntimeInfo;
   model: string;
@@ -105,7 +110,7 @@ const publishedCertifications = new WeakMap<
 function passedCertification(result: LocalModelCertification): boolean {
   return result.fingerprint.reusable
     && result.passedCount === LOCAL_MODEL_CERTIFICATION_SCENARIOS.length
-    && Object.values(result.scenarios).every((scenario) => scenario.passed);
+    && LOCAL_MODEL_CERTIFICATION_CONTRACT.scenarios.every((id) => result.scenarios[id]?.passed);
 }
 
 function publishCertification(input: CertificationRunInput, result: LocalModelCertification): void {
@@ -121,6 +126,25 @@ function publishCertification(input: CertificationRunInput, result: LocalModelCe
     certificationHash: result.fingerprint.hash,
     selectionHash: certificationSelectionFingerprint(input.runtime, input.model, result.fingerprint.hash),
   });
+}
+
+function canCarryPublishedSelection(
+  previousRuntime: LocalRuntimeInfo,
+  previousModel: LocalModel,
+  runtime: LocalRuntimeInfo,
+  model: LocalModel,
+): boolean {
+  const published = publishedCertifications.get(previousRuntime)?.get(previousModel);
+  if (!published) return false;
+  return published.selectionHash === certificationSelectionFingerprint(
+    previousRuntime,
+    previousModel.id,
+    published.certificationHash,
+  ) && published.selectionHash === certificationSelectionFingerprint(
+    runtime,
+    model.id,
+    published.certificationHash,
+  );
 }
 
 /**
@@ -154,6 +178,70 @@ async function defaultIdentity(
   } catch {
     return { runtimeVersion: null, modelDigest: null };
   }
+}
+
+/**
+ * Restore only persisted proof for the exact live runtime/model identity.
+ * This path never owns a scenario transport and therefore cannot certify on a
+ * miss; it either publishes a complete current-contract hit or does nothing.
+ */
+export async function restorePublishedCertification(
+  input: CertificationRunInput,
+  deps: CertificationRestoreDeps = {},
+): Promise<boolean> {
+  const parentSignal = input.signal ?? new AbortController().signal;
+  if (parentSignal.aborted || !input.runtime.models.some((model) => model.id === input.model)) {
+    return false;
+  }
+  let identity: CertificationIdentity;
+  try {
+    identity = await withDeadline(
+      (signal) => (deps.resolveIdentity ?? defaultIdentity)(input.runtime, input.model, signal),
+      parentSignal,
+      CALL_TIMEOUT_MS,
+    );
+  } catch {
+    return false;
+  }
+  const fingerprint = certificationFingerprint(input.runtime, input.model, identity);
+  if (!fingerprint.reusable || parentSignal.aborted) return false;
+  let cached: LocalModelCertification | null;
+  try {
+    cached = (deps.store ?? new LocalCertificationStore()).read(fingerprint.hash);
+  } catch {
+    return false;
+  }
+  if (!cached || cached.fingerprint.hash !== fingerprint.hash || !passedCertification(cached)) {
+    return false;
+  }
+  publishCertification(input, cached);
+  const model = input.runtime.models.find((candidate) => candidate.id === input.model)!;
+  return hasPublishedCertification(input.runtime, model);
+}
+
+/**
+ * Rehydrate a new discovery snapshot in the background. On restart every
+ * model is checked for an exact persisted hit. On refresh, only selections
+ * that were published on the preceding snapshot are eligible to carry.
+ */
+export async function restorePublishedCertifications(
+  runtimes: readonly LocalRuntimeInfo[],
+  previousRuntimes: readonly LocalRuntimeInfo[] | null = null,
+  deps: CertificationRestoreDeps = {},
+): Promise<number> {
+  let restored = 0;
+  for (const runtime of runtimes) {
+    for (const model of runtime.models) {
+      if (previousRuntimes && !previousRuntimes.some((previousRuntime) => (
+        previousRuntime.models.some((previousModel) => (
+          previousModel.id === model.id
+          && canCarryPublishedSelection(previousRuntime, previousModel, runtime, model)
+        ))
+      ))) continue;
+      if (await restorePublishedCertification({ runtime, model: model.id }, deps)) restored += 1;
+    }
+  }
+  return restored;
 }
 
 function hasContextFailureSignal(body: unknown): boolean {

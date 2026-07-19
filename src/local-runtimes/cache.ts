@@ -9,6 +9,7 @@
 import { candidateEndpoints } from "./endpoints.js";
 import { discoverLocalRuntimes } from "./discovery.js";
 import { maybeAutostartLmStudio } from "./lmstudio-autostart.js";
+import { restorePublishedCertifications } from "./certification-runner.js";
 import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 import { classifyModel, maxToolsForTier, type ModelTier } from "../model-tiers.js";
 import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-store.js";
@@ -33,6 +34,27 @@ const STALE_AFTER_MS = 60_000;
 let cache: LocalRuntimeInfo[] | null = null;
 let refreshedAt = 0;
 let inflight: Promise<LocalRuntimeInfo[]> | null = null;
+let restoreEpoch = 0;
+let pendingRestore: { runtimes: LocalRuntimeInfo[]; epoch: number } | null = null;
+let restoreWorker: Promise<void> | null = null;
+let restoredSnapshot: LocalRuntimeInfo[] | null = null;
+
+function scheduleCertificationRestore(runtimes: LocalRuntimeInfo[]): void {
+  pendingRestore = { runtimes, epoch: restoreEpoch };
+  if (restoreWorker) return;
+  restoreWorker = (async () => {
+    while (pendingRestore) {
+      const job = pendingRestore;
+      pendingRestore = null;
+      try {
+        await restorePublishedCertifications(job.runtimes, restoredSnapshot);
+        if (job.epoch === restoreEpoch) restoredSnapshot = job.runtimes;
+      } catch {
+        if (job.epoch === restoreEpoch) restoredSnapshot = null;
+      }
+    }
+  })().finally(() => { restoreWorker = null; });
+}
 
 /** Re-sweep and replace the cache. Coalesces concurrent callers. */
 export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
@@ -48,6 +70,7 @@ export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
       }
       cache = found;
       refreshedAt = Date.now();
+      scheduleCertificationRestore(found);
       return found;
     } finally {
       inflight = null;
@@ -119,4 +142,7 @@ export function getLocalModelCapabilityProfile(
 export function invalidateLocalRuntimes(): void {
   cache = null;
   refreshedAt = 0;
+  restoreEpoch += 1;
+  pendingRestore = null;
+  restoredSnapshot = null;
 }

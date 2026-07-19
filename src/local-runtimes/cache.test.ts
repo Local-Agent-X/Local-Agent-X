@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const restorePublishedCertifications = vi.hoisted(() => vi.fn(async () => 0));
+vi.mock("./certification-runner.js", () => ({ restorePublishedCertifications }));
+
 import {
   refreshLocalRuntimes,
   getLocalRuntimes,
@@ -54,6 +57,7 @@ beforeEach(() => {
   process.env.LAX_DATA_DIR = dataDir;
   _resetForTests();
   invalidateLocalRuntimes();
+  restorePublishedCertifications.mockClear();
 });
 
 afterEach(() => {
@@ -87,6 +91,22 @@ describe("local-runtime cache", () => {
     vi.mocked(discoverLocalRuntimes).mockClear();
     await Promise.all([refreshLocalRuntimes(), refreshLocalRuntimes(), refreshLocalRuntimes()]);
     expect(vi.mocked(discoverLocalRuntimes)).toHaveBeenCalledTimes(1);
+    expect(restorePublishedCertifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules restore after discovery without awaiting it and passes the prior snapshot", async () => {
+    let release!: () => void;
+    restorePublishedCertifications.mockImplementationOnce(() => new Promise<number>((resolve) => {
+      release = () => resolve(0);
+    }));
+    await refreshLocalRuntimes();
+    expect(getLocalRuntimes()).toEqual([RUNTIME]);
+    expect(restorePublishedCertifications).toHaveBeenLastCalledWith([RUNTIME], null);
+    await refreshLocalRuntimes();
+    expect(restorePublishedCertifications).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(() => expect(restorePublishedCertifications).toHaveBeenCalledTimes(2));
+    expect(restorePublishedCertifications).toHaveBeenLastCalledWith([RUNTIME], [RUNTIME]);
   });
 
   it("derives endpoint-isolated profiles for the same model id", async () => {

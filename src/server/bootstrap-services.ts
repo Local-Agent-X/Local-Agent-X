@@ -300,7 +300,9 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
 
   // Warm the local-runtime sweep (Ollama + LM Studio/vLLM/llama.cpp on
   // their known loopback ports + manual adds) on the same cadence, so the
-  // picker and per-turn context-window lookups read a warm cache.
+  // picker and per-turn context-window lookups read a warm cache. Cache
+  // replacement schedules persisted certification restoration after discovery;
+  // neither that identity validation nor this refresh is awaited by boot.
   import("../local-runtimes/index.js").then(({ refreshLocalRuntimes }) => {
     const warmRuntimes = () => void refreshLocalRuntimes().catch(() => {});
     warmRuntimes();

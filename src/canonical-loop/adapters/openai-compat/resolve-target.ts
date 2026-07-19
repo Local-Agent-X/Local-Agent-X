@@ -43,7 +43,12 @@ export async function resolveOpenAICompatTarget(
       const cloud = getCloudOllamaCallTarget();
       if (cloud) return cloud;
     }
-    const { getRuntimeForModel, getLocalRuntimes, refreshLocalRuntimes } =
+    const {
+      getLocalModelCapabilityProfile,
+      getRuntimeForModel,
+      getLocalRuntimes,
+      refreshLocalRuntimes,
+    } =
       await import("../../../local-runtimes/index.js");
     let rt = getRuntimeForModel(model);
     if (!rt && getLocalRuntimes() === null) {
@@ -53,7 +58,13 @@ export async function resolveOpenAICompatTarget(
       try { await refreshLocalRuntimes(); } catch { /* fall through */ }
       rt = getRuntimeForModel(model);
     }
-    if (rt) return { baseURL: rt.chatBaseUrl, apiKey: prepared.apiKey || "ollama" };
+    if (rt) {
+      return {
+        baseURL: rt.chatBaseUrl,
+        apiKey: prepared.apiKey || "ollama",
+        modelProfile: getLocalModelCapabilityProfile(rt.chatBaseUrl, model),
+      };
+    }
   }
 
   const { getRuntimeConfig } = await import("../../../config.js");
@@ -66,5 +77,9 @@ export async function resolveOpenAICompatTarget(
   // string "ollama" the old branch used so downstream auth headers stay
   // identical to pre-registry behavior.
   const apiKey = provider === "local" ? (prepared.apiKey || "ollama") : prepared.apiKey;
+  if (provider === "local" && model) {
+    const { getLocalModelCapabilityProfile } = await import("../../../local-runtimes/index.js");
+    return { baseURL, apiKey, modelProfile: getLocalModelCapabilityProfile(baseURL, model) };
+  }
   return { baseURL, apiKey };
 }

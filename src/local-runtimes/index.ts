@@ -23,11 +23,13 @@ export {
 export {
   getLocalContextWindow,
   getLocalModel,
+  getLocalModelCapabilityProfile,
   getLocalRuntimeById,
   getLocalRuntimes,
   getRuntimeForModel,
   invalidateLocalRuntimes,
   localRuntimesStale,
   refreshLocalRuntimes,
+  type LocalModelCapabilityProfile,
 } from "./cache.js";
 export { pickLocalClassifierModel, isEligibleClassifierModel } from "./classifier-model.js";

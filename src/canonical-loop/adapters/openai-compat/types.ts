@@ -3,6 +3,7 @@
 // the option/result shapes.
 
 import type { ReasoningEffort } from "../../../providers/reasoning-effort.js";
+import type { LocalModelCapabilityProfile } from "../../../local-runtimes/index.js";
 
 export const OPENAI_COMPAT_ADAPTER_NAME = "openai-compat";
 export const OPENAI_COMPAT_ADAPTER_VERSION = "1.0.0";
@@ -66,6 +67,8 @@ export interface StreamOnceResult {
 export interface OpenAICompatTarget {
   baseURL: string;
   apiKey: string;
+  /** Read-only local capability snapshot for prompt/routing decisions. */
+  modelProfile?: LocalModelCapabilityProfile;
 }
 
 export interface CanonicalImageRef {

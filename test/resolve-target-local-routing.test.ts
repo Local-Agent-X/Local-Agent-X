@@ -23,6 +23,23 @@ vi.mock("../src/local-runtimes/index.js", () => ({
   getLocalRuntimes: () => runtimes,
   getRuntimeForModel: (m: string) =>
     runtimes?.find(r => r.models.some(x => x.id === m)) ?? null,
+  getLocalModelCapabilityProfile: (baseURL: string, model: string) => {
+    const runtime = runtimes?.find(r => r.chatBaseUrl === baseURL) ?? null;
+    const localModel = runtime?.models.find(candidate => candidate.id === model) ?? null;
+    return {
+      runtimeId: runtime?.id ?? null,
+      baseURL,
+      model,
+      tier: "medium",
+      maxTools: 24,
+      contextWindow: localModel?.contextWindow ?? null,
+      tools: {
+        advertised: localModel?.tools ?? null,
+        verified: null,
+        rejectsTools: false,
+      },
+    };
+  },
   refreshLocalRuntimes: vi.fn(async () => {
     runtimes = [LMSTUDIO_RT];
     return runtimes;
@@ -41,12 +58,25 @@ beforeEach(() => {
 describe("resolveOpenAICompatTarget local per-model routing", () => {
   it("routes an LM Studio model to LM Studio's /v1, not ollamaUrl", async () => {
     const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
-    expect(t).toEqual({ baseURL: "http://127.0.0.1:1234/v1", apiKey: "ollama" });
+    expect(t).toMatchObject({
+      baseURL: "http://127.0.0.1:1234/v1",
+      apiKey: "ollama",
+      modelProfile: { runtimeId: LMSTUDIO_RT.id, model: "google/gemma-4-e4b" },
+    });
   });
 
   it("falls back to config.ollamaUrl for a model no runtime claims (pre-seam behavior)", async () => {
     const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "qwen2:7b");
-    expect(t).toEqual({ baseURL: "http://127.0.0.1:11434/v1", apiKey: "ollama" });
+    expect(t).toMatchObject({
+      baseURL: "http://127.0.0.1:11434/v1",
+      apiKey: "ollama",
+      modelProfile: {
+        runtimeId: null,
+        model: "qwen2:7b",
+        contextWindow: null,
+        tools: { advertised: null, verified: null, rejectsTools: false },
+      },
+    });
   });
 
   it("cloud (Turbo) models still override to the cloud target", async () => {
@@ -58,7 +88,11 @@ describe("resolveOpenAICompatTarget local per-model routing", () => {
   it("boot race: null cache triggers ONE awaited sweep, then routes correctly", async () => {
     runtimes = null;
     const t = await resolveOpenAICompatTarget("local", { apiKey: "" }, "google/gemma-4-e4b");
-    expect(t).toEqual({ baseURL: "http://127.0.0.1:1234/v1", apiKey: "ollama" });
+    expect(t).toMatchObject({
+      baseURL: "http://127.0.0.1:1234/v1",
+      apiKey: "ollama",
+      modelProfile: { runtimeId: LMSTUDIO_RT.id, model: "google/gemma-4-e4b" },
+    });
     const { refreshLocalRuntimes } = await import("../src/local-runtimes/index.js");
     expect(vi.mocked(refreshLocalRuntimes)).toHaveBeenCalledTimes(1);
   });

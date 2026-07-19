@@ -139,7 +139,18 @@ describe("manual LAN runtime — discovery → cache → chat routing (C7)", () 
     // The canonical chat path resolves the SAME baseURL the runtime declared —
     // resolve-target.ts's "local" branch, the one place chat picks an endpoint.
     const target = await resolveOpenAICompatTarget("local", { apiKey: "" }, "qwen3:32b");
-    expect(target).toEqual({ baseURL: `${LAN}/v1`, apiKey: "ollama" });
+    expect(target).toMatchObject({
+      baseURL: `${LAN}/v1`,
+      apiKey: "ollama",
+      modelProfile: {
+        runtimeId: "ollama@192.168.1.50:11434",
+        baseURL: `${LAN}/v1`,
+        model: "qwen3:32b",
+        tier: "medium",
+        contextWindow: 32768,
+        tools: { advertised: true, verified: null, rejectsTools: false },
+      },
+    });
 
     // No unnamed non-loopback host was ever dialed — every wire call in the
     // sweep hit either loopback (refused) or the operator-named endpoint.

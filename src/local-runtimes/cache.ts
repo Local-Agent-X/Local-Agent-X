@@ -10,6 +10,22 @@ import { candidateEndpoints } from "./endpoints.js";
 import { discoverLocalRuntimes } from "./discovery.js";
 import { maybeAutostartLmStudio } from "./lmstudio-autostart.js";
 import type { LocalModel, LocalRuntimeInfo } from "./types.js";
+import { classifyModel, maxToolsForTier, type ModelTier } from "../model-tiers.js";
+import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-store.js";
+
+export interface LocalModelCapabilityProfile {
+  runtimeId: string | null;
+  baseURL: string;
+  model: string;
+  tier: ModelTier;
+  maxTools: number;
+  contextWindow: number | null;
+  tools: {
+    advertised: boolean | null;
+    verified: boolean | null;
+    rejectsTools: boolean;
+  };
+}
 
 /** Display-path staleness bound — same spirit as ollama-cloud's 60s TTL. */
 const STALE_AFTER_MS = 60_000;
@@ -70,6 +86,33 @@ export function getLocalModel(chatBaseUrl: string, model: string): LocalModel | 
  */
 export function getLocalContextWindow(chatBaseUrl: string, model: string): number | null {
   return getLocalModel(chatBaseUrl, model)?.contextWindow ?? null;
+}
+
+/**
+ * Deterministic capability snapshot for one local endpoint/model pair.
+ * Derives from the discovery cache, canonical tier classifier, and persistent
+ * capability store on every read; it owns no facts and cannot drift from them.
+ */
+export function getLocalModelCapabilityProfile(
+  chatBaseUrl: string,
+  model: string,
+): LocalModelCapabilityProfile {
+  const runtime = cache?.find((r) => r.chatBaseUrl === chatBaseUrl) ?? null;
+  const localModel = runtime?.models.find((candidate) => candidate.id === model) ?? null;
+  const tier = classifyModel(model);
+  return {
+    runtimeId: runtime?.id ?? null,
+    baseURL: chatBaseUrl,
+    model,
+    tier,
+    maxTools: maxToolsForTier(tier),
+    contextWindow: localModel?.contextWindow ?? null,
+    tools: {
+      advertised: localModel?.tools ?? null,
+      verified: getToolsVerified(chatBaseUrl, model)?.ok ?? null,
+      rejectsTools: hasNoTools(chatBaseUrl, model),
+    },
+  };
 }
 
 /** Test seam + settings-change hook: drop the cache. */

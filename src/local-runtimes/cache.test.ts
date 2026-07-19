@@ -1,14 +1,23 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   refreshLocalRuntimes,
   getLocalRuntimes,
   getLocalContextWindow,
+  getLocalModelCapabilityProfile,
   getRuntimeForModel,
   invalidateLocalRuntimes,
   localRuntimesStale,
 } from "./cache.js";
 import type { LocalRuntimeInfo } from "./types.js";
+import {
+  _resetForTests,
+  recordNoTools,
+  recordToolsVerified,
+} from "../providers/model-capabilities-store.js";
 
 const RUNTIME: LocalRuntimeInfo = {
   kind: "ollama",
@@ -23,12 +32,36 @@ const RUNTIME: LocalRuntimeInfo = {
   refreshedAt: 0,
 };
 
+const SECOND_RUNTIME: LocalRuntimeInfo = {
+  ...RUNTIME,
+  kind: "openai-compat",
+  id: "openai-compat@127.0.0.1:1234",
+  label: "LM Studio",
+  endpoint: { baseUrl: "http://127.0.0.1:1234", origin: "auto" },
+  chatBaseUrl: "http://127.0.0.1:1234/v1",
+};
+
 vi.mock("./endpoints.js", () => ({ candidateEndpoints: () => [] }));
 vi.mock("./discovery.js", () => ({
   discoverLocalRuntimes: vi.fn(async () => [RUNTIME]),
 }));
 
-beforeEach(() => invalidateLocalRuntimes());
+let dataDir: string;
+const previousDataDir = process.env.LAX_DATA_DIR;
+
+beforeEach(() => {
+  dataDir = mkdtempSync(join(tmpdir(), "lax-local-profile-"));
+  process.env.LAX_DATA_DIR = dataDir;
+  _resetForTests();
+  invalidateLocalRuntimes();
+});
+
+afterEach(() => {
+  if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = previousDataDir;
+  _resetForTests();
+  rmSync(dataDir, { recursive: true, force: true });
+});
 
 describe("local-runtime cache", () => {
   it("null before first refresh; populated + fresh after", async () => {
@@ -54,5 +87,42 @@ describe("local-runtime cache", () => {
     vi.mocked(discoverLocalRuntimes).mockClear();
     await Promise.all([refreshLocalRuntimes(), refreshLocalRuntimes(), refreshLocalRuntimes()]);
     expect(vi.mocked(discoverLocalRuntimes)).toHaveBeenCalledTimes(1);
+  });
+
+  it("derives endpoint-isolated profiles for the same model id", async () => {
+    const { discoverLocalRuntimes } = await import("./discovery.js");
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce([RUNTIME, SECOND_RUNTIME]);
+    recordToolsVerified(RUNTIME.chatBaseUrl, "qwen3.6:27b", true);
+    recordNoTools(SECOND_RUNTIME.chatBaseUrl, "qwen3.6:27b");
+    await refreshLocalRuntimes();
+
+    expect(getLocalModelCapabilityProfile(RUNTIME.chatBaseUrl, "qwen3.6:27b")).toMatchObject({
+      runtimeId: RUNTIME.id,
+      baseURL: RUNTIME.chatBaseUrl,
+      model: "qwen3.6:27b",
+      tier: "medium",
+      contextWindow: 32768,
+      tools: { advertised: true, verified: true, rejectsTools: false },
+    });
+    expect(getLocalModelCapabilityProfile(SECOND_RUNTIME.chatBaseUrl, "qwen3.6:27b")).toMatchObject({
+      runtimeId: SECOND_RUNTIME.id,
+      baseURL: SECOND_RUNTIME.chatBaseUrl,
+      tools: { advertised: true, verified: null, rejectsTools: true },
+    });
+  });
+
+  it("keeps an unknown model conservative without disabling its tools", async () => {
+    await refreshLocalRuntimes();
+    const profile = getLocalModelCapabilityProfile(RUNTIME.chatBaseUrl, "unprobed-model");
+    expect(profile).toEqual({
+      runtimeId: RUNTIME.id,
+      baseURL: RUNTIME.chatBaseUrl,
+      model: "unprobed-model",
+      tier: "medium",
+      maxTools: expect.any(Number),
+      contextWindow: null,
+      tools: { advertised: null, verified: null, rejectsTools: false },
+    });
+    expect(profile.maxTools).toBeLessThan(Number.MAX_SAFE_INTEGER);
   });
 });

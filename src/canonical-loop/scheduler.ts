@@ -21,6 +21,9 @@ import { readOp } from "../ops/op-store.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { anyHeld, acquire, release, resetResourceLocks } from "./resource-locks.js";
 import { runWorker, type WorkerHandle } from "./worker.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("canonical-loop.scheduler");
 
 // Static fallback caps. The `interactive` lane's cap is config-driven
 // (maxInteractiveSessions) when a config reader is wired at boot; these are
@@ -85,12 +88,51 @@ const activeByLane = new Map<CanonicalLane, number>();
 // permanent deadlock of every local-model op). Keying release off this map
 // instead keeps release independent of the disk re-read.
 const activeLocks = new Map<string, string[] | undefined>();
+const deferred = new Map<string, NodeJS.Timeout>();
 let pumping = false;
+
+/** Re-enter the existing scheduler after a durable retry backoff. The op's
+ * retryNotBefore column is the source of truth across restart; this timer is
+ * only the current process's wake-up optimization. */
+export function scheduleQueuedRetry(opId: string, lane: CanonicalLane, delayMs: number): void {
+  if (deferred.has(opId)) return;
+  const timer = setTimeout(() => {
+    deferred.delete(opId);
+    if (active.has(opId) || launching.has(opId)) {
+      scheduleQueuedRetry(opId, lane, 5);
+      return;
+    }
+    if (readOp(opId)?.canonical?.state !== "queued") return;
+    if (!queue.some(item => item.opId === opId)) queue.push({ opId, lane });
+    pumpScheduler();
+  }, Math.max(0, delayMs));
+  timer.unref?.();
+  deferred.set(opId, timer);
+}
 
 export function enqueueOp(opId: string, lane: CanonicalLane): void {
   if (active.has(opId) || launching.has(opId)) return;
   if (queue.find(q => q.opId === opId)) return;
+  const notBefore = readOp(opId)?.canonical?.retryNotBefore;
+  const delay = notBefore ? Date.parse(notBefore) - Date.now() : 0;
+  if (Number.isFinite(delay) && delay > 0) {
+    scheduleQueuedRetry(opId, lane, delay);
+    return;
+  }
+  const timer = deferred.get(opId);
+  if (timer) clearTimeout(timer);
+  deferred.delete(opId);
   queue.push({ opId, lane });
+}
+
+/** Bypass a retry backoff only to deliver an already-persisted control signal
+ * (currently queued cancel). The worker still owns signal precedence and the
+ * state transition; this merely wakes it promptly. */
+export function wakeQueuedOp(opId: string, lane: CanonicalLane): void {
+  const timer = deferred.get(opId);
+  if (timer) clearTimeout(timer);
+  deferred.delete(opId);
+  scheduleQueuedRetry(opId, lane, 0);
 }
 
 export function pumpScheduler(): void {
@@ -141,7 +183,8 @@ async function launch(op: Op, factory: () => Adapter | Promise<Adapter>): Promis
     active.set(op.id, handle);
     launching.delete(op.id); // now tracked via `active`
     await handle.done;
-  } catch {
+  } catch (error) {
+    logger.error(`adapter launch failed for ${op.id}: ${(error as Error).message}`);
     // Worker.done already converts adapter / loop exceptions into canonical
     // `error` events; nothing more to surface here. A throw from `factory()`
     // (adapter construction) also lands here — the slot release below covers
@@ -223,7 +266,7 @@ export function evictWorker(opId: string): boolean {
  */
 export async function awaitIdle(timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (active.size > 0 || queue.length > 0) {
+  while (active.size > 0 || launching.size > 0 || queue.length > 0 || deferred.size > 0) {
     if (Date.now() > deadline) {
       throw new Error(
         `awaitIdle timed out — ${active.size} active, ${queue.length} queued`,
@@ -245,11 +288,13 @@ export function resetScheduler(): void {
   launching.clear();
   activeByLane.clear();
   activeLocks.clear();
+  for (const timer of deferred.values()) clearTimeout(timer);
+  deferred.clear();
   resetResourceLocks();
   pumping = false;
   capConfigReader = null;
 }
 
 export function schedulerSnapshot(): { queueDepth: number; activeCount: number } {
-  return { queueDepth: queue.length, activeCount: active.size };
+  return { queueDepth: queue.length + deferred.size, activeCount: active.size };
 }

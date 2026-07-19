@@ -144,17 +144,42 @@ export function resolveAgentPath(p: string, sessionId?: string): string {
 // security layer's session allowed-paths, so the gate and the tool keep
 // resolving identically — both call THIS resolver with the same sessionId.
 const sessionWorkRoots = new Map<string, string>();
+const sessionWorkRootGenerations = new Map<string, number>();
+
+function bumpSessionWorkRootGeneration(sessionId: string): number {
+  const generation = (sessionWorkRootGenerations.get(sessionId) ?? 0) + 1;
+  sessionWorkRootGenerations.set(sessionId, generation);
+  return generation;
+}
 
 export function setSessionWorkRoot(sessionId: string, root: string): void {
   // Canonicalize at registration — the ONE chokepoint — so every resolver hit
   // and every downstream keyer (stale-read guard, security gate, git ops)
   // receives the junction-TARGET spelling and can never split one physical
   // project into two identities.
-  if (sessionId && root) sessionWorkRoots.set(sessionId, realpathDeep(resolve(root)));
+  if (sessionId && root) {
+    sessionWorkRoots.set(sessionId, realpathDeep(resolve(root)));
+    bumpSessionWorkRootGeneration(sessionId);
+  }
 }
 
 export function clearSessionWorkRoot(sessionId: string): void {
   sessionWorkRoots.delete(sessionId);
+  if (sessionId) bumpSessionWorkRootGeneration(sessionId);
+}
+
+/** Temporarily install a recovered session root without letting stale cleanup
+ *  erase a newer owner. The returned disposer restores the prior root only if
+ *  nobody has changed this session's root since installation. */
+export function installSessionWorkRoot(sessionId: string, root: string): () => void {
+  const previous = sessionWorkRoots.get(sessionId);
+  setSessionWorkRoot(sessionId, root);
+  const installedGeneration = sessionWorkRootGenerations.get(sessionId);
+  return () => {
+    if (sessionWorkRootGenerations.get(sessionId) !== installedGeneration) return;
+    if (previous) setSessionWorkRoot(sessionId, previous);
+    else clearSessionWorkRoot(sessionId);
+  };
 }
 
 /** The registered work root for a session, if any. Consumers beyond the

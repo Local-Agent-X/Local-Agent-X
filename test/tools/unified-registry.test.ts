@@ -94,6 +94,23 @@ describe("UnifiedToolRegistry — F2 single-source store", () => {
     expect(registry.get("plugin_tool")).toBeUndefined();
   });
 
+  it("binds identity to executable bytes and optional plugin provenance", () => {
+    const base = makeTool("identity_tool");
+    const v1 = { ...base, execute: async () => ({ content: "implementation-v1" }) };
+    const v2 = { ...base, execute: async () => ({ content: "implementation-v2" }) };
+    registry.register(v1, { sourceFingerprint: "plugin-manifest-hash-a" });
+    const first = registry.getEntry(base.name)!.implementationFingerprint;
+    registry.register(v2, { sourceFingerprint: "plugin-manifest-hash-a" });
+    const executableChanged = registry.getEntry(base.name)!.implementationFingerprint;
+    registry.register(v2, { sourceFingerprint: "plugin-manifest-hash-b" });
+    const provenanceChanged = registry.getEntry(base.name)!.implementationFingerprint;
+
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(new Set([first, executableChanged, provenanceChanged])).toHaveLength(3);
+    expect(first).not.toContain("implementation-v1");
+    expect(provenanceChanged).not.toContain("plugin-manifest-hash-b");
+  });
+
   it("search() ranks exact name matches above substring noise", () => {
     registry.register(makeTool("memory_recall"), { searchHint: "recall stored memories" });
     registry.register(makeTool("run_build_plan"), { searchHint: "execute a build plan" });

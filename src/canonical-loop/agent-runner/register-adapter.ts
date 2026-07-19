@@ -1,85 +1,66 @@
+import { resolveCredential } from "../../auth/resolve.js";
+import { getRuntimeConfig } from "../../config.js";
+import type { Op } from "../../ops/types.js";
 import { registerAdapterForOp } from "../runtime.js";
-import { createAnthropicAdapter } from "../adapters/anthropic.js";
+import { createProviderAdapterFactory, resolveProviderRuntime } from "../provider-adapter-factory.js";
+import { sealDelegatedRuntime } from "../runtime-integrity.js";
 import type { CanonicalAgentOptions } from "./types.js";
 
 export async function registerProviderAdapter(
-  opId: string,
+  op: Op,
   options: CanonicalAgentOptions,
   sessionId: string,
 ): Promise<void> {
-  const { provider, model, systemPrompt, temperature, apiKey, maxTokens } = options;
+  const { provider, model, systemPrompt, temperature, maxTokens } = options;
+  const configuredKey = provider === "openai" ? getRuntimeConfig().openaiApiKey : undefined;
+  const admittedCredential = await resolveCredential(provider, {
+    configOpenAIKey: configuredKey,
+    requiredSource: options.authSource,
+  });
+  if (!admittedCredential) throw new Error(`provider ${provider} credential is unavailable at submission`);
+  if (provider !== "local" && admittedCredential.credential !== options.apiKey) {
+    throw new Error(`provider ${provider} credential changed before canonical submission`);
+  }
 
-  if (provider === "anthropic") {
-    registerAdapterForOp(opId, () =>
-      createAnthropicAdapter({
-        systemPrompt,
-        model,
-        sessionId,
-        maxTokens,
-        preferDirectHttp: options.preferAnthropicDirectHttp,
-      }),
-    );
-    return;
-  }
-  if (provider === "codex") {
-    const { createCodexAdapter } = await import("../adapters/codex.js");
-    registerAdapterForOp(opId, () =>
-      createCodexAdapter({ systemPrompt, model, sessionId }),
-    );
-    return;
-  }
-  // Gemini → native generateContent adapter (the compat shim empties on
-  // tool-laden requests; see gemini-native.ts). Same key resolution, native wire.
-  if (provider === "gemini") {
-    const { resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
-    const target = await resolveOpenAICompatTarget("gemini", { apiKey, customBaseURL: options.baseURL });
-    if (!target) {
-      throw new Error("gemini has no usable target — check API key config");
+  const resolvedRuntime = await resolveProviderRuntime(provider, model, {
+    apiKey: options.apiKey,
+    authSource: admittedCredential.source,
+    customBaseURL: options.baseURL,
+  });
+  let credential = admittedCredential;
+  if (resolvedRuntime.identity.credentialProvider !== provider) {
+    const targetCredential = await resolveCredential(resolvedRuntime.identity.credentialProvider);
+    if (!targetCredential || targetCredential.credential !== resolvedRuntime.apiKey) {
+      throw new Error("runtime target credential changed before canonical submission");
     }
-    const { createGeminiNativeAdapter } = await import("../adapters/gemini-native.js");
-    registerAdapterForOp(opId, () =>
-      createGeminiNativeAdapter({
-        model,
-        apiKey: target.apiKey,
-        systemPrompt,
-        temperature,
-        thinking: /gemini-(2\.5|3)/i.test(model),
-        sessionId,
-      }),
-    );
-    return;
+    credential = targetCredential;
   }
 
-  const { createOpenAICompatAdapter, resolveOpenAICompatTarget } = await import("../adapters/openai-compat.js");
-  // Local per-model routing (Turbo cloud override, LM Studio/vLLM/llama.cpp
-  // runtime lookup) lives inside resolveOpenAICompatTarget — one seam.
-  const target = await resolveOpenAICompatTarget(provider, { apiKey, customBaseURL: options.baseURL }, model);
-  if (!target) {
-    throw new Error(`provider ${provider} has no usable OpenAI-compat target — check API key and base URL config`);
-  }
-  const finalTarget = target;
   // Ollama (local + cloud) reports model capabilities via /api/show. Probe once
-  // up front so a tool-less local model is recorded in the registry before the
-  // first turn, rather than discovered via the empty-response stumble. Bounded,
-  // fail-safe, and cached per (baseURL, model) — a no-op for non-Ollama.
-  if (provider === "local" || provider === "ollama-cloud") {
+  // before the first turn; the resolver above already selected the exact target.
+  if ((provider === "local" || provider === "ollama-cloud") && resolvedRuntime.baseURL) {
     const { probeOllamaCapabilities } = await import("../../providers/ollama-capability-probe.js");
-    await probeOllamaCapabilities(finalTarget.baseURL, model, finalTarget.apiKey);
+    await probeOllamaCapabilities(resolvedRuntime.baseURL, model, resolvedRuntime.apiKey || "ollama");
   }
-  registerAdapterForOp(opId, () =>
-    createOpenAICompatAdapter({
-      systemPrompt,
-      model,
-      baseURL: finalTarget.baseURL,
-      apiKey: finalTarget.apiKey,
-      temperature,
-      maxTokens,
-      sessionId,
-      // Spawned field agents are expected to act. Force a real tool call on
-      // turn 0 so weaker OpenAI-compat models (xAI Grok) can't open by
-      // narrating the call as prose instead of emitting it. Turn-0 only;
-      // the openai-compat adapter releases the pin afterward.
-      requireToolOnFirstTurn: true,
-    }),
-  );
+
+  op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
+    kind: "delegated-op",
+    adapter: "provider-exact",
+    ...resolvedRuntime.identity,
+    authSource: credential.source,
+    sessionId,
+  });
+  op.model = model;
+  const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
+    apiKey: credential.credential,
+    authSource: credential.source,
+    customBaseURL: options.baseURL,
+    systemPrompt,
+    temperature,
+    maxTokens,
+    sessionId,
+    preferAnthropicDirectHttp: options.preferAnthropicDirectHttp,
+    requireToolOnFirstTurn: true,
+  });
+  registerAdapterForOp(op.id, factory);
 }

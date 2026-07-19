@@ -72,6 +72,25 @@ describe("PluginToolSurface", () => {
     expect(await live[0].execute({})).toEqual({ content: "weather_lookup ran" });
   });
 
+  it("binds registered identity to content-free plugin bundle provenance", () => {
+    const owner = "provenance-plugin";
+    const { registry, surface } = setup(owner, ["provenance_action"]);
+    const pluginManifest = manifest(owner, ["provenance_action"]);
+    const module = { provenance_action: definition("provenance_action") };
+    const first = surface.prepare(owner, pluginManifest, module, "a".repeat(64))!;
+    surface.activate(first);
+    const firstFingerprint = registry.getEntry("provenance_action")!.implementationFingerprint;
+    surface.deactivate(owner);
+    const second = surface.prepare(owner, pluginManifest, module, "b".repeat(64))!;
+    surface.activate(second);
+    const secondFingerprint = registry.getEntry("provenance_action")!.implementationFingerprint;
+
+    expect(firstFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondFingerprint).not.toBe(firstFingerprint);
+    expect(secondFingerprint).not.toContain("b".repeat(64));
+  });
+
   it("classifies external tools conservatively for kernel, autonomy, capability, and replay", () => {
     const owner = "risk-plugin";
     const { surface } = setup(owner, ["external_action"]);

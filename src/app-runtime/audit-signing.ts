@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -188,6 +188,19 @@ export function hasPersistedAuditKey(): boolean {
 // so all audit-key use stays behind this one provider.
 export function computeAuditMarkerMac(marker: string): string {
   return createHmac("sha256", getAuditHmacKey()).update(marker).digest("hex");
+}
+
+/** Domain-separated integrity MAC for other durable security records. Reuses
+ * the sealed per-install audit seed; callers never receive the key itself. */
+export function computeDurableRecordMac(domain: string, payload: string): string {
+  return createHmac("sha256", getAuditHmacKey()).update(`${domain}\0${payload}`).digest("hex");
+}
+
+export function verifyDurableRecordMac(domain: string, payload: string, mac: string): boolean {
+  if (!/^[a-f0-9]{64}$/.test(mac)) return false;
+  const expected = Buffer.from(computeDurableRecordMac(domain, payload), "hex");
+  const actual = Buffer.from(mac, "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 export function signAuditEntry(entry: Omit<AuditEntry, "signature">): string {

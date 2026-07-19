@@ -23,7 +23,7 @@ import type { Op } from "../ops/types.js";
 import { getBus, eventsChannel, streamChannel, type BusListener } from "./bus.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
-import { enqueueOp, pumpScheduler } from "./scheduler.js";
+import { enqueueOp, pumpScheduler, wakeQueuedOp } from "./scheduler.js";
 import { publishSignal } from "./signals.js";
 import { isTerminalState } from "./terminal-states.js";
 
@@ -317,6 +317,7 @@ export function opCancel(opId: string, actor: string): ControlResult {
   writeSignalColumn(opId, op, (c) => { c.cancelRequestedAt = now; });
   emit(opId, "cancel_requested", { actor });
   publishSignal({ kind: "cancel", opId, actor, ts: now });
+  if (state === "queued") wakeQueuedOp(opId, op.lane as CanonicalLane);
   return { ok: true };
 }
 

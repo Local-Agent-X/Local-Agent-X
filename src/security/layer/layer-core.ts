@@ -18,6 +18,7 @@ import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
+import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
@@ -160,6 +161,17 @@ export class SecurityLayer {
     }
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
   }
+
+  runtimeIdentity(sessionId?: string): SecurityRuntimeIdentity {
+    return snapshotSecurityRuntime(this.workspace, this.fileAccessMode, this.inlineEvalPolicy, this.sessionAllowedPaths, sessionId); }
+
+  runtimePolicyFingerprint(): string {
+    return fingerprintSecurityPolicy(this.fileAccessMode, this.inlineEvalPolicy, this.egressMode,
+      this.egressAllowlistConfigured, [...this.egressAllowlist], [...this.localServicePorts], String(SecurityLayer._selfPort || "7007"));
+  }
+
+  restoreAllowedPaths(entries: Array<{ sessionId: string; path: string }>): void {
+    restoreSecurityAllowedPaths(entries, () => this.sessionAllowedPaths.clear(), (path, sessionId) => this.addAllowedPath(path, sessionId)); }
 
   setFileAccessMode(mode: FileAccessMode): void {
     this.fileAccessMode = mode;

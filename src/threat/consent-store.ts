@@ -59,6 +59,10 @@ export function recordLastBlockedFingerprint(sessionId: string, fingerprint: str
   lastBlockedFingerprints.set(sessionId, { fingerprint, at: Date.now() });
 }
 
+export function restoreLastBlockedFingerprint(sessionId: string, fingerprint: string, at: number): void {
+  if (Date.now() - at <= 10 * 60_000) lastBlockedFingerprints.set(sessionId, { fingerprint, at });
+}
+
 export function getLastBlockedFingerprint(sessionId: string): string | null {
   const e = lastBlockedFingerprints.get(sessionId);
   if (!e) return null;

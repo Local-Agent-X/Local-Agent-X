@@ -25,8 +25,8 @@ import type { Op } from "../ops/types.js";
 
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
-import { recoverAdapterThrow, clearAdapterThrowStreak, recoverContextOverflow, clearOverflowAttempts } from "./turn-loop/adapter-throw-recovery.js";
-import { classify } from "../errors/classifier.js";
+import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
+import { recoverReportedAdapterError } from "./turn-loop/reported-adapter-recovery.js";
 import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
@@ -107,7 +107,8 @@ export async function driveTurn(
   const observedTools: string[] = [];
   // `heartbeat` = reasoning model streaming chain-of-thought (adapter-contract.ts).
   let sawReasoning = false;
-  let adapterError: { code: string; message: string } | null = null;
+  let sawStreamContent = false;
+  let adapterError: { code: string; message: string; retryable: boolean } | null = null;
   let middlewareDirective: MiddlewareDirective | null = null;
 
   // Idle-event detection — provider-agnostic. Watches the report stream
@@ -123,7 +124,7 @@ export async function driveTurn(
     idleMs,
     onTimeout: () => {
       idleFired = true;
-      adapterError = { code: "stalled", message: `no adapter reports for ${idleMs}ms — model presumed stuck` };
+      adapterError = { code: "stalled", message: `no adapter reports for ${idleMs}ms — model presumed stuck`, retryable: false };
       // Fire-and-forget — don't await; runTurn may still need a beat to
       // unwind. The reason propagates through the abort signal so
       // transports that watch reason (warm-pool kill on /idle|stalled|stop/)
@@ -147,10 +148,12 @@ export async function driveTurn(
         // (bus-only, never persisted) with a `reasoning` marker so the pump
         // maps it to a `reasoning` ServerEvent instead of answer text.
         sawReasoning = true;
+        sawStreamContent = true;
         publishStreamChunk(op.id, { reasoning: true, delta: r.delta });
         return;
       }
       if (r.kind === "stream_chunk") {
+        sawStreamContent = true;
         publishStreamChunk(op.id, r.body);
         return;
       }
@@ -176,7 +179,7 @@ export async function driveTurn(
         return;
       }
       if (r.kind === "error") {
-        adapterError = { code: r.code, message: r.message };
+        adapterError = { code: r.code, message: r.message, retryable: r.retryable };
         emit(op.id, "error", { code: r.code, message: r.message, retryable: r.retryable });
       }
     });
@@ -196,12 +199,12 @@ export async function driveTurn(
   // recovery's own attempt cap; success clears the counter below.
   // (read via a typed local: adapterError is assigned inside the stream
   // callback, which TS's narrowing can't see — it types the direct read `never`)
-  const reportedError = adapterError as { code: string; message: string } | null;
-  if (reportedError && classify(reportedError.message).recovery === "compress") {
-    const recovered = recoverContextOverflow(op, reportedError.message, turnIdx);
-    if (recovered) return recovered;
-  }
-  if (!reportedError) clearOverflowAttempts(op.id);
+  const reportedError = adapterError as { code: string; message: string; retryable: boolean } | null;
+  const recoveredReport = recoverReportedAdapterError(op, reportedError, turnIdx, {
+    streamed: sawStreamContent, finalized: finalized.length,
+    toolCalls: toolCalls.length, observedTools: observedTools.length,
+  });
+  if (recoveredReport) return recoveredReport;
   void idleFired; // surfaced via adapterError; reserved for telemetry
   const modelMs = Date.now() - modelStart;
 

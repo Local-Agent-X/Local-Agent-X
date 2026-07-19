@@ -26,9 +26,16 @@
 import { canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries } from "./canaries.js";
 import { classifyData, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
-import { THREAT_SCORES, ThreatScorer, type ThreatLevel } from "./scoring.js";
+import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerState } from "./scoring.js";
 import { readThreatScorerOptions } from "./scorer-options.js";
-import { ToolChainAnalyzer } from "./tool-chain.js";
+import { ToolChainAnalyzer, type ToolChainState } from "./tool-chain.js";
+import { restoreLastBlockedFingerprint } from "./consent-store.js";
+
+export interface ThreatEngineState {
+  scorer: ThreatScorerState;
+  chain: ToolChainState;
+  canaries: string[];
+}
 
 export { _invalidateThreatSettingsCacheForTests } from "./scorer-options.js";
 
@@ -85,6 +92,28 @@ export class ThreatEngine {
   /** Get canary tokens for system prompt injection */
   getCanaryBlock(): string {
     return canaryPromptBlock(this.canaries);
+  }
+
+  snapshot(): ThreatEngineState {
+    return {
+      scorer: this.scorer.snapshot(),
+      chain: this.chain.snapshot(),
+      canaries: [...this.canaries],
+    };
+  }
+
+  restore(state: ThreatEngineState): void {
+    if (!Array.isArray(state.canaries) || state.canaries.length === 0
+      || state.canaries.some(canary => typeof canary !== "string" || canary.length < 8)) {
+      throw new Error("invalid persisted threat canary state");
+    }
+    this.scorer.restore(state.scorer);
+    this.chain.restore(state.chain);
+    this.canaries = [...state.canaries];
+    registerSessionCanaries(this.sessionId, this.canaries);
+    if (state.chain.lastBlockedFingerprint && state.chain.lastBlockedAt !== null) {
+      restoreLastBlockedFingerprint(this.sessionId, state.chain.lastBlockedFingerprint, state.chain.lastBlockedAt);
+    }
   }
 
   /**

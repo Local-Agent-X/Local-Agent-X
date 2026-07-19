@@ -9,6 +9,9 @@ export interface DriveTurnResult {
   messageCount: number;
   /** True if the turn was aborted mid-flight via cancel; commit was skipped. */
   cancelled: boolean;
+  /** A retryable adapter report asks the worker to release its lease and
+   * requeue through the op's durable retry policy instead of busy-looping. */
+  retryCode?: string;
   /**
    * Set when a middleware in the canonical safety stack returned a non-
    * "continue" verdict. The worker uses this to override the natural

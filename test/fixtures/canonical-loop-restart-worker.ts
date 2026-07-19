@@ -1,4 +1,7 @@
-import { appendFileSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 import {
   appendOpMessage,
@@ -6,24 +9,24 @@ import {
   commitTurn,
   readOpMessages,
   readOpTurns,
-  registerToolDispatcherForOp,
-  registerToolsForOp,
-  setDefaultAdapterForLane,
 } from "../../src/canonical-loop/index.js";
-import type {
-  Adapter,
-  AdapterReport,
-  TurnInput,
-  TurnResult,
-} from "../../src/canonical-loop/adapter-contract.js";
 import { stopRecoveryJanitor } from "../../src/canonical-loop/recovery-janitor.js";
 import { readOp, writeOp } from "../../src/ops/op-store.js";
 import { getSessionForOp } from "../../src/ops/session-bridge.js";
 import type { Op } from "../../src/ops/types.js";
 import { bootstrapCanonicalLoop } from "../../src/server/canonical-loop-bootstrap.js";
 import { opTurnPath } from "../../src/canonical-loop/schema.js";
+import { sealDelegatedRuntime } from "../../src/canonical-loop/runtime-integrity.js";
+import { buildAgentRuntimeSurface } from "../../src/canonical-loop/agent-runner/runtime-surface.js";
+import { SecurityLayer } from "../../src/security/index.js";
+import { buildToolRegistry } from "../../src/tools.js";
+import { writeTool } from "../../src/tools/file-tools.js";
+import { setRuntimeConfig } from "../../src/config.js";
+import { startAriKernel } from "../../src/ari-kernel/index.js";
 
-const [action, opId, sideEffectLedger, mutation] = process.argv.slice(2);
+const [action, opId, sideEffectLedger, mutation, rawPort] = process.argv.slice(2);
+const port = Number(rawPort);
+const baseURL = `http://127.0.0.1:${port}/v1`;
 
 function result(value: unknown): never {
   process.stdout.write(`@@RESULT@@${JSON.stringify(value)}`);
@@ -42,12 +45,40 @@ function contextPack(task: string): Op["contextPack"] {
     context: { recentTurns: [], referencedFiles: [], memoryHits: [], agentsRules: "" },
     capabilities: {},
     budget: { maxIterations: 8, maxTokens: 0, maxWallTimeMs: 0, maxSelfEditCalls: 0 },
-    routing: { lane: "background" },
+    routing: { lane: "background", preferredProvider: "local" },
     secrets: { allowed: [] },
   };
 }
 
+function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
+  const descriptor = {
+    kind: "delegated-op",
+    adapter: "provider-exact",
+    provider: "local",
+    credentialProvider: mutation === "cloud-runtime" ? "ollama-cloud" : "local",
+    authSource: mutation === "cloud-runtime" ? "env" : "sentinel",
+    model: "restart-proof-model",
+    runtime: "openai-compat",
+    target: mutation === "cloud-runtime"
+      ? { kind: "ollama-cloud" as const, endpointFingerprint: createHash("sha256").update(new URL(baseURL).href).digest("hex") }
+      : { kind: "local-config" as const, endpointFingerprint: createHash("sha256").update(new URL(baseURL).href).digest("hex") },
+    sessionId: "session-across-restart",
+    surface: buildAgentRuntimeSurface({
+      provider: "local",
+      apiKey: "ollama",
+      model: "restart-proof-model",
+      systemPrompt: "Continue the durable operation from its canonical checkpoint.",
+      tools: [writeTool],
+      security: new SecurityLayer(process.env.LAX_DATA_DIR!, "unrestricted"),
+      callContext: "api",
+    }, "session-across-restart"),
+  } as const;
+  return sealDelegatedRuntime(opId, descriptor);
+}
+
 function persistInterruptedOperation(): never {
+  setRuntimeConfig({ workspace: process.cwd(), authToken: "restart-test-token", ollamaUrl: baseURL.replace(/\/v1$/, ""), ollamaCloudUrl: baseURL.replace(/\/v1$/, "") } as never);
+  buildToolRegistry();
   const task = "resume delegated work after restart";
   const op: Op = {
     id: opId,
@@ -56,11 +87,7 @@ function persistInterruptedOperation(): never {
     contextPack: contextPack(task),
     lane: "background",
     retryPolicy: { maxRecoveryAttempts: 3, backoffMs: [] },
-    runtimeDescriptor: {
-      kind: "delegated-op",
-      adapter: "lane-default",
-      sessionId: "session-across-restart",
-    },
+    runtimeDescriptor: exactDescriptor(),
     ownerId: "local-user",
     visibility: "private",
     status: "running",
@@ -85,18 +112,14 @@ function persistInterruptedOperation(): never {
     content: { text: task },
     createdAt: new Date().toISOString(),
   });
-
   appendFileSync(sideEffectLedger, `${JSON.stringify({ opId, effect: "write", callId: "call-1" })}\n`);
   commitTurn({
     op,
     turnIdx: 0,
     providerState: {
-      adapterName: "restart-proof-provider",
-      adapterVersion: "1",
-      providerPayload: {
-        cursor: "checkpoint-0",
-        providerSession: "provider-session-a",
-      },
+      adapterName: "openai-compat",
+      adapterVersion: "1.0.0",
+      providerPayload: { cursor: "checkpoint-0", model: "restart-proof-model" },
     },
     messages: [
       {
@@ -114,186 +137,128 @@ function persistInterruptedOperation(): never {
   result({ state: readOp(opId)?.canonical?.state, turns: readOpTurns(opId).length });
 }
 
-class ResumeAdapter implements Adapter {
-  readonly name = "restart-proof-provider";
-  readonly version = "1";
-  inputs: TurnInput[] = [];
-  executionIdentities: Array<Record<string, unknown>> = [];
-  trackedSessionDuringResume: string | undefined;
-  private replayAttempted = false;
-
-  constructor(
-    private readonly configuredModel: string,
-    private readonly configuredRuntime: "lane-default",
-  ) {}
-
-  async runTurn(input: TurnInput, report: (value: AdapterReport) => void): Promise<TurnResult> {
-    this.inputs.push(input);
-    this.trackedSessionDuringResume = getSessionForOp(opId);
-    const payload = input.providerState?.providerPayload as Record<string, unknown> | undefined;
-    const identity = {
-      adapterName: this.name,
-      adapterVersion: this.version,
-      checkpointAdapterName: input.providerState?.adapterName,
-      checkpointAdapterVersion: input.providerState?.adapterVersion,
-      cursor: payload?.cursor,
-      providerSession: payload?.providerSession,
-      configuredModel: this.configuredModel,
-      configuredRuntime: this.configuredRuntime,
-      canonicalSession: this.trackedSessionDuringResume,
-      turnIdx: input.turnIdx,
-      tools: input.tools.map(tool => tool.name),
-    };
-    this.executionIdentities.push(identity);
-
-    const recoveredExpectedIdentity =
-      input.turnIdx === 1
-      && identity.checkpointAdapterName === this.name
-      && identity.checkpointAdapterVersion === this.version
-      && identity.cursor === "checkpoint-0"
-      && identity.providerSession === "provider-session-a"
-      && identity.configuredModel === "restart-proof-model"
-      && identity.configuredRuntime === "lane-default"
-      && identity.canonicalSession === "session-across-restart";
-    if (!recoveredExpectedIdentity && !this.replayAttempted) {
-      this.replayAttempted = true;
-      const call = { toolCallId: "call-1", tool: "write", args: { path: "durable.txt" } };
-      report({ kind: "tool_call_requested", call });
-      report({
-        kind: "message_finalized",
-        message: {
-          messageId: "replayed-0",
-          role: "assistant",
-          content: { text: "replaying durable write", toolCalls: [call] },
-        },
-      });
-      return {
-        providerState: input.providerState ?? {
-          adapterName: this.name,
-          adapterVersion: this.version,
-          providerPayload: {},
-        },
-        modelStop: "continue",
-      };
-    }
-    report({
-      kind: "message_finalized",
-      message: {
-        messageId: "continued-1",
-        role: "assistant",
-        content: { text: "continued without replay" },
-      },
-    });
-    return {
-      providerState: {
-        adapterName: this.name,
-        adapterVersion: this.version,
-        providerPayload: {
-          cursor: "checkpoint-1",
-          providerSession: "provider-session-a",
-        },
-      },
-      terminalReason: "done",
-      modelStop: "ended",
-    };
-  }
-
-  async abort(): Promise<void> {}
-}
-
-function selectDurableRuntime(): {
-  adapter: "lane-default";
-  model: string;
-  sessionId: string;
-} {
-  const op = readOp(opId);
-  if (!op) throw new Error("durable operation missing");
-  if (op.model !== "restart-proof-model") {
-    throw new Error(`durable model identity mismatch: ${op.model ?? "missing"}`);
-  }
-  const descriptor = op.runtimeDescriptor;
-  if (
-    descriptor?.kind !== "delegated-op"
-    || descriptor.adapter !== "lane-default"
-    || descriptor.sessionId !== "session-across-restart"
-  ) {
-    throw new Error(`durable runtime identity mismatch: ${JSON.stringify(descriptor)}`);
-  }
-  return { adapter: descriptor.adapter, model: op.model, sessionId: descriptor.sessionId };
-}
-
 function applyMutation(): void {
   if (mutation === "replay-from-zero") {
     rmSync(opTurnPath(opId, 0));
     return;
   }
-  if (mutation !== "wrong-model" && mutation !== "wrong-runtime") return;
   const op = readOp(opId);
   if (!op) throw new Error("durable operation missing for mutation");
   if (mutation === "wrong-model") op.model = "mutated-model";
-  else op.runtimeDescriptor = { kind: "delegated-op", adapter: "codex", sessionId: "session-across-restart" };
+  if (mutation === "missing-model" && op.runtimeDescriptor?.kind === "delegated-op") {
+    delete (op.runtimeDescriptor as { model?: string }).model;
+  }
+  if (mutation === "wrong-runtime" && op.runtimeDescriptor?.kind === "delegated-op") {
+    (op.runtimeDescriptor as { runtime: string }).runtime = "anthropic";
+  }
+  if (mutation === "missing-provider" && op.runtimeDescriptor?.kind === "delegated-op") {
+    delete (op.runtimeDescriptor as { provider?: string }).provider;
+  }
+  if (mutation === "wrong-provider" && op.runtimeDescriptor?.kind === "delegated-op") {
+    (op.runtimeDescriptor as { provider: string }).provider = "anthropic";
+  }
+  if (mutation === "missing-runtime" && op.runtimeDescriptor?.kind === "delegated-op") {
+    delete (op.runtimeDescriptor as { runtime?: string }).runtime;
+  }
+  if (mutation === "missing-credential-provider" && op.runtimeDescriptor?.kind === "delegated-op") {
+    delete (op.runtimeDescriptor as { credentialProvider?: string }).credentialProvider;
+  }
+  if (mutation === "wrong-credential-provider" && op.runtimeDescriptor?.kind === "delegated-op") {
+    (op.runtimeDescriptor as { credentialProvider: string }).credentialProvider = "xai";
+  }
   writeOp(op);
 }
 
-async function resumeThroughBootstrap(): Promise<never> {
-  applyMutation();
-  const runtime = selectDurableRuntime();
-  const adapter = new ResumeAdapter(runtime.model, runtime.adapter);
-  bootstrapCanonicalLoop();
-  if (runtime.adapter === "lane-default") setDefaultAdapterForLane("background", () => adapter);
-  let dispatcherCalls = 0;
-  registerToolDispatcherForOp(opId, {
-    async dispatch(call) {
-      dispatcherCalls += 1;
-      appendFileSync(sideEffectLedger, `${JSON.stringify({
-        opId,
-        effect: call.tool,
-        callId: call.toolCallId,
-        replayedBy: "process-b",
-      })}\n`);
-      return { toolCallId: call.toolCallId, status: "ok", result: { text: "saved" }, durationMs: 1 };
-    },
+interface CapturedRequest { model?: string; messages?: Array<{ role?: string }>; path: string; authorization?: string }
+
+function startProvider(requests: CapturedRequest[]): Promise<Server> {
+  let chatRequests = 0;
+  const server = createServer((req, res) => {
+    if (req.url === "/api/tags") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ models: [{ name: "restart-proof-model" }] }));
+      return;
+    }
+    let raw = "";
+    req.setEncoding("utf8");
+    req.on("data", chunk => { raw += chunk; });
+    req.on("end", () => {
+      let body: CapturedRequest = { path: req.url ?? "", authorization: req.headers.authorization };
+      try { body = { ...(JSON.parse(raw) as CapturedRequest), path: req.url ?? "", authorization: req.headers.authorization }; } catch { /* expose malformed request below */ }
+      requests.push(body);
+      const isChatRequest = req.url === "/v1/chat/completions";
+      if (isChatRequest) chatRequests += 1;
+      res.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
+      if (mutation === "replay-from-zero" && isChatRequest && chatRequests === 1) {
+        const content = [
+          JSON.stringify({ opId, effect: "write", callId: "call-1" }),
+          JSON.stringify({ opId, effect: "write", callId: "call-replayed" }),
+          "",
+        ].join("\n");
+        const args = JSON.stringify({ path: sideEffectLedger, content });
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call-replay", type: "function", function: { name: "write", arguments: args } }] }, finish_reason: null }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`);
+      } else {
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "continued without replay" }, finish_reason: null }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+      }
+      res.end("data: [DONE]\n\n");
+    });
   });
-  registerToolsForOp(opId, [{
-    name: "write",
-    description: "persist the durable file",
-    inputSchema: { type: "object", properties: { path: { type: "string" } } },
-  }]);
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve(server));
+  });
+}
+
+async function closeProvider(server: Server): Promise<void> {
+  server.closeAllConnections?.();
+  await new Promise<void>(resolve => server.close(() => resolve()));
+}
+
+async function resumeThroughBootstrap(): Promise<never> {
+  setRuntimeConfig({ workspace: process.cwd(), authToken: "restart-test-token", ollamaUrl: baseURL.replace(/\/v1$/, ""), ollamaCloudUrl: baseURL.replace(/\/v1$/, "") } as never);
+  applyMutation();
+  if (mutation === "settings-changed" || mutation === "settings-changed-cloud") {
+    writeFileSync(join(process.env.LAX_DATA_DIR!, "settings.json"), JSON.stringify({ provider: "anthropic", model: "mutated-settings-model" }));
+  }
+  const requests: CapturedRequest[] = [];
+  const server = await startProvider(requests);
+  if (!(await startAriKernel(join(process.env.LAX_DATA_DIR!, "ari-audit.db"), "workspace-assistant", true))) {
+    throw new Error("fixture AriKernel failed to start");
+  }
+  buildToolRegistry();
+  bootstrapCanonicalLoop();
 
   const deadline = Date.now() + 5_000;
   while (readOp(opId)?.canonical?.state !== "succeeded") {
     const state = readOp(opId)?.canonical?.state;
     if (state === "failed" || Date.now() >= deadline) {
-      throw new Error(`restart recovery did not succeed: state=${state}`);
+      await closeProvider(server);
+      throw new Error(`restart recovery did not succeed: state=${state}; failure=${readOp(opId)?.lastFailureReason ?? "none"}`);
     }
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   await awaitIdle(2_000);
   stopRecoveryJanitor();
+  await closeProvider(server);
 
-  const input = adapter.inputs[0];
-  if (!input) throw new Error("replacement adapter was not called");
   const op = readOp(opId);
   const messages = readOpMessages(opId);
   const turns = readOpTurns(opId);
   const sideEffects = readFileSync(sideEffectLedger, "utf8").split("\n").filter(Boolean);
-  if (sideEffects.length !== 1) {
-    throw new Error(`duplicate committing side effect detected: count=${sideEffects.length}`);
-  }
+  if (sideEffects.length !== 1) throw new Error(`duplicate committing side effect detected: count=${sideEffects.length}`);
   result({
     state: op?.canonical?.state,
     attemptCount: op?.attemptCount,
     runtimeDescriptor: op?.runtimeDescriptor,
-    durableRuntimeSelection: runtime,
+    model: op?.model,
+    requestModels: requests.map(request => request.model).filter(Boolean),
+    requestPaths: requests.map(request => request.path),
+    authorizationHeaders: requests.map(request => request.authorization).filter(Boolean),
     canonicalSessionId: op?.canonical?.sessionId,
-    trackedSessionDuringResume: adapter.trackedSessionDuringResume,
     trackedSessionAfterTerminal: getSessionForOp(opId),
-    adapterExecutionIdentities: adapter.executionIdentities,
-    adapterInputCount: adapter.inputs.length,
-    dispatcherCalls,
-    resumedTurnIdx: input.turnIdx,
-    resumedProviderState: input.providerState,
-    resumedToolResults: input.messages.filter(message => message.role === "tool_result").length,
+    dispatcherCalls: turns.slice(1).reduce((count, turn) => count + (turn.toolCallSummary?.length ?? 0), 0),
     persistedToolResults: messages.filter(message => message.role === "tool_result").length,
     turnIndexes: turns.map(turn => turn.turnIdx),
     firstTurnToolSummary: turns[0]?.toolCallSummary,

@@ -18,7 +18,7 @@
 import type { TransportMessage, TransportTool, TransportEvent } from "./anthropic/types.js";
 import { toGeminiTools } from "../../providers/shared/tool-shape.js";
 
-const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export interface GeminiNativeRequest {
   model: string;

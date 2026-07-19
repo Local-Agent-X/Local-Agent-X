@@ -25,8 +25,9 @@ import type {
 } from "./anthropic.js";
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 import { randomId } from "../../util/ids.js";
+import type { CredentialSource } from "../../auth/auth-provider.js";
 
-export function defaultAnthropicTransport(): AnthropicTransport {
+export function defaultAnthropicTransport(pinned?: { credential: string; source: CredentialSource }): AnthropicTransport {
   return {
     async *stream(req: AnthropicTransportRequest): AsyncIterable<TransportEvent> {
       const { streamAnthropicResponse } = await import("../../anthropic-client/index.js");
@@ -34,6 +35,12 @@ export function defaultAnthropicTransport(): AnthropicTransport {
 
       let token: string;
       try {
+        if (pinned) {
+          if (pinned.source !== "oauth" && pinned.source !== "env" && pinned.source !== "secrets-store") {
+            throw new Error(`Anthropic transport does not support ${pinned.source} credentials`);
+          }
+          token = pinned.credential;
+        } else {
         // Chat lane: try the direct-HTTP OAuth token first (real streamed
         // thinking). If none is resolvable, fall through to getAnthropicApiKey
         // — which yields the "cli" sentinel and routes through the CLI proxy.
@@ -56,7 +63,8 @@ export function defaultAnthropicTransport(): AnthropicTransport {
               : "[anthropic] chat → CLI proxy (no direct token; thinking unavailable — authenticate Anthropic via Settings to enable)",
           );
         }
-        token = direct ?? await getAnthropicApiKey();
+          token = direct ?? await getAnthropicApiKey();
+        }
       } catch (e) {
         yield {
           type: "error",

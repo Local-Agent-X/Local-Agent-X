@@ -4,11 +4,20 @@
 
 export type ThreatLevel = "normal" | "elevated" | "high" | "critical";
 
-interface ThreatEvent {
+export interface ThreatEvent {
   type: string;
   score: number;
   timestamp: number;
   detail: string;
+}
+
+export interface ThreatScorerState {
+  events: Array<Omit<ThreatEvent, "detail">>;
+  rawLoad: number;
+  lastEventAt: number | null;
+  successfulTurnsSinceLastEvent: number;
+  confirmedBreach: boolean;
+  options: { startingBudget: number; decayPerHour: number; decayPerTurn: number };
 }
 
 export interface ThreatScorerOptions {
@@ -154,6 +163,48 @@ export class ThreatScorer {
   /** Get recent threat events for audit */
   getEvents(): ThreatEvent[] {
     return [...this.events];
+  }
+
+  snapshot(): ThreatScorerState {
+    return {
+      events: this.events.map(({ type, score, timestamp }) => ({ type, score, timestamp })),
+      rawLoad: this.rawLoad,
+      lastEventAt: this.lastEventAt,
+      successfulTurnsSinceLastEvent: this.successfulTurnsSinceLastEvent,
+      confirmedBreach: this.confirmedBreach,
+      options: {
+        startingBudget: this.startingBudget,
+        decayPerHour: this.decayPerHour,
+        decayPerTurn: this.decayPerTurn,
+      },
+    };
+  }
+
+  restore(state: ThreatScorerState): void {
+    if (state.options.startingBudget !== this.startingBudget
+      || state.options.decayPerHour !== this.decayPerHour
+      || state.options.decayPerTurn !== this.decayPerTurn) {
+      throw new Error("threat scorer configuration changed since submission");
+    }
+    if (!Array.isArray(state.events) || state.events.length > this.MAX_EVENTS
+      || !Number.isFinite(state.rawLoad) || state.rawLoad < 0
+      || (state.lastEventAt !== null && (!Number.isFinite(state.lastEventAt) || state.lastEventAt < 0))
+      || !Number.isInteger(state.successfulTurnsSinceLastEvent) || state.successfulTurnsSinceLastEvent < 0
+      || typeof state.confirmedBreach !== "boolean") {
+      throw new Error("invalid persisted threat scorer state");
+    }
+    this.events = state.events.map(event => {
+      if (!event || typeof event.type !== "string" || !event.type || event.type.length > 128
+        || !Number.isFinite(event.score) || event.score < 0
+        || !Number.isFinite(event.timestamp) || event.timestamp < 0) {
+        throw new Error("invalid persisted threat event");
+      }
+      return { ...event, detail: "[recovered]" };
+    });
+    this.rawLoad = state.rawLoad;
+    this.lastEventAt = state.lastEventAt;
+    this.successfulTurnsSinceLastEvent = state.successfulTurnsSinceLastEvent;
+    this.confirmedBreach = state.confirmedBreach;
   }
 
   reset(): void {

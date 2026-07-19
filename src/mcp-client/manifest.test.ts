@@ -268,4 +268,29 @@ describe("signed MCP publisher manifests", () => {
     expect(connectionApi.getMcpExecutionPosture(config, false, false).effective).toBe("blocked");
     expect(connectionApi.getMcpExecutionPosture(config, true, false).effective).toBe("trusted");
   });
+
+  it("binds runtime tool identity to executable bytes without exposing secret values", () => {
+    const config: MCPServerConfig = {
+      command: binaryPath,
+      args: ["--stdio"],
+      env: { TOKEN: "${secret:MCP_TOKEN}", REGION: "west" },
+      executionMode: "sandboxed",
+    };
+    const expandedOne = { ...config, env: { TOKEN: "secret-value-one", REGION: "west" } };
+    const expandedTwo = { ...config, env: { TOKEN: "secret-value-two", REGION: "west" } };
+    const first = manifestApi.mcpRuntimeSourceFingerprint("same-server", config, expandedOne);
+    expect(manifestApi.mcpRuntimeSourceFingerprint("same-server", config, expandedTwo)).toBe(first);
+    writeFileSync(binaryPath, "signed mcp binary v2\n", { mode: 0o755 });
+    const executableChanged = manifestApi.mcpRuntimeSourceFingerprint("same-server", config, expandedTwo);
+    const configChanged = manifestApi.mcpRuntimeSourceFingerprint("same-server", {
+      ...config,
+      args: ["--stdio", "--alternate"],
+    });
+
+    expect(first).toMatch(/^[a-f0-9]{64}$/);
+    expect(new Set([first, executableChanged, configChanged])).toHaveLength(3);
+    expect(first).not.toContain("MCP_TOKEN");
+    expect(first).not.toContain("west");
+    expect(JSON.stringify({ sourceFingerprint: first })).not.toContain("secret-value");
+  });
 });

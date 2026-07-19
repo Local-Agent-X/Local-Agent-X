@@ -41,6 +41,7 @@ import { aggregateOpUsage } from "./op-usage.js";
 import { ensureAriKernelScope, releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
+import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 
 // Fallback turn cap when the op carries no (or an invalid) iteration budget.
 // The real cap is the op budget the entry runner stamped — see maxTurns below;
@@ -204,6 +205,13 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         transitionOp(op, "failed", "deadline_exceeded", { learnedOutcome: "aborted" });
         break;
       }
+
+      if (r.retryCode) {
+        const outcome = await handleAdapterRetry(op, r.retryCode);
+        releaseReason = outcome === "retrying" ? `adapter_retry:${r.retryCode}` : "adapter_retry_exhausted";
+        break;
+      }
+      clearAdapterRetryState(op);
 
       if (r.middlewareDirective?.kind === "suspend") {
         if (!op.canonical) op.canonical = {};

@@ -114,6 +114,10 @@ export interface CanonicalOpFields {
     detail: string;
     suspendedAt: string;
   } | null;
+  /** Durable backoff gate for a retryable adapter report. The op remains
+   * queued while this timestamp is in the future, so process restart resumes
+   * the same retry instead of losing an in-memory timer. */
+  retryNotBefore?: string | null;
 }
 
 // ── op_turns row (PRD §11) ────────────────────────────────────────────────

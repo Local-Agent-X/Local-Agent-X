@@ -18,7 +18,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-
 import { createLogger } from "../logger.js";
 import { getMcpExecutionPosture, getMcpSandboxBackend, MCPConnection } from "./connection.js";
 import { expandPlaceholdersDeep } from "./placeholders.js";
@@ -193,15 +192,16 @@ export class MCPManager {
     }
   }
 
-  /** Get all tools from all connected servers as standard ToolDefinitions. */
-  getAllTools(): ToolDefinition[] {
-    const tools: ToolDefinition[] = [];
+  getAllTools(): Array<ToolDefinition & { mcpServerName: string; mcpSourceFingerprint: string }> {
+    const tools: Array<ToolDefinition & { mcpServerName: string; mcpSourceFingerprint: string }> = [];
     for (const [serverName, conn] of this.connections) {
       if (!conn.connected) continue;
       for (const mcpTool of conn.getTools()) {
         const toolName = `mcp_${serverName}_${mcpTool.name}`;
         tools.push({
           name: toolName,
+          mcpServerName: serverName,
+          mcpSourceFingerprint: conn.sourceFingerprint,
           description: `[MCP:${serverName}] ${mcpTool.description || mcpTool.name}`,
           parameters: (mcpTool.inputSchema as Record<string, unknown>) || { type: "object", properties: {} },
           async execute(args: Record<string, unknown>): Promise<ToolResult> {
@@ -212,7 +212,6 @@ export class MCPManager {
     }
     return tools;
   }
-
   /** Get list of connected server names. */
   listServers(): Array<{ name: string; connected: boolean; toolCount: number }> {
     const result: Array<{ name: string; connected: boolean; toolCount: number }> = [];

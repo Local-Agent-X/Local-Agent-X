@@ -10,6 +10,7 @@ import {
   createAnthropicAdapter,
   sweepStaleCanonicalOps,
   setLaneCapConfigReader,
+  startRecoveryJanitor,
   lostRegistrationAdapterFactory,
   setRenderProbe,
   type CanonicalLane,
@@ -19,7 +20,6 @@ import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/public/lear
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
-import { startRecoveryJanitor } from "../canonical-loop/recovery-janitor.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 import { createLogger } from "../logger.js";
 import { checkRegexSafety } from "../safe-regex.js";
@@ -92,6 +93,12 @@ export class ToolPolicy {
    *  name contributed at runtime. */
   findExactRule(toolName: string): string | null {
     return this.config.rules.find((rule) => rule.tool === toolName)?.id ?? null;
+  }
+
+  /** Content-free identity for restart recovery. It binds the effective rule
+   * set without serializing the live policy object into an operation row. */
+  runtimeFingerprint(): string {
+    return createHash("sha256").update(JSON.stringify(this.config)).digest("hex");
   }
 
   /**
@@ -253,6 +260,10 @@ export class LiveToolPolicy extends ToolPolicy {
 
   override findExactRule(toolName: string): string | null {
     return this.currentInner.findExactRule(toolName);
+  }
+
+  override runtimeFingerprint(): string {
+    return this.currentInner.runtimeFingerprint();
   }
 
   override resetSession(sessionId: string): void {

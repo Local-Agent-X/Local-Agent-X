@@ -11,14 +11,13 @@ import type { ToolDefinition } from "../../types.js";
 import {
   awaitOpRunning,
   canonicalLoopEntry,
-  registerAdapterForOp,
 } from "../../canonical-loop/index.js";
 import { readOp, isInteractiveHostOpType } from "../op-store.js";
 import { trackOpForSession, listOpsForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
-  readSettingsProvider,
-  stampDelegatedRuntime,
+  configureDelegatedRuntime,
+  delegatedRuntimeSessionId,
   submitParameters,
   RECENT_SUBMITS,
   SUBMIT_DEDUP_WINDOW_MS,
@@ -165,27 +164,19 @@ export const opSubmitAsyncTool: ToolDefinition = {
 
     const op = await buildOpFromArgs(args);
 
+    // Resolve once and persist the exact provider/model/runtime identity.
+    // Every provider gets a per-op factory; restart recovery never substitutes
+    // the current lane default or newly-selected settings.
+    const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
+    await configureDelegatedRuntime(op, runtimeSessionId);
+    // Suppress the background probe inside canonicalLoopEntry — we're
+    // doing the same wait synchronously here so the model gets a truthful
+    // "is it running yet?" answer in the tool return.
+    canonicalLoopEntry(op, { sessionId: runtimeSessionId, confirmRunning: false });
     if (sessionId) {
       trackOpForSession(op.id, sessionId, task);
       RECENT_SUBMITS.set(sessionId, { opId: op.id, ts: Date.now(), task });
     }
-
-    // Per-op adapter selection by the op's effective provider. Provider
-    // follows the op's explicit hint, falling back to settings.json. User
-    // picks codex in settings → ops register CodexAdapter; otherwise the
-    // lane-default AnthropicAdapter from canonical-loop-bootstrap.ts
-    // serves the op.
-    const opProvider = op.contextPack?.routing?.preferredProvider;
-    const effectiveProvider = opProvider ?? (await readSettingsProvider());
-    stampDelegatedRuntime(op, effectiveProvider, sessionId);
-    if (effectiveProvider === "codex") {
-      const { createCodexAdapter } = await import("../../canonical-loop/index.js");
-      registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
-    }
-    // Suppress the background probe inside canonicalLoopEntry — we're
-    // doing the same wait synchronously here so the model gets a truthful
-    // "is it running yet?" answer in the tool return.
-    canonicalLoopEntry(op, { ...(sessionId ? { sessionId } : {}), confirmRunning: false });
 
     // Lifecycle verification: the scheduler may have enqueued behind a
     // lane-cap or held the op in `queued` while the worker pool is full.

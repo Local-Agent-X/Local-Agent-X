@@ -14,13 +14,13 @@
  * adapter branch never fires and the lane default (our CountingAdapter)
  * serves every op — no dependence on the machine's real settings.json.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
-  setDefaultAdapterForLane,
+  registerAdapterForOp,
   resetCanonicalRuntime,
   resetScheduler,
   resetBus,
@@ -33,7 +33,17 @@ import type {
   TurnResult,
 } from "../src/canonical-loop/adapter-contract.js";
 import type { ProviderStateEnvelope } from "../src/canonical-loop/types.js";
-import { opSubmitBatchTool } from "../src/ops/tools/op-submit-batch.js";
+
+const runtimeFixture = vi.hoisted(() => ({
+  configure: vi.fn(),
+}));
+
+vi.mock("../src/ops/tools/shared.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/ops/tools/shared.js")>();
+  return { ...actual, configureDelegatedRuntime: runtimeFixture.configure };
+});
+
+const { opSubmitBatchTool } = await import("../src/ops/tools/op-submit-batch.js");
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const createdOpIds: string[] = [];
@@ -84,7 +94,10 @@ function installCountingLaneAdapter(holdMs: number): Counter {
   const counter: Counter = { inFlight: 0, max: 0 };
   // Tasks run on the "interactive" lane (cap 10), so the BATCH concurrency —
   // not the lane cap — is the binding bound in these tests.
-  setDefaultAdapterForLane("interactive", () => new CountingAdapter({ counter, holdMs }));
+  runtimeFixture.configure.mockImplementation(async (op: { id: string; model?: string }) => {
+    op.model = "batch-test-model";
+    registerAdapterForOp(op.id, () => new CountingAdapter({ counter, holdMs }));
+  });
   return counter;
 }
 
@@ -105,6 +118,7 @@ async function runBatch(tasks: unknown[], concurrency?: number): Promise<{ isErr
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+  runtimeFixture.configure.mockReset();
 });
 
 afterEach(async () => {

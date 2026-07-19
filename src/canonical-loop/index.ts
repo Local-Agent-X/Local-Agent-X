@@ -201,6 +201,7 @@ export {
   type RecoveryOutcome,
   type RecoveryOutcomeKind,
 } from "./recovery.js";
+export { startRecoveryJanitor } from "./recovery-janitor.js";
 
 export { evictWorker } from "./scheduler.js";
 

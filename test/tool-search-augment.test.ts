@@ -124,6 +124,26 @@ describe("augmentFromToolSearch", () => {
     expect(registerToolsForOp).toHaveBeenCalledTimes(1);
   });
 
+  it("does not widen the executable surface when durable registration fails", () => {
+    fakeRegistry.set("protocol_curate", mkTool("protocol_curate"));
+    const toolMap = new Map<string, ToolDefinition>([["read", mkTool("read")]]);
+    const persist = vi.fn(() => { throw new Error("durable seal failed"); });
+
+    expect(() => augmentFromToolSearch(
+      JSON.stringify([{ name: "protocol_curate" }]),
+      "op-atomic",
+      toolMap,
+      persist,
+    )).toThrow("durable seal failed");
+
+    expect(persist).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ name: "read" }),
+      expect.objectContaining({ name: "protocol_curate" }),
+    ]));
+    expect(toolMap.has("protocol_curate")).toBe(false);
+    expect(registerToolsForOp).not.toHaveBeenCalled();
+  });
+
   it("ignores entries without a string name", () => {
     fakeRegistry.set("real_tool", mkTool("real_tool"));
     const toolMap = new Map<string, ToolDefinition>();

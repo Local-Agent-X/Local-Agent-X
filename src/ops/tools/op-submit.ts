@@ -8,13 +8,12 @@ import type { ToolDefinition } from "../../types.js";
 import {
   awaitCanonicalOp,
   canonicalLoopEntry,
-  registerAdapterForOp,
 } from "../../canonical-loop/index.js";
 import { trackOpForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
-  readSettingsProvider,
-  stampDelegatedRuntime,
+  configureDelegatedRuntime,
+  delegatedRuntimeSessionId,
   submitParameters,
 } from "./shared.js";
 
@@ -29,17 +28,11 @@ export const opSubmitTool: ToolDefinition = {
 
     const sessionId = String(args._sessionId || "");
     const op = await buildOpFromArgs(args);
-    if (sessionId) trackOpForSession(op.id, sessionId, task);
-
-    const opProvider = op.contextPack?.routing?.preferredProvider;
-    const effectiveProvider = opProvider ?? (await readSettingsProvider());
-    stampDelegatedRuntime(op, effectiveProvider, sessionId);
-    if (effectiveProvider === "codex") {
-      const { createCodexAdapter } = await import("../../canonical-loop/index.js");
-      registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
-    }
+    const runtimeSessionId = delegatedRuntimeSessionId(op.id, sessionId);
+    await configureDelegatedRuntime(op, runtimeSessionId);
     const startMs = Date.now();
-    canonicalLoopEntry(op, sessionId ? { sessionId } : {});
+    canonicalLoopEntry(op, { sessionId: runtimeSessionId });
+    if (sessionId) trackOpForSession(op.id, sessionId, task);
     const result = await awaitCanonicalOp(op.id, 30 * 60 * 1000);
     const wallMs = Date.now() - startMs;
 

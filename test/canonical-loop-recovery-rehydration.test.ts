@@ -11,6 +11,7 @@ import {
   readOpTurns,
   readCanonicalEvents,
   recoverStaleOp,
+  registerAdapterForOp,
   resetBus,
   resetCanonicalRuntime,
   resetScheduler,
@@ -72,7 +73,12 @@ describe("canonical recovery runtime rehydration", () => {
       retryPolicy: { maxRecoveryAttempts: 3, backoffMs: [] },
       runtimeDescriptor: {
         kind: "delegated-op",
-        adapter: "lane-default",
+        adapter: "provider-exact",
+        provider: "local",
+        credentialProvider: "local",
+        model: "test-model",
+        runtime: "openai-compat",
+        baseURL: "http://127.0.0.1:11434/v1",
         sessionId: "session-rehydration",
       },
       ownerId: "local-user",
@@ -129,11 +135,16 @@ describe("canonical recovery runtime rehydration", () => {
     const replacement = new FakeAdapter({
       script: [scriptTurn({ text: "continued from checkpoint", terminal: "done" })],
     });
-    setDefaultAdapterForLane("background", () => replacement);
+    registerAdapterForOp(op.id, () => replacement);
 
     expect(readOp(op.id)?.runtimeDescriptor).toEqual({
       kind: "delegated-op",
-      adapter: "lane-default",
+      adapter: "provider-exact",
+      provider: "local",
+      credentialProvider: "local",
+      model: "test-model",
+      runtime: "openai-compat",
+      baseURL: "http://127.0.0.1:11434/v1",
       sessionId: "session-rehydration",
     });
 

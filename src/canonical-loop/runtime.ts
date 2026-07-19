@@ -10,7 +10,7 @@
  * scheduler/worker pull from when driving an op. Test cleanup calls
  * resetCanonicalRuntime() to drop registrations between tests.
  */
-import type { Op } from "../ops/types.js";
+import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { opDir } from "../ops/event-log.js";
@@ -19,6 +19,14 @@ import { atomicWriteFileSync } from "../server-utils.js";
 import type { Adapter, AdapterReport, ToolDescriptor, TurnInput, TurnResult } from "./adapter-contract.js";
 import { NotConfiguredToolDispatcher, type ToolDispatcher } from "./tool-dispatch.js";
 import type { CanonicalLane } from "./types.js";
+import { assertExactDelegatedRuntime } from "./provider-adapter-factory.js";
+import { createRecoveredAdapterFactory, markRuntimeReconstructionTerminal } from "./runtime-reconstruction.js";
+import { readLatestOpTurn } from "./store.js";
+import { verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
+import { ANTHROPIC_ADAPTER_NAME, ANTHROPIC_ADAPTER_VERSION } from "./adapters/anthropic/types.js";
+import { CODEX_ADAPTER_NAME, CODEX_ADAPTER_VERSION } from "./adapters/codex.js";
+import { GEMINI_NATIVE_ADAPTER_NAME, GEMINI_NATIVE_ADAPTER_VERSION } from "./adapters/gemini-native.js";
+import { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./adapters/openai-compat/types.js";
 
 export type AdapterFactory = () => Adapter | Promise<Adapter>;
 
@@ -26,6 +34,7 @@ const opAdapters = new Map<string, AdapterFactory>();
 const laneAdapters = new Map<CanonicalLane, AdapterFactory>();
 const opDispatchers = new Map<string, ToolDispatcher>();
 const opTools = new Map<string, ToolDescriptor[]>();
+const opRuntimeCleanups = new Map<string, () => void>();
 const opBaselineTokens = new Map<string, number>();
 const learnedProtocolEnvelopes = new Map<string, LearnedProtocolEnvelope>();
 let toolDispatcher: ToolDispatcher = new NotConfiguredToolDispatcher();
@@ -86,8 +95,23 @@ export function registerToolDispatcherForOp(opId: string, d: ToolDispatcher): vo
 }
 
 export function unregisterToolDispatcherForOp(opId: string): void {
-  opDispatchers.delete(opId);
+  releaseRuntimeSurfaceForRetry(opId);
   clearLearnedProtocolEnvelopeForOp(opId);
+}
+
+/** Release only process-local reconstructed state before a retry. Durable
+ * learned-protocol authority and checkpoints remain byte-identical. */
+export function releaseRuntimeSurfaceForRetry(opId: string): void {
+  opDispatchers.delete(opId);
+  opTools.delete(opId);
+  const cleanup = opRuntimeCleanups.get(opId);
+  opRuntimeCleanups.delete(opId);
+  cleanup?.();
+}
+
+export function registerRuntimeCleanupForOp(opId: string, cleanup: () => void): void {
+  opRuntimeCleanups.get(opId)?.();
+  opRuntimeCleanups.set(opId, cleanup);
 }
 
 export function registerLearnedProtocolEnvelopeForOp(
@@ -184,27 +208,50 @@ export function getOpBaselineTokens(opId: string): number {
  *  rebuilds the process-local adapter factory that cannot survive a restart.
  *  Unsupported persisted shapes get an explicit fail-closed factory. */
 export function rehydrateRecoveredRuntime(op: Op): boolean {
-  const descriptor = op.runtimeDescriptor;
   if (opAdapters.has(op.id)) return true;
-  if (!isDelegatedRuntimeDescriptor(descriptor)) {
+  let descriptor: ExactDelegatedRuntimeDescriptor;
+  try {
+    verifyDelegatedRuntimeIntegrity(op);
+    descriptor = op.runtimeDescriptor;
+    assertExactDelegatedRuntime(descriptor);
+    if (op.model !== descriptor.model) throw new Error("operation model does not match persisted runtime identity");
+    if (!descriptor.sessionId || op.canonical?.sessionId !== descriptor.sessionId) throw new Error("operation session does not match persisted runtime identity");
+    const prior = readLatestOpTurn(op.id);
+    const adapterIdentity = adapterIdentityForRuntime(descriptor.runtime);
+    if (prior && (prior.providerState.adapterName !== adapterIdentity.name
+      || prior.providerState.adapterVersion !== adapterIdentity.version)) {
+      throw new Error("checkpoint provider state does not match persisted runtime identity");
+    }
+  } catch {
+    markRuntimeReconstructionTerminal(op, "identity_mismatch");
     registerAdapterForOp(op.id, lostRegistrationAdapterFactory);
     return false;
   }
-  if (descriptor.adapter === "codex") {
-    registerAdapterForOp(op.id, async () => {
-      const { createCodexAdapter } = await import("./adapters/codex.js");
-      return createCodexAdapter({ sessionId: descriptor.sessionId });
-    });
-  }
+  registerAdapterForOp(op.id, createRecoveredAdapterFactory(
+    op,
+    descriptor,
+    () => releaseRuntimeSurfaceForRetry(op.id),
+  ));
   return true;
 }
 
-function isDelegatedRuntimeDescriptor(
-  descriptor: Op["runtimeDescriptor"],
-): descriptor is Extract<NonNullable<Op["runtimeDescriptor"]>, { kind: "delegated-op" }> {
-  return descriptor?.kind === "delegated-op"
-    && (descriptor.adapter === "lane-default" || descriptor.adapter === "codex")
-    && (descriptor.sessionId === undefined || typeof descriptor.sessionId === "string");
+function hasExactDelegatedRuntime(op: Op): boolean {
+  try {
+    verifyDelegatedRuntimeIntegrity(op);
+    assertExactDelegatedRuntime(op.runtimeDescriptor);
+    return op.model === op.runtimeDescriptor.model
+      && !!op.runtimeDescriptor.sessionId
+      && op.canonical?.sessionId === op.runtimeDescriptor.sessionId;
+  } catch {
+    return false;
+  }
+}
+
+function adapterIdentityForRuntime(runtime: ExactDelegatedRuntimeDescriptor["runtime"]): { name: string; version: string } {
+  if (runtime === "anthropic") return { name: ANTHROPIC_ADAPTER_NAME, version: ANTHROPIC_ADAPTER_VERSION };
+  if (runtime === "codex") return { name: CODEX_ADAPTER_NAME, version: CODEX_ADAPTER_VERSION };
+  if (runtime === "gemini-native") return { name: GEMINI_NATIVE_ADAPTER_NAME, version: GEMINI_NATIVE_ADAPTER_VERSION };
+  return { name: OPENAI_COMPAT_ADAPTER_NAME, version: OPENAI_COMPAT_ADAPTER_VERSION };
 }
 
 /** Inject the global tool dispatcher used when no per-op dispatcher is registered. */
@@ -305,11 +352,12 @@ export function resolveAdapterFactory(op: Op): AdapterFactory | null {
   //       wrong adapter with ZERO tools (OP-4 "planning mode"). Fail closed.
   //
   // attemptCount identifies restart recovery. A validated delegated-op
-  // descriptor proves the original runtime is reconstructible; without one,
+  // descriptor whose model matches the op proves the original runtime is
+  // reconstructible; without one,
   // attemptCount > 0 remains the lost-registration fail-closed signal. An
   // in-process opResume never increments the count and keeps using its live
   // registration, even when the op already has committed turns on disk.
-  if ((op.attemptCount ?? 0) > 0 && !isDelegatedRuntimeDescriptor(op.runtimeDescriptor)) {
+  if ((op.attemptCount ?? 0) > 0 && !hasExactDelegatedRuntime(op)) {
     return lostRegistrationAdapterFactory;
   }
   const lane = op.lane as CanonicalLane;
@@ -322,6 +370,8 @@ export function resetCanonicalRuntime(): void {
   laneAdapters.clear();
   opDispatchers.clear();
   opTools.clear();
+  for (const cleanup of opRuntimeCleanups.values()) cleanup();
+  opRuntimeCleanups.clear();
   opBaselineTokens.clear();
   learnedProtocolEnvelopes.clear();
   toolDispatcher = new NotConfiguredToolDispatcher();

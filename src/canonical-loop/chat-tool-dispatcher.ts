@@ -56,6 +56,9 @@ export interface ChatToolDispatcherOptions {
   runId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
+  /** Durable runtime owner callbacks. They complete before process-local state widens. */
+  onToolsAugmented?: (tools: ToolDefinition[]) => void;
+  onRuntimeStateChange?: () => void;
 }
 
 /**
@@ -122,7 +125,9 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
       const t0 = Date.now();
       try {
         const messages = await runExecuteToolCalls([toWireCall(call)]);
-        return shapeCallResult(call, messages, Date.now() - t0, opts, toolMap);
+        const result = shapeCallResult(call, messages, Date.now() - t0, opts, toolMap);
+        opts.onRuntimeStateChange?.();
+        return result;
       } catch (e) {
         return errorResult(call, e, Date.now() - t0);
       }
@@ -147,8 +152,10 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
         const messages = await runExecuteToolCalls(calls.map(toWireCall));
         const groups = groupMessagesByCall(messages);
         const durationMs = Date.now() - t0;
-        return calls.map(call =>
+        const results = calls.map(call =>
           shapeCallResult(call, groups.get(call.toolCallId) ?? [], durationMs, opts, toolMap));
+        opts.onRuntimeStateChange?.();
+        return results;
       } catch (e) {
         const durationMs = Date.now() - t0;
         return calls.map(call => errorResult(call, e, durationMs));
@@ -277,8 +284,9 @@ function shapeCallResult(
   //      request schema includes them.
   if (call.tool === "tool_search" && opts.opId && canonicalStatus === "ok") {
     try {
-      augmentFromToolSearch(content, opts.opId, toolMap);
+      augmentFromToolSearch(content, opts.opId, toolMap, opts.onToolsAugmented);
     } catch (e) {
+      if (opts.onToolsAugmented) throw e;
       logger.warn(`[augment] tool_search augmentation failed: ${(e as Error).message}`);
     }
   }
@@ -306,6 +314,7 @@ export function augmentFromToolSearch(
   content: string,
   opId: string,
   toolMap: Map<string, ToolDefinition>,
+  beforeRegister?: (tools: ToolDefinition[]) => void,
 ): void {
   // tool_search returns content like:
   //   "No tools matched the query."   (skip path)
@@ -316,7 +325,7 @@ export function augmentFromToolSearch(
   try { parsed = JSON.parse(content); } catch { return; }
   if (!Array.isArray(parsed)) return;
 
-  const added: string[] = [];
+  const discovered: ToolDefinition[] = [];
   for (const entry of parsed) {
     if (!entry || typeof entry !== "object") continue;
     const name = (entry as { name?: unknown }).name;
@@ -324,17 +333,19 @@ export function augmentFromToolSearch(
     if (toolMap.has(name)) continue;
     const tool = unifiedRegistry.get(name);
     if (!tool) continue;
-    toolMap.set(name, tool);
-    added.push(name);
+    discovered.push(tool);
   }
 
-  if (added.length === 0) return;
+  if (discovered.length === 0) return;
 
-  const augmented = Array.from(toolMap.values()).map((t) => ({
+  const augmentedTools = [...toolMap.values(), ...discovered];
+  beforeRegister?.(augmentedTools);
+  for (const tool of discovered) toolMap.set(tool.name, tool);
+  const augmented = augmentedTools.map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.parameters,
   }));
   registerToolsForOp(opId, augmented);
-  logger.info(`[augment] +${added.length} tool(s) for op=${opId.slice(0, 12)}: ${added.join(", ")}`);
+  logger.info(`[augment] +${discovered.length} tool(s) for op=${opId.slice(0, 12)}: ${discovered.map(tool => tool.name).join(", ")}`);
 }

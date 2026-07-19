@@ -52,6 +52,52 @@ export function mcpConfigFingerprint(config: MCPServerConfig): string {
   return createHash("sha256").update(stableConfig(config)).digest("hex");
 }
 
+/** Content-free executable/config identity for durable tool recovery. Secret
+ * placeholders bind by name; literal env values bind only through a hash. */
+export function mcpRuntimeSourceFingerprint(
+  serverName: string,
+  config: MCPServerConfig,
+  executableConfig: MCPServerConfig = config,
+): string {
+  const env = Object.entries(config.env ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => {
+      const secretNames = [...value.matchAll(/\$\{secret:([^}]+)\}/g)].map(match => match[1]).sort();
+      return [key, secretNames.length > 0
+        ? { secretNames }
+        : { valueFingerprint: createHash("sha256").update(value).digest("hex") }];
+    });
+  const signed = config.manifest ? {
+    schemaVersion: config.manifest.schemaVersion,
+    version: config.manifest.version,
+    publisher: config.manifest.publisher,
+    keyId: config.manifest.keyId ?? null,
+    command: config.manifest.command,
+    configFingerprint: config.manifest.configFingerprint,
+    executionMode: config.manifest.executionMode,
+  } : null;
+  let executable: { pathFingerprint: string; sha256: string } | { unresolvedCommandFingerprint: string };
+  try {
+    const resolvedPath = resolveCommandPath(executableConfig.command);
+    if (!resolvedPath) throw new Error("MCP command is unresolved");
+    executable = {
+      pathFingerprint: createHash("sha256").update(normalize(resolvedPath)).digest("hex"),
+      sha256: hashCommandBinary(resolvedPath),
+    };
+  } catch {
+    executable = { unresolvedCommandFingerprint: createHash("sha256").update(config.command).digest("hex") };
+  }
+  return createHash("sha256").update(JSON.stringify({
+    serverName,
+    command: config.command,
+    args: config.args ?? [],
+    env,
+    executionMode: config.executionMode ?? "sandboxed",
+    executable,
+    signed,
+  })).digest("hex");
+}
+
 export function mcpManifestPayload(manifest: Omit<MCPSignedManifest, "signature">): Buffer {
   const command = manifest.command.kind === "binary"
     ? { kind: "binary", resolvedPath: normalize(manifest.command.resolvedPath), sha256: manifest.command.sha256.toLowerCase() }

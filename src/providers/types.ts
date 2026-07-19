@@ -7,6 +7,7 @@ import type { RBACManager, Role } from "../rbac.js";
 import type { ProviderId } from "./provider-ids.js";
 import * as capStore from "./model-capabilities-store.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
+import type { CredentialSource } from "../auth/auth-provider.js";
 
 export interface ImageAttachment {
   url: string;
@@ -19,6 +20,8 @@ export interface AgentOptions {
   model: string;
   baseURL?: string;
   provider: ProviderId;
+  /** Exact non-secret source selected during request preparation. */
+  authSource?: CredentialSource;
   systemPrompt: string;
   tools: ToolDefinition[];
   security: SecurityLayer;

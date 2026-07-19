@@ -48,9 +48,12 @@ import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { createLogger } from "../../logger.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
+import { sessionWorkRootOf } from "../../workspace/paths.js";
 
 import { type CanonicalAgentOptions, DEFAULT_WALL_CLOCK_MS } from "./types.js";
 import { registerProviderAdapter } from "./register-adapter.js";
+import { buildAgentRuntimeSurface, persistRuntimeSurface, toolFingerprint } from "./runtime-surface.js";
+import { sealDelegatedRuntime } from "../runtime-integrity.js";
 import { seedOpMessages } from "./seed-messages.js";
 import { collectMessages, mapStopReason } from "./collect-result.js";
 
@@ -125,11 +128,22 @@ export async function runAgentViaCanonical(
     attemptCount: 0,
   };
 
+  // Resolve and install every non-durable runtime dependency before the op is
+  // visible to session tracking or the durable stores. A failed credential,
+  // endpoint, adapter, or surface admission must not leave a ghost operation.
+  await registerProviderAdapter(op, options, sessionId);
+  if (op.runtimeDescriptor?.kind !== "delegated-op" || op.runtimeDescriptor.adapter !== "provider-exact") {
+    throw new Error("agent runtime did not produce an exact delegated descriptor");
+  }
+  const { integrity: _integrity, ...runtimeIdentity } = op.runtimeDescriptor;
+  op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
+    ...runtimeIdentity,
+    surface: buildAgentRuntimeSurface(options, sessionId),
+  });
+
   trackOpForSession(op.id, sessionId, userMessage);
   writeOp(op);
-
   seedOpMessages(op.id, history, userMessage, options.images);
-  await registerProviderAdapter(op.id, options, sessionId);
 
   // Bridge canonical opCancel → tool-execution AbortSignal so subprocesses
   // (self_edit's claude -p, build_app's codex --full-auto) actually die on
@@ -151,6 +165,19 @@ export async function runAgentViaCanonical(
     runId: options.runId,
     onEvent: options.onEvent,
     signal: cancelBridge.signal,
+    onToolsAugmented: augmented => persistRuntimeSurface(op, current => ({
+      ...current,
+      tools: augmented.map(tool => ({ name: tool.name, fingerprint: toolFingerprint(tool) })),
+    })),
+    onRuntimeStateChange: () => persistRuntimeSurface(op, current => ({
+      ...current,
+      security: {
+        ...options.security.runtimeIdentity(sessionId),
+        ...(sessionWorkRootOf(sessionId) ? { sessionWorkRoot: sessionWorkRootOf(sessionId) } : {}),
+        configFingerprint: current.security.configFingerprint,
+      },
+      threatEngine: options.threatEngine ? { state: options.threatEngine.snapshot() } : false,
+    })),
   }));
 
   registerToolsForOp(op.id, options.tools.map(t => ({

@@ -10,11 +10,19 @@ import { outboundPayloadParts } from "../security/secrets/index.js";
 // ═══════════════════════════════════════════════════════════════════
 
 /** What data a tool call touched */
-interface DataAccess {
+export interface DataAccess {
   type: "file_read" | "file_write" | "shell" | "web_fetch" | "http_request" | "browser" | "memory" | "secret";
   target: string;       // file path, URL, command, etc.
   sensitive: boolean;    // classified as sensitive by data classifier
   timestamp: number;
+}
+
+export interface ToolChainState {
+  history: Array<Omit<DataAccess, "target">>;
+  callHashes: string[];
+  userConsentActiveUntil: number;
+  lastBlockedFingerprint: string | null;
+  lastBlockedAt: number | null;
 }
 
 /** Exfiltration pattern: sensitive data read followed by external send */
@@ -56,6 +64,7 @@ export class ToolChainAnalyzer {
   // and record into the trust ledger. Per-turn (per ThreatEngine instance).
   // Layer B carries the fingerprint across turns via session-bridge.
   private lastBlockedFingerprint: string | null = null;
+  private lastBlockedAt: number | null = null;
 
   /** Record a tool call and check for dangerous patterns */
   recordAndAnalyze(
@@ -85,6 +94,7 @@ export class ToolChainAnalyzer {
     // Loop detection
     const hash = hashToolCall(toolName, args);
     this.callHashes.push(hash);
+    if (this.callHashes.length > this.MAX_HISTORY) this.callHashes.shift();
     const loopResult = this.detectLoops(hash);
     if (loopResult) {
       return { blocked: true, reason: loopResult, loopDetected: loopResult };
@@ -124,7 +134,10 @@ export class ToolChainAnalyzer {
         }
         // Stash the fingerprint so the /approve handler can find it and
         // record into the trust ledger for future auto-allows.
-        if (fp) this.lastBlockedFingerprint = fp;
+        if (fp) {
+          this.lastBlockedFingerprint = fp;
+          this.lastBlockedAt = Date.now();
+        }
         return { blocked: true, reason: exfil.description, exfil, blockedFingerprint: fp ?? undefined };
       }
 
@@ -163,6 +176,43 @@ export class ToolChainAnalyzer {
    *  types /approve. */
   getLastBlockedFingerprint(): string | null {
     return this.lastBlockedFingerprint;
+  }
+
+  snapshot(): ToolChainState {
+    return {
+      history: this.history.map(({ type, sensitive, timestamp }) => ({ type, sensitive, timestamp })),
+      callHashes: [...this.callHashes],
+      userConsentActiveUntil: this.userConsentActiveUntil,
+      lastBlockedFingerprint: this.lastBlockedFingerprint,
+      lastBlockedAt: this.lastBlockedAt,
+    };
+  }
+
+  restore(state: ToolChainState): void {
+    if (!Array.isArray(state.history) || state.history.length > this.MAX_HISTORY
+      || !Array.isArray(state.callHashes) || state.callHashes.length > this.MAX_HISTORY
+      || !Number.isFinite(state.userConsentActiveUntil) || state.userConsentActiveUntil < 0
+      || (state.lastBlockedFingerprint !== null
+        && (typeof state.lastBlockedFingerprint !== "string" || !/^[a-z_]+:[a-z0-9.-]{1,253}$/.test(state.lastBlockedFingerprint)))
+      || (state.lastBlockedAt !== null && (!Number.isFinite(state.lastBlockedAt) || state.lastBlockedAt < 0))
+      || ((state.lastBlockedFingerprint === null) !== (state.lastBlockedAt === null))) {
+      throw new Error("invalid persisted tool-chain state");
+    }
+    this.history = state.history.map(item => {
+      if (!item || !["file_read", "file_write", "shell", "web_fetch", "http_request", "browser", "memory", "secret"].includes(item.type)
+        || typeof item.sensitive !== "boolean" || !Number.isFinite(item.timestamp) || item.timestamp < 0) {
+        throw new Error("invalid persisted tool-chain access");
+      }
+      return { ...item, target: "[recovered]" };
+    });
+    if (state.callHashes.some(hash => typeof hash !== "string" || !/^[a-f0-9]{16}$/.test(hash))) {
+      throw new Error("invalid persisted tool-call fingerprint");
+    }
+    this.callHashes = [...state.callHashes];
+    this.userConsentActiveUntil = state.userConsentActiveUntil;
+    this.userConsentReason = this.isUserConsentActive() ? "restored-user-consent" : "";
+    this.lastBlockedFingerprint = state.lastBlockedFingerprint;
+    this.lastBlockedAt = state.lastBlockedAt;
   }
 
   /** Check if a shell command accesses sensitive resources */

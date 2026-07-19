@@ -21,12 +21,34 @@
  *      patterns the model can lift verbatim).
  *   4. BLOCKED text contains no parenthetical "Reply ... (\"...\")" template.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { opSubmitAsyncTool } from "../src/ops/tools.js";
+vi.mock("../src/ops/tools/shared.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/ops/tools/shared.js")>();
+  return {
+    ...actual,
+    async configureDelegatedRuntime(op: Op) {
+      const { registerAdapterForOp } = await import("../src/canonical-loop/runtime.js");
+      op.model = "self-block-test-model";
+      registerAdapterForOp(op.id, () => ({
+        name: "self-block-test",
+        version: "1",
+        async runTurn() {
+          return {
+            providerState: { adapterName: "self-block-test", adapterVersion: "1", providerPayload: null },
+            terminalReason: "done" as const,
+          };
+        },
+        async abort() {},
+      }));
+    },
+  };
+});
+
+const { opSubmitAsyncTool } = await import("../src/ops/tools.js");
 import { writeOp, newOpId } from "../src/ops/op-store.js";
 import { trackOpForSession } from "../src/ops/session-bridge.js";
 import type { Op } from "../src/ops/types.js";

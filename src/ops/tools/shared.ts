@@ -7,8 +7,17 @@
  * single-module semantics now that the tools live in separate files.
  */
 
-import { getSetting } from "../../settings.js";
-import { normalizeSecretName } from "../../secrets.js";
+import { getOrInitSecretsStore, normalizeSecretName } from "../../secrets.js";
+import { getRuntimeConfig } from "../../config.js";
+import { getLaxDir } from "../../lax-data-dir.js";
+import { resolveCredential } from "../../auth/resolve.js";
+import { resolveProvider } from "../../agent-request/resolve-provider.js";
+import {
+  registerAdapterForOp,
+  createProviderAdapterFactory,
+  resolveProviderRuntime,
+  sealDelegatedRuntime,
+} from "../../canonical-loop/public/delegated-runtime.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
 import { newOpId, readOp, isInteractiveHostOpType } from "../op-store.js";
@@ -32,30 +41,56 @@ export interface SubmitArgs {
 }
 
 /**
- * Read the user's currently-selected provider from ~/.lax/settings.json.
- * Used to pick the canonical adapter for ops that don't carry an explicit
- * provider hint. Same source as the chat resolver, so adapter selection
- * stays consistent with what the rest of the app shows.
+ * Resolve and pin the exact provider/model/runtime before persistence, then
+ * install the matching per-op factory. Recovery can rebuild this identity
+ * without consulting whatever provider settings happen to exist later.
  */
-export async function readSettingsProvider(): Promise<string | null> {
-  try {
-    const provider = getSetting<string>("provider");
-    return typeof provider === "string" ? provider : null;
-  } catch {
-    return null;
+export async function configureDelegatedRuntime(
+  op: Op,
+  sessionId: string,
+): Promise<void> {
+  if (!sessionId) throw new Error("delegated runtime session id is required");
+  const dataDir = getLaxDir();
+  const resolved = await resolveProvider(
+    getRuntimeConfig(),
+    getOrInitSecretsStore(dataDir),
+    dataDir,
+    op.contextPack.routing.preferredProvider,
+  );
+  const runtime = await resolveProviderRuntime(resolved.provider as import("../../providers/provider-ids.js").ProviderId, resolved.model, {
+    apiKey: resolved.apiKey,
+    authSource: resolved.authSource ?? (() => { throw new Error("provider credential source was not resolved"); })(),
+    customBaseURL: resolved.customBaseURL,
+  });
+  let authSource = runtime.identity.authSource;
+  let apiKey = runtime.apiKey;
+  if (runtime.identity.credentialProvider !== resolved.provider) {
+    const credential = await resolveCredential(runtime.identity.credentialProvider);
+    if (!credential || credential.credential !== runtime.apiKey) throw new Error("resolved runtime credential does not match its canonical credential source");
+    authSource = credential.source;
+    apiKey = credential.credential;
   }
+  op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
+    kind: "delegated-op",
+    adapter: "provider-exact",
+    ...runtime.identity,
+    authSource,
+    sessionId,
+  });
+  op.model = runtime.identity.model;
+  const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
+    apiKey,
+    authSource,
+    customBaseURL: resolved.customBaseURL,
+    sessionId: sessionId || undefined,
+  });
+  registerAdapterForOp(op.id, factory);
 }
 
-export function stampDelegatedRuntime(
-  op: Op,
-  effectiveProvider: string | null,
-  sessionId: string,
-): void {
-  op.runtimeDescriptor = {
-    kind: "delegated-op",
-    adapter: effectiveProvider === "codex" ? "codex" : "lane-default",
-    ...(sessionId ? { sessionId } : {}),
-  };
+/** Every recoverable delegated op needs a durable session identity, including
+ * unattended submissions that have no originating chat session. */
+export function delegatedRuntimeSessionId(opId: string, originatingSessionId: string): string {
+  return originatingSessionId || opId;
 }
 
 /**

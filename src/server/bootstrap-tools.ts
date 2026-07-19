@@ -10,6 +10,7 @@ import type { ToolPluginContext } from "../tools/plugin.js";
 import { pluginManager } from "../plugin-system.js";
 import { PluginToolSurface } from "../plugin-system/tool-surface.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
+import { createHash } from "node:crypto";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-tools");
@@ -88,6 +89,9 @@ export async function bootstrapTools(deps: {
         tags: plugin.tags ?? [],
         searchHint: tool.description.slice(0, 80),
         toolClass: plugin.toolClass,
+        sourceFingerprint: createHash("sha256")
+          .update(`builtin-plugin:${plugin.id}\n${String(plugin.register)}`)
+          .digest("hex"),
       });
     }
   }
@@ -122,12 +126,13 @@ export async function bootstrapTools(deps: {
     if (mcpTools.length > 0) {
       allAgentTools.push(...mcpTools);
       for (const tool of mcpTools) {
-        const serverName = tool.name.replace(/^mcp_/, "").split("_")[0] ?? "unknown";
+        const serverName = tool.mcpServerName;
         toolRegistry.register(tool, {
           defer: true,
           tags: ["mcp", serverName],
           searchHint: tool.description.slice(0, 80),
           mcpSource: serverName,
+          sourceFingerprint: tool.mcpSourceFingerprint,
         });
       }
       logger.info(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
@@ -147,12 +152,13 @@ export async function bootstrapTools(deps: {
       const fresh = mcpManager.getAllTools();
       for (const tool of fresh) {
         allAgentTools.push(tool);
-        const serverName = tool.name.replace(/^mcp_/, "").split("_")[0] ?? "unknown";
+        const serverName = tool.mcpServerName;
         toolRegistry.register(tool, {
           defer: true,
           tags: ["mcp", serverName],
           searchHint: tool.description.slice(0, 80),
           mcpSource: serverName,
+          sourceFingerprint: tool.mcpSourceFingerprint,
         });
       }
       logger.info(`[mcp] tool surface refreshed — ${fresh.length} MCP tool(s) live`);

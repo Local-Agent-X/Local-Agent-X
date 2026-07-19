@@ -18,6 +18,7 @@
  * no more catch-up dedup pass after buildToolRegistry().
  */
 import type { ToolClass } from "@arikernel/core";
+import { createHash } from "node:crypto";
 import type { ToolDefinition } from "../types.js";
 
 export interface RegistryEntry {
@@ -29,6 +30,8 @@ export interface RegistryEntry {
   toolClass?: ToolClass;
   /** MCP server that contributed this tool, when sourced from MCP. */
   mcpSource?: string;
+  /** Hash-only identity of the executable implementation and its provenance. */
+  implementationFingerprint: string;
 }
 
 export interface RegisterOptions {
@@ -37,6 +40,8 @@ export interface RegisterOptions {
   searchHint?: string;
   toolClass?: ToolClass;
   mcpSource?: string;
+  /** Canonical module/plugin/MCP provenance. Never contains executable code. */
+  sourceFingerprint?: string;
 }
 
 export interface DeferredToolListing {
@@ -63,6 +68,7 @@ export class UnifiedToolRegistry {
       searchHint: opts?.searchHint ?? "",
       toolClass: opts?.toolClass,
       mcpSource: opts?.mcpSource,
+      implementationFingerprint: implementationFingerprintFor(tool, opts),
     });
   }
 
@@ -183,6 +189,17 @@ export class UnifiedToolRegistry {
   _resetForTesting(): void {
     this.tools.clear();
   }
+}
+
+export function implementationFingerprintFor(tool: ToolDefinition, opts?: RegisterOptions): string {
+  const source = [
+    tool.name,
+    String(tool.execute),
+    typeof tool.effect === "function" ? String(tool.effect) : JSON.stringify(tool.effect ?? null),
+    opts?.sourceFingerprint ?? "registry-inline",
+    opts?.mcpSource ?? "",
+  ].join("\n");
+  return createHash("sha256").update(source).digest("hex");
 }
 
 /**

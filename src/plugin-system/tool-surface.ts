@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { UnifiedToolRegistry } from "../tools/registry.js";
@@ -14,6 +15,7 @@ const SAFE_TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 export interface PreparedPluginToolActivation {
   ownerId: string;
   activationToken: symbol;
+  sourceFingerprint: string;
   tools: ToolDefinition[];
 }
 
@@ -22,6 +24,7 @@ export interface PluginToolSurfacePort {
     ownerId: string,
     manifest: PluginManifest,
     module: Record<string, unknown>,
+    sourceFingerprint?: string,
   ): PreparedPluginToolActivation | null;
   activate(prepared: PreparedPluginToolActivation): void;
   abort(prepared: PreparedPluginToolActivation): void;
@@ -60,6 +63,7 @@ export class PluginToolSurface implements PluginToolSurfacePort {
     ownerId: string,
     manifest: PluginManifest,
     module: Record<string, unknown>,
+    sourceFingerprint?: string,
   ): PreparedPluginToolActivation | null {
     const declared = manifest.contributions?.tools;
     if (!declared) return null;
@@ -107,7 +111,12 @@ export class PluginToolSurface implements PluginToolSurfacePort {
 
     for (const tool of definitions) this.reservations.set(tool.name, { ownerId, activationToken });
     this.ownerReservations.set(ownerId, activationToken);
-    return { ownerId, activationToken, tools: definitions };
+    return {
+      ownerId,
+      activationToken,
+      sourceFingerprint: sourceFingerprint ?? createHash("sha256").update(JSON.stringify(manifest)).digest("hex"),
+      tools: definitions,
+    };
   }
 
   activate(prepared: PreparedPluginToolActivation): void {
@@ -133,6 +142,7 @@ export class PluginToolSurface implements PluginToolSurfacePort {
           tags: ["plugin", "external", prepared.ownerId],
           searchHint: tool.description.slice(0, 80),
           toolClass: "shell",
+          sourceFingerprint: prepared.sourceFingerprint,
         });
         this.liveTools.push(tool);
         this.reservations.delete(tool.name);

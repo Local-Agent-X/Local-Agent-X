@@ -16,6 +16,7 @@ import type {
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
+import type { CredentialSource } from "../../auth/auth-provider.js";
 
 export interface CodexTransportRequest extends AnthropicTransportRequest {
   previousResponseId?: string;
@@ -31,7 +32,7 @@ export interface CodexTransport {
   stream(req: CodexTransportRequest): AsyncIterable<(TransportEvent | { type: "thinking"; delta: string }) & { responseId?: string }>;
 }
 
-export function defaultCodexTransport(): CodexTransport {
+export function defaultCodexTransport(pinned?: { credential: string; source: CredentialSource }): CodexTransport {
   return {
     async *stream(req: CodexTransportRequest) {
       const { getApiKey } = await import("../../auth/index.js");
@@ -39,7 +40,8 @@ export function defaultCodexTransport(): CodexTransport {
 
       let apiKey: string;
       try {
-        apiKey = await getApiKey();
+        if (pinned && pinned.source !== "oauth") throw new Error(`Codex transport does not support ${pinned.source} credentials`);
+        apiKey = pinned?.credential ?? await getApiKey();
       } catch (e) {
         // No usable OpenAI/ChatGPT credential — either never connected, or
         // the stored token couldn't be refreshed (refresh token revoked,

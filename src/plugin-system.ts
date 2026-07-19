@@ -183,7 +183,10 @@ export class PluginManager {
       throw new Error(`Failed to load plugin "${manifest.id}": ${msg}`);
     }
 
-    preparedTools = this.toolSurface?.prepare(manifest.id, manifest, pluginModule) ?? null;
+    const executableProvenance = createHash("sha256")
+      .update(`plugin:${manifest.id}\nmanifest:${currentManifestHash}\nentry:${trust.currentHash}`)
+      .digest("hex");
+    preparedTools = this.toolSurface?.prepare(manifest.id, manifest, pluginModule, executableProvenance) ?? null;
     this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel);
 
     const loadedPlugin: LoadedPlugin = {

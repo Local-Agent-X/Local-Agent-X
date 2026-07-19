@@ -10,6 +10,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
+import type { ThreatEngineState } from "../threat/threat-engine.js";
 
 // ── Op model ───────────────────────────────────────────────────────────────
 
@@ -108,11 +109,59 @@ export interface AppBuildRuntimeDescriptor {
   tier?: "quick-html" | "frontend-spa" | "full-stack" | "compiled-native";
 }
 
-export interface DelegatedRuntimeDescriptor {
+export type DelegatedProviderRuntime = "anthropic" | "codex" | "gemini-native" | "openai-compat";
+
+export type DelegatedRuntimeTarget =
+  | { kind: "provider-registry"; endpointFingerprint: string }
+  | { kind: "custom-config"; endpointFingerprint: string }
+  | { kind: "ollama-cloud"; endpointFingerprint: string }
+  | { kind: "local-runtime"; runtimeId: string; endpointFingerprint: string }
+  | { kind: "local-config"; endpointFingerprint: string };
+
+export interface DelegatedRuntimeSurface {
+  kind: "agent-runner";
+  systemPrompt: string;
+  tools: Array<{ name: string; fingerprint: string }>;
+  security: {
+    workspace: string;
+    fileAccessMode: import("../security/layer/index.js").FileAccessMode;
+    inlineEvalPolicy: import("../security/layer/index.js").InlineEvalPolicy;
+    allowedPaths: Array<{ sessionId: string; path: string }>;
+    sessionWorkRoot?: string;
+    configFingerprint: string;
+  };
+  toolPolicyFingerprint?: string;
+  threatEngine: false | { state: ThreatEngineState };
+  rbac: boolean;
+  callerRole?: import("../rbac.js").Role;
+  callContext: import("../tool-execution/context.js").CallContext;
+  runId?: string;
+}
+
+export interface ExactDelegatedRuntimeDescriptor {
+  kind: "delegated-op";
+  adapter: "provider-exact";
+  provider: import("../providers/provider-ids.js").ProviderId;
+  credentialProvider: import("../providers/provider-ids.js").ProviderId;
+  authSource: CredentialSource;
+  model: string;
+  runtime: DelegatedProviderRuntime;
+  target: DelegatedRuntimeTarget;
+  sessionId?: string;
+  surface?: DelegatedRuntimeSurface;
+  integrity: { scheme: "hmac-sha256-v1"; mac: string };
+}
+
+/** Persisted before exact provider/model rehydration existed. These rows may
+ * continue in-process when their live registration exists, but restart
+ * recovery deliberately fails closed instead of guessing current settings. */
+export interface LegacyDelegatedRuntimeDescriptor {
   kind: "delegated-op";
   adapter: "lane-default" | "codex";
   sessionId?: string;
 }
+
+export type DelegatedRuntimeDescriptor = ExactDelegatedRuntimeDescriptor | LegacyDelegatedRuntimeDescriptor;
 
 export type OpRuntimeDescriptor = AppBuildRuntimeDescriptor | DelegatedRuntimeDescriptor;
 

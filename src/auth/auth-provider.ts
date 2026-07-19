@@ -42,6 +42,9 @@ export interface CredentialResolution {
 export interface ResolveCredentialOpts {
   rejectOAuth?: boolean;
   configOpenAIKey?: string;
+  /** Restart recovery pins the source selected at admission. A missing value
+   * keeps normal precedence; a value resolves only that source. */
+  requiredSource?: CredentialSource;
 }
 
 /** Context for the sync, login-time credential presence check. */
@@ -77,24 +80,26 @@ function anthropicAuth(): AuthProvider {
   const ENV_KEY = "ANTHROPIC_API_KEY";
   return {
     async resolve(opts, store) {
+      const required = opts.requiredSource;
       const rejectOAuth = opts.rejectOAuth === true;
-      try {
+      if (!required || required === "oauth") try {
         const oauth = await getAnthropicApiKey();
         if (oauth) {
           const isOAuth = oauth.startsWith("oauth:");
-          if (!(rejectOAuth && isOAuth)) {
+          const source = isOAuth || oauth === "cli" ? "oauth" : "env";
+          if (source === (required ?? source) && !(rejectOAuth && isOAuth)) {
             return {
               provider: id,
               credential: oauth,
-              source: isOAuth || oauth === "cli" ? "oauth" : "env",
+              source,
             };
           }
         }
       } catch { /* fall through to secrets/env */ }
       const fromStore = store?.get(ENV_KEY);
-      if (fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
+      if ((!required || required === "secrets-store") && fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
       const fromEnv = process.env[ENV_KEY];
-      if (fromEnv) return { provider: id, credential: fromEnv, source: "env" };
+      if ((!required || required === "env") && fromEnv) return { provider: id, credential: fromEnv, source: "env" };
       return warnMissing(id);
     },
     hasCredential() {
@@ -108,6 +113,7 @@ function codexAuth(): AuthProvider {
   const id: ProviderId = "codex";
   return {
     async resolve(opts) {
+      if (opts.requiredSource && opts.requiredSource !== "oauth") return warnMissing(id);
       try {
         const key = await getApiKey(opts.configOpenAIKey);
         if (key) return { provider: id, credential: key, source: "oauth" };
@@ -125,17 +131,18 @@ function xaiAuth(envKey: string): AuthProvider {
   const id: ProviderId = "xai";
   return {
     async resolve(opts, store) {
+      const required = opts.requiredSource;
       const rejectOAuth = opts.rejectOAuth === true;
-      try {
+      if (!required || required === "oauth") try {
         const oauth = await getXaiApiKey();
         if (oauth && !rejectOAuth) {
           return { provider: id, credential: oauth, source: "oauth" };
         }
       } catch { /* fall through */ }
       const fromStore = store?.get(envKey);
-      if (fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
+      if ((!required || required === "secrets-store") && fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
       const fromEnv = process.env[envKey];
-      if (fromEnv) return { provider: id, credential: fromEnv, source: "env" };
+      if ((!required || required === "env") && fromEnv) return { provider: id, credential: fromEnv, source: "env" };
       return warnMissing(id);
     },
     hasCredential(ctx) {
@@ -149,13 +156,14 @@ function openaiAuth(envKey: string): AuthProvider {
   const id: ProviderId = "openai";
   return {
     async resolve(opts, store) {
-      if (opts.configOpenAIKey) {
+      const required = opts.requiredSource;
+      if ((!required || required === "config") && opts.configOpenAIKey) {
         return { provider: id, credential: opts.configOpenAIKey, source: "config" };
       }
       const fromStore = store?.get(envKey);
-      if (fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
+      if ((!required || required === "secrets-store") && fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
       const fromEnv = process.env[envKey];
-      if (fromEnv) return { provider: id, credential: fromEnv, source: "env" };
+      if ((!required || required === "env") && fromEnv) return { provider: id, credential: fromEnv, source: "env" };
       return warnMissing(id);
     },
     hasCredential(ctx) {
@@ -167,11 +175,12 @@ function openaiAuth(envKey: string): AuthProvider {
 /** Plain env-key providers (gemini, cerebras, ollama-cloud): store → env. */
 function envKeyAuth(id: ProviderId, envKey: string): AuthProvider {
   return {
-    async resolve(_opts, store) {
+    async resolve(opts, store) {
+      const required = opts.requiredSource;
       const fromStore = store?.get(envKey);
-      if (fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
+      if ((!required || required === "secrets-store") && fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
       const fromEnv = process.env[envKey];
-      if (fromEnv) return { provider: id, credential: fromEnv, source: "env" };
+      if ((!required || required === "env") && fromEnv) return { provider: id, credential: fromEnv, source: "env" };
       return warnMissing(id);
     },
     hasCredential(ctx) {
@@ -183,7 +192,8 @@ function envKeyAuth(id: ProviderId, envKey: string): AuthProvider {
 /** Custom provider: secrets store ONLY — no env fallback. */
 function secretsOnlyAuth(id: ProviderId, envKey: string): AuthProvider {
   return {
-    async resolve(_opts, store) {
+    async resolve(opts, store) {
+      if (opts.requiredSource && opts.requiredSource !== "secrets-store") return warnMissing(id);
       const fromStore = store?.get(envKey);
       if (fromStore) return { provider: id, credential: fromStore, source: "secrets-store" };
       return warnMissing(id);
@@ -197,7 +207,8 @@ function secretsOnlyAuth(id: ProviderId, envKey: string): AuthProvider {
 /** Keyless local provider (Ollama): fixed sentinel, always present. */
 function sentinelAuth(id: ProviderId, value: string): AuthProvider {
   return {
-    async resolve() {
+    async resolve(opts) {
+      if (opts.requiredSource && opts.requiredSource !== "sentinel") return warnMissing(id);
       return { provider: id, credential: value, source: "sentinel" };
     },
     hasCredential() {

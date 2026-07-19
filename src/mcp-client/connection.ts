@@ -9,7 +9,7 @@ import { killProcessGroup, killProcessTree } from "../process-tree-kill.js";
 import type { ToolResult } from "../types.js";
 import { type MCPExecutionMode, type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
-import { assessMcpManifest } from "./manifest.js";
+import { assessMcpManifest, mcpRuntimeSourceFingerprint } from "./manifest.js";
 import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT, ENV_ALLOWLIST } from "./env-credential-patterns.js";
 import { buildWindowsMcpSpawn } from "./windows-spawn.js";
 
@@ -385,6 +385,7 @@ export class MCPConnection {
   getTools(): MCPTool[] {
     return this.tools;
   }
+  get sourceFingerprint(): string { return mcpRuntimeSourceFingerprint(this.serverName, this.trustConfig, this.config); }
 
   disconnect(): void {
     this.rejectPending(new Error("Disconnecting"));

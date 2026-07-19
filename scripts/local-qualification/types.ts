@@ -66,13 +66,13 @@ export interface CompactionResult {
 
 export interface QualificationDriver {
   readonly model: string;
-  forbiddenPullRequests(): number;
-  start(): Promise<void>;
-  status(): Promise<RuntimeStatus>;
-  certify(runtimeId: string): Promise<CertificationResult>;
-  chat(kind: "baseline" | "workspace-read" | "history" | "continuity"): Promise<ChatResult>;
-  compact(): Promise<CompactionResult>;
-  persistedSummary(): Promise<{ persisted: boolean; containsMarker: boolean }>;
-  restart(): Promise<void>;
-  cleanup(): Promise<void>;
+  forbiddenRequests(): number;
+  start(signal: AbortSignal): Promise<void>;
+  status(signal: AbortSignal): Promise<RuntimeStatus>;
+  certify(runtimeId: string, signal: AbortSignal): Promise<CertificationResult>;
+  chat(kind: "baseline" | "workspace-read" | "history" | "continuity", signal: AbortSignal): Promise<ChatResult>;
+  compact(signal: AbortSignal): Promise<CompactionResult>;
+  persistedSummary(signal: AbortSignal): Promise<{ persisted: boolean; containsMarker: boolean }>;
+  restart(signal: AbortSignal): Promise<void>;
+  cleanup(signal: AbortSignal): Promise<void>;
 }

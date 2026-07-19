@@ -1,12 +1,24 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:http";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { killProcessTree } from "../../src/process-tree-kill.js";
 import { qualificationChildEnv } from "./child-env.js";
+import { chatEvidence, MARKER, qualificationPrompt, READ_NONCE, readSse, type QualificationChatKind } from "./chat-evidence.js";
+import {
+  delayWithSignal,
+  freePort,
+  requestSignal,
+  throwIfAborted,
+  waitForBarrier,
+  type QualificationLifecycleOptions,
+} from "./lifecycle-helpers.js";
+import {
+  startQualificationProxy,
+  type QualificationProxy,
+  type QualificationProxyCounters,
+} from "./qualification-proxy.js";
 
 import type {
   CertificationResult,
@@ -16,20 +28,7 @@ import type {
   RuntimeStatus,
 } from "./types.js";
 
-const MARKER = "LAX_QUALIFICATION_CONTINUITY_7F31";
-const READ_NONCE = "LAX_QUALIFICATION_READ_8C42";
 const REQUEST_TIMEOUT_MS = 180_000;
-const FORBIDDEN_CONTROL_EVENTS = new Set([
-  "approval_requested",
-  "approval_resolved",
-  "approval_timeout",
-  "secret_request",
-  "secrets_request",
-]);
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection", "content-length", "host", "keep-alive", "proxy-authenticate",
-  "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade",
-]);
 
 interface LocalRuntimePayload {
   runtimes?: Array<{
@@ -39,31 +38,12 @@ interface LocalRuntimePayload {
   }>;
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
-}
-
-async function freePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const server = createNetServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      server.close((error) => error ? reject(error) : resolvePort(port));
-    });
-  });
-}
-
-function isCertificationBody(body: Buffer): boolean {
-  const value = body.toString("utf8");
-  return value.includes("LAX_CERT_")
-    || value.includes("lax_certification_probe")
-    || value.includes('"name":"certification"');
-}
-
-function isCompactionBody(body: Buffer): boolean {
-  return body.toString("utf8").includes("Conversation segment to summarize");
+export interface RealQualificationDriverOptions extends QualificationLifecycleOptions {
+  onOwnedRoot?(path: string): void;
+  onProxyUrl?(url: string): void;
+  onForbiddenRoute?(request: string): void;
+  childStdio?: "ignore" | "inherit";
+  tsxImport?: string;
 }
 
 export class RealQualificationDriver implements QualificationDriver {
@@ -75,21 +55,26 @@ export class RealQualificationDriver implements QualificationDriver {
   private readonly workspace: string;
   private readonly token = randomUUID().replaceAll("-", "");
   private readonly sessionId = `qualification-${randomUUID()}`;
-  private proxy: Server | null = null;
+  private proxy: QualificationProxy | null = null;
   private child: ChildProcess | null = null;
   private proxyUrl = "";
   private laxUrl = "";
-  private certificationCalls = 0;
-  private backgroundRequests = 0;
-  private pullRequests = 0;
+  private readonly counters: QualificationProxyCounters = { certification: 0, background: 0, forbidden: 0 };
   private expectCertificationRestore = false;
-  private readonly onProxyUrl?: (url: string) => void;
+  private readonly options: RealQualificationDriverOptions;
+  private closing = false;
+  private generation = 0;
+  private lifecycleTail: Promise<void> = Promise.resolve();
+  private lifecycleAbort: AbortController | null = null;
+  private cleanupPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private restartPromise: Promise<void> | null = null;
 
   constructor(
     endpoint: string,
     model: string,
     repoRoot = resolve("."),
-    options: { onOwnedRoot?(path: string): void; onProxyUrl?(url: string): void } = {},
+    options: RealQualificationDriverOptions = {},
   ) {
     this.upstream = new URL(endpoint);
     const host = this.upstream.hostname.toLowerCase();
@@ -101,28 +86,48 @@ export class RealQualificationDriver implements QualificationDriver {
     this.repoRoot = repoRoot;
     this.root = mkdtempSync(join(tmpdir(), "lax-local-qualification-"));
     options.onOwnedRoot?.(this.root);
-    this.onProxyUrl = options.onProxyUrl;
+    this.options = options;
     this.dataDir = join(this.root, "data");
     this.workspace = join(this.root, "workspace");
   }
 
-  async start(): Promise<void> {
-    mkdirSync(this.dataDir, { recursive: true });
-    mkdirSync(this.workspace, { recursive: true });
-    writeFileSync(join(this.workspace, "qualification-note.txt"), `${READ_NONCE}\n`, "utf8");
-    await this.startProxy();
-    await this.startLax();
+  async start(signal: AbortSignal): Promise<void> {
+    await this.serializeLifecycle(async () => {
+      const { generation, signal: lifecycleSignal } = this.beginLifecycle(signal);
+      try {
+        await waitForBarrier(this.options, "write", lifecycleSignal);
+        this.assertOpen(generation, lifecycleSignal);
+        mkdirSync(this.dataDir, { recursive: true });
+        mkdirSync(this.workspace, { recursive: true });
+        writeFileSync(join(this.workspace, "qualification-note.txt"), `${READ_NONCE}\n`, "utf8");
+        await waitForBarrier(this.options, "proxy-bind", lifecycleSignal);
+        this.assertOpen(generation, lifecycleSignal);
+        const proxy = await startQualificationProxy(
+          this.upstream, this.counters, lifecycleSignal, this.options.onForbiddenRoute,
+        );
+        if (!this.isOpen(generation, lifecycleSignal)) {
+          await proxy.close();
+          this.assertOpen(generation, lifecycleSignal);
+        }
+        this.proxy = proxy;
+        this.proxyUrl = proxy.url;
+        this.options.onProxyUrl?.(proxy.url);
+        await this.startLax(generation, lifecycleSignal);
+      } finally {
+        this.endLifecycle();
+      }
+    });
   }
 
-  forbiddenPullRequests(): number {
-    return this.pullRequests;
+  forbiddenRequests(): number {
+    return this.counters.forbidden;
   }
 
-  async status(): Promise<RuntimeStatus> {
-    const deadline = Date.now() + 30_000;
+  async status(signal: AbortSignal): Promise<RuntimeStatus> {
+    const deadline = Date.now() + 60_000;
     let last: RuntimeStatus | null = null;
     do {
-      const payload = await this.json<LocalRuntimePayload>("GET", "/api/local-runtimes");
+      const payload = await this.json<LocalRuntimePayload>("GET", "/api/local-runtimes", undefined, signal);
       for (const runtime of payload.runtimes ?? []) {
         if (runtime.kind !== "ollama") continue;
         const model = runtime.models?.find((candidate) => candidate.id === this.model);
@@ -132,22 +137,22 @@ export class RealQualificationDriver implements QualificationDriver {
             verified: model.certification?.status === "verified",
             runtimeId: runtime.id,
             digest: model.digest ?? null,
-            certificationCalls: this.certificationCalls,
+            certificationCalls: this.counters.certification,
           };
           if (!this.expectCertificationRestore || last.verified) return last;
         }
       }
-      await delay(250);
+      await delayWithSignal(250, signal);
     } while (Date.now() < deadline);
-    return last ?? { found: false, verified: false, runtimeId: "", digest: null, certificationCalls: this.certificationCalls };
+    return last ?? { found: false, verified: false, runtimeId: "", digest: null, certificationCalls: this.counters.certification };
   }
 
-  async certify(runtimeId: string): Promise<CertificationResult> {
+  async certify(runtimeId: string, signal: AbortSignal): Promise<CertificationResult> {
     const guarded = await fetch(`${this.laxUrl}/api/local-runtimes/certify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ runtimeId, model: this.model }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: requestSignal(signal, REQUEST_TIMEOUT_MS),
     });
     const result = await this.json<{
       ok: boolean;
@@ -155,7 +160,7 @@ export class RealQualificationDriver implements QualificationDriver {
       scenarioCount: number;
       callCount: number;
       scenarios?: Array<{ id?: unknown }>;
-    }>("POST", "/api/local-runtimes/certify", { runtimeId, model: this.model });
+    }>("POST", "/api/local-runtimes/certify", { runtimeId, model: this.model }, signal);
     return {
       ...result,
       operatorGuarded: guarded.status === 401 || guarded.status === 403,
@@ -163,51 +168,28 @@ export class RealQualificationDriver implements QualificationDriver {
     };
   }
 
-  async chat(kind: "baseline" | "workspace-read" | "history" | "continuity"): Promise<ChatResult> {
-    const prompts = {
-      baseline: `Remember ${MARKER}. Reply with exactly READY.`,
-      "workspace-read": `Use the read tool on workspace/qualification-note.txt. Then reply with exactly ${READ_NONCE}.`,
-      history: `Keep remembering ${MARKER}. Reply with exactly ACK.`,
-      continuity: `From the earlier compacted context, reply with the exact continuity marker and nothing else.`,
-    } as const;
+  async chat(kind: QualificationChatKind, signal: AbortSignal): Promise<ChatResult> {
     const response = await fetch(`${this.laxUrl}/api/chat`, {
       method: "POST",
       headers: this.headers(),
-      body: JSON.stringify({ sessionId: this.sessionId, message: prompts[kind], attachments: [] }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      body: JSON.stringify({ sessionId: this.sessionId, message: qualificationPrompt(kind), attachments: [] }),
+      signal: requestSignal(signal, REQUEST_TIMEOUT_MS),
     });
     if (!response.ok || !response.body) throw new Error(`chat failed: HTTP ${response.status}`);
-    const events = await readSse(response);
-    const text = events.filter((event) => event.type === "stream" && typeof event.delta === "string")
-      .map((event) => String(event.delta)).join("");
-    const starts = events.filter((event) => event.type === "tool_start" && event.toolName === "read");
-    const ends = events.filter((event) => event.type === "tool_end" && event.toolName === "read");
-    const lifecycle = starts.length === 1 && ends.length === 1
-      && typeof starts[0].toolCallId === "string"
-      && starts[0].toolCallId === ends[0].toolCallId
-      && ends[0].allowed === true
-      && ends[0].status === "ok";
-    return {
-      done: events.some((event) => event.type === "done"),
-      hasText: text.trim().length > 0,
-      errorEvents: events.filter((event) => event.type === "error").length,
-      safeReadLifecycle: lifecycle,
-      forbiddenControlEvents: events.filter((event) => FORBIDDEN_CONTROL_EVENTS.has(String(event.type))).length,
-      readNonceSeen: text.includes(READ_NONCE),
-      continuityMarkerSeen: text.includes(MARKER),
-    };
+    return chatEvidence(await readSse(response));
   }
 
-  async compact(): Promise<CompactionResult> {
-    const before = this.backgroundRequests;
+  async compact(signal: AbortSignal): Promise<CompactionResult> {
+    throwIfAborted(signal);
+    const before = this.counters.background;
     const persistedMessageCount = this.readSessionRows().filter((row) => row.kind === "msg").length;
-    const response = await this.json<{ ok: boolean }>("POST", "/api/compact", { sessionId: this.sessionId });
+    const response = await this.json<{ ok: boolean }>("POST", "/api/compact", { sessionId: this.sessionId }, signal);
     const rows = this.readSessionRows();
     const summary = this.readPersistedSummary(rows);
     const leadingConversationRow = rows.find((row) => row.kind !== "meta");
     return {
       ok: response.ok,
-      backgroundRequests: this.backgroundRequests - before,
+      backgroundRequests: this.counters.background - before,
       persistedMessageCount,
       persistedSummary: summary !== null,
       summaryIsLeading: leadingConversationRow?.kind === "summary"
@@ -217,79 +199,57 @@ export class RealQualificationDriver implements QualificationDriver {
     };
   }
 
-  async persistedSummary(): Promise<{ persisted: boolean; containsMarker: boolean }> {
+  async persistedSummary(signal: AbortSignal): Promise<{ persisted: boolean; containsMarker: boolean }> {
+    throwIfAborted(signal);
     const summary = this.readPersistedSummary();
     return { persisted: summary !== null, containsMarker: summary?.includes(MARKER) ?? false };
   }
 
-  async restart(): Promise<void> {
-    await this.stopChild();
-    this.expectCertificationRestore = true;
-    await this.startLax();
-  }
-
-  async cleanup(): Promise<void> {
-    let failed = false;
-    try { await this.stopChild(); } catch { failed = true; }
-    const proxy = this.proxy;
-    this.proxy = null;
-    if (proxy) {
-      proxy.closeAllConnections();
-      try { await new Promise<void>((resolveClose) => proxy.close(() => resolveClose())); }
-      catch { failed = true; }
-    }
-    try { rmSync(this.root, { recursive: true, force: true }); } catch { failed = true; }
-    if (failed) throw new Error("isolated qualification cleanup failed");
-  }
-
-  private async startProxy(): Promise<void> {
-    this.proxy = createServer(async (request, response) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const body = Buffer.concat(chunks);
-      const pathname = new URL(request.url ?? "/", this.upstream).pathname;
-      if (pathname === "/api/pull") {
-        this.pullRequests += 1;
-        response.writeHead(403, { "Content-Type": "application/json" });
-        response.end('{"error":"forbidden"}');
-        return;
-      }
-      if (request.method === "POST" && pathname.endsWith("/v1/chat/completions")) {
-        if (isCertificationBody(body)) this.certificationCalls += 1;
-      }
-      if (request.method === "POST" && pathname.endsWith("/api/generate") && isCompactionBody(body)) {
-        this.backgroundRequests += 1;
-      }
+  async restart(signal: AbortSignal): Promise<void> {
+    if (this.restartPromise) return this.restartPromise;
+    this.restartPromise = this.serializeLifecycle(async () => {
+      const { generation, signal: lifecycleSignal } = this.beginLifecycle(signal);
       try {
-        const target = new URL(request.url ?? "/", this.upstream);
-        const upstream = await fetch(target, {
-          method: request.method,
-          headers: Object.fromEntries(Object.entries(request.headers).filter(
-            ([name, value]) => typeof value === "string" && !HOP_BY_HOP_HEADERS.has(name.toLowerCase()),
-          )) as Record<string, string>,
-          body: body.length > 0 ? body : undefined,
-          redirect: "manual",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-        response.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
-        response.end(Buffer.from(await upstream.arrayBuffer()));
-      } catch {
-        response.writeHead(502).end();
+        await waitForBarrier(this.options, "restart", lifecycleSignal);
+        await this.stopChild(lifecycleSignal, true);
+        this.assertOpen(generation, lifecycleSignal);
+        this.expectCertificationRestore = true;
+        await this.startLax(generation, lifecycleSignal);
+      } finally {
+        this.endLifecycle();
       }
-    });
-    await new Promise<void>((resolveListen, reject) => {
-      this.proxy!.once("error", reject);
-      this.proxy!.listen(0, "127.0.0.1", resolveListen);
-    });
-    const address = this.proxy.address();
-    const port = typeof address === "object" && address ? address.port : 0;
-    this.proxyUrl = `http://127.0.0.1:${port}`;
-    this.onProxyUrl?.(this.proxyUrl);
+    }).finally(() => { this.restartPromise = null; });
+    return this.restartPromise;
   }
 
-  private async startLax(): Promise<void> {
-    const port = await freePort();
+  cleanup(_signal: AbortSignal): Promise<void> {
+    if (this.cleanupPromise) return this.cleanupPromise;
+    this.closing = true;
+    this.generation += 1;
+    this.lifecycleAbort?.abort(new Error("qualification cleanup started"));
+    this.cleanupPromise = this.serializeLifecycle(async () => {
+      let failed = false;
+      const neverAbort = new AbortController().signal;
+      try { await this.stopChild(neverAbort, false); } catch { failed = true; }
+      const proxy = this.proxy;
+      this.proxy = null;
+      if (proxy) {
+        try { await proxy.close(); } catch { failed = true; }
+      }
+      try { rmSync(this.root, { recursive: true, force: true }); } catch { failed = true; }
+      if (failed) throw new Error("isolated qualification cleanup failed");
+    });
+    return this.cleanupPromise;
+  }
+
+  private async startLax(generation: number, signal: AbortSignal): Promise<void> {
+    await waitForBarrier(this.options, "free-port", signal);
+    this.assertOpen(generation, signal);
+    const port = await freePort(signal);
+    this.assertOpen(generation, signal);
     this.laxUrl = `http://127.0.0.1:${port}`;
+    await waitForBarrier(this.options, "write", signal);
+    this.assertOpen(generation, signal);
     writeFileSync(join(this.dataDir, "config.json"), JSON.stringify({
       authToken: this.token,
       port,
@@ -298,10 +258,12 @@ export class RealQualificationDriver implements QualificationDriver {
       localOnlyMode: true,
     }), "utf8");
     writeFileSync(join(this.dataDir, "settings.json"), JSON.stringify({ provider: "local", model: this.model }), "utf8");
-    this.child = spawn(process.execPath, ["--import=tsx", "src/index.ts"], {
+    await waitForBarrier(this.options, "spawn", signal);
+    this.assertOpen(generation, signal);
+    const child = spawn(process.execPath, [`--import=${this.options.tsxImport ?? "tsx"}`, "src/index.ts"], {
       cwd: this.repoRoot,
       windowsHide: true,
-      stdio: "ignore",
+      stdio: this.options.childStdio ?? "ignore",
       env: qualificationChildEnv(process.env, {
         HOME: this.root,
         USERPROFILE: this.root,
@@ -321,46 +283,91 @@ export class RealQualificationDriver implements QualificationDriver {
         LAX_LLM_OPERATIONAL_CLAIM: "0",
       }),
     });
-    await this.waitForHealth();
+    this.child = child;
+    this.options.onChildSpawn?.(child.pid ?? 0);
+    this.assertOpen(generation, signal);
+    await waitForBarrier(this.options, "health", signal);
+    await this.waitForHealth(generation, signal);
+    this.assertOpen(generation, signal);
   }
 
-  private async waitForHealth(): Promise<void> {
+  private async waitForHealth(generation: number, signal: AbortSignal): Promise<void> {
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      if (this.child?.exitCode !== null) throw new Error("isolated LAX process exited during boot");
+      this.assertOpen(generation, signal);
+      if (!this.child || this.child.exitCode !== null) throw new Error("isolated LAX process exited during boot");
       try {
-        const response = await fetch(`${this.laxUrl}/api/health`, { headers: this.headers(), signal: AbortSignal.timeout(1_000) });
+        const response = await fetch(`${this.laxUrl}/api/health`, {
+          headers: this.headers(),
+          signal: requestSignal(signal, 1_000),
+        });
         if (response.ok) return;
-      } catch { /* keep polling */ }
-      await delay(250);
+      } catch {
+        throwIfAborted(signal);
+      }
+      await delayWithSignal(250, signal);
     }
     throw new Error("isolated LAX health check timed out");
   }
 
-  private async stopChild(): Promise<void> {
-    if (!this.child || this.child.exitCode !== null) { this.child = null; return; }
-    const child = this.child;
-    const exited = new Promise<boolean>((resolveExit) => child.once("exit", () => resolveExit(true)));
-    killProcessTree(child, "SIGTERM");
-    const graceful = await Promise.race([exited, delay(5_000).then(() => false)]);
-    if (!graceful && child.exitCode === null) {
-      killProcessTree(child, "SIGKILL");
-      const forced = await Promise.race([exited, delay(5_000).then(() => false)]);
-      if (!forced && child.exitCode === null) throw new Error("isolated LAX process did not exit");
-    }
-    this.child = null;
+  private stopChild(signal: AbortSignal, useBarrier: boolean): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopPromise = (async () => {
+      if (useBarrier) await waitForBarrier(this.options, "stop", signal);
+      const child = this.child;
+      if (!child || child.exitCode !== null) { this.child = null; return; }
+      const exited = new Promise<boolean>((resolveExit) => child.once("exit", () => resolveExit(true)));
+      killProcessTree(child, "SIGTERM");
+      const graceful = await Promise.race([exited, delayWithSignal(5_000, signal).then(() => false)]);
+      if (!graceful && child.exitCode === null) {
+        killProcessTree(child, "SIGKILL");
+        const forced = await Promise.race([exited, delayWithSignal(5_000, signal).then(() => false)]);
+        if (!forced && child.exitCode === null) throw new Error("isolated LAX process did not exit");
+      }
+      if (this.child === child) this.child = null;
+    })().finally(() => { this.stopPromise = null; });
+    return this.stopPromise;
+  }
+
+  private serializeLifecycle(run: () => Promise<void>): Promise<void> {
+    const task = this.lifecycleTail.then(run, run);
+    this.lifecycleTail = task.catch(() => {});
+    return task;
+  }
+
+  private beginLifecycle(callerSignal: AbortSignal): { generation: number; signal: AbortSignal } {
+    if (this.closing) throw new Error("qualification driver is closing");
+    const controller = new AbortController();
+    this.lifecycleAbort = controller;
+    const signal = AbortSignal.any([callerSignal, controller.signal]);
+    const generation = this.generation;
+    this.assertOpen(generation, signal);
+    return { generation, signal };
+  }
+
+  private endLifecycle(): void {
+    this.lifecycleAbort = null;
+  }
+
+  private isOpen(generation: number, signal: AbortSignal): boolean {
+    return !this.closing && this.generation === generation && !signal.aborted;
+  }
+
+  private assertOpen(generation: number, signal: AbortSignal): void {
+    throwIfAborted(signal);
+    if (!this.isOpen(generation, signal)) throw new Error("qualification lifecycle generation closed");
   }
 
   private headers(): Record<string, string> {
     return { "Content-Type": "application/json", Authorization: `Bearer ${this.token}` };
   }
 
-  private async json<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async json<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<T> {
     const response = await fetch(`${this.laxUrl}${path}`, {
       method,
       headers: this.headers(),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: requestSignal(signal, REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`${method} ${path} failed: HTTP ${response.status}`);
     return await response.json() as T;
@@ -379,16 +386,4 @@ export class RealQualificationDriver implements QualificationDriver {
   private readPersistedSummary(rows = this.readSessionRows()): string | null {
     return [...rows].reverse().find((row) => row.kind === "summary")?.content ?? null;
   }
-}
-
-async function readSse(response: Response): Promise<Array<Record<string, unknown>>> {
-  const text = await response.text();
-  const events: Array<Record<string, unknown>> = [];
-  for (const frame of text.split(/\r?\n\r?\n/)) {
-    for (const line of frame.split(/\r?\n/)) {
-      if (!line.startsWith("data: ")) continue;
-      try { events.push(JSON.parse(line.slice(6)) as Record<string, unknown>); } catch { /* ignore malformed frame */ }
-    }
-  }
-  return events;
 }

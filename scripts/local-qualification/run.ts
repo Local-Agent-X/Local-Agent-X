@@ -41,29 +41,38 @@ function requireCondition(value: unknown, message: string): asserts value {
 class QualificationTimeoutError extends Error {}
 class QualificationAbortError extends Error {}
 
-function bounded<T>(work: Promise<T>, timeoutMs: number, signal?: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      fn();
-    };
-    const onAbort = () => finish(() => reject(new QualificationAbortError()));
-    const timer = setTimeout(
-      () => finish(() => reject(new QualificationTimeoutError())),
-      Math.max(1, timeoutMs),
-    );
-    timer.unref?.();
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-    work.then(
-      (value) => finish(() => resolve(value)),
-      (error: unknown) => finish(() => reject(error)),
-    );
-  });
+async function bounded<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  let interrupted: "timeout" | "aborted" | null = null;
+  const abortFromCaller = () => {
+    interrupted = "aborted";
+    controller.abort(new QualificationAbortError());
+  };
+  const timer = setTimeout(() => {
+    interrupted = "timeout";
+    controller.abort(new QualificationTimeoutError());
+  }, Math.max(1, timeoutMs));
+  timer.unref?.();
+  callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  if (callerSignal?.aborted) abortFromCaller();
+  let value: T | undefined;
+  let failure: unknown;
+  try {
+    value = await work(controller.signal);
+  } catch (error) {
+    failure = error;
+  } finally {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+  }
+  if (interrupted === "timeout") throw new QualificationTimeoutError();
+  if (interrupted === "aborted") throw new QualificationAbortError();
+  if (failure !== undefined) throw failure;
+  return value as T;
 }
 
 export async function runQualification(
@@ -76,14 +85,14 @@ export async function runQualification(
   const stageTimeoutMs = options.stageTimeoutMs ?? 6 * 60_000;
   const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 15_000;
 
-  const stage = async <T>(name: QualificationStageName, run: () => Promise<T>): Promise<T> => {
+  const stage = async <T>(name: QualificationStageName, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     const started = Date.now();
     try {
-      const value = await bounded(Promise.resolve().then(async () => {
-        const result = await run();
-        requireCondition(driver.forbiddenPullRequests() === 0, "forbidden model pull traffic occurred");
+      const value = await bounded(async (signal) => {
+        const result = await run(signal);
+        requireCondition(driver.forbiddenRequests() === 0, "forbidden local-runtime traffic occurred");
         return result;
-      }), stageTimeoutMs, options.signal);
+      }, stageTimeoutMs, options.signal);
       stages.push({ name, ok: true, durationMs: Date.now() - started });
       return value;
     } catch (error) {
@@ -100,10 +109,10 @@ export async function runQualification(
   };
 
   try {
-    await stage("isolated_boot", () => driver.start());
+    await stage("isolated_boot", (signal) => driver.start(signal));
 
-    const initial = await stage("passive_pre_certification", async () => {
-      const status = await driver.status();
+    const initial = await stage("passive_pre_certification", async (signal) => {
+      const status = await driver.status(signal);
       requireCondition(status.found, "configured Ollama model was not discovered");
       requireCondition(!status.verified, "model was behaviorally certified before operator POST");
       requireCondition(status.certificationCalls === 0, "automatic certification traffic occurred before operator POST");
@@ -111,8 +120,8 @@ export async function runQualification(
       return status;
     });
 
-    await stage("operator_certification", async () => {
-      const result = await driver.certify(initial.runtimeId);
+    await stage("operator_certification", async (signal) => {
+      const result = await driver.certify(initial.runtimeId, signal);
       requireCondition(result.operatorGuarded, "certification POST was not operator guarded");
       requireCondition(result.ok, "operator certification failed");
       requireCondition(result.passedCount === 5 && result.scenarioCount === 5, "operator certification was not exactly 5/5");
@@ -124,33 +133,33 @@ export async function runQualification(
       );
     });
 
-    await stage("status_reads", async () => {
-      const first = await driver.status();
-      const second = await driver.status();
+    await stage("status_reads", async (signal) => {
+      const first = await driver.status(signal);
+      const second = await driver.status(signal);
       requireCondition(first.verified && second.verified, "certification status did not remain verified");
       requireCondition(first.certificationCalls === 5 && second.certificationCalls === 5, "status GET triggered certification traffic");
     });
 
-    await stage("chat_sse", async () => {
-      const result = await driver.chat("baseline");
+    await stage("chat_sse", async (signal) => {
+      const result = await driver.chat("baseline", signal);
       requireCondition(result.done && result.hasText && result.errorEvents === 0, "real chat SSE did not complete cleanly with text");
     });
 
-    await stage("workspace_read", async () => {
-      const result = await driver.chat("workspace-read");
+    await stage("workspace_read", async (signal) => {
+      const result = await driver.chat("workspace-read", signal);
       requireCondition(result.done, "workspace-read turn did not complete");
       requireCondition(result.errorEvents === 0, "workspace-read turn emitted an error");
       requireCondition(result.safeReadLifecycle, "workspace read did not emit a matching allowed tool lifecycle");
       requireCondition(result.forbiddenControlEvents === 0, "safe workspace read emitted a control request");
       requireCondition(result.readNonceSeen, "workspace read did not continue with nonce evidence");
       for (let index = 0; index < 3; index += 1) {
-        const history = await driver.chat("history");
+        const history = await driver.chat("history", signal);
         requireCondition(history.done && history.errorEvents === 0, "history turn did not complete cleanly");
       }
     });
 
-    await stage("compaction", async () => {
-      const result = await driver.compact();
+    await stage("compaction", async (signal) => {
+      const result = await driver.compact(signal);
       requireCondition(result.ok, "manual compaction failed");
       requireCondition(result.backgroundRequests === 1, "compaction did not issue exactly one background request");
       requireCondition(result.persistedMessageCount >= 10, "fewer than ten messages were persisted before compaction");
@@ -160,24 +169,24 @@ export async function runQualification(
       );
     });
 
-    await stage("restart_restore", async () => {
-      await driver.restart();
-      const status = await driver.status();
+    await stage("restart_restore", async (signal) => {
+      await driver.restart(signal);
+      const status = await driver.status(signal);
       requireCondition(status.verified, "exact certification did not restore after restart");
       requireCondition(status.certificationCalls === 5, "restart restore reran behavioral scenarios");
-      const compacted = await driver.persistedSummary();
+      const compacted = await driver.persistedSummary(signal);
       requireCondition(compacted.persisted && compacted.containsMarker, "persisted compacted context did not survive restart");
     });
 
-    await stage("continuity", async () => {
-      const result = await driver.chat("continuity");
+    await stage("continuity", async (signal) => {
+      const result = await driver.chat("continuity", signal);
       requireCondition(result.done && result.continuityMarkerSeen, "final chat did not continue from compacted context");
     });
   } catch {
     // The failing stage already owns the sanitized diagnostic.
   } finally {
     try {
-      await bounded(Promise.resolve().then(() => driver.cleanup()), cleanupTimeoutMs);
+      await bounded((signal) => driver.cleanup(signal), cleanupTimeoutMs);
       cleanupOk = true;
     } catch {
       cleanupOk = false;

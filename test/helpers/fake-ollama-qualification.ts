@@ -77,10 +77,10 @@ function contentText(message: WireMessage): string {
 export class FakeOllamaQualificationService {
   readonly model = "qualification-fake:1b";
   readonly digest = "sha256:qualification-fake";
-  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, pull: 0 };
+  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, forbidden: 0 };
+  readonly received: string[] = [];
   private server: Server | null = null;
   private baseUrl = "";
-
   async start(): Promise<string> {
     this.server = createServer((req, res) => { void this.handle(req, res); });
     await new Promise<void>((resolve, reject) => {
@@ -100,6 +100,11 @@ export class FakeOllamaQualificationService {
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.received.push(`${req.method ?? ""} ${req.url ?? ""}`);
+    if (req.headers["x-qualification-test-redirect"] === "1") {
+      res.writeHead(307, { Location: "http://127.0.0.1:1/redirected" }).end();
+      return;
+    }
     const path = new URL(req.url ?? "/", this.baseUrl).pathname;
     if (req.method === "GET" && path === "/api/version") {
       this.counts.version += 1;
@@ -131,16 +136,13 @@ export class FakeOllamaQualificationService {
         response: `CONSTRAINTS:${marker}\nCURRENT_TASK_STATE:\n- Qualification continuity is active.`,
       });
     }
-    if (path === "/api/pull") {
-      this.counts.pull += 1;
-      return json(res, 418, { error: "proxy_forwarded_forbidden_pull" });
-    }
     if (req.method === "POST" && path === "/v1/chat/completions") {
       this.counts.completion += 1;
       const body = await bodyOf(req);
       return this.completion(body, res);
     }
-    json(res, 404, { error: "not_found" });
+    this.counts.forbidden += 1;
+    json(res, 418, { error: "proxy_forwarded_forbidden_route" });
   }
 
   private completion(body: CompletionBody, res: ServerResponse): void {

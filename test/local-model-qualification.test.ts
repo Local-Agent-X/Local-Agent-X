@@ -61,14 +61,14 @@ class FakeDriver implements QualificationDriver {
     private readonly hangAt?: QualificationStageName | "cleanup",
   ) {}
 
-  forbiddenPullRequests(): number { return 0; }
+  forbiddenRequests(): number { return 0; }
 
-  async start(): Promise<void> { await this.gate("isolated_boot"); }
+  async start(signal: AbortSignal): Promise<void> { await this.gate("isolated_boot", signal); }
 
-  async status(): Promise<RuntimeStatus> {
+  async status(signal: AbortSignal): Promise<RuntimeStatus> {
     await this.gate(!this.verified
       ? "passive_pre_certification"
-      : this.restarted ? "restart_restore" : "status_reads");
+      : this.restarted ? "restart_restore" : "status_reads", signal);
     return {
       found: true,
       verified: this.verified,
@@ -78,8 +78,8 @@ class FakeDriver implements QualificationDriver {
     };
   }
 
-  async certify(): Promise<CertificationResult> {
-    await this.gate("operator_certification");
+  async certify(_runtimeId: string, signal: AbortSignal): Promise<CertificationResult> {
+    await this.gate("operator_certification", signal);
     this.verified = true;
     this.certCalls = 5;
     return {
@@ -92,10 +92,10 @@ class FakeDriver implements QualificationDriver {
     };
   }
 
-  async chat(kind: "baseline" | "workspace-read" | "history" | "continuity"): Promise<ChatResult> {
-    if (kind === "baseline") await this.gate("chat_sse");
-    if (kind === "workspace-read") await this.gate("workspace_read");
-    if (kind === "continuity") await this.gate("continuity");
+  async chat(kind: "baseline" | "workspace-read" | "history" | "continuity", signal: AbortSignal): Promise<ChatResult> {
+    if (kind === "baseline") await this.gate("chat_sse", signal);
+    if (kind === "workspace-read") await this.gate("workspace_read", signal);
+    if (kind === "continuity") await this.gate("continuity", signal);
     return {
       done: true,
       hasText: true,
@@ -107,8 +107,8 @@ class FakeDriver implements QualificationDriver {
     };
   }
 
-  async compact(): Promise<CompactionResult> {
-    await this.gate("compaction");
+  async compact(signal: AbortSignal): Promise<CompactionResult> {
+    await this.gate("compaction", signal);
     return {
       ok: true,
       backgroundRequests: 1,
@@ -119,24 +119,32 @@ class FakeDriver implements QualificationDriver {
     };
   }
 
-  async persistedSummary(): Promise<{ persisted: boolean; containsMarker: boolean }> {
+  async persistedSummary(_signal: AbortSignal): Promise<{ persisted: boolean; containsMarker: boolean }> {
     return { persisted: true, containsMarker: true };
   }
 
-  async restart(): Promise<void> {
-    await this.gate("restart_restore");
+  async restart(signal: AbortSignal): Promise<void> {
+    await this.gate("restart_restore", signal);
     this.restarted = true;
   }
 
-  async cleanup(): Promise<void> {
+  async cleanup(signal: AbortSignal): Promise<void> {
     this.cleanupCalls += 1;
-    if (this.hangAt === "cleanup") await new Promise<void>(() => {});
+    if (this.hangAt === "cleanup") await this.waitForAbort(signal);
     if (this.failAt === "cleanup") throw new Error("sensitive cleanup detail");
   }
 
-  private async gate(stage: QualificationStageName): Promise<void> {
-    if (this.hangAt === stage) await new Promise<void>(() => {});
+  private async gate(stage: QualificationStageName, signal: AbortSignal): Promise<void> {
+    if (this.hangAt === stage) await this.waitForAbort(signal);
     if (this.failAt === stage) throw new Error("sensitive stage detail");
+  }
+
+  private waitForAbort(signal: AbortSignal): Promise<void> {
+    return new Promise((_, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    });
   }
 }
 
@@ -144,13 +152,13 @@ class ObservedRealDriver extends RealQualificationDriver {
   lastChat: ChatResult | null = null;
   lastCompaction: CompactionResult | null = null;
 
-  override async chat(kind: "baseline" | "workspace-read" | "history" | "continuity"): Promise<ChatResult> {
-    this.lastChat = await super.chat(kind);
+  override async chat(kind: "baseline" | "workspace-read" | "history" | "continuity", signal: AbortSignal): Promise<ChatResult> {
+    this.lastChat = await super.chat(kind, signal);
     return this.lastChat;
   }
 
-  override async compact(): Promise<CompactionResult> {
-    this.lastCompaction = await super.compact();
+  override async compact(signal: AbortSignal): Promise<CompactionResult> {
+    this.lastCompaction = await super.compact(signal);
     return this.lastCompaction;
   }
 }
@@ -303,37 +311,6 @@ describe("local model qualification workflow", () => {
     }
   });
 
-  it("rejects and counts pull traffic without forwarding it to Ollama", async () => {
-    const surface = repoSurface();
-    const service = new FakeOllamaQualificationService();
-    const endpoint = await service.start();
-    let proxyUrl = "";
-    class PullingDriver extends RealQualificationDriver {
-      override async start(): Promise<void> {
-        await super.start();
-        await fetch(`${proxyUrl}/api/pull?stream=true`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: this.model, stream: true }),
-        });
-      }
-    }
-    try {
-      const driver = new PullingDriver(endpoint, service.model, resolve("."), {
-        onProxyUrl: (url) => { proxyUrl = url; },
-      });
-      const scorecard = await runQualification(driver, { stageTimeoutMs: 90_000 });
-      expect(scorecard.ok).toBe(false);
-      expect(scorecard.stages[0]).toMatchObject({ name: "isolated_boot", ok: false, failure: "failed" });
-      expect(driver.forbiddenPullRequests()).toBe(1);
-      expect(service.counts.pull).toBe(0);
-      expect(JSON.stringify(scorecard)).not.toMatch(/pull\?|proxy_forwarded|name.*stream/i);
-      expect(repoSurface()).toEqual(surface);
-    } finally {
-      await service.close();
-    }
-  }, 180_000);
-
   it("qualifies the actual product routes against a deterministic fake Ollama service", async () => {
     const surface = repoSurface();
     const service = new FakeOllamaQualificationService();
@@ -351,7 +328,7 @@ describe("local model qualification workflow", () => {
       expect(scorecard.model.tag).toBe(service.model);
       expect(scorecard.cleanup.ok).toBe(true);
       expect(existsSync(ownedRoot)).toBe(false);
-      expect(service.counts.pull).toBe(0);
+      expect(service.counts.forbidden).toBe(0);
       expect(repoSurface()).toEqual(surface);
     } finally {
       await service.close();

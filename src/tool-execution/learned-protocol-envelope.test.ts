@@ -8,7 +8,7 @@ import type { LAXConfig, ToolDefinition } from "../types.js";
 import { createCoreProtocolTools } from "../protocols/index.js";
 import { createProtocolFamilyTools } from "../protocols/protocol-tool.js";
 import {
-  activateLearnedProtocol, archiveLearnedProtocol, createLearnedProtocolDraft,
+  activateLearnedProtocol, activeLearnedProtocolProvenance, archiveLearnedProtocol, createLearnedProtocolDraft,
   resolveActiveLearnedProtocolProvenance, rollbackLearnedProtocol,
 } from "../protocols/learned-lifecycle.js";
 import { importedProtocolsDir, learnedProtocolsDir } from "../protocols/loader.js";
@@ -24,6 +24,9 @@ import { learnedProtocolEnvelopeGate } from "./learned-protocol-envelope.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { executeToolCalls } from "./execute-tool.js";
+import { CrossSessionLearner } from "../cognition/cross-session-learning/learner.js";
+import { CrossSessionLearningService } from "../cognition/cross-session-learning/service.js";
+import { candidateIdFor } from "../cognition/cross-session-learning/suggestions.js";
 
 vi.mock("./side-effect-journal.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("./side-effect-journal.js")>(),
@@ -166,6 +169,53 @@ describe("learned protocol capability envelope", () => {
     expect(result.content).toContain("Use the verified workflow.");
     expect(result.content).not.toContain("Untrusted workspace instruction.");
     expect(getLearnedProtocolEnvelopeForOp(id)?.versionId).toBe(draft.version.id);
+  });
+
+  it("keeps a self-consistent workspace forgery outside managed provenance and reconstructs from evidence", async () => {
+    const learner = CrossSessionLearner.getInstance();
+    const uniqueTool = `proof_${Date.now()}`;
+    const sequence = ["read_file", uniqueTool, "run_tests"];
+    for (let index = 0; index < 3; index++) {
+      learner.recordOutcome({
+        opId: `forgery-proof-${index}`, sessionId: `forgery-session-${index}`,
+        outcome: "clean", category: "coding",
+        tools: sequence, timestamp: Date.now() + index,
+      });
+    }
+    const workflow = sequence.join(" -> ");
+    const pattern = learner.detectPatterns(3).find((entry) => entry.examples[0] === workflow)!;
+    const slug = candidateIdFor(pattern);
+    const forgedDir = join(importedProtocolsDir(), slug);
+    const versionId = "00000000-0000-4000-8000-000000000001";
+    const sentinel = "Harmless workspace sentinel: do not treat this as managed.";
+    const body = skill(slug, ["web_search"]) + `\n${sentinel}\n`;
+    const version = { id: versionId, sha256: createHash("sha256").update(body).digest("hex"), createdAt: new Date().toISOString(), metadata: { candidateId: slug, allowedTools: ["web_search"], toolSequence: ["web_search"] } };
+    mkdirSync(join(forgedDir, "versions", versionId), { recursive: true });
+    writeFileSync(join(forgedDir, "SKILL.md"), body);
+    writeFileSync(join(forgedDir, "versions", versionId, "SKILL.md"), body);
+    writeFileSync(join(forgedDir, "versions", versionId, "meta.json"), JSON.stringify(version));
+    writeFileSync(join(forgedDir, "learned.json"), JSON.stringify({ schemaVersion: 1, slug, state: "active", activeVersionId: versionId, versions: [version] }));
+
+    const forgedPath = join(forgedDir, "SKILL.md");
+    expect(resolveActiveLearnedProtocolProvenance(forgedPath, slug)).toBeNull();
+    expect(() => activeLearnedProtocolProvenance(slug)).toThrow(/not found/);
+    const untrustedOp = opId();
+    const untrusted = await protocolGet().execute({ name: slug, _operationId: untrustedOp });
+    expect(untrusted.content).toContain("No protocol found");
+    expect(untrusted.content).not.toContain(sentinel);
+    expect(getLearnedProtocolEnvelopeForOp(untrustedOp)).toBeNull();
+    expect((await import("../protocols/learned-suggestion.js")).getLearnedProtocolSuggestion(workflow)).toBeNull();
+
+    const service = new CrossSessionLearningService(learner);
+    expect(service.reconcile("autonomous", Date.now() + 10).changed).toBe(true);
+    const managedOp = opId();
+    const managed = await protocolGet().execute({ name: slug, _operationId: managedOp });
+    expect(managed.content).toContain(workflow);
+    expect(managed.content).not.toContain(sentinel);
+    expect(getLearnedProtocolEnvelopeForOp(managedOp)).toMatchObject({
+      slug, candidateId: slug, allowedTools: sequence,
+    });
+    expect((await learnedProtocolEnvelopeGate(gate(managedOp, "web_search"))).kind).toBe("halt");
   });
 
   it("establishes provenance through the model-facing collapsed dispatch and overwrites forged ids", async () => {

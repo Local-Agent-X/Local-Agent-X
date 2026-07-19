@@ -46,6 +46,27 @@ afterAll(() => {
 });
 
 describe("learned protocol lifecycle", () => {
+  it("loads ordinary user imports but ignores workspace records carrying a managed marker", () => {
+    const ordinaryDir = join(importedProtocolsDir(), "ordinary-user-pack");
+    mkdirSync(ordinaryDir, { recursive: true });
+    writeFileSync(join(ordinaryDir, "SKILL.md"), skill("ordinary-user-pack", "User instruction"));
+
+    for (const [name, contents] of [
+      ["learned-aaaaaaaaaaaaaaaaaaaa", skill("learned-aaaaaaaaaaaaaaaaaaaa", "Workspace sentinel")],
+      ["legacy-trigger-record", "---\nname: legacy-trigger-record\ndescription: Legacy marker\ntriggers: [unique-forged-trigger]\n---\nWorkspace sentinel\n"],
+    ]) {
+      const dir = join(importedProtocolsDir(), name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "SKILL.md"), contents);
+      writeFileSync(join(dir, "learned.json"), JSON.stringify({ schemaVersion: 1, slug: name, state: "active" }));
+    }
+
+    const loaded = loadImportedProtocols();
+    expect(loaded.find((protocol) => protocol.name === "ordinary-user-pack")?.body).toContain("User instruction");
+    expect(loaded.map((protocol) => protocol.name)).not.toContain("learned-aaaaaaaaaaaaaaaaaaaa");
+    expect(loaded.map((protocol) => protocol.name)).not.toContain("legacy-trigger-record");
+  });
+
   it("keeps user imports while giving the machine-local managed tier final precedence", () => {
     expect(learnedProtocolsDir()).toBe(join(process.env.LAX_DATA_DIR!, "protocols", "learned"));
     const userDir = join(importedProtocolsDir(), "precedence-check");

@@ -288,7 +288,7 @@ describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s
     const refinedRecord = s.lifecycle.loadLearnedProtocol(candidate.id);
     const secondVersion = refinedRecord.versions.at(-1)!.id;
     expect(secondVersion).not.toBe(firstVersion);
-    const firstDir = join(root, "workspace", "protocols", "imported", candidate.id, "versions", firstVersion);
+    const firstDir = join(process.env.LAX_DATA_DIR!, "protocols", "learned", candidate.id, "versions", firstVersion);
     const immutableBefore = [readFileSync(join(firstDir, "SKILL.md"), "utf8"), readFileSync(join(firstDir, "meta.json"), "utf8")];
 
     service.reconcile("autonomous", base + 8 * DAY + 1);

@@ -130,7 +130,11 @@ function runProtocolMigrations(): void {
 
 // ── SKILL.md directory scanning ───────────────────────────────────────────
 
-function scanSkillMdDir(dir: string, sourceType: "bundled" | "imported"): Protocol[] {
+function scanSkillMdDir(
+  dir: string,
+  sourceType: "bundled" | "imported",
+  rejectManagedMarker = false,
+): Protocol[] {
   if (!existsSync(dir)) return [];
   const out: Protocol[] = [];
   let entries: string[] = [];
@@ -144,6 +148,7 @@ function scanSkillMdDir(dir: string, sourceType: "bundled" | "imported"): Protoc
     let isDir = false;
     try { isDir = statSync(subdir).isDirectory(); } catch { continue; }
     if (!isDir) continue;
+    if (rejectManagedMarker && existsSync(join(subdir, "learned.json"))) continue;
     const skillFile = join(subdir, "SKILL.md");
     if (!existsSync(skillFile)) continue;
     let raw: string;
@@ -178,7 +183,7 @@ export function invalidateBundledCache(): void {
 
 export function loadImportedProtocols(): Protocol[] {
   runProtocolMigrations();
-  const userImports = scanSkillMdDir(importedProtocolsDir(), "imported");
+  const userImports = scanSkillMdDir(importedProtocolsDir(), "imported", true);
   const managedLearned = scanSkillMdDir(learnedProtocolsDir(), "imported");
   return mergeByName(userImports, managedLearned);
 }

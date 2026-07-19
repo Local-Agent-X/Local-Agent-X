@@ -3,6 +3,14 @@ import { handleProvidersRoutes } from "../src/routes/settings/providers.js";
 import type { ServerContext } from "../src/server-context.js";
 import { mockJsonRequest, mockResponse } from "./helpers/http-mocks.js";
 import type { LocalRuntimeInfo } from "../src/local-runtimes/types.js";
+import type { LocalModelCertification } from "../src/local-runtimes/certification-types.js";
+import { CERTIFICATION_SCENARIOS } from "../src/local-runtimes/certification-types.js";
+import {
+  certifyLocalModel,
+  getLocalRuntimes,
+  hasPublishedCertification,
+  refreshLocalRuntimes,
+} from "../src/local-runtimes/index.js";
 
 const OLLAMA_RT: LocalRuntimeInfo = {
   kind: "ollama",
@@ -29,6 +37,26 @@ const LMSTUDIO_RT: LocalRuntimeInfo = {
 const savedSettings: Record<string, unknown>[] = [];
 let settingsBag: Record<string, unknown> = {};
 let localOnly = false;
+let publishedRuntime: LocalRuntimeInfo | null = null;
+let publishedModel = "";
+
+function certificationResult(
+  runtime: LocalRuntimeInfo,
+  model: string,
+  reusable = true,
+): LocalModelCertification {
+  const scenarios = Object.fromEntries(CERTIFICATION_SCENARIOS.map((id) => [id, {
+    passed: true, calls: 1, latencyMs: 2, failure: null,
+  }])) as LocalModelCertification["scenarios"];
+  return {
+    version: 1,
+    fingerprint: { hash: `${runtime.id}:${model}:private`, reusable },
+    scenarios,
+    passedCount: CERTIFICATION_SCENARIOS.length,
+    callCount: CERTIFICATION_SCENARIOS.length,
+    totalLatencyMs: CERTIFICATION_SCENARIOS.length * 2,
+  };
+}
 
 vi.mock("../src/settings.js", () => ({
   loadSettings: () => settingsBag,
@@ -51,6 +79,8 @@ vi.mock("../src/local-runtimes/index.js", async (importOriginal) => {
     localRuntimesStale: () => false,
     refreshLocalRuntimes: vi.fn(async () => [OLLAMA_RT, LMSTUDIO_RT]),
     invalidateLocalRuntimes: vi.fn(),
+    certifyLocalModel: vi.fn(),
+    hasPublishedCertification: vi.fn(),
   };
 });
 vi.mock("../src/auth/index.js", () => ({ loadTokens: () => null }));
@@ -67,11 +97,11 @@ function makeCtx(): ServerContext {
   } as unknown as ServerContext;
 }
 
-async function call(method: string, path: string, body?: unknown) {
+async function call(method: string, path: string, body?: unknown, role: "operator" | "user" | "readonly" | "agent" = "operator") {
   const url = new URL(`http://test${path}`);
   const req = mockJsonRequest(body ?? {});
   const captured = mockResponse();
-  const handled = await handleProvidersRoutes(method, url, req, captured.res, makeCtx(), "owner");
+  const handled = await handleProvidersRoutes(method, url, req, captured.res, makeCtx(), role);
   return {
     handled,
     status: captured.status,
@@ -83,6 +113,18 @@ beforeEach(() => {
   settingsBag = {};
   savedSettings.length = 0;
   localOnly = false;
+  publishedRuntime = null;
+  publishedModel = "";
+  vi.mocked(getLocalRuntimes).mockReturnValue([OLLAMA_RT, LMSTUDIO_RT]);
+  vi.mocked(refreshLocalRuntimes).mockClear();
+  vi.mocked(certifyLocalModel).mockReset().mockImplementation(async ({ runtime, model }) => {
+    publishedRuntime = runtime;
+    publishedModel = model;
+    return certificationResult(runtime, model);
+  });
+  vi.mocked(hasPublishedCertification).mockReset().mockImplementation((runtime, model) => (
+    runtime === publishedRuntime && model.id === publishedModel
+  ));
 });
 
 describe("GET /api/providers — local entry is the union across runtimes", () => {
@@ -126,6 +168,139 @@ describe("POST /api/local-runtimes — manual add", () => {
     });
     expect(result.status).toBe(403);
     expect(savedSettings).toHaveLength(0);
+  });
+});
+
+describe("POST /api/local-runtimes/certify", () => {
+  it("allows the operator and selects a duplicate model id by exact runtimeId", async () => {
+    const runtimeA = { ...OLLAMA_RT, models: [{ id: "shared-model", contextWindow: 8192, tools: true }] };
+    const runtimeB = { ...LMSTUDIO_RT, models: [{ id: "shared-model", contextWindow: 4096, tools: false }] };
+    vi.mocked(getLocalRuntimes).mockReturnValue([runtimeA, runtimeB]);
+
+    const result = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: runtimeB.id,
+      model: "shared-model",
+      endpoint: runtimeA.endpoint.baseUrl,
+    });
+    const body = result.json() as { ok: boolean; status: string; scenarios: unknown[] };
+
+    expect(result.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.status).toBe("verified");
+    expect(body.scenarios).toHaveLength(CERTIFICATION_SCENARIOS.length);
+    expect(vi.mocked(certifyLocalModel)).toHaveBeenCalledWith({ runtime: runtimeB, model: "shared-model" });
+    expect(JSON.stringify(body)).not.toContain("fingerprint");
+    expect(JSON.stringify(body)).not.toContain("private");
+    expect(JSON.stringify(body)).not.toContain(runtimeA.endpoint.baseUrl);
+  });
+
+  it("denies the agent principal before certification", async () => {
+    const result = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
+    }, "agent");
+    expect(result.status).toBe(403);
+    expect(vi.mocked(certifyLocalModel)).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown runtime and model without refresh or certification", async () => {
+    expect((await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: "missing", model: "qwen3.6:27b",
+    })).status).toBe(404);
+    expect((await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "missing",
+    })).status).toBe(404);
+    expect(vi.mocked(certifyLocalModel)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshLocalRuntimes)).not.toHaveBeenCalled();
+  });
+
+  it("reports non-reusable identity without publishing or blocking the request", async () => {
+    vi.mocked(certifyLocalModel).mockImplementationOnce(async ({ runtime, model }) => (
+      certificationResult(runtime, model, false)
+    ));
+    const result = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
+    });
+    expect(result.status).toBe(200);
+    expect(result.json()).toMatchObject({ ok: false, status: "identity_unavailable" });
+  });
+
+  it("reports a reusable failed scenario without changing availability", async () => {
+    vi.mocked(certifyLocalModel).mockImplementationOnce(async ({ runtime, model }) => {
+      const result = certificationResult(runtime, model);
+      result.scenarios.required_tool_call = {
+        passed: false, calls: 1, latencyMs: 2, failure: "missing_tool_call",
+      };
+      result.passedCount -= 1;
+      return result;
+    });
+    const result = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
+    });
+    expect(result.status).toBe(200);
+    expect(result.json()).toMatchObject({ ok: false, status: "failed", passedCount: 4 });
+  });
+
+  it("keeps POST and subsequent GET unverified after a prior pass fails on retry", async () => {
+    const first = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
+    });
+    expect(first.json()).toMatchObject({ ok: true, status: "verified" });
+
+    vi.mocked(certifyLocalModel).mockImplementationOnce(async ({ runtime, model }) => {
+      publishedRuntime = null;
+      publishedModel = "";
+      const result = certificationResult(runtime, model);
+      for (const id of CERTIFICATION_SCENARIOS) {
+        result.scenarios[id] = { passed: false, calls: 1, latencyMs: 2, failure: "missing_marker" };
+      }
+      result.passedCount = 0;
+      return result;
+    });
+    const retry = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
+    });
+    expect(retry.json()).toMatchObject({ ok: false, status: "failed", passedCount: 0 });
+
+    const read = await call("GET", "/api/local-runtimes");
+    const body = read.json() as { runtimes: Array<{ id: string; models: Array<{ id: string; certification: { status: string } }> }> };
+    const model = body.runtimes.find((runtime) => runtime.id === OLLAMA_RT.id)!
+      .models.find((candidate) => candidate.id === "qwen3.6:27b")!;
+    expect(model.certification.status).toBe("unverified");
+  });
+
+  it("sanitizes runner errors", async () => {
+    vi.mocked(certifyLocalModel).mockRejectedValueOnce(new Error("secret token abc at http://private-host"));
+    const result = await call("POST", "/api/local-runtimes/certify", {
+      runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
+    });
+    expect(result.status).toBe(500);
+    expect(result.json()).toEqual({ ok: false, status: "error", error: "Verification failed" });
+  });
+});
+
+describe("local-runtime certification read status", () => {
+  it("is synchronous publication state and never starts certification", async () => {
+    publishedRuntime = OLLAMA_RT;
+    publishedModel = "qwen3.6:27b";
+    const result = await call("GET", "/api/local-runtimes");
+    const body = result.json() as {
+      runtimes: Array<{ id: string; models: Array<{ id: string; certification: { status: string } }> }>;
+    };
+    const ollama = body.runtimes.find((runtime) => runtime.id === OLLAMA_RT.id)!;
+    expect(ollama.models.find((model) => model.id === "qwen3.6:27b")?.certification.status).toBe("verified");
+    expect(ollama.models.find((model) => model.id === "mxbai-embed-large:latest")?.certification.status).toBe("unverified");
+    expect(vi.mocked(certifyLocalModel)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshLocalRuntimes)).not.toHaveBeenCalled();
+
+    const providersResult = await call("GET", "/api/providers");
+    const providersBody = providersResult.json() as {
+      providers: Array<{ id: string; runtimes?: Array<{ models: Array<{ id: string; certification: { status: string } }> }> }>;
+    };
+    const providerModel = providersBody.providers.find((provider) => provider.id === "local")
+      ?.runtimes?.find((runtime) => runtime.models.some((model) => model.id === "qwen3.6:27b"))
+      ?.models.find((model) => model.id === "qwen3.6:27b");
+    expect(providerModel?.certification.status).toBe("verified");
+    expect(vi.mocked(certifyLocalModel)).not.toHaveBeenCalled();
   });
 });
 

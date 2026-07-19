@@ -18,8 +18,41 @@ import {
   manualRuntimeEntries,
   endpointHostPort,
   lmStudioAutoStartedAt,
+  certifyLocalModel,
+  hasPublishedCertification,
+  type LocalModelCertification,
+  type LocalRuntimeInfo,
 } from "../../local-runtimes/index.js";
 import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
+
+function modelsWithCertification(runtime: LocalRuntimeInfo) {
+  return runtime.models.map((model) => ({
+    ...model,
+    certification: {
+      status: hasPublishedCertification(runtime, model) ? "verified" as const : "unverified" as const,
+    },
+  }));
+}
+
+function certificationResponse(runtime: LocalRuntimeInfo, modelId: string, result: LocalModelCertification) {
+  const model = runtime.models.find((candidate) => candidate.id === modelId);
+  const verified = !!model && hasPublishedCertification(runtime, model);
+  const status = !result.fingerprint.reusable
+    ? "identity_unavailable" as const
+    : verified ? "verified" as const : "failed" as const;
+  return {
+    ok: verified,
+    status,
+    passedCount: result.passedCount,
+    scenarioCount: Object.keys(result.scenarios).length,
+    callCount: result.callCount,
+    totalLatencyMs: result.totalLatencyMs,
+    scenarios: Object.entries(result.scenarios).map(([id, scenario]) => ({
+      id, passed: scenario.passed, calls: scenario.calls,
+      latencyMs: scenario.latencyMs, failure: scenario.failure,
+    })),
+  };
+}
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -33,7 +66,8 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       id: string; name: string; models: string[]; active: boolean;
       runtimes?: Array<{
         id: string; label: string; kind: string; origin: string; baseUrl: string;
-        models: Array<{ id: string; contextWindow: number | null; tools: boolean | null }>;
+        models: Array<{ id: string; contextWindow: number | null; tools: boolean | null;
+          certification: { status: "verified" | "unverified" } }>;
       }>;
     }> = [];
     const localOnly = isLocalOnlyMode();
@@ -122,7 +156,12 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
           kind: r.kind,
           origin: r.endpoint.origin,
           baseUrl: r.endpoint.baseUrl,
-          models: r.models.map(m => ({ id: m.id, contextWindow: m.contextWindow, tools: m.tools })),
+          models: modelsWithCertification(r).map(m => ({
+            id: m.id,
+            contextWindow: m.contextWindow,
+            tools: m.tools,
+            certification: m.certification,
+          })),
         })),
       });
     }
@@ -262,12 +301,45 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const runtimes = getLocalRuntimes();
     if (localRuntimesStale()) void refreshLocalRuntimes().catch(() => {});
     json(200, {
-      runtimes: runtimes ?? [],
+      runtimes: (runtimes ?? []).map((runtime) => ({
+        ...runtime,
+        models: modelsWithCertification(runtime),
+      })),
       manual: manualRuntimeEntries(),
       // Epoch ms when LAX flipped LM Studio's API server on this process
       // lifetime (null = never). Lets the UI label the runtime honestly.
       lmStudioAutoStartedAt: lmStudioAutoStartedAt(),
     });
+    return true;
+  }
+  if (method === "POST" && url.pathname === "/api/local-runtimes/certify") {
+    if (_role !== "operator") {
+      json(403, { ok: false, error: "Operator access required" });
+      return true;
+    }
+    let body: Record<string, unknown>;
+    try { body = JSON.parse(await readBody(req)); } catch { json(400, { ok: false, error: "Invalid JSON" }); return true; }
+    const runtimeId = typeof body.runtimeId === "string" ? body.runtimeId : "";
+    const modelId = typeof body.model === "string" ? body.model : "";
+    if (!runtimeId || !modelId) {
+      json(400, { ok: false, error: "runtimeId and model are required" });
+      return true;
+    }
+    const runtime = getLocalRuntimes()?.find((candidate) => candidate.id === runtimeId);
+    if (!runtime) {
+      json(404, { ok: false, error: "Local runtime not found" });
+      return true;
+    }
+    if (!runtime.models.some((candidate) => candidate.id === modelId)) {
+      json(404, { ok: false, error: "Local model not found" });
+      return true;
+    }
+    try {
+      const result = await certifyLocalModel({ runtime, model: modelId });
+      json(200, certificationResponse(runtime, modelId, result));
+    } catch {
+      json(500, { ok: false, status: "error", error: "Verification failed" });
+    }
     return true;
   }
   if (method === "POST" && url.pathname === "/api/local-runtimes") {

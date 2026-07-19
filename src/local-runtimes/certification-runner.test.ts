@@ -198,6 +198,36 @@ describe("local model certification", () => {
     expect(calls).toBe(10);
   });
 
+  it("unpublishes a prior pass before a drifted attempt and keeps a failed result unverified", async () => {
+    const current = structuredClone(runtime);
+    const store = new MemoryStore();
+    await certifyLocalModel({ runtime: current, model: "fixture-model" }, {
+      store, resolveIdentity: async () => identity,
+      transport: async (request) => successfulResponse(request),
+    });
+    expect(hasPublishedCertification(current, current.models[0]!)).toBe(true);
+
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const retry = certifyLocalModel({ runtime: current, model: "fixture-model" }, {
+      store,
+      resolveIdentity: async () => ({ ...identity, modelDigest: "sha256:drifted" }),
+      transport: async () => {
+        entered();
+        await gate;
+        return { status: 200, body: { choices: [{ message: { content: "wrong" } }] } };
+      },
+    });
+    await started;
+    expect(hasPublishedCertification(current, current.models[0]!)).toBe(false);
+    release();
+    const failed = await retry;
+    expect(failed.passedCount).toBe(0);
+    expect(hasPublishedCertification(current, current.models[0]!)).toBe(false);
+  });
+
   it("never reuses a result when runtime version or model digest is unknown", async () => {
     const store = new MemoryStore();
     let calls = 0;

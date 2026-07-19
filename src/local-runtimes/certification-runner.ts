@@ -107,6 +107,11 @@ const publishedCertifications = new WeakMap<
   WeakMap<LocalModel, PublishedCertification>
 >();
 
+function unpublishCertification(input: CertificationRunInput): void {
+  const model = input.runtime.models.find((candidate) => candidate.id === input.model);
+  if (model) publishedCertifications.get(input.runtime)?.delete(model);
+}
+
 function passedCertification(result: LocalModelCertification): boolean {
   return result.fingerprint.reusable
     && result.passedCount === LOCAL_MODEL_CERTIFICATION_SCENARIOS.length
@@ -294,6 +299,7 @@ export async function certifyLocalModel(
   deps: CertificationRunnerDeps = {},
 ): Promise<LocalModelCertification> {
   return runExclusive(async () => {
+    unpublishCertification(input);
     const now = deps.now ?? Date.now;
     const transport = deps.transport ?? localCertificationTransport;
     const store = deps.store ?? new LocalCertificationStore();

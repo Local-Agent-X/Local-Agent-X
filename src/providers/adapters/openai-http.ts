@@ -115,13 +115,21 @@ function streamUsageSupported(baseURL: string | undefined): boolean {
   return false;
 }
 
+export function strictFetchFor(baseURL: string | undefined): ClientOptions["fetch"] {
+  if (!isLocalOnlyMode() || !baseURL || !isLoopbackUrl(baseURL)) return undefined;
+  return ((input: unknown, init?: unknown) => {
+    const request = init as RequestInit;
+    const headers = new Headers(request.headers);
+    headers.delete("content-length");
+    return fetch(input as Parameters<typeof fetch>[0], { ...request, headers, redirect: "manual" });
+  }) as unknown as NonNullable<ClientOptions["fetch"]>;
+}
+
 export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
-    const strictFetch: ClientOptions["fetch"] = isLocalOnlyMode() && req.baseURL && isLoopbackUrl(req.baseURL)
-      ? (((input: unknown, init?: unknown) => fetch(input as Parameters<typeof fetch>[0], { ...(init as RequestInit), redirect: "manual" })) as unknown as NonNullable<ClientOptions["fetch"]>)
-      : undefined;
+    const strictFetch = strictFetchFor(req.baseURL);
     const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, ...(strictFetch ? { fetch: strictFetch } : {}) });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
     const reasoningCapable =

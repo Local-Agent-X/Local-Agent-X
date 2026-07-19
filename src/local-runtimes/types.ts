@@ -83,6 +83,17 @@ export interface LocalRuntimeProbe {
   ): Promise<Partial<LocalModel>>;
 
   /**
+   * Stable runtime/model identity used only to decide whether a behavioral
+   * certification can be reused. Unknown version or digest stays null and
+   * makes that result non-reusable. Never throws.
+   */
+  certificationIdentity?(
+    ep: LocalRuntimeEndpoint,
+    modelId: string,
+    signal?: AbortSignal,
+  ): Promise<{ runtimeVersion: string | null; modelDigest: string | null }>;
+
+  /**
    * Runtime-specific extra request body to ask for `tokens` of context on
    * the OpenAI-compat chat path. Return {} when the runtime cannot be told
    * per-request. (Measured 2026-07-15: Ollama's /v1 endpoint silently DROPS

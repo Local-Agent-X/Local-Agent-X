@@ -155,6 +155,23 @@ export const ollamaProbe: LocalRuntimeProbe = {
     return result;
   },
 
+  async certificationIdentity(ep, modelId, signal) {
+    const [version, tags] = await Promise.all([
+      getJson(`${base(ep)}/api/version`, DETECT_TIMEOUT_MS, signal),
+      getJson(`${base(ep)}/api/tags`, LIST_TIMEOUT_MS, signal),
+    ]);
+    const models = Array.isArray(tags?.models) ? tags.models : [];
+    const entry = models.find((raw) => {
+      if (!raw || typeof raw !== "object") return false;
+      const row = raw as { name?: unknown; model?: unknown };
+      return row.name === modelId || row.model === modelId;
+    }) as { digest?: unknown } | undefined;
+    return {
+      runtimeVersion: typeof version?.version === "string" ? version.version : null,
+      modelDigest: typeof entry?.digest === "string" ? entry.digest : null,
+    };
+  },
+
   chatExtraBody() {
     return {};
   },

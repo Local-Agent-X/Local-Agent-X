@@ -61,6 +61,27 @@ describe("entryToModel window honesty", () => {
   });
 });
 
+describe("openaiCompatProbe.certificationIdentity", () => {
+  it("uses explicit runtime version and model revision when the server supplies both", async () => {
+    stubFetch({
+      "/version": { version: "0.9.2" },
+      "/v1/models": { data: [{ id: "m", revision: "rev-abc" }] },
+    });
+    expect(await openaiCompatProbe.certificationIdentity!(EP, "m")).toEqual({
+      runtimeVersion: "0.9.2",
+      modelDigest: "rev-abc",
+    });
+  });
+
+  it("returns unknown fields when generic OpenAI compatibility exposes no stable identity", async () => {
+    stubFetch({ "/v1/models": { data: [{ id: "m" }] } });
+    expect(await openaiCompatProbe.certificationIdentity!(EP, "m")).toEqual({
+      runtimeVersion: null,
+      modelDigest: null,
+    });
+  });
+});
+
 describe("openaiCompatProbe.detect / identify", () => {
   it("detects on a bare /v1/models list", async () => {
     stubFetch({ "/v1/models": { object: "list", data: [{ id: "m" }] } });

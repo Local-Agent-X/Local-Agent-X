@@ -137,6 +137,27 @@ describe("ollamaProbe.probeModel", () => {
   });
 });
 
+describe("ollamaProbe.certificationIdentity", () => {
+  it("binds certification reuse to the runtime version and exact model digest", async () => {
+    stubFetch({
+      "/api/version": { version: "0.32.1" },
+      "/api/tags": { models: [{ name: "m", digest: "sha256:model-one" }] },
+    });
+    expect(await ollamaProbe.certificationIdentity!(EP, "m")).toEqual({
+      runtimeVersion: "0.32.1",
+      modelDigest: "sha256:model-one",
+    });
+  });
+
+  it("keeps missing identity fields unknown instead of inventing reusable values", async () => {
+    stubFetch({ "/api/version": {}, "/api/tags": { models: [{ name: "m" }] } });
+    expect(await ollamaProbe.certificationIdentity!(EP, "m")).toEqual({
+      runtimeVersion: null,
+      modelDigest: null,
+    });
+  });
+});
+
 describe("ollamaProbe.chatExtraBody", () => {
   // Wire-fact regression pin — re-verified live 2026-07-17 on Ollama 0.32.0
   // (evidence in ollama-probe.ts header): /v1 drops num_ctx in both the

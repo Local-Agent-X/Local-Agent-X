@@ -247,6 +247,24 @@ export const openaiCompatProbe: LocalRuntimeProbe = {
     return out;
   },
 
+  async certificationIdentity(ep, modelId, signal) {
+    const [version, models] = await Promise.all([
+      getJson(`${base(ep)}/version`, DETECT_TIMEOUT_MS, signal),
+      getJson(`${base(ep)}/v1/models`, LIST_TIMEOUT_MS, signal),
+    ]);
+    const raw = listFrom(models)?.find((entry) => (
+      entry && typeof entry === "object" && (entry as { id?: unknown }).id === modelId
+    ));
+    const row = raw && typeof raw === "object"
+      ? raw as { digest?: unknown; sha?: unknown; model_sha?: unknown; revision?: unknown }
+      : null;
+    const digest = row?.digest ?? row?.sha ?? row?.model_sha ?? row?.revision;
+    return {
+      runtimeVersion: typeof version?.version === "string" ? version.version : null,
+      modelDigest: typeof digest === "string" ? digest : null,
+    };
+  },
+
   chatExtraBody() {
     // No surveyed runtime honors a per-request context-size field on /v1;
     // context is load/launch-time config everywhere. Never ship a no-op param.

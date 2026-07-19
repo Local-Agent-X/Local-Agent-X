@@ -15,6 +15,17 @@ export {
   type ManualRuntimeEntry,
 } from "./endpoints.js";
 export { discoverLocalRuntimes } from "./discovery.js";
+export { certifyLocalModel, type CertificationRunInput, type CertificationRunnerDeps } from "./certification-runner.js";
+export { LocalCertificationStore } from "./certification-store.js";
+export type {
+  CertificationFailure,
+  CertificationFingerprint,
+  CertificationIdentity,
+  CertificationScenarioId,
+  CertificationScenarioResult,
+  CertificationTransport,
+  LocalModelCertification,
+} from "./certification-types.js";
 export {
   lmStudioAutoStartedAt,
   maybeAutostartLmStudio,

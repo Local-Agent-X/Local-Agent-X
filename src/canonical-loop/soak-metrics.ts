@@ -23,6 +23,7 @@ import { aggregateOpUsage } from "./op-usage.js";
 import { schedulerSnapshot } from "./scheduler.js";
 import { getPricing } from "../cost-tracker.js";
 import type { CanonicalEvent } from "./types.js";
+import { isLocalModelQualificationBoot } from "../qualification-boot.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("canonical-loop.soak-metrics");
@@ -58,6 +59,7 @@ const records = new Map<string, InFlightRecord>();
 let warnedOnce = false;
 
 function isEnabled(): boolean {
+  if (isLocalModelQualificationBoot()) return false;
   // Test-mode guard: vitest runs canonical-loop tests through the real
   // seam, which would otherwise append a row per test op to the
   // production soak JSONL and inflate the daily roll-up. Short-circuit

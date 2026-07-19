@@ -15,6 +15,7 @@ import { startBackgroundJobs } from "./background-jobs.js";
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import type { ProviderId } from "../providers/provider-ids.js";
+import { isLocalModelQualificationBoot } from "../qualification-boot.js";
 
 const bootLogger = createLogger("server.index");
 
@@ -340,9 +341,11 @@ export async function startServer(config: LAXConfig) {
 
     // The server bound successfully — confirm any pending self_edit merge so the
     // boot-time crashed-merge guard knows the merged code actually boots.
-    void import("../self-edit/rollback.js")
-      .then(m => m.confirmMergeBoot())
-      .catch(e => bootLogger.warn(`[self-edit] confirmMergeBoot failed: ${(e as Error).message}`));
+    if (!isLocalModelQualificationBoot()) {
+      void import("../self-edit/rollback.js")
+        .then(m => m.confirmMergeBoot())
+        .catch(e => bootLogger.warn(`[self-edit] confirmMergeBoot failed: ${(e as Error).message}`));
+    }
     // …and reset the server-sandbox escape-hatch counter: a confined boot
     // that reached listening is proven non-bricking (no-op when unconfined).
     void import("../sandbox/server-confine.js")

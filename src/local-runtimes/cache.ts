@@ -13,6 +13,7 @@ import { restorePublishedCertifications } from "./certification-runner.js";
 import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 import { classifyModel, maxToolsForTier, type ModelTier } from "../model-tiers.js";
 import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-store.js";
+import { isLocalModelQualificationBoot } from "../qualification-boot.js";
 
 export interface LocalModelCapabilityProfile {
   runtimeId: string | null;
@@ -65,7 +66,7 @@ export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
       // LM Studio app running with its API server toggled off is invisible
       // to the sweep; flip the server on (gated + throttled inside) and
       // re-sweep once so its models land in THIS refresh, not the next.
-      if (await maybeAutostartLmStudio(found)) {
+      if (!isLocalModelQualificationBoot() && await maybeAutostartLmStudio(found)) {
         found = await discoverLocalRuntimes(candidateEndpoints());
       }
       cache = found;

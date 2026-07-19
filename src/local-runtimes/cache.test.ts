@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const restorePublishedCertifications = vi.hoisted(() => vi.fn(async () => 0));
+const maybeAutostartLmStudio = vi.hoisted(() => vi.fn(async () => false));
 vi.mock("./certification-runner.js", () => ({ restorePublishedCertifications }));
+vi.mock("./lmstudio-autostart.js", () => ({ maybeAutostartLmStudio }));
 
 import {
   refreshLocalRuntimes,
@@ -51,18 +53,24 @@ vi.mock("./discovery.js", () => ({
 
 let dataDir: string;
 const previousDataDir = process.env.LAX_DATA_DIR;
+const previousQualificationBoot = process.env.LAX_LOCAL_MODEL_QUALIFICATION_BOOT;
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), "lax-local-profile-"));
   process.env.LAX_DATA_DIR = dataDir;
+  delete process.env.LAX_LOCAL_MODEL_QUALIFICATION_BOOT;
   _resetForTests();
   invalidateLocalRuntimes();
   restorePublishedCertifications.mockClear();
+  maybeAutostartLmStudio.mockClear();
+  maybeAutostartLmStudio.mockResolvedValue(false);
 });
 
 afterEach(() => {
   if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
   else process.env.LAX_DATA_DIR = previousDataDir;
+  if (previousQualificationBoot === undefined) delete process.env.LAX_LOCAL_MODEL_QUALIFICATION_BOOT;
+  else process.env.LAX_LOCAL_MODEL_QUALIFICATION_BOOT = previousQualificationBoot;
   _resetForTests();
   rmSync(dataDir, { recursive: true, force: true });
 });
@@ -92,6 +100,21 @@ describe("local-runtime cache", () => {
     await Promise.all([refreshLocalRuntimes(), refreshLocalRuntimes(), refreshLocalRuntimes()]);
     expect(vi.mocked(discoverLocalRuntimes)).toHaveBeenCalledTimes(1);
     expect(restorePublishedCertifications).toHaveBeenCalledTimes(1);
+  });
+
+  it("never invokes the LM Studio auto-start path in explicit qualification boot", async () => {
+    process.env.LAX_LOCAL_MODEL_QUALIFICATION_BOOT = "1";
+    maybeAutostartLmStudio.mockResolvedValue(true);
+
+    await refreshLocalRuntimes();
+
+    expect(maybeAutostartLmStudio).not.toHaveBeenCalled();
+  });
+
+  it("preserves the normal runtime auto-start decision outside qualification boot", async () => {
+    await refreshLocalRuntimes();
+    expect(maybeAutostartLmStudio).toHaveBeenCalledOnce();
+    expect(maybeAutostartLmStudio).toHaveBeenCalledWith([RUNTIME]);
   });
 
   it("schedules restore after discovery without awaiting it and passes the prior snapshot", async () => {

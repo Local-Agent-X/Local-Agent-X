@@ -28,6 +28,7 @@ import { writeManifest, startManifestWatcher } from "./manifest-generator/index.
 // The zod schema (field shapes, bounds, defaults — incl. the system-prompt
 // default) moved to config-schema.ts, same LOC-ceiling split as config-profiles.
 import { configSchema } from "./config-schema.js";
+import { isLocalModelQualificationBoot } from "./qualification-boot.js";
 
 // ── Boot-time side effects (explicit) ──
 // writeManifest + the two hot-reload watchers used to run AT IMPORT TIME,
@@ -43,6 +44,7 @@ let _initialized = false;
 export function initConfig(): void {
   if (_initialized) return;
   _initialized = true;
+  if (isLocalModelQualificationBoot()) return;
   // Generate manifest and start watchers for hot-reload
   writeManifest();
   startConfigWatcher();
@@ -71,6 +73,7 @@ export function loadConfig(): LAXConfig {
   let diskRaw: Record<string, unknown> = {};
   let raw: Record<string, unknown> = {};
   let diskDirty = false;
+  const allowWorkspaceMutation = !isLocalModelQualificationBoot();
 
   const applyDiskMutation = (updates: Record<string, unknown>): void => {
     Object.assign(diskRaw, updates);
@@ -190,7 +193,7 @@ export function loadConfig(): LAXConfig {
   // (no LAX_DOCUMENTS_DIR) keeps "./workspace".
   const docsDir = process.env.LAX_DOCUMENTS_DIR ? deOneDrive(process.env.LAX_DOCUMENTS_DIR) : undefined;
   const legacyWorkspace = diskRaw.workspace === undefined || diskRaw.workspace === "./workspace";
-  if (docsDir && !workspaceEnv && legacyWorkspace) {
+  if (allowWorkspaceMutation && docsDir && !workspaceEnv && legacyWorkspace) {
     // iCloud-synced Documents (macOS) → keep the high-write workspace on
     // local-only disk instead of seeding it into a sync engine that evicts
     // files; otherwise nest under ~/Documents/Local Agent X/workspace so the
@@ -209,7 +212,7 @@ export function loadConfig(): LAXConfig {
   // here and move the data onto the real disk.
   const diskWorkspace = typeof diskRaw.workspace === "string" ? diskRaw.workspace : "./workspace";
   const healed = deOneDrive(diskWorkspace);
-  if (healed !== diskWorkspace) {
+  if (allowWorkspaceMutation && healed !== diskWorkspace) {
     migrateWorkspace(resolve(diskWorkspace), resolve(healed));
     if (!workspaceEnv) config.workspace = healed;
     applyDiskMutation({ workspace: healed });
@@ -220,7 +223,7 @@ export function loadConfig(): LAXConfig {
   // install) by relocating it to local-only disk. The workspace inherits the
   // sync from its parent Documents dir, so check the parent's identity as well
   // as the path itself (third-party File Providers live under CloudStorage).
-  if (process.platform === "darwin") {
+  if (allowWorkspaceMutation && process.platform === "darwin") {
     const savedWorkspace = typeof diskRaw.workspace === "string" ? diskRaw.workspace : "./workspace";
     const ws = resolve(savedWorkspace);
     if (isCloudStoragePath(ws) || isCloudSyncedDir(dirname(ws))) {
@@ -238,7 +241,7 @@ export function loadConfig(): LAXConfig {
   // the same directory or generated files 404 / land where nothing serves
   // them. When the workspace was relocated off the cwd, bridge the two with a
   // junction so every reader and writer converges on one physical directory.
-  ensureWorkspaceLink(config.workspace);
+  if (allowWorkspaceMutation) ensureWorkspaceLink(config.workspace);
 
   // Inject actual app URL into system prompt (works with any port)
   const appUrl = `http://127.0.0.1:${config.port}`;

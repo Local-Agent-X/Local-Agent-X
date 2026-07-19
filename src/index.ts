@@ -132,6 +132,8 @@ if (maybeReexecServerConfined()) {
 }
 
 const { initConfig, loadConfig, setRuntimeConfig } = await import("./config.js");
+const { isLocalModelQualificationBoot } = await import("./qualification-boot.js");
+const localModelQualificationBoot = isLocalModelQualificationBoot();
 
 // Generate config/app-manifest.json and start the hot-reload watchers
 // (config/ cache invalidation + manifest regeneration). These used to run at
@@ -140,7 +142,7 @@ const { initConfig, loadConfig, setRuntimeConfig } = await import("./config.js")
 // Idempotent, and gated behind the confinement check so the inert launcher
 // never starts watchers. Note: the ~/.lax/config.json hot-reload is a
 // DIFFERENT watcher, started later by server/lifecycle.ts startConfigWatcher.
-initConfig();
+if (!localModelQualificationBoot) initConfig();
 const { startServer } = await import("./server/index.js");
 const { loadTokens } = await import("./auth/index.js");
 const { enforceStartupIntegrity } = await import("./startup-integrity.js");
@@ -155,7 +157,8 @@ enforceStartupIntegrity();
 // One-time notice if a self_edit merged into main on a prior run. Gives the
 // operator the revert escape hatch in case the merged code misbehaves at
 // runtime (the post-merge re-gate only catches a broken build). Best-effort.
-try {
+if (!localModelQualificationBoot) {
+  try {
   const { revertPendingMergeIfCrashed, surfaceUnacknowledgedMerge } = await import("./self-edit/rollback.js");
   // Crashed-merge guard FIRST: if a prior boot loaded a self_edit merge and
   // never bound, the merged code crashes on startup — auto-revert + rebuild so
@@ -163,7 +166,8 @@ try {
   const recovered = revertPendingMergeIfCrashed();
   if (recovered) logger.warn(`[boot] crashed self_edit merge auto-revert: ${recovered.detail}`);
   surfaceUnacknowledgedMerge();
-} catch { /* best-effort */ }
+  } catch { /* best-effort */ }
+}
 
 // NOTE: the orphan-worktree sweep used to run HERE, before the server bound.
 // It walks %TEMP%/lax-worktrees and recursive-deletes dead worktrees, retrying
@@ -291,7 +295,7 @@ startServer(config).catch((e: Error) => {
 // NEVER in a self_edit bind probe: the probe boots from a worktree INSIDE
 // %TEMP%/lax-worktrees, so the sweep would unlink the junction it's booting on
 // and kill itself mid-probe. Only the real server sweeps.
-if (process.env.LAX_SELF_EDIT_PROBE !== "1") {
+if (!localModelQualificationBoot && process.env.LAX_SELF_EDIT_PROBE !== "1") {
   setTimeout(() => {
     void (async () => {
       try {

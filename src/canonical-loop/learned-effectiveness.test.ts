@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +19,7 @@ import {
   registerLearnedProtocolEnvelopeForOp,
   resetCanonicalRuntime,
 } from "./runtime.js";
-import { transitionOp } from "./state-machine.js";
+import { _setBeforePersistHookForTests, transitionOp } from "./state-machine.js";
 import {
   _setCanonicalLearningOutcomeRecorderForTests,
   reconcileCanonicalLearnedOutcomes,
@@ -71,6 +71,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   _setLearnedEffectivenessWriteHookForTests();
+  _setBeforePersistHookForTests();
   resetCanonicalRuntime();
   _setCanonicalLearningOutcomeRecorderForTests();
   for (const id of opIds) {
@@ -135,23 +136,23 @@ describe("canonical learned effectiveness integration", () => {
     ]);
   });
 
-  it("keeps a pending receipt when terminal transition cleanup throws", () => {
+  it("keeps and resumes a pending receipt when terminal persistence is interrupted", () => {
     const current = op("persist-throws");
     writeOp(current);
     envelope(current.id);
-    const operationDir = join(getLaxDir(), "operations", current.id);
     _setLearnedEffectivenessWriteHookForTests((_phase, receipt) => {
-      if (receipt.status === "pending") chmodSync(operationDir, 0o500);
+      if (receipt.status === "pending") {
+        _setBeforePersistHookForTests(() => { throw new Error("injected terminal persistence failure"); });
+      }
     });
-    try {
-      expect(() => transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" })).toThrow();
-    } finally {
-      chmodSync(operationDir, 0o700);
-    }
+    expect(() => transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" }))
+      .toThrow("injected terminal persistence failure");
     expect(readReceipt(current.id).status).toBe("pending");
     expect(readOp(current.id)?.canonical?.state).toBe("running");
     expect(learningRecorder).not.toHaveBeenCalled();
     _setLearnedEffectivenessWriteHookForTests();
+    _setBeforePersistHookForTests();
+    resetCanonicalRuntime();
     transitionOp(readOp(current.id)!, "succeeded", "turn_done", { learnedOutcome: "clean" });
     expect(readReceipt(current.id).status).toBe("committed");
     expect(learningRecorder).toHaveBeenCalledTimes(1);
@@ -177,18 +178,17 @@ describe("canonical learned effectiveness integration", () => {
     const current = op("changed-outcome");
     writeOp(current);
     envelope(current.id);
-    const operationDir = join(getLaxDir(), "operations", current.id);
     _setLearnedEffectivenessWriteHookForTests((_phase, receipt) => {
-      if (receipt.status === "pending") chmodSync(operationDir, 0o500);
+      if (receipt.status === "pending") {
+        _setBeforePersistHookForTests(() => { throw new Error("injected terminal persistence failure"); });
+      }
     });
-    try {
-      expect(() => transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" })).toThrow();
-    } finally {
-      chmodSync(operationDir, 0o700);
-    }
+    expect(() => transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" }))
+      .toThrow("injected terminal persistence failure");
     expect(readReceipt(current.id)).toMatchObject({ status: "pending", outcome: "clean" });
     clearLearnedProtocolEnvelopeForOp(current.id);
     _setLearnedEffectivenessWriteHookForTests();
+    _setBeforePersistHookForTests();
 
     transitionOp(readOp(current.id)!, "failed", "worker_exception", { learnedOutcome: "aborted" });
 

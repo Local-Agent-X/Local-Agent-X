@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,8 @@ afterEach(async () => {
   canonical.resetBus();
   const effectiveness = await import("../src/protocols/learned-effectiveness.js");
   effectiveness._setLearnedEffectivenessWriteHookForTests();
+  const stateMachine = await import("../src/canonical-loop/state-machine.js");
+  stateMachine._setBeforePersistHookForTests();
   const config = await import("../src/config.js");
   config.setRuntimeConfig(originalConfig);
   if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR;
@@ -344,17 +346,20 @@ describe("self-learning terminal integrity", () => {
     const interrupted = op("persistence-interrupted", "running");
     s.opStore.writeOp(interrupted);
     await selectProtocol(s, interrupted.id, lifecycle.record.slug);
-    const operationDir = join(process.env.LAX_DATA_DIR!, "operations", interrupted.id);
     s.effectiveness._setLearnedEffectivenessWriteHookForTests((_phase, receipt) => {
-      if (receipt.status === "pending") chmodSync(operationDir, 0o500);
+      if (receipt.status === "pending") {
+        s.stateMachine._setBeforePersistHookForTests(() => {
+          throw new Error("injected terminal persistence failure");
+        });
+      }
     });
     try {
       expect(() => s.stateMachine.transitionOp(interrupted, "succeeded", "turn_done", {
         learnedOutcome: "clean", learningSessionId: "restart-session",
-      })).toThrow();
+      })).toThrow("injected terminal persistence failure");
     } finally {
-      chmodSync(operationDir, 0o700);
       s.effectiveness._setLearnedEffectivenessWriteHookForTests();
+      s.stateMachine._setBeforePersistHookForTests();
     }
     const pending = s.effectiveness.readLearnedOutcome(interrupted.id)!;
     expect(pending).toMatchObject({ status: "pending", outcome: "clean" });

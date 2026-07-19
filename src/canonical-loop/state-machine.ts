@@ -67,6 +67,12 @@ const LEGACY_STATUS: Record<CanonicalState, OpStatus> = {
 };
 
 const TERMINAL: ReadonlySet<CanonicalState> = new Set(["succeeded", "failed", "cancelled"]);
+let beforePersistHook: () => void = () => undefined;
+
+/** Deterministic persistence-failure seam for cross-platform recovery tests. */
+export function _setBeforePersistHookForTests(hook: () => void = () => undefined): void {
+  beforePersistHook = hook;
+}
 
 export class IllegalTransitionError extends Error {
   constructor(public readonly from: CanonicalState | undefined, public readonly to: CanonicalState) {
@@ -169,6 +175,7 @@ export function transitionOp(
   // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`
   // (recovery-only) inverts the default lease preservation so the
   // transition's writeOp clears the stale lease atomically.
+  beforePersistHook();
   persistOpKeepingSignals(op, { preserveLeaseFromDisk: !opts.clearLeaseFromOp });
 
   if (learnedReceipt) {

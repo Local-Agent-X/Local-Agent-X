@@ -38,6 +38,7 @@ import {
   prepareCanonicalLearnedOutcome, commitCanonicalLearnedOutcome, recordCanonicalLearningOutcome,
 } from "./learned-effectiveness.js";
 import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
+import { isLearningOutcomeEligible } from "./turn-loop/record-outcome.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.state-machine");
@@ -125,11 +126,14 @@ export function transitionOp(
   const learningSessionId = opts.learnedOutcome
     ? opts.learningSessionId ?? getSessionForOp(op.id) ?? ""
     : "";
+  const learningEligible = opts.learnedOutcome
+    ? isLearningOutcomeEligible(op, learningSessionId)
+    : false;
   if (TERMINAL.has(to)) {
     // Only callers that explicitly classified the outcome may feed learning.
     // Generic terminal transitions and user cancellation carry no quality
     // signal and must not be guessed into clean/aborted evidence.
-    if (opts.learnedOutcome) {
+    if (opts.learnedOutcome && learningEligible) {
       try {
         learnedReceipt = prepareCanonicalLearnedOutcome(
           op,
@@ -184,7 +188,7 @@ export function transitionOp(
       logger.warn(`[learned-effectiveness] commit failed for ${op.id}: ${(error as Error).message}`);
     }
   }
-  if (opts.learnedOutcome) {
+  if (opts.learnedOutcome && learningEligible) {
     try {
       recordCanonicalLearningOutcome(
         op,

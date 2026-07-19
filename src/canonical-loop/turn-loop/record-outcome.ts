@@ -8,9 +8,16 @@
 import type { Op } from "../../ops/types.js";
 import { readOpTurns } from "../store.js";
 import { resolveOpModel } from "../op-model.js";
-import { classifyOpCategory, recordOpOutcome, type OpOutcome } from "../../tool-tracker.js";
+import {
+  classifyOpCategory,
+  normalizeObservedToolName,
+  recordOpOutcome,
+  type OpOutcome,
+} from "../../tool-tracker.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
+import { hasExternalIngestion, isExternalIngestingTool } from "../../data-lineage/external.js";
+import { getTaintSummary } from "../../data-lineage/taint.js";
 
 export type { OpOutcome };
 
@@ -43,6 +50,19 @@ function collectToolSequence(opId: string, extraToolNames: Iterable<string> = []
   return toolSequence;
 }
 
+export function isLearningOutcomeEligible(
+  op: Op,
+  sessionId: string,
+  toolSequence = collectToolSequence(op.id),
+): boolean {
+  if (!sessionId || hasExternalIngestion(sessionId) || getTaintSummary(sessionId).count > 0) return false;
+  return !toolSequence.some((tool) => {
+    const normalized = normalizeObservedToolName(tool);
+    const externalMcpServer = tool.startsWith("mcp__") && !tool.startsWith("mcp__lax__");
+    return externalMcpServer || isExternalIngestingTool(normalized);
+  });
+}
+
 /** Persist learning evidence only after commitTurn succeeds. Unlike aggregate
  *  telemetry, learned evidence must never observe a provisional terminal state:
  *  cancellation and commit failure can still invalidate it. */
@@ -53,6 +73,7 @@ export function recordCommittedLearningOutcome(
   timestamp = Date.now(),
 ): void {
   const toolSequence = collectToolSequence(op.id);
+  if (!isLearningOutcomeEligible(op, sessionId, toolSequence)) return;
   const category = classifyOpCategory(new Set(toolSequence));
   const model = resolveOpModel(op);
   crossSessionLearner.recordOutcome({

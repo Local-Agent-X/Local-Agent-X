@@ -24,12 +24,16 @@ vi.mock("../middlewares/open-steps.js", () => ({
 vi.mock("./nudges.js", () => ({ appendNudgeAsUserMessage: vi.fn() }));
 vi.mock("../store.js", () => ({ readOpTurns: vi.fn(() => []) }));
 vi.mock("../op-model.js", () => ({ resolveOpModel: vi.fn(() => "grok-4.3") }));
-vi.mock("../../tool-tracker.js", () => ({
+vi.mock("../../tool-tracker.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../tool-tracker.js")>()),
   classifyOpCategory: vi.fn(() => "coding"),
   recordOpOutcome: vi.fn(),
 }));
 vi.mock("../../cognition/cross-session-learning/index.js", () => ({
   default: { recordOutcome: vi.fn() },
+}));
+vi.mock("../../data-lineage/taint.js", () => ({
+  getTaintSummary: vi.fn(() => ({ count: 0, sources: [] })),
 }));
 vi.mock("../middlewares/browser-handoff.js", () => ({
   opGaveUpUnrecovered: vi.fn(() => false),
@@ -66,6 +70,8 @@ import { recordCommittedLearningOutcome, recordTerminalOutcome } from "./record-
 import { publishStreamChunk } from "../event-emitter.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
 import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
+import { clearExternalIngestion, recordExternalIngestion } from "../../data-lineage/external.js";
+import { getTaintSummary } from "../../data-lineage/taint.js";
 import { readOpTurns } from "../store.js";
 import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
@@ -538,7 +544,12 @@ describe("decideTurnOutcome — late-inject resume-gate (CL-5)", () => {
 });
 
 describe("decideTurnOutcome — op-outcome telemetry", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearExternalIngestion("external-session");
+    clearExternalIngestion("external-terminal-session");
+    vi.mocked(getTaintSummary).mockReturnValue({ count: 0, sources: [] });
+  });
 
   it("records a clean outcome on a terminal done with no open steps", async () => {
     const { recordOpOutcome } = await import("../../tool-tracker.js");
@@ -562,7 +573,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
   it("preserves repeated tool order when committed evidence is recorded", () => {
     (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
       toolCallSummary: [{ tool: "read" }, { tool: "edit" }, { tool: "edit" }],
-      observedTools: ["WebSearch", "bash", "bash"],
+      observedTools: ["bash", "bash"],
     }]);
 
     recordCommittedLearningOutcome(op, "clean", "session-stable");
@@ -571,8 +582,87 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       // A missing live session binding must fall back to the distinct op id,
       // never the shared local-user owner principal.
       sessionId: "session-stable",
-      tools: ["read", "edit", "edit", "WebSearch", "bash", "bash"],
+      tools: ["read", "edit", "edit", "bash", "bash"],
     }));
+  });
+
+  it("excludes native external tools observed inside the provider subprocess", () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
+      toolCallSummary: [{ tool: "read" }],
+      observedTools: ["WebSearch"],
+    }]);
+
+    recordCommittedLearningOutcome(op, "clean", "native-search-session");
+
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("keeps local LAX MCP aliases eligible after canonical normalization", () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
+      toolCallSummary: [],
+      observedTools: ["mcp__lax__read", "mcp__lax__write", "mcp__lax__bash"],
+    }]);
+
+    recordCommittedLearningOutcome(op, "clean", "local-mcp-session");
+
+    expect(crossSessionLearner.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      tools: ["mcp__lax__read", "mcp__lax__write", "mcp__lax__bash"],
+    }));
+  });
+
+  it.each(["mcp__lax__web_search", "mcp__lax__browser"])(
+    "excludes external LAX MCP alias %s after canonical normalization",
+    (tool) => {
+      (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
+        toolCallSummary: [], observedTools: [tool],
+      }]);
+
+      recordCommittedLearningOutcome(op, "clean", `external-${tool}`);
+
+      expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps true dynamic MCP server tools external after normalization", () => {
+    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
+      toolCallSummary: [], observedTools: ["mcp__github__search_issues"],
+    }]);
+
+    recordCommittedLearningOutcome(op, "clean", "dynamic-mcp-session");
+
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("excludes outcomes without conversation provenance", () => {
+    recordCommittedLearningOutcome(op, "clean", "");
+
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("excludes externally influenced sessions from committed learning evidence", () => {
+    recordExternalIngestion("external-session");
+
+    recordCommittedLearningOutcome(op, "clean", "external-session");
+
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("excludes sensitive-tainted sessions from committed learning evidence", () => {
+    vi.mocked(getTaintSummary).mockReturnValueOnce({ count: 1, sources: ["sensitive_file"] });
+
+    recordCommittedLearningOutcome(op, "clean", "sensitive-session");
+
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+
+  it("keeps terminal outcome classification autonomous for an externally influenced session", async () => {
+    recordExternalIngestion("external-terminal-session");
+
+    const result = await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
+
+    expect(result).toMatchObject({ terminalReason: "done", terminalOutcome: "clean" });
+    expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean", "grok-4.3");
+    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
   });
 
   it("records partial when terminal done but open steps remain", async () => {

@@ -48,6 +48,7 @@ const externalIngestSessions = new Set<string>();
  *  - browser — ALL actions: even a bare navigate ingests the page via any
  *    subsequent read/snapshot/observe result, wrapped or not
  *  - web_search / image_search — off-box result snippets enter context
+ *  - WebSearch / WebFetch — provider-native aliases observed out of process
  *  - extract_site_assets / youtube_analyze — off-box GET returning content
  *  - email_read / email_search — third-party-authored sender/subject/body
  *    content over IMAP (email-read-tools.ts), returned with NO wrap; inbound
@@ -66,6 +67,8 @@ const EXTERNAL_INGESTING_TOOLS: ReadonlySet<string> = new Set([
 	"youtube_analyze",
 	"email_read",
 	"email_search",
+	"WebSearch",
+	"WebFetch",
 ]);
 
 /** Built-in LOCAL management tools that happen to carry the mcp_ prefix

@@ -25,6 +25,10 @@ import {
   reconcileCanonicalLearnedOutcomes,
 } from "./learned-effectiveness.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
+import { clearSessionTaint, recordSensitiveRead } from "../data-lineage/taint.js";
+import { insertOpTurn } from "./store.js";
+import type { OpTurnRow } from "./types.js";
 
 const ORIGINAL_CONFIG = getRuntimeConfig();
 let workspaceRoot = "";
@@ -63,6 +67,19 @@ function readReceipt(opId: string): LearnedOutcomeReceipt {
   return JSON.parse(readFileSync(receiptPath(opId), "utf8")) as LearnedOutcomeReceipt;
 }
 
+function learning(learnedOutcome: LearnedOutcome, learningSessionId = "trusted-learning-session") {
+  return { learnedOutcome, learningSessionId };
+}
+
+function observeNativeTool(opId: string, tool: string): void {
+  insertOpTurn({
+    opId, turnIdx: 0,
+    providerState: { adapterName: "anthropic", adapterVersion: "1", providerPayload: {} },
+    toolCallSummary: [], observedTools: [tool], terminalReason: null,
+    redirectConsumed: false, createdAt: new Date().toISOString(),
+  } as OpTurnRow);
+}
+
 beforeAll(() => { workspaceRoot = mkdtempSync(join(tmpdir(), "lax-learned-feedback-")); });
 beforeEach(() => {
   setRuntimeConfig({ ...ORIGINAL_CONFIG, workspace: mkdtempSync(join(workspaceRoot, "case-")) } as LAXConfig);
@@ -74,6 +91,8 @@ afterEach(() => {
   _setBeforePersistHookForTests();
   resetCanonicalRuntime();
   _setCanonicalLearningOutcomeRecorderForTests();
+  clearExternalIngestion("external-learning-session");
+  clearSessionTaint("sensitive-learning-session");
   for (const id of opIds) {
     const dir = join(getLaxDir(), "operations", id);
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
@@ -96,7 +115,7 @@ describe("canonical learned effectiveness integration", () => {
   ] as const)("records %s with exact provenance", (reason, state, outcome) => {
     const current = op(reason);
     envelope(current.id);
-    transitionOp(current, state, reason, { learnedOutcome: outcome });
+    transitionOp(current, state, reason, learning(outcome));
 
     expect(readReceipt(current.id)).toMatchObject({
       status: "committed", opId: current.id, outcome,
@@ -106,7 +125,7 @@ describe("canonical learned effectiveness integration", () => {
     });
     expect(getLearnedProtocolEnvelopeForOp(current.id)).toBeNull();
     expect(learningRecorder).toHaveBeenCalledTimes(1);
-    expect(learningRecorder).toHaveBeenCalledWith(current, outcome, "", expect.any(Number));
+    expect(learningRecorder).toHaveBeenCalledWith(current, outcome, "trusted-learning-session", expect.any(Number));
   });
 
   it("does not score a user cancellation as learned-protocol failure", () => {
@@ -128,7 +147,7 @@ describe("canonical learned effectiveness integration", () => {
       observed.push({ status: receipt.status, state: readOp(current.id)?.canonical?.state });
     });
 
-    transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" });
+    transitionOp(current, "succeeded", "turn_done", learning("clean"));
 
     expect(observed).toEqual([
       { status: "pending", state: "running" },
@@ -145,7 +164,7 @@ describe("canonical learned effectiveness integration", () => {
         _setBeforePersistHookForTests(() => { throw new Error("injected terminal persistence failure"); });
       }
     });
-    expect(() => transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" }))
+    expect(() => transitionOp(current, "succeeded", "turn_done", learning("clean")))
       .toThrow("injected terminal persistence failure");
     expect(readReceipt(current.id).status).toBe("pending");
     expect(readOp(current.id)?.canonical?.state).toBe("running");
@@ -153,7 +172,7 @@ describe("canonical learned effectiveness integration", () => {
     _setLearnedEffectivenessWriteHookForTests();
     _setBeforePersistHookForTests();
     resetCanonicalRuntime();
-    transitionOp(readOp(current.id)!, "succeeded", "turn_done", { learnedOutcome: "clean" });
+    transitionOp(readOp(current.id)!, "succeeded", "turn_done", learning("clean"));
     expect(readReceipt(current.id).status).toBe("committed");
     expect(learningRecorder).toHaveBeenCalledTimes(1);
   });
@@ -166,12 +185,12 @@ describe("canonical learned effectiveness integration", () => {
       if (receipt.status === "committed") throw new Error("injected effectiveness failure");
     });
 
-    expect(() => transitionOp(current, "failed", "worker_exception", { learnedOutcome: "aborted" })).not.toThrow();
+    expect(() => transitionOp(current, "failed", "worker_exception", learning("aborted"))).not.toThrow();
 
     expect(readOp(current.id)?.canonical?.state).toBe("failed");
     expect(readReceipt(current.id).status).toBe("pending");
     expect(learningRecorder).toHaveBeenCalledTimes(1);
-    expect(learningRecorder).toHaveBeenCalledWith(current, "aborted", "", expect.any(Number));
+    expect(learningRecorder).toHaveBeenCalledWith(current, "aborted", "trusted-learning-session", expect.any(Number));
   });
 
   it("does not commit stale clean C7 when a retry ends aborted", () => {
@@ -183,14 +202,14 @@ describe("canonical learned effectiveness integration", () => {
         _setBeforePersistHookForTests(() => { throw new Error("injected terminal persistence failure"); });
       }
     });
-    expect(() => transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" }))
+    expect(() => transitionOp(current, "succeeded", "turn_done", learning("clean")))
       .toThrow("injected terminal persistence failure");
     expect(readReceipt(current.id)).toMatchObject({ status: "pending", outcome: "clean" });
     clearLearnedProtocolEnvelopeForOp(current.id);
     _setLearnedEffectivenessWriteHookForTests();
     _setBeforePersistHookForTests();
 
-    transitionOp(readOp(current.id)!, "failed", "worker_exception", { learnedOutcome: "aborted" });
+    transitionOp(readOp(current.id)!, "failed", "worker_exception", learning("aborted"));
 
     expect(readOp(current.id)?.canonical?.state).toBe("failed");
     expect(readReceipt(current.id)).toMatchObject({ status: "pending", outcome: "clean" });
@@ -198,12 +217,59 @@ describe("canonical learned effectiveness integration", () => {
     expect(reconcileCanonicalLearnedOutcomes(learningRecorder).quarantined).toHaveLength(1);
   });
 
+  it("keeps a selected workflow terminal but excludes unknown-session evidence", () => {
+    const current = op("unknown-session");
+    envelope(current.id);
+
+    transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" });
+
+    expect(current.canonical?.state).toBe("succeeded");
+    expect(existsSync(receiptPath(current.id))).toBe(false);
+    expect(learningRecorder).not.toHaveBeenCalled();
+  });
+
+  it("keeps a selected workflow terminal but excludes external-ingestion evidence", () => {
+    const current = op("external-session");
+    envelope(current.id);
+    recordExternalIngestion("external-learning-session");
+
+    transitionOp(current, "succeeded", "turn_done", learning("clean", "external-learning-session"));
+
+    expect(current.canonical?.state).toBe("succeeded");
+    expect(existsSync(receiptPath(current.id))).toBe(false);
+    expect(learningRecorder).not.toHaveBeenCalled();
+  });
+
+  it("keeps a selected workflow terminal but excludes sensitive-taint evidence", () => {
+    const current = op("sensitive-session");
+    envelope(current.id);
+    recordSensitiveRead("sensitive-learning-session", "sensitive_file", ".env", "secret material long enough");
+
+    transitionOp(current, "succeeded", "turn_done", learning("clean", "sensitive-learning-session"));
+
+    expect(current.canonical?.state).toBe("succeeded");
+    expect(existsSync(receiptPath(current.id))).toBe(false);
+    expect(learningRecorder).not.toHaveBeenCalled();
+  });
+
+  it("keeps a selected workflow terminal but excludes native external-tool evidence", () => {
+    const current = op("native-search");
+    envelope(current.id);
+    observeNativeTool(current.id, "WebSearch");
+
+    transitionOp(current, "succeeded", "turn_done", learning("clean", "native-search-session"));
+
+    expect(current.canonical?.state).toBe("succeeded");
+    expect(existsSync(receiptPath(current.id))).toBe(false);
+    expect(learningRecorder).not.toHaveBeenCalled();
+  });
+
   it("records ordinary learning evidence without creating an effectiveness receipt", () => {
     const current = op("ordinary");
-    transitionOp(current, "succeeded", "turn_done", { learnedOutcome: "clean" });
+    transitionOp(current, "succeeded", "turn_done", learning("clean"));
     expect(existsSync(receiptPath(current.id))).toBe(false);
     expect(learningRecorder).toHaveBeenCalledTimes(1);
-    expect(learningRecorder).toHaveBeenCalledWith(current, "clean", "", undefined);
+    expect(learningRecorder).toHaveBeenCalledWith(current, "clean", "trusted-learning-session", undefined);
   });
 
   it("reconciles restart-pending work and replays the learner idempotently", () => {

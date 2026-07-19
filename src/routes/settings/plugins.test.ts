@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 const routeMocks = vi.hoisted(() => ({
   pluginManager: {
     listPlugins: vi.fn(),
+    getPluginStatus: vi.fn(),
     loadPlugin: vi.fn(),
     disablePlugin: vi.fn(),
     retryPlugin: vi.fn(),
@@ -48,10 +49,12 @@ async function request(method: "GET" | "POST", path: string, body?: unknown) {
 
 beforeEach(() => {
   routeMocks.pluginManager.listPlugins.mockReset();
+  routeMocks.pluginManager.getPluginStatus.mockReset();
   routeMocks.pluginManager.loadPlugin.mockReset();
   routeMocks.pluginManager.disablePlugin.mockReset();
   routeMocks.pluginManager.retryPlugin.mockReset();
   routeMocks.pluginManager.listPlugins.mockReturnValue([]);
+  routeMocks.pluginManager.getPluginStatus.mockReturnValue({ id: "sample", registryId: "sample", status: "loaded" });
   routeMocks.pluginManager.loadPlugin.mockResolvedValue({ id: "sample" });
   routeMocks.pluginManager.disablePlugin.mockReturnValue(true);
   routeMocks.pluginManager.retryPlugin.mockResolvedValue({ id: "sample" });
@@ -63,9 +66,10 @@ describe("plugin lifecycle routes", () => {
     const load = await request("POST", "/api/plugins/load", { path: "/plugins/sample" });
 
     expect(list).toMatchObject({ handled: true, status: 200, body: [] });
-    expect(load).toMatchObject({ handled: true, status: 200, body: { ok: true, plugin: { id: "sample" } } });
+    expect(load).toMatchObject({ handled: true, status: 200, body: { ok: true, plugin: { id: "sample", status: "loaded" } } });
     expect(routeMocks.pluginManager.listPlugins).toHaveBeenCalledOnce();
     expect(routeMocks.pluginManager.loadPlugin).toHaveBeenCalledWith("/plugins/sample");
+    expect(routeMocks.pluginManager.getPluginStatus).toHaveBeenCalledWith("sample");
     expect(load.broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { plugins: true } });
   });
 
@@ -100,6 +104,19 @@ describe("plugin lifecycle routes", () => {
     });
     expect(serialized).not.toContain("private-plugin");
     expect(serialized).not.toContain("SECRET_CANARY_7fd3");
+    expect(result.broadcastAll).not.toHaveBeenCalled();
+  });
+
+  it("returns a fixed load error without leaking bundle content or paths", async () => {
+    routeMocks.pluginManager.loadPlugin.mockRejectedValue(
+      new Error("C:\\private\\plugin\\index.mjs SECRET_CANARY_load"),
+    );
+
+    const result = await request("POST", "/api/plugins/load", { path: "C:\\private\\plugin" });
+
+    expect(result).toMatchObject({ status: 400, body: { error: "Plugin load could not be completed" } });
+    expect(JSON.stringify(result.body)).not.toContain("private");
+    expect(JSON.stringify(result.body)).not.toContain("SECRET_CANARY");
     expect(result.broadcastAll).not.toHaveBeenCalled();
   });
 

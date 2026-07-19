@@ -5,42 +5,19 @@ import { join, relative, resolve } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
-import {
-  registeredPluginItem,
-  safeLifecyclePersistenceError,
-  safePluginId,
-  safeRestoreError,
-  type PluginListItem,
-} from "./plugin-system/lifecycle-status.js";
-import { parsePluginManifest, type PluginManifest } from "./plugin-system/manifest.js";
-import {
-  createPluginRegistryStore,
-  type PluginRegistry,
-  type PluginRegistryStore,
-} from "./plugin-system/registry-store.js";
+import { registeredPluginItem, safeLifecyclePersistenceError, safePluginId, safeRestoreError, type PluginListItem } from "./plugin-system/lifecycle-status.js";
+import { parsePluginManifest, pluginManifestMetadata, type PluginManifest } from "./plugin-system/manifest.js";
+import { createPluginRegistryStore, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
 import { verifyPublisherSignature, type TrustLevel } from "./plugin-system/publisher-trust.js";
 import { assessTrustLevel } from "./plugin-system/integrity.js";
 import { buildPluginList } from "./plugin-system/list-items.js";
-import {
-  MissingPluginSecretsError,
-  PluginSecretLifecycle,
-  type SecretAvailabilityPort,
-} from "./plugin-system/secret-requirements.js";
-import type {
-  PluginToolSurfacePort,
-  PreparedPluginToolActivation,
-} from "./plugin-system/tool-surface.js";
+import type { PluginRestoreFailure } from "./plugin-system/list-items.js";
+import { MissingPluginSecretsError, PluginSecretLifecycle, type SecretAvailabilityPort } from "./plugin-system/secret-requirements.js";
+import type { PluginToolSurfacePort, PreparedPluginToolActivation } from "./plugin-system/tool-surface.js";
 
 export type { PluginListItem, PluginLifecycleStatus } from "./plugin-system/lifecycle-status.js";
 export type { PluginContributions, PluginManifest } from "./plugin-system/manifest.js";
-export {
-  readTrustedPublishers,
-  verifyPublisherSignature,
-  type PublisherSignatureVerdict,
-  type TrustedPublisher,
-  type TrustedPublishersFile,
-  type TrustLevel,
-} from "./plugin-system/publisher-trust.js";
+export { readTrustedPublishers, verifyPublisherSignature, type PublisherSignatureVerdict, type TrustedPublisher, type TrustedPublishersFile, type TrustLevel } from "./plugin-system/publisher-trust.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("plugin-system");
@@ -50,6 +27,7 @@ interface LoadedPlugin {
   module: Record<string, unknown>;
   path: string;
   trustLevel: TrustLevel;
+  manifestHash: string;
 }
 
 const PLUGINS_DIR = join(getLaxDir(), "plugins");
@@ -63,7 +41,7 @@ function ensurePluginsDir(): void {
 
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
-  private restoreErrors = new Map<string, string>();
+  private restoreErrors = new Map<string, PluginRestoreFailure>();
   private registryError: string | undefined;
   private toolSurface: PluginToolSurfacePort | undefined;
   private secretLifecycle = new PluginSecretLifecycle();
@@ -127,8 +105,8 @@ export class PluginManager {
     }
     if (inspectSecretRequirements && !manifest.contributions?.secrets?.length) return manifest;
 
-    try {
     const currentManifestHash = createHash("sha256").update(manifestContent).digest("hex");
+    try {
     const registry = this.registryStore.read();
     const registeredManifestHash = expectedRegistration?.manifestHash ?? registry[manifest.id]?.manifestHash;
     if (expectedRegistration && manifest.contributions && !registeredManifestHash) {
@@ -164,10 +142,10 @@ export class PluginManager {
     }
 
     if (!expectedRegistration && manifest.contributions?.secrets?.length) {
-      this.secretLifecycle.retainCandidate(manifest, pluginPath, trust.trustLevel);
+      this.secretLifecycle.retainCandidate(manifest, pluginPath, trust.trustLevel, currentManifestHash);
     }
     if (inspectSecretRequirements) return manifest;
-    try { this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel); }
+    try { this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel, currentManifestHash); }
     catch (error) {
       if (error instanceof MissingPluginSecretsError) this.restoreErrors.delete(manifest.id);
       throw error;
@@ -187,13 +165,14 @@ export class PluginManager {
       .update(`plugin:${manifest.id}\nmanifest:${currentManifestHash}\nentry:${trust.currentHash}`)
       .digest("hex");
     preparedTools = this.toolSurface?.prepare(manifest.id, manifest, pluginModule, executableProvenance) ?? null;
-    this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel);
+    this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel, currentManifestHash);
 
     const loadedPlugin: LoadedPlugin = {
       manifest,
       module: pluginModule,
       path: pluginPath,
       trustLevel: trust.trustLevel,
+      manifestHash: currentManifestHash,
     };
 
     if (!expectedRegistration) {
@@ -205,12 +184,13 @@ export class PluginManager {
             path: pluginPath,
             entryHash: trust.currentHash,
             manifestHash: currentManifestHash,
+            manifest: pluginManifestMetadata(manifest),
           },
         };
         this.registryStore.write(nextRegistry);
       } catch {
         const reason = safeLifecyclePersistenceError("load");
-        this.restoreErrors.set(manifest.id, reason);
+        this.restoreErrors.set(manifest.id, { error: reason, manifest, manifestHash: currentManifestHash });
         throw new Error(reason);
       }
     } else {
@@ -236,7 +216,9 @@ export class PluginManager {
       if (preparedTools) this.toolSurface?.abort(preparedTools);
       if (!(error instanceof MissingPluginSecretsError) && !expectedRegistration && !this.loaded.has(manifest.id)) {
         const reason = safeRestoreError(error);
-        if (!this.secretLifecycle.markFailure(manifest.id, reason)) this.restoreErrors.set(manifest.id, reason);
+        if (!this.secretLifecycle.markFailure(manifest.id, reason)) {
+          this.restoreErrors.set(manifest.id, { error: reason, manifest, manifestHash: currentManifestHash });
+        }
       }
       throw error;
     }
@@ -245,14 +227,22 @@ export class PluginManager {
   disablePlugin(id: string): boolean {
     const registry = this.registryStore.read();
     if (!registry[id]) return false;
+    const loaded = this.loaded.get(id);
     const nextRegistry: PluginRegistry = {
       ...registry,
-      [id]: { ...registry[id], enabled: false },
+      [id]: {
+        ...registry[id],
+        enabled: false,
+        ...(loaded ? { manifest: pluginManifestMetadata(loaded.manifest) } : {}),
+      },
     };
     try {
       this.registryStore.write(nextRegistry);
     } catch {
-      this.restoreErrors.set(id, safeLifecyclePersistenceError("disable"));
+      this.restoreErrors.set(id, {
+        error: safeLifecyclePersistenceError("disable"),
+        ...(loaded ? { manifest: loaded.manifest, manifestHash: loaded.manifestHash } : {}),
+      });
       throw new Error(safeLifecyclePersistenceError("disable"));
     }
     this.loaded.delete(id);
@@ -272,7 +262,12 @@ export class PluginManager {
       logger.warn("[plugin] Plugin registry is invalid; lifecycle operations are unavailable");
       return [registeredPluginItem("plugin-registry", false, this.registryError)];
     }
-    return buildPluginList(registry, this.loaded, this.restoreErrors, this.secretLifecycle.blocked);
+    return buildPluginList(registry, this.loaded, this.restoreErrors, this.secretLifecycle.blocked,
+      (id) => this.toolSurface?.listActive(id) ?? []);
+  }
+
+  getPluginStatus(id: string): PluginListItem | undefined {
+    return this.listPlugins().find((plugin) => plugin.registryId === id);
   }
 
   getPluginTools(id: string): string[] {
@@ -281,6 +276,10 @@ export class PluginManager {
       throw new Error(`Plugin "${id}" is not loaded`);
     }
     return [...plugin.manifest.tools];
+  }
+
+  getActivePluginTools(id: string): string[] {
+    return (this.toolSurface?.listActive(id) ?? []).map((tool) => tool.name);
   }
 
   getPluginModule(id: string): Record<string, unknown> | null {
@@ -313,7 +312,7 @@ export class PluginManager {
       if (this.loaded.has(id)) continue;
       if (!entry.entryHash) {
         const reason = "Plugin is not integrity-pinned";
-        this.restoreErrors.set(id, reason);
+        this.restoreErrors.set(id, { error: reason });
         logger.warn(`[plugin] Restore skipped for ${safePluginId(id)}: ${reason}`);
         continue;
       }
@@ -327,7 +326,7 @@ export class PluginManager {
       } catch (error) {
         if (error instanceof MissingPluginSecretsError) continue;
         const reason = safeRestoreError(error);
-        this.restoreErrors.set(id, reason);
+        this.restoreErrors.set(id, { error: reason });
         logger.warn(`[plugin] Restore failed for ${safePluginId(id)}: ${reason}`);
       }
     }
@@ -355,7 +354,7 @@ export class PluginManager {
     } catch (error) {
       if (!(error instanceof MissingPluginSecretsError)) {
         const reason = safeRestoreError(error);
-        if (!this.secretLifecycle.markFailure(id, reason)) this.restoreErrors.set(id, reason);
+        if (!this.secretLifecycle.markFailure(id, reason)) this.restoreErrors.set(id, { error: reason });
       }
       throw error;
     }

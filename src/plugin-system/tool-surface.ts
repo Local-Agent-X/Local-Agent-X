@@ -19,6 +19,16 @@ export interface PreparedPluginToolActivation {
   tools: ToolDefinition[];
 }
 
+export interface ActivePluginToolProjection {
+  name: string;
+  description: string;
+  defer: boolean;
+  tags: string[];
+  kernel: "shell";
+  risk: "shell";
+  implementationFingerprint: string;
+}
+
 export interface PluginToolSurfacePort {
   prepare(
     ownerId: string,
@@ -29,6 +39,7 @@ export interface PluginToolSurfacePort {
   activate(prepared: PreparedPluginToolActivation): void;
   abort(prepared: PreparedPluginToolActivation): void;
   deactivate(ownerId: string): void;
+  listActive(ownerId: string): ActivePluginToolProjection[];
 }
 
 function asToolDefinition(name: string, value: unknown): ToolDefinition {
@@ -172,6 +183,33 @@ export class PluginToolSurface implements PluginToolSurfacePort {
     if (this.ownerReservations.get(prepared.ownerId) === prepared.activationToken) {
       this.ownerReservations.delete(prepared.ownerId);
     }
+  }
+
+  listActive(ownerId: string): ActivePluginToolProjection[] {
+    const active = this.activeByOwner.get(ownerId);
+    if (!active) return [];
+    const projected = active.tools.map((tool) => {
+      const metadata = getActivePluginToolMetadata(tool.name);
+      const entry = this.registry.getEntry(tool.name);
+      if (
+        metadata?.ownerId !== ownerId ||
+        metadata.activationToken !== active.activationToken ||
+        metadata.kernel !== "shell" ||
+        metadata.risk !== "shell" ||
+        entry?.tool !== tool
+      ) return null;
+      return {
+        name: tool.name,
+        description: tool.description,
+        defer: entry.defer,
+        tags: [...entry.tags],
+        kernel: "shell" as const,
+        risk: "shell" as const,
+        implementationFingerprint: entry.implementationFingerprint,
+      };
+    });
+    if (projected.some((tool) => tool === null)) return [];
+    return projected as ActivePluginToolProjection[];
   }
 
   deactivate(ownerId: string): void {

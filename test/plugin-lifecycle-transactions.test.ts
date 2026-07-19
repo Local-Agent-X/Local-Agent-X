@@ -131,7 +131,10 @@ describe("PluginManager lifecycle transactions", () => {
     expect(registry.get("invalid_schema_action")).toBeUndefined();
     expect(live).toEqual([]);
     expect(pm.listPlugins()).toEqual([
-      expect.objectContaining({ id: "invalid-schema", status: "failed", error: "Plugin tool surface is invalid" }),
+      expect.objectContaining({
+        id: "invalid-schema", version: "1.0.0", status: "failed",
+        declaredTools: ["invalid_schema_action"], activeTools: [], error: "Plugin tool surface is invalid",
+      }),
     ]);
   });
 
@@ -144,6 +147,9 @@ describe("PluginManager lifecycle transactions", () => {
     await expect(pm.loadPlugin(dir)).rejects.toThrow("Plugin load could not be persisted");
     expect(registry.get("persisted_action")).toBeUndefined();
     expect(live).toEqual([]);
+    expect(pm.listPlugins()).toEqual([expect.objectContaining({
+      id: "surface-persistence", version: "1.0.0", declaredTools: ["persisted_action"], activeTools: [],
+    })]);
 
     await expect(pm.loadPlugin(dir)).resolves.toEqual(expect.objectContaining({ id: "surface-persistence" }));
     expect(registry.get("persisted_action")).toBe(live[0]);
@@ -237,6 +243,7 @@ describe("PluginManager lifecycle transactions", () => {
     expect(pm.disablePlugin("disable-rollback")).toBe(true);
     expect(pm.isLoaded("disable-rollback")).toBe(false);
     expect(store.current()["disable-rollback"].enabled).toBe(false);
+    expect(store.current()["disable-rollback"].manifest).toMatchObject({ id: "disable-rollback", version: "1.0.0" });
     expect(pm.listPlugins()).toEqual([
       expect.objectContaining({ id: "disable-rollback", status: "disabled", enabled: false }),
     ]);

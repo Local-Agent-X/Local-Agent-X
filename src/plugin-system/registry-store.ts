@@ -1,11 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { atomicWriteFileSync, ensureDirFor } from "../util/json-store.js";
+import {
+  parsePluginManifestMetadata,
+  type PluginManifestMetadata,
+} from "./manifest.js";
 
 export interface PluginRegistryEntry {
   enabled: boolean;
   path: string;
   entryHash?: string;
   manifestHash?: string;
+  manifest?: PluginManifestMetadata;
 }
 
 export interface PluginRegistry {
@@ -23,7 +28,8 @@ function parseRegistry(raw: string): PluginRegistry {
     throw new Error("Plugin registry is invalid");
   }
   const registry = parsed as Record<string, unknown>;
-  for (const entry of Object.values(registry)) {
+  const normalized: PluginRegistry = {};
+  for (const [id, entry] of Object.entries(registry)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new Error("Plugin registry is invalid");
     }
@@ -37,8 +43,19 @@ function parseRegistry(raw: string): PluginRegistry {
         throw new Error("Plugin registry is invalid");
       }
     }
+    const manifest = value.manifest === undefined
+      ? undefined
+      : parsePluginManifestMetadata(value.manifest);
+    if (manifest && manifest.id !== id) throw new Error("Plugin registry is invalid");
+    normalized[id] = {
+      enabled: value.enabled,
+      path: value.path,
+      ...(typeof value.entryHash === "string" ? { entryHash: value.entryHash } : {}),
+      ...(typeof value.manifestHash === "string" ? { manifestHash: value.manifestHash } : {}),
+      ...(manifest ? { manifest } : {}),
+    };
   }
-  return registry as PluginRegistry;
+  return normalized;
 }
 
 type RegistryWriter = (path: string, data: string) => void;

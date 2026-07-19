@@ -7,8 +7,14 @@ const html = readFileSync(join(process.cwd(), "public", "app.html"), "utf-8");
 const script = readFileSync(join(process.cwd(), "public", "js", "settings-integrations.js"), "utf-8");
 const plugin = {
   id: "secret-plugin",
+  registryId: "secret-plugin",
   name: "Secret Plugin",
+  version: "1.2.3",
+  publisher: "example.publisher",
+  enabled: true,
   status: "needs_secrets",
+  declaredTools: ["secret_action"],
+  activeTools: [],
   requiredSecrets: [{ name: "FIRST_TOKEN" }, { name: "SECOND_TOKEN" }],
   missingSecrets: ["FIRST_TOKEN", "SECOND_TOKEN"],
 };
@@ -52,6 +58,39 @@ describe("plugin secret settings UI", () => {
     window.eval("openPluginSecrets('secret-plugin')");
 
     expect(window.document.querySelectorAll("#plugin-secret-modal")).toHaveLength(1);
+  });
+
+  it("renders canonical identity/tool metadata and disables by registry identity", async () => {
+    const { window, calls } = await setup([{ ok: true }]);
+    const list = window.document.getElementById("plugin-bundles-list")!;
+
+    expect(list.textContent).toContain("v1.2.3");
+    expect(list.textContent).toContain("example.publisher");
+    expect(list.textContent).toContain("Needs FIRST_TOKEN, SECOND_TOKEN");
+    await window.eval("disablePluginBundle('secret-plugin')") as Promise<void>;
+
+    expect(calls).toContainEqual({ path: "/api/plugins/unload", body: { id: "secret-plugin" } });
+  });
+
+  it("renders the active-to-declared count from the canonical API projection", async () => {
+    const window = new Window({ url: "http://127.0.0.1" });
+    window.document.body.innerHTML = '<div id="plugin-bundles-list"></div>';
+    const runtime = window as unknown as Record<string, unknown>;
+    runtime.apiJson = vi.fn(async () => [{
+      ...plugin,
+      status: "loaded",
+      missingSecrets: [],
+      declaredTools: ["secret_action", "second_action"],
+      activeTools: [{ name: "secret_action" }],
+    }]);
+    runtime.apiPost = vi.fn();
+    runtime.esc = (value: unknown) => String(value ?? "");
+    runtime.alert = vi.fn();
+    window.eval(script);
+
+    await window.eval("loadPluginBundles()") as Promise<void>;
+
+    expect(window.document.getElementById("plugin-bundles-list")?.textContent).toContain("1/2 tools active");
   });
 
   it("stops on a first-secret 4xx, preserves values, and never retries", async () => {

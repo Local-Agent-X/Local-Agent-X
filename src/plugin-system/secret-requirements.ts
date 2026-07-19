@@ -11,6 +11,7 @@ export interface SecretBlockedPlugin {
   path: string;
   trustLevel: TrustLevel;
   missingSecrets: string[];
+  manifestHash?: string;
   error?: string;
 }
 
@@ -18,6 +19,7 @@ interface LoadedSecretPlugin {
   manifest: PluginManifest;
   path: string;
   trustLevel: TrustLevel;
+  manifestHash: string;
 }
 
 export class MissingPluginSecretsError extends Error {
@@ -51,10 +53,16 @@ export class PluginSecretLifecycle {
     this.availability = availability;
   }
 
-  assertAvailable(manifest: PluginManifest, path: string, trustLevel: TrustLevel): void {
+  assertAvailable(manifest: PluginManifest, path: string, trustLevel: TrustLevel, manifestHash?: string): void {
     const unavailable = missingSecrets(manifest, this.availability);
     if (unavailable.length === 0) return;
-    this.blocked.set(manifest.id, { manifest, path, trustLevel, missingSecrets: unavailable });
+    this.blocked.set(manifest.id, {
+      manifest,
+      path,
+      trustLevel,
+      missingSecrets: unavailable,
+      ...(manifestHash ? { manifestHash } : {}),
+    });
     throw new MissingPluginSecretsError(manifest.id, unavailable);
   }
 
@@ -62,12 +70,13 @@ export class PluginSecretLifecycle {
     this.blocked.delete(id);
   }
 
-  retainCandidate(manifest: PluginManifest, path: string, trustLevel: TrustLevel): void {
+  retainCandidate(manifest: PluginManifest, path: string, trustLevel: TrustLevel, manifestHash?: string): void {
     this.blocked.set(manifest.id, {
       manifest,
       path,
       trustLevel,
       missingSecrets: missingSecrets(manifest, this.availability),
+      ...(manifestHash ? { manifestHash } : {}),
     });
   }
 
@@ -115,6 +124,7 @@ export class PluginSecretLifecycle {
         path: plugin.path,
         trustLevel: plugin.trustLevel,
         missingSecrets: missingSecrets(plugin.manifest, this.availability),
+        manifestHash: plugin.manifestHash,
         ...(error ? { error } : {}),
       });
     }

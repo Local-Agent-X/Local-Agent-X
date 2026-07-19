@@ -22,16 +22,24 @@ async function loadPluginBundles() {
       const needsSecrets = plugin.status === 'needs_secrets';
       const repairable = needsSecrets || plugin.status === 'ready' || (plugin.status === 'failed' && Array.isArray(plugin.requiredSecrets));
       const missing = Array.isArray(plugin.missingSecrets) ? plugin.missingSecrets : [];
+      const declared = Array.isArray(plugin.declaredTools) ? plugin.declaredTools : (Array.isArray(plugin.tools) ? plugin.tools : []);
+      const active = Array.isArray(plugin.activeTools) ? plugin.activeTools : [];
+      const registryId = plugin.registryId || plugin.id;
+      const identity = [plugin.version ? `v${esc(plugin.version)}` : '', plugin.publisher ? esc(plugin.publisher) : ''].filter(Boolean).join(' · ');
+      const detail = needsSecrets
+        ? `Needs ${missing.map(esc).join(', ')}`
+        : `${active.length}/${declared.length} tools active`;
       return `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
           <div style="min-width:0">
-            <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(plugin.name || plugin.id)}</div>
-            <div style="font-size:.7rem;color:var(--muted);margin-top:2px">${needsSecrets ? `Needs ${missing.map(esc).join(', ')}` : esc(plugin.status || 'registered')}</div>
+            <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(plugin.name || plugin.id)}${identity ? ` <span style="font-weight:400;color:var(--muted)">${identity}</span>` : ''}</div>
+            <div style="font-size:.7rem;color:var(--muted);margin-top:2px">${detail}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <span style="font-size:.65rem;padding:3px 8px;border-radius:4px;background:${needsSecrets ? 'var(--warn)' : 'var(--border)'};color:${needsSecrets ? '#000' : 'var(--muted)'}">${needsSecrets ? 'NEEDS SECRETS' : esc(String(plugin.status || '').toUpperCase())}</span>
             ${needsSecrets ? `<button class="btn" data-plugin-id="${esc(plugin.id)}" onclick="openPluginSecrets(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Add Secrets</button>` : ''}
             ${repairable ? `<button class="btn" data-plugin-id="${esc(plugin.id)}" onclick="retryPluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem">Retry</button>` : ''}
+            ${plugin.enabled ? `<button class="btn" data-plugin-disable data-plugin-id="${esc(registryId)}" onclick="disablePluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--danger)">Disable</button>` : ''}
           </div>
         </div>`;
     }).join('');
@@ -111,6 +119,16 @@ async function retryPluginBundle(id) {
     await loadPluginBundles();
   } catch {
     alert('Plugin retry could not be completed.');
+  }
+}
+
+async function disablePluginBundle(id) {
+  try {
+    const result = await apiPost('/api/plugins/unload', { id });
+    if (!pluginPostSucceeded(result)) throw new Error("disable failed");
+    await loadPluginBundles();
+  } catch {
+    alert('Plugin disable could not be completed.');
   }
 }
 

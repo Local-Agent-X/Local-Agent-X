@@ -1,30 +1,75 @@
 import type { TrustLevel } from "./publisher-trust.js";
-import type { PluginManifest, PluginSecretRequirement } from "./manifest.js";
+import type { PluginManifestMetadata, PluginSecretRequirement } from "./manifest.js";
+import type { ActivePluginToolProjection } from "./tool-surface.js";
 
 export type PluginLifecycleStatus = "loaded" | "registered" | "disabled" | "failed" | "needs_secrets" | "ready";
 
-export interface PluginListItem extends PluginManifest {
+export interface PluginListItem {
+  id: string;
+  registryId: string;
+  name: string;
+  version: string;
+  description: string;
+  publisher: string | null;
+  manifestHash: string | null;
   enabled: boolean;
   status: PluginLifecycleStatus;
   trustLevel: TrustLevel | null;
+  tools: string[];
+  declaredTools: string[];
+  activeTools: ActivePluginToolProjection[];
+  requiredSecrets: PluginSecretRequirement[];
+  missingSecrets: string[];
+  secretsReady: boolean;
   error?: string;
-  requiredSecrets?: PluginSecretRequirement[];
+}
+
+export interface PluginProjectionSource {
+  registryId: string;
+  manifest?: PluginManifestMetadata;
+  manifestHash?: string;
+  enabled: boolean;
+  status: PluginLifecycleStatus;
+  trustLevel: TrustLevel | null;
+  activeTools?: ActivePluginToolProjection[];
   missingSecrets?: string[];
+  error?: string;
+}
+
+export function pluginListItem(source: PluginProjectionSource): PluginListItem {
+  const manifest = source.manifest;
+  const declaredTools = [...(manifest?.declaredTools ?? [])];
+  const requiredSecrets = [...(manifest?.requiredSecrets ?? [])];
+  const missingSecrets = [...(source.missingSecrets ?? [])];
+  return {
+    id: manifest?.id ?? source.registryId,
+    registryId: source.registryId,
+    name: manifest?.name ?? source.registryId,
+    version: manifest?.version ?? "",
+    description: manifest?.description ?? "",
+    publisher: manifest?.publisher ?? null,
+    manifestHash: source.manifestHash ?? null,
+    enabled: source.enabled,
+    status: source.status,
+    trustLevel: source.trustLevel,
+    tools: [...declaredTools],
+    declaredTools,
+    activeTools: source.status === "loaded" ? [...(source.activeTools ?? [])] : [],
+    requiredSecrets,
+    missingSecrets,
+    secretsReady: missingSecrets.length === 0,
+    ...(source.error ? { error: source.error } : {}),
+  };
 }
 
 export function registeredPluginItem(id: string, enabled: boolean, error?: string): PluginListItem {
-  return {
-    id,
-    name: id,
-    version: "",
-    description: "",
-    entryPoint: "",
-    tools: [],
+  return pluginListItem({
+    registryId: id,
     enabled,
     status: error ? "failed" : !enabled ? "disabled" : "registered",
     trustLevel: null,
     ...(error ? { error } : {}),
-  };
+  });
 }
 
 export function safeLifecyclePersistenceError(action: "load" | "disable"): string {

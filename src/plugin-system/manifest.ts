@@ -22,6 +22,16 @@ export interface PluginManifest {
   keyId?: string;
 }
 
+export interface PluginManifestMetadata {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  declaredTools: string[];
+  requiredSecrets: PluginSecretRequirement[];
+  publisher?: string;
+}
+
 const CONTRIBUTION_KEYS = new Set(["tools", "secrets"]);
 
 function isStringArray(value: unknown): value is string[] {
@@ -120,5 +130,55 @@ export function parsePluginManifest(data: unknown): PluginManifest {
     ...(raw.signature !== undefined ? { signature: raw.signature as string } : {}),
     ...(raw.publisher !== undefined ? { publisher: raw.publisher as string } : {}),
     ...(raw.keyId !== undefined ? { keyId: raw.keyId as string } : {}),
+  };
+}
+
+export function pluginManifestMetadata(manifest: PluginManifest): PluginManifestMetadata {
+  return {
+    id: manifest.id,
+    name: manifest.name,
+    version: manifest.version,
+    description: manifest.description,
+    declaredTools: [...manifest.tools],
+    requiredSecrets: [...(manifest.contributions?.secrets ?? [])],
+    ...(manifest.publisher ? { publisher: manifest.publisher } : {}),
+  };
+}
+
+export function parsePluginManifestMetadata(data: unknown): PluginManifestMetadata {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("Plugin registry manifest metadata is invalid");
+  }
+  const raw = data as Record<string, unknown>;
+  const allowed = new Set([
+    "id", "name", "version", "description", "declaredTools", "requiredSecrets", "publisher",
+  ]);
+  if (Object.keys(raw).some((key) => !allowed.has(key))) {
+    throw new Error("Plugin registry manifest metadata is invalid");
+  }
+  if (typeof raw.id !== "string" || !raw.id.trim()) throw new Error("Plugin registry manifest metadata is invalid");
+  if (typeof raw.name !== "string" || !raw.name.trim()) throw new Error("Plugin registry manifest metadata is invalid");
+  if (typeof raw.version !== "string" || !raw.version.trim()) throw new Error("Plugin registry manifest metadata is invalid");
+  if (typeof raw.description !== "string") throw new Error("Plugin registry manifest metadata is invalid");
+  if (!isStringArray(raw.declaredTools) || new Set(raw.declaredTools).size !== raw.declaredTools.length) {
+    throw new Error("Plugin registry manifest metadata is invalid");
+  }
+  if (!Array.isArray(raw.requiredSecrets)) throw new Error("Plugin registry manifest metadata is invalid");
+  const requiredSecrets = raw.requiredSecrets.length === 0
+    ? []
+    : parseSecretRequirements(raw.requiredSecrets)!;
+  if (raw.publisher !== undefined && (
+    typeof raw.publisher !== "string" || !/^[a-zA-Z0-9._-]+$/.test(raw.publisher)
+  )) {
+    throw new Error("Plugin registry manifest metadata is invalid");
+  }
+  return {
+    id: raw.id,
+    name: raw.name,
+    version: raw.version,
+    description: raw.description,
+    declaredTools: [...raw.declaredTools],
+    requiredSecrets,
+    ...(raw.publisher ? { publisher: raw.publisher as string } : {}),
   };
 }

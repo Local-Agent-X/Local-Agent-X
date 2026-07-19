@@ -18,10 +18,11 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname === "/api/plugins/load") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {
-      const plugin = await pluginManager.loadPlugin(String(body.path));
+      const manifest = await pluginManager.loadPlugin(String(body.path));
+      const plugin = pluginManager.getPluginStatus(manifest.id);
       ctx.broadcastAll({ type: "settings_changed", settings: { plugins: true } });
       json(200, { ok: true, plugin });
-    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    } catch { json(400, { error: "Plugin load could not be completed" }); }
     return true;
   }
   if (method === "POST" && url.pathname === "/api/plugins/unload") {
@@ -37,7 +38,8 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname === "/api/plugins/retry") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {
-      const plugin = await pluginManager.retryPlugin(String(body.id));
+      const manifest = await pluginManager.retryPlugin(String(body.id));
+      const plugin = pluginManager.getPluginStatus(manifest.id);
       ctx.broadcastAll({ type: "settings_changed", settings: { plugins: true } });
       json(200, { ok: true, plugin });
     } catch { json(400, { error: "Plugin retry could not be completed" }); }

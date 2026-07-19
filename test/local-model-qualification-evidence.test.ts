@@ -46,6 +46,38 @@ describe("local qualification workspace-read evidence", () => {
     expect(evidence.readNonceSeen).toBe(true);
   });
 
+  it("accepts one exact response split across streaming deltas", () => {
+    const events = readEvents({ assistant: "" });
+    events.splice(-2, 1,
+      { type: "stream", delta: READ_NONCE.slice(0, 8) },
+      { type: "stream", delta: READ_NONCE.slice(8, 21) },
+      { type: "stream", delta: READ_NONCE.slice(21) },
+    );
+    expect(chatEvidence(events).readNonceSeen).toBe(true);
+  });
+
+  it("permits only surrounding response whitespace during normalization", () => {
+    expect(chatEvidence(readEvents({ assistant: `\r\n  ${READ_NONCE}\t\n` })).readNonceSeen).toBe(true);
+  });
+
+  it.each([
+    `prefix ${READ_NONCE}`,
+    `${READ_NONCE} suffix`,
+    `${READ_NONCE}${READ_NONCE}`,
+    `${READ_NONCE}\nwrong text`,
+  ])("rejects non-exact assistant continuation %j", (assistant) => {
+    expect(chatEvidence(readEvents({ assistant })).readNonceSeen).toBe(false);
+  });
+
+  it("rejects multiple deltas when their concatenated response contains extra content", () => {
+    const events = readEvents({ assistant: "" });
+    events.splice(-2, 1,
+      { type: "stream", delta: READ_NONCE },
+      { type: "stream", delta: " extra" },
+    );
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
   it.each(["1\tWRONG\n2\t", ""])(
     "rejects an allowed read result of %j even when the assistant guesses the hidden value",
     (result) => {
@@ -67,12 +99,30 @@ describe("local qualification workspace-read evidence", () => {
     expect(evidence.readNonceSeen).toBe(false);
   });
 
-  it("does not count a guessed value streamed before the tool result as continuation evidence", () => {
-    const events = readEvents({ assistant: "I ignored the result." });
+  it("rejects a pre-tool guess even when the post-tool response is correct", () => {
+    const events = readEvents();
     events.unshift({ type: "stream", delta: READ_NONCE });
     const evidence = chatEvidence(events);
     expect(evidence.safeReadLifecycle).toBe(true);
     expect(evidence.readNonceSeen).toBe(false);
+  });
+
+  it("rejects multiple assistant answers", () => {
+    const events = readEvents();
+    events.push({ type: "stream", delta: READ_NONCE }, { type: "done" });
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it("rejects even an empty assistant stream after the terminal response", () => {
+    const events = readEvents();
+    events.push({ type: "stream", delta: "" });
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it("rejects a replacement-shaped second assistant answer", () => {
+    const events = readEvents();
+    events.splice(-1, 0, { type: "stream", replace: true, text: READ_NONCE });
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
   });
 
   it("rejects a correct assistant answer backed by the wrong tool result", () => {

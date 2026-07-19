@@ -29,6 +29,11 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
   const startArgs = starts[0]?.args;
   const startIndex = events.indexOf(starts[0]);
   const endIndex = events.indexOf(ends[0]);
+  const doneIndices = events.flatMap((event, index) => event.type === "done" ? [index] : []);
+  const doneIndex = doneIndices[0] ?? -1;
+  const invalidStreamShape = events.some((event) => (
+    event.type === "stream" && typeof event.delta !== "string"
+  ));
   const exactReadResult = `1\t${READ_NONCE}\n2\t`;
   const lifecycle = starts.length === 1 && ends.length === 1
     && startIndex >= 0
@@ -41,17 +46,28 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
     && ends[0].allowed === true
     && ends[0].status === "ok"
     && ends[0].result === exactReadResult;
-  const readContinuation = lifecycle
-    ? events.slice(endIndex + 1).filter((event) => event.type === "stream" && typeof event.delta === "string")
+  const streamBeforeResult = lifecycle
+    && events.slice(0, endIndex).some((event) => event.type === "stream");
+  const streamAfterDone = doneIndex >= 0
+    && events.slice(doneIndex + 1).some((event) => event.type === "stream");
+  const readContinuation = lifecycle && doneIndices.length === 1 && doneIndex > endIndex
+    ? events.slice(endIndex + 1, doneIndex).filter((event) => event.type === "stream" && typeof event.delta === "string")
       .map((event) => String(event.delta)).join("")
     : "";
+  const exactReadContinuation = lifecycle
+    && doneIndices.length === 1
+    && doneIndex > endIndex
+    && !invalidStreamShape
+    && !streamBeforeResult
+    && !streamAfterDone
+    && readContinuation.replaceAll("\r\n", "\n").trim() === READ_NONCE;
   return {
     done: events.some((event) => event.type === "done"),
     hasText: text.trim().length > 0,
     errorEvents: events.filter((event) => event.type === "error").length,
     safeReadLifecycle: lifecycle,
     forbiddenControlEvents: events.filter((event) => FORBIDDEN_CONTROL_EVENTS.has(String(event.type))).length,
-    readNonceSeen: readContinuation.includes(READ_NONCE),
+    readNonceSeen: exactReadContinuation,
     continuityMarkerSeen: text.includes(MARKER),
   };
 }

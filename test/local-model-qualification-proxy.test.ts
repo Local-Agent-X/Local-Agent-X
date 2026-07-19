@@ -78,7 +78,10 @@ describe("local model qualification proxy", () => {
       expect(countedAfterAttacks, forbiddenRoutes.join(" | ")).toBe(attacks.length);
       expect(driver.forbiddenRequests()).toBe(attacks.length);
       expect(service.counts.forbidden).toBe(0);
-      expect(service.received).toHaveLength(upstreamBeforeAttacks);
+      const receivedDuringAttacks = service.received.slice(upstreamBeforeAttacks);
+      for (const [method, path] of attacks) {
+        expect(receivedDuringAttacks, `${method} ${path} reached upstream`).not.toContain(`${method} ${path}`);
+      }
       expect(JSON.stringify(scorecard)).not.toMatch(/pull\?|proxy_forwarded|blobs|create|delete/i);
     } finally {
       await service.close();

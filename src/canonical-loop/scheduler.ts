@@ -20,10 +20,29 @@ import type { LAXConfig } from "../types.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { anyHeld, acquire, release, resetResourceLocks } from "./resource-locks.js";
-import { runWorker, type WorkerHandle } from "./worker.js";
+import {
+  ExecutionBackendRegistry,
+  IN_PROCESS_EXECUTION_BACKEND_ID,
+  type ExecutionBackend,
+  type ExecutionHandle,
+} from "./execution-backend.js";
+import { InProcessExecutionBackend } from "./in-process-execution-backend.js";
+import { runWorker } from "./worker.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.scheduler");
+const executionBackends = new ExecutionBackendRegistry(IN_PROCESS_EXECUTION_BACKEND_ID);
+executionBackends.register(new InProcessExecutionBackend(runWorker));
+const defaultExecutionBackendResolver = (): ExecutionBackend => executionBackends.resolve();
+let resolveExecutionBackend = defaultExecutionBackendResolver;
+
+/** Test-only dependency seat for scheduler parity tests. Production always
+ * resolves the registry's default built-in backend. */
+export function _setExecutionBackendResolverForTest(
+  resolver: (() => ExecutionBackend) | null,
+): void {
+  resolveExecutionBackend = resolver ?? defaultExecutionBackendResolver;
+}
 
 // Static fallback caps. The `interactive` lane's cap is config-driven
 // (maxInteractiveSessions) when a config reader is wired at boot; these are
@@ -71,7 +90,7 @@ interface QueuedOp {
 }
 
 const queue: QueuedOp[] = [];
-const active = new Map<string, WorkerHandle>();
+const active = new Map<string, ExecutionHandle>();
 // Ops the scheduler has reserved a lane slot for but whose worker hasn't
 // registered in `active` yet — i.e. the window across `await factory()` in
 // launch(). Without tracking this, an op is invisible to the `active.has`
@@ -156,6 +175,7 @@ export function pumpScheduler(): void {
       if (!op) { queue.splice(i, 1); continue; }
       const factory = resolveAdapterFactory(op);
       if (!factory) { i++; continue; } // No adapter — leave queued.
+      const backend = resolveExecutionBackend();
       // Resource guard: an op that declares a singleton resource lock already
       // held by an in-flight op (e.g. two local-GPU ops sharing gpu:0) is
       // SKIPPED and left in the queue — non-blocking, same shape as the
@@ -167,19 +187,23 @@ export function pumpScheduler(): void {
       acquire(op.resourceLocks); // hold the resource for THIS committed slot
       activeLocks.set(op.id, op.resourceLocks); // record for disk-free release
       queue.splice(i, 1);
-      void launch(op, factory);
+      void launch(op, factory, backend);
     }
   } finally {
     pumping = false;
   }
 }
 
-async function launch(op: Op, factory: () => Adapter | Promise<Adapter>): Promise<void> {
+async function launch(
+  op: Op,
+  factory: () => Adapter | Promise<Adapter>,
+  backend: ExecutionBackend,
+): Promise<void> {
   const lane = op.lane as CanonicalLane;
-  let handle: WorkerHandle | null = null;
+  let handle: ExecutionHandle | null = null;
   try {
     const adapter = await factory();
-    handle = runWorker(op, adapter);
+    handle = backend.start({ op, adapter });
     active.set(op.id, handle);
     launching.delete(op.id); // now tracked via `active`
     await handle.done;
@@ -293,6 +317,7 @@ export function resetScheduler(): void {
   resetResourceLocks();
   pumping = false;
   capConfigReader = null;
+  resolveExecutionBackend = defaultExecutionBackendResolver;
 }
 
 export function schedulerSnapshot(): { queueDepth: number; activeCount: number } {

@@ -46,6 +46,11 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 > helper dir) landed after v1.0 and are not enumerated here — read the
 > directory tree for the full surface.
 
+The scheduler selects an execution backend through `execution-backend.ts`.
+The default `in-process-execution-backend.ts` delegates exactly once to
+`runWorker()`; backends start work that the canonical scheduler has already
+made runnable and do not own admission, turn loops, or tool dispatchers.
+
 ## Boundaries
 
 | Concern | Owner | Forbidden |

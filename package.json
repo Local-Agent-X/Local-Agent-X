@@ -38,6 +38,7 @@
     "eval:dedup": "tsx eval/dedup-live/run.ts",
     "eval:grounding": "tsx eval/capability-grounding/run.ts",
     "eval:instruction-compliance": "node eval/instruction-compliance/run.mjs",
+    "qualify:local-model": "tsx scripts/qualify-local-model.ts",
     "memory:check": "node scripts/check-memory-freshness.mjs",
     "hooks:push-guard": "node scripts/install-push-guard.mjs",
     "setup-ai": "node scripts/setup-ai.js"

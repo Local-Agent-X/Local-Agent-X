@@ -30,6 +30,7 @@ export function safePluginId(id: string): string {
 
 export function safeRestoreError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  if (message.includes("manifest is not integrity-pinned")) return "Bundle manifest is not integrity-pinned";
   if (message.includes("tampered")) return "Integrity verification failed";
   if (message.startsWith("No manifest.json")) return "Manifest not found";
   if (message.startsWith("Invalid JSON") || message.startsWith("Invalid manifest")) return "Manifest is invalid";

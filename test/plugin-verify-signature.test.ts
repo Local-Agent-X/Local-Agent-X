@@ -34,6 +34,8 @@ function makePlugin(opts: {
   entryContent: string;
   signature?: string;
   publisher?: string;
+  tools?: string[] | null;
+  contributions?: unknown;
 }): string {
   const dir = join(pluginsDir, opts.id);
   mkdirSync(dir, { recursive: true });
@@ -45,8 +47,9 @@ function makePlugin(opts: {
     version: "1.0.0",
     description: "test plugin",
     entryPoint: entryFile,
-    tools: [],
   };
+  if (opts.tools !== null) manifest.tools = opts.tools ?? [];
+  if (opts.contributions !== undefined) manifest.contributions = opts.contributions;
   if (opts.signature !== undefined) manifest.signature = opts.signature;
   if (opts.publisher !== undefined) manifest.publisher = opts.publisher;
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
@@ -57,7 +60,7 @@ function writeTrustedPublishers(map: Record<string, { name: string; publicKey: s
   writeFileSync(join(tmpRoot, "trusted-publishers.json"), JSON.stringify(map, null, 2), "utf-8");
 }
 
-function writePluginRegistry(registry: Record<string, { enabled: boolean; path: string; entryHash?: string }>): void {
+function writePluginRegistry(registry: Record<string, { enabled: boolean; path: string; entryHash?: string; manifestHash?: string }>): void {
   writeFileSync(join(pluginsDir, "registry.json"), JSON.stringify(registry, null, 2), "utf-8");
 }
 
@@ -209,6 +212,125 @@ describe("verifySignature via PluginManager.loadPlugin", () => {
     expect(restored.map((plugin) => plugin.id)).toEqual(["restore-on-boot"]);
     expect(bootManager.isLoaded("restore-on-boot")).toBe(true);
     expect(bootManager.listPlugins()).toHaveLength(1);
+  });
+
+  it("loads and surfaces a declarative tool bundle", async () => {
+    const dir = makePlugin({
+      id: "bundle-plugin",
+      entryContent: ENTRY,
+      tools: null,
+      contributions: { tools: ["bundle_read", "bundle_write"] },
+    });
+
+    const pm = await freshPluginManager();
+    const manifest = await pm.loadPlugin(dir);
+
+    expect(manifest).toMatchObject({
+      id: "bundle-plugin",
+      tools: ["bundle_read", "bundle_write"],
+      contributions: { tools: ["bundle_read", "bundle_write"] },
+    });
+    expect(pm.getPluginTools("bundle-plugin")).toEqual(["bundle_read", "bundle_write"]);
+    expect(pm.listPlugins()).toEqual([
+      expect.objectContaining({ id: "bundle-plugin", tools: ["bundle_read", "bundle_write"] }),
+    ]);
+  });
+
+  it("rejects unknown bundle declarations before importing the entry point", async () => {
+    const marker = join(tmpRoot, "unknown-bundle-executed.txt");
+    const entryContent = `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "executed");\n`;
+    const dir = makePlugin({
+      id: "unknown-bundle",
+      entryContent,
+      tools: null,
+      contributions: { prompts: ["unsafe"] },
+    });
+    writePluginRegistry({
+      "unknown-bundle": {
+        enabled: true,
+        path: dir,
+        entryHash: createHash("sha256").update(entryContent).digest("hex"),
+      },
+    });
+
+    const pm = await freshPluginManager();
+    expect(await pm.loadAllEnabled()).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(pm.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "unknown-bundle",
+        enabled: true,
+        status: "failed",
+        error: "Manifest is invalid",
+      }),
+    ]);
+    expect(pm.disablePlugin("unknown-bundle")).toBe(true);
+  });
+
+  it("restores an integrity-pinned bundle once without duplicate lifecycle registration", async () => {
+    const dir = makePlugin({
+      id: "restore-bundle",
+      entryContent: ENTRY,
+      tools: null,
+      contributions: { tools: ["bundle_status"] },
+    });
+    const installer = await freshPluginManager();
+    await installer.loadPlugin(dir);
+    const registry = JSON.parse(readFileSync(join(pluginsDir, "registry.json"), "utf-8")) as Record<string, { manifestHash?: string }>;
+    expect(registry["restore-bundle"].manifestHash).toMatch(/^[a-f0-9]{64}$/);
+
+    const { PluginManager } = await import("../src/plugin-system.js");
+    const bootManager = new PluginManager();
+    expect((await bootManager.loadAllEnabled()).map((plugin) => plugin.id)).toEqual(["restore-bundle"]);
+    expect(await bootManager.loadAllEnabled()).toEqual([]);
+    expect(bootManager.listPlugins()).toHaveLength(1);
+    expect(bootManager.getPluginTools("restore-bundle")).toEqual(["bundle_status"]);
+  });
+
+  it("does not restore a bundle whose declarative manifest changed after install", async () => {
+    const marker = join(tmpRoot, "bundle-manifest-executed.txt");
+    const entryContent = `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "executed");\n`;
+    const dir = makePlugin({
+      id: "tampered-bundle",
+      entryContent,
+      tools: null,
+      contributions: { tools: ["original_tool"] },
+    });
+    const installer = await freshPluginManager();
+    await installer.loadPlugin(dir);
+    rmSync(marker);
+
+    const manifestPath = join(dir, "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { contributions: { tools: string[] } };
+    manifest.contributions.tools = ["injected_tool"];
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+
+    const { PluginManager } = await import("../src/plugin-system.js");
+    const bootManager = new PluginManager();
+    expect(await bootManager.loadAllEnabled()).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(bootManager.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "tampered-bundle",
+        status: "failed",
+        error: "Integrity verification failed",
+      }),
+    ]);
+  });
+
+  it("rejects duplicate tool declarations before importing the entry point", async () => {
+    const marker = join(tmpRoot, "duplicate-bundle-executed.txt");
+    const dir = makePlugin({
+      id: "duplicate-bundle",
+      entryContent: `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "executed");\n`,
+      tools: ["same_tool"],
+      contributions: { tools: ["same_tool"] },
+    });
+
+    const pm = await freshPluginManager();
+    await expect(pm.loadPlugin(dir)).rejects.toThrow(/Invalid manifest/i);
+    expect(existsSync(marker)).toBe(false);
+    expect(pm.isLoaded("duplicate-bundle")).toBe(false);
   });
 
   it("does not execute an enabled plugin without a persisted integrity pin at boot", async () => {

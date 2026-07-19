@@ -11,23 +11,13 @@ import {
   safeRestoreError,
   type PluginListItem,
 } from "./plugin-system/lifecycle-status.js";
+import { parsePluginManifest, type PluginManifest } from "./plugin-system/manifest.js";
 
 export type { PluginListItem, PluginLifecycleStatus } from "./plugin-system/lifecycle-status.js";
+export type { PluginContributions, PluginManifest } from "./plugin-system/manifest.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("plugin-system");
-
-export interface PluginManifest {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  entryPoint: string;
-  tools: string[];
-  signature?: string;   // hex-encoded Ed25519 signature over the entry point content
-  publisher?: string;    // publisher ID, maps to key in trusted-publishers.json
-  keyId?: string;        // optional named key in the publisher's publicKeys map
-}
 
 export type TrustLevel = "unsigned" | "hash-verified" | "signed";
 
@@ -44,7 +34,7 @@ export interface TrustedPublishersFile {
 }
 
 interface PluginRegistry {
-  [pluginId: string]: { enabled: boolean; path: string; entryHash?: string };
+  [pluginId: string]: { enabled: boolean; path: string; entryHash?: string; manifestHash?: string };
 }
 
 interface LoadedPlugin {
@@ -202,36 +192,13 @@ function assessTrustLevel(
   };
 }
 
-function validateManifest(data: unknown): data is PluginManifest {
-  if (!data || typeof data !== "object") return false;
-  const m = data as Record<string, unknown>;
-  if (typeof m.id !== "string" || !m.id.trim()) return false;
-  if (typeof m.name !== "string" || !m.name.trim()) return false;
-  if (typeof m.version !== "string" || !m.version.trim()) return false;
-  if (typeof m.description !== "string") return false;
-  if (typeof m.entryPoint !== "string" || !m.entryPoint.trim()) return false;
-  if (!Array.isArray(m.tools)) return false;
-  for (const t of m.tools) {
-    if (typeof t !== "string") return false;
-  }
-  // Optional signature fields
-  if (m.signature !== undefined && typeof m.signature !== "string") return false;
-  if (m.publisher !== undefined && typeof m.publisher !== "string") return false;
-  if (m.keyId !== undefined && typeof m.keyId !== "string") return false;
-  if (m.signature && !m.publisher) return false;
-  if (typeof m.publisher === "string" && !/^[a-zA-Z0-9._-]+$/.test(m.publisher)) return false;
-  if (typeof m.keyId === "string" && !/^[a-zA-Z0-9._-]+$/.test(m.keyId)) return false;
-  if (typeof m.signature === "string" && !/^[a-f0-9]+$/i.test(m.signature)) return false;
-  return true;
-}
-
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
   private restoreErrors = new Map<string, string>();
 
   async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
 
-  private async loadPluginAtPath(pluginPath: string, expectedRegistration?: { id: string; entryHash: string }): Promise<PluginManifest> {
+  private async loadPluginAtPath(pluginPath: string, expectedRegistration?: { id: string; entryHash: string; manifestHash?: string }): Promise<PluginManifest> {
     // Security: restrict plugins to the designated plugins directory
     const resolvedPath = resolve(pluginPath);
     const realPluginsDir = realpathSync(PLUGINS_DIR);
@@ -246,22 +213,35 @@ export class PluginManager {
     }
 
     let raw: unknown;
+    let manifestContent: string;
     try {
-      raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      manifestContent = readFileSync(manifestPath, "utf-8");
+      raw = JSON.parse(manifestContent);
     } catch {
       throw new Error(`Invalid JSON in manifest at ${manifestPath}`);
     }
 
-    if (!validateManifest(raw)) {
+    let manifest: PluginManifest;
+    try {
+      manifest = parsePluginManifest(raw);
+    } catch {
       throw new Error(
         `Invalid manifest at ${manifestPath}. ` +
-          "Required fields: id, name, version, description, entryPoint, tools[]"
+          "Required fields: id, name, version, description, entryPoint, and tools[] or contributions.tools[]"
       );
     }
-
-    const manifest = raw;
     if (expectedRegistration && manifest.id !== expectedRegistration.id) {
       throw new Error(`Registered plugin ID "${expectedRegistration.id}" does not match manifest ID`);
+    }
+
+    const currentManifestHash = createHash("sha256").update(manifestContent).digest("hex");
+    const registry = readRegistry();
+    const registeredManifestHash = expectedRegistration?.manifestHash ?? registry[manifest.id]?.manifestHash;
+    if (expectedRegistration && manifest.contributions && !registeredManifestHash) {
+      throw new Error(`Plugin bundle "${manifest.id}" manifest is not integrity-pinned`);
+    }
+    if (registeredManifestHash && registeredManifestHash !== currentManifestHash) {
+      throw new Error(`Plugin "${manifest.id}" manifest has been tampered with`);
     }
 
     if (this.loaded.has(manifest.id)) {
@@ -274,7 +254,6 @@ export class PluginManager {
     }
 
     // ── Integrity & signature verification ──
-    const registry = readRegistry();
     const registeredHash = expectedRegistration?.entryHash ?? registry[manifest.id]?.entryHash;
 
     const trust = assessTrustLevel(manifest, entryPath, registeredHash);
@@ -313,6 +292,7 @@ export class PluginManager {
       enabled: true,
       path: pluginPath,
       entryHash: trust.currentHash,
+      manifestHash: currentManifestHash,
     };
     writeRegistry(registry);
 
@@ -376,7 +356,11 @@ export class PluginManager {
         continue;
       }
       try {
-        const manifest = await this.loadPluginAtPath(entry.path, { id, entryHash: entry.entryHash });
+        const manifest = await this.loadPluginAtPath(entry.path, {
+          id,
+          entryHash: entry.entryHash,
+          manifestHash: entry.manifestHash,
+        });
         results.push(manifest);
       } catch (error) {
         const reason = safeRestoreError(error);

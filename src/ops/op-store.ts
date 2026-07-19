@@ -45,18 +45,55 @@ export function isInteractiveHostOpType(type: string): boolean {
   return type === "chat_turn" || type === "voice_turn";
 }
 
+type StrictWriteFailurePoint = "before_write" | "before_rename";
+let strictWriteFailureForTest: {
+  error: NodeJS.ErrnoException;
+  point: StrictWriteFailurePoint;
+  attempt: number;
+  seen: number;
+} | null = null;
+
+export function _setStrictOpWriteFailureForTest(
+  error: NodeJS.ErrnoException | null,
+  point: StrictWriteFailurePoint = "before_write",
+  attempt = 1,
+): void {
+  strictWriteFailureForTest = error ? { error, point, attempt, seen: 0 } : null;
+}
+
 export function writeOp(op: Op): void {
+  const error = attemptWriteOp(op, false);
+  if (error) logger.warn(`[op-store] failed to write op ${op.id}: ${error.message}`);
+}
+
+/** Strict lease/recovery persistence. Unlike writeOp, failure is observable. */
+export function writeOpStrict(op: Op): boolean {
+  const error = attemptWriteOp(op, true);
+  if (error) logger.warn(`[op-store] strict write failed for ${op.id}: ${error.message}`);
+  return error === null;
+}
+
+function attemptWriteOp(op: Op, strict: boolean): Error | null {
   const target = join(opDir(op.id), "operation.json");
   // Unique tmp per write: a fixed `.tmp` name is shared by every writer, so
   // two processes on one ~/.lax can interleave (one renames the other's
   // half-written or wrong-content file). rename() itself stays atomic.
   const tmp = `${target}.${randomId()}.tmp`;
   try {
+    const failure = strict ? strictWriteFailureForTest : null;
+    const failureAttempt = failure ? ++failure.seen : 0;
+    if (failure && failureAttempt === failure.attempt && failure.point === "before_write") {
+      throw failure.error;
+    }
     writeFileSync(tmp, JSON.stringify(op, null, 2), { encoding: "utf-8", mode: 0o600 });
+    if (failure && failureAttempt === failure.attempt && failure.point === "before_rename") {
+      throw failure.error;
+    }
     renameSync(tmp, target);
+    return null;
   } catch (e) {
-    logger.warn(`[op-store] failed to write op ${op.id}: ${(e as Error).message}`);
     try { rmSync(tmp, { force: true }); } catch { /* best-effort tmp cleanup */ }
+    return e as Error;
   }
 }
 

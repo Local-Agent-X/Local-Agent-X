@@ -40,13 +40,13 @@ import { readOp } from "../ops/op-store.js";
 import { decideRecovery, isCircuitOpen, recordFailure } from "../ops/heartbeat.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
+import { StrictOpPersistenceError } from "./op-persist.js";
 import {
   isLeaseExpired,
   leaseClaimFromOp,
   withObservedExpiredLeaseRecovery,
 } from "./lease.js";
 import { evictWorker, enqueueOp, pumpScheduler } from "./scheduler.js";
-import { persistOpKeepingSignals } from "./op-persist.js";
 import { resolveExpiredPendingApproval } from "./control-api-approvals.js";
 import { rehydrateRecoveredRuntime } from "./runtime.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
@@ -65,6 +65,7 @@ export type RecoveryOutcomeKind =
   | "lease_fresh"   // lease still in date — leave it alone.
   | "lease_changed" // observation lost a race to a newer exact claim.
   | "lock_unavailable" // strict op lock was contended; retry later.
+  | "persistence_failed" // strict recovery write failed; retry later.
   | "not_running"   // op is not in a recoverable state.
   | "unknown_op";   // op id not on disk.
 
@@ -128,6 +129,7 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
     if (leaseCheck.reason === "lock_unavailable") return { ok: false, kind: "lock_unavailable" };
     if (leaseCheck.reason === "unknown_op") return { ok: false, kind: "unknown_op" };
     if (leaseCheck.reason === "not_recoverable") return { ok: false, kind: "not_running" };
+    if (leaseCheck.reason === "persistence_failed") return { ok: false, kind: "persistence_failed" };
     return { ok: false, kind: "lease_changed" };
   }
   return leaseCheck.value;
@@ -190,11 +192,11 @@ function finishRecoveredOp(
     // Worker died / threw mid-cancel. PRD §13 cancel always wins — finalize the
     // cancellation instead of resuming. Adapter is gone with the worker, so no
     // further `abort()` is possible; just close the state.
-    safeRecoveryTransition(
+    if (!safeRecoveryTransition(
       opId,
       "cancelled",
       leaseOwner ? "lease_expired_during_cancel" : "orphaned_during_cancel",
-    );
+    )) return { ok: false, kind: "persistence_failed", expiredWorkerId };
     return { ok: true, kind: "cancelled", expiredWorkerId };
   }
 
@@ -215,30 +217,25 @@ function finishRecoveredOp(
     committingCallsAlreadyMade: false,
     reason: transitionReason,
   });
-  recordFailure(op.type);
   if (!decision.shouldRetry || circuitAlreadyOpen) {
     const why = decision.shouldRetry
       ? `circuit breaker open for op type "${op.type}"`
       : decision.reason;
-    safeRecoveryTransition(opId, "failed", `recovery_abandoned: ${why}`);
+    if (!safeRecoveryTransition(opId, "failed", `recovery_abandoned: ${why}`)) {
+      return { ok: false, kind: "persistence_failed", expiredWorkerId };
+    }
+    recordFailure(op.type);
     return { ok: true, kind: "exhausted", expiredWorkerId };
   }
 
-  // This relaunch consumes one recovery attempt. Persist the counter BEFORE
-  // the requeue transition (safeRecoveryTransition re-reads from disk) so the
-  // next crash of this op sees the incremented count.
+  // Counter + running->queued transition are one strict write. A failed rename
+  // leaves the ownerless running row recoverable without consuming an attempt.
   op.attemptCount = (op.attemptCount ?? 0) + 1;
-  persistOpKeepingSignals(op);
-
-  // running → queued: re-enqueue for a replacement worker, which reads
-  // `op_turns` for the resume turnIdx and hands prior `provider_state` to the
-  // adapter (PRD §11). Identical to the expired-lease path — recovery's job is
-  // to resume, and the op's retryPolicy bounds re-attempts. A commit that threw
-  // never persisted its op_turns row, so the replacement re-drives that turn
-  // idempotently (checkpoint.ts's `(op_id, turn_idx)` replay guard also absorbs
-  // a turn that DID commit before the crash), so this cannot double-execute a
-  // committed turn.
-  safeRecoveryTransition(opId, "queued", transitionReason);
+  // Persist before re-enqueue so a replacement reads the fenced attempt/state.
+  if (!safeRecoveryTransition(opId, "queued", transitionReason, op)) {
+    return { ok: false, kind: "persistence_failed", expiredWorkerId };
+  }
+  recordFailure(op.type);
   enqueueOp(opId, op.lane as CanonicalLane);
   pumpScheduler();
   return { ok: true, kind: "recovered", expiredWorkerId };
@@ -388,13 +385,16 @@ function safeRecoveryTransition(
   opId: string,
   to: Parameters<typeof transitionOp>[1],
   reason: string,
-): void {
-  const op = readOp(opId);
-  if (!op) return;
+  candidate?: NonNullable<ReturnType<typeof readOp>>,
+): boolean {
+  const op = candidate ?? readOp(opId);
+  if (!op) return false;
   try {
-    transitionOp(op, to, reason);
+    transitionOp(op, to, reason, { strictPersistence: true });
+    return true;
   } catch (e) {
-    if (e instanceof IllegalTransitionError) return;
+    if (e instanceof IllegalTransitionError) return false;
+    if (e instanceof StrictOpPersistenceError) return false;
     throw e;
   }
 }

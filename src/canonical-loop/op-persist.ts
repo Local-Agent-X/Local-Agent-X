@@ -24,7 +24,7 @@
  * currentCheckpointId, completedAt, startedAt) are written from `op`
  * as-is — they are owned by the loop, never the control API.
  */
-import { readOp, writeOp, withOpLock } from "../ops/op-store.js";
+import { readOp, tryWithOpLock, writeOp, writeOpStrict, withOpLock } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
 
 export interface PersistOpOptions {
@@ -53,25 +53,43 @@ export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): vo
   // lock, a second writer (another server on the same ~/.lax) can slip its
   // update between our readOp and writeOp and have it silently reverted.
   withOpLock(op.id, () => {
-    const onDisk = readOp(op.id);
-    const preserveLease = opts.preserveLeaseFromDisk !== false;
-    if (onDisk?.canonical) {
-      if (!op.canonical) op.canonical = {};
-      op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
-      op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
-      // Approval-manager-owned column (control-api-approvals.ts). Worker
-      // writes never intend to touch it, so it is always restored from disk.
-      op.canonical.pendingApproval = onDisk.canonical.pendingApproval ?? null;
-      if (!opts.clearRedirect) {
-        op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
-        op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
-      }
-      if (preserveLease) {
-        op.canonical.leaseOwner = onDisk.canonical.leaseOwner ?? null;
-        op.canonical.leaseExpiresAt = onDisk.canonical.leaseExpiresAt ?? null;
-        op.canonical.leaseGeneration = onDisk.canonical.leaseGeneration;
-      }
-    }
+    mergeOwnedColumns(op, opts);
     writeOp(op);
   });
+}
+
+export class StrictOpPersistenceError extends Error {
+  constructor(public readonly opId: string) {
+    super(`strict operation persistence failed for ${opId}`);
+    this.name = "StrictOpPersistenceError";
+  }
+}
+
+/** Strict variant for lease/recovery ownership changes. It never writes
+ * outside the cross-process lock and exposes atomic write/rename failure. */
+export function persistOpKeepingSignalsStrict(op: Op, opts: PersistOpOptions = {}): boolean {
+  const locked = tryWithOpLock(op.id, () => {
+    mergeOwnedColumns(op, opts);
+    return writeOpStrict(op);
+  });
+  return locked.acquired && locked.value;
+}
+
+function mergeOwnedColumns(op: Op, opts: PersistOpOptions): void {
+  const onDisk = readOp(op.id);
+  const preserveLease = opts.preserveLeaseFromDisk !== false;
+  if (!onDisk?.canonical) return;
+  if (!op.canonical) op.canonical = {};
+  op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
+  op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
+  op.canonical.pendingApproval = onDisk.canonical.pendingApproval ?? null;
+  if (!opts.clearRedirect) {
+    op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
+    op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
+  }
+  if (preserveLease) {
+    op.canonical.leaseOwner = onDisk.canonical.leaseOwner ?? null;
+    op.canonical.leaseExpiresAt = onDisk.canonical.leaseExpiresAt ?? null;
+    op.canonical.leaseGeneration = onDisk.canonical.leaseGeneration;
+  }
 }

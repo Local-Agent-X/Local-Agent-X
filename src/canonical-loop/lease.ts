@@ -1,6 +1,6 @@
 /** Cross-process op lease ownership and expiry. */
 import { readOp, tryWithOpLock } from "../ops/op-store.js";
-import { persistOpKeepingSignals } from "./op-persist.js";
+import { persistOpKeepingSignalsStrict } from "./op-persist.js";
 import type { Op } from "../ops/types.js";
 
 export interface LeaseConfig {
@@ -15,19 +15,19 @@ export interface LeaseClaim {
 
 export type LeaseAcquireResult =
   | { ok: true; claim: LeaseClaim }
-  | { ok: false; reason: "unknown_op" | "held" | "lock_unavailable" | "generation_exhausted" };
+  | { ok: false; reason: "unknown_op" | "held" | "lock_unavailable" | "generation_exhausted" | "persistence_failed" };
 
 export type LeaseActionResult =
   | { ok: true }
-  | { ok: false; reason: "unknown_op" | "claim_lost" | "lock_unavailable" };
+  | { ok: false; reason: "unknown_op" | "claim_lost" | "lock_unavailable" | "persistence_failed" };
 
 export type LeaseRecoveryResult =
   | { ok: true; op: Op; expiredClaim: LeaseClaim | null }
-  | { ok: false; reason: "unknown_op" | "claim_changed" | "lease_fresh" | "lock_unavailable" | "not_recoverable" };
+  | { ok: false; reason: "unknown_op" | "claim_changed" | "lease_fresh" | "lock_unavailable" | "not_recoverable" | "persistence_failed" };
 
 export type LeaseRecoveryRunResult<T> =
   | { ok: true; value: T }
-  | { ok: false; reason: "unknown_op" | "claim_changed" | "lease_fresh" | "lock_unavailable" | "not_recoverable" };
+  | { ok: false; reason: "unknown_op" | "claim_changed" | "lease_fresh" | "lock_unavailable" | "not_recoverable" | "persistence_failed" };
 
 const DEFAULT_LEASE_CONFIG: LeaseConfig = {
   leaseDurationMs: 30_000,
@@ -74,7 +74,9 @@ export function acquireLease(opId: string, workerId: string): LeaseAcquireResult
     op.canonical.leaseGeneration = claim.generation;
     op.canonical.leaseExpiresAt = newExpiry();
     op.workerId = workerId;
-    persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+    if (!persistOpKeepingSignalsStrict(op, { preserveLeaseFromDisk: false })) {
+      return { ok: false, reason: "persistence_failed" };
+    }
     return { ok: true, claim };
   });
   return locked.acquired ? locked.value : { ok: false, reason: "lock_unavailable" };
@@ -86,7 +88,9 @@ export function heartbeatLease(opId: string, claim: LeaseClaim): LeaseActionResu
     if (!op) return { ok: false, reason: "unknown_op" };
     if (!sameClaim(leaseClaimFromOp(op), claim)) return { ok: false, reason: "claim_lost" };
     op.canonical!.leaseExpiresAt = newExpiry();
-    persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+    if (!persistOpKeepingSignalsStrict(op, { preserveLeaseFromDisk: false })) {
+      return { ok: false, reason: "persistence_failed" };
+    }
     return { ok: true };
   });
   return locked.acquired ? locked.value : { ok: false, reason: "lock_unavailable" };
@@ -100,7 +104,9 @@ export function releaseLease(opId: string, claim: LeaseClaim): LeaseActionResult
     op.canonical!.leaseOwner = null;
     op.canonical!.leaseExpiresAt = null;
     op.workerId = undefined;
-    persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+    if (!persistOpKeepingSignalsStrict(op, { preserveLeaseFromDisk: false })) {
+      return { ok: false, reason: "persistence_failed" };
+    }
     return { ok: true };
   });
   return locked.acquired ? locked.value : { ok: false, reason: "lock_unavailable" };
@@ -143,7 +149,9 @@ export function withObservedExpiredLeaseRecovery<T>(
       op.canonical!.leaseOwner = null;
       op.canonical!.leaseExpiresAt = null;
       op.workerId = undefined;
-      persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+      if (!persistOpKeepingSignalsStrict(op, { preserveLeaseFromDisk: false })) {
+        return { ok: false, reason: "persistence_failed" };
+      }
     }
     return { ok: true, value: recover(op, current) };
   });

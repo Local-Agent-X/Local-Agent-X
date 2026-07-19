@@ -68,7 +68,7 @@ function runAction(dataDir: string, action: "heartbeat" | "release", opId: strin
 describe("lease acquisition across real processes", () => {
   it("elects exactly one fresh owner and fences old same-owner generations", async () => {
     const { dataDir, opId, gateDir } = makePersistedOp();
-    const owners = Array.from({ length: 8 }, (_, index) => `worker-${index}`);
+    const owners = Array.from({ length: 24 }, (_, index) => `worker-${index}`);
     const children = owners.map(owner => spawn(
       process.execPath,
       ["--import=tsx", fixture, "acquire", opId, owner, "0", gateDir],
@@ -106,7 +106,7 @@ describe("lease acquisition across real processes", () => {
       leaseOwner: winner.owner,
       leaseGeneration: winner.generation,
     });
-  }, 20_000);
+  }, 30_000);
 });
 
 function exists(path: string): boolean {

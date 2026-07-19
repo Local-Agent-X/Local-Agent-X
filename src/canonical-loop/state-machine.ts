@@ -13,7 +13,11 @@
  * write `canonical.state` directly.
  */
 import { emit, clearEmittedErrorsForOp } from "./event-emitter.js";
-import { persistOpKeepingSignals } from "./op-persist.js";
+import {
+  persistOpKeepingSignals,
+  persistOpKeepingSignalsStrict,
+  StrictOpPersistenceError,
+} from "./op-persist.js";
 import { clearMiddlewareStateForOp } from "./middlewares/state.js";
 import { clearEvidenceHistory } from "./middlewares/evidence-history.js";
 import { clearRenderVerifyStateForOp } from "./turn-loop/render-verify.js";
@@ -85,6 +89,8 @@ export class IllegalTransitionError extends Error {
 export interface TransitionOptions {
   learnedOutcome?: LearnedOutcome;
   learningSessionId?: string;
+  /** Recovery-only: fail visibly instead of emitting after a swallowed write. */
+  strictPersistence?: boolean;
 }
 
 /**
@@ -130,41 +136,16 @@ export function transitionOp(
         logger.warn(`[learned-effectiveness] prepare failed for ${op.id}: ${(error as Error).message}`);
       }
     }
-    // Drop per-op middleware state + evidence history on terminal so the
-    // canonical-loop registries don't grow unbounded across the process
-    // lifetime. Safe to call repeatedly (no-op if state was never set for
-    // this op).
-    clearMiddlewareStateForOp(op.id);
-    clearEvidenceHistory(op.id);
-    clearEmittedErrorsForOp(op.id);
-    clearRenderVerifyStateForOp(op.id);
-    clearBuildVerifyStateForOp(op.id);
-    clearDesignVerifyStateForOp(op.id);
-    clearSpecProbeStateForOp(op.id);
-    clearSpecAuditStateForOp(op.id);
-    clearEarnedDoneStateForOp(op.id);
-    clearOpLedger(op.id);
-    unregisterAdapterForOp(op.id);
-    unregisterToolDispatcherForOp(op.id);
-    unregisterToolsForOp(op.id);
-    unregisterOpBaselineTokens(op.id);
-    clearSessionWorkRoot(op.id);
-    // User-configured Stop hooks (~/.lax/hooks.json): the op reached a terminal
-    // state — the LAX analog of "the agent finished". Fully detached: a Stop
-    // hook observes (notify, log, kick a CI run), it can never block or delay
-    // the transition. Fired before the state_changed emit below, so the
-    // session binding is still readable here.
-    getHookEngine().fireDetached({
-      event: "Stop",
-      opId: op.id,
-      opStatus: to,
-      sessionId: getSessionForOp(op.id),
-    });
   }
   // Loop-side write — preserve control-API signal and lease columns from disk
   // so a concurrent control request or exact lease claim is not clobbered.
   beforePersistHook();
-  persistOpKeepingSignals(op);
+  if (opts.strictPersistence) {
+    if (!persistOpKeepingSignalsStrict(op)) throw new StrictOpPersistenceError(op.id);
+  } else {
+    persistOpKeepingSignals(op);
+  }
+  if (TERMINAL.has(to)) finalizeTerminalState(op, to);
 
   if (learnedReceipt) {
     try { commitCanonicalLearnedOutcome(op, learnedReceipt); }
@@ -190,4 +171,28 @@ export function transitionOp(
 
 export function isTerminalCanonicalState(s: CanonicalState): boolean {
   return TERMINAL.has(s);
+}
+
+function finalizeTerminalState(op: Op, to: CanonicalState): void {
+  clearMiddlewareStateForOp(op.id);
+  clearEvidenceHistory(op.id);
+  clearEmittedErrorsForOp(op.id);
+  clearRenderVerifyStateForOp(op.id);
+  clearBuildVerifyStateForOp(op.id);
+  clearDesignVerifyStateForOp(op.id);
+  clearSpecProbeStateForOp(op.id);
+  clearSpecAuditStateForOp(op.id);
+  clearEarnedDoneStateForOp(op.id);
+  clearOpLedger(op.id);
+  unregisterAdapterForOp(op.id);
+  unregisterToolDispatcherForOp(op.id);
+  unregisterToolsForOp(op.id);
+  unregisterOpBaselineTokens(op.id);
+  clearSessionWorkRoot(op.id);
+  getHookEngine().fireDetached({
+    event: "Stop",
+    opId: op.id,
+    opStatus: to,
+    sessionId: getSessionForOp(op.id),
+  });
 }

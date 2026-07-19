@@ -87,7 +87,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   if (!acquisition.ok) {
     // Another worker holds a fresh lease. Recovery / scheduler logic
     // should have prevented this, but bail safely if not.
-    if (acquisition.reason === "lock_unavailable") {
+    if (acquisition.reason === "lock_unavailable" || acquisition.reason === "persistence_failed") {
       const { scheduleQueuedRetry } = await import("./scheduler.js");
       scheduleQueuedRetry(op.id, op.lane, 50);
     }

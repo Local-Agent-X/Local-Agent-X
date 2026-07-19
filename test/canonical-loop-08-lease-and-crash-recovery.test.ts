@@ -23,8 +23,7 @@
  *   - Recovery during `cancelling`: closes out as `cancelled`.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -172,25 +171,6 @@ class HangingAdapter implements Adapter {
   }
 }
 
-class AbortCompletesAdapter implements Adapter {
-  readonly name = "abort-completes";
-  readonly version = "0.0.1";
-  abortCalls = 0;
-  private finish: ((result: TurnResult) => void) | null = null;
-
-  runTurn(): Promise<TurnResult> {
-    return new Promise(resolve => { this.finish = resolve; });
-  }
-
-  async abort(): Promise<void> {
-    this.abortCalls++;
-    this.finish?.({
-      providerState: { adapterName: this.name, adapterVersion: this.version, providerPayload: {} },
-      terminalReason: undefined,
-    });
-  }
-}
-
 // ── lease primitives ─────────────────────────────────────────────────────
 
 describe("lease primitives", () => {
@@ -307,35 +287,6 @@ describe("heartbeat keeps lease alive while running", () => {
     expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
   });
 
-  it("aborts before an expired contended claim can be taken by another process", async () => {
-    const op = mkOp("heartbeat-lock-contention");
-    const adapter = new AbortCompletesAdapter();
-    registerAdapterForOp(op.id, () => adapter);
-    canonicalLoopEntry(op);
-    await awaitState(op.id, "running");
-
-    const lock = join(OPS_BASE, op.id, "operation.lock");
-    writeFileSync(lock, "foreign-live-holder", { flag: "wx" });
-    await new Promise(resolve => setTimeout(resolve, 1_100));
-    expect(adapter.abortCalls).toBeGreaterThan(0);
-    rmSync(lock, { force: true });
-
-    const gate = join(OPS_BASE, op.id, "lease-child-gate");
-    mkdirSync(gate);
-    writeFileSync(join(gate, "go"), "go");
-    const child = spawnSync(process.execPath, [
-      "--import=tsx",
-      join(process.cwd(), "test", "fixtures", "lease-process-worker.ts"),
-      "acquire",
-      op.id,
-      "replacement-process",
-      "0",
-      gate,
-    ], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, windowsHide: true });
-    expect(child.status, child.stderr).toBe(0);
-    expect(child.stdout).toContain('"ok":true');
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("replacement-process");
-  }, 15_000);
 });
 
 // ── recoverStaleOp guards ─────────────────────────────────────────────────

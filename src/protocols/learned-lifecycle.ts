@@ -4,7 +4,7 @@ import {
 } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import { atomicWriteFileSync } from "../server-utils.js";
-import { importedProtocolsDir } from "./loader.js";
+import { learnedProtocolsDir } from "./loader.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 
 export type LearnedProtocolState = "draft" | "active" | "archived";
@@ -78,7 +78,7 @@ function rejectSymlink(path: string): void {
 
 function protocolDir(slug: string): string {
   assertSlug(slug);
-  const base = importedProtocolsDir();
+  const base = learnedProtocolsDir();
   const dir = join(base, slug);
   assertContained(base, dir);
   rejectSymlink(base);
@@ -384,10 +384,10 @@ export function resolveActiveLearnedProtocolProvenance(
   sourcePath: string,
   protocolName: string,
 ): ActiveLearnedProtocolProvenance | null {
-  const base = resolve(importedProtocolsDir());
+  const base = resolve(learnedProtocolsDir());
   const dir = resolve(sourcePath, "..");
   const slug = basename(dir);
-  assertContained(base, dir);
+  if (dir !== base && !dir.startsWith(base + sep)) return null;
   rejectSymlink(base);
   rejectSymlink(dir);
   if (resolve(sourcePath) !== join(dir, "SKILL.md")) throw new Error("Imported protocol source path is invalid");

@@ -11,11 +11,16 @@
  *                          pack repo. Copied into dist/ at build time by
  *                          scripts/copy-bundled-protocols.mjs so the compiled
  *                          server finds it at the same path-relative location.
- *   3. User overlay     — SKILL.md files at ~/.lax/protocols/imported/<name>/
+ *   3. User overlay     — SKILL.md files in workspace/protocols/imported/<name>/
  *                          plus typed records from ~/.lax/custom-protocols.json.
  *                          source.type = "imported" or "custom".
+ *   4. Managed learned  — system-generated SKILL.md files under
+ *                          ~/.lax/protocols/learned/<name>/. Loaded after the
+ *                          workspace overlay so an
+ *                          agent-writable workspace import cannot shadow one.
  *
- * Precedence (later wins on name collision): builtin → bundled → user.
+ * Precedence (later wins on name collision): builtin → bundled →
+ * workspace import → managed learned → typed custom.
  * That lets users override anything bundled or built-in by dropping a file
  * with the matching name into ~/.lax/protocols/imported/.
  */
@@ -53,6 +58,11 @@ export function bundledProtocolsDir(): string {
 export function importedProtocolsDir(): string {
   const cfg = getRuntimeConfig();
   return resolve(cfg.workspace, "protocols", "imported");
+}
+
+/** Machine-local trust root for system-managed learned protocols. */
+export function learnedProtocolsDir(): string {
+  return join(getLaxDir(), "protocols", "learned");
 }
 
 function legacySkillsDir(): string {
@@ -168,7 +178,9 @@ export function invalidateBundledCache(): void {
 
 export function loadImportedProtocols(): Protocol[] {
   runProtocolMigrations();
-  return scanSkillMdDir(importedProtocolsDir(), "imported");
+  const userImports = scanSkillMdDir(importedProtocolsDir(), "imported");
+  const managedLearned = scanSkillMdDir(learnedProtocolsDir(), "imported");
+  return mergeByName(userImports, managedLearned);
 }
 
 // ── Stamping helpers ──────────────────────────────────────────────────────

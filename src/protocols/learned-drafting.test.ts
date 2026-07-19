@@ -5,12 +5,13 @@ import { tmpdir } from "node:os";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
-import { importedProtocolsDir, loadImportedProtocols } from "./loader.js";
+import { learnedProtocolsDir, loadImportedProtocols } from "./loader.js";
 import { draftLearnedCandidate, renderLearnedCandidateSkill } from "./learned-drafting.js";
 import { activateLearnedProtocol, createLearnedProtocolDraft, loadLearnedProtocol } from "./learned-lifecycle.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 
 const ORIGINAL_CONFIG = getRuntimeConfig();
+const ORIGINAL_DATA_DIR = process.env.LAX_DATA_DIR;
 let workspace = "";
 
 function workflowCandidate(): LearnedCandidate {
@@ -54,7 +55,9 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
-  setRuntimeConfig({ ...ORIGINAL_CONFIG, workspace: mkdtempSync(join(workspace, "case-")) } as LAXConfig);
+  const current = mkdtempSync(join(workspace, "case-"));
+  process.env.LAX_DATA_DIR = current;
+  setRuntimeConfig({ ...ORIGINAL_CONFIG, workspace: current } as LAXConfig);
 });
 
 afterEach(() => {
@@ -63,6 +66,8 @@ afterEach(() => {
 
 afterAll(() => {
   setRuntimeConfig(ORIGINAL_CONFIG);
+  if (ORIGINAL_DATA_DIR === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = ORIGINAL_DATA_DIR;
   rmSync(workspace, { recursive: true, force: true });
 });
 
@@ -177,7 +182,7 @@ describe("learned protocol drafting", () => {
     const drafted = draftLearnedCandidate(workflowCandidate());
 
     expect(loadImportedProtocols().map((protocol) => protocol.name)).not.toContain(drafted.slug);
-    const immutableBody = readFileSync(join(importedProtocolsDir(), drafted.slug, "versions", drafted.version.id, "SKILL.md"), "utf8");
+    const immutableBody = readFileSync(join(learnedProtocolsDir(), drafted.slug, "versions", drafted.version.id, "SKILL.md"), "utf8");
     expect(immutableBody).toContain("# Learned workflow");
   });
 });

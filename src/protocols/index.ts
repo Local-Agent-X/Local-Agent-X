@@ -135,7 +135,10 @@ export function getAllProtocols(): Protocol[] {
 
 function findProtocol(query: string): Protocol | undefined {
   const q = query.toLowerCase();
-  return getAllProtocols().find(pb =>
+  const all = getAllProtocols();
+  const exact = all.find(pb => pb.name.toLowerCase() === q);
+  if (exact) return exact;
+  return all.find(pb =>
     pb.triggers.some(t => q.includes(t.toLowerCase()) || t.toLowerCase().includes(q)) ||
     q.includes(pb.name.toLowerCase()) || pb.name.toLowerCase().includes(q),
   );

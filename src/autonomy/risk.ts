@@ -12,6 +12,7 @@
 
 import { createLogger } from "../logger.js";
 import { TOOLS, type ToolRisk } from "../tool-registry.js";
+import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 
 const logger = createLogger("autonomy");
 
@@ -30,6 +31,8 @@ const _seenUnclassified = new Set<string>();
 // audit catches that case first.
 export function classifyToolRisk(toolName: string): ToolRisk {
   const risk = TOOL_RISK[toolName];
+  const pluginRisk = getActivePluginToolMetadata(toolName)?.risk;
+  if (pluginRisk) return pluginRisk;
   if (risk === undefined) {
     if (!_seenUnclassified.has(toolName)) {
       _seenUnclassified.add(toolName);

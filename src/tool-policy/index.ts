@@ -87,6 +87,13 @@ export class ToolPolicy {
     return null;
   }
 
+  /** Exact-name counterpart used by external plugin activation. A glob rule
+   *  can cover built-ins, but must never silently authorize a new executable
+   *  name contributed at runtime. */
+  findExactRule(toolName: string): string | null {
+    return this.config.rules.find((rule) => rule.tool === toolName)?.id ?? null;
+  }
+
   /**
    * Evaluate whether a tool call is allowed.
    * @param toolName - The tool being called
@@ -242,6 +249,10 @@ export class LiveToolPolicy extends ToolPolicy {
 
   override findCoveringRule(toolName: string): string | null {
     return this.currentInner.findCoveringRule(toolName);
+  }
+
+  override findExactRule(toolName: string): string | null {
+    return this.currentInner.findExactRule(toolName);
   }
 
   override resetSession(sessionId: string): void {

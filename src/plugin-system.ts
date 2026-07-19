@@ -19,6 +19,10 @@ import {
   type PluginRegistryStore,
 } from "./plugin-system/registry-store.js";
 import { verifyPublisherSignature, type TrustLevel } from "./plugin-system/publisher-trust.js";
+import type {
+  PluginToolSurfacePort,
+  PreparedPluginToolActivation,
+} from "./plugin-system/tool-surface.js";
 
 export type { PluginListItem, PluginLifecycleStatus } from "./plugin-system/lifecycle-status.js";
 export type { PluginContributions, PluginManifest } from "./plugin-system/manifest.js";
@@ -113,8 +117,14 @@ export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
   private restoreErrors = new Map<string, string>();
   private registryError: string | undefined;
+  private toolSurface: PluginToolSurfacePort | undefined;
 
   constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(REGISTRY_PATH)) {}
+
+  bindToolSurface(surface: PluginToolSurfacePort): void {
+    if (this.toolSurface && this.toolSurface !== surface) throw new Error("Plugin tool surface is already bound");
+    this.toolSurface = surface;
+  }
 
   async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
 
@@ -134,6 +144,7 @@ export class PluginManager {
 
     let raw: unknown;
     let manifestContent: string;
+    let preparedTools: PreparedPluginToolActivation | null = null;
     try {
       manifestContent = readFileSync(manifestPath, "utf-8");
       raw = JSON.parse(manifestContent);
@@ -200,6 +211,8 @@ export class PluginManager {
       throw new Error(`Failed to load plugin "${manifest.id}": ${msg}`);
     }
 
+    preparedTools = this.toolSurface?.prepare(manifest.id, manifest, pluginModule) ?? null;
+
     const loadedPlugin: LoadedPlugin = {
       manifest,
       module: pluginModule,
@@ -231,14 +244,19 @@ export class PluginManager {
         current.path !== pluginPath ||
         current.entryHash !== expectedRegistration.entryHash ||
         current.manifestHash !== expectedRegistration.manifestHash
-      ) return manifest;
+      ) {
+        if (preparedTools) this.toolSurface?.abort(preparedTools);
+        return manifest;
+      }
     }
 
+    if (preparedTools) this.toolSurface?.activate(preparedTools);
     this.loaded.set(manifest.id, loadedPlugin);
     this.restoreErrors.delete(manifest.id);
 
     return manifest;
     } catch (error) {
+      if (preparedTools) this.toolSurface?.abort(preparedTools);
       if (!expectedRegistration && !this.loaded.has(manifest.id)) {
         this.restoreErrors.set(manifest.id, safeRestoreError(error));
       }
@@ -260,6 +278,7 @@ export class PluginManager {
       throw new Error(safeLifecyclePersistenceError("disable"));
     }
     this.loaded.delete(id);
+    this.toolSurface?.deactivate(id);
     this.restoreErrors.delete(id);
     return true;
   }
@@ -302,7 +321,9 @@ export class PluginManager {
   }
 
   getPluginModule(id: string): Record<string, unknown> | null {
-    return this.loaded.get(id)?.module ?? null;
+    const plugin = this.loaded.get(id);
+    if (!plugin || plugin.manifest.contributions?.tools) return null;
+    return plugin.module;
   }
 
   isLoaded(id: string): boolean {

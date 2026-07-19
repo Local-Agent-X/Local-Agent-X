@@ -46,5 +46,6 @@ export function safeRestoreError(error: unknown): string {
   if (message.includes("does not match manifest ID")) return "Registry identity does not match manifest";
   if (message.startsWith("Entry point not found")) return "Entry point not found";
   if (message.startsWith("Failed to load plugin")) return "Entry point failed to load";
+  if (message.includes("tool exports") || message.includes("Plugin tool")) return "Plugin tool surface is invalid";
   return "Plugin failed to restore";
 }

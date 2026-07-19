@@ -20,6 +20,7 @@
 
 import { createLogger } from "../logger.js";
 import { TOOLS, GATED_KERNEL_CLASSES, type KernelClass } from "../tool-registry.js";
+import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -48,6 +49,8 @@ export function kernelClassForTool(toolName: string): KernelClass | undefined {
   const cls = TOOL_CLASS_MAP[toolName];
   if (cls !== undefined) return cls;
   if (isMcpToolName(toolName)) return "http";
+  const plugin = getActivePluginToolMetadata(toolName);
+  if (plugin) return plugin.kernel;
   return undefined;
 }
 

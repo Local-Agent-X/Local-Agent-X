@@ -13,9 +13,11 @@
 //
 //   mutation — the agent effected something OBSERVABLE this turn (file write,
 //     external API/comms, secret, scheduling). Resets the no-progress counter.
-//     EXCLUDES `shell`: bash can spin without doing anything (git-status / grep
+//     EXCLUDES ordinary `shell`: bash can spin without doing anything (git-status / grep
 //     loops), and catching that spin is the no-progress guard's whole job — the
-//     build_app 96-bash-call kill. EXCLUDES `network-read` as a tier (web_fetch
+//     build_app 96-bash-call kill. Active external plugin tools are the exception:
+//     their contract is always non-idempotent, so successful calls are mutations.
+//     EXCLUDES `network-read` as a tier (web_fetch
 //     is a read, not an action), but `browser` is overridden in because its
 //     clicks/navigations are real external side effects (the PO-entry fix).
 //
@@ -25,6 +27,7 @@
 //     — a turn still fetching/sending is gathering, not acting on findings.
 
 import { TOOLS, type ToolRisk } from "./tool-registry.js";
+import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 
 // Observable external side effects (no-progress reset). `network-read` is absent
 // on purpose — a bare fetch is a read, not an action; `browser` is added back via
@@ -63,8 +66,10 @@ const MUTATION_OVERRIDES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** True if the tool effected something observable this turn — resets the
- *  no-progress counter. Excludes `shell` (bash-spin is what no-progress hunts). */
+ *  no-progress counter. Excludes ordinary shell; active plugin contracts are
+ *  explicitly non-idempotent and count conservatively as mutations. */
 export function isMutationTool(name: string): boolean {
+  if (getActivePluginToolMetadata(name)) return true;
   if (MUTATION_OVERRIDES.has(name)) return true;
   const r = TOOLS[name]?.risk;
   return r !== undefined && MUTATION_RISKS.has(r);
@@ -73,6 +78,7 @@ export function isMutationTool(name: string): boolean {
 /** True if the tool proves the agent did local work, not spinning — resets the
  *  discovery-loop counter. Includes shell, excludes network/comms. */
 export function isProgressTool(name: string): boolean {
+  if (getActivePluginToolMetadata(name)) return true;
   const r = TOOLS[name]?.risk;
   return r !== undefined && PROGRESS_RISKS.has(r);
 }

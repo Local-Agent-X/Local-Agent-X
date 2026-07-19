@@ -8,6 +8,8 @@ import type { UnifiedToolRegistry } from "../tools/registry.js";
 import type { MemoryIndex } from "../memory/index.js";
 import type { ToolPluginContext } from "../tools/plugin.js";
 import { pluginManager } from "../plugin-system.js";
+import { PluginToolSurface } from "../plugin-system/tool-surface.js";
+import type { ToolPolicy } from "../tool-policy/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-tools");
@@ -38,12 +40,8 @@ export async function bootstrapTools(deps: {
   cronService: CronService;
   memoryIndex: MemoryIndex;
   dataDir: string;
+  toolPolicy: ToolPolicy;
 }): Promise<ToolBundle> {
-  const loadedPlugins = await pluginManager.loadAllEnabled();
-  if (loadedPlugins.length > 0) {
-    logger.info(`[plugins] Restored ${loadedPlugins.length} enabled plugin(s)`);
-  }
-
   const activeOnEventBySession = new Map<string, EventCallback>();
   const activeRuntimeBySession = new Map<string, RuntimeInfo>();
   const activeBrowserSessionIdRef: { value: string } = { value: "default" };
@@ -92,6 +90,12 @@ export async function bootstrapTools(deps: {
         toolClass: plugin.toolClass,
       });
     }
+  }
+
+  pluginManager.bindToolSurface(new PluginToolSurface(toolRegistry, allAgentTools, deps.toolPolicy));
+  const loadedPlugins = await pluginManager.loadAllEnabled();
+  if (loadedPlugins.length > 0) {
+    logger.info(`[plugins] Restored ${loadedPlugins.length} enabled plugin(s)`);
   }
 
   // bridgeTools = the same subset chat-runner has always read: core's

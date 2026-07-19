@@ -53,10 +53,51 @@ function makePlugin(id: string, entry = "export const ready = true;\n"): string 
   return dir;
 }
 
+function makeToolPlugin(id: string, toolName: string): string {
+  const dir = join(pluginsDir, id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "index.mjs"), `
+export const ${toolName} = {
+  name: ${JSON.stringify(toolName)},
+  description: "transaction tool",
+  parameters: { type: "object", properties: {}, required: [] },
+  async execute() { return { content: "executed" }; }
+};
+`, "utf-8");
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify({
+    id,
+    name: id,
+    version: "1.0.0",
+    description: "transaction test",
+    entryPoint: "index.mjs",
+    contributions: { tools: [toolName] },
+  }), "utf-8");
+  return dir;
+}
+
 async function manager(store: PluginRegistryStore) {
   vi.resetModules();
   const { PluginManager } = await import("../src/plugin-system.js");
   return new PluginManager(store);
+}
+
+async function managerWithSurface(store: PluginRegistryStore, toolName: string) {
+  vi.resetModules();
+  const [{ PluginManager }, { PluginToolSurface }, { UnifiedToolRegistry }, { ToolPolicy }] = await Promise.all([
+    import("../src/plugin-system.js"),
+    import("../src/plugin-system/tool-surface.js"),
+    import("../src/tools/registry.js"),
+    import("../src/tool-policy/index.js"),
+  ]);
+  const registry = new UnifiedToolRegistry();
+  const live: Array<import("../src/types.js").ToolDefinition> = [];
+  const policy = new ToolPolicy({
+    defaultDecision: "deny",
+    rules: [{ id: `allow-${toolName}`, tool: toolName, decision: "allow", reason: "test" }],
+  });
+  const pm = new PluginManager(store);
+  pm.bindToolSurface(new PluginToolSurface(registry, live, policy));
+  return { pm, registry, live };
 }
 
 beforeEach(() => {
@@ -74,6 +115,80 @@ afterEach(() => {
 });
 
 describe("PluginManager lifecycle transactions", () => {
+  it("rejects malformed declarative schemas before lifecycle persistence or visibility", async () => {
+    const dir = makeToolPlugin("invalid-schema", "invalid_schema_action");
+    const entryPath = join(dir, "index.mjs");
+    const entry = readFileSync(entryPath, "utf-8").replace(
+      'parameters: { type: "object", properties: {}, required: [] }',
+      'parameters: { type: "object", properties: "invalid", required: [] }',
+    );
+    writeFileSync(entryPath, entry, "utf-8");
+    const store = memoryStore();
+    const { pm, registry, live } = await managerWithSurface(store, "invalid_schema_action");
+
+    await expect(pm.loadPlugin(dir)).rejects.toThrow(/properties/);
+    expect(store.writes()).toBe(0);
+    expect(registry.get("invalid_schema_action")).toBeUndefined();
+    expect(live).toEqual([]);
+    expect(pm.listPlugins()).toEqual([
+      expect.objectContaining({ id: "invalid-schema", status: "failed", error: "Plugin tool surface is invalid" }),
+    ]);
+  });
+
+  it("exposes declarative tools only after lifecycle persistence succeeds", async () => {
+    const dir = makeToolPlugin("surface-persistence", "persisted_action");
+    const store = memoryStore();
+    store.failNext("write");
+    const { pm, registry, live } = await managerWithSurface(store, "persisted_action");
+
+    await expect(pm.loadPlugin(dir)).rejects.toThrow("Plugin load could not be persisted");
+    expect(registry.get("persisted_action")).toBeUndefined();
+    expect(live).toEqual([]);
+
+    await expect(pm.loadPlugin(dir)).resolves.toEqual(expect.objectContaining({ id: "surface-persistence" }));
+    expect(registry.get("persisted_action")).toBe(live[0]);
+    expect(pm.getPluginModule("surface-persistence")).toBeNull();
+    expect(await live[0].execute({})).toEqual({ content: "executed" });
+  });
+
+  it("keeps a tool active when disable persistence fails, then revokes stale wrappers", async () => {
+    const dir = makeToolPlugin("surface-disable", "disable_action");
+    const store = memoryStore();
+    const { pm, registry, live } = await managerWithSurface(store, "disable_action");
+    await pm.loadPlugin(dir);
+    const stale = live[0];
+    store.failNext("rename");
+
+    expect(() => pm.disablePlugin("surface-disable")).toThrow("Plugin disable could not be persisted");
+    expect(registry.get("disable_action")).toBe(stale);
+    expect(await stale.execute({})).toEqual({ content: "executed" });
+
+    expect(pm.disablePlugin("surface-disable")).toBe(true);
+    expect(registry.get("disable_action")).toBeUndefined();
+    expect(live).toEqual([]);
+    expect(await stale.execute({})).toEqual(expect.objectContaining({ status: "blocked", isError: true }));
+  });
+
+  it("restores declarative tools once without duplicate live entries", async () => {
+    const dir = makeToolPlugin("surface-restore", "restore_action");
+    const entry = readFileSync(join(dir, "index.mjs"), "utf-8");
+    const manifest = readFileSync(join(dir, "manifest.json"), "utf-8");
+    const store = memoryStore({
+      "surface-restore": {
+        enabled: true,
+        path: dir,
+        entryHash: createHash("sha256").update(entry).digest("hex"),
+        manifestHash: createHash("sha256").update(manifest).digest("hex"),
+      },
+    });
+    const { pm, registry, live } = await managerWithSurface(store, "restore_action");
+
+    await expect(pm.loadAllEnabled()).resolves.toEqual([expect.objectContaining({ id: "surface-restore" })]);
+    await expect(pm.loadAllEnabled()).resolves.toEqual([]);
+    expect(live.map((tool) => tool.name)).toEqual(["restore_action"]);
+    expect(registry.get("restore_action")).toBe(live[0]);
+  });
+
   it.each(["write", "rename"] as const)("does not activate a plugin when registry %s fails", async (stage) => {
     const marker = join(root, `module-${stage}.txt`);
     const dir = makePlugin(

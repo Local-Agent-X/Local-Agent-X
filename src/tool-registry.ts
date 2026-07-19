@@ -17,6 +17,7 @@
 
 import { deriveTools, derivePathArgs } from "./tool-policy/tool-policies.js";
 import type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
+import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
 export type KernelClass =
@@ -164,6 +165,7 @@ export const CAPABILITY_CLASS_MEMBERS: Record<CapabilityClass, readonly string[]
  * `browser`. All other membership is exact-name.
  */
 export function hasCapability(name: string, cls: CapabilityClass): boolean {
+  if (getActivePluginToolMetadata(name)) return cls === "shell";
   if (CAPABILITY_SETS[cls].has(name)) return true;
   if (cls === "egress" && name.startsWith("browser_")) {
     // Vault-only browser sub-tools write INTO the page from the encrypted vault;

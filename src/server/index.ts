@@ -103,7 +103,7 @@ export async function startServer(config: LAXConfig) {
     }
   })();
 
-  const tools = await phase("bootstrapTools", () => bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir }));
+  const tools = await phase("bootstrapTools", () => bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir, toolPolicy }));
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession } = tools;
 
   // Boot-time coverage audit — catch newly-registered tools that don't

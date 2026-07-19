@@ -19,6 +19,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { TOOLS, type ToolRisk } from "./tool-registry.js";
+import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 
 /** Risk classes that count as committing for failover + progress checks. */
 const COMMITTING_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
@@ -145,6 +146,7 @@ export function turnPerformedCommittingCall(
  *       when args are in scope.
  *    3. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
 export function isCommittingTool(name: string): boolean {
+  if (getActivePluginToolMetadata(name)) return true;
   if (LEGACY_COMMITTING_OVERRIDES.has(name)) return true;
   if (ARG_AWARE_TOOLS.has(name)) return false;
   const entry = TOOLS[name];

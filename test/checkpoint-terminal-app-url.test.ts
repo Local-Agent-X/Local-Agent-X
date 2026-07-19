@@ -23,6 +23,7 @@ import { homedir } from "node:os";
 
 import { commitTurn } from "../src/canonical-loop/index.js";
 import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import { acquireLease, leaseClaimFromOp } from "../src/canonical-loop/lease.js";
 import type { Op } from "../src/ops/types.js";
 import type { CommitTurnInput, ProviderStateEnvelope } from "../src/canonical-loop/types.js";
 
@@ -66,8 +67,16 @@ function mkOp(label: string, over: Partial<Op> = {}): Op {
 }
 
 function commitInput(op: Op, over: Partial<CommitTurnInput> = {}): CommitTurnInput {
+  let leaseClaim = leaseClaimFromOp(readOp(op.id));
+  if (!leaseClaim) {
+    const acquired = acquireLease(op.id, "checkpoint-app-url-test");
+    if (!acquired.ok) throw new Error(`test lease failed: ${acquired.reason}`);
+    leaseClaim = acquired.claim;
+    Object.assign(op, readOp(op.id));
+  }
   return {
     op,
+    leaseClaim,
     turnIdx: 0,
     providerState: providerState(null),
     messages: [{ role: "assistant", content: { text: `APP_READY: ${PROXY_URL}` } }],

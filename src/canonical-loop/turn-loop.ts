@@ -342,6 +342,7 @@ export async function driveTurn(
   const learningSessionId = terminalOutcome ? resolveLearningSessionId(op) : null;
   commitTurn({
     op,
+    leaseClaim: opts.leaseClaim,
     turnIdx,
     providerState,
     messages: allMessages,

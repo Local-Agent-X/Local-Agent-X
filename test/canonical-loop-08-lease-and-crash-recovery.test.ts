@@ -341,7 +341,6 @@ describe("recoverStaleOp guard rails", () => {
     const fresh = readOp(op.id)!;
     fresh.canonical!.state = "running";
     writeOp(fresh);
-
     const r = recoverStaleOp(op.id);
     expect(r.ok).toBe(false);
     expect(r.kind).toBe("lease_fresh");
@@ -704,6 +703,8 @@ describe("idempotent commitTurn (PRD acceptance #8)", () => {
     const fresh = readOp(op.id)!;
     fresh.canonical!.state = "running";
     writeOp(fresh);
+    const lease = acquireLease(op.id, "w-idempotent");
+    if (!lease.ok) throw new Error(`test lease failed: ${lease.reason}`);
 
     const ps: ProviderStateEnvelope = {
       adapterName: "fake",
@@ -714,6 +715,7 @@ describe("idempotent commitTurn (PRD acceptance #8)", () => {
     // First commit: inserts the row, emits message_appended + turn_committed.
     const r1 = commitTurn({
       op: readOp(op.id)!,
+      leaseClaim: lease.claim,
       turnIdx: 0,
       providerState: ps,
       messages: [{ role: "assistant", content: { text: "first" } }],
@@ -730,6 +732,7 @@ describe("idempotent commitTurn (PRD acceptance #8)", () => {
     // Second commit at the same turnIdx — replay path. Idempotent.
     const r2 = commitTurn({
       op: readOp(op.id)!,
+      leaseClaim: lease.claim,
       turnIdx: 0,
       providerState: ps,
       messages: [{ role: "assistant", content: { text: "duplicate" } }],

@@ -36,12 +36,13 @@ import {
   releaseLease,
   getLeaseConfig,
 } from "./lease.js";
-import { readLatestOpTurn } from "./store.js";
+import { readLatestOpTurn, readOpTurn } from "./store.js";
 import { aggregateOpUsage } from "./op-usage.js";
 import { ensureAriKernelScope, releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
+import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
 
 // Fallback turn cap when the op carries no (or an invalid) iteration budget.
 // The real cap is the op budget the entry runner stamped — see maxTurns below;
@@ -139,13 +140,18 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   }
 
   // Seed the initial user op_message before the first driveTurn so the
-  // adapter sees the task on turn 0 (PRD §11 parity with the legacy
-  // worker's executeOp). Idempotent — recovery / re-entry sees existing
-  // op_messages and skips.
-  seedInitialUserMessage(op);
-
   let releaseReason = "released";
+  let activeTurnIdx: number | null = null;
   try {
+    if (reconcileLatestTurnCommit(op.id, leaseClaim)) {
+      const reconciled = readOp(op.id);
+      if (reconciled) Object.assign(op, reconciled);
+      if (op.canonical?.state && isTerminalCanonicalState(op.canonical.state)) {
+        releaseReason = "committed_turn_reconciled";
+        return;
+      }
+    }
+    seedInitialUserMessage(op);
     // PRD §11 resume protocol: starting turn idx comes from disk, not
     // the in-memory cache. Survives a worker that committed a turn
     // but died before persisting the denormalized currentTurnIdx.
@@ -162,6 +168,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         : DEFAULT_MAX_TURNS;
     let count = 0;
     for (;;) {
+      activeTurnIdx = turnIdx;
       if (count >= maxTurns) {
         const continuing = op.lane !== "interactive";
         emit(op.id, "iteration_checkpoint", {
@@ -182,6 +189,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       }
       count++;
       const r = await driveTurn(op, adapter, turnIdx, {
+        leaseClaim,
         isCancelled: () => tracker.cancelled || leaseLost || deadlineExceeded,
       });
 
@@ -310,6 +318,14 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       turnIdx++;
     }
   } catch (e) {
+    if (e instanceof TurnCommitFenceError || leaseLost) {
+      releaseReason = "lease_lost";
+      return;
+    }
+    if (activeTurnIdx !== null && readOpTurn(op.id, activeTurnIdx)) {
+      releaseReason = "published_turn_projection_incomplete";
+      return;
+    }
     releaseReason = `exception:${(e as Error).message}`;
     emit(op.id, "error", {
       code: "worker_exception",

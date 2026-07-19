@@ -78,6 +78,10 @@ function ledgerPath(sessionId: string): string {
  * the ledger is unwritable.
  */
 export function appendActionLedger(entry: ActionLedgerEntry): void {
+  appendActionLedgerWithMode(entry, false);
+}
+
+function appendActionLedgerWithMode(entry: ActionLedgerEntry, strict: boolean): void {
   if (!entry.sessionId) return;
   if (entry.actions.length === 0) return;
   const clipped: ActionLedgerEntry = {
@@ -90,7 +94,17 @@ export function appendActionLedger(entry: ActionLedgerEntry): void {
     appendFileSync(path, JSON.stringify(clipped) + "\n", { encoding: "utf-8", mode: 0o600 });
   } catch (e) {
     logger.warn(`append failed sess=${entry.sessionId}: ${(e as Error).message}`);
+    if (strict) throw e;
   }
+}
+
+/** Idempotent projection of a committed canonical turn. Same-op writers are
+ * serialized by the operation lease lock; the key prevents crash replay from
+ * incrementing this denormalized index twice. */
+export function appendActionLedgerOnce(entry: ActionLedgerEntry): void {
+  if (readSessionActions(entry.sessionId).some((row) =>
+    row.opId === entry.opId && row.turnIdx === entry.turnIdx)) return;
+  appendActionLedgerWithMode(entry, true);
 }
 
 /**

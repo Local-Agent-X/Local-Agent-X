@@ -115,6 +115,7 @@ function persistInterruptedOperation(): never {
   appendFileSync(sideEffectLedger, `${JSON.stringify({ opId, effect: "write", callId: "call-1" })}\n`);
   commitTurn({
     op,
+    leaseClaim: { owner: "worker-process-a", generation: 0 },
     turnIdx: 0,
     providerState: {
       adapterName: "openai-compat",

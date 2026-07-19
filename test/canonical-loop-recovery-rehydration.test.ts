@@ -107,6 +107,7 @@ describe("canonical recovery runtime rehydration", () => {
     });
     commitTurn({
       op,
+      leaseClaim: { owner: "dead-worker", generation: 0 },
       turnIdx: 0,
       providerState: {
         adapterName: "fake",

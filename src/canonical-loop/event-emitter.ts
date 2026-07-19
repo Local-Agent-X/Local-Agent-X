@@ -13,7 +13,7 @@
  * adapters/workers go through their own contract surface, public control
  * APIs use signal columns (Issue 05+).
  */
-import { appendCanonicalEvent } from "./store.js";
+import { appendCanonicalEvent, appendCanonicalEventStrict } from "./store.js";
 import { getBus, eventsChannel, streamChannel } from "./bus.js";
 import { recordCanonicalEvent, recordStreamChunk } from "./soak-metrics.js";
 import { recordCanonicalEvent as bridgeRecord } from "./session-bridge-observer.js";
@@ -26,6 +26,19 @@ export function emit(
   body: Record<string, unknown> | null = null,
 ): CanonicalEvent {
   const event = appendCanonicalEvent(opId, type, body);
+  getBus().publish(eventsChannel(opId), event);
+  recordCanonicalEvent(event);
+  bridgeRecord(event);
+  recordCostEvent(event);
+  return event;
+}
+
+export function emitStrict(
+  opId: string,
+  type: CanonicalEventType,
+  body: Record<string, unknown> | null = null,
+): CanonicalEvent {
+  const event = appendCanonicalEventStrict(opId, type, body);
   getBus().publish(eventsChannel(opId), event);
   recordCanonicalEvent(event);
   bridgeRecord(event);

@@ -28,6 +28,8 @@ export interface DriveTurnResult {
 }
 
 export interface DriveTurnOptions {
+  /** Exact worker lease generation authorizing the post-turn publish. */
+  leaseClaim?: import("../lease.js").LeaseClaim;
   /**
    * Optional cancel-check called after the adapter resolves runTurn and
    * again after tool dispatch. If it returns true, the partial turn is

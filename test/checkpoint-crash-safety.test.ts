@@ -1,81 +1,76 @@
-/**
- * Crash-safety regression suite for src/canonical-loop/store.ts +
- * src/canonical-loop/checkpoint.ts (commitTurn).
- *
- * Two holes this locks down:
- *
- *  1. Swallowed write failures. `appendOpMessage` and `insertOpTurn` used to
- *     LOG-AND-SWALLOW a disk-full / EACCES / EISDIR write failure. A silently
- *     dropped message or turn row still let commitTurn proceed to the
- *     `succeeded` transition — the op reported success with data missing on
- *     disk. They now THROW; commitTurn must NOT transition to succeeded.
- *
- *  2. Orphaned op_messages on a mid-commit crash. commitTurn used to append
- *     op_messages BEFORE inserting the op_turns row. A crash between the two
- *     left op_messages rows with no op_turns row; on re-drive (readOpTurn
- *     returns null → NOT the idempotent path) those messages were appended a
- *     SECOND time → duplicate transcript. The fix writes the op_turns row
- *     FIRST — the row is the idempotency guard — so a crash mid-commit can
- *     never orphan messages, and a re-drive appends nothing.
- *
- * The failure seam is a real filesystem error, not a mock: the target path is
- * created as a DIRECTORY so the underlying appendFileSync/writeFileSync throws
- * EISDIR. This exercises the actual write path in store.ts.
- */
-import { afterAll, describe, expect, it } from "vitest";
-import { existsSync, rmSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, afterAll, describe, expect, it } from "vitest";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-
-import { commitTurn } from "../src/canonical-loop/index.js";
-import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "../src/canonical-loop/store.js";
-import { recoverCommittedStrategyPivot } from "../src/canonical-loop/turn-loop/nudges.js";
+import { join } from "node:path";
+import {
+  _setTurnProjectionHookForTests,
+  commitTurn,
+  TurnCommitFenceError,
+  type CommitTurnInput,
+  type TurnProjectionPoint,
+} from "../src/canonical-loop/checkpoint.js";
+import { acquireLease, leaseClaimFromOp, type LeaseClaim } from "../src/canonical-loop/lease.js";
 import { opMessagesPath, opTurnPath } from "../src/canonical-loop/schema.js";
+import {
+  appendOpMessage,
+  insertOpTurn,
+  readCanonicalEvents,
+  readLatestOpTurn,
+  readOpMessages,
+  readOpTurn,
+} from "../src/canonical-loop/store.js";
+import {
+  _setTurnCommitWriteHookForTests,
+  type TurnCommitWritePoint,
+} from "../src/canonical-loop/turn-commit-store.js";
 import { opDir } from "../src/ops/event-log.js";
-import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import { newOpId, readOp, writeOp } from "../src/ops/op-store.js";
 import type { Op } from "../src/ops/types.js";
-import type {
-  CommitTurnInput,
-  OpMessageRow,
-  OpTurnRow,
-  ProviderStateEnvelope,
-} from "../src/canonical-loop/types.js";
+import { readSessionActions } from "../src/ops/action-ledger.js";
+import type { OpMessageRow, OpTurnRow, ProviderStateEnvelope } from "../src/canonical-loop/types.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const tracked: string[] = [];
-const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
-
+const trackedSessions = new Set<string>();
 const PROVIDER_STATE: ProviderStateEnvelope = {
   adapterName: "fake",
   adapterVersion: "1",
   providerPayload: null,
 };
 
-function mkOp(label: string): Op {
-  return {
-    id: track(newOpId(`ckpt_crash_${label}`)),
+function mkOp(label: string): { op: Op; claim: LeaseClaim } {
+  const op: Op = {
+    id: newOpId(`atomic_turn_${label}`),
     type: "freeform",
-    task: `checkpoint-crash ${label}`,
+    task: `atomic turn ${label}`,
     contextPack: {} as Op["contextPack"],
     lane: "interactive",
     retryPolicy: { maxRecoveryAttempts: 3, backoffMs: [5_000] },
-    ownerId: "test-checkpoint-crash",
+    ownerId: "atomic-turn-test",
     visibility: "private",
     status: "running",
     createdAt: new Date().toISOString(),
     attemptCount: 0,
-    canonical: { state: "running" },
+    canonical: { flagValue: true, state: "running", sessionId: `session-${label}` },
   };
+  tracked.push(op.id);
+  trackedSessions.add(op.canonical!.sessionId!);
+  writeOp(op);
+  const acquired = acquireLease(op.id, `worker-${label}`);
+  if (!acquired.ok) throw new Error(`test lease failed: ${acquired.reason}`);
+  return { op: readOp(op.id)!, claim: acquired.claim };
 }
 
-function commitInput(op: Op, over: Partial<CommitTurnInput> = {}): CommitTurnInput {
+function input(op: Op, claim: LeaseClaim, over: Partial<CommitTurnInput> = {}): CommitTurnInput {
+  const turnIdx = over.turnIdx ?? 0;
   return {
     op,
-    turnIdx: 0,
+    leaseClaim: claim,
+    turnIdx,
     providerState: PROVIDER_STATE,
     messages: [
-      { role: "assistant", content: "reply-a" },
-      { role: "assistant", content: "reply-b" },
+      { messageId: `${op.id}-${turnIdx}-a`, role: "assistant", content: "reply-a" },
+      { messageId: `${op.id}-${turnIdx}-b`, role: "tool_result", content: "reply-b" },
     ],
     toolCallSummary: [],
     terminalReason: null,
@@ -83,21 +78,7 @@ function commitInput(op: Op, over: Partial<CommitTurnInput> = {}): CommitTurnInp
   };
 }
 
-/** Make appendOpMessage fail: the op-messages.jsonl target becomes a dir. */
-function failMessageWrites(opId: string): void {
-  opDir(opId); // ensure the op dir exists
-  const p = opMessagesPath(opId);
-  if (existsSync(p)) rmSync(p, { recursive: true, force: true });
-  mkdirSync(p, { recursive: true });
-}
-
-/** Make insertOpTurn fail: the op-turns/<idx>.json.tmp target becomes a dir. */
-function failTurnWrite(opId: string, turnIdx: number): void {
-  const p = opTurnPath(opId, turnIdx) + ".tmp";
-  mkdirSync(p, { recursive: true });
-}
-
-function makeTurnRow(opId: string, turnIdx: number): OpTurnRow {
+function turnRow(opId: string, turnIdx = 0): OpTurnRow {
   return {
     opId,
     turnIdx,
@@ -109,237 +90,189 @@ function makeTurnRow(opId: string, turnIdx: number): OpTurnRow {
   };
 }
 
-function makeMsgRow(opId: string, seqInTurn: number): OpMessageRow {
+function messageRow(opId: string, turnIdx = 0): OpMessageRow {
   return {
-    messageId: `m-${seqInTurn}`,
+    messageId: `${opId}-legacy-message`,
     opId,
-    turnIdx: 0,
-    seqInTurn,
+    turnIdx,
+    seqInTurn: 0,
     role: "assistant",
-    content: "x",
+    content: "legacy",
     createdAt: new Date().toISOString(),
   };
 }
 
+afterEach(() => {
+  _setTurnCommitWriteHookForTests(null);
+  _setTurnProjectionHookForTests(null);
+});
 afterAll(() => {
-  for (const id of tracked) {
-    const dir = join(OPS_BASE, id);
-    if (existsSync(dir)) {
-      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
+  for (const id of tracked) rmSync(join(OPS_BASE, id), { recursive: true, force: true });
+  for (const sessionId of trackedSessions) {
+    rmSync(join(homedir(), ".lax", "action-log", `${sessionId}.jsonl`), { force: true });
   }
 });
 
-// ── Problem 2: swallowed write failures now surface ──────────────────────
+describe("turn commit visibility boundary", () => {
+  const beforePublish: TurnCommitWritePoint[] = [
+    "before_stage_open",
+    "after_stage_write",
+    "after_stage_fsync",
+    "before_publish",
+  ];
 
-describe("store — write failures surface instead of swallow", () => {
-  it("appendOpMessage THROWS on a real write failure (was: swallowed)", () => {
-    const op = mkOp("append-throws");
-    writeOp(op);
-    failMessageWrites(op.id);
-    expect(() => appendOpMessage(makeMsgRow(op.id, 0))).toThrow();
+  for (const point of beforePublish) {
+    it(`keeps the entire finalized turn invisible after a crash at ${point}`, () => {
+      const { op, claim } = mkOp(point);
+      appendOpMessage({ ...messageRow(op.id), role: "user", content: "request" });
+      _setTurnCommitWriteHookForTests((seen) => {
+        if (seen === point) throw new Error(`crash:${point}`);
+      });
+
+      expect(() => commitTurn(input(op, claim))).toThrow(`crash:${point}`);
+      expect(readOpTurn(op.id, 0)).toBeNull();
+      expect(readOpMessages(op.id).map((row) => row.role)).toEqual(["user"]);
+      expect(readCanonicalEvents(op.id).some((event) => event.type === "turn_committed")).toBe(false);
+    });
+  }
+
+  it("exposes turn and finalized messages together after publish and repairs projections idempotently", () => {
+    const { op, claim } = mkOp("after-publish");
+    const commit = input(op, claim, {
+      toolCallSummary: [{ tool: "read", argsHash: "hash", resultStatus: "ok", durationMs: 1 }],
+    });
+    _setTurnCommitWriteHookForTests((point) => {
+      if (point === "after_publish") throw new Error("crash:after_publish");
+    });
+    expect(() => commitTurn(commit)).toThrow("crash:after_publish");
+    expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+    expect(readOpMessages(op.id).filter((row) => row.turnIdx === 0)).toHaveLength(2);
+    expect(readCanonicalEvents(op.id).some((event) => event.type === "turn_committed")).toBe(false);
+
+    _setTurnCommitWriteHookForTests(null);
+    const replay = commitTurn({ ...commit, op: readOp(op.id)! });
+    expect(replay.inserted).toBe(false);
+    expect(readOpMessages(op.id).filter((row) => row.turnIdx === 0)).toHaveLength(2);
+    expect(readCanonicalEvents(op.id).filter((event) => event.type === "turn_committed")).toHaveLength(1);
+    expect(readCanonicalEvents(op.id).filter((event) => event.type === "message_appended")).toHaveLength(2);
+    commitTurn({ ...commit, op: readOp(op.id)! });
+    expect(readSessionActions("session-after-publish").filter((row) =>
+      row.opId === op.id && row.turnIdx === 0)).toHaveLength(1);
   });
 
-  it("insertOpTurn THROWS on a real write failure, distinct from the exists→false path", () => {
-    const op = mkOp("insert-throws");
-    writeOp(op);
-    failTurnWrite(op.id, 0);
-    expect(() => insertOpTurn(makeTurnRow(op.id, 0))).toThrow();
+  it("publishes a terminal turn before projecting its terminal state", () => {
+    const { op, claim } = mkOp("terminal");
+    const result = commitTurn(input(op, claim, { terminalReason: "done" }));
+    expect(result.inserted).toBe(true);
+    expect(readOpTurn(op.id, 0)?.terminalReason).toBe("done");
+    expect(readOpMessages(op.id).filter((row) => row.turnIdx === 0)).toHaveLength(2);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
   });
 
-  it("insertOpTurn still returns false (not throw) when the row already exists (idempotency preserved)", () => {
-    const op = mkOp("insert-idempotent");
-    writeOp(op);
-    expect(insertOpTurn(makeTurnRow(op.id, 0))).toBe(true);
-    // Second insert of the same (opId, turnIdx) is the replay path: false,
-    // NOT a throw — the write-failure throw must not be confused with this.
-    expect(insertOpTurn(makeTurnRow(op.id, 0))).toBe(false);
-  });
+  const projectionPoints: TurnProjectionPoint[] = [
+    "before_checkpoint",
+    "after_checkpoint",
+    "after_message_events",
+    "after_turn_event",
+    "after_action_ledger",
+    "before_terminal",
+    "after_terminal",
+  ];
+
+  for (const point of projectionPoints) {
+    it(`repairs every projection exactly once after a crash at ${point}`, () => {
+      const { op, claim } = mkOp(`projection-${point}`);
+      const commit = input(op, claim, {
+        terminalReason: "done",
+        toolCallSummary: [{ tool: "read", argsHash: "hash", resultStatus: "ok", durationMs: 1 }],
+      });
+      _setTurnProjectionHookForTests((seen) => {
+        if (seen === point) throw new Error(`crash:${point}`);
+      });
+      expect(() => commitTurn(commit)).toThrow(`crash:${point}`);
+      expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+      expect(readOpMessages(op.id).filter((row) => row.turnIdx === 0)).toHaveLength(2);
+
+      _setTurnProjectionHookForTests(null);
+      commitTurn({ ...commit, op: readOp(op.id)! });
+      const events = readCanonicalEvents(op.id);
+      expect(events.filter((event) => event.type === "message_appended")).toHaveLength(2);
+      expect(events.filter((event) => event.type === "turn_committed")).toHaveLength(1);
+      expect(events.filter((event) => event.type === "state_changed"
+        && event.body?.to === "succeeded")).toHaveLength(1);
+      expect(readSessionActions(op.canonical!.sessionId!).filter((row) =>
+        row.opId === op.id && row.turnIdx === 0)).toHaveLength(1);
+      expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+    });
+  }
 });
 
-describe("commitTurn — a failed message write does NOT report succeeded", () => {
-  it("throws and leaves the op non-terminal (never transitions running → succeeded) when a message write fails", () => {
-    const op = mkOp("no-false-success");
-    writeOp(op);
-    failMessageWrites(op.id);
+describe("turn commit lease fencing", () => {
+  it("rejects an old generation after takeover without any turn, message, event, or state mutation", () => {
+    const { op, claim: oldClaim } = mkOp("stale");
+    const expired = readOp(op.id)!;
+    expired.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
+    writeOp(expired);
+    const replacement = acquireLease(op.id, "replacement-worker");
+    expect(replacement.ok).toBe(true);
+    const before = readOp(op.id)!;
 
-    expect(() =>
-      commitTurn(commitInput(op, { terminalReason: "done" })),
-    ).toThrow();
-
-    // The whole point: the op must NOT have been transitioned to succeeded.
-    // On the old swallow-and-succeed code this read `succeeded`.
-    const after = readOp(op.id);
-    expect(after?.canonical?.state).not.toBe("succeeded");
-    expect(after?.status).not.toBe("completed");
-  });
-});
-
-// ── Problem 1: op_turns written before op_messages (no orphan on crash) ───
-
-describe("commitTurn — crash mid-commit cannot orphan op_messages", () => {
-  it("recovers a committed pivot intent exactly once after a commit-to-nudge crash", () => {
-    const op = mkOp("pivot-recovery");
-    writeOp(op);
-    const nextTurnPivot = {
-      message: "take the alternate route",
-      metadata: {
-        strategyPivot: { pattern: "exact-repeat", strategyId: "context-refresh", epoch: 2 },
-      },
-    };
-
-    commitTurn(commitInput(op, { nextTurnPivot }));
-
-    expect(readOpTurn(op.id, 0)?.nextTurnPivot).toEqual(nextTurnPivot);
-    expect(readOpMessages(op.id).filter(row => row.turnIdx === 1)).toHaveLength(0);
-    expect(recoverCommittedStrategyPivot(op.id, 0)).toBe(true);
-    expect(recoverCommittedStrategyPivot(op.id, 0)).toBe(false);
-    const recovered = readOpMessages(op.id).filter(row => row.turnIdx === 1);
-    expect(recovered).toHaveLength(1);
-    expect(recovered[0].content).toEqual({ text: nextTurnPivot.message, kind: "nudge", ...nextTurnPivot.metadata });
-  });
-
-  it("writes no recoverable pivot when the source turn commit fails", () => {
-    const op = mkOp("pivot-commit-failure");
-    writeOp(op);
-    failTurnWrite(op.id, 0);
-
-    expect(() => commitTurn(commitInput(op, {
-      nextTurnPivot: {
-        message: "must not survive",
-        metadata: { strategyPivot: { pattern: "no-progress", strategyId: "alternate-route", epoch: 1 } },
-      },
-    }))).toThrow();
-
+    expect(() => commitTurn(input(op, oldClaim))).toThrow(TurnCommitFenceError);
     expect(readOpTurn(op.id, 0)).toBeNull();
-    expect(recoverCommittedStrategyPivot(op.id, 0)).toBe(false);
-    expect(readOpMessages(op.id).filter(row => row.turnIdx === 1)).toHaveLength(0);
+    expect(readOpMessages(op.id)).toEqual([]);
+    expect(readCanonicalEvents(op.id)).toEqual([]);
+    expect(readOp(op.id)).toEqual(before);
   });
 
-  it("writes the op_turns row BEFORE op_messages: a failed message write leaves the row committed and zero messages", () => {
-    const op = mkOp("row-first");
-    writeOp(op);
-    failMessageWrites(op.id);
+  it("requires an exact persisted claim rather than owner name alone", () => {
+    const { op, claim } = mkOp("generation");
+    expect(leaseClaimFromOp(readOp(op.id))).toEqual(claim);
+    expect(() => commitTurn(input(op, { owner: claim.owner, generation: claim.generation + 1 })))
+      .toThrow(TurnCommitFenceError);
+    expect(readOpTurn(op.id, 0)).toBeNull();
+  });
+});
 
-    expect(() => commitTurn(commitInput(op))).toThrow();
-
-    // op_turns row is durable (written first). No op_messages landed, so
-    // there is no orphaned message to duplicate on re-drive.
-    expect(existsSync(opTurnPath(op.id, 0))).toBe(true);
-    expect(readOpMessages(op.id).filter(m => m.turnIdx === 0)).toHaveLength(0);
+describe("legacy and incomplete artifacts", () => {
+  it("preserves a complete legacy turn plus message artifact", () => {
+    const { op } = mkOp("legacy");
+    insertOpTurn(turnRow(op.id));
+    appendOpMessage(messageRow(op.id));
+    expect(readOpTurn(op.id, 0)?.providerState.adapterName).toBe("fake");
+    expect(readOpMessages(op.id).map((row) => row.content)).toEqual(["legacy"]);
   });
 
-  it("re-drive after a crash between the two writes produces NO duplicate messages", () => {
-    // Simulate a crash where the op_turns write is what fails on the first
-    // attempt (the exact window that used to orphan messages on old code:
-    // old code appended messages FIRST, so a turn-row failure left messages
-    // on disk with no row, and the swallowed failure let the op "succeed").
-    const op = mkOp("no-dup-on-redrive");
-    writeOp(op);
-    failTurnWrite(op.id, 0);
-
-    // First attempt: on the fixed code the op_turns write is FIRST and now
-    // throws, so NO messages are appended. (On old code messages were
-    // appended before the swallowed turn-row failure → an orphan.)
-    expect(() => commitTurn(commitInput(op))).toThrow();
-
-    // Clear the seam — the "restart" after the crash.
-    rmSync(opTurnPath(op.id, 0) + ".tmp", { recursive: true, force: true });
-
-    // Re-drive the SAME turn_idx (worker resumes at the uncommitted turn).
-    const fresh = readOp(op.id)!;
-    const out = commitTurn(commitInput(fresh));
-
-    // Exactly one copy of each message — no duplicate transcript. The input
-    // has two messages; on the old code the first attempt would have landed
-    // two orphans and the re-drive two more = four.
-    const msgs = readOpMessages(op.id).filter(m => m.turnIdx === 0);
-    expect(msgs).toHaveLength(2);
-    expect(out.inserted).toBe(true);
-    expect(existsSync(opTurnPath(op.id, 0))).toBe(true);
+  it("ignores an incomplete staged successor without losing the older committed turn", () => {
+    const { op, claim } = mkOp("stage-ignore");
+    commitTurn(input(op, claim));
+    const staged = `${opTurnPath(op.id, 1)}.dead.stage`;
+    mkdirSync(join(opDir(op.id), "op-turns"), { recursive: true });
+    writeFileSync(staged, "{\"schemaVersion\":1", "utf-8");
+    expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+    expect(readOpTurn(op.id, 1)).toBeNull();
+    expect(readOpMessages(op.id).filter((row) => row.turnIdx === 0)).toHaveLength(2);
+    expect(existsSync(staged)).toBe(true);
   });
 
-  it("M-window: op_turns(N) lands, op_messages(N) drops on crash → op NOT falsely succeeded AND turn N not duplicated on re-drive", () => {
-    // The exact window the M skeptic flagged for the write-reorder: because the
-    // op_turns row is now written FIRST, there is a real gap where the turn row
-    // is durable but a crash drops the op_messages for the SAME turn N. This
-    // asserts the two things that gap must guarantee, driven end-to-end:
-    //   (a) the op is NOT falsely succeeded — the message-write throw prevents
-    //       commitTurn from reaching the succeeded transition even on a
-    //       terminal "done" turn (an op that "completed" with a transcript hole
-    //       is the failure the swallow-and-succeed code produced).
-    //   (b) on re-drive of the SAME turn N, the durable op_turns row is the
-    //       idempotency guard: commitTurn short-circuits and appends NO
-    //       messages, so turn N is not duplicated.
-    const op = mkOp("m-window-turn-lands-msgs-drop");
-    writeOp(op);
+  it("skips a malformed final artifact, preserves the older turn, and re-drives the corrupt index", () => {
+    const { op, claim } = mkOp("corrupt-final");
+    commitTurn(input(op, claim));
+    writeFileSync(opTurnPath(op.id, 1), "{\"schemaVersion\":1", "utf-8");
+    expect(readLatestOpTurn(op.id)?.turnIdx).toBe(0);
 
-    // Turn-row target is writable; message target is a DIRECTORY → the turn row
-    // lands, then the very next op_messages append throws EISDIR. This is the
-    // precise "turn N committed, messages dropped" seam, not the turn-row-fails
-    // variant covered above.
-    failMessageWrites(op.id);
-
-    // First attempt: terminal "done" turn. The op_turns row is written first
-    // and succeeds; the message append then throws before any state transition.
-    expect(() =>
-      commitTurn(commitInput(op, { terminalReason: "done" })),
-    ).toThrow();
-
-    // (a) The op must NOT have transitioned to succeeded — the throw fired
-    // BEFORE transitionOp(op, "succeeded"). The durable turn row alone must
-    // never be read as a completed op.
-    const afterCrash = readOp(op.id);
-    expect(afterCrash?.canonical?.state).not.toBe("succeeded");
-    expect(afterCrash?.status).not.toBe("completed");
-
-    // The recoverable disk shape: op_turns(N) present, zero op_messages(N).
-    expect(existsSync(opTurnPath(op.id, 0))).toBe(true);
-    expect(readOpMessages(op.id).filter(m => m.turnIdx === 0)).toHaveLength(0);
-
-    // Clear the seam — the "restart" after the crash makes the message path
-    // writable again. The durable turn row from the first attempt survives.
-    rmSync(opMessagesPath(op.id), { recursive: true, force: true });
-
-    // Re-drive the SAME turn N (recovery resumes at the uncommitted turn).
-    const fresh = readOp(op.id)!;
-    const out = commitTurn(commitInput(fresh, { terminalReason: "done" }));
-
-    // (b) Turn N is not duplicated: the durable op_turns row short-circuits the
-    // commit via the idempotent-replay guard — inserted=false, NO messages
-    // appended (not the two the input carries). A duplicate transcript would
-    // show two rows here.
-    expect(out.inserted).toBe(false);
-    expect(out.messages).toHaveLength(0);
-    expect(readOpMessages(op.id).filter(m => m.turnIdx === 0)).toHaveLength(0);
-
-    // NOTE ON DRIVE DEPTH: the idempotent re-drive is asserted at the commitTurn
-    // level (the same level the existing EISDIR-seam tests use). It does NOT
-    // re-run a full worker-loop recovery (recoverStaleOp + a fresh adapter
-    // turn), which would re-drive turn N from the prior provider_state and land
-    // a NEW op_turns/op_messages pair — that heavier path is a lease/recovery
-    // concern proven in the recovery suite, not the commit-boundary invariant
-    // under test here. What this pins is the boundary guarantee the reorder
-    // exists to provide: a durable turn row + absent messages is a bounded,
-    // non-terminal, replay-safe gap — never a false success, never a duplicate.
+    const repaired = commitTurn(input(readOp(op.id)!, claim, { turnIdx: 1 }));
+    expect(repaired.inserted).toBe(true);
+    expect(readLatestOpTurn(op.id)?.turnIdx).toBe(1);
+    expect(readOpMessages(op.id).filter((row) => row.turnIdx === 1)).toHaveLength(2);
   });
 
-  it("re-drive against an already-committed turn is the idempotent no-op path (no message duplication)", () => {
-    // The idempotency guard (readOpTurn) must still short-circuit a replay:
-    // op_turns present → append nothing, inserted=false. Preserved by the
-    // reorder (the guard reads the SAME row the reorder now writes first).
-    const op = mkOp("idempotent-redrive");
-    writeOp(op);
-
-    const first = commitTurn(commitInput(op));
-    expect(first.inserted).toBe(true);
-    const afterFirst = readOpMessages(op.id).filter(m => m.turnIdx === 0).length;
-
-    const second = commitTurn(commitInput(readOp(op.id)!));
-    expect(second.inserted).toBe(false);
-    expect(second.messages).toHaveLength(0);
-
-    const afterSecond = readOpMessages(op.id).filter(m => m.turnIdx === 0).length;
-    expect(afterSecond).toBe(afterFirst);
+  it("still surfaces low-level writer failures distinctly from idempotency", () => {
+    const { op } = mkOp("low-level");
+    const messagePath = opMessagesPath(op.id);
+    mkdirSync(messagePath, { recursive: true });
+    expect(() => appendOpMessage(messageRow(op.id))).toThrow();
+    rmSync(messagePath, { recursive: true, force: true });
+    expect(insertOpTurn(turnRow(op.id))).toBe(true);
+    expect(insertOpTurn(turnRow(op.id))).toBe(false);
   });
 });

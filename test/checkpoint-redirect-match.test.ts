@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 
 import { commitTurn } from "../src/canonical-loop/index.js";
 import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import { acquireLease, leaseClaimFromOp } from "../src/canonical-loop/lease.js";
 import type { Op } from "../src/ops/types.js";
 import type {
   CommitTurnInput,
@@ -74,8 +75,16 @@ function setDiskRedirect(op: Op, instr: RedirectInstruction): void {
 }
 
 function commitInput(op: Op, over: Partial<CommitTurnInput> = {}): CommitTurnInput {
+  let leaseClaim = leaseClaimFromOp(readOp(op.id));
+  if (!leaseClaim) {
+    const acquired = acquireLease(op.id, "checkpoint-redirect-test");
+    if (!acquired.ok) throw new Error(`test lease failed: ${acquired.reason}`);
+    leaseClaim = acquired.claim;
+    Object.assign(op, readOp(op.id));
+  }
   return {
     op,
+    leaseClaim,
     turnIdx: 0,
     providerState: PROVIDER_STATE,
     messages: [{ role: "assistant", content: "ok" }],

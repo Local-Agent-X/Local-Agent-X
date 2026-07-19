@@ -179,15 +179,15 @@ describe("Issue 11 — stale worker cannot mutate terminal op", () => {
     const ps: ProviderStateEnvelope = {
       adapterName: "fake", adapterVersion: "0.0.1", providerPayload: {},
     };
-    const result = commitTurn({
+    expect(() => commitTurn({
       op: readOp(op.id)!,
+      leaseClaim: { owner: "stale-terminal-worker", generation: 0 },
       turnIdx: 0,
       providerState: ps,
       messages: [{ role: "assistant", content: { text: "duplicate" } }],
       toolCallSummary: [],
       terminalReason: "done",
-    });
-    expect(result.inserted).toBe(false);
+    })).toThrow(/turn commit rejected/);
 
     // No new events; no message duplicates. Two messages on disk: the
     // turn-0 user seed plus the original assistant reply.
@@ -260,15 +260,15 @@ describe("Issue 11 — delayed adapter result after lease recovery does not comm
 
     // Late commit attempt — the stale worker A tries to write turn 0
     // again. Idempotent (PRD acceptance #8).
-    const result = commitTurn({
+    expect(() => commitTurn({
       op: readOp(op.id)!,
+      leaseClaim: { owner: "stale-worker-A", generation: 0 },
       turnIdx: 0,
       providerState: { adapterName: "fake", adapterVersion: "0.0.1", providerPayload: { from: "stale-worker-A" } },
       messages: [{ role: "assistant", content: { text: "stale" } }],
       toolCallSummary: [],
       terminalReason: null,
-    });
-    expect(result.inserted).toBe(false);
+    })).toThrow(/turn commit rejected/);
     // Original provider_state preserved.
     const turn0 = readOpTurn(op.id, 0);
     expect(turn0?.providerState.providerPayload).toEqual({ from: "worker-A" });

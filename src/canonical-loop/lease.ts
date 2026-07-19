@@ -29,6 +29,10 @@ export type LeaseRecoveryRunResult<T> =
   | { ok: true; value: T }
   | { ok: false; reason: "unknown_op" | "claim_changed" | "lease_fresh" | "lock_unavailable" | "not_recoverable" | "persistence_failed" };
 
+export type LeaseClaimRunResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: "unknown_op" | "claim_lost" | "lock_unavailable" };
+
 const DEFAULT_LEASE_CONFIG: LeaseConfig = {
   leaseDurationMs: 30_000,
   heartbeatIntervalMs: 10_000,
@@ -108,6 +112,23 @@ export function releaseLease(opId: string, claim: LeaseClaim): LeaseActionResult
       return { ok: false, reason: "persistence_failed" };
     }
     return { ok: true };
+  });
+  return locked.acquired ? locked.value : { ok: false, reason: "lock_unavailable" };
+}
+
+/** Execute a worker-owned commit while the exact lease generation remains
+ * current. The strict cross-process lock prevents a replacement acquire from
+ * interleaving any writes performed by the callback. */
+export function withCurrentLeaseClaim<T>(
+  opId: string,
+  claim: LeaseClaim,
+  run: (op: Op) => T,
+): LeaseClaimRunResult<T> {
+  const locked = tryWithOpLock(opId, (): LeaseClaimRunResult<T> => {
+    const op = readOp(opId);
+    if (!op) return { ok: false, reason: "unknown_op" };
+    if (!sameClaim(leaseClaimFromOp(op), claim)) return { ok: false, reason: "claim_lost" };
+    return { ok: true, value: run(op) };
   });
   return locked.acquired ? locked.value : { ok: false, reason: "lock_unavailable" };
 }

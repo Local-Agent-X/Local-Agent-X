@@ -1,52 +1,32 @@
-/**
- * Atomic post-turn checkpoint commit (PRD §11).
- *
- * One commitTurn call performs the post-turn boundary work:
- *   1. Insert the op_turns row FIRST (idempotent on PK `(op_id, turn_idx)` —
- *      replay safety per PRD §11 "Idempotency"). This row is the crash guard.
- *   2. Append op_messages rows for every finalized message (assistant +
- *      tool_result), assigning a contiguous seqInTurn.
- *   3. Emit `message_appended` for each persisted message.
- *   4. Update `ops.current_turn_idx` and `ops.current_checkpoint_id` and
- *      persist the op via writeOp.
- *   5. Emit `turn_committed`.
- *   6. If terminal, transition state via state-machine (which emits the
- *      paired `state_changed` event).
- *
- * v1 lives on the filesystem so true SQL-style atomicity is best-effort —
- * each underlying write is an atomic tmp+rename or append. The op_turns row
- * is written BEFORE the op_messages so the recoverable disk shapes are only:
- * (a) no op_turns row — the turn re-drives cleanly from the prior
- * provider_state; or (b) op_turns row present — the re-drive hits the
- * idempotent guard and appends no messages. There is no window where
- * op_messages exist without their op_turns row, so a mid-commit crash can
- * never orphan messages and duplicate the transcript on re-drive. Underlying
- * writes now THROW on failure (store.ts) rather than swallow, so a failed
- * write surfaces to the worker's terminal catch instead of letting the op
- * report `succeeded` with data missing on disk.
- */
+/** Failure-atomic, lease-fenced post-turn commit. */
 import { randomUUID } from "node:crypto";
-import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "./store.js";
-import { recordSessionBaselineObservation } from "./session-baseline.js";
-import { emit } from "./event-emitter.js";
-import { transitionOp } from "./state-machine.js";
-import { persistOpKeepingSignals } from "./op-persist.js";
 import { aggregateOpUsage } from "./op-usage.js";
+import { emitStrict } from "./event-emitter.js";
+import { withCurrentLeaseClaim, type LeaseClaim } from "./lease.js";
+import { persistOpKeepingSignalsStrict, StrictOpPersistenceError } from "./op-persist.js";
+import { recordSessionBaselineObservation } from "./session-baseline.js";
+import { transitionOp } from "./state-machine.js";
+import { readCanonicalEvents, readLatestOpTurn, readOpMessages, readOpTurn } from "./store.js";
+import {
+  publishTurnCommit,
+  quarantineInvalidTurnArtifact,
+  readTurnArtifact,
+  type TurnCommitEnvelope,
+} from "./turn-commit-store.js";
+import { appendActionLedgerOnce } from "../ops/action-ledger.js";
 import { readOp } from "../ops/op-store.js";
-import { getSessionForOp } from "../ops/session-bridge.js";
-import { appendActionLedger } from "../ops/action-ledger.js";
 import type { Op } from "../ops/types.js";
+import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
 import type {
+  CanonicalEventType,
   CanonicalMessageRole,
   OpMessageRow,
   OpTurnRow,
   ProviderStateEnvelope,
   ToolCallSummary,
 } from "./types.js";
-import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
 
 export interface CommitTurnMessage {
-  /** Stable id from the adapter when it finalized the message; auto-generated otherwise. */
   messageId?: string;
   role: CanonicalMessageRole;
   content: unknown;
@@ -54,255 +34,248 @@ export interface CommitTurnMessage {
 
 export interface CommitTurnInput {
   op: Op;
+  leaseClaim?: LeaseClaim;
   turnIdx: number;
   providerState: ProviderStateEnvelope;
   messages: CommitTurnMessage[];
   toolCallSummary: ToolCallSummary[];
-  /** Out-of-band tool names observed this turn (CLI/MCP path). Persisted to
-   *  OpTurnRow.observedTools for categorization; NOT folded into toolCallSummary. */
   observedTools?: string[];
   terminalReason: "done" | "error" | null;
   learnedOutcome?: LearnedOutcome;
   learningSessionId?: string;
-  /** True if a `pending_redirect` was folded into this turn's prompt. */
   redirectConsumed?: boolean;
-  /**
-   * The instructionId folded into this turn's prompt. Used to:
-   *   - Emit `redirect_applied` with the same id that `redirect_received`
-   *     announced (PRD §12 / acceptance #5).
-   *   - Compare against the disk column so a newer redirect that landed
-   *     mid-turn is preserved for the next turn (latest-wins semantics).
-   */
   redirectInstructionId?: string;
-  /**
-   * The instruction TEXT folded into this turn's prompt. Persisted on the
-   * `redirect_applied` event body — the redirect column is cleared right
-   * here in commitTurn and the `[REDIRECT]` row is transport-only, so the
-   * event ledger is the ONLY durable record of what the user asked for
-   * mid-op. spec-audit reads it back (store.appliedRedirectTexts) so the
-   * done-claim is audited against the amended request, not just the
-   * opening one. 2026-07-13: a build worker claimed a redirect ("switch
-   * default to light theme") it never implemented and the audit said MET
-   * because the redirect had vanished from every gate's view.
-   */
   redirectText?: string;
-  /** Wall-clock ms inside `adapter.runTurn`. Recorded for soak telemetry. */
   modelMs?: number;
-  /** Wall-clock ms inside `dispatchTools`. Recorded for soak telemetry. */
   toolDispatchMs?: number;
-  /** Durable next-turn strategy pivot, committed atomically with the turn. */
   nextTurnPivot?: OpTurnRow["nextTurnPivot"];
 }
 
 export interface CommitTurnOutput {
   turn: OpTurnRow;
   messages: OpMessageRow[];
-  /** False if the op_turns row was already present (replay path). */
   inserted: boolean;
 }
 
-export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
-  const { op, turnIdx } = input;
-
-  // Idempotent guard (PRD §11 + acceptance #8). If `(op_id, turn_idx)`
-  // already has an op_turns row, this is a replay path: a prior worker
-  // committed the turn, then died (or the transaction ack was lost) before
-  // its in-memory state advanced. Treat as already-committed — skip
-  // message appends, skip event emission, skip state transitions. The
-  // caller advances to `turnIdx + 1`.
-  const existing = readOpTurn(op.id, turnIdx);
-  if (existing) {
-    if (!op.canonical) op.canonical = {};
-    op.canonical.currentTurnIdx = Math.max(op.canonical.currentTurnIdx ?? -1, turnIdx);
-    op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
-    persistOpKeepingSignals(op);
-    return { turn: existing, messages: [], inserted: false };
+export class TurnCommitFenceError extends Error {
+  constructor(public readonly opId: string, public readonly reason: string) {
+    super(`turn commit rejected for ${opId}: ${reason}`);
+    this.name = "TurnCommitFenceError";
   }
+}
 
-  const persistedMsgs: OpMessageRow[] = [];
+export type TurnProjectionPoint =
+  | "before_checkpoint"
+  | "after_checkpoint"
+  | "after_message_events"
+  | "after_turn_event"
+  | "after_action_ledger"
+  | "before_terminal"
+  | "after_terminal";
+let projectionHook: ((point: TurnProjectionPoint) => void) | null = null;
 
-  // The op's messages BEFORE this turn's output is appended = the conversation
-  // this turn's REQUEST carried (its prompt). Captured here for the session
-  // baseline observation below; also reused for the seqInTurn offset.
-  const promptMessages = readOpMessages(op.id);
-  // Offset seqInTurn past any pre-existing rows for this turn (e.g. the
-  // turn-0 user seed appended by seedInitialUserMessage). Keeps
-  // (op_id, turn_idx, seq_in_turn) unique across input + output messages.
-  const seqBase = promptMessages.filter(m => m.turnIdx === turnIdx).length;
+export function _setTurnProjectionHookForTests(
+  hook: ((point: TurnProjectionPoint) => void) | null,
+): void {
+  projectionHook = hook;
+}
 
-  const redirectConsumed = input.redirectConsumed === true;
+export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
+  const leaseClaim = input.leaseClaim;
+  if (!leaseClaim) throw new TurnCommitFenceError(input.op.id, "missing_claim");
+  const guarded = withCurrentLeaseClaim(input.op.id, leaseClaim, (current) =>
+    commitOwnedTurn({ ...input, op: current, leaseClaim }));
+  if (!guarded.ok) throw new TurnCommitFenceError(input.op.id, guarded.reason);
+  Object.assign(input.op, readOp(input.op.id) ?? input.op);
+  return guarded.value;
+}
 
-  const turnRow: OpTurnRow = {
-    opId: op.id,
-    turnIdx,
+/** Repair projections after a process died after the envelope rename. The
+ * replacement must first own a fresh exact lease generation. */
+export function reconcileLatestTurnCommit(opId: string, leaseClaim: LeaseClaim): boolean {
+  const guarded = withCurrentLeaseClaim(opId, leaseClaim, (op) => {
+    const latest = readLatestOpTurn(opId);
+    if (!latest) return false;
+    const artifact = readTurnArtifact(opId, latest.turnIdx);
+    if (!artifact || !("turn" in artifact)) return false;
+    projectTurnCommit(op, artifact);
+    return true;
+  });
+  if (!guarded.ok) throw new TurnCommitFenceError(opId, guarded.reason);
+  return guarded.value;
+}
+
+function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): CommitTurnOutput {
+  const existingArtifact = readTurnArtifact(input.op.id, input.turnIdx);
+  if (existingArtifact) {
+    if ("turn" in existingArtifact) projectTurnCommit(input.op, existingArtifact);
+    else persistCheckpoint(input.op, input.turnIdx, false);
+    return { turn: "turn" in existingArtifact ? existingArtifact.turn : existingArtifact, messages: [], inserted: false };
+  }
+  quarantineInvalidTurnArtifact(input.op.id, input.turnIdx);
+
+  const promptMessages = readOpMessages(input.op.id);
+  const seqBase = promptMessages.filter((row) => row.turnIdx === input.turnIdx).length;
+  const createdAt = new Date().toISOString();
+  const turn: OpTurnRow = {
+    opId: input.op.id,
+    turnIdx: input.turnIdx,
     providerState: input.providerState,
     toolCallSummary: input.toolCallSummary,
     terminalReason: input.terminalReason,
-    redirectConsumed,
-    createdAt: new Date().toISOString(),
-    ...(input.observedTools && input.observedTools.length > 0 ? { observedTools: input.observedTools } : {}),
+    redirectConsumed: input.redirectConsumed === true,
+    createdAt,
+    ...(input.observedTools?.length ? { observedTools: input.observedTools } : {}),
     ...(input.modelMs !== undefined ? { modelMs: input.modelMs } : {}),
     ...(input.toolDispatchMs !== undefined ? { toolDispatchMs: input.toolDispatchMs } : {}),
     ...(input.nextTurnPivot ? { nextTurnPivot: input.nextTurnPivot } : {}),
   };
+  const messages = input.messages.map((message, index): OpMessageRow => ({
+    messageId: message.messageId ?? `msg-${randomUUID()}`,
+    opId: input.op.id,
+    turnIdx: input.turnIdx,
+    seqInTurn: seqBase + index,
+    role: message.role,
+    content: message.content,
+    createdAt,
+  }));
+  const envelope: TurnCommitEnvelope = {
+    schemaVersion: 1,
+    turn,
+    messages,
+    projection: {
+      opType: input.op.type,
+      task: input.op.task,
+      sessionId: input.op.canonical?.sessionId ?? "",
+      learnedOutcome: input.learnedOutcome,
+      learningSessionId: input.learningSessionId,
+      redirectInstructionId: input.redirectInstructionId,
+      redirectText: input.redirectText,
+      appUrl: input.op.appUrl,
+      stateBefore: input.op.canonical?.state,
+    },
+  };
 
-  // CRASH-SAFETY ORDER (fix): write the op_turns row FIRST, then append
-  // op_messages. The op_turns row IS the idempotency guard (the readOpTurn
-  // guard at the top of commitTurn). Committing it before the messages means
-  // a crash between the two writes leaves either (a) no op_turns row — the
-  // whole turn re-drives cleanly from the prior provider_state — or (b) an
-  // op_turns row present, so the re-drive hits the idempotent-replay path
-  // above and appends NO messages. Either way there is no window where
-  // op_messages rows exist without their op_turns row, which is exactly the
-  // window that used to orphan messages and duplicate the transcript on
-  // re-drive. insertOpTurn now THROWS on a real write failure (store.ts), so
-  // a failed insert propagates to the worker's terminal catch instead of
-  // letting the commit proceed to a `succeeded` transition with no row.
-  const inserted = insertOpTurn(turnRow);
-
-  // Observe the REAL request baseline (system + tools + memory + CLI subprocess
-  // wrapping) from this turn's usage, for the next op's turn-0 sizing. Only on a
-  // real insert (never a replay), and the observer itself no-ops on tool /
-  // compacted / non-anthropic turns. Cheap and non-throwing.
-  if (inserted) {
-    try {
-      recordSessionBaselineObservation(
-        op.canonical?.sessionId,
-        op.type,
-        input.providerState,
-        input.observedTools,
-        promptMessages,
-      );
-    } catch { /* sizing hint only — never break the commit */ }
+  if (!publishTurnCommit(envelope)) {
+    const winner = readTurnArtifact(input.op.id, input.turnIdx);
+    if (!winner) throw new Error(`turn commit publish raced without artifact for ${input.op.id}#${input.turnIdx}`);
+    if ("turn" in winner) projectTurnCommit(input.op, winner);
+    else persistCheckpoint(input.op, input.turnIdx, false);
+    return { turn: "turn" in winner ? winner.turn : winner, messages: [], inserted: false };
   }
 
-  for (let i = 0; i < input.messages.length; i++) {
-    const m = input.messages[i];
-    const row: OpMessageRow = {
-      messageId: m.messageId ?? `msg-${randomUUID()}`,
-      opId: op.id,
-      turnIdx,
-      seqInTurn: seqBase + i,
-      role: m.role,
-      content: m.content,
-      createdAt: new Date().toISOString(),
-    };
-    // appendOpMessage THROWS on a real write failure (store.ts). The op_turns
-    // row is already durable, so a throw here propagates to the worker's
-    // terminal catch (op → failed) and the guard above prevents any re-drive
-    // from re-appending — no duplicate transcript on the next attempt.
-    appendOpMessage(row);
-    persistedMsgs.push(row);
-    emit(op.id, "message_appended", {
-      turnIdx,
+  try {
+    recordSessionBaselineObservation(
+      input.op.canonical?.sessionId,
+      input.op.type,
+      input.providerState,
+      input.observedTools,
+      promptMessages,
+    );
+  } catch { /* non-authoritative sizing hint */ }
+  projectTurnCommit(input.op, envelope);
+  return { turn, messages, inserted: true };
+}
+
+/** Idempotently materialize all projections from the published envelope.
+ * Called on ordinary commit and on a same-generation replay after a crash. */
+function projectTurnCommit(op: Op, envelope: TurnCommitEnvelope): void {
+  const { turn, messages, projection } = envelope;
+  const clearRedirect = turn.redirectConsumed
+    && projection.redirectInstructionId != null
+    && diskRedirectMatches(op.id, projection.redirectInstructionId);
+  if (turn.terminalReason === "done" && projection.appUrl) {
+    const url = (turn.providerState.providerPayload as { url?: unknown } | null)?.url;
+    if (typeof url === "string" && url) op.appUrl = url;
+  }
+  projectionHook?.("before_checkpoint");
+  persistCheckpoint(op, turn.turnIdx, clearRedirect);
+  projectionHook?.("after_checkpoint");
+
+  for (const row of messages) {
+    emitOnce(op.id, "message_appended", (body) => body.messageId === row.messageId, {
+      turnIdx: turn.turnIdx,
       role: row.role,
       messageId: row.messageId,
     });
   }
-
-  if (!op.canonical) op.canonical = {};
-  op.canonical.currentTurnIdx = turnIdx;
-  op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
-
-  // Terminal app-URL adoption. An app_build adapter learns the app's REAL
-  // serving URL only at the build terminal (a framework build finalizes to
-  // the /apps/<name>/ dev-server proxy — adapters/app-build-finalize.ts),
-  // long after op creation guessed the flat /index.html URL. The adapter
-  // can't write the op record itself (turn-loop boundary rule), so the
-  // terminal commit adopts the URL it reported in providerPayload.url.
-  // Because transitionOp persists before emitting state_changed, every
-  // completion consumer (the AGENTS-sidebar "Open" link in
-  // session-bridge-observer.ts) reads the corrected appUrl. Double-gated —
-  // only ops stamped with appUrl at creation (app_build) and only a clean
-  // "done" terminal — so chat/voice/agent ops and failed builds are inert.
-  if (input.terminalReason === "done" && op.appUrl) {
-    const url = (input.providerState.providerPayload as { url?: unknown } | null | undefined)?.url;
-    if (typeof url === "string" && url.length > 0) op.appUrl = url;
-  }
-
-  // Decide whether to clear the redirect column on disk.
-  // - We only clear it if THIS turn applied the same instructionId that's
-  //   currently on disk. If a newer opRedirect landed mid-turn, its
-  //   instructionId now sits on disk and must survive for the next turn
-  //   (latest-wins, but the "previous" instruction was already consumed).
-  // - In the survives-mid-turn-overwrite case we still emit redirect_applied
-  //   for the instruction we DID apply this turn — exactly one
-  //   redirect_applied per consumed redirect (PRD §12).
-  const appliedId = redirectConsumed ? input.redirectInstructionId : undefined;
-  const clearRedirect = appliedId != null && diskRedirectMatches(op.id, appliedId);
-  // Preserve control-API signal columns (pause/cancel/redirect) from disk
-  // so a turn commit landing concurrently with opPause does not clobber
-  // the signal the worker is about to read at the next turn boundary.
-  // When `clearRedirect` is true, the redirect column is intentionally
-  // dropped (overrides the on-disk preservation).
-  if (clearRedirect) {
-    op.canonical.redirectInstruction = null;
-    op.canonical.redirectReceivedAt = null;
-  }
-  persistOpKeepingSignals(op, { clearRedirect });
-
-  // Running per-op token total for a UI cost meter. Computed AFTER insertOpTurn
-  // + persistOpKeepingSignals above, so the turn just committed is already on
-  // disk and folded into the sum (aggregateOpUsage reads ALL persisted op_turns).
-  // Additive OPTIONAL field on the existing turn_committed body — every consumer
-  // reads named fields defensively (session-bridge-observer reads turnIdx/tools,
-  // soak-metrics + event-pump ignore the body), none validates its exact shape.
+  projectionHook?.("after_message_events");
   const usage = aggregateOpUsage(op.id);
-  emit(op.id, "turn_committed", {
-    turnIdx,
-    messageCount: persistedMsgs.length,
-    toolCount: input.toolCallSummary.length,
-    tools: input.toolCallSummary.map((t) => ({ tool: t.tool, status: t.resultStatus })),
+  emitOnce(op.id, "turn_committed", (body) => body.turnIdx === turn.turnIdx, {
+    turnIdx: turn.turnIdx,
+    messageCount: messages.length,
+    toolCount: turn.toolCallSummary.length,
+    tools: turn.toolCallSummary.map((item) => ({ tool: item.tool, status: item.resultStatus })),
     usage: {
       inputTokens: usage.usageInputTokens,
       outputTokens: usage.usageOutputTokens,
       totalTokens: usage.usageInputTokens + usage.usageOutputTokens,
     },
   });
-
-  // Operational action ledger — the one write site. Denormalizes this turn's
-  // {tool, status} summary into a session-keyed log so the agent can recall
-  // what it did across messages once the op completes (op_turns is per-op and
-  // the session→op map drops finished ops). Tool-less turns are skipped inside
-  // appendActionLedger. Best-effort; never blocks the commit.
-  appendActionLedger({
-    ts: turnRow.createdAt,
-    sessionId: getSessionForOp(op.id) ?? "",
+  projectionHook?.("after_turn_event");
+  appendActionLedgerOnce({
+    ts: turn.createdAt,
+    sessionId: projection.sessionId,
     opId: op.id,
-    opType: op.type,
-    turnIdx,
-    task: op.task,
-    actions: input.toolCallSummary.map((t) => ({ tool: t.tool, status: t.resultStatus })),
-    terminalReason: input.terminalReason,
+    opType: projection.opType,
+    turnIdx: turn.turnIdx,
+    task: projection.task,
+    actions: turn.toolCallSummary.map((item) => ({ tool: item.tool, status: item.resultStatus })),
+    terminalReason: turn.terminalReason === "cancelled" ? null : turn.terminalReason,
   });
-
-  if (redirectConsumed && appliedId != null) {
-    emit(op.id, "redirect_applied", {
-      turnIdx,
-      instructionId: appliedId,
-      // Durable copy of the instruction — see CommitTurnInput.redirectText.
-      ...(typeof input.redirectText === "string" && input.redirectText
-        ? { text: input.redirectText }
-        : {}),
+  projectionHook?.("after_action_ledger");
+  if (turn.redirectConsumed && projection.redirectInstructionId) {
+    emitOnce(op.id, "redirect_applied", (body) =>
+      body.turnIdx === turn.turnIdx && body.instructionId === projection.redirectInstructionId, {
+      turnIdx: turn.turnIdx,
+      instructionId: projection.redirectInstructionId,
+      ...(projection.redirectText ? { text: projection.redirectText } : {}),
     });
   }
-
-  if (input.terminalReason === "done") {
-    transitionOp(op, "succeeded", "turn_done", {
-      learnedOutcome: input.learnedOutcome,
-      learningSessionId: input.learningSessionId,
-    });
-  } else if (input.terminalReason === "error") {
-    transitionOp(op, "failed", "turn_error", {
-      learnedOutcome: input.learnedOutcome,
-      learningSessionId: input.learningSessionId,
+  const terminal = turn.terminalReason === "done" ? "succeeded"
+    : turn.terminalReason === "error" ? "failed" : null;
+  const terminalReason = turn.terminalReason === "done" ? "turn_done" : "turn_error";
+  projectionHook?.("before_terminal");
+  if (terminal && op.canonical?.state !== terminal) {
+    transitionOp(op, terminal, terminalReason, {
+      learnedOutcome: projection.learnedOutcome,
+      learningSessionId: projection.learningSessionId,
+      strictPersistence: true,
     });
   }
+  if (terminal) {
+    emitOnce(op.id, "state_changed", (body) =>
+      body.to === terminal && body.reason === terminalReason, {
+      from: projection.stateBefore ?? "running",
+      to: terminal,
+      reason: terminalReason,
+    });
+  }
+  projectionHook?.("after_terminal");
+}
 
-  return { turn: turnRow, messages: persistedMsgs, inserted };
+function persistCheckpoint(op: Op, turnIdx: number, clearRedirect: boolean): void {
+  if (!op.canonical) op.canonical = {};
+  op.canonical.currentTurnIdx = Math.max(op.canonical.currentTurnIdx ?? -1, turnIdx);
+  op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
+  if (clearRedirect) {
+    op.canonical.redirectInstruction = null;
+    op.canonical.redirectReceivedAt = null;
+  }
+  if (!persistOpKeepingSignalsStrict(op, { clearRedirect })) throw new StrictOpPersistenceError(op.id);
+}
+
+function emitOnce(
+  opId: string,
+  type: CanonicalEventType,
+  matches: (body: Record<string, unknown>) => boolean,
+  body: Record<string, unknown>,
+): void {
+  if (readCanonicalEvents(opId).some((event) =>
+    event.type === type && matches(event.body ?? {}))) return;
+  emitStrict(opId, type, body);
 }
 
 function diskRedirectMatches(opId: string, instructionId: string): boolean {
-  const fresh = readOp(opId);
-  return fresh?.canonical?.redirectInstruction?.instructionId === instructionId;
+  return readOp(opId)?.canonical?.redirectInstruction?.instructionId === instructionId;
 }

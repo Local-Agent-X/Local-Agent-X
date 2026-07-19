@@ -38,6 +38,10 @@ import type {
   OpMessageRow,
   OpTurnRow,
 } from "./types.js";
+import {
+  committedMessagesFromArtifact,
+  readTurnArtifact,
+} from "./turn-commit-store.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("canonical-loop.store");
@@ -99,6 +103,25 @@ export function appendCanonicalEvent(
   type: CanonicalEventType,
   body: Record<string, unknown> | null = null,
 ): CanonicalEvent {
+  return appendCanonicalEventWithMode(opId, type, body, false);
+}
+
+/** Commit-projection variant: persistence failure is recoverable work, not a
+ * bus-only success, so it must surface to the envelope reconciler. */
+export function appendCanonicalEventStrict(
+  opId: string,
+  type: CanonicalEventType,
+  body: Record<string, unknown> | null = null,
+): CanonicalEvent {
+  return appendCanonicalEventWithMode(opId, type, body, true);
+}
+
+function appendCanonicalEventWithMode(
+  opId: string,
+  type: CanonicalEventType,
+  body: Record<string, unknown> | null,
+  strict: boolean,
+): CanonicalEvent {
   // Ensure op dir exists (opDir() does mkdir).
   opDir(opId);
   const path = canonicalEventsPath(opId);
@@ -123,6 +146,7 @@ export function appendCanonicalEvent(
       seqCache.set(opId, { nextSeq: seq + 1, size: currentSize + Buffer.byteLength(line, "utf-8") });
     } catch (e) {
       logger.warn(`[store] failed to append canonical event for ${opId}: ${(e as Error).message}`);
+      if (strict) throw e;
     }
     return event;
   });
@@ -195,13 +219,17 @@ export function readLatestOpTurn(opId: string): OpTurnRow | null {
   try {
     const entries = readdirSync(dir).filter((f: string) => f.endsWith(".json"));
     if (entries.length === 0) return null;
-    let bestIdx = -1;
+    const idxs: number[] = [];
     for (const f of entries) {
       const n = parseInt(f.replace(/\.json$/, ""), 10);
-      if (Number.isFinite(n) && n > bestIdx) bestIdx = n;
+      if (Number.isFinite(n) && n >= 0) idxs.push(n);
     }
-    if (bestIdx < 0) return null;
-    return readOpTurn(opId, bestIdx);
+    idxs.sort((a, b) => b - a);
+    for (const turnIdx of idxs) {
+      const row = readOpTurn(opId, turnIdx);
+      if (row) return row;
+    }
+    return null;
   } catch (e) {
     logger.warn(`[store] readLatestOpTurn failed for ${opId}: ${(e as Error).message}`);
     return null;
@@ -238,14 +266,9 @@ export function readOpTurns(opId: string): OpTurnRow[] {
 }
 
 export function readOpTurn(opId: string, turnIdx: number): OpTurnRow | null {
-  const path = opTurnPath(opId, turnIdx);
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf-8")) as OpTurnRow;
-  } catch (e) {
-    logger.warn(`[store] readOpTurn failed for ${opId}#${turnIdx}: ${(e as Error).message}`);
-    return null;
-  }
+  const artifact = readTurnArtifact(opId, turnIdx);
+  if (!artifact) return null;
+  return "turn" in artifact ? artifact.turn : artifact;
 }
 
 // ── op_messages — append-only ─────────────────────────────────────────────
@@ -318,20 +341,32 @@ export function appliedRedirectTexts(opId: string): string[] {
 
 export function readOpMessages(opId: string): OpMessageRow[] {
   const path = opMessagesPath(opId);
-  if (!existsSync(path)) return [];
+  const byId = new Map<string, OpMessageRow>();
   try {
-    const raw = readFileSync(path, "utf-8");
-    const out: OpMessageRow[] = [];
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      try {
-        out.push(JSON.parse(t) as OpMessageRow);
-      } catch {
-        logger.warn(`[store] skipped unparseable op-message line for ${opId}`);
+    if (existsSync(path)) {
+      const raw = readFileSync(path, "utf-8");
+      for (const line of raw.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const row = JSON.parse(t) as OpMessageRow;
+          byId.set(row.messageId, row);
+        } catch {
+          logger.warn(`[store] skipped unparseable op-message line for ${opId}`);
+        }
       }
     }
-    return out;
+    const dir = opTurnsDir(opId);
+    if (existsSync(dir)) {
+      for (const name of readdirSync(dir)) {
+        const match = /^(\d+)\.json$/.exec(name);
+        if (!match) continue;
+        const artifact = readTurnArtifact(opId, Number(match[1]));
+        for (const row of committedMessagesFromArtifact(artifact)) byId.set(row.messageId, row);
+      }
+    }
+    return [...byId.values()].sort((a, b) =>
+      a.turnIdx - b.turnIdx || a.seqInTurn - b.seqInTurn || a.messageId.localeCompare(b.messageId));
   } catch (e) {
     logger.warn(`[store] readOpMessages failed for ${opId}: ${(e as Error).message}`);
     return [];

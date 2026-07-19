@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, readlinkSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { runQualificationCli, sanitizedScorecard } from "../scripts/local-qualification/cli.js";
-import { qualificationChildEnv, RealQualificationDriver } from "../scripts/local-qualification/real-driver.js";
+import { qualificationChildEnv } from "../scripts/local-qualification/child-env.js";
+import { RealQualificationDriver } from "../scripts/local-qualification/real-driver.js";
 import { readQualificationConfig, runQualification } from "../scripts/local-qualification/run.js";
 import type {
   CertificationResult,
@@ -25,6 +26,29 @@ const SCENARIOS = [
   "tool_result_continuation", "context_degradation",
 ];
 
+function repoSurface(): unknown {
+  const workspace = resolve("workspace");
+  let workspaceState: unknown = { kind: "absent" };
+  try {
+    const stat = lstatSync(workspace);
+    workspaceState = stat.isSymbolicLink()
+      ? { kind: "link", target: readlinkSync(workspace), mtimeMs: stat.mtimeMs }
+      : {
+          kind: stat.isDirectory() ? "directory" : "file",
+          mtimeMs: stat.mtimeMs,
+          entries: stat.isDirectory() ? readdirSync(workspace).sort() : undefined,
+        };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const manifest = join(resolve("."), "config", "app-manifest.json");
+  const manifestStat = statSync(manifest);
+  return {
+    workspace: workspaceState,
+    manifest: { bytes: readFileSync(manifest).toString("base64"), mtimeMs: manifestStat.mtimeMs },
+  };
+}
+
 class FakeDriver implements QualificationDriver {
   readonly model = "qualification-fake:1b";
   cleanupCalls = 0;
@@ -36,6 +60,8 @@ class FakeDriver implements QualificationDriver {
     private readonly failAt?: QualificationStageName | "cleanup",
     private readonly hangAt?: QualificationStageName | "cleanup",
   ) {}
+
+  forbiddenPullRequests(): number { return 0; }
 
   async start(): Promise<void> { await this.gate("isolated_boot"); }
 
@@ -199,29 +225,35 @@ describe("local model qualification workflow", () => {
   });
 
   it.each(STAGES)("fails closed at %s and still cleans owned state", async (stage) => {
+    const surface = repoSurface();
     const driver = new FakeDriver(stage);
     const scorecard = await runQualification(driver);
     expect(scorecard.ok).toBe(false);
     expect(scorecard.stages.at(-1)).toMatchObject({ name: stage, ok: false, failure: "failed" });
     expect(JSON.stringify(scorecard)).not.toContain("sensitive stage detail");
     expect(driver.cleanupCalls).toBe(1);
+    expect(repoSurface()).toEqual(surface);
   });
 
   it.each(STAGES)("times out at %s and still cleans owned state", async (stage) => {
+    const surface = repoSurface();
     const driver = new FakeDriver(undefined, stage);
     const scorecard = await runQualification(driver, { stageTimeoutMs: 5 });
     expect(scorecard.ok).toBe(false);
     expect(scorecard.stages.at(-1)).toMatchObject({ name: stage, ok: false, failure: "timeout" });
     expect(driver.cleanupCalls).toBe(1);
+    expect(repoSurface()).toEqual(surface);
   });
 
   it("aborts an in-flight stage and still cleans owned state", async () => {
+    const surface = repoSurface();
     const controller = new AbortController();
     const driver = new FakeDriver(undefined, "isolated_boot");
     setTimeout(() => controller.abort(), 5);
     const scorecard = await runQualification(driver, { signal: controller.signal, stageTimeoutMs: 1_000 });
     expect(scorecard.stages[0]).toMatchObject({ failure: "aborted" });
     expect(driver.cleanupCalls).toBe(1);
+    expect(repoSurface()).toEqual(surface);
   });
 
   it("does not report success when cleanup fails or times out", async () => {
@@ -233,7 +265,77 @@ describe("local model qualification workflow", () => {
     expect(timedOut.ok).toBe(false);
   });
 
+  it("does not fabricate summary, restored-history, or read-result evidence", async () => {
+    const service = new FakeOllamaQualificationService();
+    const endpoint = await service.start();
+    try {
+      const summary = await fetch(`${endpoint}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Conversation segment to summarize without the cause" }),
+      });
+      expect(JSON.stringify(await summary.json())).not.toContain("LAX_QUALIFICATION_CONTINUITY_7F31");
+
+      const continuity = await fetch(`${endpoint}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stream: true,
+          messages: [{ role: "user", content: "From the earlier compacted context, reply with LAX_QUALIFICATION_CONTINUITY_7F31." }],
+        }),
+      });
+      expect(await continuity.text()).not.toContain("LAX_QUALIFICATION_CONTINUITY_7F31");
+
+      const workspace = await fetch(`${endpoint}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stream: true,
+          messages: [
+            { role: "user", content: "Use the read tool on workspace/qualification-note.txt, then say LAX_QUALIFICATION_READ_8C42." },
+            { role: "tool", content: "read completed without the requested file content" },
+          ],
+        }),
+      });
+      expect(await workspace.text()).not.toContain("LAX_QUALIFICATION_READ_8C42");
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("rejects and counts pull traffic without forwarding it to Ollama", async () => {
+    const surface = repoSurface();
+    const service = new FakeOllamaQualificationService();
+    const endpoint = await service.start();
+    let proxyUrl = "";
+    class PullingDriver extends RealQualificationDriver {
+      override async start(): Promise<void> {
+        await super.start();
+        await fetch(`${proxyUrl}/api/pull?stream=true`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: this.model, stream: true }),
+        });
+      }
+    }
+    try {
+      const driver = new PullingDriver(endpoint, service.model, resolve("."), {
+        onProxyUrl: (url) => { proxyUrl = url; },
+      });
+      const scorecard = await runQualification(driver, { stageTimeoutMs: 90_000 });
+      expect(scorecard.ok).toBe(false);
+      expect(scorecard.stages[0]).toMatchObject({ name: "isolated_boot", ok: false, failure: "failed" });
+      expect(driver.forbiddenPullRequests()).toBe(1);
+      expect(service.counts.pull).toBe(0);
+      expect(JSON.stringify(scorecard)).not.toMatch(/pull\?|proxy_forwarded|name.*stream/i);
+      expect(repoSurface()).toEqual(surface);
+    } finally {
+      await service.close();
+    }
+  }, 180_000);
+
   it("qualifies the actual product routes against a deterministic fake Ollama service", async () => {
+    const surface = repoSurface();
     const service = new FakeOllamaQualificationService();
     const endpoint = await service.start();
     let ownedRoot = "";
@@ -249,6 +351,8 @@ describe("local model qualification workflow", () => {
       expect(scorecard.model.tag).toBe(service.model);
       expect(scorecard.cleanup.ok).toBe(true);
       expect(existsSync(ownedRoot)).toBe(false);
+      expect(service.counts.pull).toBe(0);
+      expect(repoSurface()).toEqual(surface);
     } finally {
       await service.close();
     }

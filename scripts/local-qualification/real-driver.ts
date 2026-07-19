@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { killProcessTree } from "../../src/process-tree-kill.js";
+import { qualificationChildEnv } from "./child-env.js";
 
 import type {
   CertificationResult,
@@ -65,22 +66,6 @@ function isCompactionBody(body: Buffer): boolean {
   return body.toString("utf8").includes("Conversation segment to summarize");
 }
 
-const CHILD_ENV_PASSTHROUGH = [
-  "PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "ComSpec", "PATHEXT",
-] as const;
-
-export function qualificationChildEnv(
-  source: NodeJS.ProcessEnv,
-  required: Record<string, string>,
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const name of CHILD_ENV_PASSTHROUGH) {
-    const match = Object.keys(source).find((key) => key.toLowerCase() === name.toLowerCase());
-    if (match && source[match] !== undefined) env[name] = source[match];
-  }
-  return { ...env, ...required };
-}
-
 export class RealQualificationDriver implements QualificationDriver {
   readonly model: string;
   private readonly upstream: URL;
@@ -96,13 +81,15 @@ export class RealQualificationDriver implements QualificationDriver {
   private laxUrl = "";
   private certificationCalls = 0;
   private backgroundRequests = 0;
+  private pullRequests = 0;
   private expectCertificationRestore = false;
+  private readonly onProxyUrl?: (url: string) => void;
 
   constructor(
     endpoint: string,
     model: string,
     repoRoot = resolve("."),
-    options: { onOwnedRoot?(path: string): void } = {},
+    options: { onOwnedRoot?(path: string): void; onProxyUrl?(url: string): void } = {},
   ) {
     this.upstream = new URL(endpoint);
     const host = this.upstream.hostname.toLowerCase();
@@ -114,6 +101,7 @@ export class RealQualificationDriver implements QualificationDriver {
     this.repoRoot = repoRoot;
     this.root = mkdtempSync(join(tmpdir(), "lax-local-qualification-"));
     options.onOwnedRoot?.(this.root);
+    this.onProxyUrl = options.onProxyUrl;
     this.dataDir = join(this.root, "data");
     this.workspace = join(this.root, "workspace");
   }
@@ -124,6 +112,10 @@ export class RealQualificationDriver implements QualificationDriver {
     writeFileSync(join(this.workspace, "qualification-note.txt"), `${READ_NONCE}\n`, "utf8");
     await this.startProxy();
     await this.startLax();
+  }
+
+  forbiddenPullRequests(): number {
+    return this.pullRequests;
   }
 
   async status(): Promise<RuntimeStatus> {
@@ -256,6 +248,12 @@ export class RealQualificationDriver implements QualificationDriver {
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = Buffer.concat(chunks);
       const pathname = new URL(request.url ?? "/", this.upstream).pathname;
+      if (pathname === "/api/pull") {
+        this.pullRequests += 1;
+        response.writeHead(403, { "Content-Type": "application/json" });
+        response.end('{"error":"forbidden"}');
+        return;
+      }
       if (request.method === "POST" && pathname.endsWith("/v1/chat/completions")) {
         if (isCertificationBody(body)) this.certificationCalls += 1;
       }
@@ -286,6 +284,7 @@ export class RealQualificationDriver implements QualificationDriver {
     const address = this.proxy.address();
     const port = typeof address === "object" && address ? address.port : 0;
     this.proxyUrl = `http://127.0.0.1:${port}`;
+    this.onProxyUrl?.(this.proxyUrl);
   }
 
   private async startLax(): Promise<void> {
@@ -306,13 +305,13 @@ export class RealQualificationDriver implements QualificationDriver {
       env: qualificationChildEnv(process.env, {
         HOME: this.root,
         USERPROFILE: this.root,
-        NODE_ENV: "qualification",
+        NODE_ENV: "production",
+        LAX_LOCAL_MODEL_QUALIFICATION_BOOT: "1",
         VITEST: "",
         LAX_DATA_DIR: this.dataDir,
         LAX_WORKSPACE: this.workspace,
         LAX_PORT: String(port),
         LAX_AUTH_TOKEN: this.token,
-        LAX_SELF_EDIT_PROBE: "1",
         LAX_PROBE_PARENT_PID: String(process.pid),
         LAX_OLLAMA_URL: this.proxyUrl,
         LAX_MODEL: this.model,

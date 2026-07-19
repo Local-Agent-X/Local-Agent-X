@@ -66,6 +66,7 @@ export interface CompactionResult {
 
 export interface QualificationDriver {
   readonly model: string;
+  forbiddenPullRequests(): number;
   start(): Promise<void>;
   status(): Promise<RuntimeStatus>;
   certify(runtimeId: string): Promise<CertificationResult>;

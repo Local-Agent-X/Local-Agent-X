@@ -79,7 +79,11 @@ export async function runQualification(
   const stage = async <T>(name: QualificationStageName, run: () => Promise<T>): Promise<T> => {
     const started = Date.now();
     try {
-      const value = await bounded(Promise.resolve().then(run), stageTimeoutMs, options.signal);
+      const value = await bounded(Promise.resolve().then(async () => {
+        const result = await run();
+        requireCondition(driver.forbiddenPullRequests() === 0, "forbidden model pull traffic occurred");
+        return result;
+      }), stageTimeoutMs, options.signal);
       stages.push({ name, ok: true, durationMs: Date.now() - started });
       return value;
     } catch (error) {
@@ -139,9 +143,10 @@ export async function runQualification(
       requireCondition(result.safeReadLifecycle, "workspace read did not emit a matching allowed tool lifecycle");
       requireCondition(result.forbiddenControlEvents === 0, "safe workspace read emitted a control request");
       requireCondition(result.readNonceSeen, "workspace read did not continue with nonce evidence");
-      await driver.chat("history");
-      await driver.chat("history");
-      await driver.chat("history");
+      for (let index = 0; index < 3; index += 1) {
+        const history = await driver.chat("history");
+        requireCondition(history.done && history.errorEvents === 0, "history turn did not complete cleanly");
+      }
     });
 
     await stage("compaction", async () => {

@@ -77,7 +77,7 @@ function contentText(message: WireMessage): string {
 export class FakeOllamaQualificationService {
   readonly model = "qualification-fake:1b";
   readonly digest = "sha256:qualification-fake";
-  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0 };
+  readonly counts = { version: 0, tags: 0, ps: 0, show: 0, generate: 0, completion: 0, pull: 0 };
   private server: Server | null = null;
   private baseUrl = "";
 
@@ -124,9 +124,16 @@ export class FakeOllamaQualificationService {
       if (!body.prompt?.includes("Conversation segment to summarize")) {
         return json(res, 200, { response: "{}" });
       }
+      const marker = body.prompt?.includes(CONTINUITY_MARKER)
+        ? `\n- Preserve ${CONTINUITY_MARKER}.`
+        : "";
       return json(res, 200, {
-        response: `CONSTRAINTS:\n- Preserve ${CONTINUITY_MARKER}.\nCURRENT_TASK_STATE:\n- Qualification continuity is active.`,
+        response: `CONSTRAINTS:${marker}\nCURRENT_TASK_STATE:\n- Qualification continuity is active.`,
       });
+    }
+    if (path === "/api/pull") {
+      this.counts.pull += 1;
+      return json(res, 418, { error: "proxy_forwarded_forbidden_pull" });
     }
     if (req.method === "POST" && path === "/v1/chat/completions") {
       this.counts.completion += 1;
@@ -154,11 +161,16 @@ export class FakeOllamaQualificationService {
     const latestUser = [...messages].reverse().find((entry) => entry.role === "user");
     const userText = latestUser ? contentText(latestUser) : "";
     if (userText.includes("qualification-note.txt")) {
-      const hasToolResult = messages.some((entry) => entry.role === "tool");
-      if (hasToolResult) return stream(res, READ_NONCE);
+      const hasReadNonceResult = messages.some((entry) => (
+        entry.role === "tool" && contentText(entry).includes(READ_NONCE)
+      ));
+      if (hasReadNonceResult) return stream(res, READ_NONCE);
       return stream(res, "", { id: "read-call-1", name: "read", args: { path: "workspace/qualification-note.txt" } });
     }
-    if (userText.includes("earlier compacted context")) return stream(res, CONTINUITY_MARKER);
+    if (userText.includes("earlier compacted context")) {
+      const priorText = messages.slice(0, -1).map(contentText).join("\n");
+      return stream(res, priorText.includes(CONTINUITY_MARKER) ? CONTINUITY_MARKER : "NO_COMPACTED_CONTEXT");
+    }
     if (userText.includes("Reply with exactly READY")) return stream(res, "READY");
     if (userText.includes("Reply with exactly ACK")) return stream(res, "ACK");
     stream(res, "OK");

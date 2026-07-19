@@ -15,7 +15,7 @@ export type QualificationChatKind = "baseline" | "workspace-read" | "history" | 
 export function qualificationPrompt(kind: QualificationChatKind): string {
   return {
     baseline: `Remember ${MARKER}. Reply with exactly READY.`,
-    "workspace-read": `Use the read tool on workspace/qualification-note.txt. Then reply with exactly ${READ_NONCE}.`,
+    "workspace-read": "Use the read tool on workspace/qualification-note.txt. Then reply with exactly the file contents you read, without line numbers or explanation.",
     history: `Keep remembering ${MARKER}. Reply with exactly ACK.`,
     continuity: "From the earlier compacted context, reply with the exact continuity marker and nothing else.",
   }[kind];
@@ -26,18 +26,32 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
     .map((event) => String(event.delta)).join("");
   const starts = events.filter((event) => event.type === "tool_start" && event.toolName === "read");
   const ends = events.filter((event) => event.type === "tool_end" && event.toolName === "read");
+  const startArgs = starts[0]?.args;
+  const startIndex = events.indexOf(starts[0]);
+  const endIndex = events.indexOf(ends[0]);
+  const exactReadResult = `1\t${READ_NONCE}\n2\t`;
   const lifecycle = starts.length === 1 && ends.length === 1
+    && startIndex >= 0
+    && endIndex > startIndex
     && typeof starts[0].toolCallId === "string"
     && starts[0].toolCallId === ends[0].toolCallId
+    && typeof startArgs === "object"
+    && startArgs !== null
+    && (startArgs as Record<string, unknown>).path === "workspace/qualification-note.txt"
     && ends[0].allowed === true
-    && ends[0].status === "ok";
+    && ends[0].status === "ok"
+    && ends[0].result === exactReadResult;
+  const readContinuation = lifecycle
+    ? events.slice(endIndex + 1).filter((event) => event.type === "stream" && typeof event.delta === "string")
+      .map((event) => String(event.delta)).join("")
+    : "";
   return {
     done: events.some((event) => event.type === "done"),
     hasText: text.trim().length > 0,
     errorEvents: events.filter((event) => event.type === "error").length,
     safeReadLifecycle: lifecycle,
     forbiddenControlEvents: events.filter((event) => FORBIDDEN_CONTROL_EVENTS.has(String(event.type))).length,
-    readNonceSeen: text.includes(READ_NONCE),
+    readNonceSeen: readContinuation.includes(READ_NONCE),
     continuityMarkerSeen: text.includes(MARKER),
   };
 }

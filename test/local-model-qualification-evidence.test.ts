@@ -1,0 +1,86 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  chatEvidence,
+  qualificationPrompt,
+  READ_NONCE,
+} from "../scripts/local-qualification/chat-evidence.js";
+
+interface ReadEventsOptions {
+  path?: string;
+  result?: string;
+  assistant?: string;
+}
+
+function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unknown>> {
+  return [
+    {
+      type: "tool_start",
+      toolName: "read",
+      toolCallId: "read-1",
+      args: { path: options.path ?? "workspace/qualification-note.txt" },
+    },
+    {
+      type: "tool_end",
+      toolName: "read",
+      toolCallId: "read-1",
+      allowed: true,
+      status: "ok",
+      result: options.result ?? `1\t${READ_NONCE}\n2\t`,
+    },
+    { type: "stream", delta: options.assistant ?? READ_NONCE },
+    { type: "done" },
+  ];
+}
+
+describe("local qualification workspace-read evidence", () => {
+  it("keeps the hidden file value out of the model prompt", () => {
+    const prompt = qualificationPrompt("workspace-read");
+    expect(prompt).toContain("workspace/qualification-note.txt");
+    expect(prompt).not.toContain(READ_NONCE);
+  });
+
+  it("accepts only the exact matching read result followed by the same assistant value", () => {
+    const evidence = chatEvidence(readEvents());
+    expect(evidence.safeReadLifecycle).toBe(true);
+    expect(evidence.readNonceSeen).toBe(true);
+  });
+
+  it.each(["1\tWRONG\n2\t", ""])(
+    "rejects an allowed read result of %j even when the assistant guesses the hidden value",
+    (result) => {
+      const evidence = chatEvidence(readEvents({ result, assistant: READ_NONCE }));
+      expect(evidence.safeReadLifecycle).toBe(false);
+      expect(evidence.readNonceSeen).toBe(false);
+    },
+  );
+
+  it("rejects the right-looking result from an unrelated read", () => {
+    const evidence = chatEvidence(readEvents({ path: "workspace/unrelated.txt" }));
+    expect(evidence.safeReadLifecycle).toBe(false);
+    expect(evidence.readNonceSeen).toBe(false);
+  });
+
+  it("rejects a correct tool result when the assistant ignores it", () => {
+    const evidence = chatEvidence(readEvents({ assistant: "I read the file." }));
+    expect(evidence.safeReadLifecycle).toBe(true);
+    expect(evidence.readNonceSeen).toBe(false);
+  });
+
+  it("does not count a guessed value streamed before the tool result as continuation evidence", () => {
+    const events = readEvents({ assistant: "I ignored the result." });
+    events.unshift({ type: "stream", delta: READ_NONCE });
+    const evidence = chatEvidence(events);
+    expect(evidence.safeReadLifecycle).toBe(true);
+    expect(evidence.readNonceSeen).toBe(false);
+  });
+
+  it("rejects a correct assistant answer backed by the wrong tool result", () => {
+    const evidence = chatEvidence(readEvents({
+      result: "1\tcontent from a different file\n2\t",
+      assistant: READ_NONCE,
+    }));
+    expect(evidence.safeReadLifecycle).toBe(false);
+    expect(evidence.readNonceSeen).toBe(false);
+  });
+});

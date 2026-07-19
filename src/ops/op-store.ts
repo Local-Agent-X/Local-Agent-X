@@ -10,7 +10,17 @@
  * importable from the parent process.
  */
 
-import { existsSync, writeFileSync, readFileSync, renameSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  writeFileSync,
+  readFileSync,
+  renameSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  mkdirSync,
+  rmdirSync,
+} from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "./event-log.js";
@@ -55,7 +65,11 @@ const LOCK_WAIT_MS = 500;
 const LOCK_RETRY_MS = 10;
 const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
 /** In-process reentrancy guard: opIds whose lock this call stack already holds. */
-const heldLocks = new Set<string>();
+const heldLocks = new Map<string, string>();
+
+export type OpLockResult<T> =
+  | { acquired: true; value: T }
+  | { acquired: false };
 
 function sleepSync(ms: number): void {
   Atomics.wait(sleepBuf, 0, 0, ms);
@@ -63,48 +77,87 @@ function sleepSync(ms: number): void {
 
 /**
  * Serialize a read→modify→write sequence on an op's operation.json across
- * processes (two servers sharing one ~/.lax). The lock is an O_EXCL lockfile
- * in the op dir; a stale lock (crashed holder) is stolen after LOCK_STALE_MS.
- * Fail-open: if the lock cannot be acquired within LOCK_WAIT_MS, `fn` runs
- * anyway with a warning — a leaked lock must never brick op persistence.
+ * processes (two servers sharing one ~/.lax). The lock is an exclusive
+ * directory with a unique owner token; stale crashed claims are reclaimed
+ * after LOCK_STALE_MS. Contention never executes the mutation unlocked.
  */
-export function withOpLock<T>(opId: string, fn: () => T): T {
-  if (heldLocks.has(opId)) return fn(); // reentrant within the same sync call stack
+export function tryWithOpLock<T>(opId: string, fn: () => T): OpLockResult<T> {
+  if (heldLocks.has(opId)) return { acquired: true, value: fn() };
   const lockPath = join(opDir(opId), "operation.lock");
   const deadline = Date.now() + LOCK_WAIT_MS;
-  let held = false;
+  const token = randomId("lock");
   for (;;) {
     try {
-      writeFileSync(lockPath, String(process.pid), { encoding: "utf-8", mode: 0o600, flag: "wx" });
-      held = true;
+      mkdirSync(lockPath, { mode: 0o700 });
+      writeFileSync(join(lockPath, token), JSON.stringify({ token, pid: process.pid }), {
+        encoding: "utf-8",
+        mode: 0o600,
+        flag: "wx",
+      });
       break;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
         logger.warn(`[op-store] cannot create lock for ${opId}: ${(e as Error).message}`);
-        break;
+        cleanupOwnedLock(lockPath, token);
+        return { acquired: false };
       }
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
-          rmSync(lockPath, { force: true }); // crashed holder — steal
-          continue;
-        }
-      } catch { continue; } // holder released between attempts — retry now
+      if (reclaimStaleLock(lockPath)) continue;
       if (Date.now() >= deadline) {
-        logger.warn(`[op-store] lock timeout for ${opId}; proceeding unlocked`);
-        break;
+        logger.warn(`[op-store] lock timeout for ${opId}; mutation skipped`);
+        return { acquired: false };
       }
       sleepSync(LOCK_RETRY_MS);
     }
   }
-  if (held) heldLocks.add(opId);
+  heldLocks.set(opId, token);
   try {
-    return fn();
+    return { acquired: true, value: fn() };
   } finally {
-    if (held) {
-      heldLocks.delete(opId);
-      try { rmSync(lockPath, { force: true }); } catch { /* already gone */ }
-    }
+    heldLocks.delete(opId);
+    cleanupOwnedLock(lockPath, token);
   }
+}
+
+/** Legacy general persistence callers retain their fail-open behavior. Lease
+ * ownership uses tryWithOpLock directly and never enters this fallback. */
+export function withOpLock<T>(opId: string, fn: () => T): T {
+  const result = tryWithOpLock(opId, fn);
+  if (result.acquired) return result.value;
+  logger.warn(`[op-store] lock timeout for ${opId}; proceeding unlocked`);
+  return fn();
+}
+
+function cleanupOwnedLock(lockPath: string, token: string): void {
+  try { rmSync(join(lockPath, token), { force: true }); } catch { /* no longer ours */ }
+  try { rmdirSync(lockPath); } catch { /* replacement or malformed claim remains */ }
+}
+
+function reclaimStaleLock(lockPath: string): boolean {
+  let stat;
+  try { stat = statSync(lockPath); } catch { return true; }
+  if (Date.now() - stat.mtimeMs <= LOCK_STALE_MS) return false;
+
+  if (!stat.isDirectory()) {
+    try { rmSync(lockPath, { force: true }); return true; } catch { return false; }
+  }
+  let observed: string[];
+  try { observed = readdirSync(lockPath); } catch { return true; }
+  for (const entry of observed) {
+    try {
+      const owner = JSON.parse(readFileSync(join(lockPath, entry), "utf-8")) as { pid?: unknown };
+      if (typeof owner.pid === "number" && isProcessAlive(owner.pid)) return false;
+    } catch { /* malformed stale token is reclaimable */ }
+  }
+  for (const entry of observed) {
+    try { rmSync(join(lockPath, entry), { recursive: true, force: true }); } catch { return false; }
+  }
+  try { rmdirSync(lockPath); return true; } catch { return false; }
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
 export function readOp(opId: string): Op | null {

@@ -10,11 +10,9 @@
  *   2. Verify `state ∈ {running, cancelling, queued}` AND the op has no LIVE
  *      owner. For running/cancelling that means the lease is expired OR there
  *      is no lease at all (the C3 orphan shape: a worker threw after its
- *      finally released the lease but before a terminal transition landed). A
- *      `queued` op is ALWAYS reclaimable: the worker dies before the
- *      queued→running transition and never heartbeats, so a persisted
- *      queued+lease is a crashed worker regardless of lease freshness (OP-6 —
- *      see the recoverStaleOp guard for why the fresh-lease skip excludes it).
+ *      finally released the lease but before a terminal transition landed).
+ *      A queued op is reclaimable only without an owner or after expiry; a
+ *      fresh queued claim may belong to another process and stays protected.
  *      Stop otherwise — terminal ops, paused ops, and running/cancelling ops
  *      holding a FRESH lease (a live worker) are not recoverable.
  *   3. Evict the dead worker from the scheduler's active map (frees a
@@ -30,11 +28,9 @@
  *   7. Re-enqueue + pump the scheduler (only when the recovery resumes
  *      work — cancelling ops jump straight to `cancelled`).
  *
- * Hard rule: lease.ts is the sole writer of lease columns and
- * state-machine.ts is the sole writer of canonical state. recovery.ts
- * orchestrates both — it never mutates either column directly outside
- * those primitives, except for the explicit lease-clear step that runs
- * just before emitting `lease_lost`.
+ * Hard rule: lease.ts is the sole writer of lease columns and state-machine.ts
+ * is the sole writer of canonical state. Recovery uses the exact-claim clear
+ * under the cross-process op lock before emitting `lease_lost`.
  */
 import { existsSync, readdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";
@@ -44,12 +40,17 @@ import { readOp } from "../ops/op-store.js";
 import { decideRecovery, isCircuitOpen, recordFailure } from "../ops/heartbeat.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
-import { isLeaseExpired } from "./lease.js";
+import {
+  isLeaseExpired,
+  leaseClaimFromOp,
+  withObservedExpiredLeaseRecovery,
+} from "./lease.js";
 import { evictWorker, enqueueOp, pumpScheduler } from "./scheduler.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
 import { resolveExpiredPendingApproval } from "./control-api-approvals.js";
 import { rehydrateRecoveredRuntime } from "./runtime.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
+import { releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { CanonicalLane } from "./types.js";
 
 export type RecoveryOutcomeKind =
@@ -62,6 +63,8 @@ export type RecoveryOutcomeKind =
                     // returns it; a non-terminal no-lease op is now the C3
                     // orphan shape and IS reclaimed. See recoverStaleOp.
   | "lease_fresh"   // lease still in date — leave it alone.
+  | "lease_changed" // observation lost a race to a newer exact claim.
+  | "lock_unavailable" // strict op lock was contended; retry later.
   | "not_running"   // op is not in a recoverable state.
   | "unknown_op";   // op id not on disk.
 
@@ -100,21 +103,42 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   // An op that just acquired a lease is `running` WITH a fresh lease, so this
   // change can neither double-drive nor double-finalize a live op.
   //
-  // OP-6 exception for `queued`: a fresh lease is proof of a live worker ONLY
-  // for running/cancelling ops, which heartbeat while driving. A `queued` op
-  // has NOT started heartbeating — worker.drive() acquires the lease and
-  // transitions queued→running within one fully-synchronous stretch (worker.ts
-  // has no `await` between acquireLease and the transition), so no live worker
-  // is ever observable in the queued+lease state across a yield. A persisted
-  // queued+lease therefore ALWAYS means a worker that crashed in that window,
-  // regardless of whether the lease has ticked past expiry yet — never skip it
-  // as `lease_fresh`, or a crash-restart inside the lease window strands the op
-  // in `queued` forever (the boot sweep runs once).
-  const leaseOwner = op.canonical?.leaseOwner ?? null;
-  if (state !== "queued" && leaseOwner && !isLeaseExpired(op)) {
+  // Multi-process schedulers can observe the brief queued+lease window. A
+  // fresh exact claim is therefore live in every state; a crashed queued op is
+  // reclaimed by the periodic sweep after its bounded expiry.
+  const observedClaim = leaseClaimFromOp(op);
+  if (observedClaim && !isLeaseExpired(op)) {
     return { ok: false, kind: "lease_fresh" };
   }
 
+  const leaseCheck = withObservedExpiredLeaseRecovery(
+    opId,
+    observedClaim,
+    (lockedOp, expiredClaim): RecoveryOutcome => {
+      const lockedState = lockedOp.canonical!.state as "running" | "cancelling" | "queued";
+      return finishRecoveredOp(opId, lockedOp, lockedState, expiredClaim?.owner ?? null);
+    },
+    candidate => {
+      const candidateState = candidate.canonical?.state;
+      return candidateState === "running" || candidateState === "cancelling" || candidateState === "queued";
+    },
+  );
+  if (!leaseCheck.ok) {
+    if (leaseCheck.reason === "lease_fresh") return { ok: false, kind: "lease_fresh" };
+    if (leaseCheck.reason === "lock_unavailable") return { ok: false, kind: "lock_unavailable" };
+    if (leaseCheck.reason === "unknown_op") return { ok: false, kind: "unknown_op" };
+    if (leaseCheck.reason === "not_recoverable") return { ok: false, kind: "not_running" };
+    return { ok: false, kind: "lease_changed" };
+  }
+  return leaseCheck.value;
+}
+
+function finishRecoveredOp(
+  opId: string,
+  op: NonNullable<ReturnType<typeof readOp>>,
+  state: "running" | "cancelling" | "queued",
+  leaseOwner: string | null,
+): RecoveryOutcome {
   // Rebuild process-local state; op_turn/op_messages remain authoritative.
   rehydrateRecoveredRuntime(op);
   const sessionId = op.canonical?.sessionId;
@@ -134,19 +158,8 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   // Drop the scheduler's claim on the (dead) worker so the replacement launch
   // is not blocked by the lane cap. Idempotent; no-op when there was no lease.
   evictWorker(opId);
-
+  releaseAriKernelScope(opId);
   if (leaseOwner) {
-    // Expired-lease shape: clear the dead lease columns on disk via
-    // persistOpKeepingSignals (so we don't clobber control-API signals) BEFORE
-    // the `lease_lost` emit, so any consumer reading the op on the event
-    // observes the cleared lease. Recovery is one of the two legitimate writers
-    // of lease columns (alongside lease.ts) — opt out of disk-preservation so
-    // this clear lands.
-    if (!op.canonical) op.canonical = {};
-    op.canonical.leaseOwner = null;
-    op.canonical.leaseExpiresAt = null;
-    op.workerId = undefined;
-    persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
     emit(opId, "lease_lost", { workerId: leaseOwner, reason: "expired" });
   }
   // No-lease (C3 orphan) shape: the worker's own `finally` already cleared the
@@ -215,7 +228,7 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   // the requeue transition (safeRecoveryTransition re-reads from disk) so the
   // next crash of this op sees the incremented count.
   op.attemptCount = (op.attemptCount ?? 0) + 1;
-  persistOpKeepingSignals(op, { preserveLeaseFromDisk: false });
+  persistOpKeepingSignals(op);
 
   // running → queued: re-enqueue for a replacement worker, which reads
   // `op_turns` for the resume turnIdx and hands prior `provider_state` to the
@@ -259,10 +272,9 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  *     the scheduler queue is in-memory and vanishes on restart — a disk op
  *     stuck in `queued` at boot has no live worker and no in-memory slot, so it
  *     would stay pending forever without this sweep (OP-6).
- *   - the op has NO LIVE OWNER — for running/cancelling, either the lease is
+ *   - the op has NO LIVE OWNER — in every recoverable state, either the lease is
  *     set AND expired, OR there is no lease at all (the C3 orphan shape; see
- *     recoverStaleOp). A `queued` op has no live owner by construction (see
- *     recoverStaleOp's OP-6 note), so lease freshness does not gate it.
+ *     recoverStaleOp). Fresh queued claims are also protected cross-process.
  * and routes each through `recoverStaleOp`.
  *
  * Safe to call once at server boot. Periodic callers must use the cooperative
@@ -283,12 +295,9 @@ export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutco
     const c = op.canonical;
     if (!c || c.flagValue !== true) continue;
     if (c.state !== "running" && c.state !== "cancelling" && c.state !== "queued") continue;
-    // A fresh lease ⇒ a live worker: skip — but ONLY for running/cancelling
-    // ops, which heartbeat. A `queued` op never heartbeats, so a persisted
-    // queued+lease is a crashed worker regardless of freshness (OP-6) and must
-    // NOT be skipped. A no-lease non-terminal op is the C3 orphan shape and IS
-    // recoverable. Mirror recoverStaleOp's recoverability test exactly.
-    if (c.state !== "queued" && c.leaseOwner && !isLeaseExpired(op)) continue;
+    // A fresh exact claim may be live in any state. Ownerless non-terminal ops
+    // and expired claims remain recoverable.
+    if (c.leaseOwner && !isLeaseExpired(op)) continue;
 
     const outcome = recoverStaleOp(opId);
     out.push({ opId, outcome });
@@ -372,13 +381,9 @@ function yieldRecoverySlice(): Promise<void> {
   });
 }
 
-/**
- * Recovery-only transition wrapper. Re-reads the op fresh from disk,
- * clears any lease columns that may have lingered, and calls
- * `transitionOp` with `clearLeaseFromOp: true` so the transition's
- * writeOp atomically clears the dead worker's lease alongside the
- * state change.
- */
+/** Recovery-only transition wrapper. The exact stale claim was already
+ * cleared under the strict lease lock; ordinary persistence preserves any
+ * newer claim that arrived after that point. */
 function safeRecoveryTransition(
   opId: string,
   to: Parameters<typeof transitionOp>[1],
@@ -386,12 +391,8 @@ function safeRecoveryTransition(
 ): void {
   const op = readOp(opId);
   if (!op) return;
-  if (!op.canonical) op.canonical = {};
-  op.canonical.leaseOwner = null;
-  op.canonical.leaseExpiresAt = null;
-  op.workerId = undefined;
   try {
-    transitionOp(op, to, reason, { clearLeaseFromOp: true });
+    transitionOp(op, to, reason);
   } catch (e) {
     if (e instanceof IllegalTransitionError) return;
     throw e;

@@ -1,43 +1,26 @@
-/**
- * Regression suite for src/canonical-loop/lease.ts owner semantics.
- *
- * Focuses on the lease *primitives* in isolation (no scheduler / worker):
- *   - acquireLease fails when another worker holds a FRESH lease.
- *   - acquireLease succeeds once the holder's lease has EXPIRED.
- *   - heartbeatLease from the wrong workerId is rejected (and is a no-op
- *     on the persisted columns).
- *   - releaseLease is idempotent / non-clobbering when another worker has
- *     already stolen the lease (recovery path) — the original holder does
- *     not wipe the new owner's columns.
- *
- * These cover gaps left by canonical-loop-08-lease-and-crash-recovery.test.ts,
- * which asserts the live crash-recovery flow but does not pin the standalone
- * "expired lease is acquirable" path nor the steal-then-release no-op.
- *
- * Reuses the canonical-loop store fixture (createHarness / makeAndPersistOp)
- * so ops land on disk via writeOp without invoking the loop runtime. Lease
- * columns are driven purely through the public primitives plus direct disk
- * edits to synthesize expiry — matching the idiom in the Issue 08 suite.
- */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  _setLeaseRaceHookForTest,
   acquireLease,
+  clearObservedExpiredLease,
   heartbeatLease,
-  releaseLease,
   isLeaseExpired,
-  setLeaseConfig,
+  leaseClaimFromOp,
+  releaseLease,
+  recoverStaleOp,
   resetLeaseConfig,
+  setLeaseConfig,
+  type LeaseClaim,
 } from "../src/canonical-loop/index.js";
 import { readOp, writeOp } from "../src/ops/op-store.js";
-
+import { opDir } from "../src/ops/event-log.js";
 import { createHarness, makeAndPersistOp, type HarnessContext } from "./canonical-loop/harness.js";
 
 let ctx: HarnessContext;
 
 beforeEach(() => {
-  // Compress the lease cycle so synthesized-expiry math stays small and
-  // the test never leans on the 30s production default.
   setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
   ctx = createHarness();
 });
@@ -47,163 +30,154 @@ afterEach(() => {
   resetLeaseConfig();
 });
 
-/** Push the op's leaseExpiresAt into the past on disk. */
-function forceExpire(opId: string): void {
+function acquire(opId: string, owner: string): LeaseClaim {
+  const result = acquireLease(opId, owner);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error(result.reason);
+  return result.claim;
+}
+
+function forceExpire(opId: string, expiresAt = new Date(Date.now() - 1_000).toISOString()): void {
   const op = readOp(opId)!;
-  op.canonical!.leaseExpiresAt = new Date(Date.now() - 1_000).toISOString();
+  op.canonical!.leaseExpiresAt = expiresAt;
   writeOp(op);
 }
 
-describe("acquireLease owner semantics", () => {
-  it("fails when another worker holds a fresh lease, leaving the owner intact", () => {
+describe("exact lease claims", () => {
+  it("rejects every fresh re-acquire, including the same owner id", () => {
     const op = makeAndPersistOp(ctx);
-
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-A");
-
-    // Fresh lease held by A — B cannot steal it.
-    expect(acquireLease(op.id, "w-B")).toBe(false);
-    const after = readOp(op.id);
-    expect(after?.canonical?.leaseOwner).toBe("w-A");
-    expect(after?.workerId).toBe("w-A");
+    const first = acquire(op.id, "w-A");
+    expect(acquireLease(op.id, "w-A")).toEqual({ ok: false, reason: "held" });
+    expect(acquireLease(op.id, "w-B")).toEqual({ ok: false, reason: "held" });
+    expect(leaseClaimFromOp(readOp(op.id))).toEqual(first);
   });
 
-  it("re-acquire by the same owner refreshes the expiry (reuse path)", async () => {
+  it("increments generation on takeover and never resets it on release", () => {
     const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-    const first = Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!);
-
-    await new Promise(r => setTimeout(r, 20));
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-    const second = Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!);
-
-    expect(second).toBeGreaterThan(first);
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-A");
-  });
-
-  it("an EXPIRED lease is acquirable by a different worker", () => {
-    const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-
-    // The lease is fresh: it is NOT yet expired.
-    expect(isLeaseExpired(readOp(op.id))).toBe(false);
-
-    // Time passes / A dies — the lease lapses.
+    const first = acquire(op.id, "same-worker");
     forceExpire(op.id);
-    expect(isLeaseExpired(readOp(op.id))).toBe(true);
-
-    // B steals the now-expired lease.
-    expect(acquireLease(op.id, "w-B")).toBe(true);
-    const after = readOp(op.id);
-    expect(after?.canonical?.leaseOwner).toBe("w-B");
-    expect(after?.workerId).toBe("w-B");
-    expect(isLeaseExpired(after)).toBe(false);
+    const second = acquire(op.id, "same-worker");
+    expect(second.generation).toBe(first.generation + 1);
+    expect(releaseLease(op.id, second)).toEqual({ ok: true });
+    expect(readOp(op.id)?.canonical?.leaseGeneration).toBe(second.generation);
+    const third = acquire(op.id, "w-C");
+    expect(third.generation).toBe(second.generation + 1);
   });
 
-  it("acquires when no lease has ever been set", () => {
+  it("old same-worker generations cannot heartbeat or release a newer claim", () => {
     const op = makeAndPersistOp(ctx);
-    // Persisted op from the fixture has no lease columns yet.
-    expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
-
-    expect(acquireLease(op.id, "w-first")).toBe(true);
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-first");
-  });
-
-  it("returns false for an op id that does not exist", () => {
-    expect(acquireLease("op_lease_missing", "w-A")).toBe(false);
-  });
-});
-
-describe("heartbeatLease owner semantics", () => {
-  it("rejected from the wrong workerId and does not touch the persisted expiry", () => {
-    const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-    const expiryBefore = readOp(op.id)!.canonical!.leaseExpiresAt!;
-
-    // A different worker tries to heartbeat — must be rejected.
-    expect(heartbeatLease(op.id, "w-IMPOSTER")).toBe(false);
-
-    const after = readOp(op.id);
-    expect(after?.canonical?.leaseOwner).toBe("w-A");
-    // No-op: the expiry the rightful owner set is untouched.
-    expect(after?.canonical?.leaseExpiresAt).toBe(expiryBefore);
-  });
-
-  it("rejected after another worker steals an expired lease", () => {
-    const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-
-    // A's lease lapses; B re-acquires.
+    const oldClaim = acquire(op.id, "same-worker");
     forceExpire(op.id);
-    expect(acquireLease(op.id, "w-B")).toBe(true);
-
-    // A (the ghost) tries to heartbeat — must lose to B.
-    expect(heartbeatLease(op.id, "w-A")).toBe(false);
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-B");
+    const winner = acquire(op.id, "same-worker");
+    const expiry = readOp(op.id)!.canonical!.leaseExpiresAt;
+    expect(heartbeatLease(op.id, oldClaim)).toEqual({ ok: false, reason: "claim_lost" });
+    expect(releaseLease(op.id, oldClaim)).toEqual({ ok: false, reason: "claim_lost" });
+    expect(readOp(op.id)?.canonical).toMatchObject({
+      leaseOwner: winner.owner,
+      leaseGeneration: winner.generation,
+      leaseExpiresAt: expiry,
+    });
   });
 
-  it("extends the expiry forward for the rightful owner", async () => {
+  it("heartbeats and releases only the exact current claim", async () => {
     const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
+    const claim = acquire(op.id, "w-A");
     const before = Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!);
-
-    await new Promise(r => setTimeout(r, 20));
-    expect(heartbeatLease(op.id, "w-A")).toBe(true);
-    const after = Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!);
-
-    expect(after).toBeGreaterThan(before);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(heartbeatLease(op.id, claim)).toEqual({ ok: true });
+    expect(Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!)).toBeGreaterThan(before);
+    expect(releaseLease(op.id, claim)).toEqual({ ok: true });
+    expect(readOp(op.id)?.canonical).toMatchObject({
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      leaseGeneration: claim.generation,
+    });
   });
 
-  it("returns false for an op id that does not exist", () => {
-    expect(heartbeatLease("op_lease_missing", "w-A")).toBe(false);
+  it("returns typed non-mutating failures for missing ops", () => {
+    expect(acquireLease("missing", "w-A")).toEqual({ ok: false, reason: "unknown_op" });
+    expect(heartbeatLease("missing", { owner: "w-A", generation: 1 })).toEqual({
+      ok: false,
+      reason: "unknown_op",
+    });
+  });
+
+  it("returns lock_unavailable without changing the persisted row", () => {
+    const op = makeAndPersistOp(ctx);
+    const lock = join(opDir(op.id), "operation.lock");
+    writeFileSync(lock, "foreign-holder", { flag: "wx" });
+    const before = readFileSync(join(opDir(op.id), "operation.json"), "utf8");
+    expect(acquireLease(op.id, "w-A")).toEqual({ ok: false, reason: "lock_unavailable" });
+    expect(readFileSync(join(opDir(op.id), "operation.json"), "utf8")).toBe(before);
+    rmSync(lock, { force: true });
+  });
+
+  it("fails closed instead of wrapping an exhausted generation", () => {
+    const op = makeAndPersistOp(ctx);
+    const row = readOp(op.id)!;
+    row.canonical = { leaseGeneration: Number.MAX_SAFE_INTEGER };
+    writeOp(row);
+    expect(acquireLease(op.id, "w-A")).toEqual({ ok: false, reason: "generation_exhausted" });
+    expect(readOp(op.id)?.canonical).toEqual({ leaseGeneration: Number.MAX_SAFE_INTEGER });
   });
 });
 
-describe("releaseLease owner semantics", () => {
-  it("releases only when the caller still owns the lease", () => {
+describe("exact recovery", () => {
+  it("treats malformed expiry with an owner as expired instead of wedging", () => {
     const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-
-    // Non-owner release is a no-op.
-    expect(releaseLease(op.id, "w-other")).toBe(false);
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-A");
-
-    // Owner release clears the columns.
-    expect(releaseLease(op.id, "w-A")).toBe(true);
-    const after = readOp(op.id);
-    expect(after?.canonical?.leaseOwner ?? null).toBeNull();
-    expect(after?.canonical?.leaseExpiresAt ?? null).toBeNull();
-    expect(after?.workerId ?? null).toBeNull();
-  });
-
-  it("is a non-clobbering no-op when another worker already stole the lease", () => {
-    const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-
-    // Recovery path: A's lease expired and B took over.
-    forceExpire(op.id);
-    expect(acquireLease(op.id, "w-B")).toBe(true);
-    const bExpiry = readOp(op.id)!.canonical!.leaseExpiresAt!;
-
-    // A's finally block fires releaseLease late. It must NOT clobber B.
-    expect(releaseLease(op.id, "w-A")).toBe(false);
-    const after = readOp(op.id);
-    expect(after?.canonical?.leaseOwner).toBe("w-B");
-    expect(after?.canonical?.leaseExpiresAt).toBe(bExpiry);
-    expect(after?.workerId).toBe("w-B");
-  });
-
-  it("a double release by the same owner is idempotent (second is a no-op)", () => {
-    const op = makeAndPersistOp(ctx);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
-
-    expect(releaseLease(op.id, "w-A")).toBe(true);
-    // Second release: owner is already null, so it returns false.
-    expect(releaseLease(op.id, "w-A")).toBe(false);
+    const claim = acquire(op.id, "w-dead");
+    forceExpire(op.id, "not-a-date");
+    expect(isLeaseExpired(readOp(op.id))).toBe(true);
+    expect(clearObservedExpiredLease(op.id, claim)).toMatchObject({ ok: true, expiredClaim: claim });
     expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
   });
 
-  it("returns false for an op id that does not exist", () => {
-    expect(releaseLease("op_lease_missing", "w-A")).toBe(false);
+  it("deterministically clears a malformed owner shape", () => {
+    const op = makeAndPersistOp(ctx);
+    const row = readOp(op.id)!;
+    row.canonical = {};
+    row.canonical!.leaseOwner = 42 as unknown as string;
+    row.canonical!.leaseExpiresAt = "invalid";
+    writeOp(row);
+    expect(clearObservedExpiredLease(op.id, null)).toMatchObject({ ok: true });
+    expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
+  });
+
+  it("a deterministic observation race cannot clear the replacement claim", () => {
+    const op = makeAndPersistOp(ctx);
+    const observed = acquire(op.id, "w-old");
+    forceExpire(op.id);
+    _setLeaseRaceHookForTest(point => {
+      if (point !== "before_recovery_lock") return;
+      _setLeaseRaceHookForTest(null);
+      const row = readOp(op.id)!;
+      row.canonical!.leaseOwner = "w-winner";
+      row.canonical!.leaseGeneration = observed.generation + 1;
+      row.canonical!.leaseExpiresAt = new Date(Date.now() + 5_000).toISOString();
+      writeOp(row);
+    });
+    expect(clearObservedExpiredLease(op.id, observed)).toEqual({ ok: false, reason: "claim_changed" });
+    expect(leaseClaimFromOp(readOp(op.id))).toEqual({
+      owner: "w-winner",
+      generation: observed.generation + 1,
+    });
+  });
+
+  it("a state race fails closed without clearing the observed claim", () => {
+    const op = makeAndPersistOp(ctx);
+    const claim = acquire(op.id, "w-old");
+    const row = readOp(op.id)!;
+    row.canonical!.state = "running";
+    row.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
+    writeOp(row);
+    _setLeaseRaceHookForTest(point => {
+      if (point !== "before_recovery_lock") return;
+      _setLeaseRaceHookForTest(null);
+      const terminal = readOp(op.id)!;
+      terminal.canonical!.state = "succeeded";
+      writeOp(terminal);
+    });
+    expect(recoverStaleOp(op.id)).toEqual({ ok: false, kind: "not_running" });
+    expect(leaseClaimFromOp(readOp(op.id))).toEqual(claim);
   });
 });

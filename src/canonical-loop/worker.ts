@@ -83,11 +83,17 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   // routes the op directly queued → cancelled with no lease and no running.
   if (applyPreLeaseCancel(op)) return;
 
-  if (!acquireLease(op.id, workerId)) {
+  const acquisition = acquireLease(op.id, workerId);
+  if (!acquisition.ok) {
     // Another worker holds a fresh lease. Recovery / scheduler logic
     // should have prevented this, but bail safely if not.
+    if (acquisition.reason === "lock_unavailable") {
+      const { scheduleQueuedRetry } = await import("./scheduler.js");
+      scheduleQueuedRetry(op.id, op.lane, 50);
+    }
     return;
   }
+  const leaseClaim = acquisition.claim;
   // Refresh local op with the post-acquire columns (lease + workerId).
   const fresh = readOp(op.id);
   if (fresh) Object.assign(op, fresh);
@@ -106,7 +112,8 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   // turn-loop bail without committing the partial turn.
   const cfg = getLeaseConfig();
   const hb = setInterval(() => {
-    if (!heartbeatLease(op.id, workerId)) {
+    const heartbeat = heartbeatLease(op.id, leaseClaim);
+    if (!heartbeat.ok) {
       leaseLost = true;
       clearInterval(hb);
       HEARTBEATS.delete(workerId);
@@ -364,8 +371,8 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     if (wallClockTimer) clearTimeout(wallClockTimer);
     HEARTBEATS.delete(workerId);
     tracker.off();
-    const stillOwner = releaseLease(op.id, workerId);
-    if (stillOwner) {
+    const release = releaseLease(op.id, leaseClaim);
+    if (release.ok) {
       emit(op.id, "lease_lost", { workerId, reason: releaseReason });
       releaseAriKernelScope(op.id);
     }

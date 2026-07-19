@@ -101,6 +101,8 @@ export interface CanonicalOpFields {
   flagValue?: boolean;
   leaseOwner?: string | null;
   leaseExpiresAt?: string | null;
+  /** Monotonic fencing identity. Release clears ownership but never this value. */
+  leaseGeneration?: number;
   pauseRequestedAt?: string | null;
   cancelRequestedAt?: string | null;
   redirectInstruction?: RedirectInstruction | null;

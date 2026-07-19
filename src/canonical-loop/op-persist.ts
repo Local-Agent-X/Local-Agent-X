@@ -69,6 +69,7 @@ export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): vo
       if (preserveLease) {
         op.canonical.leaseOwner = onDisk.canonical.leaseOwner ?? null;
         op.canonical.leaseExpiresAt = onDisk.canonical.leaseExpiresAt ?? null;
+        op.canonical.leaseGeneration = onDisk.canonical.leaseGeneration;
       }
     }
     writeOp(op);

@@ -8,7 +8,7 @@
  * (withOpLock) around every RMW, fail-open on a leaked lock.
  */
 import { describe, it, expect, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "./types.js";
@@ -18,7 +18,7 @@ import type { Op } from "./types.js";
 const dataDir = mkdtempSync(join(tmpdir(), "lax-opstore-"));
 process.env.LAX_DATA_DIR = dataDir;
 
-const { writeOp, readOp, setOpStatus, withOpLock } = await import("./op-store.js");
+const { writeOp, readOp, setOpStatus, tryWithOpLock, withOpLock } = await import("./op-store.js");
 const { persistOpKeepingSignals } = await import("../canonical-loop/index.js");
 
 const opDirOf = (id: string) => join(dataDir, "operations", id);
@@ -82,6 +82,47 @@ describe("withOpLock — per-opId cross-process lockfile", () => {
     const id = "op_lock_throw";
     expect(() => withOpLock(id, () => { throw new Error("boom"); })).toThrow("boom");
     expect(existsSync(lockOf(id))).toBe(false);
+  });
+
+  it("release removes only its exact token, never a replacement lock", () => {
+    const id = "op_lock_token_release";
+    withOpLock(id, () => {
+      rmSync(lockOf(id), { recursive: true, force: true });
+      mkdirSync(lockOf(id));
+      writeFileSync(join(lockOf(id), "replacement-token"), "replacement");
+    });
+    expect(existsSync(join(lockOf(id), "replacement-token"))).toBe(true);
+    rmSync(lockOf(id), { recursive: true, force: true });
+  });
+
+  it("strict try-lock returns without running the mutation on contention", () => {
+    const id = "op_lock_strict_contention";
+    writeOp(mkOp(id));
+    writeFileSync(lockOf(id), "legacy-live-holder", { flag: "wx" });
+    let mutated = false;
+    expect(tryWithOpLock(id, () => { mutated = true; })).toEqual({ acquired: false });
+    expect(mutated).toBe(false);
+    rmSync(lockOf(id), { force: true });
+  });
+
+  it("reclaims a stale crashed token but never steals an old live token", () => {
+    const crashed = "op_lock_crashed";
+    writeOp(mkOp(crashed));
+    mkdirSync(lockOf(crashed));
+    writeFileSync(join(lockOf(crashed), "dead-token"), JSON.stringify({ token: "dead-token", pid: 999_999_999 }));
+    const old = new Date(Date.now() - 5_000);
+    utimesSync(lockOf(crashed), old, old);
+    expect(tryWithOpLock(crashed, () => "recovered")).toEqual({ acquired: true, value: "recovered" });
+    expect(existsSync(lockOf(crashed))).toBe(false);
+
+    const live = "op_lock_live";
+    writeOp(mkOp(live));
+    mkdirSync(lockOf(live));
+    writeFileSync(join(lockOf(live), "live-token"), JSON.stringify({ token: "live-token", pid: process.pid }));
+    utimesSync(lockOf(live), old, old);
+    expect(tryWithOpLock(live, () => "stolen")).toEqual({ acquired: false });
+    expect(existsSync(join(lockOf(live), "live-token"))).toBe(true);
+    rmSync(lockOf(live), { recursive: true, force: true });
   });
 });
 

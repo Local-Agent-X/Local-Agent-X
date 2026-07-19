@@ -23,7 +23,8 @@
  *   - Recovery during `cancelling`: closes out as `cancelled`.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -38,6 +39,8 @@ import {
   acquireLease,
   heartbeatLease,
   releaseLease,
+  clearObservedExpiredLease,
+  leaseClaimFromOp,
   isLeaseExpired,
   setLeaseConfig,
   resetLeaseConfig,
@@ -65,7 +68,6 @@ import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const tracked: string[] = [];
 const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
-
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
   // Compress the lease cycle so tests run on real wall-clock without
@@ -170,6 +172,25 @@ class HangingAdapter implements Adapter {
   }
 }
 
+class AbortCompletesAdapter implements Adapter {
+  readonly name = "abort-completes";
+  readonly version = "0.0.1";
+  abortCalls = 0;
+  private finish: ((result: TurnResult) => void) | null = null;
+
+  runTurn(): Promise<TurnResult> {
+    return new Promise(resolve => { this.finish = resolve; });
+  }
+
+  async abort(): Promise<void> {
+    this.abortCalls++;
+    this.finish?.({
+      providerState: { adapterName: this.name, adapterVersion: this.version, providerPayload: {} },
+      terminalReason: undefined,
+    });
+  }
+}
+
 // ── lease primitives ─────────────────────────────────────────────────────
 
 describe("lease primitives", () => {
@@ -177,12 +198,13 @@ describe("lease primitives", () => {
     const op = mkOp("acquire");
     canonicalLoopEntry(op);
 
-    expect(acquireLease(op.id, "w-A")).toBe(true);
+    const acquired = acquireLease(op.id, "w-A");
+    expect(acquired.ok).toBe(true);
     const a = readOp(op.id);
     expect(a?.canonical?.leaseOwner).toBe("w-A");
     expect(a?.canonical?.leaseExpiresAt).toBeTruthy();
 
-    expect(acquireLease(op.id, "w-B")).toBe(false);
+    expect(acquireLease(op.id, "w-B")).toEqual({ ok: false, reason: "held" });
     const b = readOp(op.id);
     expect(b?.canonical?.leaseOwner).toBe("w-A");
   });
@@ -190,11 +212,13 @@ describe("lease primitives", () => {
   it("heartbeatLease extends leaseExpiresAt; pushes the expiry forward in time", async () => {
     const op = mkOp("heartbeat");
     canonicalLoopEntry(op);
-    expect(acquireLease(op.id, "w-X")).toBe(true);
+    const acquired = acquireLease(op.id, "w-X");
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) return;
     const before = Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!);
 
     await new Promise(r => setTimeout(r, 30));
-    expect(heartbeatLease(op.id, "w-X")).toBe(true);
+    expect(heartbeatLease(op.id, acquired.claim)).toEqual({ ok: true });
     const after = Date.parse(readOp(op.id)!.canonical!.leaseExpiresAt!);
 
     expect(after).toBeGreaterThan(before);
@@ -203,32 +227,38 @@ describe("lease primitives", () => {
   it("heartbeatLease returns false if a different worker took the lease", () => {
     const op = mkOp("heartbeat-stolen");
     canonicalLoopEntry(op);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
+    const acquiredA = acquireLease(op.id, "w-A");
+    expect(acquiredA.ok).toBe(true);
+    if (!acquiredA.ok) return;
     // Force-expire and let B acquire.
     const fresh = readOp(op.id)!;
     fresh.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
     writeOp(fresh);
-    expect(acquireLease(op.id, "w-B")).toBe(true);
+    const acquiredB = acquireLease(op.id, "w-B");
+    expect(acquiredB.ok).toBe(true);
 
-    expect(heartbeatLease(op.id, "w-A")).toBe(false);
+    expect(heartbeatLease(op.id, acquiredA.claim)).toEqual({ ok: false, reason: "claim_lost" });
   });
 
   it("releaseLease is identity-checked; a non-owner release is a no-op", () => {
     const op = mkOp("release-idcheck");
     canonicalLoopEntry(op);
-    expect(acquireLease(op.id, "w-A")).toBe(true);
+    const acquired = acquireLease(op.id, "w-A");
+    expect(acquired.ok).toBe(true);
+    if (!acquired.ok) return;
 
-    expect(releaseLease(op.id, "w-other")).toBe(false);
+    expect(releaseLease(op.id, { owner: "w-other", generation: acquired.claim.generation }))
+      .toEqual({ ok: false, reason: "claim_lost" });
     expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-A");
 
-    expect(releaseLease(op.id, "w-A")).toBe(true);
+    expect(releaseLease(op.id, acquired.claim)).toEqual({ ok: true });
     expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
   });
 
   it("isLeaseExpired returns false for fresh leases, true for past expiries", () => {
     const op = mkOp("is-expired");
     canonicalLoopEntry(op);
-    expect(acquireLease(op.id, "w-X")).toBe(true);
+    expect(acquireLease(op.id, "w-X").ok).toBe(true);
     expect(isLeaseExpired(readOp(op.id))).toBe(false);
 
     const fresh = readOp(op.id)!;
@@ -276,6 +306,36 @@ describe("heartbeat keeps lease alive while running", () => {
     await awaitIdle(2_000).catch(() => undefined);
     expect(readOp(op.id)?.canonical?.leaseOwner ?? null).toBeNull();
   });
+
+  it("aborts before an expired contended claim can be taken by another process", async () => {
+    const op = mkOp("heartbeat-lock-contention");
+    const adapter = new AbortCompletesAdapter();
+    registerAdapterForOp(op.id, () => adapter);
+    canonicalLoopEntry(op);
+    await awaitState(op.id, "running");
+
+    const lock = join(OPS_BASE, op.id, "operation.lock");
+    writeFileSync(lock, "foreign-live-holder", { flag: "wx" });
+    await new Promise(resolve => setTimeout(resolve, 1_100));
+    expect(adapter.abortCalls).toBeGreaterThan(0);
+    rmSync(lock, { force: true });
+
+    const gate = join(OPS_BASE, op.id, "lease-child-gate");
+    mkdirSync(gate);
+    writeFileSync(join(gate, "go"), "go");
+    const child = spawnSync(process.execPath, [
+      "--import=tsx",
+      join(process.cwd(), "test", "fixtures", "lease-process-worker.ts"),
+      "acquire",
+      op.id,
+      "replacement-process",
+      "0",
+      gate,
+    ], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, windowsHide: true });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toContain('"ok":true');
+    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("replacement-process");
+  }, 15_000);
 });
 
 // ── recoverStaleOp guards ─────────────────────────────────────────────────
@@ -324,7 +384,7 @@ describe("recoverStaleOp guard rails", () => {
   it("returns lease_fresh for a running op whose lease is still in date", () => {
     const op = mkOp("guard-fresh-lease");
     canonicalLoopEntry(op);
-    expect(acquireLease(op.id, "w-fresh")).toBe(true);
+    expect(acquireLease(op.id, "w-fresh").ok).toBe(true);
     // Move state to running manually so we hit the recovery guard, not
     // the not_running early-out.
     const fresh = readOp(op.id)!;
@@ -399,7 +459,7 @@ describe("recoverStaleOp reclaims queued ops orphaned by a crash (OP-6)", () => 
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
   });
 
-  it("recovers a queued op whose lease is still FRESH (crash inside the lease window is not a live worker)", async () => {
+  it("protects a fresh queued claim, then recovers it after bounded expiry", async () => {
     const op = mkOp("queued-fresh-lease");
     canonicalLoopEntry(op);
 
@@ -420,9 +480,11 @@ describe("recoverStaleOp reclaims queued ops orphaned by a crash (OP-6)", () => 
       script: [scriptTurn({ text: "recovered from fresh-lease crash", terminal: "done" })],
     }));
 
-    const outcome = recoverStaleOp(op.id);
-    expect(outcome.ok).toBe(true);
-    expect(outcome.kind).toBe("recovered"); // NOT lease_fresh
+    expect(recoverStaleOp(op.id)).toEqual({ ok: false, kind: "lease_fresh" });
+    const expired = readOp(op.id)!;
+    expired.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
+    writeOp(expired);
+    expect(recoverStaleOp(op.id)).toMatchObject({ ok: true, kind: "recovered" });
 
     const post = readOp(op.id);
     expect(post?.canonical?.state).toBe("queued");
@@ -511,7 +573,7 @@ describe("recoverStaleOp on synthesized stale state (no live worker)", () => {
     // cleared. Earlier code preserved the stale lease through the
     // transition because state-machine's persistOpKeepingSignals defaulted
     // to `preserveLeaseFromDisk: true`. The fix routes recovery through
-    // `transitionOp(..., { clearLeaseFromOp: true })`.
+    // exact lease primitive before the transition.
     const postRecover = readOp(op.id);
     expect(postRecover?.canonical?.state).toBe("queued");
     expect(postRecover?.canonical?.leaseOwner ?? null).toBeNull();
@@ -633,9 +695,8 @@ describe("recoverStaleOp on synthesized stale state (no live worker)", () => {
   // sits on disk at the moment the recovery transition fires, the
   // transition write must NOT restore it. This test bypasses
   // recoverStaleOp's pre-transition clear and exercises only the
-  // transitionOp path with `clearLeaseFromOp: true` — proving the
-  // state-machine, on its own, defends against the leaked lease.
-  it("transitionOp({clearLeaseFromOp:true}) does not restore stale lease from disk", async () => {
+  // exact recovery-clear path followed by the ordinary state transition.
+  it("exact recovery clear is preserved by the following state transition", async () => {
     const { transitionOp } = await import("../src/canonical-loop/state-machine.js");
     const op = mkOp("regression-stale-lease");
     canonicalLoopEntry(op);
@@ -643,37 +704,33 @@ describe("recoverStaleOp on synthesized stale state (no live worker)", () => {
     const fresh = readOp(op.id)!;
     fresh.canonical!.state = "running";
     fresh.canonical!.leaseOwner = "w-dead-stale";
+    fresh.canonical!.leaseGeneration = 7;
     fresh.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
     writeOp(fresh);
 
-    // Sanity check: disk has the stale lease.
-    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-dead-stale");
-
-    // Build an in-memory op with cleared lease and call transitionOp
-    // with clearLeaseFromOp:true. Should NOT restore the disk's
-    // "w-dead-stale" lease.
+    const observed = leaseClaimFromOp(readOp(op.id));
+    expect(clearObservedExpiredLease(op.id, observed)).toMatchObject({ ok: true });
     const inMem = readOp(op.id)!;
-    inMem.canonical!.leaseOwner = null;
-    inMem.canonical!.leaseExpiresAt = null;
-    transitionOp(inMem, "queued", "lease_expired", { clearLeaseFromOp: true });
+    transitionOp(inMem, "queued", "lease_expired");
 
     const after = readOp(op.id);
     expect(after?.canonical?.state).toBe("queued");
     expect(after?.canonical?.leaseOwner ?? null).toBeNull();
     expect(after?.canonical?.leaseExpiresAt ?? null).toBeNull();
+    expect(after?.canonical?.leaseGeneration).toBe(7);
   });
 
-  // Inverse: the DEFAULT transitionOp (no `clearLeaseFromOp`) MUST preserve
+  // The default transitionOp MUST preserve
   // a live worker's lease across non-recovery state changes. Otherwise a
   // commit path or pause/resume path would clobber a heartbeating worker.
-  it("transitionOp without clearLeaseFromOp preserves an existing lease from disk", async () => {
+  it("transitionOp preserves an existing lease from disk", async () => {
     const { transitionOp } = await import("../src/canonical-loop/state-machine.js");
     const op = mkOp("regression-preserve-lease");
     canonicalLoopEntry(op);
-    expect(acquireLease(op.id, "w-live")).toBe(true);
+    expect(acquireLease(op.id, "w-live").ok).toBe(true);
 
     // Build an in-memory op with state still queued (canonical loop entry
-    // emitted that). Transition queued → running without clearLeaseFromOp.
+    // emitted that). Transition queued → running normally.
     const inMem = readOp(op.id)!;
     transitionOp(inMem, "running", "leased");
 

@@ -83,20 +83,6 @@ export class IllegalTransitionError extends Error {
 }
 
 export interface TransitionOptions {
-  /**
-   * When true, the in-memory op's `leaseOwner` / `leaseExpiresAt` columns
-   * are persisted as-is — the on-disk lease is NOT restored. Used by the
-   * crash-recovery path (Issue 08) so the state transition atomically
-   * clears the dead worker's lease alongside the state change. Without
-   * this, the default `persistOpKeepingSignals` behavior would restore
-   * the stale on-disk lease and leave a recovered op with the dead
-   * worker's `leaseOwner` set.
-   *
-   * Default behavior (lease preserved from disk) is correct for every
-   * non-recovery transition: state-machine writers do not own the lease
-   * columns and must not clobber a live worker's heartbeated lease.
-   */
-  clearLeaseFromOp?: boolean;
   learnedOutcome?: LearnedOutcome;
   learningSessionId?: string;
 }
@@ -175,12 +161,10 @@ export function transitionOp(
       sessionId: getSessionForOp(op.id),
     });
   }
-  // Loop-side write — preserve control-API signal columns from disk so a
-  // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`
-  // (recovery-only) inverts the default lease preservation so the
-  // transition's writeOp clears the stale lease atomically.
+  // Loop-side write — preserve control-API signal and lease columns from disk
+  // so a concurrent control request or exact lease claim is not clobbered.
   beforePersistHook();
-  persistOpKeepingSignals(op, { preserveLeaseFromDisk: !opts.clearLeaseFromOp });
+  persistOpKeepingSignals(op);
 
   if (learnedReceipt) {
     try { commitCanonicalLearnedOutcome(op, learnedReceipt); }

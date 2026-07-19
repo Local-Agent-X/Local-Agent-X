@@ -183,16 +183,11 @@ export { opResolveApproval, recordApprovalRequested, recordApprovalResolved, rea
 
 // ── Issue 08 lease + crash-recovery surface ───────────────────────────────
 
-export {
-  acquireLease,
-  heartbeatLease,
-  releaseLease,
-  isLeaseExpired,
-  getLeaseConfig,
-  setLeaseConfig,
-  resetLeaseConfig,
-  type LeaseConfig,
-} from "./lease.js";
+export { acquireLease, heartbeatLease, releaseLease, isLeaseExpired, getLeaseConfig,
+  setLeaseConfig, resetLeaseConfig, _setLeaseRaceHookForTest, clearObservedExpiredLease,
+  withObservedExpiredLeaseRecovery, leaseClaimFromOp, type LeaseConfig, type LeaseClaim,
+  type LeaseAcquireResult, type LeaseActionResult, type LeaseRecoveryResult,
+  type LeaseRecoveryRunResult } from "./lease.js";
 
 export {
   recoverStaleOp,

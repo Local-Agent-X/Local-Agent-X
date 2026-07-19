@@ -16,6 +16,7 @@
 //   candidates[0].content.parts[] carry {text} | {functionCall} | {thought,text}.
 
 import type { TransportMessage, TransportTool, TransportEvent } from "./anthropic/types.js";
+import { toGeminiTools } from "../../providers/shared/tool-shape.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -42,40 +43,8 @@ export interface GeminiNativeTransport {
 }
 
 // ── Schema → Gemini OpenAPI subset ────────────────────────────────────────
-// Gemini's functionDeclarations.parameters is an OpenAPI Schema, a SUBSET of
-// JSON Schema. Unsupported keywords cause a 400. Map a copy to the subset:
-// drop unknown keywords, repair property-less objects / items-less arrays.
-const SCHEMA_KEYS = new Set([
-  "type", "description", "nullable", "enum", "properties", "required",
-  "items", "minItems", "maxItems", "minimum", "maximum", "format",
-]);
-const OK_FORMATS = new Set(["enum", "date-time"]);
-
-function toGeminiSchema(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== "object") return { type: "string" };
-  const node = input as Record<string, unknown>;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(node)) {
-    if (!SCHEMA_KEYS.has(k)) continue;
-    if (k === "format") { if (typeof v === "string" && OK_FORMATS.has(v)) out.format = v; continue; }
-    out[k] = v;
-  }
-  if (out.type === "object" || out.properties) {
-    out.type = "object";
-    const props = (node.properties && typeof node.properties === "object") ? node.properties as Record<string, unknown> : {};
-    const clean: Record<string, unknown> = {};
-    for (const [name, sub] of Object.entries(props)) clean[name] = toGeminiSchema(sub);
-    out.properties = clean;
-    if (Array.isArray(node.required)) {
-      const req = (node.required as unknown[]).filter(r => typeof r === "string" && r in clean);
-      if (req.length > 0) out.required = req; else delete out.required;
-    }
-  }
-  if (out.type === "array" || out.items) { out.type = "array"; out.items = toGeminiSchema(node.items ?? { type: "string" }); }
-  if (!out.type) out.type = "string";
-  return out;
-}
-
+// Gemini schema normalization and the functionDeclarations wire envelope are
+// owned by providers/shared/tool-shape.ts and shared with prompt telemetry.
 // ── Message → Gemini contents ─────────────────────────────────────────────
 type Part = Record<string, unknown>;
 type Content = { role: "user" | "model"; parts: Part[] };
@@ -129,14 +98,6 @@ export function toGeminiContents(messages: TransportMessage[]): Content[] {
   return contents;
 }
 
-function toFunctionDeclarations(tools: TransportTool[]): Part[] {
-  return tools.map(t => ({
-    name: t.name,
-    description: t.description,
-    parameters: toGeminiSchema(t.parameters),
-  }));
-}
-
 export function buildGeminiBody(req: GeminiNativeRequest): Record<string, unknown> {
   const body: Record<string, unknown> = {
     contents: toGeminiContents(req.messages),
@@ -147,7 +108,7 @@ export function buildGeminiBody(req: GeminiNativeRequest): Record<string, unknow
   };
   if (req.systemPrompt) body.systemInstruction = { parts: [{ text: req.systemPrompt }] };
   if (req.tools.length > 0) {
-    body.tools = [{ functionDeclarations: toFunctionDeclarations(req.tools) }];
+    body.tools = toGeminiTools(req.tools);
     body.toolConfig = req.forcedToolChoice
       ? { functionCallingConfig: { mode: "ANY", allowedFunctionNames: [req.forcedToolChoice.name] } }
       : { functionCallingConfig: { mode: "AUTO" } };

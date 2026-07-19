@@ -83,7 +83,11 @@ function anthropicAuth(): AuthProvider {
         if (oauth) {
           const isOAuth = oauth.startsWith("oauth:");
           if (!(rejectOAuth && isOAuth)) {
-            return { provider: id, credential: oauth, source: "oauth" };
+            return {
+              provider: id,
+              credential: oauth,
+              source: isOAuth || oauth === "cli" ? "oauth" : "env",
+            };
           }
         }
       } catch { /* fall through to secrets/env */ }

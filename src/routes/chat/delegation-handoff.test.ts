@@ -12,6 +12,11 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { ServerEvent } from "../../types.js";
+import {
+  createPromptTelemetry,
+  measurePromptSection,
+  type PromptTelemetry,
+} from "../../prompt-telemetry.js";
 
 const { runAgentViaCanonical } = vi.hoisted(() => ({
   runAgentViaCanonical: vi.fn(async () => ({
@@ -68,6 +73,11 @@ function makeArgs(ctx: unknown) {
     prepared: {
       apiKey: "k", model: "grok", provider: "xai",
       systemPrompt: "sys", cleanHistory: [] as unknown[],
+      promptTelemetry: createPromptTelemetry({
+        profile: "full", provider: "xai", model: "grok", prompt: "sys",
+        tools: [], allToolCount: 0, historyMessageCount: 0,
+        sections: [measurePromptSection("core", "static", "sys")],
+      }),
     },
     ctx: ctx as never,
     session: { messages: [] as unknown[], updatedAt: 0 },
@@ -101,5 +111,23 @@ describe("delegation-handoff orphaned-ActiveChat net", () => {
     const doneCalls = wsOnEvent.mock.calls.filter(([ev]) => ev.type === "done");
     expect(doneCalls).toHaveLength(1);
     expect(ctx.chatWs.failChatIfCurrent).not.toHaveBeenCalled();
+  });
+
+  it("passes content-free final prompt telemetry to the canonical ack operation", async () => {
+    const { ctx } = makeCtx();
+
+    await runDelegationHandoff(makeArgs(ctx) as never);
+
+    const calls = runAgentViaCanonical.mock.calls as unknown as Array<[
+      string,
+      unknown[],
+      { systemPrompt: string; promptTelemetry: PromptTelemetry },
+    ]>;
+    const options = calls.at(-1)![2];
+    expect(options.promptTelemetry.characters).toBe(options.systemPrompt.length);
+    expect(options.promptTelemetry.loadedToolCount).toBe(0);
+    expect(options.promptTelemetry.sections.at(-1)?.id).toBe("delegation-ack");
+    expect(JSON.stringify(options.promptTelemetry)).not.toContain("op_freeform_test");
+    expect(JSON.stringify(options.promptTelemetry)).not.toContain("build me a thing");
   });
 });

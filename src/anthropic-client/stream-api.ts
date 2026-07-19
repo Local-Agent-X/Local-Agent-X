@@ -8,6 +8,7 @@ import {
 import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 import { createLogger } from "../logger.js";
+import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 
 const logger = createLogger("anthropic-client.stream-api");
 
@@ -104,11 +105,15 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   // the billing classifier meters the request as extra-usage. Rewrite outbound
   // names and keep a reverse map for the tool_call events we surface back.
   const wireToOriginal = new Map<string, string>();
-  const anthropicTools = tools?.map(t => {
-    const name = oauth ? toOAuthWireName(t.name) : t.name;
-    if (oauth) wireToOriginal.set(name, t.name);
-    return { name, description: t.description, input_schema: t.parameters };
-  }) as Array<{ name: string; description: string; input_schema: unknown; cache_control?: { type: "ephemeral" } }> | undefined;
+  if (oauth) {
+    for (const tool of tools ?? []) wireToOriginal.set(toOAuthWireName(tool.name), tool.name);
+  }
+  const anthropicTools = tools
+    ? toAnthropicTools(tools, {
+        mapName: oauth ? toOAuthWireName : undefined,
+        cacheControlLast: true,
+      })
+    : undefined;
   // Prior-turn tool_use blocks ride on the wire too; normalize their names to
   // match so the classifier sees a consistent Claude-Code-shaped tool surface.
   if (oauth) {
@@ -127,7 +132,6 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // FILTERED set (not the whole inventory) and the deferred-tool manifest
     // (build-system-prompt.ts) names the rest, so this cached block — and its
     // cold-write — is sized to the tools actually loaded this turn.
-    anthropicTools[anthropicTools.length - 1].cache_control = { type: "ephemeral" };
     body.tools = anthropicTools;
     const forcedWireName = forcedToolName && oauth ? toOAuthWireName(forcedToolName) : forcedToolName;
     if (forcedWireName && anthropicTools.some(t => t.name === forcedWireName)) {

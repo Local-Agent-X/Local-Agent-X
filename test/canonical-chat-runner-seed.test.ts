@@ -26,6 +26,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { newOpId } from "../src/ops/op-store.js";
 import { readOpMessages } from "../src/canonical-loop/store.js";
+import { seedOpMessages } from "../src/canonical-loop/chat-runner/seed-messages.js";
 import {
   resetCanonicalRuntime,
   resetScheduler,
@@ -41,6 +42,25 @@ beforeEach(() => {
 });
 
 describe("chat-runner.seedOpMessages — tool_calls preserved across legacy→canonical handoff", () => {
+  it("does not mutate or double-fold an already-finalized system prompt", () => {
+    const opId = newOpId("seed-final-prompt");
+    const finalPrompt = "base prompt\n\n[COMPACTED HISTORY]\nprior facts";
+    const prepared = {
+      systemPrompt: finalPrompt,
+      cleanHistory: [
+        { role: "system", content: "[COMPACTED HISTORY]\nprior facts" },
+        { role: "user", content: "continue" },
+      ],
+      images: [],
+    };
+
+    seedOpMessages(opId, prepared as never, "continue");
+
+    expect(prepared.systemPrompt).toBe(finalPrompt);
+    expect(readOpMessages(opId).some(row => row.role === "system")).toBe(false);
+    if (existsSync(join(OPS_BASE, opId))) rmSync(join(OPS_BASE, opId), { recursive: true, force: true });
+  });
+
   it("seeds an assistant tool-only message AND its tool_result so the call_id chain survives", async () => {
     // Direct unit test: import the module's seedOpMessages-internal contract
     // by constructing the same shape it produces and exercising readOpMessages.

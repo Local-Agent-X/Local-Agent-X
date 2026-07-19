@@ -6,6 +6,7 @@ import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import type { ProviderId } from "./provider-ids.js";
 import * as capStore from "./model-capabilities-store.js";
+import type { PromptTelemetry } from "../prompt-telemetry.js";
 
 export interface ImageAttachment {
   url: string;
@@ -36,6 +37,8 @@ export interface AgentOptions {
   images?: ImageAttachment[];
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
+  /** Content-free prompt sizing persisted on the canonical operation. */
+  promptTelemetry?: PromptTelemetry;
 }
 
 /**

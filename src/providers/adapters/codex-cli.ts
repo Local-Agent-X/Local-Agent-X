@@ -14,17 +14,13 @@
 import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { streamCodexResponse } from "../../codex-client/index.js";
+import { toCodexTools } from "../shared/tool-shape.js";
 
 export class CodexCliAdapter extends BaseAdapter {
   readonly name = "codex-cli";
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
-    const codexTools = req.tools.map(t => ({
-      type: "function" as const,
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    }));
+    const codexTools = toCodexTools(req.tools);
 
     let inner;
     try {

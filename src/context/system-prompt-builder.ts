@@ -7,6 +7,7 @@
  */
 
 import { createRequire } from "node:module";
+import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
 const require = createRequire(import.meta.url);
 
 /** Fence sentinels for recalled-memory sections. */
@@ -65,13 +66,20 @@ export class SystemPromptBuilder {
 
   /** Build the full prompt — static sections first, dynamic sections after. */
   async build(): Promise<string> {
+    return (await this.buildWithTelemetry()).prompt;
+  }
+
+  async buildWithTelemetry(): Promise<{ prompt: string; sections: PromptSectionTelemetry[] }> {
     const staticParts: string[] = [];
     const dynamicParts: string[] = [];
+    const metrics: PromptSectionTelemetry[] = [];
 
     for (const section of this.sections) {
       if (section.shouldInclude && !section.shouldInclude()) continue;
       const content = await section.build();
       if (!content) continue;
+
+      metrics.push(measurePromptSection(section.id, section.type, content));
 
       if (section.type === "static") {
         staticParts.push(content);
@@ -80,7 +88,7 @@ export class SystemPromptBuilder {
       }
     }
 
-    return staticParts.join("") + dynamicParts.join("");
+    return { prompt: staticParts.join("") + dynamicParts.join(""), sections: metrics };
   }
 
   getSectionOrder(): string[] {

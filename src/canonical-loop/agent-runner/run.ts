@@ -46,6 +46,8 @@ import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
 import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { createLogger } from "../../logger.js";
+import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
+import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 
 import { type CanonicalAgentOptions, DEFAULT_WALL_CLOCK_MS } from "./types.js";
 import { registerProviderAdapter } from "./register-adapter.js";
@@ -94,6 +96,20 @@ export async function runAgentViaCanonical(
       maxWallTimeMs: wallClockMs,
     },
   });
+  if (options.promptTelemetry) {
+    const toolSchemaFormat = toolSchemaFormatForDispatch(
+      options.provider,
+      options.promptTelemetry.toolSchemaFormat,
+      options.preferAnthropicDirectHttp === true,
+    );
+    contextPack.promptTelemetry = remeasurePromptTelemetry({
+      baseline: options.promptTelemetry,
+      prompt: options.systemPrompt,
+      tools: options.tools,
+      historyMessageCount: history.length,
+      toolSchemaFormat,
+    });
+  }
 
   const op: Op = {
     id: newOpId(`op_${opType}`),

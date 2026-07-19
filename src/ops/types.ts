@@ -9,6 +9,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { CredentialSource } from "../auth/auth-provider.js";
+import type { PromptTelemetry } from "../prompt-telemetry.js";
 
 // ── Op model ───────────────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export interface ContextPack {
   capabilities: ProviderCapabilityRequirement;
   budget: OpBudget;
   routing: { lane: OpLane; preferredProvider?: string; authSource?: CredentialSource };
+  /** Content-free prompt sizing captured before dispatch and persisted with the op. */
+  promptTelemetry?: PromptTelemetry;
   secrets: {
     allowed: string[];                          // names only, never values (§12)
     /** Names the user pre-blessed at submit (op_submit_async pre_blessed_secrets):

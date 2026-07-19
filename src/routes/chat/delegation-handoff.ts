@@ -12,6 +12,9 @@ import { buildContextPack } from "../../ops/context-pack-builder.js";
 import { getRetryPolicy } from "../../ops/heartbeat.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
 import type { Op, OpVisibility } from "../../ops/types.js";
+import type { PromptTelemetry } from "../../prompt-telemetry.js";
+import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
+import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 
 async function submitDelegationOp(message: string, sessionId: string): Promise<{ opId: string }> {
   const lane = "build" as const;
@@ -58,6 +61,7 @@ interface PreparedAgentRequest {
   cleanHistory: unknown[];
   images?: unknown[];
   temperature?: number;
+  promptTelemetry: PromptTelemetry;
 }
 
 interface SessionLike {
@@ -126,6 +130,18 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
     `Good shape: "Starting on the [thing user asked for] now — I'll let you know when it's ready."\n` +
     `Bad shape: "Built it: created at workspace/apps/X/index.html and pinned." (Lies — worker hasn't built anything yet.)`;
   const delegationSystemPrompt = prepared.systemPrompt + delegationContext;
+  const promptTelemetry = remeasurePromptTelemetry({
+    baseline: prepared.promptTelemetry,
+    prompt: delegationSystemPrompt,
+    tools: [],
+    historyMessageCount: prepared.cleanHistory.length,
+    toolSchemaFormat: toolSchemaFormatForDispatch(
+      prepared.provider,
+      prepared.promptTelemetry.toolSchemaFormat,
+      false,
+    ),
+    appendedSection: { id: "delegation-ack", type: "dynamic", text: delegationContext },
+  });
 
   logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider} — routing notice now agent-voiced`);
 
@@ -173,6 +189,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
       onEvent,
       opType: "delegation_ack",
       lane: "interactive",
+      promptTelemetry,
     });
 
     const { stripEphemeralMessages } = await import("../../providers/sanitize.js");

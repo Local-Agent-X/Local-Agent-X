@@ -18,6 +18,8 @@ import { CRON_SYSTEM_PROMPT } from "./prompts.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
 import { registerSessionOwner, clearSessionOwner } from "../../browser/session-owner-registry.js";
+import { measurePromptSection, remeasurePromptTelemetry } from "../../prompt-telemetry.js";
+import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 
 const logger = createLogger("server.background-jobs.cron");
 
@@ -89,6 +91,19 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
     // no recursive scheduling, no file writes — agent's returned text IS the report
     const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_") && t.name !== "write" && t.name !== "edit");
+    const promptTelemetry = remeasurePromptTelemetry({
+      baseline: prepared.promptTelemetry,
+      prompt: CRON_SYSTEM_PROMPT,
+      tools: cronTools,
+      model: cronModel,
+      toolSchemaFormat: toolSchemaFormatForDispatch(
+        prepared.provider,
+        prepared.promptTelemetry.toolSchemaFormat,
+        false,
+      ),
+      historyMessageCount: 0,
+      sections: [measurePromptSection("scheduled-mission", "static", CRON_SYSTEM_PROMPT)],
+    });
     const externalCancelController = new AbortController();
     cronService.registerRunAbort(jobId, externalCancelController);
     // Pin this run's tool-approval decisions to the job's profile (if set).
@@ -116,6 +131,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         wallClockMs: MISSION_HARD_TIMEOUT_MS,
         opType: "scheduled_mission",
         lane: "background",
+        promptTelemetry,
       });
     } finally {
       cronService.unregisterRunAbort(jobId);

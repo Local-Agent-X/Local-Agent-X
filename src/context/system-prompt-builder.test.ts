@@ -24,6 +24,18 @@ const MOCK_INPUTS = {
 };
 
 describe("Context Builder", () => {
+  it("reports content-free metrics for included sections", async () => {
+    const result = await createSystemPromptBuilder(MOCK_INPUTS).buildWithTelemetry();
+
+    expect(result.prompt).toContain("personal AI companion");
+    expect(result.sections.map((section) => section.id)).toContain("core-identity");
+    expect(result.sections.map((section) => section.id)).toContain("memory-orchestrator");
+    expect(result.sections.reduce((sum, section) => sum + section.characters, 0)).toBe(result.prompt.length);
+    expect(result.sections.reduce((sum, section) => sum + section.utf8Bytes, 0)).toBe(Buffer.byteLength(result.prompt, "utf8"));
+    expect(JSON.stringify(result.sections)).not.toContain("personal AI companion");
+    expect(JSON.stringify(result.sections)).not.toContain("User works on Local Agent X");
+  });
+
   it("places all static sections before all dynamic sections", async () => {
     const builder = createSystemPromptBuilder(MOCK_INPUTS);
     const output = await builder.build();

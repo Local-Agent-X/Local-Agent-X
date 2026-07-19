@@ -13,6 +13,7 @@ import { modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 import type { FileAccessMode } from "../../security/layer/index.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
+import { measurePromptSection, type PromptSectionTelemetry } from "../../prompt-telemetry.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -78,7 +79,9 @@ export interface BuildSystemPromptInput {
   buildTurnDirective?: string;
 }
 
-export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<string> {
+export async function buildSystemPromptWithTelemetry(
+  input: BuildSystemPromptInput,
+): Promise<{ prompt: string; sections: PromptSectionTelemetry[] }> {
   const providerHint = `\n\n[System: You are currently powered by ${PROVIDER_NAMES[input.resolvedProvider] || input.resolvedProvider}, model: ${input.resolvedModel}.]`;
   const integrationsContext = input.integrations.getAgentContext();
 
@@ -171,9 +174,11 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
   } catch { /* best-effort */ }
 
   let systemPrompt: string;
+  let sections: PromptSectionTelemetry[];
   if (input.systemPromptOverride) {
     // Sub-agents provide their own prompt
     systemPrompt = input.systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
+    sections = [measurePromptSection("system-prompt-override", "static", input.systemPromptOverride)];
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -195,8 +200,22 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
+    const built = await contextBuilder.buildWithTelemetry();
+    systemPrompt = built.prompt + backgroundCompletionsBlock + shortReplyContextBlock + input.memoryCurateBlock + fileAccessBlock + providerRider + modelFamilyRider;
+    sections = built.sections;
   }
+
+  for (const [id, text] of [
+    ["background-completions", backgroundCompletionsBlock],
+    ["memory-curate", input.memoryCurateBlock],
+    ["file-access", fileAccessBlock],
+    ["provider-rider", providerRider],
+    ["model-family-rider", modelFamilyRider],
+  ] as const) {
+    if (text) sections.push(measurePromptSection(id, "dynamic", text));
+  }
+
+  const beforeTurnDirectiveLength = systemPrompt.length;
 
   // build_app hand-off directive. Fires for EVERY provider (not just the
   // Anthropic CLI/OAuth path that ignores tool_choice) because the failure it
@@ -226,5 +245,11 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
       `A generic page nobody asked for is worse than one clarifying question.`);
   }
 
-  return systemPrompt;
+  const turnDirective = systemPrompt.slice(beforeTurnDirectiveLength);
+  if (turnDirective) sections.push(measurePromptSection("turn-directive", "dynamic", turnDirective));
+  return { prompt: systemPrompt, sections };
+}
+
+export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<string> {
+  return (await buildSystemPromptWithTelemetry(input)).prompt;
 }

@@ -13,6 +13,7 @@ import type { RBACManager } from "../rbac.js";
 import { createLogger } from "../logger.js";
 import { VoiceTurnHygiene } from "./voice-turn-hygiene.js";
 import { warmModel } from "../local-runtimes/residency.js";
+import { createPromptTelemetry, measurePromptSection } from "../prompt-telemetry.js";
 const logger = createLogger("server.lifecycle");
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -173,6 +174,21 @@ export async function setupVoiceWs(deps: {
         "• When a background task you started has completed, its result is in your " +
         "context — open with it (\"That search came back — …\").\n" +
         "Never say you did something you didn't." + visualPromptTail;
+      const voiceTail = voiceSystemPrompt.slice(prepared.systemPrompt.length);
+      const voicePromptTelemetry = createPromptTelemetry({
+        profile: "voice",
+        provider: prepared.provider,
+        model: prepared.model,
+        toolSchemaFormat: prepared.promptTelemetry.toolSchemaFormat,
+        prompt: voiceSystemPrompt,
+        tools: voiceTools,
+        allToolCount: allAgentTools.length,
+        historyMessageCount: prepared.cleanHistory.length,
+        sections: [
+          ...prepared.promptTelemetry.sections,
+          measurePromptSection("voice-mode", "dynamic", voiceTail),
+        ],
+      });
 
       // TTS + transcript hygiene: strips leaked template tokens from each
       // spoken delta and runs the full pass on the stored text (see the class).
@@ -257,6 +273,7 @@ export async function setupVoiceWs(deps: {
           onEvent,
           opType: "voice_turn",
           lane: "interactive",
+          promptTelemetry: voicePromptTelemetry,
         });
         if (signal.aborted || result.stopReason === "abort") aborted = true;
       } catch (e) {

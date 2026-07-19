@@ -21,7 +21,8 @@ import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-se
 import { isSlashCommandExpansion } from "../slash-commands.js";
 import { buildHistoryDigest } from "../classifiers/intent-classifier.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
-import { buildSystemPrompt } from "./prepare-request/build-system-prompt.js";
+import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
+import { createPromptTelemetry, measurePromptSection } from "../prompt-telemetry.js";
 
 const logger = createLogger("agent-request.prepare-request");
 
@@ -220,7 +221,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // 6. Build the final system prompt (base + blocks + provider rider +
   // build-intent CLI nudge if applicable).
   end = stepStart("buildSystemPrompt");
-  const systemPrompt = await buildSystemPrompt({
+  const promptBuild = await buildSystemPromptWithTelemetry({
     message: input.message,
     sessionId: input.sessionId,
     config: input.config,
@@ -253,6 +254,22 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // "/uploads/<f>" PATH. One tested unit (attachments.ts) owns this — it used to
   // be inline and silently dropped non-images, 404'ing every PDF/doc upload.
   const { images, fileAttachmentNote } = processAttachments(input.attachments, input.uploadsDir);
+  const systemPrompt = promptBuild.prompt + fileAttachmentNote;
+  const promptSections = [...promptBuild.sections];
+  if (fileAttachmentNote) {
+    promptSections.push(measurePromptSection("file-attachments", "dynamic", fileAttachmentNote));
+  }
+  const promptTelemetry = createPromptTelemetry({
+    profile: "full",
+    provider: resolved.provider,
+    model: resolved.model,
+    authSource: resolved.authSource,
+    prompt: systemPrompt,
+    tools: toolSel.tools,
+    allToolCount: input.allAgentTools.length,
+    historyMessageCount: cleanHistory.length,
+    sections: promptSections,
+  });
 
   // 8. Intent-classifier tool_choice forcing. Verdict was computed in
   // step 3 so it could drive tool-filter narrowing; here we reuse it to
@@ -312,7 +329,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     model: resolved.model,
     codexApiKey: resolved.codexApiKey,
     customBaseURL: resolved.customBaseURL,
-    systemPrompt: systemPrompt + fileAttachmentNote,
+    systemPrompt,
     tools: toolSel.tools,
     cleanHistory,
     images,
@@ -321,5 +338,6 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     reasoningEffort: resolved.reasoningEffort,
     authSource: resolved.authSource,
     toolChoice,
+    promptTelemetry,
   };
 }

@@ -19,7 +19,7 @@ export function messageRoleToCanonicalRole(role: ChatCompletionMessageParam["rol
       // /api/compact summary and truncateHistory's digest both ride
       // `role:"system"` rows in cleanHistory and are NOT part of
       // prepared.systemPrompt (build-system-prompt.ts never sees them). The
-      // seed folds them into the system prompt via foldSystemRowsIntoPrompt
+      // createChatOp folds them into the system prompt via foldSystemRowsIntoPrompt
       // before the adapter is registered — without that, pressing Compact
       // silently loses ALL prior context on the canonical path.
       return null;

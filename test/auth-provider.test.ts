@@ -139,6 +139,11 @@ describe("anthropic — OAuth XOR api-key, rejectOAuth honored", () => {
     const r = await AUTH_PROVIDERS.anthropic.resolve({}, EMPTY);
     expect(r).toEqual({ provider: "anthropic", credential: "cli", source: "oauth" });
   });
+  it("classifies a raw API key returned by the Anthropic loader as billable env auth", async () => {
+    vi.mocked(getAnthropicApiKey).mockResolvedValue("sk-ant-api03-test");
+    const r = await AUTH_PROVIDERS.anthropic.resolve({}, EMPTY);
+    expect(r).toEqual({ provider: "anthropic", credential: "sk-ant-api03-test", source: "env" });
+  });
   it("with rejectOAuth, an oauth: credential falls through to store/env", async () => {
     vi.mocked(getAnthropicApiKey).mockResolvedValue("oauth:tok");
     process.env.ANTHROPIC_API_KEY = "sk-ant-env";

@@ -5,6 +5,8 @@ import { trackOpForSession } from "../../ops/session-bridge.js";
 import type { Op, OpVisibility } from "../../ops/types.js";
 import type { CanonicalChatContext } from "../chat-runner.js";
 import { seedOpMessages } from "./seed-messages.js";
+import { measurePromptSection, remeasurePromptTelemetry } from "../../prompt-telemetry.js";
+import { foldSystemRowsIntoPrompt } from "./message-convert.js";
 
 function readChatWallClockMs(): number {
   const raw = parseInt(process.env.LAX_CHAT_WALLCLOCK_MS ?? "7200000", 10);
@@ -18,6 +20,11 @@ export interface CreatedChatOp {
 
 export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedChatOp> {
   const wallClockMs = readChatWallClockMs();
+  const promptBeforeSystemHistory = ctx.prepared.systemPrompt;
+  ctx.prepared.systemPrompt = foldSystemRowsIntoPrompt(
+    promptBeforeSystemHistory,
+    ctx.prepared.cleanHistory,
+  );
   const contextPack = await buildContextPack({
     description: ctx.message,
     successCriteria: [],
@@ -27,6 +34,24 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
     authSource: ctx.prepared.authSource,
     budget: { maxIterations: ctx.prepared.maxIterations || 30, maxWallTimeMs: wallClockMs },
   });
+  if (ctx.prepared.promptTelemetry) {
+    const chatAugmentations = promptBeforeSystemHistory.slice(ctx.prepared.promptTelemetry.characters);
+    const systemHistory = ctx.prepared.systemPrompt.slice(promptBeforeSystemHistory.length);
+    const sections = [...ctx.prepared.promptTelemetry.sections];
+    if (chatAugmentations) {
+      sections.push(measurePromptSection("chat-augmentations", "dynamic", chatAugmentations));
+    }
+    if (systemHistory) {
+      sections.push(measurePromptSection("system-history", "dynamic", systemHistory));
+    }
+    contextPack.promptTelemetry = remeasurePromptTelemetry({
+      baseline: ctx.prepared.promptTelemetry,
+      prompt: ctx.prepared.systemPrompt,
+      tools: ctx.tools,
+      historyMessageCount: ctx.prepared.cleanHistory.length,
+      sections,
+    });
+  }
 
   const op: Op = {
     id: newOpId("op_chat_turn"),

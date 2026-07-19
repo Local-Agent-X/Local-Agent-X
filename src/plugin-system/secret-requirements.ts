@@ -81,6 +81,15 @@ export class PluginSecretLifecycle {
     this.blocked.delete(id);
   }
 
+  snapshot(id: string): SecretBlockedPlugin | undefined {
+    const blocked = this.blocked.get(id);
+    return blocked ? { ...blocked, missingSecrets: [...blocked.missingSecrets] } : undefined;
+  }
+
+  restore(id: string, snapshot: SecretBlockedPlugin | undefined): void {
+    if (snapshot) this.blocked.set(id, snapshot); else this.blocked.delete(id);
+  }
+
   retainCandidate(manifest: PluginManifest, path: string, trustLevel: TrustLevel, manifestHash?: string): void {
     this.blocked.set(manifest.id, {
       manifest,

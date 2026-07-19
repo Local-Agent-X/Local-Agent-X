@@ -147,9 +147,7 @@ describe("PluginManager lifecycle transactions", () => {
     await expect(pm.loadPlugin(dir)).rejects.toThrow("Plugin load could not be persisted");
     expect(registry.get("persisted_action")).toBeUndefined();
     expect(live).toEqual([]);
-    expect(pm.listPlugins()).toEqual([expect.objectContaining({
-      id: "surface-persistence", version: "1.0.0", declaredTools: ["persisted_action"], activeTools: [],
-    })]);
+    expect(pm.listPlugins()).toEqual([]);
 
     await expect(pm.loadPlugin(dir)).resolves.toEqual(expect.objectContaining({ id: "surface-persistence" }));
     expect(registry.get("persisted_action")).toBe(live[0]);
@@ -208,13 +206,7 @@ describe("PluginManager lifecycle transactions", () => {
     await expect(pm.loadPlugin(dir)).rejects.toThrow("Plugin load could not be persisted");
     expect(pm.isLoaded(`failed-${stage}`)).toBe(false);
     expect(store.current()).toEqual({});
-    expect(pm.listPlugins()).toEqual([
-      expect.objectContaining({
-        id: `failed-${stage}`,
-        status: "failed",
-        error: "Plugin load could not be persisted",
-      }),
-    ]);
+    expect(pm.listPlugins()).toEqual([]);
 
     expect(readFileSync(marker, "utf-8")).toBe("ran");
     await expect(pm.loadPlugin(dir)).resolves.toEqual(expect.objectContaining({ id: `failed-${stage}` }));
@@ -236,7 +228,6 @@ describe("PluginManager lifecycle transactions", () => {
         id: "disable-rollback",
         enabled: true,
         status: "loaded",
-        error: "Plugin disable could not be persisted",
       }),
     ]);
 
@@ -318,8 +309,7 @@ describe("PluginManager lifecycle transactions", () => {
       expect.objectContaining({
         id: "pinned-reenable",
         enabled: false,
-        status: "failed",
-        error: "Plugin load could not be persisted",
+        status: "disabled",
       }),
     ]);
   });

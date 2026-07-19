@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { registeredPluginItem, safeLifecyclePersistenceError, safePluginId, safeRestoreError, type PluginListItem } from "./plugin-system/lifecycle-status.js";
 import { parsePluginManifest, pluginManifestMetadata, type PluginManifest } from "./plugin-system/manifest.js";
-import { createPluginRegistryStore, isPluginRegistryContentError, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
+import { createPluginRegistryStore, isPluginRegistryContentError, isPluginRegistryUnavailableError, normalizePluginRegistryUnavailable, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
 import { verifyPublisherSignature, type TrustLevel } from "./plugin-system/publisher-trust.js";
 import { assessTrustLevel } from "./plugin-system/integrity.js";
 import { buildPluginList } from "./plugin-system/list-items.js";
@@ -41,7 +41,7 @@ export class PluginManager {
     try { const registry = this.registryStore.read(); this.lastRegistry = registry; this.registryFailure = undefined; return registry; }
     catch (error) {
       this.registryFailure = isPluginRegistryContentError(error) ? "invalid" : "unavailable";
-      if (this.registryFailure !== "invalid") throw error;
+      if (this.registryFailure !== "invalid") throw normalizePluginRegistryUnavailable("read", error);
       for (const id of this.loaded.keys()) {
         try { this.toolSurface?.deactivate(id); } catch { /* canonical surface revokes before reporting cleanup errors */ }
         this.secretLifecycle.clear(id);
@@ -49,6 +49,10 @@ export class PluginManager {
       this.loaded.clear();
       throw error;
     }
+  }
+  private writeRegistry(registry: PluginRegistry, action: "load" | "disable"): void {
+    try { this.registryStore.write(registry); }
+    catch (error) { throw normalizePluginRegistryUnavailable("write", error, safeLifecyclePersistenceError(action)); }
   }
   bindToolSurface(surface: PluginToolSurfacePort): void {
     if (this.toolSurface && this.toolSurface !== surface) throw new Error("Plugin tool surface is already bound");
@@ -98,6 +102,8 @@ export class PluginManager {
     if (inspectSecretRequirements && !manifest.contributions?.secrets?.length) return manifest;
 
     const currentManifestHash = createHash("sha256").update(manifestContent).digest("hex");
+    const blockedBefore = this.secretLifecycle.snapshot(manifest.id);
+    const restoreErrorBefore = this.restoreErrors.get(manifest.id);
     try {
     const registry = this.readRegistry();
     const registeredManifestHash = expectedRegistration?.manifestHash ?? registry[manifest.id]?.manifestHash;
@@ -163,23 +169,17 @@ export class PluginManager {
     };
 
     if (!expectedRegistration) {
-      try {
-        const nextRegistry: PluginRegistry = {
-          ...this.readRegistry(),
-          [manifest.id]: {
-            enabled: true,
-            path: pluginPath,
-            entryHash: trust.currentHash,
-            manifestHash: currentManifestHash,
-            manifest: pluginManifestMetadata(manifest),
-          },
-        };
-        this.registryStore.write(nextRegistry);
-      } catch {
-        const reason = safeLifecyclePersistenceError("load");
-        this.restoreErrors.set(manifest.id, { error: reason, manifest, manifestHash: currentManifestHash });
-        throw new Error(reason);
-      }
+      const nextRegistry: PluginRegistry = {
+        ...this.readRegistry(),
+        [manifest.id]: {
+          enabled: true,
+          path: pluginPath,
+          entryHash: trust.currentHash,
+          manifestHash: currentManifestHash,
+          manifest: pluginManifestMetadata(manifest),
+        },
+      };
+      this.writeRegistry(nextRegistry, "load");
     } else {
       const currentRegistry = this.readRegistry();
       const current = currentRegistry[manifest.id];
@@ -188,12 +188,10 @@ export class PluginManager {
         current.manifestHash === expectedRegistration.manifestHash;
       if (expectedRegistration.enable) {
         if (!current || !unchanged || current.enabled) throw new Error("Plugin lifecycle state changed during enable");
-        try {
-          this.registryStore.write({
-            ...currentRegistry,
-            [manifest.id]: { ...current, enabled: true, manifest: pluginManifestMetadata(manifest) },
-          });
-        } catch { throw new Error(safeLifecyclePersistenceError("load")); }
+        this.writeRegistry({
+          ...currentRegistry,
+          [manifest.id]: { ...current, enabled: true, manifest: pluginManifestMetadata(manifest) },
+        }, "load");
       }
       if (
         (!expectedRegistration.enable && !current?.enabled) || !unchanged
@@ -211,7 +209,10 @@ export class PluginManager {
     return manifest;
     } catch (error) {
       if (preparedTools) this.toolSurface?.abort(preparedTools);
-      if (!(error instanceof MissingPluginSecretsError) && (!expectedRegistration || expectedRegistration.enable) && !this.loaded.has(manifest.id)) {
+      if (isPluginRegistryUnavailableError(error)) {
+        this.secretLifecycle.restore(manifest.id, blockedBefore);
+        if (restoreErrorBefore) this.restoreErrors.set(manifest.id, restoreErrorBefore); else this.restoreErrors.delete(manifest.id);
+      } else if (!(error instanceof MissingPluginSecretsError) && (!expectedRegistration || expectedRegistration.enable) && !this.loaded.has(manifest.id)) {
         const reason = safeRestoreError(error);
         if (!this.secretLifecycle.markFailure(manifest.id, reason)) {
           this.restoreErrors.set(manifest.id, { error: reason, manifest, manifestHash: currentManifestHash });
@@ -233,15 +234,7 @@ export class PluginManager {
         ...(loaded ? { manifest: pluginManifestMetadata(loaded.manifest), manifestHash: loaded.manifestHash } : {}),
       },
     };
-    try {
-      this.registryStore.write(nextRegistry);
-    } catch {
-      this.restoreErrors.set(id, {
-        error: safeLifecyclePersistenceError("disable"),
-        ...(loaded ? { manifest: loaded.manifest, manifestHash: loaded.manifestHash } : {}),
-      });
-      throw new Error(safeLifecyclePersistenceError("disable"));
-    }
+    this.writeRegistry(nextRegistry, "disable");
     this.loaded.delete(id);
     this.secretLifecycle.clear(id);
     this.toolSurface?.deactivate(id);
@@ -343,7 +336,7 @@ export class PluginManager {
     try {
       return await this.secretLifecycle.serializeRetry(id, () => this.retryPluginNow(id));
     } catch (error) {
-      if (!(error instanceof MissingPluginSecretsError)) {
+      if (!(error instanceof MissingPluginSecretsError) && !isPluginRegistryUnavailableError(error)) {
         const reason = safeRestoreError(error);
         if (!this.secretLifecycle.markFailure(id, reason)) this.restoreErrors.set(id, { error: reason });
       }

@@ -12,6 +12,11 @@ import type { AdapterFactory } from "./runtime.js";
 import { API_BASE as ANTHROPIC_API_BASE } from "../anthropic-client/request.js";
 import { CODEX_URL } from "../codex-client/types.js";
 import { GEMINI_BASE } from "./adapters/gemini-native-transport.js";
+import {
+  assertPersistedTargetCapabilitySnapshot,
+  captureTargetCapabilitySnapshot,
+} from "./target-capability-snapshot.js";
+export { captureTargetCapabilitySnapshot } from "./target-capability-snapshot.js";
 
 interface ProviderRuntimeOptions {
   apiKey: string;
@@ -61,14 +66,18 @@ export async function resolveProviderRuntime(
   const target = await resolveOpenAITarget(provider, model, options);
   if (!target) throw new Error(`provider ${provider} has no usable OpenAI-compat target`);
   const credentialProvider = provider === "local" && target.cloud ? "ollama-cloud" : provider;
+  const runtimeIdentity = {
+    provider,
+    credentialProvider,
+    authSource: options.authSource,
+    model,
+    runtime: "openai-compat" as const,
+    target: target.identity,
+  };
   return {
     identity: {
-      provider,
-      credentialProvider,
-      authSource: options.authSource,
-      model,
-      runtime: "openai-compat",
-      target: target.identity,
+      ...runtimeIdentity,
+      capabilitySnapshot: captureTargetCapabilitySnapshot(runtimeIdentity, target.modelProfile ?? null),
     },
     apiKey: target.apiKey,
     baseURL: target.baseURL,
@@ -82,17 +91,22 @@ function directIdentity(
   runtime: DelegatedProviderRuntime,
   options: ProviderRuntimeOptions,
 ): ResolvedProviderRuntime {
+  const target: DelegatedRuntimeTarget = {
+    kind: "provider-registry",
+    endpointFingerprint: endpointFingerprint(providerRegistryEndpoint(provider)),
+  };
+  const runtimeIdentity = {
+    provider,
+    credentialProvider: provider,
+    authSource: options.authSource,
+    model,
+    runtime,
+    target,
+  };
   return {
     identity: {
-      provider,
-      credentialProvider: provider,
-      authSource: options.authSource,
-      model,
-      runtime,
-      target: {
-        kind: "provider-registry",
-        endpointFingerprint: endpointFingerprint(providerRegistryEndpoint(provider)),
-      },
+      ...runtimeIdentity,
+      capabilitySnapshot: captureTargetCapabilitySnapshot(runtimeIdentity, null),
     },
     apiKey: options.apiKey,
     localModelCapabilityProfile: null,
@@ -177,7 +191,15 @@ export function assertExactDelegatedRuntime(value: unknown): asserts value is Ex
   if (d.sessionId !== undefined && typeof d.sessionId !== "string") throw new Error("invalid delegated session identity");
   if (d.integrity?.scheme !== "hmac-sha256-v1" || !isFingerprint(d.integrity.mac)) throw new Error("invalid delegated runtime integrity metadata");
   if (d.surface !== undefined) assertSurface(d.surface);
+  if (!isTarget(d.target)) throw new Error("invalid delegated runtime target");
   assertRuntimeMatchesProvider(d.provider, d.runtime, d.target);
+  if (d.capabilitySnapshot !== undefined) {
+    assertPersistedTargetCapabilitySnapshot(d.capabilitySnapshot, {
+      provider: d.provider,
+      model: d.model,
+      target: d.target,
+    });
+  }
   const credentialMatches = d.credentialProvider === d.provider
     || (d.provider === "local" && d.credentialProvider === "ollama-cloud");
   if (!credentialMatches) throw new Error("persisted credential provider does not match provider runtime");
@@ -224,7 +246,18 @@ async function resolveOpenAITarget(
   const target = await resolveOpenAICompatTarget(provider, options, model);
   if (!target) return null;
   const fingerprint = endpointFingerprint(target.baseURL);
-  if (provider === "custom") return { ...target, identity: { kind: "custom-config", endpointFingerprint: fingerprint }, cloud: false };
+  if (provider === "custom") {
+    const { isLoopbackOrPrivateUrl } = await import("../local-only-policy.js");
+    return {
+      ...target,
+      identity: {
+        kind: "custom-config",
+        endpointFingerprint: fingerprint,
+        locality: isLoopbackOrPrivateUrl(target.baseURL) ? "local" : "remote",
+      },
+      cloud: false,
+    };
+  }
   if (provider === "ollama-cloud") return { ...target, identity: { kind: "ollama-cloud", endpointFingerprint: fingerprint }, cloud: true };
   if (provider === "local") {
     const { isCloudModel } = await import("../ollama-cloud.js");
@@ -280,7 +313,11 @@ function isTarget(value: unknown): value is DelegatedRuntimeTarget {
   const target = value as Partial<DelegatedRuntimeTarget>;
   if (target.kind === "provider-registry") return isFingerprint(target.endpointFingerprint);
   if (target.kind === "local-runtime") return typeof target.runtimeId === "string" && !!target.runtimeId && isFingerprint(target.endpointFingerprint);
-  return (target.kind === "custom-config" || target.kind === "ollama-cloud" || target.kind === "local-config") && isFingerprint(target.endpointFingerprint);
+  if (target.kind === "custom-config") {
+    return isFingerprint(target.endpointFingerprint)
+      && (target.locality === undefined || target.locality === "local" || target.locality === "remote");
+  }
+  return (target.kind === "ollama-cloud" || target.kind === "local-config") && isFingerprint(target.endpointFingerprint);
 }
 
 function assertSurface(value: unknown): void {

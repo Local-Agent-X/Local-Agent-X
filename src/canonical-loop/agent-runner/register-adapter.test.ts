@@ -7,6 +7,18 @@ const mocks = vi.hoisted(() => ({
   registerAdapterForOp: vi.fn(),
   resolveCredential: vi.fn(async () => ({ provider: "anthropic", credential: "oauth:test", source: "oauth" })),
   createProviderAdapterFactory: vi.fn(async () => () => ({ name: "anthropic" })),
+  getLocalModelCapabilityProfile: vi.fn((): ResolvedProviderRuntime["localModelCapabilityProfile"] => null),
+  captureTargetCapabilitySnapshot: vi.fn(() => ({
+    targetIdentity: "local-runtime:runtime-a:" + "a".repeat(64),
+    tools: "unknown",
+    toolsRejected: false,
+    vision: "unknown",
+    streaming: "unknown",
+    jsonMode: "unknown",
+    localFiles: "unknown",
+    contextWindowTokens: null,
+    locality: "local",
+  })),
   resolveProviderRuntime: vi.fn(async (): Promise<ResolvedProviderRuntime> => ({
     identity: {
       provider: "anthropic",
@@ -23,6 +35,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../runtime.js", () => ({ registerAdapterForOp: mocks.registerAdapterForOp }));
 vi.mock("../provider-adapter-factory.js", () => ({
+  captureTargetCapabilitySnapshot: mocks.captureTargetCapabilitySnapshot,
   createProviderAdapterFactory: mocks.createProviderAdapterFactory,
   resolveProviderRuntime: mocks.resolveProviderRuntime,
 }));
@@ -32,6 +45,9 @@ vi.mock("../../auth/resolve.js", () => ({
 vi.mock("../../config.js", () => ({ getRuntimeConfig: () => ({ openaiApiKey: undefined }) }));
 vi.mock("../../providers/ollama-capability-probe.js", () => ({
   probeOllamaCapabilities: vi.fn(async () => undefined),
+}));
+vi.mock("../../local-runtimes/index.js", () => ({
+  getLocalModelCapabilityProfile: mocks.getLocalModelCapabilityProfile,
 }));
 vi.mock("../runtime-integrity.js", () => ({
   sealDelegatedRuntime: (_opId: string, descriptor: object) => ({
@@ -103,6 +119,7 @@ describe("registerProviderAdapter", () => {
     };
     mocks.resolveCredential.mockResolvedValue({ provider: "local", credential: "ollama", source: "sentinel" });
     mocks.resolveProviderRuntime.mockResolvedValueOnce(first).mockResolvedValue(second);
+    mocks.getLocalModelCapabilityProfile.mockReturnValue(first.localModelCapabilityProfile);
     const options = {
       provider: "local",
       model: "local-model",

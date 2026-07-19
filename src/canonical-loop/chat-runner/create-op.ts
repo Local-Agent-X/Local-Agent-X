@@ -55,6 +55,7 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
     constraints: [],
     lane: "interactive",
     preferredProvider: ctx.prepared.provider,
+    targetPin: ctx.prepared.targetPin,
     authSource: ctx.prepared.authSource,
     budget: { maxIterations: ctx.prepared.maxIterations || 30, maxWallTimeMs: wallClockMs },
   });

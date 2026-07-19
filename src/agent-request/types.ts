@@ -8,6 +8,7 @@ import type { ReasoningEffort } from "../providers/reasoning-effort.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
 import type { RenderedPromptSection } from "../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
+import type { TargetPin } from "../ops/types.js";
 
 export type ChannelKind = "web" | "telegram" | "whatsapp" | "cron" | "agent";
 
@@ -79,6 +80,8 @@ export interface PreparedAgentRequest {
   provider: string;
   apiKey: string;
   model: string;
+  /** Original explicit per-turn override, even when admission falls back. */
+  targetPin?: TargetPin;
   codexApiKey?: string;
   customBaseURL?: string;
   systemPrompt: string;

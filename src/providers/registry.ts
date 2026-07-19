@@ -14,12 +14,18 @@
 import type { ProviderId } from "./provider-ids.js";
 import { AUTH_PROVIDERS, type AuthProvider } from "../auth/auth-provider.js";
 
+export type CapabilitySupport = boolean | "target-dependent";
+
 /** Provider capability flags. Used to gate reasoning_effort, tools, etc. */
 export interface ProviderCapabilities {
-  /** Whether the provider's chat completion API accepts `tools`. */
-  tools: boolean;
-  /** Whether the provider streams via SSE. */
-  streaming: boolean;
+  /** Whether every target accepts `tools`, or the exact target must prove it. */
+  tools: CapabilitySupport;
+  /** Whether every target accepts image input, or the exact target must prove it. */
+  vision: CapabilitySupport;
+  /** Whether every target streams, or the exact target must prove it. */
+  streaming: CapabilitySupport;
+  /** Whether the transport can consume local files without an image upload. */
+  localFiles: boolean;
   /**
    * Whether to opt-in to `reasoning_effort` on the OpenAI Chat
    * Completions request. Matched per-model against the regex from
@@ -36,7 +42,7 @@ export interface ProviderCapabilities {
    * self-heals a rejection by dropping it), so this flag is a routing hint,
    * not a hard gate.
    */
-  structuredOutput?: boolean;
+  structuredOutput?: CapabilitySupport;
 }
 
 /** HTTP transport — OpenAI Chat Completions wire format. */
@@ -133,7 +139,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     backgroundModel: "grok-4.20-0309-non-reasoning",
     baseURL: "https://api.x.ai/v1",
     envKey: "XAI_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_GROK, structuredOutput: true },
+    capabilities: { tools: true, vision: false, streaming: true, localFiles: false, reasoning: REASONING_GROK, structuredOutput: true },
     auth: AUTH_PROVIDERS.xai,
   },
   openai: {
@@ -148,7 +154,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     backgroundModel: "gpt-4o-mini",
     baseURL: "https://api.openai.com/v1",
     envKey: "OPENAI_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY, structuredOutput: true },
+    capabilities: { tools: true, vision: true, streaming: true, localFiles: false, reasoning: REASONING_OPENAI_FAMILY, structuredOutput: true },
     auth: AUTH_PROVIDERS.openai,
   },
   codex: {
@@ -164,7 +170,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     // touch it.
     baseURL: "https://api.openai.com/v1",
     envKey: "",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OPENAI_FAMILY },
+    capabilities: { tools: true, vision: true, streaming: true, localFiles: false, reasoning: REASONING_OPENAI_FAMILY },
     auth: AUTH_PROVIDERS.codex,
   },
   anthropic: {
@@ -185,7 +191,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "claude-opus-4-8",
     backgroundModel: "claude-haiku-4-5",
     cliBinary: "claude",
-    capabilities: { tools: true, streaming: true, reasoning: false },
+    capabilities: { tools: true, vision: true, streaming: true, localFiles: true, reasoning: false },
     auth: AUTH_PROVIDERS.anthropic,
   },
   gemini: {
@@ -208,7 +214,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     backgroundModel: "gemini-2.0-flash",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     envKey: "GEMINI_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_GEMINI },
+    capabilities: { tools: true, vision: true, streaming: true, localFiles: false, reasoning: REASONING_GEMINI },
     auth: AUTH_PROVIDERS.gemini,
   },
   cerebras: {
@@ -219,7 +225,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "gpt-oss-120b",
     baseURL: "https://api.cerebras.ai/v1",
     envKey: "CEREBRAS_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS, structuredOutput: true },
+    capabilities: { tools: true, vision: false, streaming: true, localFiles: false, reasoning: REASONING_OSS, structuredOutput: true },
     auth: AUTH_PROVIDERS.cerebras,
   },
   local: {
@@ -235,7 +241,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "qwen2:7b",
     baseURL: (ctx) => `${ctx.ollamaUrl}/v1`,
     envKey: "",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS },
+    capabilities: { tools: "target-dependent", vision: "target-dependent", streaming: true, localFiles: false, reasoning: REASONING_OSS, structuredOutput: "target-dependent" },
     auth: AUTH_PROVIDERS.local,
   },
   "ollama-cloud": {
@@ -250,7 +256,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     // about that, so we mark it null-by-context.
     baseURL: () => null,
     envKey: "OLLAMA_CLOUD_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: REASONING_OSS },
+    capabilities: { tools: true, vision: "target-dependent", streaming: true, localFiles: false, reasoning: REASONING_OSS, structuredOutput: "target-dependent" },
     auth: AUTH_PROVIDERS["ollama-cloud"],
   },
   custom: {
@@ -261,7 +267,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     defaultModel: "custom-model",
     baseURL: (ctx) => ctx.customBaseURL || null,
     envKey: "CUSTOM_API_KEY",
-    capabilities: { tools: true, streaming: true, reasoning: false },
+    capabilities: { tools: "target-dependent", vision: "target-dependent", streaming: "target-dependent", localFiles: false, reasoning: false, structuredOutput: "target-dependent" },
     auth: AUTH_PROVIDERS.custom,
   },
 };

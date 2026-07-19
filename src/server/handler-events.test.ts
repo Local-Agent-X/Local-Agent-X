@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildExecutionRules } from "./handler-events.js";
+import { targetPinForModelOverride } from "../agent-request/target-pin.js";
 
 // The supervisor-side delegation guidance (config/system-prompt.md) promises:
 // workers report a result whose first sentence carries the outcome (the
@@ -36,5 +37,16 @@ describe("buildExecutionRules", () => {
   it("worktree variant keeps save-as-you-go; workspace variant forbids repo-source edits", () => {
     expect(variants[0].rules).toContain("Save results to workspace/ as you go");
     expect(variants[1].rules).toContain("Don't edit repo source.");
+  });
+});
+
+describe("targetPinForModelOverride", () => {
+  it("persists the requested pin rather than a later fallback target", () => {
+    const requested = { provider: "anthropic" as const, model: "claude-opus-4-8" };
+    const resolvedFallback = { provider: "openai", model: "gpt-4o-mini" };
+
+    expect(targetPinForModelOverride(requested)).toEqual(requested);
+    expect(targetPinForModelOverride(requested)).not.toEqual(resolvedFallback);
+    expect(targetPinForModelOverride(undefined)).toBeUndefined();
   });
 });

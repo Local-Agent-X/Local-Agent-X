@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPromptTelemetry, measurePromptSection } from "../../prompt-telemetry.js";
 
-const { appendOpMessage, writeOp } = vi.hoisted(() => ({
+const { appendOpMessage, buildContextPack, writeOp } = vi.hoisted(() => ({
   appendOpMessage: vi.fn(),
+  buildContextPack: vi.fn(async () => ({ routing: {}, budget: {}, secrets: { allowed: [] } })),
   writeOp: vi.fn(),
 }));
 
@@ -35,7 +36,7 @@ vi.mock("../../ops/op-store.js", () => ({
   writeOp,
 }));
 vi.mock("../../ops/context-pack-builder.js", () => ({
-  buildContextPack: vi.fn(async () => ({ routing: {}, budget: {}, secrets: { allowed: [] } })),
+  buildContextPack,
 }));
 vi.mock("../../ops/heartbeat.js", () => ({ getRetryPolicy: vi.fn(() => ({})) }));
 vi.mock("../../ops/session-bridge.js", () => ({ trackOpForSession: vi.fn() }));
@@ -45,6 +46,7 @@ import { createChatOp } from "./create-op.js";
 beforeEach(() => {
   appendOpMessage.mockClear();
   writeOp.mockClear();
+  buildContextPack.mockClear();
 });
 
 describe("createChatOp prompt telemetry", () => {
@@ -56,6 +58,7 @@ describe("createChatOp prompt telemetry", () => {
     const prepared = {
       provider: "openai",
       model: "qwen-test",
+      targetPin: { provider: "anthropic" as const, model: "claude-opus-4-8" },
       maxIterations: 30,
       systemPrompt: basePrompt + augmentation,
       cleanHistory: [
@@ -122,6 +125,10 @@ describe("createChatOp prompt telemetry", () => {
       contextPack: { promptTelemetry: ReturnType<typeof createPromptTelemetry> };
     };
     const telemetry = persisted.contextPack.promptTelemetry;
+    expect(buildContextPack).toHaveBeenCalledWith(expect.objectContaining({
+      preferredProvider: "openai",
+      targetPin: { provider: "anthropic", model: "claude-opus-4-8" },
+    }));
     expect(telemetry.characters).toBe(finalPrompt.length);
     expect(telemetry.utf8Bytes).toBe(Buffer.byteLength(finalPrompt, "utf8"));
     expect(telemetry.sections.map(section => section.id)).toEqual([

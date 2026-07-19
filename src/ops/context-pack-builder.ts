@@ -49,6 +49,7 @@ export interface BuildPackInput {
   capabilities?: ProviderCapabilityRequirement;
   lane?: OpLane;                        // default "build"
   preferredProvider?: string;
+  targetPin?: ContextPack["routing"]["targetPin"];
   authSource?: CredentialSource;        // billing mode of the active credential
   budget?: Partial<OpBudget>;
   secretsAllowed?: string[];
@@ -99,7 +100,14 @@ export async function buildContextPack(input: BuildPackInput): Promise<ContextPa
     },
     capabilities: input.capabilities ?? {},
     budget,
-    routing: { lane, preferredProvider: input.preferredProvider, authSource: input.authSource },
+    routing: {
+      lane,
+      preferredProvider: input.preferredProvider,
+      authSource: input.authSource,
+      ...(input.targetPin && (input.targetPin.provider || input.targetPin.model)
+        ? { targetPin: { ...input.targetPin } }
+        : {}),
+    },
     secrets: { allowed: input.secretsAllowed ?? [] },
   };
 }

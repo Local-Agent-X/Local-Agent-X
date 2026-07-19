@@ -14,6 +14,7 @@ import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "
 import { resolveProvider } from "./resolve-provider.js";
 import { noteResolvedAuthSource, noteResolvedModel } from "../cost-tracker.js";
 import { providerUndercallsTools } from "../providers/provider-ids.js";
+import { explicitTargetPin } from "./target-pin.js";
 import { createLogger } from "../logger.js";
 
 import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
@@ -335,6 +336,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     provider: resolved.provider,
     apiKey: resolved.apiKey,
     model: resolved.model,
+    targetPin: explicitTargetPin(input.providerOverride, input.modelOverride),
     codexApiKey: resolved.codexApiKey,
     customBaseURL: resolved.customBaseURL,
     systemPrompt,

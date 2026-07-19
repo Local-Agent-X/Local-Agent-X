@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
+import { targetPinForModelOverride } from "../agent-request/target-pin.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store/index.js";
 import { looksLikeClarificationRequest, looksLikeUnsubstantiatedCompletion, looksLikeEmptyOrErrorOnly } from "../agents/result-guard.js";
@@ -15,7 +16,6 @@ import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js";
-
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
 import { registerSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
@@ -223,7 +223,7 @@ export function registerHandlerEvents(deps: {
       const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: agentSystemPrompt,
         renderedPromptSections: requiredPromptPlan("spawned-agent", "Spawned Agent", agentSystemPrompt),
-        tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature,
+        tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature, targetPin: targetPinForModelOverride(modelOverride),
         callContext: "delegated",
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",

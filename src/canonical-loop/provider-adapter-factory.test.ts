@@ -9,7 +9,21 @@ const fixture = vi.hoisted(() => ({
   defaultCodexTransport: vi.fn(),
   createAnthropicAdapter: vi.fn(),
   createCodexAdapter: vi.fn(),
+  certified: false,
 }));
+
+vi.mock("../local-runtimes/index.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../local-runtimes/index.js")>();
+  return {
+    ...original,
+    getLocalRuntimeById: (id: string) => id === "runtime-1" ? {
+      id,
+      chatBaseUrl: "http://127.0.0.1:1234/v1",
+      models: [{ id: "shared-model", contextWindow: 8_192, tools: true }],
+    } : null,
+    hasPublishedCertification: () => fixture.certified,
+  };
+});
 
 vi.mock("../ollama-cloud.js", () => ({
   isCloudModel: (model: string) => fixture.cloudModels.has(model),
@@ -26,10 +40,16 @@ vi.mock("./adapters/codex-transport.js", () => ({ defaultCodexTransport: fixture
 vi.mock("./adapters/anthropic.js", () => ({ createAnthropicAdapter: fixture.createAnthropicAdapter }));
 vi.mock("./adapters/codex.js", () => ({ createCodexAdapter: fixture.createCodexAdapter }));
 
-const { assertExactDelegatedRuntime, createProviderAdapterFactory, resolveProviderRuntime } = await import("./provider-adapter-factory.js");
+const {
+  assertExactDelegatedRuntime,
+  captureTargetCapabilitySnapshot,
+  createProviderAdapterFactory,
+  resolveProviderRuntime,
+} = await import("./provider-adapter-factory.js");
 
 beforeEach(() => {
   fixture.cloudModels.clear();
+  fixture.certified = false;
   vi.clearAllMocks();
   fixture.defaultAnthropicTransport.mockReturnValue(fixture.anthropicTransport);
   fixture.defaultCodexTransport.mockReturnValue(fixture.codexTransport);
@@ -38,6 +58,61 @@ beforeEach(() => {
 });
 
 describe("delegated provider runtime identity", () => {
+  it("persists rejection over prior certification for the exact local target", () => {
+    fixture.certified = true;
+    const snapshot = captureTargetCapabilitySnapshot({
+      provider: "local",
+      model: "shared-model",
+      target: {
+        kind: "local-runtime",
+        runtimeId: "runtime-1",
+        endpointFingerprint: "1".repeat(64),
+      },
+    }, {
+      runtimeId: "runtime-1",
+      baseURL: "http://127.0.0.1:1234/v1",
+      model: "shared-model",
+      tier: "medium",
+      maxTools: 24,
+      contextWindow: 8_192,
+      tools: { advertised: true, verified: true, rejectsTools: true },
+    });
+
+    expect(snapshot).toMatchObject({
+      tools: "unsupported",
+      toolsRejected: true,
+      jsonMode: "supported",
+      contextWindowTokens: 8_192,
+      locality: "local",
+    });
+  });
+
+  it("does not reuse a local profile from another model on the same runtime", () => {
+    const snapshot = captureTargetCapabilitySnapshot({
+      provider: "local",
+      model: "model-b",
+      target: {
+        kind: "local-runtime",
+        runtimeId: "runtime-1",
+        endpointFingerprint: "1".repeat(64),
+      },
+    }, {
+      runtimeId: "runtime-1",
+      baseURL: "http://127.0.0.1:1234/v1",
+      model: "model-a",
+      tier: "medium",
+      maxTools: 24,
+      contextWindow: 8_192,
+      tools: { advertised: true, verified: true, rejectsTools: true },
+    });
+
+    expect(snapshot).toMatchObject({
+      tools: "unknown",
+      toolsRejected: false,
+      contextWindowTokens: null,
+    });
+  });
+
   it("keeps a true local model on the non-secret local credential source", async () => {
     const resolved = await resolveProviderRuntime("local", "qwen:14b", { apiKey: "ollama", authSource: "sentinel" });
     expect(resolved.identity).toMatchObject({

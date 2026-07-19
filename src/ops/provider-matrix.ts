@@ -1,10 +1,10 @@
 /**
- * Provider capability matrix + dynamic concurrency.
+ * Provider runtime scheduling + dynamic concurrency.
  *
- * Per spec §2: each provider declares its capabilities once at registration.
- * Routing is explicit (filter by required caps, pick by latency/cost),
- * not vibes-based. Per spec §13: maxConcurrent is dynamic — supervisor
- * halves on 429/overload, ramps back up after a cooldown.
+ * Provider feature capabilities live in providers/registry.ts. This module
+ * owns only scheduler state: concurrency, circuit health, and resource locks.
+ * Per spec §13: maxConcurrent is dynamic — the supervisor halves it on
+ * 429/overload, then ramps back up after a cooldown.
  *
  * Neutral naming per spec §9: providers identified by transport+auth
  * shape (cliOauth, httpKey, localHttp), not by vendor name in
@@ -14,43 +14,33 @@
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.provider-matrix");
 
-// ── Capability schema ─────────────────────────────────────────────────────
+// ── Scheduler profile ─────────────────────────────────────────────────────
 
-export interface ProviderCapabilities {
+export interface ProviderRuntimeProfile {
   /** Stable provider identifier. Use neutral names in code. */
   id: string;
   /** Human-friendly label for logs/UI (vendor name allowed here, it's data). */
   label: string;
-  /** Transport+auth shape: cliOauth | httpKey | localHttp | etc. */
-  transport: "cliOauth" | "httpKey" | "localHttp" | "custom";
-  supportsTools: boolean;
-  supportsVision: boolean;
-  supportsLongContext: boolean;     // >100K tokens
-  supportsStreaming: boolean;
-  supportsJsonMode: boolean;
-  supportsLocalFiles: boolean;       // CLI providers can read disk natively
   /** Hard ceiling on concurrent in-flight calls. Static config baseline. */
   maxConcurrent: number;
-  costTier: "cheap" | "standard" | "premium";
-  latencyTier: "fast" | "medium" | "slow";
   /** Resource locks the provider needs (e.g. ["gpu:0"] for local models). */
   resourceLocks: string[];
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────
 
-const REGISTRY = new Map<string, ProviderCapabilities>();
+const REGISTRY = new Map<string, ProviderRuntimeProfile>();
 
-export function registerProvider(caps: ProviderCapabilities): void {
+export function registerProvider(caps: ProviderRuntimeProfile): void {
   REGISTRY.set(caps.id, caps);
-  logger.info(`[provider-matrix] registered ${caps.id} (${caps.label}, transport=${caps.transport}, maxConcurrent=${caps.maxConcurrent})`);
+  logger.info(`[provider-matrix] registered ${caps.id} (${caps.label}, maxConcurrent=${caps.maxConcurrent})`);
 }
 
-export function listProviders(): ProviderCapabilities[] {
+export function listProviders(): ProviderRuntimeProfile[] {
   return [...REGISTRY.values()];
 }
 
-export function getProvider(id: string): ProviderCapabilities | undefined {
+export function getProvider(id: string): ProviderRuntimeProfile | undefined {
   return REGISTRY.get(id);
 }
 
@@ -92,100 +82,34 @@ export function resourceLocksForProvider(providerId: string | undefined): string
 export function bootstrapProviderMatrix(): void {
   registerProvider({
     id: "httpKeyOpenAi", label: "Codex / OpenAI (HTTP)",
-    transport: "httpKey",
-    supportsTools: true, supportsVision: true, supportsLongContext: true,
-    supportsStreaming: true, supportsJsonMode: true, supportsLocalFiles: false,
-    maxConcurrent: 8, costTier: "standard", latencyTier: "medium",
+    maxConcurrent: 8,
     resourceLocks: [],
   });
   registerProvider({
     id: "cliOauthAnthropic", label: "Claude (CLI / OAuth)",
-    transport: "cliOauth",
-    supportsTools: true, supportsVision: true, supportsLongContext: true,
-    supportsStreaming: true, supportsJsonMode: false, supportsLocalFiles: true,
-    maxConcurrent: 10, costTier: "premium", latencyTier: "medium",
+    maxConcurrent: 10,
     resourceLocks: [],
   });
   registerProvider({
     id: "httpKeyXai", label: "Grok / xAI (HTTP)",
-    transport: "httpKey",
-    supportsTools: true, supportsVision: false, supportsLongContext: true,
-    supportsStreaming: true, supportsJsonMode: true, supportsLocalFiles: false,
-    maxConcurrent: 4, costTier: "standard", latencyTier: "medium",
+    maxConcurrent: 4,
     resourceLocks: [],
   });
   registerProvider({
     id: "httpKeyGemini", label: "Gemini (HTTP)",
-    transport: "httpKey",
-    supportsTools: true, supportsVision: true, supportsLongContext: true,
-    supportsStreaming: true, supportsJsonMode: true, supportsLocalFiles: false,
-    maxConcurrent: 4, costTier: "standard", latencyTier: "medium",
+    maxConcurrent: 4,
     resourceLocks: [],
   });
   registerProvider({
     id: "httpKeyCerebras", label: "Cerebras (HTTP)",
-    transport: "httpKey",
-    supportsTools: true, supportsVision: false, supportsLongContext: false,
-    supportsStreaming: true, supportsJsonMode: true, supportsLocalFiles: false,
-    maxConcurrent: 4, costTier: "cheap", latencyTier: "fast",
+    maxConcurrent: 4,
     resourceLocks: [],
   });
   registerProvider({
     id: "localHttpOllama", label: "Local model (Ollama)",
-    transport: "localHttp",
-    supportsTools: false, supportsVision: false, supportsLongContext: false,
-    supportsStreaming: true, supportsJsonMode: false, supportsLocalFiles: false,
-    maxConcurrent: 1, costTier: "cheap", latencyTier: "slow",
+    maxConcurrent: 1,
     resourceLocks: ["gpu:0"],
   });
-}
-
-// ── Capability matching (routing) ─────────────────────────────────────────
-
-import type { ProviderCapabilityRequirement } from "./types.js";
-
-export interface MatchOptions {
-  /** Hard requirements — provider must satisfy ALL. */
-  requirements?: ProviderCapabilityRequirement;
-  /** Optional explicit preference (still must satisfy requirements). */
-  preferredId?: string;
-  /** Cost/latency tier preferences for tie-breaking. */
-  preferCheap?: boolean;
-  preferFast?: boolean;
-}
-
-/** Return providers matching all requirements, sorted by preference. */
-export function matchProviders(opts: MatchOptions = {}): ProviderCapabilities[] {
-  const req = opts.requirements ?? {};
-  let candidates = listProviders().filter(p => {
-    if (req.needsTools && !p.supportsTools) return false;
-    if (req.needsVision && !p.supportsVision) return false;
-    if (req.needsLongContext && !p.supportsLongContext) return false;
-    if (req.needsStreaming && !p.supportsStreaming) return false;
-    if (req.needsJsonMode && !p.supportsJsonMode) return false;
-    if (req.needsLocalFiles && !p.supportsLocalFiles) return false;
-    if (isCircuitOpenForProvider(p.id)) return false;
-    return true;
-  });
-
-  if (opts.preferredId) {
-    const preferred = candidates.find(p => p.id === opts.preferredId);
-    if (preferred) candidates = [preferred, ...candidates.filter(p => p.id !== opts.preferredId)];
-  }
-
-  candidates.sort((a, b) => {
-    if (opts.preferFast && a.latencyTier !== b.latencyTier) {
-      const order = { fast: 0, medium: 1, slow: 2 };
-      return order[a.latencyTier] - order[b.latencyTier];
-    }
-    if (opts.preferCheap && a.costTier !== b.costTier) {
-      const order = { cheap: 0, standard: 1, premium: 2 };
-      return order[a.costTier] - order[b.costTier];
-    }
-    return 0;
-  });
-
-  return candidates;
 }
 
 // ── Dynamic concurrency (per spec §13) ────────────────────────────────────

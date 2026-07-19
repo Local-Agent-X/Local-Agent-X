@@ -49,7 +49,13 @@ export interface ContextPack {
   };
   capabilities: ProviderCapabilityRequirement;
   budget: OpBudget;
-  routing: { lane: OpLane; preferredProvider?: string; authSource?: CredentialSource };
+  routing: {
+    lane: OpLane;
+    preferredProvider?: string;
+    authSource?: CredentialSource;
+    /** Caller-declared target pin. Absence means preference/default, not a pin. */
+    targetPin?: TargetPin;
+  };
   /** Content-free prompt sizing captured before dispatch and persisted with the op. */
   promptTelemetry?: PromptTelemetry;
   secrets: {
@@ -80,6 +86,31 @@ export interface ProviderCapabilityRequirement {
   needsStreaming?: boolean;
   needsJsonMode?: boolean;
   needsLocalFiles?: boolean;
+  /** Explicit hard floor. Effective request sizing may raise it. */
+  minimumContextTokens?: number;
+  /** Hard locality boundary; "any" is represented by absence. */
+  locality?: "local-only";
+}
+
+export interface TargetPin {
+  provider?: import("../providers/provider-ids.js").ProviderId;
+  model?: string;
+}
+
+export type CapabilityVerdict = "supported" | "unsupported" | "unknown";
+
+/** Content-free facts captured for the exact signed runtime target at admission. */
+export interface PersistedTargetCapabilitySnapshot {
+  targetIdentity: string;
+  tools: CapabilityVerdict;
+  /** A learned exact endpoint/model rejection dominates earlier certification. */
+  toolsRejected: boolean;
+  vision: CapabilityVerdict;
+  streaming: CapabilityVerdict;
+  jsonMode: CapabilityVerdict;
+  localFiles: CapabilityVerdict;
+  contextWindowTokens: number | null;
+  locality: "local" | "remote" | "unknown";
 }
 
 export interface OpBudget {
@@ -113,7 +144,7 @@ export type DelegatedProviderRuntime = "anthropic" | "codex" | "gemini-native" |
 
 export type DelegatedRuntimeTarget =
   | { kind: "provider-registry"; endpointFingerprint: string }
-  | { kind: "custom-config"; endpointFingerprint: string }
+  | { kind: "custom-config"; endpointFingerprint: string; locality?: "local" | "remote" }
   | { kind: "ollama-cloud"; endpointFingerprint: string }
   | { kind: "local-runtime"; runtimeId: string; endpointFingerprint: string }
   | { kind: "local-config"; endpointFingerprint: string };
@@ -147,6 +178,7 @@ export interface ExactDelegatedRuntimeDescriptor {
   model: string;
   runtime: DelegatedProviderRuntime;
   target: DelegatedRuntimeTarget;
+  capabilitySnapshot?: PersistedTargetCapabilitySnapshot;
   sessionId?: string;
   surface?: DelegatedRuntimeSurface;
   integrity: { scheme: "hmac-sha256-v1"; mac: string };

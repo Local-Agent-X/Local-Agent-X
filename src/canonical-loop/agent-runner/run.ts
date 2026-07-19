@@ -100,6 +100,7 @@ export async function runAgentViaCanonical(
     constraints: [],
     lane,
     preferredProvider: options.provider,
+    targetPin: options.targetPin,
     budget: {
       maxIterations: options.maxIterations || 30,
       maxWallTimeMs: wallClockMs,

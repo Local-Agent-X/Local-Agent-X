@@ -1,10 +1,12 @@
-import type { OpLane } from "../../ops/types.js";
+import type { ContextPack, OpLane } from "../../ops/types.js";
 import type { AgentOptions } from "../../providers/types.js";
 import type { CallContext } from "../../tool-execution/context.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js";
 
 export interface CanonicalAgentOptions extends AgentOptions {
+  /** Caller-declared exact provider/model pin, distinct from a resolved default. */
+  targetPin?: ContextPack["routing"]["targetPin"];
   /** Exact ordered model-visible prompt plan. Every caller must classify its
    * content explicitly so local degradation never guesses from telemetry. */
   renderedPromptSections: RenderedPromptSection[];

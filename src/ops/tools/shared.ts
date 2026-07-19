@@ -134,6 +134,9 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
   // spawning turn) onto the new op, so the agents panel can later render a
   // run-lineage tree. Resolved from `_sessionId`; undefined when unavailable.
   const parentOpId = resolveParentOpId(sessionId);
+  const preferredProvider = typeof args.preferred_provider === "string"
+    ? args.preferred_provider
+    : undefined;
 
   const contextPack = await buildContextPack({
     description: task,
@@ -145,7 +148,7 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     scopeForAgentsRules: typeof args.scope_hint === "string" ? args.scope_hint : undefined,
     memoryQuery: typeof args.memory_query === "string" ? args.memory_query : undefined,
     lane,
-    preferredProvider: typeof args.preferred_provider === "string" ? args.preferred_provider : undefined,
+    preferredProvider,
     budget: {
       maxIterations: typeof args.max_iterations === "number" ? args.max_iterations : 30,
       maxWallTimeMs: typeof args.max_wall_time_ms === "number" ? args.max_wall_time_ms : 15 * 60 * 1000,

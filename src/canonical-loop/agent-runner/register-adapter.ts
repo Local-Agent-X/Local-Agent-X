@@ -5,6 +5,7 @@ import type { Op } from "../../ops/types.js";
 import { registerAdapterForOp } from "../runtime.js";
 import {
   createProviderAdapterFactory,
+  captureTargetCapabilitySnapshot,
   resolveProviderRuntime,
   type ResolvedProviderRuntime,
 } from "../provider-adapter-factory.js";
@@ -58,6 +59,17 @@ export async function registerProviderAdapter(
   if ((provider === "local" || provider === "ollama-cloud") && resolvedRuntime.baseURL) {
     const { probeOllamaCapabilities } = await import("../../providers/ollama-capability-probe.js");
     await probeOllamaCapabilities(resolvedRuntime.baseURL, model, resolvedRuntime.apiKey || "ollama");
+    if (resolvedRuntime.identity.target.kind === "local-runtime") {
+      const { getLocalModelCapabilityProfile } = await import("../../local-runtimes/index.js");
+      resolvedRuntime.localModelCapabilityProfile = getLocalModelCapabilityProfile(
+        resolvedRuntime.baseURL,
+        model,
+      );
+      resolvedRuntime.identity.capabilitySnapshot = captureTargetCapabilitySnapshot(
+        resolvedRuntime.identity,
+        resolvedRuntime.localModelCapabilityProfile,
+      );
+    }
   }
 
   op.runtimeDescriptor = sealDelegatedRuntime(op.id, {

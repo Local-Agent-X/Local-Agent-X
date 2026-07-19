@@ -5,6 +5,14 @@ import { join, relative, resolve } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { pathToFileURL } from "node:url";
 import { createHash, verify as cryptoVerify, createPublicKey } from "node:crypto";
+import {
+  registeredPluginItem,
+  safePluginId,
+  safeRestoreError,
+  type PluginListItem,
+} from "./plugin-system/lifecycle-status.js";
+
+export type { PluginListItem, PluginLifecycleStatus } from "./plugin-system/lifecycle-status.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("plugin-system");
@@ -219,8 +227,11 @@ function validateManifest(data: unknown): data is PluginManifest {
 
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
+  private restoreErrors = new Map<string, string>();
 
-  async loadPlugin(pluginPath: string): Promise<PluginManifest> {
+  async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
+
+  private async loadPluginAtPath(pluginPath: string, expectedRegistration?: { id: string; entryHash: string }): Promise<PluginManifest> {
     // Security: restrict plugins to the designated plugins directory
     const resolvedPath = resolve(pluginPath);
     const realPluginsDir = realpathSync(PLUGINS_DIR);
@@ -249,6 +260,9 @@ export class PluginManager {
     }
 
     const manifest = raw;
+    if (expectedRegistration && manifest.id !== expectedRegistration.id) {
+      throw new Error(`Registered plugin ID "${expectedRegistration.id}" does not match manifest ID`);
+    }
 
     if (this.loaded.has(manifest.id)) {
       throw new Error(`Plugin "${manifest.id}" is already loaded`);
@@ -261,7 +275,7 @@ export class PluginManager {
 
     // ── Integrity & signature verification ──
     const registry = readRegistry();
-    const registeredHash = registry[manifest.id]?.entryHash;
+    const registeredHash = expectedRegistration?.entryHash ?? registry[manifest.id]?.entryHash;
 
     const trust = assessTrustLevel(manifest, entryPath, registeredHash);
 
@@ -292,6 +306,7 @@ export class PluginManager {
       path: pluginPath,
       trustLevel: trust.trustLevel,
     });
+    this.restoreErrors.delete(manifest.id);
 
     // Persist registry with hash pin
     registry[manifest.id] = {
@@ -304,24 +319,28 @@ export class PluginManager {
     return manifest;
   }
 
-  unloadPlugin(id: string): void {
-    if (!this.loaded.has(id)) {
-      throw new Error(`Plugin "${id}" is not loaded`);
-    }
-    this.loaded.delete(id);
-
+  disablePlugin(id: string): boolean {
     const registry = readRegistry();
-    if (registry[id]) {
-      registry[id].enabled = false;
-      writeRegistry(registry);
-    }
+    if (!registry[id]) return false;
+    this.loaded.delete(id);
+    this.restoreErrors.delete(id);
+    registry[id].enabled = false;
+    writeRegistry(registry);
+    return true;
   }
 
-  listPlugins(): Array<PluginManifest & { trustLevel: TrustLevel }> {
-    return [...this.loaded.values()].map((p) => ({
-      ...p.manifest,
-      trustLevel: p.trustLevel,
-    }));
+  listPlugins(): PluginListItem[] {
+    const registry = readRegistry();
+    const ids = new Set([...Object.keys(registry), ...this.loaded.keys()]);
+    return [...ids].map<PluginListItem>((id) => {
+      const loaded = this.loaded.get(id);
+      const entry = registry[id];
+      const enabled = entry?.enabled ?? loaded !== undefined;
+      if (loaded) {
+        return { ...loaded.manifest, enabled, status: "loaded", trustLevel: loaded.trustLevel };
+      }
+      return registeredPluginItem(id, enabled, this.restoreErrors.get(id));
+    });
   }
 
   getPluginTools(id: string): string[] {
@@ -350,11 +369,19 @@ export class PluginManager {
     for (const [id, entry] of Object.entries(registry)) {
       if (!entry.enabled) continue;
       if (this.loaded.has(id)) continue;
+      if (!entry.entryHash) {
+        const reason = "Plugin is not integrity-pinned";
+        this.restoreErrors.set(id, reason);
+        logger.warn(`[plugin] Restore skipped for ${safePluginId(id)}: ${reason}`);
+        continue;
+      }
       try {
-        const manifest = await this.loadPlugin(entry.path);
+        const manifest = await this.loadPluginAtPath(entry.path, { id, entryHash: entry.entryHash });
         results.push(manifest);
-      } catch {
-        // Skip plugins that fail to load on startup
+      } catch (error) {
+        const reason = safeRestoreError(error);
+        this.restoreErrors.set(id, reason);
+        logger.warn(`[plugin] Restore failed for ${safePluginId(id)}: ${reason}`);
       }
     }
     return results;
@@ -369,3 +396,5 @@ export class PluginManager {
       .filter((dir) => existsSync(join(dir, "manifest.json")));
   }
 }
+
+export const pluginManager = new PluginManager();

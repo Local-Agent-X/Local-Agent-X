@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 
 // plugin-system.ts captures PLUGINS_DIR and TRUSTED_PUBLISHERS_PATH at
 // module-load from getLaxDir(), which honors LAX_DATA_DIR. So we set
@@ -55,6 +55,10 @@ function makePlugin(opts: {
 
 function writeTrustedPublishers(map: Record<string, { name: string; publicKey: string }>): void {
   writeFileSync(join(tmpRoot, "trusted-publishers.json"), JSON.stringify(map, null, 2), "utf-8");
+}
+
+function writePluginRegistry(registry: Record<string, { enabled: boolean; path: string; entryHash?: string }>): void {
+  writeFileSync(join(pluginsDir, "registry.json"), JSON.stringify(registry, null, 2), "utf-8");
 }
 
 function signContent(content: string): string {
@@ -191,5 +195,96 @@ describe("verifySignature via PluginManager.loadPlugin", () => {
     const manifest = await pm.loadPlugin(dir);
     expect(manifest.id).toBe("no-sig");
     expect(pm.getPluginTrust("no-sig")).toBe("unsigned");
+  });
+
+  it("restores enabled plugins into a fresh lifecycle manager", async () => {
+    const dir = makePlugin({ id: "restore-on-boot", entryContent: ENTRY });
+    const installer = await freshPluginManager();
+    await installer.loadPlugin(dir);
+
+    const { PluginManager } = await import("../src/plugin-system.js");
+    const bootManager = new PluginManager();
+    const restored = await bootManager.loadAllEnabled();
+
+    expect(restored.map((plugin) => plugin.id)).toEqual(["restore-on-boot"]);
+    expect(bootManager.isLoaded("restore-on-boot")).toBe(true);
+    expect(bootManager.listPlugins()).toHaveLength(1);
+  });
+
+  it("does not execute an enabled plugin without a persisted integrity pin at boot", async () => {
+    const marker = join(tmpRoot, "unpinned-executed.txt");
+    const dir = makePlugin({
+      id: "unpinned",
+      entryContent: `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "executed");\n`,
+    });
+    writePluginRegistry({ unpinned: { enabled: true, path: dir } });
+
+    const pm = await freshPluginManager();
+    expect(await pm.loadAllEnabled()).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(pm.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "unpinned",
+        enabled: true,
+        status: "failed",
+        error: "Plugin is not integrity-pinned",
+      }),
+    ]);
+  });
+
+  it("keeps a tampered enabled plugin visible and allows disabling it", async () => {
+    const dir = makePlugin({ id: "tampered-on-boot", entryContent: ENTRY });
+    const installer = await freshPluginManager();
+    await installer.loadPlugin(dir);
+    writeFileSync(join(dir, "index.mjs"), ENTRY + "// changed after pinning\n", "utf-8");
+
+    const { PluginManager } = await import("../src/plugin-system.js");
+    const bootManager = new PluginManager();
+    expect(await bootManager.loadAllEnabled()).toEqual([]);
+    expect(bootManager.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "tampered-on-boot",
+        enabled: true,
+        status: "failed",
+        error: "Integrity verification failed",
+      }),
+    ]);
+
+    expect(bootManager.disablePlugin("tampered-on-boot")).toBe(true);
+    expect(bootManager.listPlugins()).toEqual([
+      expect.objectContaining({ id: "tampered-on-boot", enabled: false, status: "disabled" }),
+    ]);
+  });
+
+  it("binds a restored registry key to the manifest identity before import", async () => {
+    const marker = join(tmpRoot, "alias-executed.txt");
+    const entryContent = `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(marker)}, "executed");\n`;
+    const dir = makePlugin({ id: "payload", entryContent });
+    writePluginRegistry({
+      alias: {
+        enabled: true,
+        path: dir,
+        entryHash: createHash("sha256").update(entryContent).digest("hex"),
+      },
+    });
+
+    const pm = await freshPluginManager();
+    expect(await pm.loadAllEnabled()).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+    expect(pm.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "alias",
+        enabled: true,
+        status: "failed",
+        error: "Registry identity does not match manifest",
+      }),
+    ]);
+
+    const registry = JSON.parse(readFileSync(join(pluginsDir, "registry.json"), "utf-8")) as Record<string, unknown>;
+    expect(registry.payload).toBeUndefined();
+    expect(pm.disablePlugin("alias")).toBe(true);
+    expect(pm.listPlugins()).toEqual([
+      expect.objectContaining({ id: "alias", enabled: false, status: "disabled" }),
+    ]);
   });
 });

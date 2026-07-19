@@ -7,6 +7,7 @@ import type { ServerEvent, ToolDefinition } from "../types.js";
 import type { UnifiedToolRegistry } from "../tools/registry.js";
 import type { MemoryIndex } from "../memory/index.js";
 import type { ToolPluginContext } from "../tools/plugin.js";
+import { pluginManager } from "../plugin-system.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-tools");
@@ -38,6 +39,11 @@ export async function bootstrapTools(deps: {
   memoryIndex: MemoryIndex;
   dataDir: string;
 }): Promise<ToolBundle> {
+  const loadedPlugins = await pluginManager.loadAllEnabled();
+  if (loadedPlugins.length > 0) {
+    logger.info(`[plugins] Restored ${loadedPlugins.length} enabled plugin(s)`);
+  }
+
   const activeOnEventBySession = new Map<string, EventCallback>();
   const activeRuntimeBySession = new Map<string, RuntimeInfo>();
   const activeBrowserSessionIdRef: { value: string } = { value: "default" };

@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
 import { registerRedactedSecretValue } from "./security/secrets/index.js";
-import { deriveOrigin, encrypt, decrypt } from "./secrets-crypto.js";
+import { deriveOrigin, decrypt, encryptSecretsFile } from "./secrets-crypto.js";
+import { atomicWriteFileSync } from "./util/json-store.js";
 import type {
   SecretEntry,
   SecretMetadata,
@@ -29,6 +30,13 @@ export type { SecretMetadata, SecretMetaView } from "./secrets-types.js";
 export function normalizeSecretName(raw: string): string {
   return String(raw || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
 }
+
+export type SecretAvailabilityChange = { type: "available" | "deleted"; name: string };
+type SecretsFileWriter = (
+  path: string,
+  data: string,
+  opts: { encoding: BufferEncoding; mode: number },
+) => void;
 
 /**
  * Encrypted secrets store for API keys and tokens.
@@ -63,9 +71,10 @@ export class SecretsStore {
    * incident documented in keychain.ts:217-228.
    */
   private quarantined: SecretsFileEntry[] = [];
+  private availabilityListeners = new Set<(change: SecretAvailabilityChange) => void>();
   public readonly keychainProvider: KeychainProvider;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, private writeAtomic: SecretsFileWriter = atomicWriteFileSync) {
     mkdirSync(dataDir, { recursive: true });
     this.filePath = join(dataDir, "secrets.enc");
     const { key, provider } = getOrCreateMasterKey(dataDir);
@@ -144,35 +153,12 @@ export class SecretsStore {
     }
   }
 
-  private save(): void {
-    // Re-encrypt every live secret with the current master key.
-    const reencrypted: SecretsFileEntry[] = Array.from(this.secrets.values()).map((s) => ({
-      name: s.name,
-      service: s.service,
-      account: s.account,
-      url: s.url,
-      notes: s.notes,
-      origin: s.origin,
-      createdBySession: s.createdBySession,
-      approvedFills: s.approvedFills,
-      addedAt: s.addedAt,
-      updatedAt: s.updatedAt,
-      encrypted: encrypt(s.value, this.key),
-    }));
-    // Pass quarantined entries through unchanged. If a live entry shares
-    // a name with a quarantined one — e.g. user re-added a secret after
-    // losing the old key — the live entry wins; drop the quarantined
-    // duplicate so it doesn't shadow on the next load.
-    const liveNames = new Set(reencrypted.map(e => e.name));
-    const survivingQuarantine = this.quarantined.filter(q => !liveNames.has(q.name));
-    if (survivingQuarantine.length !== this.quarantined.length) {
-      this.quarantined = survivingQuarantine;
-    }
-    const data: SecretsFile = {
-      version: 1,
-      secrets: [...reencrypted, ...survivingQuarantine],
-    };
-    writeFileSync(this.filePath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+  private save(
+    secrets: ReadonlyMap<string, SecretEntry> = this.secrets,
+    quarantined: readonly SecretsFileEntry[] = this.quarantined,
+  ): void {
+    const data = encryptSecretsFile(secrets, quarantined, this.key);
+    this.writeAtomic(this.filePath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
   }
 
   /** Number of entries that failed to decrypt at load time and are being
@@ -201,10 +187,8 @@ export class SecretsStore {
     const existing = this.secrets.get(name);
     const metaObj: SecretMetadata = typeof meta === "string" ? { service: meta } : (meta || {});
     const url = metaObj.url ?? existing?.url;
-    // Register the new/updated value so it's immediately matchable by the egress
-    // scanner (gated by isSecretShaped inside register()).
-    registerRedactedSecretValue(value);
-    this.secrets.set(name, {
+    const nextSecrets = new Map(this.secrets);
+    nextSecrets.set(name, {
       name,
       value,
       service: metaObj.service ?? existing?.service,
@@ -217,25 +201,46 @@ export class SecretsStore {
       addedAt: existing?.addedAt || Date.now(),
       updatedAt: Date.now(),
     });
-    this.save();
+    const nextQuarantined = this.quarantined.filter((entry) => entry.name !== name);
+    this.save(nextSecrets, nextQuarantined);
+    this.secrets = nextSecrets;
+    this.quarantined = nextQuarantined;
+    registerRedactedSecretValue(value);
+    this.notifyAvailability({ type: "available", name });
   }
 
   /** Delete a secret by name. Returns true if it existed (live OR quarantined).
    *  Deleting a quarantined name is the user's explicit signal that the lost
    *  value is unrecoverable and they want the dead entry gone for good. */
   delete(name: string): boolean {
-    const liveExisted = this.secrets.delete(name);
-    const quarantineBefore = this.quarantined.length;
-    this.quarantined = this.quarantined.filter(q => q.name !== name);
-    const quarantineRemoved = this.quarantined.length < quarantineBefore;
+    const nextSecrets = new Map(this.secrets);
+    const liveExisted = nextSecrets.delete(name);
+    const nextQuarantined = this.quarantined.filter(q => q.name !== name);
+    const quarantineRemoved = nextQuarantined.length < this.quarantined.length;
     const existed = liveExisted || quarantineRemoved;
-    if (existed) this.save();
+    if (existed) {
+      this.save(nextSecrets, nextQuarantined);
+      this.secrets = nextSecrets;
+      this.quarantined = nextQuarantined;
+      this.notifyAvailability({ type: "deleted", name });
+    }
     return existed;
   }
 
   /** Check if a secret exists. */
   has(name: string): boolean {
     return this.secrets.has(name);
+  }
+
+  onAvailabilityChange(listener: (change: SecretAvailabilityChange) => void): () => void {
+    this.availabilityListeners.add(listener);
+    return () => this.availabilityListeners.delete(listener);
+  }
+
+  private notifyAvailability(change: SecretAvailabilityChange): void {
+    for (const listener of this.availabilityListeners) {
+      try { listener(change); } catch { logger.warn("[secrets] Availability listener failed"); }
+    }
   }
 
   /** List all USABLE secret names and metadata (never exposes values).
@@ -347,6 +352,7 @@ export class SecretsStore {
   destroy(): void {
     this.key.fill(0);
     this.secrets.clear();
+    this.availabilityListeners.clear();
   }
 }
 

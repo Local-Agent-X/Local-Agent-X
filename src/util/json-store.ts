@@ -33,16 +33,29 @@ export function atomicWriteFileSync(
   filePath: string,
   data: string,
   opts?: { mode?: number; encoding?: BufferEncoding },
+  operations: AtomicWriteOperations = defaultAtomicWriteOperations,
 ): void {
   const tmp = filePath + ".tmp." + randomBytes(4).toString("hex");
   try {
-    writeFileSync(tmp, data, { encoding: opts?.encoding ?? "utf-8", mode: opts?.mode });
-    renameSync(tmp, filePath);
+    operations.write(tmp, data, { encoding: opts?.encoding ?? "utf-8", mode: opts?.mode });
+    operations.rename(tmp, filePath);
   } catch (e) {
-    try { unlinkSync(tmp); } catch { /* best-effort */ }
+    try { operations.unlink(tmp); } catch { /* best-effort */ }
     throw e;
   }
 }
+
+export interface AtomicWriteOperations {
+  write(path: string, data: string, opts: { mode?: number; encoding: BufferEncoding }): void;
+  rename(source: string, destination: string): void;
+  unlink(path: string): void;
+}
+
+const defaultAtomicWriteOperations: AtomicWriteOperations = {
+  write: writeFileSync,
+  rename: renameSync,
+  unlink: unlinkSync,
+};
 
 /** mkdir -p the parent directory of `filePath`. */
 export function ensureDirFor(filePath: string): void {

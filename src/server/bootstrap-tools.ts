@@ -93,6 +93,8 @@ export async function bootstrapTools(deps: {
   }
 
   pluginManager.bindToolSurface(new PluginToolSurface(toolRegistry, allAgentTools, deps.toolPolicy));
+  pluginManager.bindSecretAvailability(deps.secretsStore);
+  await pluginManager.discoverSecretRequirements();
   const loadedPlugins = await pluginManager.loadAllEnabled();
   if (loadedPlugins.length > 0) {
     logger.info(`[plugins] Restored ${loadedPlugins.length} enabled plugin(s)`);

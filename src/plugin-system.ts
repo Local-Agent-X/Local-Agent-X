@@ -19,6 +19,13 @@ import {
   type PluginRegistryStore,
 } from "./plugin-system/registry-store.js";
 import { verifyPublisherSignature, type TrustLevel } from "./plugin-system/publisher-trust.js";
+import { assessTrustLevel } from "./plugin-system/integrity.js";
+import { buildPluginList } from "./plugin-system/list-items.js";
+import {
+  MissingPluginSecretsError,
+  PluginSecretLifecycle,
+  type SecretAvailabilityPort,
+} from "./plugin-system/secret-requirements.js";
 import type {
   PluginToolSurfacePort,
   PreparedPluginToolActivation,
@@ -54,70 +61,12 @@ function ensurePluginsDir(): void {
   }
 }
 
-function computeEntryHash(entryFilePath: string): string {
-  const content = readFileSync(entryFilePath);
-  return createHash("sha256").update(content).digest("hex");
-}
-
-function assessTrustLevel(
-  manifest: PluginManifest,
-  entryFilePath: string,
-  registeredHash: string | undefined,
-): { trustLevel: TrustLevel; currentHash: string; warning?: string } {
-  const currentHash = computeEntryHash(entryFilePath);
-
-  // Tamper check: stored hash must match current file
-  if (registeredHash && registeredHash !== currentHash) {
-    throw new Error(
-      `Plugin "${manifest.id}" entry point has been tampered with. ` +
-      `Expected hash ${registeredHash.slice(0, 12)}..., got ${currentHash.slice(0, 12)}.... ` +
-      `If this is intentional, remove and reinstall the plugin.`,
-    );
-  }
-
-  // Check publisher signature
-  if (manifest.signature && manifest.publisher) {
-    const verdict = verifyPublisherSignature(
-      manifest.publisher,
-      readFileSync(entryFilePath),
-      manifest.signature,
-      manifest.keyId,
-    );
-    if (verdict.status !== "unknown-publisher") {
-      if (verdict.status === "valid") {
-        return { trustLevel: "signed", currentHash };
-      }
-      throw new Error(
-        `Plugin "${manifest.id}" has an invalid signature from publisher "${manifest.publisher}". ` +
-        `The plugin may have been tampered with.`,
-      );
-    }
-    return {
-      trustLevel: "unsigned",
-      currentHash,
-      warning: `Plugin "${manifest.id}" is signed by unknown publisher "${manifest.publisher}". ` +
-        `Add them to ~/.lax/trusted-publishers.json to verify.`,
-    };
-  }
-
-  // No signature — check if we have a stored hash match
-  if (registeredHash) {
-    return { trustLevel: "hash-verified", currentHash };
-  }
-
-  // First load, no signature
-  return {
-    trustLevel: "unsigned",
-    currentHash,
-    warning: `Plugin "${manifest.id}" is unsigned. Loading unsigned plugins is a security risk.`,
-  };
-}
-
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
   private restoreErrors = new Map<string, string>();
   private registryError: string | undefined;
   private toolSurface: PluginToolSurfacePort | undefined;
+  private secretLifecycle = new PluginSecretLifecycle();
 
   constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(REGISTRY_PATH)) {}
 
@@ -126,9 +75,21 @@ export class PluginManager {
     this.toolSurface = surface;
   }
 
+  bindSecretAvailability(availability: SecretAvailabilityPort): void {
+    this.secretLifecycle.bind(availability);
+    availability.onAvailabilityChange?.((change) => {
+      if (change.type === "deleted") this.onSecretDeleted(change.name);
+      else void this.onSecretAdded(change.name);
+    });
+  }
+
   async loadPlugin(pluginPath: string): Promise<PluginManifest> { return this.loadPluginAtPath(pluginPath); }
 
-  private async loadPluginAtPath(pluginPath: string, expectedRegistration?: { id: string; entryHash: string; manifestHash?: string }): Promise<PluginManifest> {
+  private async loadPluginAtPath(
+    pluginPath: string,
+    expectedRegistration?: { id: string; entryHash: string; manifestHash?: string },
+    inspectSecretRequirements = false,
+  ): Promise<PluginManifest> {
     // Security: restrict plugins to the designated plugins directory
     const resolvedPath = resolve(pluginPath);
     const realPluginsDir = realpathSync(PLUGINS_DIR);
@@ -164,6 +125,7 @@ export class PluginManager {
     if (expectedRegistration && manifest.id !== expectedRegistration.id) {
       throw new Error(`Registered plugin ID "${expectedRegistration.id}" does not match manifest ID`);
     }
+    if (inspectSecretRequirements && !manifest.contributions?.secrets?.length) return manifest;
 
     try {
     const currentManifestHash = createHash("sha256").update(manifestContent).digest("hex");
@@ -201,6 +163,16 @@ export class PluginManager {
       );
     }
 
+    if (!expectedRegistration && manifest.contributions?.secrets?.length) {
+      this.secretLifecycle.retainCandidate(manifest, pluginPath, trust.trustLevel);
+    }
+    if (inspectSecretRequirements) return manifest;
+    try { this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel); }
+    catch (error) {
+      if (error instanceof MissingPluginSecretsError) this.restoreErrors.delete(manifest.id);
+      throw error;
+    }
+
     // Load plugin module
     let pluginModule: Record<string, unknown>;
     try {
@@ -212,6 +184,7 @@ export class PluginManager {
     }
 
     preparedTools = this.toolSurface?.prepare(manifest.id, manifest, pluginModule) ?? null;
+    this.secretLifecycle.assertAvailable(manifest, pluginPath, trust.trustLevel);
 
     const loadedPlugin: LoadedPlugin = {
       manifest,
@@ -252,13 +225,15 @@ export class PluginManager {
 
     if (preparedTools) this.toolSurface?.activate(preparedTools);
     this.loaded.set(manifest.id, loadedPlugin);
+    this.secretLifecycle.clear(manifest.id);
     this.restoreErrors.delete(manifest.id);
 
     return manifest;
     } catch (error) {
       if (preparedTools) this.toolSurface?.abort(preparedTools);
-      if (!expectedRegistration && !this.loaded.has(manifest.id)) {
-        this.restoreErrors.set(manifest.id, safeRestoreError(error));
+      if (!(error instanceof MissingPluginSecretsError) && !expectedRegistration && !this.loaded.has(manifest.id)) {
+        const reason = safeRestoreError(error);
+        if (!this.secretLifecycle.markFailure(manifest.id, reason)) this.restoreErrors.set(manifest.id, reason);
       }
       throw error;
     }
@@ -278,6 +253,7 @@ export class PluginManager {
       throw new Error(safeLifecyclePersistenceError("disable"));
     }
     this.loaded.delete(id);
+    this.secretLifecycle.clear(id);
     this.toolSurface?.deactivate(id);
     this.restoreErrors.delete(id);
     return true;
@@ -293,23 +269,7 @@ export class PluginManager {
       logger.warn("[plugin] Plugin registry is invalid; lifecycle operations are unavailable");
       return [registeredPluginItem("plugin-registry", false, this.registryError)];
     }
-    const ids = new Set([...Object.keys(registry), ...this.loaded.keys(), ...this.restoreErrors.keys()]);
-    return [...ids].map<PluginListItem>((id) => {
-      const loaded = this.loaded.get(id);
-      const entry = registry[id];
-      const enabled = entry?.enabled ?? loaded !== undefined;
-      if (loaded) {
-        const error = this.restoreErrors.get(id);
-        return {
-          ...loaded.manifest,
-          enabled,
-          status: "loaded",
-          trustLevel: loaded.trustLevel,
-          ...(error ? { error } : {}),
-        };
-      }
-      return registeredPluginItem(id, enabled, this.restoreErrors.get(id));
-    });
+    return buildPluginList(registry, this.loaded, this.restoreErrors, this.secretLifecycle.blocked);
   }
 
   getPluginTools(id: string): string[] {
@@ -362,12 +322,66 @@ export class PluginManager {
         });
         if (this.loaded.has(id)) results.push(manifest);
       } catch (error) {
+        if (error instanceof MissingPluginSecretsError) continue;
         const reason = safeRestoreError(error);
         this.restoreErrors.set(id, reason);
         logger.warn(`[plugin] Restore failed for ${safePluginId(id)}: ${reason}`);
       }
     }
     return results;
+  }
+
+  async discoverSecretRequirements(): Promise<void> {
+    let registry: PluginRegistry;
+    try { registry = this.registryStore.read(); } catch { return; }
+    for (const path of this.discoverPlugins()) {
+      try {
+        const raw = JSON.parse(readFileSync(join(path, "manifest.json"), "utf-8")) as unknown;
+        const manifest = parsePluginManifest(raw);
+        if (registry[manifest.id]?.enabled === false || this.loaded.has(manifest.id)) continue;
+        await this.loadPluginAtPath(path, undefined, true);
+      } catch (error) {
+        if (!(error instanceof MissingPluginSecretsError)) continue;
+      }
+    }
+  }
+
+  async retryPlugin(id: string): Promise<PluginManifest> {
+    try {
+      return await this.secretLifecycle.serializeRetry(id, () => this.retryPluginNow(id));
+    } catch (error) {
+      if (!(error instanceof MissingPluginSecretsError)) {
+        const reason = safeRestoreError(error);
+        if (!this.secretLifecycle.markFailure(id, reason)) this.restoreErrors.set(id, reason);
+      }
+      throw error;
+    }
+  }
+
+  private async retryPluginNow(id: string): Promise<PluginManifest> {
+    const loaded = this.loaded.get(id);
+    if (loaded) return loaded.manifest;
+    const blocked = this.secretLifecycle.blocked.get(id);
+    const entry = this.registryStore.read()[id];
+    const path = blocked?.path ?? entry?.path;
+    if (!path) throw new Error(`Plugin "${id}" is not waiting for secrets`);
+    if (entry?.enabled) {
+      if (!entry.entryHash) throw new Error("Plugin is not integrity-pinned");
+      return this.loadPluginAtPath(path, {
+        id,
+        entryHash: entry.entryHash,
+        manifestHash: entry.manifestHash,
+      });
+    }
+    return this.loadPluginAtPath(path);
+  }
+
+  async onSecretAdded(name: string): Promise<void> {
+    await this.secretLifecycle.restoreForAddedSecret(name, (id) => this.retryPlugin(id));
+  }
+
+  onSecretDeleted(name: string): void {
+    this.secretLifecycle.handleDeletedSecret(name, this.loaded, (id) => this.toolSurface?.deactivate(id));
   }
 
   discoverPlugins(): string[] {

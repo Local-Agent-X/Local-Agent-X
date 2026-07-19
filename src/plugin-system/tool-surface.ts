@@ -169,10 +169,19 @@ export class PluginToolSurface implements PluginToolSurfacePort {
     if (!active) return;
     for (const tool of active.tools) {
       deactivatePluginToolMetadata(tool.name, ownerId, active.activationToken);
-      if (this.registry.get(tool.name) === tool) this.registry.unregister(tool.name);
+    }
+    let cleanupFailed = false;
+    for (const tool of active.tools) {
+      try {
+        if (this.registry.get(tool.name) === tool) this.registry.unregister(tool.name);
+      } catch {
+        cleanupFailed = true;
+        this.registry.unregisterIfMatches(tool.name, tool);
+      }
       const index = this.liveTools.indexOf(tool);
       if (index >= 0) this.liveTools.splice(index, 1);
     }
     this.activeByOwner.delete(ownerId);
+    if (cleanupFailed) throw new Error(`Plugin "${ownerId}" tool registry cleanup failed`);
   }
 }

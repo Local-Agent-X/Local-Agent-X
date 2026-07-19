@@ -32,6 +32,7 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
       url: body.url,
       notes: body.notes,
     });
+    ctx.broadcastAll({ type: "settings_changed", settings: { secrets: true, plugins: true } });
     json(200, { ok: true, name }); return true;
   }
   // PATCH metadata only (not the value). Used by the secrets UI so users can
@@ -90,7 +91,9 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "DELETE" && url.pathname.startsWith("/api/secrets/")) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);
     if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return true; }
-    json(200, { ok: true, deleted: ctx.secretsStore.delete(name) }); return true;
+    const deleted = ctx.secretsStore.delete(name);
+    if (deleted) ctx.broadcastAll({ type: "settings_changed", settings: { secrets: true, plugins: true } });
+    json(200, { ok: true, deleted }); return true;
   }
 
   return false;

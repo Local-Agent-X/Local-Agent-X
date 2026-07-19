@@ -27,6 +27,8 @@ vi.mock("../plugin-system.js", () => ({
     bindToolSurface(surface: import("../plugin-system/tool-surface.js").PluginToolSurfacePort) {
       fixtures.surface = surface;
     },
+    bindSecretAvailability: vi.fn(),
+    discoverSecretRequirements: vi.fn(async () => undefined),
     async loadAllEnabled() {
       expect(fixtures.surface).toBeDefined();
       const manifest = {

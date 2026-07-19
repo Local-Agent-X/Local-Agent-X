@@ -71,6 +71,11 @@ export class UnifiedToolRegistry {
     return this.tools.delete(name);
   }
 
+  unregisterIfMatches(name: string, tool: ToolDefinition): boolean {
+    if (this.tools.get(name)?.tool !== tool) return false;
+    return this.tools.delete(name);
+  }
+
   /** Lookup a tool's executable definition by name. */
   get(name: string): ToolDefinition | undefined {
     return this.tools.get(name)?.tool;

@@ -6,7 +6,116 @@
 
 // ── API Integrations ──
 
+let pluginBundles = [];
+
+async function loadPluginBundles() {
+  const el = document.getElementById('plugin-bundles-list');
+  if (!el) return;
+  try {
+    const result = await apiJson('/api/plugins');
+    pluginBundles = Array.isArray(result) ? result : [];
+    if (pluginBundles.length === 0) {
+      el.innerHTML = '<p style="color:var(--muted)">No plugin bundles installed.</p>';
+      return;
+    }
+    el.innerHTML = pluginBundles.map(plugin => {
+      const needsSecrets = plugin.status === 'needs_secrets';
+      const repairable = needsSecrets || plugin.status === 'ready' || (plugin.status === 'failed' && Array.isArray(plugin.requiredSecrets));
+      const missing = Array.isArray(plugin.missingSecrets) ? plugin.missingSecrets : [];
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+          <div style="min-width:0">
+            <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(plugin.name || plugin.id)}</div>
+            <div style="font-size:.7rem;color:var(--muted);margin-top:2px">${needsSecrets ? `Needs ${missing.map(esc).join(', ')}` : esc(plugin.status || 'registered')}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:.65rem;padding:3px 8px;border-radius:4px;background:${needsSecrets ? 'var(--warn)' : 'var(--border)'};color:${needsSecrets ? '#000' : 'var(--muted)'}">${needsSecrets ? 'NEEDS SECRETS' : esc(String(plugin.status || '').toUpperCase())}</span>
+            ${needsSecrets ? `<button class="btn" data-plugin-id="${esc(plugin.id)}" onclick="openPluginSecrets(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Add Secrets</button>` : ''}
+            ${repairable ? `<button class="btn" data-plugin-id="${esc(plugin.id)}" onclick="retryPluginBundle(this.dataset.pluginId)" style="padding:4px 10px;font-size:.7rem">Retry</button>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+  } catch {
+    el.innerHTML = '<p style="color:var(--danger)">Failed to load plugin bundles.</p>';
+  }
+}
+
+function openPluginSecrets(id) {
+  const plugin = pluginBundles.find(item => item.id === id && item.status === 'needs_secrets');
+  if (!plugin) return;
+  const requirements = Array.isArray(plugin.requiredSecrets) ? plugin.requiredSecrets : [];
+  const missing = new Set(Array.isArray(plugin.missingSecrets) ? plugin.missingSecrets : []);
+  document.getElementById('plugin-secret-modal')?.remove();
+  const fields = requirements.filter(item => missing.has(item.name)).map(item => `
+    <div style="margin-bottom:12px">
+      <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">${esc(item.service || item.name)} (${esc(item.name)})</label>
+      ${item.description ? `<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px">${esc(item.description)}</div>` : ''}
+      <input type="password" data-plugin-secret="${esc(item.name)}" data-plugin-service="${esc(item.service || '')}" class="field-input" autocomplete="off" placeholder="Enter secret" style="width:100%"/>
+    </div>`).join('');
+  document.body.insertAdjacentHTML('beforeend', `
+    <div id="plugin-secret-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999" onclick="if(event.target===this)this.remove()">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:500px;width:90%">
+        <div style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:16px">Set Up ${esc(plugin.name || plugin.id)}</div>
+        ${fields}
+        <div data-plugin-secret-error style="display:none;color:var(--danger);font-size:.72rem;margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="action-btn secondary" onclick="document.getElementById('plugin-secret-modal').remove()">Cancel</button>
+          <button class="action-btn primary" data-plugin-save data-plugin-id="${esc(plugin.id)}" onclick="savePluginSecrets(this.dataset.pluginId)">Save &amp; Retry</button>
+        </div>
+      </div>
+    </div>`);
+  document.querySelector('#plugin-secret-modal input')?.focus();
+}
+
+function pluginPostSucceeded(result) {
+  return !!result && result.ok === true && !result.error;
+}
+
+function showPluginSecretError(modal) {
+  const status = modal?.querySelector('[data-plugin-secret-error]');
+  if (!status) return;
+  status.textContent = 'Setup could not be completed. Check the values and try again.';
+  status.style.display = 'block';
+}
+
+async function savePluginSecrets(id) {
+  const modal = document.getElementById('plugin-secret-modal');
+  const inputs = [...(modal?.querySelectorAll('[data-plugin-secret]') || [])];
+  if (inputs.some(input => !input.value.trim())) { alert('Enter every required secret.'); return; }
+  const saveButton = modal?.querySelector('[data-plugin-save]');
+  if (saveButton) saveButton.disabled = true;
+  try {
+    for (const input of inputs) {
+      const result = await apiPost('/api/secrets', {
+        name: input.dataset.pluginSecret,
+        value: input.value,
+        service: input.dataset.pluginService || undefined,
+      });
+      if (!pluginPostSucceeded(result)) { showPluginSecretError(modal); return; }
+    }
+    const retry = await apiPost('/api/plugins/retry', { id });
+    if (!pluginPostSucceeded(retry)) { showPluginSecretError(modal); return; }
+    modal?.remove();
+    await loadPluginBundles();
+  } catch {
+    showPluginSecretError(modal);
+  } finally {
+    if (saveButton?.isConnected) saveButton.disabled = false;
+  }
+}
+
+async function retryPluginBundle(id) {
+  try {
+    const result = await apiPost('/api/plugins/retry', { id });
+    if (!pluginPostSucceeded(result)) throw new Error("retry failed");
+    await loadPluginBundles();
+  } catch {
+    alert('Plugin retry could not be completed.');
+  }
+}
+
 async function loadIntegrations() {
+  loadPluginBundles();
   const el = document.getElementById('integrations-list');
   if (!el) return;
   try {

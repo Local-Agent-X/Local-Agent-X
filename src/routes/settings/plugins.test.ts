@@ -6,6 +6,7 @@ const routeMocks = vi.hoisted(() => ({
     listPlugins: vi.fn(),
     loadPlugin: vi.fn(),
     disablePlugin: vi.fn(),
+    retryPlugin: vi.fn(),
   },
 }));
 
@@ -49,9 +50,11 @@ beforeEach(() => {
   routeMocks.pluginManager.listPlugins.mockReset();
   routeMocks.pluginManager.loadPlugin.mockReset();
   routeMocks.pluginManager.disablePlugin.mockReset();
+  routeMocks.pluginManager.retryPlugin.mockReset();
   routeMocks.pluginManager.listPlugins.mockReturnValue([]);
   routeMocks.pluginManager.loadPlugin.mockResolvedValue({ id: "sample" });
   routeMocks.pluginManager.disablePlugin.mockReturnValue(true);
+  routeMocks.pluginManager.retryPlugin.mockResolvedValue({ id: "sample" });
 });
 
 describe("plugin lifecycle routes", () => {
@@ -72,6 +75,32 @@ describe("plugin lifecycle routes", () => {
     expect(result).toMatchObject({ handled: true, status: 200, body: { ok: true } });
     expect(routeMocks.pluginManager.disablePlugin).toHaveBeenCalledWith("sample");
     expect(result.broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { plugins: true } });
+  });
+
+  it("retries a repairable plugin by ID without accepting a filesystem path", async () => {
+    const result = await request("POST", "/api/plugins/retry", { id: "sample" });
+
+    expect(result).toMatchObject({ handled: true, status: 200, body: { ok: true, plugin: { id: "sample" } } });
+    expect(routeMocks.pluginManager.retryPlugin).toHaveBeenCalledWith("sample");
+    expect(result.broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { plugins: true } });
+  });
+
+  it("returns a fixed retry error without leaking paths or secret-shaped details", async () => {
+    routeMocks.pluginManager.retryPlugin.mockRejectedValue(
+      new Error("C:\\Users\\peter\\private-plugin\\index.mjs SECRET_CANARY_7fd3"),
+    );
+
+    const result = await request("POST", "/api/plugins/retry", { id: "sample" });
+    const serialized = JSON.stringify(result.body);
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: 400,
+      body: { error: "Plugin retry could not be completed" },
+    });
+    expect(serialized).not.toContain("private-plugin");
+    expect(serialized).not.toContain("SECRET_CANARY_7fd3");
+    expect(result.broadcastAll).not.toHaveBeenCalled();
   });
 
   it("does not broadcast failed lifecycle mutations", async () => {

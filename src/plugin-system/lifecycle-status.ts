@@ -1,13 +1,15 @@
 import type { TrustLevel } from "./publisher-trust.js";
-import type { PluginManifest } from "./manifest.js";
+import type { PluginManifest, PluginSecretRequirement } from "./manifest.js";
 
-export type PluginLifecycleStatus = "loaded" | "registered" | "disabled" | "failed";
+export type PluginLifecycleStatus = "loaded" | "registered" | "disabled" | "failed" | "needs_secrets" | "ready";
 
 export interface PluginListItem extends PluginManifest {
   enabled: boolean;
   status: PluginLifecycleStatus;
   trustLevel: TrustLevel | null;
   error?: string;
+  requiredSecrets?: PluginSecretRequirement[];
+  missingSecrets?: string[];
 }
 
 export function registeredPluginItem(id: string, enabled: boolean, error?: string): PluginListItem {

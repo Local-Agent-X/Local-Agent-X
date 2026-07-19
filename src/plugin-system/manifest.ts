@@ -1,5 +1,12 @@
 export interface PluginContributions {
   tools?: string[];
+  secrets?: PluginSecretRequirement[];
+}
+
+export interface PluginSecretRequirement {
+  name: string;
+  service?: string;
+  description?: string;
 }
 
 export interface PluginManifest {
@@ -15,10 +22,43 @@ export interface PluginManifest {
   keyId?: string;
 }
 
-const CONTRIBUTION_KEYS = new Set(["tools"]);
+const CONTRIBUTION_KEYS = new Set(["tools", "secrets"]);
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim().length > 0);
+}
+
+function parseSecretRequirements(value: unknown): PluginSecretRequirement[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("Plugin bundle secret contributions must be a non-empty array");
+  }
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("Plugin bundle secret requirement must be an object");
+    }
+    const raw = item as Record<string, unknown>;
+    if (Object.keys(raw).some((key) => !["name", "service", "description"].includes(key))) {
+      throw new Error("Plugin bundle secret requirement contains an unknown field");
+    }
+    if (typeof raw.name !== "string" || !/^[A-Z][A-Z0-9_]{0,63}$/.test(raw.name)) {
+      throw new Error("Plugin bundle secret requirement name must be canonical");
+    }
+    if (seen.has(raw.name)) throw new Error("Plugin bundle contains duplicate secret requirements");
+    seen.add(raw.name);
+    if (raw.service !== undefined && (typeof raw.service !== "string" || !raw.service.trim())) {
+      throw new Error("Plugin bundle secret requirement service is invalid");
+    }
+    if (raw.description !== undefined && (typeof raw.description !== "string" || !raw.description.trim())) {
+      throw new Error("Plugin bundle secret requirement description is invalid");
+    }
+    return {
+      name: raw.name,
+      ...(raw.service !== undefined ? { service: raw.service as string } : {}),
+      ...(raw.description !== undefined ? { description: raw.description as string } : {}),
+    };
+  });
 }
 
 function parseContributions(value: unknown): PluginContributions | undefined {
@@ -33,7 +73,11 @@ function parseContributions(value: unknown): PluginContributions | undefined {
   if (raw.tools !== undefined && !isStringArray(raw.tools)) {
     throw new Error("Plugin bundle tool contributions must be non-empty strings");
   }
-  return raw.tools === undefined ? {} : { tools: raw.tools };
+  const secrets = parseSecretRequirements(raw.secrets);
+  return {
+    ...(raw.tools === undefined ? {} : { tools: raw.tools }),
+    ...(secrets === undefined ? {} : { secrets }),
+  };
 }
 
 export function parsePluginManifest(data: unknown): PluginManifest {

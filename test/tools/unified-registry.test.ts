@@ -82,6 +82,18 @@ describe("UnifiedToolRegistry — F2 single-source store", () => {
     expect(registry.getAll()).toHaveLength(1);
   });
 
+  it("conditional unregister removes only the exact registered tool", () => {
+    const original = makeTool("plugin_tool");
+    const replacement = makeTool("plugin_tool");
+    registry.register(original);
+
+    expect(registry.unregisterIfMatches("plugin_tool", replacement)).toBe(false);
+    expect(registry.get("plugin_tool")).toBe(original);
+
+    expect(registry.unregisterIfMatches("plugin_tool", original)).toBe(true);
+    expect(registry.get("plugin_tool")).toBeUndefined();
+  });
+
   it("search() ranks exact name matches above substring noise", () => {
     registry.register(makeTool("memory_recall"), { searchHint: "recall stored memories" });
     registry.register(makeTool("run_build_plan"), { searchHint: "execute a build plan" });

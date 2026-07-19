@@ -26,11 +26,12 @@
  * ciphertext directly into the file so the failure mode is realistic.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { SecretsStore } from "../src/secrets.js";
+import { atomicWriteFileSync } from "../src/util/json-store.js";
 
 let tmpDir: string;
 
@@ -65,7 +66,104 @@ function corruptCiphertext(hex: string): string {
   return hex.slice(0, 56) + (hex[56] === "0" ? "f" : "0") + hex.slice(57);
 }
 
+function failingAtomicWriter(
+  stage: "write" | "rename",
+  observedOptions?: Array<{ encoding: BufferEncoding; mode?: number }>,
+) {
+  return (path: string, data: string, opts: { encoding: BufferEncoding; mode: number }) => {
+    atomicWriteFileSync(path, data, opts, {
+      write(temp, content, writeOpts) {
+        observedOptions?.push(writeOpts);
+        if (stage === "write") {
+          writeFileSync(temp, content.slice(0, 16), writeOpts);
+          throw new Error("injected temp write failure");
+        }
+        writeFileSync(temp, content, writeOpts);
+      },
+      rename(source, destination) {
+        if (stage === "rename") throw new Error("injected rename failure");
+        renameSync(source, destination);
+      },
+      unlink: unlinkSync,
+    });
+  };
+}
+
 describe("SecretsStore quarantine", () => {
+  it("notifies availability listeners only after durable set and delete mutations", () => {
+    const store = new SecretsStore(tmpDir);
+    const changes: Array<{ type: string; name: string; available: boolean }> = [];
+    store.onAvailabilityChange(change => {
+      changes.push({ ...change, available: store.has(change.name) });
+    });
+
+    store.set("PLUGIN_TOKEN", "value");
+    store.delete("PLUGIN_TOKEN");
+
+    expect(changes).toEqual([
+      { type: "available", name: "PLUGIN_TOKEN", available: true },
+      { type: "deleted", name: "PLUGIN_TOKEN", available: false },
+    ]);
+  });
+
+  it.each(["write", "rename"] as const)("keeps set failure-atomic after an injected %s failure", (stage) => {
+    const seed = new SecretsStore(tmpDir);
+    seed.set("LIVE", "original-value");
+    seed.set("REUSED", "lost-value");
+    const raw = readSecretsFile();
+    const reused = raw.secrets.find((entry) => entry.name === "REUSED")!;
+    reused.encrypted = corruptCiphertext(reused.encrypted);
+    writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
+    const observedOptions: Array<{ encoding: BufferEncoding; mode?: number }> = [];
+    const store = new SecretsStore(tmpDir, failingAtomicWriter(stage, observedOptions));
+    const durableBefore = readFileSync(join(tmpDir, "secrets.enc"), "utf-8");
+    const changes: unknown[] = [];
+    store.onAvailabilityChange((change) => changes.push(change));
+    expect(() => store.set("REUSED", "replacement-value")).toThrow(
+      stage === "write" ? "injected temp write failure" : "injected rename failure",
+    );
+
+    expect(store.get("LIVE")).toBe("original-value");
+    expect(store.has("REUSED")).toBe(false);
+    expect(store.quarantinedNames()).toEqual(["REUSED"]);
+    expect(changes).toEqual([]);
+    expect(readFileSync(join(tmpDir, "secrets.enc"), "utf-8")).toBe(durableBefore);
+    expect(readdirSync(tmpDir).filter((name) => name.includes("secrets.enc.tmp."))).toEqual([]);
+    expect(observedOptions).toEqual([{ encoding: "utf-8", mode: 0o600 }]);
+  });
+
+  it("keeps live and quarantined deletes failure-atomic with zero notifications", () => {
+    const seed = new SecretsStore(tmpDir);
+    seed.set("LIVE", "original-value");
+    seed.set("DEAD", "lost-value");
+    const raw = readSecretsFile();
+    const dead = raw.secrets.find((entry) => entry.name === "DEAD")!;
+    dead.encrypted = corruptCiphertext(dead.encrypted);
+    writeFileSync(join(tmpDir, "secrets.enc"), JSON.stringify(raw, null, 2));
+    const store = new SecretsStore(tmpDir, failingAtomicWriter("rename"));
+    const durableBefore = readFileSync(join(tmpDir, "secrets.enc"), "utf-8");
+    const changes: unknown[] = [];
+    store.onAvailabilityChange((change) => changes.push(change));
+    expect(() => store.delete("LIVE")).toThrow("injected rename failure");
+    expect(() => store.delete("DEAD")).toThrow("injected rename failure");
+
+    expect(store.get("LIVE")).toBe("original-value");
+    expect(store.quarantinedNames()).toEqual(["DEAD"]);
+    expect(changes).toEqual([]);
+    expect(readFileSync(join(tmpDir, "secrets.enc"), "utf-8")).toBe(durableBefore);
+    expect(readdirSync(tmpDir).filter((name) => name.includes("secrets.enc.tmp."))).toEqual([]);
+  });
+
+  it("keeps durable mutations successful when an availability listener fails", () => {
+    const store = new SecretsStore(tmpDir);
+    store.onAvailabilityChange(() => { throw new Error("listener failed"); });
+
+    expect(() => store.set("PLUGIN_TOKEN", "value")).not.toThrow();
+    expect(store.has("PLUGIN_TOKEN")).toBe(true);
+    expect(() => store.delete("PLUGIN_TOKEN")).not.toThrow();
+    expect(store.has("PLUGIN_TOKEN")).toBe(false);
+  });
+
   it("one corrupt entry no longer hides every entry that comes after it", () => {
     // Seed a real store with three secrets so their ciphertext is valid.
     const seed = new SecretsStore(tmpDir);

@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { SecretEntry, SecretsFile, SecretsFileEntry } from "./secrets-types.js";
 
 export const MASTER_KEY_DEPENDENT_BASENAMES = [
   "secrets.enc",
@@ -64,4 +65,26 @@ export function decrypt(hex: string, key: Buffer): string {
   // Zero the raw buffer to limit exposure of ciphertext material in memory
   data.fill(0);
   return result;
+}
+
+export function encryptSecretsFile(
+  secrets: ReadonlyMap<string, SecretEntry>,
+  quarantined: readonly SecretsFileEntry[],
+  key: Buffer,
+): SecretsFile {
+  const live = Array.from(secrets.values()).map((secret) => ({
+    name: secret.name,
+    service: secret.service,
+    account: secret.account,
+    url: secret.url,
+    notes: secret.notes,
+    origin: secret.origin,
+    createdBySession: secret.createdBySession,
+    approvedFills: secret.approvedFills,
+    addedAt: secret.addedAt,
+    updatedAt: secret.updatedAt,
+    encrypted: encrypt(secret.value, key),
+  }));
+  const liveNames = new Set(live.map((entry) => entry.name));
+  return { version: 1, secrets: [...live, ...quarantined.filter((entry) => !liveNames.has(entry.name))] };
 }

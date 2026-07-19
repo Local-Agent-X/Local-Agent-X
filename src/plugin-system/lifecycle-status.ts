@@ -1,4 +1,5 @@
-import type { PluginManifest, TrustLevel } from "../plugin-system.js";
+import type { TrustLevel } from "./publisher-trust.js";
+import type { PluginManifest } from "./manifest.js";
 
 export type PluginLifecycleStatus = "loaded" | "registered" | "disabled" | "failed";
 
@@ -18,10 +19,16 @@ export function registeredPluginItem(id: string, enabled: boolean, error?: strin
     entryPoint: "",
     tools: [],
     enabled,
-    status: !enabled ? "disabled" : error ? "failed" : "registered",
+    status: error ? "failed" : !enabled ? "disabled" : "registered",
     trustLevel: null,
     ...(error ? { error } : {}),
   };
+}
+
+export function safeLifecyclePersistenceError(action: "load" | "disable"): string {
+  return action === "disable"
+    ? "Plugin disable could not be persisted"
+    : "Plugin load could not be persisted";
 }
 
 export function safePluginId(id: string): string {
@@ -30,6 +37,8 @@ export function safePluginId(id: string): string {
 
 export function safeRestoreError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
+  if (message === "Plugin load could not be persisted") return message;
+  if (message === "Plugin disable could not be persisted") return message;
   if (message.includes("manifest is not integrity-pinned")) return "Bundle manifest is not integrity-pinned";
   if (message.includes("tampered")) return "Integrity verification failed";
   if (message.startsWith("No manifest.json")) return "Manifest not found";

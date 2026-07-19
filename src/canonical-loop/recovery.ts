@@ -37,6 +37,7 @@
  * just before emitting `lease_lost`.
  */
 import { existsSync, readdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
@@ -257,17 +258,14 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  *     recoverStaleOp's OP-6 note), so lease freshness does not gate it.
  * and routes each through `recoverStaleOp`.
  *
- * Safe to call exactly once at server boot. No-op if the operations
- * dir is missing. Resilient to per-op read errors (logs and skips).
+ * Safe to call once at server boot. Periodic callers must use the cooperative
+ * sweep below so operation history cannot starve worker heartbeats. No-op if
+ * the operations dir is missing. Resilient to per-op read errors (logs and skips).
  *
  * Returns the list of outcomes for logging by the caller.
  */
 export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutcome }[] {
-  const opsBase = join(getLaxDir(), "operations");
-  if (!existsSync(opsBase)) return [];
-
-  let opIds: string[];
-  try { opIds = readdirSync(opsBase); } catch { return []; }
+  const opIds = listOperationIds();
 
   const out: { opId: string; outcome: RecoveryOutcome }[] = [];
   for (const opId of opIds) {
@@ -289,6 +287,82 @@ export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutco
     out.push({ opId, outcome });
   }
   return out;
+}
+
+const COOPERATIVE_BATCH_SIZE = 16, COOPERATIVE_TIME_SLICE_MS = 8;
+
+export interface CooperativeRecoverySweepOptions {
+  batchSize?: number;
+  timeSliceMs?: number;
+  listOpIds?: () => string[] | Promise<string[]>;
+  readCandidate?: typeof readOp;
+  recoverCandidate?: typeof recoverStaleOp;
+  now?: () => number;
+  yieldToEventLoop?: () => Promise<void>;
+}
+
+/**
+ * Periodic stale-op sweep. It bounds both candidate count and synchronous work
+ * time per slice, yielding between slices so lease heartbeats keep running.
+ * Candidate reads only identify canonical active ops; recoverStaleOp re-reads
+ * the op immediately before acting and remains the authoritative lease gate.
+ */
+export async function sweepStaleCanonicalOpsCooperatively(
+  options: CooperativeRecoverySweepOptions = {},
+): Promise<{ opId: string; outcome: RecoveryOutcome }[]> {
+  const batchSize = options.batchSize ?? COOPERATIVE_BATCH_SIZE;
+  const timeSliceMs = options.timeSliceMs ?? COOPERATIVE_TIME_SLICE_MS;
+  if (batchSize <= 0 || timeSliceMs <= 0) {
+    throw new Error("Cooperative recovery sweep bounds must be positive");
+  }
+
+  const opIds = await (options.listOpIds ?? listOperationIdsAsync)();
+  const readCandidate = options.readCandidate ?? readOp;
+  const recoverCandidate = options.recoverCandidate ?? recoverStaleOp;
+  const now = options.now ?? Date.now;
+  const yieldToEventLoop = options.yieldToEventLoop ?? yieldRecoverySlice;
+  const out: { opId: string; outcome: RecoveryOutcome }[] = [];
+  let sliceStartedAt = now();
+  let sliceCount = 0;
+
+  for (let index = 0; index < opIds.length; index++) {
+    const opId = opIds[index];
+    let op;
+    try { op = readCandidate(opId); } catch { op = null; }
+    const state = op?.canonical?.state;
+    if (
+      op?.canonical?.flagValue === true
+      && (state === "running" || state === "cancelling" || state === "queued")
+    ) {
+      const outcome = recoverCandidate(opId);
+      if (outcome.ok) out.push({ opId, outcome });
+    }
+
+    sliceCount += 1;
+    const moreRemain = index + 1 < opIds.length;
+    if (moreRemain && (sliceCount >= batchSize || now() - sliceStartedAt >= timeSliceMs)) {
+      await yieldToEventLoop();
+      sliceCount = 0;
+      sliceStartedAt = now();
+    }
+  }
+  return out;
+}
+
+function listOperationIds(): string[] {
+  const opsBase = join(getLaxDir(), "operations");
+  if (!existsSync(opsBase)) return [];
+  try { return readdirSync(opsBase); } catch { return []; }
+}
+async function listOperationIdsAsync(): Promise<string[]> {
+  const opsBase = join(getLaxDir(), "operations");
+  try { return await readdir(opsBase); } catch { return []; }
+}
+function yieldRecoverySlice(): Promise<void> {
+  return new Promise((resolve) => {
+    const immediate = setImmediate(resolve);
+    immediate.unref();
+  });
 }
 
 /**

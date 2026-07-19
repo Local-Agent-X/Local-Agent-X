@@ -14,6 +14,7 @@ import {
   ANTHROPIC_ADAPTER_NAME,
 } from "../src/canonical-loop/index.js";
 import { bootstrapCanonicalLoop } from "../src/server/canonical-loop-bootstrap.js";
+import { isRecoveryJanitorStarted, stopRecoveryJanitor } from "../src/canonical-loop/recovery-janitor.js";
 import type { Op } from "../src/ops/types.js";
 
 const LANE_ENVS = [
@@ -46,11 +47,13 @@ beforeEach(() => {
 afterEach(() => {
   for (const e of LANE_ENVS) delete process.env[e];
   resetCanonicalRuntime();
+  stopRecoveryJanitor();
 });
 
 describe("bootstrapCanonicalLoop", () => {
   it("registers the AnthropicAdapter for every lane", async () => {
     bootstrapCanonicalLoop();
+    expect(isRecoveryJanitorStarted()).toBe(true);
     for (const lane of ["interactive", "build", "ide", "background"] as const) {
       const factory = resolveAdapterFactory(mkOp(lane));
       expect(factory, lane).not.toBeNull();

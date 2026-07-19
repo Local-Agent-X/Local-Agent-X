@@ -19,6 +19,7 @@ import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/public/lear
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
+import { startRecoveryJanitor } from "../canonical-loop/recovery-janitor.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 
@@ -30,7 +31,7 @@ const ALL_LANES: CanonicalLane[] = ["interactive", "build", "ide", "background"]
  * persists the op as queued and then fails on the next microtask with
  * adapter_not_configured.
  *
- * Also runs a one-shot sweep of stale canonical ops on disk: any op left
+ * Also starts recovery sweeps for stale canonical ops on disk: any op left
  * in `running` / `cancelling` with an expired lease (typically because
  * the prior server got SIGTERM mid-op) is routed through the
  * canonical-loop's `recoverStaleOp` primitive so it transitions to a
@@ -118,4 +119,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
       logger.warn(`[canonical-loop] background sweep failed: ${(e as Error).message}`);
     }
   });
+  // Keep using the same lease-aware sweep after boot so a worker that dies
+  // while this server remains alive cannot strand its op until a restart.
+  startRecoveryJanitor();
 }

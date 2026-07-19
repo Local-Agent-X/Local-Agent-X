@@ -127,8 +127,28 @@ export class CrossSessionLearningService {
     const safetyRecoveredIds = new Set<string>();
 
     for (let candidate of this.learner.getCandidates()) {
+      if (["rejected", "rolled-back"].includes(candidate.state)) continue;
       let record = this.recordFor(candidate.id);
-      if (!record) continue;
+      if (!record) {
+        const rebuilt = this.learner.draftCandidate(candidate.id);
+        record = loadLearnedProtocol(rebuilt.slug);
+        changed = rebuilt.created || changed;
+        if (candidate.state === "archived") {
+          record = activateLearnedProtocol({
+            slug: candidate.id,
+            versionId: rebuilt.version.id,
+            expectedActiveVersionId: null,
+            reason: "Reconstructed archived learned workflow",
+            timestamp: now,
+          });
+          record = archiveLearnedProtocol({
+            slug: candidate.id,
+            expectedActiveVersionId: record.activeVersionId,
+            reason: "Preserved archived learned workflow",
+            timestamp: now,
+          });
+        }
+      }
       if (record.state === "active") {
         const recovery = this.safetyRecovery(record);
         if (recovery?.kind === "rollback") {

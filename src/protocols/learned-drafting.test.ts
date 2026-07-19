@@ -150,17 +150,22 @@ describe("learned protocol drafting", () => {
     expect(loadLearnedProtocol(first.slug).versions).toHaveLength(2);
   });
 
-  it("allows active refinements only for the matching managed candidate history", () => {
+  it("rebuilds missing active candidates but requires matching managed history for refinements", () => {
     const unmanaged = workflowCandidate();
     unmanaged.state = "active";
-    expect(() => draftLearnedCandidate(unmanaged)).toThrow(/no managed protocol history/);
+    const rebuilt = draftLearnedCandidate(unmanaged);
+    expect(rebuilt.created).toBe(true);
+    expect(loadLearnedProtocol(rebuilt.slug).state).toBe("draft");
 
+    const mismatched = workflowCandidate();
+    mismatched.id = "learned-0123456789abcdefabcf";
+    mismatched.state = "active";
     createLearnedProtocolDraft({
-      slug: unmanaged.id,
-      skillMd: renderLearnedCandidateSkill({ ...unmanaged, state: "candidate" }),
+      slug: mismatched.id,
+      skillMd: renderLearnedCandidateSkill({ ...mismatched, state: "candidate" }),
       metadata: { candidateId: "learned-ffffffffffffffffffff" },
     });
-    expect(() => draftLearnedCandidate(unmanaged)).toThrow(/does not match its managed candidate history/);
+    expect(() => draftLearnedCandidate(mismatched)).toThrow(/does not match its managed candidate history/);
 
     const original = workflowCandidate();
     original.id = "learned-0123456789abcdefabce";

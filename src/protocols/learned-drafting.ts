@@ -48,7 +48,11 @@ function validateProof(candidate: LearnedCandidate): { tools: string[]; category
   if (candidate.evidence.patternType !== "workflow" || candidate.suggestion.config.patternType !== "workflow") {
     throw new Error("Only workflow candidates can become learned protocol drafts");
   }
-  if (!["candidate", "active"].includes(candidate.state) || !/^learned-[a-f0-9]{20}$/.test(candidate.id) || candidate.suggestion.type !== "mission") {
+  if (
+    !["candidate", "approved", "active", "archived"].includes(candidate.state)
+    || !/^learned-[a-f0-9]{20}$/.test(candidate.id)
+    || candidate.suggestion.type !== "mission"
+  ) {
     throw new Error("Malformed learned workflow candidate identity");
   }
   const stats = candidate.evidence.outcomeStats;
@@ -122,10 +126,7 @@ export function renderLearnedCandidateSkill(candidate: LearnedCandidate): string
 
 export function draftLearnedCandidate(candidate: LearnedCandidate): LearnedCandidateDraftResult {
   const slug = learnedProtocolSlug(candidate);
-  if (candidate.state === "active") {
-    if (!hasLearnedProtocol(slug)) {
-      throw new Error("Active learned workflow has no managed protocol history");
-    }
+  if (candidate.state === "active" && hasLearnedProtocol(slug)) {
     const managed = loadLearnedProtocol(slug);
     if (!managed.versions.some((version) => version.metadata.candidateId === candidate.id)) {
       throw new Error("Active learned workflow does not match its managed candidate history");

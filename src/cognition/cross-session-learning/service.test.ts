@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -44,6 +44,10 @@ describe("cross-session learning management service", () => {
         timestamp: BASE + index,
       });
     }
+  }
+
+  function managedDir(id: string): string {
+    return join(process.env.LAX_DATA_DIR!, "protocols", "learned", id);
   }
 
   async function commitOutcomes(
@@ -107,6 +111,69 @@ describe("cross-session learning management service", () => {
     expect(current.service.list()[0].versionCount).toBe(2);
     expect(current.service.list()[0].activeVersionId).not.toBe(originalVersion);
     expect(current.learner.getCandidates()[0].evidence).toEqual(originalEvidence);
+  });
+
+  it("reconstructs missing managed records without changing canonical intent", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+
+    rmSync(managedDir(id), { recursive: true, force: true });
+    expect(service.reconcile("assisted", BASE + 11).changed).toBe(true);
+    expect(service.list()[0]).toMatchObject({ state: "candidate", versionCount: 1 });
+    expect(service.reconcile("assisted", BASE + 12)).toEqual({ signals: [], changed: false });
+
+    service.action(id, { action: "activate", expectedActiveVersionId: null }, BASE + 13);
+    rmSync(managedDir(id), { recursive: true, force: true });
+    expect(service.reconcile("assisted", BASE + 14).changed).toBe(true);
+    expect(service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
+
+    service.action(id, {
+      action: "archive", expectedActiveVersionId: service.list()[0].activeVersionId,
+    }, BASE + 15);
+    rmSync(managedDir(id), { recursive: true, force: true });
+    expect(service.reconcile("autonomous", BASE + 16)).toEqual({ signals: [], changed: true });
+    expect(service.list()[0]).toMatchObject({ state: "archived", versionCount: 1 });
+    expect(service.reconcile("autonomous", BASE + 17)).toEqual({ signals: [], changed: false });
+  });
+
+  it("resumes approved activation but never reconstructs a rejected candidate", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    learner.setCandidateState(id, "approved", "Interrupted activation", BASE + 11);
+    rmSync(managedDir(id), { recursive: true, force: true });
+
+    expect(service.reconcile("assisted", BASE + 12).changed).toBe(true);
+    expect(service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
+    service.action(id, { action: "archive", expectedActiveVersionId: service.list()[0].activeVersionId }, BASE + 13);
+    learner.setCandidateState(id, "candidate", "Prepare rejection", BASE + 14);
+    service.action(id, { action: "reject" }, BASE + 15);
+    rmSync(managedDir(id), { recursive: true, force: true });
+
+    expect(service.reconcile("autonomous", BASE + 16)).toEqual({ signals: [], changed: false });
+    expect(service.list()[0]).toMatchObject({ state: "rejected", versionCount: 0 });
+    expect(existsSync(managedDir(id))).toBe(false);
+  });
+
+  it.each(["rejected", "rolled-back"] as const)("never activates an existing draft for a %s candidate", async (state) => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    if (state === "rejected") {
+      service.action(id, { action: "reject" }, BASE + 11);
+    } else {
+      learner.setCandidateState(id, "approved", "Interrupted activation", BASE + 11);
+      learner.setCandidateState(id, "active", "Interrupted activation", BASE + 12);
+      learner.setCandidateState(id, "rolled-back", "Interrupted rollback", BASE + 13);
+    }
+
+    expect(service.reconcile("autonomous", BASE + 14)).toEqual({ signals: [], changed: false });
+    expect(service.list()[0]).toMatchObject({ state, activeVersionId: null, versionCount: 1 });
+    expect(service.reconcile("autonomous", BASE + 15)).toEqual({ signals: [], changed: false });
   });
 
   it("enforces stale CAS and drives legal activate, archive, restore, and rollback transitions", async () => {
@@ -177,14 +244,14 @@ describe("cross-session learning management service", () => {
     metadata.confidence = 0.80;
     lifecycle.createLearnedProtocolDraft({
       slug: id,
-      skillMd: readFileSync(join(workspace, "protocols", "imported", id, "SKILL.md"), "utf8"),
+      skillMd: readFileSync(join(managedDir(id), "SKILL.md"), "utf8"),
       metadata,
     });
-    const before = readFileSync(join(workspace, "protocols", "imported", id, "learned.json"), "utf8");
+    const before = readFileSync(join(managedDir(id), "learned.json"), "utf8");
 
     expect(service.reconcile("autonomous", BASE + 20)).toEqual({ signals: [], changed: false });
     expect(service.list()[0].activeVersionId).toBe(active);
-    expect(readFileSync(join(workspace, "protocols", "imported", id, "learned.json"), "utf8")).toBe(before);
+    expect(readFileSync(join(managedDir(id), "learned.json"), "utf8")).toBe(before);
   });
 
   it("fails closed on a tampered inactive refinement without changing the active selection", async () => {
@@ -196,9 +263,9 @@ describe("cross-session learning management service", () => {
     addEvidence(learner, 6);
     service.reconcile("assisted", BASE + 8 * DAY);
     const target = service.detail(id)!.versions.at(-1)!.id;
-    const lifecyclePath = join(workspace, "protocols", "imported", id, "learned.json");
+    const lifecyclePath = join(managedDir(id), "learned.json");
     const before = readFileSync(lifecyclePath, "utf8");
-    writeFileSync(join(workspace, "protocols", "imported", id, "versions", target, "meta.json"), "{}\n");
+    writeFileSync(join(managedDir(id), "versions", target, "meta.json"), "{}\n");
 
     expect(() => service.reconcile("autonomous", BASE + 8 * DAY + 1)).toThrow(/hash mismatch/);
     expect(readFileSync(lifecyclePath, "utf8")).toBe(before);
@@ -274,9 +341,9 @@ describe("cross-session learning management service", () => {
     addEvidence(learner);
     service.reconcile("autonomous", BASE + 10);
     const id = service.list()[0].id;
-    const lifecyclePath = join(workspace, "protocols", "imported", id, "learned.json");
+    const lifecyclePath = join(managedDir(id), "learned.json");
     const before = readFileSync(lifecyclePath, "utf8");
-    writeFileSync(join(workspace, "protocols", "imported", id, "SKILL.md"), "tampered\n");
+    writeFileSync(join(managedDir(id), "SKILL.md"), "tampered\n");
 
     expect(() => service.reconcile("assisted", BASE + 20)).toThrow(/materialization mismatch/);
     expect(readFileSync(lifecyclePath, "utf8")).toBe(before);
@@ -288,7 +355,7 @@ describe("cross-session learning management service", () => {
     service.reconcile("autonomous", BASE + 10);
     const id = service.list()[0].id;
     const active = service.list()[0].activeVersionId!;
-    const lifecyclePath = join(workspace, "protocols", "imported", id, "learned.json");
+    const lifecyclePath = join(managedDir(id), "learned.json");
     const legacy = JSON.parse(readFileSync(lifecyclePath, "utf8")) as Record<string, unknown>;
     delete legacy.activationHistory;
     writeFileSync(lifecyclePath, JSON.stringify(legacy, null, 2));

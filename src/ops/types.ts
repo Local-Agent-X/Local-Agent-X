@@ -108,6 +108,14 @@ export interface AppBuildRuntimeDescriptor {
   tier?: "quick-html" | "frontend-spa" | "full-stack" | "compiled-native";
 }
 
+export interface DelegatedRuntimeDescriptor {
+  kind: "delegated-op";
+  adapter: "lane-default" | "codex";
+  sessionId?: string;
+}
+
+export type OpRuntimeDescriptor = AppBuildRuntimeDescriptor | DelegatedRuntimeDescriptor;
+
 export interface Op {
   id: string;
   type: string;                           // "build_app" | "research" | "self_edit" | freeform
@@ -115,7 +123,7 @@ export interface Op {
   contextPack: ContextPack;
   lane: OpLane;
   retryPolicy: OpRetryPolicy;
-  runtimeDescriptor?: AppBuildRuntimeDescriptor;
+  runtimeDescriptor?: OpRuntimeDescriptor;
   ownerId: string;
   visibility: OpVisibility;
   projectId?: string;

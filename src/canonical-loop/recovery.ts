@@ -48,6 +48,8 @@ import { isLeaseExpired } from "./lease.js";
 import { evictWorker, enqueueOp, pumpScheduler } from "./scheduler.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
 import { resolveExpiredPendingApproval } from "./control-api-approvals.js";
+import { rehydrateRecoveredRuntime } from "./runtime.js";
+import { trackOpForSession } from "../ops/session-bridge.js";
 import type { CanonicalLane } from "./types.js";
 
 export type RecoveryOutcomeKind =
@@ -112,6 +114,11 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   if (state !== "queued" && leaseOwner && !isLeaseExpired(op)) {
     return { ok: false, kind: "lease_fresh" };
   }
+
+  // Rebuild process-local state; op_turn/op_messages remain authoritative.
+  rehydrateRecoveredRuntime(op);
+  const sessionId = op.canonical?.sessionId;
+  if (sessionId) trackOpForSession(op.id, sessionId, op.task);
 
   // Stale-approval hygiene: the op is dead-owner from here on, so a
   // pendingApproval column whose ask window has already expired can never be
@@ -371,13 +378,6 @@ function yieldRecoverySlice(): Promise<void> {
  * `transitionOp` with `clearLeaseFromOp: true` so the transition's
  * writeOp atomically clears the dead worker's lease alongside the
  * state change.
- *
- * Belt and suspenders: `recoverStaleOp` already clears the lease via
- * `persistOpKeepingSignals(op, { preserveLeaseFromDisk: false })`
- * BEFORE this transition, so the disk lease at the moment of write is
- * already null. The atomic clear here defends against any future code
- * path that calls `transitionOp` on an op whose lease was not
- * pre-cleared, and against concurrent writers in v1+ multi-process.
  */
 function safeRecoveryTransition(
   opId: string,

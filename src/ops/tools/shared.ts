@@ -46,6 +46,18 @@ export async function readSettingsProvider(): Promise<string | null> {
   }
 }
 
+export function stampDelegatedRuntime(
+  op: Op,
+  effectiveProvider: string | null,
+  sessionId: string,
+): void {
+  op.runtimeDescriptor = {
+    kind: "delegated-op",
+    adapter: effectiveProvider === "codex" ? "codex" : "lane-default",
+    ...(sessionId ? { sessionId } : {}),
+  };
+}
+
 /**
  * Spawn-lineage parent for an op being submitted: the id of the op whose agent
  * is executing this submit tool. Recovered from the executor-stamped

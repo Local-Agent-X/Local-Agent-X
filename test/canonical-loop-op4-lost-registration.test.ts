@@ -8,10 +8,9 @@
  * never on an in-process pause->resume of a lane-default rider — which also has
  * a committed op_turn on disk yet keeps its live registration.
  *
- * The discriminator is attemptCount (only recovery.ts increments it, on the
- * running->queued restart relaunch; in-process opResume never routes through
- * recovery.ts). This REPLACES the earlier "op committed a turn on disk" proxy,
- * which also fired for an in-process resume and wrongly killed a live op.
+ * attemptCount identifies restart recovery; a validated durable descriptor is
+ * the only exception because it proves the original runtime can be rebuilt.
+ * In-process opResume never increments the count and keeps its live runtime.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -24,6 +23,7 @@ import {
   setDefaultAdapterForLane,
   resolveAdapterFactory,
   lostRegistrationAdapterFactory,
+  rehydrateRecoveredRuntime,
 } from "../src/canonical-loop/runtime.js";
 import { insertOpTurn } from "../src/canonical-loop/store.js";
 import type { Adapter } from "../src/canonical-loop/adapter-contract.js";
@@ -109,5 +109,39 @@ describe("OP-4 — lost-registration discriminator (attemptCount, not disk turn)
     const perOp = laneDefaultFactory;
     registerAdapterForOp(op.id, perOp);
     expect(resolveAdapterFactory(op)).toBe(perOp);
+  });
+
+  it("a valid durable delegation descriptor restores the original lane-default contract", () => {
+    const op = makeOp({
+      lane: "build",
+      attemptCount: 1,
+      runtimeDescriptor: { kind: "delegated-op", adapter: "lane-default", sessionId: "session-a" },
+    });
+    setDefaultAdapterForLane("build", laneDefaultFactory);
+    expect(rehydrateRecoveredRuntime(op)).toBe(true);
+    expect(resolveAdapterFactory(op)).toBe(laneDefaultFactory);
+  });
+
+  it("rehydrates the original Codex per-op adapter factory", async () => {
+    const op = makeOp({
+      lane: "build",
+      attemptCount: 1,
+      runtimeDescriptor: { kind: "delegated-op", adapter: "codex", sessionId: "session-codex" },
+    });
+    expect(rehydrateRecoveredRuntime(op)).toBe(true);
+    const factory = resolveAdapterFactory(op);
+    expect(factory).not.toBeNull();
+    await expect(factory!()).resolves.toMatchObject({ name: "codex" });
+  });
+
+  it("malformed persisted descriptors retain the fail-closed lost-registration behavior", () => {
+    const op = makeOp({
+      lane: "build",
+      attemptCount: 1,
+      runtimeDescriptor: { kind: "delegated-op", adapter: "unknown" } as never,
+    });
+    setDefaultAdapterForLane("build", laneDefaultFactory);
+    expect(rehydrateRecoveredRuntime(op)).toBe(false);
+    expect(resolveAdapterFactory(op)).toBe(lostRegistrationAdapterFactory);
   });
 });

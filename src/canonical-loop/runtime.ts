@@ -179,6 +179,34 @@ export function getOpBaselineTokens(opId: string): number {
   return opBaselineTokens.get(opId) ?? 0;
 }
 
+/** Restore the runtime registration that a delegated op persisted at submit.
+ *  Checkpoint messages/provider state stay in the canonical store; this only
+ *  rebuilds the process-local adapter factory that cannot survive a restart.
+ *  Unsupported persisted shapes get an explicit fail-closed factory. */
+export function rehydrateRecoveredRuntime(op: Op): boolean {
+  const descriptor = op.runtimeDescriptor;
+  if (opAdapters.has(op.id)) return true;
+  if (!isDelegatedRuntimeDescriptor(descriptor)) {
+    registerAdapterForOp(op.id, lostRegistrationAdapterFactory);
+    return false;
+  }
+  if (descriptor.adapter === "codex") {
+    registerAdapterForOp(op.id, async () => {
+      const { createCodexAdapter } = await import("./adapters/codex.js");
+      return createCodexAdapter({ sessionId: descriptor.sessionId });
+    });
+  }
+  return true;
+}
+
+function isDelegatedRuntimeDescriptor(
+  descriptor: Op["runtimeDescriptor"],
+): descriptor is Extract<NonNullable<Op["runtimeDescriptor"]>, { kind: "delegated-op" }> {
+  return descriptor?.kind === "delegated-op"
+    && (descriptor.adapter === "lane-default" || descriptor.adapter === "codex")
+    && (descriptor.sessionId === undefined || typeof descriptor.sessionId === "string");
+}
+
 /** Inject the global tool dispatcher used when no per-op dispatcher is registered. */
 export function setToolDispatcher(d: ToolDispatcher): void {
   toolDispatcher = d;
@@ -276,15 +304,12 @@ export function resolveAdapterFactory(op: Op): AdapterFactory | null {
   //       op's. Falling back to the lane default here drives the op on the
   //       wrong adapter with ZERO tools (OP-4 "planning mode"). Fail closed.
   //
-  // Discriminator: attemptCount. Only recovery.ts increments it, and only on an
-  // actual restart-recovery relaunch (recovery.ts:197, the running->queued
-  // relaunch). In-process opResume (control-api.ts) never routes through
-  // recovery.ts, so its attemptCount stays 0. So `attemptCount > 0 && no per-op
-  // registration` == lost registration. This intentionally REPLACES the earlier
-  // "op committed a turn on disk" proxy, which also fired for an in-process
-  // resume of a lane-default rider (a committed op_turn exists there too) and so
-  // wrongly killed a still-valid live op — the regression this closes.
-  if ((op.attemptCount ?? 0) > 0) {
+  // attemptCount identifies restart recovery. A validated delegated-op
+  // descriptor proves the original runtime is reconstructible; without one,
+  // attemptCount > 0 remains the lost-registration fail-closed signal. An
+  // in-process opResume never increments the count and keeps using its live
+  // registration, even when the op already has committed turns on disk.
+  if ((op.attemptCount ?? 0) > 0 && !isDelegatedRuntimeDescriptor(op.runtimeDescriptor)) {
     return lostRegistrationAdapterFactory;
   }
   const lane = op.lane as CanonicalLane;

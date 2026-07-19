@@ -14,6 +14,7 @@ import { trackOpForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
   readSettingsProvider,
+  stampDelegatedRuntime,
   submitParameters,
 } from "./shared.js";
 
@@ -32,6 +33,7 @@ export const opSubmitTool: ToolDefinition = {
 
     const opProvider = op.contextPack?.routing?.preferredProvider;
     const effectiveProvider = opProvider ?? (await readSettingsProvider());
+    stampDelegatedRuntime(op, effectiveProvider, sessionId);
     if (effectiveProvider === "codex") {
       const { createCodexAdapter } = await import("../../canonical-loop/index.js");
       registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));

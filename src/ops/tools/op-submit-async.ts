@@ -18,6 +18,7 @@ import { trackOpForSession, listOpsForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
   readSettingsProvider,
+  stampDelegatedRuntime,
   submitParameters,
   RECENT_SUBMITS,
   SUBMIT_DEDUP_WINDOW_MS,
@@ -176,6 +177,7 @@ export const opSubmitAsyncTool: ToolDefinition = {
     // serves the op.
     const opProvider = op.contextPack?.routing?.preferredProvider;
     const effectiveProvider = opProvider ?? (await readSettingsProvider());
+    stampDelegatedRuntime(op, effectiveProvider, sessionId);
     if (effectiveProvider === "codex") {
       const { createCodexAdapter } = await import("../../canonical-loop/index.js");
       registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));

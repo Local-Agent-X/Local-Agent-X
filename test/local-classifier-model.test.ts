@@ -69,7 +69,13 @@ describe("pickLocalClassifierModel — picks from the real cache", () => {
   ];
 
   const withCache = async (runtimes: unknown) => {
-    vi.doMock("../src/local-runtimes/cache.js", () => ({ getLocalRuntimes: () => runtimes }));
+    const snapshot = runtimes as { models: { id: string }[] }[] | null;
+    vi.doMock("../src/local-runtimes/cache.js", () => ({
+      getLocalRuntimes: () => runtimes,
+      getRuntimeForModel: (id: string) => snapshot?.find((runtime) => (
+        runtime.models.some((model) => model.id === id)
+      )) ?? null,
+    }));
     return (await import("../src/local-runtimes/classifier-model.js")).pickLocalClassifierModel();
   };
 
@@ -85,6 +91,76 @@ describe("pickLocalClassifierModel — picks from the real cache", () => {
     // The pre-pull state: only an embedding model and two oversized models.
     const before = [{ models: THIS_BOX[0].models.filter((m) => m.id !== "llama3.2:3b") }];
     expect(await withCache(before)).toBeNull();
+  });
+
+  it("prefers only certified eligible candidates and breaks equal sizes deterministically", async () => {
+    const runtimes = [
+      {
+        id: "runtime-z",
+        models: [
+          { id: "small-uncertified:1b", sizeBytes: 1e9 },
+          { id: "z-cert:3b", sizeBytes: 3e9 },
+        ],
+      },
+      {
+        id: "runtime-a",
+        models: [{ id: "a-cert:3b", sizeBytes: 3e9 }],
+      },
+    ];
+    vi.doMock("../src/local-runtimes/cache.js", () => ({
+      getLocalRuntimes: () => runtimes,
+      getRuntimeForModel: (id: string) => runtimes.find((runtime) => (
+        runtime.models.some((model) => model.id === id)
+      )) ?? null,
+    }));
+    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+      hasPublishedCertification: (_runtime: { id: string }, model: { id: string }) => (
+        model.id.endsWith("cert:3b")
+      ),
+    }));
+    const { pickCertifiedLocalClassifierModel } = await import("../src/local-runtimes/classifier-model.js");
+    expect(pickCertifiedLocalClassifierModel()).toBe("a-cert:3b");
+  });
+
+  it("does not treat persistent or failed evidence as a certified routing candidate", async () => {
+    const runtimes = [{
+      id: "runtime-a",
+      models: [{ id: "candidate:3b", sizeBytes: 3e9 }],
+    }];
+    vi.doMock("../src/local-runtimes/cache.js", () => ({
+      getLocalRuntimes: () => runtimes,
+      getRuntimeForModel: (id: string) => runtimes.find((runtime) => (
+        runtime.models.some((model) => model.id === id)
+      )) ?? null,
+    }));
+    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+      hasPublishedCertification: () => false,
+    }));
+    const { pickCertifiedLocalClassifierModel } = await import("../src/local-runtimes/classifier-model.js");
+    expect(pickCertifiedLocalClassifierModel()).toBeNull();
+  });
+
+  it("skips a certified duplicate ID when canonical local routing resolves another runtime", async () => {
+    const shared = "shared:3b";
+    const runtimes = [
+      { id: "runtime-a", models: [{ id: shared, sizeBytes: 3e9 }] },
+      { id: "runtime-b", models: [{ id: shared, sizeBytes: 3e9 }] },
+    ];
+    vi.doMock("../src/local-runtimes/cache.js", () => ({
+      getLocalRuntimes: () => runtimes,
+      getRuntimeForModel: (id: string) => runtimes.find((runtime) => (
+        runtime.models.some((model) => model.id === id)
+      )) ?? null,
+    }));
+    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+      hasPublishedCertification: (runtime: { id: string }) => runtime.id === "runtime-b",
+    }));
+    const {
+      pickCertifiedLocalClassifierModel,
+      pickLocalClassifierModel,
+    } = await import("../src/local-runtimes/classifier-model.js");
+    expect(pickCertifiedLocalClassifierModel()).toBeNull();
+    expect(pickLocalClassifierModel()).toBe(shared);
   });
 });
 
@@ -109,23 +185,55 @@ describe("resolveBackgroundModel — precedence", () => {
 
   it("honors the localClassifierModel setting above discovery", async () => {
     vi.doMock("../src/settings.js", () => ({ getSetting: () => "my-pinned:1b" }));
-    vi.doMock("../src/local-runtimes/index.js", () => ({ pickLocalClassifierModel: () => "llama3.2:3b" }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({
+      pickCertifiedLocalClassifierModel: () => null,
+      pickLocalClassifierModel: () => "llama3.2:3b",
+    }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
     expect(await resolveBackgroundModel("local", "qwen3.6:27b")).toBe("my-pinned:1b");
   });
 
   it("auto-picks the discovered model when the setting is empty", async () => {
     vi.doMock("../src/settings.js", () => ({ getSetting: () => "" }));
-    vi.doMock("../src/local-runtimes/index.js", () => ({ pickLocalClassifierModel: () => "llama3.2:3b" }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({
+      pickCertifiedLocalClassifierModel: () => null,
+      pickLocalClassifierModel: () => "llama3.2:3b",
+    }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
     expect(await resolveBackgroundModel("local", "qwen3.6:27b")).toBe("llama3.2:3b");
+  });
+
+  it("prefers a certified local candidate after an empty setting without changing ollama-cloud", async () => {
+    vi.doMock("../src/settings.js", () => ({ getSetting: () => "" }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({
+      pickCertifiedLocalClassifierModel: () => "certified:3b",
+      pickLocalClassifierModel: () => "discovered:1b",
+    }));
+    const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
+    expect(await resolveBackgroundModel("local", "chat:27b")).toBe("certified:3b");
+    expect(await resolveBackgroundModel("ollama-cloud", "chat:27b")).toBe("discovered:1b");
+  });
+
+  it("keeps an explicit localClassifierModel above certified routing", async () => {
+    let certificationLookups = 0;
+    vi.doMock("../src/settings.js", () => ({ getSetting: () => "chosen:1b" }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({
+      pickCertifiedLocalClassifierModel: () => { certificationLookups += 1; return "certified:3b"; },
+      pickLocalClassifierModel: () => "discovered:1b",
+    }));
+    const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
+    expect(await resolveBackgroundModel("local", "chat:27b")).toBe("chosen:1b");
+    expect(certificationLookups).toBe(0);
   });
 
   it("falls back to the chat model when nothing is pinned or discovered", async () => {
     // The multi-user guarantee: a fresh install with no small model behaves
     // EXACTLY as it does today rather than 404ing on a hardcoded id.
     vi.doMock("../src/settings.js", () => ({ getSetting: () => "" }));
-    vi.doMock("../src/local-runtimes/index.js", () => ({ pickLocalClassifierModel: () => null }));
+    vi.doMock("../src/local-runtimes/index.js", () => ({
+      pickCertifiedLocalClassifierModel: () => null,
+      pickLocalClassifierModel: () => null,
+    }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
     expect(await resolveBackgroundModel("local", "qwen3.6:27b")).toBe("qwen3.6:27b");
   });
@@ -133,6 +241,7 @@ describe("resolveBackgroundModel — precedence", () => {
   it("survives an unreadable settings file / missing discovery", async () => {
     vi.doMock("../src/settings.js", () => ({ getSetting: () => { throw new Error("no settings"); } }));
     vi.doMock("../src/local-runtimes/index.js", () => ({
+      pickCertifiedLocalClassifierModel: () => { throw new Error("no discovery"); },
       pickLocalClassifierModel: () => { throw new Error("no discovery"); },
     }));
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");

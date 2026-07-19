@@ -4,6 +4,7 @@ import {
   localModelEvidenceForResolvedTarget,
   resolveOpenAICompatTarget,
 } from "../src/canonical-loop/adapters/openai-compat/resolve-target.js";
+import { resolveBackgroundModel } from "../src/providers/background-model.js";
 import type { LocalRuntimeInfo } from "../src/local-runtimes/types.js";
 
 const LMSTUDIO_RT: LocalRuntimeInfo = {
@@ -18,12 +19,16 @@ const LMSTUDIO_RT: LocalRuntimeInfo = {
 
 let runtimes: LocalRuntimeInfo[] | null = [LMSTUDIO_RT];
 let cloudModels = new Set<string>();
+let certifiedBackgroundModel: string | null = null;
+let discoveredBackgroundModel: string | null = null;
 
 vi.mock("../src/config.js", () => ({
   getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:11434" }),
 }));
 vi.mock("../src/local-runtimes/index.js", () => ({
   getLocalRuntimes: () => runtimes,
+  pickCertifiedLocalClassifierModel: () => certifiedBackgroundModel,
+  pickLocalClassifierModel: () => discoveredBackgroundModel,
   getRuntimeForModel: (m: string) =>
     runtimes?.find(r => r.models.some(x => x.id === m)) ?? null,
   getLocalModelCapabilityProfile: (baseURL: string, model: string) => {
@@ -56,6 +61,8 @@ vi.mock("../src/ollama-cloud.js", () => ({
 beforeEach(() => {
   runtimes = [LMSTUDIO_RT];
   cloudModels = new Set();
+  certifiedBackgroundModel = null;
+  discoveredBackgroundModel = null;
 });
 
 describe("resolveOpenAICompatTarget local per-model routing", () => {
@@ -119,5 +126,29 @@ describe("resolveOpenAICompatTarget local per-model routing", () => {
   it("no model arg → old behavior exactly (ollamaUrl)", async () => {
     const t = await resolveOpenAICompatTarget("local", { apiKey: "" });
     expect(t).toEqual({ baseURL: "http://127.0.0.1:11434/v1", apiKey: "ollama" });
+  });
+
+  it("keeps duplicate-ID fallback on the canonical first runtime when no cert can select safely", async () => {
+    const first: LocalRuntimeInfo = {
+      ...LMSTUDIO_RT,
+      id: "openai-compat@127.0.0.1:1001",
+      endpoint: { baseUrl: "http://127.0.0.1:1001", origin: "auto" },
+      chatBaseUrl: "http://127.0.0.1:1001/v1",
+      models: [{ id: "shared:3b", contextWindow: 8192, tools: true, sizeBytes: 3e9 }],
+    };
+    const second: LocalRuntimeInfo = {
+      ...LMSTUDIO_RT,
+      id: "openai-compat@127.0.0.1:1002",
+      endpoint: { baseUrl: "http://127.0.0.1:1002", origin: "auto" },
+      chatBaseUrl: "http://127.0.0.1:1002/v1",
+      models: [{ id: "shared:3b", contextWindow: 8192, tools: true, sizeBytes: 3e9 }],
+    };
+    runtimes = [first, second];
+    discoveredBackgroundModel = "shared:3b";
+    expect(await resolveBackgroundModel("local", "chat:27b")).toBe("shared:3b");
+    expect(await resolveOpenAICompatTarget("local", { apiKey: "" }, "shared:3b")).toMatchObject({
+      baseURL: first.chatBaseUrl,
+      modelProfile: { runtimeId: first.id },
+    });
   });
 });

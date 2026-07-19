@@ -22,7 +22,8 @@
  * The user's explicit `localClassifierModel` setting outranks everything here;
  * this module only answers "what should we pick if they haven't said?".
  */
-import { getLocalRuntimes } from "./cache.js";
+import { getLocalRuntimes, getRuntimeForModel } from "./cache.js";
+import { hasPublishedCertification } from "./certification-runner.js";
 
 /**
  * Upper bound for an auto-picked classifier model. A classifier emits a ~50-token
@@ -62,6 +63,40 @@ export function isEligibleClassifierModel(id: string, sizeBytes: number | undefi
   return true;
 }
 
+function isBetterCandidate(
+  candidate: { id: string; sizeBytes: number; runtimeId: string },
+  current: { id: string; sizeBytes: number; runtimeId: string } | null,
+): boolean {
+  if (!current) return true;
+  if (candidate.sizeBytes !== current.sizeBytes) return candidate.sizeBytes < current.sizeBytes;
+  if (candidate.id !== current.id) return candidate.id < current.id;
+  return candidate.runtimeId < current.runtimeId;
+}
+
+/**
+ * Smallest eligible candidate with a process-local proof of the current
+ * certification contract. This only reads discovery and publication caches;
+ * it never reads persisted evidence or initiates a certification probe.
+ */
+export function pickCertifiedLocalClassifierModel(): string | null {
+  const runtimes = getLocalRuntimes();
+  if (!runtimes) return null;
+
+  let best: { id: string; sizeBytes: number; runtimeId: string } | null = null;
+  for (const runtime of runtimes) {
+    for (const model of runtime.models) {
+      if (!isEligibleClassifierModel(model.id, model.sizeBytes)) continue;
+      if (!hasPublishedCertification(runtime, model)) continue;
+      const resolvedRuntime = getRuntimeForModel(model.id);
+      const resolvedModel = resolvedRuntime?.models.find((candidate) => candidate.id === model.id);
+      if (resolvedRuntime !== runtime || resolvedModel !== model) continue;
+      const candidate = { id: model.id, sizeBytes: model.sizeBytes!, runtimeId: runtime.id };
+      if (isBetterCandidate(candidate, best)) best = candidate;
+    }
+  }
+  return best?.id ?? null;
+}
+
 /**
  * Smallest eligible model across every discovered runtime, or null when the box
  * has nothing suitable (caller must then keep its existing fallback).
@@ -75,10 +110,10 @@ export function pickLocalClassifierModel(): string | null {
   if (!runtimes) return null;
 
   let best: { id: string; sizeBytes: number } | null = null;
-  for (const rt of runtimes) {
-    for (const m of rt.models) {
-      if (!isEligibleClassifierModel(m.id, m.sizeBytes)) continue;
-      if (!best || m.sizeBytes! < best.sizeBytes) best = { id: m.id, sizeBytes: m.sizeBytes! };
+  for (const runtime of runtimes) {
+    for (const model of runtime.models) {
+      if (!isEligibleClassifierModel(model.id, model.sizeBytes)) continue;
+      if (!best || model.sizeBytes! < best.sizeBytes) best = { id: model.id, sizeBytes: model.sizeBytes! };
     }
   }
   return best?.id ?? null;

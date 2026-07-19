@@ -15,10 +15,16 @@ export {
   type ManualRuntimeEntry,
 } from "./endpoints.js";
 export { discoverLocalRuntimes } from "./discovery.js";
-export { certifyLocalModel, type CertificationRunInput, type CertificationRunnerDeps } from "./certification-runner.js";
+export {
+  certifyLocalModel,
+  hasPublishedCertification,
+  type CertificationRunInput,
+  type CertificationRunnerDeps,
+} from "./certification-runner.js";
 export { LocalCertificationStore } from "./certification-store.js";
 export type {
   CertificationFailure,
+  CertificationContract,
   CertificationFingerprint,
   CertificationIdentity,
   CertificationScenarioId,
@@ -43,4 +49,8 @@ export {
   refreshLocalRuntimes,
   type LocalModelCapabilityProfile,
 } from "./cache.js";
-export { pickLocalClassifierModel, isEligibleClassifierModel } from "./classifier-model.js";
+export {
+  pickCertifiedLocalClassifierModel,
+  pickLocalClassifierModel,
+  isEligibleClassifierModel,
+} from "./classifier-model.js";

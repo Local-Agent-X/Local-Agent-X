@@ -1,9 +1,14 @@
-import { certificationFingerprint } from "./certification-fingerprint.js";
+import {
+  certificationFingerprint,
+  certificationSelectionFingerprint,
+} from "./certification-fingerprint.js";
 import { LOCAL_MODEL_CERTIFICATION_SCENARIOS } from "./certification-scenarios.js";
 import { LocalCertificationStore } from "./certification-store.js";
 import { localCertificationTransport } from "./certification-transport.js";
+import { LOCAL_MODEL_CERTIFICATION_CONTRACT } from "./certification-types.js";
 import type {
   CertificationFailure,
+  CertificationContract,
   CertificationIdentity,
   CertificationScenarioId,
   CertificationScenarioResult,
@@ -11,7 +16,7 @@ import type {
   LocalModelCertification,
 } from "./certification-types.js";
 import { probeFor } from "./probes.js";
-import type { LocalRuntimeInfo } from "./types.js";
+import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 
 const CALL_TIMEOUT_MS = 30_000;
 const RUN_TIMEOUT_MS = 150_000;
@@ -88,6 +93,54 @@ export interface CertificationRunInput {
 }
 
 let queue: Promise<void> = Promise.resolve();
+interface PublishedCertification {
+  certificationHash: string;
+  selectionHash: string;
+}
+const publishedCertifications = new WeakMap<
+  LocalRuntimeInfo,
+  WeakMap<LocalModel, PublishedCertification>
+>();
+
+function passedCertification(result: LocalModelCertification): boolean {
+  return result.fingerprint.reusable
+    && result.passedCount === LOCAL_MODEL_CERTIFICATION_SCENARIOS.length
+    && Object.values(result.scenarios).every((scenario) => scenario.passed);
+}
+
+function publishCertification(input: CertificationRunInput, result: LocalModelCertification): void {
+  if (!passedCertification(result)) return;
+  const model = input.runtime.models.find((candidate) => candidate.id === input.model);
+  if (!model) return;
+  let published = publishedCertifications.get(input.runtime);
+  if (!published) {
+    published = new WeakMap<LocalModel, PublishedCertification>();
+    publishedCertifications.set(input.runtime, published);
+  }
+  published.set(model, {
+    certificationHash: result.fingerprint.hash,
+    selectionHash: certificationSelectionFingerprint(input.runtime, input.model, result.fingerprint.hash),
+  });
+}
+
+/**
+ * A process-local proof that this exact discovery snapshot passed the current
+ * certification contract. It deliberately cannot revive persisted evidence:
+ * choosing a background model must never probe a runtime on its hot path.
+ */
+export function hasPublishedCertification(
+  runtime: LocalRuntimeInfo,
+  model: LocalModel,
+  contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT,
+): boolean {
+  const published = publishedCertifications.get(runtime)?.get(model);
+  return !!published && published.selectionHash === certificationSelectionFingerprint(
+    runtime,
+    model.id,
+    published.certificationHash,
+    contract,
+  );
+}
 
 async function defaultIdentity(
   runtime: LocalRuntimeInfo,
@@ -172,7 +225,10 @@ export async function certifyLocalModel(
     }
     const fingerprint = certificationFingerprint(input.runtime, input.model, identity);
     const cached = fingerprint.reusable && !parentSignal.aborted ? store.read(fingerprint.hash) : null;
-    if (cached) return cached;
+    if (cached) {
+      publishCertification(input, cached);
+      return cached;
+    }
 
     const scenarios = {} as LocalModelCertification["scenarios"];
     let callCount = 0;
@@ -240,6 +296,7 @@ export async function certifyLocalModel(
     if (!values.some((value) => value.failure && TRANSIENT_FAILURES.has(value.failure))) {
       store.write(result);
     }
+    publishCertification(input, result);
     return result;
   });
 }

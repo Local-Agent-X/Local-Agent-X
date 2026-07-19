@@ -10,6 +10,19 @@ export const CERTIFICATION_SCENARIOS = [
 
 export type CertificationScenarioId = (typeof CERTIFICATION_SCENARIOS)[number];
 
+/** Bump when a passing certification means something materially different. */
+export const CERTIFICATION_CONTRACT_VERSION = 1;
+
+export interface CertificationContract {
+  version: number;
+  scenarios: readonly CertificationScenarioId[];
+}
+
+export const LOCAL_MODEL_CERTIFICATION_CONTRACT: CertificationContract = {
+  version: CERTIFICATION_CONTRACT_VERSION,
+  scenarios: CERTIFICATION_SCENARIOS,
+};
+
 export type CertificationFailure =
   | "aborted"
   | "auth_rejected"

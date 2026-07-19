@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { certifyLocalModel } from "./certification-runner.js";
+import { certifyLocalModel, hasPublishedCertification } from "./certification-runner.js";
 import { LocalCertificationStore } from "./certification-store.js";
 import type {
   CertificationIdentity,
@@ -10,6 +10,7 @@ import type {
   CertificationResponse,
   LocalModelCertification,
 } from "./certification-types.js";
+import { CERTIFICATION_SCENARIOS } from "./certification-types.js";
 import type { LocalRuntimeInfo } from "./types.js";
 
 const runtime: LocalRuntimeInfo = {
@@ -98,6 +99,81 @@ describe("local model certification", () => {
     expect(requests).toHaveLength(5);
     expect(requests.every((request) => request.body.max_tokens === 256)).toBe(true);
     expect(runtime).toEqual(before);
+  });
+
+  it("publishes only a complete reusable certification for the exact discovery snapshot", async () => {
+    const completeRuntime = structuredClone(runtime);
+    const complete = await certifyLocalModel({ runtime: completeRuntime, model: "fixture-model" }, {
+      store: new MemoryStore(),
+      resolveIdentity: async () => identity,
+      transport: async (request) => successfulResponse(request),
+    });
+    expect(complete.passedCount).toBe(5);
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(true);
+    const unpublishedRuntime = structuredClone(runtime);
+    expect(hasPublishedCertification(unpublishedRuntime, unpublishedRuntime.models[0]!)).toBe(false);
+
+    const cachedRuntime = structuredClone(runtime);
+    const sharedStore = new MemoryStore();
+    const persisted = await certifyLocalModel({ runtime: cachedRuntime, model: "fixture-model" }, {
+      store: sharedStore,
+      resolveIdentity: async () => identity,
+      transport: async (request) => successfulResponse(request),
+    });
+    const restartedRuntime = structuredClone(runtime);
+    expect(sharedStore.read(persisted.fingerprint.hash)?.passedCount).toBe(5);
+    expect(hasPublishedCertification(restartedRuntime, restartedRuntime.models[0]!)).toBe(false);
+    const cached = await certifyLocalModel({ runtime: restartedRuntime, model: "fixture-model" }, {
+      store: sharedStore,
+      resolveIdentity: async () => identity,
+      transport: async () => { throw new Error("cached evidence must not run scenarios"); },
+    });
+    expect(cached.passedCount).toBe(5);
+    expect(hasPublishedCertification(restartedRuntime, restartedRuntime.models[0]!)).toBe(true);
+
+    completeRuntime.kind = "ollama";
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    completeRuntime.kind = "openai-compat";
+    completeRuntime.models[0]!.contextWindow = 16384;
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    completeRuntime.models[0]!.contextWindow = 8192;
+    completeRuntime.models[0]!.tools = true;
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    completeRuntime.models[0]!.tools = null;
+    completeRuntime.endpoint.baseUrl = "http://127.0.0.1:9999";
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    completeRuntime.endpoint.baseUrl = "http://127.0.0.1:1234";
+    completeRuntime.chatBaseUrl = "http://127.0.0.1:1234/other";
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    completeRuntime.chatBaseUrl = "http://127.0.0.1:1234/v1";
+    completeRuntime.models[0]!.id = "replaced-model";
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    completeRuntime.models[0]!.id = "fixture-model";
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!, {
+      version: 2,
+      scenarios: CERTIFICATION_SCENARIOS,
+    })).toBe(false);
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!, {
+      version: 1,
+      scenarios: CERTIFICATION_SCENARIOS.slice(0, -1),
+    })).toBe(false);
+    expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(true);
+
+    const partialRuntime = structuredClone(runtime);
+    await certifyLocalModel({ runtime: partialRuntime, model: "fixture-model" }, {
+      store: new MemoryStore(),
+      resolveIdentity: async () => identity,
+      transport: async () => ({ status: 200, body: { choices: [{ message: { content: "wrong" } }] } }),
+    });
+    expect(hasPublishedCertification(partialRuntime, partialRuntime.models[0]!)).toBe(false);
+
+    const unknownIdentityRuntime = structuredClone(runtime);
+    await certifyLocalModel({ runtime: unknownIdentityRuntime, model: "fixture-model" }, {
+      store: new MemoryStore(),
+      resolveIdentity: async () => ({ runtimeVersion: null, modelDigest: "known" }),
+      transport: async (request) => successfulResponse(request),
+    });
+    expect(hasPublishedCertification(unknownIdentityRuntime, unknownIdentityRuntime.models[0]!)).toBe(false);
   });
 
   it("invalidates reuse when the runtime/model fingerprint changes", async () => {

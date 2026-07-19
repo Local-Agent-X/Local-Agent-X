@@ -9,7 +9,8 @@
  * static `models` list), because there is no id we could safely declare: any
  * hardcoded local model 404s for every user who hasn't pulled it.
  *
- * So dynamic-catalog providers resolve in three tiers, most explicit first:
+ * Dynamic-catalog providers resolve explicitly pinned, then discovered. Local
+ * alone may prefer a certified discovered candidate before the ordinary pick.
  *
  *   1. `localClassifierModel` setting — the user said so; nothing outranks it.
  *   2. Discovered smallest eligible model — small, non-reasoning, non-embedding
@@ -48,8 +49,12 @@ export async function resolveBackgroundModel(
     } catch { /* settings unreadable — fall through to discovery */ }
 
     try {
-      const { pickLocalClassifierModel } = await import("../local-runtimes/index.js");
-      const auto = pickLocalClassifierModel();
+      const localRuntimes = await import("../local-runtimes/index.js");
+      if (provider === "local") {
+        const certified = localRuntimes.pickCertifiedLocalClassifierModel();
+        if (certified) return certified;
+      }
+      const auto = localRuntimes.pickLocalClassifierModel();
       if (auto) return auto;
     } catch { /* discovery unavailable — fall through to the caller's fallback */ }
   }

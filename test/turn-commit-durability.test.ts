@@ -230,6 +230,49 @@ describe("message collision safety", () => {
       expect.objectContaining({ messageId: `${op.id}-answer`, turnIdx: 0, seqInTurn: 1 }),
     ]);
   });
+
+  it("never quarantines an already-published turn after a malformed legacy tail appears", () => {
+    const { op, claim } = mkOp("published-before-malformed-tail");
+    expect(commitTurn(input(op, claim)).inserted).toBe(true);
+    const target = opTurnPath(op.id, 0);
+    const published = readFileSync(target, "utf-8");
+    writeFileSync(opMessagesPath(op.id), '{"messageId":\n');
+
+    expect(() => commitTurn(input(readOp(op.id)!, claim))).toThrow("legacy message seed integrity");
+    expect(readFileSync(target, "utf-8")).toBe(published);
+    expect(readdirSync(opTurnsDir(op.id)).filter((name) => name.endsWith(".corrupt"))).toEqual([]);
+    expect(readOpTurn(op.id, 0)).toBeNull();
+
+    writeFileSync(opMessagesPath(op.id), "");
+    expect(commitTurn(input(readOp(op.id)!, claim)).inserted).toBe(false);
+    expect(readFileSync(target, "utf-8")).toBe(published);
+    expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+  });
+
+  it("never quarantines an already-published turn after duplicate legacy rows appear", () => {
+    const { op, claim } = mkOp("published-before-duplicate-rows");
+    expect(commitTurn(input(op, claim)).inserted).toBe(true);
+    const target = opTurnPath(op.id, 0);
+    const published = readFileSync(target, "utf-8");
+    const first = { ...seed(op.id), turnIdx: 1 };
+    writeSeeds(op.id, [first, { ...first, seqInTurn: 1 }]);
+
+    expect(() => commitTurn(input(readOp(op.id)!, claim))).toThrow("legacy message seed integrity");
+    expect(readFileSync(target, "utf-8")).toBe(published);
+    expect(readdirSync(opTurnsDir(op.id)).filter((name) => name.endsWith(".corrupt"))).toEqual([]);
+  });
+
+  it("never quarantines an already-published turn after a foreign legacy row appears", () => {
+    const { op, claim } = mkOp("published-before-foreign-row");
+    expect(commitTurn(input(op, claim)).inserted).toBe(true);
+    const target = opTurnPath(op.id, 0);
+    const published = readFileSync(target, "utf-8");
+    writeSeeds(op.id, [{ ...seed(op.id), opId: "foreign-op", turnIdx: 1 }]);
+
+    expect(() => commitTurn(input(readOp(op.id)!, claim))).toThrow("legacy message seed integrity");
+    expect(readFileSync(target, "utf-8")).toBe(published);
+    expect(readdirSync(opTurnsDir(op.id)).filter((name) => name.endsWith(".corrupt"))).toEqual([]);
+  });
 });
 
 describe("projection identity", () => {

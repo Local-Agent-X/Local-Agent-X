@@ -97,6 +97,17 @@ function readBaseArtifact(
   opId: string,
   turnIdx: number,
 ): TurnCommitEnvelope | OpTurnRow | null {
+  const artifact = readStructurallyAuthorizedArtifact(opId, turnIdx);
+  if (!artifact || !("turn" in artifact)) return artifact;
+  const seeds = readLegacyMessageSeeds(opId);
+  return seeds.issues.length || hasMessageCollision(artifact.messages, seeds.rows)
+    ? null : artifact;
+}
+
+function readStructurallyAuthorizedArtifact(
+  opId: string,
+  turnIdx: number,
+): TurnCommitEnvelope | OpTurnRow | null {
   const path = opTurnPath(opId, turnIdx);
   if (!existsSync(path)) return null;
   try {
@@ -106,8 +117,6 @@ function readBaseArtifact(
       if (!op || op.id !== opId) return null;
       if (parsed.turn.opId !== opId || parsed.turn.turnIdx !== turnIdx) return null;
       if (!projectionMatchesOp(parsed.projection, op)) return null;
-      const seeds = readLegacyMessageSeeds(opId);
-      if (seeds.issues.length || hasMessageCollision(parsed.messages, seeds.rows)) return null;
       return parsed;
     }
     if ((parsed as { schemaVersion?: unknown })?.schemaVersion !== undefined) return null;
@@ -199,7 +208,16 @@ export function scavengeTurnCommitStages(opId: string): number {
  * the same turn can be safely re-driven. Valid artifacts are never moved. */
 export function quarantineInvalidTurnArtifact(opId: string, turnIdx: number): boolean {
   const target = opTurnPath(opId, turnIdx);
-  if (!existsSync(target) || readTurnArtifact(opId, turnIdx)) return false;
+  if (!existsSync(target)) return false;
+  const artifact = readStructurallyAuthorizedArtifact(opId, turnIdx);
+  if (artifact && "turn" in artifact) {
+    const seeds = readLegacyMessageSeeds(opId);
+    if (seeds.issues.length) throw new LegacyMessageSeedIntegrityError(opId, seeds.issues);
+    if (!hasMessageCollision(artifact.messages, seeds.rows)
+      && !hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx))) return false;
+  } else if (artifact) {
+    return false;
+  }
   renameSync(target, `${target}.${randomUUID()}.corrupt`);
   return true;
 }

@@ -33,6 +33,7 @@ describe("rolling installer freshness contract", () => {
     for (const path of [
       "installer/**",
       "scripts/install-common.mjs",
+      "scripts/installer/**",
       "scripts/build-mac-installer.sh",
       "scripts/fetch-electron-bundle.mjs",
       ".github/workflows/installer-rolling.yml",
@@ -46,12 +47,12 @@ describe("rolling installer freshness contract", () => {
     const view = readFileSync(resolve("installer/Views/MainWindow.axaml"), "utf8");
     const viewModel = readFileSync(resolve("installer/ViewModels/MainWindowViewModel.cs"), "utf8");
     const process = readFileSync(resolve("installer/Services/InstallProcess.cs"), "utf8");
-    const script = readFileSync(resolve("scripts/install-common.mjs"), "utf8");
+    const script = readFileSync(resolve("scripts/installer/contract.mjs"), "utf8");
 
     expect(view).toContain('IsChecked="{Binding InstallOllama}"');
     expect(viewModel).toContain("_process.Start(_repoRoot, _source.ResolvedCommit, InstallOllama)");
     expect(process).toContain('psi.Environment["LAX_INSTALL_OLLAMA"] = installOllama ? "1" : "0"');
-    expect(script).toContain('process.env.LAX_INSTALL_OLLAMA === "1"');
+    expect(script).toContain('env.LAX_INSTALL_OLLAMA === "1"');
   });
 });
 

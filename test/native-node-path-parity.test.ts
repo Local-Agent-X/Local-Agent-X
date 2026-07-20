@@ -25,7 +25,7 @@ function augmentsInBlock(file: string, arrayName: string): string[] {
 describe("native node-path resolution parity", () => {
   it("installer and runtime prepend identical PATH augments", () => {
     const runtime = augmentsInBlock("desktop/src/server-process.ts", "PATH_AUGMENTS = [");
-    const installer = augmentsInBlock("scripts/install-common.mjs", "RUNTIME_NODE_PATH_AUGMENTS = [");
+    const installer = augmentsInBlock("scripts/installer/process-tools.mjs", "RUNTIME_NODE_PATH_AUGMENTS = [");
     expect(runtime.length).toBeGreaterThan(0);
     expect(installer).toEqual(runtime);
   });

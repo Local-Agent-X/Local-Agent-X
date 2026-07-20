@@ -47,6 +47,7 @@ on:
     paths:
       - "installer/**"
       - "scripts/install-common.mjs"
+      - "scripts/installer/**"
       - "scripts/build-mac-installer.sh"
       - "scripts/fetch-electron-bundle.mjs"
       - ".github/workflows/installer-rolling.yml"

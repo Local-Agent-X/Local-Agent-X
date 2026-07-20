@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ControlTransport } from "../screen-stream/peer.js";
 import {
   PhoneProjectionBridge,
@@ -8,6 +8,7 @@ import {
   type PhoneProjectionSource,
 } from "./phone-projection.js";
 import type { Op } from "../ops/types.js";
+import { clearSessionCanaries, registerSessionCanaries } from "../threat/canaries.js";
 
 class FakeTransport implements ControlTransport {
   readonly sent: Array<Record<string, unknown>> = [];
@@ -38,6 +39,7 @@ const subscribe = (transport: FakeTransport, sessionId = "session-a", afterSeq?:
 });
 
 describe("read-only phone projection", () => {
+  afterEach(() => clearSessionCanaries("session-a"));
   it("binds subscriptions to the paired phone and selected session", () => {
     const s = source();
     const bridge = new PhoneProjectionBridge({ pairedPhoneId: "phone-1", source: s.value });
@@ -46,18 +48,15 @@ describe("read-only phone projection", () => {
     transport.emit({ type: "phone_projection_subscribe", deviceId: "phone-2", sessionId: "session-a" });
     expect(transport.sent).toEqual([{ type: "phone_projection_error", version: 1, code: "unauthorized" }]);
     expect(s.value.subscribe).not.toHaveBeenCalled();
-
     subscribe(transport);
     s.emit("session-b", { kind: "output", text: "wrong", replace: false });
     s.emit("session-a", { kind: "output", text: "right", replace: false });
     expect(transport.sent.at(-1)).toMatchObject({ sessionId: "session-a", item: { text: "right" } });
-
     subscribe(transport, "session-b", 0);
     expect(transport.sent.at(-1)).toEqual({ type: "phone_projection_error", version: 1, code: "unauthorized" });
     s.emit("session-b", { kind: "output", text: "still wrong", replace: false });
     expect(transport.sent.at(-1)).toEqual({ type: "phone_projection_error", version: 1, code: "unauthorized" });
   });
-
   it.each([
     { type: "chat", sessionId: "session-a", message: "mutate" },
     { type: "stop", sessionId: "session-a" },
@@ -74,27 +73,37 @@ describe("read-only phone projection", () => {
     expect(transport.sent).toEqual([{ type: "phone_projection_error", version: 1, code: "invalid_request" }]);
     expect(s.value.subscribe).not.toHaveBeenCalled();
   });
-
-  it("redacts snapshot and live output, then replays it in sequence after reconnect", () => {
-    const secret = "sk_live_123456789012345678901234";
-    const s = source([{ kind: "conversation", role: "assistant", text: `saved ${secret}` }]);
-    const bridge = new PhoneProjectionBridge({ pairedPhoneId: "phone-1", source: s.value });
-    const first = new FakeTransport();
-    bridge.attach(first);
-    subscribe(first);
-    expect(JSON.stringify(first.sent[0])).not.toContain(secret);
-    s.emit("session-a", { kind: "output", text: `answer ${secret}`, replace: false });
-    s.emit("session-a", { kind: "status", state: "done" });
-    expect(first.sent.slice(1).map(frame => frame.seq)).toEqual([1, 2]);
-    expect(JSON.stringify(first.sent)).not.toContain(secret);
-
-    first.close();
-    const second = new FakeTransport();
-    bridge.attach(second);
-    subscribe(second, "session-a", 0);
-    expect(second.sent.map(frame => frame.seq)).toEqual([1, 2]);
+  it.each(["wa-15551234567", "tg-8199987986"])("rejects private messaging session %s", sessionId => {
+    const s = source(); const bridge = new PhoneProjectionBridge({ pairedPhoneId: "phone-1", source: s.value });
+    const transport = new FakeTransport(); bridge.attach(transport);
+    subscribe(transport, sessionId);
+    expect(transport.sent).toEqual([{ type: "phone_projection_error", version: 1, code: "unauthorized" }]);
+    expect(s.value.subscribe).not.toHaveBeenCalled();
+    subscribe(transport); expect(transport.sent.at(-1)).toMatchObject({ sessionId: "session-a" });
   });
-
+  it("withholds secrets and raw or encoded canaries without bricking live output or replay", () => {
+    const canary = "CANARY-deadbeefdeadbeef-ALPHA"; const encoded = Buffer.from(canary).toString("base64");
+    registerSessionCanaries("session-a", [canary]);
+    const s = source([
+      { kind: "conversation", role: "assistant", text: "safe base" },
+      { kind: "output", text: "sk_live_123456789012345678901234", replace: false },
+      { kind: "output", text: encoded, replace: false },
+    ]);
+    const bridge = new PhoneProjectionBridge({ pairedPhoneId: "phone-1", source: s.value });
+    const first = new FakeTransport(); bridge.attach(first); subscribe(first);
+    expect(first.sent[0]).toMatchObject({ items: [{ text: "safe base" }, { detail: "Content withheld." }] });
+    s.emit("session-a", { kind: "output", text: canary, replace: false });
+    s.emit("session-a", { kind: "output", text: "sk_live_123456789012345678901234", replace: false });
+    s.emit("session-a", { kind: "output", text: "safe answer", replace: false });
+    expect(first.sent.slice(1, 3).map(frame => frame.item)).toEqual(Array(2).fill(
+      { kind: "status", state: "error", detail: "Content withheld." },
+    ));
+    expect(first.sent[3]).toMatchObject({ item: { text: "safe answer" } });
+    first.close();
+    const second = new FakeTransport(); bridge.attach(second); subscribe(second, "session-a", 0);
+    expect(second.sent.map(frame => frame.seq)).toEqual([1, 2, 3]);
+    expect(JSON.stringify([...first.sent, ...second.sent])).not.toMatch(new RegExp(`${canary}|${encoded}|sk_live_`));
+  });
   it("subscribes before a cursorless durable snapshot and flushes concurrent live frames after it", () => {
     const live: { listener: ((item: PhoneProjectionItem) => void) | null } = { listener: null };
     const value: PhoneProjectionSource = {
@@ -117,7 +126,6 @@ describe("read-only phone projection", () => {
     ]);
     expect(transport.sent[1]).toMatchObject({ seq: 1, item: { text: "arrived during snapshot" } });
   });
-
   it.each<PhoneProjectionItem>([
     { kind: "operation", opId: "op-race", status: "running", progress: "turn 2" },
     { kind: "conversation", role: "assistant", text: "persisted answer" },
@@ -138,11 +146,9 @@ describe("read-only phone projection", () => {
     expect(transport.sent).toEqual([
       expect.objectContaining({ type: "phone_projection_snapshot", items: [item] }),
     ]);
-
     live.listener?.(item, 2);
     expect(transport.sent.at(-1)).toMatchObject({ type: "phone_projection_event", seq: 1, item });
   });
-
   it.each<PhoneProjectionItem>([
     { kind: "operation", opId: "op-window", status: "running", progress: "after read" },
     { kind: "conversation", role: "assistant", text: "after read" },
@@ -167,7 +173,6 @@ describe("read-only phone projection", () => {
     ]);
     expect(transport.sent[1]).toMatchObject({ seq: 1, item });
   });
-
   it("never treats ephemeral progress as covered by a durable operation snapshot", () => {
     const items: PhoneProjectionItem[] = [{ kind: "operation", opId: "op-progress", status: "running" }];
     const event = { type: "bg_op_progress", opId: "op-progress", line: "fresh progress" } as const;
@@ -287,7 +292,6 @@ describe("read-only phone projection", () => {
       "during reconnect",
     ]);
   });
-
   it("ignores stale transport close and message callbacks after a replacement attaches", () => {
     const s = source();
     const bridge = new PhoneProjectionBridge({ pairedPhoneId: "phone-1", source: s.value });
@@ -306,7 +310,6 @@ describe("read-only phone projection", () => {
       item: { text: "still attached" },
     });
   });
-
   it("falls back to a bounded snapshot when the replay cursor has expired", () => {
     const s = source([{ kind: "status", state: "done" }]);
     const bridge = new PhoneProjectionBridge({ pairedPhoneId: "phone-1", source: s.value });
@@ -322,7 +325,6 @@ describe("read-only phone projection", () => {
     expect(second.sent[0]).toEqual({ type: "phone_projection_error", version: 1, code: "replay_expired" });
     expect(second.sent[1]).toMatchObject({ type: "phone_projection_snapshot", sessionId: "session-a", seq: 130 });
   });
-
   it("reconciles the same concurrent output across an expired-cursor snapshot boundary", () => {
     const duplicate: PhoneProjectionItem = { kind: "output", text: "durable final", replace: true };
     const live: { listener: ((item: PhoneProjectionItem, version?: number) => void) | null } = { listener: null };
@@ -356,7 +358,6 @@ describe("read-only phone projection", () => {
     live.listener?.(duplicate, 132);
     expect(second.sent.at(-1)).toMatchObject({ type: "phone_projection_event", seq: 131, item: duplicate });
   });
-
   it("rebuilds an ordered read model from canonical snapshot state after process restart", () => {
     const items: PhoneProjectionItem[] = [
       { kind: "conversation", role: "user", text: "build it" },
@@ -371,7 +372,6 @@ describe("read-only phone projection", () => {
     subscribe(transport);
     expect(transport.sent[0]).toMatchObject({ type: "phone_projection_snapshot", seq: 0, items });
   });
-
   it("reconstructs current operation state and latest progress from durable restart facts", () => {
     const op = {
       id: "op-restart",

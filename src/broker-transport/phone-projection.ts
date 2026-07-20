@@ -14,6 +14,9 @@ import { readCheckpoint } from "../ops/checkpoint.js";
 import type { Op, OpCheckpoint } from "../ops/types.js";
 import { extractFinalAssistantText, readOpTurns, type OpTurnRow } from "../canonical-loop/index.js";
 import { redactString } from "../ops/redactor.js";
+import { scanForSecrets } from "../security/secrets/secret-scanner.js";
+import { parseMessagingSessionTarget } from "../session/channel-registry.js";
+import { checkCanariesInPayload } from "../threat/canaries.js";
 import type { ChatChannel } from "./chat-bridge.js";
 
 const MAX_REPLAY_FRAMES = 128;
@@ -99,6 +102,7 @@ export class PhoneProjectionBridge implements ChatChannel {
     const request = parseSubscribeRequest(text);
     if (!request) return this.sendError("invalid_request");
     if (request.deviceId !== this.deps.pairedPhoneId) return this.sendError("unauthorized");
+    if (parseMessagingSessionTarget(request.sessionId)) return this.sendError("unauthorized");
     if (this.boundSessionId && request.sessionId !== this.boundSessionId) return this.sendError("unauthorized");
     this.boundSessionId ||= request.sessionId;
 
@@ -154,8 +158,14 @@ export class PhoneProjectionBridge implements ChatChannel {
 
   private sendSnapshot(sessionId: string, sinceVersion?: number): Set<number> {
     const result = this.source.snapshot(sessionId, sinceVersion);
-    const items = (Array.isArray(result) ? result : result.items)
-      .slice(-(MAX_MESSAGES + MAX_OPERATIONS)).map(redactItem);
+    const items: PhoneProjectionItem[] = [];
+    let withheld = false;
+    for (const item of (Array.isArray(result) ? result : result.items).slice(-(MAX_MESSAGES + MAX_OPERATIONS))) {
+      const cleared = clearItemForProjection(sessionId, item);
+      if (cleared) items.push(cleared);
+      else withheld = true;
+    }
+    if (withheld) items.push(contentWithheldItem());
     this.send({ type: "phone_projection_snapshot", version: 1, sessionId, seq: this.seq, items });
     return new Set(Array.isArray(result) ? [] : result.coveredVersions);
   }
@@ -163,7 +173,8 @@ export class PhoneProjectionBridge implements ChatChannel {
   private sendItem(sessionId: string, item: PhoneProjectionItem): void {
     if (sessionId !== this.sessionId) return;
     const frame: Extract<PhoneProjectionFrame, { type: "phone_projection_event" }> = {
-      type: "phone_projection_event", version: 1, sessionId, seq: ++this.seq, item: redactItem(item),
+      type: "phone_projection_event", version: 1, sessionId, seq: ++this.seq,
+      item: clearItemForProjection(sessionId, item) ?? contentWithheldItem(),
     };
     this.replay.push(frame);
     if (this.replay.length > MAX_REPLAY_FRAMES) this.replay.splice(0, this.replay.length - MAX_REPLAY_FRAMES);
@@ -330,4 +341,15 @@ function redactItem<T extends PhoneProjectionItem>(item: T): T {
   };
   if (item.kind === "notification") return { ...item, summary: clean(item.summary) };
   return item.detail ? { ...item, detail: clean(item.detail) } : item;
+}
+
+function clearItemForProjection(sessionId: string, item: PhoneProjectionItem): PhoneProjectionItem | null {
+  const redacted = redactItem(item);
+  const payload = JSON.stringify(item);
+  if (!scanForSecrets(payload).clean || checkCanariesInPayload(sessionId, payload)) return null;
+  return redacted;
+}
+
+function contentWithheldItem(): PhoneProjectionItem {
+  return { kind: "status", state: "error", detail: "Content withheld." };
 }

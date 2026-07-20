@@ -25,13 +25,13 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs
 import { join } from "node:path";
 import {
   createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
-  getBranchHead, revertBranchTo, runRepoBuild, runDesktopTscBuild,
+  getBranchHead, runRepoBuild, runDesktopTscBuild,
 } from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
 import { gateDeps, gateBuild, gateBuildAt, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
-import { recordMerge } from "./self-edit/rollback.js";
+import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restoreUpdateLanding, type PreparedUpdateLanding } from "./update-git-rollback.js";
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
 import { createLogger } from "./logger.js";
@@ -126,6 +126,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
   const branch = `update/${nowSlug()}`;
   let probeProc: ChildProcess | null = null;
   let probeDataDir: string | null = null;
+  let prepared: PreparedUpdateLanding | null = null;
 
   try {
     sh("git fetch origin main --quiet", repoRoot);
@@ -208,8 +209,13 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     const gates: UpdateGates = { deps, build, bind: bindOutcome.result, smoke };
 
     const mergeInfo = getMergeBaseInfo(name);
+    if (mergeInfo) {
+      prepared = prepareUpdateLanding(wt.path, mergeInfo);
+    }
     const merge = mergeWorktree(name);
     if (!merge.merged) {
+      if (mergeInfo) cancelUpdateLanding(mergeInfo);
+      prepared = null;
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Gates passed but landing failed: ${merge.error || "unknown"}` };
     }
 
@@ -223,8 +229,9 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
         syncLiveDeps(repoRoot);
       } catch (e) {
         if (mergeInfo) {
-          revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
+          restoreUpdateLanding(mergeInfo);
           try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ }
+          prepared = null;
         }
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — dependency install on the live tree failed: ${(e as Error).message.slice(0, 600)}` };
       }
@@ -232,12 +239,14 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     if (mergeInfo) {
       const rebuilt = runRepoBuild(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
       if (!rebuilt.ok) {
-        revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
+        restoreUpdateLanding(mergeInfo);
         if (!deps.skipped) { try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ } }
+        prepared = null;
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — post-merge rebuild failed: ${rebuilt.detail.slice(0, 600)}` };
       }
       const postSha = getBranchHead(mergeInfo.repoRoot, mergeInfo.baseBranch);
-      recordMerge({ preSha: mergeInfo.sha, postSha, baseBranch: mergeInfo.baseBranch, repoRoot: mergeInfo.repoRoot, files: merge.files, ts: new Date().toISOString() });
+      confirmUpdateLanding(mergeInfo, postSha, merge.files);
+      prepared = null;
 
       // Pre-build desktop/dist for updates that touch the Electron main, so the
       // restart is a single clean boot — reconcile's desktopDistIsFresh skip
@@ -257,6 +266,10 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     logger.info(`[update] applied ${fromCommit.slice(0, 7)} → ${toCommit.slice(0, 7)} (${merge.files} files)`);
     return { ok: true, fromCommit: fromCommit.slice(0, 7), toCommit: toCommit.slice(0, 7), gates, detail: `Updated (${merge.files} files). Restart to finish.` };
   } catch (e) {
+    if (prepared) {
+      restoreUpdateLanding(prepared);
+      prepared = null;
+    }
     return { ok: false, fromCommit: "", toCommit: "", detail: `Update pipeline crashed: ${(e as Error).message}` };
   } finally {
     killProbe(probeProc);
@@ -265,11 +278,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
   }
 }
 
-/**
- * Tarball (rolling-channel) update behind the same machine-wide lock as the
- * git path and self_edit. Concurrent Update clicks were racing each other's
- * extract dirs and probes into EBUSY before this existed.
- */
+/** Tarball updates share the self-edit lock and the canonical validation gates. */
 export async function applyRollingUpdate(installDir: string, authToken: string): Promise<GitUpdateResult> {
   const lock = acquireGlobalSelfEditLock({ task: "platform update (rolling)" });
   if (!lock.acquired) {
@@ -288,13 +297,14 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
       tarPath, installDir, installed || "rolling", commit,
       (extractDir) => validateExtractedUpdate(extractDir, installDir, authToken),
     );
-    if (depsChanged) {
-      // The gated tree validated against fresh deps; sync the live install's
-      // node_modules to the new lockfile. A file lock on a loaded native module
-      // defers to next-launch reconcile (see syncLiveDeps).
-      syncLiveDeps(installDir);
+    try {
+      if (depsChanged) syncLiveDeps(installDir);
+      await ota.writeInstalledCommit(commit);
+      await ota.confirmUpdate(commit);
+    } catch (error) {
+      await ota.rollbackUpdate(installDir, commit);
+      throw new Error(`Update rolled back after post-copy verification failed: ${(error as Error).message}`);
     }
-    await ota.writeInstalledCommit(commit);
     logger.info(`[update] rolling applied ${installed.slice(0, 7) || "(fresh)"} → ${commit.slice(0, 7)}`);
     return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Updated from main (validated) — relaunch to finish." };
   } catch (e) {

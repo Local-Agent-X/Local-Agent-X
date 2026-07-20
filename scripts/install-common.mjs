@@ -21,6 +21,7 @@ const context = {
   wantOllama: selections.ollamaRuntime,
   wantOllamaMemoryModel: selections.ollamaMemoryModel,
   selections,
+  installRoot: process.cwd(),
 };
 
 if (process.argv.includes("--upgrade-node")) {

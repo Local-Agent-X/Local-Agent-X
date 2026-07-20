@@ -10,7 +10,7 @@
  * one-time boot notice so the operator knows the hatch exists.
  */
 
-import { writeFileSync, readFileSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -34,6 +34,8 @@ export interface MergeRecord {
   /** Boots that have ATTEMPTED to confirm this merge. 0 = merge recorded, not
    *  yet booted into; ≥ 1 = a boot tried and (if still pending) didn't bind. */
   bootAttempts: number;
+  landingPending?: boolean;
+  previousRecord?: MergeRecord;
 }
 
 /** Resolved at call time so LAX_DATA_DIR relocation (tests, CI) is honored. */
@@ -54,6 +56,15 @@ export interface UnsafeEditRecord {
 
 function unsafeRecordPath(): string {
   return join(getLaxDir(), "last-unsafe-self-edit.json");
+}
+
+function writeMergeRecord(record: MergeRecord): void {
+  const path = recordPath();
+  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(record, null, 2), { mode: 0o600 });
+  const file = openSync(temporary, "r+");
+  try { fsyncSync(file); } finally { closeSync(file); }
+  renameSync(temporary, path);
 }
 
 /** Persist the pre-edit SHA before a gateless `_unsafe` self_edit runs. */
@@ -78,11 +89,23 @@ export function readLastUnsafeEdit(): UnsafeEditRecord | null {
  *  merge starts boot-pending: the next server boot must confirm it binds. */
 export function recordMerge(rec: Omit<MergeRecord, "surfaced" | "bootPending" | "bootAttempts">): void {
   try {
-    const full: MergeRecord = { ...rec, surfaced: false, bootPending: true, bootAttempts: 0 };
-    writeFileSync(recordPath(), JSON.stringify(full, null, 2), { mode: 0o600 });
+    const full: MergeRecord = { ...rec, surfaced: false, bootPending: true, bootAttempts: 0, landingPending: false };
+    writeMergeRecord(full);
   } catch (e) {
     logger.warn(`[self-edit.rollback] Failed to record merge: ${(e as Error).message}`);
   }
+}
+
+export function prepareUpdateMerge(rec: Omit<MergeRecord, "surfaced" | "bootPending" | "bootAttempts">): void {
+  const previousRecord = readLastMerge() || undefined;
+  writeMergeRecord({ ...rec, surfaced: false, bootPending: true, bootAttempts: 1, landingPending: true, previousRecord });
+}
+
+export function cancelPreparedUpdateMerge(preSha: string): void {
+  const record = readLastMerge();
+  if (!record?.landingPending || record.preSha !== preSha) return;
+  if (record.previousRecord) writeMergeRecord(record.previousRecord);
+  else rmSync(recordPath(), { force: true });
 }
 
 /** Read the last self_edit merge record, or null if missing/corrupt. */
@@ -204,7 +227,10 @@ export function revertPendingMergeIfCrashed(): { reverted: boolean; detail: stri
       }
       rec.bootPending = false;
       rec.surfaced = true;
-      writeFileSync(recordPath(), JSON.stringify(rec, null, 2), { mode: 0o600 });
+      if (rec.landingPending) {
+        if (rec.previousRecord) writeMergeRecord(rec.previousRecord);
+        else rmSync(recordPath(), { force: true });
+      } else writeMergeRecord(rec);
       return { reverted: revert.ok, detail };
     }
 

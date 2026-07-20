@@ -1,10 +1,11 @@
 import { mkdir, writeFile, readFile, rm, copyFile, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { extractTarball } from "./ota-extract.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import { createLogger } from "./logger.js";
+import { UpdateRollbackTransaction } from "./update-rollback.js";
 
 const logger = createLogger("ota-update");
 
@@ -45,6 +46,7 @@ interface UpdateHistoryEntry {
   appliedAt: string;
   status: "applied" | "rolled-back";
   previousVersion: string;
+  targetVersion?: string;
 }
 
 export class OTAManager {
@@ -55,11 +57,13 @@ export class OTAManager {
   private installedCommitPath: string;
   private repoOwner: string;
   private repoName: string;
+  private rollback: UpdateRollbackTransaction;
 
   constructor(
     repoOwner = "Local-Agent-X",
     repoName = "Local-Agent-X",
-    laxDir?: string
+    laxDir?: string,
+    fault: (point: string) => void = () => {},
   ) {
     this.repoOwner = repoOwner;
     this.repoName = repoName;
@@ -68,6 +72,7 @@ export class OTAManager {
     this.backupDir = join(this.laxDir, "backups");
     this.updatesDir = join(this.laxDir, "updates");
     this.installedCommitPath = join(this.laxDir, "installed-source.json");
+    this.rollback = new UpdateRollbackTransaction(this.laxDir, fault);
   }
 
   // ── Rolling channel (tarball installs that track `main`) ──
@@ -198,6 +203,14 @@ export class OTAManager {
       );
     }
 
+    const pending = await this.rollback.read();
+    if (pending?.status === "verified") await this.rollback.clearVerified();
+    else if (pending && pending.status !== "restored") {
+      await this.rollback.restore(installDir, pending.targetVersion, "interrupted update transaction");
+      if (/^[0-9a-f]{40}$/.test(pending.previousVersion)) await this.writeInstalledCommit(pending.previousVersion);
+      await this.rollback.clearRestored();
+    } else if (pending?.status === "restored") await this.rollback.clearRestored();
+
     // Extract first so we can back up exactly what this update will overwrite.
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
     await mkdir(extractDir, { recursive: true });
@@ -227,12 +240,15 @@ export class OTAManager {
     // dir, so a whole-dir copy hits Singleton sockets/lock files (copyfile
     // ENOENT on SingletonCookie) and gigabytes of cache. The overlapping
     // source is all we need to roll back.
-    const backupPath = join(this.backupDir, `${currentVersion}-${Date.now()}`);
-    await mkdir(backupPath, { recursive: true });
-    await this.backupOverlap(extractDir, installDir, backupPath);
-
-    // apply extracted files over install dir
-    await this.copyDirectory(extractDir, installDir);
+    const paths = await this.updatePaths(extractDir);
+    await this.rollback.begin(installDir, currentVersion, expectedCommit, paths);
+    try {
+      await this.copyDirectory(extractDir, installDir);
+      await this.rollback.markApplied(expectedCommit);
+    } catch (error) {
+      await this.rollback.restore(installDir, expectedCommit, `update mutation failed: ${(error as Error).message}`);
+      throw new Error(`Update rolled back after mutation failed: ${(error as Error).message}`);
+    }
 
     // Preserve the build-freshness signal. The extract carries a validated,
     // freshly-built dist/, but copyFile stamps copy-time mtimes and `dist`
@@ -254,39 +270,44 @@ export class OTAManager {
 
     // record in history
     const newVersion = tarPath.match(/([^/\\]+)\.tar\.gz$/)?.[1] ?? "unknown";
-    await this.addHistoryEntry({
-      version: newVersion,
-      appliedAt: new Date().toISOString(),
-      status: "applied",
+    try {
+      await this.addHistoryEntry({
+        version: newVersion,
+        appliedAt: new Date().toISOString(),
+        status: "applied",
       previousVersion: currentVersion,
-    });
+      targetVersion: expectedCommit,
+      });
+    } catch (error) {
+      await this.rollback.restore(installDir, expectedCommit, `update report failed: ${(error as Error).message}`);
+      throw new Error(`Update rolled back after report persistence failed: ${(error as Error).message}`);
+    }
 
     // clean up extract dir
     await rmBestEffort(extractDir);
     return { depsChanged };
   }
 
-  async rollbackUpdate(): Promise<void> {
+  async confirmUpdate(commit: string): Promise<void> {
+    await this.rollback.markVerified(commit);
+  }
+
+  async rollbackUpdate(installDir: string, expectedCommit?: string): Promise<void> {
+    const pending = await this.rollback.read();
+    if (!pending) throw new Error("No update to roll back");
+    if (expectedCommit && pending.targetVersion !== expectedCommit) {
+      throw new Error("Rollback target does not match the selected update");
+    }
+    await this.rollback.restore(installDir, pending.targetVersion, "update verification failed");
+    if (/^[0-9a-f]{40}$/.test(pending.previousVersion)) await this.writeInstalledCommit(pending.previousVersion);
     const history = await this.readHistory();
-    const lastApplied = [...history]
-      .reverse()
-      .find((e) => e.status === "applied");
-    if (!lastApplied) {
-      throw new Error("No update to roll back");
+    const lastApplied = [...history].reverse()
+      .find((entry) => entry.status === "applied" && entry.previousVersion === pending.previousVersion
+        && (!entry.targetVersion || entry.targetVersion === pending.targetVersion));
+    if (lastApplied) {
+      lastApplied.status = "rolled-back";
+      await this.writeHistory(history);
     }
-
-    const backups = await this.listBackups();
-    const matching = backups.find((b) =>
-      b.startsWith(lastApplied.previousVersion)
-    );
-    if (!matching) {
-      throw new Error(
-        `Backup for version ${lastApplied.previousVersion} not found`
-      );
-    }
-
-    lastApplied.status = "rolled-back";
-    await this.writeHistory(history);
   }
 
   async getHistory(): Promise<UpdateHistoryEntry[]> {
@@ -312,16 +333,7 @@ export class OTAManager {
     await this.writeHistory(history);
   }
 
-  private async listBackups(): Promise<string[]> {
-    const { readdir } = await import("node:fs/promises");
-    try {
-      return await readdir(this.backupDir);
-    } catch {
-      return [];
-    }
-  }
-
-  private async copyDirectory(src: string, dest: string): Promise<void> {
+  private async copyDirectory(src: string, dest: string, topLevel = true): Promise<void> {
     const { readdir } = await import("node:fs/promises");
     await mkdir(dest, { recursive: true });
     const entries = await readdir(src, { withFileTypes: true });
@@ -334,41 +346,34 @@ export class OTAManager {
       // a walked junction reaches the live install's real node_modules. The
       // extract's node_modules is normally removed pre-copy, but survives when
       // junction cleanup is stuck — this enforces the invariant regardless.
-      if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
+      if (entry.name === "node_modules" || entry.isSymbolicLink() || topLevel && entry.name === "workspace") continue;
       const srcPath = join(src, entry.name);
       const destPath = join(dest, entry.name);
       if (entry.isDirectory()) {
-        await this.copyDirectory(srcPath, destPath);
+        await this.copyDirectory(srcPath, destPath, false);
       } else {
         await copyFile(srcPath, destPath);
       }
     }
   }
 
-  // Back up only the install files an update will overwrite — i.e. the paths
-  // present in the freshly-extracted tarball. Walks the extract, and for each
-  // file copies the CURRENT install version into the backup. Install-only
-  // files (node_modules, caches, Electron userData state, sockets) are never
-  // touched because the tarball doesn't contain them.
-  private async backupOverlap(extractDir: string, installDir: string, backupPath: string): Promise<void> {
-    const { readdir, stat } = await import("node:fs/promises");
+  // Enumerate the exact overwrite set for the durable rollback transaction.
+  // User workspace, dependency trees, and links are never update artifacts.
+  private async updatePaths(extractDir: string): Promise<string[]> {
+    const { readdir } = await import("node:fs/promises");
+    const paths: string[] = [];
     const walk = async (rel: string): Promise<void> => {
       const entries = await readdir(join(extractDir, rel), { withFileTypes: true });
       for (const entry of entries) {
         // Mirror copyDirectory: node_modules / symlinks are never part of the
         // overwrite set, so there's nothing to back up for them.
-        if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
+        if (entry.name === "node_modules" || entry.isSymbolicLink() || !rel && entry.name === "workspace") continue;
         const childRel = rel ? join(rel, entry.name) : entry.name;
         if (entry.isDirectory()) { await walk(childRel); continue; }
-        const installFile = join(installDir, childRel);
-        try {
-          if (!(await stat(installFile)).isFile()) continue;
-          const dest = join(backupPath, childRel);
-          await mkdir(dirname(dest), { recursive: true });
-          await copyFile(installFile, dest);
-        } catch { /* not present in install (new file) — nothing to roll back */ }
+        paths.push(childRel);
       }
     };
     await walk("");
+    return paths;
   }
 }

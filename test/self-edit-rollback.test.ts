@@ -80,6 +80,35 @@ describe("self-edit-rollback", () => {
     expect(rec.bootAttempts).toBe(0);
   });
 
+  it("persists a pre-landing update fence that the next boot will restore", async () => {
+    const { prepareUpdateMerge, readLastMerge } = await import("../src/self-edit/rollback.js");
+    prepareUpdateMerge(sample);
+    expect(readLastMerge()).toMatchObject({
+      preSha: sample.preSha, postSha: sample.postSha,
+      bootPending: true, bootAttempts: 1, landingPending: true,
+    });
+  });
+
+  it("cancels only the matching prepared landing", async () => {
+    const { cancelPreparedUpdateMerge, prepareUpdateMerge, readLastMerge } =
+      await import("../src/self-edit/rollback.js");
+    prepareUpdateMerge(sample);
+    cancelPreparedUpdateMerge("c".repeat(40));
+    expect(readLastMerge()).not.toBeNull();
+    cancelPreparedUpdateMerge(sample.preSha);
+    expect(readLastMerge()).toBeNull();
+  });
+
+  it("restores the prior recovery record when a prepared update is cancelled", async () => {
+    const { cancelPreparedUpdateMerge, prepareUpdateMerge, readLastMerge, recordMerge } =
+      await import("../src/self-edit/rollback.js");
+    recordMerge(sample);
+    const update = { ...sample, preSha: "c".repeat(40), postSha: "d".repeat(40) };
+    prepareUpdateMerge(update);
+    cancelPreparedUpdateMerge(update.preSha);
+    expect(readLastMerge()).toMatchObject({ preSha: sample.preSha, postSha: sample.postSha });
+  });
+
   it("confirmMergeBoot clears the boot-pending flag", async () => {
     const { recordMerge, readLastMerge, confirmMergeBoot } = await import("../src/self-edit/rollback.js");
     recordMerge(sample);

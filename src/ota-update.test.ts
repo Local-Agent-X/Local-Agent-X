@@ -8,7 +8,7 @@
  * are integration-level and exercised live, not here.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, readdirSync, lstatSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,8 +130,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     expect(readFileSync(join(installDir, "keep.marker"), "utf-8")).toBe("keep me");
 
     // Backup holds the OLD overlapping source only — not the install-only file.
-    const backupRoot = join(root, "lax", "backups");
-    const backupDir = join(backupRoot, readdirSync(backupRoot)[0]);
+    const backupDir = join(root, "lax", "update-rollback", "artifacts");
     expect(readFileSync(join(backupDir, "src", "app.ts"), "utf-8")).toBe("OLD");
     expect(existsSync(join(backupDir, "keep.marker"))).toBe(false);
 
@@ -155,8 +154,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     ).resolves.toEqual({ depsChanged: false });
 
     expect(lstatSync(join(installDir, "SingletonLock")).isSymbolicLink()).toBe(true);
-    const backupRoot = join(root, "lax", "backups");
-    const backupDir = join(backupRoot, readdirSync(backupRoot)[0]);
+    const backupDir = join(root, "lax", "update-rollback", "artifacts");
     expect(existsSync(join(backupDir, "SingletonLock"))).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });

@@ -22,6 +22,7 @@ export function parsePercent(line) {
 export function createReporter({ ipcMode = false, stdout = process.stdout, consoleImpl = console, exit = process.exit } = {}) {
   let currentStepId = null;
   let stepLifecycle = null;
+  let requiredFailure = null;
   const resumedOutputs = new Map();
   const degraded = [];
   const sortDegraded = () => degraded.sort((left, right) =>
@@ -73,16 +74,24 @@ export function createReporter({ ipcMode = false, stdout = process.stdout, conso
       stepDone(currentStepId);
       return;
     }
+    let rollback = null;
+    try { rollback = requiredFailure?.(message) || null; }
+    catch (error) {
+      message = `${message} Rollback could not be verified: ${error.message}`;
+    }
     if (!ipcMode) consoleImpl.error(`[error] ${message}`);
     ipc({ type: "log", level: "error", id: currentStepId, line: message });
     if (currentStepId) ipc({ type: "step", id: currentStepId, state: "error", message });
-    ipc({ type: "fatal", message });
+    const fatal = { type: "fatal", message };
+    if (rollback && rollback.outcome !== "disabled") fatal.rollback = rollback;
+    ipc(fatal);
     exit(1);
   };
   api = {
     ipcMode, ipc, step, stepDone, log, ok, warn, fail, abort, degraded,
     currentStep: () => currentStepId,
     attachStepLifecycle: (lifecycle) => { stepLifecycle = lifecycle; },
+    attachRequiredFailure: (handler) => { requiredFailure = handler; },
     resumedStepResult: (id) => resumedOutputs.get(id),
     restoreDegraded: (items) => { degraded.splice(0, degraded.length, ...items); sortDegraded(); },
     clearDegraded: (id) => {

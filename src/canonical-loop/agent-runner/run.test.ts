@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { usageTotalFromEvent } from "./run.js";
+import { createAgentOperation, usageTotalFromEvent } from "./run.js";
 import type { CanonicalEvent } from "../types.js";
+import type { Op } from "../../ops/types.js";
 
 // Contract of the agent-runner's turn_committed → onEvent usage forward:
 // only a turn_committed event with a numeric usage.totalTokens yields a total.
@@ -38,5 +39,18 @@ describe("usageTotalFromEvent — agent-runner live token forward", () => {
     for (const type of ["state_changed", "error", "tool_finished", "turn_started"] as const) {
       expect(usageTotalFromEvent(evt({ type, body: { usage: { totalTokens: 42 } } }))).toBeNull();
     }
+  });
+});
+
+describe("agent-runner durable session binding", () => {
+  it("stamps the originating session at the top level of every created op", () => {
+    const op = createAgentOperation({
+      opType: "scheduled_mission",
+      userMessage: "continue the durable task",
+      contextPack: {} as Op["contextPack"],
+      lane: "background",
+      sessionId: "session-restart",
+    });
+    expect(op.sessionId).toBe("session-restart");
   });
 });

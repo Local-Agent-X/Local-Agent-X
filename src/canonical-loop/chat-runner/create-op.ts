@@ -65,6 +65,7 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
 
   const op: Op = {
     id: newOpId("op_chat_turn"),
+    sessionId: ctx.sessionId,
     type: "chat_turn",
     task: ctx.message,
     contextPack,

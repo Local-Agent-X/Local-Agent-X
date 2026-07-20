@@ -8,6 +8,7 @@
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { hasChatHandlerPending } from "../ops/session-bridge.js";
+import { notifySessionEventObservers } from "./session-event-observers.js";
 
 /** One uninterrupted run of same-lane turn output, in ARRIVAL order across
  *  lanes — the ordered twin of the flat streamText/reasoningText
@@ -240,6 +241,7 @@ const BACKPRESSURE_MAX_BUFFERED = 1_000_000;
 
 export function broadcastToSession(sessionId: string, event: ServerEvent): void {
   if (isHeadlessSession(sessionId)) return;
+  notifySessionEventObservers(sessionId, event);
   // Delta-shaped stream/reasoning only — the sole event class whose loss the
   // replay replace fully repairs. Everything else must always be sent.
   const droppable =

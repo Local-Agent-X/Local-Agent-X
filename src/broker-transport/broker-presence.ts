@@ -17,6 +17,7 @@ import { openBrokerSocket } from "./ws-socket-adapter.js";
 import { DataChannelControl } from "./control-channel.js";
 import { ChatBridge } from "./chat-bridge.js";
 import { openBrokerChatLoopback } from "./chat-loopback.js";
+import { PhoneProjectionBridge } from "./phone-projection.js";
 import { HttpTunnelBridge } from "./http-tunnel-bridge.js";
 import { BrokerScreenDialer } from "./broker-screen-dialer.js";
 import { getRuntimeConfig } from "../config.js";
@@ -154,19 +155,20 @@ export class BrokerPresence {
 }
 
 /** Production deps: build a real ws-backed dialer with a data-channel control path. */
-export function defaultPresenceDeps(): BrokerPresenceDeps {
+export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
   return {
     createDialer: (connectUrl, token, onClosed) => {
       const socket = openBrokerSocket(connectUrl, token);
       const control = new DataChannelControl();
-      // Chat rides the peer's `chat` data channel, bridged to the desktop's own /ws/chat
-      // over loopback (operator-authed; read fresh so a re-login's token is current).
       const chat = new ChatBridge({
         openLoopback: () => {
           const cfg = getRuntimeConfig();
           return openBrokerChatLoopback(cfg.port, cfg.authToken);
         },
       });
+      // A separate channel carries a closed read-only projection; it never inherits
+      // operator chat frames or the HTTP tunnel's path-based capabilities.
+      const projection = new PhoneProjectionBridge({ pairedPhoneId });
       // Device REST (app list / sessions / settings) tunnels to the desktop's own loopback,
       // device-scoped (the HttpTunnelBridge enforces the same allowlist a tailnet device had).
       const http = new HttpTunnelBridge({
@@ -175,7 +177,7 @@ export function defaultPresenceDeps(): BrokerPresenceDeps {
           return { origin: `http://127.0.0.1:${cfg.port}`, token: cfg.authToken };
         },
       });
-      return new BrokerScreenDialer({ socket, control, chat, http, onClosed });
+      return new BrokerScreenDialer({ socket, control, chat, http, projection, onClosed });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -187,7 +189,7 @@ export function defaultPresenceDeps(): BrokerPresenceDeps {
 
 /** Construct + start a desktop broker presence from config. Returns it for shutdown. */
 export function startBrokerPresence(config: BrokerPresenceConfig): BrokerPresence {
-  const presence = new BrokerPresence(config, defaultPresenceDeps());
+  const presence = new BrokerPresence(config, defaultPresenceDeps(config.pairedPhoneId));
   presence.start();
   return presence;
 }

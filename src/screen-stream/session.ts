@@ -71,6 +71,8 @@ export interface ScreenSessionOptions {
    *  — app list / sessions / settings — tunneled to the desktop's loopback). Omitted on
    *  the tailnet path. */
   onHttpTransport?: (transport: ControlTransport) => void;
+  /** Broker transport only: read-only status/conversation/notification projection. */
+  onProjectionTransport?: (transport: ControlTransport) => void;
   /** Broker transport only: when true, `rtc_start` ESTABLISHES the peer (track + data
    *  channels + offer) but does NOT start ffmpeg — the persistent broker peer carries
    *  chat without the screen running. ffmpeg starts later via openScreen() when the
@@ -224,6 +226,7 @@ export class ScreenSession {
       const extra: Array<{ label: string; onReady: (t: ControlTransport) => void }> = [];
       if (this.opts.onChatTransport) extra.push({ label: "chat", onReady: this.opts.onChatTransport });
       if (this.opts.onHttpTransport) extra.push({ label: "http", onReady: this.opts.onHttpTransport });
+      if (this.opts.onProjectionTransport) extra.push({ label: "projection", onReady: this.opts.onProjectionTransport });
       const extraChannels = extra.length > 0 ? extra : undefined;
       const peer = await ScreenPeer.create(
         {

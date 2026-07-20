@@ -50,6 +50,8 @@ export interface BrokerScreenDialerDeps {
   /** Where device REST flows: the peer's `http` data channel, tunneled to the desktop's
    *  loopback (app list / sessions / settings). Defaults to NullHttpChannel. */
   http?: HttpChannel;
+  /** Read-only phone state projection on its own data channel. */
+  projection?: ChatChannel;
   /** Builds the session. Defaults to the real ScreenSession; tests inject a fake. */
   createSession?: (opts: ScreenSessionOptions) => ScreenSessionLike;
   /** Fires ONCE when this dialer goes terminal — the presence supervisor schedules a
@@ -61,6 +63,7 @@ export class BrokerScreenDialer extends BrokerDialer {
   private readonly control: ControlChannel;
   private readonly chat: ChatChannel;
   private readonly http: HttpChannel;
+  private readonly projection: ChatChannel;
   private readonly session: ScreenSessionLike;
   /** One synthetic session correlation id — the broker has no rtcId (the rendezvous IS the
    *  session), so the dialer mints one for the ScreenSession side. */
@@ -71,6 +74,7 @@ export class BrokerScreenDialer extends BrokerDialer {
     this.control = deps.control;
     this.chat = deps.chat ?? new NullChatChannel();
     this.http = deps.http ?? new NullHttpChannel();
+    this.projection = deps.projection ?? new NullChatChannel();
 
     const sessionOpts: ScreenSessionOptions = {
       send: (frame) => this.onSessionFrame(frame),
@@ -80,6 +84,7 @@ export class BrokerScreenDialer extends BrokerDialer {
       onControlTransport: (transport) => this.control.attach(transport),
       onChatTransport: (transport) => this.chat.attach(transport),
       onHttpTransport: (transport) => this.http.attach(transport),
+      onProjectionTransport: (transport) => this.projection.attach(transport),
       // Broker peer is PERSISTENT (carries chat): establish it on present, but defer ffmpeg
       // until the phone opens the live view (openScreen, below).
       deferCapture: true,
@@ -125,6 +130,7 @@ export class BrokerScreenDialer extends BrokerDialer {
     this.control.close();
     this.chat.close();
     this.http.close();
+    this.projection.close();
   }
 
   // ── outbound: session → broker / control ─────────────────────────────────────────

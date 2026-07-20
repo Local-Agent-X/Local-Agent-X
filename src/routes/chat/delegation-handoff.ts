@@ -40,6 +40,7 @@ async function submitDelegationOp(message: string, sessionId: string, ingressKey
     : newOpId("op_freeform");
   const op: Op = {
     id: opId,
+    sessionId,
     type: "freeform",
     task: message,
     contextPack,

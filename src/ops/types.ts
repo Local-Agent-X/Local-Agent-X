@@ -199,6 +199,8 @@ export type OpRuntimeDescriptor = AppBuildRuntimeDescriptor | DelegatedRuntimeDe
 
 export interface Op {
   id: string;
+  /** Durable originating conversation binding for read-side projections/recovery. */
+  sessionId?: string;
   type: string;                           // "build_app" | "research" | "self_edit" | freeform
   task: string;                           // user-facing one-line description
   contextPack: ContextPack;

@@ -73,6 +73,29 @@ export function usageTotalFromEvent(event: CanonicalEvent): number | null {
   return typeof total === "number" ? total : null;
 }
 
+export function createAgentOperation(args: {
+  opType: string;
+  userMessage: string;
+  contextPack: Op["contextPack"];
+  lane: OpLane;
+  sessionId: string;
+}): Op {
+  return {
+    id: newOpId(`op_${args.opType}`),
+    sessionId: args.sessionId,
+    type: args.opType,
+    task: args.userMessage,
+    contextPack: args.contextPack,
+    lane: args.lane,
+    retryPolicy: getRetryPolicy(args.opType),
+    ownerId: "local-user",
+    visibility: "private" as OpVisibility,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    attemptCount: 0,
+  };
+}
+
 export async function runAgentViaCanonical(
   userMessage: string,
   history: ChatCompletionMessageParam[],
@@ -108,19 +131,7 @@ export async function runAgentViaCanonical(
   });
   contextPack.promptTelemetry = options.promptTelemetry;
 
-  const op: Op = {
-    id: newOpId(`op_${opType}`),
-    type: opType,
-    task: userMessage,
-    contextPack,
-    lane,
-    retryPolicy: getRetryPolicy(opType),
-    ownerId: "local-user",
-    visibility: "private" as OpVisibility,
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    attemptCount: 0,
-  };
+  const op = createAgentOperation({ opType, userMessage, contextPack, lane, sessionId });
 
   // Resolve and install every non-durable runtime dependency before the op is
   // visible to session tracking or the durable stores. A failed credential,

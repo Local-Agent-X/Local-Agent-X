@@ -18,6 +18,7 @@ import {
   type PromptTelemetry,
 } from "../../prompt-telemetry.js";
 import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
+import type { Op } from "../../ops/types.js";
 
 const { runAgentViaCanonical, canonicalLoopEntry, storedOps } = vi.hoisted(() => ({
   runAgentViaCanonical: vi.fn(async () => ({
@@ -155,5 +156,6 @@ describe("delegation-handoff orphaned-ActiveChat net", () => {
 
     expect(canonicalLoopEntry).toHaveBeenCalledTimes(1);
     expect(canonicalLoopEntry.mock.calls[0][0].id).toMatch(/^op_freeform_inbound_/);
+    expect((canonicalLoopEntry.mock.calls[0][0] as Op).sessionId).toBe(args.sessionId);
   });
 });

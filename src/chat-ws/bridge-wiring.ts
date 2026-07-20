@@ -15,6 +15,7 @@ import { setIdleNudgeBroadcaster } from "../ops/idle-nudge.js";
 import { activeChats, broadcastAll, broadcastToSession } from "./state.js";
 import type { ActiveChat } from "./state.js";
 import type { ServerEvent } from "../types.js";
+import { notifySessionEventObservers } from "./session-event-observers.js";
 
 // Buffer a replay event with the SAME 500→400 cap manager.onEvent enforces.
 // Bridge-originated streams (bg_op progress, idle-nudge) can run for many
@@ -39,6 +40,7 @@ export function wireBridgeBroadcasters(): void {
       event.type === "bg_op_completed" ||
       event.type === "bg_op_nudge";
     if (isBgOpEvent) {
+      notifySessionEventObservers(sessionId, event);
       broadcastAll({ type: "event", sessionId, event });
     } else {
       broadcastToSession(sessionId, event);

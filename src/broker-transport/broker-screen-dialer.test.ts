@@ -10,6 +10,7 @@ import { DataChannelControl, type ControlChannel, type ControlOutbound, type Scr
 import type { ScreenSessionOptions } from "../screen-stream/session.js";
 import type { IceServerConfig, ControlTransport } from "../screen-stream/peer.js";
 import type { RtcInboundFrame, RtcOutboundFrame, ScreenInputEvent } from "../screen-stream/protocol.js";
+import type { ChatChannel } from "./chat-bridge.js";
 import { buildOffer, buildIce, buildDisplays, buildFocus } from "../screen-stream/protocol.js";
 
 class FakeSocket implements SocketAdapter {
@@ -42,6 +43,13 @@ class SpyControl implements ControlChannel {
   onScreenCommand(h: (cmd: ScreenCommand) => void): void { this.screen = h; }
   attach(t: ControlTransport): void { this.attached.push(t); }
   close(): void { this.closed++; }
+}
+
+class SpyProjection implements ChatChannel {
+  attached: ControlTransport[] = [];
+  closed = 0;
+  attach(transport: ControlTransport): void { this.attached.push(transport); }
+  close(): void { this.closed += 1; }
 }
 
 /** A fake duplex text channel standing in for the peer's WebRTC data channel. */
@@ -248,6 +256,24 @@ describe("BrokerScreenDialer — control inbound + teardown", () => {
     const transport = new FakeTransport();
     getOpts().onControlTransport?.(transport);
     expect(control.attached).toEqual([transport]);
+  });
+
+  it("keeps the read-only projection on a distinct peer data channel", () => {
+    const socket = new FakeSocket();
+    const control = new SpyControl();
+    const projection = new SpyProjection();
+    const session = new FakeSession();
+    let opts!: ScreenSessionOptions;
+    const dialer = new BrokerScreenDialer({
+      socket, control, projection,
+      createSession: o => { opts = o; return session; },
+    });
+    const transport = new FakeTransport();
+    opts.onProjectionTransport?.(transport);
+    expect(projection.attached).toEqual([transport]);
+    expect(opts.onChatTransport).toBeTypeOf("function");
+    dialer.stop();
+    expect(projection.closed).toBe(1);
   });
 });
 

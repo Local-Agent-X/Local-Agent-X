@@ -122,8 +122,10 @@ describe("createChatOp prompt telemetry", () => {
     });
 
     const persisted = writeOp.mock.calls[0][0] as {
+      sessionId: string;
       contextPack: { promptTelemetry: ReturnType<typeof createPromptTelemetry> };
     };
+    expect(persisted.sessionId).toBe("sess-prompt-final");
     const telemetry = persisted.contextPack.promptTelemetry;
     expect(buildContextPack).toHaveBeenCalledWith(expect.objectContaining({
       preferredProvider: "openai",

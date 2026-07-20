@@ -15,6 +15,7 @@ import type { ServerEvent } from "../types.js";
 import { wireBridgeBroadcasters } from "./bridge-wiring.js";
 import { clients, activeChats } from "./state.js";
 import { broadcastToSession as driveSessionBroadcaster } from "../ops/session-bridge.js";
+import { subscribeSessionEvents } from "./session-event-observers.js";
 
 const TG_SESSION = "tg-12345"; // a bridge session no browser client subscribes to
 
@@ -93,6 +94,14 @@ describe("bridge bg_op routing", () => {
 
     // broadcastAll path only — exactly one frame, not one per routing branch.
     expect(a.sent).toHaveLength(1);
+  });
+
+  it("also routes canonical background events to session-scoped read observers", () => {
+    const observed: ServerEvent[] = [];
+    const off = subscribeSessionEvents(TG_SESSION, event => observed.push(event));
+    driveSessionBroadcaster(TG_SESSION, bgEvent());
+    off();
+    expect(observed).toEqual([bgEvent()]);
   });
 });
 

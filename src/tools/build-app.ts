@@ -254,6 +254,7 @@ export const buildAppTool: ToolDefinition = {
 
     const op: Op = {
       id: newOpId(`op_${APP_BUILD_OP_TYPE}`),
+      ...(sessionId ? { sessionId } : {}),
       type: APP_BUILD_OP_TYPE,
       task: `Build app "${appName}"`,
       appUrl,

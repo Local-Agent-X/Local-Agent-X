@@ -166,6 +166,7 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
 
   return {
     id: newOpId(`op_${opType}`),
+    ...(sessionId ? { sessionId } : {}),
     type: opType,
     task,
     contextPack,

@@ -11,7 +11,7 @@
  */
 
 import { browserExec } from "./bridge-client.js";
-import { asExecResult, clickScript, fillScript, selectScript } from "./in-app-observe.js";
+import { asExecResult, clickScript, fillScript, selectScript } from "./in-app-scripts.js";
 
 export async function clickSelectorInApp(viewId: string, selector: string): Promise<void> {
 	const res = asExecResult(await browserExec(viewId, clickScript(selector)));

@@ -364,6 +364,9 @@ describe("bridge ops + wiring (server-bridge-browser.ts)", () => {
       proc as never,
       { type: "lax:browser-navigate", id: 21, viewId: "v9", url: "https://example.com/" },
     );
+    // Real Electron ordering: loadURL fires did-start-loading before any
+    // navigate/finish event — navigate-settle gates success on it.
+    wc.fire("did-start-loading");
     wc.fire("did-navigate", {}, "https://example.com/", 404, "Not Found");
     wc.fire("did-finish-load");
     await flush();
@@ -380,6 +383,7 @@ describe("bridge ops + wiring (server-bridge-browser.ts)", () => {
       proc as never,
       { type: "lax:browser-navigate", id: 22, viewId: "v9", url: "about:blank" },
     );
+    wc.fire("did-start-loading");
     wc.fire("did-finish-load");
     await flush();
     const reply = proc.send.mock.calls.map(([m]) => m as Record<string, unknown>)

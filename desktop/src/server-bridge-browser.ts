@@ -183,11 +183,42 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 		}
 		case "lax:browser-capture": {
 			reply(proc, "lax:browser-capture-result", msg.id, async () => {
-				const pngB64 = (await requireWebContents(msg.viewId).capturePage()).toPNG().toString("base64");
+				const wc = requireWebContents(msg.viewId);
+				let pngB64 = (await wc.capturePage()).toPNG().toString("base64");
+				// A view detached from the window (backgrounded agent view) has no
+				// compositor surface, so capturePage() returns an EMPTY image — the
+				// server saw "desktop returned no image data" (2026-07-20). CDP's
+				// Page.captureScreenshot renders the frame regardless of attachment.
+				if (pngB64.length === 0) pngB64 = await captureViaCdp(wc);
 				if (pngB64.length > CAPTURE_MAX_B64) throw new Error(`capture exceeds ${CAPTURE_MAX_B64} base64 bytes`);
 				return { pngB64 };
 			});
 			return;
+		}
+	}
+}
+
+/** Screenshot a DETACHED view via the DevTools protocol. Attaches the
+ *  webContents debugger only for the duration of the shot (nothing else in
+ *  the app uses wc.debugger); a failure here throws a DESCRIPTIVE error so
+ *  the server-side message names the real condition instead of "no image
+ *  data". */
+async function captureViaCdp(wc: Electron.WebContents): Promise<string> {
+	const dbg = wc.debugger;
+	const attachedHere = !dbg.isAttached();
+	try {
+		if (attachedHere) dbg.attach("1.3");
+		const { data } = (await dbg.sendCommand("Page.captureScreenshot", { format: "png" })) as { data?: string };
+		if (!data) throw new Error("CDP returned no data");
+		return data;
+	} catch (e) {
+		throw new Error(
+			`view is backgrounded (no compositor surface) and the CDP fallback failed: ` +
+			`${e instanceof Error ? e.message : String(e)} — surface the view or re-observe instead of capturing`,
+		);
+	} finally {
+		if (attachedHere && dbg.isAttached()) {
+			try { dbg.detach(); } catch { /* already gone */ }
 		}
 	}
 }

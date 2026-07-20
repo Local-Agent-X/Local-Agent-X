@@ -842,6 +842,55 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
     expect(autoSurfaceAgentView).not.toHaveBeenCalled();
   });
 
+  it("capture falls back to CDP when a detached view's capturePage comes back empty", async () => {
+    // A backgrounded (removeChildView'd) view has no compositor surface —
+    // capturePage() returns an empty image (2026-07-20 "no image data").
+    const wc = makeWc("");
+    (wc as { capturePage?: unknown }).capturePage = async () => ({ toPNG: () => Buffer.alloc(0) });
+    const dbg = {
+      attached: false,
+      isAttached: () => dbg.attached,
+      attach: vi.fn(() => { dbg.attached = true; }),
+      detach: vi.fn(() => { dbg.attached = false; }),
+      sendCommand: vi.fn(async () => ({ data: "Zm9vYmFy" })),
+    };
+    (wc as { debugger?: unknown }).debugger = dbg;
+    h.viewsById.set("agent-cap", { webContents: wc });
+    await handleBrowserBridgeMessage(
+      proc as never,
+      { type: "lax:browser-capture", id: 9, viewId: "agent-cap" } as never,
+    );
+    await flush();
+    expect(proc.send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "lax:browser-capture-result", id: 9, ok: true, pngB64: "Zm9vYmFy" }),
+    );
+    expect(dbg.sendCommand).toHaveBeenCalledWith("Page.captureScreenshot", { format: "png" });
+    expect(dbg.attach).toHaveBeenCalled();
+    expect(dbg.detach).toHaveBeenCalled();
+  });
+
+  it("capture with a live compositor surface never touches the debugger", async () => {
+    const wc = makeWc("");
+    (wc as { capturePage?: unknown }).capturePage = async () => ({ toPNG: () => Buffer.from("real-png") });
+    const dbg = { isAttached: () => false, attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn() };
+    (wc as { debugger?: unknown }).debugger = dbg;
+    h.viewsById.set("agent-cap2", { webContents: wc });
+    await handleBrowserBridgeMessage(
+      proc as never,
+      { type: "lax:browser-capture", id: 10, viewId: "agent-cap2" } as never,
+    );
+    await flush();
+    expect(proc.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "lax:browser-capture-result",
+        id: 10,
+        ok: true,
+        pngB64: Buffer.from("real-png").toString("base64"),
+      }),
+    );
+    expect(dbg.attach).not.toHaveBeenCalled();
+  });
+
   it("lifecycle close REFUSES non-agentDriven views (ok:false reply, view untouched)", async () => {
     h.poolList = [{ viewId: "foreground", agentDriven: false }];
     await handleBrowserBridgeMessage(

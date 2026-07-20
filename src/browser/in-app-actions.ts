@@ -25,19 +25,19 @@ import type { Page } from "playwright";
 import { ObservationRegistry, type DurableRef } from "./observation.js";
 import { waitForStability } from "./stability.js";
 import {
-	browserExec,
 	browserInput,
 	browserLifecycle,
 	isUserActiveResult,
 	type BridgeInputEvent,
 	type BridgeInputModifier,
 } from "./bridge-client.js";
+import { execChecked } from "./in-app-observe.js";
 import {
 	asExecResult,
 	resolutionScript,
 	selectFillScript,
 	textSearchScript,
-} from "./in-app-observe.js";
+} from "./in-app-scripts.js";
 import type { InteractionResult, ScrollOptions } from "./backend.js";
 import { createLogger } from "../logger.js";
 
@@ -192,18 +192,23 @@ function userTookWheel(): InteractionResult {
 	return { ok: false, text: USER_TOOK_WHEEL };
 }
 
+/** Misses carry the LAST pass's occluder diagnostics ("strategy:occluder"),
+ *  threaded into the model-facing failure so "occluded" names the actual
+ *  obstruction instead of reading as a site bug. */
 async function resolveWithRetry(
 	ctx: InAppActionContext,
 	ref: DurableRef,
 	op: "click" | "fill",
-): Promise<ResolvedTarget | null> {
+): Promise<ResolveOutcome> {
 	const delay = ctx.retryDelayMs ?? RESOLVE_RETRY_DELAY_MS;
+	let lastOccluded: string[] = [];
 	for (let attempt = 0; attempt < 3; attempt++) {
-		const out = asResolveOutcome(await browserExec(ctx.viewId, resolutionScript(ref, op)));
+		const out = asResolveOutcome(await execChecked(ctx.viewId, resolutionScript(ref, op)));
 		if (out.found) return out;
-		if (out.occluded && out.occluded.length > 0) {
+		lastOccluded = out.occluded ?? [];
+		if (lastOccluded.length > 0) {
 			logger.info(
-				`[in-app] ref ${ref.id}: hit-test missed for ${out.occluded.join(",")} (occluded) — refusing blind ${op}`,
+				`[in-app] ref ${ref.id}: hit-test missed for ${lastOccluded.join(",")} (occluded) — refusing blind ${op}`,
 			);
 		}
 		// Pass 1 → wait 1.5s (CDP actions.ts parity); pass 2 → re-observe
@@ -211,7 +216,7 @@ async function resolveWithRetry(
 		if (attempt === 0) await sleep(delay);
 		else if (attempt === 1) await ctx.registry.observe(ctx.page).catch(() => {});
 	}
-	return null;
+	return { found: false, occluded: lastOccluded };
 }
 
 function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget): string {
@@ -227,11 +232,17 @@ function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget):
 	}
 }
 
-async function failedWithSnapshot(ctx: InAppActionContext, ref: DurableRef): Promise<InteractionResult> {
+async function failedWithSnapshot(ctx: InAppActionContext, ref: DurableRef, occluded: string[] = []): Promise<InteractionResult> {
 	const refreshed = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
+	// Name what intercepted each strategy's hit-test. Without this the model
+	// reads "all strategies failed" as a broken site; with it, a real overlay
+	// (modal backdrop, toast region) is identified by tag/id/class.
+	const why = occluded.length > 0
+		? ` Hit-tests were intercepted (strategy:occluder): ${occluded.join(", ")} — an overlay may need dismissing first.`
+		: "";
 	return {
 		ok: false,
-		text: `[${ref.id}] ${ref.role} "${ref.name}" — all resolution strategies failed. Re-observe the page.\n\nCurrent page:\n\n${refreshed}`,
+		text: `[${ref.id}] ${ref.role} "${ref.name}" — all resolution strategies failed.${why} Re-observe the page.\n\nCurrent page:\n\n${refreshed}`,
 	};
 }
 
@@ -270,7 +281,7 @@ export async function clickRefInApp(ctx: InAppActionContext, refId: number): Pro
 	const ref = ctx.registry.get(refId);
 	if (!ref) return { ok: false, text: `Ref [${refId}] not found — take a fresh observation` };
 	const hit = await resolveWithRetry(ctx, ref, "click");
-	if (!hit) return failedWithSnapshot(ctx, ref);
+	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 	if ((await clickAtPoint(ctx, hit)) === "userActive") return userTookWheel();
 	await waitForStability(ctx.page, { maxWait: 2500 });
 	const after = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
@@ -281,7 +292,7 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 	const ref = ctx.registry.get(refId);
 	if (!ref) return { ok: false, text: `Ref [${refId}] not found — take a fresh observation` };
 	const hit = await resolveWithRetry(ctx, ref, "fill");
-	if (!hit) return failedWithSnapshot(ctx, ref);
+	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 
 	if (hit.tag === "INPUT" && hit.type === "file") {
 		return { ok: false, text: `[${ref.id}] ${FILE_INPUT_NEEDS_HUMAN}` };
@@ -289,7 +300,7 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 	if (hit.tag === "SELECT") {
 		// Exec-driven mutation — arbitrate against the co-drive lock first.
 		if (await isViewUserActive(ctx.viewId)) return userTookWheel();
-		const res = asExecResult(await browserExec(ctx.viewId, selectFillScript(ref, value)));
+		const res = asExecResult(await execChecked(ctx.viewId, selectFillScript(ref, value)));
 		if (!res.ok) {
 			return { ok: false, text: `[${ref.id}] fill failed: ${res.error} — re-observe, or use select with a CSS selector` };
 		}
@@ -308,7 +319,7 @@ export async function clickTextInApp(
 	await waitForStability(ctx.page);
 	const deadline = Date.now() + budgetMs;
 	for (let attempt = 0; attempt < CLICK_TEXT_ATTEMPTS; attempt++) {
-		const raw = await browserExec(ctx.viewId, textSearchScript(text));
+		const raw = await execChecked(ctx.viewId, textSearchScript(text));
 		const found = raw && typeof raw === "object" && (raw as { found?: unknown }).found === true
 			? (raw as { role?: string; x: number; y: number; dpr: number; zoom: number })
 			: null;
@@ -323,7 +334,7 @@ export async function clickTextInApp(
 		}
 		if (Date.now() >= deadline) break;
 		if (attempt < CLICK_TEXT_ATTEMPTS - 1) {
-			await browserExec(ctx.viewId, SCROLL_ONE_VIEWPORT_SCRIPT).catch(() => { /* keep searching */ });
+			await execChecked(ctx.viewId, SCROLL_ONE_VIEWPORT_SCRIPT).catch(() => { /* keep searching */ });
 			await sleep(ctx.settleMs ?? TEXT_SCROLL_SETTLE_MS);
 		}
 	}
@@ -354,14 +365,14 @@ export async function scrollInApp(ctx: InAppActionContext, opts: ScrollOptions):
 		if (!ref) return `Ref [${opts.refId}] not found — re-observe first`;
 		// The resolution script scrolls the element into view as a side effect;
 		// an occluded hit-test still means the scroll happened.
-		const out = asResolveOutcome(await browserExec(ctx.viewId, resolutionScript(ref, "click")));
+		const out = asResolveOutcome(await execChecked(ctx.viewId, resolutionScript(ref, "click")));
 		if (!out.found && !(out.occluded && out.occluded.length > 0)) {
 			return `Could not scroll ref [${opts.refId}]: element not found — re-observe first`;
 		}
 		await waitForStability(ctx.page, { maxWait: 1500 });
 		return `Scrolled ref [${opts.refId}] into view`;
 	}
-	const m = asScrollMetrics(await browserExec(ctx.viewId, SCROLL_METRICS_SCRIPT));
+	const m = asScrollMetrics(await execChecked(ctx.viewId, SCROLL_METRICS_SCRIPT));
 	const amount = opts.amount ?? DEFAULT_SCROLL_AMOUNT_PX;
 	const dir = opts.direction ?? "down";
 	// CSS scroll delta, positive = down — scrollPage's window.scrollBy semantics.

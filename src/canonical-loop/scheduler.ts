@@ -169,9 +169,10 @@ export function wakeQueuedOp(opId: string, lane: CanonicalLane): void {
 export function wakeExecutionPlacement(
   opId: string,
   identity: { backendId: string; targetId: string },
+  expectedRevision: number,
   wakeToken: string,
 ): PlacementWakeResult {
-  const result = markExecutionPlacementReady(opId, identity, wakeToken);
+  const result = markExecutionPlacementReady(opId, identity, expectedRevision, wakeToken);
   if (!result.ok) return result;
   const op = readOp(opId);
   if (!op || op.canonical?.state !== "queued") return { ok: false, reason: "not_queued" };

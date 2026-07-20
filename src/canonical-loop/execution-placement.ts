@@ -107,12 +107,13 @@ export function ensureExecutionPlacement(op: Op, backend: ExecutionBackend): Exe
 
 export type PlacementWakeResult =
   | { ok: true; placement: ExecutionPlacement }
-  | { ok: false; reason: "unknown_op" | "not_queued" | "ambiguous" | "identity_mismatch" | "token_mismatch" | "not_waiting" | "persistence_failed" };
+  | { ok: false; reason: "unknown_op" | "not_queued" | "ambiguous" | "identity_mismatch" | "revision_mismatch" | "token_mismatch" | "not_waiting" | "persistence_failed" };
 
 /** Exact-token wake. Stale owners cannot make a newer/different placement runnable. */
 export function markExecutionPlacementReady(
   opId: string,
   identity: { backendId: string; targetId: string },
+  expectedRevision: number,
   wakeToken: string,
   now = new Date().toISOString(),
 ): PlacementWakeResult {
@@ -127,6 +128,7 @@ export function markExecutionPlacementReady(
     if (placement.backendId !== identity.backendId || placement.targetId !== identity.targetId) {
       return { ok: false, reason: "identity_mismatch" } as const;
     }
+    if (placement.revision !== expectedRevision) return { ok: false, reason: "revision_mismatch" } as const;
     if (placement.disposition !== "waiting") return { ok: false, reason: "not_waiting" } as const;
     if (placement.wakeToken !== wakeToken) return { ok: false, reason: "token_mismatch" } as const;
     const ready: ExecutionPlacement = {

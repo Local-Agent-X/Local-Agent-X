@@ -127,7 +127,7 @@ describe("durable execution placement", () => {
         expect(wakeExecutionPlacement(candidate.id, {
           backendId: backend!.id,
           targetId: "slot-1",
-        }, "wake-1")).toMatchObject({ ok: true });
+        }, 1, "wake-1")).toMatchObject({ ok: true });
       }
       return true;
     });
@@ -162,7 +162,7 @@ describe("durable execution placement", () => {
         wakeExecutionPlacement(candidate.id, {
           backendId: backend!.id,
           targetId: "slot-cancel",
-        }, "wake-cancel");
+        }, 1, "wake-cancel");
         opCancel(candidate.id, "test");
       }
       return true;
@@ -199,7 +199,7 @@ describe("durable execution placement", () => {
           wakeExecutionPlacement(candidate.id, {
             backendId: "wake-pause-backend",
             targetId: "slot-pause",
-          }, "wake-pause");
+          }, 1, "wake-pause");
           opPause(candidate.id, "test");
         }
         return placement.targetId === "slot-pause";
@@ -245,17 +245,17 @@ describe("durable execution placement", () => {
     expect(wakeExecutionPlacement(waiting.id, {
       backendId: backend.id,
       targetId: "stale-slot",
-    }, "wake-7")).toEqual({ ok: false, reason: "identity_mismatch" });
+    }, 1, "wake-7")).toEqual({ ok: false, reason: "identity_mismatch" });
     expect(wakeExecutionPlacement(waiting.id, {
       backendId: backend.id,
       targetId: "process-slot-7",
-    }, "stale-token")).toEqual({ ok: false, reason: "token_mismatch" });
+    }, 1, "stale-token")).toEqual({ ok: false, reason: "token_mismatch" });
 
     backend.runs.get(healthy.id)!.resolve();
     const wake = wakeExecutionPlacement(waiting.id, {
       backendId: backend.id,
       targetId: "process-slot-7",
-    }, "wake-7");
+    }, 1, "wake-7");
     expect(wake).toMatchObject({ ok: true, placement: { disposition: "ready", revision: 2 } });
     await vi.waitFor(() => expect(backend!.starts).toHaveBeenCalledTimes(2));
     expect(backend.starts.mock.calls[1][0].placement).toMatchObject({

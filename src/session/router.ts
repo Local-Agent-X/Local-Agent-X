@@ -20,6 +20,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { getLaxDir } from "../lax-data-dir.js";
+import { getMessagingChannelDefinition, isMessagingChannelId } from "./channel-registry.js";
 const require = createRequire(import.meta.url);
 
 const LAX_DIR = getLaxDir();
@@ -206,20 +207,21 @@ export function getGroupForUser(channel: ChannelType, channelUserId: string): Id
  * Build a context string for the agent so it knows which channel the user is on.
  */
 export function buildChannelContext(route: SessionRoute): string {
-  const channelNames: Record<ChannelType, string> = {
+  const channelNames: Record<Exclude<ChannelType, "telegram" | "whatsapp">, string> = {
     web: "Web UI",
-    telegram: "Telegram",
-    whatsapp: "WhatsApp",
     cli: "CLI",
     api: "API",
   };
-  const parts = [`User is messaging from: ${channelNames[route.channel] || route.channel}`];
+  const displayName = (channel: ChannelType): string => isMessagingChannelId(channel)
+    ? getMessagingChannelDefinition(channel).displayName
+    : channelNames[channel];
+  const parts = [`User is messaging from: ${displayName(route.channel)}`];
   if (route.isLinked) {
     const group = identityGroups.find(g => g.canonicalId === route.canonicalId);
     if (group && group.identities.length > 1) {
       const others = group.identities
         .filter(i => i.channel !== route.channel)
-        .map(i => channelNames[i.channel] || i.channel);
+        .map(i => displayName(i.channel));
       if (others.length > 0) {
         parts.push(`This user also uses: ${others.join(", ")}`);
       }

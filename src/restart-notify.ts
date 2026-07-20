@@ -18,10 +18,15 @@ import { createLogger } from "./logger.js";
 import { formatForChannel } from "./channel-formatter.js";
 import { getTelegramBridgeInstance } from "./telegram-bridge/index.js";
 import { getWhatsAppBridgeInstance } from "./whatsapp-bridge/index.js";
+import {
+  isMessagingChannelId,
+  parseMessagingSessionTarget,
+  type MessagingChannelId,
+} from "./session/channel-registry.js";
 
 const logger = createLogger("restart-notify");
 
-export type NotifyChannel = "telegram" | "whatsapp";
+export type NotifyChannel = MessagingChannelId;
 
 export interface RestartNotice {
   channel: NotifyChannel;
@@ -43,7 +48,7 @@ export function readRestartNotice(): RestartNotice | null {
     const p = markerPath();
     if (!existsSync(p)) return null;
     const n = JSON.parse(readFileSync(p, "utf-8")) as RestartNotice;
-    if (!n || (n.channel !== "telegram" && n.channel !== "whatsapp") || !n.target) return null;
+    if (!n || !isMessagingChannelId(n.channel) || !n.target) return null;
     return n;
   } catch { return null; }
 }
@@ -70,8 +75,8 @@ export async function resolveNotifyTarget(
   args: Record<string, unknown>,
 ): Promise<{ channel: NotifyChannel; target: string } | null> {
   const sid = typeof args._sessionId === "string" ? args._sessionId : "";
-  if (sid.startsWith("tg-")) return { channel: "telegram", target: sid.slice(3) };
-  if (sid.startsWith("wa-")) return { channel: "whatsapp", target: sid.slice(3) };
+  const sessionTarget = parseMessagingSessionTarget(sid);
+  if (sessionTarget) return sessionTarget;
 
   const tg = getTelegramBridgeInstance();
   const tgStatus = tg?.getStatus();

@@ -7,6 +7,7 @@
  */
 
 import type { TelegramBridge as TelegramBridgeClass } from "./bridge.js";
+import { getMessagingBridge, setMessagingBridge } from "../session/channel-registry.js";
 
 export { TelegramBridge } from "./bridge.js";
 export type { TelegramBridgeConfig } from "./types.js";
@@ -15,6 +16,9 @@ export type { TelegramBridgeConfig } from "./types.js";
 // scheduled missions can push PROACTIVE messages. The inbound reply path rides
 // onMessage, but a cron ping has no inbound turn to ride — it needs the bridge
 // object directly. Set once at bootstrap (bootstrap-bridges.ts).
-let _instance: TelegramBridgeClass | null = null;
-export function setTelegramBridgeInstance(b: TelegramBridgeClass | null): void { _instance = b; }
-export function getTelegramBridgeInstance(): TelegramBridgeClass | null { return _instance; }
+export function setTelegramBridgeInstance(b: TelegramBridgeClass | null): void {
+  setMessagingBridge("telegram", b);
+}
+export function getTelegramBridgeInstance(): TelegramBridgeClass | null {
+  return getMessagingBridge("telegram");
+}

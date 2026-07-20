@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { buildMessagingSessionId, messagingChannelConfigPath } from "../session/channel-registry.js";
 
 import { apiCall, sendMessage, sendVoice, sendPhoto, sendVideo } from "./api.js";
 import { describeNonTextMessage, dispatchReply, transcribeInboundVoice } from "./inbound.js";
@@ -240,7 +240,7 @@ export class TelegramBridge {
       await this.sendMessage(chatId, "Message too long (max 10,000 characters).");
       return;
     }
-    const sessionId = `tg-${chatId}`;
+    const sessionId = buildMessagingSessionId("telegram", chatId);
 
     const safeName = (senderName || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
     const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
@@ -296,7 +296,7 @@ export class TelegramBridge {
 
   private loadAllowedChats(): void {
     try {
-      const cfgPath = join(this.dataDir, "telegram-config.json");
+      const cfgPath = messagingChannelConfigPath(this.dataDir, "telegram");
       if (existsSync(cfgPath)) {
         const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
         if (Array.isArray(cfg.allowedChatIds) && cfg.allowedChatIds.length > 0) {
@@ -315,7 +315,7 @@ export class TelegramBridge {
   private saveAllowedChats(): void {
     try {
       writeFileSync(
-        join(this.dataDir, "telegram-config.json"),
+        messagingChannelConfigPath(this.dataDir, "telegram"),
         JSON.stringify({ allowedChatIds: [...this.allowedChatIds] }, null, 2),
       );
     } catch (e) {

@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../providers/sanitize.js";
 import { WhatsAppBridge, setWhatsAppBridgeInstance } from "../whatsapp-bridge/index.js";
@@ -25,9 +24,14 @@ const logger = createLogger("server.bootstrap-bridges");
 
 import type { BridgeReply } from "../whatsapp-bridge/index.js";
 import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../local-only-policy.js";
+import {
+  getMessagingChannelDefinition,
+  messagingChannelAuthReadyPath,
+  type MessagingChannelId,
+} from "../session/channel-registry.js";
 
 export type BridgeHandler = (
-  platform: string,
+  platform: MessagingChannelId,
   payload: { from: string; name: string; text: string; sessionId: string }
 ) => Promise<string | BridgeReply>;
 
@@ -58,7 +62,8 @@ export function createBridgeHandler(deps: {
   } = deps;
 
   return async function bridgeMessageHandler(platform, { from, name, text, sessionId }) {
-    const channelType = platform.toLowerCase() as ChannelType;
+    const channelType = platform as ChannelType;
+    const channelName = getMessagingChannelDefinition(platform).displayName;
     const route = resolveSession(channelType, from, sessionId);
 
     const trimmed = text.trim().toLowerCase();
@@ -147,13 +152,13 @@ export function createBridgeHandler(deps: {
     }
 
     const session = getOrCreateSession(route.sessionKey);
-    if (session.messages.length === 0) session.title = `${platform}: ${name}`;
+    if (session.messages.length === 0) session.title = `${channelName}: ${name}`;
     const injectionScore = detectInjection(text).reduce((max, h) => Math.max(max, h.score), 0);
     if (injectionScore >= 0.85) return `I can't process that message — it was flagged by security filters.`;
 
     const { prepareAgentRequest } = await import("../agent-request/index.js");
     const channelConfig = getChannelConfig(channelType);
-    const bridgeCtx = `\n\n[${platform} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
+    const bridgeCtx = `\n\n[${channelName} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
       `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +
       (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
     const prepared = await prepareAgentRequest({
@@ -243,7 +248,7 @@ export function createBridgeHandler(deps: {
     // image bytes / media paths on the result envelope when a tool emits them.
     if (canonicalOpId) {
       await forwardBridgeMedia({
-        canonicalOpId, channelType, platform, from,
+        canonicalOpId, channelType, platform: channelName, from,
         sessionKey: route.sessionKey, getWhatsappBridge, getTelegramBridge,
       });
     }
@@ -273,21 +278,26 @@ export function bootstrapBridges(deps: {
   bridgeHandler: BridgeHandler;
 }): BridgeBundle {
   const { dataDir, secretsStore, bridgeHandler } = deps;
-  const whatsappBridge = new WhatsAppBridge({ dataDir, onMessage: (p) => bridgeHandler("WhatsApp", p) });
+  const whatsappBridge = new WhatsAppBridge({ dataDir, onMessage: (p) => bridgeHandler("whatsapp", p) });
   setWhatsAppBridgeInstance(whatsappBridge);
-  const telegramBridge = new TelegramBridge({ dataDir, getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null, onMessage: (p) => bridgeHandler("Telegram", p) });
+  const telegramDefinition = getMessagingChannelDefinition("telegram");
+  const telegramBridge = new TelegramBridge({
+    dataDir,
+    getToken: () => secretsStore.get(telegramDefinition.tokenSecret!) ?? null,
+    onMessage: (p) => bridgeHandler("telegram", p),
+  });
   setTelegramBridgeInstance(telegramBridge);
   registerLocalOnlyTeardown("messaging-bridges", () => {
     telegramBridge.disconnect();
     return whatsappBridge.disconnect(true);
   });
-  if (!isLocalOnlyMode() && secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") { logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); void sendRestartPingIfPending("telegram"); } }).catch(() => {});
+  if (!isLocalOnlyMode() && secretsStore.has(telegramDefinition.tokenSecret!)) telegramBridge.connect().then(r => { if (r.state === "connected") { logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); void sendRestartPingIfPending("telegram"); } }).catch(() => {});
   // WhatsApp auto-reconnect on boot. Only attempts when a saved Baileys
   // session exists (creds.json under whatsapp-auth/) — otherwise the
   // first connect generates a fresh QR that nobody is around to scan,
   // wasting cycles. Mirrors the telegram pattern. The bridge's connect
   // method is idempotent and returns immediately if already connected.
-  const waCredsPath = join(dataDir, "whatsapp-auth", "creds.json");
+  const waCredsPath = messagingChannelAuthReadyPath(dataDir, "whatsapp")!;
   if (!isLocalOnlyMode() && existsSync(waCredsPath)) {
     whatsappBridge.connect()
       .then(r => { if (r.state === "connected") { logger.info(`[whatsapp] Auto-reconnected as ${r.phone || "(phone unknown)"}`); void sendRestartPingIfPending("whatsapp"); } })

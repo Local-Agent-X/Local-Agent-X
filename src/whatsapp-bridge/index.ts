@@ -15,7 +15,6 @@
  *   4. Done — your agent is now on WhatsApp
  */
 
-import { join } from "node:path";
 import { mkdirSync, existsSync, rmSync } from "node:fs";
 // @ts-ignore — no types for qrcode
 import QRCode from "qrcode";
@@ -27,6 +26,10 @@ import { loadAllowedNumbers, saveAllowedNumbers, sanitizeNumbers } from "./allow
 import { dispatchReplyToJid } from "./voice-reply.js";
 import { createMessagesUpsertHandler } from "./message-handler.js";
 import { createRequire } from "node:module";
+import {
+  messagingChannelAuthPath,
+  messagingChannelAuthReadyPath,
+} from "../session/channel-registry.js";
 const require = createRequire(import.meta.url);
 
 const logger = createLogger("whatsapp-bridge");
@@ -36,6 +39,7 @@ export const WA_RECONNECT_BASE_MS = 5000;
 export const WA_RECONNECT_MAX_MS = 60_000;
 
 export type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
+export { getWhatsAppBridgeInstance, setWhatsAppBridgeInstance } from "./live-instance.js";
 
 export class WhatsAppBridge {
   private dataDir: string;
@@ -56,7 +60,7 @@ export class WhatsAppBridge {
 
   constructor(config: WhatsAppBridgeConfig) {
     this.dataDir = config.dataDir;
-    this.authDir = join(config.dataDir, "whatsapp-auth");
+    this.authDir = messagingChannelAuthPath(config.dataDir, "whatsapp")!;
     this.onMessage = config.onMessage;
 
     this.allowedNumbers = loadAllowedNumbers(this.dataDir);
@@ -232,7 +236,7 @@ export class WhatsAppBridge {
       qrImageUrl,
       error: this.lastError,
       allowedNumbers: [...this.allowedNumbers],
-      hasSavedSession: existsSync(join(this.authDir, "creds.json")),
+      hasSavedSession: existsSync(messagingChannelAuthReadyPath(this.dataDir, "whatsapp")!),
     };
   }
 
@@ -390,10 +394,3 @@ export class WhatsAppBridge {
     this.sock.ev.on("messages.upsert", handleMessagesUpsert);
   }
 }
-
-// Module-singleton handle to the live bridge so tools (whatsapp_send) and scheduled
-// missions can push PROACTIVE messages — a cron ping has no inbound turn to ride
-// onMessage, so it needs the bridge directly. Set once at bootstrap (bootstrap-bridges.ts).
-let _instance: WhatsAppBridge | null = null;
-export function setWhatsAppBridgeInstance(b: WhatsAppBridge | null): void { _instance = b; }
-export function getWhatsAppBridgeInstance(): WhatsAppBridge | null { return _instance; }

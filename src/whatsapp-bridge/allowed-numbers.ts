@@ -3,13 +3,13 @@
 // lives in ~/.lax/whatsapp-config.json.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { createLogger } from "../logger.js";
+import { messagingChannelConfigPath } from "../session/channel-registry.js";
 
 const logger = createLogger("whatsapp-bridge");
 
 function configPath(dataDir: string): string {
-  return join(dataDir, "whatsapp-config.json");
+  return messagingChannelConfigPath(dataDir, "whatsapp");
 }
 
 export function loadAllowedNumbers(dataDir: string): Set<string> {

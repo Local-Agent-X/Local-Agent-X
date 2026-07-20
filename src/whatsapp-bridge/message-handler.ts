@@ -19,6 +19,7 @@ import { createLogger } from "../logger.js";
 import { markVoiceMirror, clearVoiceMirror, dispatchReplyToJid } from "./voice-reply.js";
 import { isOwnerSelfChat } from "./text-utils.js";
 import type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
+import { buildMessagingSessionId } from "../session/channel-registry.js";
 
 const logger = createLogger("whatsapp-bridge");
 
@@ -210,7 +211,7 @@ export function createMessagesUpsertHandler(
       }
 
       const name = msg.pushName || phone;
-      const sessionId = `wa-${phone}`;
+      const sessionId = buildMessagingSessionId("whatsapp", phone);
 
       const safeName = (name || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
       const safeText = sanitizedText.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");

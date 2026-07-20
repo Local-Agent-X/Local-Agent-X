@@ -1,5 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
+import { getMessagingChannelDefinition } from "../../session/channel-registry.js";
 
 export const handleTelegramRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -12,7 +13,8 @@ export const handleTelegramRoutes: RouteHandler = async (method, url, req, res, 
     ctx.telegramBridge.disconnect(); json(200, { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/telegram/status") {
-    json(200, { ...ctx.telegramBridge.getStatus(), hasToken: ctx.secretsStore.has("TELEGRAM_BOT_TOKEN") }); return true;
+    const secret = getMessagingChannelDefinition("telegram").tokenSecret!;
+    json(200, { ...ctx.telegramBridge.getStatus(), hasToken: ctx.secretsStore.has(secret) }); return true;
   }
   if (method === "POST" && url.pathname === "/api/telegram/send") {
     try {

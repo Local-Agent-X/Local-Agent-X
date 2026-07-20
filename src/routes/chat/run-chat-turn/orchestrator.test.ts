@@ -64,17 +64,47 @@ vi.mock("./canonical-run.js", () => ({ runCanonicalChat }));
 
 import { runChatTurn } from "./orchestrator.js";
 import { preparePerTurnRequest } from "./prepare-and-route.js";
+import { routeMessage } from "../../../routing/index.js";
 import { getTurnRegistry, releaseTurn, getActiveTurn } from "../../../session/turn-lock.js";
 
 const SESSION = "sess-ct2-refusal";
 const SESSION_ORPHAN = "sess-orphan-activechat";
 const SESSION_EARLY = "sess-early-exit-no-key";
+const SESSION_CHANNEL = "tg-transport-parity";
 
 afterEach(() => {
   releaseTurn(SESSION);
   releaseTurn(SESSION_ORPHAN);
   releaseTurn(SESSION_EARLY);
+  releaseTurn(SESSION_CHANNEL);
   vi.clearAllMocks();
+});
+
+describe("orchestrator transport parity", () => {
+  it("carries the messaging channel through canonical prepare and routing", async () => {
+    const { ctx } = makeCtx(() => {});
+    await runChatTurn({
+      sessionId: SESSION_CHANNEL,
+      message: "continue",
+      attachments: [],
+      projectId: null,
+      ctx: ctx as never,
+      requestRole: "operator",
+      sseSink: vi.fn(),
+      channel: "telegram",
+      bridgeContext: "[Telegram bridge] authenticated sender",
+      skipMemory: true,
+      maxHistory: 30,
+      sessionTitle: "Telegram: Peter",
+    });
+    expect(preparePerTurnRequest).toHaveBeenCalledWith(expect.objectContaining({
+      channel: "telegram",
+      bridgeContext: "[Telegram bridge] authenticated sender",
+      skipMemory: true,
+      maxHistory: 30,
+    }));
+    expect(routeMessage).toHaveBeenCalledWith("xai", "continue", "telegram");
+  });
 });
 
 function makeCtx(onEmit: (id: string, ev: ServerEvent) => void) {

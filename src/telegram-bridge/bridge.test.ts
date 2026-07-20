@@ -119,3 +119,41 @@ describe("TelegramBridge.pollLoop — outage resilience (BR-4)", () => {
     await loop;
   });
 });
+
+describe("TelegramBridge inbound identity", () => {
+  it("forwards the stable update id to the canonical inbound runner", async () => {
+    apiCall.mockResolvedValue({ ok: true });
+    const onMessage = vi.fn().mockResolvedValue(null);
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-delivery-test-dir",
+      getToken: () => "TESTTOKEN",
+      onMessage,
+    }) as any;
+    bridge.state = "connected";
+    bridge.allowedChatIds = new Set(["42"]);
+    bridge.ownerVerified = true;
+    await bridge.handleUpdate({
+      update_id: 991,
+      message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" },
+    }, "TESTTOKEN");
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "tg-42",
+      deliveryId: "update:991",
+    }));
+  });
+
+  it("does not discard queued updates when reconnecting after a crash", async () => {
+    apiCall.mockImplementation(async (_token, method) => method === "getMe"
+      ? { ok: true, result: { id: 1, is_bot: true, first_name: "LAX", username: "lax" } }
+      : { ok: false, error_code: 401, description: "test terminal" });
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-reconnect-test-dir",
+      getToken: () => "TESTTOKEN",
+      onMessage: async () => null,
+    });
+    await bridge.connect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    bridge.disconnect();
+    expect(apiCall.mock.calls.some((call) => call[1] === "getUpdates" && call[2]?.offset === -1)).toBe(false);
+  });
+});

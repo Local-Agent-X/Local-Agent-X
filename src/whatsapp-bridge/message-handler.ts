@@ -255,7 +255,10 @@ export function createMessagesUpsertHandler(
       ctx.processingLock.add(phone);
       replyingTo.add(replyJid);
       try {
-        const replyRaw = await ctx.onMessage({ from: phone, name, text: sanitizedText, sessionId });
+        const replyRaw = await ctx.onMessage({
+          from: phone, name, text: sanitizedText, sessionId,
+          deliveryId: `message:${String(msgId)}`,
+        });
         const reply: BridgeReply | null = !replyRaw ? null
           : typeof replyRaw === "string" ? { text: replyRaw, speakable: replyRaw }
           : { text: replyRaw.text, speakable: replyRaw.speakable ?? replyRaw.text };

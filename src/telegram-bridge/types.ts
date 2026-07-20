@@ -24,7 +24,8 @@ export interface TelegramBridgeConfig {
     name: string;
     text: string;
     sessionId: string;
-  }) => Promise<string | import("../whatsapp-bridge/index.js").BridgeReply>;
+    deliveryId?: string;
+  }) => Promise<string | import("../whatsapp-bridge/index.js").BridgeReply | null>;
 }
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";

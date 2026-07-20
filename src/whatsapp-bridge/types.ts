@@ -19,7 +19,8 @@ export interface WhatsAppBridgeConfig {
     name: string;
     text: string;
     sessionId: string;
-  }) => Promise<string | BridgeReply>;
+    deliveryId?: string;
+  }) => Promise<string | BridgeReply | null>;
 }
 
 export type ConnectionState = "disconnected" | "connecting" | "qr" | "connected";

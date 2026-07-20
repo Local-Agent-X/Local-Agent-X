@@ -15,6 +15,11 @@ import { join } from "node:path";
 // which pulls the voice/STT stack we don't exercise here.
 vi.mock("../bridge-voice/index.js", () => ({}));
 vi.mock("../voice/index.js", () => ({}));
+vi.mock("./voice-reply.js", () => ({
+  markVoiceMirror: vi.fn(),
+  clearVoiceMirror: vi.fn(),
+  dispatchReplyToJid: vi.fn(),
+}));
 
 const UPLOADS = mkdtempSync(join(tmpdir(), "wa-media-test-"));
 
@@ -25,7 +30,7 @@ vi.mock("../config.js", () => ({
   getRuntimeConfig: () => ({ port: 7007 }),
 }));
 
-import { describeInboundMedia } from "./message-handler.js";
+import { createMessagesUpsertHandler, describeInboundMedia } from "./message-handler.js";
 
 describe("describeInboundMedia — inbound media reaches the model", () => {
   beforeEach(() => downloadMediaMessage.mockClear());
@@ -62,5 +67,33 @@ describe("describeInboundMedia — inbound media reaches the model", () => {
     downloadMediaMessage.mockRejectedValueOnce(new Error("boom"));
     const out = await describeInboundMedia({ message: { videoMessage: { mimetype: "video/mp4" } } });
     expect(out).toContain("download failed: boom");
+  });
+});
+
+describe("WhatsApp inbound identity", () => {
+  it("forwards the stable provider message id to the canonical inbound runner", async () => {
+    const onMessage = vi.fn().mockResolvedValue(null);
+    const handler = createMessagesUpsertHandler({
+      phoneNumber: "15550001",
+      selfLid: null,
+      allowedNumbers: new Set(),
+      processedMessages: new Set(),
+      processingLock: new Set(),
+      sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+      onMessage,
+      sendMessage: vi.fn().mockResolvedValue(true),
+      sendToJid: vi.fn().mockResolvedValue(true),
+      sendVoiceToJid: vi.fn().mockResolvedValue(true),
+    }, null);
+    await handler({ type: "notify", messages: [{
+      key: { id: "ABC123", remoteJid: "15550001@s.whatsapp.net", fromMe: false },
+      pushName: "Peter",
+      message: { conversation: "hello" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    }] });
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: "wa-15550001",
+      deliveryId: "message:ABC123",
+    }));
   });
 });

@@ -16,16 +16,19 @@ import { runCanonicalChat } from "./canonical-run.js";
 const logger = createLogger("routes.chat.run-turn");
 
 /**
- * Execute a single chat turn. Transport-agnostic core. Two callers:
+ * Execute a single chat turn. Transport-agnostic core. Three callers:
  *
  *   - HTTP route handler (src/routes/chat.ts): passes `sseSink = (ev) => sseWrite(res, ev)`
  *     so the SSE response body matches the legacy contract for non-WS clients
- *     (Telegram / WhatsApp / curl).
+ *     (browser fallback / curl).
  *
  *   - WS forward layer (src/server/lifecycle.ts wireWsChat): passes
  *     `sseSink = null` because the WS client receives events through chat-ws's
  *     own subscription (set up by `ctx.chatWs.startChat(sessionId)`).
  *     Eliminates the localhost HTTP self-loop that used to live in wireWsChat.
+ *
+ *   - Inbound messaging adapter (src/server/inbound-channel-runner.ts): captures
+ *     canonical events for Telegram/WhatsApp replies without a shadow agent loop.
  *
  * Behavior is identical to the previous inline body: slash expansion,
  * project stamping, prepareAgentRequest, JARVIS redirect, auto-delegation,
@@ -35,6 +38,7 @@ const logger = createLogger("routes.chat.run-turn");
  */
 export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   const { sessionId, attachments, projectId, ctx, requestRole, sseSink } = args;
+  const channel = args.channel ?? "web";
   let message = args.message;
 
   const emitSse = (event: ServerEvent) => { if (sseSink) sseSink(event); };
@@ -73,7 +77,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // turn from history. flushSession is a no-op when nothing is pending.
   await ctx.flushSession(sessionId);
   const session = ctx.getOrCreateSession(sessionId);
-  if (session.messages.length === 0) session.title = message.slice(0, 60) + (message.length > 60 ? "..." : "");
+  if (session.messages.length === 0) {
+    session.title = args.sessionTitle ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
+  }
 
   // Persist the chat→project link onto the durable session so it survives
   // client-side sync and seeds future cold loads. The in-memory map (set
@@ -129,6 +135,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   try {
     const prepared = await preparePerTurnRequest({
       sessionId, message, sessionMessages: session.messages, attachments, ctx,
+      channel, bridgeContext: args.bridgeContext,
+      skipMemory: args.skipMemory, maxHistory: args.maxHistory,
     });
 
     await emitContextStatus(prepared, ctx, sessionId, emitSse);
@@ -156,7 +164,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       return;
     }
 
-    const routeDecision = await routeMessage(prepared.provider, message, "web");
+    const routeDecision = await routeMessage(prepared.provider, message, channel);
     if (routeDecision.destination === "delegate") {
       const handoff = await runDelegationHandoff({
         message, sessionId, prepared, ctx, session, requestRole, sseSink,
@@ -207,7 +215,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
         const { buildCleanHistory } = await import("../../../providers/sanitize.js");
         prepared.cleanHistory = buildCleanHistory(
           session.messages as Parameters<typeof buildCleanHistory>[0],
-          "web",
+          channel,
         );
       } catch (e) {
         logger.warn(`[turn-lock] cleanHistory refresh after replace failed: ${(e as Error).message}`);

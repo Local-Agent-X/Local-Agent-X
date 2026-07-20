@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent } from "../../../types.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
+import type { ChannelKind } from "../../../agent-request/types.js";
 import { createLogger } from "../../../logger.js";
 
 const logger = createLogger("routes.chat.prepare");
@@ -12,6 +13,10 @@ export interface PrepareInput {
   sessionMessages: unknown[];
   attachments: Array<{ name: string; url: string; isImage: boolean }>;
   ctx: ServerContext;
+  channel?: ChannelKind;
+  bridgeContext?: string;
+  skipMemory?: boolean;
+  maxHistory?: number;
 }
 
 export async function preparePerTurnRequest(input: PrepareInput): Promise<PreparedAgentRequest> {
@@ -19,13 +24,16 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
   const { prepareAgentRequest } = await import("../../../agent-request/index.js");
   const prepStart = Date.now();
   const prepared = await prepareAgentRequest({
-    channel: sessionId.startsWith("ide-") ? "web" : "web",
+    channel: input.channel ?? "web",
     message, sessionMessages: sessionMessages as Parameters<typeof prepareAgentRequest>[0]["sessionMessages"], sessionId,
     config: ctx.config, dataDir: ctx.dataDir,
     memoryIndex: ctx.memoryIndex, memoryManager: ctx.memoryManager, integrations: ctx.integrations,
     secretsStore: ctx.secretsStore,
     allAgentTools: ctx.allAgentTools, bridgeTools: ctx.bridgeTools,
     attachments, uploadsDir: join(ctx.dataDir, "uploads"),
+    bridgeContext: input.bridgeContext,
+    skipMemory: input.skipMemory,
+    maxHistory: input.maxHistory,
   });
   logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
   console.log(`[chat-diag] prepared sess=${sessionId.slice(-8)} provider=${prepared.provider} model=${prepared.model || "EMPTY"} hasKey=${!!prepared.apiKey}`);
@@ -35,7 +43,7 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
 /**
  * Emit a context_status event so the chat-bar gauge reflects actual
  * prompt size BEFORE the agent runs. Fan out to BOTH transports —
- * SSE clients (Telegram/WhatsApp/curl) get `emitSse`, WS clients (the
+ * SSE clients (HTTP/curl) and messaging event sinks get `emitSse`; WS clients (the
  * chat UI, which uses sseSink=null) get `ctx.chatWs.emit`. Until this
  * dual-emit was added, WS clients never saw a fresh context_status
  * unless compaction fired, so the bottom-of-chat gauge stayed at the

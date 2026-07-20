@@ -211,20 +211,13 @@ export async function startServer(config: LAXConfig) {
   const sessionHelpers = createSessionHelpers({ sessionStore, memoryIndex, dataDir, maxCached: config.maxCachedSessions });
   const { sessions, getOrCreateSession, saveSession, flushSession } = sessionHelpers;
 
-  const allAgentToolsRef = { value: allAgentTools };
-  const bridgeToolsRef = { value: bridgeTools };
-
-  const bridgeHolder: { whatsappBridge: import("../whatsapp-bridge/index.js").WhatsAppBridge | null; telegramBridge: import("../telegram-bridge/index.js").TelegramBridge | null } = { whatsappBridge: null, telegramBridge: null };
+  let resolveBridgeContext!: (ctx: ServerContext) => void;
+  const bridgeContextReady = new Promise<ServerContext>((resolve) => { resolveBridgeContext = resolve; });
   const bridgeHandler = createBridgeHandler({
-    sessions, sessionStore, getOrCreateSession, saveSession,
-    config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
-    allAgentToolsRef, bridgeToolsRef, security, toolPolicy, rbac,
-    getWhatsappBridge: () => bridgeHolder.whatsappBridge!,
-    getTelegramBridge: () => bridgeHolder.telegramBridge!,
+    sessions, sessionStore, config,
+    getContext: () => bridgeContextReady,
   });
   const { whatsappBridge, telegramBridge } = bootstrapBridges({ dataDir, secretsStore, bridgeHandler });
-  bridgeHolder.whatsappBridge = whatsappBridge;
-  bridgeHolder.telegramBridge = telegramBridge;
 
   const agentRunStore = AgentRunStore.getInstance();
   const agentTemplateStore = AgentTemplateStore.getInstance();
@@ -312,6 +305,7 @@ export async function startServer(config: LAXConfig) {
       else activeRuntimeBySession.delete(sid);
     },
   });
+  resolveBridgeContext(buildWsCtx());
   wireWsChat({ chatWs, buildCtx: buildWsCtx });
 
   registerHandlerEvents({

@@ -1,6 +1,7 @@
 import type { ServerContext } from "../../../server-context.js";
 import type { Role } from "../../../rbac.js";
 import type { ServerEvent } from "../../../types.js";
+import type { ChannelKind } from "../../../agent-request/types.js";
 
 // Directive verbs that signal "the user is explicitly directing this
 // attachment to a destination" — when paired with attachments, this is
@@ -32,4 +33,12 @@ export interface RunChatTurnArgs {
   requestRole: Role;
   /** SSE side-channel sink. Pass null for WS-only delivery. */
   sseSink: SseSink;
+  /** Transport metadata. Web remains the default; messaging adapters pass
+   *  their real channel so preparation, routing, history sanitation, and
+   *  prompt context stay on the same canonical turn path. */
+  channel?: ChannelKind;
+  bridgeContext?: string;
+  skipMemory?: boolean;
+  maxHistory?: number;
+  sessionTitle?: string;
 }

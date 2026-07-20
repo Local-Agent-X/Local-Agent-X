@@ -59,14 +59,6 @@ export class TelegramBridge {
       if (!me.ok) throw new Error(me.description || "Invalid bot token");
       this.botUser = me.result;
 
-      // Flush any stale Telegram-side long-poll so we don't get "terminated by other getUpdates"
-      try {
-        const flush = await apiCall(token, "getUpdates", { offset: -1, timeout: 0 });
-        if (flush.ok && flush.result?.length) {
-          this.offset = flush.result[flush.result.length - 1].update_id + 1;
-        }
-      } catch {}
-
       // Re-load allowed chats in case config was updated while disconnected
       this.loadAllowedChats();
 
@@ -277,7 +269,10 @@ export class TelegramBridge {
 
     this.processingLock.add(chatId);
     try {
-      const reply = await this.onMessage({ from: chatId, name: senderName, text, sessionId });
+      const reply = await this.onMessage({
+        from: chatId, name: senderName, text, sessionId,
+        deliveryId: `update:${String(update.update_id)}`,
+      });
       if (!reply) { /* nothing to send */ }
       else if (typeof reply === "string") {
         await dispatchReply(token, chatId, reply, reply);

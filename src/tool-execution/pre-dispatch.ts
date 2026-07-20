@@ -23,6 +23,7 @@ import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/layer/index.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
+import { killSwitchBlock } from "./kill-switch-gates.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
@@ -135,32 +136,18 @@ export async function assertToolCallAllowed(
       userHint: USER_HINTS.policy,
     });
   }
-  // The shell kill-switch covers every shell-class tool, not just `bash`: the
-  // process_* family spawns the same /bin/bash -c (or powershell) subprocess,
-  // so leaving them on while Shell is off would be a silent bypass of the
-  // user's own toggle.
-  if ((call.name === "bash" || call.name.startsWith("process_")) && cfg.enableShell === false) {
+  // Category kill-switches (shell / http / browser / computer control) come
+  // from the declarative table in kill-switch-gates.ts — one shared recovery
+  // template guarantees every block names the exact `setting` field, so an
+  // agent is never left guessing at the wrong layer (tool-policy rules, HTTP
+  // endpoints). See that module's header for the incident that motivated it.
+  const killSwitch = killSwitchBlock(call.name, cfg);
+  if (killSwitch) {
     throw new ToolBlocked({
       stage: "tool-policy",
-      reason: "Shell Access is disabled in Settings → Security → Tool Policy.",
-      recovery: "Shell is off. Tell the user, and ask if they'd like it on. If they confirm, call `setting` with enableShell=true. Don't re-enable it on your own just to get past this block. Other tools (write/edit/http_request) still work.",
-      userHint: USER_HINTS.policy,
-    });
-  }
-  if (call.name === "http_request" && cfg.enableHttp === false) {
-    throw new ToolBlocked({
-      stage: "tool-policy",
-      reason: "HTTP Requests are disabled in Settings → Security → Tool Policy.",
-      recovery: "HTTP is off. Tell the user, and ask if they'd like it on. If they confirm, call `setting` with enableHttp=true. Don't re-enable it on your own just to get past this block.",
-      userHint: USER_HINTS.policy,
-    });
-  }
-  if (call.name.startsWith("browser") && cfg.enableBrowser === false) {
-    throw new ToolBlocked({
-      stage: "tool-policy",
-      reason: "Browser is disabled in Settings → Security → Tool Policy.",
-      recovery: "The browser is off. Tell the user, and ask if they'd like it on. If they confirm, call `setting` with enableBrowser=true. Don't re-enable it on your own just to get past this block.",
-      userHint: USER_HINTS.policy,
+      reason: killSwitch.reason,
+      recovery: killSwitch.recovery,
+      userHint: USER_HINTS.killSwitch,
     });
   }
   // Supervised browser mode. DEFAULT OFF — the in-app browser is autonomous,
@@ -178,18 +165,6 @@ export async function assertToolCallAllowed(
       disposition: "approval-required",
       reason: supervised.reason,
       recovery: supervised.recovery,
-      userHint: USER_HINTS.policy,
-    });
-  }
-
-  // Computer control defaults OFF (high-risk opt-in). On macOS it ALSO needs
-  // the Accessibility permission — but that's enforced in the driver; here we
-  // gate on the user-facing kill-switch.
-  if (call.name === "computer" && cfg.enableComputerControl === false) {
-    throw new ToolBlocked({
-      stage: "tool-policy",
-      reason: "Computer control (mouse/keyboard) is disabled in Settings → Security → Tool Policy.",
-      recovery: "Computer control is off (off by default). Tell the user it must be enabled in Settings → Security, and that macOS also needs Accessibility permission. Don't re-enable it on your own just to get past this block.",
       userHint: USER_HINTS.policy,
     });
   }

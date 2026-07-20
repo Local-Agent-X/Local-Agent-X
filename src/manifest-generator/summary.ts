@@ -3,6 +3,22 @@ import { createRequire } from "node:module";
 
 import { MANIFEST_PATH } from "./paths.js";
 import type { AppManifest } from "./types.js";
+import { FLIPPABLE_SETTINGS } from "../settings-schema.js";
+
+/**
+ * Security-settings line for the App Map — DERIVED from the settings
+ * registry, never hand-typed. A hand-typed copy omitted
+ * enableComputerControl and a blocked agent went hunting for a nonexistent
+ * toggle endpoint (2026-07-20). Exported for the contract test.
+ */
+export function securitySettingsLine(): string {
+  const fields = FLIPPABLE_SETTINGS.filter((s) => s.protected).map((s) => s.field).join("/");
+  return (
+    `- **Security settings** (${fields}): when the user asks you to change one, use the \`setting\` tool with that field — it takes effect immediately. ` +
+    `That IS how you turn a capability back on at the user's request. Just don't change a security setting unless the user explicitly asked, ` +
+    `and never silently re-enable one to get around a block.`
+  );
+}
 
 const require = createRequire(import.meta.url);
 
@@ -73,7 +89,7 @@ export function getManifestSummary(): string {
     "### Common Operations",
     "- **Change theme**: `http_request` → `POST {{APP_URL}}/api/settings` with `{\"theme\": \"light\"}` (or `\"dark\"`, `\"system\"`)",
     "- **Change a non-security setting** (theme, model, temperature, etc.): `http_request` → `POST {{APP_URL}}/api/settings` with the setting JSON",
-    "- **Security settings** (enableShell/enableHttp/enableBrowser, toolApproval): when the user asks you to change one, use the `setting` tool with that field — it takes effect immediately. That IS how you turn a capability back on at the user's request. Just don't change a security setting unless the user explicitly asked, and never silently re-enable one to get around a block.",
+    securitySettingsLine(),
     "- **Change AI provider/model**: `http_request` → `POST {{APP_URL}}/api/providers/switch` with `{\"provider\": \"...\", \"model\": \"...\"}`",
     "- **Create an organization**: `http_request` → `POST {{APP_URL}}/api/agents/organizations` — uses existing Agents page Org Chart tab",
     "- **Create a project**: use `project_create` tool (name + optional agent_ids); list with `project_list`; add members with `project_add_agent`",

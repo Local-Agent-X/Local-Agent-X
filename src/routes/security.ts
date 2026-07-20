@@ -96,10 +96,16 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "POST" && url.pathname === "/api/tool-policy/toggle") {
     const body = await readBody(req);
-    const { tool, enabled } = JSON.parse(body);
+    let parsed: { tool?: string; enabled?: boolean };
+    try { parsed = JSON.parse(body); } catch { json(400, { error: "Invalid JSON body. Expected {\"tool\": \"bash|http|browser\", \"enabled\": true|false}" }); return true; }
+    const { tool, enabled } = parsed;
     const ruleMap: Record<string, string> = { bash: "allow-bash-limited", http: "allow-http-limited", browser: "allow-browser" };
-    const ruleId = ruleMap[tool];
-    if (!ruleId) { json(400, { error: "Unknown tool. Use: bash, http, browser" }); return true; }
+    const ruleId = ruleMap[tool ?? ""];
+    // The redirect matters: this endpoint flips tool-policy RULES only. The
+    // category kill-switches are config settings on a different layer — an
+    // agent that landed here chasing a kill-switch block (computer control,
+    // 2026-07-20) must be pointed at the `setting` tool, not dead-ended.
+    if (!ruleId) { json(400, { error: "Unknown tool. Use: bash, http, browser. This endpoint flips tool-policy rules only — category kill-switches (enableShell/enableHttp/enableBrowser/enableComputerControl) are settings: use the `setting` tool with that field instead." }); return true; }
     const policyPath = join(ctx.dataDir, "tool-policy.json");
     try {
       let policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) as { defaultDecision: string; rules: Array<{ id: string; tool?: string; decision: string; reason?: string; priority?: number }> } : { defaultDecision: "deny" as string, rules: [] as Array<{ id: string; tool?: string; decision: string; reason?: string; priority?: number }> };

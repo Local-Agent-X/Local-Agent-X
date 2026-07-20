@@ -216,6 +216,12 @@ export const USER_HINTS = {
   /** Tool-policy default-deny, rate cap by policy, blocked args, host allowlist, hook, RBAC, context-restricted tool. */
   policy:
     "That action isn't permitted by the current policy — tell me what you'd like instead, or relax the rule in ~/.lax/tool-policy.json.",
+  /** Category kill-switch (enableShell/enableHttp/enableBrowser/enableComputerControl) flipped off.
+   *  Distinct from `policy`: these live in Settings → Security, NOT tool-policy.json —
+   *  pointing users (or the agent) at the policy file here sent a live agent
+   *  diagnosing the wrong layer (2026-07-20, computer control). */
+  killSwitch:
+    "That tool category is switched off in Settings → Security — say the word and the agent can request it back on with your approval, or flip the toggle there yourself.",
   /** User declined the approval prompt for this specific call. */
   declined:
     "You declined this action — the agent will adjust its approach instead of retrying it.",

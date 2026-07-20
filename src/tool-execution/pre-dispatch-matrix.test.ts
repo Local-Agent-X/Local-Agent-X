@@ -133,6 +133,18 @@ const rows: MatrixRow[] = [
     expected: { outcome: "blocked", stage: "tool-policy", reason: /HTTP Requests are disabled/ },
   },
   {
+    name: "browser kill-switch off → browser blocked at tool-policy (kill-switch)",
+    call: { id: "m-br", name: "browser", args: { action: "navigate", url: "https://example.com" } },
+    deps: { getRuntimeConfig: () => flags({ enableBrowser: false }) },
+    expected: { outcome: "blocked", stage: "tool-policy", reason: /Browser is disabled/ },
+  },
+  {
+    name: "computer-control kill-switch off → computer blocked at tool-policy (kill-switch)",
+    call: { id: "m-comp", name: "computer", args: { action: "screen_size" } },
+    deps: { getRuntimeConfig: () => flags({ enableComputerControl: false }) },
+    expected: { outcome: "blocked", stage: "tool-policy", reason: /Computer control .* is disabled/ },
+  },
+  {
     name: "strict local-only mode → non-loopback network tool blocked (real policy fn, injected cfg)",
     call: { id: "m-lo", name: "http_request", args: { url: "https://example.com" } },
     deps: {

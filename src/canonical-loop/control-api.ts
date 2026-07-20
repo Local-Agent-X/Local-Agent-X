@@ -15,8 +15,7 @@
  * Stream chunks (`op_stream:{op_id}`) are bus-only and never replayed —
  * callers that re-attach via `subscribeOpStream` get the live tail only.
  */
-import { randomUUID } from "node:crypto";
-import type { CanonicalEvent, CanonicalLane, RedirectInstruction } from "./types.js";
+import type { CanonicalEvent, CanonicalLane } from "./types.js";
 import { readCanonicalEvents } from "./store.js";
 import { readOp, writeOp, withOpLock } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
@@ -47,7 +46,6 @@ export function writeSignalColumn(opId: string, loaded: Op, mutate: (c: NonNulla
     writeOp(base);
   });
 }
-
 /** Sentinel for `seq` arg of `opEventsSince`: replay from the beginning. */
 export const OP_EVENTS_FROM_BEGINNING = -1;
 
@@ -318,75 +316,5 @@ export function opCancel(opId: string, actor: string): ControlResult {
   emit(opId, "cancel_requested", { actor });
   publishSignal({ kind: "cancel", opId, actor, ts: now });
   if (state === "queued") wakeQueuedOp(opId, op.lane as CanonicalLane);
-  return { ok: true };
-}
-
-// ── Issue 07: opRedirect ──────────────────────────────────────────────────
-
-export interface RedirectControlErr {
-  ok: false;
-  code: "unknown_op" | "invalid_op_id" | "invalid_instruction" | "terminal";
-  message: string;
-}
-export type RedirectControlResult = ControlOk | RedirectControlErr;
-
-/**
- * Latest-wins redirect (PRD §13).
- *
- * Writes `redirect_instruction` + `redirect_received_at` on the op,
- * overwriting any pending instruction that hasn't applied yet (latest-wins
- * — PRD §4 explicitly disallows multi-redirect queueing). Emits
- * `redirect_received` with the new `instructionId`, then publishes a
- * `RedirectSignal` on `op_signals:{opId}` so workers can fast-path it.
- *
- * The actual fold-into-prompt happens at the NEXT turn boundary —
- * `turn_loop.buildTurnInput` reads the column and passes it as
- * `TurnInput.pendingRedirect`. `commitTurn` emits `redirect_applied` and
- * clears the column atomically with the post-turn write.
- *
- * Cancel beats pause beats redirect (PRD §13). This entrypoint just
- * records the intent; precedence is enforced by the worker turn-boundary
- * handler. A redirect set on a `cancelling` or terminal op is rejected.
- *
- * Each call gets a fresh `instructionId` (UUID) and emits a fresh
- * `redirect_received` event. Only the LAST instruction surviving on disk
- * at the next prompt assembly is folded in and yields `redirect_applied`
- * (PRD acceptance #6).
- */
-export function opRedirect(opId: string, instruction: string, actor: string): RedirectControlResult {
-  if (typeof opId !== "string" || opId.length === 0) {
-    return { ok: false, code: "invalid_op_id", message: "opId must be a non-empty string" };
-  }
-  if (typeof instruction !== "string" || instruction.length === 0) {
-    return {
-      ok: false,
-      code: "invalid_instruction",
-      message: "instruction must be a non-empty string",
-    };
-  }
-  const op = readOp(opId);
-  if (!op) return { ok: false, code: "unknown_op", message: `no op with id ${opId}` };
-  const state = op.canonical?.state;
-  if (isTerminalState(state)) {
-    return { ok: false, code: "terminal", message: `op ${opId} is already ${state}` };
-  }
-  // Cancelling/cancelled paths: PRD §13 cancel > pause > redirect. We do
-  // not reject on `cancelling` (matches opPause: silent no-op effect — the
-  // worker's cancel path runs before any next prompt assembly), keeping
-  // the API surface mirror-symmetric with pause/cancel.
-
-  if (!op.canonical) op.canonical = {};
-  const now = new Date().toISOString();
-  const instructionId = `ri-${randomUUID()}`;
-  const next: RedirectInstruction = { instructionId, text: instruction, receivedAt: now };
-  // OP-9: latest-wins on the redirect column, but merged onto the LATEST disk
-  // state under the per-op lock so a concurrent cancel/pause from another
-  // process is not reverted by our stale op.
-  writeSignalColumn(opId, op, (c) => {
-    c.redirectInstruction = next;
-    c.redirectReceivedAt = now;
-  });
-  emit(opId, "redirect_received", { actor, instructionId });
-  publishSignal({ kind: "redirect", opId, actor, ts: now, instructionId });
   return { ok: true };
 }

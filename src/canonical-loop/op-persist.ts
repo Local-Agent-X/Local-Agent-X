@@ -83,6 +83,7 @@ function mergeOwnedColumns(op: Op, opts: PersistOpOptions): void {
   op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
   op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
   op.canonical.pendingApproval = onDisk.canonical.pendingApproval ?? null;
+  op.canonical.redirectIngressKeys = onDisk.canonical.redirectIngressKeys;
   if (!opts.clearRedirect) {
     op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
     op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;

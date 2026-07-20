@@ -29,6 +29,8 @@ export class TelegramBridge {
   private polling = false;
   private offset = 0;
   private processingLock = new Set<string>();
+  private pendingUpdates = new Map<number, { done: boolean; delivered: boolean }>();
+  private pendingUpdateOrder: number[] = [];
   private allowedChatIds: Set<string> = new Set();
   private ownerVerified = false;  // true once we've confirmed config loaded or owner locked
 
@@ -179,9 +181,27 @@ export class TelegramBridge {
 
         consecutiveErrors = 0;
         for (const update of result.result || []) {
-          this.offset = update.update_id + 1;
-          this.handleUpdate(update, token);
+          const id = Number(update.update_id);
+          const prior = this.pendingUpdates.get(id);
+          if (!prior) {
+            const state = { done: false, delivered: false };
+            this.pendingUpdates.set(id, state);
+            this.pendingUpdateOrder.push(id);
+            this.runPendingUpdate(update, token, state);
+          } else if (prior.done && !prior.delivered) {
+            prior.done = false;
+            this.runPendingUpdate(update, token, prior);
+          }
         }
+        while (this.pendingUpdateOrder.length > 0) {
+          const id = this.pendingUpdateOrder[0];
+          const state = this.pendingUpdates.get(id);
+          if (!state?.done || !state.delivered) break;
+          this.pendingUpdateOrder.shift();
+          this.pendingUpdates.delete(id);
+          this.offset = id + 1;
+        }
+        if (this.pendingUpdateOrder.length > 0) await new Promise((resolve) => setTimeout(resolve, 250));
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         consecutiveErrors++;
@@ -192,7 +212,13 @@ export class TelegramBridge {
     }
   }
 
-  private async handleUpdate(update: any, token: string): Promise<void> {
+  private runPendingUpdate(update: any, token: string, state: { done: boolean; delivered: boolean }): void {
+    void this.handleUpdate(update, token)
+      .then((delivered) => { state.delivered = delivered !== false; state.done = true; })
+      .catch((error: Error) => { logger.error(`[telegram] Update ${update.update_id} failed: ${error.message}`); state.done = true; });
+  }
+
+  private async handleUpdate(update: any, token: string): Promise<boolean | void> {
     const msg = update.message;
     if (!msg) return;
 
@@ -233,6 +259,7 @@ export class TelegramBridge {
       return;
     }
     const sessionId = buildMessagingSessionId("telegram", chatId);
+    const preferVoiceReply = _voiceMirrorForChat.has(chatId);
 
     const safeName = (senderName || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
     const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
@@ -243,20 +270,20 @@ export class TelegramBridge {
     // swallow it). Doesn't depend on the model cooperating.
     const cmd = text.trim().toLowerCase();
     if (cmd === "/stop" || cmd === "/cancel") {
-      const { stopBridgeTurn } = await import("../bridge-control.js");
-      const n = await stopBridgeTurn("telegram", chatId, sessionId, "telegram-stop");
-      await this.sendMessage(chatId, n > 0 ? "🛑 Stopped." : "Nothing running.");
-      return;
+      return this.dispatchInboundReply(token, chatId, await this.onMessage({
+        from: chatId, name: senderName, text, sessionId,
+        deliveryId: `update:${String(update.update_id)}`,
+        deliveryFingerprint: JSON.stringify(msg),
+        deliveryTarget: chatId, preferVoiceReply,
+      }));
     }
 
     if (this.processingLock.has(chatId)) {
-      // A message arriving mid-turn is steering the running turn — inject it
-      // instead of bouncing. Falls back to the old "still working" notice
-      // only if the op already finished out from under us.
-      const { injectBridgeTurn } = await import("../bridge-control.js");
-      const injected = await injectBridgeTurn("telegram", chatId, sessionId, text, "telegram-inject");
-      await this.sendMessage(chatId, injected ? "→ Got it — passing that to the running task." : "Still working on your last message...");
-      return;
+      return this.dispatchInboundReply(token, chatId, await this.onMessage({
+        from: chatId, name: senderName, text, sessionId, intent: "steer",
+        deliveryId: `update:${String(update.update_id)}`,
+        deliveryFingerprint: JSON.stringify(msg), deliveryTarget: chatId, preferVoiceReply,
+      }));
     }
 
     // Typing indicator — Telegram's typing state expires in ~5s, so we
@@ -272,21 +299,38 @@ export class TelegramBridge {
       const reply = await this.onMessage({
         from: chatId, name: senderName, text, sessionId,
         deliveryId: `update:${String(update.update_id)}`,
+        deliveryFingerprint: JSON.stringify(msg),
+        deliveryTarget: chatId, preferVoiceReply,
       });
-      if (!reply) { /* nothing to send */ }
-      else if (typeof reply === "string") {
-        await dispatchReply(token, chatId, reply, reply);
-      } else {
-        await dispatchReply(token, chatId, reply.text, reply.speakable ?? reply.text);
-      }
+      if (!(await this.dispatchInboundReply(token, chatId, reply))) return false;
     } catch (e) {
       logger.error(`[telegram] Agent error for ${chatId}:`, (e as Error).message);
       await this.sendMessage(chatId, "Something went wrong. Try again?");
+      return false;
     } finally {
       clearInterval(typingInterval);
       this.processingLock.delete(chatId);
       _voiceMirrorForChat.delete(chatId);
     }
+  }
+
+  private async dispatchInboundReply(
+    token: string,
+    chatId: string,
+    reply: Awaited<ReturnType<TelegramBridgeConfig["onMessage"]>>,
+  ): Promise<boolean> {
+    if (!reply) return true;
+    if (typeof reply === "string") return dispatchReply(token, chatId, reply, reply);
+    if (reply.deferDelivery) return false;
+    let delivered: boolean;
+    try { delivered = await dispatchReply(token, chatId, reply.text, reply.speakable ?? reply.text, reply); }
+    catch (error) {
+      await reply.acknowledgeDelivery?.(false).catch(() => {});
+      throw error;
+    }
+    try { await reply.acknowledgeDelivery?.(delivered); }
+    catch (error) { logger.error(`[telegram] Delivery acknowledgement failed for ${chatId}:`, (error as Error).message); }
+    return delivered;
   }
 
   private loadAllowedChats(): void {

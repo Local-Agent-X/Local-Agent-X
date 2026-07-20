@@ -175,9 +175,10 @@ export { opCancel } from "./control-api.js";
 
 export {
   opRedirect,
+  opRedirectOnce,
   type RedirectControlResult,
   type RedirectControlErr,
-} from "./control-api.js";
+} from "./control-api-redirect.js";
 
 export { type RedirectSignal } from "./signals.js";
 

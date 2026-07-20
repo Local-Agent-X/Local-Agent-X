@@ -107,6 +107,8 @@ export interface CanonicalOpFields {
   cancelRequestedAt?: string | null;
   redirectInstruction?: RedirectInstruction | null;
   redirectReceivedAt?: string | null;
+  /** Bounded durable dedupe keys for transport-originated redirects. */
+  redirectIngressKeys?: string[];
   pendingApproval?: PendingApprovalRecord | null;
   currentTurnIdx?: number | null;
   currentCheckpointId?: string | null;

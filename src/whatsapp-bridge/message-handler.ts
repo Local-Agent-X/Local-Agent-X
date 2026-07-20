@@ -100,8 +100,16 @@ export function createMessagesUpsertHandler(
   // JIDs is our agent's reply, not a fresh user message to process.
   const replyingTo = new Set<string>();
   const connectedAtMs = Date.now();
+  const scheduleDeliveryRetry = (msg: any) => {
+    const attempt = Number(msg._laxDeliveryAttempt ?? 0) + 1;
+    const delay = Math.min(60_000, 1_000 * 2 ** Math.min(attempt - 1, 6));
+    const timer = setTimeout(() => {
+      void handleMessagesUpsert({ type: "notify", messages: [{ ...msg, _laxDeliveryAttempt: attempt }] });
+    }, delay);
+    timer.unref?.();
+  };
 
-  return async function handleMessagesUpsert(upsert: any): Promise<void> {
+  async function handleMessagesUpsert(upsert: any): Promise<void> {
     const { messages, type } = upsert;
 
     // Accept both "notify" (new incoming) and "append" (self-chat / catch-up)
@@ -197,6 +205,7 @@ export function createMessagesUpsertHandler(
 
       // Use real phone number for self-chat sessions (not the LID).
       const phone = isSelfChat ? (ctx.phoneNumber || senderPhone) : senderPhone;
+      const preferVoiceReply = Boolean(audioMsg && text);
 
       // If the inbound was a transcribed voice note, mark this phone for
       // voice-mirror reply (handled by dispatchReplyToJid). Cleared in
@@ -227,9 +236,26 @@ export function createMessagesUpsertHandler(
       // model cooperating.
       const cmd = sanitizedText.trim().toLowerCase();
       if (cmd === "/stop" || cmd === "/cancel") {
-        const { stopBridgeTurn } = await import("../bridge-control.js");
-        const n = await stopBridgeTurn("whatsapp", phone, sessionId, "whatsapp-stop");
-        await ctx.sendMessage(phone, n > 0 ? "🛑 Stopped." : "Nothing running.");
+        const raw = await ctx.onMessage({
+          from: phone, name: msg.pushName || phone, text: sanitizedText, sessionId,
+          deliveryId: `message:${String(msgId)}`, deliveryFingerprint: JSON.stringify(msg.message),
+          deliveryTarget: remoteJid, preferVoiceReply,
+        });
+        const reply = !raw ? null : typeof raw === "string" ? { text: raw, speakable: raw } : raw;
+        if (reply?.deferDelivery) {
+          ctx.processedMessages.delete(msgId);
+          scheduleDeliveryRetry(msg);
+        } else if (reply) {
+          const delivered = await dispatchReplyToJid(
+            { sendToJid: (j, t) => ctx.sendToJid(j, t), sendVoiceToJid: (j, o) => ctx.sendVoiceToJid(j, o) },
+            remoteJid, phone, reply,
+          );
+          await reply.acknowledgeDelivery?.(delivered);
+          if (!delivered) {
+            ctx.processedMessages.delete(msgId);
+            scheduleDeliveryRetry(msg);
+          }
+        }
         continue;
       }
 
@@ -237,9 +263,26 @@ export function createMessagesUpsertHandler(
       // instead of bouncing. Falls back to the old notice only if the op
       // already finished out from under us.
       if (ctx.processingLock.has(phone)) {
-        const { injectBridgeTurn } = await import("../bridge-control.js");
-        const injected = await injectBridgeTurn("whatsapp", phone, sessionId, sanitizedText, "whatsapp-inject");
-        await ctx.sendMessage(phone, injected ? "→ Got it — passing that to the running task." : "Still working on your last message...");
+        const raw = await ctx.onMessage({
+          from: phone, name: msg.pushName || phone, text: sanitizedText, sessionId, intent: "steer",
+          deliveryId: `message:${String(msgId)}`, deliveryFingerprint: JSON.stringify(msg.message),
+          deliveryTarget: remoteJid, preferVoiceReply,
+        });
+        const reply = !raw ? null : typeof raw === "string" ? { text: raw, speakable: raw } : raw;
+        if (reply?.deferDelivery) {
+          ctx.processedMessages.delete(msgId);
+          scheduleDeliveryRetry(msg);
+        } else if (reply) {
+          const delivered = await dispatchReplyToJid(
+            { sendToJid: (j, t) => ctx.sendToJid(j, t), sendVoiceToJid: (j, o) => ctx.sendVoiceToJid(j, o) },
+            remoteJid, phone, reply,
+          );
+          await reply.acknowledgeDelivery?.(delivered);
+          if (!delivered) {
+            ctx.processedMessages.delete(msgId);
+            scheduleDeliveryRetry(msg);
+          }
+        }
         continue;
       }
 
@@ -254,23 +297,45 @@ export function createMessagesUpsertHandler(
 
       ctx.processingLock.add(phone);
       replyingTo.add(replyJid);
+      let retryDelivery = false;
       try {
         const replyRaw = await ctx.onMessage({
           from: phone, name, text: sanitizedText, sessionId,
           deliveryId: `message:${String(msgId)}`,
+          deliveryFingerprint: JSON.stringify(msg.message),
+          deliveryTarget: replyJid, preferVoiceReply,
         });
         const reply: BridgeReply | null = !replyRaw ? null
           : typeof replyRaw === "string" ? { text: replyRaw, speakable: replyRaw }
-          : { text: replyRaw.text, speakable: replyRaw.speakable ?? replyRaw.text };
+          : replyRaw;
+        if (reply?.deferDelivery) {
+          ctx.processedMessages.delete(msgId);
+          retryDelivery = true;
+          continue;
+        }
         if (reply) {
-          await dispatchReplyToJid(
-            { sendToJid: (j, t) => ctx.sendToJid(j, t), sendVoiceToJid: (j, o) => ctx.sendVoiceToJid(j, o) },
-            replyJid,
-            phone,
-            reply,
-          );
+          let delivered: boolean;
+          try {
+            delivered = await dispatchReplyToJid(
+              { sendToJid: (j, t) => ctx.sendToJid(j, t), sendVoiceToJid: (j, o) => ctx.sendVoiceToJid(j, o) },
+              replyJid,
+              phone,
+              reply,
+            );
+          } catch (error) {
+            await reply.acknowledgeDelivery?.(false).catch(() => {});
+            throw error;
+          }
+          try { await reply.acknowledgeDelivery?.(delivered); }
+          catch (error) { logger.error(`[whatsapp] Delivery acknowledgement failed for ${phone}:`, (error as Error).message); }
+          if (!delivered) {
+            ctx.processedMessages.delete(msgId);
+            retryDelivery = true;
+          }
         }
       } catch (e) {
+        ctx.processedMessages.delete(msgId);
+        retryDelivery = true;
         logger.error(`[whatsapp] Agent error for ${phone}:`, (e as Error).message);
         await ctx.sendToJid(replyJid, "Something went wrong. Try again?");
       } finally {
@@ -281,7 +346,9 @@ export function createMessagesUpsertHandler(
         setTimeout(() => replyingTo.delete(replyJid), 3000);
         ctx.processingLock.delete(phone);
         clearVoiceMirror(phone);
+        if (retryDelivery) scheduleDeliveryRetry(msg);
       }
     }
-  };
+  }
+  return handleMessagesUpsert;
 }

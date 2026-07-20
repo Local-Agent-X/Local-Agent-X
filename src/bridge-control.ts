@@ -27,6 +27,39 @@ async function resolveOps(channel: ChannelType, from: string, fallbackSessionId:
   return listOpsForSession(sessionKey);
 }
 
+export async function resolveLiveBridgeOps(
+  channel: ChannelType,
+  from: string,
+  fallbackSessionId: string,
+): Promise<string[]> {
+  const opIds = await resolveOps(channel, from, fallbackSessionId);
+  const { readOp } = await import("./ops/op-store.js");
+  return opIds.filter(opId => {
+    const op = readOp(opId);
+    return op && (op.status === "pending" || op.status === "running" || op.status === "needs-input");
+  });
+}
+
+export async function cancelBridgeOps(opIds: string[], actor: string): Promise<void> {
+  const { opCancel } = await import("./canonical-loop/index.js");
+  for (const opId of opIds) {
+    const res = opCancel(opId, actor);
+    logger.info(`[${actor}] /stop → opCancel ${opId} ok=${res.ok}`);
+  }
+}
+
+export async function applyBridgeInjection(
+  opId: string,
+  text: string,
+  actor: string,
+  ingressKey: string,
+): Promise<boolean> {
+  const { opRedirectOnce } = await import("./canonical-loop/index.js");
+  const res = opRedirectOnce(opId, text, actor, ingressKey);
+  logger.info(`[${actor}] inject → opRedirect ${opId} ok=${res.ok}`);
+  return res.ok;
+}
+
 /** Hard-cancel every live op for this bridge session. Returns how many were
  *  cancelled (0 = nothing was running). The worker aborts within ~1s and the
  *  bridge's processingLock self-clears when its onMessage loop unwinds. */
@@ -36,7 +69,7 @@ export async function stopBridgeTurn(
   fallbackSessionId: string,
   actor: string,
 ): Promise<number> {
-  const ops = await resolveOps(channel, from, fallbackSessionId);
+  const ops = await resolveLiveBridgeOps(channel, from, fallbackSessionId);
   if (ops.length === 0) return 0;
   const { opCancel } = await import("./canonical-loop/index.js");
   let cancelled = 0;
@@ -57,12 +90,15 @@ export async function injectBridgeTurn(
   fallbackSessionId: string,
   text: string,
   actor: string,
+  ingressKey?: string,
 ): Promise<boolean> {
-  const ops = await resolveOps(channel, from, fallbackSessionId);
+  const ops = await resolveLiveBridgeOps(channel, from, fallbackSessionId);
   if (ops.length === 0) return false;
-  const { opRedirect } = await import("./canonical-loop/index.js");
+  const { opRedirect, opRedirectOnce } = await import("./canonical-loop/index.js");
   const targetOpId = ops[ops.length - 1];
-  const res = opRedirect(targetOpId, text, actor);
+  const res = ingressKey
+    ? opRedirectOnce(targetOpId, text, actor, ingressKey)
+    : opRedirect(targetOpId, text, actor);
   logger.info(`[${actor}] inject → opRedirect ${targetOpId} ok=${res.ok}`);
   return res.ok;
 }

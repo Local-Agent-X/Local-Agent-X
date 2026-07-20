@@ -41,4 +41,6 @@ export interface RunChatTurnArgs {
   skipMemory?: boolean;
   maxHistory?: number;
   sessionTitle?: string;
+  /** Stable provider receipt identity for idempotent pre-op effects. */
+  ingressKey?: string;
 }

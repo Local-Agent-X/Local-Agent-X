@@ -82,4 +82,44 @@ describe("forwardBridgeMedia block-notice (BR-8)", () => {
     expect(wa.sendMessage).not.toHaveBeenCalled();
     expect(tg.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("checkpoints each media item so retry does not resend earlier successes", async () => {
+    const { wa, tg } = makeBridges();
+    wa.sendImage.mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const opId = "op-media-retry";
+    enqueueBridgeMedia(opId, {
+      imageB64: [Buffer.from("first").toString("base64"), Buffer.from("second").toString("base64")],
+    });
+    expect(await forwardBridgeMedia({
+      canonicalOpId: opId, channelType: "whatsapp", platform: "whatsapp", from: "user@wa", sessionKey: "sess-3",
+      getWhatsappBridge: () => wa as never, getTelegramBridge: () => tg as never,
+    })).toBe(false);
+    expect(await forwardBridgeMedia({
+      canonicalOpId: opId, channelType: "whatsapp", platform: "whatsapp", from: "user@wa", sessionKey: "sess-3",
+      getWhatsappBridge: () => wa as never, getTelegramBridge: () => tg as never,
+    })).toBe(true);
+    expect(wa.sendImage).toHaveBeenCalledTimes(3);
+    expect(wa.sendImage.mock.calls.filter((call) => (call[1] as Buffer).toString() === "first")).toHaveLength(1);
+  });
+
+  it("preserves the exact WhatsApp JID for media and block notices", async () => {
+    const { wa, tg } = makeBridges();
+    const opId = "op-lid-media";
+    enqueueBridgeMedia(opId, { imageB64: [textBearingImageB64] });
+    await forwardBridgeMedia({
+      canonicalOpId: opId, channelType: "whatsapp", platform: "whatsapp", from: "1555",
+      deliveryTarget: "owner@lid", sessionKey: "sess-lid",
+      getWhatsappBridge: () => wa as never, getTelegramBridge: () => tg as never,
+    });
+    expect(wa.sendImage).toHaveBeenCalledWith("owner@lid", expect.any(Buffer));
+
+    scanState.value = { clean: false, findings: [{}] };
+    enqueueBridgeMedia(`${opId}-blocked`, { imageB64: [textBearingImageB64] });
+    await forwardBridgeMedia({
+      canonicalOpId: `${opId}-blocked`, channelType: "whatsapp", platform: "whatsapp", from: "1555",
+      deliveryTarget: "owner@lid", sessionKey: "sess-lid",
+      getWhatsappBridge: () => wa as never, getTelegramBridge: () => tg as never,
+    });
+    expect(wa.sendMessage).toHaveBeenCalledWith("owner@lid", expect.stringContaining("Couldn't send"));
+  });
 });

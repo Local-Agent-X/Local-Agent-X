@@ -1,7 +1,8 @@
 /** Convert a phone string to a WhatsApp JID. Pass-through if already a JID. */
 export function toJid(phone: string): string {
+  if (phone.includes("@")) return phone;
   const clean = phone.replace(/\D/g, "");
-  return clean.includes("@") ? clean : `${clean}@s.whatsapp.net`;
+  return `${clean}@s.whatsapp.net`;
 }
 
 /**

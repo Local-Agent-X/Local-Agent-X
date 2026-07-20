@@ -10,6 +10,16 @@
 export interface BridgeReply {
   text: string;
   speakable?: string;
+  /** Keep the provider delivery pending while canonical recovery is still running. */
+  deferDelivery?: boolean;
+  /** Durable inbound deliveries acknowledge only after the channel send settles. */
+  acknowledgeDelivery?: (delivered: boolean) => Promise<void>;
+  /** Resume multipart transport without resending parts already accepted by the provider. */
+  isDeliveryPartComplete?: (part: string) => boolean;
+  acknowledgeDeliveryPart?: (part: string) => Promise<void>;
+  /** Freeze voice/text/fallback selection so a transport retry resumes the same wire plan. */
+  readDeliveryPlan?: () => import("../server/inbound-delivery-store.js").DurableInboundDeliveryPlan | undefined;
+  writeDeliveryPlan?: (plan: import("../server/inbound-delivery-store.js").DurableInboundDeliveryPlan) => Promise<void>;
 }
 
 export interface WhatsAppBridgeConfig {
@@ -20,6 +30,10 @@ export interface WhatsAppBridgeConfig {
     text: string;
     sessionId: string;
     deliveryId?: string;
+    deliveryFingerprint?: string;
+    deliveryTarget?: string;
+    preferVoiceReply?: boolean;
+    intent?: "turn" | "steer";
   }) => Promise<string | BridgeReply | null>;
 }
 

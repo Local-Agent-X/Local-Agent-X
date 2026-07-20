@@ -50,6 +50,7 @@ export interface LearnedPattern {
   firstApprovedAt: number;
   lastApprovedAt: number;
   reason: string;
+  approvalKeys?: string[];
 }
 
 interface LedgerFile {
@@ -108,13 +109,23 @@ export function fingerprintOf(sourceType: string, sinkTarget: string): string | 
 /** Record a user approval. Idempotent — re-recording an existing pattern
  *  bumps its approvals count and lastApprovedAt. */
 export function recordApproval(fingerprint: string, reason: string): void {
+  recordApprovalInternal(fingerprint, reason);
+}
+
+export function recordApprovalOnce(key: string, fingerprint: string, reason: string): void {
+  recordApprovalInternal(fingerprint, reason, key);
+}
+
+function recordApprovalInternal(fingerprint: string, reason: string, key?: string): void {
   const map = load();
   const existing = map.get(fingerprint);
+  if (key && existing?.approvalKeys?.includes(key)) return;
   const now = Date.now();
   if (existing) {
     existing.approvals += 1;
     existing.lastApprovedAt = now;
     existing.reason = reason; // latest reason wins
+    if (key) existing.approvalKeys = [...(existing.approvalKeys ?? []).slice(-255), key];
   } else {
     map.set(fingerprint, {
       fingerprint,
@@ -122,6 +133,7 @@ export function recordApproval(fingerprint: string, reason: string): void {
       firstApprovedAt: now,
       lastApprovedAt: now,
       reason,
+      approvalKeys: key ? [key] : undefined,
     });
   }
   save();

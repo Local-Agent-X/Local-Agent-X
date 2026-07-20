@@ -19,6 +19,7 @@ interface JarvisRedirectArgs {
    *  "can we use photos?" redirected to a running app_build; WS client sat
    *  on the thinking placeholder for the rest of the build. */
   emit: (event: ServerEvent) => void;
+  ingressKey?: string;
 }
 
 /**
@@ -32,7 +33,7 @@ interface JarvisRedirectArgs {
  * normal chat flow).
  */
 export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boolean> {
-  const { sessionId, message, recentSessionMessages, emit } = args;
+  const { sessionId, message, recentSessionMessages, emit, ingressKey } = args;
   try {
     const { listOpsForSession, getOpTask } = await import("../../ops/session-bridge.js");
     const activeOps = listOpsForSession(sessionId);
@@ -51,7 +52,7 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
       .filter(o => (o.status === "running" || o.status === "pending") && !isInteractiveHostOpType(o.type));
     if (liveWorkers.length === 0) return false;
 
-    const { opRedirect } = await import("../../canonical-loop/index.js");
+    const { opRedirect, opRedirectOnce } = await import("../../canonical-loop/index.js");
     const { classifyWorkerRedirect } = await import("../../routing/worker-redirect-classifier.js");
 
     // Pick the most recently submitted live worker as the redirect target
@@ -73,7 +74,9 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
     const cls = await classifyWorkerRedirect(message, taskHint, recentTurns);
     if (!cls?.redirect) return false;
 
-    const res = opRedirect(targetOpId, message, "jarvis-redirect");
+    const res = ingressKey
+      ? opRedirectOnce(targetOpId, message, "jarvis-redirect", ingressKey)
+      : opRedirect(targetOpId, message, "jarvis-redirect");
     logger.info(`[router] worker-redirect → op=${targetOpId} ok=${res.ok} reason="${cls.reason}"`);
     if (!res.ok) return false;
 

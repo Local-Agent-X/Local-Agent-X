@@ -159,7 +159,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       emitSse(event);
       if (!sseSink) ctx.chatWs.emit(sessionId, event);
     };
-    if (await tryWorkerRedirect({ sessionId, message, recentSessionMessages: session.messages, emit: emitRedirectAck })) {
+    if (await tryWorkerRedirect({
+      sessionId, message, recentSessionMessages: session.messages, emit: emitRedirectAck,
+      ingressKey: args.ingressKey,
+    })) {
       doneEmitted = true;
       return;
     }
@@ -167,7 +170,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     const routeDecision = await routeMessage(prepared.provider, message, channel);
     if (routeDecision.destination === "delegate") {
       const handoff = await runDelegationHandoff({
-        message, sessionId, prepared, ctx, session, requestRole, sseSink,
+        message, sessionId, prepared, ctx, session, requestRole, sseSink, ingressKey: args.ingressKey,
       });
       if (handoff.onEventInstalled) onEventInstalled = true;
       if (handoff.doneEmitted) doneEmitted = true;

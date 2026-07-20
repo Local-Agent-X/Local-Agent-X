@@ -25,6 +25,10 @@ export interface TelegramBridgeConfig {
     text: string;
     sessionId: string;
     deliveryId?: string;
+    deliveryFingerprint?: string;
+    deliveryTarget?: string;
+    preferVoiceReply?: boolean;
+    intent?: "turn" | "steer";
   }) => Promise<string | import("../whatsapp-bridge/index.js").BridgeReply | null>;
 }
 

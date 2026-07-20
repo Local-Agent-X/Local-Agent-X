@@ -18,9 +18,23 @@ export async function apiCall(
   return res.json();
 }
 
-export async function sendMessage(token: string, chatId: string, text: string): Promise<boolean> {
+export interface DeliveryProgress {
+  prefix: string;
+  isComplete?: (part: string) => boolean;
+  acknowledge?: (part: string) => Promise<void>;
+}
+
+export async function sendMessage(
+  token: string,
+  chatId: string,
+  text: string,
+  progress?: DeliveryProgress,
+): Promise<boolean> {
   const chunks = splitMessage(text, 4000);
-  for (const chunk of chunks) {
+  for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index];
+    const part = `${progress?.prefix ?? "text"}:${index}`;
+    if (progress?.isComplete?.(part)) continue;
     try {
       // The channel-formatter produces MarkdownV2-escaped text (escaping
       // ( ) . ! - + = | { } # > ~ etc.). Telegram's legacy "Markdown"
@@ -39,6 +53,7 @@ export async function sendMessage(token: string, chatId: string, text: string): 
         logger.error(`[telegram] Send failed: ${result.description}`);
         return false;
       }
+      await progress?.acknowledge?.(part);
     } catch (e) {
       logger.error("[telegram] Send error:", (e as Error).message);
       return false;

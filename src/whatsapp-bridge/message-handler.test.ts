@@ -11,6 +11,8 @@ import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const { dispatchReplyToJid } = vi.hoisted(() => ({ dispatchReplyToJid: vi.fn() }));
+
 // Keep the module lightweight — the handler statically imports voice-reply,
 // which pulls the voice/STT stack we don't exercise here.
 vi.mock("../bridge-voice/index.js", () => ({}));
@@ -18,7 +20,7 @@ vi.mock("../voice/index.js", () => ({}));
 vi.mock("./voice-reply.js", () => ({
   markVoiceMirror: vi.fn(),
   clearVoiceMirror: vi.fn(),
-  dispatchReplyToJid: vi.fn(),
+  dispatchReplyToJid,
 }));
 
 const UPLOADS = mkdtempSync(join(tmpdir(), "wa-media-test-"));
@@ -71,6 +73,8 @@ describe("describeInboundMedia — inbound media reaches the model", () => {
 });
 
 describe("WhatsApp inbound identity", () => {
+  beforeEach(() => dispatchReplyToJid.mockReset());
+
   it("forwards the stable provider message id to the canonical inbound runner", async () => {
     const onMessage = vi.fn().mockResolvedValue(null);
     const handler = createMessagesUpsertHandler({
@@ -95,5 +99,82 @@ describe("WhatsApp inbound identity", () => {
       sessionId: "wa-15550001",
       deliveryId: "message:ABC123",
     }));
+  });
+
+  it.each([true, false])("acknowledges durable reply only with WhatsApp send result %s", async (delivered) => {
+    dispatchReplyToJid.mockResolvedValue(delivered);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const handler = createMessagesUpsertHandler({
+      phoneNumber: "15550001",
+      selfLid: null,
+      allowedNumbers: new Set(),
+      processedMessages: new Set(),
+      processingLock: new Set(),
+      sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+      onMessage: async () => ({ text: "wire", speakable: "raw", acknowledgeDelivery }),
+      sendMessage: vi.fn().mockResolvedValue(true),
+      sendToJid: vi.fn().mockResolvedValue(true),
+      sendVoiceToJid: vi.fn().mockResolvedValue(true),
+    }, null);
+    await handler({ type: "notify", messages: [{
+      key: { id: delivered ? "ACK1" : "ACK0", remoteJid: "15550001@s.whatsapp.net", fromMe: false },
+      pushName: "Peter",
+      message: { conversation: "hello" },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+    }] });
+    expect(acknowledgeDelivery).toHaveBeenCalledWith(delivered);
+  });
+
+  it("autonomously replays the same WhatsApp message id after a failed transport send", async () => {
+    vi.useFakeTimers();
+    dispatchReplyToJid.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const onMessage = vi.fn().mockResolvedValue({ text: "wire", speakable: "raw", acknowledgeDelivery });
+    const processedMessages = new Set<string>();
+    const handler = createMessagesUpsertHandler({
+      phoneNumber: "15550001", selfLid: null, allowedNumbers: new Set(), processedMessages,
+      processingLock: new Set(), sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+      onMessage, sendMessage: vi.fn().mockResolvedValue(true), sendToJid: vi.fn().mockResolvedValue(true),
+      sendVoiceToJid: vi.fn().mockResolvedValue(true),
+    }, null);
+    const event = { type: "notify", messages: [{
+      key: { id: "RETRY1", remoteJid: "15550001@s.whatsapp.net", fromMe: false }, pushName: "Peter",
+      message: { conversation: "hello" }, messageTimestamp: Math.floor(Date.now() / 1000),
+    }] };
+    await handler(event);
+    expect(processedMessages.has("RETRY1")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
+    expect(onMessage.mock.calls[0][0].deliveryFingerprint).toBe(onMessage.mock.calls[1][0].deliveryFingerprint);
+    vi.useRealTimers();
+  });
+
+  it("retries a failed steering acknowledgement without dropping the provider id", async () => {
+    vi.useFakeTimers();
+    dispatchReplyToJid.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const onMessage = vi.fn().mockResolvedValue({ text: "steered", speakable: "steered", acknowledgeDelivery });
+    const processedMessages = new Set<string>();
+    const handler = createMessagesUpsertHandler({
+      phoneNumber: "15550001", selfLid: "owner", allowedNumbers: new Set(), processedMessages,
+      processingLock: new Set(["15550001"]),
+      sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+      onMessage, sendMessage: vi.fn().mockResolvedValue(true), sendToJid: vi.fn().mockResolvedValue(true),
+      sendVoiceToJid: vi.fn().mockResolvedValue(true),
+    }, null);
+    const event = { type: "notify", messages: [{
+      key: { id: "STEER1", remoteJid: "owner@lid", fromMe: true }, pushName: "Peter",
+      message: { conversation: "make it blue" }, messageTimestamp: Math.floor(Date.now() / 1000),
+    }] };
+    await handler(event);
+    expect(processedMessages.has("STEER1")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      intent: "steer", deliveryId: "message:STEER1", deliveryTarget: "owner@lid",
+    }));
+    expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
+    vi.useRealTimers();
   });
 });

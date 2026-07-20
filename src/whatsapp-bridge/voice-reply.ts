@@ -21,6 +21,7 @@ import { createLogger } from "../logger.js";
 import { encodeWavToOgg, isFfmpegAvailable, getVoicePref, splitForVoiceChunks } from "../bridge-voice/index.js";
 import { synthesize } from "../voice/index.js";
 import type { BridgeReply } from "./types.js";
+import { splitMessage } from "./text-utils.js";
 
 const logger = createLogger("whatsapp-bridge");
 
@@ -47,46 +48,83 @@ export async function dispatchReplyToJid(
   jid: string,
   phone: string,
   reply: BridgeReply,
-): Promise<void> {
+): Promise<boolean> {
   const { text: textForWire } = reply;
   const speakable = reply.speakable ?? reply.text;
-  const wantVoice = getVoicePref("whatsapp", phone) || _voiceMirrorForPhone.has(phone);
-  if (!wantVoice) {
-    await deps.sendToJid(jid, textForWire);
-    return;
+  const sendText = async (text: string, prefix: string): Promise<boolean> => {
+    const chunks = splitMessage(text, 4000);
+    for (let index = 0; index < chunks.length; index++) {
+      const part = `${prefix}:${index}`;
+      if (reply.isDeliveryPartComplete?.(part)) continue;
+      if (!(await deps.sendToJid(jid, chunks[index]))) return false;
+      await reply.acknowledgeDeliveryPart?.(part);
+    }
+    return true;
+  };
+  let plan = reply.readDeliveryPlan?.();
+  if (!plan) {
+    const wantVoice = getVoicePref("whatsapp", phone) || _voiceMirrorForPhone.has(phone);
+    plan = { mode: wantVoice ? "voice" : "text" };
+    await reply.writeDeliveryPlan?.(plan);
+  }
+  if (plan.mode === "text") {
+    return sendText(textForWire, "text");
   }
 
-  const sendWithHintOnce = async (text: string, hint: string) => {
+  const sendWithHintOnce = async (text: string, hint: string): Promise<boolean> => {
     if (_voiceFailHintSentByPhone.has(phone)) {
-      await deps.sendToJid(jid, text);
-      return;
+      return sendText(text, "fallback-text");
     }
-    _voiceFailHintSentByPhone.add(phone);
-    await deps.sendToJid(jid, `${text}\n\n— ${hint}`);
+    const sent = await sendText(`${text}\n\n— ${hint}`, "fallback-text");
+    if (sent) _voiceFailHintSentByPhone.add(phone);
+    return sent;
   };
+
+  const sendDurableFallback = async (hint: string): Promise<boolean> => {
+    if (plan?.mode !== "fallback") {
+      const includeHint = !_voiceFailHintSentByPhone.has(phone);
+      plan = { mode: "fallback", fallbackText: includeHint ? `${textForWire}\n\n--- ${hint}` : textForWire };
+      await reply.writeDeliveryPlan?.(plan);
+    }
+    const sent = await sendText(plan.fallbackText ?? textForWire, "fallback-text");
+    if (sent && plan.fallbackText !== textForWire) _voiceFailHintSentByPhone.add(phone);
+    return sent;
+  };
+
+  if (plan.mode === "fallback") {
+    return sendDurableFallback("Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
+  }
 
   if (!(await isFfmpegAvailable())) {
     logger.warn("[whatsapp] voice reply requested but ffmpeg unavailable — sending text");
-    await sendWithHintOnce(textForWire, "Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
-    return;
+    return sendDurableFallback("Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
   }
 
   const chunks = splitForVoiceChunks(speakable, 3000);
-  let anySent = false;
-  for (const chunk of chunks) {
+  let allSent = true;
+  for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index];
+    const part = `voice:${index}`;
+    if (reply.isDeliveryPartComplete?.(part)) continue;
     try {
       const wav = await synthesize(chunk);
       const ogg = await encodeWavToOgg(wav);
       const ok = await deps.sendVoiceToJid(jid, ogg);
-      if (ok) { anySent = true; continue; }
+      if (ok) {
+        await reply.acknowledgeDeliveryPart?.(part);
+        continue;
+      }
       logger.warn("[whatsapp] sendVoice returned false on chunk — bailing to text fallback");
+      allSent = false;
       break;
     } catch (e) {
       logger.warn(`[whatsapp] voice synthesis failed on chunk: ${(e as Error).message} — bailing to text fallback`);
+      allSent = false;
       break;
     }
   }
-  if (!anySent) {
-    await sendWithHintOnce(textForWire, "Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
+  if (!allSent) {
+    return sendDurableFallback("Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
   }
+  return true;
 }

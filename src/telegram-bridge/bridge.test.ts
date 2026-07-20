@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const apiCall = vi.fn();
+const { dispatchReply } = vi.hoisted(() => ({ dispatchReply: vi.fn() }));
 vi.mock("./api.js", () => ({
   apiCall: (...args: unknown[]) => apiCall(...args),
   sendMessage: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock("./api.js", () => ({
 }));
 vi.mock("./inbound.js", () => ({
   describeNonTextMessage: vi.fn(),
-  dispatchReply: vi.fn(),
+  dispatchReply,
   transcribeInboundVoice: vi.fn(),
 }));
 
@@ -118,9 +119,31 @@ describe("TelegramBridge.pollLoop — outage resilience (BR-4)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await loop;
   });
+
+  it("does not advance provider offset until a failed outbound send is redelivered", async () => {
+    const update = { update_id: 994, message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" } };
+    apiCall.mockImplementation(async (_token, _method, args) => Number(args?.offset) >= 995
+      ? { ok: false, error_code: 401, description: "test stop" }
+      : { ok: true, result: [update] });
+    dispatchReply.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const onMessage = vi.fn().mockResolvedValue({ text: "wire", speakable: "raw", acknowledgeDelivery });
+    const b = makeBridge();
+    b.onMessage = onMessage;
+    b.allowedChatIds = new Set(["42"]);
+    b.ownerVerified = true;
+    const loop = b.pollLoop("TESTTOKEN");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await loop;
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
+    expect(b.offset).toBe(995);
+  });
 });
 
 describe("TelegramBridge inbound identity", () => {
+  beforeEach(() => dispatchReply.mockReset());
+
   it("forwards the stable update id to the canonical inbound runner", async () => {
     apiCall.mockResolvedValue({ ok: true });
     const onMessage = vi.fn().mockResolvedValue(null);
@@ -140,6 +163,64 @@ describe("TelegramBridge inbound identity", () => {
       sessionId: "tg-42",
       deliveryId: "update:991",
     }));
+  });
+
+  it.each([true, false])("acknowledges durable reply only with Telegram send result %s", async (delivered) => {
+    apiCall.mockResolvedValue({ ok: true });
+    dispatchReply.mockResolvedValue(delivered);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-ack-test-dir",
+      getToken: () => "TESTTOKEN",
+      onMessage: async () => ({ text: "wire", speakable: "raw", acknowledgeDelivery }),
+    }) as any;
+    bridge.state = "connected";
+    bridge.allowedChatIds = new Set(["42"]);
+    bridge.ownerVerified = true;
+    await bridge.handleUpdate({
+      update_id: delivered ? 992 : 993,
+      message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" },
+    }, "TESTTOKEN");
+    expect(acknowledgeDelivery).toHaveBeenCalledWith(delivered);
+  });
+
+  it("redelivers the same Telegram update after a failed transport send", async () => {
+    apiCall.mockResolvedValue({ ok: true });
+    dispatchReply.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const onMessage = vi.fn().mockResolvedValue({ text: "wire", speakable: "raw", acknowledgeDelivery });
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-redelivery-test-dir", getToken: () => "TESTTOKEN", onMessage,
+    }) as any;
+    bridge.state = "connected";
+    bridge.allowedChatIds = new Set(["42"]);
+    bridge.ownerVerified = true;
+    const update = { update_id: 994, message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "hello" } };
+    await bridge.handleUpdate(update, "TESTTOKEN");
+    await bridge.handleUpdate(update, "TESTTOKEN");
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
+    expect(onMessage.mock.calls[0][0].deliveryFingerprint).toBe(onMessage.mock.calls[1][0].deliveryFingerprint);
+  });
+
+  it("keeps a failed steering acknowledgement pending for durable retry", async () => {
+    apiCall.mockResolvedValue({ ok: true });
+    dispatchReply.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const acknowledgeDelivery = vi.fn().mockResolvedValue(undefined);
+    const onMessage = vi.fn().mockResolvedValue({ text: "steered", speakable: "steered", acknowledgeDelivery });
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-steer-test-dir", getToken: () => "TESTTOKEN", onMessage,
+    }) as any;
+    bridge.state = "connected";
+    bridge.allowedChatIds = new Set(["42"]);
+    bridge.ownerVerified = true;
+    bridge.processingLock.add("42");
+    const update = { update_id: 995, message: { chat: { id: 42 }, from: { first_name: "Peter" }, text: "make it blue" } };
+    await expect(bridge.handleUpdate(update, "TESTTOKEN")).resolves.toBe(false);
+    await expect(bridge.handleUpdate(update, "TESTTOKEN")).resolves.toBe(true);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ intent: "steer", deliveryId: "update:995" }));
+    expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
   });
 
   it("does not discard queued updates when reconnecting after a crash", async () => {

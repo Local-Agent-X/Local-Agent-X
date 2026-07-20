@@ -4,6 +4,7 @@ import { synthesize } from "../voice/index.js";
 import { getRuntimeConfig } from "../config.js";
 import { apiCall, downloadTelegramFile, sendMessage, sendVoice } from "./api.js";
 import { _voiceFailHintSent, _voiceMirrorForChat, logger } from "./types.js";
+import type { BridgeReply } from "../whatsapp-bridge/types.js";
 
 /**
  * Detect voice/audio/photo/video/document messages, download the file, and
@@ -78,26 +79,55 @@ export async function transcribeInboundVoice(msg: any, token: string, chatId: st
  * Failure paths: any TTS / encode / send-voice failure falls back to
  * sendMessage(text) so the user always gets the reply.
  */
-export async function dispatchReply(token: string, chatId: string, textForWire: string, speakable: string): Promise<void> {
-  const wantVoice = getVoicePref("telegram", chatId) || _voiceMirrorForChat.has(chatId);
-  if (!wantVoice) {
-    await sendMessage(token, chatId, textForWire);
-    return;
+export async function dispatchReply(
+  token: string,
+  chatId: string,
+  textForWire: string,
+  speakable: string,
+  progress?: Pick<BridgeReply, "isDeliveryPartComplete" | "acknowledgeDeliveryPart" | "readDeliveryPlan" | "writeDeliveryPlan">,
+): Promise<boolean> {
+  const textProgress = (prefix: string) => ({
+    prefix,
+    isComplete: progress?.isDeliveryPartComplete,
+    acknowledge: progress?.acknowledgeDeliveryPart,
+  });
+  let plan = progress?.readDeliveryPlan?.();
+  if (!plan) {
+    const wantVoice = getVoicePref("telegram", chatId) || _voiceMirrorForChat.has(chatId);
+    plan = { mode: wantVoice ? "voice" : "text" };
+    await progress?.writeDeliveryPlan?.(plan);
+  }
+  if (plan.mode === "text") {
+    return sendMessage(token, chatId, textForWire, textProgress("text"));
   }
 
-  const sendWithHintOnce = async (text: string, hint: string) => {
+  const sendWithHintOnce = async (text: string, hint: string): Promise<boolean> => {
     if (_voiceFailHintSent.has(chatId)) {
-      await sendMessage(token, chatId, text);
-      return;
+      return sendMessage(token, chatId, text, textProgress("fallback-text"));
     }
-    _voiceFailHintSent.add(chatId);
-    await sendMessage(token, chatId, `${text}\n\n— ${hint}`);
+    const sent = await sendMessage(token, chatId, `${text}\n\n— ${hint}`, textProgress("fallback-text"));
+    if (sent) _voiceFailHintSent.add(chatId);
+    return sent;
   };
+
+  const sendDurableFallback = async (hint: string): Promise<boolean> => {
+    if (plan?.mode !== "fallback") {
+      const includeHint = !_voiceFailHintSent.has(chatId);
+      plan = { mode: "fallback", fallbackText: includeHint ? `${textForWire}\n\n--- ${hint}` : textForWire };
+      await progress?.writeDeliveryPlan?.(plan);
+    }
+    const sent = await sendMessage(token, chatId, plan.fallbackText ?? textForWire, textProgress("fallback-text"));
+    if (sent && plan.fallbackText !== textForWire) _voiceFailHintSent.add(chatId);
+    return sent;
+  };
+
+  if (plan.mode === "fallback") {
+    return sendDurableFallback("Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
+  }
 
   if (!(await isFfmpegAvailable())) {
     logger.warn("[telegram] voice reply requested but ffmpeg unavailable — sending text");
-    await sendWithHintOnce(textForWire, "Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
-    return;
+    return sendDurableFallback("Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
   }
 
   // Voice-only mode: split long replies into multiple voice notes at
@@ -108,21 +138,30 @@ export async function dispatchReply(token: string, chatId: string, textForWire: 
   // huge headroom. Cap each chunk at 3000 chars (~2-3 min audio) to
   // keep individual notes loadable on slow connections.
   const chunks = splitForVoiceChunks(speakable, 3000);
-  let anySent = false;
-  for (const chunk of chunks) {
+  let allSent = true;
+  for (let index = 0; index < chunks.length; index++) {
+    const chunk = chunks[index];
+    const part = `voice:${index}`;
+    if (progress?.isDeliveryPartComplete?.(part)) continue;
     try {
       const wav = await synthesize(chunk);
       const ogg = await encodeWavToOgg(wav);
       const ok = await sendVoice(token, chatId, ogg);
-      if (ok) { anySent = true; continue; }
+      if (ok) {
+        await progress?.acknowledgeDeliveryPart?.(part);
+        continue;
+      }
       logger.warn("[telegram] sendVoice returned false on chunk — bailing to text fallback");
+      allSent = false;
       break;
     } catch (e) {
       logger.warn(`[telegram] voice synthesis failed on chunk: ${(e as Error).message} — bailing to text fallback`);
+      allSent = false;
       break;
     }
   }
-  if (!anySent) {
-    await sendWithHintOnce(textForWire, "Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
+  if (!allSent) {
+    return sendDurableFallback("Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
   }
+  return true;
 }

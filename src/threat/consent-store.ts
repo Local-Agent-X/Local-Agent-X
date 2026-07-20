@@ -29,9 +29,16 @@ interface ConsentEntry {
 }
 
 const consents = new Map<string, ConsentEntry>();
+const appliedConsentKeys = new Set<string>();
 
 export function grantConsent(sessionId: string, durationMs: number, reason: string): void {
   consents.set(sessionId, { until: Date.now() + durationMs, reason, grantedAt: Date.now() });
+}
+
+export function grantConsentOnce(key: string, sessionId: string, durationMs: number, reason: string): void {
+  if (appliedConsentKeys.has(key)) return;
+  appliedConsentKeys.add(key);
+  grantConsent(sessionId, durationMs, reason);
 }
 
 export function getActiveConsent(sessionId: string): { reason: string; remainingMs: number } | null {
@@ -79,4 +86,5 @@ export function getLastBlockedFingerprint(sessionId: string): string | null {
 export function _resetAllConsentForTests(): void {
   consents.clear();
   lastBlockedFingerprints.clear();
+  appliedConsentKeys.clear();
 }

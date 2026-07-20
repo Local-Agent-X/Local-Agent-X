@@ -16,8 +16,10 @@ import type { PromptTelemetry } from "../../prompt-telemetry.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
 import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
+import { createHash } from "node:crypto";
+import { readOp, tryWithOpLock } from "../../ops/op-store.js";
 
-async function submitDelegationOp(message: string, sessionId: string): Promise<{ opId: string }> {
+async function submitDelegationOp(message: string, sessionId: string, ingressKey?: string): Promise<{ opId: string }> {
   const lane = "build" as const;
   const contextPack = await buildContextPack({
     description: message,
@@ -33,8 +35,11 @@ async function submitDelegationOp(message: string, sessionId: string): Promise<{
     lane,
     budget: { maxIterations: 30, maxWallTimeMs: 15 * 60 * 1000 },
   });
+  const opId = ingressKey
+    ? `op_freeform_inbound_${createHash("sha256").update(ingressKey).digest("hex").slice(0, 32)}`
+    : newOpId("op_freeform");
   const op: Op = {
-    id: newOpId("op_freeform"),
+    id: opId,
     type: "freeform",
     task: message,
     contextPack,
@@ -46,9 +51,18 @@ async function submitDelegationOp(message: string, sessionId: string): Promise<{
     createdAt: new Date().toISOString(),
     attemptCount: 0,
   };
-  trackOpForSession(op.id, sessionId, message);
-  canonicalLoopEntry(op, { sessionId });
-  return { opId: op.id };
+  if (ingressKey) {
+    const admitted = tryWithOpLock(opId, () => {
+      if (readOp(opId)) return true;
+      canonicalLoopEntry(op, { sessionId });
+      return true;
+    });
+    if (!admitted.acquired) throw new Error(`delegation admission lock unavailable for ${opId}`);
+  } else {
+    canonicalLoopEntry(op, { sessionId });
+  }
+  trackOpForSession(opId, sessionId, message);
+  return { opId };
 }
 
 const logger = createLogger("routes.chat.delegation");
@@ -81,6 +95,7 @@ interface DelegationHandoffArgs {
   /** SSE side-channel sink — null for WS-only callers. WS clients still
    *  receive events via chat-ws's own pub/sub (wsChat.onEvent below). */
   sseSink: SseSink;
+  ingressKey?: string;
 }
 
 interface DelegationHandoffResult {
@@ -98,11 +113,11 @@ interface DelegationHandoffResult {
  * event. Caller is expected to short-circuit (`return true`) afterwards.
  */
 export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise<DelegationHandoffResult> {
-  const { message, sessionId, prepared, ctx, session, requestRole, sseSink } = args;
+  const { message, sessionId, prepared, ctx, session, requestRole, sseSink, ingressKey } = args;
 
   const { linkDecisionToOpId } = await import("../../routing/index.js");
 
-  const { opId } = await submitDelegationOp(message, sessionId);
+  const { opId } = await submitDelegationOp(message, sessionId, ingressKey);
   // Link the decision entry to this opId so the UI's "Stay inline"
   // button can find + override it later. Saves the full message too
   // so we can re-submit on override.

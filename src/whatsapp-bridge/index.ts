@@ -25,19 +25,15 @@ import { splitMessage, toJid } from "./text-utils.js";
 import { loadAllowedNumbers, saveAllowedNumbers, sanitizeNumbers } from "./allowed-numbers.js";
 import { dispatchReplyToJid } from "./voice-reply.js";
 import { createMessagesUpsertHandler } from "./message-handler.js";
+import { createWhatsAppDurableDrainer } from "./durable-drain.js";
 import { createRequire } from "node:module";
-import {
-  messagingChannelAuthPath,
-  messagingChannelAuthReadyPath,
-} from "../session/channel-registry.js";
+import { messagingChannelAuthPath, messagingChannelAuthReadyPath } from "../session/channel-registry.js";
 const require = createRequire(import.meta.url);
-
 const logger = createLogger("whatsapp-bridge");
 
 // Reconnect backoff: base 5s, doubling, capped at 60s, retried FOREVER (broker pattern).
 export const WA_RECONNECT_BASE_MS = 5000;
 export const WA_RECONNECT_MAX_MS = 60_000;
-
 export type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
 export { getWhatsAppBridgeInstance, setWhatsAppBridgeInstance } from "./live-instance.js";
 
@@ -57,12 +53,18 @@ export class WhatsAppBridge {
   allowedNumbers: Set<string> = new Set(); // Empty = owner-only (default-deny)
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempt = 0;
+  private triggerDurableDrain: () => void;
 
   constructor(config: WhatsAppBridgeConfig) {
     this.dataDir = config.dataDir;
     this.authDir = messagingChannelAuthPath(config.dataDir, "whatsapp")!;
     this.onMessage = config.onMessage;
-
+    this.triggerDurableDrain = createWhatsAppDurableDrainer({
+      onMessage: this.onMessage,
+      dispatch: (jid, phone, reply) => this.dispatchReplyToJid(jid, phone, reply),
+      isConnected: () => this.state === "connected",
+      onError: error => logger.error("[whatsapp] Durable inbound drain failed:", error.message),
+    });
     this.allowedNumbers = loadAllowedNumbers(this.dataDir);
 
     // Prune dedup cache periodically — bounds growth on long-lived sessions;
@@ -264,7 +266,7 @@ export class WhatsAppBridge {
 
   /** Voice/text reply dispatcher. Public for the message-handler module; delegates to
    *  the standalone voice-reply helper, supplying the bridge's send callbacks. */
-  async dispatchReplyToJid(jid: string, phone: string, reply: BridgeReply): Promise<void> {
+  async dispatchReplyToJid(jid: string, phone: string, reply: BridgeReply): Promise<boolean> {
     return dispatchReplyToJid(
       { sendToJid: (j, t) => this.sendToJid(j, t), sendVoiceToJid: (j, o) => this.sendVoiceToJid(j, o) },
       jid,
@@ -383,6 +385,7 @@ export class WhatsAppBridge {
         this.selfLid = me?.lid?.replace(/@.*$/, "").split(":")[0] || null;
         logger.info(`[whatsapp] Connected as ${this.phoneNumber} (lid=${this.selfLid})`);
         try { this.sock.sendPresenceUpdate("available"); } catch {}
+        this.triggerDurableDrain();
       }
     });
 

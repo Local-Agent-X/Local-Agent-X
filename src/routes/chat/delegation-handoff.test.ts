@@ -19,17 +19,23 @@ import {
 } from "../../prompt-telemetry.js";
 import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
-const { runAgentViaCanonical } = vi.hoisted(() => ({
+const { runAgentViaCanonical, canonicalLoopEntry, storedOps } = vi.hoisted(() => ({
   runAgentViaCanonical: vi.fn(async () => ({
     messages: [] as unknown[],
     usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
   })),
+  canonicalLoopEntry: vi.fn((op: { id: string }) => storedOps.set(op.id, op)),
+  storedOps: new Map<string, unknown>(),
 }));
 vi.mock("../../canonical-loop/index.js", () => ({
   runAgentViaCanonical,
-  canonicalLoopEntry: vi.fn(),
+  canonicalLoopEntry,
 }));
-vi.mock("../../ops/op-store.js", () => ({ newOpId: vi.fn(() => "op_freeform_test") }));
+vi.mock("../../ops/op-store.js", () => ({
+  newOpId: vi.fn(() => "op_freeform_test"),
+  readOp: vi.fn((id: string) => storedOps.get(id) ?? null),
+  tryWithOpLock: vi.fn((_id: string, fn: () => unknown) => ({ acquired: true, value: fn() })),
+}));
 vi.mock("../../ops/context-pack-builder.js", () => ({ buildContextPack: vi.fn(async () => ({})) }));
 vi.mock("../../ops/heartbeat.js", () => ({ getRetryPolicy: vi.fn(() => ({})) }));
 vi.mock("../../ops/session-bridge.js", () => ({ trackOpForSession: vi.fn() }));
@@ -47,6 +53,7 @@ const SESSION = "sess-delegation-net";
 
 afterEach(() => {
   vi.clearAllMocks();
+  storedOps.clear();
 });
 
 function makeCtx() {
@@ -137,5 +144,16 @@ describe("delegation-handoff orphaned-ActiveChat net", () => {
     });
     expect(JSON.stringify(options.promptTelemetry)).not.toContain("op_freeform_test");
     expect(JSON.stringify(options.promptTelemetry)).not.toContain("build me a thing");
+  });
+
+  it("reuses one deterministic background op for a repeated ingress key", async () => {
+    const { ctx } = makeCtx();
+    const args = { ...makeArgs(ctx), ingressKey: "op_inbound_receipt" };
+
+    await runDelegationHandoff(args as never);
+    await runDelegationHandoff(args as never);
+
+    expect(canonicalLoopEntry).toHaveBeenCalledTimes(1);
+    expect(canonicalLoopEntry.mock.calls[0][0].id).toMatch(/^op_freeform_inbound_/);
   });
 });

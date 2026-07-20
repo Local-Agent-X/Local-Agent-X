@@ -16,6 +16,7 @@ import { tryWorkerRedirect } from "./jarvis-redirect.js";
 
 const classifyWorkerRedirect = vi.fn();
 const opRedirect = vi.fn();
+const opRedirectOnce = vi.fn();
 
 vi.mock("../../ops/session-bridge.js", () => ({
   listOpsForSession: vi.fn(() => ["op_app_build_test1"]),
@@ -27,12 +28,13 @@ vi.mock("../../ops/op-store.js", () => ({
 }));
 vi.mock("../../canonical-loop/index.js", () => ({
   opRedirect: (...args: unknown[]) => opRedirect(...args),
+  opRedirectOnce: (...args: unknown[]) => opRedirectOnce(...args),
 }));
 vi.mock("../../routing/worker-redirect-classifier.js", () => ({
   classifyWorkerRedirect: (...args: unknown[]) => classifyWorkerRedirect(...args),
 }));
 
-function run(message: string) {
+function run(message: string, ingressKey?: string) {
   const emitted: ServerEvent[] = [];
   const emit = (ev: ServerEvent) => emitted.push(ev);
   const result = tryWorkerRedirect({
@@ -40,6 +42,7 @@ function run(message: string) {
     message,
     recentSessionMessages: [{ role: "user", content: "make me a fan page" }],
     emit,
+    ingressKey,
   });
   return { result, emitted };
 }
@@ -48,6 +51,8 @@ beforeEach(() => {
   classifyWorkerRedirect.mockReset();
   opRedirect.mockReset();
   opRedirect.mockReturnValue({ ok: true });
+  opRedirectOnce.mockReset();
+  opRedirectOnce.mockReturnValue({ ok: true });
 });
 
 describe("tryWorkerRedirect ack delivery", () => {
@@ -80,5 +85,12 @@ describe("tryWorkerRedirect ack delivery", () => {
     const { result, emitted } = run("can we use photos?");
     await expect(result).resolves.toBe(false);
     expect(emitted).toHaveLength(0);
+  });
+
+  it("uses canonical ingress-key dedupe for messaging redirects", async () => {
+    classifyWorkerRedirect.mockResolvedValue({ redirect: true, reason: "feedback" });
+    await expect(run("make it blue", "receipt-1").result).resolves.toBe(true);
+    expect(opRedirectOnce).toHaveBeenCalledWith("op_app_build_test1", "make it blue", "jarvis-redirect", "receipt-1");
+    expect(opRedirect).not.toHaveBeenCalled();
   });
 });

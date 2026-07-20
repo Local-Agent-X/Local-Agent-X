@@ -190,6 +190,10 @@ async function forwardHttp(
     upstreamResponse.pipe(response);
   });
   upstream.once("error", (error) => writeHttpError(response, error));
+  // pipe() does not forward errors: a client that aborts mid-body would
+  // otherwise leave `request` erroring with no listener (same class as the
+  // connection-level guard above) and the dialed upstream socket leaked.
+  request.once("error", () => upstream.destroy());
   request.pipe(upstream);
 }
 
@@ -202,6 +206,12 @@ async function openTunnel(
   const url = parseConnectTarget(request.url);
   const target = await resolveDialTarget(url);
   const upstream = await dial(target);
+  // The client may have died during the two awaits above (Chrome SIGKILLed
+  // by a mid-session browserMode flip) — don't tunnel into a dead socket.
+  if (client.destroyed) {
+    upstream.destroy();
+    return;
+  }
   upstream.once("error", (error) => client.destroy(error));
   client.once("error", () => upstream.destroy());
   client.once("close", () => upstream.destroy());
@@ -221,6 +231,14 @@ export async function startBrowserEgressProxy(
   server.on("connection", (socket) => {
     clientSockets.add(socket);
     socket.once("close", () => clientSockets.delete(socket));
+    // INVARIANT: every socket the proxy owns carries an error handler from
+    // the moment it's owned — never only at first use. openTunnel() awaits
+    // DNS-pin + upstream dial before ITS handlers attach; when agent Chrome
+    // is SIGKILLed mid-CONNECT (browserMode flip → closeAllBrowsers), the
+    // client socket RSTs inside that window, and an unhandled 'error' here
+    // escalated to a process-wide uncaughtException (read ECONNRESET,
+    // 2026-07-20). Handling at acquisition closes every such window at once.
+    socket.on("error", () => socket.destroy());
   });
   server.on("connect", (request, socket, head) => {
     void openTunnel(request, socket, head, dial).catch((error) => writeSocketError(socket, error));

@@ -817,6 +817,9 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
       proc as never,
       { type: "lax:browser-navigate", id: 7, viewId, url: "https://agent.example/" },
     );
+    // Real Electron ordering: loadURL fires did-start-loading before any
+    // finish event — navigate-settle gates success on it (stale-event guard).
+    listeners.get("did-start-loading")!();
     listeners.get("did-finish-load")!();
     await flush();
   }

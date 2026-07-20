@@ -12,66 +12,68 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 61 top-level dirs · 61 live · 0 with no live importer · 1314 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1370 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/security/` | 73 | 29 | XL |  |
-| `src/ops/` | 72 | 22 | XL |  |
-| `src/tools/` | 57 | 147 | XL |  |
-| `src/canonical-loop/` | 47 | 150 | XL |  |
-| `src/providers/` | 45 | 20 | L |  |
+| `src/ops/` | 93 | 24 | XL |  |
+| `src/security/` | 74 | 30 | XL |  |
+| `src/tools/` | 59 | 147 | XL |  |
+| `src/providers/` | 55 | 20 | XL |  |
+| `src/canonical-loop/` | 50 | 172 | XL |  |
 | `src/memory/` | 42 | 118 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
-| `src/workspace/` | 31 | 2 | M |  |
-| `src/agency/` | 25 | 16 | L |  |
+| `src/workspace/` | 33 | 2 | M |  |
+| `src/session/` | 30 | 7 | L |  |
+| `src/auth/` | 29 | 10 | L |  |
+| `src/util/` | 27 | 2 | S |  |
+| `src/agency/` | 26 | 16 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
+| `src/threat/` | 25 | 11 | L |  |
+| `src/tool-policy/` | 25 | 20 | L |  |
 | `src/browser/` | 24 | 50 | XL |  |
-| `src/auth/` | 23 | 10 | L |  |
-| `src/tool-policy/` | 23 | 20 | L |  |
-| `src/util/` | 23 | 2 | S |  |
-| `src/threat/` | 22 | 11 | L |  |
+| `src/local-runtimes/` | 22 | 18 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/session/` | 19 | 6 | M |  |
-| `src/agent-request/` | 17 | 13 | L |  |
-| `src/agent-guards/` | 15 | 13 | L |  |
-| `src/agents/` | 15 | 13 | L |  |
-| `src/chat-ws/` | 15 | 11 | L |  |
-| `src/context-manager/` | 15 | 10 | M |  |
-| `src/app-runtime/` | 14 | 12 | L |  |
-| `src/protocols/` | 14 | 38 | XL |  |
+| `src/context-manager/` | 19 | 10 | M |  |
+| `src/agent-request/` | 18 | 14 | L |  |
+| `src/context/` | 17 | 3 | M |  |
+| `src/agent-guards/` | 16 | 14 | L |  |
+| `src/agents/` | 16 | 13 | L |  |
+| `src/chat-ws/` | 16 | 12 | L |  |
+| `src/app-runtime/` | 15 | 12 | L |  |
+| `src/protocols/` | 15 | 38 | XL |  |
+| `src/anthropic-client/` | 14 | 19 | L |  |
 | `src/data-lineage/` | 13 | 6 | L |  |
-| `src/anthropic-client/` | 12 | 19 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/voice/` | 12 | 65 | XL |  |
+| `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
-| `src/local-runtimes/` | 11 | 12 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/integrations/` | 10 | 15 | M |  |
-| `src/self-edit/` | 9 | 19 | L |  |
-| `src/whatsapp-bridge/` | 9 | 6 | M |  |
+| `src/self-edit/` | 10 | 19 | L |  |
+| `src/integrations/` | 9 | 15 | M |  |
+| `src/screen-stream/` | 9 | 8 | L |  |
+| `src/tool-execution/` | 9 | 33 | XL |  |
 | `src/sandbox/` | 8 | 6 | L |  |
-| `src/screen-stream/` | 8 | 8 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
+| `src/ari-kernel/` | 7 | 11 | L |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
+| `src/bridge-voice/` | 7 | 5 | M |  |
+| `src/plugin-system/` | 7 | 10 | L |  |
+| `src/routes/` | 7 | 85 | XL |  |
+| `src/server/` *(entrypoint)* | 7 | 40 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
-| `src/tool-execution/` | 7 | 32 | XL |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
-| `src/ari-kernel/` | 6 | 11 | L |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
-| `src/routes/` | 6 | 85 | XL |  |
-| `src/bridge-voice/` | 5 | 5 | M |  |
+| `src/persistence/` | 5 | 2 | S |  |
 | `src/routing/` | 5 | 7 | M |  |
-| `src/server/` *(entrypoint)* | 5 | 36 | XL |  |
-| `src/broker-transport/` | 4 | 27 | L |  |
+| `src/broker-transport/` | 4 | 28 | XL |  |
+| `src/codex-client/` | 4 | 5 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
-| `src/codex-client/` | 3 | 5 | M |  |
-| `src/context/` | 3 | 2 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
@@ -143,6 +145,8 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/process-tree-kill.ts` | S |
 | `src/progressive-loader.ts` | S |
 | `src/project-rosters.ts` | M |
+| `src/prompt-telemetry.ts` | S |
+| `src/qualification-boot.ts` | S |
 | `src/rbac.ts` | M |
 | `src/reap-stale-procs.ts` | S |
 | `src/replay-test.ts` | S |
@@ -175,7 +179,9 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/tools.ts` | S |
 | `src/tts-stream.ts` | S |
 | `src/types.ts` | M |
+| `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
+| `src/update-rollback.ts` | S |
 | `src/update-service.ts` | S |
 | `src/worker-session.ts` | S |
 

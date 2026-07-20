@@ -250,6 +250,56 @@ describe("browser egress proxy", () => {
     });
   });
 
+  it("survives the client dying mid-dial without an uncaughtException (2026-07-20 ECONNRESET class)", async () => {
+    // Reproduces the crash window: agent Chrome SIGKILLed (browserMode flip →
+    // closeAllBrowsers) while a CONNECT tunnel is still awaiting the upstream
+    // dial. Before the connection-level error guard, the client socket's RST
+    // fired 'error' with no listener → process-wide uncaughtException.
+    resolve4.mockResolvedValue(["93.184.216.36"]);
+    let releaseDial!: () => void;
+    const dialGate = new Promise<void>((r) => { releaseDial = r; });
+    const dialed = tunnelSocket();
+    const dial = vi.fn(async (_target: BrowserProxyDialTarget) => {
+      await dialGate; // hold the tunnel in the pre-handler await window
+      return dialed;
+    });
+    const proxy = await startWithDial(dial);
+
+    const uncaught: Error[] = [];
+    const onUncaught = (e: Error) => { uncaught.push(e); };
+    process.on("uncaughtException", onUncaught);
+    try {
+      // Open a CONNECT and kill the client while dial is still pending.
+      const clientDead = new Promise<void>((resolve) => {
+        const socket = netConnect({ host: "127.0.0.1", port: proxyPort(proxy) }, () => {
+          socket.write("CONNECT secure.example:443 HTTP/1.1\r\nHost: secure.example:443\r\n\r\n");
+          // Give the proxy a beat to enter openTunnel's awaits, then RST.
+          setTimeout(() => {
+            socket.resetAndDestroy();
+            resolve();
+          }, 50);
+        });
+        socket.on("error", () => { /* client side may see its own reset */ });
+      });
+      await clientDead;
+      releaseDial();
+      // Let the held dial resolve and the tunnel path run against the dead client.
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(uncaught).toEqual([]);
+      // The dead client's tunnel must not leak the dialed upstream socket.
+      expect(dialed.destroyed).toBe(true);
+
+      // And the proxy must still serve new tunnels afterwards.
+      const dial2 = vi.fn(async (_target: BrowserProxyDialTarget) => tunnelSocket());
+      const proxy2 = await startWithDial(dial2);
+      const ok = await connectThroughProxy(proxy2, "secure.example:443");
+      expect(ok).toContain("200 Connection Established");
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+
   it("fails startup when the listen socket is unavailable", async () => {
     const blocker = createNetServer();
     await new Promise<void>((resolve, reject) => {

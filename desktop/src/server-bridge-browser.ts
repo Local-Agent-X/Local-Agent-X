@@ -44,6 +44,7 @@ import {
 	setBrowserUiEventSink,
 } from "./browser-perception";
 import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
+import { settleNavigation } from "./navigate-settle";
 
 // Isolated world for agent scripts — never the main world, so page JS
 // can't tamper with (or observe) what the agent executes.
@@ -283,60 +284,24 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 	}
 }
 
-// Settles on main-frame success (did-finish-load, or did-stop-loading for
-// pages that never fire finish), main-frame failure (did-fail-load, code -3
-// "aborted" excluded — a JS redirect is not a failure), or the deadline.
+// Settle semantics live in navigate-settle.ts (unit-tested there): full load
+// settles immediately; a heavy CSR SPA that never quiesces settles shortly
+// after dom-ready instead of outrunning the deadline + the server's wedge
+// timer (the 2026-07-20 Thrive hang class).
 function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>> {
 	const wc = requireWebContents(msg.viewId);
-	const timeoutMs = msg.timeoutMs ?? NAVIGATE_DEFAULT_TIMEOUT_MS;
-	return new Promise((resolve) => {
-		let settled = false;
-		// Main-frame HTTP status: 'did-navigate' carries httpResponseCode, so an
-		// HTTP ≥400 error page (which still load-finishes) is finally detectable
-		// by the server side. Absent for non-HTTP loads → the client keeps its
-		// "unknown" fallback.
-		let status: number | undefined;
-		const finish = (payload: Record<string, unknown>) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(deadline);
-			wc.off("did-fail-load", onFail);
-			wc.off("did-finish-load", onDone);
-			wc.off("did-stop-loading", onDone);
-			wc.off("did-navigate", onNavigated);
-			resolve(payload);
-		};
-		const onFail = (_e: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => {
-			if (!isMainFrame || errorCode === -3) return;
-			finish({ ok: false, error: `${errorDescription || `load failed (${errorCode})`} (${validatedURL})` });
-		};
-		const onNavigated = (_e: unknown, _url: string, httpResponseCode: number) => {
-			if (typeof httpResponseCode === "number" && httpResponseCode > 0) status = httpResponseCode;
-		};
-		const onDone = () => {
-			if (settled) return;
-			finish({ ok: true, url: wc.getURL(), title: wc.getTitle(), ...(status !== undefined ? { status } : {}) });
+	return settleNavigation(wc, msg.url, {
+		timeoutMs: msg.timeoutMs ?? NAVIGATE_DEFAULT_TIMEOUT_MS,
+		// agent nav, even on adopted views — not user activity
+		onBeforeLoad: () => markAgentNavigation(msg.viewId),
+		onSuccess: () => {
 			// Successful AGENT navigate → offer the view to the renderer's anchor.
 			// browser-ipc owns the policy (blank-foreground only); this path only
 			// fires for bridge-owned agentDriven views.
 			if (listBrowserViews().some((v) => v.viewId === msg.viewId && v.agentDriven)) {
 				autoSurfaceAgentView(msg.viewId);
 			}
-		};
-		const deadline = setTimeout(() => {
-			// Stop the still-loading page — the client has already given up,
-			// and a zombie load would race the NEXT navigate's did-stop-loading.
-			if (!wc.isDestroyed()) wc.stop();
-			finish({ ok: false, error: `navigation did not settle within ${timeoutMs}ms` });
-		}, timeoutMs);
-		wc.on("did-fail-load", onFail);
-		wc.on("did-finish-load", onDone);
-		wc.on("did-stop-loading", onDone);
-		wc.on("did-navigate", onNavigated);
-		markAgentNavigation(msg.viewId); // agent nav, even on adopted views — not user activity
-		wc.loadURL(msg.url).catch((e: unknown) => {
-			finish({ ok: false, error: e instanceof Error ? e.message : String(e) });
-		});
+		},
 	});
 }
 

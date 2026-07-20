@@ -175,8 +175,13 @@ export function wakeExecutionPlacement(
   if (!result.ok) return result;
   const op = readOp(opId);
   if (!op || op.canonical?.state !== "queued") return { ok: false, reason: "not_queued" };
-  enqueueOp(opId, op.lane as CanonicalLane);
-  pumpScheduler();
+  // Always schedule a fresh task, even when the current pump still contains
+  // this op. A synchronous backend wake can land while placement validation is
+  // on the stack: enqueueOp would see the old queue row, then the outer pump
+  // would remove it using its stale `waiting` snapshot and lose the wake.
+  // The deferred task runs after that stack unwinds, re-reads durable state,
+  // and re-enters the same queue exactly once.
+  scheduleQueuedRetry(opId, op.lane as CanonicalLane, 0);
   return result;
 }
 

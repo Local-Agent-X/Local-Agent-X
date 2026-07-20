@@ -31,6 +31,7 @@ const {
   resetScheduler,
   wakeExecutionPlacement,
 } = await import("./scheduler.js");
+const { runWorker } = await import("./worker.js");
 
 interface Deferred { promise: Promise<void>; resolve: () => void }
 function deferred(): Deferred {
@@ -38,7 +39,6 @@ function deferred(): Deferred {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
-
 class PlacementBackend implements ExecutionBackend {
   readonly id = "placement-test";
   readonly decisions = new Map<string, ExecutionPlacementDecision>();
@@ -63,7 +63,6 @@ class PlacementBackend implements ExecutionBackend {
     for (const run of this.runs.values()) run.resolve();
   }
 }
-
 const adapter = { name: "placement", version: "1" } as Adapter;
 
 function op(label: string, lane: Op["lane"] = "interactive"): Op {
@@ -90,7 +89,6 @@ function op(label: string, lane: Op["lane"] = "interactive"): Op {
     attemptCount: 0,
   };
 }
-
 function submit(candidate: Op): void {
   registerAdapterForOp(candidate.id, () => adapter);
   canonicalLoopEntry(candidate);
@@ -113,6 +111,114 @@ afterAll(() => {
 });
 
 describe("durable execution placement", () => {
+  it("does not lose an exact wake delivered inside placement validation", async () => {
+    backend = new PlacementBackend();
+    _setExecutionBackendResolverForTest(() => backend!);
+    const candidate = op("wake-during-pump");
+    backend.decisions.set(candidate.id, {
+      targetId: "slot-1",
+      disposition: "waiting",
+      wakeToken: "wake-1",
+    });
+    let delivered = false;
+    vi.spyOn(backend, "acceptsPlacement").mockImplementation((placement) => {
+      if (!delivered && placement.disposition === "waiting") {
+        delivered = true;
+        expect(wakeExecutionPlacement(candidate.id, {
+          backendId: backend!.id,
+          targetId: "slot-1",
+        }, "wake-1")).toMatchObject({ ok: true });
+      }
+      return true;
+    });
+
+    submit(candidate);
+
+    await vi.waitFor(() => expect(backend!.starts).toHaveBeenCalledOnce());
+    expect(backend.starts.mock.calls[0][0].placement).toMatchObject({
+      targetId: "slot-1",
+      disposition: "ready",
+      revision: 2,
+    });
+    expect(readOp(candidate.id)?.canonical?.executionPlacement).toMatchObject({
+      disposition: "ready",
+      revision: 2,
+    });
+  });
+
+  it("lets cancellation beat an exact wake delivered during placement validation", async () => {
+    backend = new PlacementBackend();
+    _setExecutionBackendResolverForTest(() => backend!);
+    const candidate = op("wake-cancel-race");
+    backend.decisions.set(candidate.id, {
+      targetId: "slot-cancel",
+      disposition: "waiting",
+      wakeToken: "wake-cancel",
+    });
+    let delivered = false;
+    vi.spyOn(backend, "acceptsPlacement").mockImplementation((placement) => {
+      if (!delivered && placement.disposition === "waiting") {
+        delivered = true;
+        wakeExecutionPlacement(candidate.id, {
+          backendId: backend!.id,
+          targetId: "slot-cancel",
+        }, "wake-cancel");
+        opCancel(candidate.id, "test");
+      }
+      return true;
+    });
+
+    submit(candidate);
+
+    await vi.waitFor(() => expect(readOp(candidate.id)?.canonical?.state).toBe("cancelled"));
+    expect(backend.starts).not.toHaveBeenCalled();
+  });
+
+  it("preserves pause and resume across a wake delivered during placement validation", async () => {
+    const candidate = op("wake-pause-race");
+    let delivered = false;
+    let turns = 0;
+    const pausingAdapter: Adapter = {
+      name: "wake-pause",
+      version: "1",
+      async runTurn(): Promise<TurnResult> {
+        turns += 1;
+        return {
+          providerState: { adapterName: "wake-pause", adapterVersion: "1", providerPayload: {} },
+          ...(turns === 1 ? {} : { terminalReason: "done" as const }),
+        };
+      },
+      async abort(): Promise<void> {},
+    };
+    const liveBackend: ExecutionBackend = {
+      id: "wake-pause-backend",
+      place: () => ({ targetId: "slot-pause", disposition: "waiting", wakeToken: "wake-pause" }),
+      acceptsPlacement: (placement) => {
+        if (!delivered && placement.disposition === "waiting") {
+          delivered = true;
+          wakeExecutionPlacement(candidate.id, {
+            backendId: "wake-pause-backend",
+            targetId: "slot-pause",
+          }, "wake-pause");
+          opPause(candidate.id, "test");
+        }
+        return placement.targetId === "slot-pause";
+      },
+      start: ({ op: placedOp, adapter: placedAdapter }) => runWorker(placedOp, placedAdapter),
+    };
+    _setExecutionBackendResolverForTest(() => liveBackend);
+    registerAdapterForOp(candidate.id, () => pausingAdapter);
+    canonicalLoopEntry(candidate);
+    await awaitIdle();
+    expect(readOp(candidate.id)?.canonical?.state).toBe("paused");
+    const placement = readOp(candidate.id)?.canonical?.executionPlacement;
+
+    expect(opResume(candidate.id, "test")).toEqual({ ok: true });
+    await awaitIdle();
+    expect(readOp(candidate.id)?.canonical?.state).toBe("succeeded");
+    expect(readOp(candidate.id)?.canonical?.executionPlacement).toEqual(placement);
+  });
+
   it("parks a waiting target without blocking later work, then accepts only its exact wake", async () => {
     backend = new PlacementBackend();
     _setExecutionBackendResolverForTest(() => backend!);

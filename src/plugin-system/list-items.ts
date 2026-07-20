@@ -8,7 +8,7 @@ import {
   type PluginManifest,
   type PluginSecretRequirement,
 } from "./manifest.js";
-import type { PluginRegistry } from "./registry-store.js";
+import { pluginRegistryEntry, type PluginRegistry } from "./registry-store.js";
 import type { SecretBlockedPlugin } from "./secret-requirements.js";
 import type { ActivePluginToolProjection } from "./tool-surface.js";
 import type { TrustLevel } from "./publisher-trust.js";
@@ -42,7 +42,7 @@ export function buildPluginList(
   return [...ids].sort().map((registryId) => {
     const loaded = loadedPlugins.get(registryId);
     const blocked = secretBlocked.get(registryId);
-    const entry = registry[registryId];
+    const entry = pluginRegistryEntry(registry, registryId);
     const enabled = entry?.enabled ?? loaded !== undefined;
     if (loaded) {
       return pluginListItem({

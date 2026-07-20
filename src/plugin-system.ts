@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { registeredPluginItem, safeLifecyclePersistenceError, safePluginId, safeRestoreError, type PluginListItem } from "./plugin-system/lifecycle-status.js";
 import { parsePluginManifest, pluginManifestMetadata, type PluginManifest } from "./plugin-system/manifest.js";
-import { createPluginRegistryStore, isPluginRegistryContentError, isPluginRegistryUnavailableError, normalizePluginRegistryUnavailable, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
+import { createPluginRegistryStore, isPluginRegistryContentError, isPluginRegistryUnavailableError, normalizePluginRegistryUnavailable, pluginRegistryEntry, withPluginRegistryEntry, type PluginRegistry, type PluginRegistryStore } from "./plugin-system/registry-store.js";
 import { verifyPublisherSignature, type TrustLevel } from "./plugin-system/publisher-trust.js";
 import { assessTrustLevel } from "./plugin-system/integrity.js";
 import { buildPluginList } from "./plugin-system/list-items.js";
@@ -106,7 +106,7 @@ export class PluginManager {
     const restoreErrorBefore = this.restoreErrors.get(manifest.id);
     try {
     const registry = this.readRegistry();
-    const registeredManifestHash = expectedRegistration?.manifestHash ?? registry[manifest.id]?.manifestHash;
+    const registeredManifestHash = expectedRegistration?.manifestHash ?? pluginRegistryEntry(registry, manifest.id)?.manifestHash;
     if (expectedRegistration && manifest.contributions && !registeredManifestHash) {
       throw new Error(`Plugin bundle "${manifest.id}" manifest is not integrity-pinned`);
     }
@@ -123,7 +123,7 @@ export class PluginManager {
       throw new Error(`Entry point not found: ${entryPath}`);
     }
 
-    const registeredHash = expectedRegistration?.entryHash ?? registry[manifest.id]?.entryHash;
+    const registeredHash = expectedRegistration?.entryHash ?? pluginRegistryEntry(registry, manifest.id)?.entryHash;
 
     const trust = assessTrustLevel(manifest, entryPath, registeredHash);
 
@@ -169,29 +169,25 @@ export class PluginManager {
     };
 
     if (!expectedRegistration) {
-      const nextRegistry: PluginRegistry = {
-        ...this.readRegistry(),
-        [manifest.id]: {
-          enabled: true,
-          path: pluginPath,
-          entryHash: trust.currentHash,
-          manifestHash: currentManifestHash,
-          manifest: pluginManifestMetadata(manifest),
-        },
-      };
+      const nextRegistry = withPluginRegistryEntry(this.readRegistry(), manifest.id, {
+        enabled: true,
+        path: pluginPath,
+        entryHash: trust.currentHash,
+        manifestHash: currentManifestHash,
+        manifest: pluginManifestMetadata(manifest),
+      });
       this.writeRegistry(nextRegistry, "load");
     } else {
       const currentRegistry = this.readRegistry();
-      const current = currentRegistry[manifest.id];
+      const current = pluginRegistryEntry(currentRegistry, manifest.id);
       const unchanged = current?.path === pluginPath &&
         current.entryHash === expectedRegistration.entryHash &&
         current.manifestHash === expectedRegistration.manifestHash;
       if (expectedRegistration.enable) {
         if (!current || !unchanged || current.enabled) throw new Error("Plugin lifecycle state changed during enable");
-        this.writeRegistry({
-          ...currentRegistry,
-          [manifest.id]: { ...current, enabled: true, manifest: pluginManifestMetadata(manifest) },
-        }, "load");
+        this.writeRegistry(withPluginRegistryEntry(currentRegistry, manifest.id, {
+          ...current, enabled: true, manifest: pluginManifestMetadata(manifest),
+        }), "load");
       }
       if (
         (!expectedRegistration.enable && !current?.enabled) || !unchanged
@@ -224,16 +220,14 @@ export class PluginManager {
 
   disablePlugin(id: string): boolean {
     const registry = this.readRegistry();
-    if (!registry[id]) return false;
+    const registered = pluginRegistryEntry(registry, id);
+    if (!registered) return false;
     const loaded = this.loaded.get(id);
-    const nextRegistry: PluginRegistry = {
-      ...registry,
-      [id]: {
-        ...registry[id],
-        enabled: false,
-        ...(loaded ? { manifest: pluginManifestMetadata(loaded.manifest), manifestHash: loaded.manifestHash } : {}),
-      },
-    };
+    const nextRegistry = withPluginRegistryEntry(registry, id, {
+      ...registered,
+      enabled: false,
+      ...(loaded ? { manifest: pluginManifestMetadata(loaded.manifest), manifestHash: loaded.manifestHash } : {}),
+    });
     this.writeRegistry(nextRegistry, "disable");
     this.loaded.delete(id);
     this.secretLifecycle.clear(id);
@@ -328,7 +322,7 @@ export class PluginManager {
       try {
         const raw = JSON.parse(readFileSync(join(path, "manifest.json"), "utf-8")) as unknown;
         const manifest = parsePluginManifest(raw);
-        if (registry[manifest.id]?.enabled === false || this.loaded.has(manifest.id)) continue;
+        if (pluginRegistryEntry(registry, manifest.id)?.enabled === false || this.loaded.has(manifest.id)) continue;
         await this.loadPluginAtPath(path, undefined, true);
       } catch (error) {
         if (!(error instanceof MissingPluginSecretsError)) continue;
@@ -349,7 +343,7 @@ export class PluginManager {
   }
   async enablePlugin(id: string): Promise<PluginManifest> {
     return this.secretLifecycle.serializeRetry(id, async () => {
-      const entry = this.readRegistry()[id];
+      const entry = pluginRegistryEntry(this.readRegistry(), id);
       if (!entry || entry.enabled) throw new Error(`Plugin "${id}" is not disabled`);
       if (entry.manifest?.id !== id || !entry.entryHash || !entry.manifestHash) {
         throw new Error("Plugin is not fully integrity-pinned");
@@ -364,7 +358,7 @@ export class PluginManager {
     const loaded = this.loaded.get(id);
     if (loaded) return loaded.manifest;
     const blocked = this.secretLifecycle.blocked.get(id);
-    const entry = this.readRegistry()[id];
+    const entry = pluginRegistryEntry(this.readRegistry(), id);
     const path = blocked?.path ?? entry?.path;
     if (!path) throw new Error(`Plugin "${id}" is not waiting for secrets`);
     if (entry?.enabled === false) throw new Error(`Plugin "${id}" is disabled`);

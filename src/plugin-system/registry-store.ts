@@ -23,6 +23,23 @@ export interface PluginRegistryStore {
   write(registry: PluginRegistry): void;
 }
 
+export function emptyPluginRegistry(): PluginRegistry {
+  return Object.create(null) as PluginRegistry;
+}
+
+export function pluginRegistryEntry(registry: PluginRegistry, id: string): PluginRegistryEntry | undefined {
+  return Object.hasOwn(registry, id) ? registry[id] : undefined;
+}
+
+export function withPluginRegistryEntry(
+  registry: PluginRegistry, id: string, entry: PluginRegistryEntry,
+): PluginRegistry {
+  const next = emptyPluginRegistry();
+  for (const [key, value] of Object.entries(registry)) next[key] = value;
+  next[id] = entry;
+  return next;
+}
+
 const REGISTRY_ERROR_KIND = Symbol.for("local-agent-x.plugin-registry-error");
 type RegistryErrorKind = "content-invalid" | "read-unavailable" | "write-unavailable";
 
@@ -78,7 +95,7 @@ function parseRegistry(raw: string): PluginRegistry {
     throw new Error("Plugin registry is invalid");
   }
   const registry = parsed as Record<string, unknown>;
-  const normalized: PluginRegistry = {};
+  const normalized = emptyPluginRegistry();
   for (const [id, entry] of Object.entries(registry)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new Error("Plugin registry is invalid");
@@ -152,7 +169,7 @@ export function createPluginRegistryStore(
       try { second = observeCommittedRegistry(path, readCommitted, statCommitted); }
       catch (cause) { throw new PluginRegistryUnavailableError("read", cause); }
       if (first.kind === "missing" || second.kind === "missing") {
-        if (first.kind === "missing" && second.kind === "missing") return {};
+        if (first.kind === "missing" && second.kind === "missing") return emptyPluginRegistry();
         throw new PluginRegistryUnavailableError("read");
       }
       if (first.raw !== second.raw || !sameIdentity(first.identity, second.identity)) {

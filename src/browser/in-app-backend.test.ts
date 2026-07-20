@@ -1,17 +1,4 @@
-/**
- * ElectronInAppBackend (chunk A1) — bridge fully mocked. Proves:
- *   - observe round-trip: bridge RawElements → ObservationRegistry refs →
- *     formatted output BYTE-IDENTICAL to ObservationRegistry.format (the
- *     same formatter+registry the CDP backend uses).
- *   - navigate / newTab / screenshot / getInfo / tabs result shapes match
- *     the CDP backend's strings.
- *   - evaluate guard rejects blocked scripts BEFORE any bridge call.
- *   - A2 methods (clickByRef/scroll) route through the resolution chain; the
- *     KB1 credential-focus guard blocks screenshot capture; dialogs/downloads
- *     report their not-supported state honestly.
- *   - hostile-page invariant: every page-script execution flows through
- *     browserExec (isolated-world-only transport); no main-world path exists.
- */
+/** ElectronInAppBackend bridge contract with the desktop fully mocked. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,6 +40,7 @@ import { handleNewTab } from "../tools/browser-tools/navigation.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
 import { ObservationRegistry, type DurableRef } from "./observation.js";
 import type { RawElement } from "./extract.js";
+import * as bridgeEgress from "./bridge-egress.js";
 
 const PAGE_URL = "https://example.com/";
 const PAGE_TITLE = "Example Domain";
@@ -147,10 +135,14 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(backend.isActive()).toBe(true);
 	});
 
-	it("navigate prints the REAL HTTP status when the bridge reply carries one", async () => {
+	it("navigate reports HTTP status and enriches failures with its exact view", async () => {
 		vi.mocked(browserNavigate).mockResolvedValue({ url: PAGE_URL, title: PAGE_TITLE, status: 404 });
 		const out = await backend.navigate(PAGE_URL);
 		expect(out).toBe(`Navigated to: ${PAGE_URL}\nStatus: 404\nTitle: ${PAGE_TITLE}`);
+		const enrich = vi.spyOn(bridgeEgress, "enrichBlockedNavigation");
+		vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("ERR_BLOCKED_BY_CLIENT"));
+		await expect(backend.navigate(PAGE_URL)).rejects.toThrow("ERR_BLOCKED_BY_CLIENT");
+		expect(enrich).toHaveBeenCalledWith(expect.any(Error), PAGE_URL, VIEW_ID);
 	});
 
 	it("new_tab prints the REAL HTTP status when the bridge reply carries one", async () => {
@@ -746,8 +738,10 @@ describe("ElectronInAppBackend (A1)", () => {
 
 		it("a navigate failure on a minted tab rolls it back: view closed, no ghost row, previous tab active, error propagates", async () => {
 			await backend.navigate(PAGE_URL);
+			const enrich = vi.spyOn(bridgeEgress, "enrichBlockedNavigation");
 			vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("bridge timeout"));
 			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("bridge timeout");
+			expect(enrich).toHaveBeenCalledWith(expect.any(Error), PAGE_URL, `${VIEW_ID}-t2`);
 			// The view DID materialize — rollback must close it.
 			const closed = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "close").map(([, id]) => id);
 			expect(closed).toEqual([`${VIEW_ID}-t2`]);

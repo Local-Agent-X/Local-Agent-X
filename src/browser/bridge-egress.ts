@@ -27,8 +27,9 @@ const logger = createLogger("browser-bridge");
 // surface exactly that string, with the policy's actual reason and recovery
 // path visible only in the server log. The reason is computed HERE, in the
 // same process that later assembles the navigate error, so a small recent-deny
-// cache (keyed by origin+path — the request URL can gain a trailing slash or a
-// local-auth token query en route) lets the tool layer name the real cause.
+// cache (keyed by exact view + normalized origin/path; unattributed legacy asks
+// use a separate null scope) lets the tool layer name the real cause without
+// leaking it across views when the URL gains a slash or local-auth query.
 interface RecordedDeny {
 	reason: string;
 	recovery?: string;
@@ -39,7 +40,7 @@ const recentDenies = new Map<string, RecordedDeny>();
 const DENY_TTL_MS = 30_000;
 const DENY_MAX = 64;
 
-function denyKey(url: string): string {
+function normalizedDenyUrl(url: string): string {
 	try {
 		const u = new URL(url);
 		return u.origin + u.pathname;
@@ -48,20 +49,26 @@ function denyKey(url: string): string {
 	}
 }
 
-function recordEgressDeny(url: string, reason: string, recovery?: string): void {
-	if (recentDenies.size >= DENY_MAX) {
+function denyKey(url: string, viewId?: string): string {
+	return JSON.stringify([viewId || null, normalizedDenyUrl(url)]);
+}
+
+function recordEgressDeny(url: string, viewId: string | undefined, reason: string, recovery?: string): void {
+	const key = denyKey(url, viewId);
+	if (!recentDenies.has(key) && recentDenies.size >= DENY_MAX) {
 		const oldest = recentDenies.keys().next().value;
 		if (oldest !== undefined) recentDenies.delete(oldest);
 	}
-	recentDenies.set(denyKey(url), { reason, recovery, at: Date.now() });
+	recentDenies.set(key, { reason, recovery, at: Date.now() });
 }
 
-/** The recorded policy deny for a URL, if one happened recently. */
-export function recentEgressDeny(url: string): { reason: string; recovery?: string } | null {
-	const hit = recentDenies.get(denyKey(url));
+/** Consume the recorded policy deny for this exact view and URL, if recent. */
+export function recentEgressDeny(url: string, viewId?: string): { reason: string; recovery?: string } | null {
+	const key = denyKey(url, viewId);
+	const hit = recentDenies.get(key);
 	if (!hit) return null;
+	recentDenies.delete(key);
 	if (Date.now() - hit.at > DENY_TTL_MS) {
-		recentDenies.delete(denyKey(url));
 		return null;
 	}
 	return { reason: hit.reason, recovery: hit.recovery };
@@ -71,10 +78,10 @@ export function recentEgressDeny(url: string): { reason: string; recovery?: stri
  *  (ERR_BLOCKED_BY_CLIENT) was caused by a recorded egress-policy deny, so the
  *  agent sees the policy's reason and recovery path instead of the bare
  *  network-stack error. Any other failure passes through untouched. */
-export function enrichBlockedNavigation(e: unknown, url: string): unknown {
+export function enrichBlockedNavigation(e: unknown, url: string, viewId?: string): unknown {
 	const message = e instanceof Error ? e.message : String(e);
 	if (!message.includes("ERR_BLOCKED_BY_CLIENT")) return e;
-	const deny = recentEgressDeny(url);
+	const deny = recentEgressDeny(url, viewId);
 	if (!deny) return e;
 	return new Error(
 		`Navigation to ${url} was blocked by the egress policy: ${deny.reason}` +
@@ -107,9 +114,10 @@ export function answerEgressAsk(ask: EgressAskMessage): void {
 		// ZERO server-side trace — undiagnosable (2026-07-20). Name the reason.
 		if (!allowed) {
 			logger.warn(`[browser-bridge] egress DENY ${ask.url.slice(0, 120)}: ${decision.reason ?? "policy"}`);
-			recordEgressDeny(ask.url, decision.reason ?? "blocked by the egress policy", decision.recovery ?? decision.userHint);
+			recordEgressDeny(ask.url, ask.viewId, decision.reason ?? "blocked by the egress policy", decision.recovery ?? decision.userHint);
 		}
 		if (allowed) allowed = passesPageEgressTaint(ask);
+		if (allowed) recentDenies.delete(denyKey(ask.url, ask.viewId));
 	} catch (e) {
 		logger.warn(`[browser-bridge] egress evaluation failed for ${ask.url}: ${(e as Error).message}`);
 		allowed = false;
@@ -141,7 +149,7 @@ export function passesPageEgressTaint(ask: EgressAskMessage): boolean {
 		// (the scan is pure; the enforcing caller owns the side effect).
 		if (verdict.canary) recordCanaryExfilAudit(sessionId, "browser-page-egress");
 		logger.warn(`[browser-bridge] page egress BLOCKED [${verdict.layer}] session=${sessionId}: ${verdict.reason}`);
-		recordEgressDeny(ask.url, verdict.reason ?? "blocked by the page-egress taint scan");
+		recordEgressDeny(ask.url, ask.viewId, verdict.reason ?? "blocked by the page-egress taint scan");
 		return false;
 	} catch (e) {
 		logger.warn(`[browser-bridge] page-egress taint scan errored (allowing — URL policy already passed): ${(e as Error).message}`);

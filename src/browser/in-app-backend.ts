@@ -133,7 +133,6 @@ export class ElectronInAppBackend implements BrowserBackend {
 	private get viewId(): string {
 		return this.activeTab.viewId;
 	}
-
 	// ── Identity / state ──
 
 	getProfileId(): string {
@@ -164,11 +163,12 @@ export class ElectronInAppBackend implements BrowserBackend {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
 		await this.ensureView();
+		const viewId = this.viewId;
 		let result;
 		try {
-			result = await browserNavigate(this.viewId, url);
+			result = await browserNavigate(viewId, url);
 		} catch (e) {
-			throw enrichBlockedNavigation(e, url);
+			throw enrichBlockedNavigation(e, url, viewId);
 		}
 		this.state.url = result.url;
 		this.state.title = result.title;
@@ -213,7 +213,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 				}
 				this.rollbackMintedTab(tab, prevActive);
 			}
-			throw enrichBlockedNavigation(e, url);
+			throw enrichBlockedNavigation(e, url, tab.viewId);
 		}
 		tab.state.url = result.url;
 		tab.state.title = result.title;

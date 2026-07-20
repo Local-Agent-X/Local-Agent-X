@@ -17,6 +17,7 @@ import { opMessagesPath, opTurnPath, opTurnsDir } from "./schema.js";
 import type { OpMessageRow, OpTurnRow } from "./types.js";
 import type { CanonicalState } from "./types.js";
 import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
+import type { RuntimeRoutingFeedback } from "./types.js";
 import {
   hasMessageCollision,
   isLegacyOpTurnRow,
@@ -35,6 +36,7 @@ export interface TurnCommitProjection {
   task?: string;
   sessionId: string;
   learnedOutcome?: LearnedOutcome;
+  routingFeedback?: RuntimeRoutingFeedback;
   learningSessionId?: string;
   redirectInstructionId?: string;
   redirectText?: string;

@@ -27,6 +27,7 @@ import type {
   ProviderStateEnvelope,
   ToolCallSummary,
 } from "./types.js";
+import { createRuntimeRoutingFeedback } from "./runtime-routing-feedback.js";
 
 export interface CommitTurnMessage {
   messageId?: string;
@@ -143,6 +144,19 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
   const turnMessages = promptMessages.filter((row) => row.turnIdx === input.turnIdx);
   const seqBase = turnMessages.reduce((max, row) => Math.max(max, row.seqInTurn + 1), 0);
   const createdAt = new Date().toISOString();
+  const exactRuntime = input.op.runtimeDescriptor?.kind === "delegated-op"
+    && input.op.runtimeDescriptor.adapter === "provider-exact"
+    ? input.op.runtimeDescriptor
+    : null;
+  const routingFeedback = input.learnedOutcome && exactRuntime
+    ? createRuntimeRoutingFeedback(
+      input.op,
+      exactRuntime,
+      input.learnedOutcome === "clean" ? "success" : "failure",
+      Date.parse(createdAt),
+      [...input.toolCallSummary.map((item) => item.tool), ...(input.observedTools ?? [])],
+    )
+    : null;
   const turn: OpTurnRow = {
     opId: input.op.id,
     turnIdx: input.turnIdx,
@@ -174,6 +188,7 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
       task: input.op.task,
       sessionId: input.op.canonical?.sessionId ?? "",
       learnedOutcome: input.learnedOutcome,
+      ...(routingFeedback ? { routingFeedback } : {}),
       learningSessionId: input.learningSessionId,
       redirectInstructionId: input.redirectInstructionId,
       redirectText: input.redirectText,

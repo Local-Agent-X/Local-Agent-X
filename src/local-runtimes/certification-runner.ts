@@ -157,18 +157,19 @@ function canCarryPublishedSelection(
  * certification contract. It deliberately cannot revive persisted evidence:
  * choosing a background model must never probe a runtime on its hot path.
  */
-export function hasPublishedCertification(
-  runtime: LocalRuntimeInfo,
-  model: LocalModel,
-  contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT,
-): boolean {
+export function hasPublishedCertification(runtime: LocalRuntimeInfo, model: LocalModel, contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT): boolean {
+  return publishedCertificationSelectionHash(runtime, model, contract) !== null;
+}
+export function publishedCertificationSelectionHash(runtime: LocalRuntimeInfo, model: LocalModel, contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT): string | null {
   const published = publishedCertifications.get(runtime)?.get(model);
-  return !!published && published.selectionHash === certificationSelectionFingerprint(
+  if (!published) return null;
+  const current = certificationSelectionFingerprint(
     runtime,
     model.id,
     published.certificationHash,
     contract,
   );
+  return current === published.selectionHash ? current : null;
 }
 
 async function defaultIdentity(

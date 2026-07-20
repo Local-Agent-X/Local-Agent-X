@@ -139,6 +139,17 @@ export interface RuntimeFailoverState {
   normalizedFailure: string;
   retryNotBefore: string;
   revision: number;
+  /** Bounded exact-target attempt outcomes. These receipts contain hashes and
+   * routing facts only; candidate scoring still re-runs every live U5 gate. */
+  feedback?: RuntimeRoutingFeedback[];
+}
+
+export interface RuntimeRoutingFeedback {
+  schemaVersion: 1;
+  routingIdentity: string;
+  compatibilityKey: string;
+  outcome: "success" | "failure";
+  recordedAt: number;
 }
 
 export type ExecutionPlacementDisposition = "ready" | "waiting";

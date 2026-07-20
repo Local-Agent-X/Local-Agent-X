@@ -104,7 +104,18 @@ function isProjection(value: unknown): value is TurnCommitProjection {
     && optionalString(value.redirectInstructionId) && optionalString(value.redirectText)
     && optionalString(value.appUrl)
     && (value.learnedOutcome === undefined || LEARNED.has(value.learnedOutcome as string))
+    && isRoutingFeedback(value.routingFeedback)
     && (value.stateBefore === undefined || STATES.has(value.stateBefore as string));
+}
+
+function isRoutingFeedback(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!record(value)) return false;
+  return value.schemaVersion === 1
+    && typeof value.routingIdentity === "string" && /^[a-f0-9]{64}$/.test(value.routingIdentity)
+    && typeof value.compatibilityKey === "string" && /^[a-f0-9]{64}$/.test(value.compatibilityKey)
+    && (value.outcome === "success" || value.outcome === "failure")
+    && integer(value.recordedAt);
 }
 
 function isNextTurnPivot(value: unknown): boolean {

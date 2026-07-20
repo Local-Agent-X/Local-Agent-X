@@ -2,7 +2,11 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { certifyLocalModel, hasPublishedCertification } from "./certification-runner.js";
+import {
+  certifyLocalModel,
+  hasPublishedCertification,
+  publishedCertificationSelectionHash,
+} from "./certification-runner.js";
 import { LocalCertificationStore } from "./certification-store.js";
 import type {
   CertificationIdentity,
@@ -110,6 +114,8 @@ describe("local model certification", () => {
     });
     expect(complete.passedCount).toBe(5);
     expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(true);
+    expect(publishedCertificationSelectionHash(completeRuntime, completeRuntime.models[0]!))
+      .toMatch(/^[a-f0-9]{64}$/);
     const unpublishedRuntime = structuredClone(runtime);
     expect(hasPublishedCertification(unpublishedRuntime, unpublishedRuntime.models[0]!)).toBe(false);
 
@@ -136,6 +142,7 @@ describe("local model certification", () => {
     completeRuntime.kind = "openai-compat";
     completeRuntime.models[0]!.contextWindow = 16384;
     expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);
+    expect(publishedCertificationSelectionHash(completeRuntime, completeRuntime.models[0]!)).toBeNull();
     completeRuntime.models[0]!.contextWindow = 8192;
     completeRuntime.models[0]!.tools = true;
     expect(hasPublishedCertification(completeRuntime, completeRuntime.models[0]!)).toBe(false);

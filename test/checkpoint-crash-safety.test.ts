@@ -21,6 +21,7 @@ import {
 } from "../src/canonical-loop/store.js";
 import {
   _setTurnCommitWriteHookForTests,
+  readTurnArtifact,
   type TurnCommitWritePoint,
 } from "../src/canonical-loop/turn-commit-store.js";
 import { opDir } from "../src/ops/event-log.js";
@@ -166,6 +167,30 @@ describe("turn commit visibility boundary", () => {
     expect(result.inserted).toBe(true);
     expect(readOpTurn(op.id, 0)?.terminalReason).toBe("done");
     expect(readOpMessages(op.id).filter((row) => row.turnIdx === 0)).toHaveLength(2);
+    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+  });
+
+  it("commits legacy provider-exact rows without a target and omits routing feedback", () => {
+    const { op, claim } = mkOp("legacy-runtime-target");
+    op.runtimeDescriptor = {
+      kind: "delegated-op",
+      adapter: "provider-exact",
+      provider: "openai",
+      credentialProvider: "openai",
+      authSource: "env",
+      model: "legacy-model",
+      runtime: "openai-compat",
+      integrity: { scheme: "hmac-sha256-v1", mac: "f".repeat(64) },
+    } as unknown as Op["runtimeDescriptor"];
+    writeOp(op);
+
+    expect(() => commitTurn(input(op, claim, {
+      terminalReason: "done",
+      learnedOutcome: "clean",
+    }))).not.toThrow();
+    const artifact = readTurnArtifact(op.id, 0);
+    expect(artifact && "turn" in artifact ? artifact.projection.routingFeedback : undefined)
+      .toBeUndefined();
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
   });
 

@@ -24,10 +24,17 @@ import { createRecoveredAdapterFactory } from "./runtime-reconstruction.js";
 import { sealDelegatedRuntime, verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
 import { readOpMessages } from "./store.js";
 import type { RuntimeFailoverState } from "./types.js";
+import {
+  appendRuntimeRoutingFeedback,
+  createRuntimeRoutingFeedback,
+} from "./runtime-routing-feedback.js";
 
 const WAIT_MS = 60_000;
 const FAILOVER_FAILURES = new Set([
   "auth", "billing", "model_not_found", "overloaded", "rate_limit", "server_error", "timeout",
+]);
+const ROUTING_FEEDBACK_FAILURES = new Set([
+  "model_not_found", "overloaded", "rate_limit", "server_error", "timeout",
 ]);
 
 export interface FailoverCandidate {
@@ -117,7 +124,10 @@ export function buildRuntimeFailoverState(input: {
   normalizedFailure: string;
   retryNotBefore: string;
   priorRevision?: number;
+  priorFeedback?: RuntimeFailoverState["feedback"];
+  nextFeedback?: NonNullable<RuntimeFailoverState["feedback"]>[number] | null;
 }): RuntimeFailoverState {
+  const feedback = appendRuntimeRoutingFeedback(input.priorFeedback, input.nextFeedback ?? null);
   return {
     schemaVersion: 1,
     phase: input.phase,
@@ -127,7 +137,12 @@ export function buildRuntimeFailoverState(input: {
     normalizedFailure: input.normalizedFailure,
     retryNotBefore: input.retryNotBefore,
     revision: (input.priorRevision ?? 0) + 1,
+    ...(feedback.length ? { feedback } : {}),
   };
+}
+
+export function runtimeFailureFeedsRouting(normalized: string): boolean {
+  return ROUTING_FEEDBACK_FAILURES.has(normalized);
 }
 
 export function attemptedTargetsForEpoch(
@@ -186,7 +201,7 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
       && liveBudgetAllows(candidate.descriptor, persisted.canonical?.sessionId ?? persisted.sessionId ?? "");
   });
   if (!selected) {
-    await persistWaiting(persisted, currentIdentity, attempted, normalized!, now + WAIT_MS);
+    await persistWaiting(persisted, current, currentIdentity, attempted, normalized!, now, now + WAIT_MS);
     return { kind: "waiting", delayMs: WAIT_MS };
   }
   const candidateIdentity = runtimeTargetIdentity(selected.descriptor);
@@ -214,6 +229,8 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
       normalizedFailure: normalized!,
       retryNotBefore: fresh.canonical.retryNotBefore,
       priorRevision: failover?.revision,
+      priorFeedback: failover?.feedback,
+      nextFeedback: routingFailureFeedback(persisted, current, normalized!, now),
     });
     const written = writeOpStrict(fresh);
     if (written) Object.assign(op, fresh);
@@ -320,9 +337,11 @@ function liveBudgetAllows(descriptor: ExactDelegatedRuntimeDescriptor, sessionId
 
 async function persistWaiting(
   op: Op,
+  descriptor: ExactDelegatedRuntimeDescriptor,
   currentIdentity: string,
   attempted: ReadonlySet<string>,
   normalized: string,
+  recordedAt: number,
   retryAt: number,
 ): Promise<void> {
   const result = tryWithOpLock(op.id, () => {
@@ -339,6 +358,8 @@ async function persistWaiting(
       normalizedFailure: normalized,
       retryNotBefore,
       priorRevision: fresh.canonical.runtimeFailover?.revision,
+      priorFeedback: fresh.canonical.runtimeFailover?.feedback,
+      nextFeedback: routingFailureFeedback(fresh, descriptor, normalized, recordedAt),
     });
     fresh.lastFailureAt = new Date().toISOString();
     fresh.lastFailureReason = `runtime_failover_waiting:${normalized}`;
@@ -352,4 +373,15 @@ async function persistWaiting(
 function retryDelay(op: Op): number {
   const values = op.retryPolicy?.backoffMs ?? [];
   return values[Math.min(op.attemptCount ?? 0, Math.max(0, values.length - 1))] ?? 5_000;
+}
+
+function routingFailureFeedback(
+  op: Op,
+  descriptor: ExactDelegatedRuntimeDescriptor,
+  normalized: string,
+  recordedAt: number,
+) {
+  return runtimeFailureFeedsRouting(normalized)
+    ? createRuntimeRoutingFeedback(op, descriptor, "failure", recordedAt)
+    : null;
 }

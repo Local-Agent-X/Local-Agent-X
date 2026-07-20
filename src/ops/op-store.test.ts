@@ -7,18 +7,30 @@
  * read→mutate→write. Fix: per-write unique tmp + per-opId lockfile
  * (withOpLock) around every RMW, fail-open on a leaked lock.
  */
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "./types.js";
+
+const fsReads = vi.hoisted(() => ({ operations: 0 }));
+vi.mock("node:fs", async (importActual) => {
+  const actual = await importActual<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readFileSync: ((path: unknown, ...rest: unknown[]) => {
+      if (typeof path === "string" && path.endsWith("operation.json")) fsReads.operations++;
+      return (actual.readFileSync as (...args: unknown[]) => unknown)(path, ...rest);
+    }) as typeof actual.readFileSync,
+  };
+});
 
 // op-store captures OPS_BASE from getLaxDir() at module load, so the env
 // override must be in place BEFORE the dynamic imports below.
 const dataDir = mkdtempSync(join(tmpdir(), "lax-opstore-"));
 process.env.LAX_DATA_DIR = dataDir;
 
-const { writeOp, readOp, setOpStatus, tryWithOpLock, withOpLock } = await import("./op-store.js");
+const { writeOp, readOp, listRecentOps, setOpStatus, tryWithOpLock, withOpLock } = await import("./op-store.js");
 const { persistOpKeepingSignals } = await import("../canonical-loop/index.js");
 
 const opDirOf = (id: string) => join(dataDir, "operations", id);
@@ -53,6 +65,16 @@ describe("writeOp — per-write unique tmp", () => {
     mkdirSync(join(opDirOf(id), "operation.json.tmp"));
     writeOp(mkOp(id, { task: "updated task" }));
     expect(readOp(id)?.task).toBe("updated task");
+  });
+});
+
+describe("listRecentOps — persistence-level bound", () => {
+  it("decodes no more operation payloads than the requested limit", () => {
+    for (let index = 0; index < 300; index++) writeOp(mkOp(`op_recent_${index}`));
+    fsReads.operations = 0;
+    const recent = listRecentOps(256);
+    expect(recent).toHaveLength(256);
+    expect(fsReads.operations).toBe(256);
   });
 });
 

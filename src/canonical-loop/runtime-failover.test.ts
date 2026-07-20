@@ -7,6 +7,7 @@ import {
   failoverPolicyAllows,
   normalizeRuntimeFailure,
   runtimeFailoverEnabled,
+  runtimeFailureFeedsRouting,
   targetMeetsRequirements,
 } from "./runtime-failover.js";
 import type { TargetCapabilitySnapshot } from "../ops/operation-requirements.js";
@@ -47,6 +48,13 @@ describe("runtime failover failure taxonomy", () => {
     ["aborted", "cancelled"],
   ])("fails closed for %s", (code, message) => {
     expect(normalizeRuntimeFailure(code, message)).toBeNull();
+  });
+
+  it("never treats credential or budget drift as target-quality evidence", () => {
+    expect(runtimeFailureFeedsRouting("auth")).toBe(false);
+    expect(runtimeFailureFeedsRouting("billing")).toBe(false);
+    expect(runtimeFailureFeedsRouting("timeout")).toBe(true);
+    expect(runtimeFailureFeedsRouting("model_not_found")).toBe(true);
   });
 });
 

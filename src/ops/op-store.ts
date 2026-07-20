@@ -221,6 +221,24 @@ export function listOps(): Op[] {
   return out.sort((a, b) => String(b.startedAt || b.createdAt).localeCompare(String(a.startedAt || a.createdAt)));
 }
 
+/** Bounded persistence query for callers that need only recently mutated ops.
+ * It orders by operation.json metadata before decoding any persisted payload. */
+export function listRecentOps(limit: number): Op[] {
+  if (!existsSync(OPS_BASE) || !Number.isSafeInteger(limit) || limit <= 0) return [];
+  const candidates: Array<{ id: string; mtimeMs: number }> = [];
+  for (const id of readdirSync(OPS_BASE)) {
+    try {
+      const stat = statSync(join(OPS_BASE, id, "operation.json"));
+      if (stat.isFile()) candidates.push({ id, mtimeMs: stat.mtimeMs });
+    } catch { /* concurrently removed or incomplete op */ }
+  }
+  return candidates
+    .sort((a, b) => b.mtimeMs - a.mtimeMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, limit)
+    .map(({ id }) => readOp(id))
+    .filter((op): op is Op => op !== null);
+}
+
 /** Convenience: update just the status field + a few common transition fields. */
 export function setOpStatus(opId: string, status: OpStatus, extras: Partial<Op> = {}): Op | null {
   return withOpLock(opId, () => {

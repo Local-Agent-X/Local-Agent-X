@@ -18,6 +18,7 @@ export { discoverLocalRuntimes } from "./discovery.js";
 export {
   certifyLocalModel,
   hasPublishedCertification,
+  publishedCertificationSelectionHash,
   restorePublishedCertification,
   restorePublishedCertifications,
   type CertificationRunInput,

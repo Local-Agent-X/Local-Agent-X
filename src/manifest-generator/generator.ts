@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import { createLogger } from "../logger.js";
 import { MANIFEST_PATH } from "./paths.js";
@@ -33,6 +33,14 @@ export function generateManifest(): AppManifest {
 
 export function writeManifest(): void {
   const manifest = generateManifest();
+  try {
+    const existing = JSON.parse(readFileSync(MANIFEST_PATH, "utf8")) as AppManifest;
+    const { generatedAt: _existingGeneratedAt, ...existingContent } = existing;
+    const { generatedAt: _nextGeneratedAt, ...nextContent } = manifest;
+    if (JSON.stringify(existingContent) === JSON.stringify(nextContent)) return;
+  } catch {
+    // Missing or malformed manifests are replaced below.
+  }
   try {
     writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
     logger.info(`[manifest] Generated app-manifest.json (${manifest.pages.length} pages, ${manifest.apiRoutes.length} routes, ${manifest.tools.length} tools, ${manifest.apps.length} apps)`);

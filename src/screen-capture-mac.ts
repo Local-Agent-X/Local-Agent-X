@@ -10,7 +10,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, unlinkSync } from "node:fs";
+import { readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { ScreenCaptureOptions, ScreenCaptureResult } from "./screen-capture.js";
@@ -20,22 +20,44 @@ const SIPS = "/usr/bin/sips";
 
 /** Build the `screencapture` argv. Pure + exported for tests.
  *  `-x` mutes the shutter sound; `-D` is 1-based display number; `-R` is a
- *  capture rect in points (for the primary display this matches the tool
- *  API's "region relative to the chosen monitor" contract; secondary-display
- *  region math needs real bounds enumeration — multi-monitor macOS regions
- *  are primary-only for now, same limitation as screen-stream). */
+ *  capture rect in points. Primary-display regions match the tool API's
+ *  relative-coordinate contract; secondary regions are rejected because the
+ *  CLI cannot combine `-D` and a display-relative `-R` reliably. */
 export function buildScreencaptureArgs(
   outFile: string,
   options: Pick<ScreenCaptureOptions, "monitor" | "region">,
 ): string[] {
   const args = ["-x", "-t", "png"];
-  if (options.monitor != null) args.push("-D", String(Math.trunc(options.monitor) + 1));
+  const monitor = options.monitor ?? 0;
+  if (!Number.isFinite(monitor) || !Number.isInteger(monitor) || monitor < 0) {
+    throw new Error("Invalid monitor: must be a non-negative integer");
+  }
+  args.push("-D", String(monitor + 1));
   if (options.region) {
     const { x, y, width, height } = options.region;
+    if (![x, y, width, height].every(Number.isFinite)) {
+      throw new Error("Invalid region: coordinates and dimensions must be finite numbers");
+    }
+    if (width <= 0 || height <= 0) {
+      throw new Error("Invalid region: width and height must be greater than zero");
+    }
+    if (monitor !== 0) {
+      throw new Error("macOS region capture is only supported on the primary display; omit region for secondary displays");
+    }
     args.push("-R", `${x},${y},${width},${height}`);
   }
   args.push(outFile);
   return args;
+}
+
+export function cleanupCaptureFiles(tmpDir: string, stamp: string, format: "png" | "jpg"): void {
+  const escapedStamp = stamp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rawPattern = new RegExp(`^shot_${escapedStamp}(?: ?\\d+)?\\.png$`);
+  const outName = `shot_${stamp}_out.${format === "jpg" ? "jpg" : "png"}`;
+  for (const name of readdirSync(tmpDir)) {
+    if (!rawPattern.test(name) && name !== outName) continue;
+    unlinkSync(join(tmpDir, name));
+  }
 }
 
 /** Build the `sips` argv converting/scaling the captured PNG in place-to-out.
@@ -76,8 +98,9 @@ export function captureScreenMacImpl(
   const outFile = join(tmpDir, `shot_${stamp}_out.${format === "jpg" ? "jpg" : "png"}`);
 
   try {
+    const captureArgs = buildScreencaptureArgs(rawFile, options);
     try {
-      execFileSync(SCREENCAPTURE, buildScreencaptureArgs(rawFile, options), { timeout: 15_000 });
+      execFileSync(SCREENCAPTURE, captureArgs, { timeout: 15_000 });
     } catch (e) {
       const err = e as { stderr?: Buffer | string; message?: string };
       const reason = (err.stderr ? err.stderr.toString().trim() : "") || err.message || "unknown failure";
@@ -98,8 +121,6 @@ export function captureScreenMacImpl(
 
     return { image, format, width: outW, height: outH, capturedAt: new Date().toISOString() };
   } finally {
-    for (const f of [rawFile, outFile]) {
-      try { unlinkSync(f); } catch { /* not created */ }
-    }
+    cleanupCaptureFiles(tmpDir, stamp, format);
   }
 }

@@ -28,18 +28,28 @@ import {
 } from "./execution-backend.js";
 import { InProcessExecutionBackend } from "./in-process-execution-backend.js";
 import { runWorker } from "./worker.js";
+import { applyPreLeaseCancel } from "./cancel-handler.js";
+import {
+  ensureExecutionPlacement,
+  ExecutionPlacementRetryError,
+  markExecutionPlacementReady,
+  parseExecutionPlacement,
+  type PlacementWakeResult,
+} from "./execution-placement.js";
+import { emit } from "./event-emitter.js";
+import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.scheduler");
 const executionBackends = new ExecutionBackendRegistry(IN_PROCESS_EXECUTION_BACKEND_ID);
 executionBackends.register(new InProcessExecutionBackend(runWorker));
-const defaultExecutionBackendResolver = (): ExecutionBackend => executionBackends.resolve();
+const defaultExecutionBackendResolver = (id?: string): ExecutionBackend => executionBackends.resolve(id);
 let resolveExecutionBackend = defaultExecutionBackendResolver;
 
 /** Test-only dependency seat for scheduler parity tests. Production always
  * resolves the registry's default built-in backend. */
 export function _setExecutionBackendResolverForTest(
-  resolver: (() => ExecutionBackend) | null,
+  resolver: ((id?: string) => ExecutionBackend) | null,
 ): void {
   resolveExecutionBackend = resolver ?? defaultExecutionBackendResolver;
 }
@@ -154,6 +164,22 @@ export function wakeQueuedOp(opId: string, lane: CanonicalLane): void {
   scheduleQueuedRetry(opId, lane, 0);
 }
 
+/** Durable backend wake. Only the exact recorded identity + token can make a
+ * waiting placement runnable; stale target owners fail without enqueueing. */
+export function wakeExecutionPlacement(
+  opId: string,
+  identity: { backendId: string; targetId: string },
+  wakeToken: string,
+): PlacementWakeResult {
+  const result = markExecutionPlacementReady(opId, identity, wakeToken);
+  if (!result.ok) return result;
+  const op = readOp(opId);
+  if (!op || op.canonical?.state !== "queued") return { ok: false, reason: "not_queued" };
+  enqueueOp(opId, op.lane as CanonicalLane);
+  pumpScheduler();
+  return result;
+}
+
 export function pumpScheduler(): void {
   if (pumping) return;
   pumping = true;
@@ -173,9 +199,28 @@ export function pumpScheduler(): void {
       if (inUse >= cap) { i++; continue; }
       const op = readOp(q.opId);
       if (!op) { queue.splice(i, 1); continue; }
+      if (applyPreLeaseCancel(op)) { queue.splice(i, 1); continue; }
       const factory = resolveAdapterFactory(op);
       if (!factory) { i++; continue; } // No adapter — leave queued.
-      const backend = resolveExecutionBackend();
+      let backend: ExecutionBackend;
+      let placement;
+      try {
+        const recorded = parseExecutionPlacement(op.canonical?.executionPlacement);
+        backend = resolveExecutionBackend(recorded?.backendId);
+        placement = ensureExecutionPlacement(op, backend);
+      } catch (error) {
+        queue.splice(i, 1);
+        if (error instanceof ExecutionPlacementRetryError) {
+          scheduleQueuedRetry(op.id, q.lane, 50);
+          continue;
+        }
+        failPlacement(op, error as Error);
+        continue;
+      }
+      if (placement.disposition === "waiting") {
+        queue.splice(i, 1);
+        continue;
+      }
       // Resource guard: an op that declares a singleton resource lock already
       // held by an in-flight op (e.g. two local-GPU ops sharing gpu:0) is
       // SKIPPED and left in the queue — non-blocking, same shape as the
@@ -187,7 +232,7 @@ export function pumpScheduler(): void {
       acquire(op.resourceLocks); // hold the resource for THIS committed slot
       activeLocks.set(op.id, op.resourceLocks); // record for disk-free release
       queue.splice(i, 1);
-      void launch(op, factory, backend);
+      void launch(op, factory, backend, placement);
     }
   } finally {
     pumping = false;
@@ -198,12 +243,13 @@ async function launch(
   op: Op,
   factory: () => Adapter | Promise<Adapter>,
   backend: ExecutionBackend,
+  placement: NonNullable<NonNullable<Op["canonical"]>["executionPlacement"]>,
 ): Promise<void> {
   const lane = op.lane as CanonicalLane;
   let handle: ExecutionHandle | null = null;
   try {
     const adapter = await factory();
-    handle = backend.start({ op, adapter });
+    handle = backend.start({ op, adapter, placement });
     active.set(op.id, handle);
     launching.delete(op.id); // now tracked via `active`
     await handle.done;
@@ -244,6 +290,19 @@ async function launch(
       activeLocks.delete(op.id);
     }
     pumpScheduler(); // re-pump: an op skipped on this lock (or lane) retries now
+  }
+}
+
+function failPlacement(op: Op, error: Error): void {
+  logger.error(`execution placement failed for ${op.id}: ${error.message}`);
+  emit(op.id, "error", {
+    code: "execution_placement_invalid",
+    message: error.message,
+    retryable: false,
+  });
+  try { transitionOp(op, "failed", "execution_placement_invalid"); }
+  catch (transitionError) {
+    if (!(transitionError instanceof IllegalTransitionError)) throw transitionError;
   }
 }
 

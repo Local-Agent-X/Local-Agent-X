@@ -60,6 +60,8 @@ export type {
   CanonicalEvent,
   CanonicalEventType,
   CanonicalOpFields,
+  ExecutionPlacement,
+  ExecutionPlacementDisposition,
   OpTurnRow,
   OpMessageRow,
   PendingApprovalRecord,
@@ -99,6 +101,7 @@ export {
   resetScheduler,
   schedulerSnapshot,
   setLaneCapConfigReader,
+  wakeExecutionPlacement,
 } from "./scheduler.js";
 
 export {

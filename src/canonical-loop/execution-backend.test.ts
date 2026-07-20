@@ -10,6 +10,15 @@ import { InProcessExecutionBackend, type InProcessWorkerRunner } from "./in-proc
 
 const op = { id: "op-backend-parity" } as Op;
 const adapter = { name: "parity", version: "1" } as Adapter;
+const placement = {
+  schemaVersion: 1 as const,
+  backendId: IN_PROCESS_EXECUTION_BACKEND_ID,
+  targetId: "canonical-worker",
+  disposition: "ready" as const,
+  wakeToken: null,
+  wakeRequestedAt: null,
+  revision: 1,
+};
 
 type Outcome = "success" | "failure" | "cancel" | "pause" | "redirect" | "worker-throw";
 
@@ -42,7 +51,7 @@ describe("in-process execution backend parity", () => {
       const backend = new InProcessExecutionBackend(backendRunner);
 
       const direct = await observe(() => directRunner(op, adapter));
-      const throughBackend = await observe(() => backend.start({ op, adapter }));
+      const throughBackend = await observe(() => backend.start({ op, adapter, placement }));
 
       expect(throughBackend).toBe(direct);
       expect(directRunner).toHaveBeenCalledOnce();
@@ -61,6 +70,10 @@ describe("execution backend registry", () => {
     registry.register(backend);
     expect(registry.resolve()).toBe(backend);
     expect(registry.resolve(IN_PROCESS_EXECUTION_BACKEND_ID)).toBe(backend);
+  });
+
+  it("selects the stable in-process target", () => {
+    expect(backend.place(op)).toEqual({ targetId: "canonical-worker", disposition: "ready" });
   });
 
   it("rejects unknown ids instead of silently falling back", () => {

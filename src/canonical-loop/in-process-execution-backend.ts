@@ -1,5 +1,6 @@
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
+import type { ExecutionPlacement } from "./types.js";
 import {
   IN_PROCESS_EXECUTION_BACKEND_ID,
   type ExecutionBackend,
@@ -17,10 +18,22 @@ export type InProcessWorkerRunner = (op: Op, adapter: Adapter) => InProcessExecu
  * worker. It adds placement selection without adding another execution loop. */
 export class InProcessExecutionBackend implements ExecutionBackend {
   readonly id = IN_PROCESS_EXECUTION_BACKEND_ID;
+  private readonly targetId = "canonical-worker";
 
   constructor(private readonly runner: InProcessWorkerRunner) {}
 
-  start({ op, adapter }: ExecutionBackendStartRequest): InProcessExecutionHandle {
+  place(_op: Op): { targetId: string; disposition: "ready" } {
+    return { targetId: this.targetId, disposition: "ready" };
+  }
+
+  acceptsPlacement(placement: ExecutionPlacement): boolean {
+    return placement.backendId === this.id && placement.targetId === this.targetId;
+  }
+
+  start({ op, adapter, placement }: ExecutionBackendStartRequest): InProcessExecutionHandle {
+    if (placement.backendId !== this.id || placement.targetId !== this.targetId) {
+      throw new Error("in-process execution placement identity mismatch");
+    }
     return this.runner(op, adapter);
   }
 }

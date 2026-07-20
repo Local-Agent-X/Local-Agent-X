@@ -39,6 +39,9 @@ function deferred(): Deferred {
 
 class ControlledBackend implements ExecutionBackend {
   readonly id = "controlled-test";
+  readonly decisions = new Map<string, ReturnType<ExecutionBackend["place"]>>();
+  readonly place = vi.fn((op: Op) => this.decisions.get(op.id)
+    ?? { targetId: `target-${op.id}`, disposition: "ready" as const });
   readonly starts = vi.fn((request: ExecutionBackendStartRequest) => {
     if (this.throwOnStart.delete(request.op.id)) throw new Error("worker start threw");
     const run = deferred();
@@ -49,6 +52,8 @@ class ControlledBackend implements ExecutionBackend {
   });
   readonly runs = new Map<string, Deferred[]>();
   readonly throwOnStart = new Set<string>();
+
+  acceptsPlacement(): boolean { return true; }
 
   start(request: ExecutionBackendStartRequest): { done: Promise<void> } {
     return this.starts(request);
@@ -122,7 +127,15 @@ describe("scheduler execution-backend parity", () => {
     submit(op);
 
     await waitForStarts(backend, 1);
-    expect(backend.starts.mock.calls[0][0]).toEqual({ op, adapter });
+    expect(backend.starts.mock.calls[0][0]).toEqual({
+      op: expect.objectContaining({ id: op.id }),
+      adapter,
+      placement: expect.objectContaining({
+        backendId: backend.id,
+        targetId: `target-${op.id}`,
+        disposition: "ready",
+      }),
+    });
     backend.latest(op.id).resolve();
   });
 

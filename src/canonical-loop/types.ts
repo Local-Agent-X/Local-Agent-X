@@ -120,6 +120,23 @@ export interface CanonicalOpFields {
    * queued while this timestamp is in the future, so process restart resumes
    * the same retry instead of losing an in-memory timer. */
   retryNotBefore?: string | null;
+  /** Durable scheduler-to-backend placement. Absence is the legacy
+   * in-process shape; the scheduler stamps it before the first backend start. */
+  executionPlacement?: ExecutionPlacement;
+}
+
+export type ExecutionPlacementDisposition = "ready" | "waiting";
+
+export interface ExecutionPlacement {
+  schemaVersion: 1;
+  backendId: string;
+  targetId: string;
+  disposition: ExecutionPlacementDisposition;
+  /** Exact backend-issued token required to wake a waiting placement. */
+  wakeToken: string | null;
+  wakeRequestedAt: string | null;
+  /** Monotonic metadata fence. Every accepted wake advances it. */
+  revision: number;
 }
 
 // ── op_turns row (PRD §11) ────────────────────────────────────────────────

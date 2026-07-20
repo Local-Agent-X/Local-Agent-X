@@ -61,6 +61,7 @@ const logger = createLogger("canonical-loop.store");
  */
 export function nextEventSeq(opId: string): number {
   const rows = readDurableJsonl(canonicalEventsPath(opId), eventValidator(opId));
+  assertEventSequence(opId, rows);
   return rows.length ? rows[rows.length - 1].seq + 1 : 0;
 }
 
@@ -128,6 +129,7 @@ function appendCanonicalEventWithMode(
         appendKnownGoodJsonl(path, event);
       } else {
         const result = updateDurableJsonl(path, eventValidator(opId), (rows) => {
+          assertEventSequence(opId, rows);
           event = { ...event, seq: rows.length ? rows[rows.length - 1].seq + 1 : 0 };
           return event;
         });
@@ -174,12 +176,16 @@ function isCanonicalEvent(value: unknown): value is CanonicalEvent {
 }
 
 function eventValidator(opId: string): (value: unknown) => value is CanonicalEvent {
-  let expectedSeq = 0;
-  return (value: unknown): value is CanonicalEvent => {
-    if (!isCanonicalEvent(value) || value.opId !== opId || value.seq !== expectedSeq) return false;
-    expectedSeq++;
-    return true;
-  };
+  return (value: unknown): value is CanonicalEvent =>
+    isCanonicalEvent(value) && value.opId === opId;
+}
+
+function assertEventSequence(opId: string, rows: readonly CanonicalEvent[]): void {
+  for (let index = 0; index < rows.length; index++) {
+    if (rows[index].seq !== index) {
+      throw new Error(`canonical event seq gap detected for ${opId} at index ${index}: got ${rows[index].seq}`);
+    }
+  }
 }
 
 /**

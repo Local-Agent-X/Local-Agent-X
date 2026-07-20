@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { commitTurn, type CommitTurnInput } from "../src/canonical-loop/checkpoint.js";
 import { acquireLease, type LeaseClaim } from "../src/canonical-loop/lease.js";
 import { canonicalEventsPath, opMessagesPath, opTurnPath, opTurnsDir } from "../src/canonical-loop/schema.js";
-import { appendCanonicalEvent, appendOpMessage, readCanonicalEvents, readOpMessages, readOpTurn } from "../src/canonical-loop/store.js";
+import {
+  appendCanonicalEvent,
+  appendCanonicalEventStrict,
+  appendOpMessage,
+  readCanonicalEvents,
+  readOpMessages,
+  readOpTurn,
+} from "../src/canonical-loop/store.js";
 import {
   _setTurnCommitWriteHookForTests,
   readLegacyMessageSeeds,
@@ -322,16 +329,20 @@ describe("projection identity", () => {
 });
 
 describe("durable projections and publication", () => {
-  it("truncates a partial canonical-event tail and assigns the next gapless seq", () => {
+  it("repairs only a partial event tail and preserves a complete semantic sequence error", () => {
     const { op } = mkOp("event-tail");
     appendCanonicalEvent(op.id, "turn_started", { turnIdx: 0 });
     appendFileSync(canonicalEventsPath(op.id), "{\"opId\":");
     appendCanonicalEvent(op.id, "message_appended", { messageId: "m" });
+    expect(readCanonicalEvents(op.id).map((event) => event.seq)).toEqual([0, 1]);
     appendFileSync(canonicalEventsPath(op.id), JSON.stringify({
       opId: op.id, seq: 99, type: "error", ts: new Date().toISOString(), body: null,
     }) + "\n");
-    appendCanonicalEvent(op.id, "turn_committed", { turnIdx: 0 });
-    expect(readCanonicalEvents(op.id).map((event) => event.seq)).toEqual([0, 1, 2]);
+    const before = readFileSync(canonicalEventsPath(op.id), "utf-8");
+    expect(readCanonicalEvents(op.id).map((event) => event.seq)).toEqual([0, 1, 99]);
+    expect(() => appendCanonicalEventStrict(op.id, "turn_committed", { turnIdx: 0 }))
+      .toThrow("seq gap detected");
+    expect(readFileSync(canonicalEventsPath(op.id), "utf-8")).toBe(before);
   });
 
   it("repairs an action tail and keeps once-only projection idempotent", () => {

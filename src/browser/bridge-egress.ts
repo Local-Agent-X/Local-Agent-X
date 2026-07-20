@@ -39,7 +39,13 @@ export function answerEgressAsk(ask: EgressAskMessage): void {
 	let allowed = false;
 	try {
 		const selfPort = process.env.LAX_PORT ?? String(getRuntimeConfig().port);
-		allowed = evaluateEgressForUrl(ask.url, selfPort).allowed === true;
+		const decision = evaluateEgressForUrl(ask.url, selfPort);
+		allowed = decision.allowed === true;
+		// A silent deny here renders in the browser as ERR_BLOCKED_BY_CLIENT with
+		// ZERO server-side trace — undiagnosable (2026-07-20). Name the reason.
+		if (!allowed) {
+			logger.warn(`[browser-bridge] egress DENY ${ask.url.slice(0, 120)}: ${decision.reason ?? "policy"}`);
+		}
 		if (allowed) allowed = passesPageEgressTaint(ask);
 	} catch (e) {
 		logger.warn(`[browser-bridge] egress evaluation failed for ${ask.url}: ${(e as Error).message}`);

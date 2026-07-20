@@ -14,7 +14,37 @@ import type { ChildProcess } from "child_process";
 import { viewIdForWebContents } from "./browser-views";
 import type { EgressDecision, EgressRequest } from "./browser-partition";
 
-const EGRESS_ASK_DEADLINE_MS = 250; // per-hop policy ask; fail closed past this
+/**
+ * Per-hop policy ask deadline; fail closed past it. Sized to tolerate the
+ * server's REAL event-loop stalls, not an idealized round-trip: during agent
+ * turns the child blocks for seconds at a time (measured 2026-07-20:
+ * selectTools 10.5s, buildSystemPrompt 0.7s), and at the old 250ms every
+ * in-app request timing out → denied rendered the whole browser as
+ * ERR_BLOCKED_BY_CLIENT / "You're offline" exactly while the agent was
+ * thinking. Chromium happily holds a webRequest callback this long — a slow
+ * page beats a spuriously offline one. A DEAD child never waits this out:
+ * proc.connected/send-failure deny immediately above.
+ */
+const EGRESS_ASK_DEADLINE_MS = 15_000;
+
+/** Rate-limited timeout-deny telemetry — one line per window, with a count,
+ *  so a stalled server is diagnosable from the desktop log instead of
+ *  looking like a site outage. */
+const TIMEOUT_LOG_WINDOW_MS = 10_000;
+let timeoutDenies = 0;
+let timeoutWindowStart = 0;
+
+function noteTimeoutDeny(url: string): void {
+	const now = Date.now();
+	timeoutDenies++;
+	if (now - timeoutWindowStart < TIMEOUT_LOG_WINDOW_MS) return;
+	console.warn(
+		`[server-bridge-egress] ${timeoutDenies} egress ask(s) DENIED on the ${EGRESS_ASK_DEADLINE_MS}ms deadline ` +
+		`(server event loop stalled?) — latest: ${url.slice(0, 120)}`,
+	);
+	timeoutWindowStart = now;
+	timeoutDenies = 0;
+}
 
 let egressSeq = 0;
 const pendingEgressAsks = new Map<number, (allowed: boolean) => void>();
@@ -33,7 +63,7 @@ export function askServerEgress(proc: ChildProcess, req: EgressRequest): Promise
 		let timer: ReturnType<typeof setTimeout>;
 		const finish = (allowed: boolean) => { clearTimeout(timer); pendingEgressAsks.delete(id); resolve({ allowed }); };
 		pendingEgressAsks.set(id, finish);
-		timer = setTimeout(() => finish(false), EGRESS_ASK_DEADLINE_MS);
+		timer = setTimeout(() => { noteTimeoutDeny(req.url); finish(false); }, EGRESS_ASK_DEADLINE_MS);
 		try {
 			const msg: Record<string, unknown> = { type: "lax:browser-egress-ask", id, url: req.url };
 			if (req.method) msg.method = req.method;

@@ -183,6 +183,44 @@ describe("installer artifact rollback", () => {
     expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
   });
 
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("rejects a dangling junction ancestor before backup", () => {
+    const f = fixture();
+    const vanished = join(f.base, "vanished");
+    mkdirSync(vanished);
+    symlinkSync(vanished, join(f.installRoot, "desktop"), process.platform === "win32" ? "junction" : "dir");
+    rmSync(vanished, { recursive: true });
+    expect(existsSync(join(f.installRoot, "desktop"))).toBe(false);
+    expect(() => createInstallRollback(f).begin()).toThrow(/linked/);
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK).each([
+    "after-backup-journal", "after-backup", "before-restore", "after-restore", "after-verified",
+  ])("revalidates linked ancestors after the %s fault boundary", (faultPoint) => {
+    const f = fixture();
+    const outside = join(f.base, `swap-${faultPoint}`);
+    mkdirSync(join(outside, "node_modules"), { recursive: true });
+    writeFileSync(join(outside, "node_modules", "keep.txt"), "outside-safe");
+    let swapped = false;
+    const swap = (point: string) => {
+      if (point !== faultPoint || swapped) return;
+      swapped = true;
+      symlinkSync(outside, join(f.installRoot, "desktop"), process.platform === "win32" ? "junction" : "dir");
+    };
+    const transaction = createInstallRollback({ ...f, installerFault: swap });
+    if (faultPoint.startsWith("after-backup")) {
+      expect(() => transaction.begin()).toThrow(/paths changed|linked/);
+    } else {
+      transaction.begin();
+      if (faultPoint === "after-verified") expect(() => transaction.verified()).toThrow(/paths changed|linked/);
+      else expect(() => transaction.rollback("required failure")).toThrow(/paths changed|linked/);
+    }
+    expect(swapped).toBe(true);
+    expect(readFileSync(join(outside, "node_modules", "keep.txt"), "utf-8")).toBe("outside-safe");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
   it("keeps restore retryable across a kill at the restore boundary", () => {
     const f = fixture();
     const transaction = createInstallRollback({ ...f, installerFault: (point: string) => {

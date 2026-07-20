@@ -209,12 +209,12 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;
           // Surface the worker's ACTUAL final message, not a bare "task
           // completed". On completed, the final assistant text IS the result
-          // the parent asked for; on failure lead with the error but fall back
-          // to the worker's last words, then the bare status.
+          // the parent asked for; on failure preserve the durable failure fact
+          // rather than replaying stale assistant text from before termination.
           const finalText = extractFinalAssistantText(event.opId);
           const persistedSummary = status === "completed"
             ? (finalText || "task completed")
-            : (op?.lastFailureReason || finalText || status);
+            : (op?.lastFailureReason || status);
           const summary = persistedSummary.slice(0, 400);
 
           // Surface an "Open" link on the AGENTS sidebar card. Resolution

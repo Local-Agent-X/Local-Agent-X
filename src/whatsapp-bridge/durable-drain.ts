@@ -7,15 +7,34 @@ export async function drainRecoverableWhatsApp(deps: {
   dispatch: (jid: string, phone: string, reply: BridgeReply) => Promise<boolean>;
 }): Promise<boolean> {
   let retry = false;
+  const errors: unknown[] = [];
   for (const request of listRecoverableInboundRequests("whatsapp")) {
-    const raw = await deps.onMessage(request);
-    if (!raw) continue;
-    const reply = typeof raw === "string" ? { text: raw, speakable: raw } : raw;
-    if (reply.deferDelivery) { retry = true; continue; }
-    const delivered = await deps.dispatch(request.deliveryTarget ?? toJid(request.from), request.from, reply);
-    await reply.acknowledgeDelivery?.(delivered);
-    if (!delivered) retry = true;
+    try {
+      const raw = await deps.onMessage(request);
+      if (!raw) continue;
+      const reply = typeof raw === "string" ? { text: raw, speakable: raw } : raw;
+      if (reply.deferDelivery) { retry = true; continue; }
+      let delivered: boolean;
+      try {
+        delivered = await deps.dispatch(request.deliveryTarget ?? toJid(request.from), request.from, reply);
+      } catch (error) {
+        try {
+          await reply.acknowledgeDelivery?.(false);
+        } catch (releaseError) {
+          errors.push(releaseError);
+          continue;
+        }
+        errors.push(error);
+        continue;
+      }
+      await reply.acknowledgeDelivery?.(delivered);
+      if (!delivered) retry = true;
+    } catch (error) {
+      errors.push(error);
+    }
   }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "multiple WhatsApp durable receipts failed");
   return retry;
 }
 

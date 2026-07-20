@@ -1,9 +1,10 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeOp } from "../ops/op-store.js";
-import { trackOpForSession, listOpsForSession } from "../ops/session-bridge.js";
+import { appendOpMessage } from "./store.js";
+import { trackOpForSession, listOpsForSession, setSessionBroadcaster } from "../ops/session-bridge.js";
 import { recordCanonicalEvent } from "./session-bridge-observer.js";
 import type { CanonicalEvent } from "./types.js";
 
@@ -71,5 +72,25 @@ describe("session-bridge-observer — terminal release for suppressed op types",
     recordCanonicalEvent(stateChanged(cancelId, "cancelled"));
 
     expect(listOpsForSession(sessionId)).toEqual([]);
+  });
+
+  it.each(["failed", "cancelled"] as const)("preserves %s status instead of replaying stale success text", (status) => {
+    const sessionId = `sess-obs-${status}`;
+    const opId = `op_replay_${status}_1`;
+    makeOp(opId, "research");
+    appendOpMessage({
+      opId, messageId: `message-${status}`, turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: { text: "Done." }, createdAt: new Date().toISOString(),
+    });
+    trackOpForSession(opId, sessionId, "phone task");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, status));
+
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      type: "bg_op_completed", status, summary: status,
+    }));
+    expect(broadcast).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ summary: "Done." }));
   });
 });

@@ -86,6 +86,10 @@ export function createBridgeHandler(deps: BridgeHandlerDeps): BridgeHandler {
       channel: platform, deliveryId: payload.deliveryId, sessionId: route.sessionKey,
       text: payload.deliveryFingerprint ?? payload.text,
     }) : null;
+    if (payload.intent === "steer" || persistedPlan?.kind === "steer") {
+      const injectionScore = detectInjection(text).reduce((max, hit) => Math.max(max, hit.score), 0);
+      if (injectionScore >= 0.85) return "I can't process that message — it was flagged by security filters.";
+    }
     if (persistedPlan) return durableCommand(persistedPlan);
 
     if (payload.intent === "steer") {

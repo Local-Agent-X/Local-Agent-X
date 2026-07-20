@@ -53,7 +53,7 @@ afterEach(() => {
 });
 
 describe("runtime plugin registry failure classification", () => {
-  it.each(["EAGAIN", "EBUSY", "EACCES"])("preserves active autonomy across one-shot %s reads", async (code) => {
+  it.each(["EAGAIN", "EBUSY", "EACCES", "ENOENT", "EPERM", "EMFILE"])("preserves active autonomy across one-shot %s reads", async (code) => {
     let fail: string | undefined;
     const h = await harness((path, encoding) => {
       if (!fail) return readFileSync(path, encoding);
@@ -80,6 +80,23 @@ describe("runtime plugin registry failure classification", () => {
     expect(h.toolRegistry.get("registry_probe")).toBe(stale);
     expect(await stale.execute({})).toEqual({ content: "executed" });
     expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "loaded" })]);
+    h.surface.deactivate("runtime-registry");
+  });
+
+  it.each(["EAGAIN", "EBUSY", "EACCES", "ENOENT", "EPERM", "EMFILE"])("keeps failed %s loads transactional and retryable", async (code) => {
+    let fail: string | undefined;
+    const h = await harness((path, encoding) => {
+      if (!fail) return readFileSync(path, encoding);
+      const current = fail; fail = undefined;
+      throw Object.assign(new Error(`private ${current} path`), { code: current });
+    });
+    h.store.write({});
+    fail = code;
+    await expect(h.manager.loadPlugin(h.pluginDir)).rejects.toThrow("Plugin registry read is temporarily unavailable");
+    expect(h.manager.isLoaded("runtime-registry")).toBe(false);
+    expect(h.toolRegistry.get("registry_probe")).toBeUndefined();
+    expect(h.manager.listPlugins()).toEqual([]);
+    await expect(h.manager.loadPlugin(h.pluginDir)).resolves.toEqual(expect.objectContaining({ id: "runtime-registry" }));
     h.surface.deactivate("runtime-registry");
   });
 
@@ -127,6 +144,110 @@ describe("runtime plugin registry failure classification", () => {
     expect(await active.execute({})).toEqual({ content: "executed" });
     changeOnConfirmation = false;
     h.store.write(durable);
+    expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "loaded" })]);
+    h.surface.deactivate("runtime-registry");
+  });
+
+  it("preserves exact needs-secrets state when an inner restore confirmation read fails", async () => {
+    let reads = 0;
+    let failAt = 0;
+    const available = new Set<string>();
+    const h = await harness((path, encoding) => {
+      reads += 1;
+      if (reads === failAt) throw Object.assign(new Error("EMFILE at C:\\private\\registry.json"), { code: "EMFILE" });
+      return readFileSync(path, encoding);
+    }, "PLUGIN_TOKEN");
+    const entry = readFileSync(join(h.pluginDir, "index.mjs"), "utf-8");
+    const manifest = readFileSync(join(h.pluginDir, "manifest.json"), "utf-8");
+    h.store.write({
+      "runtime-registry": {
+        enabled: true,
+        path: h.pluginDir,
+        entryHash: createHash("sha256").update(entry).digest("hex"),
+        manifestHash: createHash("sha256").update(manifest).digest("hex"),
+      },
+    });
+    h.manager.bindSecretAvailability({ has: (name) => available.has(name) });
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([]);
+    expect(h.manager.listPlugins()).toEqual([expect.objectContaining({
+      id: "runtime-registry", status: "needs_secrets", missingSecrets: ["PLUGIN_TOKEN"],
+    })]);
+
+    available.add("PLUGIN_TOKEN");
+    failAt = reads + 4;
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([]);
+    const deferred = h.manager.listPlugins();
+    expect(deferred).toEqual([expect.objectContaining({
+      id: "runtime-registry", status: "needs_secrets", missingSecrets: ["PLUGIN_TOKEN"],
+    })]);
+    expect(JSON.stringify(deferred)).not.toContain("private");
+
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([expect.objectContaining({ id: "runtime-registry" })]);
+    expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "loaded" })]);
+    h.surface.deactivate("runtime-registry");
+  });
+
+  it("does not turn a registered plugin into a failed plugin on transient inner restore I/O", async () => {
+    let reads = 0;
+    let failAt = 0;
+    const h = await harness((path, encoding) => {
+      reads += 1;
+      if (reads === failAt) throw Object.assign(new Error("EPERM at C:\\private\\registry.json"), { code: "EPERM" });
+      return readFileSync(path, encoding);
+    });
+    const entry = readFileSync(join(h.pluginDir, "index.mjs"), "utf-8");
+    const manifest = readFileSync(join(h.pluginDir, "manifest.json"), "utf-8");
+    h.store.write({
+      "runtime-registry": {
+        enabled: true,
+        path: h.pluginDir,
+        entryHash: createHash("sha256").update(entry).digest("hex"),
+        manifestHash: createHash("sha256").update(manifest).digest("hex"),
+      },
+    });
+    expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "registered" })]);
+
+    failAt = reads + 4;
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([]);
+    expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "registered" })]);
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([expect.objectContaining({ id: "runtime-registry" })]);
+    h.surface.deactivate("runtime-registry");
+  });
+
+  it("preserves an existing failed projection across transient inner restore I/O", async () => {
+    let reads = 0;
+    let failAt = 0;
+    const h = await harness((path, encoding) => {
+      reads += 1;
+      if (reads === failAt) throw Object.assign(new Error("EMFILE at C:\\private\\registry.json"), { code: "EMFILE" });
+      return readFileSync(path, encoding);
+    });
+    const entry = readFileSync(join(h.pluginDir, "index.mjs"), "utf-8");
+    const manifest = readFileSync(join(h.pluginDir, "manifest.json"), "utf-8");
+    const registration = {
+      enabled: true,
+      path: h.pluginDir,
+      entryHash: "f".repeat(64),
+      manifestHash: createHash("sha256").update(manifest).digest("hex"),
+    };
+    h.store.write({ "runtime-registry": registration });
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([]);
+    const failed = h.manager.listPlugins();
+    expect(failed).toEqual([expect.objectContaining({
+      id: "runtime-registry", status: "failed", error: "Integrity verification failed",
+    })]);
+
+    failAt = reads + 4;
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([]);
+    expect(h.manager.listPlugins()).toEqual(failed);
+
+    h.store.write({
+      "runtime-registry": {
+        ...registration,
+        entryHash: createHash("sha256").update(entry).digest("hex"),
+      },
+    });
+    await expect(h.manager.loadAllEnabled()).resolves.toEqual([expect.objectContaining({ id: "runtime-registry" })]);
     expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "loaded" })]);
     h.surface.deactivate("runtime-registry");
   });
@@ -193,6 +314,33 @@ describe("runtime plugin registry failure classification", () => {
       id: "runtime-registry", status: "loaded", missingSecrets: [],
     })]);
     expect(await h.toolRegistry.get("registry_probe")!.execute({})).toEqual({ content: "executed" });
+    h.surface.deactivate("runtime-registry");
+  });
+
+  it("rolls an automatic secret-added retry back when nested registry confirmation is unavailable", async () => {
+    let reads = 0;
+    let failAt = 0;
+    const available = new Set<string>();
+    const h = await harness((path, encoding) => {
+      reads += 1;
+      if (reads === failAt) throw Object.assign(new Error("EPERM at C:\\private\\registry.json"), { code: "EPERM" });
+      return readFileSync(path, encoding);
+    }, "PLUGIN_TOKEN");
+    h.store.write({});
+    h.manager.bindSecretAvailability({ has: (name) => available.has(name) });
+    await expect(h.manager.loadPlugin(h.pluginDir)).rejects.toThrow("PLUGIN_TOKEN");
+
+    available.add("PLUGIN_TOKEN");
+    failAt = reads + 4;
+    await expect(h.manager.onSecretAdded("PLUGIN_TOKEN")).resolves.toBeUndefined();
+    const blocked = h.manager.listPlugins();
+    expect(blocked).toEqual([expect.objectContaining({
+      id: "runtime-registry", status: "needs_secrets", missingSecrets: ["PLUGIN_TOKEN"],
+    })]);
+    expect(JSON.stringify(blocked)).not.toContain("private");
+
+    await expect(h.manager.onSecretAdded("PLUGIN_TOKEN")).resolves.toBeUndefined();
+    expect(h.manager.listPlugins()).toEqual([expect.objectContaining({ id: "runtime-registry", status: "loaded" })]);
     h.surface.deactivate("runtime-registry");
   });
 });

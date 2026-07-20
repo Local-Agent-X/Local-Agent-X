@@ -309,6 +309,10 @@ export class PluginManager {
         if (this.loaded.has(id)) results.push(manifest);
       } catch (error) {
         if (error instanceof MissingPluginSecretsError) continue;
+        if (isPluginRegistryUnavailableError(error)) {
+          logger.warn(`[plugin] Restore deferred for ${safePluginId(id)}: Plugin registry is temporarily unavailable`);
+          continue;
+        }
         const reason = safeRestoreError(error);
         this.restoreErrors.set(id, { error: reason });
         logger.warn(`[plugin] Restore failed for ${safePluginId(id)}: ${reason}`);
@@ -376,7 +380,9 @@ export class PluginManager {
   }
 
   async onSecretAdded(name: string): Promise<void> {
-    await this.secretLifecycle.restoreForAddedSecret(name, (id) => this.retryPlugin(id));
+    await this.secretLifecycle.restoreForAddedSecret(
+      name, (id) => this.retryPlugin(id), isPluginRegistryUnavailableError,
+    );
   }
   onSecretDeleted(name: string): void {
     this.secretLifecycle.handleDeletedSecret(name, this.loaded, (id) => this.toolSurface?.deactivate(id));

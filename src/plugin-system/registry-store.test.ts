@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -74,7 +74,7 @@ describe("plugin registry persistence", () => {
     expect(() => createPluginRegistryStore(path).read()).toThrow("Plugin registry is invalid");
   });
 
-  it.each(["EAGAIN", "EBUSY", "EACCES"])("preserves typed cause and code for %s read unavailability", (code) => {
+  it.each(["EAGAIN", "EBUSY", "EACCES", "ENOENT", "EPERM", "EMFILE"])("preserves typed cause and code for %s read unavailability", (code) => {
     const path = tempRegistryPath();
     writeFileSync(path, "{}", "utf-8");
     const cause = Object.assign(new Error("private path"), { code });
@@ -87,6 +87,34 @@ describe("plugin registry persistence", () => {
       expect((error as Error).message).not.toContain("private");
       expect(isPluginRegistryContentError(error)).toBe(false);
     }
+  });
+
+  it.each(["missing-to-valid", "valid-to-missing"] as const)("treats %s confirmation as unavailable", (transition) => {
+    const path = tempRegistryPath();
+    writeFileSync(path, "{}", "utf-8");
+    let stats = 0;
+    const missing = () => { throw Object.assign(new Error("private path"), { code: "ENOENT" }); };
+    const store = createPluginRegistryStore(path, undefined, undefined, (target) => {
+      stats += 1;
+      if (transition === "missing-to-valid" && stats === 1) return missing();
+      if (transition === "valid-to-missing" && stats === 3) return missing();
+      return statSync(target);
+    });
+
+    expect(() => store.read()).toThrow("Plugin registry read is temporarily unavailable");
+  });
+
+  it("treats an unavailable confirmation read as unavailable rather than corrupt", () => {
+    const path = tempRegistryPath();
+    writeFileSync(path, "{broken", "utf-8");
+    let reads = 0;
+    const store = createPluginRegistryStore(path, undefined, (target, encoding) => {
+      reads += 1;
+      if (reads === 2) throw Object.assign(new Error("private path"), { code: "EMFILE" });
+      return readFileSync(target, encoding);
+    });
+
+    expect(() => store.read()).toThrow("Plugin registry read is temporarily unavailable");
   });
 
   it("brands malformed durable content separately from transient I/O", () => {

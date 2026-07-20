@@ -112,20 +112,26 @@ type RegistryWriter = (path: string, data: string) => void;
 type RegistryReader = (path: string, encoding: "utf-8") => string;
 type RegistryIdentity = { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number };
 type RegistryStat = (path: string) => RegistryIdentity;
+type RegistryObservation = { kind: "missing" } | { kind: "snapshot"; raw: string; identity: RegistryIdentity };
 
 function sameIdentity(left: RegistryIdentity, right: RegistryIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.size === right.size &&
     left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
 }
 
-function readCommittedSnapshot(path: string, read: RegistryReader, stat: RegistryStat): { raw: string; identity: RegistryIdentity } {
-  const before = stat(path);
+function observeCommittedRegistry(path: string, read: RegistryReader, stat: RegistryStat): RegistryObservation {
+  let before: RegistryIdentity;
+  try { before = stat(path); }
+  catch (cause) {
+    if (systemErrorCode(cause) === "ENOENT") return { kind: "missing" };
+    throw cause;
+  }
   const raw = read(path, "utf-8");
   const after = stat(path);
   if (!sameIdentity(before, after) || Buffer.byteLength(raw, "utf-8") !== after.size) {
     throw new Error("Plugin registry snapshot changed during read");
   }
-  return { raw, identity: after };
+  return { kind: "snapshot", raw, identity: after };
 }
 
 export function createPluginRegistryStore(
@@ -136,25 +142,24 @@ export function createPluginRegistryStore(
 ): PluginRegistryStore {
   return {
     read(): PluginRegistry {
-      let first: { raw: string; identity: RegistryIdentity };
+      let first: RegistryObservation;
       try {
-        first = readCommittedSnapshot(path, readCommitted, statCommitted);
+        first = observeCommittedRegistry(path, readCommitted, statCommitted);
       } catch (cause) {
-        if (systemErrorCode(cause) === "ENOENT") return {};
         throw new PluginRegistryUnavailableError("read", cause);
       }
-      try { return parseRegistry(first.raw); }
-      catch (firstCause) {
-        let second: { raw: string; identity: RegistryIdentity };
-        try { second = readCommittedSnapshot(path, readCommitted, statCommitted); }
-        catch (cause) { throw new PluginRegistryUnavailableError("read", cause); }
-        if (first.raw !== second.raw || !sameIdentity(first.identity, second.identity)) {
-          throw new PluginRegistryUnavailableError("read", firstCause);
-        }
-        try { parseRegistry(second.raw); }
-        catch (secondCause) { throw new PluginRegistryContentError(secondCause); }
-        throw new PluginRegistryUnavailableError("read", firstCause);
+      let second: RegistryObservation;
+      try { second = observeCommittedRegistry(path, readCommitted, statCommitted); }
+      catch (cause) { throw new PluginRegistryUnavailableError("read", cause); }
+      if (first.kind === "missing" || second.kind === "missing") {
+        if (first.kind === "missing" && second.kind === "missing") return {};
+        throw new PluginRegistryUnavailableError("read");
       }
+      if (first.raw !== second.raw || !sameIdentity(first.identity, second.identity)) {
+        throw new PluginRegistryUnavailableError("read");
+      }
+      try { return parseRegistry(second.raw); }
+      catch (cause) { throw new PluginRegistryContentError(cause); }
     },
     write(registry: PluginRegistry): void {
       try {

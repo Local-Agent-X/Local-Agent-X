@@ -116,16 +116,22 @@ export class PluginSecretLifecycle {
     return pending;
   }
 
-  async restoreForAddedSecret(name: string, retry: (id: string) => Promise<PluginManifest>): Promise<void> {
+  async restoreForAddedSecret(
+    name: string,
+    retry: (id: string) => Promise<PluginManifest>,
+    isTransient: (error: unknown) => boolean = () => false,
+  ): Promise<void> {
     const ids = [...this.blocked.entries()]
       .filter(([, blocked]) => blocked.missingSecrets.includes(name))
       .map(([id]) => id);
     for (const id of ids) {
       const blocked = this.blocked.get(id);
       if (!blocked) continue;
+      const before = this.snapshot(id);
       blocked.missingSecrets = missingSecrets(blocked.manifest, this.availability);
       if (blocked.missingSecrets.length > 0) continue;
-      try { await retry(id); } catch { /* lifecycle owner retains a safe failure status */ }
+      try { await retry(id); }
+      catch (error) { if (isTransient(error)) this.restore(id, before); }
     }
   }
 

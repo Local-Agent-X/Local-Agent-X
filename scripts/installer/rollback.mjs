@@ -21,7 +21,7 @@ function installIdentity(root, dataDirectory) {
 }
 
 function validJournal(value, root, backupRoot) {
-  if (!value || value.version !== VERSION || !["active", "verified", "restored"].includes(value.status)) return false;
+  if (!value || value.version !== VERSION || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
   if (resolve(value.identity?.root || "") !== resolve(root)) return false;
   if (typeof value.identity.version !== "string") return false;
   if (value.identity.source !== null && !/^[0-9a-f]{40}$/.test(value.identity.source?.commit || "")) return false;
@@ -73,6 +73,11 @@ export function createInstallRollback(context) {
       rmSync(directory, { recursive: true, force: true });
       return { restored: false, outcome: "verified-install-retained" };
     }
+    if (journal.status === "active") {
+      journal.status = "rolling-back";
+      journal.reason = reason;
+      save(journal);
+    }
     fault("before-restore");
     for (const item of [...journal.artifacts].reverse()) {
       const target = resolve(root, item.relative);
@@ -100,13 +105,22 @@ export function createInstallRollback(context) {
   return {
     reconcile() {
       const journal = load();
-      return journal ? restore(journal, "interrupted installer transaction") : { restored: false, outcome: "none" };
+      if (!journal) return { restored: false, resumed: false, outcome: "none" };
+      if (journal.status === "active") {
+        for (const item of journal.artifacts) {
+          if (item.existed && !existsSync(resolve(backupRoot, item.relative))) {
+            throw new Error(`Installer rollback backup is missing for ${item.relative}.`);
+          }
+        }
+        return { restored: false, resumed: true, outcome: "installer-transaction-resumed" };
+      }
+      return { ...restore(journal, "interrupted installer backup"), resumed: false };
     },
     begin() {
       if (load()) throw new Error("Installer rollback reconciliation must complete before a new transaction.");
       const identity = installIdentity(root, dataDirectory);
       const journal = {
-        version: VERSION, status: "active", identity, startedAt: new Date().toISOString(),
+        version: VERSION, status: "backing-up", identity, startedAt: new Date().toISOString(),
         artifacts: ARTIFACTS.map((item) => ({ relative: item, existed: existsSync(join(root, item)) })),
       };
       mkdirSync(backupRoot, { recursive: true });
@@ -118,6 +132,8 @@ export function createInstallRollback(context) {
         if (lstatSync(source).isSymbolicLink()) throw new Error(`Refusing to back up linked installer artifact ${item.relative}.`);
         move(source, join(backupRoot, item.relative));
       }
+      journal.status = "active";
+      save(journal);
       fault("after-backup");
     },
     rollback(reason) {

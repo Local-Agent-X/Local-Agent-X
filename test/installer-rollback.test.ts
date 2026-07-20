@@ -50,13 +50,16 @@ describe("installer artifact rollback", () => {
     expect(existsSync(join(f.installRoot, "dist"))).toBe(false);
   });
 
-  it("recovers an interrupted active transaction and is idempotent after restore", () => {
+  it("resumes an interrupted active transaction without discarding completed work", () => {
     const f = fixture();
     const first = createInstallRollback(f);
     first.begin();
     mkdirSync(join(f.installRoot, "dist"));
     writeFileSync(join(f.installRoot, "dist", "index.js"), "partial");
-    expect(createInstallRollback(f).reconcile().outcome).toBe("prior-installation-restored");
+    const resumed = createInstallRollback(f);
+    expect(resumed.reconcile().outcome).toBe("installer-transaction-resumed");
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("partial");
+    resumed.rollback("later required failure");
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
     expect(createInstallRollback(f).reconcile().outcome).toBe("none");
   });
@@ -101,6 +104,16 @@ describe("installer artifact rollback", () => {
     mkdirSync(join(f.installRoot, "dist"));
     expect(() => transaction.rollback("failed")).toThrow("kill");
     expect(createInstallRollback(f).reconcile().restored).toBe(true);
+  });
+
+  it("restores an interrupted backup before any installer step can run", () => {
+    const f = fixture();
+    const transaction = createInstallRollback({ ...f, installerFault: (point: string) => {
+      if (point === "after-backup-journal") throw new Error("kill");
+    } });
+    expect(() => transaction.begin()).toThrow("kill");
+    expect(createInstallRollback(f).reconcile().outcome).toBe("prior-installation-restored");
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
   });
 
   it("rolls back required failure through the real reporter lifecycle", async () => {

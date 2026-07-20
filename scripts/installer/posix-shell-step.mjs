@@ -3,7 +3,7 @@ import { provisionPortableGit, resolvePosixShell } from "./windows-tools.mjs";
 export async function runPosixShellStep(context) {
   const { reporter, processes, platform = process.platform, env = process.env } = context;
   if (platform !== "win32") return;
-  reporter.step("posixshell");
+  if (!reporter.step("posixshell")) return;
   const forceBootstrap = env.LAX_FORCE_GIT_BOOTSTRAP === "1" || env.LAX_FORCE_GIT_BOOTSTRAP === "true";
   let bash = forceBootstrap ? null : resolvePosixShell({ env });
   if (!bash) {

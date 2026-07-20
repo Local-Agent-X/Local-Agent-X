@@ -15,7 +15,7 @@ export async function runCoreSteps(context) {
 
 async function installDependencies({ reporter, processes, platform = process.platform, env = process.env }) {
   const logLevel = env.LAX_NPM_LOGLEVEL || "error";
-  reporter.step("npm", "npm ci (5-10 min on first install)");
+  if (!reporter.step("npm", "npm ci (5-10 min on first install)")) return;
   reporter.log("Installing npm dependencies (npm ci — enforces the committed lockfile)…");
   const nodeEnvironment = runtimeNodeEnv(platform, env);
   const environmentOption = nodeEnvironment ? { env: nodeEnvironment } : {};
@@ -41,7 +41,7 @@ async function installDependencies({ reporter, processes, platform = process.pla
 }
 
 function scaffoldSettings({ reporter }, ollamaModelReady) {
-  reporter.step("settings");
+  if (!reporter.step("settings")) return;
   const laxDirectory = join(homedir(), ".lax");
   const settingsFile = join(laxDirectory, "settings.json");
   if (!existsSync(settingsFile)) {
@@ -56,7 +56,7 @@ function scaffoldSettings({ reporter }, ollamaModelReady) {
 }
 
 async function buildServer({ reporter, processes }) {
-  reporter.step("build", "tsc + arikernel (1-2 min)");
+  if (!reporter.step("build", "tsc + arikernel (1-2 min)")) return;
   reporter.log("Building server (npm run build)…");
   const result = await processes.runStreaming("npm", ["run", "build"]);
   if (result.status !== 0) reporter.fail("npm run build failed. Fix the build errors above before re-running install — the runtime refuses to boot when its security layer (AriKernel pre-dispatch gate) can't wire.");
@@ -65,7 +65,7 @@ async function buildServer({ reporter, processes }) {
 }
 
 async function writeRuntimeConfig({ reporter }) {
-  reporter.step("config");
+  if (!reporter.step("config")) return;
   const laxDirectory = join(homedir(), ".lax");
   mkdirSync(laxDirectory, { recursive: true });
   const configFile = join(laxDirectory, "config.json");

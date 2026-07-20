@@ -3,13 +3,18 @@ import { EMBED_MODEL, NODE_MAJOR_MIN, WINGET_SOURCE } from "./contract.mjs";
 import { ensureOllamaOnPath, installOllamaDirectWindows, wingetAvailable } from "./windows-tools.mjs";
 
 export async function runPrerequisiteSteps(context) {
-  const { reporter, processes, platform = process.platform, wantOllama } = context;
-  reporter.step("node");
+  const { reporter } = context;
+  if (!reporter.step("node")) return runRemainingPrerequisites(context);
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   if (nodeMajor < NODE_MAJOR_MIN) reporter.fail(`Node ${NODE_MAJOR_MIN}+ required (found v${process.versions.node})`);
   reporter.ok(`Node v${process.versions.node}`);
   reporter.stepDone("node");
 
+  return runRemainingPrerequisites(context);
+}
+
+async function runRemainingPrerequisites(context) {
+  const { platform = process.platform, wantOllama } = context;
   if (platform === "win32") await installWindowsBuildTools(context);
   else if (platform === "darwin") await installXcodeTools(context);
   await installPython(context);
@@ -17,7 +22,7 @@ export async function runPrerequisiteSteps(context) {
 }
 
 async function installWindowsBuildTools({ reporter, processes }) {
-  reporter.step("vsbuildtools", "~3 GB download, 10-30 min on first install");
+  if (!reporter.step("vsbuildtools", "~3 GB download, 10-30 min on first install")) return;
   const vswhere = `${process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"}\\Microsoft Visual Studio\\Installer\\vswhere.exe`;
   let hasCompiler = false;
   if (existsSync(vswhere)) {
@@ -43,7 +48,7 @@ async function installWindowsBuildTools({ reporter, processes }) {
 }
 
 async function installXcodeTools({ reporter, processes }) {
-  reporter.step("xcode-clt", "Apple requires a system dialog — click Install if prompted");
+  if (!reporter.step("xcode-clt", "Apple requires a system dialog — click Install if prompted")) return;
   const check = processes.spawnSync("xcode-select", ["-p"], { stdio: ["ignore", "ignore", "ignore"] });
   if (check.status === 0) reporter.ok("Xcode Command Line Tools already present");
   else {
@@ -62,7 +67,7 @@ async function installXcodeTools({ reporter, processes }) {
 }
 
 async function installPython({ reporter, processes, platform = process.platform }) {
-  reporter.step("python");
+  if (!reporter.step("python")) return;
   const command = platform === "win32" ? "python" : "python3";
   const present = processes.spawnSync(command, ["--version"], { stdio: ["ignore", "ignore", "ignore"], shell: true }).status === 0;
   if (present) reporter.ok("Python already present");
@@ -94,7 +99,7 @@ export async function runOllamaPrerequisite(
   selected,
   { directWindowsInstaller = installOllamaDirectWindows } = {},
 ) {
-  reporter.step("ollama");
+  if (!reporter.step("ollama")) return;
   if (!selected) reporter.ok("Skipped — memory uses the built-in local embedder (no Ollama needed). Set LAX_INSTALL_OLLAMA=1 to enable Ollama-backed semantic memory.");
   else if (processes.has("ollama")) reporter.ok("Ollama already present");
   else if (platform === "win32") {

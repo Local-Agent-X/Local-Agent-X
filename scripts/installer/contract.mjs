@@ -13,6 +13,7 @@ export const NODE_LTS_INSTALL = 24;
 export const NODE_PORTABLE_VERSION = "24.16.0";
 export const EMBED_MODEL = "mxbai-embed-large";
 export const WINGET_SOURCE = ["--source", "winget"];
+export const INSTALL_CHECKPOINT_VERSION = 1;
 
 export const ALL_STEPS = [
   { id: "node", label: "Node.js runtime", platforms: ["win32", "darwin", "linux"], required: true },
@@ -46,4 +47,26 @@ export function installerSelections(env = process.env) {
     ollamaRuntime: wantsOllama(env),
     ollamaMemoryModel: wantsOllamaMemoryModel(env),
   };
+}
+
+export function installerContract(platform, selections) {
+  return {
+    version: INSTALL_CHECKPOINT_VERSION,
+    platform,
+    steps: stepsPlan(platform).map(({ id }) => id),
+    selections,
+  };
+}
+
+export function stepIntent(contract, stepId) {
+  const selection = stepId === "ollama"
+    ? contract.selections.ollamaRuntime
+    : stepId === "embedmodel" ? contract.selections.ollamaMemoryModel : null;
+  return JSON.stringify({
+    version: contract.version,
+    platform: contract.platform,
+    steps: contract.steps,
+    stepId,
+    selection,
+  });
 }

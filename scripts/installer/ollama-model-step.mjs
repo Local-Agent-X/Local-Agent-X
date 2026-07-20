@@ -8,10 +8,12 @@ const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 
 export async function runOllamaModelStep(context, { createReadiness: readinessFactory = createReadiness } = {}) {
   const { reporter, processes, wantOllamaMemoryModel } = context;
-  reporter.step("embedmodel", wantOllamaMemoryModel ? `Downloading ${EMBED_MODEL} (~670 MB, one-time)` : "Using built-in local embedder");
+  if (!reporter.step("embedmodel", wantOllamaMemoryModel ? `Downloading ${EMBED_MODEL} (~670 MB, one-time)` : "Using built-in local embedder")) {
+    return reporter.resumedStepResult("embedmodel") ?? wantOllamaMemoryModel;
+  }
   if (!wantOllamaMemoryModel) {
     reporter.ok(`Local embedder ready — no download needed. Enable Ollama later for stronger semantic memory: install Ollama, run \`ollama pull ${EMBED_MODEL}\`, then set Embedding Provider to Ollama in Settings.`);
-    reporter.stepDone("embedmodel");
+    reporter.stepDone("embedmodel", false);
     return false;
   }
   ensureOllamaOnPath();
@@ -40,7 +42,7 @@ export async function runOllamaModelStep(context, { createReadiness: readinessFa
   }
   if (pull.status === 0) {
     reporter.ok("Memory engine ready");
-    reporter.stepDone("embedmodel");
+    reporter.stepDone("embedmodel", true);
     return true;
   }
   reporter.fail(`Pull failed twice — the requested memory model was not downloaded. Re-run later: ollama pull ${EMBED_MODEL}`);

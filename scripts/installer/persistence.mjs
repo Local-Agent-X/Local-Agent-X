@@ -1,6 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { writeDurableJson } from "./checkpoint.mjs";
 
 export function persistInstallOutcome(context, desktop) {
   const { reporter, env = process.env, platform = process.platform } = context;
@@ -9,20 +10,22 @@ export function persistInstallOutcome(context, desktop) {
   if (/^[0-9a-f]{40}$/.test(installedCommit)) {
     try {
       mkdirSync(dataDirectory, { recursive: true });
-      writeFileSync(join(dataDirectory, "installed-source.json"), JSON.stringify({ commit: installedCommit, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
+      writeDurableJson(join(dataDirectory, "installed-source.json"), { commit: installedCommit, updatedAt: new Date().toISOString() });
       reporter.ok(`Recorded installed source commit ${installedCommit.slice(0, 7)}`);
     } catch (error) { reporter.warn(`Couldn't record installed source commit: ${error.message}`); }
   }
+  let reportSaved = false;
   try {
     mkdirSync(dataDirectory, { recursive: true });
-    writeFileSync(join(dataDirectory, "install-report.json"), JSON.stringify({
+    writeDurableJson(join(dataDirectory, "install-report.json"), {
       installedAt: new Date().toISOString(),
       selections: context.selections || {
         ollamaRuntime: Boolean(context.wantOllama),
         ollamaMemoryModel: Boolean(context.wantOllamaMemoryModel),
       },
       degraded: reporter.degraded,
-    }, null, 2), "utf-8");
+    });
+    reportSaved = true;
     if (reporter.degraded.length) reporter.ok(`Recorded ${reporter.degraded.length} degraded step(s) for in-app repair`);
   } catch (error) { reporter.warn(`Couldn't record the install report: ${error.message}`); }
 
@@ -46,4 +49,5 @@ export function persistInstallOutcome(context, desktop) {
     reporter.log(`  App built at: ${desktop.appBuildPath} (drag to /Applications manually)`);
   }
   reporter.log("  CLI (headless): npm run dev   →   http://127.0.0.1:7007");
+  return reportSaved;
 }

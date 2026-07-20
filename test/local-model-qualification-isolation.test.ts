@@ -23,7 +23,9 @@ const INTERRUPTION_CASES = (["timeout", "abort"] as const).flatMap((mode) => (
   LAYOUTS.map((layout) => [mode, layout] as const)
 ));
 const REAL_REPO = resolve(".");
-const DEPENDENCY_ROOT = resolve(REAL_REPO, "..", "..");
+const DEPENDENCY_ROOT = existsSync(resolve(REAL_REPO, "node_modules"))
+  ? REAL_REPO
+  : resolve(REAL_REPO, "..", "..");
 const TSX_IMPORT = pathToFileURL(resolve(DEPENDENCY_ROOT, "node_modules", "tsx", "dist", "loader.mjs")).href;
 
 function barrier() {

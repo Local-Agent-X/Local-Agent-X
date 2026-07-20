@@ -152,6 +152,37 @@ describe("installer artifact rollback", () => {
     expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
   });
 
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK).each([
+    "install parent", "install endpoint", "backup root parent", "backup artifact parent", "backup nested parent",
+  ])("rejects a %s junction before backup moves any byte", (placement) => {
+    const f = fixture();
+    const outside = join(f.base, `outside-${placement.replaceAll(" ", "-")}`);
+    mkdirSync(join(outside, "node_modules"), { recursive: true });
+    writeFileSync(join(outside, "node_modules", "keep.txt"), "outside-runtime-safe");
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    if (placement === "install parent") symlinkSync(outside, join(f.installRoot, "desktop"), linkType);
+    if (placement === "install endpoint") {
+      mkdirSync(join(f.installRoot, "desktop"));
+      symlinkSync(join(outside, "node_modules"), join(f.installRoot, "desktop", "node_modules"), linkType);
+    }
+    if (placement === "backup root parent") {
+      mkdirSync(f.dataDirectory, { recursive: true });
+      symlinkSync(outside, join(f.dataDirectory, "install-rollback"), linkType);
+    }
+    if (placement === "backup artifact parent") {
+      mkdirSync(join(f.dataDirectory, "install-rollback"), { recursive: true });
+      symlinkSync(outside, join(f.dataDirectory, "install-rollback", "artifacts"), linkType);
+    }
+    if (placement === "backup nested parent") {
+      mkdirSync(join(f.dataDirectory, "install-rollback", "artifacts"), { recursive: true });
+      symlinkSync(outside, join(f.dataDirectory, "install-rollback", "artifacts", "desktop"), linkType);
+    }
+    expect(() => createInstallRollback(f).begin()).toThrow(/linked|ambiguous provenance/);
+    expect(readFileSync(join(outside, "node_modules", "keep.txt"), "utf-8")).toBe("outside-runtime-safe");
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
   it("keeps restore retryable across a kill at the restore boundary", () => {
     const f = fixture();
     const transaction = createInstallRollback({ ...f, installerFault: (point: string) => {

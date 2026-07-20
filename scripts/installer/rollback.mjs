@@ -25,13 +25,18 @@ function inside(base, path) {
   return rel !== "" && !isAbsolute(rel) && !rel.split(/[\\/]/).includes("..");
 }
 
-function safeArtifactPath(path, base) {
-  if (!existsSync(path)) return true;
-  const info = lstatSync(path);
-  return !info.isSymbolicLink() && inside(base, realpathSync(path));
+function safePathChain(base, relativePath) {
+  let current = resolve(base);
+  for (const part of relativePath.split(/[\\/]/)) {
+    current = join(current, part);
+    if (!existsSync(current)) continue;
+    const info = lstatSync(current);
+    if (info.isSymbolicLink() || !inside(base, realpathSync(current))) return false;
+  }
+  return true;
 }
 
-function validJournal(value, root, backupRoot) {
+function validJournal(value, root, dataDirectory, backupRoot) {
   if (!value || value.version !== VERSION || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
   if (resolve(value.identity?.root || "") !== resolve(root)) return false;
   if (typeof value.identity.version !== "string") return false;
@@ -49,7 +54,8 @@ function validJournal(value, root, backupRoot) {
     const target = resolve(root, item.relative);
     const backup = resolve(backupRoot, item.relative);
     if (!inside(root, target) || !inside(backupRoot, backup)) return false;
-    if (!safeArtifactPath(target, root) || !safeArtifactPath(backup, backupRoot)) return false;
+    if (!safePathChain(root, item.relative)) return false;
+    if (!safePathChain(dataDirectory, join("install-rollback", "artifacts", item.relative))) return false;
     if (item.existed && !existsSync(target) && !existsSync(backup)) return false;
     return item.existed || !existsSync(backup);
   });
@@ -77,7 +83,7 @@ export function createInstallRollback(context) {
   const load = () => {
     if (!existsSync(journalPath)) return null;
     const value = readJson(journalPath);
-    if (!validJournal(value, root, backupRoot)) throw new Error("Installer rollback journal has ambiguous provenance; refusing to mutate installation artifacts.");
+    if (!validJournal(value, root, dataDirectory, backupRoot)) throw new Error("Installer rollback journal has ambiguous provenance; refusing to mutate installation artifacts.");
     if (readJson(join(root, "package.json"))?.version !== value.identity.version) {
       throw new Error("Installer rollback journal package identity does not match this installation.");
     }
@@ -139,6 +145,12 @@ export function createInstallRollback(context) {
     begin() {
       if (load()) throw new Error("Installer rollback reconciliation must complete before a new transaction.");
       const identity = installIdentity(root, dataDirectory);
+      if (!ARTIFACTS.every((item) => safePathChain(root, item))) {
+        throw new Error("Installer artifact path contains a linked or escaping component.");
+      }
+      if (!ARTIFACTS.every((item) => safePathChain(dataDirectory, join("install-rollback", "artifacts", item)))) {
+        throw new Error("Installer backup path contains a linked or escaping component.");
+      }
       const journal = {
         version: VERSION, status: "backing-up", identity, startedAt: new Date().toISOString(),
         artifacts: ARTIFACTS.map((item) => ({ relative: item, existed: existsSync(join(root, item)) })),

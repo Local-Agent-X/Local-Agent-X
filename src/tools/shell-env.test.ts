@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join, sep } from "node:path";
 import { buildSanitizedEnv, mergePathDirs } from "./shell-env.js";
 import { withNodeTitleGuard, hardenChildEnv } from "./env-contamination.js";
 
@@ -187,5 +187,21 @@ describe("mergePathDirs — toolchain PATH repair", () => {
     setEnv("PATH", P("/usr/bin", "/bin", "/sbin"));
     const env = buildSanitizedEnv();
     for (const d of ["/usr/bin", "/bin", "/sbin"]) expect(env.PATH!.split(delimiter)).toContain(d);
+  });
+});
+
+// The binaries LAX bundles for its own tools (ripgrep via @vscode/ripgrep,
+// ffmpeg/ffprobe) must be reachable from the agent's shell too — a freehand
+// `rg` on a box with no system ripgrep used to die with "command not found"
+// while the built-in grep tool worked fine.
+describe("buildSanitizedEnv PATH — bundled tool binaries", () => {
+  it("appends the bundled ripgrep dir so `rg` resolves in the agent shell", async () => {
+    const { ripgrepBin } = await import("./grep-tool.js");
+    const rg = ripgrepBin();
+    // Only asserts when the resolver found a real binary (node_modules/bundle);
+    // a bare "rg" means the box already resolves it from PATH.
+    if (!rg.includes(sep)) return;
+    const dirs = (buildSanitizedEnv().PATH ?? "").split(delimiter);
+    expect(dirs).toContain(dirname(rg));
   });
 });

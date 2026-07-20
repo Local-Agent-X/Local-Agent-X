@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { ffmpegBin } from "./ffmpeg-bin.js";
+import { captureScreenMacImpl } from "./screen-capture-mac.js";
 
 const FFMPEG = ffmpegBin();
 
@@ -48,11 +49,34 @@ function safeNum(val: unknown, name: string): number {
   return n;
 }
 
-/** Capture the screen via ffmpeg gdigrab. Deliberately NOT a PowerShell
- *  script: Defender's AMSI blocks the System.Drawing CopyFromScreen pattern
- *  as a screen-grabber signature, which killed WhatsApp/Telegram screenshot
- *  delivery. ffmpeg is an external binary (already a dependency — see
- *  camera-tool.ts) and is not subject to AMSI script scanning. */
+/** Per-platform ffmpeg grab input. Windows: gdigrab (deliberately NOT a
+ *  PowerShell script — Defender's AMSI blocks the System.Drawing
+ *  CopyFromScreen pattern as a screen-grabber signature, which killed
+ *  WhatsApp/Telegram screenshot delivery; ffmpeg is an external binary and
+ *  not subject to AMSI script scanning). Linux: x11grab, the direct
+ *  equivalent (offset rides on the -i display spec instead of offset_x/y).
+ *  macOS never reaches here — it dispatches to the native `screencapture`
+ *  path in screen-capture-mac.ts before the ffmpeg branch. */
+export function grabInputArgs(target: { x: number; y: number; width: number; height: number }): string[] {
+  const size = `${Math.round(target.width)}x${Math.round(target.height)}`;
+  if (process.platform === "linux") {
+    return [
+      "-f", "x11grab",
+      "-framerate", "1",
+      "-video_size", size,
+      "-i", `${process.env.DISPLAY || ":0.0"}+${Math.round(target.x)},${Math.round(target.y)}`,
+    ];
+  }
+  return [
+    "-f", "gdigrab",
+    "-framerate", "1",
+    "-offset_x", String(Math.round(target.x)),
+    "-offset_y", String(Math.round(target.y)),
+    "-video_size", size,
+    "-i", "desktop",
+  ];
+}
+
 export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCaptureResult {
   const format = options.format ?? "png";
   if (!/^(png|jpg)$/.test(format)) throw new Error(`Invalid format: ${format}`);
@@ -70,6 +94,13 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
     if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
       effectiveRegion = undefined;
     }
+  }
+
+  // macOS: the native `screencapture` CLI addresses displays by number and
+  // regions directly — no monitor-bounds enumeration needed (listMonitors is
+  // PowerShell and returns a bogus 1920x1080 stub off Windows anyway).
+  if (process.platform === "darwin") {
+    return captureScreenMacImpl({ ...options, format, scale, region: effectiveRegion }, TMP_DIR);
   }
 
   // Resolve the capture rectangle in virtual-desktop coordinates. gdigrab's
@@ -111,12 +142,7 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
 
   const args = [
     "-hide_banner", "-loglevel", "error",
-    "-f", "gdigrab",
-    "-framerate", "1",
-    "-offset_x", String(Math.round(target.x)),
-    "-offset_y", String(Math.round(target.y)),
-    "-video_size", `${Math.round(target.width)}x${Math.round(target.height)}`,
-    "-i", "desktop",
+    ...grabInputArgs(target),
     "-frames:v", "1",
   ];
   if (scale < 1) args.push("-vf", `scale=${outW}:${outH}`);

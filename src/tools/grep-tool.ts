@@ -5,6 +5,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,13 +46,23 @@ function truncate(lines: string[], limit: number): string {
 let cachedNodeModulesRg: string | null | undefined;
 function nodeModulesRg(): string | null {
   if (cachedNodeModulesRg !== undefined) return cachedNodeModulesRg;
+  const exe = process.platform === "win32" ? "rg.exe" : "rg";
+  const spec = `@vscode/ripgrep-${process.platform}-${process.arch}/bin/${exe}`;
+  let p: string | null = null;
   try {
-    const exe = process.platform === "win32" ? "rg.exe" : "rg";
-    const p = fileURLToPath(import.meta.resolve(`@vscode/ripgrep-${process.platform}-${process.arch}/bin/${exe}`));
-    cachedNodeModulesRg = existsSync(p) ? p : null;
+    p = fileURLToPath(import.meta.resolve(spec));
   } catch {
-    cachedNodeModulesRg = null;
+    // import.meta.resolve is runtime-dependent (tsx/loaders intercept it and
+    // can refuse extensionless binary subpaths plain node accepts). CJS
+    // resolution has no such hook — fall through so dev-runtime servers still
+    // find the binary instead of silently degrading to bare `rg`.
+    try {
+      p = createRequire(import.meta.url).resolve(spec);
+    } catch {
+      p = null;
+    }
   }
+  cachedNodeModulesRg = p !== null && existsSync(p) ? p : null;
   return cachedNodeModulesRg;
 }
 
@@ -84,7 +95,10 @@ function buildRgArgs(args: Record<string, unknown>): string[] {
   else if (mode === "count") rg.push("-c");
   else if (mode === "content") { rg.push("-n"); if (ctx !== undefined) rg.push("-C", String(ctx)); }
 
-  rg.push(pattern, searchRoot(args));
+  // `--` ends option parsing so a pattern (or path) that begins with a dash —
+  // e.g. a CSS custom-property search like `--(color|brand)` — is never
+  // mistaken for a flag.
+  rg.push("--", pattern, searchRoot(args));
   return rg;
 }
 

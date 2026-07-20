@@ -10,6 +10,8 @@ import type { ServerEvent } from "../types.js";
 // keep working, and used locally in buildSanitizedEnv below.
 import { isHostContaminationEnvKey, stripHostContaminationEnv, withNodeTitleGuard } from "./env-contamination.js";
 export { isHostContaminationEnvKey, stripHostContaminationEnv };
+import { repairedPath } from "./shell-path.js";
+export { mergePathDirs } from "./shell-path.js";
 
 // ── Windows shell resolution ──────────────────────────────────────────────
 //
@@ -288,35 +290,6 @@ function bundledNodeModulesDir(): string | null {
  * then overlays caller-supplied `extra` vars (still NUL-filtered). Pure +
  * side-effect free so both bash and process_* can share it.
  */
-// Standard user-toolchain bin dirs that a Finder/launchd-launched macOS app (or
-// a minimal-PATH Linux service) inherits a PATH WITHOUT — so `cargo`, `go`,
-// `python3`, `node`, and other Homebrew/rustup tools read as "command not found"
-// even when installed. We APPEND the ones that exist (never prepend), so system
-// tools keep priority and nothing is shadowed. This is what makes the
-// compiled-language app-build tier — and any build/test command — work
-// regardless of how LAX was launched.
-function toolchainBinDirs(): string[] {
-  const home = homedir();
-  if (platform() === "win32") return [join(home, ".cargo", "bin")];
-  return [
-    "/opt/homebrew/bin", "/opt/homebrew/sbin",   // Apple-silicon Homebrew (cargo, node, go, python3, …)
-    "/usr/local/bin", "/usr/local/sbin",          // Intel Homebrew / common installs
-    join(home, ".cargo", "bin"),                  // rustup
-    join(home, ".local", "bin"),                  // pip --user / pipx
-    join(home, "go", "bin"), "/usr/local/go/bin", // Go
-    "/opt/local/bin",                             // MacPorts
-  ];
-}
-
-/** Append `addDirs` to a PATH string, skipping any already present. Pure +
- *  fs-free so it's unit-testable; the caller filters addDirs by existence. */
-export function mergePathDirs(currentPath: string | undefined, addDirs: string[]): string {
-  const existing = (currentPath || "").split(delimiter).filter(Boolean);
-  const have = new Set(existing);
-  const add = addDirs.filter((d) => d && !have.has(d));
-  return [...existing, ...add].join(delimiter);
-}
-
 export function buildSanitizedEnv(extra?: Record<string, string>): Record<string, string> {
   const sanitizedEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -372,7 +345,7 @@ export function buildSanitizedEnv(extra?: Record<string, string>): Record<string
   // Repair PATH so an installed (Finder/launchd-launched) app can still find the
   // user's toolchain (cargo/go/python3/node/Homebrew). Done last so it applies
   // over any caller-supplied PATH too; only existing dirs are appended.
-  sanitizedEnv.PATH = mergePathDirs(sanitizedEnv.PATH, toolchainBinDirs().filter((d) => existsSync(d)));
+  sanitizedEnv.PATH = repairedPath(sanitizedEnv.PATH);
   // Guard the macOS process.title SIGSEGV for agent-spawned node children too:
   // stripping __CFBundleIdentifier above is NOT sufficient (the app-bundle
   // responsibility is a posix_spawn attribute node can't clear), so a freehand

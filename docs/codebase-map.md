@@ -12,26 +12,26 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1371 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1372 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 93 | 24 | XL |  |
-| `src/security/` | 74 | 30 | XL |  |
-| `src/tools/` | 59 | 147 | XL |  |
+| `src/security/` | 75 | 30 | XL |  |
+| `src/tools/` | 59 | 148 | XL |  |
 | `src/providers/` | 55 | 20 | XL |  |
 | `src/canonical-loop/` | 50 | 172 | XL |  |
 | `src/memory/` | 42 | 118 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 33 | 2 | M |  |
-| `src/session/` | 30 | 7 | L |  |
+| `src/session/` | 31 | 7 | L |  |
 | `src/auth/` | 29 | 10 | L |  |
 | `src/util/` | 27 | 2 | S |  |
 | `src/agency/` | 26 | 16 | L |  |
+| `src/threat/` | 26 | 11 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/threat/` | 25 | 11 | L |  |
 | `src/tool-policy/` | 25 | 20 | L |  |
 | `src/browser/` | 24 | 51 | XL |  |
 | `src/local-runtimes/` | 22 | 18 | L |  |
@@ -159,6 +159,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/safe-delete.ts` | S |
 | `src/safe-regex.ts` | S |
 | `src/sanitize.ts` | M |
+| `src/screen-capture-mac.ts` | S |
 | `src/screen-capture.ts` | S |
 | `src/secrets-crypto.ts` | S |
 | `src/secrets-types.ts` | S |
@@ -181,7 +182,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/types.ts` | M |
 | `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
-| `src/update-rollback.ts` | S |
+| `src/update-rollback.ts` | M |
 | `src/update-service.ts` | S |
 | `src/worker-session.ts` | S |
 

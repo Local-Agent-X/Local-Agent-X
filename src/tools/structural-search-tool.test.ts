@@ -218,3 +218,20 @@ describe("structural_search — input validation", () => {
     expect(badRoot.content).toContain("does-not-exist");
   });
 });
+
+// Same class as grep-tool's dash-leading pattern bug: a symbol beginning with
+// a dash was pushed positionally with no `--`, so rg consumed it as a flag.
+describe("runWordFallback — dash-leading symbols are never parsed as flags", () => {
+  it("places `--` before the symbol and root", async () => {
+    let seen: readonly string[] = [];
+    const exec: ExecFileLike = (_file, args, _options, callback) => {
+      seen = args;
+      queueMicrotask(() => callback(null, "/root/theme.css:1:--pre", ""));
+      return { stdin: { end() {} } };
+    };
+    await runWordFallback("--pre", "/root", 50, undefined, exec);
+    const sep = seen.indexOf("--");
+    expect(sep).toBeGreaterThanOrEqual(0);
+    expect(seen.slice(sep + 1)).toEqual(["--pre", "/root"]);
+  });
+});

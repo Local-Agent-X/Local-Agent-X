@@ -30,6 +30,7 @@
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { browserLifecycle, browserNavigate } from "./bridge-client.js";
+import { enrichBlockedNavigation } from "./bridge-egress.js";
 import {
 	acceptDialogInApp,
 	captureScreenshotInApp,
@@ -163,7 +164,12 @@ export class ElectronInAppBackend implements BrowserBackend {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
 		await this.ensureView();
-		const result = await browserNavigate(this.viewId, url);
+		let result;
+		try {
+			result = await browserNavigate(this.viewId, url);
+		} catch (e) {
+			throw enrichBlockedNavigation(e, url);
+		}
 		this.state.url = result.url;
 		this.state.title = result.title;
 		return navigationReport("Navigated to: ", result, requestedHost);
@@ -207,7 +213,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 				}
 				this.rollbackMintedTab(tab, prevActive);
 			}
-			throw e;
+			throw enrichBlockedNavigation(e, url);
 		}
 		tab.state.url = result.url;
 		tab.state.title = result.title;

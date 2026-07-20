@@ -145,3 +145,31 @@ describe("ripgrepBin — binary resolution", () => {
     expect(ripgrepBin()).toMatch(VSCODE_RG);
   });
 });
+
+// A pattern that BEGINS with a dash — e.g. a CSS custom-property search like
+// `--(color|brand)` — used to be pushed as a bare positional arg, so ripgrep
+// parsed it as a flag and died with "unrecognized flag" (exit 2). buildRgArgs
+// now terminates option parsing with `--` before the pattern/path positionals.
+describe("grep — dash-leading patterns are never parsed as flags", () => {
+  it("places `--` before the pattern and search root", async () => {
+    let seen: readonly string[] = [];
+    const exec: ExecFileLike = (_file, args, _options, callback) => {
+      seen = args;
+      queueMicrotask(() => callback(null, "ok.ts:1:--color", ""));
+      return { stdin: { end() {} } };
+    };
+    await runRg({ pattern: "--(color|brand)", path: tmpdir() }, 250, undefined, exec);
+    const sep = seen.indexOf("--");
+    expect(sep).toBeGreaterThanOrEqual(0);
+    expect(seen.slice(sep + 1)).toHaveLength(2);
+    expect(seen[sep + 1]).toBe("--(color|brand)");
+  });
+
+  it("finds dash-leading content with the real ripgrep binary", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dashpat-"));
+    writeFileSync(join(dir, "theme.css"), ":root {\n  --color-brand: #fff;\n}\n");
+    const res = await runRg({ pattern: "--(color|brand)", path: dir, output_mode: "content" }, 250);
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toContain("--color-brand");
+  });
+});

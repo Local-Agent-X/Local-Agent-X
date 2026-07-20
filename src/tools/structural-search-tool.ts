@@ -72,7 +72,9 @@ export function runWordFallback(
   signal?: AbortSignal,
   exec: ExecFileLike = defaultExec,
 ): Promise<ToolResult> {
-  const rgArgs = ["-n", "--word-regexp", "--fixed-strings", "--no-heading", "--color", "never", symbol, root];
+  // `--` ends option parsing so a symbol beginning with a dash (`-e`, `--pre`)
+  // is matched literally instead of being consumed as an rg flag.
+  const rgArgs = ["-n", "--word-regexp", "--fixed-strings", "--no-heading", "--color", "never", "--", symbol, root];
   return new Promise((resolve, reject) => {
     const child = exec(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout, stderr) => {
       if (signal?.aborted) return resolve(err("Aborted"));

@@ -4,19 +4,18 @@ import { join } from "node:path";
 
 export function persistInstallOutcome(context, desktop) {
   const { reporter, env = process.env, platform = process.platform } = context;
+  const dataDirectory = context.dataDirectory || join(homedir(), ".lax");
   const installedCommit = env.LAX_INSTALLED_COMMIT || "";
   if (/^[0-9a-f]{40}$/.test(installedCommit)) {
     try {
-      const laxDirectory = join(homedir(), ".lax");
-      mkdirSync(laxDirectory, { recursive: true });
-      writeFileSync(join(laxDirectory, "installed-source.json"), JSON.stringify({ commit: installedCommit, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
+      mkdirSync(dataDirectory, { recursive: true });
+      writeFileSync(join(dataDirectory, "installed-source.json"), JSON.stringify({ commit: installedCommit, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
       reporter.ok(`Recorded installed source commit ${installedCommit.slice(0, 7)}`);
     } catch (error) { reporter.warn(`Couldn't record installed source commit: ${error.message}`); }
   }
   try {
-    const laxDirectory = join(homedir(), ".lax");
-    mkdirSync(laxDirectory, { recursive: true });
-    writeFileSync(join(laxDirectory, "install-report.json"), JSON.stringify({ installedAt: new Date().toISOString(), degraded: reporter.degraded }, null, 2), "utf-8");
+    mkdirSync(dataDirectory, { recursive: true });
+    writeFileSync(join(dataDirectory, "install-report.json"), JSON.stringify({ installedAt: new Date().toISOString(), degraded: reporter.degraded }, null, 2), "utf-8");
     if (reporter.degraded.length) reporter.ok(`Recorded ${reporter.degraded.length} degraded step(s) for in-app repair`);
   } catch (error) { reporter.warn(`Couldn't record the install report: ${error.message}`); }
 

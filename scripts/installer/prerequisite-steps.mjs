@@ -13,7 +13,7 @@ export async function runPrerequisiteSteps(context) {
   if (platform === "win32") await installWindowsBuildTools(context);
   else if (platform === "darwin") await installXcodeTools(context);
   await installPython(context);
-  await installOllama(context, wantOllama);
+  await runOllamaPrerequisite(context, wantOllama);
 }
 
 async function installWindowsBuildTools({ reporter, processes }) {
@@ -89,7 +89,11 @@ async function installPython({ reporter, processes, platform = process.platform 
   reporter.stepDone("python");
 }
 
-async function installOllama({ reporter, processes, platform = process.platform }, selected) {
+export async function runOllamaPrerequisite(
+  { reporter, processes, platform = process.platform },
+  selected,
+  { directWindowsInstaller = installOllamaDirectWindows } = {},
+) {
   reporter.step("ollama");
   if (!selected) reporter.ok("Skipped — memory uses the built-in local embedder (no Ollama needed). Set LAX_INSTALL_OLLAMA=1 to enable Ollama-backed semantic memory.");
   else if (processes.has("ollama")) reporter.ok("Ollama already present");
@@ -101,7 +105,7 @@ async function installOllama({ reporter, processes, platform = process.platform 
       if (result.status === 0) installed = true;
       else reporter.warn(`winget couldn't install Ollama (exit ${result.status}) — falling back to Ollama's official installer…`);
     } else reporter.log("winget not available — installing Ollama from its official installer…");
-    if (!installed && await installOllamaDirectWindows({ reporter, processes })) installed = true;
+    if (!installed && await directWindowsInstaller({ reporter, processes })) installed = true;
     if (installed) { ensureOllamaOnPath(); reporter.ok("Ollama installed"); }
     else reporter.fail("Ollama couldn't be installed via winget or its official installer. Install it from https://ollama.com/download and re-run to enable semantic memory");
   } else if (platform === "darwin") {

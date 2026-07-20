@@ -1,7 +1,15 @@
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { stepsPlan, wantsOllama } from "../scripts/installer/contract.mjs";
+import { runInstaller } from "../scripts/installer/orchestrator.mjs";
+import { persistInstallOutcome } from "../scripts/installer/persistence.mjs";
+import { runOllamaPrerequisite } from "../scripts/installer/prerequisite-steps.mjs";
+import { createReporter } from "../scripts/installer/reporter.mjs";
+import { readInstallReport } from "../src/server/setup-status.js";
 
 const child = fileURLToPath(new URL("./fixtures/installer-contract-child.mjs", import.meta.url));
 const run = (args: string[], env: NodeJS.ProcessEnv = process.env) => spawnSync(process.execPath, [child, ...args], { encoding: "utf8", env });
@@ -73,5 +81,115 @@ describe("installer child-process framing", () => {
     expect(output[0]).toEqual({ type: "plan", steps: stepsPlan("linux") });
     expect(output).toContainEqual({ type: "step", id: "node", state: "running", detail: null });
     expect(output.some((event) => event.type === "complete" || event.type === "fatal")).toBe(false);
+  });
+});
+
+describe("Windows Ollama delivery fallback", () => {
+  const exercise = async (directResult: boolean) => {
+    const calls: Array<{ name: string; args?: string[] }> = [];
+    const events: unknown[] = [];
+    const reporter = createReporter({
+      ipcMode: true,
+      stdout: { write: (line: string) => { events.push(JSON.parse(line)); return true; } } as NodeJS.WriteStream,
+    });
+    const processes = {
+      has: (command: string) => { calls.push({ name: `has:${command}` }); return command === "winget"; },
+      runStreaming: async (command: string, args: string[]) => {
+        calls.push({ name: `stream:${command}`, args });
+        return { status: 17 };
+      },
+    };
+    await runOllamaPrerequisite(
+      { reporter, processes, platform: "win32" },
+      true,
+      { directWindowsInstaller: async () => { calls.push({ name: "direct" }); return directResult; } },
+    );
+    return { calls, events, reporter };
+  };
+
+  it("tries the official direct installer after a present-but-failing winget", async () => {
+    const { calls, reporter } = await exercise(true);
+    expect(calls).toEqual([
+      { name: "has:ollama" },
+      { name: "has:winget" },
+      {
+        name: "stream:winget",
+        args: ["install", "Ollama.Ollama", "--source", "winget", "--accept-package-agreements", "--accept-source-agreements", "--silent"],
+      },
+      { name: "direct" },
+    ]);
+    expect(reporter.degraded).toEqual([]);
+  });
+
+  it("degrades only after winget and the direct installer both fail", async () => {
+    const { calls, events, reporter } = await exercise(false);
+    expect(calls.at(-1)).toEqual({ name: "direct" });
+    expect(reporter.degraded).toEqual([{
+      step: "ollama",
+      message: "Ollama couldn't be installed via winget or its official installer. Install it from https://ollama.com/download and re-run to enable semantic memory",
+    }]);
+    expect(events).toContainEqual({ type: "step", id: "ollama", state: "done" });
+    expect(events.some((event) => (event as { type?: string }).type === "fatal")).toBe(false);
+  });
+});
+
+describe("canonical orchestration durability and IPC ordering", () => {
+  const noOp = async () => {};
+  const desktop = async () => ({ appInstalled: false, appBuildPath: null });
+
+  it("persists optional degradation before emitting complete and roundtrips through setup status", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "installer-outcome-"));
+    try {
+      const output: string[] = [];
+      let reportPresentAtComplete = false;
+      const reporter = createReporter({
+        ipcMode: true,
+        stdout: {
+          write: (line: string) => {
+            output.push(line);
+            if (JSON.parse(line).type === "complete") reportPresentAtComplete = existsSync(join(directory, "install-report.json"));
+            return true;
+          },
+        } as NodeJS.WriteStream,
+      });
+      const prerequisites = async () => {
+        reporter.step("ollama");
+        reporter.fail("offline");
+        reporter.stepDone("ollama");
+      };
+      await runInstaller(
+        { reporter, platform: "linux", env: {}, dataDirectory: directory },
+        { prerequisites, core: noOp, posixShell: noOp, desktop, persist: persistInstallOutcome },
+      );
+      expect(reportPresentAtComplete).toBe(true);
+      expect(readInstallReport(directory)?.degraded).toEqual([{ step: "ollama", message: "offline" }]);
+      const emitted = events(output.join(""));
+      expect(emitted[0]).toEqual({ type: "plan", steps: stepsPlan("linux") });
+      expect(emitted.findIndex((event) => event.type === "complete"))
+        .toBeGreaterThan(emitted.findIndex((event) => event.type === "step" && event.id === "ollama" && event.state === "done"));
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it("frames required fatal in GUI order without persistence or false completion", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "installer-fatal-"));
+    try {
+      const output: string[] = [];
+      const reporter = createReporter({
+        ipcMode: true,
+        stdout: { write: (line: string) => { output.push(line); return true; } } as NodeJS.WriteStream,
+        exit: (code) => { throw new Error(`exit:${code}`); },
+      });
+      const prerequisites = async () => { reporter.step("node"); reporter.fail("unsupported"); };
+      await expect(runInstaller(
+        { reporter, platform: "linux", env: {}, dataDirectory: directory },
+        { prerequisites, core: noOp, posixShell: noOp, desktop, persist: persistInstallOutcome },
+      )).rejects.toThrow("exit:1");
+      expect(existsSync(join(directory, "install-report.json"))).toBe(false);
+      const emitted = events(output.join(""));
+      expect(emitted.map((event) => event.type)).toEqual(["plan", "step", "log", "step", "fatal"]);
+      expect(emitted[1]).toEqual({ type: "step", id: "node", state: "running", detail: null });
+      expect(emitted.at(-1)).toEqual({ type: "fatal", message: "unsupported" });
+      expect(emitted.some((event) => event.type === "complete")).toBe(false);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 });

@@ -203,7 +203,7 @@ export class OTAManager {
       );
     }
 
-    const pending = await this.rollback.read();
+    const pending = await this.rollback.read(installDir);
     if (pending?.status === "verified") await this.rollback.clearVerified();
     else if (pending && pending.status !== "restored") {
       await this.rollback.restore(installDir, pending.targetVersion, "interrupted update transaction");
@@ -293,7 +293,7 @@ export class OTAManager {
   }
 
   async rollbackUpdate(installDir: string, expectedCommit?: string): Promise<void> {
-    const pending = await this.rollback.read();
+    const pending = await this.rollback.read(installDir);
     if (!pending) throw new Error("No update to roll back");
     if (expectedCommit && pending.targetVersion !== expectedCommit) {
       throw new Error("Rollback target does not match the selected update");

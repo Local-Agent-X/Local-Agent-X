@@ -3,6 +3,7 @@ import { readOp, withOpLock, writeOp } from "../ops/op-store.js";
 import { createRuntimeReconstructionFailureAdapter } from "./adapters/runtime-reconstruction-failure.js";
 import { createProviderAdapterFactory, RuntimeIdentityMismatchError } from "./provider-adapter-factory.js";
 import { RuntimeSurfaceMismatchError } from "./agent-runner/runtime-surface-error.js";
+import { isRuntimeFailoverBoundary } from "../ops/target-identity.js";
 
 export function createRecoveredAdapterFactory(
   op: Op,
@@ -19,6 +20,12 @@ export function createRecoveredAdapterFactory(
         configOpenAIKey: descriptor.credentialProvider === "openai" ? getRuntimeConfig().openaiApiKey : undefined,
       });
       if (!resolution) throw new Error("credential unavailable");
+      if (isRuntimeFailoverBoundary(op, descriptor)) {
+        const { validatePersistedFailoverTarget } = await import("./runtime-failover.js");
+        if (!validatePersistedFailoverTarget(op, descriptor)) {
+          throw new Error("persisted failover target is no longer eligible");
+        }
+      }
       let systemPrompt: string | undefined;
       if (descriptor.surface) {
         const { rehydrateAgentRuntimeSurface } = await import("./agent-runner/runtime-surface.js");

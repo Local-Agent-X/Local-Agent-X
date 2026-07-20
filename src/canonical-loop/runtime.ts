@@ -27,6 +27,7 @@ import { ANTHROPIC_ADAPTER_NAME, ANTHROPIC_ADAPTER_VERSION } from "./adapters/an
 import { CODEX_ADAPTER_NAME, CODEX_ADAPTER_VERSION } from "./adapters/codex.js";
 import { GEMINI_NATIVE_ADAPTER_NAME, GEMINI_NATIVE_ADAPTER_VERSION } from "./adapters/gemini-native.js";
 import { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./adapters/openai-compat/types.js";
+import { isRuntimeFailoverBoundary } from "../ops/target-identity.js";
 
 export type AdapterFactory = () => Adapter | Promise<Adapter>;
 
@@ -219,7 +220,8 @@ export function rehydrateRecoveredRuntime(op: Op): boolean {
     const prior = readLatestOpTurn(op.id);
     const adapterIdentity = adapterIdentityForRuntime(descriptor.runtime);
     if (prior && (prior.providerState.adapterName !== adapterIdentity.name
-      || prior.providerState.adapterVersion !== adapterIdentity.version)) {
+      || prior.providerState.adapterVersion !== adapterIdentity.version)
+      && !isRuntimeFailoverBoundary(op, descriptor)) {
       throw new Error("checkpoint provider state does not match persisted runtime identity");
     }
   } catch {

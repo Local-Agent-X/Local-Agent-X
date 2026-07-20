@@ -12,6 +12,8 @@ export interface DriveTurnResult {
   /** A retryable adapter report asks the worker to release its lease and
    * requeue through the op's durable retry policy instead of busy-looping. */
   retryCode?: string;
+  /** Redacted provider text used only by the canonical failure taxonomy. */
+  retryMessage?: string;
   /**
    * Set when a middleware in the canonical safety stack returned a non-
    * "continue" verdict. The worker uses this to override the natural

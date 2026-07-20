@@ -1,6 +1,6 @@
 /** Durable exactly-once guard for mutation effects inside canonical ops. */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { opDir } from "../ops/event-log.js";
@@ -151,6 +151,23 @@ function validateEntry(value: unknown): JournalEntry {
 function readEntry(path: string): JournalEntry | null {
   if (!existsSync(path)) return null;
   return validateEntry(JSON.parse(readFileSync(path, "utf-8")) as unknown);
+}
+
+/** Failover must never cross providers while a mutation outcome is unknown. */
+export function hasAmbiguousSideEffects(operationId: string): boolean {
+  const dir = join(opDir(operationId), "side-effects");
+  if (!existsSync(dir)) return false;
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return true; }
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      if (readEntry(join(dir, name))?.state === "ambiguous") return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
 }
 
 function writeEntry(path: string, entry: JournalEntry): void {

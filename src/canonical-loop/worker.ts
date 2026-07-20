@@ -222,8 +222,10 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       }
 
       if (r.retryCode) {
-        const outcome = await handleAdapterRetry(op, r.retryCode);
-        releaseReason = outcome === "retrying" ? `adapter_retry:${r.retryCode}` : "adapter_retry_exhausted";
+        const outcome = await handleAdapterRetry(op, r.retryCode, r.retryMessage);
+        releaseReason = outcome === "retrying"
+          ? (op.lastFailureReason?.startsWith("runtime_failover") ? op.lastFailureReason : `adapter_retry:${r.retryCode}`)
+          : "adapter_retry_exhausted";
         break;
       }
       clearAdapterRetryState(op);

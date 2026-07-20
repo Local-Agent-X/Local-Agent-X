@@ -122,9 +122,23 @@ export interface CanonicalOpFields {
    * queued while this timestamp is in the future, so process restart resumes
    * the same retry instead of losing an in-memory timer. */
   retryNotBefore?: string | null;
+  /** Durable unattended runtime failover state. Exact identities are
+   * content-free and bind every transition to one signed runtime target. */
+  runtimeFailover?: RuntimeFailoverState;
   /** Durable scheduler-to-backend placement. Absence is the legacy
    * in-process shape; the scheduler stamps it before the first backend start. */
   executionPlacement?: ExecutionPlacement;
+}
+
+export interface RuntimeFailoverState {
+  schemaVersion: 1;
+  phase: "cooldown" | "waiting";
+  currentTargetIdentity: string;
+  candidateTargetIdentity: string | null;
+  attemptedTargetIdentities: string[];
+  normalizedFailure: string;
+  retryNotBefore: string;
+  revision: number;
 }
 
 export type ExecutionPlacementDisposition = "ready" | "waiting";

@@ -28,5 +28,6 @@ export function recoverReportedAdapterError(
     messageCount: 0,
     cancelled: false,
     retryCode: error.code,
+    retryMessage: error.message,
   };
 }

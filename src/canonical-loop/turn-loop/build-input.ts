@@ -4,7 +4,7 @@
 
 import type { TurnInput } from "../adapter-contract.js";
 import type { CanonicalMessage } from "../contract-types.js";
-import type { RedirectInstruction } from "../types.js";
+import type { ProviderStateEnvelope, RedirectInstruction } from "../types.js";
 import type { Op } from "../../ops/types.js";
 import { readLatestOpTurn, readOpMessages } from "../store.js";
 import { lastTurnUsage } from "../op-usage.js";
@@ -15,6 +15,7 @@ import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
 import { getSessionBaselineTokens } from "../session-baseline.js";
 import { isAnthropicModel } from "../../context-manager/effective-window.js";
+import { isRuntimeFailoverBoundary } from "../../ops/target-identity.js";
 
 export async function buildTurnInput(
   op: Op,
@@ -67,6 +68,11 @@ export async function buildTurnInput(
     viewCompacted = compacted.compacted;
   }
   const prior = readLatestOpTurn(op.id);
+  const descriptor = op.runtimeDescriptor?.kind === "delegated-op"
+    && op.runtimeDescriptor.adapter === "provider-exact"
+    ? op.runtimeDescriptor
+    : null;
+  const crossedRuntimeBoundary = !!descriptor && isRuntimeFailoverBoundary(op, descriptor);
   // Tools come from the per-op registry (chat-runner registers them on
   // submit; legacy worker-pool ops don't register and get []). Without
   // this, the adapter never tells the model about its tool surface and
@@ -75,7 +81,7 @@ export async function buildTurnInput(
     opId: op.id,
     turnIdx,
     messages,
-    providerState: prior?.providerState,
+    providerState: providerStateAcrossRuntimeBoundary(crossedRuntimeBoundary, prior?.providerState),
     tools: getToolsForOp(op.id),
   };
   if (pendingRedirect) input.pendingRedirect = pendingRedirect;
@@ -97,6 +103,13 @@ export async function buildTurnInput(
   }
 
   return input;
+}
+
+export function providerStateAcrossRuntimeBoundary(
+  crossedRuntimeBoundary: boolean,
+  prior: ProviderStateEnvelope | undefined,
+): ProviderStateEnvelope | undefined {
+  return crossedRuntimeBoundary ? undefined : prior;
 }
 
 export function readPendingRedirect(opId: string): RedirectInstruction | null {

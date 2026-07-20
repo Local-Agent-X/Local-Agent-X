@@ -5,6 +5,7 @@ import { opDir } from "../ops/event-log.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { dispatchSingleToolCall } from "./execute-tool.js";
+import { hasAmbiguousSideEffects } from "./side-effect-journal.js";
 
 const opIds: string[] = [];
 let seq = 0;
@@ -142,5 +143,19 @@ describe("side-effect journal integrity and claims", () => {
     expect(executions).toBe(1);
     expect(blocked.isError).toBe(true);
     expect(blocked.content).toContain("journal_integrity_failure");
+  });
+
+  it("blocks provider crossing for ambiguous or corrupt durable effects", async () => {
+    const operationId = opId("failover-ambiguous");
+    await dispatch(operationId, mutationTool(async () => ({ content: "done" })), {}, "first");
+    const path = journalFile(operationId);
+    const entry = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    entry.state = "ambiguous";
+    delete entry.result;
+    entry.reconciliationReason = "test crash after remote mutation";
+    writeFileSync(path, JSON.stringify(entry));
+    expect(hasAmbiguousSideEffects(operationId)).toBe(true);
+    writeFileSync(path, "{broken");
+    expect(hasAmbiguousSideEffects(operationId)).toBe(true);
   });
 });

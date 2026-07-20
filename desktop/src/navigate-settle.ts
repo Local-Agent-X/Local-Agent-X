@@ -29,10 +29,14 @@
 export const INTERACTIVE_SETTLE_MS = 3_000;
 
 /** The slice of Electron.WebContents the settle logic needs — narrow on
- *  purpose so tests can drive it with a plain emitter-backed fake. */
+ *  purpose so tests can drive it with a plain emitter-backed fake. Listener
+ *  params are unknown[] (not never[]): method-position bivariance makes both
+ *  work against Electron's typings, but never[] fails against EventEmitter
+ *  fakes under some @types/node versions (seen on the installed app's
+ *  reconcile compile, 2026-07-20). */
 export interface NavigableWebContents {
-	on(event: string, listener: (...args: never[]) => void): unknown;
-	off(event: string, listener: (...args: never[]) => void): unknown;
+	on(event: string, listener: (...args: unknown[]) => void): unknown;
+	off(event: string, listener: (...args: unknown[]) => void): unknown;
 	loadURL(url: string): Promise<unknown>;
 	getURL(): string;
 	getTitle(): string;
@@ -84,11 +88,16 @@ export function settleNavigation(
 			opts.onSuccess?.();
 		};
 		const onStart = () => { navStarted = true; };
-		const onFail = (_e: unknown, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => {
+		// Electron event args arrive as unknown[] through the narrowed interface;
+		// destructure + assert inside so the listener type stays fake-compatible.
+		const onFail = (...args: unknown[]) => {
+			const [, errorCode, errorDescription, validatedURL, isMainFrame] =
+				args as [unknown, number, string, string, boolean];
 			if (!isMainFrame || errorCode === -3) return;
 			finish({ ok: false, error: `${errorDescription || `load failed (${errorCode})`} (${validatedURL})` });
 		};
-		const onNavigated = (_e: unknown, _url: string, httpResponseCode: number) => {
+		const onNavigated = (...args: unknown[]) => {
+			const httpResponseCode = args[2];
 			if (typeof httpResponseCode === "number" && httpResponseCode > 0) status = httpResponseCode;
 		};
 		const onDone = () => {

@@ -27,10 +27,23 @@ export function isTurnCommitEnvelope(value: unknown): value is TurnCommitEnvelop
 }
 
 export function isOpTurnRow(value: unknown): value is OpTurnRow {
+  return isOpTurnRowWithProvider(value, isProviderState);
+}
+
+export function isLegacyOpTurnRow(value: unknown): value is OpTurnRow {
+  return isOpTurnRowWithProvider(value, (provider) => isProviderState(provider)
+    || (record(provider) && typeof provider.kind === "string"
+      && Object.prototype.hasOwnProperty.call(provider, "state")));
+}
+
+function isOpTurnRowWithProvider(
+  value: unknown,
+  providerValid: (value: unknown) => boolean,
+): value is OpTurnRow {
   if (!record(value)) return false;
   const row = value as Partial<OpTurnRow>;
   return typeof row.opId === "string" && integer(row.turnIdx)
-    && isProviderState(row.providerState)
+    && providerValid(row.providerState)
     && Array.isArray(row.toolCallSummary) && row.toolCallSummary.every(isToolSummary)
     && TERMINALS.has(row.terminalReason as never)
     && typeof row.redirectConsumed === "boolean" && typeof row.createdAt === "string"

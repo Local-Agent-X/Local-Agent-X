@@ -1,13 +1,14 @@
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { commitTurn, type CommitTurnInput } from "../src/canonical-loop/checkpoint.js";
 import { acquireLease, type LeaseClaim } from "../src/canonical-loop/lease.js";
-import { canonicalEventsPath, opTurnPath, opTurnsDir } from "../src/canonical-loop/schema.js";
+import { canonicalEventsPath, opMessagesPath, opTurnPath, opTurnsDir } from "../src/canonical-loop/schema.js";
 import { appendCanonicalEvent, appendOpMessage, readCanonicalEvents, readOpMessages, readOpTurn } from "../src/canonical-loop/store.js";
 import {
   _setTurnCommitWriteHookForTests,
+  readLegacyMessageSeeds,
   scavengeTurnCommitStages,
   type TurnCommitEnvelope,
 } from "../src/canonical-loop/turn-commit-store.js";
@@ -156,6 +157,78 @@ describe("message collision safety", () => {
     expect(commitTurn(input(readOp(op.id)!, claim, "unique-message", 1)).inserted).toBe(true);
     expect(readOpMessages(op.id).map((row) => row.messageId)).toEqual(["shared-message", "unique-message"]);
     expect(readdirSync(opTurnsDir(op.id)).some((file) => file.startsWith("1.json.") && file.endsWith(".corrupt"))).toBe(true);
+  });
+
+  function writeSeeds(opId: string, rows: OpMessageRow[], tail = ""): string {
+    const raw = rows.map((row) => JSON.stringify(row)).join("\n") + `\n${tail}`;
+    writeFileSync(opMessagesPath(opId), raw);
+    return raw;
+  }
+
+  it("fails closed on duplicate raw seed IDs at different positions without dropping evidence", () => {
+    const { op, claim } = mkOp("raw-duplicate-id");
+    const first = seed(op.id);
+    const second = { ...first, seqInTurn: 1 };
+    const raw = writeSeeds(op.id, [first, second]);
+    expect(readLegacyMessageSeeds(op.id).issues.map((issue) => issue.kind))
+      .toContain("duplicate_message_id");
+    expect(() => readOpMessages(op.id)).toThrow("legacy message seed integrity");
+    expect(() => commitTurn(input(op, claim))).toThrow("legacy message seed integrity");
+    expect(readFileSync(opMessagesPath(op.id), "utf-8")).toBe(raw);
+    expect(readOpTurn(op.id, 0)).toBeNull();
+    expect(readSessionActions(op.canonical!.sessionId!)).toEqual([]);
+    expect(readOp(op.id)?.canonical?.state).toBe("running");
+  });
+
+  it("fails closed on duplicate raw seed positions with different IDs", () => {
+    const { op, claim } = mkOp("raw-duplicate-position");
+    const first = seed(op.id);
+    const second = { ...first, messageId: `${op.id}-other` };
+    writeSeeds(op.id, [first, second]);
+    expect(readLegacyMessageSeeds(op.id).issues.map((issue) => issue.kind))
+      .toContain("duplicate_position");
+    expect(() => commitTurn(input(op, claim))).toThrow("legacy message seed integrity");
+    expect(readOpTurn(op.id, 0)).toBeNull();
+  });
+
+  it("reports both a malformed raw tail and an earlier seed collision", () => {
+    const { op, claim } = mkOp("raw-tail-collision");
+    const first = seed(op.id);
+    const raw = writeSeeds(op.id, [first, { ...first, seqInTurn: 1 }], "{\"messageId\":");
+    expect(readLegacyMessageSeeds(op.id).issues.map((issue) => issue.kind))
+      .toEqual(["duplicate_message_id", "malformed_row"]);
+    expect(() => commitTurn(input(op, claim))).toThrow("legacy message seed integrity");
+    expect(readFileSync(opMessagesPath(op.id), "utf-8")).toBe(raw);
+    expect(readOpTurn(op.id, 0)).toBeNull();
+  });
+
+  it("revalidates a concurrent raw seed append immediately before rename", () => {
+    const { op, claim } = mkOp("raw-before-rename");
+    const first = seed(op.id);
+    appendOpMessage(first);
+    const eventsBefore = readCanonicalEvents(op.id);
+    _setTurnCommitWriteHookForTests((point) => {
+      if (point !== "before_publish") return;
+      appendFileSync(opMessagesPath(op.id), JSON.stringify({
+        ...first, seqInTurn: 2, createdAt: new Date().toISOString(),
+      }) + "\n");
+    });
+    expect(() => commitTurn(input(op, claim))).toThrow("legacy message seed integrity");
+    expect(readOpTurn(op.id, 0)).toBeNull();
+    expect(readCanonicalEvents(op.id)).toEqual(eventsBefore);
+    expect(readSessionActions(op.canonical!.sessionId!)).toEqual([]);
+    expect(readOp(op.id)?.canonical?.state).toBe("running");
+  });
+
+  it("keeps valid legacy seed behavior and appends after its position", () => {
+    const { op, claim } = mkOp("raw-valid-parity");
+    const first = seed(op.id);
+    appendOpMessage(first);
+    expect(commitTurn(input(op, claim, `${op.id}-answer`)).inserted).toBe(true);
+    expect(readOpMessages(op.id)).toEqual([
+      first,
+      expect.objectContaining({ messageId: `${op.id}-answer`, turnIdx: 0, seqInTurn: 1 }),
+    ]);
   });
 });
 

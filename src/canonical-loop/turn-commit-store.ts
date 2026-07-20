@@ -19,6 +19,7 @@ import type { CanonicalState } from "./types.js";
 import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
 import {
   hasMessageCollision,
+  isLegacyOpTurnRow,
   isOpMessageRow,
   isOpTurnRow,
   isTurnCommitEnvelope,
@@ -46,6 +47,24 @@ export interface TurnCommitEnvelope {
   turn: OpTurnRow;
   messages: OpMessageRow[];
   projection: TurnCommitProjection;
+}
+
+export type LegacyMessageSeedIssue =
+  | { kind: "malformed_row"; line: number }
+  | { kind: "foreign_op"; line: number }
+  | { kind: "duplicate_message_id"; line: number; messageId: string }
+  | { kind: "duplicate_position"; line: number; position: string };
+
+export interface LegacyMessageSeedRead {
+  rows: OpMessageRow[];
+  issues: LegacyMessageSeedIssue[];
+}
+
+export class LegacyMessageSeedIntegrityError extends Error {
+  constructor(public readonly opId: string, public readonly issues: LegacyMessageSeedIssue[]) {
+    super(`legacy message seed integrity failure for ${opId}: ${issues.map((issue) => issue.kind).join(",")}`);
+    this.name = "LegacyMessageSeedIntegrityError";
+  }
 }
 
 export type TurnCommitWritePoint =
@@ -87,11 +106,12 @@ function readBaseArtifact(
       if (!op || op.id !== opId) return null;
       if (parsed.turn.opId !== opId || parsed.turn.turnIdx !== turnIdx) return null;
       if (!projectionMatchesOp(parsed.projection, op)) return null;
-      if (hasMessageCollision(parsed.messages, readLegacyMessages(opId))) return null;
+      const seeds = readLegacyMessageSeeds(opId);
+      if (seeds.issues.length || hasMessageCollision(parsed.messages, seeds.rows)) return null;
       return parsed;
     }
     if ((parsed as { schemaVersion?: unknown })?.schemaVersion !== undefined) return null;
-    return isOpTurnRow(parsed) && parsed.opId === opId && parsed.turnIdx === turnIdx ? parsed : null;
+    return isLegacyOpTurnRow(parsed) && parsed.opId === opId && parsed.turnIdx === turnIdx ? parsed : null;
   } catch {
     return null;
   }
@@ -141,6 +161,7 @@ export function publishTurnCommit(envelope: TurnCommitEnvelope): boolean {
     closeSync(fd);
     fd = null;
     writeHook?.("before_publish");
+    assertTurnCommitPublicationValid(envelope);
     renameSync(tmp, target);
     published = true;
     fsyncDirectory(dir);
@@ -189,18 +210,51 @@ export function committedMessagesFromArtifact(
   return artifact && isTurnCommitEnvelope(artifact) ? artifact.messages : [];
 }
 
-function readLegacyMessages(opId: string): OpMessageRow[] {
+export function readLegacyMessageSeeds(opId: string): LegacyMessageSeedRead {
   const path = opMessagesPath(opId);
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return { rows: [], issues: [] };
   const rows: OpMessageRow[] = [];
-  for (const line of readFileSync(path, "utf-8").split("\n")) {
+  const issues: LegacyMessageSeedIssue[] = [];
+  const ids = new Set<string>();
+  const positions = new Set<string>();
+  const lines = readFileSync(path, "utf-8").split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     if (!line.trim()) continue;
     try {
       const parsed: unknown = JSON.parse(line);
-      if (isOpMessageRow(parsed) && parsed.opId === opId) rows.push(parsed);
-    } catch { /* invalid legacy tail is handled by its own writer */ }
+      if (!isOpMessageRow(parsed)) {
+        issues.push({ kind: "malformed_row", line: index + 1 });
+        continue;
+      }
+      if (parsed.opId !== opId) {
+        issues.push({ kind: "foreign_op", line: index + 1 });
+        continue;
+      }
+      const position = `${parsed.turnIdx}:${parsed.seqInTurn}`;
+      if (ids.has(parsed.messageId)) {
+        issues.push({ kind: "duplicate_message_id", line: index + 1, messageId: parsed.messageId });
+      }
+      if (positions.has(position)) {
+        issues.push({ kind: "duplicate_position", line: index + 1, position });
+      }
+      ids.add(parsed.messageId);
+      positions.add(position);
+      rows.push(parsed);
+    } catch { issues.push({ kind: "malformed_row", line: index + 1 }); }
   }
-  return rows;
+  return { rows, issues };
+}
+
+function assertTurnCommitPublicationValid(envelope: TurnCommitEnvelope): void {
+  const op = readOp(envelope.turn.opId);
+  const seeds = readLegacyMessageSeeds(envelope.turn.opId);
+  if (seeds.issues.length) throw new LegacyMessageSeedIntegrityError(envelope.turn.opId, seeds.issues);
+  if (!op || !projectionMatchesOp(envelope.projection, op)
+    || hasMessageCollision(envelope.messages, seeds.rows)
+    || hasMessageCollision(envelope.messages, priorCommittedMessages(envelope.turn.opId, envelope.turn.turnIdx))) {
+    throw new Error(`turn commit message collision or invalid authority for ${envelope.turn.opId}#${envelope.turn.turnIdx}`);
+  }
 }
 
 function processAlive(pid: number): boolean {

@@ -24,7 +24,7 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { withOpLock } from "../ops/op-store.js";
+import { tryWithOpLock, withOpLock } from "../ops/op-store.js";
 import {
   canonicalEventsPath,
   opMessagesPath,
@@ -39,6 +39,8 @@ import type {
 } from "./types.js";
 import {
   committedMessagesFromArtifact,
+  LegacyMessageSeedIntegrityError,
+  readLegacyMessageSeeds,
   readTurnArtifact,
 } from "./turn-commit-store.js";
 import { appendKnownGoodJsonl, readDurableJsonl, updateDurableJsonl } from "../persistence/durable-jsonl.js";
@@ -296,17 +298,20 @@ export function readOpTurn(opId: string, turnIdx: number): OpTurnRow | null {
  * catch, which finalizes the op as `failed` rather than lying about success.
  */
 export function appendOpMessage(row: OpMessageRow): void {
-  const path = opMessagesPath(row.opId);
-  if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const line = JSON.stringify(row) + "\n";
-  try {
-    appendFileSync(path, line, { encoding: "utf-8", mode: 0o600 });
-  } catch (e) {
-    // Log (preserved) then re-throw so the failed write surfaces to the
-    // commit boundary — never swallow it into a false success.
-    logger.warn(`[store] appendOpMessage failed for ${row.opId}: ${(e as Error).message}`);
-    throw e;
-  }
+  const locked = tryWithOpLock(row.opId, () => {
+    const path = opMessagesPath(row.opId);
+    if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const line = JSON.stringify(row) + "\n";
+    try {
+      appendFileSync(path, line, { encoding: "utf-8", mode: 0o600 });
+    } catch (e) {
+      // Log (preserved) then re-throw so the failed write surfaces to the
+      // commit boundary — never swallow it into a false success.
+      logger.warn(`[store] appendOpMessage failed for ${row.opId}: ${(e as Error).message}`);
+      throw e;
+    }
+  });
+  if (!locked.acquired) throw new Error(`op-message append lock unavailable for ${row.opId}`);
 }
 
 /**
@@ -345,7 +350,6 @@ export function appliedRedirectTexts(opId: string): string[] {
 }
 
 export function readOpMessages(opId: string): OpMessageRow[] {
-  const path = opMessagesPath(opId);
   const byId = new Map<string, OpMessageRow>();
   const positions = new Set<string>();
   const add = (row: OpMessageRow): boolean => {
@@ -355,20 +359,10 @@ export function readOpMessages(opId: string): OpMessageRow[] {
     positions.add(position);
     return true;
   };
+  const seeds = readLegacyMessageSeeds(opId);
+  if (seeds.issues.length) throw new LegacyMessageSeedIntegrityError(opId, seeds.issues);
+  for (const row of seeds.rows) add(row);
   try {
-    if (existsSync(path)) {
-      const raw = readFileSync(path, "utf-8");
-      for (const line of raw.split("\n")) {
-        const t = line.trim();
-        if (!t) continue;
-        try {
-          const row = JSON.parse(t) as OpMessageRow;
-          add(row);
-        } catch {
-          logger.warn(`[store] skipped unparseable op-message line for ${opId}`);
-        }
-      }
-    }
     const dir = opTurnsDir(opId);
     if (existsSync(dir)) {
       for (const name of readdirSync(dir)) {

@@ -8,6 +8,38 @@ import { writeDurableJson } from "./checkpoint.mjs";
 const VERSION = 1;
 const ARTIFACTS = ["node_modules", "dist", join("desktop", "node_modules"), join("desktop", "dist")];
 
+function samePath(left, right) {
+  return process.platform === "win32"
+    ? resolve(left).toLocaleLowerCase("en-US") === resolve(right).toLocaleLowerCase("en-US")
+    : resolve(left) === resolve(right);
+}
+
+function directoryIdentity(path) {
+  let info;
+  try { info = lstatSync(path); }
+  catch { throw new Error(`Trusted rollback base is missing: ${path}`); }
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Trusted rollback base is linked or not a directory: ${path}`);
+  let real;
+  try { real = realpathSync(path); } catch { throw new Error(`Trusted rollback base cannot be resolved: ${path}`); }
+  if (!samePath(real, path)) throw new Error(`Trusted rollback base has a linked ancestor: ${path}`);
+  return { path: resolve(path), real: resolve(real), dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
+}
+
+function sameIdentity(expected, actual) {
+  return expected && samePath(expected.path, actual.path) && samePath(expected.real, actual.real)
+    && expected.dev === actual.dev && expected.ino === actual.ino && expected.birthtimeMs === actual.birthtimeMs;
+}
+
+function ensureDataDirectory(path) {
+  if (!existsSync(path)) {
+    let ancestor = dirname(path);
+    while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) ancestor = dirname(ancestor);
+    directoryIdentity(ancestor);
+    mkdirSync(path, { recursive: true });
+  }
+  return directoryIdentity(path);
+}
+
 function readJson(path) {
   try { return JSON.parse(readFileSync(path, "utf-8")); } catch { return null; }
 }
@@ -45,6 +77,11 @@ function safePathChain(base, relativePath) {
 function validJournal(value, root, dataDirectory, backupRoot) {
   if (!value || value.version !== VERSION || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
   if (resolve(value.identity?.root || "") !== resolve(root)) return false;
+  let installBase;
+  let dataBase;
+  try { installBase = directoryIdentity(root); dataBase = directoryIdentity(dataDirectory); }
+  catch { return false; }
+  if (!sameIdentity(value.identity.installBase, installBase) || !sameIdentity(value.identity.dataBase, dataBase)) return false;
   if (typeof value.identity.version !== "string") return false;
   if (value.identity.source !== null && !/^[0-9a-f]{40}$/.test(value.identity.source?.commit || "")) return false;
   if (!Array.isArray(value.artifacts)) return false;
@@ -80,13 +117,24 @@ export function createInstallRollback(context) {
   const journalPath = join(directory, "transaction.json");
   const backupRoot = join(directory, "artifacts");
   const fault = context.installerFault || (() => {});
+  let boundBases = null;
+
+  const assertBases = () => {
+    if (!boundBases) return;
+    if (!sameIdentity(boundBases.install, directoryIdentity(root))
+      || !sameIdentity(boundBases.data, directoryIdentity(dataDirectory))) {
+      throw new Error("Installer rollback trusted base identity changed.");
+    }
+  };
 
   const assertPath = (base, relativePath) => {
+    assertBases();
     if (!safePathChain(base, relativePath)) {
       throw new Error(`Installer rollback path became linked or escaped: ${relativePath}`);
     }
   };
   const assertJournalPaths = (journal) => {
+    assertBases();
     if (!validJournal(journal, root, dataDirectory, backupRoot)) {
       throw new Error("Installer rollback journal paths changed or became unsafe.");
     }
@@ -108,12 +156,16 @@ export function createInstallRollback(context) {
   };
 
   const load = () => {
+    assertBases();
+    directoryIdentity(root);
+    if (existsSync(dataDirectory)) directoryIdentity(dataDirectory);
     if (!existsSync(journalPath)) return null;
     const value = readJson(journalPath);
     if (!validJournal(value, root, dataDirectory, backupRoot)) throw new Error("Installer rollback journal has ambiguous provenance; refusing to mutate installation artifacts.");
     if (readJson(join(root, "package.json"))?.version !== value.identity.version) {
       throw new Error("Installer rollback journal package identity does not match this installation.");
     }
+    boundBases = { install: value.identity.installBase, data: value.identity.dataBase };
     return value;
   };
   const save = (journal) => {
@@ -184,6 +236,11 @@ export function createInstallRollback(context) {
     begin() {
       if (load()) throw new Error("Installer rollback reconciliation must complete before a new transaction.");
       const identity = installIdentity(root, dataDirectory);
+      const installBase = directoryIdentity(root);
+      const dataBase = ensureDataDirectory(dataDirectory);
+      boundBases = { install: installBase, data: dataBase };
+      identity.installBase = installBase;
+      identity.dataBase = dataBase;
       if (!ARTIFACTS.every((item) => safePathChain(root, item))) {
         throw new Error("Installer artifact path contains a linked or escaping component.");
       }

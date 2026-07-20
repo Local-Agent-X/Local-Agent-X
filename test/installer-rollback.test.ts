@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -193,6 +193,65 @@ describe("installer artifact rollback", () => {
     expect(() => createInstallRollback(f).begin()).toThrow(/linked/);
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
     expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK).each(["install", "data"])(
+    "rejects a linked %s base even when every rollback artifact is absent", (baseKind) => {
+      const f = fixture();
+      const target = baseKind === "install" ? f.installRoot : f.dataDirectory;
+      if (baseKind === "install") rmSync(f.installRoot, { recursive: true });
+      const outside = join(f.base, `linked-${baseKind}-base`);
+      mkdirSync(outside);
+      writeFileSync(join(outside, "keep.txt"), "outside-safe");
+      symlinkSync(outside, target, process.platform === "win32" ? "junction" : "dir");
+      expect(() => createInstallRollback(f).begin()).toThrow(/trusted rollback base|linked/i);
+      expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("outside-safe");
+    },
+  );
+
+  it.each(["install", "data"])("rejects replacement of the bound %s base", (baseKind) => {
+    const f = fixture();
+    const transaction = createInstallRollback(f);
+    transaction.begin();
+    const target = baseKind === "install" ? f.installRoot : f.dataDirectory;
+    const original = join(f.base, `original-${baseKind}`);
+    renameSync(target, original);
+    mkdirSync(target);
+    writeFileSync(join(target, "keep.txt"), "replacement-safe");
+    expect(() => transaction.rollback("required failure")).toThrow(/trusted base identity changed/i);
+    expect(readFileSync(join(target, "keep.txt"), "utf-8")).toBe("replacement-safe");
+    if (baseKind === "install") {
+      expect(readFileSync(join(original, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+    } else {
+      expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+    }
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK).each([
+    "after-backup-journal", "after-backup", "before-restore", "after-restore", "after-verified",
+  ])("rejects an install-base swap after the %s fault boundary", (faultPoint) => {
+    const f = fixture();
+    const original = join(f.base, `original-install-${faultPoint}`);
+    const outside = join(f.base, `outside-install-${faultPoint}`);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "outside-safe");
+    let swapped = false;
+    const transaction = createInstallRollback({ ...f, installerFault: (point: string) => {
+      if (point !== faultPoint || swapped) return;
+      swapped = true;
+      renameSync(f.installRoot, original);
+      symlinkSync(outside, f.installRoot, process.platform === "win32" ? "junction" : "dir");
+    } });
+    if (faultPoint.startsWith("after-backup")) {
+      expect(() => transaction.begin()).toThrow(/trusted base identity changed|linked/i);
+    } else {
+      transaction.begin();
+      if (faultPoint === "after-verified") expect(() => transaction.verified()).toThrow(/trusted base identity changed|linked/i);
+      else expect(() => transaction.rollback("required failure")).toThrow(/trusted base identity changed|linked/i);
+    }
+    expect(swapped).toBe(true);
+    expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("outside-safe");
+    expect(readFileSync(join(original, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
   });
 
   it.skipIf(!CAN_CREATE_DIRECTORY_LINK).each([

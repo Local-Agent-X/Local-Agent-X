@@ -17,6 +17,7 @@ const {
   enqueueOp,
   pumpScheduler,
   resetScheduler,
+  scheduleQueuedRetry,
   wakeExecutionPlacement,
 } = await import("./scheduler.js");
 
@@ -99,6 +100,26 @@ afterAll(() => {
 });
 
 describe("execution placement revision fencing", () => {
+  it("cancels stale placement backoff when capacity wakes the op", async () => {
+    vi.useFakeTimers();
+    try {
+      const candidate = makeOp("capacity-backoff");
+      submit(candidate);
+      scheduleQueuedRetry(candidate.id, candidate.lane, 60_000);
+      const identity = { backendId: backend.id, targetId: "capacity-slot" };
+
+      expect(wakeExecutionPlacement(candidate.id, identity, 1, "capacity")).toMatchObject({ ok: true });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(backend.starts).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(backend.starts).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects a stale wake when a newer waiting revision reuses the same token", async () => {
     const candidate = makeOp("same-token");
     submit(candidate);

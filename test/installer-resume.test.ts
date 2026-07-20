@@ -3,10 +3,11 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { installCheckpointPath } from "../scripts/installer/checkpoint.mjs";
 import { runInstaller } from "../scripts/installer/orchestrator.mjs";
 import { createReporter } from "../scripts/installer/reporter.mjs";
+import { verifyInstallStep } from "../scripts/installer/step-verification.mjs";
 
 const directories: string[] = [];
 const resumeChild = fileURLToPath(new URL("./fixtures/installer-resume-child.mjs", import.meta.url));
@@ -94,6 +95,13 @@ function harness(): Harness {
 }
 
 describe("resumable installer checkpoints", () => {
+  it("uses npm.cmd through the Windows shell when reconciling an interrupted npm step", () => {
+    const spawn = vi.fn(() => ({ status: 0 }));
+    expect(verifyInstallStep("npm", {
+      platform: "win32", processes: { spawnSync: spawn }, selections: {},
+    }, { inFlight: true })).toBe("present");
+    expect(spawn).toHaveBeenCalledWith("npm.cmd", ["ls", "--depth=0"], { stdio: "ignore", shell: true });
+  });
   it("keeps restored degradation in canonical report order", () => {
     const reporter = createReporter({ ipcMode: true, stdout: { write: () => true } as NodeJS.WriteStream });
     reporter.restoreDegraded([

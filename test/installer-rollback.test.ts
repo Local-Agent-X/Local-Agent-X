@@ -40,6 +40,22 @@ describe("installer artifact rollback", () => {
     expect(JSON.parse(readFileSync(join(f.dataDirectory, "installed-source.json"), "utf-8")).commit).toBe(previousCommit);
   });
 
+  it("copies durably before removing source when a rollback move crosses volumes", () => {
+    const f = fixture();
+    const installerRename = vi.fn(() => { throw Object.assign(new Error("cross-volume"), { code: "EXDEV" }); });
+    const transaction = createInstallRollback({ ...f, installerRename });
+    transaction.begin();
+    expect(existsSync(join(f.installRoot, "dist"))).toBe(false);
+    expect(readFileSync(join(f.dataDirectory, "install-rollback", "artifacts", "dist", "index.js"), "utf-8"))
+      .toBe("verified-old");
+    mkdirSync(join(f.installRoot, "dist"));
+    writeFileSync(join(f.installRoot, "dist", "index.js"), "broken-new");
+    expect(transaction.rollback("required build failed")).toMatchObject({ restored: true });
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
+    expect(existsSync(join(f.installRoot, "dist.installer-copy"))).toBe(false);
+    expect(installerRename).toHaveBeenCalledTimes(2);
+  });
+
   it("removes artifacts introduced by a failed fresh install", () => {
     const f = fixture();
     rmSync(join(f.installRoot, "dist"), { recursive: true });
@@ -287,8 +303,12 @@ describe("installer artifact rollback", () => {
     } });
     transaction.begin();
     mkdirSync(join(f.installRoot, "dist"));
+    const checkpoint = join(f.dataDirectory, "install-checkpoint.json");
+    writeFileSync(checkpoint, "stale-in-flight");
     expect(() => transaction.rollback("failed")).toThrow("kill");
+    expect(existsSync(checkpoint)).toBe(true);
     expect(createInstallRollback(f).reconcile().restored).toBe(true);
+    expect(existsSync(checkpoint)).toBe(false);
   });
 
   it("restores an interrupted backup before any installer step can run", () => {
@@ -301,7 +321,7 @@ describe("installer artifact rollback", () => {
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
   });
 
-  it("rolls back required failure through the real reporter lifecycle", async () => {
+  it("clears a rolled-back in-flight checkpoint so the installer can retry", async () => {
     const f = fixture();
     const reporter = createReporter({ ipcMode: true, stdout: { write: () => true } as NodeJS.WriteStream,
       exit: (code: number) => { throw new Error(`exit:${code}`); } });
@@ -316,6 +336,20 @@ describe("installer artifact rollback", () => {
       posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
     })).rejects.toThrow("exit:1");
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
+    expect(existsSync(join(f.dataDirectory, "install-checkpoint.json"))).toBe(false);
+
+    const retryReporter = createReporter({ ipcMode: true, stdout: { write: () => true } as NodeJS.WriteStream });
+    await runInstaller({ ...f, reporter: retryReporter, platform: "linux", selections: {}, verifyInstallStep: () => "absent" }, {
+      prerequisites: async () => {},
+      core: async () => {
+        expect(retryReporter.step("build")).toBe(true);
+        mkdirSync(join(f.installRoot, "dist"));
+        writeFileSync(join(f.installRoot, "dist", "index.js"), "verified-new");
+        retryReporter.stepDone("build");
+      },
+      posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
+    });
+    expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-new");
   });
 
   it("does not roll back optional degradation", async () => {

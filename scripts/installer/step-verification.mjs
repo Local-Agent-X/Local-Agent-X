@@ -23,7 +23,10 @@ function verifyNpm(context, evidence) {
   if (!existsSync(join(process.cwd(), "node_modules"))) return "absent";
   if (!existsSync(join(process.cwd(), "node_modules", ".package-lock.json"))) return "absent";
   if (!evidence?.inFlight) return "present";
-  const result = context.processes.spawnSync("npm", ["ls", "--depth=0"], { stdio: "ignore" });
+  const windows = context.platform === "win32";
+  const result = context.processes.spawnSync(windows ? "npm.cmd" : "npm", ["ls", "--depth=0"], {
+    stdio: "ignore", shell: windows,
+  });
   return result.status === 0 ? "present" : "absent";
 }
 

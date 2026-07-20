@@ -128,3 +128,12 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
 export function installCheckpointPath(dataDirectory = join(homedir(), ".lax")) {
   return join(dataDirectory, FILE);
 }
+
+export function resetInstallCheckpoint(dataDirectory = join(homedir(), ".lax")) {
+  const path = installCheckpointPath(dataDirectory);
+  rmSync(path, { force: true });
+  try {
+    const directory = openSync(dirname(path), "r");
+    try { fsyncSync(directory); } finally { closeSync(directory); }
+  } catch {}
+}

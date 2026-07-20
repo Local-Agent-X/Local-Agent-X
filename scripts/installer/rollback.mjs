@@ -1,9 +1,10 @@
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync,
+  closeSync, cpSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
+  readFileSync, readdirSync, realpathSync, renameSync, rmSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { writeDurableJson } from "./checkpoint.mjs";
+import { resetInstallCheckpoint, writeDurableJson } from "./checkpoint.mjs";
 
 const VERSION = 1;
 const ARTIFACTS = ["node_modules", "dist", join("desktop", "node_modules"), join("desktop", "dist")];
@@ -38,6 +39,27 @@ function ensureDataDirectory(path) {
     mkdirSync(path, { recursive: true });
   }
   return directoryIdentity(path);
+}
+
+function syncCopiedPath(path) {
+  const info = lstatSync(path);
+  if (info.isSymbolicLink()) return;
+  if (info.isDirectory()) {
+    for (const entry of readdirSync(path)) syncCopiedPath(join(path, entry));
+  }
+  try {
+    const handle = openSync(path, info.isDirectory() ? "r" : "r+");
+    try { fsyncSync(handle); } finally { closeSync(handle); }
+  } catch (error) {
+    if (!info.isDirectory()) throw error;
+  }
+}
+
+function syncDirectory(path) {
+  try {
+    const handle = openSync(path, "r");
+    try { fsyncSync(handle); } finally { closeSync(handle); }
+  } catch {}
 }
 
 function readJson(path) {
@@ -92,6 +114,8 @@ function validJournal(value, root, dataDirectory, backupRoot) {
   if (new Set(received.map((item) => String(item).toLocaleLowerCase("en-US"))).size !== received.length) return false;
   return value.artifacts.every((item) => {
     if (!item || typeof item.relative !== "string" || typeof item.existed !== "boolean") return false;
+    if (item.restored !== undefined && typeof item.restored !== "boolean") return false;
+    if (item.restored && !["rolling-back", "restored"].includes(value.status)) return false;
     if (!item.relative || item.relative === "." || isAbsolute(item.relative) || normalize(item.relative) !== item.relative) return false;
     if (item.relative.split(/[\\/]/).some((part) => !part || part === "." || part === "..")) return false;
     const target = resolve(root, item.relative);
@@ -99,6 +123,7 @@ function validJournal(value, root, dataDirectory, backupRoot) {
     if (!inside(root, target) || !inside(backupRoot, backup)) return false;
     if (!safePathChain(root, item.relative)) return false;
     if (!safePathChain(dataDirectory, join("install-rollback", "artifacts", item.relative))) return false;
+    if (item.restored && !existsSync(target)) return false;
     if (item.existed && !existsSync(target) && !existsSync(backup)) return false;
     return item.existed || !existsSync(backup);
   });
@@ -117,6 +142,7 @@ export function createInstallRollback(context) {
   const journalPath = join(directory, "transaction.json");
   const backupRoot = join(directory, "artifacts");
   const fault = context.installerFault || (() => {});
+  const renamePath = context.installerRename || renameSync;
   let boundBases = null;
 
   const assertBases = () => {
@@ -143,7 +169,7 @@ export function createInstallRollback(context) {
     assertPath(base, relativePath);
     rmSync(resolve(base, relativePath), options);
   };
-  const movePath = (sourceBase, sourceRelative, destinationBase, destinationRelative) => {
+  const movePath = (sourceBase, sourceRelative, destinationBase, destinationRelative, afterDestinationDurable) => {
     assertPath(sourceBase, sourceRelative);
     assertPath(destinationBase, destinationRelative);
     const destination = resolve(destinationBase, destinationRelative);
@@ -152,7 +178,39 @@ export function createInstallRollback(context) {
     mkdirSync(dirname(destination), { recursive: true });
     assertPath(sourceBase, sourceRelative);
     assertPath(destinationBase, destinationRelative);
-    renameSync(resolve(sourceBase, sourceRelative), destination);
+    const source = resolve(sourceBase, sourceRelative);
+    try {
+      renamePath(source, destination);
+      syncDirectory(dirname(destination));
+      syncDirectory(dirname(source));
+      afterDestinationDurable?.();
+    }
+    catch (error) {
+      if (error?.code !== "EXDEV") throw error;
+      const temporaryRelative = `${destinationRelative}.installer-copy`;
+      const temporary = resolve(destinationBase, temporaryRelative);
+      assertPath(destinationBase, temporaryRelative);
+      rmSync(temporary, { recursive: true, force: true });
+      try {
+        cpSync(source, temporary, {
+          recursive: true, dereference: false, errorOnExist: true, force: false, preserveTimestamps: true,
+        });
+        syncCopiedPath(temporary);
+        assertPath(sourceBase, sourceRelative);
+        assertPath(destinationBase, temporaryRelative);
+        renameSync(temporary, destination);
+        syncDirectory(dirname(destination));
+        afterDestinationDurable?.();
+        assertPath(sourceBase, sourceRelative);
+        assertPath(destinationBase, destinationRelative);
+        rmSync(source, { recursive: true, force: true });
+        syncDirectory(dirname(source));
+      } catch (copyError) {
+        assertPath(destinationBase, temporaryRelative);
+        rmSync(temporary, { recursive: true, force: true });
+        throw copyError;
+      }
+    }
   };
 
   const load = () => {
@@ -181,7 +239,7 @@ export function createInstallRollback(context) {
       removePath(dataDirectory, "install-rollback", { recursive: true, force: true });
       return { restored: false, outcome: "verified-install-retained" };
     }
-    if (journal.status === "active") {
+    if (journal.status === "active" || journal.status === "backing-up") {
       journal.status = "rolling-back";
       journal.reason = reason;
       save(journal);
@@ -192,11 +250,16 @@ export function createInstallRollback(context) {
       const target = resolve(root, item.relative);
       const backup = resolve(backupRoot, item.relative);
       if (item.existed) {
-        if (existsSync(backup)) {
+        if (item.restored) {
+          if (existsSync(backup)) removePath(dataDirectory, join("install-rollback", "artifacts", item.relative), { recursive: true, force: true });
+        } else if (existsSync(backup)) {
           assertJournalPaths(journal);
           removePath(root, item.relative, { recursive: true, force: true });
           assertJournalPaths(journal);
-          movePath(dataDirectory, join("install-rollback", "artifacts", item.relative), root, item.relative);
+          movePath(dataDirectory, join("install-rollback", "artifacts", item.relative), root, item.relative, () => {
+            item.restored = true;
+            save(journal);
+          });
         } else if (!existsSync(target)) throw new Error(`Rollback backup is missing for ${item.relative}.`);
       } else {
         assertJournalPaths(journal);
@@ -207,6 +270,7 @@ export function createInstallRollback(context) {
     assertPath(dataDirectory, "installed-source.json");
     if (journal.identity.source) writeDurableJson(sourcePath, journal.identity.source);
     else removePath(dataDirectory, "installed-source.json", { force: true });
+    resetInstallCheckpoint(dataDirectory);
     journal.status = "restored";
     journal.restoredAt = new Date().toISOString();
     journal.reason = reason;

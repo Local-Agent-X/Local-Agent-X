@@ -64,6 +64,14 @@ function flip(field: string, value: unknown): { call: ToolCall; result: Canonica
   };
 }
 
+function success(tool: string, content = "ok"): { call: ToolCall; result: CanonicalToolResultView } {
+  const id = `c${++seq}`;
+  return {
+    call: { toolCallId: id, tool, args: {} },
+    result: { toolName: tool, toolCallId: id, content, status: "ok" },
+  };
+}
+
 /** Run one afterToolExecution batch through the guard. */
 async function run(op: Op, steps: Array<{ call: ToolCall; result: CanonicalToolResultView }>) {
   const ctx = mkCtx(op, steps.map((s) => s.call), steps.map((s) => s.result));
@@ -109,6 +117,20 @@ describe("thrash-guard middleware", () => {
       { call: { toolCallId: "cok", tool: "browser", args: {} },
         result: { toolName: "browser", toolCallId: "cok", content: "page loaded", status: "ok" } },
     ]);
+    expect(r.kind).toBe("continue");
+  });
+
+  it("successful progress disarms a reactive flip before a later unrelated failure", async () => {
+    const op = mkOp();
+    expect((await run(op, [fail("browser", "old route failed")])).kind).toBe("continue");
+    expect((await run(op, [flip("browserMode", "isolated")])).kind).toBe("continue");
+    expect((await run(op, [success("browser", "page loaded")])).kind).toBe("continue");
+
+    // This later failure belongs to a new incident. It must not complete the
+    // old flip-then-refail cycle or leave the old failure count armed.
+    expect((await run(op, [fail("http_request", "unrelated outage")])).kind).toBe("continue");
+    expect((await run(op, [flip("browserMode", "in-app")])).kind).toBe("continue");
+    const r = await run(op, [fail("browser", "new route failed")]);
     expect(r.kind).toBe("continue");
   });
 

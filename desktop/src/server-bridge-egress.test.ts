@@ -18,15 +18,15 @@ import { askServerEgress, settleEgressAsk } from "./server-bridge-egress";
 
 interface SentAsk { id: number; url: string }
 
-function fakeProc(over: Partial<{ connected: boolean; killed: boolean; sendOk: boolean }> = {}) {
+function fakeProc(over: Partial<{ connected: boolean; killed: boolean; backpressured: boolean; sendError: Error }> = {}) {
 	const sent: SentAsk[] = [];
 	const proc = {
 		connected: over.connected ?? true,
 		killed: over.killed ?? false,
-		send: (msg: SentAsk) => {
-			if (over.sendOk === false) return false;
+		send: (msg: SentAsk, callback?: (error: Error | null) => void) => {
 			sent.push(msg);
-			return true;
+			queueMicrotask(() => callback?.(over.sendError ?? null));
+			return !over.backpressured;
 		},
 	};
 	return { proc: proc as unknown as ChildProcess, sent };
@@ -66,8 +66,16 @@ describe("askServerEgress deadline semantics", () => {
 		await expect(askServerEgress(proc, { url: "https://example.com/" } as never)).resolves.toEqual({ allowed: false });
 	});
 
-	it("a failed send denies immediately", async () => {
-		const { proc } = fakeProc({ sendOk: false });
+	it("IPC backpressure does not deny a request that was queued", async () => {
+		const { proc, sent } = fakeProc({ backpressured: true });
+		const ask = askServerEgress(proc, { url: "https://example.com/" } as never);
+		await vi.advanceTimersByTimeAsync(1_000);
+		settleEgressAsk(sent[0].id, true);
+		await expect(ask).resolves.toEqual({ allowed: true });
+	});
+
+	it("a send callback error denies immediately", async () => {
+		const { proc } = fakeProc({ sendError: new Error("channel closed") });
 		await expect(askServerEgress(proc, { url: "https://example.com/" } as never)).resolves.toEqual({ allowed: false });
 	});
 });

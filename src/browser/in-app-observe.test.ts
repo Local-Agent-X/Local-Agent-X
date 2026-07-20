@@ -171,4 +171,18 @@ describe("execChecked", () => {
 		await expect(execChecked("view-1", "1")).rejects.toThrow(/in-page script threw: TypeError: x is undefined/);
 		vi.doUnmock("./bridge-client.js");
 	});
+
+	it("surfaces invalid selectors through every selector-addressed action", async () => {
+		vi.resetModules();
+		vi.doMock("./bridge-client.js", () => ({
+			browserExec: vi.fn(async () => ({ __laxScriptError: "SyntaxError: invalid selector" })),
+			browserCapture: vi.fn(),
+		}));
+		const { clickSelectorInApp, fillSelectorInApp, selectOptionInApp } =
+			await import("./in-app-selector-actions.js");
+		await expect(clickSelectorInApp("view-1", "[")).rejects.toThrow(/in-page script threw: SyntaxError: invalid selector/);
+		await expect(fillSelectorInApp("view-1", "[", "value")).rejects.toThrow(/in-page script threw: SyntaxError: invalid selector/);
+		await expect(selectOptionInApp("view-1", "[", "value")).rejects.toThrow(/in-page script threw: SyntaxError: invalid selector/);
+		vi.doUnmock("./bridge-client.js");
+	});
 });

@@ -10,18 +10,18 @@
  * The backend keeps only the ensureView/snapshot orchestration around these.
  */
 
-import { browserExec } from "./bridge-client.js";
 import { asExecResult, clickScript, fillScript, selectScript } from "./in-app-scripts.js";
+import { execChecked } from "./in-app-observe.js";
 
 export async function clickSelectorInApp(viewId: string, selector: string): Promise<void> {
-	const res = asExecResult(await browserExec(viewId, clickScript(selector)));
+	const res = asExecResult(await execChecked(viewId, clickScript(selector)));
 	if (res.ok) return;
 	if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
 	throw new Error(`Cannot click ${selector}: ${res.error}`);
 }
 
 export async function fillSelectorInApp(viewId: string, selector: string, value: string): Promise<string> {
-	const res = asExecResult(await browserExec(viewId, fillScript(selector, value)));
+	const res = asExecResult(await execChecked(viewId, fillScript(selector, value)));
 	if (!res.ok) {
 		if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
 		throw new Error(`Cannot fill ${selector}: ${res.error}`);
@@ -35,7 +35,7 @@ export async function fillSelectorInApp(viewId: string, selector: string, value:
 }
 
 export async function selectOptionInApp(viewId: string, selector: string, value: string): Promise<string> {
-	const res = asExecResult(await browserExec(viewId, selectScript(selector, value)));
+	const res = asExecResult(await execChecked(viewId, selectScript(selector, value)));
 	if (!res.ok) {
 		if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
 		throw new Error(`Cannot select in ${selector}: ${res.error}`);

@@ -70,7 +70,12 @@ export function askServerEgress(proc: ChildProcess, req: EgressRequest): Promise
 			if (req.pageUrl) msg.pageUrl = req.pageUrl;
 			if (req.body) msg.body = req.body;
 			if (viewId) msg.viewId = viewId;
-			if (!proc.send(msg)) finish(false);
+			// A false return means the IPC backlog crossed its threshold, not that
+			// delivery failed. The message is still queued; only the callback error
+			// proves a send failure. Otherwise the reply/deadline owns settlement.
+			proc.send(msg, (error) => {
+				if (error) finish(false);
+			});
 		} catch {
 			finish(false); // channel just closed — deny
 		}

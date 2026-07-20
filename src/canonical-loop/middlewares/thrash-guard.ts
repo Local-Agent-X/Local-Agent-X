@@ -75,6 +75,14 @@ export const thrashGuardMiddleware: CanonicalMiddleware = {
         }
         continue;
       }
+      if (tr.status === "ok" && tr.toolName !== "setting") {
+        // A successful action proves the route produced forward progress.
+        // Disarm both sides of the pending cycle so a later unrelated failure
+        // cannot be misclassified as the refail for an old settings change.
+        state.awaitingRefail = false;
+        state.failuresSinceFlip = 0;
+        continue;
+      }
       if (tr.toolName !== "setting" || tr.status !== "ok") continue;
       const args = argsById.get(tr.toolCallId) as { field?: unknown } | undefined;
       const field = typeof args?.field === "string" ? args.field : "";

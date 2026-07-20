@@ -97,6 +97,15 @@ describe("settleNavigation", () => {
 		expect(r.ok).toBe(true);
 	});
 
+	it("ignores a stale main-frame failure from the previous page before this navigation starts", async () => {
+		const p = start({ timeoutMs: 10_000 });
+		await tick();
+		wc.emit("did-fail-load", {}, -105, "NAME_NOT_RESOLVED", "https://previous.example/", true);
+		wc.emit("did-start-loading");
+		wc.emit("did-finish-load");
+		await expect(p).resolves.toMatchObject({ ok: true });
+	});
+
 	it("main-frame did-fail-load settles as error; code -3 (aborted) is ignored", async () => {
 		const p = start();
 		await tick();

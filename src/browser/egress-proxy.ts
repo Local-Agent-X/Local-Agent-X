@@ -164,6 +164,12 @@ async function forwardHttp(
   const url = parseHttpTarget(request);
   const target = await resolveDialTarget(url);
   const socket = await dial(target);
+  // The client can disappear while DNS pinning / dialing is awaiting. In that
+  // window no request listener owns the new socket yet, so close it here.
+  if (request.destroyed && !request.complete) {
+    socket.destroy();
+    return;
+  }
   const headers: Record<string, string | string[] | undefined> = {
     ...request.headers,
     host: url.host,
@@ -194,6 +200,12 @@ async function forwardHttp(
   // otherwise leave `request` erroring with no listener (same class as the
   // connection-level guard above) and the dialed upstream socket leaked.
   request.once("error", () => upstream.destroy());
+  request.once("close", () => {
+    // IncomingMessage closes after both normal completion and an early client
+    // disconnect. Only the latter owns the upstream: once the full request was
+    // received, the upstream may still be producing a legitimate response.
+    if (!request.complete) upstream.destroy();
+  });
   request.pipe(upstream);
 }
 

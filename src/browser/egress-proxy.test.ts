@@ -132,6 +132,59 @@ describe("browser egress proxy", () => {
     });
   });
 
+  it("destroys the upstream when an HTTP client disconnects mid-body", async () => {
+    resolve4.mockResolvedValue(["93.184.216.37"]);
+    const dialed = tunnelSocket();
+    let markDialed!: () => void;
+    const dialStarted = new Promise<void>((resolve) => { markDialed = resolve; });
+    const dial = vi.fn(async (_target: BrowserProxyDialTarget) => {
+      markDialed();
+      return dialed;
+    });
+    const proxy = await startWithDial(dial);
+    const client = netConnect({ host: "127.0.0.1", port: proxyPort(proxy) });
+    client.on("error", () => { /* an early HTTP disconnect may reset locally */ });
+    await new Promise<void>((resolve) => client.once("connect", resolve));
+    client.write(
+      "POST http://public.example/upload HTTP/1.1\r\n" +
+      "Host: public.example\r\nContent-Length: 100\r\n\r\npartial",
+    );
+    await dialStarted;
+
+    client.end();
+
+    await vi.waitFor(() => expect(dialed.destroyed).toBe(true));
+  });
+
+  it("destroys a socket returned after the HTTP client aborted during dial", async () => {
+    resolve4.mockResolvedValue(["93.184.216.38"]);
+    const dialed = tunnelSocket();
+    let releaseDial!: () => void;
+    const dialGate = new Promise<void>((resolve) => { releaseDial = resolve; });
+    let markDialed!: () => void;
+    const dialStarted = new Promise<void>((resolve) => { markDialed = resolve; });
+    const dial = vi.fn(async (_target: BrowserProxyDialTarget) => {
+      markDialed();
+      await dialGate;
+      return dialed;
+    });
+    const proxy = await startWithDial(dial);
+    const client = netConnect({ host: "127.0.0.1", port: proxyPort(proxy) });
+    client.on("error", () => { /* an early HTTP disconnect may reset locally */ });
+    await new Promise<void>((resolve) => client.once("connect", resolve));
+    client.write(
+      "POST http://public.example/upload HTTP/1.1\r\n" +
+      "Host: public.example\r\nContent-Length: 100\r\n\r\npartial",
+    );
+    await dialStarted;
+
+    client.resetAndDestroy();
+    await new Promise<void>((resolve) => client.once("close", () => resolve()));
+    releaseDial();
+
+    await vi.waitFor(() => expect(dialed.destroyed).toBe(true));
+  });
+
   it("refuses a private DNS answer before opening a socket", async () => {
     resolve4.mockResolvedValue(["10.0.0.7"]);
     const dial = vi.fn(async (_target: BrowserProxyDialTarget) => new HttpResponseSocket());

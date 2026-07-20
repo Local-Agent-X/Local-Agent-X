@@ -93,7 +93,7 @@ export function settleNavigation(
 		const onFail = (...args: unknown[]) => {
 			const [, errorCode, errorDescription, validatedURL, isMainFrame] =
 				args as [unknown, number, string, string, boolean];
-			if (!isMainFrame || errorCode === -3) return;
+			if (!navStarted || !isMainFrame || errorCode === -3) return;
 			finish({ ok: false, error: `${errorDescription || `load failed (${errorCode})`} (${validatedURL})` });
 		};
 		const onNavigated = (...args: unknown[]) => {

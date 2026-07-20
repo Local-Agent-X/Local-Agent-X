@@ -15,7 +15,14 @@ export function persistInstallOutcome(context, desktop) {
   }
   try {
     mkdirSync(dataDirectory, { recursive: true });
-    writeFileSync(join(dataDirectory, "install-report.json"), JSON.stringify({ installedAt: new Date().toISOString(), degraded: reporter.degraded }, null, 2), "utf-8");
+    writeFileSync(join(dataDirectory, "install-report.json"), JSON.stringify({
+      installedAt: new Date().toISOString(),
+      selections: context.selections || {
+        ollamaRuntime: Boolean(context.wantOllama),
+        ollamaMemoryModel: Boolean(context.wantOllamaMemoryModel),
+      },
+      degraded: reporter.degraded,
+    }, null, 2), "utf-8");
     if (reporter.degraded.length) reporter.ok(`Recorded ${reporter.degraded.length} degraded step(s) for in-app repair`);
   } catch (error) { reporter.warn(`Couldn't record the install report: ${error.message}`); }
 

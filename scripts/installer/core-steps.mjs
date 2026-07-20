@@ -7,8 +7,8 @@ import { runOllamaModelStep } from "./ollama-model-step.mjs";
 
 export async function runCoreSteps(context) {
   await installDependencies(context);
-  await runOllamaModelStep(context);
-  scaffoldSettings(context);
+  const ollamaModelReady = await runOllamaModelStep(context);
+  scaffoldSettings(context, ollamaModelReady);
   await buildServer(context);
   await writeRuntimeConfig(context);
 }
@@ -40,13 +40,13 @@ async function installDependencies({ reporter, processes, platform = process.pla
   reporter.stepDone("npm");
 }
 
-function scaffoldSettings({ reporter, wantOllama }) {
+function scaffoldSettings({ reporter }, ollamaModelReady) {
   reporter.step("settings");
   const laxDirectory = join(homedir(), ".lax");
   const settingsFile = join(laxDirectory, "settings.json");
   if (!existsSync(settingsFile)) {
     mkdirSync(laxDirectory, { recursive: true });
-    const defaults = wantOllama
+    const defaults = ollamaModelReady
       ? { temperature: 0.7, maxIterations: 160, embeddingProvider: "ollama", embeddingModel: EMBED_MODEL }
       : { temperature: 0.7, maxIterations: 160, embeddingProvider: "local" };
     writeFileSync(settingsFile, JSON.stringify(defaults, null, 2));

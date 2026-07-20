@@ -40,6 +40,7 @@ export interface DegradedComponent {
 
 interface InstallReport {
   installedAt?: string;
+  selections?: { ollamaRuntime: boolean; ollamaMemoryModel: boolean };
   degraded?: Array<{ step?: string; message?: string }>;
 }
 

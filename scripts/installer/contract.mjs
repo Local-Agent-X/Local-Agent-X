@@ -36,3 +36,14 @@ export function stepsPlan(platform = process.platform) {
 export function wantsOllama(env = process.env) {
   return env.LAX_INSTALL_OLLAMA === "1" || env.LAX_INSTALL_OLLAMA === "true";
 }
+
+export function wantsOllamaMemoryModel(env = process.env) {
+  return env.LAX_INSTALL_OLLAMA_MEMORY_MODEL === "1" || env.LAX_INSTALL_OLLAMA_MEMORY_MODEL === "true";
+}
+
+export function installerSelections(env = process.env) {
+  return {
+    ollamaRuntime: wantsOllama(env),
+    ollamaMemoryModel: wantsOllamaMemoryModel(env),
+  };
+}

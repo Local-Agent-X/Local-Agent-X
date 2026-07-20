@@ -1,4 +1,4 @@
-import { stepsPlan, wantsOllama } from "../../scripts/installer/contract.mjs";
+import { stepsPlan, wantsOllama, wantsOllamaMemoryModel } from "../../scripts/installer/contract.mjs";
 import { createReporter } from "../../scripts/installer/reporter.mjs";
 
 const mode = process.argv[2] || "complete";
@@ -13,6 +13,7 @@ if (mode === "wait") {
   const platform = process.argv.find((arg) => arg.startsWith("--platform="))?.slice(11) || "linux";
   reporter.ipc({ type: "plan", steps: stepsPlan(platform) });
   reporter.log(`ollama=${wantsOllama()}`);
+  reporter.log(`ollama-memory-model=${wantsOllamaMemoryModel()}`);
   if (mode === "optional") {
     reporter.step("ollama");
     reporter.fail("unavailable");

@@ -14,7 +14,7 @@ public class InstallProcess
 
     private Process? _proc;
 
-    public void Start(string repoRoot, string? installedCommit = null, bool installOllama = false)
+    public void Start(string repoRoot, string? installedCommit = null, bool installOllama = false, bool installOllamaMemoryModel = false)
     {
         var psi = new ProcessStartInfo
         {
@@ -42,11 +42,10 @@ public class InstallProcess
         if (!string.IsNullOrEmpty(installedCommit))
             psi.Environment["LAX_INSTALLED_COMMIT"] = installedCommit;
 
-        // Opt-in from the Welcome checkbox. install-common.mjs reads this
-        // (WANT_OLLAMA) to gate BOTH the Ollama runtime install and the ~670 MB
-        // embedding-model pull. Unset/"0" → the fast default: no download, memory
-        // runs on the built-in local embedder.
+        // Independent opt-ins from the Welcome screen. Installing the runtime
+        // never implies downloading a model; every model acquisition is explicit.
         psi.Environment["LAX_INSTALL_OLLAMA"] = installOllama ? "1" : "0";
+        psi.Environment["LAX_INSTALL_OLLAMA_MEMORY_MODEL"] = installOllamaMemoryModel ? "1" : "0";
 
         _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
         _proc.OutputDataReceived += (_, e) =>

@@ -50,9 +50,12 @@ describe("rolling installer freshness contract", () => {
     const script = readFileSync(resolve("scripts/installer/contract.mjs"), "utf8");
 
     expect(view).toContain('IsChecked="{Binding InstallOllama}"');
-    expect(viewModel).toContain("_process.Start(_repoRoot, _source.ResolvedCommit, InstallOllama)");
+    expect(view).toContain('IsChecked="{Binding InstallOllamaMemoryModel}"');
+    expect(viewModel).toContain("_process.Start(_repoRoot, _source.ResolvedCommit, InstallOllama, InstallOllamaMemoryModel)");
     expect(process).toContain('psi.Environment["LAX_INSTALL_OLLAMA"] = installOllama ? "1" : "0"');
+    expect(process).toContain('psi.Environment["LAX_INSTALL_OLLAMA_MEMORY_MODEL"] = installOllamaMemoryModel ? "1" : "0"');
     expect(script).toContain('env.LAX_INSTALL_OLLAMA === "1"');
+    expect(script).toContain('env.LAX_INSTALL_OLLAMA_MEMORY_MODEL === "1"');
   });
 });
 

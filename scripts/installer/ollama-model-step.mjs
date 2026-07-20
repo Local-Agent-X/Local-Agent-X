@@ -6,25 +6,23 @@ import { ensureOllamaOnPath, killOllamaServe } from "./windows-tools.mjs";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-export async function runOllamaModelStep(context) {
-  const { reporter, processes, wantOllama } = context;
-  reporter.step("embedmodel", wantOllama ? `Downloading ${EMBED_MODEL} (~670 MB, one-time)` : "Using built-in local embedder");
-  if (!wantOllama) {
+export async function runOllamaModelStep(context, { createReadiness: readinessFactory = createReadiness } = {}) {
+  const { reporter, processes, wantOllamaMemoryModel } = context;
+  reporter.step("embedmodel", wantOllamaMemoryModel ? `Downloading ${EMBED_MODEL} (~670 MB, one-time)` : "Using built-in local embedder");
+  if (!wantOllamaMemoryModel) {
     reporter.ok(`Local embedder ready — no download needed. Enable Ollama later for stronger semantic memory: install Ollama, run \`ollama pull ${EMBED_MODEL}\`, then set Embedding Provider to Ollama in Settings.`);
     reporter.stepDone("embedmodel");
-    return;
+    return false;
   }
   ensureOllamaOnPath();
   if (!processes.has("ollama")) {
-    reporter.warn(`Ollama not on PATH — semantic memory will be unavailable until you install Ollama and run: ollama pull ${EMBED_MODEL}`);
-    reporter.stepDone("embedmodel");
-    return;
+    reporter.fail(`Ollama not on PATH — the requested memory model was not downloaded. Install Ollama and re-run, or run: ollama pull ${EMBED_MODEL}`);
+    return false;
   }
-  const readiness = createReadiness(context);
+  const readiness = readinessFactory(context);
   if (!(await readiness.ensureUp())) {
-    reporter.warn(`Ollama daemon didn't come up at ${readiness.url} — skipping model pull. Re-run later: ollama pull ${EMBED_MODEL}`);
-    reporter.stepDone("embedmodel");
-    return;
+    reporter.fail(`Ollama daemon didn't come up at ${readiness.url} — the requested memory model was not downloaded. Re-run later: ollama pull ${EMBED_MODEL}`);
+    return false;
   }
   reporter.log(`Pulling ${EMBED_MODEL} (~670MB, one-time)…`);
   let pull = await processes.runStreaming("ollama", ["pull", EMBED_MODEL]);
@@ -40,9 +38,13 @@ export async function runOllamaModelStep(context) {
     }
     pull = await processes.runStreaming("ollama", ["pull", EMBED_MODEL]);
   }
-  if (pull.status === 0) reporter.ok("Memory engine ready");
-  else reporter.warn(`Pull failed twice — semantic memory unavailable. Re-run later: ollama pull ${EMBED_MODEL}`);
-  reporter.stepDone("embedmodel");
+  if (pull.status === 0) {
+    reporter.ok("Memory engine ready");
+    reporter.stepDone("embedmodel");
+    return true;
+  }
+  reporter.fail(`Pull failed twice — the requested memory model was not downloaded. Re-run later: ollama pull ${EMBED_MODEL}`);
+  return false;
 }
 
 function createReadiness({ reporter, processes, env = process.env }) {

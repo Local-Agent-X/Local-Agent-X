@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { stepsPlan, wantsOllama } from "../scripts/installer/contract.mjs";
+import { installerSelections, stepsPlan, wantsOllama, wantsOllamaMemoryModel } from "../scripts/installer/contract.mjs";
+import { runOllamaModelStep } from "../scripts/installer/ollama-model-step.mjs";
 import { runInstaller } from "../scripts/installer/orchestrator.mjs";
 import { persistInstallOutcome } from "../scripts/installer/persistence.mjs";
 import { runOllamaPrerequisite } from "../scripts/installer/prerequisite-steps.mjs";
@@ -38,15 +39,100 @@ describe("installer plan contract", () => {
     expect(wantsOllama({ LAX_INSTALL_OLLAMA: "1" } as NodeJS.ProcessEnv)).toBe(true);
     expect(wantsOllama({ LAX_INSTALL_OLLAMA: "true" } as NodeJS.ProcessEnv)).toBe(true);
   });
+
+  it.each([
+    [undefined, undefined, false, false],
+    ["1", undefined, true, false],
+    [undefined, "1", false, true],
+    ["true", "true", true, true],
+  ])("keeps runtime %s and model %s as independent choices", (runtime, model, ollamaRuntime, ollamaModel) => {
+    const env = { LAX_INSTALL_OLLAMA: runtime, LAX_INSTALL_OLLAMA_MEMORY_MODEL: model } as NodeJS.ProcessEnv;
+    expect(wantsOllamaMemoryModel(env)).toBe(ollamaModel);
+    expect(installerSelections(env)).toEqual({ ollamaRuntime, ollamaMemoryModel: ollamaModel });
+  });
+});
+
+describe("Ollama model acquisition", () => {
+  const reporter = () => createReporter({
+    ipcMode: true,
+    stdout: { write: () => true } as NodeJS.WriteStream,
+  });
+
+  it.each([
+    [false, false, false],
+    [true, false, false],
+    [false, true, true],
+    [true, true, true],
+  ])("runtime=%s and memory-model=%s makes model pull=%s", async (wantOllama, wantOllamaMemoryModel, shouldPull) => {
+    const calls: string[] = [];
+    const processes = {
+      has: (name: string) => { calls.push(`has:${name}`); return true; },
+      runStreaming: async (name: string, args: string[]) => {
+        calls.push(`${name} ${args.join(" ")}`);
+        return { status: 0 };
+      },
+    };
+    const ready = { url: "http://127.0.0.1:11434", ready: async () => true, ensureUp: async () => true };
+    await runOllamaModelStep(
+      { reporter: reporter(), processes, wantOllama, wantOllamaMemoryModel },
+      { createReadiness: () => ready },
+    );
+    expect(calls.includes("ollama pull mxbai-embed-large")).toBe(shouldPull);
+  });
+
+  it("never probes, starts, or pulls a model for a runtime-only install", async () => {
+    const calls: string[] = [];
+    const processes = {
+      has: (name: string) => { calls.push(`has:${name}`); return true; },
+      runStreaming: async (name: string) => { calls.push(`stream:${name}`); return { status: 0 }; },
+      spawn: (name: string) => { calls.push(`spawn:${name}`); throw new Error("unexpected spawn"); },
+    };
+    expect(await runOllamaModelStep({ reporter: reporter(), processes, wantOllama: true, wantOllamaMemoryModel: false })).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("pulls only the fixed memory model after an explicit model opt-in", async () => {
+    const calls: Array<{ name: string; args?: string[] }> = [];
+    const processes = {
+      has: (name: string) => { calls.push({ name: `has:${name}` }); return true; },
+      runStreaming: async (name: string, args: string[]) => { calls.push({ name: `stream:${name}`, args }); return { status: 0 }; },
+    };
+    const ready = { url: "http://127.0.0.1:11434", ready: async () => true, ensureUp: async () => true };
+    expect(await runOllamaModelStep(
+      { reporter: reporter(), processes, wantOllama: false, wantOllamaMemoryModel: true },
+      { createReadiness: () => ready },
+    )).toBe(true);
+    expect(calls).toEqual([
+      { name: "has:ollama" },
+      { name: "stream:ollama", args: ["pull", "mxbai-embed-large"] },
+    ]);
+  });
+
+  it("records an explicit model request as degraded when no runtime exists", async () => {
+    const installReporter = reporter();
+    const ready = await runOllamaModelStep({
+      reporter: installReporter,
+      processes: { has: () => false },
+      wantOllama: false,
+      wantOllamaMemoryModel: true,
+    });
+    expect(ready).toBe(false);
+    expect(installReporter.degraded).toEqual([expect.objectContaining({ step: "embedmodel" })]);
+  });
 });
 
 describe("installer child-process framing", () => {
   it("emits plan, optional degradation, and completion as JSONL", () => {
-    const result = run(["optional", "--ipc", "--platform=win32"], { ...process.env, LAX_INSTALL_OLLAMA: "1" });
+    const result = run(["optional", "--ipc", "--platform=win32"], {
+      ...process.env,
+      LAX_INSTALL_OLLAMA: "1",
+      LAX_INSTALL_OLLAMA_MEMORY_MODEL: "0",
+    });
     expect(result.status).toBe(0);
     const output = events(result.stdout);
     expect(output[0]).toEqual({ type: "plan", steps: stepsPlan("win32") });
     expect(output).toContainEqual({ type: "log", level: "info", id: null, line: "ollama=true" });
+    expect(output).toContainEqual({ type: "log", level: "info", id: null, line: "ollama-memory-model=false" });
     expect(output).toContainEqual({ type: "step", id: "ollama", state: "done" });
     expect(output.at(-1)).toEqual({ type: "complete" });
   });
@@ -63,7 +149,10 @@ describe("installer child-process framing", () => {
   it("keeps prose mode free of JSON framing", () => {
     const result = run(["complete"], { ...process.env, LAX_INSTALL_OLLAMA: "0" });
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("[install] ollama=false");
+    expect(result.stdout.trim().split(/\r?\n/)).toEqual([
+      "[install] ollama=false",
+      "[install] ollama-memory-model=false",
+    ]);
   });
 
   it("allows the GUI cancellation model to terminate a live child", async () => {
@@ -136,6 +225,32 @@ describe("Windows Ollama delivery fallback", () => {
 describe("canonical orchestration durability and IPC ordering", () => {
   const noOp = async () => {};
   const desktop = async () => ({ appInstalled: false, appBuildPath: null });
+
+  it("persists the exact independent selections and replaces stale report choices on rerun", () => {
+    const directory = mkdtempSync(join(tmpdir(), "installer-selections-"));
+    const installReporter = createReporter({ ipcMode: true, stdout: { write: () => true } as NodeJS.WriteStream });
+    try {
+      persistInstallOutcome({
+        reporter: installReporter,
+        platform: "linux",
+        env: {},
+        dataDirectory: directory,
+        selections: { ollamaRuntime: true, ollamaMemoryModel: false },
+      }, desktop());
+      let report = readInstallReport(directory);
+      expect(report?.selections).toEqual({ ollamaRuntime: true, ollamaMemoryModel: false });
+
+      persistInstallOutcome({
+        reporter: installReporter,
+        platform: "linux",
+        env: {},
+        dataDirectory: directory,
+        selections: { ollamaRuntime: false, ollamaMemoryModel: true },
+      }, desktop());
+      report = readInstallReport(directory);
+      expect(report?.selections).toEqual({ ollamaRuntime: false, ollamaMemoryModel: true });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
 
   it("persists optional degradation before emitting complete and roundtrips through setup status", async () => {
     const directory = mkdtempSync(join(tmpdir(), "installer-outcome-"));

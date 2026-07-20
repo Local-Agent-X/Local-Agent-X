@@ -68,20 +68,21 @@
                 <StackPanel IsVisible="{Binding IsWelcome}" Spacing="14">
                     <TextBlock Text="Ready to install" FontSize="15" FontWeight="SemiBold"/>
                     <TextBlock TextWrapping="Wrap" Opacity="0.82" FontSize="13" LineHeight="20"
-                               Text="This installs the app engine, its dependencies, and the desktop launcher — a few minutes on most machines. Your agent gets memory either way; the option below makes that memory smarter with a one-time download."/>
+                               Text="This installs the app engine, its dependencies, and the desktop launcher — a few minutes on most machines. Optional local AI components are selected separately below."/>
 
-                    <!-- Opt-in: local AI memory (Ollama runtime + embedding model).
-                         Off by default so the base install stays small and fast.
-                         Bound to InstallOllama → LAX_INSTALL_OLLAMA env var. -->
+                    <!-- Runtime and model acquisition are separate explicit choices. -->
                     <Border Background="#12FFFFFF" CornerRadius="8" Padding="14,12">
                         <StackPanel Spacing="8">
                             <CheckBox IsChecked="{Binding InstallOllama}"
-                                      Content="Enable local AI memory  ·  recommended"
+                                      Content="Install Ollama local AI runtime"
                                       FontSize="13" FontWeight="SemiBold"/>
                             <TextBlock TextWrapping="Wrap" Opacity="0.78" FontSize="12" LineHeight="18"
-                                       Text="Downloads the Ollama runtime and its embedding model (~670 MB) so your agent recalls past conversations by meaning, not just keywords — 97% recall on our 500-question memory benchmark. Runs fully offline; nothing leaves your machine."/>
+                                       Text="Installs only the runtime. It does not select or download a chat model."/>
+                            <CheckBox IsChecked="{Binding InstallOllamaMemoryModel}"
+                                      Content="Download the optional AI memory model (~670 MB)"
+                                      FontSize="13" FontWeight="SemiBold"/>
                             <TextBlock TextWrapping="Wrap" Opacity="0.55" FontSize="12" LineHeight="18"
-                                       Text="Leave it unchecked to install faster with no download. Memory still works on the built-in lightweight engine — strong for keyword and recent-context recall, weaker at meaning-based matching. You can turn this on anytime in Settings."/>
+                                       Text="Memory works with the built-in lightweight engine when the model option is off. If Ollama is already installed, you can download the memory model without reinstalling the runtime. Chat models remain a separate choice in Settings."/>
                         </StackPanel>
                     </Border>
 
@@ -93,7 +94,8 @@
                             <TextBlock Text="• App dependencies (npm packages)" FontSize="12"/>
                             <TextBlock Text="• Compiled server + Electron desktop bundle" FontSize="12"/>
                             <TextBlock Text="• Desktop + Start Menu shortcuts" FontSize="12"/>
-                            <TextBlock Text="• Local AI memory: Ollama runtime + embedding model (~670 MB) — only if enabled above" FontSize="12" Opacity="0.75"/>
+                            <TextBlock Text="• Ollama runtime — only if selected above" FontSize="12" Opacity="0.75"/>
+                            <TextBlock Text="• Optional AI memory model (~670 MB) — only if selected separately" FontSize="12" Opacity="0.75"/>
                         </StackPanel>
                     </Expander>
                 </StackPanel>

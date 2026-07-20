@@ -4,6 +4,7 @@ import {
   chatEvidence,
   qualificationPrompt,
   READ_NONCE,
+  readSse,
 } from "../scripts/local-qualification/chat-evidence.js";
 
 interface ReadEventsOptions {
@@ -20,7 +21,10 @@ function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unkno
       type: "tool_start",
       toolName: "read",
       toolCallId: "read-1",
-      args: { path: options.path ?? "workspace/qualification-note.txt" },
+      args: { path: options.path ?? "workspace/qualification-note.txt", _sessionId: "qualification-test" },
+      riskLevel: "low",
+      context: "Read file: qualification-note.txt",
+      requiresApproval: false,
     },
     {
       type: "tool_end",
@@ -29,9 +33,10 @@ function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unkno
       allowed: true,
       status: "ok",
       result: options.result ?? `1\t${READ_NONCE}\n2\t`,
+      metadata: { path: "C:\\Temp\\qualification-note.txt", bytes: 28, total_lines: 2, lines_shown: 2 },
     },
     { type: "stream", delta: options.assistant ?? READ_NONCE },
-    { type: "done" },
+    { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } },
   ];
 }
 
@@ -153,6 +158,90 @@ describe("local qualification workspace-read evidence", () => {
     events[index] = { ...events[index], delta: READ_NONCE };
     expect(chatEvidence(events).readNonceSeen).toBe(false);
   });
+
+  it("rejects the nonce in context status level", () => {
+    const events = readEvents();
+    events[0] = { ...events[0], level: READ_NONCE };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it("rejects the nonce in the chat operation id", () => {
+    const events = readEvents();
+    events[1] = { ...events[1], opId: READ_NONCE };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it("rejects extra nested tool metadata", () => {
+    const events = readEvents();
+    events[3] = {
+      ...events[3],
+      metadata: { ...(events[3].metadata as Record<string, unknown>), content: READ_NONCE },
+    };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it.each([
+    { type: "stream", delta: READ_NONCE, replace: true, text: READ_NONCE },
+    { type: "stream", delta: READ_NONCE, metadata: { source: "unverified" } },
+  ])("rejects non-append stream shape %#", (stream) => {
+    const events = readEvents();
+    events[4] = stream;
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it("rejects done carrying assistant content", () => {
+    const events = readEvents();
+    events[5] = { ...events[5], delta: READ_NONCE };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it.each([0, 1, 2, 3, 4, 5])("rejects an extra own key on accepted frame %i", (index) => {
+    const events = readEvents();
+    events[index] = { ...events[index], extra: true };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it.each([0, 1, 2, 3, 4, 5])("rejects an inherited field on accepted frame %i", (index) => {
+    const events = readEvents();
+    events[index] = Object.assign(Object.create({ inherited: READ_NONCE }), events[index]);
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it("rejects extra own keys in every accepted nested object", () => {
+    for (const [frameIndex, field] of [[2, "args"], [3, "metadata"], [5, "usage"]] as const) {
+      const events = readEvents();
+      const nested = events[frameIndex][field] as Record<string, unknown>;
+      events[frameIndex] = { ...events[frameIndex], [field]: { ...nested, extra: true } };
+      expect(chatEvidence(events).readNonceSeen, `${frameIndex}.${field}`).toBe(false);
+    }
+  });
+
+  it("rejects inherited fields in every accepted nested object", () => {
+    for (const [frameIndex, field] of [[2, "args"], [3, "metadata"], [5, "usage"]] as const) {
+      const events = readEvents();
+      const nested = events[frameIndex][field] as Record<string, unknown>;
+      const inherited = Object.assign(Object.create({ inherited: READ_NONCE }), nested);
+      events[frameIndex] = { ...events[frameIndex], [field]: inherited };
+      expect(chatEvidence(events).readNonceSeen, `${frameIndex}.${field}`).toBe(false);
+    }
+  });
+
+  it("recursively rejects the nonce in an otherwise valid pre-result nested field", () => {
+    const events = readEvents();
+    const args = events[2].args as Record<string, unknown>;
+    events[2] = { ...events[2], args: { ...args, _sessionId: READ_NONCE } };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it.each(["not-json", "42", '{"type":"unknown_qualification_event"}'])(
+    "surfaces invalid SSE data after done: %s",
+    async (payload) => {
+      const body = `${readEvents().map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: ${payload}\n\n`;
+      const evidence = chatEvidence(await readSse(new Response(body)));
+      expect(evidence.errorEvents).toBe(1);
+      expect(evidence.readNonceSeen).toBe(false);
+    },
+  );
 
   const invalidFrames = [
     { type: "op_heartbeat", opId: "op-read-1" },

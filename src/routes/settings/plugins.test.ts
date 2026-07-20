@@ -33,7 +33,7 @@ function makeRes() {
   return res;
 }
 
-async function request(method: "GET" | "POST", path: string, body?: unknown) {
+async function request(method: "GET" | "POST", path: string, body?: unknown, role: "operator" | "agent" = "operator") {
   const req = makeReq(body);
   const res = makeRes();
   const broadcastAll = vi.fn();
@@ -43,7 +43,7 @@ async function request(method: "GET" | "POST", path: string, body?: unknown) {
     req as unknown as Parameters<typeof handlePluginsRoutes>[2],
     res as unknown as Parameters<typeof handlePluginsRoutes>[3],
     { broadcastAll } as unknown as Parameters<typeof handlePluginsRoutes>[4],
-    "operator",
+    role,
   );
   return { handled, status: res.statusCode, body: JSON.parse(res.body) as unknown, broadcastAll };
 }
@@ -64,6 +64,25 @@ beforeEach(() => {
 });
 
 describe("plugin lifecycle routes", () => {
+  it("allows non-operators to list but denies every lifecycle mutation before side effects", async () => {
+    expect(await request("GET", "/api/plugins", undefined, "agent")).toMatchObject({ status: 200, body: [] });
+    for (const [path, body] of [
+      ["/api/plugins/load", { path: "/plugins/sample" }],
+      ["/api/plugins/unload", { id: "sample" }],
+      ["/api/plugins/enable", { id: "sample" }],
+      ["/api/plugins/retry", { id: "sample" }],
+    ] as const) {
+      const result = await request("POST", path, body, "agent");
+      expect(result).toMatchObject({ handled: true, status: 403, body: { error: "Operator access required" } });
+      expect(result.broadcastAll).not.toHaveBeenCalled();
+    }
+    expect(routeMocks.pluginManager.loadPlugin).not.toHaveBeenCalled();
+    expect(routeMocks.pluginManager.disablePlugin).not.toHaveBeenCalled();
+    expect(routeMocks.pluginManager.enablePlugin).not.toHaveBeenCalled();
+    expect(routeMocks.pluginManager.retryPlugin).not.toHaveBeenCalled();
+    expect(routeMocks.pluginManager.getPluginStatus).not.toHaveBeenCalled();
+  });
+
   it("uses the process-wide manager for list and load", async () => {
     const list = await request("GET", "/api/plugins");
     const load = await request("POST", "/api/plugins/load", { path: "/plugins/sample" });

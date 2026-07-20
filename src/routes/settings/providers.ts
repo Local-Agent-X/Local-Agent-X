@@ -343,6 +343,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     return true;
   }
   if (method === "POST" && url.pathname === "/api/local-runtimes") {
+    if (_role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     let body: Record<string, unknown>;
     try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
     const kind = String(body.kind || "");
@@ -371,6 +372,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     return true;
   }
   if (method === "DELETE" && url.pathname === "/api/local-runtimes") {
+    if (_role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     const hostPort = endpointHostPort(String(url.searchParams.get("baseUrl") || ""));
     if (!hostPort) { json(400, { error: "baseUrl query param required" }); return true; }
     const settings = { ...loadSettings() };
@@ -384,6 +386,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
   }
 
   if (method === "POST" && url.pathname === "/api/ollama/start") {
+    if (_role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     try {
       const { spawn } = await import("node:child_process");
       const child = spawn("ollama", ["serve"], { detached: true, stdio: "ignore", windowsHide: true });

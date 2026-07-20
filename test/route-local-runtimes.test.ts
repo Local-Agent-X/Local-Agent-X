@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { spawn } from "node:child_process";
 import { handleProvidersRoutes } from "../src/routes/settings/providers.js";
 import type { ServerContext } from "../src/server-context.js";
 import { mockJsonRequest, mockResponse } from "./helpers/http-mocks.js";
@@ -9,8 +10,14 @@ import {
   certifyLocalModel,
   getLocalRuntimes,
   hasPublishedCertification,
+  invalidateLocalRuntimes,
   refreshLocalRuntimes,
 } from "../src/local-runtimes/index.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
+  spawn: vi.fn(),
+}));
 
 const OLLAMA_RT: LocalRuntimeInfo = {
   kind: "ollama",
@@ -39,6 +46,7 @@ let settingsBag: Record<string, unknown> = {};
 let localOnly = false;
 let publishedRuntime: LocalRuntimeInfo | null = null;
 let publishedModel = "";
+const broadcastAll = vi.fn();
 
 function certificationResult(
   runtime: LocalRuntimeInfo,
@@ -94,6 +102,7 @@ function makeCtx(): ServerContext {
   return {
     secretsStore: { has: () => false },
     config: {},
+    broadcastAll,
   } as unknown as ServerContext;
 }
 
@@ -115,8 +124,11 @@ beforeEach(() => {
   localOnly = false;
   publishedRuntime = null;
   publishedModel = "";
+  broadcastAll.mockReset();
+  vi.mocked(spawn).mockReset();
   vi.mocked(getLocalRuntimes).mockReturnValue([OLLAMA_RT, LMSTUDIO_RT]);
   vi.mocked(refreshLocalRuntimes).mockClear();
+  vi.mocked(invalidateLocalRuntimes).mockClear();
   vi.mocked(certifyLocalModel).mockReset().mockImplementation(async ({ runtime, model }) => {
     publishedRuntime = runtime;
     publishedModel = model;
@@ -143,6 +155,18 @@ describe("GET /api/providers — local entry is the union across runtimes", () =
 });
 
 describe("POST /api/local-runtimes — manual add", () => {
+  it("denies non-operators before persistence, refresh, or broadcast", async () => {
+    const result = await call("POST", "/api/local-runtimes", {
+      kind: "openai-compat", baseUrl: "http://127.0.0.1:5000",
+    }, "agent");
+    expect(result.status).toBe(403);
+    expect(result.json()).toEqual({ error: "Operator access required" });
+    expect(savedSettings).toHaveLength(0);
+    expect(vi.mocked(invalidateLocalRuntimes)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshLocalRuntimes)).not.toHaveBeenCalled();
+    expect(broadcastAll).not.toHaveBeenCalled();
+  });
+
   it("persists a valid loopback entry and reports reachability", async () => {
     const result = await call("POST", "/api/local-runtimes", {
       kind: "openai-compat", baseUrl: "http://127.0.0.1:5000/", label: "vLLM box",
@@ -305,6 +329,17 @@ describe("local-runtime certification read status", () => {
 });
 
 describe("DELETE /api/local-runtimes", () => {
+  it("denies non-operators before persistence, refresh, or broadcast", async () => {
+    settingsBag = { localRuntimes: [{ kind: "ollama", baseUrl: "http://127.0.0.1:5000" }] };
+    const result = await call("DELETE", "/api/local-runtimes?baseUrl=http://127.0.0.1:5000", undefined, "readonly");
+    expect(result.status).toBe(403);
+    expect(result.json()).toEqual({ error: "Operator access required" });
+    expect(savedSettings).toHaveLength(0);
+    expect(vi.mocked(invalidateLocalRuntimes)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshLocalRuntimes)).not.toHaveBeenCalled();
+    expect(broadcastAll).not.toHaveBeenCalled();
+  });
+
   it("removes by host:port identity", async () => {
     settingsBag = {
       localRuntimes: [
@@ -317,5 +352,18 @@ describe("DELETE /api/local-runtimes", () => {
     expect(settingsBag.localRuntimes).toEqual([
       { kind: "openai-compat", baseUrl: "http://127.0.0.1:6000" },
     ]);
+  });
+});
+
+describe("POST /api/ollama/start", () => {
+  it("denies non-operators before starting a process", async () => {
+    const result = await call("POST", "/api/ollama/start", undefined, "user");
+    expect(result.status).toBe(403);
+    expect(result.json()).toEqual({ error: "Operator access required" });
+    expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+    expect(savedSettings).toHaveLength(0);
+    expect(vi.mocked(invalidateLocalRuntimes)).not.toHaveBeenCalled();
+    expect(vi.mocked(refreshLocalRuntimes)).not.toHaveBeenCalled();
+    expect(broadcastAll).not.toHaveBeenCalled();
   });
 });

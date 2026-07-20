@@ -3,7 +3,7 @@ import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-util
 import { generateFullSpec } from "../../api-docs.js";
 import { pluginManager } from "../../plugin-system.js";
 
-export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
+export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   // API docs
@@ -16,6 +16,7 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
     json(200, pluginManager.listPlugins()); return true;
   }
   if (method === "POST" && url.pathname === "/api/plugins/load") {
+    if (role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {
       const manifest = await pluginManager.loadPlugin(String(body.path));
@@ -26,6 +27,7 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
   if (method === "POST" && url.pathname === "/api/plugins/unload") {
+    if (role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {
       const id = String(body.id);
@@ -36,6 +38,7 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
   if (method === "POST" && url.pathname === "/api/plugins/enable") {
+    if (role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {
       const manifest = await pluginManager.enablePlugin(String(body.id));
@@ -46,6 +49,7 @@ export const handlePluginsRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
   if (method === "POST" && url.pathname === "/api/plugins/retry") {
+    if (role !== "operator") { json(403, { error: "Operator access required" }); return true; }
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     try {
       const manifest = await pluginManager.retryPlugin(String(body.id));

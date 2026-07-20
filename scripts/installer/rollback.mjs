@@ -1,8 +1,8 @@
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync,
+  existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { writeDurableJson } from "./checkpoint.mjs";
 
 const VERSION = 1;
@@ -20,18 +20,38 @@ function installIdentity(root, dataDirectory) {
   return { root: resolve(root), version: manifest.version, source };
 }
 
+function inside(base, path) {
+  const rel = relative(resolve(base), resolve(path));
+  return rel !== "" && !isAbsolute(rel) && !rel.split(/[\\/]/).includes("..");
+}
+
+function safeArtifactPath(path, base) {
+  if (!existsSync(path)) return true;
+  const info = lstatSync(path);
+  return !info.isSymbolicLink() && inside(base, realpathSync(path));
+}
+
 function validJournal(value, root, backupRoot) {
   if (!value || value.version !== VERSION || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
   if (resolve(value.identity?.root || "") !== resolve(root)) return false;
   if (typeof value.identity.version !== "string") return false;
   if (value.identity.source !== null && !/^[0-9a-f]{40}$/.test(value.identity.source?.commit || "")) return false;
   if (!Array.isArray(value.artifacts)) return false;
+  if (value.artifacts.length !== ARTIFACTS.length) return false;
+  const expected = [...ARTIFACTS].sort((left, right) => left.localeCompare(right));
+  const received = value.artifacts.map((item) => item?.relative).sort((left, right) => String(left).localeCompare(String(right)));
+  if (!expected.every((item, index) => item === received[index])) return false;
+  if (new Set(received.map((item) => String(item).toLocaleLowerCase("en-US"))).size !== received.length) return false;
   return value.artifacts.every((item) => {
     if (!item || typeof item.relative !== "string" || typeof item.existed !== "boolean") return false;
+    if (!item.relative || item.relative === "." || isAbsolute(item.relative) || normalize(item.relative) !== item.relative) return false;
+    if (item.relative.split(/[\\/]/).some((part) => !part || part === "." || part === "..")) return false;
     const target = resolve(root, item.relative);
     const backup = resolve(backupRoot, item.relative);
-    return relative(resolve(root), target).split(/[\\/]/).every((part) => part !== "..")
-      && relative(resolve(backupRoot), backup).split(/[\\/]/).every((part) => part !== "..");
+    if (!inside(root, target) || !inside(backupRoot, backup)) return false;
+    if (!safeArtifactPath(target, root) || !safeArtifactPath(backup, backupRoot)) return false;
+    if (item.existed && !existsSync(target) && !existsSync(backup)) return false;
+    return item.existed || !existsSync(backup);
   });
 }
 

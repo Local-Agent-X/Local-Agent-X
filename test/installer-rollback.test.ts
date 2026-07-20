@@ -1,10 +1,11 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInstallRollback } from "../scripts/installer/rollback.mjs";
 import { createReporter } from "../scripts/installer/reporter.mjs";
 import { runInstaller } from "../scripts/installer/orchestrator.mjs";
+import { CAN_CREATE_DIRECTORY_LINK } from "../src/symlink-capabilities.test-helper.js";
 
 const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
@@ -93,6 +94,62 @@ describe("installer artifact rollback", () => {
     createInstallRollback(f).begin();
     writeFileSync(join(f.installRoot, "package.json"), JSON.stringify({ version: "9.9.9" }));
     expect(() => createInstallRollback(f).reconcile()).toThrow(/package identity/);
+  });
+
+  it.each([
+    ["empty", ""], ["root alias", "."], ["absolute", "C:\\outside"],
+    ["traversal", "..\\outside"], ["dot alias", "dist\\."],
+    ["case alias", "DIST"], ["parent-child alias", "dist\\child"],
+  ])("rejects %s artifact paths before changing any byte", (_label, malicious) => {
+    const f = fixture();
+    const transaction = createInstallRollback(f);
+    transaction.begin();
+    const journalPath = join(f.dataDirectory, "install-rollback", "transaction.json");
+    const journal = JSON.parse(readFileSync(journalPath, "utf-8"));
+    journal.artifacts[0].relative = malicious;
+    writeFileSync(journalPath, JSON.stringify(journal));
+    const userBefore = readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8");
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe(userBefore);
+    expect(existsSync(f.installRoot)).toBe(true);
+  });
+
+  it.each(["duplicate", "partial"])("rejects an artifact %s set without mutation", (kind) => {
+    const f = fixture();
+    createInstallRollback(f).begin();
+    const journalPath = join(f.dataDirectory, "install-rollback", "transaction.json");
+    const journal = JSON.parse(readFileSync(journalPath, "utf-8"));
+    if (kind === "duplicate") journal.artifacts[1] = { ...journal.artifacts[0] };
+    else journal.artifacts.pop();
+    writeFileSync(journalPath, JSON.stringify(journal));
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("rejects a target junction escape without touching either tree", () => {
+    const f = fixture();
+    createInstallRollback(f).begin();
+    const outside = join(f.base, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "outside-safe");
+    symlinkSync(outside, join(f.installRoot, "dist"), process.platform === "win32" ? "junction" : "dir");
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+    expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("outside-safe");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("rejects a backup junction escape without touching the install", () => {
+    const f = fixture();
+    createInstallRollback(f).begin();
+    const outside = join(f.base, "outside-backup");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep.txt"), "outside-safe");
+    const backup = join(f.dataDirectory, "install-rollback", "artifacts", "dist");
+    rmSync(backup, { recursive: true });
+    symlinkSync(outside, backup, process.platform === "win32" ? "junction" : "dir");
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+    expect(readFileSync(join(outside, "keep.txt"), "utf-8")).toBe("outside-safe");
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
   });
 
   it("keeps restore retryable across a kill at the restore boundary", () => {

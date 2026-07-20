@@ -9,17 +9,14 @@ import { attemptRuntimeFailover } from "./runtime-failover.js";
 
 export async function handleAdapterRetry(op: Op, reportedCode: string, message = ""): Promise<"retrying" | "exhausted"> {
   const code = safeRetryCode(reportedCode);
-  const failover = await attemptRuntimeFailover(op, code, message).catch(() => ({ kind: "ineligible" } as const));
-  if (failover.kind !== "ineligible") {
-    const reason = failover.kind === "switched" ? "runtime_failover" : "runtime_failover_waiting";
+  const failover = await attemptRuntimeFailover(op, code, message);
+  if (failover.kind === "switched") {
     emit(op.id, "error", {
-      code: reason,
-      message: failover.kind === "switched"
-        ? "The unavailable runtime was replaced by an eligible configured runtime. Resuming from the durable checkpoint."
-        : "No eligible configured runtime is currently available. The operation will keep waiting and resume automatically.",
+      code: "runtime_failover",
+      message: `The unavailable runtime was replaced by ${failover.provider}/${failover.model}. Resuming from the durable checkpoint.`,
       retryable: true,
     });
-    transitionOp(op, "queued", `${reason}:${code}`);
+    transitionOp(op, "queued", `runtime_failover:${code}`);
     const { scheduleQueuedRetry } = await import("./scheduler.js");
     scheduleQueuedRetry(op.id, op.lane as CanonicalLane, failover.delayMs);
     return "retrying";
@@ -31,6 +28,7 @@ export async function handleAdapterRetry(op: Op, reportedCode: string, message =
   const now = Date.now();
   op.lastFailureAt = new Date(now).toISOString();
   if (!decision.shouldRetry) {
+    if (op.canonical) op.canonical.retryNotBefore = null;
     op.lastFailureReason = `adapter_retry_exhausted:${code}`;
     persistOpKeepingSignals(op);
     emit(op.id, "error", {
@@ -44,12 +42,21 @@ export async function handleAdapterRetry(op: Op, reportedCode: string, message =
   }
   op.attemptCount = (op.attemptCount ?? 0) + 1;
   if (!op.canonical) op.canonical = {};
-  op.canonical.retryNotBefore = new Date(now + decision.nextDelayMs).toISOString();
-  op.lastFailureReason = `adapter_retry:${code}`;
+  const waiting = failover.kind === "waiting";
+  const delayMs = waiting ? Math.max(failover.delayMs, decision.nextDelayMs) : decision.nextDelayMs;
+  op.canonical.retryNotBefore = new Date(now + delayMs).toISOString();
+  op.lastFailureReason = waiting ? `runtime_failover_waiting:${code}` : `adapter_retry:${code}`;
   persistOpKeepingSignals(op);
-  transitionOp(op, "queued", `adapter_retry:${code}`);
+  if (waiting) {
+    emit(op.id, "error", {
+      code: "runtime_failover_waiting",
+      message: "No eligible configured runtime is currently available. Recovery remains bounded by the operation retry policy.",
+      retryable: true,
+    });
+  }
+  transitionOp(op, "queued", `${waiting ? "runtime_failover_waiting" : "adapter_retry"}:${code}`);
   const { scheduleQueuedRetry } = await import("./scheduler.js");
-  scheduleQueuedRetry(op.id, op.lane as CanonicalLane, decision.nextDelayMs);
+  scheduleQueuedRetry(op.id, op.lane as CanonicalLane, delayMs);
   return "retrying";
 }
 

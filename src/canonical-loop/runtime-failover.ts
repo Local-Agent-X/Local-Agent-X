@@ -36,9 +36,13 @@ export interface FailoverCandidate {
 }
 
 export type FailoverResult =
-  | { kind: "switched"; delayMs: number; targetIdentity: string }
+  | { kind: "switched"; delayMs: number; targetIdentity: string; provider: ProviderId; model: string }
   | { kind: "waiting"; delayMs: number }
   | { kind: "ineligible" };
+
+export function runtimeFailoverEnabled(value = getSetting<boolean>("allowRuntimeFailover")): boolean {
+  return value === true;
+}
 
 export function failoverPolicyAllows(input: {
   lane: Op["lane"];
@@ -98,6 +102,7 @@ export function candidateWithinBudget(
 ): boolean {
   void sessionId;
   if (!isBillableSource(authSource)) return true;
+  if (facts.dailyBudgetUsd <= 0 && facts.sessionBudgetUsd <= 0 && facts.modelBudgetUsd <= 0) return false;
   if (facts.dailyBudgetUsd > 0 && facts.todaySpent >= facts.dailyBudgetUsd) return false;
   if (facts.sessionBudgetUsd > 0 && facts.sessionSpent >= facts.sessionBudgetUsd) return false;
   if (facts.modelBudgetUsd > 0 && facts.modelSpent >= facts.modelBudgetUsd) return false;
@@ -154,6 +159,10 @@ export function validatePersistedFailoverTarget(
 export async function attemptRuntimeFailover(op: Op, reportedCode: string, message = ""): Promise<FailoverResult> {
   const normalized = normalizeRuntimeFailure(reportedCode, message);
   const persisted = readOp(op.id) ?? op;
+  if (persisted.runtimeDescriptor?.kind === "delegated-op"
+    && persisted.runtimeDescriptor.adapter === "provider-exact") {
+    verifyDelegatedRuntimeIntegrity(persisted);
+  }
   const resolved = resolveOperationRequirements(persisted, readOpMessages(op.id));
   if (!failoverPolicyAllows({
     lane: op.lane,
@@ -162,7 +171,9 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
     controlPending: !!(persisted.canonical?.cancelRequestedAt || persisted.canonical?.pauseRequestedAt),
     ambiguousSideEffect: hasAmbiguousSideEffects(op.id),
   })) return { kind: "ineligible" };
-  verifyDelegatedRuntimeIntegrity(persisted);
+  if (!runtimeFailoverEnabled()) return { kind: "ineligible" };
+  if (persisted.runtimeDescriptor?.kind !== "delegated-op"
+    || persisted.runtimeDescriptor.adapter !== "provider-exact") return { kind: "ineligible" };
   const current = persisted.runtimeDescriptor;
   const currentIdentity = runtimeTargetIdentity(current);
   const failover = persisted.canonical?.runtimeFailover;
@@ -214,7 +225,13 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
     selected.descriptor,
     () => releaseRuntimeSurfaceForRetry(op.id),
   ));
-  return { kind: "switched", delayMs, targetIdentity: candidateIdentity };
+  return {
+    kind: "switched",
+    delayMs,
+    targetIdentity: candidateIdentity,
+    provider: selected.descriptor.provider,
+    model: selected.descriptor.model,
+  };
 }
 
 async function enumerateCandidates(
@@ -310,6 +327,7 @@ async function persistWaiting(
 ): Promise<void> {
   const result = tryWithOpLock(op.id, () => {
     const fresh = readOp(op.id) ?? op;
+    verifyDelegatedRuntimeIntegrity(fresh);
     if (!fresh.canonical) fresh.canonical = {};
     const retryNotBefore = new Date(retryAt).toISOString();
     fresh.canonical.retryNotBefore = retryNotBefore;

@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   candidateWithinBudget,
   buildRuntimeFailoverState,
+  attemptRuntimeFailover,
   attemptedTargetsForEpoch,
   failoverPolicyAllows,
   normalizeRuntimeFailure,
+  runtimeFailoverEnabled,
   targetMeetsRequirements,
 } from "./runtime-failover.js";
 import type { TargetCapabilitySnapshot } from "../ops/operation-requirements.js";
+import { BROADCAST_KEYS, FLIPPABLE_SETTINGS } from "../settings-schema.js";
 import { providerStateAcrossRuntimeBoundary } from "./turn-loop/build-input.js";
 import { isRuntimeFailoverBoundary } from "../ops/target-identity.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
@@ -58,6 +61,38 @@ describe("runtime failover policy boundary", () => {
 
   it("allows unattended normalized runtime failures without asking", () => {
     expect(failoverPolicyAllows(base)).toBe(true);
+  });
+
+  it("defaults cross-runtime switching off and requires the exact persisted opt-in", () => {
+    expect(runtimeFailoverEnabled(undefined)).toBe(false);
+    expect(runtimeFailoverEnabled(false)).toBe(false);
+    expect(runtimeFailoverEnabled(true)).toBe(true);
+    const setting = FLIPPABLE_SETTINGS.find(entry => entry.field === "allowRuntimeFailover");
+    expect(setting).toMatchObject({ runtime: false, broadcast: true });
+    expect(setting?.validate.safeParse(true).success).toBe(true);
+    expect(setting?.validate.safeParse("true").success).toBe(false);
+    expect(BROADCAST_KEYS.has("allowRuntimeFailover")).toBe(true);
+  });
+
+  it("rejects a tampered exact descriptor before default-off recovery can requeue it", async () => {
+    const tampered = {
+      id: "op_failover_integrity_unit",
+      lane: "background",
+      runtimeDescriptor: {
+        kind: "delegated-op",
+        adapter: "provider-exact",
+        provider: "local",
+        credentialProvider: "local",
+        authSource: "sentinel",
+        model: "tampered-model",
+        runtime: "openai-compat",
+        target: { kind: "local-config", endpointFingerprint: "a".repeat(64) },
+        integrity: { scheme: "hmac-sha256-v1", mac: "tampered" },
+      },
+    } as Op;
+
+    await expect(attemptRuntimeFailover(tampered, "http_503"))
+      .rejects.toThrow("delegated runtime integrity check failed");
   });
 
   it.each([
@@ -121,6 +156,19 @@ describe("runtime failover budget matrix", () => {
     expect(candidateWithinBudget("env", "m", "s", { ...open, todaySpent: 10 })).toBe(false);
     expect(candidateWithinBudget("env", "m", "s", { ...open, sessionSpent: 5 })).toBe(false);
     expect(candidateWithinBudget("env", "m", "s", { ...open, modelSpent: 3 })).toBe(false);
+  });
+
+  it("requires an explicit positive cap before admitting a billable fallback", () => {
+    const uncapped = {
+      dailyBudgetUsd: 0,
+      sessionBudgetUsd: 0,
+      modelBudgetUsd: 0,
+      todaySpent: 0,
+      sessionSpent: 0,
+      modelSpent: 0,
+    };
+    expect(candidateWithinBudget("env", "m", "s", uncapped)).toBe(false);
+    expect(candidateWithinBudget("env", "m", "s", { ...uncapped, dailyBudgetUsd: 1 })).toBe(true);
   });
 
   it("does not invent API spend for subscription or local runtimes", () => {

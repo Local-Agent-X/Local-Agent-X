@@ -54,6 +54,13 @@ export interface FlippableSetting {
 }
 
 export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
+  {
+    field: "allowRuntimeFailover",
+    validate: z.boolean(),
+    runtime: false,
+    broadcast: true,
+    description: "Explicit opt-in for autonomous cross-provider or cross-model recovery. Off by default; exact-runtime retries remain autonomous and bounded",
+  },
   // ── Runtime-bound (server reads, must mirror to config.json) ──
   {
     field: "toolApproval",

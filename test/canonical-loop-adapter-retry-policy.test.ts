@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,13 @@ import { registerAdapterForOp, resetCanonicalRuntime } from "../src/canonical-lo
 import { readOp, writeOp } from "../src/ops/op-store.js";
 import type { Op } from "../src/ops/types.js";
 import { opCancel } from "../src/canonical-loop/control-api.js";
+import { handleAdapterRetry } from "../src/canonical-loop/worker-adapter-retry.js";
+import { readCanonicalEvents } from "../src/canonical-loop/store.js";
+
+const failoverMock = vi.hoisted(() => ({ attempt: vi.fn() }));
+vi.mock("../src/canonical-loop/runtime-failover.js", () => ({
+  attemptRuntimeFailover: failoverMock.attempt,
+}));
 
 let dataDir: string;
 let priorDataDir: string | undefined;
@@ -69,6 +76,8 @@ beforeEach(() => {
   process.env.LAX_DATA_DIR = dataDir;
   resetCanonicalRuntime();
   resetScheduler();
+  failoverMock.attempt.mockReset();
+  failoverMock.attempt.mockResolvedValue({ kind: "ineligible" });
 });
 
 afterEach(() => {
@@ -80,6 +89,61 @@ afterEach(() => {
 });
 
 describe("canonical retryable adapter recovery", () => {
+  it("propagates descriptor integrity failures without requeueing the operation", async () => {
+    const tampered = op([0], 2);
+    tampered.status = "running";
+    tampered.canonical!.state = "running";
+    writeOp(tampered);
+    failoverMock.attempt.mockRejectedValue(new Error("delegated runtime integrity check failed"));
+
+    await expect(handleAdapterRetry(tampered, "http_503"))
+      .rejects.toThrow("delegated runtime integrity check failed");
+    expect(readOp(tampered.id)).toMatchObject({
+      attemptCount: 0,
+      status: "running",
+      canonical: { state: "running" },
+    });
+  });
+
+  it("names the opted-in destination provider and model without credential details", async () => {
+    const switching = op([0], 2);
+    switching.status = "running";
+    switching.canonical!.state = "running";
+    writeOp(switching);
+    failoverMock.attempt.mockResolvedValue({
+      kind: "switched",
+      delayMs: 60_000,
+      targetIdentity: "destination",
+      provider: "xai",
+      model: "grok-4.5",
+    });
+
+    await expect(handleAdapterRetry(switching, "http_503")).resolves.toBe("retrying");
+    const event = readCanonicalEvents(switching.id)
+      .find(item => item.type === "error" && item.body?.code === "runtime_failover");
+    expect(event?.body?.message).toContain("xai/grok-4.5");
+    expect(event?.body?.message).not.toMatch(/credential|secret|token|api key/i);
+  });
+
+  it("charges failover waiting to the bounded retry budget and exhausts", async () => {
+    const waiting = op([0], 1);
+    writeOp(waiting);
+    failoverMock.attempt.mockResolvedValue({ kind: "waiting", delayMs: 0 });
+    registerAdapterForOp(waiting.id, () => createRuntimeReconstructionFailureAdapter(true));
+
+    enqueueOp(waiting.id, "background");
+    pumpScheduler();
+    await awaitIdle();
+
+    expect(failoverMock.attempt).toHaveBeenCalledTimes(2);
+    expect(readOp(waiting.id)).toMatchObject({
+      attemptCount: 1,
+      status: "failed",
+      lastFailureReason: "adapter_retry_exhausted:runtime_reconstruction_unavailable",
+      canonical: { state: "failed" },
+    });
+  });
+
   it("backs off without holding the lane and then resumes successfully", async () => {
     const recovering = op([40], 2);
     const next = op([], 0);

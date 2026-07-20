@@ -2,19 +2,21 @@
 import { randomUUID } from "node:crypto";
 import { aggregateOpUsage } from "./op-usage.js";
 import { emitStrict } from "./event-emitter.js";
-import { withCurrentLeaseClaim, type LeaseClaim } from "./lease.js";
+import { isLeaseExpired, withCurrentLeaseClaim, type LeaseClaim } from "./lease.js";
 import { persistOpKeepingSignalsStrict, StrictOpPersistenceError } from "./op-persist.js";
 import { recordSessionBaselineObservation } from "./session-baseline.js";
 import { transitionOp } from "./state-machine.js";
-import { readCanonicalEvents, readLatestOpTurn, readOpMessages, readOpTurn } from "./store.js";
+import { readCanonicalEvents, readLatestOpTurn, readOpMessages, readOpTurn, readOpTurns } from "./store.js";
 import {
   publishTurnCommit,
   quarantineInvalidTurnArtifact,
   readTurnArtifact,
+  scavengeTurnCommitStages,
   type TurnCommitEnvelope,
 } from "./turn-commit-store.js";
+import { hasMessageCollision, isTurnCommitEnvelope } from "./turn-commit-validation.js";
 import { appendActionLedgerOnce } from "../ops/action-ledger.js";
-import { readOp } from "../ops/op-store.js";
+import { readOp, tryWithOpLock } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
 import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
 import type {
@@ -105,7 +107,30 @@ export function reconcileLatestTurnCommit(opId: string, leaseClaim: LeaseClaim):
   return guarded.value;
 }
 
+/** Process recovery path. It repairs evidence for every published envelope
+ * under the op lock, but never overrides pause/cancel/approval control. */
+export function reconcilePublishedTurnCommitsForRecovery(opId: string): boolean {
+  try {
+    const locked = tryWithOpLock(opId, () => {
+      const op = readOp(opId);
+      if (!op?.canonical?.flagValue) return false;
+      let repaired = false;
+      for (const turn of readOpTurns(opId)) {
+        const artifact = readTurnArtifact(opId, turn.turnIdx);
+        if (!artifact || !("turn" in artifact)) continue;
+        projectTurnCommit(op, artifact, "recovery");
+        repaired = true;
+      }
+      return repaired;
+    });
+    return locked.acquired && locked.value;
+  } catch {
+    return false;
+  }
+}
+
 function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): CommitTurnOutput {
+  scavengeTurnCommitStages(input.op.id);
   const existingArtifact = readTurnArtifact(input.op.id, input.turnIdx);
   if (existingArtifact) {
     if ("turn" in existingArtifact) projectTurnCommit(input.op, existingArtifact);
@@ -115,7 +140,8 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
   quarantineInvalidTurnArtifact(input.op.id, input.turnIdx);
 
   const promptMessages = readOpMessages(input.op.id);
-  const seqBase = promptMessages.filter((row) => row.turnIdx === input.turnIdx).length;
+  const turnMessages = promptMessages.filter((row) => row.turnIdx === input.turnIdx);
+  const seqBase = turnMessages.reduce((max, row) => Math.max(max, row.seqInTurn + 1), 0);
   const createdAt = new Date().toISOString();
   const turn: OpTurnRow = {
     opId: input.op.id,
@@ -155,6 +181,9 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
       stateBefore: input.op.canonical?.state,
     },
   };
+  if (!isTurnCommitEnvelope(envelope) || hasMessageCollision(messages, promptMessages)) {
+    throw new Error(`turn commit message collision or invalid envelope for ${input.op.id}#${input.turnIdx}`);
+  }
 
   if (!publishTurnCommit(envelope)) {
     const winner = readTurnArtifact(input.op.id, input.turnIdx);
@@ -179,7 +208,11 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
 
 /** Idempotently materialize all projections from the published envelope.
  * Called on ordinary commit and on a same-generation replay after a crash. */
-function projectTurnCommit(op: Op, envelope: TurnCommitEnvelope): void {
+function projectTurnCommit(
+  op: Op,
+  envelope: TurnCommitEnvelope,
+  terminalMode: "owned" | "recovery" = "owned",
+): void {
   const { turn, messages, projection } = envelope;
   const clearRedirect = turn.redirectConsumed
     && projection.redirectInstructionId != null
@@ -236,14 +269,23 @@ function projectTurnCommit(op: Op, envelope: TurnCommitEnvelope): void {
     : turn.terminalReason === "error" ? "failed" : null;
   const terminalReason = turn.terminalReason === "done" ? "turn_done" : "turn_error";
   projectionHook?.("before_terminal");
-  if (terminal && op.canonical?.state !== terminal) {
+  const state = op.canonical?.state;
+  const controlBlocksTerminal = terminalMode === "recovery" && (
+    state === "paused" || state === "cancelling" || state === "cancelled"
+    || !!op.canonical?.pendingApproval || !!op.canonical?.pauseRequestedAt
+    || !!op.canonical?.cancelRequestedAt
+  );
+  const recoveryMayTransition = terminalMode === "owned"
+    || (state === "running" && !controlBlocksTerminal
+      && (!op.canonical?.leaseOwner || isLeaseExpired(op)));
+  if (terminal && state !== terminal && recoveryMayTransition) {
     transitionOp(op, terminal, terminalReason, {
       learnedOutcome: projection.learnedOutcome,
       learningSessionId: projection.learningSessionId,
       strictPersistence: true,
     });
   }
-  if (terminal) {
+  if (terminal && op.canonical?.state === terminal) {
     emitOnce(op.id, "state_changed", (body) =>
       body.to === terminal && body.reason === terminalReason, {
       from: projection.stateBefore ?? "running",

@@ -17,11 +17,12 @@
  * reads cheap (no global scan) and lets a session's history be dropped wholesale
  * if needed.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 import type { ToolDispatchStatus } from "../canonical-loop/public/op-facts.js";
+import { readDurableJsonl, updateDurableJsonl } from "../persistence/durable-jsonl.js";
 
 const logger = createLogger("ops.action-ledger");
 
@@ -51,6 +52,9 @@ export interface ActionLedgerEntry {
 }
 
 const TASK_MAX_CHARS = 200;
+const ACTION_STATUSES = new Set([
+  "ok", "error", "blocked", "declined", "timeout", "cancelled",
+]);
 
 function ledgerDir(): string {
   return join(getLaxDir(), "action-log");
@@ -78,10 +82,22 @@ function ledgerPath(sessionId: string): string {
  * the ledger is unwritable.
  */
 export function appendActionLedger(entry: ActionLedgerEntry): void {
-  appendActionLedgerWithMode(entry, false);
+  appendActionLedgerWithMode(entry, false, false);
 }
 
-function appendActionLedgerWithMode(entry: ActionLedgerEntry, strict: boolean): void {
+function isActionLedgerEntry(value: unknown): value is ActionLedgerEntry {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Partial<ActionLedgerEntry>;
+  return typeof row.ts === "string" && typeof row.sessionId === "string"
+    && typeof row.opId === "string" && typeof row.opType === "string"
+    && Number.isSafeInteger(row.turnIdx) && row.turnIdx! >= 0
+    && (row.task === undefined || typeof row.task === "string")
+    && Array.isArray(row.actions) && row.actions.every((action) =>
+      !!action && typeof action.tool === "string" && ACTION_STATUSES.has(action.status))
+    && (row.terminalReason === null || row.terminalReason === "done" || row.terminalReason === "error");
+}
+
+function appendActionLedgerWithMode(entry: ActionLedgerEntry, strict: boolean, once: boolean): void {
   if (!entry.sessionId) return;
   if (entry.actions.length === 0) return;
   const clipped: ActionLedgerEntry = {
@@ -90,8 +106,9 @@ function appendActionLedgerWithMode(entry: ActionLedgerEntry, strict: boolean): 
   };
   try {
     const path = ledgerPath(entry.sessionId);
-    if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    appendFileSync(path, JSON.stringify(clipped) + "\n", { encoding: "utf-8", mode: 0o600 });
+    updateDurableJsonl(path, isActionLedgerEntry, (rows) =>
+      once && rows.some((row) => row.opId === entry.opId && row.turnIdx === entry.turnIdx)
+        ? null : clipped);
   } catch (e) {
     logger.warn(`append failed sess=${entry.sessionId}: ${(e as Error).message}`);
     if (strict) throw e;
@@ -102,9 +119,7 @@ function appendActionLedgerWithMode(entry: ActionLedgerEntry, strict: boolean): 
  * serialized by the operation lease lock; the key prevents crash replay from
  * incrementing this denormalized index twice. */
 export function appendActionLedgerOnce(entry: ActionLedgerEntry): void {
-  if (readSessionActions(entry.sessionId).some((row) =>
-    row.opId === entry.opId && row.turnIdx === entry.turnIdx)) return;
-  appendActionLedgerWithMode(entry, true);
+  appendActionLedgerWithMode(entry, true, true);
 }
 
 /**
@@ -119,17 +134,8 @@ export function readSessionActions(
   const path = ledgerPath(sessionId);
   if (!existsSync(path)) return [];
   try {
-    const raw = readFileSync(path, "utf-8");
-    const out: ActionLedgerEntry[] = [];
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      try {
-        const e = JSON.parse(t) as ActionLedgerEntry;
-        if (opts.sinceTs && e.ts < opts.sinceTs) continue;
-        out.push(e);
-      } catch { /* skip malformed line */ }
-    }
+    const out = readDurableJsonl(path, isActionLedgerEntry)
+      .filter((entry) => !opts.sinceTs || entry.ts >= opts.sinceTs);
     return opts.limit && opts.limit > 0 ? out.slice(-opts.limit) : out;
   } catch (e) {
     logger.warn(`read failed sess=${sessionId}: ${(e as Error).message}`);
@@ -155,15 +161,8 @@ export function readAllEntriesSince(sinceTs: string): ActionLedgerEntry[] {
   const out: ActionLedgerEntry[] = [];
   for (const f of files) {
     try {
-      const raw = readFileSync(join(dir, f), "utf-8");
-      for (const line of raw.split("\n")) {
-        const t = line.trim();
-        if (!t) continue;
-        try {
-          const e = JSON.parse(t) as ActionLedgerEntry;
-          if (sinceTs && e.ts <= sinceTs) continue;
-          out.push(e);
-        } catch { /* skip malformed line */ }
+      for (const entry of readDurableJsonl(join(dir, f), isActionLedgerEntry)) {
+        if (!sinceTs || entry.ts > sinceTs) out.push(entry);
       }
     } catch { /* skip unreadable file */ }
   }

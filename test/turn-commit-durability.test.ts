@@ -1,0 +1,191 @@
+import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { commitTurn, type CommitTurnInput } from "../src/canonical-loop/checkpoint.js";
+import { acquireLease, type LeaseClaim } from "../src/canonical-loop/lease.js";
+import { canonicalEventsPath, opTurnPath, opTurnsDir } from "../src/canonical-loop/schema.js";
+import { appendCanonicalEvent, appendOpMessage, readCanonicalEvents, readOpMessages, readOpTurn } from "../src/canonical-loop/store.js";
+import {
+  _setTurnCommitWriteHookForTests,
+  scavengeTurnCommitStages,
+  type TurnCommitEnvelope,
+} from "../src/canonical-loop/turn-commit-store.js";
+import { actionLogDir, appendActionLedgerOnce, readSessionActions } from "../src/ops/action-ledger.js";
+import { newOpId, readOp, writeOp } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
+import type { OpMessageRow } from "../src/canonical-loop/types.js";
+
+const OPS = join(homedir(), ".lax", "operations");
+const ids: string[] = [];
+const sessions: string[] = [];
+
+function mkOp(label: string): { op: Op; claim: LeaseClaim } {
+  const op: Op = {
+    id: newOpId(`durability_${label}`), type: "freeform", task: label,
+    contextPack: {} as Op["contextPack"], lane: "interactive",
+    retryPolicy: { maxRecoveryAttempts: 2, backoffMs: [1] }, ownerId: "test",
+    visibility: "private", status: "running", createdAt: new Date().toISOString(),
+    attemptCount: 0, canonical: { flagValue: true, state: "running", sessionId: `durability-${label}` },
+  };
+  ids.push(op.id); sessions.push(op.canonical!.sessionId!); writeOp(op);
+  mkdirSync(opTurnsDir(op.id), { recursive: true });
+  const lease = acquireLease(op.id, `worker-${label}`);
+  if (!lease.ok) throw new Error(lease.reason);
+  return { op: readOp(op.id)!, claim: lease.claim };
+}
+
+function input(op: Op, claim: LeaseClaim, messageId = `${op.id}-reply`): CommitTurnInput {
+  return {
+    op, leaseClaim: claim, turnIdx: 0,
+    providerState: { adapterName: "fake", adapterVersion: "1", providerPayload: null },
+    messages: [{ messageId, role: "assistant", content: "reply" }],
+    toolCallSummary: [{ tool: "read", argsHash: "h", resultStatus: "ok", durationMs: 1 }],
+    terminalReason: null,
+  };
+}
+
+function envelope(op: Op): TurnCommitEnvelope {
+  return {
+    schemaVersion: 1,
+    turn: {
+      opId: op.id, turnIdx: 0,
+      providerState: { adapterName: "fake", adapterVersion: "1", providerPayload: null },
+      toolCallSummary: [], terminalReason: null, redirectConsumed: false,
+      createdAt: new Date().toISOString(),
+    },
+    messages: [{
+      messageId: `${op.id}-reply`, opId: op.id, turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: "reply", createdAt: new Date().toISOString(),
+    }],
+    projection: { opType: op.type, sessionId: op.canonical!.sessionId!, stateBefore: "running" },
+  };
+}
+
+afterEach(() => _setTurnCommitWriteHookForTests(null));
+afterAll(() => {
+  for (const id of ids) rmSync(join(OPS, id), { recursive: true, force: true });
+  for (const session of sessions) rmSync(join(actionLogDir(), `${session}.jsonl`), { force: true });
+});
+
+describe("strict turn envelope validation", () => {
+  const corruptions: Array<[string, (value: any) => void]> = [
+    ["schema", (v) => { v.schemaVersion = 2; }],
+    ["turn-provider", (v) => { delete v.turn.providerState.providerPayload; }],
+    ["turn-tools", (v) => { v.turn.toolCallSummary = [{ tool: "x", argsHash: "h", resultStatus: "ok", durationMs: "1" }]; }],
+    ["turn-terminal", (v) => { v.turn.terminalReason = "maybe"; }],
+    ["message-role", (v) => { v.messages[0].role = "developer"; }],
+    ["message-content", (v) => { delete v.messages[0].content; }],
+    ["message-duplicate", (v) => { v.messages.push({ ...v.messages[0] }); }],
+    ["projection", (v) => { delete v.projection.opType; }],
+    ["projection-state", (v) => { v.projection.stateBefore = "unknown"; }],
+  ];
+
+  for (const [name, corrupt] of corruptions) {
+    it(`quarantines and re-drives malformed ${name}`, () => {
+      const { op, claim } = mkOp(`invalid-${name}`);
+      const value: any = envelope(op);
+      corrupt(value);
+      writeFileSync(opTurnPath(op.id, 0), JSON.stringify(value));
+      expect(commitTurn(input(op, claim)).inserted).toBe(true);
+      expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+      expect(readdirSync(opTurnsDir(op.id)).some((file) => file.endsWith(".corrupt"))).toBe(true);
+    });
+  }
+
+  it("rejects a legacy-shaped final missing mandatory fields", () => {
+    const { op, claim } = mkOp("invalid-legacy");
+    writeFileSync(opTurnPath(op.id, 0), JSON.stringify({ opId: op.id, turnIdx: 0 }));
+    expect(commitTurn(input(op, claim)).inserted).toBe(true);
+    expect(readdirSync(opTurnsDir(op.id)).some((file) => file.endsWith(".corrupt"))).toBe(true);
+  });
+
+  for (const [name, value] of [
+    ["null", null], ["array", []], ["string", "turn"], ["number", 7],
+    ["empty", {}], ["shallow-envelope", { schemaVersion: 1, turn: {}, messages: [], projection: {} }],
+  ] as const) {
+    it(`quarantines fuzzed ${name} final data`, () => {
+      const { op, claim } = mkOp(`fuzz-${name}`);
+      writeFileSync(opTurnPath(op.id, 0), JSON.stringify(value));
+      expect(commitTurn(input(op, claim)).inserted).toBe(true);
+      expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+    });
+  }
+});
+
+describe("message collision safety", () => {
+  function seed(opId: string): OpMessageRow {
+    return {
+      messageId: `${opId}-seed`, opId, turnIdx: 0, seqInTurn: 0, role: "user",
+      content: "canonical request", createdAt: new Date().toISOString(),
+    };
+  }
+
+  it("rejects a finalized messageId collision without replacing the seed", () => {
+    const { op, claim } = mkOp("id-collision");
+    const row = seed(op.id); appendOpMessage(row);
+    expect(() => commitTurn(input(op, claim, row.messageId))).toThrow("message collision");
+    expect(readOpTurn(op.id, 0)).toBeNull();
+    expect(readOpMessages(op.id)).toEqual([row]);
+  });
+
+  it("quarantines a finalized composite-position collision and preserves the seed", () => {
+    const { op, claim } = mkOp("position-collision");
+    const row = seed(op.id); appendOpMessage(row);
+    const value = envelope(op);
+    value.messages[0].messageId = `${op.id}-different`;
+    writeFileSync(opTurnPath(op.id, 0), JSON.stringify(value));
+    expect(commitTurn(input(op, claim)).inserted).toBe(true);
+    const messages = readOpMessages(op.id);
+    expect(messages[0]).toEqual(row);
+    expect(messages[1].seqInTurn).toBe(1);
+  });
+});
+
+describe("durable projections and publication", () => {
+  it("truncates a partial canonical-event tail and assigns the next gapless seq", () => {
+    const { op } = mkOp("event-tail");
+    appendCanonicalEvent(op.id, "turn_started", { turnIdx: 0 });
+    appendFileSync(canonicalEventsPath(op.id), "{\"opId\":");
+    appendCanonicalEvent(op.id, "message_appended", { messageId: "m" });
+    appendFileSync(canonicalEventsPath(op.id), JSON.stringify({
+      opId: op.id, seq: 99, type: "error", ts: new Date().toISOString(), body: null,
+    }) + "\n");
+    appendCanonicalEvent(op.id, "turn_committed", { turnIdx: 0 });
+    expect(readCanonicalEvents(op.id).map((event) => event.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("repairs an action tail and keeps once-only projection idempotent", () => {
+    const { op } = mkOp("action-tail");
+    const entry = {
+      ts: new Date().toISOString(), sessionId: op.canonical!.sessionId!, opId: op.id,
+      opType: op.type, turnIdx: 0, task: op.task,
+      actions: [{ tool: "read", status: "ok" as const }], terminalReason: null,
+    };
+    appendActionLedgerOnce(entry);
+    appendFileSync(join(actionLogDir(), `${entry.sessionId}.jsonl`), "{\"ts\":");
+    appendActionLedgerOnce(entry);
+    expect(readSessionActions(entry.sessionId)).toEqual([entry]);
+  });
+
+  it("publishes only after the parent directory fsync boundary", () => {
+    const { op, claim } = mkOp("directory-fsync");
+    _setTurnCommitWriteHookForTests((point) => {
+      if (point === "after_directory_fsync") throw new Error("crash:directory-fsync");
+    });
+    expect(() => commitTurn(input(op, claim))).toThrow("crash:directory-fsync");
+    expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+  });
+
+  it("scavenges dead stages but never a stage owned by a live process", () => {
+    const { op, claim } = mkOp("stage-owner");
+    const live = join(opTurnsDir(op.id), `0.json.${process.pid}-00000000-0000-0000-0000-000000000000.stage`);
+    const dead = join(opTurnsDir(op.id), "0.json.99999999-00000000-0000-0000-0000-000000000000.stage");
+    writeFileSync(live, "live"); writeFileSync(dead, "dead");
+    expect(scavengeTurnCommitStages(op.id)).toBe(1);
+    expect(existsSync(live)).toBe(true);
+    commitTurn(input(op, claim));
+    expect(existsSync(live)).toBe(true);
+    rmSync(live, { force: true });
+  });
+});

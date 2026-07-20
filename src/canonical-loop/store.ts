@@ -6,10 +6,9 @@
  * provided so the schema is complete; they are not yet called by the loop
  * (Issue 03 lights them up).
  *
- * Atomicity in v1 is best-effort filesystem semantics: per-op `seq` is
- * derived from the current line count of canonical-events.jsonl, and
+ * Event append repairs torn tails, derives sequence from valid frames, and
  * `appendCanonicalEvent` is synchronous to preserve ordering — same
- * approach as ops/event-log.ts.
+ * append is fsynced before publication.
  *
  * CL-9: the seq is assigned UNDER the same cross-process op lock (withOpLock)
  * that OP-9 uses for signal RMW, so two writers on one ~/.lax that are NOT in
@@ -42,6 +41,7 @@ import {
   committedMessagesFromArtifact,
   readTurnArtifact,
 } from "./turn-commit-store.js";
+import { appendKnownGoodJsonl, readDurableJsonl, updateDurableJsonl } from "../persistence/durable-jsonl.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("canonical-loop.store");
@@ -57,19 +57,8 @@ const logger = createLogger("canonical-loop.store");
  * a foreign writer appended.
  */
 export function nextEventSeq(opId: string): number {
-  const path = canonicalEventsPath(opId);
-  if (!existsSync(path)) return 0;
-  try {
-    const raw = readFileSync(path, "utf-8");
-    let seq = 0;
-    for (const line of raw.split("\n")) {
-      if (line.trim().length > 0) seq++;
-    }
-    return seq;
-  } catch (e) {
-    logger.warn(`[store] failed to read canonical events for ${opId}: ${(e as Error).message}`);
-    return 0;
-  }
+  const rows = readDurableJsonl(canonicalEventsPath(opId), eventValidator(opId));
+  return rows.length ? rows[rows.length - 1].seq + 1 : 0;
 }
 
 /**
@@ -128,22 +117,23 @@ function appendCanonicalEventWithMode(
   return withOpLock(opId, () => {
     const currentSize = existsSync(path) ? statSync(path).size : 0;
     const cached = seqCache.get(opId);
+    let event: CanonicalEvent = { opId, seq: 0, type, ts: new Date().toISOString(), body };
     // Trust the cache only if the file is byte-for-byte what we left it as;
     // otherwise re-seed from disk (a foreign writer appended under the lock).
-    const seq = cached && cached.size === currentSize ? cached.nextSeq : nextEventSeq(opId);
-    const event: CanonicalEvent = {
-      opId,
-      seq,
-      type,
-      ts: new Date().toISOString(),
-      body,
-    };
-    const line = JSON.stringify(event) + "\n";
     try {
-      appendFileSync(path, line, { encoding: "utf-8", mode: 0o600 });
+      if (cached && cached.size === currentSize) {
+        event = { ...event, seq: cached.nextSeq };
+        appendKnownGoodJsonl(path, event);
+      } else {
+        const result = updateDurableJsonl(path, eventValidator(opId), (rows) => {
+          event = { ...event, seq: rows.length ? rows[rows.length - 1].seq + 1 : 0 };
+          return event;
+        });
+        event = result.value!;
+      }
+      seqCache.set(opId, { nextSeq: event.seq + 1, size: statSync(path).size });
       // Advance the cache only on a durable append — a failed write must not
       // burn a seq that never landed on disk.
-      seqCache.set(opId, { nextSeq: seq + 1, size: currentSize + Buffer.byteLength(line, "utf-8") });
     } catch (e) {
       logger.warn(`[store] failed to append canonical event for ${opId}: ${(e as Error).message}`);
       if (strict) throw e;
@@ -157,22 +147,37 @@ export function readCanonicalEvents(opId: string): CanonicalEvent[] {
   const path = canonicalEventsPath(opId);
   if (!existsSync(path)) return [];
   try {
-    const raw = readFileSync(path, "utf-8");
-    const out: CanonicalEvent[] = [];
-    for (const line of raw.split("\n")) {
-      const t = line.trim();
-      if (!t) continue;
-      try {
-        out.push(JSON.parse(t) as CanonicalEvent);
-      } catch {
-        logger.warn(`[store] skipped unparseable canonical-event line for ${opId}`);
-      }
-    }
-    return out;
+    return readDurableJsonl(path, eventValidator(opId));
   } catch (e) {
     logger.warn(`[store] failed to read canonical events for ${opId}: ${(e as Error).message}`);
     return [];
   }
+}
+
+const EVENT_TYPES = new Set<CanonicalEventType>([
+  "state_changed", "turn_started", "turn_committed", "iteration_checkpoint",
+  "tool_started", "tool_finished", "message_appended", "redirect_received",
+  "redirect_applied", "pause_requested", "resume_requested", "approval_requested",
+  "approval_resolved", "cancel_requested", "lease_acquired", "lease_lost", "error",
+]);
+
+function isCanonicalEvent(value: unknown): value is CanonicalEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Partial<CanonicalEvent>;
+  return typeof row.opId === "string"
+    && Number.isSafeInteger(row.seq) && row.seq! >= 0
+    && typeof row.type === "string" && EVENT_TYPES.has(row.type as CanonicalEventType)
+    && typeof row.ts === "string"
+    && (row.body === null || (!!row.body && typeof row.body === "object" && !Array.isArray(row.body)));
+}
+
+function eventValidator(opId: string): (value: unknown) => value is CanonicalEvent {
+  let expectedSeq = 0;
+  return (value: unknown): value is CanonicalEvent => {
+    if (!isCanonicalEvent(value) || value.opId !== opId || value.seq !== expectedSeq) return false;
+    expectedSeq++;
+    return true;
+  };
 }
 
 /**
@@ -342,6 +347,14 @@ export function appliedRedirectTexts(opId: string): string[] {
 export function readOpMessages(opId: string): OpMessageRow[] {
   const path = opMessagesPath(opId);
   const byId = new Map<string, OpMessageRow>();
+  const positions = new Set<string>();
+  const add = (row: OpMessageRow): boolean => {
+    const position = `${row.turnIdx}:${row.seqInTurn}`;
+    if (byId.has(row.messageId) || positions.has(position)) return false;
+    byId.set(row.messageId, row);
+    positions.add(position);
+    return true;
+  };
   try {
     if (existsSync(path)) {
       const raw = readFileSync(path, "utf-8");
@@ -350,7 +363,7 @@ export function readOpMessages(opId: string): OpMessageRow[] {
         if (!t) continue;
         try {
           const row = JSON.parse(t) as OpMessageRow;
-          byId.set(row.messageId, row);
+          add(row);
         } catch {
           logger.warn(`[store] skipped unparseable op-message line for ${opId}`);
         }
@@ -362,7 +375,7 @@ export function readOpMessages(opId: string): OpMessageRow[] {
         const match = /^(\d+)\.json$/.exec(name);
         if (!match) continue;
         const artifact = readTurnArtifact(opId, Number(match[1]));
-        for (const row of committedMessagesFromArtifact(artifact)) byId.set(row.messageId, row);
+        for (const row of committedMessagesFromArtifact(artifact)) add(row);
       }
     }
     return [...byId.values()].sort((a, b) =>

@@ -52,7 +52,7 @@ import { rehydrateRecoveredRuntime } from "./runtime.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
 import { releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { CanonicalLane } from "./types.js";
-
+import { reconcilePublishedTurnCommitsForRecovery } from "./checkpoint.js";
 export type RecoveryOutcomeKind =
   | "recovered"     // running → queued (or an already-queued op that crashed
                     //   before launch), op re-enqueued for a replacement worker.
@@ -77,6 +77,7 @@ export interface RecoveryOutcome {
 }
 
 export function recoverStaleOp(opId: string): RecoveryOutcome {
+  reconcilePublishedTurnCommitsForRecovery(opId);
   const op = readOp(opId);
   if (!op) return { ok: false, kind: "unknown_op" };
   const state = op.canonical?.state;
@@ -252,7 +253,6 @@ function finishRecoveredOp(
 export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
   return opIds.map(recoverStaleOp);
 }
-
 /**
  * Boot-time sweep of stale canonical-loop ops on disk.
  *
@@ -262,17 +262,9 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  * re-acquire, just an orphan polluting the AGENTS sidebar and the
  * `op_status` listing until something explicitly drives recovery.
  *
- * The sweep walks `~/.lax/operations/`, finds canonical ops where:
- *   - `op.canonical.flagValue === true`
- *   - `op.canonical.state ∈ {running, cancelling, queued}` (paused ops are not
- *     recoverable; terminal states are absorbing). `queued` ops matter because
- *     the scheduler queue is in-memory and vanishes on restart — a disk op
- *     stuck in `queued` at boot has no live worker and no in-memory slot, so it
- *     would stay pending forever without this sweep (OP-6).
- *   - the op has NO LIVE OWNER — in every recoverable state, either the lease is
- *     set AND expired, OR there is no lease at all (the C3 orphan shape; see
- *     recoverStaleOp). Fresh queued claims are also protected cross-process.
- * and routes each through `recoverStaleOp`.
+ * Every canonical op first repairs committed-turn evidence. Only ownerless
+ * running/cancelling/queued ops proceed to state recovery; pause and terminal
+ * control remains authoritative.
  *
  * Safe to call once at server boot. Periodic callers must use the cooperative
  * sweep below so operation history cannot starve worker heartbeats. No-op if
@@ -282,19 +274,21 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  */
 export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutcome }[] {
   const opIds = listOperationIds();
-
   const out: { opId: string; outcome: RecoveryOutcome }[] = [];
   for (const opId of opIds) {
     let op;
     try { op = readOp(opId); } catch { continue; }
     if (!op) continue;
-
     const c = op.canonical;
     if (!c || c.flagValue !== true) continue;
-    if (c.state !== "running" && c.state !== "cancelling" && c.state !== "queued") continue;
+    reconcilePublishedTurnCommitsForRecovery(opId);
+    op = readOp(opId);
+    if (!op?.canonical) continue;
+    const refreshed = op.canonical;
+    if (refreshed.state !== "running" && refreshed.state !== "cancelling" && refreshed.state !== "queued") continue;
     // A fresh exact claim may be live in any state. Ownerless non-terminal ops
     // and expired claims remain recoverable.
-    if (c.leaseOwner && !isLeaseExpired(op)) continue;
+    if (refreshed.leaseOwner && !isLeaseExpired(op)) continue;
 
     const outcome = recoverStaleOp(opId);
     out.push({ opId, outcome });
@@ -342,6 +336,10 @@ export async function sweepStaleCanonicalOpsCooperatively(
     const opId = opIds[index];
     let op;
     try { op = readCandidate(opId); } catch { op = null; }
+    if (op?.canonical?.flagValue === true) {
+      reconcilePublishedTurnCommitsForRecovery(opId);
+      try { op = readCandidate(opId); } catch { op = null; }
+    }
     const state = op?.canonical?.state;
     if (
       op?.canonical?.flagValue === true

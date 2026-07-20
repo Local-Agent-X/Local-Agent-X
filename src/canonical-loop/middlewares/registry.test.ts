@@ -13,6 +13,7 @@ import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
 import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
 import { instructionAuditMiddleware } from "./instruction-audit.js";
+import { thrashGuardMiddleware } from "./thrash-guard.js";
 
 // CLASS LOCK for the model-behavior guards. Each of these is a safety/quality
 // guard that catches a distinct LLM failure mode (looping, fabricated actions,
@@ -34,6 +35,7 @@ const REQUIRED_GUARDS = [
   repeatFailureMiddleware,
   instructionLedgerMiddleware,
   instructionAuditMiddleware,
+  thrashGuardMiddleware,
 ];
 
 describe("default middleware stack completeness", () => {
@@ -113,6 +115,7 @@ const EXPECTED_ORDER = [
   "external-change-diff",
   "dead-end",
   "repeat-failure",
+  "thrash-guard",
 ];
 
 describe("default middleware stack exact order", () => {

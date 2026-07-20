@@ -68,6 +68,7 @@ import { externalChangeDiffMiddleware } from "./external-change-diff.js";
 import { cleanupVerifyMiddleware } from "./cleanup-verify.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
 import { instructionAuditMiddleware } from "./instruction-audit.js";
+import { thrashGuardMiddleware } from "./thrash-guard.js";
 
 /** One declarative stack entry: the middleware plus its explicit sort key. */
 interface StackEntry {
@@ -193,6 +194,12 @@ const DEFAULT_STACK: StackEntry[] = [
   { order: 250, mw: deadEndMiddleware },
   // All lanes (incl. interactive) — same-tool same-error spiral breaker.
   { order: 260, mw: repeatFailureMiddleware },
+  // All lanes — settings-flip thrash breaker: protected-setting flips that
+  // land right after tool failures, followed by more failures (the agent
+  // routing AROUND a blocker instead of reporting it). Sibling to
+  // repeat-failure, which can't see it: the flips SUCCEED and the failures
+  // vary their error text, so no same-error spiral ever forms.
+  { order: 270, mw: thrashGuardMiddleware },
 ];
 
 export function getDefaultMiddlewareStack(): CanonicalMiddleware[] {

@@ -56,6 +56,11 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
   };
   const save = () => writeDurableJson(path, record);
   const resetForContract = () => { record.contract = contract; };
+  const clearStepState = (id, reporter, { output = false } = {}) => {
+    reporter.clearDegraded?.(id);
+    record.degraded = reporter.degraded;
+    if (output && record.outputs) delete record.outputs[id];
+  };
 
   return {
     path,
@@ -68,6 +73,9 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
           return { blocked: `Cannot safely resume after interrupted installer step '${record.inFlight.id}'. Its side effect is ambiguous; completed earlier steps remain saved.` };
         }
         if (state === "present") {
+          clearStepState(record.inFlight.id, reporter, {
+            output: record.inFlight.intent !== stepIntent(contract, record.inFlight.id),
+          });
           record.completed = record.completed.filter((item) => item.id !== record.inFlight.id);
           record.completed.push({ id: record.inFlight.id, intent: stepIntent(contract, record.inFlight.id) });
         }
@@ -84,6 +92,7 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
       if (prior) {
         const state = verify(id, { inFlight: false, intentMatches: prior.intent === intent });
         if (state === "present") {
+          clearStepState(id, reporter, { output: prior.intent !== intent });
           record.completed = record.completed.filter((item) => item.id !== id);
           record.completed.push({ id, intent });
           resetForContract();
@@ -92,7 +101,7 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
         }
         if (state === "ambiguous") return { action: "block", message: `Cannot safely resume installer step '${id}': its prior side effect is ambiguous. Resolve the step state and retry; completed earlier steps remain saved.` };
         record.completed = record.completed.filter((item) => item.id !== id);
-        reporter.clearDegraded?.(id);
+        clearStepState(id, reporter, { output: true });
       } else if (record.inFlight) {
         return { action: "block", message: `Cannot safely resume after interrupted installer step '${record.inFlight.id}'. Its state must be verified before continuing.` };
       }

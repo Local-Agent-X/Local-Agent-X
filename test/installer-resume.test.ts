@@ -20,7 +20,8 @@ type Harness = {
   present: Record<string, "present" | "absent" | "ambiguous">;
   events: Array<Record<string, unknown>>;
   persistedDegraded: Array<Array<{ step: string; message: string }>>;
-  run: (options?: { killAt?: string; degradeAt?: string; persistSucceeds?: boolean; selections?: { ollamaRuntime: boolean; ollamaMemoryModel: boolean }; ipc?: boolean }) => Promise<void>;
+  persistedModelReady: boolean[];
+  run: (options?: { killAt?: string; degradeAt?: string | string[]; includeModel?: boolean; includePython?: boolean; persistSucceeds?: boolean; selections?: { ollamaRuntime: boolean; ollamaMemoryModel: boolean }; ipc?: boolean }) => Promise<void>;
 };
 
 function harness(): Harness {
@@ -30,54 +31,66 @@ function harness(): Harness {
   const present: Record<string, "present" | "absent" | "ambiguous"> = {};
   const events: Array<Record<string, unknown>> = [];
   const persistedDegraded: Array<Array<{ step: string; message: string }>> = [];
-  const execute = (reporter: ReturnType<typeof createReporter>, id: string, killAt?: string, degradeAt?: string) => {
+  const persistedModelReady: boolean[] = [];
+  const execute = (
+    reporter: ReturnType<typeof createReporter>,
+    id: string,
+    selections: { ollamaRuntime: boolean; ollamaMemoryModel: boolean },
+    killAt?: string,
+    degradeAt?: string | string[],
+  ) => {
     if (!reporter.step(id)) return;
     effects[id] = (effects[id] || 0) + 1;
-    if (degradeAt === id) {
+    if (degradeAt === id || Array.isArray(degradeAt) && degradeAt.includes(id)) {
       reporter.fail("offline");
       present[id] = "present";
       return;
     }
     if (killAt === `during:${id}`) throw new Error(`killed:${id}`);
     present[id] = "present";
-    reporter.stepDone(id, id === "desktop" ? { appInstalled: true, appBuildPath: null } : undefined);
+    const output = id === "desktop" ? { appInstalled: true, appBuildPath: null }
+      : id === "embedmodel" ? selections.ollamaMemoryModel : undefined;
+    reporter.stepDone(id, output);
     if (killAt === `after:${id}`) throw new Error(`killed-after:${id}`);
   };
   const run = async ({
     killAt,
     degradeAt,
+    includeModel = false,
+    includePython = false,
     persistSucceeds = true,
     selections = { ollamaRuntime: false, ollamaMemoryModel: false },
     ipc = true,
-  }: { killAt?: string; degradeAt?: string; persistSucceeds?: boolean; selections?: { ollamaRuntime: boolean; ollamaMemoryModel: boolean }; ipc?: boolean } = {}) => {
+  }: { killAt?: string; degradeAt?: string | string[]; includeModel?: boolean; includePython?: boolean; persistSucceeds?: boolean; selections?: { ollamaRuntime: boolean; ollamaMemoryModel: boolean }; ipc?: boolean } = {}) => {
     const reporter = createReporter({
       ipcMode: ipc,
       stdout: { write: (line: string) => { events.push(JSON.parse(line)); return true; } } as NodeJS.WriteStream,
       consoleImpl: { log() {}, warn() {}, error() {} } as Console,
       exit: (code: number) => { throw new Error(`exit:${code}`); },
     });
-    const stage = (...ids: string[]) => async () => { for (const id of ids) execute(reporter, id, killAt, degradeAt); };
+    const stage = (...ids: string[]) => async () => { for (const id of ids) execute(reporter, id, selections, killAt, degradeAt); };
     await runInstaller({
       reporter, platform: "linux", dataDirectory: directory, selections,
       wantOllama: selections.ollamaRuntime,
       wantOllamaMemoryModel: selections.ollamaMemoryModel,
       verifyInstallStep: (id: string) => present[id] || "absent",
     }, {
-      prerequisites: stage("node", "ollama"),
-      core: stage("npm"),
+      prerequisites: stage("node", ...(includePython ? ["python"] : []), "ollama"),
+      core: stage("npm", ...(includeModel ? ["embedmodel"] : [])),
       posixShell: stage(),
       desktop: async () => {
-        execute(reporter, "desktop", killAt, degradeAt);
+        execute(reporter, "desktop", selections, killAt, degradeAt);
         return reporter.resumedStepResult("desktop") || { appInstalled: true, appBuildPath: null };
       },
       persist: () => {
         persistedDegraded.push(reporter.degraded.map((item) => ({ ...item })));
+        if (includeModel) persistedModelReady.push(reporter.resumedStepResult("embedmodel") ?? selections.ollamaMemoryModel);
         reporter.ipc({ type: "complete" });
         return persistSucceeds;
       },
     });
   };
-  return { directory, effects, present, events, persistedDegraded, run };
+  return { directory, effects, present, events, persistedDegraded, persistedModelReady, run };
 }
 
 describe("resumable installer checkpoints", () => {
@@ -166,6 +179,52 @@ describe("resumable installer checkpoints", () => {
     expect(h.effects.ollama).toBe(2);
   });
 
+  it("clears stale Ollama degradation when the runtime becomes unselected", async () => {
+    const h = harness();
+    await expect(h.run({
+      degradeAt: "ollama",
+      killAt: "during:npm",
+      selections: { ollamaRuntime: true, ollamaMemoryModel: false },
+    })).rejects.toThrow("killed:npm");
+    h.present.npm = "absent";
+    await h.run({ selections: { ollamaRuntime: false, ollamaMemoryModel: false } });
+    expect(h.persistedDegraded.at(-1)).toEqual([]);
+  });
+
+  it("does not reuse an unselected model result after the model becomes selected", async () => {
+    const h = harness();
+    await expect(h.run({
+      includeModel: true,
+      killAt: "during:desktop",
+      selections: { ollamaRuntime: false, ollamaMemoryModel: false },
+    })).rejects.toThrow("killed:desktop");
+    h.present.desktop = "absent";
+    await h.run({
+      includeModel: true,
+      selections: { ollamaRuntime: false, ollamaMemoryModel: true },
+    });
+    expect(h.effects.embedmodel).toBe(1);
+    expect(h.persistedModelReady.at(-1)).toBe(true);
+  });
+
+  it("clears only drifted degradation while preserving an unrelated failed step", async () => {
+    const h = harness();
+    await expect(h.run({
+      includePython: true,
+      degradeAt: ["python", "ollama"],
+      killAt: "during:npm",
+      selections: { ollamaRuntime: true, ollamaMemoryModel: false },
+    })).rejects.toThrow("killed:npm");
+    h.present.python = "absent";
+    h.present.npm = "absent";
+    await h.run({
+      includePython: true,
+      degradeAt: "python",
+      selections: { ollamaRuntime: false, ollamaMemoryModel: false },
+    });
+    expect(h.persistedDegraded.at(-1)).toEqual([{ step: "python", message: "offline" }]);
+  });
+
   it("revalidates a completed step after contract drift", async () => {
     const h = harness();
     await expect(h.run({ killAt: "during:npm" })).rejects.toThrow("killed:npm");
@@ -192,8 +251,9 @@ describe("resumable installer checkpoints", () => {
   it("preserves optional degradation truth across a crash and resume", async () => {
     const h = harness();
     await expect(h.run({ degradeAt: "ollama", killAt: "during:npm" })).rejects.toThrow("killed:npm");
+    h.present.ollama = "absent";
     h.present.npm = "absent";
-    await h.run();
+    await h.run({ degradeAt: "ollama" });
     expect(h.persistedDegraded.at(-1)).toEqual([{ step: "ollama", message: "offline" }]);
   });
 

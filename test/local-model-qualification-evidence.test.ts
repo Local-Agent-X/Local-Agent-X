@@ -14,6 +14,8 @@ interface ReadEventsOptions {
 
 function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unknown>> {
   return [
+    { type: "context_status", percentage: 0, level: "ok", usedTokens: 30, maxTokens: 32768, compacted: false },
+    { type: "chat_op_started", opId: "op-read-1" },
     {
       type: "tool_start",
       toolName: "read",
@@ -101,7 +103,7 @@ describe("local qualification workspace-read evidence", () => {
 
   it("rejects a pre-tool guess even when the post-tool response is correct", () => {
     const events = readEvents();
-    events.unshift({ type: "stream", delta: READ_NONCE });
+    events.splice(2, 0, { type: "stream", delta: READ_NONCE });
     const evidence = chatEvidence(events);
     expect(evidence.safeReadLifecycle).toBe(true);
     expect(evidence.readNonceSeen).toBe(false);
@@ -133,4 +135,57 @@ describe("local qualification workspace-read evidence", () => {
     expect(evidence.safeReadLifecycle).toBe(false);
     expect(evidence.readNonceSeen).toBe(false);
   });
+
+  it.each([
+    ["heartbeat after done", "after-done", { type: "op_heartbeat", opId: "op-read-1" }],
+    ["error after done", "after-done", { type: "error", message: "late failure" }],
+    ["metadata after done", "after-done", { type: "context_status", percentage: 1 }],
+    ["reasoning before the read", "before-start", { type: "reasoning", delta: READ_NONCE }],
+    ["metadata before the read", "before-start", { type: "context_status", percentage: 1 }],
+  ] as const)("rejects %s", (_label, position, frame) => {
+    const events = readEvents();
+    insertFrame(events, position, frame);
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  it.each([0, 1])("rejects content smuggled onto allowed prelude frame %i", (index) => {
+    const events = readEvents();
+    events[index] = { ...events[index], delta: READ_NONCE };
+    expect(chatEvidence(events).readNonceSeen).toBe(false);
+  });
+
+  const invalidFrames = [
+    { type: "op_heartbeat", opId: "op-read-1" },
+    { type: "error", message: "failure" },
+    { type: "context_status", percentage: 1 },
+    { type: "reasoning", delta: "private reasoning" },
+    { type: "tool_progress", toolName: "read", toolCallId: "read-1" },
+    { type: "usage", totalTokens: 1 },
+    { type: "stream", replace: true, text: READ_NONCE },
+  ];
+
+  it.each(["before-start", "between-start-end", "before-done", "after-done"] as const)(
+    "rejects every non-grammar frame at %s",
+    (position) => {
+      for (const frame of invalidFrames) {
+        const events = readEvents();
+        insertFrame(events, position, frame);
+        expect(chatEvidence(events).readNonceSeen, JSON.stringify({ position, frame })).toBe(false);
+      }
+    },
+  );
 });
+
+function insertFrame(
+  events: Array<Record<string, unknown>>,
+  position: "before-start" | "between-start-end" | "before-done" | "after-done",
+  frame: Record<string, unknown>,
+): void {
+  const index = {
+    "before-start": 2,
+    "between-start-end": 3,
+    "before-done": events.length - 1,
+    "after-done": events.length,
+  }[position];
+  events.splice(index, 0, frame);
+}

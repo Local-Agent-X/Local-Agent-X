@@ -151,6 +151,11 @@ class FakeDriver implements QualificationDriver {
 class ObservedRealDriver extends RealQualificationDriver {
   lastChat: ChatResult | null = null;
   lastCompaction: CompactionResult | null = null;
+  workspaceEvents: Array<Record<string, unknown>> = [];
+
+  protected override observeChatEvents(kind: "baseline" | "workspace-read" | "history" | "continuity", events: Array<Record<string, unknown>>): void {
+    if (kind === "workspace-read") this.workspaceEvents = events;
+  }
 
   override async chat(kind: "baseline" | "workspace-read" | "history" | "continuity", signal: AbortSignal): Promise<ChatResult> {
     this.lastChat = await super.chat(kind, signal);
@@ -327,6 +332,9 @@ describe("local model qualification workflow", () => {
       expect(scorecard.stages.map((stage) => stage.name)).toEqual(STAGES);
       expect(scorecard.model.tag).toBe(service.model);
       expect(scorecard.cleanup.ok).toBe(true);
+      expect(driver.workspaceEvents.map((event) => event.type), JSON.stringify(driver.workspaceEvents)).toEqual([
+        "context_status", "chat_op_started", "tool_start", "tool_end", "stream", "done",
+      ]);
       expect(existsSync(ownedRoot)).toBe(false);
       expect(service.counts.forbidden).toBe(0);
       expect(repoSurface()).toEqual(surface);

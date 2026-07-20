@@ -176,8 +176,12 @@ export class RealQualificationDriver implements QualificationDriver {
       signal: requestSignal(signal, REQUEST_TIMEOUT_MS),
     });
     if (!response.ok || !response.body) throw new Error(`chat failed: HTTP ${response.status}`);
-    return chatEvidence(await readSse(response));
+    const events = await readSse(response);
+    this.observeChatEvents(kind, events);
+    return chatEvidence(events);
   }
+
+  protected observeChatEvents(_kind: QualificationChatKind, _events: Array<Record<string, unknown>>): void {}
 
   async compact(signal: AbortSignal): Promise<CompactionResult> {
     throwIfAborted(signal);

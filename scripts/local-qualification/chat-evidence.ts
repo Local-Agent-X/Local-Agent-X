@@ -31,9 +31,6 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
   const endIndex = events.indexOf(ends[0]);
   const doneIndices = events.flatMap((event, index) => event.type === "done" ? [index] : []);
   const doneIndex = doneIndices[0] ?? -1;
-  const invalidStreamShape = events.some((event) => (
-    event.type === "stream" && typeof event.delta !== "string"
-  ));
   const exactReadResult = `1\t${READ_NONCE}\n2\t`;
   const lifecycle = starts.length === 1 && ends.length === 1
     && startIndex >= 0
@@ -46,20 +43,22 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
     && ends[0].allowed === true
     && ends[0].status === "ok"
     && ends[0].result === exactReadResult;
-  const streamBeforeResult = lifecycle
-    && events.slice(0, endIndex).some((event) => event.type === "stream");
-  const streamAfterDone = doneIndex >= 0
-    && events.slice(doneIndex + 1).some((event) => event.type === "stream");
-  const readContinuation = lifecycle && doneIndices.length === 1 && doneIndex > endIndex
-    ? events.slice(endIndex + 1, doneIndex).filter((event) => event.type === "stream" && typeof event.delta === "string")
-      .map((event) => String(event.delta)).join("")
+  const prelude = events.slice(0, startIndex);
+  const validPrelude = prelude.length === 2
+    && isContextStatus(prelude[0])
+    && isChatOperationStarted(prelude[1]);
+  const continuation = events.slice(endIndex + 1, doneIndex);
+  const validContinuation = continuation.length > 0
+    && continuation.every((event) => event.type === "stream" && typeof event.delta === "string");
+  const readContinuation = validContinuation
+    ? continuation.map((event) => String(event.delta)).join("")
     : "";
   const exactReadContinuation = lifecycle
+    && validPrelude
+    && endIndex === startIndex + 1
     && doneIndices.length === 1
-    && doneIndex > endIndex
-    && !invalidStreamShape
-    && !streamBeforeResult
-    && !streamAfterDone
+    && doneIndex === events.length - 1
+    && validContinuation
     && readContinuation.replaceAll("\r\n", "\n").trim() === READ_NONCE;
   return {
     done: events.some((event) => event.type === "done"),
@@ -70,6 +69,27 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
     readNonceSeen: exactReadContinuation,
     continuityMarkerSeen: text.includes(MARKER),
   };
+}
+
+function isContextStatus(event: Record<string, unknown>): boolean {
+  return hasExactKeys(event, ["type", "percentage", "level", "usedTokens", "maxTokens", "compacted"])
+    && event.type === "context_status"
+    && typeof event.percentage === "number"
+    && typeof event.level === "string"
+    && typeof event.usedTokens === "number"
+    && typeof event.maxTokens === "number"
+    && typeof event.compacted === "boolean";
+}
+
+function isChatOperationStarted(event: Record<string, unknown>): boolean {
+  return hasExactKeys(event, ["type", "opId"])
+    && event.type === "chat_op_started"
+    && typeof event.opId === "string";
+}
+
+function hasExactKeys(event: Record<string, unknown>, keys: string[]): boolean {
+  const actual = Object.keys(event);
+  return actual.length === keys.length && keys.every((key) => Object.hasOwn(event, key));
 }
 
 export async function readSse(response: Response): Promise<Array<Record<string, unknown>>> {

@@ -1,5 +1,6 @@
 import type { TurnCommitEnvelope, TurnCommitProjection } from "./turn-commit-store.js";
 import type { OpMessageRow, OpTurnRow, ToolCallSummary } from "./types.js";
+import type { Op } from "../ops/types.js";
 
 const ROLES = new Set(["system", "user", "assistant", "tool_result", "control"]);
 const TOOL_STATUSES = new Set(["ok", "error", "blocked", "declined", "timeout", "cancelled"]);
@@ -55,6 +56,18 @@ export function hasMessageCollision(
   const ids = new Set(existing.map((row) => row.messageId));
   const positions = new Set(existing.map(messagePosition));
   return messages.some((row) => ids.has(row.messageId) || positions.has(messagePosition(row)));
+}
+
+/** Current operation.json is authoritative for projection routing. Legacy ops
+ * without a session use the historical empty-session identity; malformed
+ * identity fields reject envelopes rather than guessing a foreign target. */
+export function projectionMatchesOp(projection: TurnCommitProjection, op: Op): boolean {
+  if (typeof op.type !== "string" || typeof op.task !== "string") return false;
+  const persistedSession = op.canonical?.sessionId;
+  if (persistedSession !== undefined && typeof persistedSession !== "string") return false;
+  return projection.opType === op.type
+    && projection.task === op.task
+    && projection.sessionId === (persistedSession ?? "");
 }
 
 function isProviderState(value: unknown): boolean {

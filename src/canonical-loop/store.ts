@@ -22,8 +22,8 @@
  * re-reads the file.
  */
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from "node:fs";
-import { dirname } from "node:path";
-import { opDir } from "../ops/event-log.js";
+import { dirname, join } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
 import { withOpLock } from "../ops/op-store.js";
 import {
   canonicalEventsPath,
@@ -42,6 +42,7 @@ import {
   readTurnArtifact,
 } from "./turn-commit-store.js";
 import { appendKnownGoodJsonl, readDurableJsonl, updateDurableJsonl } from "../persistence/durable-jsonl.js";
+import { ensureDurableDirectory } from "../persistence/durable-directory.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("canonical-loop.store");
@@ -111,8 +112,7 @@ function appendCanonicalEventWithMode(
   body: Record<string, unknown> | null,
   strict: boolean,
 ): CanonicalEvent {
-  // Ensure op dir exists (opDir() does mkdir).
-  opDir(opId);
+  ensureDurableDirectory(join(getLaxDir(), "operations", opId));
   const path = canonicalEventsPath(opId);
   return withOpLock(opId, () => {
     const currentSize = existsSync(path) ? statSync(path).size : 0;

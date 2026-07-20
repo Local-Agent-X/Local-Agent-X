@@ -35,9 +35,9 @@ function mkOp(label: string): { op: Op; claim: LeaseClaim } {
   return { op: readOp(op.id)!, claim: lease.claim };
 }
 
-function input(op: Op, claim: LeaseClaim, messageId = `${op.id}-reply`): CommitTurnInput {
+function input(op: Op, claim: LeaseClaim, messageId = `${op.id}-reply`, turnIdx = 0): CommitTurnInput {
   return {
-    op, leaseClaim: claim, turnIdx: 0,
+    op, leaseClaim: claim, turnIdx,
     providerState: { adapterName: "fake", adapterVersion: "1", providerPayload: null },
     messages: [{ messageId, role: "assistant", content: "reply" }],
     toolCallSummary: [{ tool: "read", argsHash: "h", resultStatus: "ok", durationMs: 1 }],
@@ -58,7 +58,12 @@ function envelope(op: Op): TurnCommitEnvelope {
       messageId: `${op.id}-reply`, opId: op.id, turnIdx: 0, seqInTurn: 0,
       role: "assistant", content: "reply", createdAt: new Date().toISOString(),
     }],
-    projection: { opType: op.type, sessionId: op.canonical!.sessionId!, stateBefore: "running" },
+    projection: {
+      opType: op.type,
+      sessionId: op.canonical!.sessionId!,
+      task: op.task,
+      stateBefore: "running",
+    },
   };
 }
 
@@ -139,6 +144,64 @@ describe("message collision safety", () => {
     const messages = readOpMessages(op.id);
     expect(messages[0]).toEqual(row);
     expect(messages[1].seqInTurn).toBe(1);
+  });
+
+  it("quarantines a duplicate messageId from a later envelope and re-drives it", () => {
+    const { op, claim } = mkOp("cross-envelope-id");
+    commitTurn(input(op, claim, "shared-message", 0));
+    const later = envelope(op);
+    later.turn.turnIdx = 1;
+    later.messages[0] = { ...later.messages[0], turnIdx: 1, messageId: "shared-message" };
+    writeFileSync(opTurnPath(op.id, 1), JSON.stringify(later));
+    expect(commitTurn(input(readOp(op.id)!, claim, "unique-message", 1)).inserted).toBe(true);
+    expect(readOpMessages(op.id).map((row) => row.messageId)).toEqual(["shared-message", "unique-message"]);
+    expect(readdirSync(opTurnsDir(op.id)).some((file) => file.startsWith("1.json.") && file.endsWith(".corrupt"))).toBe(true);
+  });
+});
+
+describe("projection identity", () => {
+  for (const field of ["opType", "sessionId", "task"] as const) {
+    it(`quarantines a forged ${field} and projects only to the authoritative op`, () => {
+      const { op, claim } = mkOp(`forged-${field}`);
+      const forged = envelope(op);
+      forged.projection[field] = `foreign-${field}`;
+      writeFileSync(opTurnPath(op.id, 0), JSON.stringify(forged));
+      expect(commitTurn(input(op, claim)).inserted).toBe(true);
+      expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+      expect(readSessionActions(`foreign-${field}`)).toEqual([]);
+      expect(readdirSync(opTurnsDir(op.id)).some((file) => file.endsWith(".corrupt"))).toBe(true);
+    });
+  }
+
+  it("uses the legacy empty-session identity when sessionId is absent", () => {
+    const { op } = mkOp("identity-sessionless");
+    const current = readOp(op.id)!;
+    delete current.canonical!.sessionId;
+    writeOp(current);
+    const value = envelope(current);
+    value.projection.sessionId = "";
+    writeFileSync(opTurnPath(op.id, 0), JSON.stringify(value));
+    expect(readOpTurn(op.id, 0)?.turnIdx).toBe(0);
+  });
+
+  it("rejects envelopes when current canonical identity is malformed", () => {
+    const { op } = mkOp("identity-malformed");
+    const value = envelope(op);
+    writeFileSync(opTurnPath(op.id, 0), JSON.stringify(value));
+    const current = readOp(op.id)!;
+    (current.canonical as { sessionId?: unknown }).sessionId = 42;
+    writeOp(current);
+    expect(readOpTurn(op.id, 0)).toBeNull();
+  });
+
+  it("preserves a complete legacy row using opId truth without projection identity", () => {
+    const { op } = mkOp("identity-legacy-row");
+    const row = envelope(op).turn;
+    const current = readOp(op.id)!;
+    delete current.canonical;
+    writeOp(current);
+    writeFileSync(opTurnPath(op.id, 0), JSON.stringify(row));
+    expect(readOpTurn(op.id, 0)).toEqual(row);
   });
 });
 

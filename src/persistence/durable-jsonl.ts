@@ -15,12 +15,21 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { ensureDurableDirectory, fsyncDirectory } from "./durable-directory.js";
 
 const LOCK_STALE_MS = 2_000;
 const LOCK_WAIT_MS = 500;
 const RETRY_MS = 10;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 const held = new Set<string>();
+export type DurableJsonlLockPoint = "after_acquire" | "after_reclaim_observe";
+let lockHook: ((point: DurableJsonlLockPoint, path: string) => void) | null = null;
+
+export function _setDurableJsonlLockHookForTests(
+  hook: ((point: DurableJsonlLockPoint, path: string) => void) | null,
+): void {
+  lockHook = hook;
+}
 
 export interface DurableJsonlAppend<T> {
   rows: T[];
@@ -86,7 +95,8 @@ function repairAndRead<T>(path: string, validate: (value: unknown) => value is T
 }
 
 function appendAndSync(path: string, line: string): void {
-  if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  ensureDurableDirectory(dirname(path));
+  const created = !existsSync(path);
   const fd = openSync(path, "a", 0o600);
   try {
     const bytes = Buffer.from(line);
@@ -98,11 +108,12 @@ function appendAndSync(path: string, line: string): void {
     }
     fsyncSync(fd);
   } finally { closeSync(fd); }
+  if (created) fsyncDirectory(dirname(path));
 }
 
 function withJsonlLock<T>(path: string, fn: () => T): T {
   if (held.has(path)) return fn();
-  if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  ensureDurableDirectory(dirname(path));
   const lock = `${path}.lock`;
   const token = randomUUID();
   const deadline = Date.now() + LOCK_WAIT_MS;
@@ -110,6 +121,7 @@ function withJsonlLock<T>(path: string, fn: () => T): T {
     try {
       mkdirSync(lock, { mode: 0o700 });
       writeFileSync(join(lock, token), JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
+      lockHook?.("after_acquire", path);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -139,7 +151,13 @@ function reclaimDeadLock(lock: string): boolean {
       if (typeof owner.pid === "number" && processAlive(owner.pid)) return false;
     } catch { /* malformed stale owner is reclaimable */ }
   }
-  try { rmSync(lock, { recursive: true, force: true }); return true; }
+  lockHook?.("after_reclaim_observe", lock);
+  for (const name of names) {
+    try { rmSync(join(lock, name), { force: true }); } catch { return false; }
+  }
+  // Token-safe reclaim: a replacement may create a fresh token after our
+  // observation. rmdir then fails and we never recursively erase its claim.
+  try { rmdirSync(lock); return true; }
   catch { return false; }
 }
 

@@ -3,7 +3,6 @@ import {
   constants,
   existsSync,
   fsyncSync,
-  mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -23,8 +22,12 @@ import {
   isOpMessageRow,
   isOpTurnRow,
   isTurnCommitEnvelope,
+  projectionMatchesOp,
 } from "./turn-commit-validation.js";
 export { isTurnCommitEnvelope } from "./turn-commit-validation.js";
+import { readOp } from "../ops/op-store.js";
+import { getLaxDir } from "../lax-data-dir.js";
+import { ensureDurableDirectory, fsyncDirectory } from "../persistence/durable-directory.js";
 
 export interface TurnCommitProjection {
   opType: string;
@@ -65,12 +68,25 @@ export function readTurnArtifact(
   opId: string,
   turnIdx: number,
 ): TurnCommitEnvelope | OpTurnRow | null {
+  const artifact = readBaseArtifact(opId, turnIdx);
+  if (!artifact || !("turn" in artifact)) return artifact;
+  return hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx))
+    ? null : artifact;
+}
+
+function readBaseArtifact(
+  opId: string,
+  turnIdx: number,
+): TurnCommitEnvelope | OpTurnRow | null {
   const path = opTurnPath(opId, turnIdx);
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
     if (isTurnCommitEnvelope(parsed)) {
+      const op = readOp(opId);
+      if (!op || op.id !== opId) return null;
       if (parsed.turn.opId !== opId || parsed.turn.turnIdx !== turnIdx) return null;
+      if (!projectionMatchesOp(parsed.projection, op)) return null;
       if (hasMessageCollision(parsed.messages, readLegacyMessages(opId))) return null;
       return parsed;
     }
@@ -81,12 +97,31 @@ export function readTurnArtifact(
   }
 }
 
+function priorCommittedMessages(opId: string, beforeTurnIdx: number): OpMessageRow[] {
+  const dir = opTurnsDir(opId);
+  if (!existsSync(dir)) return [];
+  const messages: OpMessageRow[] = [];
+  const indexes = readdirSync(dir).map((name) => /^(\d+)\.json$/.exec(name))
+    .filter((match): match is RegExpExecArray => !!match)
+    .map((match) => Number(match[1]))
+    .filter((turnIdx) => turnIdx < beforeTurnIdx)
+    .sort((a, b) => a - b);
+  for (const turnIdx of indexes) {
+    const artifact = readBaseArtifact(opId, turnIdx);
+    if (!artifact || !("turn" in artifact)) continue;
+    if (hasMessageCollision(artifact.messages, messages)) continue;
+    messages.push(...artifact.messages);
+  }
+  return messages;
+}
+
 export function publishTurnCommit(envelope: TurnCommitEnvelope): boolean {
   const { opId, turnIdx } = envelope.turn;
+  ensureDurableDirectory(join(getLaxDir(), "operations", opId));
   const target = opTurnPath(opId, turnIdx);
   if (existsSync(target)) return false;
   const dir = opTurnsDir(opId);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  ensureDurableDirectory(dir);
   const tmp = `${target}.${process.pid}-${randomUUID()}.stage`;
   let fd: number | null = null;
   let published = false;
@@ -108,7 +143,7 @@ export function publishTurnCommit(envelope: TurnCommitEnvelope): boolean {
     writeHook?.("before_publish");
     renameSync(tmp, target);
     published = true;
-    fsyncParentDirectory(dir);
+    fsyncDirectory(dir);
     writeHook?.("after_directory_fsync");
     writeHook?.("after_publish");
     return true;
@@ -166,23 +201,6 @@ function readLegacyMessages(opId: string): OpMessageRow[] {
     } catch { /* invalid legacy tail is handled by its own writer */ }
   }
   return rows;
-}
-
-function fsyncParentDirectory(path: string): void {
-  let fd: number | null = null;
-  try {
-    fd = openSync(path, "r");
-    fsyncSync(fd);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    // Windows rejects directory fsync on common filesystems; only its known
-    // unsupported-handle error family may degrade to rename durability.
-    const windowsUnsupported = process.platform === "win32"
-      && ["EACCES", "EBADF", "EINVAL", "EISDIR", "ENOTSUP", "EPERM"].includes(code ?? "");
-    if (!windowsUnsupported) throw error;
-  } finally {
-    if (fd !== null) try { closeSync(fd); } catch { /* preserve primary failure */ }
-  }
 }
 
 function processAlive(pid: number): boolean {

@@ -1,8 +1,12 @@
 /* Full-page Browser workspace. Desktop paints the compact chat in its own
    tightly bounded WebContentsView above the full-height Browser view. */
 #browser-chat-dock-bar{display:none}
+/* 38px default keeps the toggle clear of #sidebar-agents-controls, which floats
+   in the same row in a plain browser. Windows hides those controls and darwin
+   moves them up into the title drag strip, so both can hug the right edge. */
 .browser-workspace-toggle{font-size:.9rem;min-width:30px;margin-left:auto;margin-right:38px}
 body.platform-win .browser-workspace-toggle{margin-right:0;transform:translateY(3px)}
+body.platform-darwin .browser-workspace-toggle{margin-right:0}
 
 body.browser-workspace{
   --browser-chat-dock-height:52px;

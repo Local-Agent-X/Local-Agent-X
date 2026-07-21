@@ -20,7 +20,7 @@ import {
   TERMINAL_TELEMETRY_IDENTITY,
   WORKFLOW_TACTIC_IDENTITY,
 } from "./types.js";
-import { autoPrune, ensureDir, loadData, persistData } from "./persistence.js";
+import { autoPrune, ensureDir, loadData, mutateData } from "./persistence.js";
 import {
   detectRepeatedQuestions,
   detectRepeatedTasks,
@@ -46,10 +46,11 @@ export class CrossSessionLearner {
   private constructor() {
     ensureDir();
     this.data = loadData();
-    const normalized = normalizeLegacyEvidenceIdentities(this.data);
-    if (autoPrune(this.data) || normalized) {
-      persistData(this.data);
-    }
+    const committed = mutateData((data) => {
+      normalizeLegacyEvidenceIdentities(data);
+      autoPrune(data);
+    });
+    if (committed) this.data = committed.data;
   }
 
   static getInstance(): CrossSessionLearner {
@@ -63,21 +64,18 @@ export class CrossSessionLearner {
     sessionId: string,
     action: { type: string; details: string; timestamp: number }
   ): void {
-    this.data.actions.push({
-      ...WORKFLOW_TACTIC_IDENTITY,
-      sessionId,
-      type: action.type,
-      details: action.details,
-      timestamp: action.timestamp,
+    this.commit((data) => {
+      data.actions.push({
+        ...WORKFLOW_TACTIC_IDENTITY,
+        sessionId,
+        type: action.type,
+        details: action.details,
+        timestamp: action.timestamp,
+      });
+      if (data.actions.length > MAX_ACTIONS) {
+        data.actions = data.actions.slice(-MAX_ACTIONS);
+      }
     });
-
-    if (this.data.actions.length > MAX_ACTIONS) {
-      this.data.actions = this.data.actions.slice(
-        this.data.actions.length - MAX_ACTIONS
-      );
-    }
-
-    persistData(this.data);
   }
 
   /** Record only the structural receipt of a completed operation. Tool names
@@ -97,17 +95,18 @@ export class CrossSessionLearner {
       tools,
       ...(evidence.model ? { model: evidence.model } : {}),
     };
-    const existing = this.data.actions.findIndex((action) =>
-      action.opId === evidence.opId
-      && action.evidenceClass === TERMINAL_TELEMETRY_IDENTITY.evidenceClass
-      && action.authority === TERMINAL_TELEMETRY_IDENTITY.authority
-    );
-    if (existing >= 0) this.data.actions[existing] = entry;
-    else this.data.actions.push(entry);
-    if (this.data.actions.length > MAX_ACTIONS) {
-      this.data.actions = this.data.actions.slice(-MAX_ACTIONS);
-    }
-    persistData(this.data);
+    this.commit((data) => {
+      const existing = data.actions.findIndex((action) =>
+        action.opId === evidence.opId
+        && action.evidenceClass === TERMINAL_TELEMETRY_IDENTITY.evidenceClass
+        && action.authority === TERMINAL_TELEMETRY_IDENTITY.authority
+      );
+      if (existing >= 0) data.actions[existing] = entry;
+      else data.actions.push(entry);
+      if (data.actions.length > MAX_ACTIONS) {
+        data.actions = data.actions.slice(-MAX_ACTIONS);
+      }
+    });
   }
 
   detectPatterns(minOccurrences?: number): DetectedPattern[] {
@@ -137,34 +136,31 @@ export class CrossSessionLearner {
     const suggestion = this.suggestAutomation(pattern);
     if (!suggestion) return null;
     const next = createLearnedCandidate(pattern, suggestion, now);
-    const index = this.data.candidates.findIndex((candidate) =>
-      candidate.id === next.id && hasCandidateEvidenceIdentity(candidate)
-    );
-    if (index < 0) {
-      this.data.candidates.push(next);
-      persistData(this.data);
-      return structuredClone(next);
-    }
+    const committed = this.commit((data) => {
+      const index = data.candidates.findIndex((candidate) =>
+        candidate.id === next.id && hasCandidateEvidenceIdentity(candidate)
+      );
+      if (index < 0) {
+        data.candidates.push(next);
+        return next.id;
+      }
+      const current = data.candidates[index];
+      if (
+        current.state !== "rejected"
+        || (current.rejectionCooldownUntil !== undefined && now < current.rejectionCooldownUntil)
+      ) return current.id;
 
-    const current = this.data.candidates[index];
-    if (
-      current.state === "rejected"
-      && current.rejectionCooldownUntil !== undefined
-      && now < current.rejectionCooldownUntil
-    ) {
-      return structuredClone(current);
-    }
-    if (current.state !== "rejected") return structuredClone(current);
-
-    const revived = transitionCandidate(current, "candidate", now, "New evidence after suppression period");
-    this.data.candidates[index] = {
-      ...revived,
-      confidence: next.confidence,
-      suggestion: next.suggestion,
-      evidence: next.evidence,
-    };
-    persistData(this.data);
-    return structuredClone(this.data.candidates[index]);
+      const revived = transitionCandidate(current, "candidate", now, "New evidence after suppression period");
+      data.candidates[index] = {
+        ...revived,
+        confidence: next.confidence,
+        suggestion: next.suggestion,
+        evidence: next.evidence,
+      };
+      return current.id;
+    });
+    if (!committed) return null;
+    return structuredClone(this.requireCommittedCandidate(committed.value));
   }
 
   setCandidateState(
@@ -173,14 +169,16 @@ export class CrossSessionLearner {
     reason?: string,
     now = Date.now(),
   ): LearnedCandidate {
-    const index = this.data.candidates.findIndex((candidate) =>
-      candidate.id === id && hasCandidateEvidenceIdentity(candidate)
-    );
-    if (index < 0) throw new Error(`Unknown learned candidate: ${id}`);
-    const updated = transitionCandidate(this.data.candidates[index], state, now, reason);
-    this.data.candidates[index] = updated;
-    persistData(this.data);
-    return structuredClone(updated);
+    const committed = this.commit((data) => {
+      const index = data.candidates.findIndex((candidate) =>
+        candidate.id === id && hasCandidateEvidenceIdentity(candidate)
+      );
+      if (index < 0) throw new Error(`Unknown learned candidate: ${id}`);
+      data.candidates[index] = transitionCandidate(data.candidates[index], state, now, reason);
+      return id;
+    });
+    if (!committed) throw new Error("Cross-session learning persistence unavailable");
+    return structuredClone(this.requireCommittedCandidate(id));
   }
 
   draftCandidate(id: string, opportunity?: LearnedCandidate): LearnedCandidateDraftResult {
@@ -224,23 +222,27 @@ export class CrossSessionLearner {
       if (!candidate || !suggestion || !["candidate", "active"].includes(candidate.state)) continue;
       const live = createLearnedCandidate(pattern, suggestion, now);
       if (live.confidence < 0.75) continue;
-      if (candidate.surfaceCooldownUntil && now < candidate.surfaceCooldownUntil) continue;
-      if (
-        candidate.lastSurfacedOccurrences !== undefined
-        && pattern.occurrences <= candidate.lastSurfacedOccurrences
-      ) continue;
-
-      const index = this.data.candidates.findIndex((entry) =>
-        entry.id === candidate.id && hasCandidateEvidenceIdentity(entry)
-      );
-      const surfaced = {
-        ...this.data.candidates[index],
-        lastSurfacedAt: now,
-        lastSurfacedOccurrences: pattern.occurrences,
-        surfaceCooldownUntil: now + CANDIDATE_SURFACE_COOLDOWN_DAYS * MS_PER_DAY,
-      };
-      this.data.candidates[index] = surfaced;
-      persistData(this.data);
+      const committed = this.commit((data) => {
+        const index = data.candidates.findIndex((entry) =>
+          entry.id === candidate.id && hasCandidateEvidenceIdentity(entry)
+        );
+        if (index < 0) return null;
+        const current = data.candidates[index];
+        if (current.surfaceCooldownUntil && now < current.surfaceCooldownUntil) return null;
+        if (
+          current.lastSurfacedOccurrences !== undefined
+          && pattern.occurrences <= current.lastSurfacedOccurrences
+        ) return null;
+        data.candidates[index] = {
+          ...current,
+          lastSurfacedAt: now,
+          lastSurfacedOccurrences: pattern.occurrences,
+          surfaceCooldownUntil: now + CANDIDATE_SURFACE_COOLDOWN_DAYS * MS_PER_DAY,
+        };
+        return current.id;
+      });
+      if (!committed?.value) continue;
+      const surfaced = this.requireCommittedCandidate(committed.value);
       const draftCandidate: LearnedCandidate = {
         ...live,
         state: surfaced.state,
@@ -260,5 +262,19 @@ export class CrossSessionLearner {
   signalsFor(mode: "assisted" | "autonomous" = "assisted", now = Date.now()): ModuleSignal[] {
     const opportunity = this.nextLearningOpportunity(now);
     return opportunity ? [formatLearningCandidateNudge(opportunity.draftCandidate, mode)] : [];
+  }
+
+  private commit<T>(mutation: (data: SessionData) => T) {
+    const committed = mutateData(mutation);
+    if (committed) this.data = committed.data;
+    return committed;
+  }
+
+  private requireCommittedCandidate(id: string): LearnedCandidate {
+    const candidate = this.data.candidates.find((entry) =>
+      entry.id === id && hasCandidateEvidenceIdentity(entry)
+    );
+    if (!candidate) throw new Error(`Committed learned candidate is missing: ${id}`);
+    return candidate;
   }
 }

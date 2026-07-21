@@ -1,6 +1,10 @@
 import type { ActionEntry, SessionData } from "./types.js";
 import { DATA_FILE, MS_PER_DAY, PRUNE_AGE_DAYS } from "./types.js";
 import { createJsonStore, ensureDirFor } from "../../util/json-store.js";
+import Database from "better-sqlite3";
+
+const MUTEX_FILE = `${DATA_FILE}.lock.sqlite`;
+const LOCK_TIMEOUT_MS = 5_000;
 
 // Recurring types (>=3 entries) keep at most this many of their most recent
 // stale entries. The old unbounded keep-rule made homogeneous legacy data
@@ -33,13 +37,44 @@ export function loadData(): SessionData {
   return store.load();
 }
 
-export function persistData(data: SessionData): void {
+export interface CommittedLearningMutation<T> {
+  data: SessionData;
+  value: T;
+}
+
+export function mutateData<T>(
+  mutation: (data: SessionData) => T,
+): CommittedLearningMutation<T> | null {
+  let db: Database.Database | undefined;
+  let mutationError: unknown;
+  let mutationFailed = false;
   try {
+    ensureDirFor(MUTEX_FILE);
+    db = new Database(MUTEX_FILE, { timeout: LOCK_TIMEOUT_MS });
+    db.pragma(`busy_timeout = ${LOCK_TIMEOUT_MS}`);
+    db.exec("BEGIN IMMEDIATE");
+
+    const data = store.load();
+    let value: T;
+    try {
+      value = mutation(data);
+    } catch (error) {
+      mutationFailed = true;
+      mutationError = error;
+      throw error;
+    }
+    const committedData = structuredClone(data);
     store.save(data);
-  } catch {
-    // A failed persist has never crashed the learner; keep that contract.
-    // (The old non-atomic direct-write fallback is gone — better a stale
-    // file than a torn one.)
+    db.exec("COMMIT");
+    return { data: committedData, value };
+  } catch (error) {
+    if (db) {
+      try { db.exec("ROLLBACK"); } catch { /* original failure wins */ }
+    }
+    if (mutationFailed) throw mutationError;
+    return null;
+  } finally {
+    try { db?.close(); } catch { /* a closed mutex needs no recovery */ }
   }
 }
 

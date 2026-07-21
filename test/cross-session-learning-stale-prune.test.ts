@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import Database from "better-sqlite3";
 import {
   autoPrune,
   MAX_STALE_PER_TYPE,
@@ -33,6 +36,45 @@ import {
 const NOW = Date.now();
 const STALE_TS = NOW - (PRUNE_AGE_DAYS + 5) * MS_PER_DAY;
 const FRESH_TS = NOW - 1 * MS_PER_DAY;
+
+function runWorker(script: string, args: string[], dataDir: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolveChild, reject) => {
+    const child = spawn(process.execPath, ["--import=tsx", script, ...args], {
+      cwd: process.cwd(),
+      env: { ...process.env, LAX_DATA_DIR: dataDir },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.once("error", reject);
+    child.once("close", (code) => resolveChild({ code, stdout, stderr }));
+  });
+}
+
+function writeLearningWorker(dir: string): string {
+  const worker = join(dir, "learning-worker.mjs");
+  const learnerUrl = pathToFileURL(resolve("src/cognition/cross-session-learning/learner.ts")).href;
+  writeFileSync(worker, `
+import { existsSync } from "node:fs";
+import { CrossSessionLearner } from ${JSON.stringify(learnerUrl)};
+const [mode, id, gate] = process.argv.slice(2);
+while (gate && !existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
+const learner = CrossSessionLearner.getInstance();
+if (mode === "record") {
+  learner.recordAction("session-" + id, { type: "task", details: "action-" + id, timestamp: Number(id) + 1 });
+  learner.recordOutcome({ opId: "unique-" + id, sessionId: "session-" + id, outcome: "clean", category: "coding", tools: ["read", "edit"], timestamp: Number(id) + 10 });
+  learner.recordOutcome({ opId: "shared", sessionId: "shared-session", outcome: "clean", category: "coding", tools: ["read"], timestamp: Number(id) + 20 });
+} else if (mode === "state") {
+  const candidate = learner.getCandidates()[0];
+  learner.setCandidateState(candidate.id, id, "concurrent", Date.now());
+} else if (mode === "surface") {
+  process.stdout.write(learner.nextLearningOpportunity(Date.now()) ? "surfaced" : "quiet");
+}
+process.exit(0);
+`, "utf8");
+  return worker;
+}
 
 function action(type: string, timestamp: number, i: number): ActionEntry {
   return { sessionId: "s1", type, details: `d${i}`, timestamp };
@@ -488,5 +530,143 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
       readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8"),
     ) as SessionData;
     expect(persisted.actions[0]).toMatchObject(WORKFLOW_TACTIC_IDENTITY);
+  });
+
+  it("serializes real-process actions and outcomes without lost updates", async () => {
+    const worker = writeLearningWorker(tmpDir);
+    const gate = join(tmpDir, "start");
+    const runs = Array.from({ length: 4 }, (_, index) =>
+      runWorker(worker, ["record", String(index), gate], tmpDir));
+    writeFileSync(gate, "go", "utf8");
+    const results = await Promise.all(runs);
+
+    expect(results).toEqual(results.map(() => ({ code: 0, stdout: "", stderr: "" })));
+    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    expect(persisted.actions.filter((entry) => entry.evidenceClass === "workflow-tactic")).toHaveLength(4);
+    expect(persisted.actions.filter((entry) => entry.opId?.startsWith("unique-"))).toHaveLength(4);
+    expect(persisted.actions.filter((entry) => entry.opId === "shared")).toHaveLength(1);
+  }, 20_000);
+
+  it("releases a crashed process mutex without stale-lock recovery", async () => {
+    const crashWorker = join(tmpDir, "crash-worker.mjs");
+    const sqliteUrl = pathToFileURL(resolve("node_modules/better-sqlite3/lib/index.js")).href;
+    writeFileSync(crashWorker, `
+import Database from ${JSON.stringify(sqliteUrl)};
+const db = new Database(process.argv[2]);
+db.exec("BEGIN IMMEDIATE");
+process.stdout.write("locked");
+setTimeout(() => process.exit(23), 100);
+`, "utf8");
+    const lockPath = join(tmpDir, "cross-session-data.json.lock.sqlite");
+    const crashed = await runWorker(crashWorker, [lockPath], tmpDir);
+    expect(crashed).toMatchObject({ code: 23, stdout: "locked", stderr: "" });
+
+    const worker = writeLearningWorker(tmpDir);
+    const started = Date.now();
+    const recovered = await runWorker(worker, ["record", "9", ""], tmpDir);
+    expect(recovered).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(Date.now() - started).toBeLessThan(3_000);
+    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    expect(persisted.actions.some((entry) => entry.opId === "unique-9")).toBe(true);
+  }, 10_000);
+
+  it("preserves concurrent candidate transitions without stale resurrection", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    const learner = CrossSessionLearner.getInstance();
+    for (let index = 0; index < 3; index++) {
+      learner.recordOutcome({
+        opId: `seed-${index}`,
+        sessionId: `seed-session-${index}`,
+        outcome: "clean",
+        category: "coding",
+        tools: ["read", "edit"],
+        timestamp: NOW + index,
+      });
+    }
+    expect(learner.nextLearningOpportunity(NOW + 10)).not.toBeNull();
+
+    const worker = writeLearningWorker(tmpDir);
+    const gate = join(tmpDir, "state-start");
+    const runs = ["approved", "archived"].map((state) =>
+      runWorker(worker, ["state", state, gate], tmpDir));
+    writeFileSync(gate, "go", "utf8");
+    const results = await Promise.all(runs);
+    expect(results.filter((result) => result.code === 0).length).toBeGreaterThanOrEqual(1);
+
+    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    const candidate = persisted.candidates[0];
+    expect(candidate.state).toBe("archived");
+    expect(candidate.transitions.at(-1)?.to).toBe("archived");
+    expect(candidate.transitions[0]?.from).toBe("candidate");
+  }, 20_000);
+
+  it("allows only one concurrent process to claim a surfacing cooldown", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    const learner = CrossSessionLearner.getInstance();
+    for (let index = 0; index < 3; index++) {
+      learner.recordOutcome({
+        opId: `surface-${index}`,
+        sessionId: `surface-session-${index}`,
+        outcome: "clean",
+        category: "coding",
+        tools: ["read", "edit"],
+        timestamp: NOW + index,
+      });
+    }
+
+    const worker = writeLearningWorker(tmpDir);
+    const gate = join(tmpDir, "surface-start");
+    const runs = ["a", "b"].map((id) => runWorker(worker, ["surface", id, gate], tmpDir));
+    writeFileSync(gate, "go", "utf8");
+    const results = await Promise.all(runs);
+    expect(results.map((result) => result.code)).toEqual([0, 0]);
+    expect(results.map((result) => result.stdout).sort()).toEqual(["quiet", "surfaced"]);
+
+    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    expect(persisted.candidates).toHaveLength(1);
+    expect(persisted.candidates[0].lastSurfacedOccurrences).toBe(3);
+  }, 20_000);
+
+  it("does not execute or publish a mutation when the mutex cannot be acquired", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    const learner = CrossSessionLearner.getInstance();
+    const lockPath = join(tmpDir, "cross-session-data.json.lock.sqlite");
+    const blocker = new Database(lockPath);
+    blocker.exec("BEGIN IMMEDIATE");
+    try {
+      expect(() => learner.recordAction("blocked", {
+        type: "forbidden", details: "must not escape the lock", timestamp: NOW,
+      })).not.toThrow();
+    } finally {
+      blocker.exec("ROLLBACK");
+      blocker.close();
+    }
+    expect(learner.detectPatterns(1)).toEqual([]);
+    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    expect(persisted.actions).toEqual([]);
+  }, 10_000);
+
+  it("keeps the committed snapshot when the JSON write fails", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    const learner = CrossSessionLearner.getInstance();
+    learner.recordAction("kept", { type: "task", details: "committed", timestamp: NOW });
+    const dataFile = join(tmpDir, "cross-session-data.json");
+    rmSync(dataFile);
+    mkdirSync(dataFile);
+
+    expect(() => learner.recordAction("lost", {
+      type: "task", details: "uncommitted", timestamp: NOW + 1,
+    })).not.toThrow();
+    const patterns = learner.detectPatterns(1);
+    expect(patterns.some((pattern) => pattern.examples.includes("committed"))).toBe(true);
+    expect(patterns.some((pattern) => pattern.examples.includes("uncommitted"))).toBe(false);
   });
 });

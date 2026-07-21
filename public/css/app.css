@@ -1263,6 +1263,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .browser-strip-tab:hover{background:color-mix(in srgb,var(--surface) 74%,transparent);color:var(--text)}
 .browser-strip-tab.active{z-index:1;background:var(--bg);border-color:var(--border);border-bottom-color:var(--bg);color:var(--text)}
 .browser-tab-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:left}
+.browser-tab-agent-icon{width:13px;height:13px;border-radius:3px;flex-shrink:0}
 .browser-tab-close{display:grid;place-items:center;width:16px;height:16px;border-radius:50%;opacity:.62;transition:opacity .12s,color .12s,background .12s;flex-shrink:0;font-size:.68rem;line-height:1}
 .browser-tab-close:hover{opacity:1;color:var(--text);background:color-mix(in srgb,var(--text) 12%,transparent)}
 .browser-new-tab{width:28px;height:28px;margin:0 2px 1px 0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:1rem;line-height:1;cursor:pointer;flex:0 0 auto;transition:background .12s,color .12s}

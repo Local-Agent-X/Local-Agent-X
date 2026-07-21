@@ -4,7 +4,7 @@
 //   render(views, opts)  — one pill per pool view in
 //     #browser-view-switcher-slot, ALWAYS (even with a single view), plus a
 //     "+" new-tab button at the end. Pill label: page title, else URL host,
-//     else profileId, else "tab"; 🤖 prefix on agent-driven views; the active
+//     else profileId, else "tab"; app-mark icon on agent-driven views; the active
 //     pill is the SELECTED (attached) view.
 //   reconcileSelection(views, selectedViewId) — main may retarget the shown
 //     view itself (auto-surface of an agent view). If listViews() reports an
@@ -19,7 +19,7 @@
 // Close affordance: a ✕ rides each USER pill (agentDriven === false) and calls
 // opts.onClose(viewId). It mirrors the server bridge's close guard — the bridge
 // closes only agent views (its own), so the renderer closes only user views.
-// Agent 🤖 pills get NO ✕: closing one out from under a running agent would
+// Agent pills get NO ✕: closing one out from under a running agent would
 // break its browsing with no recovery, so those stay agent-managed.
 (function () {
 	function hostOf(url) {
@@ -28,8 +28,7 @@
 	}
 
 	function stripLabel(v) {
-		var name = (v.title && String(v.title).trim()) || hostOf(v.url) || v.profileId || 'tab';
-		return (v.agentDriven ? '🤖 ' : '') + name;
+		return (v.title && String(v.title).trim()) || hostOf(v.url) || v.profileId || 'tab';
 	}
 
 	function reconcileSelection(views, selectedViewId) {
@@ -61,6 +60,13 @@
 				pill.setAttribute('data-view-id', v.viewId);
 				pill.setAttribute('role', 'tab');
 				pill.setAttribute('aria-selected', v.viewId === opts.selectedViewId ? 'true' : 'false');
+				if (v.agentDriven) {
+					var mark = document.createElement('img');
+					mark.className = 'browser-tab-agent-icon';
+					mark.src = '/favicon.png';
+					mark.alt = 'Agent';
+					pill.appendChild(mark);
+				}
 				var name = document.createElement('span');
 				name.className = 'browser-tab-label';
 				name.textContent = stripLabel(v);
@@ -68,7 +74,7 @@
 				pill.addEventListener('click', function () {
 					if (opts.onSelect) opts.onSelect(v.viewId);
 				});
-				// Only user views are closable (agent 🤖 views are agent-managed).
+				// Only user views are closable (agent views are agent-managed).
 				if (!v.agentDriven && opts.onClose) {
 					var x = document.createElement('span');
 					x.className = 'browser-tab-close';

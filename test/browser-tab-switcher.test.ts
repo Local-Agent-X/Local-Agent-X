@@ -117,7 +117,11 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(pills().length).toBe(2);
 		const labels = pills().map((p) => p.textContent);
 		expect(labels).toContain("User");     // user foreground: title, no badge
-		expect(labels).toContain("🤖 Job");   // agent-driven: title, badged
+		expect(labels).toContain("Job");      // agent-driven: title text unbadged…
+		// …the agent badge is the app-mark icon, present only on the agent pill.
+		const byId = new Map(pills().map((p) => [p.getAttribute("data-view-id"), p]));
+		expect(byId.get("view-s1-work")?.querySelector("img.browser-tab-agent-icon")).toBeTruthy();
+		expect(byId.get("foreground")?.querySelector("img.browser-tab-agent-icon")).toBeNull();
 		expect(plusButton()).toBeTruthy();
 		// Attached foreground is the active pill.
 		expect(activePill()?.getAttribute("data-view-id")).toBe("foreground");
@@ -283,7 +287,7 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(input.value).toBe("half-typed.example");
 	});
 
-	it("user pills carry a ✕ close affordance; agent 🤖 pills do not", async () => {
+	it("user pills carry a ✕ close affordance; agent pills do not", async () => {
 		const bridge = makeBridge([fgView(), agentView()]) as ReturnType<typeof makeBridge> & { closeView: unknown };
 		bridge.closeView = vi.fn(() => Promise.resolve(true));
 		g.desktop = { browser: bridge };

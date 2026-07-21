@@ -12,7 +12,7 @@ const GENERATION_DOMAIN = "canonical-process-relay-generation-v1";
 const RECORD_DOMAIN = "canonical-process-relay-record-v1";
 
 export type ProcessRelayKind = "canonical-event" | "stream-chunk" | "session-event";
-export type ProcessRelayTarget = "canonical-core" | "browser-render";
+export type ProcessRelayTarget = "canonical-core" | "session-observer" | "browser-render";
 
 export interface ProcessRelayGeneration {
   schemaVersion: 1;
@@ -50,6 +50,28 @@ export interface ProcessRelayNotice {
   opId: string;
   generationId: string;
   cursor: number;
+}
+
+export interface ProcessRelayBrowserDelivery {
+  type: "process_relay_delivery";
+  opId: string;
+  sessionId: string;
+  generationId: string;
+  cursor: number;
+  deliveryId: string;
+  scope: "global" | "session" | "mixed";
+  ackRequired?: boolean;
+  events: ServerEvent[];
+  eventIds: string[];
+}
+
+export interface ProcessRelayBrowserAck {
+  type: "process_relay_ack";
+  opId: string;
+  sessionId: string;
+  generationId: string;
+  cursor: number;
+  deliveryId: string;
 }
 
 const SESSION_EVENT_TYPES = new Set<string>([
@@ -115,9 +137,7 @@ export function createRelayRecord(
 ): ProcessRelayRecord {
   validateRelayPayload(kind, payload, generation.opId);
   if (!Number.isSafeInteger(cursor) || cursor < 1) throw new Error("invalid process relay cursor");
-  const targets: ProcessRelayTarget[] = kind === "canonical-event"
-    ? ["canonical-core", "browser-render"]
-    : ["browser-render"];
+  const targets = relayTargets(kind);
   const unsigned = {
     schemaVersion: 1 as const,
     generationId: generation.generationId,
@@ -183,8 +203,14 @@ function isRelayKind(value: unknown): value is ProcessRelayKind {
 }
 
 function sameTargets(value: unknown[], kind: ProcessRelayKind): boolean {
-  const expected = kind === "canonical-event" ? ["canonical-core", "browser-render"] : ["browser-render"];
+  const expected = relayTargets(kind);
   return value.length === expected.length && value.every((item, index) => item === expected[index]);
+}
+
+function relayTargets(kind: ProcessRelayKind): ProcessRelayTarget[] {
+  if (kind === "stream-chunk") return ["canonical-core"];
+  if (kind === "session-event") return ["session-observer", "browser-render"];
+  return ["canonical-core", "session-observer", "browser-render"];
 }
 
 function assertJsonValue(value: unknown, depth: number): void {

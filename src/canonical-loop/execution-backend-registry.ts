@@ -4,17 +4,19 @@ import {
   type ExecutionBackend,
 } from "./execution-backend.js";
 import { InProcessExecutionBackend } from "./in-process-execution-backend.js";
-import { ProcessExecutionBackend } from "./process-execution-backend.js";
+import {
+  PROCESS_EXECUTION_BACKEND_ID,
+  ProcessExecutionBackend,
+} from "./process-execution-backend.js";
 import { runWorker } from "./worker.js";
+import type { Op } from "../ops/types.js";
 
 const registry = new ExecutionBackendRegistry(IN_PROCESS_EXECUTION_BACKEND_ID);
 registry.register(new InProcessExecutionBackend(runWorker));
 registry.register(new ProcessExecutionBackend());
 
-/** Resolve only the durable backend identity supplied by placement. Absence
- * intentionally remains in-process until the later routing chunk activates
- * process selection for its narrow eligible operation class. */
-export function resolveRegisteredExecutionBackend(id?: string): ExecutionBackend {
-  return registry.resolve(id);
+export function resolveRegisteredExecutionBackend(id?: string, op?: Op): ExecutionBackend {
+  if (id) return registry.resolve(id);
+  if (op && ProcessExecutionBackend.isEligible(op)) return registry.resolve(PROCESS_EXECUTION_BACKEND_ID);
+  return registry.resolve();
 }
-

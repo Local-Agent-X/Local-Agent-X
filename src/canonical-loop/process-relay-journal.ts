@@ -192,6 +192,34 @@ export function acknowledgeProcessRelayTarget(
   });
 }
 
+export function acknowledgeProcessRelayBrowserDelivery(identity: {
+  opId: string; sessionId: string; generationId: string; cursor: number; deliveryId: string;
+}): boolean {
+  return withOpLock(identity.opId, () => {
+    const states = readProcessRelayGenerationsUnlocked(identity.opId);
+    const state = states.find(candidate =>
+      candidate.sealedGeneration.generation.generationId === identity.generationId);
+    const generation = state?.sealedGeneration.generation;
+    const record = state?.records.find(candidate => candidate.cursor === identity.cursor);
+    if (!state || !generation || generation.sessionId !== identity.sessionId
+      || !record || record.deliveryId !== identity.deliveryId
+      || !record.targets.includes("browser-render")) {
+      return false;
+    }
+    const acknowledged = state.acknowledgements.get(identity.cursor) ?? new Set<ProcessRelayTarget>();
+    if (acknowledged.has("browser-render")) return true;
+    acknowledged.add("browser-render");
+    state.acknowledgements.set(identity.cursor, acknowledged);
+    writeAckState(state.ackPath, {
+      schemaVersion: 1,
+      generationId: identity.generationId,
+      acknowledgements: Object.fromEntries([...state.acknowledgements]
+        .map(([key, values]) => [String(key), [...values].sort()])),
+    });
+    return true;
+  });
+}
+
 export function withProcessRelayLock<T>(opId: string, fn: () => T): T | undefined {
   const result = tryWithOpLock(opId, fn);
   return result.acquired ? result.value : undefined;
@@ -325,7 +353,7 @@ function readAckState(path: string, generationId: string): RelayAckState {
   }
   for (const targets of Object.values(state.acknowledgements)) {
     if (!Array.isArray(targets) || new Set(targets).size !== targets.length
-      || targets.some(target => target !== "canonical-core" && target !== "browser-render")) {
+      || targets.some(target => target !== "canonical-core" && target !== "session-observer" && target !== "browser-render")) {
       throw new Error("invalid process relay acknowledgement target");
     }
   }

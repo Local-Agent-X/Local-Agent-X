@@ -23,7 +23,8 @@ function handleBgOpQueued(msg) {
         parentOpId: msg.event.parentOpId,
       });
     }
-  } catch(e) { console.warn('[bg_op_queued] sidebar update failed', e); }
+    return true;
+  } catch(e) { console.warn('[bg_op_queued] sidebar update failed', e); return false; }
 }
 
 function handleBgOpQueueReordered(msg) {
@@ -31,7 +32,8 @@ function handleBgOpQueueReordered(msg) {
     if (typeof updateAgentFeed === 'function') {
       updateAgentFeed(msg.event.opId, { status: 'queued #' + msg.event.queuePosition });
     }
-  } catch(e) { console.warn('[bg_op_queue_reordered] sidebar update failed', e); }
+    return true;
+  } catch(e) { console.warn('[bg_op_queue_reordered] sidebar update failed', e); return false; }
 }
 
 function handleBgOpStarted(msg) {
@@ -76,7 +78,8 @@ function handleBgOpStarted(msg) {
         parentOpId: msg.event.parentOpId,
       });
     }
-  } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); }
+    return true;
+  } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); return false; }
 }
 
 function handleBgOpProgress(msg) {
@@ -90,7 +93,8 @@ function handleBgOpProgress(msg) {
       if (typeof msg.event.totalTokens === 'number') upd.totalTokens = msg.event.totalTokens;
       updateAgentFeed(msg.event.opId, upd);
     }
-  } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); }
+    return true;
+  } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); return false; }
 }
 
 // worker_stream: worker's own LLM text deltas. JARVIS-mode per
@@ -114,6 +118,7 @@ function handleWorkerStream(msg) {
     // collapsible worker-tools-group below.
     updateAgentFeed(msg.event.opId, { streamText: (msg.event.delta || ''), lastActivityMs: Date.now() });
   }
+  return true;
 }
 
 function handleWorkerDone(msg) {
@@ -130,6 +135,7 @@ function handleWorkerDone(msg) {
     b.div.classList.remove('streaming');
     _workerBubbles.delete(msg.event.opId);
   }
+  return true;
 }
 
 function handleAvBlockedWarning(msg) {
@@ -138,7 +144,7 @@ function handleAvBlockedWarning(msg) {
     // Renders once per browser session (matches the once-per-server
     // emission gate so two browser tabs don't double-banner). Stays
     // until user dismisses with the X button.
-    if (document.getElementById('av-banner')) return;
+    if (document.getElementById('av-banner')) return true;
     var banner = document.createElement('div');
     banner.id = 'av-banner';
     banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#3a1a1a;border-bottom:2px solid #ff5555;color:#ffe5e5;padding:14px 20px;font-family:var(--font);font-size:.85rem;line-height:1.45;box-shadow:0 2px 12px rgba(255,85,85,.3)';
@@ -152,7 +158,8 @@ function handleAvBlockedWarning(msg) {
         '<button onclick="document.getElementById(\'av-banner\').remove()" style="background:none;border:1px solid #ff5555;color:#ff8888;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:.75rem;flex-shrink:0">Dismiss</button>' +
       '</div>';
     document.body.appendChild(banner);
-  } catch(e) { console.warn('[av_blocked_warning] failed', e); }
+    return true;
+  } catch(e) { console.warn('[av_blocked_warning] failed', e); return false; }
 }
 
 function handleBgOpNudge(msg) {
@@ -170,7 +177,8 @@ function handleBgOpNudge(msg) {
       if (typeof renderSidebar === 'function') renderSidebar();
     }
     if (window.desktop) window.desktop.showNotification('Worker finished', msg.event.text);
-  } catch(e) { console.warn('[bg_op_nudge] failed', e); }
+    return true;
+  } catch(e) { console.warn('[bg_op_nudge] failed', e); return false; }
 }
 
 function handleBgOpCompleted(msg) {
@@ -227,23 +235,30 @@ function handleBgOpCompleted(msg) {
     // notifications queue (ops/pending-notifications.ts). Sidebar
     // shows the live state + full result; chat narration happens
     // organically when the user replies.
-  } catch(e) { console.warn('[bg_op_completed] update failed', e); }
+    return true;
+  } catch(e) { console.warn('[bg_op_completed] update failed', e); return false; }
 }
 
 // Dispatcher for the bg_op_* / worker_* / av_blocked_warning event family.
 // Returns true if the event was handled (caller should `return` from the
 // outer handler), false otherwise.
 function dispatchBgOpEvent(msg) {
+  return dispatchBgOpEventChecked(msg) !== null;
+}
+
+// Checked variant for durable relay ACK. Null means this event family does
+// not own the event; false means it owned it but a reducer/DOM side effect failed.
+function dispatchBgOpEventChecked(msg) {
   switch (msg.event.type) {
-    case 'bg_op_queued':           handleBgOpQueued(msg); return true;
-    case 'bg_op_queue_reordered':  handleBgOpQueueReordered(msg); return true;
-    case 'bg_op_started':          handleBgOpStarted(msg); return true;
-    case 'bg_op_progress':         handleBgOpProgress(msg); return true;
-    case 'worker_stream':          handleWorkerStream(msg); return true;
-    case 'worker_done':            handleWorkerDone(msg); return true;
-    case 'av_blocked_warning':     handleAvBlockedWarning(msg); return true;
-    case 'bg_op_nudge':            handleBgOpNudge(msg); return true;
-    case 'bg_op_completed':        handleBgOpCompleted(msg); return true;
-    default: return false;
+    case 'bg_op_queued':           return handleBgOpQueued(msg);
+    case 'bg_op_queue_reordered':  return handleBgOpQueueReordered(msg);
+    case 'bg_op_started':          return handleBgOpStarted(msg);
+    case 'bg_op_progress':         return handleBgOpProgress(msg);
+    case 'worker_stream':          return handleWorkerStream(msg);
+    case 'worker_done':            return handleWorkerDone(msg);
+    case 'av_blocked_warning':     return handleAvBlockedWarning(msg);
+    case 'bg_op_nudge':            return handleBgOpNudge(msg);
+    case 'bg_op_completed':        return handleBgOpCompleted(msg);
+    default: return null;
   }
 }

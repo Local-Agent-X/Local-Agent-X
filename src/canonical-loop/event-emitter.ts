@@ -44,15 +44,27 @@ export function emitStrict(
 
 export function publishStreamChunk(opId: string, chunk: unknown): void {
   if (publishProcessRelayOutput("stream-chunk", chunk)) return;
+  projectStreamChunk(opId, chunk);
+}
+
+/** Parent-side projection for a durably relayed stream chunk. */
+export function projectStreamChunk(opId: string, chunk: unknown): void {
   getBus().publish(streamChannel(opId), chunk);
   recordStreamChunk(opId);
 }
 
 /** Parent-side projection for a durably relayed canonical event. */
-export function projectCanonicalEvent(event: CanonicalEvent, nonBrowserOnly = false): void {
+export function projectCanonicalEvent(
+  event: CanonicalEvent,
+  nonBrowserOnly = false,
+  sessionId?: string,
+): void {
   getBus().publish(eventsChannel(event.opId), event);
   recordCanonicalEvent(event);
-  if (nonBrowserOnly) bridgeRecord(event, "non-browser");
+  if (nonBrowserOnly) {
+    if (sessionId) bridgeRecord(event, "non-browser", sessionId);
+    else bridgeRecord(event, "non-browser");
+  } else if (sessionId) bridgeRecord(event, "all", sessionId);
   else bridgeRecord(event);
   recordCostEvent(event);
 }

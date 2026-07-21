@@ -49,7 +49,9 @@ describe("durable process relay", () => {
     const event = canonicalEvent(claim.opId, 0);
     const first = createRelayRecord(sealed.generation, 1, "canonical-event", event, sealed.mac);
     expect(first.deliveryId).toBe(`${sealed.generation.generationId}:1`);
-    expect(first.targets).toEqual(["canonical-core", "browser-render"]);
+    expect(first.targets).toEqual(["canonical-core", "session-observer", "browser-render"]);
+    expect(createRelayRecord(sealed.generation, 2, "stream-chunk", { delta: "x" }, first.mac).targets)
+      .toEqual(["canonical-core"]);
     expect(verifyRelayRecord(first, sealed.generation, 1, sealed.mac)).toEqual(first);
     expect(() => verifyRelayRecord(first, sealed.generation, 2, sealed.mac)).toThrow("non-contiguous");
     const replacement = createRelayGeneration({ ...claim, token: "replacement" },
@@ -107,15 +109,19 @@ describe("durable process relay", () => {
       if (target === "browser-render") throw new Error("sink offline");
       return true;
     })).toThrow("sink offline");
-    expect(seen).toEqual(["1:canonical-core", "1:browser-render"]);
+    expect(seen).toEqual([
+      "1:canonical-core", "2:canonical-core",
+      "1:session-observer",
+      "1:browser-render",
+    ]);
     const restarted = readProcessRelayGenerations(claim.opId)[0];
-    expect([...restarted.acknowledgements.get(1) ?? []]).toEqual(["canonical-core"]);
+    expect([...restarted.acknowledgements.get(1) ?? []]).toEqual(["canonical-core", "session-observer"]);
     const retried: string[] = [];
     reconcileProcessRelay(claim.opId, (_state, record, target) => {
       retried.push(`${record.cursor}:${target}`);
       return true;
     });
-    expect(retried).toEqual(["1:browser-render", "2:browser-render"]);
+    expect(retried).toEqual(["1:browser-render"]);
   });
 
   it("merges acknowledgements written from independent stale snapshots", () => {

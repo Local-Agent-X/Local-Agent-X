@@ -31,6 +31,8 @@ import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
 import { resolveDurableApproval } from "./approval-durable-resolve.js";
 import type { ScreenAttachment } from "../screen-stream/index.js";
+import { handleProcessRelayAck } from "./process-relay-router.js";
+import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 
 const logger = createLogger("chat-ws");
 
@@ -71,8 +73,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
       return;
     }
 
+    if (handleProcessRelayAck(msg, subscriptions)) return;
+
     if (type === "subscribe" && sessionId) {
       subscriptions.add(sessionId);
+      setImmediate(() => reconcileAllPendingProcessRelays(sessionId));
       // CT-3: coalesce buffered stream deltas into one `replace` on replay so
       // a mid-turn reconnect doesn't append the whole partial onto the partial
       // the client already holds (duplicated bubble + corrupted persisted

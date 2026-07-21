@@ -20,6 +20,7 @@ import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/public/lear
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
+import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 
@@ -104,6 +105,7 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
     const t = Date.now();
     try {
       const restored = restorePersistedAppBuildRuntimes();
+      reconcileAllPendingProcessRelays();
       const recovered = sweepStaleCanonicalOps();
       const learned = reconcileCanonicalLearnedOutcomes();
       const dt = Date.now() - t;

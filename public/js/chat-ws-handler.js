@@ -15,6 +15,11 @@
 function handleChatWsMessage(e) {
   let msg;
   try { msg = JSON.parse(e.data); } catch { return; }
+  dispatchChatWsMessage(msg);
+}
+
+function dispatchChatWsMessage(msg) {
+  if (handleProcessRelayDelivery(msg, dispatchProcessRelayEvent)) return;
 
   if (msg.type === 'pong') {
     window.chatWsLastPong = Date.now();
@@ -33,12 +38,22 @@ function handleChatWsMessage(e) {
   }
 
   if (msg.type === 'event' && msg.sessionId && msg.event) {
+    dispatchChatWsEvent(msg, false);
+    return;
+  }
+
+  dispatchChatWsNonEvent(msg);
+}
+
+  // Non-relay callers keep the historical best-effort behavior. Durable
+  // relay uses checked=true and withholds ACK when any owned handler fails.
+function dispatchChatWsEvent(msg, checked) {
     // Enforced plan mode flipped (Plan toggle echo) — mirror to the chip.
     if (msg.event.type === 'plan_mode_changed') {
       window._laxPlanMode = window._laxPlanMode || {};
       window._laxPlanMode[msg.sessionId] = !!msg.event.enforced;
       try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
-      return;
+      return true;
     }
     // Bump per-op activity from the envelope's _opId so the watchdog stays
     // honest for any event carrying canonical tags — not just the ones
@@ -52,15 +67,18 @@ function handleChatWsMessage(e) {
     // informational — the local echo already exists tagged
     // _queueState:'queued', so nothing to do client-side. inject_consumed
     // drops the queued styling once the server actually drained it.
-    if (msg.event.type === 'inject_queued') return;
-    if (msg.event.type === 'inject_consumed') { handleInjectConsumed(msg); return; }
+    if (msg.event.type === 'inject_queued') return true;
+    if (msg.event.type === 'inject_consumed') return handleInjectConsumed(msg);
 
     // Worker-pool / background-op events surface in the AGENTS sidebar
     // (not the chat thread). See chat-ws-handler-bg-ops.js.
-    if (dispatchBgOpEvent(msg)) return;
+    if (checked) {
+      const bgResult = dispatchBgOpEventChecked(msg);
+      if (bgResult !== null) return bgResult;
+    } else if (dispatchBgOpEvent(msg)) return true;
 
     // In-turn chat events — store + DOM side effects for the active chat.
-    dispatchChatStreamEvent(msg);
+    if (dispatchChatStreamEvent(msg) !== true) return false;
 
     // If the stream just terminated for a session the user ISN'T viewing,
     // clear its sidebar marker. The server eventually re-broadcasts
@@ -70,9 +88,10 @@ function handleChatWsMessage(e) {
       ChatStreamStore.setSidebarActive(msg.sessionId, false);
       renderSidebar();
     }
-    return;
-  }
+    return true;
+}
 
+function dispatchChatWsNonEvent(msg) {
   // Runtime canary verdicts (e.g. the memory-write self-test): show a
   // dismissible failure banner; auto-clear it when the subsystem recovers.
   if (msg.type === 'system_health') {
@@ -107,6 +126,11 @@ function handleChatWsMessage(e) {
   handleAgentFeedEvent(msg);
 }
 
+function dispatchProcessRelayEvent(msg) {
+  return !!(msg && msg.type === 'event' && msg.sessionId && msg.event
+    && dispatchChatWsEvent(msg, true));
+}
+
 function handleInjectConsumed(msg) {
   try {
     const sid = msg.sessionId;
@@ -119,15 +143,15 @@ function handleInjectConsumed(msg) {
         && ChatStreamStore.consumeInject(sid, msg.event.injectId, msg.event.message)) {
       if (typeof activeChat !== 'undefined' && activeChat && activeChat.id === sid
           && typeof rerenderLiveMessage === 'function') rerenderLiveMessage(sid);
-      return;
+      return true;
     }
     // Row path: the inject became a standalone user row — a queued inject
     // re-emitted by promoteLiveToMessages after its turn ended, or the
     // legacy pre-timeline splice shape.
     const chat = (typeof chats !== 'undefined' && Array.isArray(chats)) ? chats.find(c => c.id === sid) : null;
-    if (!chat || !Array.isArray(chat.messages)) return;
+    if (!chat || !Array.isArray(chat.messages)) return true;
     const m = chat.messages.find(x => x && x._injectId === msg.event.injectId && x._queueState === 'queued');
-    if (!m) return;
+    if (!m) return true;
     delete m._queueState;
     if (typeof activeChat !== 'undefined' && activeChat && activeChat.id === sid) {
       // Un-dim the one queued bubble in place (renderMessage stamps
@@ -138,8 +162,12 @@ function handleInjectConsumed(msg) {
       if (node) node.classList.remove('queued');
       else if (typeof renderMessages === 'function') renderMessages();
     }
-    try { if (typeof saveChats === 'function') saveChats(); } catch {}
-  } catch (e) { console.warn('[inject_consumed] failed to clear queue state', e); }
+    if (typeof saveChats === 'function') saveChats();
+    return true;
+  } catch (e) {
+    console.warn('[inject_consumed] failed to clear queue state', e);
+    return false;
+  }
 }
 
 // Reconcile renderer-side state against the server's truth on every WS

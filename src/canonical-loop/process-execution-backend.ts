@@ -10,6 +10,8 @@ import type {
   ExecutionHandle,
 } from "./execution-backend.js";
 import type { ExecutionPlacement } from "./types.js";
+import { notifyProcessRelayParent } from "./process-relay-parent-hook.js";
+import type { ProcessRelayNotice } from "./process-relay-contract.js";
 import {
   claimProcessExecution,
   isLiveProcessExecutionClaim,
@@ -31,6 +33,8 @@ export interface ProcessBackendOptions {
   spawn?: typeof fork;
   isPidAlive?: (pid: number) => boolean;
   readyTimeoutMs?: number;
+  onRelayNotice?: (notice: ProcessRelayNotice) => void;
+  onFinalReconcile?: (opId: string) => void;
 }
 
 interface ReadyMessage {
@@ -49,6 +53,8 @@ export class ProcessExecutionBackend implements ExecutionBackend {
   private readonly spawn: typeof fork;
   private readonly pidAlive: (pid: number) => boolean;
   private readonly readyTimeoutMs: number;
+  private readonly onRelayNotice: (notice: ProcessRelayNotice) => void;
+  private readonly onFinalReconcile: (opId: string) => void;
 
   constructor(options: ProcessBackendOptions = {}) {
     this.entryPath = options.entryPath ?? defaultEntryPath();
@@ -57,6 +63,8 @@ export class ProcessExecutionBackend implements ExecutionBackend {
     this.spawn = options.spawn ?? fork;
     this.pidAlive = options.isPidAlive ?? isPidAlive;
     this.readyTimeoutMs = options.readyTimeoutMs ?? READY_TIMEOUT_MS;
+    this.onRelayNotice = options.onRelayNotice ?? notifyProcessRelayParent;
+    this.onFinalReconcile = options.onFinalReconcile ?? notifyProcessRelayParent;
   }
 
   static isEligible(op: Op): boolean {
@@ -112,6 +120,8 @@ export class ProcessExecutionBackend implements ExecutionBackend {
         spawnedAt,
         now: this.now,
         readyTimeoutMs: this.readyTimeoutMs,
+        onRelayNotice: this.onRelayNotice,
+        onFinalReconcile: this.onFinalReconcile,
       }),
     };
   }
@@ -146,6 +156,8 @@ interface HandoffInput {
   spawnedAt: number;
   now: () => number;
   readyTimeoutMs: number;
+  onRelayNotice: (notice: ProcessRelayNotice) => void;
+  onFinalReconcile: (opId: string) => void;
 }
 
 function handoffAndWait(input: HandoffInput): Promise<void> {
@@ -175,6 +187,7 @@ function handoffAndWait(input: HandoffInput): Promise<void> {
       settled = true;
       cleanupListeners();
       cleanupClaim();
+      try { input.onFinalReconcile(opId); } catch { /* durable relay stays pending */ }
       try { child.kill(); } catch { /* already gone */ }
       reject(error);
     };
@@ -183,6 +196,7 @@ function handoffAndWait(input: HandoffInput): Promise<void> {
       settled = true;
       cleanupListeners();
       cleanupClaim();
+      try { input.onFinalReconcile(opId); } catch { /* startup janitor retries */ }
       resolve();
     };
     const onError = (error: Error) => fail(error);
@@ -199,7 +213,15 @@ function handoffAndWait(input: HandoffInput): Promise<void> {
       }
     };
     const onMessage = (value: unknown) => {
-      if (claim || settled) return;
+      if (settled) return;
+      if (claim) {
+        const notice = value as Partial<ProcessRelayNotice> | null;
+        if (notice?.type === "process-relay" && notice.opId === opId
+          && typeof notice.generationId === "string" && Number.isSafeInteger(notice.cursor)) {
+          try { input.onRelayNotice(notice as ProcessRelayNotice); } catch { /* durable relay stays pending */ }
+        }
+        return;
+      }
       const ready = parseReady(value, child.pid, token, spawnedAt, now());
       if (!ready) {
         const message = value as { type?: unknown } | null;

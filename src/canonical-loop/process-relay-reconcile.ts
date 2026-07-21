@@ -1,5 +1,5 @@
 import type { CanonicalEvent } from "./types.js";
-import { projectCanonicalEvent } from "./event-emitter.js";
+import { projectCanonicalEvent, projectStreamChunk } from "./event-emitter.js";
 import {
   acknowledgeProcessRelayTarget,
   cleanupCompletedProcessRelay,
@@ -25,17 +25,19 @@ export function reconcileProcessRelay(opId: string, project: ProcessRelayProject
     return withProcessRelayLock(opId, () => {
       let applied = 0;
       const generations = readProcessRelayGenerations(opId);
-      for (const state of generations) {
-        for (const record of state.records) {
-          const acknowledged = state.acknowledgements.get(record.cursor) ?? new Set<ProcessRelayTarget>();
-          for (const target of record.targets) {
+      for (const target of ["canonical-core", "session-observer", "browser-render"] as const) {
+        let targetBlocked = false;
+        for (const state of generations) {
+          for (const record of state.records) {
+            if (targetBlocked || !record.targets.includes(target)) continue;
+            const acknowledged = state.acknowledgements.get(record.cursor) ?? new Set<ProcessRelayTarget>();
             if (acknowledged.has(target)) continue;
-            if (project(state, record, target) === false) return applied;
+            if (project(state, record, target) === false) {
+              targetBlocked = true;
+              continue;
+            }
             acknowledgeProcessRelayTarget(state, record.cursor, target);
             applied++;
-          }
-          if (record.targets.some(target => !(state.acknowledgements.get(record.cursor)?.has(target)))) {
-            return applied;
           }
         }
       }
@@ -53,8 +55,16 @@ export function canonicalRelayEvent(record: ProcessRelayRecord): CanonicalEvent 
 }
 
 /** E4C projects durable non-browser effects. E4D owns browser render ACK. */
-export const projectProcessRelayTarget: ProcessRelayProjector = (_state, record, target) => {
-  if (target === "browser-render") return false;
-  projectCanonicalEvent(canonicalRelayEvent(record), true);
+export const projectProcessRelayTarget: ProcessRelayProjector = (state, record, target) => {
+  if (target !== "canonical-core") return false;
+  if (record.kind === "canonical-event") {
+    projectCanonicalEvent(
+      canonicalRelayEvent(record),
+      true,
+      state.sealedGeneration?.generation.sessionId,
+    );
+  } else if (record.kind === "stream-chunk") {
+    projectStreamChunk(state.sealedGeneration.generation.opId, record.payload);
+  }
   return true;
 };

@@ -5,7 +5,8 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { writeOp } from "../ops/op-store.js";
 import { appendOpMessage } from "./store.js";
 import { trackOpForSession, listOpsForSession, setSessionBroadcaster } from "../ops/session-bridge.js";
-import { recordCanonicalEvent } from "./session-bridge-observer.js";
+import { collectCanonicalBrowserEvents, recordCanonicalEvent } from "./session-bridge-observer.js";
+import { getBus, streamChannel } from "./bus.js";
 import type { CanonicalEvent } from "./types.js";
 
 // Regression: chat_turn (and other sidebar-suppressed) ops were tracked in the
@@ -93,4 +94,39 @@ describe("session-bridge-observer — terminal release for suppressed op types",
     }));
     expect(broadcast).not.toHaveBeenCalledWith(sessionId, expect.objectContaining({ summary: "Done." }));
   });
+
+  it("collects browser events without consuming core terminal side effects", () => {
+    const sessionId = "sess-obs-split";
+    const opId = "op_observer_projection_split";
+    makeOp(opId, "research");
+    trackOpForSession(opId, sessionId, "split projection");
+    const event = stateChanged(opId, "succeeded");
+
+    const projection = collectCanonicalBrowserEvents(event, sessionId);
+    expect(projection?.events.map(candidate => candidate.type))
+      .toEqual(["bg_op_completed", "worker_done"]);
+    expect(listOpsForSession(sessionId)).toContain(opId);
+
+    recordCanonicalEvent(event, "non-browser", sessionId);
+    expect(listOpsForSession(sessionId)).toEqual([]);
+  });
+
+  it.each(["chat_turn", "agent_spawn", "voice_turn"])(
+    "does not install sidebar stream forwarding for suppressed %s ops",
+    (type) => {
+      const sessionId = `sess-obs-suppressed-${type}`;
+      const opId = `op_suppressed_stream_${type}`;
+      makeOp(opId, type);
+      trackOpForSession(opId, sessionId, "suppressed stream");
+      const broadcast = vi.fn();
+      setSessionBroadcaster(broadcast);
+
+      recordCanonicalEvent({
+        type: "state_changed", opId, body: { from: null, to: "queued" },
+      } as unknown as CanonicalEvent, "non-browser", sessionId);
+      getBus().publish(streamChannel(opId), { delta: "private lane output" });
+
+      expect(broadcast).not.toHaveBeenCalled();
+    },
+  );
 });

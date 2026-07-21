@@ -7,6 +7,7 @@
 
 import type { WebSocket } from "ws";
 import { activeChats, clients } from "./state.js";
+import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 
 const WS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 25_000;
@@ -18,6 +19,7 @@ export interface ConnectionContext {
 export function setupConnection(ws: WebSocket): ConnectionContext {
   const subscriptions = new Set<string>();
   clients.set(ws, subscriptions);
+  setImmediate(() => reconcileAllPendingProcessRelays());
 
   // Auto-close after 24h to force re-authentication.
   const maxAgeTimer = setTimeout(() => {

@@ -108,10 +108,40 @@ function extractStreamLine(msg: unknown): string {
   return "";
 }
 
-export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | "non-browser" = "all"): void {
+export function recordCanonicalEvent(
+  event: CanonicalEvent,
+  projection: "all" | "non-browser" = "all",
+  sessionId?: string,
+): void {
+  recordCanonicalEventWithSink(
+    event,
+    true,
+    projection === "all" ? (target, serverEvent) => broadcastToSession(target, serverEvent) : null,
+    sessionId,
+  );
+}
+
+export function collectCanonicalBrowserEvents(
+  event: CanonicalEvent,
+  sessionId: string,
+): { sessionId: string; events: ServerEvent[] } | null {
+  const events: ServerEvent[] = [];
+  let targetSessionId = "";
+  recordCanonicalEventWithSink(event, false, (target, serverEvent) => {
+    targetSessionId = target;
+    events.push(serverEvent);
+  }, sessionId);
+  return targetSessionId ? { sessionId: targetSessionId, events } : null;
+}
+
+function recordCanonicalEventWithSink(
+  event: CanonicalEvent,
+  core: boolean,
+  emitBrowser: ((sessionId: string, event: ServerEvent) => void) | null,
+  sessionOverride?: string,
+): void {
   try {
-    const browser = projection === "all";
-    const sessionId = getSessionForOp(event.opId);
+    const sessionId = sessionOverride ?? getSessionForOp(event.opId);
     if (!sessionId) return; // op wasn't submitted by a chat session — nothing to surface
 
     // Suppress AGENTS-sidebar cards for `chat_turn` ops. The canonical
@@ -142,7 +172,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
       // workers. Exactly the leak releaseOpFromSession's doc warns about.
       if (event.type === "state_changed") {
         const to = (event.body as Record<string, unknown> | undefined)?.to;
-        if (to === "succeeded" || to === "failed" || to === "cancelled") {
+        if (core && (to === "succeeded" || to === "failed" || to === "cancelled")) {
           releaseOpFromSession(event.opId);
           teardownStreamForwarder(event.opId);
         }
@@ -150,7 +180,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
       return;
     }
 
-    const task = getTaskForOp(event.opId) ?? "";
+    const task = getTaskForOp(event.opId) ?? op?.task ?? "";
     const b = (event.body ?? {}) as Record<string, unknown>;
 
     switch (event.type) {
@@ -162,7 +192,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
           // Op submitted into canonical scheduler. Lane caps mean queueing
           // is real but typically brief.
           const lane = (op?.lane as string | undefined) ?? "interactive";
-          if (browser) broadcastToSession(sessionId, {
+          if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_queued",
             opId: event.opId,
             task,
@@ -182,9 +212,9 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
           // (build_app's tool_progress, etc.) surfaces as bg_op_progress in
           // the AGENTS sidebar. Throttled internally. No-op for suppressed
           // op types.
-          if (browser && op?.type) ensureStreamForwarder(event.opId, sessionId, op.type);
+          if (core && op?.type) ensureStreamForwarder(event.opId, sessionId, op.type);
         } else if (to === "running") {
-          if (browser) broadcastToSession(sessionId, {
+          if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_started",
             opId: event.opId,
             task,
@@ -199,7 +229,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
             : suspension?.reason === "stalled"
               ? "stalled"
               : "paused";
-          if (browser) broadcastToSession(sessionId, {
+          if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_progress",
             opId: event.opId,
             status,
@@ -264,7 +294,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
             }
           }
 
-          if (browser) broadcastToSession(sessionId, {
+          if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_completed",
             opId: event.opId,
             status,
@@ -272,14 +302,14 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
             filesChanged: [],
             ...(resultUrl ? { resultUrl } : {}),
           } as ServerEvent);
-          if (browser) broadcastToSession(sessionId, {
+          if (emitBrowser) emitBrowser(sessionId, {
             type: "worker_done",
             opId: event.opId,
             status,
             summary,
           } as ServerEvent);
 
-          pushPendingNotification(sessionId, {
+          if (core) pushPendingNotification(sessionId, {
             opId: event.opId,
             status,
             summary: persistedSummary,
@@ -290,19 +320,21 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
           // If the user is in a live voice session, speak the result at the next
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
-          if (browser) {
+          if (core) {
             proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status));
             scheduleIdleNudge(sessionId, task);
           }
-          releaseOpFromSession(event.opId);
-          teardownStreamForwarder(event.opId);
+          if (core) {
+            releaseOpFromSession(event.opId);
+            teardownStreamForwarder(event.opId);
+          }
         }
         return;
       }
       case "error": {
         const code = (b.code as string | undefined) ?? "error";
         const message = (b.message as string | undefined) ?? "";
-        if (browser) broadcastToSession(sessionId, {
+        if (emitBrowser) emitBrowser(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: `! ${code}${message ? ": " + message.slice(0, 120) : ""}`,
@@ -312,7 +344,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
       case "iteration_checkpoint": {
         const maxTurns = typeof b.maxTurns === "number" ? b.maxTurns : null;
         const continuing = b.continuing === true;
-        if (browser) broadcastToSession(sessionId, {
+        if (emitBrowser) emitBrowser(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: continuing
@@ -335,7 +367,7 @@ export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | 
         // turn_committed (aggregateOpUsage across all persisted op_turns); we
         // relay only the total — additive/optional, absent if unusable.
         const usage = b.usage as { totalTokens?: number } | undefined;
-        if (browser) broadcastToSession(sessionId, {
+        if (emitBrowser) emitBrowser(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: `✓ turn ${turnIdx} · ${summary}`,

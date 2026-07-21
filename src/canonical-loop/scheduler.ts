@@ -42,7 +42,7 @@ let resolveExecutionBackend = defaultExecutionBackendResolver;
 /** Test-only dependency seat for scheduler parity tests. Production always
  * resolves the registry's default built-in backend. */
 export function _setExecutionBackendResolverForTest(
-  resolver: ((id?: string) => ExecutionBackend) | null,
+  resolver: ((id?: string, op?: Op) => ExecutionBackend) | null,
 ): void {
   resolveExecutionBackend = resolver ?? defaultExecutionBackendResolver;
 }
@@ -206,7 +206,7 @@ export function pumpScheduler(): void {
       let placement;
       try {
         const recorded = parseExecutionPlacement(op.canonical?.executionPlacement);
-        backend = resolveExecutionBackend(recorded?.backendId);
+        backend = resolveExecutionBackend(recorded?.backendId, op);
         placement = ensureExecutionPlacement(op, backend);
       } catch (error) {
         queue.splice(i, 1);

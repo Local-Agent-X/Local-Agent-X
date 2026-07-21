@@ -17,7 +17,7 @@ the block — if you need to change protected core, either:
 | Module | Owns | Don't touch from elsewhere |
 |---|---|---|
 | `tool-execution/` | tool-call lifecycle, Ari+policy+approval gating | Never bypass to call tools directly |
-| `tool-policy.ts` | allow/deny rules + default-deny | New tools need `allow-<name>` rule |
+| `tool-policy/` | allow/deny rules + default-deny | New tools need `allow-<name>` rule |
 | `ari-kernel/` | in-process security layer | Don't add a second one |
 | `anthropic-client/`, `codex-client/`, `canonical-loop/adapters/` | provider-specific streaming | Keep provider differences here, not leaking into routes |
 | `canonical-loop/agent-runner/` | `runAgentViaCanonical` entry point | All provider routing goes through the canonical loop |

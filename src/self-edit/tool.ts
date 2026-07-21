@@ -288,11 +288,12 @@ export const selfEditTool: ToolDefinition = {
       // against any sandboxed self_edit via the machine-wide global lock so the
       // two can't build/install into the shared node_modules concurrently (#9).
       //
-      // _unsafe is the human's emergency rescue hatch — it force-steals the
-      // global lock so a wedged/long-running self_edit can't block fixing a
-      // bricked app. Automated paths (autopilot _cwd) respect the lock instead.
+      // _unsafe asks a live self_edit to cancel and waits for its kernel lease.
+      // If the owner cannot stop, the rescue stays serialized.
       const isUnsafeRescue = unsafe && !internalCwd;
-      const gLock = acquireGlobalSelfEditLock({ force: isUnsafeRescue, task });
+      const gLock = await acquireGlobalSelfEditLock({
+        force: isUnsafeRescue, task, onRevoke: () => controller.abort(),
+      });
       if (!gLock.acquired) {
         // Benign serialization notice (not a failure) — end the turn, don't
         // retry-loop. isError:false so the breaker doesn't trip.
@@ -328,7 +329,7 @@ export const selfEditTool: ToolDefinition = {
       onProgress("Running source-code repair…");
       return await runSelfEditBypass(subprocessCwd, fullPrompt, combinedSignal);
     } finally {
-      if (globalLockNonce) releaseGlobalSelfEditLock(globalLockNonce);
+      if (globalLockNonce) await releaseGlobalSelfEditLock(globalLockNonce);
       releaseLock();
     }
   },

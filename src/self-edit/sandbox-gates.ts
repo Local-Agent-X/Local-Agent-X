@@ -10,7 +10,7 @@ import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { runCommandInWorktree, getWorktreePath, getMergeDeltaFiles, isolateNodeModules, changedFilesTouchDeps } from "../agency/worktree.js";
+import { getWorktreePath, getMergeDeltaFiles, isolateNodeModules, changedFilesTouchDeps } from "../agency/worktree.js";
 import { killProcessTree } from "../process-tree-kill.js";
 import { runSmokeAssertions } from "./smoke-suite.js";
 import { buildSelfEditChildEnv } from "./child-env.js";
@@ -53,7 +53,34 @@ export const SKIPPED_GATE: GateResult = { ok: false, skipped: true, durationMs: 
 // (isolateNodeModules) and run a real `npm ci` in an isolated dir. A failing
 // install blocks the merge.
 
-export function gateDeps(name: string): GateResult {
+async function runGateCommand(name: string, args: string[], signal?: AbortSignal, env = process.env): Promise<{ ok: boolean; durationMs: number; stdout: string; stderr: string }> {
+  const cwd = getWorktreePath(name);
+  if (!cwd) return { ok: false, durationMs: 0, stdout: "", stderr: "worktree path not found" };
+  const start = Date.now();
+  return new Promise((resolveRun) => {
+    const child = spawn("npm", args, { cwd, env, windowsHide: true, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      resolveRun({ ok, durationMs: Date.now() - start, stdout, stderr });
+    };
+    const abort = () => { killProcessTree(child, "SIGKILL"); };
+    const timer = setTimeout(abort, BUILD_TIMEOUT_MS);
+    child.stdout?.on("data", (chunk: Buffer) => { stdout = (stdout + chunk).slice(-10 * 1024 * 1024); });
+    child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk).slice(-10 * 1024 * 1024); });
+    child.once("error", () => finish(false));
+    child.once("exit", (code) => finish(code === 0 && !signal?.aborted));
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+  });
+}
+
+export async function gateDeps(name: string, signal?: AbortSignal): Promise<GateResult> {
   // Merge delta (committed + uncommitted), not just the working tree: a
   // committed package.json change must still trigger the isolated install,
   // or a self_edit could commit a malicious dependency that the working-tree
@@ -66,7 +93,7 @@ export function gateDeps(name: string): GateResult {
   if (!isolate.ok) {
     return { ok: false, skipped: false, durationMs: 0, detail: isolate.detail };
   }
-  const r = runCommandInWorktree(name, { command: "npm ci", timeoutMs: BUILD_TIMEOUT_MS });
+  const r = await runGateCommand(name, ["ci"], signal);
   return {
     ok: r.ok,
     skipped: false,
@@ -77,11 +104,11 @@ export function gateDeps(name: string): GateResult {
 
 // ── Gate 1: build ──────────────────────────────────────────────────────────
 
-export function gateBuild(name: string): GateResult {
+export async function gateBuild(name: string, signal?: AbortSignal): Promise<GateResult> {
   // Scrubbed env: `npm run build` runs the worktree's build scripts (authored
   // by the untrusted self_edit child). It needs no credentials — strip them so
   // a malicious build script can't read+exfil the server's secrets.
-  const r = runCommandInWorktree(name, { command: "npm run build", timeoutMs: BUILD_TIMEOUT_MS, env: buildSelfEditChildEnv() });
+  const r = await runGateCommand(name, ["run", "build"], signal, buildSelfEditChildEnv());
   return {
     ok: r.ok,
     skipped: false,
@@ -224,7 +251,7 @@ export async function gateBindAt(wt: string, port: number, authToken: string, si
   const deadline = Date.now() + BIND_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (signal?.aborted) {
-      killProcessTree(proc, "SIGKILL");
+      await killProbe(proc);
       return { result: { ok: false, skipped: false, durationMs: Date.now() - start, detail: "aborted" }, proc: null, dataDir };
     }
     if (proc.exitCode !== null) {
@@ -246,7 +273,7 @@ export async function gateBindAt(wt: string, port: number, authToken: string, si
     } catch { /* not yet bound */ }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  killProcessTree(proc, "SIGKILL");
+  await killProbe(proc);
   return {
     result: {
       ok: false, skipped: false, durationMs: Date.now() - start,
@@ -270,7 +297,7 @@ export async function gateSmoke(port: number, authToken: string, signal?: AbortS
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${authToken}` },
       body: JSON.stringify({ message: "ping", sessionId: "selfedit-smoke" }),
-      signal: AbortSignal.timeout(SMOKE_TIMEOUT_MS),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(SMOKE_TIMEOUT_MS)]) : AbortSignal.timeout(SMOKE_TIMEOUT_MS),
     });
     if (res.status !== 200) {
       const body = await res.text().catch(() => "");
@@ -307,7 +334,8 @@ export async function gateSmoke(port: number, authToken: string, signal?: AbortS
 
 // ── Probe process cleanup helper ───────────────────────────────────────────
 
-export function killProbe(proc: ChildProcess | null): void {
+export async function killProbe(proc: ChildProcess | null): Promise<void> {
+  if (!proc || proc.exitCode !== null) return;
   killProcessTree(proc, "SIGKILL");
-  void logger; // silence unused-import lint
+  await new Promise<void>((resolveExit) => proc.once("exit", () => resolveExit()));
 }

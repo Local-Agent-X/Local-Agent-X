@@ -2,29 +2,36 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeDurableJson } from "./checkpoint.mjs";
+import { bindInstallerDataRoot, mutateInstallerDataRoot } from "./data-root.mjs";
 
 export function persistInstallOutcome(context, desktop) {
   const { reporter, env = process.env, platform = process.platform } = context;
   const dataDirectory = context.dataDirectory || join(homedir(), ".lax");
+  context.dataDirectory = dataDirectory;
+  if (!context.installerDataRootIdentity) bindInstallerDataRoot(context);
   const installedCommit = env.LAX_INSTALLED_COMMIT || "";
   if (/^[0-9a-f]{40}$/.test(installedCommit)) {
     try {
-      mkdirSync(dataDirectory, { recursive: true });
-      writeDurableJson(join(dataDirectory, "installed-source.json"), { commit: installedCommit, updatedAt: new Date().toISOString() });
+      mutateInstallerDataRoot(context, ["installed-source.json"], () => {
+        mkdirSync(dataDirectory, { recursive: true });
+        writeDurableJson(join(dataDirectory, "installed-source.json"), { commit: installedCommit, updatedAt: new Date().toISOString() });
+      });
       reporter.ok(`Recorded installed source commit ${installedCommit.slice(0, 7)}`);
     } catch (error) { reporter.warn(`Couldn't record installed source commit: ${error.message}`); }
   }
   let reportSaved = false;
   try {
-    mkdirSync(dataDirectory, { recursive: true });
-    writeDurableJson(join(dataDirectory, "install-report.json"), {
-      installedAt: new Date().toISOString(),
-      selections: context.selections || {
-        ollamaRuntime: Boolean(context.wantOllama),
-        ollamaMemoryModel: Boolean(context.wantOllamaMemoryModel),
-      },
-      hardwareProfile: context.hardwareProfile || null,
-      degraded: reporter.degraded,
+    mutateInstallerDataRoot(context, ["install-report.json"], () => {
+      mkdirSync(dataDirectory, { recursive: true });
+      writeDurableJson(join(dataDirectory, "install-report.json"), {
+        installedAt: new Date().toISOString(),
+        selections: context.selections || {
+          ollamaRuntime: Boolean(context.wantOllama),
+          ollamaMemoryModel: Boolean(context.wantOllamaMemoryModel),
+        },
+        hardwareProfile: context.hardwareProfile || null,
+        degraded: reporter.degraded,
+      });
     });
     reportSaved = true;
     if (reporter.degraded.length) reporter.ok(`Recorded ${reporter.degraded.length} degraded step(s) for in-app repair`);

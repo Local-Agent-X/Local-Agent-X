@@ -45,7 +45,7 @@ export async function runEndOfShiftBootProof(config: AutopilotConfig, signal?: A
       durationMs: Date.now() - start,
     };
   } finally {
-    killProbe(bind.proc);
+    await killProbe(bind.proc);
     if (bind.dataDir) {
       try { rmSync(bind.dataDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }

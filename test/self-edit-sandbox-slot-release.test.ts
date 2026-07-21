@@ -50,6 +50,9 @@ vi.mock("../src/self-edit/refute-merge.js", () => ({
 
 const { runSelfEditInSandbox } = await import("../src/self-edit/sandbox.js");
 const { activeWorktrees, WORKTREE_BASE, worktreeSlotAvailable } = await import("../src/agency/worktree-core.js");
+const surgeonModule = await import("../src/self-edit/surgeon.js");
+const gatesModule = await import("../src/self-edit/sandbox-gates.js");
+const lockModule = await import("../src/self-edit/global-lock.js");
 
 const repo = mkdtempSync(join(tmpdir(), "lax-slot-release-"));
 const prevCwd = process.cwd();
@@ -101,5 +104,27 @@ describe("failed self_edit releases its worktree registry slot (AB-7)", () => {
     const wtDir = join(WORKTREE_BASE, name);
     expect(existsSync(wtDir)).toBe(true);
     rmSync(wtDir, { recursive: true, force: true });
+  });
+
+  it("stops the sandbox before gates or merge when a rescue revokes its lease", async () => {
+    let revoke: (() => boolean | void) | undefined;
+    vi.mocked(lockModule.acquireGlobalSelfEditLock).mockImplementationOnce(async (options) => {
+      revoke = options.onRevoke;
+      return { acquired: true, nonce: "revocable-owner" };
+    });
+    vi.mocked(surgeonModule.runSurgeon).mockImplementationOnce(async (_path, _prompt, signal) => {
+      setTimeout(() => revoke?.(), 10);
+      await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+      return {} as Awaited<ReturnType<typeof surgeonModule.runSurgeon>>;
+    });
+    vi.mocked(gatesModule.gateDeps).mockClear();
+    vi.mocked(lockModule.releaseGlobalSelfEditLock).mockClear();
+
+    const result = await runSelfEditInSandbox({ task: "revoked edit", fullPrompt: "noop", authToken: "t" });
+
+    expect(result.ok).toBe(false);
+    expect(result.failure).toMatch(/abort/i);
+    expect(gatesModule.gateDeps).not.toHaveBeenCalled();
+    expect(lockModule.releaseGlobalSelfEditLock).toHaveBeenCalledWith("revocable-owner");
   });
 });

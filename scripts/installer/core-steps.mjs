@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { EMBED_MODEL } from "./contract.mjs";
 import { runtimeNodeEnv } from "./process-tools.mjs";
 import { runOllamaModelStep } from "./ollama-model-step.mjs";
+import { mutateInstallerDataRoot } from "./data-root.mjs";
+import { readDurableJson, writeDurableJson } from "./checkpoint.mjs";
 
 export async function runCoreSteps(context) {
   await installDependencies(context);
@@ -40,18 +41,20 @@ async function installDependencies({ reporter, processes, platform = process.pla
   reporter.stepDone("npm");
 }
 
-function scaffoldSettings({ reporter }, ollamaModelReady) {
+function scaffoldSettings(context, ollamaModelReady) {
+  const { reporter, dataDirectory } = context;
   if (!reporter.step("settings")) return;
-  const laxDirectory = join(homedir(), ".lax");
+  const laxDirectory = dataDirectory;
   const settingsFile = join(laxDirectory, "settings.json");
-  if (!existsSync(settingsFile)) {
-    mkdirSync(laxDirectory, { recursive: true });
-    const defaults = ollamaModelReady
-      ? { temperature: 0.7, maxIterations: 160, embeddingProvider: "ollama", embeddingModel: EMBED_MODEL }
-      : { temperature: 0.7, maxIterations: 160, embeddingProvider: "local" };
-    writeFileSync(settingsFile, JSON.stringify(defaults, null, 2));
-    reporter.ok(`Seeded ${settingsFile}`);
-  } else reporter.ok("Settings already present");
+  mutateInstallerDataRoot(context, ["settings.json"], () => {
+    if (!existsSync(settingsFile)) {
+      const defaults = ollamaModelReady
+        ? { temperature: 0.7, maxIterations: 160, embeddingProvider: "ollama", embeddingModel: EMBED_MODEL }
+        : { temperature: 0.7, maxIterations: 160, embeddingProvider: "local" };
+      writeDurableJson(settingsFile, defaults, { fault: context.installerDataRootFault });
+      reporter.ok(`Seeded ${settingsFile}`);
+    } else reporter.ok("Settings already present");
+  });
   reporter.stepDone("settings");
 }
 
@@ -64,21 +67,20 @@ async function buildServer({ reporter, processes }) {
   reporter.stepDone("build");
 }
 
-async function writeRuntimeConfig({ reporter }) {
+async function writeRuntimeConfig(context) {
+  const { reporter, dataDirectory } = context;
   if (!reporter.step("config")) return;
-  const laxDirectory = join(homedir(), ".lax");
-  mkdirSync(laxDirectory, { recursive: true });
-  const configFile = join(laxDirectory, "config.json");
-  let config = {};
-  if (existsSync(configFile)) {
-    try { config = JSON.parse(readFileSync(configFile, "utf-8")); } catch {}
-  }
-  config.projectRoot = process.cwd();
-  if (!config.authToken) {
-    const { randomBytes } = await import("node:crypto");
-    config.authToken = randomBytes(32).toString("hex");
-  }
-  writeFileSync(configFile, JSON.stringify(config, null, 2), { mode: 0o600 });
-  reporter.ok(`Wired ${configFile} → projectRoot=${config.projectRoot}, authToken=${config.authToken.slice(0, 4)}...${config.authToken.slice(-4)}`);
+  const laxDirectory = dataDirectory;
+  const { randomBytes } = await import("node:crypto");
+  mutateInstallerDataRoot(context, ["config.json"], () => {
+    const configFile = join(laxDirectory, "config.json");
+    const config = readDurableJson(configFile, {}, { fault: context.installerDataRootFault });
+    config.projectRoot = process.cwd();
+    if (!config.authToken) {
+      config.authToken = randomBytes(32).toString("hex");
+    }
+    writeDurableJson(configFile, config, { fault: context.installerDataRootFault });
+    reporter.ok(`Wired ${configFile} → projectRoot=${config.projectRoot}, authToken=${config.authToken.slice(0, 4)}...${config.authToken.slice(-4)}`);
+  });
   reporter.stepDone("config");
 }

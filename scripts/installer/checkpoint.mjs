@@ -1,20 +1,110 @@
 import {
-  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync,
-  renameSync, rmSync, writeFileSync,
+  closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync,
+  readFileSync, realpathSync, renameSync, rmSync, writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { installerContract, stepIntent } from "./contract.mjs";
+import { mutateInstallerDataRoot } from "./data-root.mjs";
 
 const FILE = "install-checkpoint.json";
 
-export function writeDurableJson(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(value, null, 2), { encoding: "utf-8", mode: 0o600 });
-  const handle = openSync(temporary, "r+");
-  try { fsyncSync(handle); } finally { closeSync(handle); }
-  renameSync(temporary, path);
+function samePath(left, right) {
+  return process.platform === "win32"
+    ? resolve(left).toLocaleLowerCase("en-US") === resolve(right).toLocaleLowerCase("en-US")
+    : resolve(left) === resolve(right);
+}
+
+function directoryIdentity(path) {
+  const info = lstatSync(path);
+  const real = realpathSync(path);
+  if (!info.isDirectory() || info.isSymbolicLink() || !samePath(real, path)) {
+    throw new Error(`Durable JSON parent is linked or not a directory: ${path}`);
+  }
+  return { dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs, real };
+}
+
+function sameDirectory(left, right) {
+  return left.dev === right.dev && left.ino === right.ino
+    && left.birthtimeMs === right.birthtimeMs && samePath(left.real, right.real);
+}
+
+function assertSafeFile(path, expected) {
+  const info = lstatSync(path);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || !samePath(realpathSync(path), path)) {
+    throw new Error(`Durable JSON path is linked or not a regular file: ${path}`);
+  }
+  if (expected && (info.dev !== expected.dev || info.ino !== expected.ino)) {
+    throw new Error(`Durable JSON temporary file identity changed: ${path}`);
+  }
+  return info;
+}
+
+export function readDurableJson(path, fallback = {}, options = {}) {
+  if (!existsSync(path)) return fallback;
+  const parent = dirname(path);
+  const parentBefore = directoryIdentity(parent);
+  const handle = openSync(path, "r");
+  try {
+    const opened = fstatSync(handle);
+    options.fault?.("before-read", { path, parent });
+    assertSafeFile(path, opened);
+    if (!sameDirectory(parentBefore, directoryIdentity(parent))) {
+      throw new Error(`Durable JSON parent identity changed: ${parent}`);
+    }
+    const raw = readFileSync(handle, "utf-8");
+    assertSafeFile(path, opened);
+    if (!sameDirectory(parentBefore, directoryIdentity(parent))) {
+      throw new Error(`Durable JSON parent identity changed: ${parent}`);
+    }
+    try { return JSON.parse(raw); } catch { return fallback; }
+  } finally {
+    closeSync(handle);
+  }
+}
+
+export function writeDurableJson(path, value, options = {}) {
+  const parent = dirname(path);
+  mkdirSync(parent, { recursive: true });
+  const parentBefore = directoryIdentity(parent);
+  if (existsSync(path)) assertSafeFile(path);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  const handle = openSync(temporary, "wx", 0o600);
+  const opened = fstatSync(handle);
+  if (!opened.isFile() || opened.nlink !== 1) {
+    closeSync(handle);
+    try { rmSync(temporary, { force: true }); } catch {}
+    throw new Error(`Durable JSON temporary file is not private: ${temporary}`);
+  }
+  let writeError;
+  try {
+    writeFileSync(handle, JSON.stringify(value, null, 2), { encoding: "utf-8" });
+    fsyncSync(handle);
+  } catch (error) {
+    writeError = error;
+  } finally {
+    closeSync(handle);
+  }
+  if (writeError) {
+    try { rmSync(temporary, { force: true }); } catch {}
+    throw writeError;
+  }
+  try {
+    options.fault?.("before-publication", { temporary, parent });
+    assertSafeFile(temporary, opened);
+    if (!sameDirectory(parentBefore, directoryIdentity(parent))) {
+      throw new Error(`Durable JSON parent identity changed: ${parent}`);
+    }
+    if (existsSync(path)) assertSafeFile(path);
+    renameSync(temporary, path);
+    if (!sameDirectory(parentBefore, directoryIdentity(parent))) {
+      throw new Error(`Durable JSON parent identity changed: ${parent}`);
+    }
+  } catch (error) {
+    try { rmSync(temporary, { force: true }); } catch {}
+    throw error;
+  }
   try {
     const directory = openSync(dirname(path), "r");
     try { fsyncSync(directory); } finally { closeSync(directory); }
@@ -54,7 +144,7 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
     return result === true || result === "present" ? "present"
       : result === false || result === "absent" ? "absent" : "ambiguous";
   };
-  const save = () => writeDurableJson(path, record);
+  const save = () => mutateInstallerDataRoot(context, [FILE], () => writeDurableJson(path, record));
   const resetForContract = () => { record.contract = contract; };
   const clearStepState = (id, reporter, { output = false } = {}) => {
     reporter.clearDegraded?.(id);
@@ -121,7 +211,7 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
       if (output !== undefined) record.outputs[id] = output;
       save();
     },
-    finish() { rmSync(path, { force: true }); },
+    finish() { mutateInstallerDataRoot(context, [FILE], () => rmSync(path, { force: true })); },
   };
 }
 
@@ -129,11 +219,15 @@ export function installCheckpointPath(dataDirectory = join(homedir(), ".lax")) {
   return join(dataDirectory, FILE);
 }
 
-export function resetInstallCheckpoint(dataDirectory = join(homedir(), ".lax")) {
+export function resetInstallCheckpoint(dataDirectory = join(homedir(), ".lax"), context) {
   const path = installCheckpointPath(dataDirectory);
-  rmSync(path, { force: true });
-  try {
-    const directory = openSync(dirname(path), "r");
-    try { fsyncSync(directory); } finally { closeSync(directory); }
-  } catch {}
+  const remove = () => {
+    rmSync(path, { force: true });
+    try {
+      const directory = openSync(dirname(path), "r");
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    } catch {}
+  };
+  if (context) mutateInstallerDataRoot(context, [FILE], remove);
+  else remove();
 }

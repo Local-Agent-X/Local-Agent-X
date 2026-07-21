@@ -239,7 +239,7 @@ export async function sweepOrphanWorktreeJunctions(): Promise<void> {
   // new instance booting) that worktree is NOT an orphan — unlinking its
   // junction would brick the in-flight build. Skip the whole sweep; the next
   // boot (no active self_edit) reclaims any genuine orphans.
-  if (isSelfEditLockHeldByLiveProcess()) {
+  if (await isSelfEditLockHeldByLiveProcess()) {
     logger.info("[worktree] orphan sweep: a live self_edit holds the global lock — skipping to protect its active worktree");
     return;
   }

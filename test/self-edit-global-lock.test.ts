@@ -1,186 +1,170 @@
-/**
- * Tests for the global (cross-process) self_edit lock.
- *
- * The lock serializes every self_edit on the machine (sandbox + bypass). It must
- * be atomic (no check-then-write race), reclaim stale locks whose holder PID is
- * dead, let the `_unsafe` rescue force-steal a live lock, and only release a lock
- * the current process still owns (so a force-displaced holder doesn't free the
- * new owner's lock).
- *
- * LAX_DATA_DIR is redirected to a temp dir BEFORE importing the module (the lock
- * path is resolved at module load) so the test never touches a live instance's
- * real ~/.lax lock.
- */
-
-import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { createConnection, createServer } from "node:net";
+import {
+  existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync,
+  symlinkSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+import { CAN_CREATE_FILE_SYMLINK } from "../src/symlink-capabilities.test-helper.js";
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), "lax-lock-test-"));
 process.env.LAX_DATA_DIR = DATA_DIR;
 const LOCK = join(DATA_DIR, "self-edit-sandbox.lock");
+const {
+  acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, isSelfEditLockHeldByLiveProcess,
+} = await import("../src/self-edit/global-lock.js");
+const { mutationLockEndpoint, resolveWindowsProcessIncarnation } = await import("../scripts/installer/transaction-lock.mjs");
 
-const { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, isSelfEditLockHeldByLiveProcess } = await import("../src/self-edit/global-lock.js");
+beforeEach(() => { rmSync(LOCK, { recursive: true, force: true }); });
 
-const DEAD_PID = 2147483646; // unlikely to exist → isPidAlive false
-
-beforeEach(() => {
-  try { rmSync(LOCK, { force: true }); } catch { /* ignore */ }
-});
-
-describe("global self_edit lock", () => {
-  it("acquires when free, then blocks a second acquire (live self-held)", () => {
-    expect(acquireGlobalSelfEditLock().acquired).toBe(true);
-    const second = acquireGlobalSelfEditLock();
-    expect(second.acquired).toBe(false);
-    expect(second.holder?.pid).toBe(process.pid);
+describe("global installation mutation lock", () => {
+  it("falls back to Get-Process when CIM process metadata is inaccessible", () => {
+    const commands: string[] = [];
+    const runner = (_file: unknown, args: unknown[]) => {
+      const command = String(args.at(-1));
+      commands.push(command);
+      return command.includes("Get-CimInstance") ? { status: 1, stdout: "" } : { status: 0, stdout: "638887680000000000\n" };
+    };
+    expect(resolveWindowsProcessIncarnation(42, runner, "C:\\Windows")).toBe("win:638887680000000000");
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toContain("Get-Process");
   });
 
-  it("releases then re-acquires", () => {
-    const first = acquireGlobalSelfEditLock();
+  it("acquires, blocks overlap, releases, and reacquires", async () => {
+    const first = await acquireGlobalSelfEditLock({ task: "first" });
     expect(first.acquired).toBe(true);
-    releaseGlobalSelfEditLock(first.nonce);
-    expect(existsSync(LOCK)).toBe(false);
-    expect(acquireGlobalSelfEditLock().acquired).toBe(true);
+    const blocked = await acquireGlobalSelfEditLock({ task: "second" });
+    expect(blocked.acquired).toBe(false);
+    expect(blocked.holder?.incarnation).toMatch(/^(linux|win|posix):/);
+    await releaseGlobalSelfEditLock(first.nonce);
+    const second = await acquireGlobalSelfEditLock({ task: "second" });
+    expect(second.acquired).toBe(true);
+    await releaseGlobalSelfEditLock(second.nonce);
   });
 
-  it("reclaims a stale lock whose holder PID is dead", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: DEAD_PID, startedAt: "2020-01-01T00:00:00.000Z" }));
-    const r = acquireGlobalSelfEditLock();
-    expect(r.acquired).toBe(true);
+  it("does not let an unsafe rescue force-steal the live kernel claim", async () => {
+    const first = await acquireGlobalSelfEditLock({ task: "normal" });
+    expect(first.acquired).toBe(true);
+    expect((await acquireGlobalSelfEditLock({ force: true, task: "rescue" })).acquired).toBe(false);
+    await releaseGlobalSelfEditLock(first.nonce);
   });
 
-  it("reclaims a corrupt lock file", () => {
-    writeFileSync(LOCK, "{ not json");
-    expect(acquireGlobalSelfEditLock().acquired).toBe(true);
+  it("reclaims valid evidence from a dead process after taking the kernel claim", async () => {
+    writeFileSync(LOCK, JSON.stringify({
+      version: 2, pid: 2_147_483_646, ticket: "dead", incarnation: "dead:1", startedAt: "2020-01-01T00:00:00.000Z",
+    }));
+    const lock = await acquireGlobalSelfEditLock();
+    expect(lock.acquired).toBe(true);
+    await releaseGlobalSelfEditLock(lock.nonce);
   });
 
-  it("force-steals a live lock; non-force does not", () => {
-    // A genuinely live holder = a real acquire (tracked by the in-process nonce).
-    const held = acquireGlobalSelfEditLock();
-    expect(held.acquired).toBe(true);
-    expect(acquireGlobalSelfEditLock({ force: false }).acquired).toBe(false);
-    const stolen = acquireGlobalSelfEditLock({ force: true });
-    expect(stolen.acquired).toBe(true);
-    releaseGlobalSelfEditLock(held.nonce);
-    releaseGlobalSelfEditLock(stolen.nonce);
+  it("reclaims evidence when a live PID has a different process incarnation", async () => {
+    writeFileSync(LOCK, JSON.stringify({
+      version: 2, pid: process.ppid, ticket: "reused", incarnation: "not-the-current-process", startedAt: "2020-01-01T00:00:00.000Z",
+    }));
+    const lock = await acquireGlobalSelfEditLock();
+    expect(lock.acquired).toBe(true);
+    await releaseGlobalSelfEditLock(lock.nonce);
   });
 
-  it("reclaims a leaked same-pid lock immediately (crash-before-release in this process)", () => {
-    // self_edit runs in-process, so a leaked lock's pid is THIS always-alive
-    // server. The nonce bookkeeping knows no live run wrote this file, so it is
-    // reclaimable at once — even with a RECENT startedAt.
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-    const r = acquireGlobalSelfEditLock({ force: false });
-    expect(r.acquired).toBe(true);
-    releaseGlobalSelfEditLock(r.nonce);
+  it("does not treat current v2 metadata as ownership without the kernel claim", async () => {
+    writeFileSync(LOCK, JSON.stringify({
+      version: 2, pid: process.pid, ticket: "abandoned", incarnation: "stale", startedAt: new Date().toISOString(),
+    }));
+    const replacement = await acquireGlobalSelfEditLock();
+    expect(replacement.acquired).toBe(true);
+    await releaseGlobalSelfEditLock(replacement.nonce);
   });
 
-  it("never TTL-reclaims a lock this process is actively holding (AB-6: worst-case run outlives the TTL)", () => {
-    const run = acquireGlobalSelfEditLock({ task: "long run" });
-    expect(run.acquired).toBe(true);
-    // Age the running lock far past any TTL, preserving its per-run nonce.
-    const holder = JSON.parse(readFileSync(LOCK, "utf-8"));
-    holder.startedAt = new Date(Date.now() - 60 * 60_000).toISOString();
-    writeFileSync(LOCK, JSON.stringify(holder));
-    // A second self_edit must still block — reclaiming here would put two runs
-    // in the shared node_modules concurrently.
-    expect(acquireGlobalSelfEditLock().acquired).toBe(false);
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(true);
-    releaseGlobalSelfEditLock(run.nonce);
-    expect(existsSync(LOCK)).toBe(false); // release still works on the aged lock
+  it("preserves cross-version exclusion for a live legacy owner", async () => {
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, nonce: "legacy", startedAt: new Date().toISOString() }));
+    expect((await acquireGlobalSelfEditLock()).acquired).toBe(false);
   });
 
-  it("blocks on another live process's lock at ~28min (AB-6: TTL raised past worst-case run)", () => {
-    // process.ppid = the live test runner parent — a live pid that is not ours.
-    writeFileSync(LOCK, JSON.stringify({ pid: process.ppid, startedAt: new Date(Date.now() - 28 * 60_000).toISOString() }));
-    expect(acquireGlobalSelfEditLock().acquired).toBe(false);
+  it("reclaims a legacy record whose PID was reused by a newer process", async () => {
+    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, nonce: "reused", startedAt: "2020-01-01T00:00:00.000Z" }));
+    const replacement = await acquireGlobalSelfEditLock();
+    expect(replacement.acquired).toBe(true);
+    await releaseGlobalSelfEditLock(replacement.nonce);
   });
 
-  it("still TTL-reclaims another live process's lock once truly stale", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: process.ppid, startedAt: new Date(Date.now() - 60 * 60_000).toISOString() }));
-    const r = acquireGlobalSelfEditLock();
-    expect(r.acquired).toBe(true);
-    releaseGlobalSelfEditLock(r.nonce);
+  it("fails closed without replacing corrupt evidence", async () => {
+    writeFileSync(LOCK, "{not json");
+    expect((await acquireGlobalSelfEditLock()).acquired).toBe(false);
+    expect(readFileSync(LOCK, "utf-8")).toBe("{not json");
   });
 
-  it("release is ownership-aware — won't delete a lock owned by another PID", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: DEAD_PID, startedAt: "2020-01-01T00:00:00.000Z", nonce: "someone-else" }));
-    releaseGlobalSelfEditLock("someone-else");
-    expect(existsSync(LOCK)).toBe(true); // not ours (foreign pid) → left intact
+  it("fails closed without removing non-regular evidence", async () => {
+    mkdirSync(LOCK);
+    expect((await acquireGlobalSelfEditLock()).acquired).toBe(false);
+    expect(lstatSync(LOCK).isDirectory()).toBe(true);
   });
 
-  it("release won't delete a same-pid lock it no longer owns (AB-6: per-run nonce, not pid)", () => {
-    const run = acquireGlobalSelfEditLock();
-    expect(run.acquired).toBe(true);
-    // Simulate a reclaimer's lock: SAME pid (self_edit runs in-process), new nonce.
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), nonce: "reclaimer-run" }));
-    releaseGlobalSelfEditLock(run.nonce);
-    expect(existsSync(LOCK)).toBe(true); // a pid-only check would delete the reclaimer's lock
+  it.skipIf(!CAN_CREATE_FILE_SYMLINK)("fails closed without following or removing linked evidence", async () => {
+    const outside = join(DATA_DIR, "outside-lock");
+    writeFileSync(outside, "outside");
+    symlinkSync(outside, LOCK, "file");
+    expect((await acquireGlobalSelfEditLock()).acquired).toBe(false);
+    expect(readFileSync(outside, "utf-8")).toBe("outside");
   });
 
-  it("displaced run's release does NOT delete the force-stealer's live lock (AB-6-rw: per-run nonce, not a module global)", () => {
-    // Run A acquires the lock in-process.
-    const a = acquireGlobalSelfEditLock({ task: "run A" });
-    expect(a.acquired).toBe(true);
-    // Run B force-steals it — same pid (self_edit runs in-process), a NEW nonce,
-    // now the on-disk holder. B is mid-build in the shared node_modules.
-    const b = acquireGlobalSelfEditLock({ force: true, task: "run B" });
-    expect(b.acquired).toBe(true);
-    expect(b.nonce).toBeDefined();
-    expect(b.nonce).not.toBe(a.nonce);
-    expect(JSON.parse(readFileSync(LOCK, "utf-8")).nonce).toBe(b.nonce);
-    // A's finally-release fires with A's OWN nonce. It must leave B's live lock
-    // intact — a module-global nonce (overwritten to B by the force-steal) would
-    // match here and delete B's lock, freeing it while B still builds → a third
-    // self_edit could then run concurrently in the shared node_modules.
-    releaseGlobalSelfEditLock(a.nonce);
-    expect(existsSync(LOCK)).toBe(true);
-    expect(JSON.parse(readFileSync(LOCK, "utf-8")).nonce).toBe(b.nonce);
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(true);
-    // A second self_edit still blocks while B holds the reclaimed lock.
-    expect(acquireGlobalSelfEditLock().acquired).toBe(false);
-    // B's own release (its captured nonce matches disk) finally frees it.
-    releaseGlobalSelfEditLock(b.nonce);
+  it("fails closed when an unrelated process already owns the kernel endpoint", async () => {
+    const server = createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(mutationLockEndpoint(DATA_DIR).listen, resolve);
+    });
+    try { expect((await acquireGlobalSelfEditLock()).acquired).toBe(false); }
+    finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  });
+
+  it("reports the live kernel owner to the boot sweep", async () => {
+    expect(await isSelfEditLockHeldByLiveProcess()).toBe(false);
+    const lock = await acquireGlobalSelfEditLock();
+    expect(lock.acquired).toBe(true);
+    expect(await isSelfEditLockHeldByLiveProcess()).toBe(true);
+    await releaseGlobalSelfEditLock(lock.nonce);
+    expect(await isSelfEditLockHeldByLiveProcess()).toBe(false);
     expect(existsSync(LOCK)).toBe(false);
   });
-});
 
-describe("isSelfEditLockHeldByLiveProcess (boot-sweep guard)", () => {
-  it("is false when no lock file exists", () => {
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
+  it("survives a client that disconnects during the kernel reply", async () => {
+    const lock = await acquireGlobalSelfEditLock({ task: "disconnect owner" });
+    expect(lock.acquired).toBe(true);
+    const socket = createConnection(mutationLockEndpoint(DATA_DIR).listen);
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", () => {
+        socket.write(`${JSON.stringify({ action: "observe", rootHash: "wrong" })}\n`);
+        socket.destroy();
+        resolve();
+      });
+      socket.once("error", reject);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect((await acquireGlobalSelfEditLock({ task: "still blocked" })).acquired).toBe(false);
+    await releaseGlobalSelfEditLock(lock.nonce);
   });
 
-  it("is true while a live run in this process holds the lock", () => {
-    const r = acquireGlobalSelfEditLock();
-    expect(r.acquired).toBe(true);
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(true);
-    releaseGlobalSelfEditLock(r.nonce);
-  });
-
-  it("is true while another live process holds an in-TTL-window lock", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }));
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(true);
-  });
-
-  it("is false for a stale lock whose holder PID is dead", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: DEAD_PID, startedAt: "2020-01-01T00:00:00.000Z" }));
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
-  });
-
-  it("is false for a leaked same-pid lock no live run wrote", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: process.pid, startedAt: "2020-01-01T00:00:00.000Z" }));
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
-  });
-
-  it("is false for another live process's lock held past the TTL", () => {
-    writeFileSync(LOCK, JSON.stringify({ pid: process.ppid, startedAt: new Date(Date.now() - 60 * 60_000).toISOString() }));
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
-  });
-
-  it("is false for a corrupt lock file", () => {
-    writeFileSync(LOCK, "{ not json");
-    expect(isSelfEditLockHeldByLiveProcess()).toBe(false);
+  it("does not let an unauthenticated kernel client revoke a live owner", async () => {
+    let revoked = 0;
+    const lock = await acquireGlobalSelfEditLock({ task: "protected", onRevoke: () => { revoked += 1; } });
+    expect(lock.acquired).toBe(true);
+    const endpoint = mutationLockEndpoint(DATA_DIR);
+    const reply = await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const socket = createConnection(endpoint.listen);
+      let response = "";
+      socket.setEncoding("utf-8");
+      socket.once("error", reject);
+      socket.once("connect", () => socket.write(`${JSON.stringify({ action: "revoke", rootHash: endpoint.rootHash })}\n`));
+      socket.on("data", (chunk) => {
+        response += chunk;
+        if (response.includes("\n")) resolve(JSON.parse(response.split(/\r?\n/, 1)[0]));
+      });
+    });
+    expect(reply.revokeAccepted).toBe(false);
+    expect(revoked).toBe(0);
+    expect((await acquireGlobalSelfEditLock({ task: "still blocked" })).acquired).toBe(false);
+    await releaseGlobalSelfEditLock(lock.nonce);
   });
 });

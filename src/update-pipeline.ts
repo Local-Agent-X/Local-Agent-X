@@ -116,7 +116,7 @@ function syncLiveDeps(installDir: string): { deferred: boolean } {
 export async function applyGitUpdate(repoRoot: string, authToken: string): Promise<GitUpdateResult> {
   // Same machine-wide lock as the self_edit sandbox: both build into the
   // shared node_modules and mutate main, so they must never run concurrently.
-  const lock = acquireGlobalSelfEditLock({ task: "platform update" });
+  const lock = await acquireGlobalSelfEditLock({ task: "platform update" });
   if (!lock.acquired) {
     logger.info(`[update] refused — lock held by ${JSON.stringify(lock.holder ?? "unknown")}`);
     return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
@@ -181,12 +181,12 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     }
 
     logger.info(`[update] validating ${remote.slice(0, 7)} in worktree ${name}`);
-    const deps = gateDeps(name);
+    const deps = await gateDeps(name);
     if (!deps.skipped && !deps.ok) {
       cleanupWorktree(name);
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at deps gate: ${deps.detail.slice(0, 600)}` };
     }
-    const build = gateBuild(name);
+    const build = await gateBuild(name);
     if (!build.ok) {
       cleanupWorktree(name);
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at build gate: ${build.detail.slice(0, 600)}` };
@@ -200,7 +200,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build, bind: bindOutcome.result, smoke: SKIPPED_GATE }, detail: `Update blocked at bind gate: ${bindOutcome.result.detail.slice(0, 600)}` };
     }
     const smoke = await gateSmoke(port, authToken);
-    killProbe(probeProc);
+    await killProbe(probeProc);
     probeProc = null;
     if (!smoke.ok) {
       cleanupWorktree(name);
@@ -272,15 +272,15 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     }
     return { ok: false, fromCommit: "", toCommit: "", detail: `Update pipeline crashed: ${(e as Error).message}` };
   } finally {
-    killProbe(probeProc);
+    await killProbe(probeProc);
     if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
-    releaseGlobalSelfEditLock(lock.nonce);
+    await releaseGlobalSelfEditLock(lock.nonce);
   }
 }
 
 /** Tarball updates share the self-edit lock and the canonical validation gates. */
 export async function applyRollingUpdate(installDir: string, authToken: string): Promise<GitUpdateResult> {
-  const lock = acquireGlobalSelfEditLock({ task: "platform update (rolling)" });
+  const lock = await acquireGlobalSelfEditLock({ task: "platform update (rolling)" });
   if (!lock.acquired) {
     logger.info(`[update] rolling refused — lock held by ${JSON.stringify(lock.holder ?? "unknown")}`);
     return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
@@ -310,7 +310,7 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
   } catch (e) {
     return { ok: false, fromCommit: "", toCommit: "", detail: (e as Error).message };
   } finally {
-    releaseGlobalSelfEditLock(lock.nonce);
+    await releaseGlobalSelfEditLock(lock.nonce);
   }
 }
 
@@ -381,7 +381,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
     }
     return { ok: true, depsChanged, detail: "all gates passed", gates: { deps, build, bind: bindOutcome.result, smoke } };
   } finally {
-    killProbe(probeProc);
+    await killProbe(probeProc);
     if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
     // Junction must go BEFORE any caller rm/copy walks extractDir — a walked
     // junction reaches the live install's real node_modules. A real isolated

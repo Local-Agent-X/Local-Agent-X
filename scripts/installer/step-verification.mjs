@@ -32,7 +32,7 @@ function verifyNpm(context, evidence) {
 
 function verifyConfig(context) {
   const home = context.homeDirectory || homedir();
-  const config = readJson(join(home, ".lax", "config.json"));
+  const config = readJson(join(context.dataDirectory || join(home, ".lax"), "config.json"));
   if (!config) return "absent";
   return config.projectRoot === process.cwd() && typeof config.authToken === "string" && config.authToken.length > 0
     ? "present" : "ambiguous";
@@ -71,7 +71,7 @@ export function verifyInstallStep(id, context, evidence = {}) {
     const result = processes.spawnSync("ollama", ["list"], { encoding: "utf-8" });
     return result.status === 0 ? present(String(result.stdout || "").includes(EMBED_MODEL)) : "ambiguous";
   }
-  if (id === "settings") return present(existsSync(join(context.homeDirectory || homedir(), ".lax", "settings.json")));
+  if (id === "settings") return present(existsSync(join(context.dataDirectory || join(context.homeDirectory || homedir(), ".lax"), "settings.json")));
   if (id === "build") {
     if (!existsSync(join(process.cwd(), "dist", "index.js"))) return "absent";
     return evidence.inFlight ? "ambiguous" : "present";

@@ -2,11 +2,6 @@
  * self_edit sandbox — runs the claude -p subprocess in an isolated worktree
  * and validates that the changes don't brick the agent before merging.
  *
- * Why: self_edit's default mode used to spawn claude -p with bypassPermissions
- * at LAX_REPO_ROOT. If the subprocess wrote broken code, the next server
- * restart loaded broken code, the agent couldn't run, and the user couldn't
- * ask the agent to fix it. Self-bricking.
- *
  * Three gates between subprocess-finished and merge-to-main:
  *   1. Build  — `npm run build` inside worktree must exit 0
  *   2. Bind   — spawn the worktree's server on a probe port; must bind
@@ -31,14 +26,14 @@ import { releaseWorktreeSlot } from "../agency/worktree-core.js";
 import { recordMerge } from "./rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./sandbox-gates.js";
 import { runSurgeon, formatSurgeonOutput } from "./surgeon.js";
-import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
+import { releaseGlobalSelfEditLock, formatGlobalLockBusy } from "./global-lock.js";
 import { fingerprintParentDeps, restoreParentDeps } from "./parent-deps-guard.js";
 import { scanWorktreeForStagedSecrets } from "./exfil-scan.js";
 import { refuteSelfEditMerge } from "./refute-merge.js";
 import { redactSecrets } from "../security/secrets/index.js";
 import { slugify, nowSlug, pickProbePort } from "./sandbox-naming.js";
+import { acquireSandboxLease } from "./sandbox-cancellation.js";
 export { pickProbePort } from "./sandbox-naming.js";
-
 import { createLogger } from "../logger.js";
 const logger = createLogger("self-edit.sandbox");
 
@@ -48,13 +43,10 @@ export interface SandboxResult {
   ok: boolean;
   /** Subprocess output (claude -p) — kept for the chat-agent to surface. */
   output: string;
-  /** Per-gate status, in order. */
   gates: { deps: GateResult; build: GateResult; bind: GateResult; smoke: GateResult };
   /** Branch the worktree was on (preserved on disk if any gate failed). */
   branchName: string;
-  /** Number of files merged on success; null on failure. */
   filesMerged: number | null;
-  /** Reason for failure, populated when ok=false. */
   failure?: string;
   /** True when all gates passed but the merge was deliberately HELD (not a
    *  failure) — currently only the security diff-scope gate (#10), which
@@ -71,7 +63,6 @@ export interface SandboxOpts {
   task: string;
   scopeHint?: string;
   signal?: AbortSignal;
-  /** The full prompt to send to claude -p. */
   fullPrompt: string;
   /** Auth token for the probe smoke-test (POST /api/chat). */
   authToken: string;
@@ -83,7 +74,8 @@ export interface SandboxOpts {
 // ── Main entry ─────────────────────────────────────────────────────────────
 
 export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxResult> {
-  const lock = acquireGlobalSelfEditLock({ task: opts.task });
+  const lease = await acquireSandboxLease(opts.task, opts.signal);
+  const { lock, signal } = lease;
   if (!lock.acquired) {
     return {
       ok: false, output: "",
@@ -103,6 +95,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
   const progress = opts.onProgress ?? (() => { /* no-op */ });
 
   try {
+    signal.throwIfAborted();
     const wt = createNamedWorktree(name, branch, undefined, `self-edit:${lock.nonce}`);
     if (!wt) {
       return {
@@ -125,7 +118,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // the child echoed before it reaches chat/logs (defense-in-depth — a
     // child that read a credential shouldn't surface it through stdout).
     progress("Running source-code repair in sandbox…");
-    const surgeonOutput = redactSecrets(formatSurgeonOutput(await runSurgeon(wt.path, opts.fullPrompt, opts.signal)));
+    const surgeonOutput = redactSecrets(formatSurgeonOutput(await runSurgeon(wt.path, opts.fullPrompt, signal)));
 
     // Parent-deps guard (#2): the parent's node_modules must be UNCHANGED across
     // the run (the only legit install — the deps gate — is isolated to the
@@ -147,9 +140,11 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // Gate 0: deps — isolate node_modules + `npm ci` if a manifest changed.
     // Lazy: skipped (passes) when no dependency change. A failed isolated
     // install blocks the merge before anything else runs.
+    signal.throwIfAborted();
     logger.info(`[self-edit.sandbox] running deps gate`);
     progress("Deps gate: checking for dependency changes…");
-    const deps = gateDeps(name);
+    const deps = await gateDeps(name, signal);
+    signal.throwIfAborted();
     if (!deps.skipped && !deps.ok) {
       logger.warn(`[self-edit.sandbox] deps gate failed: ${deps.detail.slice(0, 200)}`);
       return failResult(surgeonOutput, branch, { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Dependency install failed: ${deps.detail.slice(0, 600)}`);
@@ -159,7 +154,8 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // Gate 1: build
     logger.info(`[self-edit.sandbox] running build gate`);
     progress("Build gate: compiling sandboxed code…");
-    const build = gateBuild(name);
+    const build = await gateBuild(name, signal);
+    signal.throwIfAborted();
     if (!build.ok) {
       logger.warn(`[self-edit.sandbox] build gate failed: ${build.detail.slice(0, 200)}`);
       return failResult(surgeonOutput, branch, { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, `Build failed: ${build.detail.slice(0, 600)}`);
@@ -170,7 +166,8 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const port = await pickProbePort();
     logger.info(`[self-edit.sandbox] running bind gate on port ${port}`);
     progress(`Bind gate: launching probe server on :${port}…`);
-    const bindOutcome = await gateBind(name, port, opts.authToken, opts.signal);
+    const bindOutcome = await gateBind(name, port, opts.authToken, signal);
+    signal.throwIfAborted();
     probeProc = bindOutcome.proc;
     probeDataDir = bindOutcome.dataDir;
     if (!bindOutcome.result.ok) {
@@ -182,7 +179,8 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // Gate 3: smoke
     logger.info(`[self-edit.sandbox] running smoke gate`);
     progress("Smoke gate: exercising probe agent…");
-    const smoke = await gateSmoke(port, opts.authToken, opts.signal);
+    const smoke = await gateSmoke(port, opts.authToken, signal);
+    signal.throwIfAborted();
     if (!smoke.ok) {
       logger.warn(`[self-edit.sandbox] smoke gate failed: ${smoke.detail.slice(0, 200)}`);
       return failResult(surgeonOutput, branch, { deps, build, bind: bindOutcome.result, smoke }, `Agent smoke test failed: ${smoke.detail.slice(0, 600)}`);
@@ -190,7 +188,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     logger.info(`[self-edit.sandbox] smoke gate passed (${smoke.durationMs}ms)`);
 
     // All gates pass — kill probe BEFORE merge so it doesn't hold file handles
-    killProbe(probeProc);
+    await killProbe(probeProc);
     probeProc = null;
 
     // Capture the pre-merge base SHA BEFORE mergeWorktree deletes the registry
@@ -261,8 +259,9 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     const refute = await refuteSelfEditMerge({
       diff: getMergeDeltaDiff(name),
       requestedTask: opts.task,
-      signal: opts.signal,
+      signal,
     });
+    signal.throwIfAborted();
     if (refute.hold) {
       logger.warn(`[self-edit.sandbox] merge diff refuted by skeptics — holding merge for human review: ${refute.reason}`);
       const base = mergeInfo?.baseBranch ?? "main";
@@ -281,6 +280,8 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     }
 
     progress("All gates passed — merging into main…");
+    lease.seal();
+    signal.throwIfAborted();
     const merge = mergeWorktree(name);
     if (!merge.merged) {
       return {
@@ -328,7 +329,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
       failure: `Sandbox crashed: ${(e as Error).message}`,
     };
   } finally {
-    killProbe(probeProc);
+    await killProbe(probeProc);
     if (probeDataDir) {
       try { rmSync(probeDataDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
@@ -339,7 +340,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // would brick every later self_edit AND applyGitUpdate. No-op when the
     // entry is already gone (merged) or was never registered (create failed).
     releaseWorktreeSlot(name);
-    releaseGlobalSelfEditLock(lock.nonce);
+    await releaseGlobalSelfEditLock(lock.nonce);
   }
 }
 

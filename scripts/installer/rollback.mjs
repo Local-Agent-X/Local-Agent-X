@@ -224,6 +224,7 @@ export function createInstallRollback(context) {
       throw new Error("Installer rollback journal package identity does not match this installation.");
     }
     boundBases = { install: value.identity.installBase, data: value.identity.dataBase };
+    context.installerDataRootIdentity = value.identity.dataBase;
     return value;
   };
   const save = (journal) => {
@@ -270,7 +271,7 @@ export function createInstallRollback(context) {
     assertPath(dataDirectory, "installed-source.json");
     if (journal.identity.source) writeDurableJson(sourcePath, journal.identity.source);
     else removePath(dataDirectory, "installed-source.json", { force: true });
-    resetInstallCheckpoint(dataDirectory);
+    resetInstallCheckpoint(dataDirectory, context);
     journal.status = "restored";
     journal.restoredAt = new Date().toISOString();
     journal.reason = reason;
@@ -303,6 +304,7 @@ export function createInstallRollback(context) {
       const installBase = directoryIdentity(root);
       const dataBase = ensureDataDirectory(dataDirectory);
       boundBases = { install: installBase, data: dataBase };
+      context.installerDataRootIdentity = dataBase;
       identity.installBase = installBase;
       identity.dataBase = dataBase;
       if (!ARTIFACTS.every((item) => safePathChain(root, item))) {

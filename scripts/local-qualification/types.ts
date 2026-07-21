@@ -76,3 +76,22 @@ export interface QualificationDriver {
   restart(signal: AbortSignal): Promise<void>;
   cleanup(signal: AbortSignal): Promise<void>;
 }
+
+export {
+  QUALIFICATION_RESULT_SCHEMA,
+  QUALIFICATION_RESULT_VERSION,
+  QUALIFICATION_SCORECARD_SCHEMA,
+  QUALIFICATION_SCORECARD_VERSION,
+  aggregateQualificationResults,
+  parseQualificationResult,
+  parseQualificationScorecard,
+  sealQualificationResult,
+} from "./result-schema.js";
+export type {
+  QualificationEvidenceReference,
+  QualificationFailureKind,
+  QualificationPackContract,
+  QualificationResult,
+  QualificationScorecard as AggregateQualificationScorecard,
+  QualificationStatus,
+} from "./result-schema.js";

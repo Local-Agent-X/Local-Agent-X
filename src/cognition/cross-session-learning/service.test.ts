@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 
 const DAY = 86_400_000;
 const BASE = Date.now();
@@ -125,17 +126,13 @@ describe("cross-session learning management service", () => {
     expect(service.reconcile("assisted", BASE + 12)).toEqual({ signals: [], changed: false });
 
     service.action(id, { action: "activate", expectedActiveVersionId: null }, BASE + 13);
-    rmSync(managedDir(id), { recursive: true, force: true });
-    expect(service.reconcile("assisted", BASE + 14).changed).toBe(true);
-    expect(service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
-
     service.action(id, {
       action: "archive", expectedActiveVersionId: service.list()[0].activeVersionId,
-    }, BASE + 15);
+    }, BASE + 14);
     rmSync(managedDir(id), { recursive: true, force: true });
-    expect(service.reconcile("autonomous", BASE + 16)).toEqual({ signals: [], changed: true });
+    expect(service.reconcile("autonomous", BASE + 15)).toEqual({ signals: [], changed: true });
     expect(service.list()[0]).toMatchObject({ state: "archived", versionCount: 1 });
-    expect(service.reconcile("autonomous", BASE + 17)).toEqual({ signals: [], changed: false });
+    expect(service.reconcile("autonomous", BASE + 16)).toEqual({ signals: [], changed: false });
   });
 
   it("resumes approved activation but never reconstructs a rejected candidate", async () => {
@@ -366,31 +363,196 @@ describe("cross-session learning management service", () => {
     expect(service.list()[0].state).toBe("archived");
   });
 
-  it("resumes approved activation without a fake rejection and heals filesystem-first recovery", async () => {
+  it.each(["assisted", "autonomous"] as const)("resumes durable approval exactly once in %s mode", async (mode) => {
     const first = await system();
     addEvidence(first.learner);
     first.service.reconcile("assisted", BASE + 10);
     const id = first.service.list()[0].id;
     first.learner.setCandidateState(id, "approved", "Interrupted activation", BASE + 11);
-    expect(first.service.reconcile("assisted", BASE + 12).changed).toBe(true);
-    expect(first.service.list()[0].state).toBe("active");
+    expect(first.service.reconcile(mode, BASE + 12).changed).toBe(true);
+    expect(first.service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
     expect(first.service.detail(id)!.history.some((entry) => entry.to === "rejected")).toBe(false);
-    first.service.action(id, { action: "archive", expectedActiveVersionId: first.service.list()[0].activeVersionId }, BASE + 13);
+    const lifecycle = await import("../../protocols/learned-lifecycle.js");
+    const record = lifecycle.loadLearnedProtocol(id);
+    expect(record.versions).toHaveLength(1);
+    expect(record.activationHistory).toHaveLength(1);
+    expect(record.activationHistory![0]).toMatchObject({ kind: "activate", reason: "Resumed approved activation" });
+
+    expect(first.service.reconcile(mode, BASE + 13)).toEqual({ signals: [], changed: false });
+    const repeated = lifecycle.loadLearnedProtocol(id);
+    expect(repeated.versions).toHaveLength(1);
+    expect(repeated.activationHistory).toHaveLength(1);
+    expect(first.service.detail(id)!.history.map((entry) => entry.to)).toEqual(["approved", "active"]);
+  });
+
+  it("refreshes a long-lived service before exposing another process's candidate intent", async () => {
+    const first = await system();
+    addEvidence(first.learner);
+    first.service.reconcile("assisted", BASE + 10);
+    const id = first.service.list()[0].id;
 
     vi.resetModules();
     const second = await system();
+    second.service.action(id, { action: "reject" }, BASE + 11);
+
+    expect(first.service.list()[0].state).toBe("rejected");
+    expect(first.service.detail(id)!.history.at(-1)).toMatchObject({ to: "rejected" });
+  });
+
+  it("keeps lifecycle activation authoritative when candidate projection is locked, then heals", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    const historyBefore = structuredClone(learner.getCandidates()[0].transitions);
+    const lockPath = join(process.env.LAX_DATA_DIR!, "cross-session-data.json.lock.sqlite");
+    const lock = new Database(lockPath);
+    lock.exec("BEGIN IMMEDIATE");
+    try {
+      const activated = service.action(id, { action: "activate", expectedActiveVersionId: null }, BASE + 11);
+      expect(activated).toMatchObject({ state: "active", activeVersionId: expect.any(String) });
+      expect(learner.getCandidates()[0].state).toBe("candidate");
+      learner.refresh();
+      expect(learner.getCandidates()[0].transitions).toEqual(historyBefore);
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+
+    expect(service.reconcile("assisted", BASE + 12).changed).toBe(true);
+    expect(learner.getCandidates()[0].state).toBe("active");
+    expect(learner.getCandidates()[0].transitions.slice(-2).map((entry) => entry.to)).toEqual(["approved", "active"]);
+    expect(service.reconcile("assisted", BASE + 13)).toEqual({ signals: [], changed: false });
+  }, 15_000);
+
+  it("heals one atomic rollback projection after lifecycle success under lock contention", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("autonomous", BASE + 10);
+    const id = service.list()[0].id;
+    const firstVersion = service.list()[0].activeVersionId!;
+    addEvidence(learner, 6);
+    service.reconcile("assisted", BASE + 8 * DAY);
+    const secondVersion = service.detail(id)!.versions.at(-1)!.id;
+    service.action(id, {
+      action: "activate", versionId: secondVersion, expectedActiveVersionId: firstVersion,
+    }, BASE + 8 * DAY + 1);
+    const historyBefore = structuredClone(learner.getCandidates()[0].transitions);
+    const lock = new Database(join(process.env.LAX_DATA_DIR!, "cross-session-data.json.lock.sqlite"));
+    lock.exec("BEGIN IMMEDIATE");
+    try {
+      service.action(id, {
+        action: "rollback", versionId: firstVersion, expectedActiveVersionId: secondVersion,
+      }, BASE + 8 * DAY + 2);
+      learner.refresh();
+      expect(learner.getCandidates()[0].transitions).toEqual(historyBefore);
+      expect(service.list()[0]).toMatchObject({ state: "active", activeVersionId: firstVersion });
+    } finally {
+      lock.exec("ROLLBACK");
+      lock.close();
+    }
+
+    expect(service.reconcile("assisted", BASE + 8 * DAY + 3).changed).toBe(true);
+    const tail = service.detail(id)!.history.slice(-4);
+    expect(tail.map((entry) => entry.to)).toEqual(["rolled-back", "candidate", "approved", "active"]);
+    expect(tail.map((entry) => entry.reason)).toEqual([
+      "Rolled back by user", "Rollback retained active workflow", "Rollback reconciled", "Rollback reconciled",
+    ]);
+    expect(service.reconcile("assisted", BASE + 8 * DAY + 4)).toEqual({ signals: [], changed: false });
+    expect(service.detail(id)!.history.slice(-4)).toEqual(tail);
+  }, 15_000);
+
+  it("heals a lifecycle-first restart exactly once without duplicate drafts or activation history", async () => {
+    const first = await system();
+    addEvidence(first.learner);
+    first.service.reconcile("assisted", BASE + 10);
+    const id = first.service.list()[0].id;
     const lifecycle = await import("../../protocols/learned-lifecycle.js");
-    const record = lifecycle.loadLearnedProtocol(id);
+    const draft = lifecycle.loadLearnedProtocol(id);
     lifecycle.activateLearnedProtocol({
       slug: id,
-      versionId: record.versions[0].id,
-      expectedActiveVersionId: record.activeVersionId,
+      versionId: draft.versions[0].id,
+      expectedActiveVersionId: null,
+      reason: "Lifecycle committed before projection",
+      timestamp: BASE + 11,
     });
-    expect(second.learner.getCandidates()[0].state).toBe("archived");
 
-    const healed = second.service.reconcile("assisted", BASE + 14);
-    expect(healed.changed).toBe(true);
-    expect(second.service.list()[0].state).toBe("active");
-    expect(second.service.detail(id)!.history.map((entry) => entry.to)).toEqual(expect.arrayContaining(["candidate", "approved", "active"]));
+    vi.resetModules();
+    const second = await system();
+    expect(second.service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
+    expect(second.service.reconcile("assisted", BASE + 12).changed).toBe(true);
+    const healed = (await import("../../protocols/learned-lifecycle.js")).loadLearnedProtocol(id);
+    expect(healed.versions).toHaveLength(1);
+    expect(healed.activationHistory).toHaveLength(1);
+    expect(second.service.reconcile("assisted", BASE + 13)).toEqual({ signals: [], changed: false });
+    expect(second.service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
+  });
+
+  it("uses an active lifecycle record over stale rejected candidate suppression", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    service.action(id, { action: "reject" }, BASE + 11);
+    const lifecycle = await import("../../protocols/learned-lifecycle.js");
+    const draft = lifecycle.loadLearnedProtocol(id);
+    lifecycle.activateLearnedProtocol({
+      slug: id,
+      versionId: draft.versions[0].id,
+      expectedActiveVersionId: null,
+      timestamp: BASE + 12,
+    });
+
+    expect(service.list()[0].state).toBe("active");
+    expect(service.reconcile("assisted", BASE + 13).changed).toBe(true);
+    expect(learner.getCandidates()[0].state).toBe("active");
+  });
+
+  it("projects lifecycle activation from the latest candidate state in one mutation", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    const project = learner.projectCandidateState.bind(learner);
+    vi.spyOn(learner, "projectCandidateState").mockImplementationOnce((...args) => {
+      learner.setCandidateState(id, "rejected", "Concurrent rejection", BASE + 11);
+      return project(...args);
+    });
+
+    service.action(id, { action: "activate", expectedActiveVersionId: null }, BASE + 12);
+
+    expect(learner.getCandidates()[0].state).toBe("active");
+    expect(service.detail(id)!.history.slice(-4).map((entry) => entry.to)).toEqual([
+      "rejected", "candidate", "approved", "active",
+    ]);
+  });
+
+  it("fails a projection with no partial transition history when no legal path exists", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    learner.setCandidateState(id, "approved", "Approved", BASE + 11);
+    const before = learner.getCandidates()[0];
+
+    expect(() => learner.projectCandidateState(id, "candidate", "Invalid recovery", BASE + 12))
+      .toThrow("Approved learned workflow requires activation recovery");
+    learner.refresh();
+    expect(learner.getCandidates()[0]).toEqual(before);
+  });
+
+  it("never activates a draft during repeated assisted reconciliation", async () => {
+    const { learner, service } = await system();
+    addEvidence(learner);
+    service.reconcile("assisted", BASE + 10);
+    const id = service.list()[0].id;
+    const lifecycle = await import("../../protocols/learned-lifecycle.js");
+
+    expect(service.reconcile("assisted", BASE + 11)).toEqual({ signals: [], changed: false });
+    expect(service.reconcile("assisted", BASE + 12)).toEqual({ signals: [], changed: false });
+    const record = lifecycle.loadLearnedProtocol(id);
+    expect(record).toMatchObject({ state: "draft", activeVersionId: null });
+    expect(record.versions).toHaveLength(1);
+    expect(record.activationHistory ?? []).toHaveLength(0);
   });
 });

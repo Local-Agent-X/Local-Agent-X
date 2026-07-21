@@ -19,7 +19,7 @@ import {
   isStrongerRefinement,
   selectSafetyRecovery,
 } from "../../protocols/learned-refinement.js";
-import { CrossSessionLearner } from "./learner.js";
+import { CrossSessionLearner, LearningPersistenceUnavailableError } from "./learner.js";
 import type { LearnedCandidate, LearnedCandidateState } from "./types.js";
 
 export interface LearningSummary {
@@ -62,10 +62,12 @@ export class CrossSessionLearningService {
   constructor(private readonly learner = CrossSessionLearner.getInstance()) {}
 
   list(): LearningSummary[] {
+    this.learner.refresh();
     return this.learner.getCandidates().map((candidate) => this.summary(candidate, this.recordFor(candidate.id)));
   }
 
   detail(id: string): LearningDetail | null {
+    this.learner.refresh();
     const candidate = this.candidate(id);
     if (!candidate) return null;
     const record = this.recordFor(id);
@@ -78,6 +80,7 @@ export class CrossSessionLearningService {
   }
 
   action(id: string, input: LearningAction, now = Date.now()): LearningDetail {
+    this.learner.refresh();
     const candidate = this.requireCandidate(id);
     if (input.action === "reject") {
       if (this.recordFor(id)?.state === "active") {
@@ -93,19 +96,19 @@ export class CrossSessionLearningService {
         slug: id, versionId, expectedActiveVersionId: input.expectedActiveVersionId,
         reason: "Activated by user", timestamp: now,
       });
-      this.healState(candidate, active, now, "Activated by user");
+      this.projectState(candidate.id, active, now, "Activated by user");
     } else if (input.action === "archive") {
       const archived = archiveLearnedProtocol({
         slug: id, expectedActiveVersionId: input.expectedActiveVersionId,
         reason: "Archived by user", timestamp: now,
       });
-      this.healState(candidate, archived, now, "Archived by user");
+      this.projectState(candidate.id, archived, now, "Archived by user");
     } else if (input.action === "restore") {
       const active = restoreLearnedProtocol({
         slug: id, expectedActiveVersionId: input.expectedActiveVersionId,
         reason: "Restored by user", timestamp: now,
       });
-      this.healState(candidate, active, now, "Restored by user");
+      this.projectState(candidate.id, active, now, "Restored by user");
     } else {
       const active = rollbackLearnedProtocol({
         slug: id,
@@ -114,21 +117,21 @@ export class CrossSessionLearningService {
         reason: "Rolled back by user",
         timestamp: now,
       });
-      this.recordRollback(id, now);
-      this.healState(this.requireCandidate(id), active, now, "Rollback reconciled");
+      this.projectState(id, active, now, "Rollback reconciled");
     }
     return this.detail(id)!;
   }
 
   reconcile(mode: "assisted" | "autonomous", now = Date.now()): LearningReconcileResult {
+    this.learner.refresh();
     let changed = false;
     const signals: ModuleSignal[] = [];
     const signaledIds = new Set<string>();
     const safetyRecoveredIds = new Set<string>();
 
     for (let candidate of this.learner.getCandidates()) {
-      if (["rejected", "rolled-back"].includes(candidate.state)) continue;
       let record = this.recordFor(candidate.id);
+      if (["rejected", "rolled-back"].includes(candidate.state) && record?.state !== "active") continue;
       if (!record) {
         const rebuilt = this.learner.draftCandidate(candidate.id);
         record = loadLearnedProtocol(rebuilt.slug);
@@ -159,8 +162,7 @@ export class CrossSessionLearningService {
             reason: recovery.reason,
             timestamp: now,
           });
-          this.recordRollback(candidate.id, now, recovery.reason);
-          changed = this.healState(this.requireCandidate(candidate.id), record, now, recovery.reason) || changed;
+          changed = this.projectState(candidate.id, record, now, recovery.reason) || changed;
           changed = true;
           safetyRecoveredIds.add(candidate.id);
           candidate = this.requireCandidate(candidate.id);
@@ -171,7 +173,7 @@ export class CrossSessionLearningService {
             reason: recovery.reason,
             timestamp: now,
           });
-          changed = this.healState(candidate, record, now, recovery.reason) || changed;
+          changed = this.projectState(candidate.id, record, now, recovery.reason) || changed;
           changed = true;
           safetyRecoveredIds.add(candidate.id);
           continue;
@@ -185,10 +187,9 @@ export class CrossSessionLearningService {
           reason: "Resumed approved activation",
           timestamp: now,
         });
-        changed = this.healState(candidate, record, now, "Resumed approved activation") || changed;
-        candidate = this.requireCandidate(candidate.id);
+        changed = true;
       }
-      changed = this.healState(candidate, record, now, "Recovered cross-store state") || changed;
+      changed = this.projectState(candidate.id, record, now, "Recovered cross-store state") || changed;
       if (mode === "autonomous" && record.state === "active" && !safetyRecoveredIds.has(candidate.id)) {
         const target = this.newestVersion(record);
         const activeVersionId = record.activeVersionId;
@@ -206,7 +207,7 @@ export class CrossSessionLearningService {
             reason: "Activated stronger refinement automatically",
             timestamp: now,
           });
-          changed = this.healState(this.requireCandidate(candidate.id), record, now, "Activated automatically") || changed;
+          changed = this.projectState(candidate.id, record, now, "Activated automatically") || changed;
           signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
           signaledIds.add(candidate.id);
           changed = true;
@@ -220,7 +221,7 @@ export class CrossSessionLearningService {
           reason: "Activated automatically",
           timestamp: now,
         });
-        changed = this.healState(this.requireCandidate(candidate.id), active, now, "Activated automatically") || changed;
+        changed = this.projectState(candidate.id, active, now, "Activated automatically") || changed;
         signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
         signaledIds.add(candidate.id);
         changed = true;
@@ -247,7 +248,7 @@ export class CrossSessionLearningService {
           reason: before.activeVersionId ? "Activated stronger refinement automatically" : "Activated automatically",
           timestamp: now,
         });
-        changed = this.healState(this.requireCandidate(candidate.id), active, now, "Activated automatically") || changed;
+        changed = this.projectState(candidate.id, active, now, "Activated automatically") || changed;
       }
     }
     if (!signaledIds.has(candidate.id)) {
@@ -284,7 +285,10 @@ export class CrossSessionLearningService {
 
   private summary(candidate: LearnedCandidate, record: LearnedProtocolRecord | null): LearningSummary {
     const latest = record?.versions.at(-1)?.createdAt;
-    const effectiveState = record?.state === "active" ? "active" : record?.state === "archived" ? "archived" : candidate.state;
+    const effectiveState = record?.state === "active" ? "active"
+      : record?.state === "archived" ? "archived"
+      : record && !["rejected", "rolled-back"].includes(candidate.state) ? "candidate"
+      : candidate.state;
     return {
       id: candidate.id,
       name: candidate.suggestion.name,
@@ -306,26 +310,27 @@ export class CrossSessionLearningService {
     };
   }
 
-  private healState(candidate: LearnedCandidate, record: LearnedProtocolRecord, now: number, reason: string): boolean {
+  private projectState(
+    id: string,
+    record: LearnedProtocolRecord,
+    now: number,
+    reason: string,
+  ): boolean {
     const target = record.state === "active" ? "active" : record.state === "archived" ? "archived" : "candidate";
-    if (candidate.state === target) return false;
-    for (const state of this.path(candidate.state, target)) {
-      this.learner.setCandidateState(candidate.id, state, reason, now);
+    const rollback = record.activationHistory?.at(-1);
+    const pendingRollback = target === "active" && rollback?.kind === "rollback" ? rollback : undefined;
+    const projectionReason = pendingRollback?.reason === "Rolled back by user" ? "Rollback reconciled"
+      : pendingRollback?.reason ?? reason;
+    try {
+      return this.learner.projectCandidateState(id, target, projectionReason, now, pendingRollback && {
+        reason: pendingRollback.reason,
+        timestamp: pendingRollback.timestamp,
+      });
     }
-    return true;
-  }
-
-  private path(from: LearnedCandidateState, to: "candidate" | "active" | "archived"): LearnedCandidateState[] {
-    if (to === "active") {
-      if (from === "candidate") return ["approved", "active"];
-      if (from === "approved") return ["active"];
-      if (from === "active") return [];
-      return ["candidate", "approved", "active"];
+    catch (error) {
+      if (error instanceof LearningPersistenceUnavailableError) return false;
+      throw error;
     }
-    if (to === "archived") return from === "archived" ? [] : ["archived"];
-    if (from === "active") return ["rolled-back", "candidate"];
-    if (from === "approved") throw new Error("Approved learned workflow requires activation recovery");
-    return from === "candidate" ? [] : ["candidate"];
   }
 
   private safetyRecovery(record: LearnedProtocolRecord) {
@@ -352,13 +357,6 @@ export class CrossSessionLearningService {
       && entry.reason.startsWith("Safety rollback:"));
   }
 
-  private recordRollback(id: string, now: number, reason = "Rolled back by user"): void {
-    const candidate = this.requireCandidate(id);
-    if (candidate.state === "active") {
-      this.learner.setCandidateState(id, "rolled-back", reason, now);
-      this.learner.setCandidateState(id, "candidate", "Rollback retained active workflow", now);
-    }
-  }
 }
 
 const learningService = new CrossSessionLearningService();

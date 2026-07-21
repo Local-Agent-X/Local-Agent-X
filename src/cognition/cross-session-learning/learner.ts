@@ -60,6 +60,10 @@ export class CrossSessionLearner {
     return CrossSessionLearner.instance;
   }
 
+  refresh(): void {
+    this.data = loadData();
+  }
+
   recordAction(
     sessionId: string,
     action: { type: string; details: string; timestamp: number }
@@ -177,8 +181,41 @@ export class CrossSessionLearner {
       data.candidates[index] = transitionCandidate(data.candidates[index], state, now, reason);
       return id;
     });
-    if (!committed) throw new Error("Cross-session learning persistence unavailable");
+    if (!committed) throw new LearningPersistenceUnavailableError();
     return structuredClone(this.requireCommittedCandidate(id));
+  }
+
+  projectCandidateState(
+    id: string,
+    target: "candidate" | "active" | "archived",
+    reason: string,
+    now = Date.now(),
+    rollback?: { reason: string; timestamp: number },
+  ): boolean {
+    const committed = this.commit((data) => {
+      const index = data.candidates.findIndex((candidate) =>
+        candidate.id === id && hasCandidateEvidenceIdentity(candidate)
+      );
+      if (index < 0) throw new Error(`Unknown learned candidate: ${id}`);
+      let current = data.candidates[index];
+      const pendingRollback = rollback && !current.transitions.some((entry) =>
+        entry.to === "rolled-back"
+        && entry.timestamp === rollback.timestamp
+        && entry.reason === rollback.reason
+      ) ? rollback : undefined;
+      const path = candidateProjectionPath(current.state, target, pendingRollback !== undefined);
+      const transitionNow = pendingRollback?.timestamp ?? now;
+      for (const state of path) {
+        const transitionReason = state === "rolled-back" ? pendingRollback?.reason
+          : current.state === "rolled-back" && state === "candidate" ? "Rollback retained active workflow"
+          : reason;
+        current = transitionCandidate(current, state, transitionNow, transitionReason);
+      }
+      data.candidates[index] = current;
+      return path.length > 0;
+    });
+    if (!committed) throw new LearningPersistenceUnavailableError();
+    return committed.value;
   }
 
   draftCandidate(id: string, opportunity?: LearnedCandidate): LearnedCandidateDraftResult {
@@ -277,4 +314,29 @@ export class CrossSessionLearner {
     if (!candidate) throw new Error(`Committed learned candidate is missing: ${id}`);
     return candidate;
   }
+}
+
+export class LearningPersistenceUnavailableError extends Error {
+  constructor() {
+    super("Cross-session learning persistence unavailable");
+    this.name = "LearningPersistenceUnavailableError";
+  }
+}
+
+function candidateProjectionPath(
+  from: LearnedCandidateState,
+  target: "candidate" | "active" | "archived",
+  recordRollback: boolean,
+): LearnedCandidateState[] {
+  if (target === "active") {
+    if (recordRollback && from === "active") return ["rolled-back", "candidate", "approved", "active"];
+    if (from === "active") return [];
+    if (from === "approved") return ["active"];
+    if (from === "candidate") return ["approved", "active"];
+    return ["candidate", "approved", "active"];
+  }
+  if (target === "archived") return from === "archived" ? [] : ["archived"];
+  if (from === "active") return ["rolled-back", "candidate"];
+  if (from === "approved") throw new Error("Approved learned workflow requires activation recovery");
+  return from === "candidate" ? [] : ["candidate"];
 }

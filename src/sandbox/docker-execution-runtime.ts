@@ -1,4 +1,6 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
+import { realpathSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -63,6 +65,11 @@ export interface DockerExecutionRuntime {
   stop(containerId: string): Promise<void>;
 }
 
+export interface DockerExecutionPolicy {
+  approvedMountRoots: readonly string[];
+  allowedNetwork: string | null;
+}
+
 export function createDockerCommandRunner(binary = "docker"): DockerCommandRunner {
   return async (args, options = {}) => {
     const execOptions: ExecFileOptions = {
@@ -77,7 +84,10 @@ export function createDockerCommandRunner(binary = "docker"): DockerCommandRunne
 }
 
 export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
-  constructor(private readonly run: DockerCommandRunner = createDockerCommandRunner()) {}
+  constructor(
+    private readonly run: DockerCommandRunner = createDockerCommandRunner(),
+    private readonly policy: DockerExecutionPolicy = { approvedMountRoots: [], allowedNetwork: null },
+  ) {}
 
   async probe(): Promise<boolean> {
     try {
@@ -108,7 +118,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   }
 
   async create(spec: DockerContainerSpec): Promise<DockerContainerIdentity> {
-    validateSpec(spec);
+    validateSpec(spec, this.policy);
     const args = [
       "create", "--name", spec.name,
       "--read-only", "--cap-drop", "ALL",
@@ -184,14 +194,19 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   }
 }
 
-function validateSpec(spec: DockerContainerSpec): void {
+function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy): void {
   if (!DOCKER_NAME.test(spec.name)) throw new Error("invalid container execution name");
   if (!PINNED_IMAGE.test(spec.image.reference) || !SHA256.test(spec.image.requestedDigest)
     || !SHA256.test(spec.image.imageId)) throw new Error("invalid container execution image identity");
   if (spec.network !== "none" && !NETWORK_NAME.test(spec.network.name)) {
     throw new Error("invalid container execution network");
   }
-  if (!/^\d+(?:[kmg])?$/i.test(spec.memoryLimit)) throw new Error("invalid container memory limit");
+  if (spec.network !== "none" && (policy.allowedNetwork === null
+    || spec.network.name !== policy.allowedNetwork
+    || ["host", "default", "bridge", "none"].includes(spec.network.name.toLowerCase()))) {
+    throw new Error("container execution network is not approved");
+  }
+  if (!validMemoryLimit(spec.memoryLimit)) throw new Error("invalid container memory limit");
   if (!Number.isSafeInteger(spec.pidsLimit) || spec.pidsLimit < 16 || spec.pidsLimit > 4096) {
     throw new Error("invalid container pid limit");
   }
@@ -205,8 +220,39 @@ function validateSpec(spec: DockerContainerSpec): void {
       || mount.target === "/" || mount.source.includes("\0") || mount.target.includes("..")) {
       throw new Error("invalid container execution mount");
     }
-    if (mount.target === "/var/run/docker.sock") throw new Error("Docker socket mount is forbidden");
+    const source = resolve(mount.source);
+    if (mount.target === "/var/run/docker.sock" || dockerSocketPath(source)) {
+      throw new Error("Docker socket mount is forbidden");
+    }
+    let canonical: string;
+    try { canonical = realpathSync(source); }
+    catch { throw new Error("container execution mount source is unavailable"); }
+    if (dockerSocketPath(canonical)) {
+      throw new Error("Docker socket mount is forbidden");
+    }
+    const roots = policy.approvedMountRoots.map(root => {
+      try { return realpathSync(resolve(root)); }
+      catch { throw new Error("approved container mount root is unavailable"); }
+    });
+    if (!roots.some(root => canonical === root || canonical.startsWith(root.endsWith(sep) ? root : root + sep))) {
+      throw new Error("container execution mount source is outside approved roots");
+    }
   }
+}
+
+function validMemoryLimit(value: string): boolean {
+  const match = /^(\d+)([kmg])?$/i.exec(value);
+  if (!match) return false;
+  const amount = Number(match[1]);
+  const multiplier = match[2]?.toLowerCase() === "g" ? 1024 ** 3
+    : match[2]?.toLowerCase() === "m" ? 1024 ** 2
+      : match[2]?.toLowerCase() === "k" ? 1024 : 1;
+  const bytes = amount * multiplier;
+  return Number.isSafeInteger(bytes) && bytes >= 64 * 1024 ** 2 && bytes <= 64 * 1024 ** 3;
+}
+
+function dockerSocketPath(path: string): boolean {
+  return path.replace(/\\/g, "/").toLowerCase().endsWith("/docker.sock");
 }
 
 function bindMountArg(mount: DockerBindMount): string {

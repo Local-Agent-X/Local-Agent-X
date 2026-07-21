@@ -36,6 +36,18 @@ describe("execution owner claim", () => {
       isContainerAlive: () => false,
     })).toBe(false);
   });
+
+  it("accepts an explicit process owner marker but rejects a future heartbeat", () => {
+    const processClaim = {
+      ...containerClaim(), ownerKind: "process" as const,
+      containerId: undefined, containerCreatedAt: undefined, imageDigest: undefined,
+    };
+    expect(parseProcessExecutionClaim(processClaim).ownerKind).toBe("process");
+    const future = { ...containerClaim(), heartbeatAt: "2027-07-21T12:00:00.000Z" };
+    expect(isLiveProcessExecutionClaim(future, {
+      now: () => Date.parse(now), isContainerAlive: () => true,
+    })).toBe(false);
+  });
 });
 
 function containerClaim(): ContainerExecutionClaim {

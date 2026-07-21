@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { ensureDurableDirectory, fsyncDirectory } from "../persistence/durable-directory.js";
 import { opDir } from "../ops/event-log.js";
@@ -68,7 +69,12 @@ export interface ProcessClaimLivenessOptions {
   now?: () => number;
   isPidAlive?: (pid: number) => boolean;
   isContainerAlive?: (claim: ContainerExecutionClaim) => boolean;
+  inspectContainer?: (claim: ContainerExecutionClaim) => ContainerClaimInspection;
+  stopContainer?: (claim: ContainerExecutionClaim) => boolean;
 }
+
+export type ContainerClaimInspection = "live" | "dead" | "changed" | "unavailable";
+const FUTURE_HEARTBEAT_SKEW_MS = 5_000;
 
 function claimPath(opId: string): string {
   return join(opDir(opId), "process-execution.json");
@@ -99,7 +105,7 @@ export function parseProcessExecutionClaim(value: unknown): ExecutionOwnerClaim 
       || typeof claim.imageDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(claim.imageDigest)) {
       throw new Error("ambiguous container execution claim");
     }
-  } else if (claim.ownerKind !== undefined || claim.containerId !== undefined
+  } else if ((claim.ownerKind !== undefined && claim.ownerKind !== "process") || claim.containerId !== undefined
     || claim.containerCreatedAt !== undefined || claim.imageDigest !== undefined) {
     throw new Error("ambiguous process execution claim owner");
   }
@@ -117,10 +123,14 @@ export function isLiveProcessExecutionClaim(
   options: ProcessClaimLivenessOptions = {},
 ): boolean {
   const now = options.now ?? Date.now;
-  const fresh = now() - Date.parse(claim.heartbeatAt) <= PROCESS_EXECUTION_CLAIM_FRESH_MS;
+  const age = now() - Date.parse(claim.heartbeatAt);
+  const fresh = age >= -FUTURE_HEARTBEAT_SKEW_MS && age <= PROCESS_EXECUTION_CLAIM_FRESH_MS;
   if (!fresh) return false;
   if (claim.ownerKind === "container") {
-    return options.isContainerAlive ? options.isContainerAlive(claim) : true;
+    const inspection = options.isContainerAlive
+      ? (options.isContainerAlive(claim) ? "live" : "dead")
+      : (options.inspectContainer ?? inspectContainerClaim)(claim);
+    return inspection === "live";
   }
   return (options.isPidAlive ?? isPidAlive)(claim.pid);
 }
@@ -128,10 +138,17 @@ export function isLiveProcessExecutionClaim(
 export function checkProcessExecutionRecoveryOwnership(
   opId: string,
   cleanupStale = false,
+  options: ProcessClaimLivenessOptions = {},
 ): "live" | "clear" | "changed" {
   const claim = readProcessExecutionClaim(opId);
   if (!claim) return "clear";
-  if (isLiveProcessExecutionClaim(claim)) return "live";
+  if (isLiveProcessExecutionClaim(claim, options)) return "live";
+  if (claim.ownerKind === "container") {
+    const inspection = options.inspectContainer?.(claim) ?? inspectContainerClaim(claim);
+    if (inspection === "changed" || inspection === "unavailable") return "changed";
+    if (!cleanupStale) return "clear";
+    if (inspection === "live" && !(options.stopContainer ?? stopContainerClaim)(claim)) return "changed";
+  }
   if (!cleanupStale) return "clear";
   return removeProcessExecutionClaim(claim) ? "clear" : "changed";
 }
@@ -210,4 +227,28 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function inspectContainerClaim(claim: ContainerExecutionClaim): ContainerClaimInspection {
+  const result = spawnSync("docker", [
+    "container", "inspect", claim.containerId,
+    "--format", "{{.Id}}\n{{.Created}}\n{{.Image}}\n{{.State.Running}}",
+  ], { encoding: "utf8", windowsHide: true, timeout: 5_000 });
+  if (result.error) return "unavailable";
+  if (result.status !== 0) {
+    return /no such (?:object|container)/i.test(result.stderr ?? "") ? "dead" : "unavailable";
+  }
+  const [id, createdAt, imageId, running] = (result.stdout ?? "").trim().split(/\r?\n/);
+  if (id !== claim.containerId || createdAt !== claim.containerCreatedAt || imageId !== claim.imageDigest) {
+    return "changed";
+  }
+  return running === "true" ? "live" : running === "false" ? "dead" : "changed";
+}
+
+function stopContainerClaim(claim: ContainerExecutionClaim): boolean {
+  if (inspectContainerClaim(claim) !== "live") return false;
+  const result = spawnSync("docker", ["rm", "--force", claim.containerId], {
+    encoding: "utf8", windowsHide: true, timeout: 30_000,
+  });
+  return !result.error && result.status === 0;
 }

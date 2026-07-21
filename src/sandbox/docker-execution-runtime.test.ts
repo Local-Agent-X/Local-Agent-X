@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   DockerCliExecutionRuntime,
   type DockerCommandRunner,
@@ -10,13 +13,17 @@ const imageId = `sha256:${"b".repeat(64)}`;
 const reference = `registry.example/lax-worker@${digest}`;
 const containerId = "c".repeat(64);
 const createdAt = "2026-07-21T12:00:00.000Z";
+const mountRoot = mkdtempSync(join(tmpdir(), "lax-docker-runtime-"));
+const mountSource = join(mountRoot, "op-1");
+writeFileSync(mountSource, "state");
+afterAll(() => rmSync(mountRoot, { recursive: true, force: true }));
 
 describe("DockerCliExecutionRuntime", () => {
   it("requires an exact digest pin and verifies the local image identity", async () => {
     const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
       stdout: `${JSON.stringify([reference])}\n${imageId}\n`, stderr: "",
     });
-    const runtime = new DockerCliExecutionRuntime(run);
+    const runtime = new DockerCliExecutionRuntime(run, policy());
 
     await expect(runtime.resolvePinnedImage("registry.example/lax-worker:latest"))
       .rejects.toThrow("pinned by sha256");
@@ -31,7 +38,7 @@ describe("DockerCliExecutionRuntime", () => {
       .mockResolvedValueOnce({
         stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "",
       });
-    const runtime = new DockerCliExecutionRuntime(run);
+    const runtime = new DockerCliExecutionRuntime(run, policy());
     await expect(runtime.create(spec())).resolves.toEqual({
       containerId, createdAt, imageId, running: false, exitCode: 0,
     });
@@ -46,9 +53,9 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("rejects a Docker socket mount and never invokes Docker", async () => {
     const run = vi.fn<DockerCommandRunner>();
-    const runtime = new DockerCliExecutionRuntime(run);
+    const runtime = new DockerCliExecutionRuntime(run, policy());
     const input = spec();
-    input.mounts = [{ source: "/var/run/docker.sock", target: "/var/run/docker.sock", readOnly: false }];
+    input.mounts = [{ source: "/var/run/docker.sock", target: "/tmp/daemon.sock", readOnly: false }];
     await expect(runtime.create(input)).rejects.toThrow("Docker socket mount is forbidden");
     expect(run).not.toHaveBeenCalled();
   });
@@ -60,9 +67,19 @@ describe("DockerCliExecutionRuntime", () => {
         stdout: `${containerId}\n${createdAt}\nsha256:${"d".repeat(64)}\nfalse\n0\n`, stderr: "",
       })
       .mockResolvedValueOnce({ stdout: containerId, stderr: "" });
-    await expect(new DockerCliExecutionRuntime(run).create(spec()))
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
       .rejects.toThrow("image identity changed");
     expect(run.mock.calls[2][0]).toEqual(["rm", "--force", containerId]);
+  });
+
+  it("rejects host networking and a zero memory fence", async () => {
+    const run = vi.fn<DockerCommandRunner>();
+    const runtime = new DockerCliExecutionRuntime(run, policy());
+    await expect(runtime.create({ ...spec(), network: { name: "host" } }))
+      .rejects.toThrow("network is not approved");
+    await expect(runtime.create({ ...spec(), memoryLimit: "0g" }))
+      .rejects.toThrow("invalid container memory limit");
+    expect(run).not.toHaveBeenCalled();
   });
 });
 
@@ -72,10 +89,14 @@ function spec(): DockerContainerSpec {
     image: { reference, requestedDigest: digest, imageId },
     command: ["node", "/opt/lax/container-worker-entry.js"],
     environment: { LAX_OP_ID: "op-1" },
-    mounts: [{ source: "/tmp/op-1", target: "/var/lib/lax-op", readOnly: false }],
+    mounts: [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }],
     network: { name: "lax-egress" },
     memoryLimit: "2g",
     pidsLimit: 256,
     labels: { "local-agent-x.op-id": "op-1" },
   };
+}
+
+function policy() {
+  return { approvedMountRoots: [mountRoot], allowedNetwork: "lax-egress" };
 }

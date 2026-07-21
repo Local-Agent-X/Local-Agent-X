@@ -17,11 +17,19 @@ export interface WorktreeEntry {
   branch: string;
   baseBranch: string;  // The branch we'll merge back to (captured at creation)
   repoRoot: string;
+  runId?: string;
   mergedSuccessfully: boolean;
+  /** Durable ownership fence. Optional only for legacy/test-seeded entries. */
+  ownerToken?: string;
+  ownerGeneration?: number;
+  /** Recovered entries survive process shutdown until their operation resumes. */
+  recovered?: boolean;
 }
 
 export const WORKTREE_BASE = join(tmpdir(), "lax-worktrees");
 export const activeWorktrees = new Map<string, WorktreeEntry>();
+/** Recovered work is quarantined here until its exact durable run resumes. */
+export const pendingRecoveredWorktrees = new Map<string, WorktreeEntry>();
 
 /**
  * Generous global cap on concurrent worktrees, as a cross-source safety
@@ -31,6 +39,7 @@ export const activeWorktrees = new Map<string, WorktreeEntry>();
  * max is ~agent-lane-cap(5) + self-edit(1) + update(1) + autopilot headroom.
  */
 export const MAX_CONCURRENT_WORKTREES = Number(process.env.LAX_MAX_WORKTREES) || 12;
+export const MAX_PENDING_RECOVERED_WORKTREES = MAX_CONCURRENT_WORKTREES * 4;
 
 /** True while there's room under the global cap to create another worktree. */
 export function worktreeSlotAvailable(): boolean {

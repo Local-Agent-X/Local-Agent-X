@@ -9,23 +9,38 @@ import { join } from "node:path";
 
 import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./worktree-junctions.js";
+import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 
 /** Create an isolated worktree for an agent */
 export function createWorktree(agentId: string): { path: string; branch: string } | null {
+  let repoRoot: string;
+  let baseBranch: string;
+  try {
+    repoRoot = git("rev-parse --show-toplevel");
+    baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
+  } catch (e) {
+    logger.warn(`[worktree] Failed to resolve repository: ${(e as Error).message}`);
+    return null;
+  }
+  const branch = `agent/${agentId}`;
+  const recovered = claimRecoveredWorktree({
+    name: agentId, branch, runId: agentId, repoRoot, baseBranch,
+  });
+  if (recovered) return { path: recovered.path, branch: recovered.branch };
   if (!worktreeSlotAvailable()) {
     logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${agentId}`);
     return null;
   }
   try {
-    const repoRoot = git("rev-parse --show-toplevel");
-    const baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
-    const branch = `agent/${agentId}`;
     const wtPath = join(WORKTREE_BASE, agentId);
 
     git(["branch", branch, "HEAD"], repoRoot);
     git(["worktree", "add", wtPath, branch], repoRoot);
 
-    activeWorktrees.set(agentId, { path: wtPath, branch, baseBranch, repoRoot, mergedSuccessfully: false });
+    const entry = registerWorktreeOwnership(agentId, {
+      path: wtPath, branch, baseBranch, repoRoot, runId: agentId, mergedSuccessfully: false,
+    }, agentId);
+    activeWorktrees.set(agentId, entry);
     logger.info(`[worktree] Created ${wtPath} on branch ${branch} (base: ${baseBranch})`);
     return { path: wtPath, branch };
   } catch (e) {
@@ -38,6 +53,10 @@ export function createWorktree(agentId: string): { path: string; branch: string 
 export function mergeWorktree(agentId: string): { merged: boolean; files: number; error?: string } {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return { merged: false, files: 0, error: "No worktree found" };
+  if (!ownsWorktree(wt)) {
+    activeWorktrees.delete(agentId);
+    return { merged: false, files: 0, error: "Worktree ownership changed; preserved without merge" };
+  }
 
   try {
     const status = git("status --porcelain", wt.path);
@@ -119,6 +138,11 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
 export function cleanupWorktree(agentId: string): void {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return;
+  if (!ownsWorktree(wt)) {
+    logger.warn(`[worktree] Ownership changed for ${agentId}; preserving worktree`);
+    activeWorktrees.delete(agentId);
+    return;
+  }
 
   // Drop the shared node_modules junctions BEFORE `git worktree remove --force`
   // so the recursive delete can't traverse into the parent repo's real deps.
@@ -129,6 +153,7 @@ export function cleanupWorktree(agentId: string): void {
     return;
   }
 
+  forgetWorktreeOwnership(wt);
   try { git(["worktree", "remove", wt.path, "--force"], wt.repoRoot); } catch { /* already gone */ }
 
   // Only delete branch if merge was successful — preserve it on conflict so user can resolve
@@ -144,7 +169,40 @@ export function cleanupWorktree(agentId: string): void {
 
 /** Cleanup all worktrees on shutdown */
 export function cleanupAllWorktrees(): void {
-  for (const [id] of activeWorktrees) cleanupWorktree(id);
+  for (const [id, wt] of activeWorktrees) {
+    if (!ownsWorktree(wt)) {
+      activeWorktrees.delete(id);
+      continue;
+    }
+    let dirty = "";
+    try { dirty = git(["status", "--porcelain"], wt.path); } catch {
+      logger.warn(`[worktree] Could not inspect ${id} during shutdown; preserving it`);
+      continue;
+    }
+    if (dirty) {
+      try {
+        git(["add", "-A"], wt.path);
+        git(["commit", "-m", `Checkpoint ${id}: preserve work in progress`], wt.path);
+        wt.recovered = true;
+        logger.info(`[worktree] Checkpointed dirty worktree ${id} for recovery`);
+      } catch (e) {
+        logger.warn(`[worktree] Could not checkpoint ${id}; preserving directory: ${(e as Error).message}`);
+      }
+      continue;
+    }
+    let integrated = wt.mergedSuccessfully;
+    if (!integrated) {
+      try {
+        git(["merge-base", "--is-ancestor", wt.branch, wt.baseBranch], wt.repoRoot);
+        integrated = true;
+      } catch { /* clean branch still carries unfinished commits */ }
+    }
+    if (integrated && !wt.recovered) cleanupWorktree(id);
+    else {
+      wt.recovered = true;
+      logger.info(`[worktree] Preserving clean unmerged worktree ${id} for recovery`);
+    }
+  }
 }
 
 // ── Named worktrees (autopilot) ─────────────────────────────────────────
@@ -179,7 +237,23 @@ export function createNamedWorktree(
   name: string,
   branchName: string,
   repoRoot?: string,
+  runId = name,
 ): { path: string; branch: string; baseBranch: string } | null {
+  let resolvedRoot: string;
+  let baseBranch: string;
+  try {
+    resolvedRoot = git("rev-parse --show-toplevel", repoRoot);
+    baseBranch = git("rev-parse --abbrev-ref HEAD", resolvedRoot);
+  } catch (e) {
+    logger.warn(`[worktree] Failed to resolve named worktree repository: ${(e as Error).message}`);
+    return null;
+  }
+  const recovered = claimRecoveredWorktree({
+    name, branch: branchName, runId, repoRoot: resolvedRoot, baseBranch,
+  });
+  if (recovered) {
+    return { path: recovered.path, branch: recovered.branch, baseBranch: recovered.baseBranch };
+  }
   if (!worktreeSlotAvailable()) {
     logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${name}`);
     return null;
@@ -188,8 +262,6 @@ export function createNamedWorktree(
     // Resolve the toplevel of the repo this worktree belongs to. `repoRoot`
     // undefined → cwd (today's behavior); provided → the caller's repo, even
     // when it's a subdir (git normalizes to the toplevel + strips symlinks).
-    const resolvedRoot = git("rev-parse --show-toplevel", repoRoot);
-    const baseBranch = git("rev-parse --abbrev-ref HEAD", resolvedRoot);
     const wtPath = join(WORKTREE_BASE, name);
 
     git(["branch", branchName, "HEAD"], resolvedRoot);
@@ -215,7 +287,15 @@ export function createNamedWorktree(
       logger.warn(`[worktree] Failed to link package node_modules: ${(e as Error).message}`);
     }
 
-    activeWorktrees.set(name, { path: wtPath, branch: branchName, baseBranch, repoRoot: resolvedRoot, mergedSuccessfully: false });
+    const entry = registerWorktreeOwnership(name, {
+      path: wtPath,
+      branch: branchName,
+      baseBranch,
+      repoRoot: resolvedRoot,
+      runId,
+      mergedSuccessfully: false,
+    }, runId);
+    activeWorktrees.set(name, entry);
     logger.info(`[worktree] Created named worktree ${wtPath} on branch ${branchName} (base: ${baseBranch}, repo: ${resolvedRoot})`);
     return { path: wtPath, branch: branchName, baseBranch };
   } catch (e) {

@@ -168,6 +168,15 @@ function scanReparsePoints(wtPath: string): string[] {
   return found;
 }
 
+/** Unlink every shallow reparse point before boot recovery removes a worktree. */
+export function unlinkAllShallowReparsePoints(wtPath: string): string[] {
+  const points = scanReparsePoints(wtPath);
+  const stuck = points.filter(path => !unlinkReparsePoint(path));
+  const remaining = scanReparsePoints(wtPath);
+  const escaped = shallowNodeModules(wtPath).filter(path => escapesSandbox(path, wtPath));
+  return [...new Set([...stuck, ...remaining, ...escaped])];
+}
+
 /**
  * After the orphan sweep, delete leftover agent branches (selfedit/<slug>/<ts>,
  * autopilot/<slug>/<ts>) that are FULLY MERGED into the current base and not
@@ -182,7 +191,7 @@ function scanReparsePoints(wtPath: string): string[] {
  * is abandoned. `git branch -d` (lower-case) refuses to delete an unmerged
  * branch, so even a misclassified branch can't lose work.
  */
-function pruneMergedAgentBranches(): void {
+export function pruneMergedAgentBranches(): void {
   const checkedOut = new Set<string>();
   try {
     for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {

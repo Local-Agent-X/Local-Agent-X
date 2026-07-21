@@ -103,7 +103,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
   const progress = opts.onProgress ?? (() => { /* no-op */ });
 
   try {
-    const wt = createNamedWorktree(name, branch);
+    const wt = createNamedWorktree(name, branch, undefined, `self-edit:${lock.nonce}`);
     if (!wt) {
       return {
         ok: false, output: "",

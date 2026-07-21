@@ -155,7 +155,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       };
     }
 
-    const wt = createNamedWorktree(name, branch);
+    const wt = createNamedWorktree(name, branch, repoRoot, `update:${lock.nonce}`);
     if (!wt) {
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Failed to create update worktree — see server logs." };
     }

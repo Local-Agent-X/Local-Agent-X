@@ -164,7 +164,8 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
     const branch = `autobuild/c${chunk.number}`;
     // Anchor the worktree to the USER's project repo (opts.projectDir), NOT the
     // LAX server's process.cwd() — a cwd-derived root would cut from LAX's repo.
-    const wt = createNamedWorktree(name, branch, opts.projectDir);
+    const buildRunId = `${opts.parentOpId ?? opts.parentSessionId ?? opts.planPath}:chunk:${chunk.number}`;
+    const wt = createNamedWorktree(name, branch, opts.projectDir, buildRunId);
     if (!wt) {
       emit({
         type: "review-result", chunkNumber: chunk.number, totalChunks,

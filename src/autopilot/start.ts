@@ -167,7 +167,7 @@ export async function startAutopilot(
   registerExitCleanup(opId);
 
   // Create worktree
-  const wt = createNamedWorktree(worktreeName, branchName);
+  const wt = createNamedWorktree(worktreeName, branchName, repoRoot, opId);
   if (!wt) {
     // Release lock since we're not going to use it.
     const { releaseLock } = await import("./lock.js");

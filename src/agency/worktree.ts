@@ -20,7 +20,12 @@ export {
   createNamedWorktree,
 } from "./worktree-lifecycle.js";
 
-export { sweepOrphanWorktreeJunctions } from "./worktree-junctions.js";
+export {
+  reconcileWorktreeBase,
+  sweepOrphanWorktreeJunctions,
+  type RecoveryDisposition,
+  type WorktreeRecoveryResult,
+} from "./worktree-recovery.js";
 
 export {
   getWorktreePath,

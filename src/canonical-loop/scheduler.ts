@@ -20,14 +20,8 @@ import type { LAXConfig } from "../types.js";
 import { readOp } from "../ops/op-store.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { anyHeld, acquire, release, resetResourceLocks } from "./resource-locks.js";
-import {
-  ExecutionBackendRegistry,
-  IN_PROCESS_EXECUTION_BACKEND_ID,
-  type ExecutionBackend,
-  type ExecutionHandle,
-} from "./execution-backend.js";
-import { InProcessExecutionBackend } from "./in-process-execution-backend.js";
-import { runWorker } from "./worker.js";
+import type { ExecutionBackend, ExecutionHandle } from "./execution-backend.js";
+import { resolveRegisteredExecutionBackend } from "./execution-backend-registry.js";
 import { applyPreLeaseCancel } from "./cancel-handler.js";
 import {
   ensureExecutionPlacement,
@@ -42,9 +36,7 @@ import { createLogger } from "../logger.js";
 import { recoverRejectedExecutionLaunch } from "./execution-launch-recovery.js";
 
 const logger = createLogger("canonical-loop.scheduler");
-const executionBackends = new ExecutionBackendRegistry(IN_PROCESS_EXECUTION_BACKEND_ID);
-executionBackends.register(new InProcessExecutionBackend(runWorker));
-const defaultExecutionBackendResolver = (id?: string): ExecutionBackend => executionBackends.resolve(id);
+const defaultExecutionBackendResolver = resolveRegisteredExecutionBackend;
 let resolveExecutionBackend = defaultExecutionBackendResolver;
 
 /** Test-only dependency seat for scheduler parity tests. Production always

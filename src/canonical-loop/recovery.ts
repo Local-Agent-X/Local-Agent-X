@@ -53,15 +53,14 @@ import { trackOpForSession } from "../ops/session-bridge.js";
 import { releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { CanonicalLane } from "./types.js";
 import { reconcilePublishedTurnCommitsForRecovery } from "./checkpoint.js";
+import { checkProcessExecutionRecoveryOwnership } from "./process-execution-claim.js";
 export type RecoveryOutcomeKind =
   | "recovered"     // running → queued (or an already-queued op that crashed
                     //   before launch), op re-enqueued for a replacement worker.
   | "cancelled"     // cancelling → cancelled, no requeue.
   | "exhausted"     // retry policy / circuit breaker refused a relaunch:
                     // running → failed, no requeue.
-  | "no_lease"      // (retained for the type surface) — recoverStaleOp no longer
-                    // returns it; a non-terminal no-lease op is now the C3
-                    // orphan shape and IS reclaimed. See recoverStaleOp.
+  | "no_lease"      // retained type surface; ownerless non-terminal ops are recovered.
   | "lease_fresh"   // lease still in date — leave it alone.
   | "lease_changed" // observation lost a race to a newer exact claim.
   | "lock_unavailable" // strict op lock was contended; retry later.
@@ -85,16 +84,8 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
     return { ok: false, kind: "not_running" };
   }
 
-  // Recoverability: a non-terminal op is recoverable when it has NO LIVE OWNER.
-  // Two disk shapes qualify:
-  //   1. Expired lease — a worker died mid-turn and its lease timed out (the
-  //      classic Issue-08 crash-recovery case).
-  //   2. NO lease at all — the C3 orphan class: a worker threw AFTER its
-  //      `finally` released the lease but BEFORE a terminal transition landed
-  //      (disk-full during commitTurn's transition; a cancel-time throw that
-  //      hit the illegal cancelling → failed and was swallowed). Left alone the
-  //      op wedges non-terminal forever and the chat pump never sees a terminal
-  //      `state_changed`. Recovery is the single chokepoint that closes it.
+  // Recover only ownerless operations: an expired lease, or the C3 orphan
+  // shape where worker cleanup released its lease before a terminal write.
   //
   // SAFETY — this can NEVER race a live worker. lease.ts writes the lease
   // BEFORE the queued → running transition and heartbeats it; only releaseLease
@@ -105,14 +96,13 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   // An op that just acquired a lease is `running` WITH a fresh lease, so this
   // change can neither double-drive nor double-finalize a live op.
   //
-  // Multi-process schedulers can observe the brief queued+lease window. A
-  // fresh exact claim is therefore live in every state; a crashed queued op is
-  // reclaimed by the periodic sweep after its bounded expiry.
   const observedClaim = leaseClaimFromOp(op);
   if (observedClaim && !isLeaseExpired(op)) {
     return { ok: false, kind: "lease_fresh" };
   }
+  if (checkProcessExecutionRecoveryOwnership(opId) === "live") return { ok: false, kind: "lease_fresh" };
 
+  const processGuard: { ownership: "live" | "clear" | "changed" } = { ownership: "clear" };
   const leaseCheck = withObservedExpiredLeaseRecovery(
     opId,
     observedClaim,
@@ -122,14 +112,22 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
     },
     candidate => {
       const candidateState = candidate.canonical?.state;
-      return candidateState === "running" || candidateState === "cancelling" || candidateState === "queued";
+      const stateRecoverable = candidateState === "running"
+        || candidateState === "cancelling" || candidateState === "queued";
+      if (!stateRecoverable) return false;
+      processGuard.ownership = checkProcessExecutionRecoveryOwnership(opId, true);
+      return processGuard.ownership === "clear";
     },
   );
   if (!leaseCheck.ok) {
     if (leaseCheck.reason === "lease_fresh") return { ok: false, kind: "lease_fresh" };
     if (leaseCheck.reason === "lock_unavailable") return { ok: false, kind: "lock_unavailable" };
     if (leaseCheck.reason === "unknown_op") return { ok: false, kind: "unknown_op" };
-    if (leaseCheck.reason === "not_recoverable") return { ok: false, kind: "not_running" };
+    if (leaseCheck.reason === "not_recoverable") {
+      if (processGuard.ownership === "live") return { ok: false, kind: "lease_fresh" };
+      if (processGuard.ownership === "changed") return { ok: false, kind: "lease_changed" };
+      return { ok: false, kind: "not_running" };
+    }
     if (leaseCheck.reason === "persistence_failed") return { ok: false, kind: "persistence_failed" };
     return { ok: false, kind: "lease_changed" };
   }

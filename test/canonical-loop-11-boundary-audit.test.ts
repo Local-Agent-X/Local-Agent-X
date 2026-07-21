@@ -6,9 +6,9 @@
  * dependency that would erode the canonical-loop boundary contract.
  *
  *   - Loop modules (`src/canonical-loop/*.ts`, NOT including
- *     `adapters/`) must NOT import `child_process` / `node:child_process`.
- *     The loop never spawns subprocesses; provider I/O lives behind
- *     the adapter contract.
+ *     `adapters/`) must NOT import `child_process` / `node:child_process`,
+ *     except the canonical process execution backend. Provider I/O remains
+ *     behind the adapter contract and the child re-enters the same worker.
  *   - Loop modules must NOT import `ops/event-log` for
  *     write-side effects. Reads are allowed (e.g., `event-log.opDir`
  *     for filesystem layout).
@@ -49,6 +49,9 @@ const FORBIDDEN_LOOP_IMPORTS: readonly string[] = [
 const ADAPTER_TRANSPORT_ALLOWLIST: readonly string[] = [
   "anthropic-transport.ts",
 ] as const;
+const PROCESS_BACKEND_ALLOWLIST: readonly string[] = [
+  "process-execution-backend.ts",
+] as const;
 
 function listTsFiles(dir: string, recurse = true): string[] {
   const out: string[] = [];
@@ -85,7 +88,7 @@ function findForbiddenImports(src: string, forbidden: readonly string[]): string
 // ── Loop modules: no subprocess imports ─────────────────────────────────
 
 describe("Issue 11 — boundary audit: loop modules have no subprocess imports", () => {
-  it("no canonical-loop source file imports child_process / node:child_process", () => {
+  it("only the process execution backend imports child_process", () => {
     const files = listTsFiles(LOOP_DIR, true);
     expect(files.length).toBeGreaterThan(0);
     const violations: { file: string; hits: string[] }[] = [];
@@ -98,7 +101,10 @@ describe("Issue 11 — boundary audit: loop modules have no subprocess imports",
       const isAdapterTransport = ADAPTER_TRANSPORT_ALLOWLIST.some(name =>
         base.endsWith(`/canonical-loop/adapters/${name}`),
       );
-      if (isAdapterTransport) continue;
+      const isProcessBackend = PROCESS_BACKEND_ALLOWLIST.some(name =>
+        base.endsWith(`/canonical-loop/${name}`),
+      );
+      if (isAdapterTransport || isProcessBackend) continue;
       const hits = findForbiddenImports(readSource(file), FORBIDDEN_LOOP_IMPORTS);
       if (hits.length > 0) violations.push({ file, hits });
     }

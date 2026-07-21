@@ -27,8 +27,14 @@ const {
   resetScheduler,
 } = await import("./scheduler.js");
 const { recoverStaleOp } = await import("./recovery.js");
-const { readOp } = await import("../ops/op-store.js");
+const { readOp, writeOp } = await import("../ops/op-store.js");
 const { transitionOp } = await import("./state-machine.js");
+const { _setLeaseRaceHookForTest } = await import("./lease.js");
+const {
+  claimProcessExecution,
+  readProcessExecutionClaim,
+  removeProcessExecutionClaim,
+} = await import("./process-execution-claim.js");
 
 const adapter = { name: "scheduler-parity", version: "1" } as Adapter;
 
@@ -117,6 +123,7 @@ async function waitForStarts(backend: ControlledBackend, count: number): Promise
 let backend: ControlledBackend;
 
 afterEach(() => {
+  _setLeaseRaceHookForTest(null);
   backend?.settleAll();
   resetScheduler();
   resetCanonicalRuntime();
@@ -429,5 +436,87 @@ describe("scheduler execution-backend parity", () => {
     await waitForStarts(backend, 2);
     expect(backend.starts.mock.calls.map(([request]) => request.op.id)).toEqual([op.id, op.id]);
     backend.settleAll();
+  });
+
+  it.each([
+    { label: "fresh-live", heartbeatAgeMs: 0, pid: process.pid, protected: true },
+    { label: "stale-live", heartbeatAgeMs: 30_001, pid: process.pid, protected: false },
+    { label: "fresh-dead", heartbeatAgeMs: 0, pid: 2_147_483_647, protected: false },
+  ])("correlates $label process ownership with canonical recovery", async ({
+    label,
+    heartbeatAgeMs,
+    pid,
+    protected: isProtected,
+  }) => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const op = makeOp(`process-claim-${label}`, "background");
+    submit(op);
+    await waitForStarts(backend, 1);
+
+    const heartbeatAt = new Date(Date.now() - heartbeatAgeMs).toISOString();
+    const claim = {
+      schemaVersion: 1 as const,
+      opId: op.id,
+      backendId: "local-process",
+      targetId: "canonical-worker-process-v1",
+      placementRevision: 1,
+      token: `token-${label}`,
+      pid,
+      processStartedAt: heartbeatAt,
+      heartbeatAt,
+    };
+    expect(claimProcessExecution(claim)).toBe(true);
+
+    const outcome = recoverStaleOp(op.id);
+    if (isProtected) {
+      expect(outcome).toEqual({ ok: false, kind: "lease_fresh" });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(backend.starts).toHaveBeenCalledTimes(1);
+      expect(readProcessExecutionClaim(op.id)).toEqual(claim);
+      expect(removeProcessExecutionClaim(claim)).toBe(true);
+    } else {
+      expect(outcome).toMatchObject({ ok: true, kind: "recovered" });
+      await waitForStarts(backend, 2);
+      expect(readProcessExecutionClaim(op.id)).toBeNull();
+    }
+  });
+
+  it("rechecks process ownership under the recovery lock before relaunch", async () => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const op = makeOp("process-claim-concurrent", "background");
+    submit(op);
+    await waitForStarts(backend, 1);
+
+    const persisted = readOp(op.id)!;
+    persisted.canonical!.leaseOwner = "stale-canonical-owner";
+    persisted.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
+    writeOp(persisted);
+
+    const now = new Date().toISOString();
+    const claim = {
+      schemaVersion: 1 as const,
+      opId: op.id,
+      backendId: "local-process",
+      targetId: "canonical-worker-process-v1",
+      placementRevision: 1,
+      token: "token-concurrent",
+      pid: process.pid,
+      processStartedAt: now,
+      heartbeatAt: now,
+    };
+    _setLeaseRaceHookForTest(point => {
+      if (point !== "before_recovery_lock") return;
+      _setLeaseRaceHookForTest(null);
+      expect(claimProcessExecution(claim)).toBe(true);
+    });
+
+    expect(recoverStaleOp(op.id)).toEqual({ ok: false, kind: "lease_fresh" });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(backend.starts).toHaveBeenCalledTimes(1);
+    expect(readOp(op.id)?.canonical?.leaseOwner).toBe("stale-canonical-owner");
+    expect(readProcessExecutionClaim(op.id)).toEqual(claim);
+    expect(removeProcessExecutionClaim(claim)).toBe(true);
   });
 });

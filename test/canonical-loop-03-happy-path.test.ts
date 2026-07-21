@@ -7,7 +7,7 @@
  *   - Multi-turn happy path (3 turns, monotonic seq + turn_idx).
  *   - Happy path with a tool call dispatched through the canonical
  *     ToolDispatcher seam (the loop never executes tools itself).
- *   - Boundary checks: canonical-loop modules import no `child_process`;
+ *   - Boundary checks: only the process backend imports `child_process`;
  *     FakeAdapter has no DB / event-writer / worker-pool import.
  *   - Permanent invariant: `ops.state == latest state_changed.to` after
  *     every test.
@@ -480,9 +480,10 @@ describe("Issue 03 — adapter / loop sandbox boundary", () => {
       .map(f => join(LOOP_DIR, f));
   }
 
-  it("canonical-loop modules import no child_process / node:child_process", () => {
+  it("only the process backend imports child_process / node:child_process", () => {
     const offenders: Array<{ file: string; match: string }> = [];
     for (const file of listLoopSourceFiles()) {
+      if (file.endsWith("process-execution-backend.ts")) continue;
       const src = readFileSync(file, "utf-8");
       // Skip the sandbox deny-list constant in adapter-contract.ts — it's a
       // string literal, not an import statement.

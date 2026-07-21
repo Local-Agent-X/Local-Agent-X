@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -52,22 +52,38 @@ function runWorker(script: string, args: string[], dataDir: string): Promise<{ c
   });
 }
 
+async function waitForFiles(paths: string[]): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!paths.every((path) => existsSync(path))) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for learning workers");
+    await new Promise((done) => setTimeout(done, 10));
+  }
+}
+
 function writeLearningWorker(dir: string): string {
   const worker = join(dir, "learning-worker.mjs");
   const learnerUrl = pathToFileURL(resolve("src/cognition/cross-session-learning/learner.ts")).href;
   writeFileSync(worker, `
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { CrossSessionLearner } from ${JSON.stringify(learnerUrl)};
-const [mode, id, gate] = process.argv.slice(2);
+const [mode, id, gate, requestedAt, delay, ready] = process.argv.slice(2);
+if (mode === "state" || mode === "revive") {
+  const learner = CrossSessionLearner.getInstance();
+  const candidate = learner.getCandidates()[0];
+  const pattern = mode === "revive" ? learner.detectPatterns(3)[0] : undefined;
+  writeFileSync(ready, "ready", "utf8");
+  while (!existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
+  await new Promise((done) => setTimeout(done, Number(delay)));
+  if (mode === "state") learner.setCandidateState(candidate.id, id, "concurrent", Number(requestedAt));
+  else learner.captureCandidate(pattern, Number(requestedAt));
+  process.exit(0);
+}
 while (gate && !existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
 const learner = CrossSessionLearner.getInstance();
 if (mode === "record") {
   learner.recordAction("session-" + id, { type: "task", details: "action-" + id, timestamp: Number(id) + 1 });
   learner.recordOutcome({ opId: "unique-" + id, sessionId: "session-" + id, outcome: "clean", category: "coding", tools: ["read", "edit"], timestamp: Number(id) + 10 });
   learner.recordOutcome({ opId: "shared", sessionId: "shared-session", outcome: "clean", category: "coding", tools: ["read"], timestamp: Number(id) + 20 });
-} else if (mode === "state") {
-  const candidate = learner.getCandidates()[0];
-  learner.setCandidateState(candidate.id, id, "concurrent", Date.now());
 } else if (mode === "surface") {
   process.stdout.write(learner.nextLearningOpportunity(Date.now()) ? "surfaced" : "quiet");
 }
@@ -588,18 +604,87 @@ setTimeout(() => process.exit(23), 100);
     expect(learner.nextLearningOpportunity(NOW + 10)).not.toBeNull();
 
     const worker = writeLearningWorker(tmpDir);
-    const gate = join(tmpDir, "state-start");
-    const runs = ["approved", "archived"].map((state) =>
-      runWorker(worker, ["state", state, gate], tmpDir));
+    const rounds = [
+      { approvedAt: NOW + 30, approvedDelay: 0, archivedAt: NOW + 20, archivedDelay: 100 },
+      { approvedAt: NOW + 50, approvedDelay: 100, archivedAt: NOW + 60, archivedDelay: 0 },
+    ];
+    for (const [index, round] of rounds.entries()) {
+      const gate = join(tmpDir, `state-start-${index}`);
+      const approvedReady = `${gate}-approved-ready`;
+      const archivedReady = `${gate}-archived-ready`;
+      const runs = [
+        runWorker(worker, ["state", "approved", gate, String(round.approvedAt), String(round.approvedDelay), approvedReady], tmpDir),
+        runWorker(worker, ["state", "archived", gate, String(round.archivedAt), String(round.archivedDelay), archivedReady], tmpDir),
+      ];
+      await waitForFiles([approvedReady, archivedReady]);
+      writeFileSync(gate, "go", "utf8");
+      const results = await Promise.all(runs);
+      expect(results.filter((result) => result.code === 0).length).toBeGreaterThanOrEqual(1);
+
+      const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+      const candidate = persisted.candidates[0];
+      expect(candidate.state).toBe("archived");
+      expect(candidate.transitions.at(-1)?.to).toBe("archived");
+      expect(candidate.transitions[0]?.from).toBe("candidate");
+      expect(candidate.transitions.every((entry, transitionIndex) =>
+        transitionIndex === 0 || entry.timestamp >= candidate.transitions[transitionIndex - 1].timestamp
+      )).toBe(true);
+      if (index < rounds.length - 1) {
+        learner.refresh();
+        learner.setCandidateState(candidate.id, "candidate", "Prepare next contention", NOW + 40);
+      }
+    }
+  }, 30_000);
+
+  it("does not revive an equal-time rejection from a stale process snapshot", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    const learner = CrossSessionLearner.getInstance();
+    for (let index = 0; index < 3; index++) {
+      learner.recordOutcome({
+        opId: `revive-${index}`,
+        sessionId: `revive-session-${index}`,
+        outcome: "clean",
+        category: "coding",
+        tools: ["read", "edit"],
+        timestamp: NOW + index,
+      });
+    }
+    const opportunity = learner.nextLearningOpportunity(NOW + 10);
+    expect(opportunity).not.toBeNull();
+
+    const worker = writeLearningWorker(tmpDir);
+    const gate = join(tmpDir, "revive-start");
+    const ready = `${gate}-ready`;
+    const run = runWorker(worker, ["revive", "", gate, String(NOW + 10), "0", ready], tmpDir);
+    await waitForFiles([ready]);
+    learner.refresh();
+    learner.setCandidateState(opportunity!.candidate.id, "rejected", "Concurrent rejection", NOW + 10);
     writeFileSync(gate, "go", "utf8");
-    const results = await Promise.all(runs);
-    expect(results.filter((result) => result.code === 0).length).toBeGreaterThanOrEqual(1);
+    expect(await run).toEqual({ code: 0, stdout: "", stderr: "" });
 
     const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
     const candidate = persisted.candidates[0];
-    expect(candidate.state).toBe("archived");
-    expect(candidate.transitions.at(-1)?.to).toBe("archived");
-    expect(candidate.transitions[0]?.from).toBe("candidate");
+    expect(candidate.state).toBe("rejected");
+    expect(candidate.rejectionCooldownUntil).toBeGreaterThan(NOW + 10);
+    expect(candidate.transitions.map((entry) => entry.to)).toEqual(["rejected"]);
+
+    learner.refresh();
+    learner.setCandidateState(candidate.id, "candidate", "Prepare explicit stale request", NOW + 20);
+    const stateGate = join(tmpDir, "stale-state-start");
+    const stateReady = `${stateGate}-ready`;
+    const stateRun = runWorker(worker, ["state", "candidate", stateGate, String(NOW + 20), "0", stateReady], tmpDir);
+    await waitForFiles([stateReady]);
+    learner.refresh();
+    learner.setCandidateState(candidate.id, "rejected", "Concurrent rejection", NOW + 20);
+    writeFileSync(stateGate, "go", "utf8");
+    expect((await stateRun).code).not.toBe(0);
+
+    const afterStateRequest = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    expect(afterStateRequest.candidates[0].state).toBe("rejected");
+    expect(afterStateRequest.candidates[0].transitions.map((entry) => entry.to))
+      .toEqual(["rejected", "candidate", "rejected"]);
   }, 20_000);
 
   it("allows only one concurrent process to claim a surfacing cooldown", async () => {

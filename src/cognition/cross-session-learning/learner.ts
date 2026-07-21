@@ -10,6 +10,7 @@ import type {
 } from "./types.js";
 import {
   DEFAULT_MIN_OCCURRENCES,
+  CANDIDATE_TRANSITIONS,
   CANDIDATE_SURFACE_COOLDOWN_DAYS,
   MAX_ACTIONS,
   MS_PER_DAY,
@@ -140,6 +141,7 @@ export class CrossSessionLearner {
     const suggestion = this.suggestAutomation(pattern);
     if (!suggestion) return null;
     const next = createLearnedCandidate(pattern, suggestion, now);
+    const observed = this.observedCandidateRevision(next.id);
     const committed = this.commit((data) => {
       const index = data.candidates.findIndex((candidate) =>
         candidate.id === next.id && hasCandidateEvidenceIdentity(candidate)
@@ -153,8 +155,14 @@ export class CrossSessionLearner {
         current.state !== "rejected"
         || (current.rejectionCooldownUntil !== undefined && now < current.rejectionCooldownUntil)
       ) return current.id;
+      if (!sameCandidateRevision(current, observed)) return current.id;
 
-      const revived = transitionCandidate(current, "candidate", now, "New evidence after suppression period");
+      const revived = transitionCandidate(
+        current,
+        "candidate",
+        transitionTimestampAtCommit(current, now, observed),
+        "New evidence after suppression period",
+      );
       data.candidates[index] = {
         ...revived,
         confidence: next.confidence,
@@ -173,12 +181,22 @@ export class CrossSessionLearner {
     reason?: string,
     now = Date.now(),
   ): LearnedCandidate {
+    const observed = this.observedCandidateRevision(id);
+    if (observed && !CANDIDATE_TRANSITIONS[observed.state].includes(state)) {
+      throw new Error(`Invalid learned candidate transition: ${observed.state} -> ${state}`);
+    }
     const committed = this.commit((data) => {
       const index = data.candidates.findIndex((candidate) =>
         candidate.id === id && hasCandidateEvidenceIdentity(candidate)
       );
       if (index < 0) throw new Error(`Unknown learned candidate: ${id}`);
-      data.candidates[index] = transitionCandidate(data.candidates[index], state, now, reason);
+      const current = data.candidates[index];
+      data.candidates[index] = transitionCandidate(
+        current,
+        state,
+        transitionTimestampAtCommit(current, now, observed),
+        reason,
+      );
       return id;
     });
     if (!committed) throw new LearningPersistenceUnavailableError();
@@ -192,6 +210,7 @@ export class CrossSessionLearner {
     now = Date.now(),
     rollback?: { reason: string; timestamp: number },
   ): boolean {
+    const observed = this.observedCandidateRevision(id);
     const committed = this.commit((data) => {
       const index = data.candidates.findIndex((candidate) =>
         candidate.id === id && hasCandidateEvidenceIdentity(candidate)
@@ -204,7 +223,11 @@ export class CrossSessionLearner {
         && entry.reason === rollback.reason
       ) ? rollback : undefined;
       const path = candidateProjectionPath(current.state, target, pendingRollback !== undefined);
-      const transitionNow = pendingRollback?.timestamp ?? now;
+      const transitionNow = transitionTimestampAtCommit(
+        current,
+        pendingRollback?.timestamp ?? now,
+        observed,
+      );
       for (const state of path) {
         const transitionReason = state === "rolled-back" ? pendingRollback?.reason
           : current.state === "rolled-back" && state === "candidate" ? "Rollback retained active workflow"
@@ -314,6 +337,17 @@ export class CrossSessionLearner {
     if (!candidate) throw new Error(`Committed learned candidate is missing: ${id}`);
     return candidate;
   }
+
+  private observedCandidateRevision(id: string): CandidateRevision | undefined {
+    const candidate = this.data.candidates.find((entry) =>
+      entry.id === id && hasCandidateEvidenceIdentity(entry)
+    );
+    return candidate && {
+      state: candidate.state,
+      updatedAt: candidate.updatedAt,
+      transitionCount: candidate.transitions.length,
+    };
+  }
 }
 
 export class LearningPersistenceUnavailableError extends Error {
@@ -321,6 +355,27 @@ export class LearningPersistenceUnavailableError extends Error {
     super("Cross-session learning persistence unavailable");
     this.name = "LearningPersistenceUnavailableError";
   }
+}
+
+interface CandidateRevision {
+  state: LearnedCandidateState;
+  updatedAt: number;
+  transitionCount: number;
+}
+
+function transitionTimestampAtCommit(
+  current: LearnedCandidate,
+  requestedAt: number,
+  observed: CandidateRevision | undefined,
+): number {
+  if (!observed || requestedAt < observed.updatedAt) return requestedAt;
+  return Math.max(requestedAt, current.updatedAt);
+}
+
+function sameCandidateRevision(candidate: LearnedCandidate, observed: CandidateRevision | undefined): boolean {
+  return !!observed && candidate.state === observed.state
+    && candidate.updatedAt === observed.updatedAt
+    && candidate.transitions.length === observed.transitionCount;
 }
 
 function candidateProjectionPath(

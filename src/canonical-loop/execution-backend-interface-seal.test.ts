@@ -51,4 +51,12 @@ describe("execution backend interface seal", () => {
     const scheduler = readFileSync(join(LOOP_DIR, "scheduler.ts"), "utf8");
     expect(scheduler).not.toMatch(/\brunWorker\s*\(/);
   });
+
+  it("makes the production adapter-construction boundary explicit", () => {
+    const contract = readFileSync(join(LOOP_DIR, "execution-backend.ts"), "utf8");
+    const inProcess = readFileSync(join(LOOP_DIR, "in-process-execution-backend.ts"), "utf8");
+    expect(contract).toContain('"parent" | "backend"');
+    expect(inProcess).toContain('adapterProvisioning = "parent"');
+    expect(inProcess).toContain("requires a live adapter");
+  });
 });

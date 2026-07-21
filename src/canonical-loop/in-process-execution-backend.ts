@@ -18,6 +18,7 @@ export type InProcessWorkerRunner = (op: Op, adapter: Adapter) => InProcessExecu
  * worker. It adds placement selection without adding another execution loop. */
 export class InProcessExecutionBackend implements ExecutionBackend {
   readonly id = IN_PROCESS_EXECUTION_BACKEND_ID;
+  readonly adapterProvisioning = "parent" as const;
   private readonly targetId = "canonical-worker";
 
   constructor(private readonly runner: InProcessWorkerRunner) {}
@@ -34,6 +35,7 @@ export class InProcessExecutionBackend implements ExecutionBackend {
     if (placement.backendId !== this.id || placement.targetId !== this.targetId) {
       throw new Error("in-process execution placement identity mismatch");
     }
+    if (!adapter) throw new Error("in-process execution requires a live adapter");
     return this.runner(op, adapter);
   }
 }

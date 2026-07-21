@@ -39,6 +39,7 @@ import {
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { createLogger } from "../logger.js";
+import { recoverRejectedExecutionLaunch } from "./execution-launch-recovery.js";
 
 const logger = createLogger("canonical-loop.scheduler");
 const executionBackends = new ExecutionBackendRegistry(IN_PROCESS_EXECUTION_BACKEND_ID);
@@ -209,8 +210,6 @@ export function pumpScheduler(): void {
       const op = readOp(q.opId);
       if (!op) { queue.splice(i, 1); continue; }
       if (applyPreLeaseCancel(op)) { queue.splice(i, 1); continue; }
-      const factory = resolveAdapterFactory(op);
-      if (!factory) { i++; continue; } // No adapter — leave queued.
       let backend: ExecutionBackend;
       let placement;
       try {
@@ -230,6 +229,8 @@ export function pumpScheduler(): void {
         queue.splice(i, 1);
         continue;
       }
+      const factory = backend.adapterProvisioning === "backend" ? null : resolveAdapterFactory(op);
+      if (backend.adapterProvisioning !== "backend" && !factory) { i++; continue; }
       // Resource guard: an op that declares a singleton resource lock already
       // held by an in-flight op (e.g. two local-GPU ops sharing gpu:0) is
       // SKIPPED and left in the queue — non-blocking, same shape as the
@@ -250,38 +251,34 @@ export function pumpScheduler(): void {
 
 async function launch(
   op: Op,
-  factory: () => Adapter | Promise<Adapter>,
+  factory: (() => Adapter | Promise<Adapter>) | null,
   backend: ExecutionBackend,
   placement: NonNullable<NonNullable<Op["canonical"]>["executionPlacement"]>,
 ): Promise<void> {
   const lane = op.lane as CanonicalLane;
   let handle: ExecutionHandle | null = null;
+  let launchError: Error | null = null;
+  let launchPhase: "factory" | "backend" = "factory";
   try {
-    const adapter = await factory();
-    handle = backend.start({ op, adapter, placement });
+    const adapter = factory ? await factory() : null;
+    launchPhase = "backend";
+    if (backend.adapterProvisioning === "backend") {
+      if (!backend.startWithoutAdapter) throw new Error("backend adapter provisioning is not implemented");
+      handle = backend.startWithoutAdapter({ op, placement });
+    } else {
+      if (!adapter) throw new Error("parent adapter provisioning returned no adapter");
+      handle = backend.start({ op, adapter, placement });
+    }
     active.set(op.id, handle);
     launching.delete(op.id); // now tracked via `active`
     await handle.done;
   } catch (error) {
-    logger.error(`adapter launch failed for ${op.id}: ${(error as Error).message}`);
-    // Worker.done already converts adapter / loop exceptions into canonical
-    // `error` events; nothing more to surface here. A throw from `factory()`
-    // (adapter construction) also lands here — the slot release below covers
-    // it so the lane never leaks.
+    launchError = error as Error;
+    logger.error(`execution launch failed for ${op.id}: ${launchError.message}`);
   } finally {
     launching.delete(op.id);
-    // Release the lane slot pumpScheduler reserved for THIS launch. Every
-    // increment must be matched by exactly one decrement, or the lane leaks a
-    // permanent slot — after `cap` leaks the lane reads "full" and every new
-    // op queues forever (interactive chat silently stops dispatching until a
-    // server restart clears the in-memory counter).
-    //
-    //   - handle registered and still ours → normal completion: release.
-    //   - handle never registered (factory threw before runWorker) → release;
-    //     recovery can't have touched an op that never entered `active`.
-    //   - handle registered but no longer ours → a replacement worker took
-    //     over via recovery's evictWorker, which already decremented; skip to
-    //     avoid a double-release.
+    // Match every reserved lane slot unless recovery already evicted this
+    // handle and installed a replacement owner.
     const stillOurs = handle !== null && active.get(op.id) === handle;
     const neverRegistered = handle === null;
     if (stillOurs) active.delete(op.id);
@@ -297,6 +294,13 @@ async function launch(
       // balanced regardless of the map.
       release(op.resourceLocks);
       activeLocks.delete(op.id);
+    }
+    const backendOwnedSettlement = backend.adapterProvisioning === "backend";
+    if ((launchError || backendOwnedSettlement) && (stillOurs || neverRegistered)) {
+      const recovery = recoverRejectedExecutionLaunch(
+        op.id, launchPhase === "backend",
+      );
+      if (recovery.kind === "retry") scheduleQueuedRetry(op.id, lane, recovery.delayMs);
     }
     pumpScheduler(); // re-pump: an op skipped on this lock (or lane) retries now
   }

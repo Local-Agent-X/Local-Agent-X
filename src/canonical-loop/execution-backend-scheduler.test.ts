@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../ops/types.js";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "./adapter-contract.js";
-import type { ExecutionBackend, ExecutionBackendStartRequest } from "./execution-backend.js";
+import type {
+  ExecutionBackend,
+  ExecutionBackendStartRequest,
+  ExecutionBackendStartWithoutAdapterRequest,
+} from "./execution-backend.js";
 
 const previousDataDir = process.env.LAX_DATA_DIR;
 const dataDir = mkdtempSync(join(tmpdir(), "lax-execution-backend-scheduler-"));
@@ -18,9 +22,13 @@ const {
 const {
   _setExecutionBackendResolverForTest,
   awaitIdle,
+  enqueueOp,
+  pumpScheduler,
   resetScheduler,
 } = await import("./scheduler.js");
 const { recoverStaleOp } = await import("./recovery.js");
+const { readOp } = await import("../ops/op-store.js");
+const { transitionOp } = await import("./state-machine.js");
 
 const adapter = { name: "scheduler-parity", version: "1" } as Adapter;
 
@@ -39,6 +47,7 @@ function deferred(): Deferred {
 
 class ControlledBackend implements ExecutionBackend {
   readonly id = "controlled-test";
+  readonly adapterProvisioning = "parent" as const;
   readonly decisions = new Map<string, ReturnType<ExecutionBackend["place"]>>();
   readonly place = vi.fn((op: Op) => this.decisions.get(op.id)
     ?? { targetId: `target-${op.id}`, disposition: "ready" as const });
@@ -96,8 +105,8 @@ function makeOp(label: string, lane: Op["lane"] = "interactive", locks?: string[
   };
 }
 
-function submit(op: Op): void {
-  registerAdapterForOp(op.id, () => adapter);
+function submit(op: Op, factory: () => Adapter | Promise<Adapter> = () => adapter): void {
+  registerAdapterForOp(op.id, factory);
   canonicalLoopEntry(op);
 }
 
@@ -120,6 +129,94 @@ afterAll(() => {
 });
 
 describe("scheduler execution-backend parity", () => {
+  it("does not construct or pass the parent adapter for a backend-owned adapter", async () => {
+    const run = deferred();
+    const startWithoutAdapter = vi.fn((_request: ExecutionBackendStartWithoutAdapterRequest) => (
+      { done: run.promise }
+    ));
+    const backendOwned: ExecutionBackend = {
+      id: "backend-owned-test",
+      adapterProvisioning: "backend",
+      place: (op) => ({ targetId: `target-${op.id}`, disposition: "ready" }),
+      acceptsPlacement: () => true,
+      start: () => { throw new Error("parent adapter path used"); },
+      startWithoutAdapter,
+    };
+    _setExecutionBackendResolverForTest(() => backendOwned);
+    const op = makeOp("backend-owned");
+    const parentFactory = vi.fn(() => { throw new Error("parent factory used"); });
+    submit(op, parentFactory);
+
+    await vi.waitFor(() => expect(startWithoutAdapter).toHaveBeenCalledOnce());
+    expect(parentFactory).not.toHaveBeenCalled();
+    expect(startWithoutAdapter).toHaveBeenCalledWith({
+      op: expect.objectContaining({ id: op.id }),
+      placement: expect.objectContaining({ backendId: backendOwned.id }),
+    });
+    transitionOp(startWithoutAdapter.mock.calls[0][0].op, "running", "test_claimed");
+    run.resolve();
+  });
+
+  it("retries a backend-owned clean settlement that never durably claimed the op", async () => {
+    const runs: Deferred[] = [];
+    const startWithoutAdapter = vi.fn((_request: ExecutionBackendStartWithoutAdapterRequest) => {
+      const run = deferred();
+      runs.push(run);
+      return { done: run.promise };
+    });
+    const backendOwned: ExecutionBackend = {
+      id: "backend-owned-clean-settlement",
+      adapterProvisioning: "backend",
+      place: (op) => ({ targetId: `target-${op.id}`, disposition: "ready" }),
+      acceptsPlacement: () => true,
+      start: () => { throw new Error("parent adapter path used"); },
+      startWithoutAdapter,
+    };
+    _setExecutionBackendResolverForTest(() => backendOwned);
+    const op = makeOp("backend-clean-before-claim", "background");
+    submit(op, () => { throw new Error("parent factory used"); });
+    await vi.waitFor(() => expect(startWithoutAdapter).toHaveBeenCalledTimes(1));
+
+    runs[0].resolve();
+    await vi.waitFor(() => expect(startWithoutAdapter).toHaveBeenCalledTimes(2));
+    expect(readOp(op.id)?.attemptCount).toBe(1);
+    const claimed = startWithoutAdapter.mock.calls[1][0].op;
+    transitionOp(claimed, "running", "test_claimed");
+    runs[1].resolve();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(startWithoutAdapter).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["running", "failed"] as const)(
+    "does not retry a clean backend-owned settlement after durable state is %s",
+    async (state) => {
+      const run = deferred();
+      const startWithoutAdapter = vi.fn((_request: ExecutionBackendStartWithoutAdapterRequest) => (
+        { done: run.promise }
+      ));
+      const backendOwned: ExecutionBackend = {
+        id: `backend-owned-${state}`,
+        adapterProvisioning: "backend",
+        place: (op) => ({ targetId: `target-${op.id}`, disposition: "ready" }),
+        acceptsPlacement: () => true,
+        start: () => { throw new Error("parent adapter path used"); },
+        startWithoutAdapter,
+      };
+      _setExecutionBackendResolverForTest(() => backendOwned);
+      const op = makeOp(`backend-owned-${state}`);
+      submit(op, () => { throw new Error("parent factory used"); });
+      await vi.waitFor(() => expect(startWithoutAdapter).toHaveBeenCalledOnce());
+      const launched = startWithoutAdapter.mock.calls[0][0].op;
+      transitionOp(launched, "running", "test_claimed");
+      if (state === "failed") transitionOp(launched, "failed", "test_terminal");
+
+      run.resolve();
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(startWithoutAdapter).toHaveBeenCalledOnce();
+      expect(readOp(op.id)?.canonical?.state).toBe(state);
+    },
+  );
+
   it("starts one backend execution exactly once for one runnable op", async () => {
     backend = new ControlledBackend();
     _setExecutionBackendResolverForTest(() => backend);
@@ -201,6 +298,92 @@ describe("scheduler execution-backend parity", () => {
     await waitForStarts(backend, 2);
     expect(backend.starts.mock.calls.map(([request]) => request.op.id)).toEqual([first.id, second.id]);
     backend.latest(second.id).resolve();
+    await waitForStarts(backend, 3);
+    expect(backend.starts.mock.calls.map(([request]) => request.op.id))
+      .toEqual([first.id, second.id, first.id]);
+    backend.latest(first.id).resolve();
+  });
+
+  it("terminalizes an adapter factory throw before backend ownership", async () => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const op = makeOp("factory-throw", "background");
+    const factory = vi.fn<() => Adapter | Promise<Adapter>>()
+      .mockRejectedValue(new Error("factory failed"));
+    submit(op, factory);
+
+    await vi.waitFor(() => expect(readOp(op.id)?.canonical?.state).toBe("failed"));
+    expect(factory).toHaveBeenCalledOnce();
+    expect(backend.starts).not.toHaveBeenCalled();
+    expect(readOp(op.id)?.attemptCount).toBe(0);
+  });
+
+  it("requeues exactly once when done rejects while durable state remains queued", async () => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const op = makeOp("queued-reject", "background");
+    submit(op);
+    await waitForStarts(backend, 1);
+
+    backend.latest(op.id).reject(new Error("child exited before claim"));
+    await waitForStarts(backend, 2);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(backend.starts).toHaveBeenCalledTimes(2);
+    expect(readOp(op.id)?.attemptCount).toBe(1);
+    backend.latest(op.id).resolve();
+  });
+
+  it.each(["running", "failed"] as const)(
+    "does not requeue a rejected handle after durable state is %s",
+    async (state) => {
+      backend = new ControlledBackend();
+      _setExecutionBackendResolverForTest(() => backend);
+      const op = makeOp(`owned-${state}`);
+      submit(op);
+      await waitForStarts(backend, 1);
+      const launched = backend.starts.mock.calls[0][0].op;
+      transitionOp(launched, "running", "test_owned");
+      if (state === "failed") transitionOp(launched, "failed", "test_terminal");
+
+      backend.latest(op.id).reject(new Error("late transport rejection"));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(backend.starts).toHaveBeenCalledTimes(1);
+      expect(readOp(op.id)?.canonical?.state).toBe(state);
+    },
+  );
+
+  it("terminalizes exhausted launch failure and drains the next locked op", async () => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const first = makeOp("exhausted", "interactive", ["test:launch"]);
+    first.retryPolicy = { maxRecoveryAttempts: 0, backoffMs: [] };
+    const second = makeOp("after-exhausted", "interactive", ["test:launch"]);
+    backend.throwOnStart.add(first.id);
+    submit(first);
+    submit(second);
+
+    await waitForStarts(backend, 2);
+    expect(backend.starts.mock.calls.map(([request]) => request.op.id)).toEqual([first.id, second.id]);
+    expect(readOp(first.id)?.canonical?.state).toBe("failed");
+    backend.latest(second.id).resolve();
+  });
+
+  it("does not double-launch when enqueue and pump race adapter construction", async () => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const op = makeOp("pump-race");
+    let releaseFactory!: (value: Adapter) => void;
+    const factory = vi.fn(() => new Promise<Adapter>(resolve => { releaseFactory = resolve; }));
+    submit(op, factory);
+    enqueueOp(op.id, op.lane as Op["lane"]);
+    pumpScheduler();
+    pumpScheduler();
+    releaseFactory(adapter);
+
+    await waitForStarts(backend, 1);
+    expect(factory).toHaveBeenCalledOnce();
+    expect(backend.starts).toHaveBeenCalledOnce();
+    backend.latest(op.id).resolve();
   });
 
   it("preserves lane concurrency limits", async () => {

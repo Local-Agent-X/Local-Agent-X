@@ -60,6 +60,12 @@ describe("in-process execution backend parity", () => {
     },
   );
 
+  it("rejects a missing parent-constructed adapter", () => {
+    const backend = new InProcessExecutionBackend(runnerFor("success"));
+    expect(() => backend.start({ op, adapter: null as unknown as Adapter, placement }))
+      .toThrow("requires a live adapter");
+  });
+
 });
 
 describe("execution backend registry", () => {

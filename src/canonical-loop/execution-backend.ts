@@ -14,6 +14,10 @@ export interface ExecutionBackendStartRequest {
   placement: ExecutionPlacement;
 }
 
+export type ExecutionBackendStartWithoutAdapterRequest = Omit<ExecutionBackendStartRequest, "adapter">;
+
+export type ExecutionBackendAdapterProvisioning = "parent" | "backend";
+
 export type ExecutionPlacementDecision =
   | { targetId: string; disposition: "ready" }
   | { targetId: string; disposition: "waiting"; wakeToken: string };
@@ -22,6 +26,9 @@ export type ExecutionPlacementDecision =
  * execution happens, but they never own the turn loop or tool dispatcher. */
 export interface ExecutionBackend {
   readonly id: string;
+  /** Production backends declare where the Adapter is constructed. Omitted is
+   * reserved for structurally minimal test doubles and means `parent`. */
+  readonly adapterProvisioning?: ExecutionBackendAdapterProvisioning;
   /** Select once. The scheduler persists this decision before start; later
    * restarts resolve the exact recorded backend/target instead of re-routing. */
   place(op: Op): ExecutionPlacementDecision;
@@ -29,6 +36,7 @@ export interface ExecutionBackend {
    * implementation/version that no longer recognizes it must fail closed. */
   acceptsPlacement(placement: ExecutionPlacement): boolean;
   start(request: ExecutionBackendStartRequest): ExecutionHandle;
+  startWithoutAdapter?(request: ExecutionBackendStartWithoutAdapterRequest): ExecutionHandle;
 }
 
 export class ExecutionBackendRegistry {

@@ -125,6 +125,7 @@ demand via tool search and aren't all listed here.)
 
 - `run_build_plan` — Run a staged app-build plan.
 - `build_plan_status` — Check an app build's status.
+- `build_plan_resume` — Resume a paused app build.
 - `start_app_build`
 - `finalize_app_build`
 
@@ -138,4 +139,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_61 capabilities · 45 with a description · 16 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_62 capabilities · 46 with a description · 16 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

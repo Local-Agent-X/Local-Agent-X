@@ -20,8 +20,8 @@ Companion docs: [AGENTS.md](AGENTS.md) (the invariants/rules),
 [docs/mcp-consuming-servers.md](docs/mcp-consuming-servers.md) (MCP trust and
 execution), and
 [docs/release-qualification.md](docs/release-qualification.md) (release gates,
-benchmark evidence, and report interpretation). `canonical-agent-design.md`
-and `canonical-loop-prd.md` are
+benchmark evidence, and report interpretation). `docs/canonical-agent-design.md`
+and `docs/canonical-loop-prd.md` are
 historical design/ship records; their headers point back to current owners.
 
 Paths below were verified against the tree (the generated map's importer counts
@@ -29,7 +29,7 @@ Paths below were verified against the tree (the generated map's importer counts
 
 ## Read these first (in order)
 
-1. **`src/index.ts`** — process entry: logger, crash guards, Chromium/sandbox flags, then the boot sequence.
+1. **`src/index.ts`** — process entry: logger, crash guards, whole-server sandbox confinement re-exec, then the boot sequence.
 2. **`src/server/index.ts`** + **`src/server/lifecycle.ts`** — boot-phase orchestration; creates the HTTP server, wires the chat WebSocket, starts the security kernel.
 3. **`src/server-context.ts`** — the `ServerContext` dependency surface: every major subsystem handed to the request handlers. The cleanest single view of "what's wired to what."
 4. **`src/canonical-loop/index.ts`** → **`src/canonical-loop/turn-loop.ts`** — the agent turn loop: assemble input → call the provider adapter → dispatch tools → persist. This is the core.
@@ -45,7 +45,7 @@ Paths below were verified against the tree (the generated map's importer counts
 | **Provider adapters + routing** | `src/providers/registry.ts`, `src/providers/provider-ids.ts` | Per-turn transport adapters: `src/canonical-loop/adapters/`. Credential resolution: `src/auth/resolve.ts`. Per-provider history prep: `src/agent-request/prepare-request.ts`. |
 | **Tool defs + registry + dispatch** | `src/tool-execution/` (entry `execute-tool.ts`) | Registry build: `src/tools/registry-build.ts`; tool impls under `src/tools/`. |
 | **Tool governance / policy** | `src/tool-policy/tool-policies.data.ts` + `evaluator.ts` | Default-deny; one row per tool. |
-| **Tool approvals** | `src/tool-execution/require-approval.ts`, `src/approval-manager.ts`, `src/approval-decision.ts` | Live tool-call gate for risky actions; emits `approval_requested` and is rendered by `public/js/chat-stream-store.js`. This is separate from retired issue-level approval fields. |
+| **Tool approvals** | `src/tool-execution/require-approval.ts`, `src/approval-manager.ts`, `src/approval-decision.ts` | Live tool-call gate for risky actions; emits `approval_requested` and is rendered by `public/js/chat-stream-store.js`/`chat-stream-store-approvals.js`. This is separate from retired issue-level approval fields. |
 | **Retry / resilience policy** | `src/auto-retry.ts`, `src/resilience-policy.ts` | Retries only recognized transient categories and only replay-safe tool effects: read-only, idempotent mutation, or keyed mutation with an operation key. Missing effect metadata and non-idempotent mutations are not auto-retried. |
 | **Security kernel (ARI)** | `src/ari-kernel/` (TS gateway) over `packages/arikernel/*` | The kernel is **TypeScript** (`@arikernel/core`, `policy-engine`, `taint-tracker`, `audit-log`, `tool-executors`, `runtime`), vendored as workspace packages — not a native binary. |
 | **Security policy layer** | `src/security/layer/` + `src/security/secrets/` | `layer/` = SecurityLayer policy core (file access, shell policy, network policy); `secrets/` = secret/credential detection. Each has an `index.ts` barrel; the root `src/security/index.ts` is a compat façade re-exporting both. |

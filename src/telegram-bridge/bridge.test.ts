@@ -223,6 +223,77 @@ describe("TelegramBridge inbound identity", () => {
     expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
   });
 
+  it.each([
+    ["/st\u200Bop", "/stop"], ["/ca\u202Encel", "/cancel"], ["/st\u2028op", "/stop"],
+    ["/ca\u2029ncel", "/cancel"], ["/st\u202Fop", "/stop"], ["/st\u200Cop", "/stop"],
+    ["/ca\u200Dncel", "/cancel"],
+  ])(
+    "routes hidden-format control %s before active-turn steering",
+    async (text, command) => {
+      apiCall.mockResolvedValue({ ok: true });
+      dispatchReply.mockResolvedValue(true);
+      const onMessage = vi.fn().mockResolvedValue({ text: "stopped", speakable: "stopped" });
+      const bridge = new TelegramBridge({
+        dataDir: "/nonexistent-telegram-control-test-dir", getToken: () => "TESTTOKEN", onMessage,
+      }) as any;
+      bridge.state = "connected";
+      bridge.allowedChatIds = new Set(["42"]);
+      bridge.ownerVerified = true;
+      bridge.processingLock.add("42");
+
+      await bridge.handleUpdate({
+        update_id: 996,
+        message: { chat: { id: 42 }, from: { first_name: "Peter" }, text },
+      }, "TESTTOKEN");
+
+      expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+        text: command,
+        deliveryId: "update:996", deliveryTarget: "42",
+      }));
+      expect(onMessage.mock.calls[0][0]).not.toHaveProperty("intent");
+    },
+  );
+
+  it("preserves legitimate Unicode formatting in ordinary active-turn steering", async () => {
+    apiCall.mockResolvedValue({ ok: true });
+    const text = "line one\u2028line two\u2029paragraph\u202Fspace\u200Cjoin\u200D";
+    const onMessage = vi.fn().mockResolvedValue(null);
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-unicode-test-dir", getToken: () => "TESTTOKEN", onMessage,
+    }) as any;
+    bridge.state = "connected";
+    bridge.allowedChatIds = new Set(["42"]);
+    bridge.ownerVerified = true;
+    bridge.processingLock.add("42");
+
+    await bridge.handleUpdate({
+      update_id: 997,
+      message: { chat: { id: 42 }, from: { first_name: "Peter" }, text },
+    }, "TESTTOKEN");
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text, intent: "steer" }));
+  });
+
+  it("does not reinterpret a sentence containing a hidden-format control word as a command", async () => {
+    apiCall.mockResolvedValue({ ok: true });
+    const text = "please /st\u200Bop after this step";
+    const onMessage = vi.fn().mockResolvedValue(null);
+    const bridge = new TelegramBridge({
+      dataDir: "/nonexistent-telegram-exact-control-test-dir", getToken: () => "TESTTOKEN", onMessage,
+    }) as any;
+    bridge.state = "connected";
+    bridge.allowedChatIds = new Set(["42"]);
+    bridge.ownerVerified = true;
+    bridge.processingLock.add("42");
+
+    await bridge.handleUpdate({
+      update_id: 998,
+      message: { chat: { id: 42 }, from: { first_name: "Peter" }, text },
+    }, "TESTTOKEN");
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text, intent: "steer" }));
+  });
+
   it("does not discard queued updates when reconnecting after a crash", async () => {
     apiCall.mockImplementation(async (_token, method) => method === "getMe"
       ? { ok: true, result: { id: 1, is_bot: true, first_name: "LAX", username: "lax" } }

@@ -22,6 +22,12 @@ import type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
 import { buildMessagingSessionId } from "../session/channel-registry.js";
 
 const logger = createLogger("whatsapp-bridge");
+const UNSAFE_INBOUND_FORMAT = /[\u00AD\u034F\u061C\u180E\u200B\u200E\u200F\u202A-\u202E\u2061-\u206F\uFEFF\uFFF9-\uFFFB]/g;
+const CONTROL_COMMAND_IGNORABLE = /[\x00-\x1F\x7F\u00AD\u034F\u061C\u180E\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/g;
+
+function controlCommandKey(text: string): string {
+  return text.replace(CONTROL_COMMAND_IGNORABLE, "").trim().toLowerCase();
+}
 
 export interface MessageHandlerContext {
   readonly phoneNumber: string | null;
@@ -163,7 +169,7 @@ export function createMessagesUpsertHandler(
 
       // Strip zero-width, RTL/LTR overrides, and other invisible control
       // characters that could be used to hide prompt injection payloads.
-      const sanitizedText = text?.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD\u034F\u061C\u180E\u2060-\u2069\uFFF9-\uFFFB]/g, "")
+      const sanitizedText = text?.replace(UNSAFE_INBOUND_FORMAT, "")
         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") || null;
 
       const isSelfChat = isOwnerSelfChat(remoteJid, fromMe, ctx.phoneNumber, ctx.selfLid);
@@ -234,10 +240,10 @@ export function createMessagesUpsertHandler(
       // /stop | /cancel — hard-kill the running turn. Intercepted BEFORE the
       // processingLock bounce so it works mid-turn. Doesn't depend on the
       // model cooperating.
-      const cmd = sanitizedText.trim().toLowerCase();
+      const cmd = controlCommandKey(sanitizedText);
       if (cmd === "/stop" || cmd === "/cancel") {
         const raw = await ctx.onMessage({
-          from: phone, name: msg.pushName || phone, text: sanitizedText, sessionId,
+          from: phone, name: msg.pushName || phone, text: cmd, sessionId,
           deliveryId: `message:${String(msgId)}`, deliveryFingerprint: JSON.stringify(msg.message),
           deliveryTarget: remoteJid, preferVoiceReply,
         });

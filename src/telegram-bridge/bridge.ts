@@ -11,6 +11,12 @@ import {
   type TelegramUser,
 } from "./types.js";
 
+const CONTROL_COMMAND_IGNORABLE = /[\x00-\x1F\x7F\u00AD\u034F\u061C\u180E\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF\uFFF9-\uFFFB]/g;
+
+function controlCommandKey(text: string): string {
+  return text.replace(CONTROL_COMMAND_IGNORABLE, "").trim().toLowerCase();
+}
+
 /** Exponential poll backoff capped at 60s. Never gives up — the loop retries
  *  indefinitely (only a 401 is terminal); the exponent is clamped so the delay
  *  stays a finite number no matter how long the outage lasts. */
@@ -268,10 +274,10 @@ export class TelegramBridge {
     // /stop | /cancel — hard-kill the running turn. Intercepted BEFORE the
     // processingLock bounce so it works mid-turn (the bounce would otherwise
     // swallow it). Doesn't depend on the model cooperating.
-    const cmd = text.trim().toLowerCase();
+    const cmd = controlCommandKey(text);
     if (cmd === "/stop" || cmd === "/cancel") {
       return this.dispatchInboundReply(token, chatId, await this.onMessage({
-        from: chatId, name: senderName, text, sessionId,
+        from: chatId, name: senderName, text: cmd, sessionId,
         deliveryId: `update:${String(update.update_id)}`,
         deliveryFingerprint: JSON.stringify(msg),
         deliveryTarget: chatId, preferVoiceReply,

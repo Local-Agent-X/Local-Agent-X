@@ -177,4 +177,74 @@ describe("WhatsApp inbound identity", () => {
     expect(acknowledgeDelivery.mock.calls).toEqual([[false], [true]]);
     vi.useRealTimers();
   });
+
+  it.each([
+    ["/st\u200Bop", "/stop"], ["/ca\u202Encel", "/cancel"], ["/st\u2028op", "/stop"],
+    ["/ca\u2029ncel", "/cancel"], ["/st\u202Fop", "/stop"], ["/st\u200Cop", "/stop"],
+    ["/ca\u200Dncel", "/cancel"],
+  ])(
+    "routes hidden-format control %s before active-turn steering with durable identity",
+    async (text, command) => {
+      dispatchReplyToJid.mockResolvedValue(true);
+      const onMessage = vi.fn().mockResolvedValue({ text: "stopped", speakable: "stopped" });
+      const handler = createMessagesUpsertHandler({
+        phoneNumber: "15550001", selfLid: "owner", allowedNumbers: new Set(), processedMessages: new Set(),
+        processingLock: new Set(["15550001"]),
+        sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+        onMessage, sendMessage: vi.fn().mockResolvedValue(true), sendToJid: vi.fn().mockResolvedValue(true),
+        sendVoiceToJid: vi.fn().mockResolvedValue(true),
+      }, null);
+
+      await handler({ type: "notify", messages: [{
+        key: { id: `CONTROL-${text.length}`, remoteJid: "owner@lid", fromMe: true }, pushName: "Peter",
+        message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000),
+      }] });
+
+      expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+        text: command,
+        deliveryTarget: "owner@lid",
+      }));
+      expect(onMessage.mock.calls[0][0]).not.toHaveProperty("intent");
+    },
+  );
+
+  it("preserves separators, narrow no-break spaces, and joiners in ordinary steering", async () => {
+    const text = "line one\u2028line two\u2029paragraph\u202Fspace\u200Cjoin\u200Dword\u2060join";
+    const onMessage = vi.fn().mockResolvedValue(null);
+    const handler = createMessagesUpsertHandler({
+      phoneNumber: "15550001", selfLid: "owner", allowedNumbers: new Set(), processedMessages: new Set(),
+      processingLock: new Set(["15550001"]),
+      sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+      onMessage, sendMessage: vi.fn().mockResolvedValue(true), sendToJid: vi.fn().mockResolvedValue(true),
+      sendVoiceToJid: vi.fn().mockResolvedValue(true),
+    }, null);
+
+    await handler({ type: "notify", messages: [{
+      key: { id: "UNICODE1", remoteJid: "owner@lid", fromMe: true }, pushName: "Peter",
+      message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000),
+    }] });
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({ text, intent: "steer" }));
+  });
+
+  it("keeps a sentence containing a hidden-format control word as ordinary steering", async () => {
+    const text = "please /st\u200Bop after this step";
+    const onMessage = vi.fn().mockResolvedValue(null);
+    const handler = createMessagesUpsertHandler({
+      phoneNumber: "15550001", selfLid: "owner", allowedNumbers: new Set(), processedMessages: new Set(),
+      processingLock: new Set(["15550001"]),
+      sock: { readMessages: vi.fn(), sendPresenceUpdate: vi.fn().mockResolvedValue(undefined) },
+      onMessage, sendMessage: vi.fn().mockResolvedValue(true), sendToJid: vi.fn().mockResolvedValue(true),
+      sendVoiceToJid: vi.fn().mockResolvedValue(true),
+    }, null);
+
+    await handler({ type: "notify", messages: [{
+      key: { id: "EXACT1", remoteJid: "owner@lid", fromMe: true }, pushName: "Peter",
+      message: { conversation: text }, messageTimestamp: Math.floor(Date.now() / 1000),
+    }] });
+
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: "please /stop after this step", intent: "steer",
+    }));
+  });
 });

@@ -135,6 +135,7 @@ function persistInterruptedOperation(): never {
     toolCallSummary: [{ tool: "write", argsHash: "hash-1", resultStatus: "ok", durationMs: 3 }],
     terminalReason: null,
   });
+  if (mutation === "hard-exit") process.exit(86);
   result({ state: readOp(opId)?.canonical?.state, turns: readOpTurns(opId).length });
 }
 

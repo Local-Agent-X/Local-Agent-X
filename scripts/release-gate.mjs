@@ -1,15 +1,25 @@
 #!/usr/bin/env node
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { arch, platform } from "node:os";
-import { dirname, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { arch, platform, tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { terminateProcessTree } from "./release-process-tree.mjs";
 import { RELEASE_GATE_SCHEMA, releaseGates } from "./release-gates.mjs";
+import {
+  benchmarkPackForGate,
+  benchmarkReporterArgs,
+  buildBenchmarkEvidence,
+  validateBenchmarkSourceScript,
+  validatePersistedBenchmarkEvidence,
+} from "./local-qualification/release-benchmark-evidence.mjs";
 
 const toolingRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand = process.platform === "win32" ? process.execPath : "npm";
+const npmPrefix = process.platform === "win32"
+  ? [resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")]
+  : [];
 
 function parseArgs(args) {
   const options = { sourceRoot: toolingRoot, report: undefined, state: undefined, resume: false, toolingRevision: undefined };
@@ -45,7 +55,14 @@ function gitRevision(root, label) {
 
 function runnerDigest() {
   const hash = createHash("sha256");
-  for (const path of [fileURLToPath(import.meta.url), resolve(toolingRoot, "scripts", "release-gates.mjs"), resolve(toolingRoot, "scripts", "release-process-tree.mjs")]) {
+  for (const path of [
+    fileURLToPath(import.meta.url), resolve(toolingRoot, "scripts", "release-gates.mjs"),
+    resolve(toolingRoot, "scripts", "release-process-tree.mjs"),
+    resolve(toolingRoot, "scripts", "local-qualification", "benchmark-packs.mjs"),
+    resolve(toolingRoot, "scripts", "local-qualification", "release-benchmark-evidence.mjs"),
+    resolve(toolingRoot, "scripts", "local-qualification", "result-schema.ts"),
+    resolve(toolingRoot, "scripts", "local-qualification", "schema-codec.ts"),
+  ]) {
     hash.update(readFileSync(path));
   }
   return hash.digest("hex");
@@ -53,16 +70,24 @@ function runnerDigest() {
 
 function executionEnvironment(override) {
   if (override) return override;
-  const npmVersion = spawnSync(npm, ["--version"], { encoding: "utf8", windowsHide: true });
+  const npmVersion = spawnSync(npmCommand, [...npmPrefix, "--version"], { encoding: "utf8", windowsHide: true });
   if (npmVersion.status !== 0) throw new Error("Release environment has no working npm executable");
   return { platform: platform(), arch: arch(), node: process.version, npm: npmVersion.stdout.trim() };
 }
 
-function readScripts(sourceRoot) {
+function readSourcePackage(sourceRoot) {
   try {
     const packageJson = JSON.parse(readFileSync(resolve(sourceRoot, "package.json"), "utf8"));
-    return packageJson?.scripts && typeof packageJson.scripts === "object" ? packageJson.scripts : {};
-  } catch {
+    if (typeof packageJson?.version !== "string" || packageJson.version.length > 128
+      || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(packageJson.version)) {
+      throw new Error(`Release source has an invalid package version: ${sourceRoot}`);
+    }
+    return {
+      version: packageJson.version,
+      scripts: packageJson?.scripts && typeof packageJson.scripts === "object" ? packageJson.scripts : {},
+    };
+  } catch (error) {
+    if (String(error?.message ?? error).includes("invalid package version")) throw error;
     throw new Error(`Release source has no readable package.json: ${sourceRoot}`);
   }
 }
@@ -93,7 +118,7 @@ function verifyStateMac(state, key) {
   return timingSafeEqual(Buffer.from(mac, "hex"), expected);
 }
 
-function readState(path, expectedFingerprint, gates, key) {
+async function readState(path, expectedFingerprint, gates, key, context) {
   let state;
   try { state = JSON.parse(readFileSync(path, "utf8")); }
   catch (error) {
@@ -106,6 +131,9 @@ function readState(path, expectedFingerprint, gates, key) {
     && new Set(evidence.map((item) => item?.id)).size === evidence.length
     && evidence.every((item) => {
       const gate = known.get(item?.id);
+      const expectedFields = ["id", "status", "exitCode", "outputBytes", "outputSha256", "testSkips", "completedAt", ...(gate?.benchmarkPackId ? ["benchmarkEvidence"] : [])].sort();
+      if (!item || typeof item !== "object" || Object.keys(item).sort().some((field, index) => field !== expectedFields[index])
+        || Object.keys(item).length !== expectedFields.length) return false;
       const validOutcome = (item?.status === "passed" && item?.exitCode === 0)
         || (item?.status === "platform_skip" && item?.exitCode === 77 && gate?.allowPlatformSkip === true);
       return validOutcome && Number.isInteger(item?.outputBytes) && item.outputBytes >= 0
@@ -116,6 +144,12 @@ function readState(path, expectedFingerprint, gates, key) {
       || state?.fingerprint !== expectedFingerprint || !validEvidence) {
     throw new Error(`Release gate state has a stale, forged, or invalid schema: ${path}`);
   }
+  for (const item of evidence) {
+    const gate = known.get(item.id);
+    if (!await validatePersistedBenchmarkEvidence(gate, item.benchmarkEvidence, item, context)) {
+      throw new Error(`Release gate state has a stale, forged, or invalid benchmark scorecard: ${path}`);
+    }
+  }
   const { mac: _mac, ...verified } = state;
   return verified;
 }
@@ -124,28 +158,41 @@ function summarizeOutput(text) {
   return text.length <= 8_000 ? text : `${text.slice(0, 4_000)}\n... output truncated ...\n${text.slice(-4_000)}`;
 }
 
-function prerequisiteResult(gate, message) {
+function prerequisiteResult(gate, message, reason = "missing_script") {
   const output = `${message}\n`;
   const timestamp = new Date().toISOString();
   return {
-    id: gate.id, status: "prerequisite", reason: "missing_script", exitCode: 2,
+    id: gate.id, status: "prerequisite", reason, exitCode: 2,
     startedAt: timestamp, completedAt: timestamp, durationMs: 0,
     outputBytes: Buffer.byteLength(output), outputSha256: sha256(output), testSkips: 0, output,
   };
 }
 
-async function executeGate(gate, sourceRoot, scripts, spawnRunner = spawn) {
+async function executeGate(gate, sourceRoot, scripts, context, spawnRunner = spawn) {
   if (gate.script && typeof scripts[gate.script] !== "string") {
     return prerequisiteResult(gate, `Tagged source is missing required release script: ${gate.script}`);
   }
-  const command = gate.command ?? npm;
-  const args = gate.args ?? ["run", gate.script];
+  const pack = benchmarkPackForGate(gate);
+  if (pack) {
+    const validation = validateBenchmarkSourceScript(pack, scripts);
+    if (!validation.ok) return prerequisiteResult(gate, `Tagged source has a stale benchmark script: ${gate.script}`, validation.reason);
+  }
+  const command = gate.command ?? npmCommand;
+  const reporterDirectory = pack ? mkdtempSync(join(tmpdir(), "lax-release-benchmark-")) : undefined;
+  const reporterFile = reporterDirectory ? join(reporterDirectory, "vitest.json") : undefined;
+  const args = gate.args ?? [...npmPrefix, "run", gate.script, ...(reporterFile ? benchmarkReporterArgs(reporterFile) : [])];
   const startedAt = new Date().toISOString();
   const start = Date.now();
-  const child = spawnRunner(command, args, {
-    cwd: sourceRoot, env: process.env, windowsHide: true, detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  let child;
+  try {
+    child = spawnRunner(command, args, {
+      cwd: sourceRoot, env: process.env, windowsHide: true, detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    if (reporterDirectory) rmSync(reporterDirectory, { recursive: true, force: true });
+    throw error;
+  }
   const chunks = [];
   child.stdout?.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
   child.stderr?.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -162,7 +209,11 @@ async function executeGate(gate, sourceRoot, scripts, spawnRunner = spawn) {
   let timedOut = first.timedOut === true;
   let outcome = first;
   if (timedOut) {
-    await terminateProcessTree(child);
+    try { await terminateProcessTree(child); }
+    catch (error) {
+      if (reporterDirectory) rmSync(reporterDirectory, { recursive: true, force: true });
+      throw error;
+    }
     outcome = await Promise.race([
       closed,
       new Promise((resolveBound) => setTimeout(() => resolveBound({ code: null, signal: "cleanup_bound" }), 1_000)),
@@ -174,7 +225,7 @@ async function executeGate(gate, sourceRoot, scripts, spawnRunner = spawn) {
   const rawOutput = Buffer.concat(chunks).toString("utf8");
   const output = summarizeOutput(`${rawOutput}${spawnError?.message ?? ""}`);
   const skipSummaries = [...output.matchAll(/^\s*Tests\s+.*?\b(\d+) skipped\b/gm)];
-  const testSkips = skipSummaries.length ? Number(skipSummaries.at(-1)[1]) : 0;
+  let testSkips = skipSummaries.length ? Number(skipSummaries.at(-1)[1]) : 0;
   let status = "failed";
   let reason = `exit_${code ?? "missing"}`;
   if (timedOut || signal) {
@@ -192,10 +243,43 @@ async function executeGate(gate, sourceRoot, scripts, spawnRunner = spawn) {
     status = gate.allowPlatformSkip ? "platform_skip" : "failed";
     reason = gate.allowPlatformSkip ? "explicit_platform_skip" : "unauthorized_platform_skip";
   }
+  const completedAt = new Date().toISOString();
+  let benchmarkEvidence;
+  if (pack) {
+    try {
+      try {
+        benchmarkEvidence = await buildBenchmarkEvidence(pack, reporterFile, {
+          ...context, sourceRoot, outputSha256: sha256(rawOutput), completedAt,
+        });
+      } catch (error) {
+        try {
+          benchmarkEvidence = await buildBenchmarkEvidence(pack, `${reporterFile}.unavailable`, {
+            ...context, sourceRoot, outputSha256: sha256(rawOutput), completedAt,
+          });
+        } catch {
+          benchmarkEvidence = {
+            scorecard: null, results: [], disposition: { allowed: [], blocked: [] },
+            reporterSha256: `sha256:${sha256("unavailable")}`, reportedFiles: 0,
+          };
+        }
+        benchmarkEvidence.error = "benchmark evidence transformation failed";
+      }
+    } finally {
+      rmSync(reporterDirectory, { recursive: true, force: true });
+    }
+    testSkips = benchmarkEvidence.disposition.allowed.length + benchmarkEvidence.disposition.blocked.length;
+    if (status === "passed" && benchmarkEvidence.scorecard?.verdict !== "pass") {
+      status = "failed";
+      reason = benchmarkEvidence.error ? "malformed_benchmark_evidence"
+        : benchmarkEvidence.disposition.blocked.length ? "unrecognized_benchmark_skip" : "incomplete_benchmark_evidence";
+    }
+  }
   return {
     id: gate.id, status, reason, exitCode: code, startedAt,
-    completedAt: new Date().toISOString(), durationMs: Date.now() - start,
-    outputBytes: Buffer.byteLength(rawOutput), outputSha256: sha256(rawOutput), testSkips, output,
+    completedAt, durationMs: Date.now() - start,
+    outputBytes: Buffer.byteLength(rawOutput), outputSha256: sha256(rawOutput), testSkips,
+    output: pack ? "Benchmark output retained as a content-free digest." : output,
+    benchmarkEvidence,
   };
 }
 
@@ -212,14 +296,17 @@ export async function runReleaseGate({
   }
   const digest = runnerDigest();
   const runtime = executionEnvironment(environment);
-  const scripts = readScripts(root);
+  const sourcePackage = readSourcePackage(root);
+  const scripts = sourcePackage.scripts;
   const report = reportPath ? resolve(reportPath) : resolve(root, ".release-gate", "report.json");
   const stateFile = statePath ? resolve(statePath) : resolve(root, ".release-gate", "state.json");
   const fingerprint = sha256(JSON.stringify({ sourceRevision, toolingRevision, runnerDigest: digest, runtime, gates }));
   const signingKey = resumeKey(key);
   if (resume && !signingKey) throw new Error("Release gate resume requires LAX_RELEASE_GATE_RESUME_KEY");
   const state = resume
-    ? readState(stateFile, fingerprint, gates, signingKey)
+    ? await readState(stateFile, fingerprint, gates, signingKey, {
+      sourceRevision, toolingRevision, runtime, packageVersion: sourcePackage.version,
+    })
     : { schema: RELEASE_GATE_SCHEMA, fingerprint, evidence: [] };
   const results = [];
   let blocked = false;
@@ -230,13 +317,16 @@ export async function runReleaseGate({
       results.push({ id: gate.id, status: "resumed", reason: "authenticated_receipt", receipt });
       continue;
     }
-    const result = await executeGate(gate, root, scripts, spawnRunner);
+    const result = await executeGate(gate, root, scripts, {
+      sourceRevision, toolingRevision, runtime, packageVersion: sourcePackage.version,
+    }, spawnRunner);
     results.push(result);
     if (result.status === "passed" || result.status === "platform_skip") {
       state.evidence.push({
         id: result.id, status: result.status, exitCode: result.exitCode,
         outputBytes: result.outputBytes, outputSha256: result.outputSha256,
         testSkips: result.testSkips, completedAt: result.completedAt,
+        ...(result.benchmarkEvidence ? { benchmarkEvidence: result.benchmarkEvidence } : {}),
       });
       if (signingKey) atomicJson(stateFile, signedState(state, signingKey));
     } else {

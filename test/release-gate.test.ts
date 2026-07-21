@@ -1,11 +1,16 @@
+import { createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { isPidAlive } from "../src/pid-probe.js";
 import { releaseGates } from "../scripts/release-gates.mjs";
 import { runReleaseGate } from "../scripts/release-gate.mjs";
+import { projectQualificationPackContract, qualificationBenchmarkCatalog } from "../scripts/local-qualification/benchmark-packs.mjs";
+import { aggregateQualificationResults, sealQualificationResult } from "../scripts/local-qualification/result-schema.js";
 
 const roots: string[] = [];
 const child = resolve("test/fixtures/release-gate-child.mjs");
@@ -19,6 +24,10 @@ function paths() {
   const root = mkdtempSync(join(tmpdir(), "lax-release-gate-"));
   roots.push(root);
   return { reportPath: join(root, "report.json"), statePath: join(root, "state.json") };
+}
+
+function benchmarkTempDirectories(): string[] {
+  return readdirSync(tmpdir()).filter((name) => name.startsWith("lax-release-benchmark-")).sort();
 }
 
 function gate(id: string, mode: string, extraArgs: string[] = [], allowPlatformSkip = false) {
@@ -36,14 +45,64 @@ function job(value: string, name: string, next?: string): string {
   return value.slice(start, end < 0 ? value.length : end);
 }
 
-function initSource(scripts: Record<string, string> = {}) {
+function initSource(scripts: Record<string, string> = {}, version: string | null = "0.5.3") {
   const root = mkdtempSync(join(tmpdir(), "lax-release-source-"));
   roots.push(root);
-  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "release-source", scripts }));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "release-source", ...(version === null ? {} : { version }), scripts }));
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["add", "package.json"], { cwd: root });
   execFileSync("git", ["-c", "user.name=Release Gate", "-c", "user.email=gate@example.invalid", "commit", "--quiet", "-m", "source"], { cwd: root });
   return root;
+}
+
+let installerAssertions: Map<string, string[]> | undefined;
+
+function installerAssertionNames(): Map<string, string[]> {
+  if (installerAssertions) return installerAssertions;
+  const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+  const output = join(mkdtempSync(join(tmpdir(), "lax-release-list-")), "tests.json");
+  roots.push(dirname(output));
+  const npmCli = resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  execFileSync(process.execPath, [npmCli, "exec", "vitest", "list", ...pack.scenarios.map((scenario) => scenario.testPath), "--", `--json=${output}`]);
+  installerAssertions = new Map(pack.scenarios.map((scenario) => [scenario.testPath, []]));
+  for (const item of JSON.parse(readFileSync(output, "utf8"))) {
+    const path = relative(resolve("."), item.file).replaceAll("\\", "/");
+    installerAssertions.get(path)?.push(item.name.replaceAll(" > ", " "));
+  }
+  return installerAssertions;
+}
+
+function benchmarkReport(sourceRoot: string, options: { missing?: string; skip?: string; fail?: string } = {}) {
+  const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+  const names = installerAssertionNames();
+  const testResults = pack.scenarios.filter((scenario) => scenario.id !== options.missing).map((scenario) => {
+    const status = scenario.id === options.fail ? "failed" : "passed";
+    return {
+      name: resolve(sourceRoot, scenario.testPath), status, startTime: 1, endTime: 2,
+      assertionResults: names.get(scenario.testPath)!.map((fullName, index) => ({
+        fullName,
+        status: index === 0 && scenario.id === options.skip ? "skipped"
+          : index === 0 && scenario.id === options.fail ? "failed" : "passed",
+      })),
+    };
+  });
+  return { success: !options.fail, testResults };
+}
+
+function benchmarkSpawn(report: unknown, exitCode = 0) {
+  return (_command: string, args: string[]) => {
+    const output = args.find((arg) => arg.startsWith("--outputFile="));
+    if (output) writeFileSync(output.slice("--outputFile=".length), JSON.stringify(report));
+    const child = new EventEmitter() as EventEmitter & { stdout: PassThrough; stderr: PassThrough };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    queueMicrotask(() => {
+      child.stdout.end("bounded benchmark output");
+      child.stderr.end();
+      child.emit("close", exitCode, null);
+    });
+    return child;
+  };
 }
 
 describe("release publication workflows", () => {
@@ -161,6 +220,14 @@ describe("release gate evidence", () => {
     expect(result.results[0]).toMatchObject({ status: "prerequisite", reason: "missing_script", exitCode: 2 });
   });
 
+  it("blocks a release source with a missing or invalid package version", async () => {
+    for (const version of [null, "latest", "1.2", "1.2.3 || masked"]) {
+      await expect(runReleaseGate({
+        gates: [gate("one", "pass")], sourceRoot: initSource({}, version), ...paths(), environment: runtime,
+      })).rejects.toThrow(/invalid package version/);
+    }
+  });
+
   it("requires an authenticated resume key and rejects forged state", async () => {
     const p = paths();
     const gates = [gate("one", "pass"), gate("two", "fail")];
@@ -191,5 +258,135 @@ describe("release gate evidence", () => {
     await expect(runReleaseGate({
       gates: [gate("one", "pass")], ...paths(), environment: runtime, expectedToolingRevision: "0".repeat(40),
     })).rejects.toThrow(/tooling revision mismatch/);
+  });
+
+  it("emits a real Q2 scorecard from benchmark reporter evidence and resumes it", async () => {
+    const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+    const sourceRoot = initSource({ [pack.gate.script]: "vitest run test/installer-contract.test.ts test/installer-resume.test.ts test/installer-rollback.test.ts" });
+    const p = paths();
+    const gateDefinition = releaseGates.find((item) => item.id === "installer")!;
+    const result = await runReleaseGate({
+      gates: [gateDefinition], sourceRoot, ...p, key, environment: runtime,
+      spawnRunner: benchmarkSpawn(benchmarkReport(sourceRoot)),
+    });
+    expect(result.status).toBe("passed");
+    expect(result.results[0].benchmarkEvidence).toMatchObject({
+      reportedFiles: 3, disposition: { allowed: [], blocked: [] },
+      scorecard: { verdict: "pass", counts: { pass: 3, missing: 0 } },
+    });
+    expect(result.results[0].benchmarkEvidence.results).toHaveLength(3);
+    const resumed = await runReleaseGate({ gates: [gateDefinition], sourceRoot, ...p, key, resume: true, environment: runtime });
+    expect(resumed.results[0]).toMatchObject({
+      status: "resumed", receipt: { benchmarkEvidence: { scorecard: { verdict: "pass" } } },
+    });
+  });
+
+  it("rejects stale benchmark commands before spawning a tagged source script", async () => {
+    const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+    const exact = "vitest run test/installer-contract.test.ts test/installer-resume.test.ts test/installer-rollback.test.ts";
+    const gateDefinition = releaseGates.find((item) => item.id === "installer")!;
+    let spawns = 0;
+    for (const changed of [
+      undefined,
+      exact.replace("test/installer-contract.test.ts ", ""),
+      "vitest run test/installer-resume.test.ts test/installer-contract.test.ts test/installer-rollback.test.ts",
+      `${exact} test/extra.test.ts`,
+      `${exact} || npm run build`,
+    ]) {
+      const sourceRoot = initSource(changed === undefined ? {} : { [pack.gate.script]: changed });
+      const result = await runReleaseGate({
+        gates: [gateDefinition], sourceRoot, ...paths(), environment: runtime,
+        spawnRunner: () => { spawns += 1; throw new Error("must not spawn"); },
+      });
+      expect(result.results[0]).toMatchObject({
+        status: "prerequisite", reason: changed === undefined ? "missing_script" : "stale_benchmark_script",
+      });
+    }
+    expect(spawns).toBe(0);
+  });
+
+  it("blocks partial, malformed, skipped, and output-mismatched benchmark evidence", async () => {
+    const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+    const script = "vitest run test/installer-contract.test.ts test/installer-resume.test.ts test/installer-rollback.test.ts";
+    const gateDefinition = releaseGates.find((item) => item.id === "installer")!;
+    for (const [reportFactory, reason, verdict] of [
+      [(root: string) => benchmarkReport(root, { missing: "rollback" }), "incomplete_benchmark_evidence", "incomplete"],
+      [() => ({ success: true, testResults: "not-an-array" }), "malformed_benchmark_evidence", "incomplete"],
+      [(root: string) => benchmarkReport(root, { skip: "contract" }), "unrecognized_benchmark_skip", "environment_unavailable"],
+      [(root: string) => benchmarkReport(root, { fail: "resume" }), "incomplete_benchmark_evidence", "product_failure"],
+    ] as const) {
+      const sourceRoot = initSource({ [pack.gate.script]: script });
+      const result = await runReleaseGate({
+        gates: [gateDefinition], sourceRoot, ...paths(), environment: runtime,
+        spawnRunner: benchmarkSpawn(reportFactory(sourceRoot)),
+      });
+      expect(result.status).toBe("blocked");
+      expect(result.results[0]).toMatchObject({ status: "failed", reason, benchmarkEvidence: { scorecard: { verdict } } });
+    }
+    const sourceRoot = initSource({ [pack.gate.script]: script });
+    const failedProcess = await runReleaseGate({
+      gates: [gateDefinition], sourceRoot, ...paths(), environment: runtime,
+      spawnRunner: benchmarkSpawn(benchmarkReport(sourceRoot), 9),
+    });
+    expect(failedProcess.results[0]).toMatchObject({ status: "failed", reason: "exit_9", benchmarkEvidence: { scorecard: { verdict: "pass" } } });
+  });
+
+  it("contains Q2 transformation failure and cleans reporter temp state", async () => {
+    const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+    const sourceRoot = initSource({ [pack.gate.script]: "vitest run test/installer-contract.test.ts test/installer-resume.test.ts test/installer-rollback.test.ts" });
+    const gateDefinition = releaseGates.find((item) => item.id === "installer")!;
+    const before = benchmarkTempDirectories();
+    const result = await runReleaseGate({
+      gates: [gateDefinition], sourceRoot, ...paths(),
+      environment: { ...runtime, node: `ghp_${"x".repeat(36)}` },
+      spawnRunner: benchmarkSpawn(benchmarkReport(sourceRoot)),
+    });
+    expect(result).toMatchObject({
+      status: "blocked",
+      results: [{ status: "failed", reason: "malformed_benchmark_evidence", benchmarkEvidence: { scorecard: { verdict: "incomplete" } } }],
+    });
+    expect(benchmarkTempDirectories()).toEqual(before);
+
+    await expect(runReleaseGate({
+      gates: [gateDefinition], sourceRoot, ...paths(), environment: runtime,
+      spawnRunner: () => { throw new Error("spawn failed"); },
+    })).rejects.toThrow(/spawn failed/);
+    expect(benchmarkTempDirectories()).toEqual(before);
+  });
+
+  it("rejects MAC-valid but forged resumed benchmark scorecards and receipts", async () => {
+    const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
+    const sourceRoot = initSource({ [pack.gate.script]: "vitest run test/installer-contract.test.ts test/installer-resume.test.ts test/installer-rollback.test.ts" });
+    const p = paths();
+    const gateDefinition = releaseGates.find((item) => item.id === "installer")!;
+    await runReleaseGate({
+      gates: [gateDefinition], sourceRoot, ...p, key, environment: runtime,
+      spawnRunner: benchmarkSpawn(benchmarkReport(sourceRoot)),
+    });
+    const original = JSON.parse(readFileSync(p.statePath, "utf8"));
+    const semanticForgery = (state: any) => {
+      const evidence = state.evidence[0].benchmarkEvidence;
+      evidence.results = evidence.results.map((row: any) => {
+        const { resultDigest: _digest, ...unsigned } = row;
+        unsigned.subject.runtime.version = "v99.0.0";
+        return sealQualificationResult(unsigned);
+      });
+      evidence.scorecard = aggregateQualificationResults(projectQualificationPackContract(pack), evidence.results);
+    };
+    for (const mutate of [
+      (state: any) => { state.evidence[0].benchmarkEvidence.scorecard.verdict = "product_failure"; },
+      (state: any) => { state.evidence[0].unexpected = true; },
+      (state: any) => { state.evidence[0].benchmarkEvidence.disposition.allowed = [`sha256:${"a".repeat(64)}`]; },
+      (state: any) => { state.evidence[0].testSkips = 1; },
+      semanticForgery,
+    ]) {
+      const state = structuredClone(original);
+      mutate(state);
+      const { mac: _mac, ...payload } = state;
+      state.mac = createHmac("sha256", key).update(JSON.stringify(payload)).digest("hex");
+      writeFileSync(p.statePath, JSON.stringify(state));
+      await expect(runReleaseGate({ gates: [gateDefinition], sourceRoot, ...p, key, resume: true, environment: runtime }))
+        .rejects.toThrow(/stale, forged, or invalid/);
+    }
   });
 });

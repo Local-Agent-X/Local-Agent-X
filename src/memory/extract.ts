@@ -18,7 +18,8 @@ import type { MemoryIndex } from "./index.js";
 import { dispatch } from "../llm-dispatch.js";
 import { guardedRewrite } from "../context-manager/llm-rewrite-guard.js";
 import { runMemoryGate } from "./write-safely.js";
-import { createInternalMemoryContext } from "./promotion-gate.js";
+import { createImportedMemoryContext, createInternalMemoryContext } from "./promotion-gate.js";
+import { IMPORTED_FACT_SOURCE_PREFIX } from "./fact-provenance-label.js";
 
 export interface ExtractionOptions {
   lookbackHours?: number;       // default 24
@@ -47,6 +48,20 @@ interface ChunkRow {
   source: string;
   text: string;
   updated_at: number;
+  metadata: string | null;
+}
+
+function hasImportedOrUntrustedLineage(chunk: ChunkRow): boolean {
+  if (chunk.source === "import" || chunk.path.startsWith("import/")) return true;
+  if (!chunk.metadata) return false;
+  try {
+    const metadata = JSON.parse(chunk.metadata) as Record<string, unknown>;
+    return metadata.source_type === "import"
+      || metadata.trust_status === "untrusted"
+      || metadata.taint_status === "tainted";
+  } catch {
+    return true;
+  }
 }
 
 /** Main entry point — extract facts from recent chunks into the MemoryIndex. */
@@ -75,7 +90,7 @@ export async function runExtraction(
   // Fetch chunks from the lookback window, grouped by session path
   const rows = (memory as unknown as { db: { prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] } } }).db
     .prepare(
-      `SELECT id, path, source, text, updated_at FROM chunks
+      `SELECT id, path, source, text, updated_at, metadata FROM chunks
        WHERE updated_at >= ?
        ORDER BY path, updated_at ASC`
     )
@@ -125,17 +140,17 @@ export async function runExtraction(
       }
 
       // Ingest through retainSmart so the resolver deduplicates + updates
-      const sourceFile = `consolidation:${sessionPath}`;
+      const imported = chunks.some(hasImportedOrUntrustedLineage);
+      const sourceFile = imported
+        ? `${IMPORTED_FACT_SOURCE_PREFIX}${sessionPath}`
+        : `consolidation:${sessionPath}`;
       // Consolidation reorganizes chunks that are already in the durable memory
       // index. Bind that handoff to this exact output, target, source, and
       // session; the gate sanitizes without consuming, then retainSmart consumes
       // the same one-use capability at the durable Facts DB boundary.
-      const promotion = createInternalMemoryContext(
-        extractedText,
-        "memory:retain",
-        sourceFile,
-        sessionPath,
-      );
+      const promotion = imported
+        ? createImportedMemoryContext(extractedText, "memory:retain", sourceFile, sessionPath)
+        : createInternalMemoryContext(extractedText, "memory:retain", sourceFile, sessionPath);
       const gated = runMemoryGate({
         content: extractedText,
         source: "tool",

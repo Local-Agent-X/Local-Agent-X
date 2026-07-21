@@ -12,7 +12,7 @@ import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ServerEvent } from "../types.js";
 import { MemoryIndex } from "./index.js";
 import { createFactsTools } from "./tools/facts.js";
-import { createInternalMemoryContext } from "./promotion-gate.js";
+import { createImportedMemoryContext, createInternalMemoryContext } from "./promotion-gate.js";
 
 let dir: string;
 let memory: MemoryIndex;
@@ -282,5 +282,15 @@ describe("memory promotion through the canonical tool pipeline", () => {
       promotion: createInternalMemoryContext("existing fact", "memory:retain", "test"),
     });
     expect(() => memory.updateFact("existing fact", "bypass")).toThrow(/capability required/);
+  });
+
+  it("binds imported origin so a context cannot relabel the capability", () => {
+    const content = "- W @user imported fact";
+    const source = "consolidation:import-derived:UNTRUSTED:import/chatgpt/1";
+    const promotion = createImportedMemoryContext(content, "memory:retain", source, "import/chatgpt/1");
+    expect(() => memory.retain(content, source, 0, {
+      ...promotion,
+      origin: "durable_memory",
+    })).toThrow(/claims do not match/);
   });
 });

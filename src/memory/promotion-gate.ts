@@ -91,9 +91,21 @@ export function createInternalMemoryContext(
   return { origin: "durable_memory", capability, evidenceContent: content, target, source, sessionId, provenance, confidence };
 }
 
+export function createImportedMemoryContext(
+  content: string,
+  target: string,
+  source: string,
+  sessionId: string,
+): MemoryPromotionContext {
+  const provenance = "import";
+  const confidence = 1;
+  const capability = mint({ content, target, source, sessionId, provenance, confidence, origin: "import" });
+  return { origin: "import", capability, evidenceContent: content, target, source, sessionId, provenance, confidence };
+}
+
 export function assertMemoryPromotionCapability(
   capability: MemoryPromotionCapability | undefined,
-  expected: Omit<MemoryPromotionClaims, "origin" | "evidenceSpan">,
+  expected: Omit<MemoryPromotionClaims, "evidenceSpan">,
   consume = true,
 ): void {
   const state = capability ? states.get(capability) : undefined;
@@ -114,10 +126,11 @@ export function assertMemoryPromotionCapability(
     && claims.source === expected.source
     && claims.sessionId === expected.sessionId
     && claims.provenance === expected.provenance
-    && claims.confidence === expected.confidence;
+    && claims.confidence === expected.confidence
+    && claims.origin === expected.origin;
   if (!matches) {
     throw new Error(
-      "memory promotion capability claims do not match this write — gate and sink disagree on content/target/source/session/provenance/confidence",
+      "memory promotion capability claims do not match this write — gate and sink disagree on content/target/source/session/provenance/confidence/origin",
     );
   }
   if (consume && state.consumed) throw new Error("memory promotion capability has already been consumed");
@@ -293,6 +306,7 @@ export function assertMemoryPromotionAllowed(content: string, target: string, co
     sessionId: context?.sessionId ?? "default",
     provenance: context?.provenance ?? "unknown",
     confidence: context?.confidence ?? 0,
+    origin: context?.origin ?? "unknown",
   }, consume);
 }
 

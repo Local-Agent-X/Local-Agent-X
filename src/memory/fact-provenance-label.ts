@@ -7,8 +7,15 @@
 // through memory — a tainted save must never render without its label.
 
 export const TAINTED_FACT_SOURCE_PREFIX = "agent-tool:tainted-external";
+export const IMPORTED_FACT_SOURCE_PREFIX = "consolidation:import-derived:UNTRUSTED:";
 
 export function factTrustSuffix(sourceFile: string | undefined): string {
+	if (sourceFile?.startsWith(IMPORTED_FACT_SOURCE_PREFIX)) {
+		return (
+			" [UNTRUSTED - derived from imported conversation history; verify before relying on it]" +
+			" [source=retained-fact source_type=import trust=untrusted taint=unknown label=\"Imported-derived fact\"]"
+		);
+	}
 	if (sourceFile?.startsWith(TAINTED_FACT_SOURCE_PREFIX)) {
 		return (
 			" [UNTRUSTED — saved while this session was reading external (web/MCP/email) content and never human-reviewed;" +

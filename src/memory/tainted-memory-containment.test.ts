@@ -17,7 +17,7 @@ import { MemoryIndex } from "./index.js";
 import { createFactsTools } from "./tools/facts.js";
 import { buildContextBlock } from "./context.js";
 import { clearTaintedPromotionQuota } from "./promotion-gate.js";
-import { factTrustSuffix, TAINTED_FACT_SOURCE_PREFIX } from "./fact-provenance-label.js";
+import { factTrustSuffix, IMPORTED_FACT_SOURCE_PREFIX, TAINTED_FACT_SOURCE_PREFIX } from "./fact-provenance-label.js";
 import { requireApprovalPhase } from "../tool-execution/require-approval.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 import { setSessionProfile, clearSessionProfile } from "../autonomy/profile-store.js";
@@ -145,6 +145,7 @@ describe("factTrustSuffix unit mapping", () => {
 	it("keys the untrusted label off the tainted source prefix, others unchanged", () => {
 		expect(factTrustSuffix(`${TAINTED_FACT_SOURCE_PREFIX}-inference`)).toContain("trust=untrusted taint=tainted");
 		expect(factTrustSuffix(`${TAINTED_FACT_SOURCE_PREFIX}-tool-observation`)).toContain("UNTRUSTED");
+		expect(factTrustSuffix(`${IMPORTED_FACT_SOURCE_PREFIX}import/chatgpt/1`)).toContain("source_type=import trust=untrusted");
 		expect(factTrustSuffix("agent-tool:user-statement")).toContain("reported by user");
 		expect(factTrustSuffix("agent-tool:inference")).toContain("unverified inference");
 		expect(factTrustSuffix(undefined)).toContain("source_type=legacy");

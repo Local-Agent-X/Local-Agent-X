@@ -12,17 +12,17 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1372 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1374 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 93 | 24 | XL |  |
+| `src/ops/` | 94 | 24 | XL |  |
 | `src/security/` | 75 | 30 | XL |  |
 | `src/tools/` | 59 | 148 | XL |  |
 | `src/providers/` | 55 | 20 | XL |  |
-| `src/canonical-loop/` | 50 | 172 | XL |  |
+| `src/canonical-loop/` | 50 | 173 | XL |  |
 | `src/memory/` | 42 | 118 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 33 | 2 | M |  |
@@ -34,7 +34,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/tool-policy/` | 25 | 20 | L |  |
 | `src/browser/` | 24 | 51 | XL |  |
-| `src/local-runtimes/` | 22 | 18 | L |  |
+| `src/local-runtimes/` | 23 | 18 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
 | `src/agent-request/` | 18 | 14 | L |  |
@@ -43,7 +43,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agents/` | 16 | 13 | L |  |
 | `src/chat-ws/` | 16 | 12 | L |  |
 | `src/app-runtime/` | 15 | 12 | L |  |
-| `src/protocols/` | 15 | 38 | XL |  |
+| `src/protocols/` | 15 | 39 | XL |  |
 | `src/anthropic-client/` | 14 | 19 | L |  |
 | `src/data-lineage/` | 13 | 6 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
@@ -160,7 +160,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/safe-regex.ts` | S |
 | `src/sanitize.ts` | M |
 | `src/screen-capture-mac.ts` | S |
-| `src/screen-capture.ts` | S |
+| `src/screen-capture.ts` | M |
 | `src/secrets-crypto.ts` | S |
 | `src/secrets-types.ts` | S |
 | `src/secrets.ts` | M |

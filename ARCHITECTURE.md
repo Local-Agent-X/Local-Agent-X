@@ -18,7 +18,10 @@ Companion docs: [AGENTS.md](AGENTS.md) (the invariants/rules),
 [docs/ari-kernel.md](docs/ari-kernel.md) (current security-kernel behavior),
 [docs/provider-auth.md](docs/provider-auth.md) (credential storage), and
 [docs/mcp-consuming-servers.md](docs/mcp-consuming-servers.md) (MCP trust and
-execution). `canonical-agent-design.md` and `canonical-loop-prd.md` are
+execution), and
+[docs/release-qualification.md](docs/release-qualification.md) (release gates,
+benchmark evidence, and report interpretation). `canonical-agent-design.md`
+and `canonical-loop-prd.md` are
 historical design/ship records; their headers point back to current owners.
 
 Paths below were verified against the tree (the generated map's importer counts
@@ -64,6 +67,7 @@ Paths below were verified against the tree (the generated map's importer counts
 | **Remote screen + control** | `src/screen-stream/` (`index.ts`, `peer.ts`) | WebRTC desktop stream to a paired mobile device (`ffmpeg-capture.ts`) with remote input back (`screen-input.ts`); signaling state machine in `signaling-machine.ts`. |
 | **Voice** | `src/voice/`, `src/bridge-voice/` | Node side is a forwarder; the heavy STT/TTS runs in Python sidecars under `python/`. |
 | **Self-edit + platform updates** | `src/self-edit/` (`sandbox.ts`, `sandbox-gates.ts`) | Both self-edits and platform updates validate in an isolated worktree (deps → build → bind → smoke gates) before landing. Update entry: `src/update-pipeline.ts`. Crash-revert: `src/self-edit/rollback.ts`. |
+| **Release qualification** | `scripts/release-gate.mjs`, `scripts/release-gates.mjs`, `scripts/local-qualification/` | One source/tooling-bound gate runs the ordered release checks and emits machine-readable evidence. Versioned installer, local-model, plugin, and channel packs are defined by `benchmark-packs.mjs`; the three versioned publisher workflows depend on the gate before packaging or upload. |
 | **Cross-machine sync** | `src/sync/` (`index.ts`) | `AgentSync` mirrors configured memory, sessions, sanitized config/UI state, and workspace data to a user-configured Git remote. The product expects a private repository but does not enforce repository visibility. |
 | **Scheduled missions / cron** | `src/cron/` (`cron-service.ts`) | |
 | **Desktop app (Electron)** | `desktop/src/` | `main.ts` (Electron main) spawns the Node server (`server-process.ts`) and runs a pre-boot reconcile/build (`reconcile.ts`); window/IPC in `window.ts`, `ipc.ts`. |

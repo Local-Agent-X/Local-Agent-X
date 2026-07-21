@@ -745,12 +745,37 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     expect(h.closeCalls).toContain("user-3");
   });
 
-  it("browser-close-view REFUSES an agent view (agent-managed, no user close)", async () => {
-    h.viewsById.set("agent-9", { webContents: makeWc("https://agent/") });
-    h.poolList = [{ viewId: "agent-9", partition: "persist:lax-profile-work", agentDriven: true }];
-    const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "agent-9");
-    expect(ok).toBe(false);
-    expect(h.closeCalls).not.toContain("agent-9");
+  it("browser-close-view closes an agent view AND pushes the recovery notice to the server child", async () => {
+    const { setBrowserUiEventSink } = await import("../desktop/src/browser-perception");
+    const pushed: Array<Record<string, unknown>> = [];
+    setBrowserUiEventSink((msg) => pushed.push(msg));
+    try {
+      h.viewsById.set("agent-9", { webContents: makeWc("https://agent/") });
+      h.poolList = [{ viewId: "agent-9", partition: "persist:lax-profile-work", agentDriven: true }];
+      const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "agent-9");
+      expect(ok).toBe(true);
+      expect(h.closeCalls).toContain("agent-9");
+      expect(pushed).toEqual([
+        expect.objectContaining({ type: "lax:browser-agent-view-closed", viewId: "agent-9" }),
+      ]);
+    } finally {
+      setBrowserUiEventSink(null);
+    }
+  });
+
+  it("browser-close-view does NOT push the agent-view-closed notice for a user view", async () => {
+    const { setBrowserUiEventSink } = await import("../desktop/src/browser-perception");
+    const pushed: Array<Record<string, unknown>> = [];
+    setBrowserUiEventSink((msg) => pushed.push(msg));
+    try {
+      h.viewsById.set("user-4", { webContents: makeWc("https://x/") });
+      h.poolList = [{ viewId: "user-4", partition: "persist:lax-profile-default", agentDriven: false }];
+      const ok = h.handlers.get("browser-close-view")!({ sender: trustedWC }, "user-4");
+      expect(ok).toBe(true);
+      expect(pushed).toEqual([]);
+    } finally {
+      setBrowserUiEventSink(null);
+    }
   });
 
   it("browser-close-view returns false for an unknown view", async () => {

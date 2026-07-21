@@ -8,9 +8,11 @@ import { EventBus } from "../event-bus.js";
 import {
 	formatConsoleReport,
 	formatNetworkReport,
+	handleAgentViewClosed,
 	handleBrowserDownloadEvent,
 	handleBrowserUiEvent,
 	sessionIdFromViewId,
+	setAgentViewClosedHandler,
 } from "./bridge-perception.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { sanitizeUiEvent } from "../orchestrator/ui-event-store.js";
@@ -33,6 +35,28 @@ describe("sessionIdFromViewId", () => {
 		expect(sessionIdFromViewId("view-x")).toBeUndefined(); // no profile segment
 		expect(sessionIdFromViewId(42)).toBeUndefined();
 		expect(sessionIdFromViewId(undefined)).toBeUndefined();
+	});
+});
+
+describe("handleAgentViewClosed → registered handler", () => {
+	afterEach(() => setAgentViewClosedHandler(null));
+
+	it("dispatches the viewId to the registered handler", () => {
+		const seen: string[] = [];
+		setAgentViewClosedHandler((viewId) => seen.push(viewId));
+		handleAgentViewClosed({ viewId: "view-sess-1-work" });
+		expect(seen).toEqual(["view-sess-1-work"]);
+	});
+
+	it("ignores missing/empty/non-string viewIds and a missing handler", () => {
+		const seen: string[] = [];
+		setAgentViewClosedHandler((viewId) => seen.push(viewId));
+		handleAgentViewClosed({});
+		handleAgentViewClosed({ viewId: "" });
+		handleAgentViewClosed({ viewId: 42 });
+		expect(seen).toEqual([]);
+		setAgentViewClosedHandler(null);
+		expect(() => handleAgentViewClosed({ viewId: "view-sess-1-work" })).not.toThrow();
 	});
 });
 

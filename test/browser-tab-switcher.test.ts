@@ -287,14 +287,14 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(input.value).toBe("half-typed.example");
 	});
 
-	it("user pills carry a ✕ close affordance; agent pills do not", async () => {
+	it("every pill carries a ✕ close affordance — agent views close recoverably", async () => {
 		const bridge = makeBridge([fgView(), agentView()]) as ReturnType<typeof makeBridge> & { closeView: unknown };
 		bridge.closeView = vi.fn(() => Promise.resolve(true));
 		g.desktop = { browser: bridge };
 		loadTab();
 		await g.laxBrowserTab.refreshSwitcher();
 		expect(slot().querySelector('[data-close-view-id="foreground"]')).toBeTruthy();
-		expect(slot().querySelector('[data-close-view-id="view-s1-work"]')).toBeNull();
+		expect(slot().querySelector('[data-close-view-id="view-s1-work"]')).toBeTruthy();
 	});
 
 	it("no ✕ at all when the bridge can't close (no closeView channel)", async () => {

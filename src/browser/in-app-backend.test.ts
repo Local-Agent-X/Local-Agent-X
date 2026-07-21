@@ -135,6 +135,25 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(backend.isActive()).toBe(true);
 	});
 
+	it("noteViewClosedExternally makes the next navigate recreate the view (user ✕ recovery)", async () => {
+		await backend.navigate(PAGE_URL);
+		expect(vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create")).toHaveLength(1);
+
+		backend.noteViewClosedExternally(VIEW_ID);
+		expect(backend.isActive()).toBe(false);
+
+		const out = await backend.navigate(PAGE_URL);
+		expect(out).toBe(`Navigated to: ${PAGE_URL}\nStatus: unknown\nTitle: ${PAGE_TITLE}`);
+		expect(vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create")).toHaveLength(2);
+		expect(backend.isActive()).toBe(true);
+	});
+
+	it("noteViewClosedExternally ignores unknown viewIds", async () => {
+		await backend.navigate(PAGE_URL);
+		backend.noteViewClosedExternally("view-other-session-default");
+		expect(backend.isActive()).toBe(true);
+	});
+
 	it("navigate reports HTTP status and enriches failures with its exact view", async () => {
 		vi.mocked(browserNavigate).mockResolvedValue({ url: PAGE_URL, title: PAGE_TITLE, status: 404 });
 		const out = await backend.navigate(PAGE_URL);

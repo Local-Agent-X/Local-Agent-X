@@ -190,10 +190,11 @@
 		}).catch(swallow);
 	}
 
-	// ✕ on a user pill: close the view main-side, then re-list. Main retargets
-	// the anchor to the foreground view when the closed tab was the current one,
-	// so we just drop our selection and let refreshSwitcher re-adopt whatever is
-	// attached. Agent views are refused main-side (their pills carry no ✕).
+	// ✕ on a pill: close the view main-side, then re-list. Main retargets the
+	// anchor to the foreground view when the closed tab was the current one, so
+	// we just drop our selection and let refreshSwitcher re-adopt whatever is
+	// attached. Agent views close recoverably — main tells the server child so
+	// the owning backend recreates the view on the agent's next op.
 	function closeTab(viewId) {
 		if (!bridge || !bridge.closeView) return;
 		Promise.resolve(bridge.closeView(viewId)).then(function (closed) {

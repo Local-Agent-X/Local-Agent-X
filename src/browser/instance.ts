@@ -4,6 +4,7 @@ import type { BrowserBackend } from "./backend.js";
 import type { BrowserMode } from "../types.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { browserAbort } from "./bridge-client.js";
+import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
 import { resolveSessionBrowserProfileId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { desktopBridgeAvailable } from "../desktop-bridge.js";
@@ -23,6 +24,15 @@ const logger = createLogger("browser.route");
 // Identity ownership is selected explicitly by browserMode.
 const cdpManagers = new Map<string, BrowserManager>();
 const inAppBackends = new Map<string, { backend: ElectronInAppBackend; viewId: string }>();
+
+// User ✕ on an agent pill (desktop push, via bridge-client): tell the owning
+// backend its view is gone so the next op recreates it instead of wedging on
+// a dead viewId. Unknown session / no backend → nothing to mark.
+setAgentViewClosedHandler((viewId) => {
+	const sessionId = sessionIdFromViewId(viewId);
+	if (sessionId === undefined) return;
+	inAppBackends.get(sessionId)?.backend.noteViewClosedExternally(viewId);
+});
 
 /** getCdpBrowserManager was called for a session routed to the in-app backend.
  *  Handing back a CDP manager there would open a second, separate browser

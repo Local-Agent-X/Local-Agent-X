@@ -16,11 +16,10 @@
 //     showing the tab attaches the current view and the next views-changed
 //     poke reconciles.)
 //
-// Close affordance: a ✕ rides each USER pill (agentDriven === false) and calls
-// opts.onClose(viewId). It mirrors the server bridge's close guard — the bridge
-// closes only agent views (its own), so the renderer closes only user views.
-// Agent pills get NO ✕: closing one out from under a running agent would
-// break its browsing with no recovery, so those stay agent-managed.
+// Close affordance: a ✕ rides EVERY pill (when the bridge can close) and calls
+// opts.onClose(viewId). Agent views close recoverably: main notifies the
+// server child, whose backend marks the tab gone and recreates the view on
+// the agent's next op — so the user can always dismiss a lingering agent tab.
 (function () {
 	function hostOf(url) {
 		if (!url) return '';
@@ -74,8 +73,7 @@
 				pill.addEventListener('click', function () {
 					if (opts.onSelect) opts.onSelect(v.viewId);
 				});
-				// Only user views are closable (agent views are agent-managed).
-				if (!v.agentDriven && opts.onClose) {
+				if (opts.onClose) {
 					var x = document.createElement('span');
 					x.className = 'browser-tab-close';
 					x.textContent = '✕';

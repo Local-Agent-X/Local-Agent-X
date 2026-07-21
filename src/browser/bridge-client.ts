@@ -14,6 +14,7 @@
 import { createLogger } from "../logger.js";
 import { answerEgressAsk } from "./bridge-egress.js";
 import {
+	handleAgentViewClosed,
 	handleBrowserDownloadEvent,
 	handleBrowserUiEvent,
 	type BridgeConsoleEntry,
@@ -198,6 +199,16 @@ function ensureListener(): void {
 		if (msg.type === "lax:browser-download-event") {
 			// Desktop-initiated, fire-and-forget → canonical download ingest.
 			handleBrowserDownloadEvent(msg as unknown as Record<string, unknown>);
+			return;
+		}
+		if (msg.type === "lax:browser-agent-view-closed") {
+			// User closed an agent view from the tab strip. Reject its pending
+			// ops NOW (they'd otherwise run to their timeout against a dead
+			// view), then let the owning backend mark the tab for recreation.
+			if (typeof msg.viewId === "string" && msg.viewId !== "") {
+				rejectPendingForView(msg.viewId, -1);
+				handleAgentViewClosed(msg as unknown as Record<string, unknown>);
+			}
 			return;
 		}
 		if (!RESULT_TYPES.has(msg.type)) return;

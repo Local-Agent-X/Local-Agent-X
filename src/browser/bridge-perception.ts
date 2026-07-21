@@ -77,6 +77,23 @@ export function _resetAdoptedViewsForTest(): void {
 	adoptedViewSessions.clear();
 }
 
+// ── External agent-view close (user ✕ on an agent pill) ─────────
+// The desktop pushes "lax:browser-agent-view-closed" when the USER closes an
+// agent-owned view from the tab strip. The owning backend must mark that tab
+// gone so its next op recreates the view instead of driving a dead viewId.
+// Registered by instance.ts (which owns the session→backend map); a seam
+// rather than an import because instance.ts sits above this module.
+let agentViewClosedHandler: ((viewId: string) => void) | null = null;
+
+export function setAgentViewClosedHandler(fn: ((viewId: string) => void) | null): void {
+	agentViewClosedHandler = fn;
+}
+
+export function handleAgentViewClosed(msg: Record<string, unknown>): void {
+	if (typeof msg.viewId !== "string" || msg.viewId === "") return;
+	agentViewClosedHandler?.(msg.viewId);
+}
+
 /**
  * Inbound desktop UI-activity message → `ui:browser` bus event. Fire-and-
  * forget on both hops: no reply, and bus emission failures stay in the bus.

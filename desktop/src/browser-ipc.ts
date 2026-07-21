@@ -40,6 +40,7 @@ import {
 	readNavState,
 	wireNavPushes,
 } from "./browser-ipc-navstate";
+import { emitAgentViewClosed } from "./browser-perception";
 
 const FOREGROUND_ID = "foreground";
 const FOREGROUND_PARTITION = "persist:lax-profile-default";
@@ -305,20 +306,22 @@ export function setupBrowserIPC(): void {
 		return state;
 	});
 
-	// Close a USER tab. The mirror of the server bridge's close guard: the bridge
-	// closes only agent-driven views (its own), so the renderer closes only
-	// user views (foreground / user-N / profile-*). Agent 🤖 views are the
-	// agent's — closing one out from under a running agent would break its
-	// in-flight browsing with no recovery (the backend wouldn't recreate), so
-	// those are refused here and stay agent-managed (they close with the session).
-	// Returns true when the view was closed, false when refused/absent.
+	// Close a tab from the strip. User views close outright. Agent views are
+	// closable too — RECOVERABLY: emitAgentViewClosed tells the server child,
+	// whose backend marks the tab gone and lazily recreates the view on the
+	// agent's next op (its in-flight ops are rejected with a typed view-closed
+	// error rather than left to time out). The server bridge's own close guard
+	// (agent views only) is unchanged — it protects user views from the server,
+	// not agent views from the user.
+	// Returns true when the view was closed, false when absent.
 	ipcMain.handle("browser-close-view", (event: IpcMainInvokeEvent, viewId: string): boolean => {
 		if (!isTrustedBrowserSender(event.sender)) return false;
 		const info = listBrowserViews().find((v) => v.viewId === viewId);
-		if (!info || info.agentDriven) return false; // unknown, or an agent's view — refuse
+		if (!info) return false;
 		const wasCurrent = currentViewId === viewId;
 		const wasAttached = getAttachedViewId() === viewId;
 		closeBrowserView(viewId); // fires the pool-change poke → renderer re-lists
+		if (info.agentDriven) emitAgentViewClosed(viewId);
 		if (wasCurrent) {
 			// The anchor's driven view just went away — fall back to the foreground
 			// view (recreated lazily). If the closed tab was on screen, show the

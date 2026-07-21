@@ -393,6 +393,19 @@ export class ElectronInAppBackend implements BrowserBackend {
 
 	// ── Lifecycle ──
 
+	/** The desktop reported the USER closed one of this backend's views (tab
+	 *  strip ✕). Mark the tab gone so the next op's ensureView recreates the
+	 *  view instead of driving a dead viewId. Adopted user tabs keep their own
+	 *  desktop lifecycle — the existing user tab-close flow covers those. */
+	noteViewClosedExternally(viewId: string): void {
+		const tab = this.tabs.all().find((t) => t.viewId === viewId && t.owned);
+		if (!tab) return;
+		tab.closed = true;
+		tab.created = false;
+		tab.state.url = "";
+		tab.state.title = "";
+	}
+
 	/** Closes owned views only; adopted user tabs are dropped, never closed. */
 	async close(): Promise<void> {
 		await closeOwnedTabs(this.tabs, this.sessionId);

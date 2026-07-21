@@ -102,6 +102,19 @@ function emitUiEvent(action: string, viewId: string, target?: string): void {
 	}
 }
 
+/** Tell the server child the USER closed one of its agent-driven views (tab
+ *  strip ✕) so the owning backend marks the tab gone and recreates it on next
+ *  use. Only browser-ipc's user-close path calls this — bridge-initiated
+ *  closes are the server's own doing and must not echo back. */
+export function emitAgentViewClosed(viewId: string): void {
+	if (!uiEventSink) return;
+	try {
+		uiEventSink({ type: "lax:browser-agent-view-closed", viewId, ts: Date.now() });
+	} catch {
+		/* child gone — the backend closes with the session anyway */
+	}
+}
+
 // ── Per-view console rings ─────────
 interface ViewPerception {
 	entries: ConsoleEntry[];

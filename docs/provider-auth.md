@@ -11,7 +11,7 @@ LAX writes these provider credentials as AES-256-GCM `lax-auth-v2` envelopes:
 | Path | Contents |
 | --- | --- |
 | `~/.lax/auth.json` | OpenAI OAuth tokens used by LAX |
-| `~/.lax/anthropic-auth.json` | Anthropic setup-token or legacy LAX OAuth tokens |
+| `~/.lax/anthropic-auth.json` | Anthropic setup-token (`method:"token"`) or LAX-owned OAuth tokens (`method:"oauth"`) — written by the paste-code flow for the direct-thinking path and refreshed by LAX; includes legacy OAuth tokens |
 | `~/.lax/xai-auth.json` | xAI OAuth tokens used by LAX |
 
 The filenames are retained for compatibility, but the files contain envelope

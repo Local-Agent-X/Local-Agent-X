@@ -19,10 +19,20 @@ describe("buildRequestBody — reasoning.effort", () => {
     expect(body.reasoning).toEqual({ effort: "medium", summary: "auto" });
   });
 
-  it("sends the user-selected effort verbatim, including xhigh (Max)", () => {
-    for (const effort of ["minimal", "low", "high", "xhigh"] as const) {
+  it("sends supported GPT-5.6 efforts verbatim, including xhigh (Max)", () => {
+    for (const effort of ["low", "high", "xhigh"] as const) {
       const body = buildRequestBody({ ...BASE, reasoningEffort: effort });
       expect(body.reasoning).toEqual({ effort, summary: "auto" });
     }
+  });
+
+  it("maps the legacy minimal level to low for GPT-5.6", () => {
+    const body = buildRequestBody({ ...BASE, reasoningEffort: "minimal" });
+    expect(body.reasoning).toEqual({ effort: "low", summary: "auto" });
+  });
+
+  it("preserves minimal for Codex models that still accept it", () => {
+    const body = buildRequestBody({ ...BASE, model: "gpt-5.5", reasoningEffort: "minimal" });
+    expect(body.reasoning).toEqual({ effort: "minimal", summary: "auto" });
   });
 });

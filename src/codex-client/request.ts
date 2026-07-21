@@ -50,7 +50,15 @@ export interface BuildBodyInput {
   reasoningEffort?: ReasoningEffort;
 }
 
+function effortForCodexModel(model: string, effort: ReasoningEffort): ReasoningEffort {
+  return /^gpt-5\.6(?:-|$)/i.test(model) && effort === "minimal" ? "low" : effort;
+}
+
 export function buildRequestBody(input: BuildBodyInput): Record<string, unknown> {
+  const reasoningEffort = effortForCodexModel(
+    input.model,
+    input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+  );
   const body: Record<string, unknown> = {
     model: input.model,
     stream: true,
@@ -73,7 +81,9 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
     // chatgpt.com/backend-api/codex endpoint does not honor it.) Consequence:
     // trivial prompts legitimately render no Thinking block — auto only emits
     // a summary when the model actually runs a reasoning pass.
-    reasoning: { effort: input.reasoningEffort ?? DEFAULT_REASONING_EFFORT, summary: "auto" },
+    // GPT-5.6 replaced the older "minimal" wire value with "low". Keep the
+    // user-facing level stable while sending the model's accepted enum.
+    reasoning: { effort: reasoningEffort, summary: "auto" },
   };
 
   // NOTE: previous_response_id is NOT supported on the Codex subscription

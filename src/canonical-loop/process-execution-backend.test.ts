@@ -386,7 +386,7 @@ describe("process execution backend handoff", () => {
     writeOp(candidate);
     const entryPath = new URL("./process-worker-entry.ts", import.meta.url)
       .pathname.replace(/^\/(.:\/)/, "$1");
-    const tsxLoader = new URL("../../../../node_modules/tsx/dist/loader.mjs", import.meta.url).href;
+    const tsxLoader = import.meta.resolve("tsx");
     await new ProcessExecutionBackend({ entryPath, execArgv: ["--import", tsxLoader] })
       .startWithoutAdapter({ op: candidate, placement: placement(4) }).done;
     expect(readOp(candidate.id)?.canonical?.state).toBe("failed");

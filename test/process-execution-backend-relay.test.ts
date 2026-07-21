@@ -1,14 +1,14 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import type { ChildProcess, fork } from "node:child_process";
-import type { Op } from "../ops/types.js";
-import type { ExecutionPlacement } from "./types.js";
+import type { Op } from "../src/ops/types.js";
+import type { ExecutionPlacement } from "../src/canonical-loop/types.js";
 import {
   ProcessExecutionBackend,
   PROCESS_EXECUTION_BACKEND_ID,
   PROCESS_EXECUTION_TARGET_ID,
-} from "./process-execution-backend.js";
-import { resolveRegisteredExecutionBackend } from "./execution-backend-registry.js";
+} from "../src/canonical-loop/process-execution-backend.js";
+import { resolveRegisteredExecutionBackend } from "../src/canonical-loop/execution-backend-registry.js";
 
 describe("process backend production routing and relay", () => {
   it("routes only eligible durable background operations to the process backend", () => {

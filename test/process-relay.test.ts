@@ -2,10 +2,9 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import type { Op } from "../ops/types.js";
-import type { ProcessExecutionClaim } from "./process-execution-claim.js";
+import type { Op } from "../src/ops/types.js";
+import type { ProcessExecutionClaim } from "../src/canonical-loop/process-execution-claim.js";
 
 const priorDataDir = process.env.LAX_DATA_DIR;
 const priorAuditKey = process.env.LAX_AUDIT_KEY;
@@ -13,25 +12,25 @@ const dataDir = mkdtempSync(join(tmpdir(), "lax-process-relay-"));
 process.env.LAX_DATA_DIR = dataDir;
 process.env.LAX_AUDIT_KEY = "process-relay-test-key";
 
-const { tryWithOpLock, writeOp } = await import("../ops/op-store.js");
+const { tryWithOpLock, writeOp } = await import("../src/ops/op-store.js");
 const {
   claimProcessExecution,
   removeProcessExecutionClaim,
-} = await import("./process-execution-claim.js");
+} = await import("../src/canonical-loop/process-execution-claim.js");
 const {
   createRelayGeneration,
   createRelayRecord,
   verifyRelayGeneration,
   verifyRelayRecord,
-} = await import("./process-relay-contract.js");
+} = await import("../src/canonical-loop/process-relay-contract.js");
 const {
   acknowledgeProcessRelayTarget,
   appendProcessRelayRecord,
   cleanupCompletedProcessRelay,
   initializeProcessRelayJournal,
   readProcessRelayGenerations,
-} = await import("./process-relay-journal.js");
-const { reconcileProcessRelay } = await import("./process-relay-reconcile.js");
+} = await import("../src/canonical-loop/process-relay-journal.js");
+const { reconcileProcessRelay } = await import("../src/canonical-loop/process-relay-reconcile.js");
 
 afterAll(() => {
   if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR;
@@ -167,7 +166,7 @@ describe("durable process relay", () => {
     const script = join(dataDir, `${claim.opId}.mjs`);
     writeFileSync(script, `
 import { appendFileSync } from "node:fs";
-import { reconcileProcessRelay } from ${JSON.stringify(new URL("./process-relay-reconcile.ts", import.meta.url).href)};
+import { reconcileProcessRelay } from ${JSON.stringify(new URL("../src/canonical-loop/process-relay-reconcile.ts", import.meta.url).href)};
 const wait = new Int32Array(new SharedArrayBuffer(4));
 reconcileProcessRelay(process.argv[2], (_state, _record, target) => {
   if (target !== "canonical-core") return false;
@@ -177,8 +176,7 @@ reconcileProcessRelay(process.argv[2], (_state, _record, target) => {
 });
 process.exit(0);
 `, "utf8");
-    const loader = join(process.cwd(), "..", "..", "node_modules", "tsx", "dist", "loader.mjs");
-    const args = ["--import", pathToFileURL(loader).href, script, claim.opId, marker];
+    const args = ["--import", import.meta.resolve("tsx"), script, claim.opId, marker];
     const env = { ...process.env, LAX_DATA_DIR: dataDir, LAX_AUDIT_KEY: "process-relay-test-key" };
     const results = await Promise.all([
       childExit(spawn(process.execPath, args, { env, stdio: "pipe" })),

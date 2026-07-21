@@ -12,17 +12,17 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1374 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1390 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 94 | 24 | XL |  |
+| `src/ops/` | 102 | 24 | XL |  |
 | `src/security/` | 75 | 30 | XL |  |
 | `src/tools/` | 59 | 148 | XL |  |
 | `src/providers/` | 55 | 20 | XL |  |
-| `src/canonical-loop/` | 50 | 173 | XL |  |
+| `src/canonical-loop/` | 53 | 187 | XL |  |
 | `src/memory/` | 42 | 118 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 33 | 2 | M |  |
@@ -38,11 +38,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
 | `src/agent-request/` | 18 | 14 | L |  |
+| `src/app-runtime/` | 17 | 12 | L |  |
+| `src/chat-ws/` | 17 | 14 | L |  |
 | `src/context/` | 17 | 3 | M |  |
 | `src/agent-guards/` | 16 | 14 | L |  |
 | `src/agents/` | 16 | 13 | L |  |
-| `src/chat-ws/` | 16 | 12 | L |  |
-| `src/app-runtime/` | 15 | 12 | L |  |
 | `src/protocols/` | 15 | 39 | XL |  |
 | `src/anthropic-client/` | 14 | 19 | L |  |
 | `src/data-lineage/` | 13 | 6 | L |  |
@@ -62,13 +62,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |
+| `src/persistence/` | 7 | 2 | S |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/routes/` | 7 | 85 | XL |  |
 | `src/server/` *(entrypoint)* | 7 | 40 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
-| `src/persistence/` | 5 | 2 | S |  |
 | `src/routing/` | 5 | 7 | M |  |
 | `src/broker-transport/` | 4 | 28 | XL |  |
 | `src/codex-client/` | 4 | 5 | M |  |

@@ -60,9 +60,9 @@ describe("versioned source release contract", () => {
     const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf-8");
 
     expect(workflow).toContain(
-      'node .release-tools/scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"',
+      'node .release-tools/scripts/build-source-archive.mjs "$SOURCE_SHA" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"',
     );
-    expect(workflow).toContain("cd local-agent-x-${{ env.VERSION }}");
+    expect(workflow).toContain("cd local-agent-x-${{ needs.release-gate.outputs.version }}");
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("npm run dev");
     expect(workflow).not.toContain("npm install --production");
@@ -71,7 +71,7 @@ describe("versioned source release contract", () => {
 
   it("requires an ASCII version tag and uses it as the immutable release ref", () => {
     const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf-8");
-    const validation = workflow.indexOf('if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]');
+    const validation = workflow.indexOf('if [[ ! "$RELEASE_TAG" =~ ^v[0-9][0-9A-Za-z._-]*$ ]]');
     const checkout = workflow.indexOf("- uses: actions/checkout@v6");
 
     expect(validation).toBeGreaterThan(-1);
@@ -81,9 +81,9 @@ describe("versioned source release contract", () => {
     expect(workflow).not.toContain("ref: ${{ inputs.tag || github.ref_name }}");
     expect(workflow).not.toContain("tag_name: ${{ inputs.tag || github.ref_name }}");
 
-    const versionTag = /^v[0-9]/;
+    const versionTag = /^v[0-9][0-9A-Za-z._-]*$/;
     expect(versionTag.test("v1.2.3")).toBe(true);
-    for (const ref of ["main", sha, "vbeta", "v\u0661.2.3"]) {
+    for (const ref of ["main", sha, "vbeta", "v\u0661.2.3", "v1 bad", "v1/other"]) {
       expect(versionTag.test(ref), ref).toBe(false);
     }
   });
@@ -91,16 +91,20 @@ describe("versioned source release contract", () => {
   it("loads release tooling outside a historical target tag before packaging", () => {
     const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "release.yml"), "utf-8");
     const targetCheckout = workflow.indexOf("ref: refs/tags/${{ env.RELEASE_TAG }}");
-    const toolCheckout = workflow.indexOf("- name: Check out release tooling");
-    const toolRef = workflow.indexOf("ref: ${{ github.sha }}", toolCheckout);
+    const toolCheckout = workflow.indexOf("- name: Check out trusted release tooling");
+    const toolRef = workflow.indexOf("ref: ${{ github.event.repository.default_branch }}", toolCheckout);
     const toolPath = workflow.indexOf("path: .release-tools", toolCheckout);
+    const gate = workflow.indexOf("node .release-tools/scripts/release-gate.mjs", toolPath);
+    const immutableToolingCheckout = workflow.indexOf("ref: ${{ needs.release-gate.outputs.tooling_sha }}", gate);
     const packageStep = workflow.indexOf("- name: Package release");
 
     expect(targetCheckout).toBeGreaterThan(-1);
     expect(toolCheckout).toBeGreaterThan(targetCheckout);
     expect(toolRef).toBeGreaterThan(toolCheckout);
     expect(toolPath).toBeGreaterThan(toolRef);
-    expect(packageStep).toBeGreaterThan(toolPath);
+    expect(gate).toBeGreaterThan(toolPath);
+    expect(immutableToolingCheckout).toBeGreaterThan(gate);
+    expect(packageStep).toBeGreaterThan(immutableToolingCheckout);
   });
 
   it("archives an older source ref that does not contain the release helper", () => {

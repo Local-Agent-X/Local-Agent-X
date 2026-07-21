@@ -46,15 +46,88 @@ on:
         type: string
 
 permissions:
-  contents: write   # softprops/action-gh-release needs write to attach assets
+  contents: read
 
 env:
   # Tag-push runs take the pushed tag; dispatch runs take the required input.
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  release-gate:
+    name: Verify versioned release gate
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.refs.outputs.source_sha }}
+      tooling_sha: ${{ steps.refs.outputs.tooling_sha }}
+    steps:
+      - name: Require a version tag
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9][0-9A-Za-z._-]*$ ]]; then
+            echo "::error::Installer releases require a version tag beginning with v and a digit, got: $RELEASE_TAG"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve source revision
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            EVENT_SOURCE_SHA=$(git rev-parse "$EVENT_SHA^{commit}")
+            if [[ "$SOURCE_SHA" != "$EVENT_SOURCE_SHA" ]]; then
+              echo "::error::Tag push SHA mismatch: event=$EVENT_SOURCE_SHA resolved=$SOURCE_SHA"
+              exit 1
+            fi
+          fi
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check out release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .release-tools
+          persist-credentials: false
+
+      - name: Resolve immutable tooling revision
+        id: refs
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "tooling_sha=$(git -C .release-tools rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Release publication gate
+        env:
+          TOOLING_SHA: ${{ steps.refs.outputs.tooling_sha }}
+        run: node .release-tools/scripts/release-gate.mjs --source-root "$GITHUB_WORKSPACE" --tooling-revision "$TOOLING_SHA" --report release-gate-report.json
+
+      - name: Upload release gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-release-gate-${{ env.RELEASE_TAG }}
+          path: release-gate-report.json
+          if-no-files-found: error
+
   build-windows:
     name: Windows installer (.exe)
+    needs: release-gate
     runs-on: windows-latest
     env:
       AZURE_SIGN_TENANT_ID: ${{ secrets.AZURE_SIGN_TENANT_ID }}
@@ -68,14 +141,15 @@ jobs:
       - name: Require a version tag
         shell: pwsh
         run: |
-          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]') {
+          if ($env:RELEASE_TAG -cnotmatch '^v[0-9][0-9A-Za-z._-]*$') {
             Write-Error "Installer releases require a version tag beginning with v and a digit, got: $env:RELEASE_TAG"
             exit 1
           }
 
       - uses: actions/checkout@v6
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ needs.release-gate.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Require Windows release signing configuration
         shell: pwsh
@@ -176,6 +250,7 @@ jobs:
 
   build-macos:
     name: macOS installer (.dmg, signed + notarized)
+    needs: release-gate
     runs-on: macos-latest
     # KEYCHAIN_PATH is exported via $GITHUB_ENV in the first step below —
     # job-level `env` can't reference ${{ runner.* }}, only step-level can.
@@ -185,14 +260,15 @@ jobs:
     steps:
       - name: Require a version tag
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]; then
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9][0-9A-Za-z._-]*$ ]]; then
             echo "::error::Installer releases require a version tag beginning with v and a digit, got: $RELEASE_TAG"
             exit 1
           fi
 
       - uses: actions/checkout@v6
         with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
+          ref: ${{ needs.release-gate.outputs.source_sha }}
+          persist-credentials: false
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5
@@ -429,17 +505,42 @@ jobs:
 
   attach-to-release:
     name: Attach to GitHub Release
-    needs: [build-windows, build-macos]
+    needs: [release-gate, build-windows, build-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v8
         with:
           path: dist
 
-      - name: List downloaded artifacts
-        run: |
-          find dist -type f | sort
+      - name: Verify release tag is still immutable
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          EXPECTED_SOURCE_SHA: ${{ needs.release-gate.outputs.source_sha }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const expected = process.env.EXPECTED_SOURCE_SHA.toLowerCase();
+            if (!/^v[0-9][0-9A-Za-z._-]*$/.test(tag) || !/^[a-f0-9]{40}$/.test(expected)) {
+              throw new Error("Invalid release tag or qualified source SHA");
+            }
+            let object = (await github.rest.git.getRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: `tags/${tag}`,
+            })).data.object;
+            const seen = new Set();
+            while (object.type === "tag") {
+              if (seen.has(object.sha) || seen.size >= 16) throw new Error("Cyclic or excessive annotated tag chain");
+              seen.add(object.sha);
+              object = (await github.rest.git.getTag({
+                owner: context.repo.owner, repo: context.repo.repo, tag_sha: object.sha,
+              })).data.object;
+            }
+            if (object.type !== "commit" || object.sha.toLowerCase() !== expected) {
+              throw new Error(`Release tag moved: expected ${expected}, resolved ${object.type}:${object.sha}`);
+            }
 
       - name: Attach to release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0

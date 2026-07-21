@@ -18,14 +18,14 @@
              single uploaded installer keeps serving current code with NO
              rebuild per app update. This is the WIP/daily-update path.
            - Tag pinning (release builds; -p:InstallerSourceTag=vX.Y.Z): a
-             version tag (matched by ^v[0-9]) pins that exact snapshot forever, so
+             version tag (matched by ^v[0-9][0-9A-Za-z._-]*$) pins that exact snapshot forever, so
              re-running an old installer is reproducible.
          InstallerSourceRefKind chooses refs/heads/ vs refs/tags/ in the GitHub
          archive URL; it's derived from the ref name but can be overridden with
          -p:InstallerSourceRefKind if you ever track a branch named like a tag.
          Both are surfaced to runtime via AssemblyMetadataAttribute below. -->
     <InstallerSourceTag Condition="'$(InstallerSourceTag)' == ''">main</InstallerSourceTag>
-    <InstallerSourceRefKind Condition="'$(InstallerSourceRefKind)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(InstallerSourceTag)', '^v[0-9]'))">tags</InstallerSourceRefKind>
+    <InstallerSourceRefKind Condition="'$(InstallerSourceRefKind)' == '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(InstallerSourceTag)', '^v[0-9][0-9A-Za-z._-]*$'))">tags</InstallerSourceRefKind>
     <InstallerSourceRefKind Condition="'$(InstallerSourceRefKind)' == ''">heads</InstallerSourceRefKind>
     <!-- Win32 .exe icon shown in Explorer, the taskbar before the window paints,
          and Add/Remove Programs. The runtime Window.Icon (set in MainWindow.axaml)

@@ -54,6 +54,7 @@ junit.xml
 
 # Vitest coverage output (npm run test:coverage)
 coverage/
+.release-gate/
 
 # Stray "{}" artifact — 0-byte file that intermittently appears in repo root
 # during commits/test runs. Source unidentified after ~30 min of probing

@@ -3,9 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*' # Triggered by version tags: v0.2.0, v0.3.0, etc.
-  # Re-release an EXISTING tag whose original run failed (e.g. a gate fixed
-  # after tagging) without moving the tag — version tags are immutable here.
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -14,99 +12,182 @@ on:
         type: string
 
 permissions:
-  contents: write # Needed to create GitHub releases
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  release:
-    name: Build & Release
+  release-gate:
+    name: Resolve and qualify immutable source
     runs-on: ubuntu-latest
-    env:
-      # Tag-push runs take the pushed tag; dispatch runs take the input.
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    outputs:
+      source_sha: ${{ steps.refs.outputs.source_sha }}
+      tooling_sha: ${{ steps.refs.outputs.tooling_sha }}
+      version: ${{ steps.refs.outputs.version }}
     steps:
       - name: Require a version tag
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9] ]]; then
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9][0-9A-Za-z._-]*$ ]]; then
             echo "::error::Releases require a version tag beginning with v and a digit, got: $RELEASE_TAG"
             exit 1
           fi
 
-      - uses: actions/checkout@v6
-        with:
-          ref: refs/tags/${{ env.RELEASE_TAG }}
-
-      # Historical tags predate the current release helper. Keep the tagged
-      # source at the workspace root, and load tooling from this workflow's
-      # commit into an untracked nested checkout.
-      - name: Check out release tooling
+      - name: Check out exact release source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve source revision
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            EVENT_SOURCE_SHA=$(git rev-parse "$EVENT_SHA^{commit}")
+            if [[ "$SOURCE_SHA" != "$EVENT_SOURCE_SHA" ]]; then
+              echo "::error::Tag push SHA mismatch: event=$EVENT_SOURCE_SHA resolved=$SOURCE_SHA"
+              exit 1
+            fi
+          fi
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check out trusted release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
           path: .release-tools
+          persist-credentials: false
+
+      - name: Resolve immutable tooling revision
+        id: refs
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+        run: |
+          TOOLING_SHA=$(git -C .release-tools rev-parse HEAD)
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "tooling_sha=$TOOLING_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install source dependencies
         run: npm ci
 
-      - name: Security check
-        run: npm audit --production --audit-level=high
+      - name: Release publication gate
+        env:
+          TOOLING_SHA: ${{ steps.refs.outputs.tooling_sha }}
+        run: node .release-tools/scripts/release-gate.mjs --source-root "$GITHUB_WORKSPACE" --tooling-revision "$TOOLING_SHA" --report release-gate-report.json
 
-      - name: Run tests
-        # test:unit is the CI-runnable vitest suite (the same one Security & CI
-        # gates on). `npm test` is the LIVE integration suite — it needs a
-        # running server and ~/.lax/config.json, which a clean runner never has.
-        run: npm run test:unit
+      - name: Upload release gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-release-gate-${{ env.RELEASE_TAG }}
+          path: release-gate-report.json
+          if-no-files-found: error
 
-      - name: Build
-        run: npm run build
+  package:
+    name: Package immutable source
+    needs: release-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-gate.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out immutable release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-gate.outputs.tooling_sha }}
+          path: .release-tools
+          persist-credentials: false
 
       - name: Package release
-        run: |
-          VERSION=${RELEASE_TAG#v}
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          node .release-tools/scripts/build-source-archive.mjs "$RELEASE_TAG" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"
+        env:
+          SOURCE_SHA: ${{ needs.release-gate.outputs.source_sha }}
+          VERSION: ${{ needs.release-gate.outputs.version }}
+        run: node .release-tools/scripts/build-source-archive.mjs "$SOURCE_SHA" "local-agent-x-${VERSION}.tar.gz" "local-agent-x-${VERSION}"
 
       - name: Generate checksums
-        # Hashes the SAME local-agent-x-*.tar.gz asset uploaded below, so the
-        # advertised `sha256sum -c checksums-sha256.txt` manual verification is
-        # real. Note: there is no in-app auto-verify to keep this asset name in
-        # sync with — the dead OTAManager.checkForUpdates/downloadUpdate release
-        # path was removed (R4-07), since the app updates via the rolling
-        # commit-pinned channel, not these v* source tarballs.
-        run: |
-          sha256sum local-agent-x-*.tar.gz > checksums-sha256.txt
-          cat checksums-sha256.txt
+        run: sha256sum local-agent-x-*.tar.gz > checksums-sha256.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: versioned-source-${{ env.RELEASE_TAG }}
+          path: |
+            local-agent-x-*.tar.gz
+            checksums-sha256.txt
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [release-gate, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: versioned-source-${{ env.RELEASE_TAG }}
+          path: release-assets
+
+      - name: Verify release tag is still immutable
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          EXPECTED_SOURCE_SHA: ${{ needs.release-gate.outputs.source_sha }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const expected = process.env.EXPECTED_SOURCE_SHA.toLowerCase();
+            if (!/^v[0-9][0-9A-Za-z._-]*$/.test(tag) || !/^[a-f0-9]{40}$/.test(expected)) {
+              throw new Error("Invalid release tag or qualified source SHA");
+            }
+            let object = (await github.rest.git.getRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: `tags/${tag}`,
+            })).data.object;
+            const seen = new Set();
+            while (object.type === "tag") {
+              if (seen.has(object.sha) || seen.size >= 16) throw new Error("Cyclic or excessive annotated tag chain");
+              seen.add(object.sha);
+              object = (await github.rest.git.getTag({
+                owner: context.repo.owner, repo: context.repo.repo, tag_sha: object.sha,
+              })).data.object;
+            }
+            if (object.type !== "commit" || object.sha.toLowerCase() !== expected) {
+              throw new Error(`Release tag moved: expected ${expected}, resolved ${object.type}:${object.sha}`);
+            }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          files: |
-            local-agent-x-*.tar.gz
-            checksums-sha256.txt
+          files: release-assets/*
           body: |
-            ## Local Agent X ${{ env.VERSION }}
+            ## Local Agent X ${{ needs.release-gate.outputs.version }}
 
             ### Security
             - SHA-256 checksums included for integrity verification
-            - All security checks passed before release
+            - All release gates passed before publication
             - Run `sha256sum -c checksums-sha256.txt` to verify
 
             ### Install
             ```bash
-            tar -xzf local-agent-x-${{ env.VERSION }}.tar.gz
-            cd local-agent-x-${{ env.VERSION }}
+            tar -xzf local-agent-x-${{ needs.release-gate.outputs.version }}.tar.gz
+            cd local-agent-x-${{ needs.release-gate.outputs.version }}
             npm ci
             npm run dev
             ```
           draft: false
           prerelease: false
-          # Version tags are pinned/archived snapshots — they must NOT take the
-          # "Latest" badge. The `rolling` release (installer-rolling.yml) is the
-          # featured Latest download so new users always get the main-tracking,
-          # auto-latest installer instead of a frozen version.
           make_latest: false

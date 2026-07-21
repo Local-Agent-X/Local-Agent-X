@@ -104,6 +104,7 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		setDom();
+		localStorage.clear();
 	});
 	afterEach(() => {
 		vi.useRealTimers();
@@ -339,5 +340,69 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		const after = bridge.listViews.mock.calls.length;
 		vi.advanceTimersByTime(4000);          // no further polling
 		expect(bridge.listViews.mock.calls.length).toBe(after);
+	});
+});
+
+describe("tab strip drag-reorder", () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		setDom();
+		localStorage.clear();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		delete g.desktop;
+	});
+
+	function stripApi() {
+		return (globalThis as unknown as {
+			laxBrowserTabStrip: { applyOrder(views: ViewInfo[], order: string[]): ViewInfo[] };
+		}).laxBrowserTabStrip;
+	}
+
+	it("applyOrder sorts known viewIds by saved position and appends newcomers in pool order", () => {
+		loadTab();
+		const views = [
+			fgView({ viewId: "a", attached: false }),
+			fgView({ viewId: "b", attached: false }),
+			fgView({ viewId: "c", attached: false }),
+		];
+		const ordered = stripApi().applyOrder(views, ["c", "a"]);
+		expect(ordered.map((v) => v.viewId)).toEqual(["c", "a", "b"]);
+		// Stale saved ids are simply skipped; empty order keeps pool order.
+		expect(stripApi().applyOrder(views, ["ghost"]).map((v) => v.viewId)).toEqual(["a", "b", "c"]);
+		expect(stripApi().applyOrder(views, []).map((v) => v.viewId)).toEqual(["a", "b", "c"]);
+	});
+
+	it("render applies the order saved in localStorage", async () => {
+		localStorage.setItem("laxBrowserTabOrder", JSON.stringify(["view-s1-work", "foreground"]));
+		g.desktop = { browser: makeBridge([fgView(), agentView()]) };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		expect(pills().map((p) => p.getAttribute("data-view-id"))).toEqual(["view-s1-work", "foreground"]);
+		expect(plusButton()).toBeTruthy(); // + stays at the end
+	});
+
+	it("dragging a pill reorders the strip and persists the new order on dragend", async () => {
+		g.desktop = { browser: makeBridge([fgView(), agentView()]) };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		const [first, second] = pills();
+		expect(first.draggable).toBe(true);
+
+		first.dispatchEvent(new Event("dragstart", { bubbles: true }));
+		expect(first.classList.contains("dragging")).toBe(true);
+		// happy-dom rects are 0×0, so clientX 0 is NOT < mid(0) → insert AFTER the
+		// pill under the cursor — dragging the first pill over the second swaps them.
+		second.dispatchEvent(new MouseEvent("dragover", { bubbles: true }));
+		expect(pills().map((p) => p.getAttribute("data-view-id"))).toEqual(["view-s1-work", "foreground"]);
+
+		first.dispatchEvent(new Event("dragend", { bubbles: true }));
+		expect(first.classList.contains("dragging")).toBe(false);
+		expect(JSON.parse(localStorage.getItem("laxBrowserTabOrder") || "[]")).toEqual(["view-s1-work", "foreground"]);
+
+		// The persisted order survives a full pool re-render (the poke path).
+		await g.laxBrowserTab.refreshSwitcher();
+		expect(pills().map((p) => p.getAttribute("data-view-id"))).toEqual(["view-s1-work", "foreground"]);
 	});
 });

@@ -20,10 +20,61 @@
 // opts.onClose(viewId). Agent views close recoverably: main notifies the
 // server child, whose backend marks the tab gone and recreates the view on
 // the agent's next op — so the user can always dismiss a lingering agent tab.
+//
+// Drag-reorder: pills are draggable; dropping persists the viewId order to
+// localStorage and render() applies it as a sort. Ordering is a PRESENTATION
+// preference of this strip only — main's pool order stays canonical (the
+// server's tabs listing reads it), which is why nothing crosses the bridge.
+// Saving the full current order on each drop prunes stale session viewIds.
 (function () {
 	function hostOf(url) {
 		if (!url) return '';
 		try { return new URL(url).host; } catch (e) { return ''; }
+	}
+
+	var ORDER_KEY = 'laxBrowserTabOrder';
+
+	function loadOrder() {
+		try {
+			var arr = JSON.parse(localStorage.getItem(ORDER_KEY) || '[]');
+			return Array.isArray(arr) ? arr.filter(function (x) { return typeof x === 'string'; }) : [];
+		} catch (e) { return []; }
+	}
+
+	function saveOrder(ids) {
+		try { localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* storage unavailable */ }
+	}
+
+	/** Stable sort: known viewIds take their saved position, newcomers keep
+	 *  their pool order after the known ones. */
+	function applyOrder(views, order) {
+		return views
+			.map(function (v, i) {
+				var at = order.indexOf(v.viewId);
+				return { v: v, key: at < 0 ? order.length + i : at };
+			})
+			.sort(function (a, b) { return a.key - b.key; })
+			.map(function (x) { return x.v; });
+	}
+
+	// One dragged pill at a time; reorder live on dragover, persist on dragend.
+	var draggedPill = null;
+
+	function wireDragReorder(slot) {
+		if (slot.dataset.dragReorderWired) return;
+		slot.dataset.dragReorderWired = '1';
+		slot.addEventListener('dragover', function (e) {
+			if (!draggedPill) return;
+			e.preventDefault(); // required for the move drop-cursor
+			var over = e.target && e.target.closest ? e.target.closest('.browser-strip-tab') : null;
+			if (!over || over === draggedPill || over.parentNode !== slot) return;
+			var rect = over.getBoundingClientRect();
+			var before = e.clientX < rect.left + rect.width / 2;
+			slot.insertBefore(draggedPill, before ? over : over.nextSibling);
+		});
+		slot.addEventListener('drop', function (e) {
+			if (draggedPill) e.preventDefault();
+		});
 	}
 
 	function stripLabel(v) {
@@ -47,7 +98,9 @@
 	function render(views, opts) {
 		var slot = opts && opts.slot;
 		if (!slot) return;
-		views = views || [];
+		views = applyOrder(views || [], loadOrder());
+		wireDragReorder(slot);
+		draggedPill = null; // a re-render mid-drag orphans the dragged node
 		slot.innerHTML = '';
 		for (var i = 0; i < views.length; i++) {
 			(function (v) {
@@ -72,6 +125,24 @@
 				pill.appendChild(name);
 				pill.addEventListener('click', function () {
 					if (opts.onSelect) opts.onSelect(v.viewId);
+				});
+				pill.draggable = true;
+				pill.addEventListener('dragstart', function (e) {
+					draggedPill = pill;
+					pill.classList.add('dragging');
+					if (e.dataTransfer) {
+						e.dataTransfer.effectAllowed = 'move';
+						try { e.dataTransfer.setData('text/plain', v.viewId); } catch (err) { /* jsdom */ }
+					}
+				});
+				pill.addEventListener('dragend', function () {
+					pill.classList.remove('dragging');
+					if (!draggedPill) return; // a re-render already invalidated this drag
+					draggedPill = null;
+					var ids = [];
+					var ordered = slot.querySelectorAll('.browser-strip-tab[data-view-id]');
+					for (var j = 0; j < ordered.length; j++) ids.push(ordered[j].getAttribute('data-view-id'));
+					saveOrder(ids);
 				});
 				if (opts.onClose) {
 					var x = document.createElement('span');
@@ -104,5 +175,6 @@
 		label: stripLabel,
 		reconcileSelection: reconcileSelection,
 		render: render,
+		applyOrder: applyOrder,
 	};
 })();

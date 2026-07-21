@@ -8,11 +8,16 @@ import {
 } from "../src/cognition/cross-session-learning/persistence.js";
 import type {
   ActionEntry,
+  LearnedCandidate,
   SessionData,
 } from "../src/cognition/cross-session-learning/types.js";
 import {
   MS_PER_DAY,
+  deriveCandidateId,
+  normalizeLegacyEvidenceIdentities,
   PRUNE_AGE_DAYS,
+  TERMINAL_TELEMETRY_IDENTITY,
+  WORKFLOW_TACTIC_IDENTITY,
 } from "../src/cognition/cross-session-learning/types.js";
 
 // Regression for AM-3: recordAction lost its last caller in May, freezing the
@@ -31,6 +36,38 @@ const FRESH_TS = NOW - 1 * MS_PER_DAY;
 
 function action(type: string, timestamp: number, i: number): ActionEntry {
   return { sessionId: "s1", type, details: `d${i}`, timestamp };
+}
+
+function legacyCandidate(): LearnedCandidate {
+  return {
+    id: deriveCandidateId("workflow", "workflow", ["read -> edit"]),
+    state: "candidate",
+    confidence: 1,
+    suggestion: {
+      type: "mission",
+      name: "workflow",
+      description: "workflow",
+      config: { patternType: "workflow", sequence: ["read -> edit"], occurrences: 3 },
+    },
+    evidence: {
+      patternType: "workflow",
+      description: "workflow",
+      occurrences: 3,
+      lastSeen: 3,
+      examples: ["read -> edit"],
+      outcomeStats: {
+        clean: 3,
+        partial: 0,
+        aborted: 0,
+        successRate: 1,
+        weightedSuccessRate: 1,
+        distinctSessions: 3,
+      },
+    },
+    createdAt: 1,
+    updatedAt: 1,
+    transitions: [],
+  };
 }
 
 describe("autoPrune — bounded keep for stale recurring types", () => {
@@ -132,6 +169,7 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
 
   it("still emits a signal for a genuinely recent recurring pattern", async () => {
     const fresh: ActionEntry[] = Array.from({ length: 3 }, (_, i) => ({
+      ...TERMINAL_TELEMETRY_IDENTITY,
       opId: `fresh-${i}`,
       sessionId: `session-${i}`,
       type: "op_outcome",
@@ -170,6 +208,7 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
       readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8")
     ) as SessionData;
     expect(persisted.actions).toEqual([{
+      ...TERMINAL_TELEMETRY_IDENTITY,
       opId: "op-7",
       sessionId: "session-7",
       type: "op_outcome",
@@ -196,10 +235,258 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
     ) as SessionData;
     expect(replaced.actions).toHaveLength(1);
     expect(replaced.actions[0]).toMatchObject({
+      ...TERMINAL_TELEMETRY_IDENTITY,
       opId: "op-7",
       outcome: "clean",
       tools: ["read"],
       timestamp: 5678,
     });
+  });
+
+  it("normalizes only structurally unambiguous identity-less legacy records", async () => {
+    writeDataFile([
+      action("task", FRESH_TS, 1),
+      {
+        opId: "legacy-terminal",
+        sessionId: "s2",
+        type: "op_outcome",
+        details: "coding:read",
+        timestamp: FRESH_TS + 1,
+        outcome: "clean",
+        category: "coding",
+        tools: ["read"],
+      },
+      { ...action("task", FRESH_TS + 2, 3), evidenceClass: "workflow-tactic" },
+    ], NOW);
+
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    CrossSessionLearner.getInstance();
+    const persisted = JSON.parse(
+      readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8"),
+    ) as SessionData;
+
+    expect(persisted.actions[0]).toMatchObject(WORKFLOW_TACTIC_IDENTITY);
+    expect(persisted.actions[1]).toMatchObject(TERMINAL_TELEMETRY_IDENTITY);
+    expect(persisted.actions[2]).toMatchObject({ evidenceClass: "workflow-tactic" });
+    expect(persisted.actions[2].authority).toBeUndefined();
+  });
+
+  it("normalizes structurally complete plain legacy candidates", () => {
+    const candidate = legacyCandidate();
+    const data: SessionData = { actions: [], candidates: [candidate], lastPrune: NOW };
+
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(true);
+    expect(candidate).toMatchObject(WORKFLOW_TACTIC_IDENTITY);
+    expect(candidate.evidence).toMatchObject(TERMINAL_TELEMETRY_IDENTITY);
+  });
+
+  it("does not invoke terminal discriminator or tool accessors", () => {
+    let reads = 0;
+    const base = {
+      sessionId: "s1",
+      opId: "op-accessor",
+      type: "op_outcome",
+      details: "coding:read",
+      timestamp: 1,
+      outcome: "clean",
+      category: "coding",
+      tools: ["read"],
+    };
+    const accessorFields = ["type", "opId", "outcome", "category", "tools"].map((field) => {
+      const record = { ...base };
+      Object.defineProperty(record, field, {
+        configurable: true,
+        enumerable: true,
+        get() { reads++; throw new Error(`${field} getter executed`); },
+      });
+      return record;
+    });
+    const accessorTools = ["read"];
+    Object.defineProperty(accessorTools, "0", {
+      configurable: true,
+      enumerable: true,
+      get() { reads++; throw new Error("tool getter executed"); },
+    });
+    const terminal = {
+      sessionId: "s2",
+      opId: "op-tools",
+      type: "op_outcome",
+      details: "coding:read",
+      timestamp: 2,
+      outcome: "clean",
+      category: "coding",
+      tools: accessorTools,
+    };
+    const data = {
+      actions: [...accessorFields, terminal] as unknown as ActionEntry[],
+      candidates: [],
+      lastPrune: NOW,
+    };
+
+    expect(() => normalizeLegacyEvidenceIdentities(data)).not.toThrow();
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
+    expect(reads).toBe(0);
+    expect(accessorFields.every((record) => !Object.hasOwn(record, "authority"))).toBe(true);
+    expect(Object.hasOwn(terminal, "authority")).toBe(false);
+  });
+
+  it("does not invoke nested candidate accessors or proxy traps", () => {
+    let reads = 0;
+    const configAccessor = legacyCandidate();
+    Object.defineProperty(configAccessor.suggestion, "config", {
+      configurable: true,
+      enumerable: true,
+      get() { reads++; throw new Error("config getter executed"); },
+    });
+    const evidenceAccessor = legacyCandidate();
+    Object.defineProperty(evidenceAccessor.evidence, "outcomeStats", {
+      configurable: true,
+      enumerable: true,
+      get() { reads++; throw new Error("outcome getter executed"); },
+    });
+    const proxyEvidence = legacyCandidate();
+    proxyEvidence.evidence = new Proxy(proxyEvidence.evidence, {
+      getOwnPropertyDescriptor() { reads++; throw new Error("proxy trap executed"); },
+    });
+    const data: SessionData = {
+      actions: [],
+      candidates: [configAccessor, evidenceAccessor, proxyEvidence],
+      lastPrune: NOW,
+    };
+
+    expect(() => normalizeLegacyEvidenceIdentities(data)).not.toThrow();
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
+    expect(reads).toBe(0);
+    expect(data.candidates.every((candidate) => !Object.hasOwn(candidate, "authority"))).toBe(true);
+  });
+
+  it("rejects inherited identity without assigning through its descriptor", () => {
+    let reads = 0;
+    const prototype = {};
+    Object.defineProperty(prototype, "authority", {
+      get() { reads++; throw new Error("inherited getter executed"); },
+    });
+    Object.defineProperty(prototype, "evidenceClass", {
+      value: "workflow-tactic",
+      writable: false,
+    });
+    const inherited = Object.assign(Object.create(prototype) as object, {
+      sessionId: "s1",
+      type: "task",
+      details: "read",
+      timestamp: 1,
+    }) as ActionEntry;
+    const data: SessionData = { actions: [inherited], candidates: [], lastPrune: NOW };
+
+    expect(() => normalizeLegacyEvidenceIdentities(data)).not.toThrow();
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
+    expect(reads).toBe(0);
+    expect(Object.hasOwn(inherited, "authority")).toBe(false);
+  });
+
+  it("rejects non-enumerable legacy terminal discriminators", () => {
+    const terminal = {
+      sessionId: "s1",
+      opId: "hidden-type",
+      details: "coding:read",
+      timestamp: 1,
+      outcome: "clean",
+      category: "coding",
+      tools: ["read"],
+    };
+    Object.defineProperty(terminal, "type", { value: "op_outcome", enumerable: false });
+    const data = {
+      actions: [terminal] as unknown as ActionEntry[],
+      candidates: [],
+      lastPrune: NOW,
+    };
+
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
+    expect(Object.hasOwn(terminal, "authority")).toBe(false);
+  });
+
+  it("treats revoked legacy actions and tool arrays as non-normalizable", () => {
+    const actionRecord = Proxy.revocable(action("task", 1, 1), {});
+    actionRecord.revoke();
+    const tools = Proxy.revocable(["read"], {});
+    const terminal = {
+      sessionId: "s1",
+      opId: "revoked-tools",
+      type: "op_outcome",
+      details: "coding:read",
+      timestamp: 1,
+      outcome: "clean",
+      category: "coding",
+      tools: tools.proxy,
+    };
+    tools.revoke();
+    const data = {
+      actions: [actionRecord.proxy, terminal] as unknown as ActionEntry[],
+      candidates: [],
+      lastPrune: NOW,
+    };
+
+    expect(() => normalizeLegacyEvidenceIdentities(data)).not.toThrow();
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
+    expect(Object.hasOwn(terminal, "authority")).toBe(false);
+  });
+
+  it("rejects hostile outer containers and array traversal without invoking them", () => {
+    let reads = 0;
+    const revoked = Proxy.revocable({ actions: [], candidates: [], lastPrune: NOW }, {});
+    revoked.revoke();
+    expect(() => normalizeLegacyEvidenceIdentities(revoked.proxy as SessionData)).not.toThrow();
+    expect(normalizeLegacyEvidenceIdentities(revoked.proxy as SessionData)).toBe(false);
+
+    const accessorActions = [action("task", 1, 1)];
+    Object.defineProperty(accessorActions, "0", {
+      configurable: true,
+      enumerable: true,
+      get() { reads++; throw new Error("array index getter executed"); },
+    });
+    const accessorData: SessionData = { actions: accessorActions, candidates: [], lastPrune: NOW };
+    expect(normalizeLegacyEvidenceIdentities(accessorData)).toBe(false);
+
+    const customIterator = [action("task", 1, 1)];
+    Object.defineProperty(customIterator, Symbol.iterator, {
+      configurable: true,
+      get() { reads++; throw new Error("iterator getter executed"); },
+    });
+    expect(normalizeLegacyEvidenceIdentities({ actions: customIterator, candidates: [], lastPrune: NOW })).toBe(false);
+
+    const outer = { candidates: [], lastPrune: NOW };
+    Object.defineProperty(outer, "actions", {
+      configurable: true,
+      enumerable: true,
+      get() { reads++; throw new Error("outer getter executed"); },
+    });
+    expect(normalizeLegacyEvidenceIdentities(outer as SessionData)).toBe(false);
+    expect(reads).toBe(0);
+  });
+
+  it("rejects oversized sparse arrays before traversing or allocating their length", () => {
+    const huge: ActionEntry[] = [];
+    huge.length = 1_000_000_000;
+    const data: SessionData = { actions: huge, candidates: [], lastPrune: NOW };
+
+    expect(() => normalizeLegacyEvidenceIdentities(data)).not.toThrow();
+    expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
+  });
+
+  it("stamps new workflow actions with exact learning authority", async () => {
+    const { CrossSessionLearner } = await import(
+      "../src/cognition/cross-session-learning/learner.js"
+    );
+    CrossSessionLearner.getInstance().recordAction("session", {
+      type: "task",
+      details: "read then edit",
+      timestamp: 99,
+    });
+    const persisted = JSON.parse(
+      readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8"),
+    ) as SessionData;
+    expect(persisted.actions[0]).toMatchObject(WORKFLOW_TACTIC_IDENTITY);
   });
 });

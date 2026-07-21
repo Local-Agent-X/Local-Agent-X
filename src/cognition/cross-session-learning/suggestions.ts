@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   ActionEntry,
   AutomationSuggestion,
@@ -8,39 +7,22 @@ import type {
   LearnedCandidateState,
   SessionInsight,
 } from "./types.js";
-import { MS_PER_DAY, REJECTION_COOLDOWN_DAYS } from "./types.js";
+import {
+  hasCandidateEvidenceIdentity,
+  CANDIDATE_TRANSITIONS,
+  deriveCandidateId,
+  hasEvidenceIdentity,
+  isExactTerminalTelemetryAction,
+  isExactWorkflowTacticAction,
+  hasPatternEvidenceIdentity,
+  MS_PER_DAY,
+  REJECTION_COOLDOWN_DAYS,
+  WORKFLOW_TACTIC_IDENTITY,
+} from "./types.js";
 import { slugify } from "./text-utils.js";
 
-const TRANSITIONS: Record<LearnedCandidateState, LearnedCandidateState[]> = {
-  candidate: ["approved", "rejected", "archived"],
-  approved: ["active", "rejected", "archived"],
-  active: ["archived", "rolled-back"],
-  rejected: ["candidate", "archived"],
-  archived: ["candidate"],
-  "rolled-back": ["archived", "candidate"],
-};
-
-function identityFor(pattern: DetectedPattern): string {
-  const description = pattern.description.trim().toLowerCase();
-  let anchor: string;
-  switch (pattern.type) {
-    case "workflow":
-    case "question":
-    case "task":
-    case "topic":
-      anchor = description.match(/"([^"]+)"/)?.[1]
-        ?? pattern.examples[0]?.trim().toLowerCase()
-        ?? description;
-      break;
-    case "time":
-      anchor = description.replace(/ \(\d+ times\)$/, "");
-      break;
-  }
-  return JSON.stringify([pattern.type, anchor]);
-}
-
 export function candidateIdFor(pattern: DetectedPattern): string {
-  return `learned-${createHash("sha256").update(identityFor(pattern)).digest("hex").slice(0, 20)}`;
+  return deriveCandidateId(pattern.type, pattern.description, pattern.examples);
 }
 
 export function confidenceFor(pattern: DetectedPattern): number {
@@ -52,7 +34,12 @@ export function confidenceFor(pattern: DetectedPattern): number {
 }
 
 function snapshot(pattern: DetectedPattern): CandidateEvidenceSnapshot {
+  if (!hasPatternEvidenceIdentity(pattern)) {
+    throw new Error("Learned pattern has mismatched evidence authority");
+  }
   return {
+    evidenceClass: pattern.sourceEvidence!.evidenceClass,
+    authority: pattern.sourceEvidence!.authority,
     patternType: pattern.type,
     description: pattern.description,
     occurrences: pattern.occurrences,
@@ -67,7 +54,11 @@ export function createLearnedCandidate(
   suggestion: AutomationSuggestion,
   now = Date.now(),
 ): LearnedCandidate {
+  if (!hasPatternEvidenceIdentity(pattern)) {
+    throw new Error("Learned pattern has mismatched evidence authority");
+  }
   return {
+    ...WORKFLOW_TACTIC_IDENTITY,
     id: candidateIdFor(pattern),
     state: "candidate",
     confidence: confidenceFor(pattern),
@@ -85,19 +76,23 @@ export function transitionCandidate(
   now = Date.now(),
   reason?: string,
 ): LearnedCandidate {
+  if (!hasCandidateEvidenceIdentity(candidate)) {
+    throw new Error("Learned candidate has mismatched evidence authority");
+  }
   if (now < candidate.updatedAt) {
     throw new Error(`Learned candidate transition predates current state: ${candidate.id}`);
   }
-  if (!TRANSITIONS[candidate.state].includes(to)) {
+  if (!CANDIDATE_TRANSITIONS[candidate.state].includes(to)) {
     throw new Error(`Invalid learned candidate transition: ${candidate.state} -> ${to}`);
   }
+  const { rejectionCooldownUntil: _cooldown, ...base } = candidate;
   return {
-    ...candidate,
+    ...base,
     state: to,
     updatedAt: now,
     ...(to === "rejected"
       ? { rejectionCooldownUntil: now + REJECTION_COOLDOWN_DAYS * MS_PER_DAY }
-      : { rejectionCooldownUntil: undefined }),
+      : {}),
     transitions: [
       ...candidate.transitions,
       { from: candidate.state, to, timestamp: now, ...(reason ? { reason } : {}) },
@@ -108,6 +103,7 @@ export function transitionCandidate(
 export function suggestAutomation(
   pattern: DetectedPattern
 ): AutomationSuggestion | null {
+  if (!hasEvidenceIdentity(pattern, WORKFLOW_TACTIC_IDENTITY) || !hasPatternEvidenceIdentity(pattern)) return null;
   if (pattern.automationEligible === false) return null;
   switch (pattern.type) {
     case "question":
@@ -181,6 +177,9 @@ export function suggestAutomation(
 }
 
 export function getInsights(actions: ActionEntry[]): SessionInsight[] {
+  actions = actions.filter((action) =>
+    isExactWorkflowTacticAction(action) || isExactTerminalTelemetryAction(action)
+  );
   const insights: SessionInsight[] = [];
   const now = Date.now();
 

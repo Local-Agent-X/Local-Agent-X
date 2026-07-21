@@ -14,6 +14,11 @@ import {
   MAX_ACTIONS,
   MS_PER_DAY,
   PRUNE_AGE_DAYS,
+  hasCandidateEvidenceIdentity,
+  normalizeLegacyEvidenceIdentities,
+  sanitizeLearnedCandidate,
+  TERMINAL_TELEMETRY_IDENTITY,
+  WORKFLOW_TACTIC_IDENTITY,
 } from "./types.js";
 import { autoPrune, ensureDir, loadData, persistData } from "./persistence.js";
 import {
@@ -41,7 +46,8 @@ export class CrossSessionLearner {
   private constructor() {
     ensureDir();
     this.data = loadData();
-    if (autoPrune(this.data)) {
+    const normalized = normalizeLegacyEvidenceIdentities(this.data);
+    if (autoPrune(this.data) || normalized) {
       persistData(this.data);
     }
   }
@@ -58,6 +64,7 @@ export class CrossSessionLearner {
     action: { type: string; details: string; timestamp: number }
   ): void {
     this.data.actions.push({
+      ...WORKFLOW_TACTIC_IDENTITY,
       sessionId,
       type: action.type,
       details: action.details,
@@ -79,6 +86,7 @@ export class CrossSessionLearner {
   recordOutcome(evidence: OutcomeEvidence): void {
     const tools = evidence.tools.map((tool) => tool.trim()).filter(Boolean);
     const entry: ActionEntry = {
+      ...TERMINAL_TELEMETRY_IDENTITY,
       opId: evidence.opId,
       sessionId: evidence.sessionId,
       type: "op_outcome",
@@ -89,7 +97,11 @@ export class CrossSessionLearner {
       tools,
       ...(evidence.model ? { model: evidence.model } : {}),
     };
-    const existing = this.data.actions.findIndex((action) => action.opId === evidence.opId);
+    const existing = this.data.actions.findIndex((action) =>
+      action.opId === evidence.opId
+      && action.evidenceClass === TERMINAL_TELEMETRY_IDENTITY.evidenceClass
+      && action.authority === TERMINAL_TELEMETRY_IDENTITY.authority
+    );
     if (existing >= 0) this.data.actions[existing] = entry;
     else this.data.actions.push(entry);
     if (this.data.actions.length > MAX_ACTIONS) {
@@ -118,14 +130,16 @@ export class CrossSessionLearner {
   }
 
   getCandidates(): LearnedCandidate[] {
-    return structuredClone(this.data.candidates);
+    return structuredClone(this.data.candidates.filter(hasCandidateEvidenceIdentity));
   }
 
   captureCandidate(pattern: DetectedPattern, now = Date.now()): LearnedCandidate | null {
     const suggestion = this.suggestAutomation(pattern);
     if (!suggestion) return null;
     const next = createLearnedCandidate(pattern, suggestion, now);
-    const index = this.data.candidates.findIndex((candidate) => candidate.id === next.id);
+    const index = this.data.candidates.findIndex((candidate) =>
+      candidate.id === next.id && hasCandidateEvidenceIdentity(candidate)
+    );
     if (index < 0) {
       this.data.candidates.push(next);
       persistData(this.data);
@@ -159,7 +173,9 @@ export class CrossSessionLearner {
     reason?: string,
     now = Date.now(),
   ): LearnedCandidate {
-    const index = this.data.candidates.findIndex((candidate) => candidate.id === id);
+    const index = this.data.candidates.findIndex((candidate) =>
+      candidate.id === id && hasCandidateEvidenceIdentity(candidate)
+    );
     if (index < 0) throw new Error(`Unknown learned candidate: ${id}`);
     const updated = transitionCandidate(this.data.candidates[index], state, now, reason);
     this.data.candidates[index] = updated;
@@ -168,18 +184,22 @@ export class CrossSessionLearner {
   }
 
   draftCandidate(id: string, opportunity?: LearnedCandidate): LearnedCandidateDraftResult {
-    const candidate = this.data.candidates.find((entry) => entry.id === id);
+    const candidate = this.data.candidates.find((entry) =>
+      hasCandidateEvidenceIdentity(entry) && entry.id === id
+    );
     if (!candidate) throw new Error(`Unknown learned candidate: ${id}`);
     if (!opportunity) return draftLearnedCandidate(structuredClone(candidate));
+    const safeOpportunity = sanitizeLearnedCandidate(opportunity);
     if (
-      opportunity.id !== candidate.id
-      || opportunity.state !== candidate.state
-      || opportunity.evidence.occurrences < candidate.evidence.occurrences
-      || opportunity.confidence < candidate.confidence
+      !safeOpportunity
+      || safeOpportunity.id !== candidate.id
+      || safeOpportunity.state !== candidate.state
+      || safeOpportunity.evidence.occurrences < candidate.evidence.occurrences
+      || safeOpportunity.confidence < candidate.confidence
     ) {
       throw new Error(`Invalid learned refinement opportunity: ${id}`);
     }
-    return draftLearnedCandidate(structuredClone(opportunity));
+    return draftLearnedCandidate(safeOpportunity);
   }
 
   getInsights(): SessionInsight[] {
@@ -210,7 +230,9 @@ export class CrossSessionLearner {
         && pattern.occurrences <= candidate.lastSurfacedOccurrences
       ) continue;
 
-      const index = this.data.candidates.findIndex((entry) => entry.id === candidate.id);
+      const index = this.data.candidates.findIndex((entry) =>
+        entry.id === candidate.id && hasCandidateEvidenceIdentity(entry)
+      );
       const surfaced = {
         ...this.data.candidates[index],
         lastSurfacedAt: now,

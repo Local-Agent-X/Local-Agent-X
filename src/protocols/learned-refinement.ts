@@ -1,34 +1,59 @@
-import type { CandidateEvidenceSnapshot, LearnedCandidate } from "../cognition/cross-session-learning/types.js";
+import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
+import {
+  hasCandidateEvidenceIdentity,
+  hasEvidenceIdentity,
+  isSafeLearnedStringArray,
+  readOwnEnumerableData,
+  TERMINAL_TELEMETRY_IDENTITY,
+  WORKFLOW_TACTIC_IDENTITY,
+} from "../cognition/cross-session-learning/types.js";
 import type { LearnedOutcomeReceipt, VersionEffectiveness } from "./learned-effectiveness.js";
 import type { LearnedProtocolRecord, LearnedProtocolVersion } from "./learned-lifecycle.js";
 
 const PROMOTION_RATE = 0.85;
 
-interface DraftMetadata {
-  candidateId?: unknown;
-  confidence?: unknown;
-  toolSequence?: unknown;
-  evidenceSnapshot?: unknown;
-}
-
 export type SafetyRecovery =
   | { kind: "rollback"; targetVersionId: string; reason: string }
   | { kind: "archive"; reason: string };
 
-function candidateTools(candidate: LearnedCandidate): string[] | null {
-  const sequence = candidate.suggestion.config.sequence;
-  if (!Array.isArray(sequence) || !sequence.every((step) => typeof step === "string")) return null;
-  return sequence.flatMap((step) => step.split(" -> ").map((tool) => tool.trim()).filter(Boolean));
+function field(value: unknown, key: PropertyKey): unknown {
+  const read = readOwnEnumerableData(value, key);
+  return read.ok ? read.value : undefined;
+}
+
+function expandedTools(sequence: unknown): string[] | null {
+  if (!isSafeLearnedStringArray(sequence) || sequence.length === 0) return null;
+  const tools: string[] = [];
+  for (let index = 0; index < sequence.length; index++) {
+    tools.push(...sequence[index].split(" -> ").map((tool) => tool.trim()).filter(Boolean));
+  }
+  return tools;
+}
+
+function sameStrings(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 export function isStrongerRefinement(
   candidate: LearnedCandidate,
   latest: LearnedProtocolVersion,
 ): boolean {
-  const tools = candidateTools(candidate);
-  return candidate.state === "active" && tools !== null && passesPromotion(
-    candidate.id, tools, candidate.evidence, candidate.confidence, latest.metadata as DraftMetadata,
-  );
+  if (!hasCandidateEvidenceIdentity(candidate)) return false;
+  const tools = expandedTools(field(field(field(candidate, "suggestion"), "config"), "sequence"));
+  const id = field(candidate, "id");
+  const state = field(candidate, "state");
+  const confidence = field(candidate, "confidence");
+  const evidence = field(candidate, "evidence");
+  const prior = field(latest, "metadata");
+  return state === "active"
+    && typeof id === "string"
+    && typeof confidence === "number"
+    && tools !== null
+    && passesPromotion(id, tools, evidence, confidence, prior);
 }
 
 export function isSafeRefinementVersion(
@@ -36,19 +61,22 @@ export function isSafeRefinementVersion(
   target: LearnedProtocolVersion,
   expectedCandidateId: string,
 ): boolean {
-  const metadata = target.metadata as DraftMetadata;
+  const metadata = field(target, "metadata");
+  const candidateId = field(metadata, "candidateId");
+  const toolSequence = field(metadata, "toolSequence");
+  const confidence = field(metadata, "confidence");
   if (
-    metadata.candidateId !== expectedCandidateId
-    || !Array.isArray(metadata.toolSequence)
-    || metadata.toolSequence.some((tool) => typeof tool !== "string")
-    || typeof metadata.confidence !== "number"
+    !hasEvidenceIdentity(metadata, WORKFLOW_TACTIC_IDENTITY)
+    || candidateId !== expectedCandidateId
+    || !isSafeLearnedStringArray(toolSequence)
+    || typeof confidence !== "number"
   ) return false;
   return passesPromotion(
-    metadata.candidateId,
-    metadata.toolSequence as string[],
-    metadata.evidenceSnapshot,
-    metadata.confidence,
-    active.metadata as DraftMetadata,
+    candidateId,
+    toolSequence,
+    field(metadata, "evidenceSnapshot"),
+    confidence,
+    field(active, "metadata"),
   );
 }
 
@@ -57,23 +85,36 @@ function passesPromotion(
   tools: string[],
   evidenceValue: unknown,
   confidence: number,
-  prior: DraftMetadata,
+  priorValue: unknown,
 ): boolean {
-  const evidence = evidenceValue as CandidateEvidenceSnapshot | undefined;
-  const stats = evidence?.outcomeStats;
-  const priorEvidence = prior.evidenceSnapshot as CandidateEvidenceSnapshot | undefined;
-  const priorOccurrences = priorEvidence?.occurrences;
-  const priorSessions = priorEvidence?.outcomeStats?.distinctSessions;
+  if (!hasEvidenceIdentity(evidenceValue, TERMINAL_TELEMETRY_IDENTITY)) return false;
+  const stats = field(evidenceValue, "outcomeStats");
+  const priorEvidence = field(priorValue, "evidenceSnapshot");
   if (
-    !stats
-    || tools.length === 0
-    || prior.candidateId !== candidateId
-    || !Array.isArray(prior.toolSequence)
-    || JSON.stringify(prior.toolSequence) !== JSON.stringify(tools)
-    || typeof prior.confidence !== "number"
-    || !Number.isFinite(prior.confidence)
-    || prior.confidence < 0
-    || prior.confidence > 1
+    !hasEvidenceIdentity(priorValue, WORKFLOW_TACTIC_IDENTITY)
+    || !hasEvidenceIdentity(priorEvidence, TERMINAL_TELEMETRY_IDENTITY)
+  ) return false;
+  const priorOccurrences = field(priorEvidence, "occurrences");
+  const priorSessions = field(field(priorEvidence, "outcomeStats"), "distinctSessions");
+  const priorCandidateId = field(priorValue, "candidateId");
+  const priorTools = field(priorValue, "toolSequence");
+  const priorConfidence = field(priorValue, "confidence");
+  const clean = field(stats, "clean");
+  const partial = field(stats, "partial");
+  const aborted = field(stats, "aborted");
+  const successRate = field(stats, "successRate");
+  const weightedSuccessRate = field(stats, "weightedSuccessRate");
+  const distinctSessions = field(stats, "distinctSessions");
+  const occurrences = field(evidenceValue, "occurrences");
+  if (
+    tools.length === 0
+    || priorCandidateId !== candidateId
+    || !isSafeLearnedStringArray(priorTools)
+    || !sameStrings(priorTools, tools)
+    || typeof priorConfidence !== "number"
+    || !Number.isFinite(priorConfidence)
+    || priorConfidence < 0
+    || priorConfidence > 1
     || typeof priorOccurrences !== "number"
     || !Number.isInteger(priorOccurrences)
     || priorOccurrences < 0
@@ -81,32 +122,41 @@ function passesPromotion(
     || !Number.isInteger(priorSessions)
     || priorSessions < 0
   ) return false;
-  const total = stats.clean + stats.partial + stats.aborted;
   if (
-    ![stats.clean, stats.partial, stats.aborted, stats.successRate, stats.weightedSuccessRate, stats.distinctSessions, confidence]
+    typeof clean !== "number"
+    || typeof partial !== "number"
+    || typeof aborted !== "number"
+    || typeof successRate !== "number"
+    || typeof weightedSuccessRate !== "number"
+    || typeof distinctSessions !== "number"
+    || typeof occurrences !== "number"
+  ) return false;
+  const total = clean + partial + aborted;
+  if (
+    ![clean, partial, aborted, successRate, weightedSuccessRate, distinctSessions, confidence]
       .every(Number.isFinite)
-    || ![stats.clean, stats.partial, stats.aborted, stats.distinctSessions, evidence.occurrences]
+    || ![clean, partial, aborted, distinctSessions, occurrences]
       .every(Number.isInteger)
-    || stats.clean < 0
-    || stats.partial < 0
-    || stats.aborted < 0
-    || stats.distinctSessions < 0
-    || total !== evidence.occurrences
+    || clean < 0
+    || partial < 0
+    || aborted < 0
+    || distinctSessions < 0
+    || total !== occurrences
     || total <= 0
-    || stats.clean < 5
-    || stats.distinctSessions < 3
-    || stats.successRate < PROMOTION_RATE
-    || stats.successRate > 1
-    || Math.abs(stats.successRate - stats.clean / total) > 1e-9
-    || stats.weightedSuccessRate < PROMOTION_RATE
-    || stats.weightedSuccessRate > 1
-    || stats.aborted / total > 0.10
+    || clean < 5
+    || distinctSessions < 3
+    || successRate < PROMOTION_RATE
+    || successRate > 1
+    || Math.abs(successRate - clean / total) > 1e-9
+    || weightedSuccessRate < PROMOTION_RATE
+    || weightedSuccessRate > 1
+    || aborted / total > 0.10
     || confidence < PROMOTION_RATE
     || confidence > 1
-    || confidence < prior.confidence
+    || confidence < priorConfidence
   ) return false;
-  return evidence.occurrences >= priorOccurrences + 3
-    || stats.distinctSessions >= priorSessions + 2;
+  return occurrences >= priorOccurrences + 3
+    || distinctSessions >= priorSessions + 2;
 }
 
 function windowMetrics(receipts: LearnedOutcomeReceipt[]): { cleanRate: number; quality: number } {

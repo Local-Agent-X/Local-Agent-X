@@ -1,21 +1,36 @@
 import type { ActionEntry, DetectedPattern } from "./types.js";
 import {
+  isExactTerminalTelemetryAction,
+  isExactWorkflowTacticAction,
+  TERMINAL_TELEMETRY_IDENTITY,
+  WORKFLOW_TACTIC_IDENTITY,
+} from "./types.js";
+import {
   clusterBySimilarity,
   extractKeywords,
   normalizeDetail,
 } from "./text-utils.js";
 
+function asWorkflowTactics(
+  patterns: DetectedPattern[],
+  sourceEvidence: typeof WORKFLOW_TACTIC_IDENTITY | typeof TERMINAL_TELEMETRY_IDENTITY,
+): DetectedPattern[] {
+  return patterns.map((pattern) => ({ ...WORKFLOW_TACTIC_IDENTITY, sourceEvidence, ...pattern }));
+}
+
 export function detectRepeatedQuestions(
   actions: ActionEntry[],
   min: number
 ): DetectedPattern[] {
-  const questions = actions.filter((a) => a.type === "question");
+  const questions = actions.filter((a) =>
+    isExactWorkflowTacticAction(a) && a.type === "question"
+  );
   const clusters = clusterBySimilarity(
     questions.map((q) => q.details),
     0.6
   );
 
-  return clusters
+  return asWorkflowTactics(clusters
     .filter((c) => c.items.length >= min)
     .map((c) => ({
       type: "question" as const,
@@ -28,7 +43,7 @@ export function detectRepeatedQuestions(
       ),
       examples: c.items.slice(0, 5),
       suggestedAction: `Create a shortcut or FAQ entry for: "${c.representative}"`,
-    }));
+    })), WORKFLOW_TACTIC_IDENTITY);
 }
 
 export function detectRepeatedTasks(
@@ -36,7 +51,8 @@ export function detectRepeatedTasks(
   min: number
 ): DetectedPattern[] {
   const tasks = actions.filter(
-    (a) => a.type === "tool_call" || a.type === "task"
+    (a) => isExactWorkflowTacticAction(a)
+      && (a.type === "tool_call" || a.type === "task")
   );
   const taskCounts = new Map<
     string,
@@ -59,7 +75,7 @@ export function detectRepeatedTasks(
     }
   }
 
-  return Array.from(taskCounts.entries())
+  return asWorkflowTactics(Array.from(taskCounts.entries())
     .filter(([, v]) => v.count >= min)
     .map(([key, v]) => ({
       type: "task" as const,
@@ -68,14 +84,16 @@ export function detectRepeatedTasks(
       lastSeen: v.last,
       examples: v.examples,
       suggestedAction: `Create a mission template for: "${key}"`,
-    }));
+    })), WORKFLOW_TACTIC_IDENTITY);
 }
 
 export function detectRepeatedTopics(
   actions: ActionEntry[],
   min: number
 ): DetectedPattern[] {
-  actions = actions.filter((action) => action.type !== "op_outcome");
+  actions = actions.filter((action) =>
+    isExactWorkflowTacticAction(action) && action.type !== "op_outcome"
+  );
   const sessionTopics = new Map<string, Set<string>>();
 
   for (const a of actions) {
@@ -96,7 +114,7 @@ export function detectRepeatedTopics(
     }
   }
 
-  return Array.from(keywordSessions.entries())
+  return asWorkflowTactics(Array.from(keywordSessions.entries())
     .filter(([, sessions]) => sessions.size >= min)
     .map(([keyword, sessions]) => ({
       type: "topic" as const,
@@ -109,14 +127,16 @@ export function detectRepeatedTopics(
         0
       ),
       examples: Array.from(sessions).slice(0, 5),
-    }));
+    })), WORKFLOW_TACTIC_IDENTITY);
 }
 
 export function detectTimePatterns(
   actions: ActionEntry[],
   min: number
 ): DetectedPattern[] {
-  actions = actions.filter((action) => action.type !== "op_outcome");
+  actions = actions.filter((action) =>
+    isExactWorkflowTacticAction(action) && action.type !== "op_outcome"
+  );
   const hourBuckets = new Map<
     number,
     { count: number; types: Map<string, number> }
@@ -159,7 +179,7 @@ export function detectTimePatterns(
     }
   }
 
-  return patterns;
+  return asWorkflowTactics(patterns, WORKFLOW_TACTIC_IDENTITY);
 }
 
 export function detectWorkflowPatterns(
@@ -167,7 +187,9 @@ export function detectWorkflowPatterns(
   min: number
 ): DetectedPattern[] {
   const outcomePatterns = detectOutcomeWorkflows(actions, min);
-  const legacyActions = actions.filter((action) => action.type !== "op_outcome");
+  const legacyActions = actions.filter((action) =>
+    isExactWorkflowTacticAction(action) && action.type !== "op_outcome"
+  );
   const sessionActions = new Map<string, ActionEntry[]>();
   for (const a of legacyActions) {
     if (!sessionActions.has(a.sessionId)) {
@@ -218,7 +240,7 @@ export function detectWorkflowPatterns(
       examples: [key],
       suggestedAction: `Bundle "${key}" into a single mission or shortcut`,
     }));
-  return [...outcomePatterns, ...legacyPatterns];
+  return [...outcomePatterns, ...asWorkflowTactics(legacyPatterns, WORKFLOW_TACTIC_IDENTITY)];
 }
 
 function detectOutcomeWorkflows(actions: ActionEntry[], min: number): DetectedPattern[] {
@@ -228,7 +250,7 @@ function detectOutcomeWorkflows(actions: ActionEntry[], min: number): DetectedPa
     entries: ActionEntry[];
   }>();
   for (const action of actions) {
-    if (action.type !== "op_outcome" || !action.category || !action.outcome || !action.tools) continue;
+    if (!isExactTerminalTelemetryAction(action)) continue;
     const key = JSON.stringify([action.category, action.tools]);
     const group = groups.get(key);
     if (group) group.entries.push(action);
@@ -274,5 +296,5 @@ function detectOutcomeWorkflows(actions: ActionEntry[], min: number): DetectedPa
       outcomeStats: { clean, partial, aborted, successRate, weightedSuccessRate, distinctSessions },
     });
   }
-  return patterns;
+  return asWorkflowTactics(patterns, TERMINAL_TELEMETRY_IDENTITY);
 }

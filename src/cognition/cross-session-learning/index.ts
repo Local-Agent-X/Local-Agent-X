@@ -8,6 +8,9 @@
 
 export type {
   ActionEntry,
+  LearnedEvidenceAuthority,
+  LearnedEvidenceClass,
+  LearnedEvidenceIdentity,
   OutcomeEvidence,
   DetectedPattern,
   AutomationSuggestion,
@@ -16,6 +19,12 @@ export type {
   LearnedCandidate,
   LearnedCandidateState,
   SessionInsight,
+} from "./types.js";
+
+export {
+  TERMINAL_TELEMETRY_IDENTITY,
+  WORKFLOW_TACTIC_IDENTITY,
+  hasEvidenceIdentity,
 } from "./types.js";
 
 export { CrossSessionLearner } from "./learner.js";

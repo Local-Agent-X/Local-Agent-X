@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
+import {
+  deriveCandidateId,
+  TERMINAL_TELEMETRY_IDENTITY,
+  WORKFLOW_TACTIC_IDENTITY,
+} from "../cognition/cross-session-learning/types.js";
 import { learnedProtocolsDir, loadImportedProtocols } from "./loader.js";
 import { draftLearnedCandidate, renderLearnedCandidateSkill } from "./learned-drafting.js";
 import { activateLearnedProtocol, createLearnedProtocolDraft, loadLearnedProtocol } from "./learned-lifecycle.js";
@@ -15,8 +20,11 @@ const ORIGINAL_DATA_DIR = process.env.LAX_DATA_DIR;
 let workspace = "";
 
 function workflowCandidate(): LearnedCandidate {
+  const description = "Workflow \"coding:read_file -> write_file -> run_tests\" completed cleanly 3/4 times";
+  const examples = ["read_file -> write_file -> run_tests"];
   return {
-    id: "learned-0123456789abcdefabcd",
+    ...WORKFLOW_TACTIC_IDENTITY,
+    id: deriveCandidateId("workflow", description, examples),
     state: "candidate",
     confidence: 0.8,
     suggestion: {
@@ -30,11 +38,12 @@ function workflowCandidate(): LearnedCandidate {
       },
     },
     evidence: {
+      ...TERMINAL_TELEMETRY_IDENTITY,
       patternType: "workflow",
-      description: "Workflow \"coding:read_file -> write_file -> run_tests\" completed cleanly 3/4 times",
+      description,
       occurrences: 4,
       lastSeen: 1_750_000_000_000,
-      examples: ["read_file -> write_file -> run_tests"],
+      examples,
       outcomeStats: {
         clean: 3,
         partial: 1,
@@ -48,6 +57,21 @@ function workflowCandidate(): LearnedCandidate {
     updatedAt: 1_750_000_000_000,
     transitions: [],
   };
+}
+
+function markActive(candidate: LearnedCandidate): void {
+  candidate.state = "active";
+  candidate.transitions = [
+    { from: "candidate", to: "approved", timestamp: candidate.createdAt },
+    { from: "approved", to: "active", timestamp: candidate.updatedAt },
+  ];
+}
+
+function rekey(candidate: LearnedCandidate, sequence: string): void {
+  candidate.evidence.description = `Workflow \"coding:${sequence}\" completed cleanly 3/4 times`;
+  candidate.evidence.examples = [sequence];
+  candidate.suggestion.config.sequence = [sequence];
+  candidate.id = deriveCandidateId("workflow", candidate.evidence.description, candidate.evidence.examples);
 }
 
 beforeAll(() => {
@@ -72,10 +96,39 @@ afterAll(() => {
 });
 
 describe("learned protocol drafting", () => {
+  it("rejects partial and cross-class evidence identities", () => {
+    const partial = workflowCandidate();
+    delete partial.authority;
+    expect(() => draftLearnedCandidate(partial)).toThrow(/mismatched evidence authority/);
+
+    const crossClass = workflowCandidate();
+    Object.assign(crossClass.evidence, WORKFLOW_TACTIC_IDENTITY);
+    expect(() => draftLearnedCandidate(crossClass)).toThrow(/mismatched evidence authority/);
+  });
+
+  it("turns revoked or accessor-backed suggestion structure into controlled rejection", () => {
+    const revoked = workflowCandidate();
+    const suggestion = Proxy.revocable(revoked.suggestion, {});
+    revoked.suggestion = suggestion.proxy;
+    suggestion.revoke();
+    expect(() => draftLearnedCandidate(revoked)).toThrow(Error);
+    expect(() => draftLearnedCandidate(revoked)).not.toThrow(TypeError);
+
+    let reads = 0;
+    const accessor = workflowCandidate();
+    Object.defineProperty(accessor.suggestion, "config", {
+      configurable: true,
+      enumerable: true,
+      get() { reads++; throw new Error("config getter executed"); },
+    });
+    expect(() => draftLearnedCandidate(accessor)).toThrow(/mismatched evidence authority/);
+    expect(reads).toBe(0);
+  });
+
   it("rejects non-workflow, unproven, and malformed candidates", () => {
     const nonWorkflow = workflowCandidate();
     nonWorkflow.evidence.patternType = "task";
-    expect(() => draftLearnedCandidate(nonWorkflow)).toThrow(/Only workflow/);
+    expect(() => draftLearnedCandidate(nonWorkflow)).toThrow(/mismatched evidence authority/);
 
     const unproven = workflowCandidate();
     unproven.evidence.outcomeStats = { clean: 2, partial: 2, aborted: 0, successRate: 0.5, weightedSuccessRate: 0.5, distinctSessions: 1 };
@@ -152,30 +205,30 @@ describe("learned protocol drafting", () => {
 
   it("rebuilds missing active candidates but requires matching managed history for refinements", () => {
     const unmanaged = workflowCandidate();
-    unmanaged.state = "active";
+    markActive(unmanaged);
     const rebuilt = draftLearnedCandidate(unmanaged);
     expect(rebuilt.created).toBe(true);
     expect(loadLearnedProtocol(rebuilt.slug).state).toBe("draft");
 
     const mismatched = workflowCandidate();
-    mismatched.id = "learned-0123456789abcdefabcf";
-    mismatched.state = "active";
+    rekey(mismatched, "read_file -> mismatch -> run_tests");
+    markActive(mismatched);
     createLearnedProtocolDraft({
       slug: mismatched.id,
-      skillMd: renderLearnedCandidateSkill({ ...mismatched, state: "candidate" }),
+      skillMd: renderLearnedCandidateSkill({ ...mismatched, state: "candidate", transitions: [] }),
       metadata: { candidateId: "learned-ffffffffffffffffffff" },
     });
     expect(() => draftLearnedCandidate(mismatched)).toThrow(/does not match its managed candidate history/);
 
     const original = workflowCandidate();
-    original.id = "learned-0123456789abcdefabce";
+    rekey(original, "read_file -> distinct -> run_tests");
     const first = draftLearnedCandidate(original);
     activateLearnedProtocol({ slug: first.slug, versionId: first.version.id, expectedActiveVersionId: null });
     const stronger = workflowCandidate();
-    stronger.id = original.id;
-    stronger.state = "active";
+    rekey(stronger, "read_file -> distinct -> run_tests");
+    markActive(stronger);
     stronger.evidence.occurrences = 5;
-    stronger.evidence.description = "Workflow \"coding:read_file -> write_file -> run_tests\" completed cleanly 4/5 times";
+    stronger.evidence.description = "Workflow \"coding:read_file -> distinct -> run_tests\" completed cleanly 4/5 times";
     stronger.evidence.outcomeStats = { clean: 4, partial: 1, aborted: 0, successRate: 0.8, weightedSuccessRate: 0.85, distinctSessions: 4 };
     stronger.suggestion.config.occurrences = 5;
     stronger.confidence = 0.85;

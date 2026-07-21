@@ -41,8 +41,8 @@ function certificationResponse(runtime: LocalRuntimeInfo, modelId: string, resul
     ? "identity_unavailable" as const
     : verified ? "verified" as const : "failed" as const;
   return {
-    ok: verified,
-    status,
+    ok: verified, status, target: { runtimeId: runtime.id, model: modelId },
+    identityEvidence: result.fingerprint.reusable ? "runtime_version_and_model_digest" : "unavailable",
     passedCount: result.passedCount,
     scenarioCount: Object.keys(result.scenarios).length,
     callCount: result.callCount,

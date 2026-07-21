@@ -14,7 +14,7 @@ function escapeHtml(value: unknown): string {
 }
 
 function loadUi(options: {
-  apiJson?: () => Promise<unknown>;
+  apiJson?: (path: string) => Promise<unknown>;
   apiPost?: (path: string, body: unknown) => Promise<unknown>;
   list?: Record<string, unknown>;
 } = {}) {
@@ -104,6 +104,8 @@ describe("local-runtime settings verification UI", () => {
     release({
       ok: true,
       status: "verified",
+      target: { runtimeId: "runtime-b", model: "shared-model" },
+      identityEvidence: "runtime_version_and_model_digest",
       passedCount: 5,
       scenarioCount: 5,
       scenarios: [{ id: "baseline_marker", passed: true, latencyMs: 4, failure: null }],
@@ -112,6 +114,8 @@ describe("local-runtime settings verification UI", () => {
     expect(button.disabled).toBe(false);
     expect(button.textContent).toBe("Verify again");
     expect(resultEl.innerHTML).toContain("Verified");
+    expect(resultEl.innerHTML).toContain("Exact target: runtime-b / shared-model");
+    expect(resultEl.innerHTML).toContain("declared runtime identity + runtime version + model digest recorded");
     expect(resultEl.innerHTML).toContain("Basic response");
     expect(badge.innerHTML).toContain("Verified");
   });
@@ -162,5 +166,66 @@ describe("local-runtime settings verification UI", () => {
     expect(String(list.innerHTML)).toContain("MANUAL ENDPOINTS");
     expect(String(list.innerHTML)).toContain("Desk");
     expect(String(list.innerHTML)).toContain("data-lr-remove");
+  });
+
+  it("renders stored installer evidence as advisory without adding actions", async () => {
+    const apiJson = vi.fn(async (path: string) => path === "/api/setup/status" ? {
+      hardwareProfile: {
+        cpu: { model: "Evidence CPU" },
+        memory: { totalBytes: 16 * 1024 ** 3 },
+        gpu: { status: "unknown", devices: [] },
+        ollama: { status: "not-installed", version: null },
+        modelAdvisories: [],
+      },
+    } : { manual: [], runtimes: [] });
+    const { ui, list } = loadUi({ apiJson });
+    await ui.loadLocalRuntimesEditor();
+    expect(apiJson).toHaveBeenCalledWith("/api/setup/status");
+    expect(String(list.innerHTML)).toContain("INSTALL-TIME HARDWARE EVIDENCE");
+    expect(String(list.innerHTML)).toContain("Evidence CPU");
+    expect(String(list.innerHTML)).toContain("advisory only");
+    expect(String(list.innerHTML)).not.toContain("data-lr-download");
+  });
+
+  it("ignores malformed advisory entries while preserving runtime, manual, and Verify controls", async () => {
+    const apiJson = vi.fn(async (path: string) => path === "/api/setup/status" ? {
+      hardwareProfile: {
+        cpu: { model: "Evidence CPU" }, memory: { totalBytes: null },
+        gpu: { status: "unknown", devices: [null] },
+        ollama: { status: "unknown", version: null }, modelAdvisories: [null],
+      },
+    } : {
+      manual: [{ kind: "ollama", baseUrl: "http://127.0.0.1:11434", label: "Desk" }],
+      runtimes: [{
+        id: "ollama@127.0.0.1:11434", kind: "ollama", label: "Ollama",
+        endpoint: { baseUrl: "http://127.0.0.1:11434" },
+        models: [{ id: "model-a", contextWindow: 8192, tools: true, certification: { status: "unverified" } }],
+      }],
+    });
+    const { ui, list } = loadUi({ apiJson });
+    await ui.loadLocalRuntimesEditor();
+    expect(String(list.innerHTML)).toContain("GPU unknown");
+    expect(String(list.innerHTML)).toContain("model-a");
+    expect(String(list.innerHTML)).toContain(">Verify<");
+    expect(String(list.innerHTML)).toContain("Desk");
+  });
+
+  it("keeps runtime controls visible when setup evidence cannot be loaded", async () => {
+    const apiJson = vi.fn(async (path: string) => {
+      if (path === "/api/setup/status") throw new Error("offline");
+      return {
+        manual: [],
+        runtimes: [{
+          id: "runtime-a", kind: "ollama", label: "Ollama",
+          endpoint: { baseUrl: "http://127.0.0.1:11434" },
+          models: [{ id: "model-a", contextWindow: null, tools: null, certification: { status: "unverified" } }],
+        }],
+      };
+    });
+    const { ui, list } = loadUi({ apiJson });
+    await ui.loadLocalRuntimesEditor();
+    expect(String(list.innerHTML)).toContain("No installer hardware evidence is available");
+    expect(String(list.innerHTML)).toContain("model-a");
+    expect(String(list.innerHTML)).toContain(">Verify<");
   });
 });

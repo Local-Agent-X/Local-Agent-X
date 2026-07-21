@@ -18,16 +18,20 @@ function localCertificationBadge(status) {
   return '<span class="status-badge" data-lr-cert-badge><span class="status-dot"></span> Not verified</span>';
 }
 
-function localRuntimeModelRow(runtime, model) {
+function localRuntimeModelRow(runtime, model, advisories) {
   const runtimeKey = esc(encodeURIComponent(runtime.id));
   const modelKey = esc(encodeURIComponent(model.id));
   const verified = model.certification?.status === 'verified';
   const context = model.contextWindow ? `${Number(model.contextWindow).toLocaleString()} ctx` : 'context unknown';
   const tools = model.tools === true ? 'tools' : model.tools === false ? 'no tools' : 'tools unknown';
+  const advisory = advisories.get(model.id);
+  const fit = advisory
+    ? ` &middot; install-time fit: <span style="color:${advisory.status === 'compatible' ? 'var(--accent)' : advisory.status === 'degraded' ? 'var(--warn, #c99a52)' : 'var(--muted)'}">${esc(advisory.status)}</span>`
+    : '';
   return `<div data-lr-model-row style="padding:7px 0;border-top:1px solid var(--border)">
     <div style="display:flex;align-items:center;gap:8px;font-size:.75rem">
       <span style="flex:1;min-width:0;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(model.id)}">${esc(model.id)}</span>
-      <span style="color:var(--muted);font-size:.68rem">${esc(context)} &middot; ${esc(tools)}</span>
+      <span style="color:var(--muted);font-size:.68rem">${esc(context)} &middot; ${esc(tools)}${fit}</span>
       ${localCertificationBadge(verified ? 'verified' : 'unverified')}
       <button class="btn" data-lr-verify data-lr-runtime="${runtimeKey}" data-lr-model="${modelKey}" style="padding:3px 10px;font-size:.7rem">${verified ? 'Verify again' : 'Verify'}</button>
     </div>
@@ -35,10 +39,11 @@ function localRuntimeModelRow(runtime, model) {
   </div>`;
 }
 
-function discoveredRuntimeRow(runtime) {
+function discoveredRuntimeRow(runtime, advisories) {
   const models = Array.isArray(runtime.models) ? runtime.models : [];
+  const runtimeAdvisories = runtime.kind === 'ollama' ? advisories : new Map();
   const modelRows = models.length
-    ? models.map((model) => localRuntimeModelRow(runtime, model)).join('')
+    ? models.map((model) => localRuntimeModelRow(runtime, model, runtimeAdvisories)).join('')
     : '<div style="padding:7px 0;color:var(--muted);font-size:.72rem">No models reported.</div>';
   return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
     <div style="display:flex;align-items:center;gap:8px;font-size:.78rem">
@@ -47,6 +52,27 @@ function discoveredRuntimeRow(runtime) {
       <span class="status-badge ok" style="margin-left:auto"><span class="status-dot"></span> Connected</span>
     </div>
     ${modelRows}
+  </div>`;
+}
+
+function localHardwareProfileHtml(profile) {
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)) return '<div style="font-size:.72rem;color:var(--muted);margin-bottom:10px">No installer hardware evidence is available. Runtime discovery and exact verification still work.</div>';
+  const gib = (bytes) => Number.isFinite(bytes) && bytes > 0 ? `${(bytes / (1024 ** 3)).toFixed(1)} GiB` : 'unknown';
+  const cpu = profile.cpu?.model || 'CPU model unknown';
+  const ram = gib(profile.memory?.totalBytes);
+  const devices = Array.isArray(profile.gpu?.devices)
+    ? profile.gpu.devices.filter((device) => device && typeof device === 'object' && typeof device.name === 'string')
+    : [];
+  const gpu = devices.length
+    ? devices.map((device) => `${device.name}${device.memoryKind === 'shared' ? ' (shared memory)' : device.memoryBytes ? ` (${gib(device.memoryBytes)} VRAM)` : ' (VRAM unknown)'}`).join(' + ')
+    : `GPU ${profile.gpu?.status || 'unknown'}`;
+  const runtime = profile.ollama?.status === 'installed'
+    ? `Ollama ${profile.ollama.version || 'version unknown'} detected when installer evidence was collected`
+    : `Ollama ${profile.ollama?.status || 'unknown'} when installer evidence was collected`;
+  return `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px;font-size:.72rem">
+    <div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">INSTALL-TIME HARDWARE EVIDENCE &middot; advisory only</div>
+    <div>${esc(cpu)} &middot; ${esc(ram)} RAM &middot; ${esc(gpu)} &middot; ${esc(runtime)}</div>
+    <div style="color:var(--muted);margin-top:4px">Unknown or unsupported hardware does not block local runtime discovery, chat, or exact verification.</div>
   </div>`;
 }
 
@@ -79,16 +105,23 @@ async function loadLocalRuntimesEditor() {
     list.dataset.wired = '1';
   }
   try {
-    const data = await apiJson('/api/local-runtimes');
+    const [data, setup] = await Promise.all([
+      apiJson('/api/local-runtimes'),
+      apiJson('/api/setup/status').catch(() => ({ hardwareProfile: null })),
+    ]);
     const manual = data.manual || [];
     const discovered = data.runtimes || [];
+    const profile = setup && typeof setup === 'object' ? setup.hardwareProfile || null : null;
+    const advisories = new Map((Array.isArray(profile?.modelAdvisories) ? profile.modelAdvisories : [])
+      .filter((item) => item && typeof item === 'object' && typeof item.model === 'string')
+      .map((item) => [item.model, item]));
     const discoveredHtml = discovered.length
-      ? discovered.map(discoveredRuntimeRow).join('')
+      ? discovered.map((runtime) => discoveredRuntimeRow(runtime, advisories)).join('')
       : '<div style="font-size:.75rem;color:var(--muted);margin-bottom:10px">No local runtimes discovered yet.</div>';
     const manualHtml = manual.length
       ? manual.map((entry) => manualRuntimeRow(entry, discovered)).join('')
       : '<div style="font-size:.75rem;color:var(--muted)">No manual runtimes yet. Loopback servers on known ports are found automatically.</div>';
-    list.innerHTML = `<div style="font-size:.68rem;color:var(--muted);margin-bottom:6px">DISCOVERED</div>${discoveredHtml}
+    list.innerHTML = `${localHardwareProfileHtml(profile)}<div style="font-size:.68rem;color:var(--muted);margin-bottom:6px">DISCOVERED</div>${discoveredHtml}
       <div style="font-size:.68rem;color:var(--muted);margin:12px 0 4px">MANUAL ENDPOINTS</div>${manualHtml}`;
   } catch {
     list.innerHTML = '<div style="font-size:.75rem;color:var(--err, #c66)">Failed to load runtimes.</div>';
@@ -109,7 +142,10 @@ function localCertificationResultHtml(result) {
   if (result.status === 'verified') summary = `Verified &middot; ${Number(result.passedCount) || 0}/${Number(result.scenarioCount) || 5} checks passed`;
   if (result.status === 'identity_unavailable') summary = 'Identity unavailable &middot; result cannot be reused after refresh or restart';
   if (result.status === 'error') summary = 'Verification failed to run';
-  return `<div style="font-size:.72rem;margin-bottom:3px;color:${result.status === 'verified' ? 'var(--accent)' : 'var(--err, #c66)'}">${summary}</div>${rows}`;
+  const target = result.target && result.target.runtimeId && result.target.model
+    ? `<div style="font-size:.68rem;color:var(--muted);margin-bottom:4px">Exact target: ${esc(result.target.runtimeId)} / ${esc(result.target.model)} &middot; ${result.identityEvidence === 'runtime_version_and_model_digest' ? 'declared runtime identity + runtime version + model digest recorded' : 'stable identity unavailable'}</div>`
+    : '';
+  return `<div style="font-size:.72rem;margin-bottom:3px;color:${result.status === 'verified' ? 'var(--accent)' : 'var(--err, #c66)'}">${summary}</div>${target}${rows}`;
 }
 
 async function verifyLocalRuntime(button) {

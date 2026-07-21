@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +49,21 @@ describe("installer plan contract", () => {
     const env = { LAX_INSTALL_OLLAMA: runtime, LAX_INSTALL_OLLAMA_MEMORY_MODEL: model } as NodeJS.ProcessEnv;
     expect(wantsOllamaMemoryModel(env)).toBe(ollamaModel);
     expect(installerSelections(env)).toEqual({ ollamaRuntime, ollamaMemoryModel: ollamaModel });
+  });
+
+  it("keeps hardware onboarding advisory and exact-target verification explicit", () => {
+    const view = readFileSync(fileURLToPath(new URL("../installer/Views/MainWindow.axaml", import.meta.url)), "utf-8");
+    const evidence = readFileSync(fileURLToPath(new URL("../installer/ViewModels/MainWindowViewModel.Hardware.cs", import.meta.url)), "utf-8");
+    const runtimeUi = readFileSync(fileURLToPath(new URL("../public/js/settings-local-runtimes.js", import.meta.url)), "utf-8");
+    expect(view).toContain("Hardware and local AI evidence");
+    expect(view).toContain("Install Ollama local AI runtime");
+    expect(evidence).toContain("verify an exact runtime/model after launch");
+    expect(evidence).toContain("No chat default changes automatically");
+    expect(evidence).toContain('RunLines("ollama", "list")');
+    expect(evidence).not.toMatch(/ollama[^\n]{0,30}\bpull\b/i);
+    expect(runtimeUi).toContain("INSTALL-TIME HARDWARE EVIDENCE");
+    expect(runtimeUi).toContain("Unknown or unsupported hardware does not block");
+    expect(runtimeUi).toContain("declared runtime identity + runtime version + model digest recorded");
   });
 });
 

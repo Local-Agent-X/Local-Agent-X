@@ -22,6 +22,7 @@ export function certificationSelectionFingerprint(
   contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT,
 ): string {
   const localModel = runtime.models.find((candidate) => candidate.id === model);
+  const runtimeIdHash = hash([runtime.id]);
   const endpointHash = hash([runtime.endpoint.baseUrl.replace(/\/+$/, "")]);
   const chatBaseHash = hash([runtime.chatBaseUrl.replace(/\/+$/, "")]);
   const modelHash = hash([model]);
@@ -31,6 +32,7 @@ export function certificationSelectionFingerprint(
   return hash([
     certificationHash,
     certificationContractFingerprint(contract),
+    runtimeIdHash,
     endpointHash,
     chatBaseHash,
     modelHash,
@@ -47,6 +49,7 @@ export function certificationFingerprint(
   contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT,
 ): CertificationFingerprint {
   const localModel = runtime.models.find((candidate) => candidate.id === model);
+  const runtimeIdHash = hash([runtime.id]);
   const endpointHash = hash([runtime.endpoint.baseUrl.replace(/\/+$/, "")]);
   const chatBaseHash = hash([runtime.chatBaseUrl.replace(/\/+$/, "")]);
   const modelHash = hash([model]);
@@ -58,6 +61,7 @@ export function certificationFingerprint(
   const toolsHash = hash([String(localModel?.tools ?? "unknown")]);
   return {
     hash: hash([
+      runtimeIdHash,
       endpointHash,
       chatBaseHash,
       modelHash,

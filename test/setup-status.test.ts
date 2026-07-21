@@ -20,6 +20,13 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 const writeReport = (degraded: unknown) =>
   writeFileSync(join(dir, "install-report.json"), JSON.stringify({ installedAt: "2026-07-14T00:00:00Z", degraded }));
 
+const hardwareProfile = () => ({
+  version: 1, platform: "linux", arch: "arm64",
+  cpu: { model: null, logicalCores: null }, memory: { totalBytes: null },
+  gpu: { status: "unknown", devices: [], multiGpu: false, sharedMemory: false },
+  ollama: { status: "not-installed", version: null, modelsStatus: "unknown", models: [] }, modelAdvisories: [],
+});
+
 describe("readInstallReport", () => {
   it("returns null when absent — an old install is not a clean install", () => {
     expect(readInstallReport(dir)).toBeNull();
@@ -33,6 +40,31 @@ describe("readInstallReport", () => {
   it("reads the installer's degraded list", () => {
     writeReport([{ step: "ollama", message: "winget couldn't install Ollama (exit 2316632158)" }]);
     expect(readInstallReport(dir)?.degraded).toHaveLength(1);
+  });
+
+  it("roundtrips advisory hardware evidence without treating unknown hardware as degraded", () => {
+    const profile = hardwareProfile();
+    writeFileSync(join(dir, "install-report.json"), JSON.stringify({ degraded: [], hardwareProfile: profile }));
+    expect(readInstallReport(dir)?.hardwareProfile).toEqual(profile);
+    expect(buildDegradedList(null, readInstallReport(dir))).toEqual([]);
+    expect(isFullySetUp(buildDegradedList(null, readInstallReport(dir)))).toBe(true);
+  });
+
+  it.each([
+    ["null GPU entry", (profile: ReturnType<typeof hardwareProfile>) => ({ ...profile, gpu: { ...profile.gpu, devices: [null] } })],
+    ["null advisory", (profile: ReturnType<typeof hardwareProfile>) => ({ ...profile, modelAdvisories: [null] })],
+    ["oversized architecture", (profile: ReturnType<typeof hardwareProfile>) => ({ ...profile, arch: "x".repeat(33) })],
+    ["oversized model inventory", (profile: ReturnType<typeof hardwareProfile>) => ({
+      ...profile, ollama: { ...profile.ollama, models: Array.from({ length: 129 }, (_, index) => ({ name: `m${index}`, sizeBytes: null })) },
+    })],
+  ])("drops malformed advisory evidence (%s) without changing setup readiness", (_label, mutate) => {
+    writeFileSync(join(dir, "install-report.json"), JSON.stringify({ degraded: [], hardwareProfile: mutate(hardwareProfile()) }));
+    const report = readInstallReport(dir);
+    expect(report).not.toBeNull();
+    expect(report?.hardwareProfile).toBeNull();
+    const components = buildDegradedList(null, report);
+    expect(components).toEqual([]);
+    expect(isFullySetUp(components)).toBe(true);
   });
 });
 

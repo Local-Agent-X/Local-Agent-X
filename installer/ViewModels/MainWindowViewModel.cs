@@ -75,6 +75,7 @@ public partial class MainWindowViewModel : ObservableObject
                 CurrentStepDetail = $"Downloading: {mb:F1} / {totalMb:F1} MB";
             }
         });
+        _ = RefreshHardwareEvidenceAsync();
     }
 
     [RelayCommand]

@@ -65,7 +65,8 @@
             <Panel Grid.Row="1" Margin="0,22,0,12">
 
                 <!-- WELCOME -->
-                <StackPanel IsVisible="{Binding IsWelcome}" Spacing="14">
+                <ScrollViewer IsVisible="{Binding IsWelcome}">
+                <StackPanel Spacing="14">
                     <TextBlock Text="Ready to install" FontSize="15" FontWeight="SemiBold"/>
                     <TextBlock TextWrapping="Wrap" Opacity="0.82" FontSize="13" LineHeight="20"
                                Text="This installs the app engine, its dependencies, and the desktop launcher — a few minutes on most machines. Optional local AI components are selected separately below."/>
@@ -86,6 +87,18 @@
                         </StackPanel>
                     </Border>
 
+                    <Border BorderThickness="1" BorderBrush="#33475F" CornerRadius="8" Padding="12,10">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Hardware and local AI evidence" FontSize="12" FontWeight="SemiBold"/>
+                                <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshHardwareEvidenceCommand}"
+                                        IsEnabled="{Binding CanInspectHardware}" Padding="10,3" MinWidth="70"/>
+                            </Grid>
+                            <TextBlock Text="{Binding HardwareSummary}" TextWrapping="Wrap" Opacity="0.78" FontSize="11" LineHeight="16"/>
+                            <TextBlock Text="{Binding LocalAiChoices}" TextWrapping="Wrap" Opacity="0.62" FontSize="11" LineHeight="16"/>
+                        </StackPanel>
+                    </Border>
+
                     <Expander Header="What gets installed?" Margin="0,4,0,0">
                         <StackPanel Spacing="6" Margin="0,8,0,0">
                             <TextBlock Text="• Node.js 22 runtime (if missing)" FontSize="12"/>
@@ -99,6 +112,7 @@
                         </StackPanel>
                     </Expander>
                 </StackPanel>
+                </ScrollViewer>
 
                 <!-- PROGRESS -->
                 <Grid IsVisible="{Binding IsProgress}" RowDefinitions="Auto,*,Auto">

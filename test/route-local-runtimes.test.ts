@@ -206,11 +206,13 @@ describe("POST /api/local-runtimes/certify", () => {
       model: "shared-model",
       endpoint: runtimeA.endpoint.baseUrl,
     });
-    const body = result.json() as { ok: boolean; status: string; scenarios: unknown[] };
+    const body = result.json() as { ok: boolean; status: string; scenarios: unknown[]; target: unknown; identityEvidence: string };
 
     expect(result.status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.status).toBe("verified");
+    expect(body.target).toEqual({ runtimeId: runtimeB.id, model: "shared-model" });
+    expect(body.identityEvidence).toBe("runtime_version_and_model_digest");
     expect(body.scenarios).toHaveLength(CERTIFICATION_SCENARIOS.length);
     expect(vi.mocked(certifyLocalModel)).toHaveBeenCalledWith({ runtime: runtimeB, model: "shared-model" });
     expect(JSON.stringify(body)).not.toContain("fingerprint");
@@ -245,7 +247,12 @@ describe("POST /api/local-runtimes/certify", () => {
       runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b",
     });
     expect(result.status).toBe(200);
-    expect(result.json()).toMatchObject({ ok: false, status: "identity_unavailable" });
+    expect(result.json()).toMatchObject({
+      ok: false,
+      status: "identity_unavailable",
+      identityEvidence: "unavailable",
+      target: { runtimeId: OLLAMA_RT.id, model: "qwen3.6:27b" },
+    });
   });
 
   it("reports a reusable failed scenario without changing availability", async () => {

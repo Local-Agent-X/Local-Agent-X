@@ -6,6 +6,7 @@
 import { installerSelections } from "./installer/contract.mjs";
 import { createReporter } from "./installer/reporter.mjs";
 import { createProcessTools } from "./installer/process-tools.mjs";
+import { collectHardwareProfile } from "./installer/hardware-profile.mjs";
 import { upgradeNode } from "./installer/node-upgrade.mjs";
 import { runInstaller } from "./installer/orchestrator.mjs";
 
@@ -28,4 +29,5 @@ if (process.argv.includes("--upgrade-node")) {
   process.exit(await upgradeNode(context));
 }
 
+context.hardwareProfile = collectHardwareProfile({ platform: process.platform, processes });
 await runInstaller(context);

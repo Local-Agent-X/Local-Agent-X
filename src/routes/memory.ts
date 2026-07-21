@@ -148,8 +148,14 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
       const { buildDegradedList, readInstallReport, isFullySetUp, probeEmbeddingsDegraded } =
         await import("../server/setup-status.js");
       const embeddingsDegraded = await probeEmbeddingsDegraded();
-      const components = buildDegradedList(embeddingsDegraded, readInstallReport(ctx.dataDir));
-      json(200, { ok: true, ready: isFullySetUp(components), components });
+      const installReport = readInstallReport(ctx.dataDir);
+      const components = buildDegradedList(embeddingsDegraded, installReport);
+      json(200, {
+        ok: true,
+        ready: isFullySetUp(components),
+        components,
+        hardwareProfile: installReport?.hardwareProfile ?? null,
+      });
     } catch (e) {
       json(500, { error: "Setup status check failed: " + safeErrorMessage(e) });
     }

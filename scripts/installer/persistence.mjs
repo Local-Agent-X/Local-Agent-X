@@ -23,6 +23,7 @@ export function persistInstallOutcome(context, desktop) {
         ollamaRuntime: Boolean(context.wantOllama),
         ollamaMemoryModel: Boolean(context.wantOllamaMemoryModel),
       },
+      hardwareProfile: context.hardwareProfile || null,
       degraded: reporter.degraded,
     });
     reportSaved = true;

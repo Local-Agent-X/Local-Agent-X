@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { certificationFingerprint } from "./certification-fingerprint.js";
+import { certificationFingerprint, certificationSelectionFingerprint } from "./certification-fingerprint.js";
 import { CERTIFICATION_SCENARIOS } from "./certification-types.js";
 import type { LocalRuntimeInfo } from "./types.js";
 
@@ -58,6 +58,26 @@ describe("certification fingerprint", () => {
     expect(certificationFingerprint(runtime, "model-a", {
       runtimeVersion: "1.0.0", modelDigest: null,
     }).reusable).toBe(false);
+  });
+
+  it("binds reusable evidence and published selection to the declared runtime id", () => {
+    const identity = { runtimeVersion: "1.0.0", modelDigest: "digest-a" };
+    const certification = certificationFingerprint(runtime, "model-a", identity);
+    const renamed = { ...runtime, id: `${runtime.id}:other` };
+    const renamedCertification = certificationFingerprint(renamed, "model-a", identity);
+    expect(renamedCertification.hash).not.toBe(certification.hash);
+    expect(certificationSelectionFingerprint(renamed, "model-a", certification.hash))
+      .not.toBe(certificationSelectionFingerprint(runtime, "model-a", certification.hash));
+
+    const withSlashes = {
+      ...runtime,
+      endpoint: { ...runtime.endpoint, baseUrl: `${runtime.endpoint.baseUrl}/` },
+      chatBaseUrl: `${runtime.chatBaseUrl}/`,
+    };
+    const slashCertification = certificationFingerprint(withSlashes, "model-a", identity);
+    expect(slashCertification.hash).toBe(certification.hash);
+    expect(certificationSelectionFingerprint(withSlashes, "model-a", slashCertification.hash))
+      .toBe(certificationSelectionFingerprint(runtime, "model-a", certification.hash));
   });
   it("binds reuse to the certification contract and current runtime capability profile", () => {
     const profiled = {

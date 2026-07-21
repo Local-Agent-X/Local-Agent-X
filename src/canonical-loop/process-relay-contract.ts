@@ -4,7 +4,7 @@ import {
   verifyDurableRecordMac,
 } from "../app-runtime/audit-signing.js";
 import type { ServerEvent } from "../types.js";
-import type { ProcessExecutionClaim } from "./process-execution-claim.js";
+import type { ExecutionOwnerClaim } from "./process-execution-claim.js";
 import type { CanonicalEvent } from "./types.js";
 
 export const PROCESS_RELAY_SCHEMA_VERSION = 1;
@@ -24,6 +24,10 @@ export interface ProcessRelayGeneration {
   token: string;
   pid: number;
   processStartedAt: string;
+  ownerKind?: "container";
+  containerId?: string;
+  containerCreatedAt?: string;
+  imageDigest?: string;
   sessionId: string;
   createdAt: string;
 }
@@ -91,12 +95,14 @@ const CANONICAL_EVENT_TYPES = new Set<string>([
 ]);
 
 export function createRelayGeneration(
-  claim: ProcessExecutionClaim,
+  claim: ExecutionOwnerClaim,
   sessionId: string,
   createdAt = new Date().toISOString(),
 ): SealedProcessRelayGeneration {
   if (!sessionId) throw new Error("process relay session identity is missing");
-  const identity = `${claim.opId}\0${claim.backendId}\0${claim.targetId}\0${claim.placementRevision}\0${claim.token}\0${claim.pid}\0${claim.processStartedAt}\0${sessionId}`;
+  const containerIdentity = claim.ownerKind === "container"
+    ? `\0${claim.containerId}\0${claim.containerCreatedAt}\0${claim.imageDigest}` : "";
+  const identity = `${claim.opId}\0${claim.backendId}\0${claim.targetId}\0${claim.placementRevision}\0${claim.token}\0${claim.pid}\0${claim.processStartedAt}${containerIdentity}\0${sessionId}`;
   const generation: ProcessRelayGeneration = {
     schemaVersion: PROCESS_RELAY_SCHEMA_VERSION,
     generationId: createHash("sha256").update(identity).digest("hex"),
@@ -107,6 +113,12 @@ export function createRelayGeneration(
     token: claim.token,
     pid: claim.pid,
     processStartedAt: claim.processStartedAt,
+    ...(claim.ownerKind === "container" ? {
+      ownerKind: claim.ownerKind,
+      containerId: claim.containerId,
+      containerCreatedAt: claim.containerCreatedAt,
+      imageDigest: claim.imageDigest,
+    } : {}),
     sessionId,
     createdAt,
   };
@@ -120,12 +132,23 @@ export function verifyRelayGeneration(value: unknown): SealedProcessRelayGenerat
     || !nonEmpty(generation.opId) || !nonEmpty(generation.backendId) || !nonEmpty(generation.targetId)
     || !Number.isSafeInteger(generation.placementRevision) || (generation.placementRevision as number) < 1
     || !nonEmpty(generation.token) || !Number.isSafeInteger(generation.pid) || (generation.pid as number) < 1
-    || !canonicalIso(generation.processStartedAt) || !nonEmpty(generation.sessionId)
+    || !canonicalIso(generation.processStartedAt) || !validContainerGeneration(generation)
+    || !nonEmpty(generation.sessionId)
     || !canonicalIso(generation.createdAt) || !nonEmpty(sealed?.mac)
     || !verifyDurableRecordMac(GENERATION_DOMAIN, stableStringify(generation), sealed.mac as string)) {
     throw new Error("process relay generation integrity check failed");
   }
   return sealed as SealedProcessRelayGeneration;
+}
+
+function validContainerGeneration(generation: Partial<ProcessRelayGeneration>): boolean {
+  if (generation.ownerKind === "container") {
+    return typeof generation.containerId === "string" && /^[a-f0-9]{64}$/.test(generation.containerId)
+      && canonicalIso(generation.containerCreatedAt)
+      && typeof generation.imageDigest === "string" && /^sha256:[a-f0-9]{64}$/.test(generation.imageDigest);
+  }
+  return generation.ownerKind === undefined && generation.containerId === undefined
+    && generation.containerCreatedAt === undefined && generation.imageDigest === undefined;
 }
 
 export function createRelayRecord(

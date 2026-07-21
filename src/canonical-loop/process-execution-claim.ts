@@ -24,7 +24,29 @@ export interface ProcessExecutionClaim {
   pid: number;
   processStartedAt: string;
   heartbeatAt: string;
+  ownerKind?: "process";
+  containerId?: never;
+  containerCreatedAt?: never;
+  imageDigest?: never;
 }
+
+export interface ContainerExecutionClaim {
+  schemaVersion: 1;
+  opId: string;
+  backendId: string;
+  targetId: string;
+  placementRevision: number;
+  token: string;
+  pid: number;
+  processStartedAt: string;
+  heartbeatAt: string;
+  ownerKind: "container";
+  containerId: string;
+  containerCreatedAt: string;
+  imageDigest: string;
+}
+
+export type ExecutionOwnerClaim = ProcessExecutionClaim | ContainerExecutionClaim;
 
 export interface ProcessClaimIdentity {
   opId: string;
@@ -34,6 +56,10 @@ export interface ProcessClaimIdentity {
   token: string;
   pid: number;
   processStartedAt: string;
+  ownerKind?: "process" | "container";
+  containerId?: string;
+  containerCreatedAt?: string;
+  imageDigest?: string;
 }
 
 export const PROCESS_EXECUTION_CLAIM_FRESH_MS = 30_000;
@@ -41,6 +67,7 @@ export const PROCESS_EXECUTION_CLAIM_FRESH_MS = 30_000;
 export interface ProcessClaimLivenessOptions {
   now?: () => number;
   isPidAlive?: (pid: number) => boolean;
+  isContainerAlive?: (claim: ContainerExecutionClaim) => boolean;
 }
 
 function claimPath(opId: string): string {
@@ -53,8 +80,8 @@ function canonicalIso(value: unknown): value is string {
   return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 
-export function parseProcessExecutionClaim(value: unknown): ProcessExecutionClaim {
-  const claim = value as Partial<ProcessExecutionClaim> | null;
+export function parseProcessExecutionClaim(value: unknown): ExecutionOwnerClaim {
+  const claim = value as Partial<ExecutionOwnerClaim> | null;
   if (!claim || claim.schemaVersion !== 1
     || typeof claim.opId !== "string" || !claim.opId
     || typeof claim.backendId !== "string" || !claim.backendId
@@ -66,23 +93,36 @@ export function parseProcessExecutionClaim(value: unknown): ProcessExecutionClai
     || !canonicalIso(claim.heartbeatAt)) {
     throw new Error("ambiguous process execution claim");
   }
-  return claim as ProcessExecutionClaim;
+  if (claim.ownerKind === "container") {
+    if (typeof claim.containerId !== "string" || !/^[a-f0-9]{64}$/.test(claim.containerId)
+      || !canonicalIso(claim.containerCreatedAt)
+      || typeof claim.imageDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(claim.imageDigest)) {
+      throw new Error("ambiguous container execution claim");
+    }
+  } else if (claim.ownerKind !== undefined || claim.containerId !== undefined
+    || claim.containerCreatedAt !== undefined || claim.imageDigest !== undefined) {
+    throw new Error("ambiguous process execution claim owner");
+  }
+  return claim as ExecutionOwnerClaim;
 }
 
-export function readProcessExecutionClaim(opId: string): ProcessExecutionClaim | null {
+export function readProcessExecutionClaim(opId: string): ExecutionOwnerClaim | null {
   const path = claimPath(opId);
   if (!existsSync(path)) return null;
   return parseProcessExecutionClaim(JSON.parse(readFileSync(path, "utf8")));
 }
 
 export function isLiveProcessExecutionClaim(
-  claim: ProcessExecutionClaim,
+  claim: ExecutionOwnerClaim,
   options: ProcessClaimLivenessOptions = {},
 ): boolean {
   const now = options.now ?? Date.now;
-  const pidAlive = options.isPidAlive ?? isPidAlive;
-  return now() - Date.parse(claim.heartbeatAt) <= PROCESS_EXECUTION_CLAIM_FRESH_MS
-    && pidAlive(claim.pid);
+  const fresh = now() - Date.parse(claim.heartbeatAt) <= PROCESS_EXECUTION_CLAIM_FRESH_MS;
+  if (!fresh) return false;
+  if (claim.ownerKind === "container") {
+    return options.isContainerAlive ? options.isContainerAlive(claim) : true;
+  }
+  return (options.isPidAlive ?? isPidAlive)(claim.pid);
 }
 
 export function checkProcessExecutionRecoveryOwnership(
@@ -96,7 +136,7 @@ export function checkProcessExecutionRecoveryOwnership(
   return removeProcessExecutionClaim(claim) ? "clear" : "changed";
 }
 
-function writeProcessExecutionClaim(claim: ProcessExecutionClaim): void {
+function writeProcessExecutionClaim(claim: ExecutionOwnerClaim): void {
   const path = claimPath(claim.opId);
   ensureDurableDirectory(dirname(path));
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
@@ -111,7 +151,7 @@ function writeProcessExecutionClaim(claim: ProcessExecutionClaim): void {
   fsyncDirectory(dirname(path));
 }
 
-export function claimProcessExecution(claim: ProcessExecutionClaim): boolean {
+export function claimProcessExecution(claim: ExecutionOwnerClaim): boolean {
   const result = tryWithOpLock(claim.opId, () => {
     if (readProcessExecutionClaim(claim.opId)) return false;
     writeProcessExecutionClaim(claim);
@@ -147,7 +187,7 @@ export function removeProcessExecutionClaim(expected: ProcessClaimIdentity): boo
 }
 
 export function processClaimMatches(
-  claim: ProcessExecutionClaim,
+  claim: ExecutionOwnerClaim,
   expected: ProcessClaimIdentity,
 ): boolean {
   return claim.opId === expected.opId
@@ -156,7 +196,11 @@ export function processClaimMatches(
     && claim.placementRevision === expected.placementRevision
     && claim.token === expected.token
     && claim.pid === expected.pid
-    && claim.processStartedAt === expected.processStartedAt;
+    && claim.processStartedAt === expected.processStartedAt
+    && (claim.ownerKind ?? "process") === (expected.ownerKind ?? "process")
+    && claim.containerId === expected.containerId
+    && claim.containerCreatedAt === expected.containerCreatedAt
+    && claim.imageDigest === expected.imageDigest;
 }
 
 function isPidAlive(pid: number): boolean {

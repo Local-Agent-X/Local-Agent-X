@@ -20,7 +20,7 @@ import { readCanonicalEvents } from "./store.js";
 import {
   processClaimMatches,
   readProcessExecutionClaim,
-  type ProcessExecutionClaim,
+  type ExecutionOwnerClaim,
 } from "./process-execution-claim.js";
 import {
   createRelayGeneration,
@@ -65,7 +65,7 @@ function ackPath(opId: string, generationId: string): string {
 }
 
 export function initializeProcessRelayJournal(
-  claim: ProcessExecutionClaim,
+  claim: ExecutionOwnerClaim,
   sessionId: string,
 ): SealedProcessRelayGeneration {
   return withOpLock(claim.opId, () => {
@@ -88,7 +88,7 @@ export function initializeProcessRelayJournal(
 }
 
 export function appendProcessRelayRecord(
-  claim: ProcessExecutionClaim,
+  claim: ExecutionOwnerClaim,
   sessionId: string,
   kind: ProcessRelayKind,
   payload: unknown,
@@ -116,7 +116,7 @@ export function appendProcessRelayRecord(
 
 /** Rebuild only a prior process generation's canonical append-before-relay crash gap. */
 export function backfillCanonicalRelayTail(
-  claim: ProcessExecutionClaim,
+  claim: ExecutionOwnerClaim,
   sessionId: string,
 ): ProcessRelayNotice[] {
   const generations = readProcessRelayGenerations(claim.opId);
@@ -329,7 +329,7 @@ function repairPartialJournalTail(path: string, raw: string): void {
   }
 }
 
-function assertCurrentGeneration(claim: ProcessExecutionClaim, sessionId: string): void {
+function assertCurrentGeneration(claim: ExecutionOwnerClaim, sessionId: string): void {
   const current = readProcessExecutionClaim(claim.opId);
   const op = readOp(claim.opId);
   const placement = op?.canonical?.executionPlacement;
@@ -396,5 +396,7 @@ function sameGenerationIdentity(
     && left.backendId === right.backendId && left.targetId === right.targetId
     && left.placementRevision === right.placementRevision && left.token === right.token
     && left.pid === right.pid && left.processStartedAt === right.processStartedAt
+    && left.ownerKind === right.ownerKind && left.containerId === right.containerId
+    && left.containerCreatedAt === right.containerCreatedAt && left.imageDigest === right.imageDigest
     && left.sessionId === right.sessionId;
 }

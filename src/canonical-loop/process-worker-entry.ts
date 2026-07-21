@@ -1,18 +1,6 @@
-import { readOp } from "../ops/op-store.js";
-import { rehydrateRecoveredRuntime, resolveAdapterFactory } from "./runtime.js";
-import { runWorker } from "./worker.js";
-import { startProcessControlRelay } from "./process-control-relay.js";
-import { setSessionRelayWriter } from "../ops/session-bridge.js";
-import { setProcessRelayOutputWriter } from "./process-relay-output.js";
+import { runClaimedExecutionWorker } from "./execution-worker-runtime.js";
 import {
-  appendProcessRelayRecord,
-  backfillCanonicalRelayTail,
-  initializeProcessRelayJournal,
-} from "./process-relay-journal.js";
-import {
-  heartbeatProcessExecutionClaim,
   processClaimMatches,
-  readProcessExecutionClaim,
   removeProcessExecutionClaim,
   type ProcessClaimIdentity,
   type ProcessExecutionClaim,
@@ -39,8 +27,6 @@ send({ type: "ready", token, pid: process.pid, processStartedAt });
 
 let started = false;
 let finishing = false;
-let heartbeat: NodeJS.Timeout | undefined;
-let stopControl = () => {};
 const handoffTimer = setTimeout(() => fail(2), 60_000);
 handoffTimer.unref?.();
 
@@ -63,45 +49,11 @@ process.once("message", message => {
 });
 
 async function run(expected: ProcessExecutionClaim): Promise<void> {
-  const durable = readProcessExecutionClaim(opId);
-  if (!durable || !processClaimMatches(durable, identity)
-    || !processClaimMatches(expected, identity)) return fail(3);
-  const op = readOp(opId);
-  const placement = op?.canonical?.executionPlacement;
-  if (!op || placement?.backendId !== backendId
-    || placement.targetId !== targetId
-    || placement.revision !== placementRevision
-    || placement.disposition !== "ready") return fail(4);
-
   try {
-    const sessionId = op.canonical?.sessionId;
-    if (!sessionId) return fail(4);
-    initializeProcessRelayJournal(expected, sessionId);
-    setProcessRelayOutputWriter((kind, payload) => {
-      const notice = appendProcessRelayRecord(expected, sessionId, kind, payload);
-      send(notice);
-      return notice;
-    });
-    setSessionRelayWriter((targetSessionId, event) => {
-      if (targetSessionId !== sessionId) throw new Error("process relay session identity changed");
-      const notice = appendProcessRelayRecord(expected, sessionId, "session-event", event);
-      send(notice);
-    });
-    for (const notice of backfillCanonicalRelayTail(expected, sessionId)) send(notice);
-    stopControl = startProcessControlRelay(opId);
-    heartbeat = setInterval(() => {
-      if (!heartbeatProcessExecutionClaim(identity, new Date().toISOString())) fail(6);
-    }, 2_000);
-    heartbeat.unref?.();
-    rehydrateRecoveredRuntime(op);
-    const factory = resolveAdapterFactory(op);
-    if (!factory) return fail(5);
-    const adapter = await factory();
-    await runWorker(op, adapter).done;
-    if (!removeProcessExecutionClaim(identity)) return fail(7);
+    if (!processClaimMatches(expected, identity)) return fail(3);
+    await runClaimedExecutionWorker(expected, send, () => fail(6));
     finish(0);
   } catch {
-    removeProcessExecutionClaim(identity);
     finish(8);
   }
 }
@@ -131,10 +83,6 @@ function fail(code: number): void {
 function finish(code: number): void {
   if (finishing) return;
   finishing = true;
-  if (heartbeat) clearInterval(heartbeat);
-  stopControl();
-  setProcessRelayOutputWriter(null);
-  setSessionRelayWriter(null);
   process.exitCode = code;
   if (process.connected) process.disconnect?.();
   setImmediate(() => process.exit(code));

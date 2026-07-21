@@ -2,8 +2,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
+import Database from "better-sqlite3";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 import { importedProtocolsDir, learnedProtocolsDir, loadImportedProtocols } from "./loader.js";
@@ -22,6 +25,56 @@ let workspace = "";
 
 function skill(name: string, instruction: string): string {
   return `---\nname: ${name}\ndescription: Learned ${name}\n---\n\n# ${name}\n\n${instruction}\n`;
+}
+
+function runWorker(script: string, args: string[], dataDir: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolveChild, reject) => {
+    const child = spawn(process.execPath, ["--import=tsx", script, ...args], {
+      cwd: process.cwd(), env: { ...process.env, LAX_DATA_DIR: dataDir }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+    child.once("error", reject);
+    child.once("close", (code) => resolveChild({ code, stdout, stderr }));
+  });
+}
+
+function writeLifecycleWorker(dir: string): string {
+  const worker = join(dir, "lifecycle-worker.mjs");
+  const lifecycleUrl = pathToFileURL(resolve("src/protocols/learned-lifecycle.ts")).href;
+  const sqliteUrl = pathToFileURL(resolve("node_modules/better-sqlite3/lib/index.js")).href;
+  writeFileSync(worker, `
+import { existsSync } from "node:fs";
+import Database from ${JSON.stringify(sqliteUrl)};
+import { createLearnedProtocolDraft, activateLearnedProtocol } from ${JSON.stringify(lifecycleUrl)};
+const [mode, data, gate] = process.argv.slice(2);
+while (gate && !existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
+const input = JSON.parse(data);
+if (mode === "draft") {
+  const result = createLearnedProtocolDraft(input);
+  process.stdout.write(result.version.id);
+  process.exit(0);
+}
+if (mode === "activate") {
+  try {
+    activateLearnedProtocol(input);
+    process.stdout.write("winner");
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(error instanceof Error ? error.message : String(error));
+    process.exit(2);
+  }
+}
+if (mode === "crash") {
+  const db = new Database(input.lockPath);
+  db.exec("BEGIN IMMEDIATE");
+  process.stdout.write("locked");
+  process.exit(23);
+}
+process.exit(3);
+`, "utf8");
+  return worker;
 }
 
 beforeAll(() => {
@@ -209,4 +262,89 @@ describe("learned protocol lifecycle", () => {
 
     expect(() => loadLearnedProtocol("history-integrity")).toThrow(/activation history/);
   });
+
+  it("deduplicates exact drafts across concurrent processes", async () => {
+    const worker = writeLifecycleWorker(workspace);
+    const gate = join(getRuntimeConfig().workspace, "draft-start");
+    const first = { slug: "same-draft", skillMd: skill("same-draft", "Exact body"), metadata: { alpha: 1, beta: "two" } };
+    const second = { ...first, metadata: { beta: "two", alpha: 1 } };
+    const runs = [first, second].map((input) =>
+      runWorker(worker, ["draft", JSON.stringify(input), gate], process.env.LAX_DATA_DIR!));
+    writeFileSync(gate, "go", "utf8");
+    const results = await Promise.all(runs);
+
+    expect(results.map((result) => result.code)).toEqual([0, 0]);
+    expect(results[0].stdout).toBe(results[1].stdout);
+    const record = loadLearnedProtocol("same-draft");
+    expect(record.versions).toHaveLength(1);
+    const versions = join(learnedProtocolsDir(), "same-draft", "versions");
+    expect(readFileSync(join(versions, record.versions[0].id, "SKILL.md"), "utf8")).toBe(first.skillMd);
+  }, 20_000);
+
+  it("preserves distinct concurrent drafts in the canonical record", async () => {
+    const worker = writeLifecycleWorker(workspace);
+    const gate = join(getRuntimeConfig().workspace, "distinct-start");
+    const runs = ["First stronger body", "Second stronger body"].map((instruction, index) =>
+      runWorker(worker, ["draft", JSON.stringify({
+        slug: "distinct-drafts", skillMd: skill("distinct-drafts", instruction), metadata: { strength: index + 1 },
+      }), gate], process.env.LAX_DATA_DIR!));
+    writeFileSync(gate, "go", "utf8");
+    const results = await Promise.all(runs);
+
+    expect(results.map((result) => result.code)).toEqual([0, 0]);
+    expect(new Set(results.map((result) => result.stdout)).size).toBe(2);
+    expect(loadLearnedProtocol("distinct-drafts").versions).toHaveLength(2);
+  }, 20_000);
+
+  it("allows one same-expected activation winner without corrupting history", async () => {
+    const first = createLearnedProtocolDraft({ slug: "activation-race", skillMd: skill("activation-race", "First") });
+    const second = createLearnedProtocolDraft({ slug: "activation-race", skillMd: skill("activation-race", "Second") });
+    const worker = writeLifecycleWorker(workspace);
+    const gate = join(getRuntimeConfig().workspace, "activation-start");
+    const runs = [first.version.id, second.version.id].map((versionId) =>
+      runWorker(worker, ["activate", JSON.stringify({
+        slug: "activation-race", versionId, expectedActiveVersionId: null,
+      }), gate], process.env.LAX_DATA_DIR!));
+    writeFileSync(gate, "go", "utf8");
+    const results = await Promise.all(runs);
+
+    expect(results.filter((result) => result.code === 0)).toHaveLength(1);
+    expect(results.filter((result) => result.code === 2)).toHaveLength(1);
+    expect(results.find((result) => result.code === 2)?.stderr).toMatch(/version changed/);
+    const record = loadLearnedProtocol("activation-race");
+    expect(record.activationHistory).toHaveLength(1);
+    expect(record.activationHistory?.[0].versionId).toBe(record.activeVersionId);
+    const active = record.versions.find((version) => version.id === record.activeVersionId)!;
+    expect(readFileSync(join(learnedProtocolsDir(), "activation-race", "SKILL.md"), "utf8"))
+      .toBe(readFileSync(join(learnedProtocolsDir(), "activation-race", "versions", active.id, "SKILL.md"), "utf8"));
+  }, 20_000);
+
+  it("releases the OS mutex when its owning process crashes", async () => {
+    const worker = writeLifecycleWorker(workspace);
+    const lockPath = join(process.env.LAX_DATA_DIR!, "protocols", "learned-lifecycle.lock.sqlite");
+    mkdirSync(join(process.env.LAX_DATA_DIR!, "protocols"), { recursive: true });
+    const crashed = await runWorker(worker, ["crash", JSON.stringify({ lockPath }), ""], process.env.LAX_DATA_DIR!);
+    expect(crashed).toEqual({ code: 23, stdout: "locked", stderr: "" });
+
+    const started = Date.now();
+    createLearnedProtocolDraft({ slug: "after-crash", skillMd: skill("after-crash", "Recovered") });
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(loadLearnedProtocol("after-crash").versions).toHaveLength(1);
+  }, 10_000);
+
+  it("executes no lifecycle mutation when the OS mutex cannot be acquired", () => {
+    const lockPath = join(process.env.LAX_DATA_DIR!, "protocols", "learned-lifecycle.lock.sqlite");
+    mkdirSync(join(process.env.LAX_DATA_DIR!, "protocols"), { recursive: true });
+    const blocker = new Database(lockPath);
+    blocker.exec("BEGIN IMMEDIATE");
+    try {
+      expect(() => createLearnedProtocolDraft({
+        slug: "blocked-draft", skillMd: skill("blocked-draft", "Must not be written"),
+      })).toThrow();
+    } finally {
+      blocker.exec("ROLLBACK");
+      blocker.close();
+    }
+    expect(existsSync(join(learnedProtocolsDir(), "blocked-draft"))).toBe(false);
+  }, 10_000);
 });

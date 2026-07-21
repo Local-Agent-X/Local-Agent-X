@@ -108,8 +108,9 @@ function extractStreamLine(msg: unknown): string {
   return "";
 }
 
-export function recordCanonicalEvent(event: CanonicalEvent): void {
+export function recordCanonicalEvent(event: CanonicalEvent, projection: "all" | "non-browser" = "all"): void {
   try {
+    const browser = projection === "all";
     const sessionId = getSessionForOp(event.opId);
     if (!sessionId) return; // op wasn't submitted by a chat session — nothing to surface
 
@@ -161,7 +162,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           // Op submitted into canonical scheduler. Lane caps mean queueing
           // is real but typically brief.
           const lane = (op?.lane as string | undefined) ?? "interactive";
-          broadcastToSession(sessionId, {
+          if (browser) broadcastToSession(sessionId, {
             type: "bg_op_queued",
             opId: event.opId,
             task,
@@ -181,9 +182,9 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           // (build_app's tool_progress, etc.) surfaces as bg_op_progress in
           // the AGENTS sidebar. Throttled internally. No-op for suppressed
           // op types.
-          if (op?.type) ensureStreamForwarder(event.opId, sessionId, op.type);
+          if (browser && op?.type) ensureStreamForwarder(event.opId, sessionId, op.type);
         } else if (to === "running") {
-          broadcastToSession(sessionId, {
+          if (browser) broadcastToSession(sessionId, {
             type: "bg_op_started",
             opId: event.opId,
             task,
@@ -198,7 +199,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             : suspension?.reason === "stalled"
               ? "stalled"
               : "paused";
-          broadcastToSession(sessionId, {
+          if (browser) broadcastToSession(sessionId, {
             type: "bg_op_progress",
             opId: event.opId,
             status,
@@ -263,7 +264,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             }
           }
 
-          broadcastToSession(sessionId, {
+          if (browser) broadcastToSession(sessionId, {
             type: "bg_op_completed",
             opId: event.opId,
             status,
@@ -271,7 +272,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             filesChanged: [],
             ...(resultUrl ? { resultUrl } : {}),
           } as ServerEvent);
-          broadcastToSession(sessionId, {
+          if (browser) broadcastToSession(sessionId, {
             type: "worker_done",
             opId: event.opId,
             status,
@@ -289,8 +290,10 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           // If the user is in a live voice session, speak the result at the next
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
-          proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status));
-          scheduleIdleNudge(sessionId, task);
+          if (browser) {
+            proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status));
+            scheduleIdleNudge(sessionId, task);
+          }
           releaseOpFromSession(event.opId);
           teardownStreamForwarder(event.opId);
         }
@@ -299,7 +302,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
       case "error": {
         const code = (b.code as string | undefined) ?? "error";
         const message = (b.message as string | undefined) ?? "";
-        broadcastToSession(sessionId, {
+        if (browser) broadcastToSession(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: `! ${code}${message ? ": " + message.slice(0, 120) : ""}`,
@@ -309,7 +312,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
       case "iteration_checkpoint": {
         const maxTurns = typeof b.maxTurns === "number" ? b.maxTurns : null;
         const continuing = b.continuing === true;
-        broadcastToSession(sessionId, {
+        if (browser) broadcastToSession(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: continuing
@@ -332,7 +335,7 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
         // turn_committed (aggregateOpUsage across all persisted op_turns); we
         // relay only the total — additive/optional, absent if unusable.
         const usage = b.usage as { totalTokens?: number } | undefined;
-        broadcastToSession(sessionId, {
+        if (browser) broadcastToSession(sessionId, {
           type: "bg_op_progress",
           opId: event.opId,
           line: `✓ turn ${turnIdx} · ${summary}`,

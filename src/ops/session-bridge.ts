@@ -39,6 +39,7 @@ const opTask = new Map<string, string>();
 const pendingChatHandlers = new Map<string, number>();
 
 let broadcaster: ((sessionId: string, event: ServerEvent) => void) | null = null;
+let relayWriter: ((sessionId: string, event: ServerEvent) => void) | null = null;
 let persister: ((sessionId: string, content: string) => void) | null = null;
 let initialized = false;
 
@@ -52,7 +53,18 @@ export function setSessionBroadcaster(fn: (sessionId: string, event: ServerEvent
   broadcaster = fn;
 }
 
+/** Process-worker-only durable output seam. Failure must reach the worker. */
+export function setSessionRelayWriter(
+  fn: ((sessionId: string, event: ServerEvent) => void) | null,
+): void {
+  relayWriter = fn;
+}
+
 export function broadcastToSession(sessionId: string, event: ServerEvent): void {
+  if (relayWriter && sessionId) {
+    relayWriter(sessionId, event);
+    return;
+  }
   if (!broadcaster || !sessionId) return;
   try {
     broadcaster(sessionId, event);

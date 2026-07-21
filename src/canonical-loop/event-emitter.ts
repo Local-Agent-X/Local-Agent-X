@@ -7,7 +7,8 @@
  *   2. Publish on the in-process bus channel `op_events:{op_id}`.
  *
  * Stream chunks (PRD §12 "stream chunks are bus-only and ephemeral") are
- * published through publishStreamChunk and never persisted.
+ * published through publishStreamChunk. A process worker persists them before
+ * the parent projects them onto that same bus.
  *
  * Hard rule: callers other than canonical-loop modules must NOT use this —
  * adapters/workers go through their own contract surface, public control
@@ -19,6 +20,7 @@ import { recordCanonicalEvent, recordStreamChunk } from "./soak-metrics.js";
 import { recordCanonicalEvent as bridgeRecord } from "./session-bridge-observer.js";
 import { recordCostEvent } from "./cost-recording.js";
 import type { CanonicalEvent, CanonicalEventType } from "./types.js";
+import { publishProcessRelayOutput } from "./process-relay-output.js";
 
 export function emit(
   opId: string,
@@ -26,10 +28,7 @@ export function emit(
   body: Record<string, unknown> | null = null,
 ): CanonicalEvent {
   const event = appendCanonicalEvent(opId, type, body);
-  getBus().publish(eventsChannel(opId), event);
-  recordCanonicalEvent(event);
-  bridgeRecord(event);
-  recordCostEvent(event);
+  if (!publishProcessRelayOutput("canonical-event", event)) projectCanonicalEvent(event);
   return event;
 }
 
@@ -39,16 +38,23 @@ export function emitStrict(
   body: Record<string, unknown> | null = null,
 ): CanonicalEvent {
   const event = appendCanonicalEventStrict(opId, type, body);
-  getBus().publish(eventsChannel(opId), event);
-  recordCanonicalEvent(event);
-  bridgeRecord(event);
-  recordCostEvent(event);
+  if (!publishProcessRelayOutput("canonical-event", event)) projectCanonicalEvent(event);
   return event;
 }
 
 export function publishStreamChunk(opId: string, chunk: unknown): void {
+  if (publishProcessRelayOutput("stream-chunk", chunk)) return;
   getBus().publish(streamChannel(opId), chunk);
   recordStreamChunk(opId);
+}
+
+/** Parent-side projection for a durably relayed canonical event. */
+export function projectCanonicalEvent(event: CanonicalEvent, nonBrowserOnly = false): void {
+  getBus().publish(eventsChannel(event.opId), event);
+  recordCanonicalEvent(event);
+  if (nonBrowserOnly) bridgeRecord(event, "non-browser");
+  else bridgeRecord(event);
+  recordCostEvent(event);
 }
 
 // Per-op dedup ledger for `error` events. Bug 2026-05-24: a single

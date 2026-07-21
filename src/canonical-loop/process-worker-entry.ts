@@ -2,6 +2,13 @@ import { readOp } from "../ops/op-store.js";
 import { rehydrateRecoveredRuntime, resolveAdapterFactory } from "./runtime.js";
 import { runWorker } from "./worker.js";
 import { startProcessControlRelay } from "./process-control-relay.js";
+import { setSessionRelayWriter } from "../ops/session-bridge.js";
+import { setProcessRelayOutputWriter } from "./process-relay-output.js";
+import {
+  appendProcessRelayRecord,
+  backfillCanonicalRelayTail,
+  initializeProcessRelayJournal,
+} from "./process-relay-journal.js";
 import {
   heartbeatProcessExecutionClaim,
   processClaimMatches,
@@ -67,6 +74,20 @@ async function run(expected: ProcessExecutionClaim): Promise<void> {
     || placement.disposition !== "ready") return fail(4);
 
   try {
+    const sessionId = op.canonical?.sessionId;
+    if (!sessionId) return fail(4);
+    initializeProcessRelayJournal(expected, sessionId);
+    setProcessRelayOutputWriter((kind, payload) => {
+      const notice = appendProcessRelayRecord(expected, sessionId, kind, payload);
+      send(notice);
+      return notice;
+    });
+    setSessionRelayWriter((targetSessionId, event) => {
+      if (targetSessionId !== sessionId) throw new Error("process relay session identity changed");
+      const notice = appendProcessRelayRecord(expected, sessionId, "session-event", event);
+      send(notice);
+    });
+    for (const notice of backfillCanonicalRelayTail(expected, sessionId)) send(notice);
     stopControl = startProcessControlRelay(opId);
     heartbeat = setInterval(() => {
       if (!heartbeatProcessExecutionClaim(identity, new Date().toISOString())) fail(6);
@@ -112,6 +133,8 @@ function finish(code: number): void {
   finishing = true;
   if (heartbeat) clearInterval(heartbeat);
   stopControl();
+  setProcessRelayOutputWriter(null);
+  setSessionRelayWriter(null);
   process.exitCode = code;
   if (process.connected) process.disconnect?.();
   setImmediate(() => process.exit(code));

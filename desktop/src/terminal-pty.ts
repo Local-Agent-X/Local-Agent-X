@@ -1,5 +1,7 @@
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { homedir } from "os";
+import { chmodSync, statSync } from "fs";
+import { dirname, join } from "path";
 import * as pty from "node-pty";
 import { getProjectRoot } from "./config";
 
@@ -35,6 +37,25 @@ export function validateTerminalSize(cols: unknown, rows: unknown): TerminalSize
 	};
 }
 
+// npm does not reliably preserve the execute bit on files extracted from
+// package tarballs. node-pty's darwin/linux prebuilds ship a `spawn-helper`
+// binary that pty.spawn() execs via posix_spawnp; when an install strips its
+// exec bit (observed 2026-07-18), every terminal create dies with
+// "Error: posix_spawnp failed." Restore the bit before spawning.
+export function ensureSpawnHelperExecutable(resolvePtyDir?: () => string): void {
+	if (process.platform === "win32") return;
+	try {
+		const ptyDir = resolvePtyDir
+			? resolvePtyDir()
+			: dirname(require.resolve("node-pty/package.json"));
+		const helper = join(ptyDir, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper");
+		const mode = statSync(helper).mode;
+		if ((mode & 0o111) === 0) chmodSync(helper, mode | 0o755);
+	} catch {
+		// Helper missing (e.g. source build) — node-pty will surface its own error.
+	}
+}
+
 function shellForPlatform(): string {
 	if (process.platform === "win32") return "powershell.exe";
 	if (process.platform === "darwin") return process.env.SHELL || "/bin/zsh";
@@ -55,6 +76,7 @@ function sessionFor(event: IpcMainInvokeEvent): TerminalSession | undefined {
 
 function createSession(event: IpcMainInvokeEvent, size: TerminalSize): void {
 	if (sessionFor(event)) return;
+	ensureSpawnHelperExecutable();
 	const owner = event.sender;
 	const terminalProcess = pty.spawn(shellForPlatform(), [], {
 		name: "xterm-256color",

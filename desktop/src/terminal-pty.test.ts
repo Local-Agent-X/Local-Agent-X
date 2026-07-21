@@ -1,4 +1,7 @@
 import { EventEmitter } from "events";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -17,7 +20,7 @@ vi.mock("electron", () => ({
 vi.mock("node-pty", () => ({ spawn: mocks.spawn }));
 vi.mock("./config", () => ({ getProjectRoot: () => "C:\\project" }));
 
-import { disposeAllTerminals, setupTerminalIPC, validateTerminalSize, validateTerminalWrite } from "./terminal-pty";
+import { disposeAllTerminals, ensureSpawnHelperExecutable, setupTerminalIPC, validateTerminalSize, validateTerminalWrite } from "./terminal-pty";
 
 class FakeOwner extends EventEmitter {
 	readonly send = vi.fn();
@@ -97,6 +100,31 @@ describe("terminal PTY IPC", () => {
 		invoke("terminal-create", owner, 80, 24);
 		owner.emit("destroyed");
 		expect(terminal.kill).toHaveBeenCalledOnce();
+	});
+});
+
+describe("spawn-helper exec-bit self-heal", () => {
+	const itUnix = process.platform === "win32" ? it.skip : it;
+
+	itUnix("restores a stripped execute bit on the platform spawn-helper", () => {
+		const root = mkdtempSync(join(tmpdir(), "pty-helper-"));
+		try {
+			const helperDir = join(root, "prebuilds", `${process.platform}-${process.arch}`);
+			mkdirSync(helperDir, { recursive: true });
+			const helper = join(helperDir, "spawn-helper");
+			writeFileSync(helper, "#!/bin/sh\n");
+			chmodSync(helper, 0o644);
+
+			ensureSpawnHelperExecutable(() => root);
+
+			expect(statSync(helper).mode & 0o111).not.toBe(0);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	itUnix("swallows a missing helper (source builds have none)", () => {
+		expect(() => ensureSpawnHelperExecutable(() => "/nonexistent-pty-dir")).not.toThrow();
 	});
 });
 

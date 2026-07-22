@@ -13,6 +13,7 @@
 
 import { createLogger } from "../logger.js";
 import { answerEgressAsk } from "./bridge-egress.js";
+import { startEgressWorkerHost } from "./egress-worker-host.js";
 import {
 	handleAgentViewClosed,
 	handleBrowserDownloadEvent,
@@ -219,10 +220,21 @@ function ensureListener(): void {
 
 /** Arm the reverse egress-ask channel (and reply correlation) without
  *  issuing an op. Wire this once at server boot when running under the
- *  desktop; harmless no-op elsewhere. */
+ *  desktop; harmless no-op elsewhere. Also boots the off-loop egress worker
+ *  (egress-worker-host.ts) and announces its pipe endpoint to the desktop —
+ *  the in-loop ask branch above STAYS armed as the fallback path (the desktop
+ *  uses it until it connects, and whenever the worker is down). */
 export function initBrowserBridgeClient(): void {
 	if (!browserBridgeAvailable()) return;
 	ensureListener();
+	startEgressWorkerHost((pipeName) => {
+		// Re-announced on every worker (re)boot — each spawn mints a new name.
+		try {
+			process.send!({ type: "lax:browser-egress-endpoint", pipeName });
+		} catch (e) {
+			logger.warn(`[browser-bridge] egress-endpoint announce failed: ${(e as Error).message}`);
+		}
+	});
 }
 
 /** Reject every pending op addressed to viewId (except `exceptId`, the

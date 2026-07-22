@@ -23,6 +23,33 @@ export type { TaintSource, TaintEntry } from "./fingerprint.js";
 // Per-session taint state
 const sessionTaint = new Map<string, TaintEntry[]>();
 
+// ── Change notification (mirror seam) ──────────────────────────────────────
+//
+// The egress worker thread (browser/egress-worker.ts) cannot see this module's
+// map — worker_threads get their own module instances — so it keeps an
+// eventually-consistent shadow copy fed by these callbacks. Every mutation
+// notifies with the session's POST-mutation entries ([] = session cleared).
+type TaintChangeListener = (sessionId: string, entries: readonly TaintEntry[]) => void;
+const taintListeners = new Set<TaintChangeListener>();
+
+/**
+ * Subscribe to per-session taint changes. Replays every existing session's
+ * entries synchronously on subscribe (so a late subscriber — e.g. a restarted
+ * egress-worker mirror — starts from the full current state), then fires after
+ * every mutation. Returns an unsubscribe.
+ */
+export function subscribeTaintChanges(cb: TaintChangeListener): () => void {
+  taintListeners.add(cb);
+  for (const [sessionId, entries] of sessionTaint) cb(sessionId, entries);
+  return () => { taintListeners.delete(cb); };
+}
+
+function notifyTaintChanged(sessionId: string): void {
+  if (taintListeners.size === 0) return;
+  const entries = sessionTaint.get(sessionId) ?? [];
+  for (const cb of taintListeners) cb(sessionId, entries);
+}
+
 /**
  * Record a sensitive data read.
  *
@@ -61,6 +88,7 @@ export function recordSensitiveRead(sessionId: string, source: TaintSource, targ
     fingerprints: fp.fingerprints,
     complete: fp.complete,
   });
+  notifyTaintChanged(sessionId);
 }
 
 /** Check if a session has tainted data that should block egress */
@@ -94,8 +122,17 @@ export function checkEgressTaint(sessionId: string): { blocked: boolean; reason?
  * bytes are found in the payload.
  */
 export function findTaintInPayload(sessionId: string, payload: string): Array<{ source: TaintSource; target: string }> {
-  const taints = sessionTaint.get(sessionId);
-  if (!taints || taints.length === 0 || !payload) return [];
+  return findTaintInEntries(sessionTaint.get(sessionId) ?? [], payload);
+}
+
+/**
+ * The pure core of findTaintInPayload, over an EXPLICIT entry list instead of
+ * the module-level session map. The egress worker thread runs this against its
+ * mirrored entries (its module instance's map is always empty); in-process
+ * callers keep using findTaintInPayload. ONE matching implementation.
+ */
+export function findTaintInEntries(taints: readonly TaintEntry[], payload: string): Array<{ source: TaintSource; target: string }> {
+  if (taints.length === 0 || !payload) return [];
 
   // Hash the payload across every evasion view, REUSING the scanner's decoders
   // (no duplicate decode/normalize logic), then shingle each view the same way
@@ -179,7 +216,7 @@ export function checkEgressTaintWithPayload(
 
 /** Clear taint for a session (e.g., on new chat) */
 export function clearSessionTaint(sessionId: string): void {
-  sessionTaint.delete(sessionId);
+  if (sessionTaint.delete(sessionId)) notifyTaintChanged(sessionId);
 }
 
 /**
@@ -208,6 +245,7 @@ export function retractProvisionalTaint(sessionId: string, pairs: Array<{ source
     }
   }
   if (entries.length === 0) sessionTaint.delete(sessionId);
+  if (removed > 0) notifyTaintChanged(sessionId);
   return removed;
 }
 
@@ -222,12 +260,14 @@ export function _removeTaintEntries(sessionId: string, source?: TaintSource): Ta
   if (!entries || entries.length === 0) return [];
   if (source === undefined) {
     sessionTaint.delete(sessionId);
+    notifyTaintChanged(sessionId);
     return entries;
   }
   const removed = entries.filter(t => t.source === source);
   const kept = entries.filter(t => t.source !== source);
   if (kept.length === 0) sessionTaint.delete(sessionId);
   else sessionTaint.set(sessionId, kept);
+  if (removed.length > 0) notifyTaintChanged(sessionId);
   return removed;
 }
 
@@ -299,6 +339,7 @@ export function propagateTaint(fromSessionId: string, toSessionId: string): numb
     target.push({ source: t.source, target: t.target, timestamp: Date.now(), runId: toSessionId, fingerprints: t.fingerprints, complete: t.complete });
     count++;
   }
+  if (count > 0) notifyTaintChanged(toSessionId);
   return count;
 }
 

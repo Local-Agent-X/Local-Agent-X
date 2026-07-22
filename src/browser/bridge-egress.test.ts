@@ -11,7 +11,7 @@ vi.mock("./page-egress-taint.js", async (importOriginal) => {
 
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { scanPageEgress } from "./page-egress-taint.js";
-import { answerEgressAsk, enrichBlockedNavigation, recentEgressDeny } from "./bridge-egress.js";
+import { answerEgressAsk, clearEgressDeny, enrichBlockedNavigation, peekEgressDeny, recentEgressDeny } from "./bridge-egress.js";
 
 describe("browser egress deny reason correlation", () => {
 	let sent: unknown[];
@@ -79,6 +79,31 @@ describe("browser egress deny reason correlation", () => {
 		answerEgressAsk({ id: 9, url: "https://old.example/", viewId: "view-a-work" });
 		vi.setSystemTime(31_001);
 		expect(recentEgressDeny("https://old.example/", "view-a-work")).toBeNull();
+	});
+
+	it("peekEgressDeny reads without consuming; recentEgressDeny still gets its one consume", () => {
+		answerEgressAsk({ id: 11, url: "https://peek.example/p", viewId: "view-a-work" });
+		expect(peekEgressDeny("https://peek.example/p", "view-a-work")?.reason).toBe("policy deny");
+		expect(peekEgressDeny("https://peek.example/p", "view-a-work")?.reason).toBe("policy deny"); // still there
+		expect(peekEgressDeny("https://peek.example/p", "view-b-work")).toBeNull(); // view-scoped
+		expect(recentEgressDeny("https://peek.example/p", "view-a-work")?.reason).toBe("policy deny");
+		expect(peekEgressDeny("https://peek.example/p", "view-a-work")).toBeNull(); // consumed above
+	});
+
+	it("peekEgressDeny respects the TTL", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_000);
+		answerEgressAsk({ id: 12, url: "https://peek-old.example/", viewId: "view-a-work" });
+		vi.setSystemTime(31_001);
+		expect(peekEgressDeny("https://peek-old.example/", "view-a-work")).toBeNull();
+	});
+
+	it("clearEgressDeny drops the recorded deny for exactly that view + URL", () => {
+		answerEgressAsk({ id: 13, url: "https://clear.example/", viewId: "view-a-work" });
+		answerEgressAsk({ id: 14, url: "https://clear.example/", viewId: "view-b-work" });
+		clearEgressDeny("https://clear.example/", "view-a-work");
+		expect(peekEgressDeny("https://clear.example/", "view-a-work")).toBeNull();
+		expect(peekEgressDeny("https://clear.example/", "view-b-work")?.reason).toBe("policy deny");
 	});
 
 	it("passes non-policy and unmatched blocked failures through untouched", () => {

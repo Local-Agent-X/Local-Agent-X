@@ -56,8 +56,28 @@ export function sessionIdFromViewId(viewId: unknown): string | undefined {
 // so download attribution follows the takeover.
 const adoptedViewSessions = new Map<string, string>();
 
+// Mirror seam: the egress worker thread (egress-worker.ts) keeps a shadow copy
+// of this registry — worker_threads get their own module instance, so it can't
+// read the map above. null sessionId = adoption dropped.
+type AdoptedViewListener = (viewId: string, sessionId: string | null) => void;
+const adoptedViewListeners = new Set<AdoptedViewListener>();
+
+/** Subscribe to adopted-view changes. Replays every current adoption
+ *  synchronously on subscribe (restarted mirrors start complete), then fires
+ *  on every register/unregister. Returns an unsubscribe. */
+export function subscribeAdoptedViewChanges(cb: AdoptedViewListener): () => void {
+	adoptedViewListeners.add(cb);
+	for (const [viewId, sessionId] of adoptedViewSessions) cb(viewId, sessionId);
+	return () => { adoptedViewListeners.delete(cb); };
+}
+
+function notifyAdoptedView(viewId: string, sessionId: string | null): void {
+	for (const cb of adoptedViewListeners) cb(viewId, sessionId);
+}
+
 export function registerAdoptedView(viewId: string, sessionId: string): void {
 	adoptedViewSessions.set(viewId, sessionId);
+	notifyAdoptedView(viewId, sessionId);
 }
 
 /** The session that adopted this (user-origin) viewId, if any. Lets the egress
@@ -69,11 +89,15 @@ export function adoptedViewSession(viewId: string): string | undefined {
 /** Drop every adoption a session holds (backend close). */
 export function unregisterAdoptedViews(sessionId: string): void {
 	for (const [viewId, sess] of adoptedViewSessions) {
-		if (sess === sessionId) adoptedViewSessions.delete(viewId);
+		if (sess === sessionId) {
+			adoptedViewSessions.delete(viewId);
+			notifyAdoptedView(viewId, null);
+		}
 	}
 }
 
 export function _resetAdoptedViewsForTest(): void {
+	for (const viewId of adoptedViewSessions.keys()) notifyAdoptedView(viewId, null);
 	adoptedViewSessions.clear();
 }
 

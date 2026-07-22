@@ -8,6 +8,12 @@ vi.mock("../security/layer/index.js", () => ({
 vi.mock("../config.js", () => ({
 	getRuntimeConfig: () => ({ port: 7007 }),
 }));
+// Don't spawn the real off-loop egress worker from these unit tests (it is
+// exercised end-to-end in egress-worker.test.ts) — capture the start call.
+const startEgressWorkerHost = vi.fn<(onEndpoint: (pipeName: string) => void) => void>();
+vi.mock("./egress-worker-host.js", () => ({
+	startEgressWorkerHost: (onEndpoint: (pipeName: string) => void) => startEgressWorkerHost(onEndpoint),
+}));
 
 import {
 	BridgeOpError,
@@ -55,6 +61,7 @@ function receive(msg: Record<string, unknown>): void {
 beforeEach(() => {
 	sendMock.mockReset().mockReturnValue(true);
 	evaluateEgressForUrl.mockReset();
+	startEgressWorkerHost.mockReset();
 	process.env.LAX_DESKTOP_BRIDGE = "1";
 	// eslint-disable-next-line @typescript-eslint/unbound-method
 	process.send = sendMock as unknown as typeof process.send;
@@ -252,6 +259,24 @@ describe("browser bridge client — reverse egress-ask channel", () => {
 		initBrowserBridgeClient();
 		receive({ type: "lax:browser-egress-ask", url: "https://x.example/" }); // no id
 		expect(sent().filter((m) => m.type === "lax:browser-egress-ask-result")).toHaveLength(0);
+	});
+
+	it("starts the off-loop egress worker host and announces each endpoint to the desktop", () => {
+		initBrowserBridgeClient();
+		expect(startEgressWorkerHost).toHaveBeenCalledTimes(1);
+		const onEndpoint = startEgressWorkerHost.mock.calls[0][0];
+		onEndpoint("\\\\.\\pipe\\lax-egress-1-aa");
+		onEndpoint("\\\\.\\pipe\\lax-egress-1-bb"); // worker restarted → NEW name re-announced
+		expect(sent()).toEqual([
+			{ type: "lax:browser-egress-endpoint", pipeName: "\\\\.\\pipe\\lax-egress-1-aa" },
+			{ type: "lax:browser-egress-endpoint", pipeName: "\\\\.\\pipe\\lax-egress-1-bb" },
+		]);
+	});
+
+	it("does not start the egress worker host off-desktop", () => {
+		delete process.env.LAX_DESKTOP_BRIDGE;
+		initBrowserBridgeClient();
+		expect(startEgressWorkerHost).not.toHaveBeenCalled();
 	});
 });
 

@@ -25,6 +25,8 @@ export {
   retractProvisionalTaint,
   checkEgressTaint,
   findTaintInPayload,
+  findTaintInEntries,
+  subscribeTaintChanges,
   checkEgressTaintWithPayload,
   clearSessionTaint,
   getKernelTaintSources,

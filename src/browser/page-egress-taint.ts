@@ -49,6 +49,7 @@
  */
 
 import { findTaintInPayload } from "../data-lineage/index.js";
+import type { TaintSource } from "../data-lineage/index.js";
 import { checkCanariesInPayload } from "../threat/canaries.js";
 import { registrableDomain } from "./csp-policy.js";
 
@@ -104,12 +105,28 @@ export function isCrossSiteHop(url: string, pageUrl: string | undefined): boolea
 }
 
 /**
+ * The taint/canary registry reads the scan depends on. The default entry point
+ * (scanPageEgress) binds the module-level session registries; the egress worker
+ * thread binds its mirrored shadow state instead (a worker's module instances
+ * have empty registries). ONE scan implementation either way.
+ */
+export interface PageEgressScanState {
+	findTaintInPayload(sessionId: string, payload: string): Array<{ source: TaintSource; target: string }>;
+	checkCanariesInPayload(sessionId: string, payload: string): string | null;
+}
+
+/**
  * Positive-overlap page-egress scan for `sessionId`. Returns a block verdict
  * ONLY when a cross-registrable-domain request's URL/body actually carries the
  * session's canary or tainted bytes. Same-site hops and clean payloads pass.
  * Pure: the caller records the canary audit on a canary verdict.
  */
 export function scanPageEgress(sessionId: string, req: PageEgressRequest): PageEgressVerdict {
+	return scanPageEgressWith({ findTaintInPayload, checkCanariesInPayload }, sessionId, req);
+}
+
+/** scanPageEgress against injected registry state (see PageEgressScanState). */
+export function scanPageEgressWith(state: PageEgressScanState, sessionId: string, req: PageEgressRequest): PageEgressVerdict {
 	// First-party hops are always allowed — a page talking to its own domain is
 	// not exfil, and this is what keeps a legit SPA (and multi-CDN rendering)
 	// working. Only cross-domain hops are candidates.
@@ -123,7 +140,7 @@ export function scanPageEgress(sessionId: string, req: PageEgressRequest): PageE
 
 	// Canary: deterministic proof of protected-context exfiltration. A normal
 	// site's traffic never contains the session canary, so this is near-zero-FP.
-	if (checkCanariesInPayload(sessionId, scanText)) {
+	if (state.checkCanariesInPayload(sessionId, scanText)) {
 		return {
 			allowed: false,
 			layer: "canary",
@@ -134,7 +151,7 @@ export function scanPageEgress(sessionId: string, req: PageEgressRequest): PageE
 
 	// Tainted-byte overlap: the payload carries bytes the agent read from a
 	// sensitive source this session (positive overlap, not the sticky floor).
-	const taint = findTaintInPayload(sessionId, scanText);
+	const taint = state.findTaintInPayload(sessionId, scanText);
 	if (taint.length > 0) {
 		const named = [...new Set(taint.map((t) => `${t.source}:${t.target.slice(0, 40)}`))].join(", ");
 		return {

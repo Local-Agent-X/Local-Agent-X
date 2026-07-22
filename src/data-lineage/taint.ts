@@ -214,6 +214,42 @@ export function checkEgressTaintWithPayload(
   return { ...base, evidence: [] };
 }
 
+/**
+ * Set a session's taint to a set of externally-computed entries — the host's
+ * ingest seam for taint FORWARDED from a container process over the browser
+ * relay (container-bridge-lineage.ts).
+ *
+ * WHY: when a container drives the in-app browser, its agent loop runs in a
+ * separate process, so its sensitive-read taint accrues in THAT process's map —
+ * the host's page-egress scan (page-egress-taint.ts) would see an empty registry
+ * for the session and wave an exfil request through. The container forwards its
+ * post-mutation entries (full-state deltas, mirroring the subscribe seam) and the
+ * host lands them HERE, keyed by the (relay-authenticated, owner-confined)
+ * session, so the SAME canonical scan now sees them. notifyTaintChanged fires so
+ * the off-loop egress worker mirror picks the forwarded taint up too.
+ *
+ * REPLACE (not merge) is correct and matches the mirror contract: execution for
+ * a container-owned session is claimed by the container, so the host never
+ * independently taints that session — the container is the sole writer and sends
+ * full state each change. Entries are copied defensively (fresh objects, own
+ * fingerprint arrays) so the caller's wire array is not retained. Empty → clear.
+ */
+export function setForwardedSessionTaint(sessionId: string, entries: readonly TaintEntry[]): void {
+  if (entries.length === 0) {
+    if (sessionTaint.delete(sessionId)) notifyTaintChanged(sessionId);
+    return;
+  }
+  sessionTaint.set(sessionId, entries.map(e => ({
+    source: e.source,
+    target: e.target,
+    timestamp: e.timestamp,
+    runId: e.runId,
+    fingerprints: [...e.fingerprints],
+    complete: e.complete,
+  })));
+  notifyTaintChanged(sessionId);
+}
+
 /** Clear taint for a session (e.g., on new chat) */
 export function clearSessionTaint(sessionId: string): void {
   if (sessionTaint.delete(sessionId)) notifyTaintChanged(sessionId);

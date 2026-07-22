@@ -12,6 +12,8 @@ import {
   browserAbortDesktop,
   requestDesktopBrowserBridge,
 } from "../browser/bridge-client.js";
+import { setForwardedSessionTaint } from "../data-lineage/index.js";
+import { registerSessionCanaries } from "../threat/canaries.js";
 
 export const BROWSER_RELAY_TOKEN_FILE = "secrets/browser-relay-token";
 const CONTAINER_RELAY_SOCKET = "/var/lib/lax/browser-relay.sock";
@@ -53,6 +55,14 @@ export async function openProjectionBrowserRelay(
     token,
     ownerSessionId,
     handler: { request: requestDesktopBrowserBridge, abort: browserAbortDesktop },
+    // Land the container's forwarded taint/canaries in the canonical host
+    // registries (keyed by the owner-confined session), so the host page-egress
+    // scan sees what the container read. The relay enforces the session binding
+    // before these run.
+    lineage: {
+      applyTaint: (sessionId, entries) => setForwardedSessionTaint(sessionId, entries),
+      applyCanaries: (sessionId, canaries) => registerSessionCanaries(sessionId, canaries),
+    },
   });
   return {
     environment: {

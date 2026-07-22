@@ -15,6 +15,8 @@ import {
 } from "./container-bridge-relay.js";
 
 const token = "a".repeat(64);
+const SESSION = "s1";
+const VIEW = `view-${SESSION}-default`; // sessionIdFromViewId(VIEW) === SESSION
 const handles: BrowserRelayServerHandle[] = [];
 const original = {
 	flag: process.env[CONTAINER_BROWSER_RELAY_FLAG],
@@ -61,14 +63,75 @@ describe("container browser relay", () => {
 		const handle = await startBrowserContainerRelay({
 			socketPath,
 			token,
+			ownerSessionId: SESSION,
 			handler: { request, abort: vi.fn() },
 		});
 		handles.push(handle);
 		activate(socketPath);
-		const message = { type: "lax:browser-input", viewId: "view-1", event: { type: "char", keyCode: "x" } };
-		await expect(relayBrowserRequest({ op: "input", viewId: "view-1", message, timeoutMs: 5_000 }))
+		const message = { type: "lax:browser-input", viewId: VIEW, event: { type: "char", keyCode: "x" } };
+		await expect(relayBrowserRequest({ op: "input", viewId: VIEW, message, timeoutMs: 5_000 }))
 			.resolves.toEqual({ userActive: true, result: { ok: true } });
-		expect(request).toHaveBeenCalledWith({ op: "input", viewId: "view-1", message, timeoutMs: 5_000 });
+		expect(request).toHaveBeenCalledWith({ op: "input", viewId: VIEW, message, timeoutMs: 5_000 });
+	});
+
+	it("refuses an op targeting another session's view without invoking the handler", async () => {
+		const socketPath = endpoint("cross-session");
+		const request = vi.fn();
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request, abort: vi.fn() },
+		}));
+		activate(socketPath);
+		// A well-formed, correctly-authenticated request for a view owned by a
+		// DIFFERENT session. Before the ownership check this was accepted.
+		const foreignView = "view-s2-default";
+		const message = { type: "lax:browser-capture", viewId: foreignView };
+		await expect(relayBrowserRequest({ op: "capture", viewId: foreignView, message, timeoutMs: 5_000 }))
+			.rejects.toThrow("not owned by this session");
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it("refuses an op targeting a user/foreground view the container never owns", async () => {
+		const socketPath = endpoint("user-view");
+		const request = vi.fn();
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request, abort: vi.fn() },
+		}));
+		activate(socketPath);
+		const message = { type: "lax:browser-capture", viewId: "foreground" };
+		await expect(relayBrowserRequest({ op: "capture", viewId: "foreground", message, timeoutMs: 5_000 }))
+			.rejects.toThrow("not owned by this session");
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it("refuses a cross-session abort without invoking the handler", async () => {
+		const socketPath = endpoint("cross-abort");
+		const abort = vi.fn();
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request: vi.fn(), abort },
+		}));
+		activate(socketPath);
+		await expect(relayBrowserAbort("view-s2-default")).rejects.toThrow("not owned by this session");
+		expect(abort).not.toHaveBeenCalled();
+	});
+
+	it("rejects a malformed or oversized viewId before it leaves the client", async () => {
+		activate(endpoint("bad-viewid"));
+		await expect(relayBrowserRequest({
+			op: "capture",
+			viewId: "x".repeat(513),
+			message: { type: "lax:browser-capture", viewId: "x".repeat(513) },
+			timeoutMs: 1_000,
+		})).rejects.toThrow("invalid browser relay view identity");
+		await expect(relayBrowserAbort("")).rejects.toThrow("invalid browser relay view identity");
 	});
 
 	it("forwards abort and acknowledges cleanup", async () => {
@@ -77,23 +140,25 @@ describe("container browser relay", () => {
 		handles.push(await startBrowserContainerRelay({
 			socketPath,
 			token,
+			ownerSessionId: SESSION,
 			handler: { request: vi.fn(), abort },
 		}));
 		activate(socketPath);
-		await relayBrowserAbort("view-2");
-		expect(abort).toHaveBeenCalledWith("view-2");
+		await relayBrowserAbort(VIEW);
+		expect(abort).toHaveBeenCalledWith(VIEW);
 	});
 
 	it("replaces the prior in-process owner when reopening the same endpoint", async () => {
 		const socketPath = endpoint("restart");
 		const handler = { request: vi.fn(), abort: vi.fn() };
-		const first = await startBrowserContainerRelay({ socketPath, token, handler });
+		const first = await startBrowserContainerRelay({ socketPath, token, ownerSessionId: SESSION, handler });
 		handles.push(first);
-		const second = await startBrowserContainerRelay({ socketPath, token, handler });
+		const second = await startBrowserContainerRelay({ socketPath, token, ownerSessionId: SESSION, handler });
 		handles.push(second);
 		activate(socketPath);
-		await relayBrowserAbort("view-restarted");
-		expect(handler.abort).toHaveBeenCalledWith("view-restarted");
+		const restartedView = `view-${SESSION}-restart`;
+		await relayBrowserAbort(restartedView);
+		expect(handler.abort).toHaveBeenCalledWith(restartedView);
 	});
 
 	it("rejects an unauthenticated client without invoking the handler", async () => {
@@ -102,13 +167,14 @@ describe("container browser relay", () => {
 		handles.push(await startBrowserContainerRelay({
 			socketPath,
 			token,
+			ownerSessionId: SESSION,
 			handler: { request, abort: vi.fn() },
 		}));
 		activate(socketPath, "b".repeat(64));
 		await expect(relayBrowserRequest({
 			op: "capture",
-			viewId: "view-3",
-			message: { type: "lax:browser-capture", viewId: "view-3" },
+			viewId: VIEW,
+			message: { type: "lax:browser-capture", viewId: VIEW },
 			timeoutMs: 1_000,
 		})).rejects.toThrow();
 		expect(request).not.toHaveBeenCalled();
@@ -120,6 +186,7 @@ describe("container browser relay", () => {
 		handles.push(await startBrowserContainerRelay({
 			socketPath,
 			token,
+			ownerSessionId: SESSION,
 			handler: { request, abort: vi.fn() },
 		}));
 		await new Promise<void>((resolve, reject) => {

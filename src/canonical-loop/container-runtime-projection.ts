@@ -177,8 +177,16 @@ async function materializeProjection(
   const workspace = realpathSync(workspaceRoot());
   const operation = opDir(op.id);
   const projectionManifest = readManifest(root);
+  // Bind the relay to the container's OWN execution session — the same id the
+  // in-container worker names its browser views after (view-<sessionId>-…). The
+  // relay refuses ops targeting any other session's views. Fail closed if the
+  // op carries no session: an unattributed container must drive no views.
+  const ownerSessionId = op.canonical?.sessionId;
+  if (!ownerSessionId) {
+    throw new Error("container projection is missing its owning session");
+  }
   const browserRelay = await openProjectionBrowserRelay(root,
-    projectionManifest.mounts.browserRelayToken);
+    projectionManifest.mounts.browserRelayToken, ownerSessionId);
   return {
     durableId: projectionId,
     buildSpec({ image, placement }): DockerContainerSpec {

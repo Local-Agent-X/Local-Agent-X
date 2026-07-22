@@ -2,6 +2,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, rmSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
+import { sessionIdFromViewId } from "./bridge-perception.js";
 
 export const CONTAINER_BROWSER_RELAY_FLAG = "LAX_CONTAINER_BROWSER_RELAY";
 export const CONTAINER_BROWSER_RELAY_SOCKET = "LAX_CONTAINER_BROWSER_RELAY_SOCKET";
@@ -69,16 +70,23 @@ export async function relayBrowserAbort(viewId: string): Promise<void> {
 export async function startBrowserContainerRelay(options: {
 	socketPath: string;
 	token: string;
+	/** The session that owns this relay. Every relayed op may only target a
+	 *  view named for this session (view-<ownerSessionId>-<profile>); a viewId
+	 *  parsed to a different (or no) session is refused — the token proves only
+	 *  container membership, so this is what keeps one container off another
+	 *  session's browser views. */
+	ownerSessionId: string;
 	handler: BrowserRelayHandler;
 }): Promise<BrowserRelayServerHandle> {
 	validateEndpoint(options.socketPath, options.token);
+	assertOwnerSessionId(options.ownerSessionId);
 	await activeServers.get(options.socketPath)?.close();
 	removeStaleSocket(options.socketPath);
 	const sockets = new Set<Socket>();
 	const server = createServer(socket => {
 		sockets.add(socket);
 		socket.once("close", () => sockets.delete(socket));
-		handleSocket(socket, options.token, options.handler);
+		handleSocket(socket, options.token, options.ownerSessionId, options.handler);
 	});
 	await listen(server, options.socketPath);
 	if (process.platform !== "win32") chmodSync(options.socketPath, 0o600);
@@ -145,7 +153,12 @@ async function exchange(payload: RelayPayload, timeoutMs: number): Promise<unkno
 	return response.result;
 }
 
-function handleSocket(socket: Socket, token: string, handler: BrowserRelayHandler): void {
+function handleSocket(
+	socket: Socket,
+	token: string,
+	ownerSessionId: string,
+	handler: BrowserRelayHandler,
+): void {
 	let bytes = 0;
 	let body = "";
 	let handled = false;
@@ -160,7 +173,7 @@ function handleSocket(socket: Socket, token: string, handler: BrowserRelayHandle
 		if (newline < 0) return;
 		if (body.slice(newline + 1).trim() !== "") { socket.destroy(); return; }
 		handled = true;
-		void serveFrame(socket, body.slice(0, newline), token, handler);
+		void serveFrame(socket, body.slice(0, newline), token, ownerSessionId, handler);
 	});
 }
 
@@ -168,6 +181,7 @@ async function serveFrame(
 	socket: Socket,
 	body: string,
 	token: string,
+	ownerSessionId: string,
 	handler: BrowserRelayHandler,
 ): Promise<void> {
 	let frame: RelayFrame;
@@ -182,10 +196,13 @@ async function serveFrame(
 	try {
 		const payload = frame.payload as RelayPayload;
 		if (payload.kind === "abort") {
+			assertViewOwnership(payload.viewId as string, ownerSessionId);
 			await handler.abort(payload.viewId as string);
 			response = { ok: true };
 		} else {
-			response = { ok: true, result: await handler.request(payload.request as BrowserRelayRequest) };
+			const request = payload.request as BrowserRelayRequest;
+			assertViewOwnership(request.viewId, ownerSessionId);
+			response = { ok: true, result: await handler.request(request) };
 		}
 	} catch (error) {
 		response = { ok: false, error: serializeError(error) };
@@ -280,6 +297,23 @@ function validateEndpoint(socketPath: string, token: string): void {
 function assertViewId(value: unknown): asserts value is string {
 	if (typeof value !== "string" || value.length < 1 || value.length > 512) {
 		throw new Error("invalid browser relay view identity");
+	}
+}
+
+function assertOwnerSessionId(value: string): void {
+	if (typeof value !== "string" || value.length < 1 || value.length > 512) {
+		throw new Error("container browser relay owner session is invalid");
+	}
+}
+
+// Server-side authorization: the relay token only proves container membership,
+// so a well-formed, authenticated request must additionally target a view the
+// container's OWN session owns. Agent views are named view-<sessionId>-<profile>;
+// a viewId whose parsed session differs (cross-session) or is absent (a user /
+// foreground view the container never owns) is refused before the handler runs.
+function assertViewOwnership(viewId: string, ownerSessionId: string): void {
+	if (sessionIdFromViewId(viewId) !== ownerSessionId) {
+		throw new Error("browser relay view is not owned by this session");
 	}
 }
 

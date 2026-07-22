@@ -24,6 +24,8 @@ const originalEnv = {
 	token: process.env[CONTAINER_BROWSER_RELAY_TOKEN],
 };
 const send = vi.fn<(message: unknown) => boolean>();
+const SESSION = "sess";
+const VIEW = `view-${SESSION}-main`; // owned by SESSION per sessionIdFromViewId
 let relay: BrowserRelayServerHandle;
 
 function endpoint(): string {
@@ -51,6 +53,7 @@ beforeAll(async () => {
 	relay = await startBrowserContainerRelay({
 		socketPath,
 		token: "c".repeat(64),
+		ownerSessionId: SESSION,
 		handler: { request: requestDesktopBrowserBridge, abort: browserAbortDesktop },
 	});
 });
@@ -66,7 +69,7 @@ afterAll(async () => {
 
 describe("container relay through the canonical browser bridge", () => {
 	it("preserves input userActive status", async () => {
-		const pending = browserInput("relay-view", { type: "char", keyCode: "x" });
+		const pending = browserInput(VIEW, { type: "char", keyCode: "x" });
 		await vi.waitFor(() => expect(send).toHaveBeenCalled());
 		const message = send.mock.calls.at(-1)?.[0] as { id: number; type: string };
 		expect(message.type).toBe("lax:browser-input");
@@ -75,7 +78,7 @@ describe("container relay through the canonical browser bridge", () => {
 	});
 
 	it("preserves arbitrary exec results", async () => {
-		const pending = browserExec("relay-view", "document.title");
+		const pending = browserExec(VIEW, "document.title");
 		await vi.waitFor(() => expect(send.mock.calls.at(-1)?.[0]).toMatchObject({ type: "lax:browser-exec" }));
 		const message = send.mock.calls.at(-1)?.[0] as { id: number };
 		receive({ type: "lax:browser-exec-result", id: message.id, ok: true, result: { title: "Example" } });
@@ -83,7 +86,7 @@ describe("container relay through the canonical browser bridge", () => {
 	});
 
 	it("forwards abort through the canonical desktop send path", async () => {
-		browserAbort("relay-view");
-		await vi.waitFor(() => expect(send.mock.calls.at(-1)?.[0]).toEqual({ type: "lax:browser-abort", viewId: "relay-view" }));
+		browserAbort(VIEW);
+		await vi.waitFor(() => expect(send.mock.calls.at(-1)?.[0]).toEqual({ type: "lax:browser-abort", viewId: VIEW }));
 	});
 });

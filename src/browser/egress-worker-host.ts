@@ -7,9 +7,10 @@
  *     workerSpawnSpec precedent, adapted: this worker imports project modules,
  *     so the ts runtime spawns with --experimental-transform-types and the
  *     worker registers its own .ts resolution hook),
- *   - feed it registry deltas from the three subscribe seams (taint, canaries,
- *     adopted views) — each seam replays full current state on subscribe, so a
- *     restarted worker's mirrors start complete,
+ *   - feed it registry deltas from the four subscribe seams (taint, canaries,
+ *     adopted views, discovered local-runtime ports) — each seam replays full
+ *     current state on subscribe, so a restarted worker's mirrors start
+ *     complete,
  *   - apply its deny/canary posts through the existing single-writer paths
  *     (recordEgressDeny / clearEgressDeny / recordCanaryExfilAudit),
  *   - restart it on crash with bounded backoff, announcing each new endpoint
@@ -25,6 +26,8 @@ import { fileURLToPath } from "node:url";
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import { subscribeTaintChanges } from "../data-lineage/index.js";
+import { subscribeLocalRuntimeChanges } from "../local-runtimes/cache.js";
+import { loopbackPortFromUrl } from "../security/layer/security-config.js";
 import { recordCanaryExfilAudit, subscribeCanaryChanges } from "../threat/canaries.js";
 import { subscribeAdoptedViewChanges } from "./bridge-perception.js";
 import { clearEgressDeny, recordEgressDeny } from "./bridge-egress.js";
@@ -133,6 +136,22 @@ function spawnWorker(st: HostState): void {
 		subscribeTaintChanges((sessionId, entries) => post({ kind: "taint", sessionId, entries: [...entries] })),
 		subscribeCanaryChanges((sessionId, canaries) => post({ kind: "canaries", sessionId, canaries: [...canaries] })),
 		subscribeAdoptedViewChanges((viewId, sessionId) => post({ kind: "adopted", viewId, sessionId })),
+		// Discovered-runtime loopback ports: the worker's local-runtimes cache
+		// module instance is never populated (the MAIN thread runs the sweeps),
+		// so without this mirror the worker would deny the
+		// http://127.0.0.1:<discovered-port> requests the in-loop path allows
+		// ("Allowed local service"). Ports derive through the same canonical
+		// helper the policy loader uses (loopbackPortFromUrl). Manual runtime
+		// entries need no mirror — they come from settings.json, which the
+		// worker's loadEgressConfig reads from disk itself.
+		subscribeLocalRuntimeChanges((runtimes) => {
+			const ports = new Set<string>();
+			for (const rt of runtimes ?? []) {
+				const port = loopbackPortFromUrl(rt.endpoint.baseUrl);
+				if (port) ports.add(port);
+			}
+			post({ kind: "runtime-ports", ports: [...ports] });
+		}),
 	];
 
 	worker.on("message", (msg: EgressWorkerPost) => {

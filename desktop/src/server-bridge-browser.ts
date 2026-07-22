@@ -10,9 +10,11 @@
  *
  * Also wires the per-partition egress guard (browser-partition.ts) to
  * the server's canonical URL policy: wireBrowserEgressEvaluator installs
- * an evaluator that IPC-asks the child ("lax:browser-egress-ask") and
- * FAILS CLOSED — no child, send failure, or a reply slower than the
- * short deadline all deny. Policy lives server-side only.
+ * an evaluator that asks the child — over the off-loop worker pipe when
+ * one is announced ("lax:browser-egress-endpoint"), else via IPC
+ * ("lax:browser-egress-ask") — and FAILS CLOSED: no child, send failure,
+ * or a reply slower than the deadline all deny. Policy lives server-side
+ * only (server-bridge-egress.ts owns the transports).
  */
 
 import type { ChildProcess } from "child_process";
@@ -34,7 +36,7 @@ import { autoSurfaceAgentView } from "./browser-ipc";
 import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
 import { wireDownloadBridge } from "./browser-downloads-bridge";
 import { getHardenedPartitionSession, setEgressEvaluator } from "./browser-partition";
-import { askServerEgress, settleEgressAsk } from "./server-bridge-egress";
+import { askServerEgress, resetEgressPipe, setEgressPipeEndpoint, settleEgressAsk } from "./server-bridge-egress";
 import {
 	attachViewPerception,
 	detachViewPerception,
@@ -66,6 +68,10 @@ export type { BridgeInputEvent, BrowserBridgeMessage, BrowserLifecycleOp } from 
  *  attachServerBridge on every (re)spawn so the closure always holds the
  *  live process; a dead/replaced child fails closed inside the ask. */
 export function wireBrowserEgressEvaluator(proc: ChildProcess): void {
+	// A (re)spawned child means the OLD child's egress worker — and its pipe —
+	// died with it. Drop any pipe connection and revert to the in-loop IPC ask
+	// path until the new child announces a fresh endpoint.
+	resetEgressPipe();
 	setEgressEvaluator((req) => askServerEgress(proc, req));
 	// Same (re)spawn moment arms perception (console rings + UI events) and
 	// beforeunload-dialog interception on every view's lifecycle.
@@ -102,6 +108,12 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 	switch (msg.type) {
 		case "lax:browser-egress-ask-result": {
 			settleEgressAsk(msg.id, msg.allowed === true);
+			return;
+		}
+		case "lax:browser-egress-endpoint": {
+			// Announce, not a request: no id, no reply. Hand the worker's pipe
+			// to the ask client; asks flow over it while it stays connected.
+			if (typeof msg.pipeName === "string" && msg.pipeName !== "") setEgressPipeEndpoint(msg.pipeName);
 			return;
 		}
 		case "lax:browser-abort": {

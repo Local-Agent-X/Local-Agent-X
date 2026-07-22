@@ -49,6 +49,10 @@ export interface BrowserCaptureRequest { type: "lax:browser-capture"; id: number
 export interface BrowserClearPartitionRequest { type: "lax:browser-clear-partition"; id: number; partition: string }
 export interface BrowserAbortRequest { type: "lax:browser-abort"; viewId: string }
 export interface BrowserEgressAskResult { type: "lax:browser-egress-ask-result"; id: number; allowed: boolean }
+/** Server-initiated announce (no id, no reply): the off-loop egress worker's
+ *  pipe endpoint. Re-sent on every worker (re)boot — each spawn mints a fresh
+ *  nonce name (src/browser/bridge-client.ts initBrowserBridgeClient). */
+export interface BrowserEgressEndpointAnnounce { type: "lax:browser-egress-endpoint"; pipeName: string }
 export interface BrowserReadConsoleRequest { type: "lax:browser-read-console"; id: number; viewId: string }
 export interface BrowserReadNetworkRequest { type: "lax:browser-read-network"; id: number; viewId: string }
 /** Beforeunload dialog queue ops (browser-dialogs.ts): list pending, or
@@ -64,6 +68,7 @@ export type BrowserBridgeMessage =
 	| BrowserClearPartitionRequest
 	| BrowserAbortRequest
 	| BrowserEgressAskResult
+	| BrowserEgressEndpointAnnounce
 	| BrowserReadConsoleRequest
 	| BrowserReadNetworkRequest
 	| BrowserDialogsRequest;
@@ -77,6 +82,7 @@ const BROWSER_MESSAGE_TYPES = new Set<string>([
 	"lax:browser-clear-partition",
 	"lax:browser-abort",
 	"lax:browser-egress-ask-result",
+	"lax:browser-egress-endpoint",
 	"lax:browser-read-console",
 	"lax:browser-read-network",
 	"lax:browser-dialogs",

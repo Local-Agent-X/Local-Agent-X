@@ -36,6 +36,32 @@ const STALE_AFTER_MS = 60_000;
 
 let cache: LocalRuntimeInfo[] | null = null;
 let refreshedAt = 0;
+
+// ── Change notification (mirror seam) ──────────────────────────────────────
+//
+// The egress worker thread (browser/egress-worker.ts) cannot see this module's
+// cache — worker_threads get their own module instances — so its host mirrors
+// the discovered-runtime set to it (the loopback-port egress carve-out reads
+// this cache via security-config.ts localRuntimeLoopbackPorts). Every cache
+// replacement notifies with the post-update snapshot (null = invalidated).
+type LocalRuntimesChangeListener = (runtimes: readonly LocalRuntimeInfo[] | null) => void;
+const runtimeListeners = new Set<LocalRuntimesChangeListener>();
+
+/**
+ * Subscribe to discovered-runtime cache changes. Replays the current snapshot
+ * synchronously on subscribe (so a late subscriber — e.g. a restarted
+ * egress-worker mirror — starts from the full current state), then fires after
+ * every cache replacement. Returns an unsubscribe.
+ */
+export function subscribeLocalRuntimeChanges(cb: LocalRuntimesChangeListener): () => void {
+  runtimeListeners.add(cb);
+  cb(cache);
+  return () => { runtimeListeners.delete(cb); };
+}
+
+function notifyLocalRuntimesChanged(): void {
+  for (const cb of runtimeListeners) cb(cache);
+}
 let inflight: Promise<LocalRuntimeInfo[]> | null = null;
 let restoreEpoch = 0;
 let pendingRestore: { runtimes: LocalRuntimeInfo[]; epoch: number } | null = null;
@@ -73,6 +99,7 @@ export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
       }
       cache = found;
       refreshedAt = Date.now();
+      notifyLocalRuntimesChanged();
       scheduleCertificationRestore(found);
       return found;
     } finally {
@@ -148,6 +175,7 @@ export function invalidateLocalRuntimes(): void {
   restoreEpoch += 1;
   pendingRestore = null;
   restoredSnapshot = null;
+  notifyLocalRuntimesChanged();
 }
 
 export function restoreProjectedLocalRuntime(path: string): void {
@@ -159,6 +187,7 @@ export function restoreProjectedLocalRuntime(path: string): void {
   const runtime = parseProjectedRuntime(JSON.parse(readFileSync(path, "utf8")));
   cache = [runtime];
   refreshedAt = Date.now();
+  notifyLocalRuntimesChanged();
 }
 
 function parseProjectedRuntime(value: unknown): LocalRuntimeInfo {

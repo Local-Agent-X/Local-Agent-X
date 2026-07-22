@@ -14,8 +14,9 @@
  * EgressPipeReply out. The decision is the SAME decideEgressAsk core the
  * in-loop fallback (bridge-egress.ts answerEgressAsk) uses — evaluated here
  * against a config cache plus MIRRORED registries (taint / canaries / adopted
- * views), because a worker's module instances cannot see the main thread's
- * maps. Mirrors are fed by the host (egress-worker-host.ts) from the
+ * views / discovered local-runtime ports), because a worker's module instances
+ * cannot see the main thread's maps. Mirrors are fed by the host
+ * (egress-worker-host.ts) from the
  * registries' subscribe seams and are eventually-consistent — acceptable
  * because the taint scan is the documented fail-open defense-in-depth layer;
  * the URL policy layer stays fail-closed and reads only disk config.
@@ -54,11 +55,14 @@ import type { EgressConfig } from "../security/layer/network-policy.js";
 export type EgressPipeAsk = EgressAskMessage;
 export interface EgressPipeReply { id: number; allowed: boolean }
 
-/** Host → worker registry deltas (subscribe-seam replays included). */
+/** Host → worker registry deltas (subscribe-seam replays included).
+ *  "runtime-ports" is a full snapshot of the discovered local-runtime loopback
+ *  ports, not a delta — the host re-derives the whole set per cache change. */
 export type EgressWorkerControl =
 	| { kind: "taint"; sessionId: string; entries: TaintEntry[] }
 	| { kind: "canaries"; sessionId: string; canaries: string[] }
-	| { kind: "adopted"; viewId: string; sessionId: string | null };
+	| { kind: "adopted"; viewId: string; sessionId: string | null }
+	| { kind: "runtime-ports"; ports: string[] };
 
 /** Worker → host posts (single-writer side effects stay on the main thread). */
 export type EgressWorkerPost =
@@ -130,6 +134,10 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 	const taintMirror = new Map<string, TaintEntry[]>();
 	const canaryMirror = new Map<string, string[]>();
 	const adoptedMirror = new Map<string, string>();
+	// Discovered local-runtime loopback ports (main thread's cache.ts snapshot;
+	// this thread's cache module instance is never populated). Starts empty →
+	// fail-toward-deny until the host's subscribe replay lands.
+	let runtimePortsMirror = new Set<string>();
 
 	port.on("message", (msg: EgressWorkerControl) => {
 		if (!msg || typeof msg !== "object") return;
@@ -142,6 +150,8 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 		} else if (msg.kind === "adopted") {
 			if (msg.sessionId !== null) adoptedMirror.set(msg.viewId, msg.sessionId);
 			else adoptedMirror.delete(msg.viewId);
+		} else if (msg.kind === "runtime-ports") {
+			runtimePortsMirror = new Set(msg.ports);
 		}
 	});
 
@@ -151,7 +161,16 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 	let cfgCache: { key: string; cfg: EgressConfig } | null = null;
 	function currentConfig(): EgressConfig {
 		const dir = getLaxDir();
-		const key = statKey(join(dir, "egress-allowlist.json")) + "|" + statKey(join(dir, "security.json"));
+		// Every file loadEgressConfig folds in keys the cache: the allowlist +
+		// security.json, PLUS config.json (ollamaLoopbackPort) and settings.json
+		// (manual runtime entries) — so an ollama/manual port change propagates
+		// without an unrelated policy-file touch.
+		const key = [
+			statKey(join(dir, "egress-allowlist.json")),
+			statKey(join(dir, "security.json")),
+			statKey(join(dir, "config.json")),
+			statKey(join(dir, "settings.json")),
+		].join("|");
 		if (cfgCache === null || cfgCache.key !== key) cfgCache = { key, cfg: loadEgressConfig() };
 		return cfgCache.cfg;
 	}
@@ -161,7 +180,14 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 	const deps: EgressAskDeps = {
 		evaluateUrl: (url) => {
 			const cfg = currentConfig();
-			return evaluateWebFetch(cfg.allowlist, cfg.configured, data.selfPort, url, cfg.mode, cfg.localServicePorts, cfg.manualHostPorts);
+			// Fold the mirrored discovered-runtime ports into localServicePorts
+			// exactly as loadEgressConfig folds the cache-derived ports in-loop
+			// (localRuntimeLoopbackPorts reads a cache THIS thread never fills).
+			// Union per ask, never mutating the cached set.
+			const localPorts = runtimePortsMirror.size === 0
+				? cfg.localServicePorts
+				: new Set([...cfg.localServicePorts, ...runtimePortsMirror]);
+			return evaluateWebFetch(cfg.allowlist, cfg.configured, data.selfPort, url, cfg.mode, localPorts, cfg.manualHostPorts);
 		},
 		sessionForView: (viewId) => sessionIdFromViewId(viewId) ?? adoptedMirror.get(viewId),
 		scan: (sessionId, req) =>

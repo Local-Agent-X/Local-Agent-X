@@ -17,6 +17,7 @@ export class InvalidOpDependencyError extends Error {
 }
 
 const waitersByPrerequisite = new Map<string, Set<string>>();
+const SAFE_OP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
 
 function normalizedDependencyIds(op: Op): string[] {
   if (op.dependsOn === undefined) return [];
@@ -26,6 +27,9 @@ function normalizedDependencyIds(op: Op): string[] {
   const ids = op.dependsOn.map((value) => typeof value === "string" ? value.trim() : "");
   if (ids.some((id) => id.length === 0)) {
     throw new InvalidOpDependencyError(`op ${op.id} has an empty dependency id`);
+  }
+  if (ids.some((id) => !SAFE_OP_ID.test(id))) {
+    throw new InvalidOpDependencyError(`op ${op.id} has an invalid dependency id`);
   }
   if (new Set(ids).size !== ids.length) {
     throw new InvalidOpDependencyError(`op ${op.id} has duplicate dependency ids`);

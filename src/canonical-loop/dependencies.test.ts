@@ -198,7 +198,7 @@ describe("durable dependency scheduling", () => {
     submit(root);
     submit(child);
     await expectStarts(backend, [root.id]);
-    expect(opCancel(child.id).ok).toBe(true);
+    expect(opCancel(child.id, "test").ok).toBe(true);
     await vi.waitFor(() => expect(readOp(child.id)?.canonical?.state).toBe("cancelled"));
     expect(backend.starts.mock.calls.some(([request]) => request.op.id === child.id)).toBe(false);
   });
@@ -219,6 +219,8 @@ describe("dependency admission", () => {
     const root = persisted("admission-root", "succeeded");
     expect(() => validateOpDependencies(makeOp("missing", { dependsOn: ["absent"] })))
       .toThrow(InvalidOpDependencyError);
+    expect(() => validateOpDependencies(makeOp("traversal", { dependsOn: ["../../settings.json"] })))
+      .toThrow(/invalid dependency id/);
     expect(() => validateOpDependencies(makeOp("duplicate", { dependsOn: [root.id, root.id] })))
       .toThrow(/duplicate/);
     expect(() => validateOpDependencies(makeOp("self", { dependsOn: ["self"] })))

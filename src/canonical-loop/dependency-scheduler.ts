@@ -23,10 +23,15 @@ export class DependencySchedulerCoordinator {
 
   gate(op: Op): DependencyGateDisposition {
     if (!op.dependsOn?.length) return "runnable";
-    registerDependencyWaiter(op);
     const readiness = evaluateDependencyReadiness(op);
-    if (readiness.kind === "runnable") return "runnable";
-    if (readiness.kind === "blocked") return "blocked";
+    if (readiness.kind === "runnable") {
+      unregisterDependencyWaiter(op.id);
+      return "runnable";
+    }
+    if (readiness.kind === "blocked") {
+      registerDependencyWaiter(op);
+      return "blocked";
+    }
     this.settle(op, readiness);
     return "settled";
   }

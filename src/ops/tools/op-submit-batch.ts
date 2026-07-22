@@ -24,6 +24,7 @@ import {
   validateDependencyBatch,
 } from "../../canonical-loop/index.js";
 import type { Op } from "../types.js";
+import { resourceLocksForProvider } from "../provider-matrix.js";
 import { trackOpForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
@@ -53,6 +54,7 @@ function hasDependencyMetadata(task: Record<string, unknown>): boolean {
 async function runDependencyBatch(
   tasks: Record<string, unknown>[],
   sessionId: string,
+  concurrency: number,
 ): Promise<BatchTaskResult[]> {
   const keys = new Map<string, Op>();
   const ops: Op[] = [];
@@ -79,6 +81,16 @@ async function runDependencyBatch(
     });
   }
   validateDependencyBatch(ops);
+
+  const batchLockPrefix = `batch:${ops[0].id}`;
+  for (let index = 0; index < ops.length; index++) {
+    const providerLocks = resourceLocksForProvider(ops[index].contextPack.routing.preferredProvider);
+    ops[index].resourceLocks = Array.from(new Set([
+      ...(ops[index].resourceLocks ?? []),
+      ...providerLocks,
+      `${batchLockPrefix}:slot:${index % concurrency}`,
+    ]));
+  }
 
   for (const op of ops) {
     await configureDelegatedRuntime(op, delegatedRuntimeSessionId(op.id, sessionId));
@@ -235,7 +247,7 @@ export const opSubmitBatchTool: ToolDefinition = {
     let results: BatchTaskResult[];
     try {
       results = rawTasks.some(hasDependencyMetadata)
-        ? await runDependencyBatch(rawTasks, sessionId)
+        ? await runDependencyBatch(rawTasks, sessionId, concurrency)
         : await runPool(rawTasks, concurrency, sessionId);
     } catch (error) {
       return { content: `Dependency batch rejected before launch: ${(error as Error).message}`, isError: true };

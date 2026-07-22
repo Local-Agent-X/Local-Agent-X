@@ -253,4 +253,15 @@ describe("op_submit_batch — fan-out launcher", () => {
     expect(cycle.content).toContain("cycle");
     expect(runtimeFixture.configure).not.toHaveBeenCalled();
   });
+
+  it("honors concurrency for independent keyed tasks without coupling failure state", async () => {
+    const counter = installCountingLaneAdapter(25);
+    const tasks = [1, 2, 3].map((number) => ({
+      ...task(`keyed root ${number}`),
+      task_key: `root-${number}`,
+    }));
+    const { meta } = await runBatch(tasks, 1);
+    expect(meta.succeeded).toBe(3);
+    expect(counter.max).toBe(1);
+  });
 });

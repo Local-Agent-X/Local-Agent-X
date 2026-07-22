@@ -296,6 +296,9 @@ async function launch(
         op.id, launchPhase === "backend",
       );
       if (recovery.kind === "retry") scheduleQueuedRetry(op.id, lane, recovery.delayMs);
+      else if (backendOwnedSettlement && readOp(op.id)?.canonical?.state !== "queued") {
+        dependencyCoordinator.terminal(op.id);
+      }
     }
     pumpScheduler(); // re-pump: an op skipped on this lock (or lane) retries now
   }

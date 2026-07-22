@@ -51,6 +51,13 @@ class DependencyBackend implements ExecutionBackend {
   }
   settle(): void { for (const run of this.runs.values()) run.resolve(); }
   finish(opId: string): void { this.runs.get(opId)?.resolve(); }
+  completeWithoutObserver(opId: string): void {
+    const op = readOp(opId)!;
+    op.canonical!.state = "succeeded";
+    op.status = "completed";
+    writeOp(op);
+    this.finish(opId);
+  }
 }
 
 function makeOp(id: string, over: Partial<Op> = {}): Op {
@@ -172,6 +179,16 @@ describe("durable dependency scheduling", () => {
     expect(backend.starts).toHaveBeenCalledTimes(1);
   });
 
+  it("wakes dependents when a backend-owned child process persists the terminal", async () => {
+    const root = makeOp("child-terminal-root");
+    const dependent = makeOp("child-terminal-dependent", { dependsOn: [root.id] });
+    submit(root);
+    submit(dependent);
+    await expectStarts(backend, [root.id]);
+    backend.completeWithoutObserver(root.id);
+    await expectStarts(backend, [root.id, dependent.id]);
+  });
+
   it("propagates failed and cancelled prerequisites before leasing dependents", async () => {
     const failedRoot = makeOp("failed-root");
     const failedChild = makeOp("failed-child", { dependsOn: [failedRoot.id] });
@@ -211,6 +228,16 @@ describe("durable dependency scheduling", () => {
     rebuildDependencyScheduling();
     expect(readOp(child.id)?.canonical?.state).toBe("failed");
     expect(backend.starts).not.toHaveBeenCalled();
+  });
+
+  it("fails one malformed persisted row without poisoning valid waiters", async () => {
+    persisted("healthy-root", "succeeded");
+    const healthy = persisted("healthy-child", "queued", { dependsOn: ["healthy-root"] });
+    persisted("malformed-child", "queued", { dependsOn: ["../bad"] });
+    registerAdapterForOp(healthy.id, () => adapter);
+    rebuildDependencyScheduling();
+    await expectStarts(backend, [healthy.id]);
+    expect(readOp("malformed-child")?.canonical?.state).toBe("failed");
   });
 });
 

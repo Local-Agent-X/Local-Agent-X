@@ -120,8 +120,9 @@ export function rebuildDependencyWaiterIndex(): Op[] {
     if (!op.dependsOn?.length || state === "succeeded" || state === "failed" || state === "cancelled") {
       continue;
     }
-    registerDependencyWaiter(op);
     dependents.push(op);
+    try { registerDependencyWaiter(op); }
+    catch { /* coordinator fails malformed rows individually */ }
   }
   return dependents;
 }

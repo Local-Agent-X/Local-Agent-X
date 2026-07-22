@@ -32,6 +32,8 @@ export interface RegistryEntry {
   mcpSource?: string;
   /** Hash-only identity of the executable implementation and its provenance. */
   implementationFingerprint: string;
+  /** True only when a fresh execution worker can rebuild this exact tool from source. */
+  workerReconstructible: boolean;
 }
 
 export interface RegisterOptions {
@@ -42,6 +44,8 @@ export interface RegisterOptions {
   mcpSource?: string;
   /** Canonical module/plugin/MCP provenance. Never contains executable code. */
   sourceFingerprint?: string;
+  /** Reserved for tools installed by the static worker registry builder. */
+  workerReconstructible?: boolean;
 }
 
 export interface DeferredToolListing {
@@ -69,6 +73,7 @@ export class UnifiedToolRegistry {
       toolClass: opts?.toolClass,
       mcpSource: opts?.mcpSource,
       implementationFingerprint: implementationFingerprintFor(tool, opts),
+      workerReconstructible: opts?.workerReconstructible === true,
     });
   }
 

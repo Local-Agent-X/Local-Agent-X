@@ -130,6 +130,26 @@ describe("canonical delegated recovery across a process restart", () => {
     expect(recovered.authorizationHeaders).toEqual(["Bearer restart-cloud-secret"]);
   });
 
+  it("rehydrates a secrets-store credential inside the recovered execution worker", () => {
+    const opId = "op_process_restart_secrets_store";
+    expect(run("persist", opId, "secrets-runtime").status).toBe(0);
+    const resumed = run("resume", opId, "secrets-runtime");
+    expect(resumed.status, resumed.stderr).toBe(0);
+    expect(childResult<{ authorizationHeaders: string[] }>(resumed.stdout).authorizationHeaders)
+      .toEqual(["Bearer restart-store-secret"]);
+  });
+
+  it("keeps a dynamically registered tool surface on exact in-process recovery", () => {
+    const opId = "op_process_restart_plugin_surface";
+    expect(run("persist", opId, "plugin-runtime").status).toBe(0);
+    const resumed = run("resume", opId, "plugin-runtime");
+    expect(resumed.status, resumed.stderr).toBe(0);
+    expect(childResult<{ state: string; executionBackendId: string }>(resumed.stdout)).toMatchObject({
+      state: "succeeded",
+      executionBackendId: "in-process",
+    });
+  });
+
   it("detects a replay-from-zero mutation through the committing dispatcher", () => {
     const opId = "op_process_restart_mutation";
     expect(run("persist", opId).status).toBe(0);

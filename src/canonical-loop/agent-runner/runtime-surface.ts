@@ -143,20 +143,24 @@ export function persistRuntimeSurface(
 
 export function toolFingerprint(tool: ToolDefinition): string {
   const registryEntry = unifiedRegistry.getEntry(tool.name);
+  const implementationFingerprint = implementationFingerprintFor(tool);
   const policies = Object.entries(TOOL_POLICIES)
     .filter(([pattern]) => matchGlob(pattern, tool.name))
     .map(([pattern, policy]) => ({ pattern, policy }));
-  return hash(stableStringify({
+  const identity = {
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
     effect: typeof tool.effect === "function" ? String(tool.effect) : tool.effect,
     readOnly: tool.readOnly,
     concurrencySafe: tool.concurrencySafe,
-    implementationFingerprint: implementationFingerprintFor(tool),
-    provenanceFingerprint: registryEntry?.tool === tool ? registryEntry.implementationFingerprint : null,
+    implementationFingerprint,
+    provenanceFingerprint: registryEntry?.tool === tool
+      ? registryEntry.implementationFingerprint
+      : implementationFingerprint,
     policies,
-  }));
+  };
+  return hash(stableStringify(identity));
 }
 
 function hash(value: string | Buffer): string {

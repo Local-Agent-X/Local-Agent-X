@@ -1,5 +1,11 @@
+import { join } from "node:path";
+import { startAriKernel } from "../ari-kernel/index.js";
+import { getRuntimeConfig } from "../config.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { readOp } from "../ops/op-store.js";
+import { getOrInitSecretsStore } from "../secrets.js";
 import { setSessionRelayWriter } from "../ops/session-bridge.js";
+import { buildToolRegistry } from "../tools.js";
 import {
   heartbeatProcessExecutionClaim,
   processClaimMatches,
@@ -63,6 +69,19 @@ export async function runClaimedExecutionWorker(
       }
     }, 2_000);
     heartbeat.unref?.();
+    const config = getRuntimeConfig();
+    const kernelActive = await startAriKernel(
+      join(getLaxDir(), "ari-audit.db"),
+      undefined,
+      config.ariRequired,
+    );
+    if (!kernelActive && config.ariRequired) {
+      throw new Error("execution worker security kernel is unavailable");
+    }
+    if (!process.env.LAX_SCOPED_RUNTIME_CREDENTIAL_FILE) {
+      getOrInitSecretsStore(getLaxDir());
+    }
+    buildToolRegistry();
     rehydrateRecoveredRuntime(op);
     const factory = resolveAdapterFactory(op);
     if (!factory) throw new Error("execution adapter is unavailable");

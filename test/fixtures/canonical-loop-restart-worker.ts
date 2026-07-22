@@ -20,13 +20,28 @@ import { sealDelegatedRuntime } from "../../src/canonical-loop/runtime-integrity
 import { buildAgentRuntimeSurface } from "../../src/canonical-loop/agent-runner/runtime-surface.js";
 import { SecurityLayer } from "../../src/security/index.js";
 import { buildToolRegistry } from "../../src/tools.js";
+import { unifiedRegistry } from "../../src/tools/registry.js";
 import { writeTool } from "../../src/tools/file-tools.js";
+import type { ToolDefinition } from "../../src/types.js";
 import { setRuntimeConfig } from "../../src/config.js";
 import { startAriKernel } from "../../src/ari-kernel/index.js";
+import { getOrInitSecretsStore } from "../../src/secrets.js";
 
 const [action, opId, sideEffectLedger, mutation, rawPort] = process.argv.slice(2);
 const port = Number(rawPort);
 const baseURL = `http://127.0.0.1:${port}/v1`;
+
+const restartPluginTool: ToolDefinition = {
+  name: "restart_plugin_action",
+  description: "A fixture plugin action that must retain its registered implementation.",
+  parameters: { type: "object", properties: {}, required: [] },
+  async execute() { return { content: "plugin action available" }; },
+};
+
+function registerFixturePlugin(): void {
+  if (mutation !== "plugin-runtime") return;
+  unifiedRegistry.register(restartPluginTool, { sourceFingerprint: "restart-plugin-v1" });
+}
 
 function result(value: unknown): never {
   process.stdout.write(`@@RESULT@@${JSON.stringify(value)}`);
@@ -51,15 +66,18 @@ function contextPack(task: string): Op["contextPack"] {
 }
 
 function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
+  const secretsRuntime = mutation === "secrets-runtime";
   const descriptor = {
     kind: "delegated-op",
     adapter: "provider-exact",
-    provider: "local",
-    credentialProvider: mutation === "cloud-runtime" ? "ollama-cloud" : "local",
-    authSource: mutation === "cloud-runtime" ? "env" : "sentinel",
+    provider: secretsRuntime ? "custom" : "local",
+    credentialProvider: secretsRuntime ? "custom" : mutation === "cloud-runtime" ? "ollama-cloud" : "local",
+    authSource: secretsRuntime ? "secrets-store" : mutation === "cloud-runtime" ? "env" : "sentinel",
     model: "restart-proof-model",
     runtime: "openai-compat",
-    target: mutation === "cloud-runtime"
+    target: secretsRuntime
+      ? { kind: "custom-config" as const, endpointFingerprint: createHash("sha256").update(new URL(baseURL).href).digest("hex"), locality: "local" as const }
+      : mutation === "cloud-runtime"
       ? { kind: "ollama-cloud" as const, endpointFingerprint: createHash("sha256").update(new URL(baseURL).href).digest("hex") }
       : { kind: "local-config" as const, endpointFingerprint: createHash("sha256").update(new URL(baseURL).href).digest("hex") },
     sessionId: "session-across-restart",
@@ -68,7 +86,7 @@ function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
       apiKey: "ollama",
       model: "restart-proof-model",
       systemPrompt: "Continue the durable operation from its canonical checkpoint.",
-      tools: [writeTool],
+      tools: mutation === "plugin-runtime" ? [restartPluginTool] : [writeTool],
       security: new SecurityLayer(process.env.LAX_DATA_DIR!, "unrestricted"),
       callContext: "api",
     }, "session-across-restart"),
@@ -78,7 +96,12 @@ function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
 
 function persistInterruptedOperation(): never {
   setRuntimeConfig({ workspace: process.cwd(), authToken: "restart-test-token", ollamaUrl: baseURL.replace(/\/v1$/, ""), ollamaCloudUrl: baseURL.replace(/\/v1$/, "") } as never);
+  if (mutation === "secrets-runtime") {
+    getOrInitSecretsStore(process.env.LAX_DATA_DIR!).set("CUSTOM_API_KEY", "restart-store-secret");
+    writeFileSync(join(process.env.LAX_DATA_DIR!, "settings.json"), JSON.stringify({ customBaseUrl: baseURL }));
+  }
   buildToolRegistry();
+  registerFixturePlugin();
   const task = "resume delegated work after restart";
   const op: Op = {
     id: opId,
@@ -230,6 +253,7 @@ async function resumeThroughBootstrap(): Promise<never> {
     throw new Error("fixture AriKernel failed to start");
   }
   buildToolRegistry();
+  registerFixturePlugin();
   bootstrapCanonicalLoop();
 
   const deadline = Date.now() + 5_000;
@@ -268,6 +292,7 @@ async function resumeThroughBootstrap(): Promise<never> {
     sideEffectCount: sideEffects.length,
     leaseOwner: op?.canonical?.leaseOwner,
     leaseExpiresAt: op?.canonical?.leaseExpiresAt,
+    executionBackendId: op?.canonical?.executionPlacement?.backendId,
   });
 }
 

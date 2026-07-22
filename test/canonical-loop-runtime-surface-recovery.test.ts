@@ -133,6 +133,16 @@ afterEach(() => {
 });
 
 describe("recovered delegated runtime surface", () => {
+  it("keeps a tool identity stable when the canonical registry boots after persistence", () => {
+    const action = tool("write");
+    const persistedFingerprint = toolFingerprint(action);
+
+    mocks.tools.set(action.name, action);
+    mocks.entryFingerprints.set(action.name, `implementation:${action.name}`);
+
+    expect(toolFingerprint(action)).toBe(persistedFingerprint);
+  });
+
   it("rejects restart when plugin or MCP executable provenance changes without persisting source content", () => {
     const action = tool("plugin_action");
     mocks.tools.set(action.name, action);

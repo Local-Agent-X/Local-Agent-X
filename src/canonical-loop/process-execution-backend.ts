@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { getRuntimeConfig } from "../config.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
+import { unifiedRegistry } from "../tools/registry.js";
 import type {
   ExecutionBackend,
   ExecutionBackendStartRequest,
@@ -73,6 +75,8 @@ export class ProcessExecutionBackend implements ExecutionBackend {
       && isExactDelegatedRuntime(descriptor)
       && !!descriptor.sessionId
       && descriptor.surface?.kind === "agent-runner"
+      && descriptor.surface.tools.every(saved =>
+        unifiedRegistry.getEntry(saved.name)?.workerReconstructible === true)
       && op.canonical?.sessionId === descriptor.sessionId
       && op.type !== "chat_turn"
       && op.type !== "voice_turn"
@@ -98,6 +102,7 @@ export class ProcessExecutionBackend implements ExecutionBackend {
     this.reclaimDeadClaim(request.op.id);
     const token = randomUUID();
     const spawnedAt = this.now();
+    const runtimeConfig = getRuntimeConfig();
     const child = this.spawn(this.entryPath, [], {
       stdio: ["ignore", "inherit", "inherit", "ipc"],
       execArgv: this.execArgv,
@@ -108,6 +113,9 @@ export class ProcessExecutionBackend implements ExecutionBackend {
         LAX_PROCESS_TARGET_ID: request.placement.targetId,
         LAX_PROCESS_PLACEMENT_REVISION: String(request.placement.revision),
         LAX_PROCESS_HANDOFF_TOKEN: token,
+        LAX_OLLAMA_URL: runtimeConfig.ollamaUrl,
+        LAX_OLLAMA_CLOUD_URL: runtimeConfig.ollamaCloudUrl,
+        LAX_WORKSPACE: runtimeConfig.workspace,
       },
     });
     return {

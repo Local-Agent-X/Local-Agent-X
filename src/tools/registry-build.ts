@@ -126,7 +126,12 @@ export function buildToolRegistry(): { registry: UnifiedToolRegistry; eagerTools
     // Deferred = no audiences (not visible in any per-request schema).
     // Eager = at least one audience. tool_search still indexes both.
     const defer = !tool.audiences || tool.audiences.length === 0;
-    unifiedRegistry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
+    unifiedRegistry.register(tool, {
+      defer,
+      tags: [],
+      searchHint: tool.description.slice(0, 80),
+      workerReconstructible: true,
+    });
   }
 
   const eagerTools = unifiedRegistry.getEagerTools();

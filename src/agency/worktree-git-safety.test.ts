@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { composeGitArgs, GIT_SAFETY_ARGS, git, WORKTREE_BASE } from "./worktree-core.js";
+import { git, WORKTREE_BASE } from "./worktree-core.js";
 import { bootSweepSafeForRepo, reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
-import { gitSafeCmd } from "../update-pipeline.js";
+import { composeGitArgs, GIT_SAFETY_ARGS, gitSafeCmd } from "../git-safety.js";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const roots: string[] = [];

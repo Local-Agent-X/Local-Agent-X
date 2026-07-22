@@ -35,6 +35,7 @@ import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restor
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
 import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
+import { gitSafeCmd } from "./git-safety.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("update-pipeline");
@@ -73,16 +74,6 @@ export interface GitUpdateResult {
   toCommit: string;
   detail: string;
   gates?: UpdateGates;
-}
-
-/**
- * Prepend `-c gc.auto=0` to a `git ...` command so the update's fetch / merge /
- * commit can never trigger Git's default auto-gc, whose repack+prune would
- * delete objects momentarily unreachable during the landing and corrupt the
- * shared object store. Non-git commands (npm, etc.) pass through unchanged.
- */
-export function gitSafeCmd(cmd: string): string {
-  return /^git\s/.test(cmd) ? cmd.replace(/^git\s/, "git -c gc.auto=0 ") : cmd;
 }
 
 function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): string {

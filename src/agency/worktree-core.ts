@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createLogger } from "../logger.js";
+import { composeGitArgs } from "../git-safety.js";
 
 export const logger = createLogger("agency.worktree");
 
@@ -58,26 +59,6 @@ export function releaseWorktreeSlot(name: string): void {
   if (activeWorktrees.delete(name)) {
     logger.info(`[worktree] released registry slot for ${name} (branch + dir left on disk)`);
   }
-}
-
-/**
- * Config flags prepended to EVERY git invocation this module makes.
- *
- * `gc.auto=0` disables Git's automatic garbage collection. Auto-gc is
- * default-enabled and fires opportunistically after fetch/merge/commit; its
- * repack+prune deletes objects it deems unreachable. A boot sweep that
- * momentarily severs a reachability root (worktree prune, branch delete) can
- * leave objects transiently unreachable exactly when the next op trips auto-gc
- * — which then prunes them from a SHARED object store and corrupts the repo
- * ("bad object HEAD"). Disabling auto-gc per-invocation makes that cascade
- * impossible without persisting any config into the user's checkout.
- */
-export const GIT_SAFETY_ARGS: readonly string[] = ["-c", "gc.auto=0"];
-
-/** Compose the full argv passed to git: safety flags first, then the command. */
-export function composeGitArgs(args: string[] | string): string[] {
-  const argv = Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);
-  return [...GIT_SAFETY_ARGS, ...argv];
 }
 
 /**

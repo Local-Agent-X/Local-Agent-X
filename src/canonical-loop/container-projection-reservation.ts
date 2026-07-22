@@ -26,17 +26,22 @@ export function writeProjectionReservation(
   descriptorMac: string,
 ): void {
   const payload = { schemaVersion: 1 as const, projectionId, opId, descriptorMac };
-  const path = join(root, "reservation.json");
-  const tmp = join(root, `reservation.${process.pid}.${randomUUID()}.tmp`);
   fsyncDirectory(dirname(root));
-  const fd = openSync(tmp, "wx", 0o600);
-  try {
-    writeFileSync(fd, JSON.stringify({ ...payload,
-      mac: computeDurableRecordMac(DOMAIN, JSON.stringify(payload)) }), "utf8");
-    fsyncSync(fd);
-  } finally { closeSync(fd); }
-  renameSync(tmp, path);
-  fsyncDirectory(root);
+  writeDurableJson(root, "reservation.json", { ...payload,
+    mac: computeDurableRecordMac(DOMAIN, JSON.stringify(payload)) });
+}
+
+export function writeProjectionManifest(root: string, value: unknown): void {
+  writeDurableJson(root, "projection.json", value);
+}
+
+export function removeOwnedProjectionRoot(root: string): void {
+  const stat = lstatSync(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("container projection root is invalid");
+  }
+  rmSync(root, { recursive: true, force: true });
+  fsyncDirectory(dirname(root));
 }
 
 export function reopenReservedProjection(
@@ -73,10 +78,19 @@ function interruptedProjection(
       else if (!isRecoverableEmptyReservation(root)) {
         throw new Error("container projection reservation changed before cleanup");
       }
-      rmSync(root, { recursive: true, force: true });
-      fsyncDirectory(dirname(root));
+      removeOwnedProjectionRoot(root);
     },
   };
+}
+
+function writeDurableJson(root: string, name: string, value: unknown): void {
+  const path = join(root, name);
+  const tmp = join(root, `${name}.${process.pid}.${randomUUID()}.tmp`);
+  const fd = openSync(tmp, "wx", 0o600);
+  try { writeFileSync(fd, JSON.stringify(value), "utf8"); fsyncSync(fd); }
+  finally { closeSync(fd); }
+  renameSync(tmp, path);
+  fsyncDirectory(root);
 }
 
 function isRecoverableEmptyReservation(root: string): boolean {

@@ -39,7 +39,8 @@ import {
   createProjectionBrowserRelayToken,
   openProjectionBrowserRelay,
 } from "./container-runtime-browser-relay.js";
-import { reopenReservedProjection, writeProjectionReservation } from "./container-projection-reservation.js";
+import { removeOwnedProjectionRoot, reopenReservedProjection, writeProjectionManifest,
+  writeProjectionReservation } from "./container-projection-reservation.js";
 
 const CONTAINER_DATA = "/var/lib/lax";
 const CONTAINER_SECRETS = "/run/lax-secrets";
@@ -91,10 +92,10 @@ export async function createContainerRuntimeProjection(
   const state = join(root, "state");
   const secrets = join(root, "secrets");
   mkdirSync(root, { mode: 0o700 });
-  writeProjectionReservation(root, projectionId, op.id, descriptor.integrity.mac);
-  mkdirSync(state, { mode: 0o700 });
-  mkdirSync(secrets, { mode: 0o700 });
   try {
+    writeProjectionReservation(root, projectionId, op.id, descriptor.integrity.mac);
+    mkdirSync(state, { mode: 0o700 });
+    mkdirSync(secrets, { mode: 0o700 });
     writeJson(join(state, "config.json"), projectedConfig());
     copyOptionalJson(settingsPath(), join(state, "settings.json"));
     copyOptionalJson(join(getLaxDir(), "tool-policy.json"), join(state, "tool-policy.json"));
@@ -133,10 +134,10 @@ export async function createContainerRuntimeProjection(
         ...(localRuntimePath ? [["localRuntime", localRuntimePath]] : []),
       ].map(([name, path]) => [name, fileIdentity(path)])),
     };
-    writeJson(join(root, "projection.json"), sealManifest(manifest));
+    writeProjectionManifest(root, sealManifest(manifest));
     return await materializeProjection(op, projectionId, root, localRuntimePath !== null);
   } catch (error) {
-    rmSync(root, { recursive: true, force: true });
+    removeOwnedProjectionRoot(root);
     throw error;
   }
 }

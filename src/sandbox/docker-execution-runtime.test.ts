@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -87,16 +87,38 @@ describe("DockerCliExecutionRuntime", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it.skipIf(!canSymlink)("passes the canonical mount source to Docker", async () => {
+  it.skipIf(!canSymlink || process.platform !== "linux")(
+    "holds the canonical mount inode across Docker create",
+    async () => {
+      const replacement = join(mountRoot, "replacement");
+      writeFileSync(replacement, "replacement");
+      const run = vi.fn<DockerCommandRunner>()
+        .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+        .mockImplementationOnce(async (args) => {
+          rmSync(mountLink);
+          symlinkSync(replacement, mountLink, "file");
+          const source = /source=([^,]+)/.exec(args.join(" "))?.[1];
+          expect(source).toMatch(/^\/proc\/\d+\/fd\/\d+$/);
+          expect(readFileSync(source!, "utf8")).toBe("state");
+          return { stdout: `${containerId}\n`, stderr: "" };
+        })
+        .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" });
+      const input = spec();
+      input.mounts = [{ source: mountLink, target: "/var/lib/lax-op", readOnly: false }];
+      await new DockerCliExecutionRuntime(run, policy()).create(input);
+      expect(run.mock.calls[1][0].join(" ")).not.toContain(`source=${mountLink}`);
+    },
+  );
+
+  it.skipIf(process.platform === "linux")("fails closed for bind mounts without inode-stable handoff", async () => {
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
-      .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
-      .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" });
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" });
     const input = spec();
-    input.mounts = [{ source: mountLink, target: "/var/lib/lax-op", readOnly: false }];
-    await new DockerCliExecutionRuntime(run, policy()).create(input);
-    expect(run.mock.calls[1][0].join(" ")).toContain(`source=${realpathSync(mountSource)}`);
-    expect(run.mock.calls[1][0].join(" ")).not.toContain(`source=${mountLink}`);
+    input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
+
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(input))
+      .rejects.toThrow("inode-stable container bind mounts require a Linux host");
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it("rejects host networking and a zero memory fence", async () => {
@@ -116,7 +138,7 @@ function spec(): DockerContainerSpec {
     image: { reference, requestedDigest: digest, imageId },
     command: ["node", "/opt/lax/container-worker-entry.js"],
     environment: { LAX_OP_ID: "op-1" },
-    mounts: [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }],
+    mounts: [],
     network: { name: "lax-egress" },
     memoryLimit: "2g",
     pidsLimit: 256,

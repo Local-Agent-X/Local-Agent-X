@@ -1,5 +1,5 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -121,7 +121,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   async create(spec: DockerContainerSpec): Promise<DockerContainerIdentity> {
     validateSpec(spec, this.policy);
     const network = spec.network === "none" ? "none" : await this.resolveApprovedNetwork(spec.network.name);
-    const mounts = validatedMounts(spec.mounts, this.policy.approvedMountRoots);
+    const heldMounts = holdValidatedMounts(spec.mounts, this.policy.approvedMountRoots);
     const args = [
       "create", "--name", spec.name,
       "--read-only", "--cap-drop", "ALL",
@@ -138,11 +138,13 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
     for (const [key, value] of Object.entries(spec.environment).sort(([a], [b]) => a.localeCompare(b))) {
       args.push("--env", `${key}=${value}`);
     }
-    for (const mount of mounts) {
+    for (const mount of heldMounts.mounts) {
       args.push("--mount", bindMountArg(mount));
     }
     args.push(spec.image.reference, ...spec.command);
-    const created = (await this.run(args, { timeoutMs: 60_000 })).stdout.trim();
+    let created: string;
+    try { created = (await this.run(args, { timeoutMs: 60_000 })).stdout.trim(); }
+    finally { heldMounts.close(); }
     if (!CONTAINER_ID.test(created)) throw new Error("Docker returned an ambiguous container id");
     const identity = await this.inspect(created);
     if (!identity || identity.imageId !== spec.image.imageId) {
@@ -250,40 +252,71 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
   for (const mount of spec.mounts) validateMountShape(mount);
 }
 
-function validatedMounts(
+function holdValidatedMounts(
   mounts: readonly DockerBindMount[],
   approvedMountRoots: readonly string[],
-): DockerBindMount[] {
-  return mounts.map(mount => {
-    validateMountShape(mount);
-    const source = resolve(mount.source);
-    if (mount.target === "/var/run/docker.sock" || dockerSocketPath(source)) {
-      throw new Error("Docker socket mount is forbidden");
-    }
-    let canonical: string;
-    try { canonical = realpathSync(source); }
-    catch { throw new Error("container execution mount source is unavailable"); }
-    if (dockerSocketPath(canonical)) {
-      throw new Error("Docker socket mount is forbidden");
-    }
-    const sourceType = lstatSync(canonical);
-    if (!sourceType.isFile() && !sourceType.isDirectory()) {
-      throw new Error("container execution mount source must be a regular file or directory");
-    }
-    const roots = approvedMountRoots.map(root => {
-      try { return realpathSync(resolve(root)); }
-      catch { throw new Error("approved container mount root is unavailable"); }
+): { mounts: DockerBindMount[]; close: () => void } {
+  if (mounts.length > 0 && process.platform !== "linux") {
+    throw new Error("inode-stable container bind mounts require a Linux host");
+  }
+  const descriptors: number[] = [];
+  try {
+    const roots = mounts.length > 0
+      ? approvedMountRoots.map(root => holdDirectory(resolve(root), descriptors))
+      : [];
+    const held = mounts.map(mount => {
+      validateMountShape(mount);
+      const source = resolve(mount.source);
+      if (mount.target === "/var/run/docker.sock" || dockerSocketPath(source)) {
+        throw new Error("Docker socket mount is forbidden");
+      }
+      let canonical: string;
+      try { canonical = realpathSync(source); }
+      catch { throw new Error("container execution mount source is unavailable"); }
+      if (dockerSocketPath(canonical)) {
+        throw new Error("Docker socket mount is forbidden");
+      }
+      const fd = openSync(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+      descriptors.push(fd);
+      const heldIdentity = fstatSync(fd);
+      if (!heldIdentity.isFile() && !heldIdentity.isDirectory()) {
+        throw new Error("container execution mount source must be a regular file or directory");
+      }
+      const heldPath = realpathSync(fdPath(fd));
+      if (!roots.some(root => heldPath === root.path
+        || heldPath.startsWith(root.path.endsWith(sep) ? root.path : root.path + sep))) {
+        throw new Error("container execution mount source is outside approved roots");
+      }
+      return { ...mount, source: fdPath(fd) };
     });
-    if (!roots.some(root => canonical === root || canonical.startsWith(root.endsWith(sep) ? root : root + sep))) {
-      throw new Error("container execution mount source is outside approved roots");
-    }
-    const before = lstatSync(canonical);
-    const after = lstatSync(canonical);
-    if (before.dev !== after.dev || before.ino !== after.ino) {
-      throw new Error("container execution mount source identity changed");
-    }
-    return { ...mount, source: canonical };
-  });
+    return { mounts: held, close: () => closeAll(descriptors) };
+  } catch (error) {
+    closeAll(descriptors);
+    throw error;
+  }
+}
+
+function holdDirectory(path: string, descriptors: number[]): { path: string } {
+  let canonical: string;
+  try { canonical = realpathSync(path); }
+  catch { throw new Error("approved container mount root is unavailable"); }
+  const before = lstatSync(canonical);
+  if (!before.isDirectory()) throw new Error("approved container mount root is unavailable");
+  const fd = openSync(canonical, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0));
+  descriptors.push(fd);
+  const held = fstatSync(fd);
+  if (!held.isDirectory() || before.dev !== held.dev || before.ino !== held.ino) {
+    throw new Error("approved container mount root identity changed");
+  }
+  return { path: realpathSync(fdPath(fd)) };
+}
+
+function fdPath(fd: number): string {
+  return `/proc/${process.pid}/fd/${fd}`;
+}
+
+function closeAll(descriptors: number[]): void {
+  for (const fd of descriptors.splice(0)) closeSync(fd);
 }
 
 function validateMountShape(mount: DockerBindMount): void {

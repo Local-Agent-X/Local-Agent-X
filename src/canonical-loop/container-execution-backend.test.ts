@@ -175,6 +175,24 @@ describe("ContainerExecutionBackend", () => {
     await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
     expect(recovered.cleanup).toHaveBeenCalledOnce();
   });
+
+  it("cleans the durable projection before reclaiming a stale container claim", async () => {
+    const runtime = fakeRuntime();
+    const recovered = fakeProjection();
+    const backend = new Backend({ imageReference, runtime,
+      projectionFactory: async () => { throw new Error("fresh launch blocked"); },
+      projectionRecovery: async () => recovered });
+    const op = fixtureOp("projection-reclaim", backend);
+    const placement = op.canonical!.executionPlacement!;
+    const stale = { ...claim(op, placement.targetId, placement.revision, "stale-token"),
+      heartbeatAt: "2026-07-21T12:00:00.000Z" };
+    expect(claimProcessExecution(stale)).toBe(true);
+    writeBoundIntent(op, placement, "stale-token", "projection-stale");
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done)
+      .rejects.toThrow("fresh launch blocked");
+    expect(recovered.cleanup).toHaveBeenCalledOnce();
+  });
 });
 
 function backendWith(runtime: DockerExecutionRuntime, projection = fakeProjection()): ContainerExecutionBackend {

@@ -143,8 +143,10 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       if (state && !containerStateMatchesClaim(state, existing)) {
         throw new Error("container execution identity changed before reclaim");
       }
+      const projection = await this.reopenProjection(request.op, intent);
       await this.stopAndConfirm(existing.containerId);
       if (!removeProcessExecutionClaim(existing)) throw new Error("container ownership changed during reclaim");
+      projection?.cleanup();
       removeContainerLaunchIntent(intent);
     }
 

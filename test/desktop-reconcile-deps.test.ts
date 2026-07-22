@@ -11,12 +11,16 @@
 //      writes a cross-boot marker (server-side ESM writer, desktop-side CJS
 //      reader; they cannot import each other, so this test pins the shared
 //      path convention AND the payload round trip).
+//   4. A pnpm run in this npm-managed repo rewrote node_modules mid-run (vitest
+//      vanished while tests were executing) and gutted desktop electron —
+//      foreignPmCorruption detects the rewrite so reconcile can wipe + heal.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   depsInstalled,
+  foreignPmCorruption,
   staleDistDecision,
   readDesktopPrebuildMarker,
   clearDesktopPrebuildMarker,
@@ -62,6 +66,53 @@ describe("depsInstalled — manifest alone is not proof", () => {
     writeFileSync(manifest(), "{}");
     writeFileSync(join(root, "node_modules", "electron", "package.json"), '{"name":"electron"}');
     expect(depsInstalled(root, "electron")).toBe(true);
+  });
+});
+
+describe("foreignPmCorruption — a pnpm rewrite of an npm tree is corruption, not health", () => {
+  const nm = () => join(root, "node_modules");
+  const cleanNpmLayout = () => {
+    mkdirSync(join(nm(), "electron"), { recursive: true });
+    writeFileSync(join(nm(), ".package-lock.json"), "{}");
+    writeFileSync(join(nm(), "electron", "package.json"), '{"name":"electron"}');
+  };
+
+  it("null when node_modules is missing entirely — deps MISSING, not corrupt", () => {
+    expect(foreignPmCorruption(root)).toBeNull();
+    expect(depsInstalled(root)).toBe(false); // still unhealthy, via the plain missing-deps path
+  });
+
+  it("clean npm layout is healthy — no corruption, depsInstalled true", () => {
+    cleanNpmLayout();
+    expect(foreignPmCorruption(root)).toBeNull();
+    expect(depsInstalled(root)).toBe(true);
+    expect(depsInstalled(root, "electron")).toBe(true);
+  });
+
+  it("CORRUPT when node_modules/.pnpm exists — even with npm's manifest and marker package intact", () => {
+    cleanNpmLayout();
+    mkdirSync(join(nm(), ".pnpm"), { recursive: true });
+    const cause = foreignPmCorruption(root);
+    expect(cause).toMatch(/another package manager \(pnpm\)/);
+    expect(cause).toContain(".pnpm");
+    expect(depsInstalled(root)).toBe(false);
+    expect(depsInstalled(root, "electron")).toBe(false);
+  });
+
+  it("CORRUPT when node_modules/.modules.yaml exists — pnpm's tree manifest", () => {
+    cleanNpmLayout();
+    writeFileSync(join(nm(), ".modules.yaml"), "layoutVersion: 5");
+    const cause = foreignPmCorruption(root);
+    expect(cause).toMatch(/another package manager \(pnpm\)/);
+    expect(cause).toContain(".modules.yaml");
+    expect(depsInstalled(root)).toBe(false);
+  });
+
+  it("CORRUPT when node_modules exists without npm's .package-lock.json manifest", () => {
+    mkdirSync(join(nm(), "some-pkg"), { recursive: true });
+    const cause = foreignPmCorruption(root);
+    expect(cause).toMatch(/\.package-lock\.json/);
+    expect(depsInstalled(root)).toBe(false);
   });
 });
 

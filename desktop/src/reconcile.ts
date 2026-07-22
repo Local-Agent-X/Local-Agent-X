@@ -21,10 +21,8 @@ import { existsSync, readFileSync, readdirSync, statSync, cpSync, rmSync } from 
 import { join, relative } from "path";
 import { Script } from "vm";
 import { serverDistIsFresh, desktopDistIsFresh, desktopDistMtimeFresh } from "./dist-freshness";
-import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState, depsInstalled, staleDistDecision, readDesktopPrebuildMarker, clearDesktopPrebuildMarker } from "./reconcile-hash";
-import { showNotification } from "./hotkey-notifications";
-import { setSplashHint } from "./splash-recovery";
-import { getMainWindow } from "./window";
+import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState, depsInstalled, foreignPmCorruption, staleDistDecision, readDesktopPrebuildMarker, clearDesktopPrebuildMarker } from "./reconcile-hash";
+import { surfaceForeignPmRewrite } from "./reconcile-surface";
 
 // GUI-launched apps inherit a PATH that can't see the node/npm we provision
 // (minimal launchd PATH on macOS; stale pre-install env on Windows). Without
@@ -167,24 +165,6 @@ function firstUnparseableJs(distDir: string): { file: string; error: string } | 
   return null;
 }
 
-/** All three loud surfaces for a stale desktop dist, warn-and-continue (never
- *  throws): OS notification + splash hint now (main.ts calls this during the
- *  splash phase), and a renderer health-banner via the "server-crashed" channel
- *  pattern (send → preload onDesktopBuildStale → shared-desktop.js). Sent on
- *  every did-finish-load — the listener only exists once the real app page
- *  loads (the splash ignores the send), and re-sends survive in-app reloads. */
-export function surfaceStaleDesktopDist(reason: string): void {
-  console.warn(`[desktop] stale desktop build: ${reason}`);
-  try {
-    showNotification("Local Agent X — app build is stale", `${reason}. Restart, update again, or use the splash Repair button to rebuild.`);
-    setSplashHint(reason);
-    const w = getMainWindow();
-    w?.webContents.on("did-finish-load", () => {
-      try { w.webContents.send("desktop-build-stale", { reason }); } catch { /* window tearing down */ }
-    });
-  } catch (e) { console.warn(`[desktop] could not surface stale-dist warning: ${(e as Error).message}`); }
-}
-
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
   const { projectRoot, onStatus } = opts;
   const ranSteps: string[] = [];
@@ -212,6 +192,24 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       `Reconcile aborted: projectRoot "${projectRoot}" has no desktop/src/*.ts files and no package-lock.json. ` +
       `This is almost certainly the wrong projectRoot. Check ~/.lax/config.json.`,
     );
+  }
+
+  // Foreign-package-manager rewrite guard (the 2026-07 pnpm incident: a coding
+  // agent ran pnpm in this npm-managed repo — pnpm rewrote node_modules MID-RUN
+  // and gutted desktop/node_modules/electron, silently breaking desktop rebuilds
+  // for 3 days). Surface LOUDLY, then wipe the tree so the heal npm-install
+  // below rebuilds a clean npm layout — `npm install` over pnpm's symlink forest
+  // leaves .pnpm/.modules.yaml behind and would re-flag this on every boot.
+  // Runs after the misconfigured-projectRoot guard so we never wipe a stranger's
+  // node_modules; depsInstalled() below independently reads the wiped tree as
+  // missing, which is what routes both launch paths into the existing heal.
+  for (const dir of [projectRoot, join(projectRoot, "desktop")]) {
+    const cause = foreignPmCorruption(dir);
+    if (!cause) continue;
+    const label = dir === projectRoot ? "" : "desktop ";
+    surfaceForeignPmRewrite(label + cause);
+    rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+    ranSteps.push(`wiped foreign-package-manager ${label}node_modules`);
   }
 
   // node_modules can be gone/incomplete without the lockfile changing — a fresh

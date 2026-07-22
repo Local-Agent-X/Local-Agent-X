@@ -11,14 +11,17 @@ try {
   });
 } catch { /* preload bridge unavailable, browser context */ }
 
-// Desktop-only: boot found desktop/dist stale with no rebuild scheduled
-// (failed update pre-build / degraded deps) — surface it in-app via the
-// standard health banner instead of a log line nobody reads. Channel:
-// desktop/src/reconcile.ts surfaceStaleDesktopDist → preload onDesktopBuildStale.
+// Desktop-only: boot found a desktop health problem — a stale desktop/dist
+// with no rebuild scheduled (failed update pre-build / degraded deps), or a
+// node_modules rewritten by a foreign package manager (pnpm). Surface it
+// in-app via the standard health banner instead of a log line nobody reads.
+// Channel: desktop/src/reconcile-surface.ts → preload onDesktopBuildStale.
+// `headline` is optional (older mains send only `reason`).
 try {
   window.desktop?.onDesktopBuildStale?.((info) => {
-    console.warn('[desktop] Desktop build stale:', info);
-    const msg = 'Desktop app build is out of date — ' + (info && info.reason ? info.reason : 'reason unknown');
+    console.warn('[desktop] Desktop health issue:', info);
+    const headline = (info && info.headline) || 'Desktop app build is out of date';
+    const msg = headline + ' — ' + (info && info.reason ? info.reason : 'reason unknown');
     if (typeof window.showHealthBanner === 'function') window.showHealthBanner(msg);
   });
 } catch { /* preload bridge unavailable, browser context */ }

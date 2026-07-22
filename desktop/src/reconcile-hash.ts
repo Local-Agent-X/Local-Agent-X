@@ -21,11 +21,47 @@ export const STATE_PATH = join(homedir(), ".lax", "reconcile-state.json");
  * node_modules/electron) can keep `.package-lock.json` and pass for days while
  * the loader silently falls back to the bundled main. Desktop passes "electron";
  * root has no equally clear single marker, so it stays manifest-only.
+ *
+ * Also false when foreignPmCorruption (below) flags the tree — a node_modules
+ * rewritten by pnpm is corrupt for an npm-managed repo even if the manifest
+ * and marker package survived the rewrite.
  */
 export function depsInstalled(dir: string, markerPkg?: string): boolean {
-  if (!existsSync(join(dir, "node_modules", ".package-lock.json"))) return false;
+  if (!existsSync(join(dir, "node_modules"))) return false;
+  // Covers BOTH a missing .package-lock.json manifest and a tree rewritten by
+  // a foreign package manager (pnpm) — either way this is not a healthy npm
+  // install, so the heal npm-install path must run.
+  if (foreignPmCorruption(dir) !== null) return false;
   if (markerPkg !== undefined && !existsSync(join(dir, "node_modules", markerPkg, "package.json"))) return false;
   return true;
+}
+
+/**
+ * Foreign-package-manager corruption of an npm-managed node_modules (the
+ * 2026-07 incident: a coding-agent session ran `pnpm` in this npm repo; pnpm
+ * rewrote node_modules MID-RUN — vitest vanished while tests were executing —
+ * and had previously gutted desktop/node_modules/electron into an empty dir,
+ * silently breaking desktop rebuilds for 3 days). pnpm's layout is a symlink
+ * forest into node_modules/.pnpm plus a .modules.yaml manifest; npm's is flat
+ * with a .package-lock.json manifest. Any pnpm marker — or a node_modules
+ * that exists WITHOUT npm's manifest — means the tree cannot be trusted.
+ *
+ * Returns the human-readable cause, or null when the tree is either absent
+ * (deps MISSING, not corrupt — the plain heal handles that) or a healthy npm
+ * layout. Callers that heal a corrupt tree must WIPE node_modules first:
+ * `npm install` over pnpm's symlink forest leaves .pnpm/.modules.yaml behind,
+ * which would re-flag corruption on every subsequent boot.
+ */
+export function foreignPmCorruption(dir: string): string | null {
+  const nm = join(dir, "node_modules");
+  if (!existsSync(nm)) return null;
+  if (existsSync(join(nm, ".pnpm")))
+    return "node_modules was rewritten by another package manager (pnpm) — found node_modules/.pnpm";
+  if (existsSync(join(nm, ".modules.yaml")))
+    return "node_modules was rewritten by another package manager (pnpm) — found node_modules/.modules.yaml";
+  if (!existsSync(join(nm, ".package-lock.json")))
+    return "node_modules exists but npm's .package-lock.json manifest is missing — the tree was rewritten by another package manager or an install was interrupted";
+  return null;
 }
 
 // ── Desktop pre-build marker (cross-side, sibling of reconcile-state.json) ──

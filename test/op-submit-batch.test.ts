@@ -288,6 +288,29 @@ describe("op_submit_batch — fan-out launcher", () => {
     }
   });
 
+  it("rejects a missing adapter before committing or enqueueing any row", async () => {
+    const configuredIds: string[] = [];
+    runtimeFixture.configure.mockImplementation(async (op) => {
+      configuredIds.push(op.id);
+      if (configuredIds.length === 1) {
+        registerAdapterForOp(op.id, () => new CountingAdapter({
+          counter: { inFlight: 0, max: 0 }, holdMs: 1,
+        }));
+      }
+    });
+    const result = await opSubmitBatchTool.execute({ tasks: [
+      { ...task("adapter root one"), task_key: "one" },
+      { ...task("adapter root two"), task_key: "two" },
+    ] });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("adapter missing");
+    for (const id of configuredIds) {
+      expect(readOp(id)).toBeNull();
+      expect(resolveAdapterFactory({ id } as Op)).toBeNull();
+    }
+  });
+
   it("honors concurrency for independent keyed tasks without coupling failure state", async () => {
     const counter = installCountingLaneAdapter(25);
     const tasks = [1, 2, 3].map((number) => ({

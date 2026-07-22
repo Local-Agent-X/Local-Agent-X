@@ -6,6 +6,7 @@ import { writeOpStrict } from "../ops/op-store.js";
 import { resourceLocksForProvider } from "../ops/provider-matrix.js";
 import type { Op } from "../ops/types.js";
 import { randomId } from "../util/ids.js";
+import { createLogger } from "../logger.js";
 import { registerDependencyWaiter, validateDependencyBatch } from "./dependencies.js";
 import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory, unregisterAdapterForOp } from "./runtime.js";
@@ -19,6 +20,7 @@ interface DependencyBatchManifest {
 }
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/;
+const logger = createLogger("canonical-loop.dependency-batch");
 
 function batchDirectory(): string {
   return join(getLaxDir(), "operation-batches");
@@ -96,6 +98,9 @@ export function admitDependencyBatch(ops: readonly Op[], sessionIds: readonly st
   for (let index = 0; index < ops.length; index++) initialize(ops[index], sessionIds[index], batchId);
   try {
     for (const op of ops) {
+      if (!resolveAdapterFactory(op)) throw new Error(`dependency batch adapter missing for ${op.id}`);
+    }
+    for (const op of ops) {
       if (!writeOpStrict(op)) throw new Error(`failed to persist dependency batch operation ${op.id}`);
     }
     commitManifest(batchId, ops.map(op => op.id));
@@ -106,10 +111,13 @@ export function admitDependencyBatch(ops: readonly Op[], sessionIds: readonly st
 
   const body: StateChangedBody = { from: null, to: "queued", reason: "submitted" };
   for (const op of ops) {
-    registerDependencyWaiter(op);
-    emit(op.id, "state_changed", body);
-    if (!resolveAdapterFactory(op)) throw new Error(`dependency batch adapter missing for ${op.id}`);
-    enqueueOp(op.id, op.lane as CanonicalLane);
+    try { registerDependencyWaiter(op); }
+    catch (error) { logger.error(`committed batch waiter registration failed for ${op.id}: ${(error as Error).message}`); }
+    try { emit(op.id, "state_changed", body); }
+    catch (error) { logger.error(`committed batch event projection failed for ${op.id}: ${(error as Error).message}`); }
+    try { enqueueOp(op.id, op.lane as CanonicalLane); }
+    catch (error) { logger.error(`committed batch enqueue failed for ${op.id}: ${(error as Error).message}`); }
   }
-  pumpScheduler();
+  try { pumpScheduler(); }
+  catch (error) { logger.error(`committed batch pump failed: ${(error as Error).message}`); }
 }

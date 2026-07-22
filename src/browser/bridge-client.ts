@@ -259,7 +259,7 @@ export function requestDesktopBrowserBridge(request: BrowserRelayRequest): Promi
 		});
 		timer = setTimeout(() => finish(() => reject(new BridgeTimeoutError(op, viewId, timeoutMs))), timeoutMs);
 		try {
-			process.send!({ id, ...message });
+			process.send!({ ...message, id });
 		} catch (e) {
 			finish(() => reject(new BridgeOpError(op, viewId, `send failed: ${(e as Error).message}`)));
 			return;

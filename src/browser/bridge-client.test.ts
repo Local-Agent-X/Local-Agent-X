@@ -26,6 +26,7 @@ import {
 	INPUT_TIMEOUT_MS,
 	LIFECYCLE_TIMEOUT_MS,
 	NAVIGATE_DESKTOP_TIMEOUT_MS,
+	requestDesktopBrowserBridge,
 } from "./bridge-client.js";
 import { EventBus } from "../event-bus.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
@@ -68,6 +69,19 @@ afterEach(() => {
 });
 
 describe("browser bridge client — happy paths", () => {
+	it("owns reply correlation even when a relayed message contains an id", async () => {
+		const pending = requestDesktopBrowserBridge({
+			op: "capture",
+			viewId: "v-relay",
+			message: { type: "lax:browser-capture", viewId: "v-relay", id: -1 },
+			timeoutMs: 1_000,
+		});
+		const msg = lastSent();
+		expect(msg.id).not.toBe(-1);
+		receive({ type: "lax:browser-capture-result", id: msg.id, ok: true, pngB64: "png" });
+		await expect(pending).resolves.toMatchObject({ pngB64: "png" });
+	});
+
 	it("lifecycle create sends the partition and resolves the view info", async () => {
 		const p = browserLifecycle("create", "v1", { partition: "persist:lax-profile-abc", bounds: { x: 0, y: 0, width: 800, height: 600 } });
 		const msg = lastSent();

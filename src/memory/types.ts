@@ -57,6 +57,8 @@ export interface MemoryConfig {
   dailyLogTailChars: number;
   coreFactsLimit: number;
   coreFactsMaxBytes: number;
+  /** Byte cap for inline entity facts rendered in <known_entities>. */
+  entityFactsMaxBytes: number;
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -93,6 +95,7 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   dailyLogTailChars: 1500,
   coreFactsLimit: 60,
   coreFactsMaxBytes: 3000,
+  entityFactsMaxBytes: 1500,
 };
 
 // ── Search / chunk types ──

@@ -6,6 +6,8 @@ import { readProjectBrief } from "./project-brief.js";
 import type { FactKind } from "./types.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
 import { extractKeywords, safeReadTextFile } from "./utils.js";
+import { scanMentionedEntities, renderKnownEntitiesBody, findCutoffMisses } from "./entity-context.js";
+import { logMemoryRecall } from "./recall-telemetry.js";
 
 function sanitizeDailyLogForModeration(log: string): string {
   const lines = log.split(/\r?\n/);
@@ -137,40 +139,8 @@ export async function buildContextBlockParts(
   // bumped) — their hot-score jumps, so they make the selection cut this turn
   // AND stay warm for the next session. The "human memory" pattern: a fact
   // untouched for months returns to hot context the moment it's relevant.
-  let mentionedEntities: string[] = [];
-  const entityFactIds = new Set<number>();
-  if (opts.userMessage && opts.userMessage.trim().length > 0) {
-    const stats = memory.getStats();
-    if (stats.totalEntities > 0) {
-      // Most-mentioned first — the old `ORDER BY entity_slug LIMIT 200`
-      // silently ignored every entity past the first 200 alphabetically.
-      const entitySlugs = memory["db"]
-        .prepare(
-          "SELECT entity_slug, COUNT(*) AS mentions FROM entity_mentions GROUP BY entity_slug ORDER BY mentions DESC LIMIT 200"
-        )
-        .all() as Array<{ entity_slug: string }>;
-      const msgLower = opts.userMessage.toLowerCase();
-      mentionedEntities = entitySlugs
-        .map((e) => e.entity_slug)
-        .filter((slug) => {
-          if (!slug || slug.length < 3) return false;
-          // Word-boundary match, not naive substring — `includes` reinforced
-          // 'art' via 'start' and 'ann' via 'planning', bumping last_updated
-          // on the wrong facts and corrupting hot-score ranking for the
-          // ~30-day decay half-life.
-          const esc = slug.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          return new RegExp(`\\b${esc}\\b`).test(msgLower);
-        });
-      // Reinforce facts attached to mentioned entities; limit per-entity so
-      // a single name doesn't flood the prompt or trigger a 100-row update.
-      for (const slug of mentionedEntities) {
-        for (const fact of memory.recallByEntity(slug, 5)) {
-          if (fact.id !== undefined) entityFactIds.add(fact.id);
-        }
-      }
-      if (entityFactIds.size > 0) memory.reinforceFacts([...entityFactIds]);
-    }
-  }
+  // The fetched facts are kept and rendered inline in <known_entities> below.
+  const entityScan = scanMentionedEntities(memory, opts.userMessage);
 
   // <core_memory> — unified, read-only projection of the Facts DB grouped by
   // kind (replaced <user_preferences> + <learned_facts>). A live view is
@@ -188,6 +158,9 @@ export async function buildContextBlockParts(
     limit: cfg.coreFactsLimit,
     minConfidence: 0.4,
   });
+  // Fact ids <core_memory> renders this turn — <known_entities> dedups
+  // against this set so the same fact never appears twice in one prompt.
+  const renderedCoreFactIds = new Set<number>();
   if (coreFacts.length > 0) {
     const buckets: Record<FactKind, string[]> = {
       world: [],
@@ -223,7 +196,10 @@ export async function buildContextBlockParts(
     // monotonic and immutable, unlike hot-score, and read chronologically).
     // Same selected set → same bytes. Line text tiebreaks id-less facts.
     selected.sort((a, b) => a.id - b.id || a.line.localeCompare(b.line));
-    for (const s of selected) buckets[s.kind].push(s.line);
+    for (const s of selected) {
+      buckets[s.kind].push(s.line);
+      if (s.id !== Number.MAX_SAFE_INTEGER) renderedCoreFactIds.add(s.id);
+    }
     // Relational labels (May 2026) — schema-flavored labels (Identity /
     // Preferences / …) made the model read this as a cold database. Second-
     // person relational wording keeps it in the "you know this person"
@@ -289,11 +265,42 @@ export async function buildContextBlockParts(
     }
   }
 
-  if (mentionedEntities.length > 0) {
+  if (entityScan.mentionedEntities.length > 0) {
+    // Inline recall: render the matched entities' facts (already fetched
+    // for reinforcement above) instead of a bare name list, so a one-word
+    // mention is answered from context instead of a memory_search tool
+    // round-trip. Facts <core_memory> already rendered are not repeated.
+    const render = renderKnownEntitiesBody(entityScan, renderedCoreFactIds, cfg.entityFactsMaxBytes);
+    const guidance = render.factsRendered > 0
+      ? "(facts you already hold about entities named in this message — recall, not proof; verify current runtime/project state with fresh tools)\n"
+      : "";
     volatileSections.push(
       `<known_entities>\n${provenanceHeader("entity", "entity-page", "unknown", "unknown", "Mentioned known entities")}\n` +
-      `${mentionedEntities.join(", ")}\n</known_entities>`,
+      `${guidance}${render.body}\n</known_entities>`,
     );
+    logMemoryRecall({
+      sessionId: opts.sessionId,
+      matched: entityScan.mentionedEntities,
+      factsRendered: render.factsRendered,
+      factsDeduped: render.factsDeduped,
+      bytesInjected: render.bytes,
+      totalEntities: entityScan.totalEntities,
+      scannedEntities: entityScan.scannedEntities,
+      cutoffMisses: findCutoffMisses(memory, opts.userMessage, entityScan),
+    });
+  } else if (entityScan.scannedEntities > 0) {
+    // Zero matches is the interesting datapoint — log it (with cutoff-miss
+    // detection) so "term mentioned but not recognized" is measurable.
+    logMemoryRecall({
+      sessionId: opts.sessionId,
+      matched: [],
+      factsRendered: 0,
+      factsDeduped: 0,
+      bytesInjected: 0,
+      totalEntities: entityScan.totalEntities,
+      scannedEntities: entityScan.scannedEntities,
+      cutoffMisses: findCutoffMisses(memory, opts.userMessage, entityScan),
+    });
   }
 
   if (stableSections.length === 0 && volatileSections.length === 0) return { stable: "", volatile: "" };

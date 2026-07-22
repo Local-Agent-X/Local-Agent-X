@@ -30,7 +30,11 @@ export function createProjectionBrowserRelayToken(root: string): string {
 export async function openProjectionBrowserRelay(
   root: string,
   identity: { device: string; inode: string },
+  ownerSessionId: string,
 ): Promise<ProjectionBrowserRelay> {
+  if (!ownerSessionId) {
+    throw new Error("container browser relay requires an owning session");
+  }
   const tokenPath = join(root, BROWSER_RELAY_TOKEN_FILE);
   const stat = lstatSync(tokenPath);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== 64) {
@@ -47,6 +51,7 @@ export async function openProjectionBrowserRelay(
   const handle: BrowserRelayServerHandle = await startBrowserContainerRelay({
     socketPath: join(root, "state", "browser-relay.sock"),
     token,
+    ownerSessionId,
     handler: { request: requestDesktopBrowserBridge, abort: browserAbortDesktop },
   });
   return {

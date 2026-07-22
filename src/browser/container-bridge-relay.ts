@@ -2,6 +2,8 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, rmSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
+import type { BrowserViewInfo } from "./bridge-client-contract.js";
+import { viewBelongsToSession } from "./bridge-perception.js";
 
 export const CONTAINER_BROWSER_RELAY_FLAG = "LAX_CONTAINER_BROWSER_RELAY";
 export const CONTAINER_BROWSER_RELAY_SOCKET = "LAX_CONTAINER_BROWSER_RELAY_SOCKET";
@@ -69,16 +71,25 @@ export async function relayBrowserAbort(viewId: string): Promise<void> {
 export async function startBrowserContainerRelay(options: {
 	socketPath: string;
 	token: string;
+	/** The session that owns this relay. Every relayed op may only target a
+	 *  view named for this session (view-<ownerSessionId>-<profile>); a viewId
+	 *  belonging to an unrelated session (or none) is refused — see
+	 *  viewBelongsToSession for the exact boundary, which admits this session's
+	 *  own hyphen-nested descendants but never an unrelated top-level session.
+	 *  The token proves only container membership, so this is what keeps one
+	 *  container off another session's browser views. */
+	ownerSessionId: string;
 	handler: BrowserRelayHandler;
 }): Promise<BrowserRelayServerHandle> {
 	validateEndpoint(options.socketPath, options.token);
+	assertOwnerSessionId(options.ownerSessionId);
 	await activeServers.get(options.socketPath)?.close();
 	removeStaleSocket(options.socketPath);
 	const sockets = new Set<Socket>();
 	const server = createServer(socket => {
 		sockets.add(socket);
 		socket.once("close", () => sockets.delete(socket));
-		handleSocket(socket, options.token, options.handler);
+		handleSocket(socket, options.token, options.ownerSessionId, options.handler);
 	});
 	await listen(server, options.socketPath);
 	if (process.platform !== "win32") chmodSync(options.socketPath, 0o600);
@@ -145,7 +156,12 @@ async function exchange(payload: RelayPayload, timeoutMs: number): Promise<unkno
 	return response.result;
 }
 
-function handleSocket(socket: Socket, token: string, handler: BrowserRelayHandler): void {
+function handleSocket(
+	socket: Socket,
+	token: string,
+	ownerSessionId: string,
+	handler: BrowserRelayHandler,
+): void {
 	let bytes = 0;
 	let body = "";
 	let handled = false;
@@ -160,7 +176,7 @@ function handleSocket(socket: Socket, token: string, handler: BrowserRelayHandle
 		if (newline < 0) return;
 		if (body.slice(newline + 1).trim() !== "") { socket.destroy(); return; }
 		handled = true;
-		void serveFrame(socket, body.slice(0, newline), token, handler);
+		void serveFrame(socket, body.slice(0, newline), token, ownerSessionId, handler);
 	});
 }
 
@@ -168,6 +184,7 @@ async function serveFrame(
 	socket: Socket,
 	body: string,
 	token: string,
+	ownerSessionId: string,
 	handler: BrowserRelayHandler,
 ): Promise<void> {
 	let frame: RelayFrame;
@@ -182,10 +199,12 @@ async function serveFrame(
 	try {
 		const payload = frame.payload as RelayPayload;
 		if (payload.kind === "abort") {
+			assertOwnedView(payload.viewId as string, ownerSessionId);
 			await handler.abort(payload.viewId as string);
 			response = { ok: true };
 		} else {
-			response = { ok: true, result: await handler.request(payload.request as BrowserRelayRequest) };
+			const request = payload.request as BrowserRelayRequest;
+			response = { ok: true, result: await authorizeAndRun(request, ownerSessionId, handler) };
 		}
 	} catch (error) {
 		response = { ok: false, error: serializeError(error) };
@@ -280,6 +299,58 @@ function validateEndpoint(socketPath: string, token: string): void {
 function assertViewId(value: unknown): asserts value is string {
 	if (typeof value !== "string" || value.length < 1 || value.length > 512) {
 		throw new Error("invalid browser relay view identity");
+	}
+}
+
+function assertOwnerSessionId(value: string): void {
+	if (typeof value !== "string" || value.length < 1 || value.length > 512) {
+		throw new Error("container browser relay owner session is invalid");
+	}
+}
+
+// Server-side authorization for a relayed request. The relay token only proves
+// container MEMBERSHIP, so every op is additionally confined to the container's
+// OWN session here — the token by itself would let any in-container code drive
+// another session's browser views.
+async function authorizeAndRun(
+	request: BrowserRelayRequest,
+	ownerSessionId: string,
+	handler: BrowserRelayHandler,
+): Promise<unknown> {
+	// clear-partition wipes a whole profile's saved logins, and its target is a
+	// `persist:lax-profile-<id>` partition SHARED across every session on that
+	// profile — it cannot be confined to one session's views. No in-container
+	// caller mints it (browserClearPartition is only reached from the host-side
+	// profile-management route), so a container framing it is out of contract.
+	if (request.op === "clear-partition") {
+		throw new Error("browser relay clear-partition is not available to container sessions");
+	}
+	// lifecycle:list is a POOL query — the desktop ignores the viewId and returns
+	// every session's views (url + title). It can't be gated by a single viewId,
+	// so instead the whole-pool reply is filtered down to the caller's own views
+	// before it leaves the relay. The list caller (mergeTabs) passes a "*"
+	// sentinel viewId, so no per-view ownership assertion applies to this op.
+	if (request.op === "lifecycle:list") {
+		return filterViewsToSession(await handler.request(request), ownerSessionId);
+	}
+	// Every other op targets one view (or, for the co-drive `input`/`exec` family,
+	// the view named in request.viewId); confine it to a view this session owns.
+	assertOwnedView(request.viewId, ownerSessionId);
+	return handler.request(request);
+}
+
+// Strip other sessions' views out of a pool-list reply so a container never
+// learns another session's browsing (url/title). Non-list shapes pass through.
+function filterViewsToSession(result: unknown, ownerSessionId: string): unknown {
+	if (!isRecord(result) || !Array.isArray(result.views)) return result;
+	const views = (result.views as BrowserViewInfo[])
+		.filter(view => isRecord(view) && viewBelongsToSession(view.viewId, ownerSessionId));
+	return { ...result, views };
+}
+
+function assertOwnedView(viewId: string, ownerSessionId: string): void {
+	if (!viewBelongsToSession(viewId, ownerSessionId)) {
+		throw new Error("browser relay view is not owned by this session");
 	}
 }
 

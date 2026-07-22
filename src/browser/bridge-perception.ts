@@ -48,6 +48,34 @@ export function sessionIdFromViewId(viewId: unknown): string | undefined {
 	return rest.slice(0, cut);
 }
 
+/**
+ * Authorization-grade ownership: does `viewId` name a view OWNED by `sessionId`?
+ *
+ * Unlike sessionIdFromViewId (a best-effort attribution parser that drops the
+ * LAST hyphen segment and so mis-splits any profileId containing a hyphen, e.g.
+ * the `prof-<b36>-<hex>` custom-profile shape), this RECONSTRUCTS the mint
+ * instead of parsing the ambiguous session/profile boundary. inAppViewId names
+ * every agent view `view-<sessionId>-<profileId>` with an optional `-tN` tab
+ * suffix, so a view is owned iff its id begins with the exact
+ * `view-<sessionId>-` prefix AND carries at least one character after it (a
+ * non-empty profile/tab segment). The trailing hyphen in the prefix keeps
+ * sibling ids apart — `view-s1-…` never matches a session named `s12`.
+ *
+ * Known boundary: because the profileId itself may contain hyphens, this cannot
+ * distinguish session `s` (profile `a-b`) from a DESCENDANT session `s-a`
+ * (profile `b`) — the spawned-branch id shape `<parent>-b<i>` (dream-check.ts).
+ * It therefore confines a caller to its own session PLUS that session's own
+ * hyphen-nested descendants, and rejects every unrelated session (agent/uuid
+ * ids never prefix-nest). Closing the descendant residual needs the profileId
+ * threaded to the caller for an exact match, which the container projection
+ * does not carry today.
+ */
+export function viewBelongsToSession(viewId: unknown, sessionId: string): boolean {
+	if (typeof viewId !== "string" || !sessionId) return false;
+	const prefix = `view-${sessionId}-`;
+	return viewId.startsWith(prefix) && viewId.length > prefix.length;
+}
+
 // ── Adopted-view session registry ─────────
 // A user view taken over via switch_tab keeps its USER viewId (foreground /
 // user-N), which sessionIdFromViewId can't attribute — downloads the agent

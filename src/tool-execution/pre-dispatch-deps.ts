@@ -79,6 +79,13 @@ export interface PreDispatchDeps {
    *  unknowable URL ("" / throw) fails SAFE toward approval in supervised
    *  mode. */
   getBrowserCurrentUrl?: (sessionId: string) => string | Promise<string>;
+  /** Whether the session currently owns a live in-app browser view — read
+   *  only when the screen-capture redirect gate sees a screen_capture call.
+   *  Default reads the backend map via src/browser/instance.ts (lazy import,
+   *  same reasoning as getBrowserCurrentUrl). Unknowable state fails OPEN
+   *  (false = no view = capture allowed) — the historic behavior for every
+   *  session without an in-app browser. */
+  hasInAppBrowserView?: (sessionId: string) => boolean | Promise<boolean>;
 }
 
 export type ResolvedPreDispatchDeps = Required<PreDispatchDeps>;
@@ -110,6 +117,16 @@ export function resolvePreDispatchDeps(deps: PreDispatchDeps = {}): ResolvedPreD
           return await getBrowserManager(sessionId).getCurrentUrl();
         } catch {
           return "";
+        }
+      }),
+    hasInAppBrowserView:
+      deps.hasInAppBrowserView ??
+      (async (sessionId: string) => {
+        try {
+          const { hasInAppBackend } = await import("../browser/instance.js");
+          return hasInAppBackend(sessionId);
+        } catch {
+          return false;
         }
       }),
   };

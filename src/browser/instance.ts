@@ -167,6 +167,14 @@ export function inAppViewId(sessionId: string, profileId: string): string {
 	return `view-${sessionId}-${profileId}`;
 }
 
+/** Does this session currently own a live in-app browser backend? Read by the
+ *  pre-dispatch screen-capture redirect gate. Cheap map lookup, no lifecycle
+ *  ping — same reasoning as getBrowserManager: a dead view fails loudly at
+ *  first use, so this seam never guesses ahead of time. */
+export function hasInAppBackend(sessionId: string = "default"): boolean {
+	return inAppBackends.has(sessionId || "default");
+}
+
 function peerPagesExcept(self: BrowserManager): Page[] {
 	const pages: Page[] = [];
 	for (const m of cdpManagers.values()) {

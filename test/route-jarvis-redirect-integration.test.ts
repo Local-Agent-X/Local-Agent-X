@@ -34,6 +34,10 @@ vi.mock("../src/canonical-loop/index.js", () => ({
     redirectedCalls.push({ opId, instruction });
     return { ok: redirectOpReturn };
   }),
+  opRedirectOnce: vi.fn((opId: string, instruction: string) => {
+    redirectedCalls.push({ opId, instruction });
+    return { ok: redirectOpReturn };
+  }),
 }));
 
 vi.mock("../src/routing/worker-redirect-classifier.js", () => ({

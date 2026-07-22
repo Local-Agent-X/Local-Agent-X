@@ -36,7 +36,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("creates a non-root read-only container without a Docker socket", async () => {
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
       .mockResolvedValueOnce({
         stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "",
@@ -65,7 +65,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("fails closed if inspect reports a different image id", async () => {
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
       .mockResolvedValueOnce({
         stdout: `${containerId}\n${createdAt}\nsha256:${"d".repeat(64)}\nfalse\n0\n`, stderr: "",
@@ -79,7 +79,7 @@ describe("DockerCliExecutionRuntime", () => {
   it("recovers an exact named container when create delivery is ambiguous", async () => {
     const labels = { "local-agent-x.op-id": "op-1" };
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockRejectedValueOnce(new Error("create response timed out"))
       .mockResolvedValueOnce({
         stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n/lax-op-abc\n${JSON.stringify(labels)}\n`,
@@ -96,7 +96,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("does not treat one negative inspect as proof after a transport timeout", async () => {
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockRejectedValueOnce(new Error("create response timed out"))
       .mockRejectedValueOnce(new Error("No such container: lax-op-abc"));
 
@@ -139,7 +139,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("binds the local remap gateway to inspected network IPAM", async () => {
     const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
-      stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n172.18.0.2\n`, stderr: "",
+      stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n172.18.0.2\n`, stderr: "",
     });
     const exactPolicy = { ...policy(), allowedNetwork: {
       name: "lax-egress", id: networkId, gateway: "172.18.0.1",
@@ -148,13 +148,46 @@ describe("DockerCliExecutionRuntime", () => {
       .rejects.toThrow("network properties are not approved");
   });
 
+  it("approves an internal bridge whose gateway matches the allowlisted host-runtime endpoint", async () => {
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n172.18.0.1\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
+      .mockResolvedValueOnce({
+        stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "",
+      });
+    const exactPolicy = { ...policy(), allowedNetwork: {
+      name: "lax-egress", id: networkId, gateway: "172.18.0.1",
+    } };
+    await expect(new DockerCliExecutionRuntime(run, exactPolicy).create(spec())).resolves.toEqual({
+      containerId, createdAt, imageId, running: false, exitCode: 0,
+    });
+    // The container joins the approved internal bridge by id; the gateway allowlist is what keeps the
+    // local-runtime host endpoint reachable without granting general LAN/internet routing.
+    expect(run.mock.calls[0][0]).toEqual(expect.arrayContaining(["network", "inspect", "lax-egress"]));
+    expect(run.mock.calls[1][0]).toEqual(expect.arrayContaining(["--network", networkId]));
+  });
+
+  it("rejects a non-internal bridge that would grant general LAN/internet egress", async () => {
+    // Would-fail-before: prior to the internal-network fix, internal=false was the *required* value,
+    // so this network was approved and the container joined a fully routable bridge — the shell-level
+    // egress bypass. It must now be rejected.
+    const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
+      stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "",
+    });
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
+      .rejects.toThrow("network properties are not approved");
+    expect(run).toHaveBeenCalledOnce();
+    // Docker create was never composed with a fully routable network.
+    expect(run.mock.calls.every(call => !call[0].includes("create"))).toBe(true);
+  });
+
   it.skipIf(process.platform !== "linux")(
     "holds the canonical mount inode until Docker start completes",
     async () => {
       writeFileSync(mountSource, "state");
       let heldSource = "";
       const run = vi.fn<DockerCommandRunner>()
-        .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+        .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
         .mockImplementationOnce(async (args) => {
           heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
           expect(heldSource).toMatch(/^\/proc\/\d+\/fd\/\d+$/);
@@ -193,7 +226,7 @@ describe("DockerCliExecutionRuntime", () => {
     } });
     let heldSource = "";
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockImplementationOnce(async args => {
         heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
         expect(readFileSync(heldSource, "utf8")).toBe("approved");
@@ -213,7 +246,7 @@ describe("DockerCliExecutionRuntime", () => {
   it.skipIf(process.platform !== "linux")("releases held mounts when Docker create fails", async () => {
     let heldSource = "";
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockImplementationOnce(async args => {
         heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
         throw Object.assign(new Error("create failed"), { code: 125 });
@@ -231,7 +264,7 @@ describe("DockerCliExecutionRuntime", () => {
     async () => {
       let heldSource = "";
       const run = vi.fn<DockerCommandRunner>()
-        .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+        .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
         .mockImplementationOnce(async args => {
           heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
           throw new Error("create timed out");
@@ -260,7 +293,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it.skipIf(process.platform !== "linux")("rejects a mount whose sealed inode identity changed", async () => {
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" });
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" });
     const actual = lstatSync(mountSource, { bigint: true });
     const input = spec();
     input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false,
@@ -274,7 +307,7 @@ describe("DockerCliExecutionRuntime", () => {
   it.skipIf(process.platform !== "linux")("releases held mounts when Docker start fails", async () => {
     let heldSource = "";
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" })
       .mockImplementationOnce(async args => {
         heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
         return { stdout: `${containerId}\n`, stderr: "" };
@@ -292,7 +325,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it.skipIf(process.platform === "linux")("fails closed for bind mounts without inode-stable handoff", async () => {
     const run = vi.fn<DockerCommandRunner>()
-      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" });
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\ntrue\n`, stderr: "" });
     const input = spec();
     input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
 

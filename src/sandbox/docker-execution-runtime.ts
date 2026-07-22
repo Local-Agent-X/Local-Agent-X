@@ -230,9 +230,13 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
       "--format", "{{.Id}}\n{{.Name}}\n{{.Driver}}\n{{.Scope}}\n{{.Internal}}\n{{(index .IPAM.Config 0).Gateway}}",
     ]);
     const [id, actualName, driver, scope, internal, gateway] = result.stdout.trim().split(/\r?\n/);
+    // The network must be an INTERNAL local bridge (internal=true): it still routes
+    // container->host-gateway traffic so the allowlisted local-runtime endpoint stays reachable,
+    // but Docker drops forwarded traffic to external interfaces — confining raw shell egress
+    // (e.g. curl) to the gateway, not the general LAN/internet routing evaluateEgressForUrl never sees.
     if (!this.policy.allowedNetwork || id !== this.policy.allowedNetwork.id
       || actualName !== this.policy.allowedNetwork.name || actualName !== name || driver !== "bridge"
-      || scope !== "local" || internal !== "false"
+      || scope !== "local" || internal !== "true"
       || (this.policy.allowedNetwork.gateway !== undefined
         && gateway !== this.policy.allowedNetwork.gateway)) {
       throw new Error("container execution network properties are not approved");

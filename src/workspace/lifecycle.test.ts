@@ -7,10 +7,45 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, symlinkSync, lstatSy
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { CAN_CREATE_DIRECTORY_LINK } from "../symlink-capabilities.test-helper.js";
-import { ensureWorkspaceLink, isEphemeralPath } from "./lifecycle.js";
+import { ensureWorkspaceLink, isEphemeralPath, migrateWorkspace } from "./lifecycle.js";
 
 const cleanup: string[] = [];
 afterEach(() => { for (const d of cleanup.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } } });
+
+describe("migrateWorkspace never relocates version-control / dependency trees", () => {
+  it("leaves .git, .worktrees, node_modules, .pnpm-store, and nested repos in the source (2026-07-22 incident)", () => {
+    const old = mkdtempSync(join(tmpdir(), "lax-mig-old-")); cleanup.push(old);
+    const dest = mkdtempSync(join(tmpdir(), "lax-mig-new-")); cleanup.push(dest);
+    // A real workspace payload that SHOULD migrate…
+    mkdirSync(join(old, "apps"), { recursive: true });
+    writeFileSync(join(old, "apps", "keep.txt"), "real content", "utf-8");
+    // …alongside the trees that must NEVER be moved (moving .git/objects is what
+    // destroyed the repo).
+    mkdirSync(join(old, ".git", "objects", "pack"), { recursive: true });
+    writeFileSync(join(old, ".git", "objects", "pack", "pack-abc.pack"), "OBJECTS", "utf-8");
+    mkdirSync(join(old, ".worktrees", "c4"), { recursive: true });
+    writeFileSync(join(old, ".worktrees", "c4", "x"), "wt", "utf-8");
+    mkdirSync(join(old, "node_modules", "left-pad"), { recursive: true });
+    // A nested git repo the user parked inside the workspace: must stay whole.
+    mkdirSync(join(old, "myproject", ".git"), { recursive: true });
+    writeFileSync(join(old, "myproject", "src.ts"), "code", "utf-8");
+
+    migrateWorkspace(old, dest);
+
+    // The real payload moved.
+    expect(existsSync(join(dest, "apps", "keep.txt"))).toBe(true);
+    // The dangerous trees did NOT move and are still intact at the source.
+    expect(existsSync(join(old, ".git", "objects", "pack", "pack-abc.pack"))).toBe(true);
+    expect(existsSync(join(dest, ".git"))).toBe(false);
+    expect(existsSync(join(old, ".worktrees", "c4", "x"))).toBe(true);
+    expect(existsSync(join(dest, ".worktrees"))).toBe(false);
+    expect(existsSync(join(old, "node_modules", "left-pad"))).toBe(true);
+    expect(existsSync(join(dest, "node_modules"))).toBe(false);
+    // The nested repo was left whole in the source, its .git intact.
+    expect(existsSync(join(old, "myproject", ".git"))).toBe(true);
+    expect(existsSync(join(dest, "myproject"))).toBe(false);
+  });
+});
 
 describe("isEphemeralPath", () => {
   it("flags system temp roots, including the incident path", () => {

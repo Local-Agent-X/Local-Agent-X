@@ -177,6 +177,14 @@ export function ensureWorkspaceLink(workspace: string, linkOverride?: string): v
   }
 }
 
+// Version-control and dependency trees are NEVER migrated: relocating a .git
+// object store (or a package tree with junctions that loop back into one)
+// physically severs the repo — the 2026-07-22 incident where the migration,
+// walking a workspace that sat next to a live checkout, moved .git/objects out
+// and destroyed the repo. These names are skipped at every recursion level, and
+// any directory that IS a repo (contains a nested .git) is left in place whole.
+const MIGRATE_NEVER = new Set([".git", ".worktrees", "node_modules", ".pnpm-store"]);
+
 // Move files off the legacy install-dir workspace into the new Documents
 // workspace. Per-entry and non-clobbering; falls back to copy+delete when a
 // rename would cross devices. Best-effort — a failed entry is logged and
@@ -187,8 +195,16 @@ export function migrateWorkspace(oldWorkspace: string, newWorkspace: string): vo
   if (!existsSync(oldWorkspace)) return;
   let moved = 0;
   for (const entry of readdirSync(oldWorkspace)) {
+    if (MIGRATE_NEVER.has(entry)) continue;
     const from = join(oldWorkspace, entry);
     const to = join(newWorkspace, entry);
+    // Never relocate a nested repository — moving its .git is catastrophic.
+    try {
+      if (statSync(from).isDirectory() && existsSync(join(from, ".git"))) {
+        logger.warn(`[config] workspace migrate skipped nested repo "${entry}" (has .git — left in place)`);
+        continue;
+      }
+    } catch { /* stat race — fall through to the normal guarded move */ }
     if (existsSync(to)) {
       // Collision. If BOTH sides are directories, merge recursively instead of
       // skipping the whole subtree — otherwise a pre-created empty dir at the

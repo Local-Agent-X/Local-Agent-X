@@ -137,12 +137,12 @@ const definition = {
   version: QUALIFICATION_BENCHMARK_CATALOG_VERSION,
   packs: [
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 2,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 3,
       gate: { id: "installer", script: "test:installer-qualification", timeoutMs: 10 * 60_000, preflightScripts: [] },
       scenarios: [
         { id: "contract", version: 1, testPath: "test/installer-contract.test.ts", assertionCount: 23, assertionManifestSha256: "sha256:e3ab089e51e06f1b15df9b891a28e89a92ffab3456dcd18797a344e77ae0cf30", platformIndependent: false, allowedSkips: [] },
         { id: "resume", version: 1, testPath: "test/installer-resume.test.ts", assertionCount: 19, assertionManifestSha256: "sha256:c430e624a1adf05a7d5d087de4ff00cf9a2c76a8496f6fc2caae1716304df097", platformIndependent: false, allowedSkips: [] },
-        { id: "rollback", version: 1, testPath: "test/installer-rollback.test.ts", assertionCount: 42, assertionManifestSha256: "sha256:a08288ddc1a87ac234e4f8a1f59d1ef14c92208c4236e494758ae86cc581a087", platformIndependent: false, allowedSkips: [] },
+        { id: "rollback", version: 2, testPath: "test/installer-rollback.test.ts", assertionCount: 45, assertionManifestSha256: "sha256:3e13f5515a85256475b1eebbee4dfcd43c6177da59fbe0fbdd5e41956a44b93c", platformIndependent: false, allowedSkips: [] },
       ],
     },
     {

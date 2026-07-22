@@ -30,7 +30,7 @@ import { setupIPC } from "./ipc";
 import { disposeAllTerminals } from "./terminal-pty";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
-import { runReconcile, killReconcileStepsSync } from "./reconcile";
+import { runReconcile, killReconcileStepsSync, surfaceStaleDesktopDist } from "./reconcile";
 import { shutdownNativeSpeech } from "./native-speech";
 import { setupSessionPermissions } from "./session-permissions";
 import { initBrowserNetworkHardening } from "./browser-partition";
@@ -231,6 +231,7 @@ app.on("ready", async () => {
       console.warn(`[desktop] reconcile warning: ${w}`);
       showNotification("Local Agent X — update warning", w);
     }
+    if (result.staleDesktopDist) surfaceStaleDesktopDist(result.staleDesktopDist);
   } catch (e) {
     const msg = (e as Error).message;
     const code = (e as NodeJS.ErrnoException).code;

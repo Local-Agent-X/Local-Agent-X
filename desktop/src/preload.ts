@@ -234,6 +234,14 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("server-crashed", (_e, info) => cb(info));
   },
 
+  // Stale desktop-build signal: main fires "desktop-build-stale" when boot
+  // found desktop/dist older than desktop/src with no rebuild scheduled
+  // (failed update pre-build / degraded deps). Same pattern as onServerCrash;
+  // shared-desktop.js surfaces it via the health banner.
+  onDesktopBuildStale: (cb: (info: { reason: string }) => void) => {
+    ipcRenderer.on("desktop-build-stale", (_e, info) => cb(info));
+  },
+
   // Check if running inside desktop app
   isDesktop: true,
 });

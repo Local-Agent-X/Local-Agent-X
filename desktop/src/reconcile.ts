@@ -20,8 +20,11 @@ import { ChildProcess, execSync, spawn } from "child_process";
 import { existsSync, readFileSync, readdirSync, statSync, cpSync, rmSync } from "fs";
 import { join, relative } from "path";
 import { Script } from "vm";
-import { serverDistIsFresh, desktopDistIsFresh } from "./dist-freshness";
-import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState } from "./reconcile-hash";
+import { serverDistIsFresh, desktopDistIsFresh, desktopDistMtimeFresh } from "./dist-freshness";
+import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState, depsInstalled, staleDistDecision, readDesktopPrebuildMarker, clearDesktopPrebuildMarker } from "./reconcile-hash";
+import { showNotification } from "./hotkey-notifications";
+import { setSplashHint } from "./splash-recovery";
+import { getMainWindow } from "./window";
 
 // GUI-launched apps inherit a PATH that can't see the node/npm we provision
 // (minimal launchd PATH on macOS; stale pre-install env on Windows). Without
@@ -43,6 +46,9 @@ export interface ReconcileResult {
    *  deliberately does not throw for these — but silence is not an option
    *  either. */
   warnings: string[];
+  /** Reason string when desktop/dist is stale and NOTHING this boot will fix it
+   *  (null = quiet). Caller MUST pass it to surfaceStaleDesktopDist — loud, not log-only. */
+  staleDesktopDist: string | null;
 }
 
 export interface ReconcileOpts {
@@ -161,18 +167,22 @@ function firstUnparseableJs(distDir: string): { file: string; error: string } | 
   return null;
 }
 
-/**
- * A node_modules npm finished installing carries a `.package-lock.json` manifest.
- * Its absence — or a missing node_modules — means the install is incomplete: a
- * fresh tree, an interrupted install, or (the bug this guards) an update whose
- * worktree merge deleted node_modules on macOS while package-lock.json stayed
- * put. Reconcile keys its `npm install` on lockfile-hash CHANGES, so without this
- * a gutted node_modules boots the server straight into "Cannot find package" and
- * bricks the app with no self-recovery — Repair re-runs reconcile and skips the
- * install for the same reason. Cheap (one stat); npm writes this on every install.
- */
-function depsInstalled(dir: string): boolean {
-  return existsSync(join(dir, "node_modules", ".package-lock.json"));
+/** All three loud surfaces for a stale desktop dist, warn-and-continue (never
+ *  throws): OS notification + splash hint now (main.ts calls this during the
+ *  splash phase), and a renderer health-banner via the "server-crashed" channel
+ *  pattern (send → preload onDesktopBuildStale → shared-desktop.js). Sent on
+ *  every did-finish-load — the listener only exists once the real app page
+ *  loads (the splash ignores the send), and re-sends survive in-app reloads. */
+export function surfaceStaleDesktopDist(reason: string): void {
+  console.warn(`[desktop] stale desktop build: ${reason}`);
+  try {
+    showNotification("Local Agent X — app build is stale", `${reason}. Restart, update again, or use the splash Repair button to rebuild.`);
+    setSplashHint(reason);
+    const w = getMainWindow();
+    w?.webContents.on("did-finish-load", () => {
+      try { w.webContents.send("desktop-build-stale", { reason }); } catch { /* window tearing down */ }
+    });
+  } catch (e) { console.warn(`[desktop] could not surface stale-dist warning: ${(e as Error).message}`); }
 }
 
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
@@ -208,8 +218,20 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // checkout, an interrupted install, or (the macOS bug this guards) an update
   // whose worktree merge deleted node_modules. Heal it regardless of the
   // hash-based change detection, on BOTH the first-launch and steady paths.
+  // "electron" = desktop's load-bearing marker package (see depsInstalled: a
+  // gutted node_modules/electron passed the manifest-only check for 3 days).
   const rootDepsMissing    = !depsInstalled(projectRoot);
-  const desktopDepsMissing = !depsInstalled(join(projectRoot, "desktop"));
+  const desktopDepsMissing = !depsInstalled(join(projectRoot, "desktop"), "electron");
+
+  // Dist staleness is consulted at EVERY boot — a stale dist with no rebuild
+  // scheduled used to have no signal at all. The WARNING signal is mtime-only
+  // (see desktopDistMtimeFresh: the stale-stamp case is unfixable noise); the
+  // REBUILD decision stays stamp-aware. Captured before steps can touch dist.
+  const desktopDistFresh = await desktopDistIsFresh(projectRoot);
+  const desktopMtimeFresh = await desktopDistMtimeFresh(projectRoot);
+  const prebuildMarker = readDesktopPrebuildMarker();
+  const decideStale = (rebuildPlanned: boolean) => staleDistDecision({
+    distFresh: desktopMtimeFresh, rebuildPlanned, depsWereMissing: desktopDepsMissing, prebuildFailDetail: prebuildMarker?.detail ?? null });
 
   // First-ever launch (no state file): trust the installer's build is fresh and
   // just record current hashes, to avoid a 30s+ delay when everything is already
@@ -240,6 +262,9 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       needsRelaunch: false,
       ranSteps: [healed ? "first-launch heal (deps were missing)" : "first-launch (recorded baseline)"],
       warnings: [],
+      // First launch never rebuilds desktop AND just baselined the src hash, so
+      // no later boot will either — a stale dist must be loud NOW or never.
+      staleDesktopDist: decideStale(false),
     };
   }
 
@@ -314,7 +339,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // Same freshness short-circuit the server build uses above: a gated update
   // pre-builds desktop/dist (update-pipeline.ts), so the post-update boot loads
   // a current main process — skip the redundant tsc AND the relaunch it forces.
-  const needsDesktopBuild = srcChanged && !(await desktopDistIsFresh(projectRoot));
+  const needsDesktopBuild = srcChanged && !desktopDistFresh;
   if (needsDesktopBuild) {
     onStatus?.("Building app updates…");
     const distDir = join(projectRoot, "desktop", "dist");
@@ -348,6 +373,8 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     rmSync(backupDir, { recursive: true, force: true });
     ranSteps.push("desktop tsc build");
   }
+  // Rebuild landed or dist was already current → any pending pre-build marker is resolved.
+  if (needsDesktopBuild || desktopMtimeFresh) clearDesktopPrebuildMarker();
 
   // Record currentRootSrc as the reconciled baseline when dist is known-good
   // for this src: a build landed, OR src didn't change, OR a gated update
@@ -367,5 +394,6 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     lastReconciledAt: new Date().toISOString(),
   });
 
-  return { needsRelaunch: needsDesktopBuild, ranSteps, warnings };
+  // decideStale(needsDesktopBuild): reaching here means any planned build succeeded.
+  return { needsRelaunch: needsDesktopBuild, ranSteps, warnings, staleDesktopDist: decideStale(needsDesktopBuild) };
 }

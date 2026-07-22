@@ -10,3 +10,15 @@ try {
     document.dispatchEvent(new CustomEvent('lax:server-crashed', { detail: info }));
   });
 } catch { /* preload bridge unavailable, browser context */ }
+
+// Desktop-only: boot found desktop/dist stale with no rebuild scheduled
+// (failed update pre-build / degraded deps) — surface it in-app via the
+// standard health banner instead of a log line nobody reads. Channel:
+// desktop/src/reconcile.ts surfaceStaleDesktopDist → preload onDesktopBuildStale.
+try {
+  window.desktop?.onDesktopBuildStale?.((info) => {
+    console.warn('[desktop] Desktop build stale:', info);
+    const msg = 'Desktop app build is out of date — ' + (info && info.reason ? info.reason : 'reason unknown');
+    if (typeof window.showHealthBanner === 'function') window.showHealthBanner(msg);
+  });
+} catch { /* preload bridge unavailable, browser context */ }

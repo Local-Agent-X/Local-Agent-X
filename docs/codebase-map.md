@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1416 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1418 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -22,7 +22,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/security/` | 77 | 30 | XL |  |
 | `src/tools/` | 60 | 148 | XL |  |
 | `src/providers/` | 55 | 20 | XL |  |
-| `src/canonical-loop/` | 53 | 202 | XL |  |
+| `src/canonical-loop/` | 53 | 203 | XL |  |
 | `src/memory/` | 42 | 118 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 33 | 2 | M |  |
@@ -30,12 +30,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auth/` | 30 | 10 | L |  |
 | `src/util/` | 29 | 2 | S |  |
 | `src/threat/` | 28 | 11 | L |  |
-| `src/agency/` | 26 | 18 | L |  |
+| `src/agency/` | 26 | 19 | L |  |
 | `src/browser/` | 26 | 56 | XL |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/tool-policy/` | 25 | 20 | L |  |
-| `src/app-runtime/` | 22 | 12 | L |  |
+| `src/app-runtime/` | 23 | 12 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
 | `src/agent-request/` | 18 | 14 | L |  |
@@ -53,10 +53,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/self-edit/` | 10 | 20 | L |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
+| `src/self-edit/` | 9 | 20 | L |  |
 | `src/tool-execution/` | 9 | 33 | XL |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
@@ -124,6 +124,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/embedding-singleton.ts` | S |
 | `src/event-bus.ts` | S |
 | `src/ffmpeg-bin.ts` | S |
+| `src/git-safety.ts` | S |
 | `src/index.ts` | M |
 | `src/injection-patterns.ts` | S |
 | `src/injection-views.ts` | S |

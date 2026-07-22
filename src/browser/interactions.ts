@@ -31,7 +31,7 @@ export async function fingerprintPage(page: Page): Promise<string> {
 
 export async function scrollPage(page: Page, registry: ObservationRegistry, opts: ScrollOptions): Promise<string> {
   if (opts.refId !== undefined) {
-    const ref = registry.get(opts.refId);
+    const ref = registry.recoverStaleRef(opts.refId);
     if (!ref) return `Ref [${opts.refId}] not found — re-observe first`;
     try {
       const loc = page.locator(`xpath=${ref.xpath}`);

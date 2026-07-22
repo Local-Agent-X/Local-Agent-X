@@ -38,7 +38,7 @@ import {
 	selectFillScript,
 	textSearchScript,
 } from "./in-app-scripts.js";
-import type { InteractionResult, ScrollOptions } from "./backend.js";
+import type { InteractionResult } from "./backend.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("browser.in-app.actions");
@@ -75,7 +75,6 @@ const RESOLVE_RETRY_DELAY_MS = 1_500; // CDP parity: actions.ts waits 1.5s befor
 const CLICK_TEXT_BUDGET_MS = 12_000; // CDP parity: actions.ts CLICK_TEXT_BUDGET
 const CLICK_TEXT_ATTEMPTS = 3;
 const TEXT_SCROLL_SETTLE_MS = 400;
-const DEFAULT_SCROLL_AMOUNT_PX = 600;
 
 // ── Coordinate conversion ─────────
 
@@ -137,6 +136,11 @@ export interface ResolvedTarget {
 	tag: string;
 	type: string;
 	editable: boolean;
+	/** Set when the hit-test landed on an unrelated-but-benign overlapping
+	 *  element (icon, ripple span, styled sibling): the click is dispatched at
+	 *  the point anyway — same element a human click would land on. Carries
+	 *  the overlapper's tag#id/.class for the result message. */
+	through?: string;
 }
 interface ResolveMiss {
 	found: false;
@@ -146,7 +150,7 @@ interface ResolveMiss {
 }
 type ResolveOutcome = ResolvedTarget | ResolveMiss;
 
-function asResolveOutcome(raw: unknown): ResolveOutcome {
+export function asResolveOutcome(raw: unknown): ResolveOutcome {
 	if (raw && typeof raw === "object" && (raw as { found?: unknown }).found === true) {
 		return raw as ResolvedTarget;
 	}
@@ -156,18 +160,6 @@ function asResolveOutcome(raw: unknown): ResolveOutcome {
 
 const SCROLL_ONE_VIEWPORT_SCRIPT =
 	"document.scrollingElement && document.scrollingElement.scrollBy(0, document.documentElement.clientHeight)";
-
-const SCROLL_METRICS_SCRIPT = `(() => {
-	const d = document.scrollingElement || document.documentElement;
-	return {
-		vw: document.documentElement.clientWidth,
-		vh: document.documentElement.clientHeight,
-		top: d.scrollTop,
-		height: d.scrollHeight,
-		dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
-		zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1,
-	};
-})()`;
 
 // ── Drivers ─────────
 
@@ -220,16 +212,50 @@ async function resolveWithRetry(
 }
 
 function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget): string {
+	// A benign overlapper took the hit-test — say so, so an unexpected outcome
+	// reads as "clicked the thing on top" instead of a silent mystery.
+	const through = hit.through ? ` (through overlapping ${hit.through})` : "";
 	switch (hit.via) {
 		case "role":
-			return `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")`;
+			return `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${through}`;
 		case "text":
-			return `[${ref.id}] click via visible text "${ref.name}"`;
+			return `[${ref.id}] click via visible text "${ref.name}"${through}`;
 		case "xpath":
-			return `[${ref.id}] ${op} via XPath`;
+			return `[${ref.id}] ${op} via XPath${through}`;
 		case "coords":
 			return `[${ref.id}] click via coords (${hit.x},${hit.y}) — layout-dependent, verify result`;
 	}
+}
+
+/**
+ * Resolve a ref id, transparently recovering a STALE one: on a registry miss,
+ * take a fresh observation (refreshing the map) and remap via
+ * recoverStaleRef (signature, then unique role+name). The model keeps its old
+ * id working across a page re-render instead of burning a turn on
+ * "take a fresh observation". An unrecoverable id fails WITH the fresh
+ * snapshot so the retry has real refs to aim at.
+ */
+async function resolveRefOrFail(
+	ctx: InAppActionContext,
+	refId: number,
+): Promise<{ ref: DurableRef; note: string } | { fail: InteractionResult }> {
+	const direct = ctx.registry.get(refId);
+	if (direct) return { ref: direct, note: "" };
+	let snapshot = "";
+	try {
+		snapshot = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
+	} catch { /* recovery below still gets whatever the registry holds */ }
+	const ref = ctx.registry.recoverStaleRef(refId);
+	if (ref) {
+		logger.info(`[in-app] stale ref [${refId}] recovered as [${ref.id}] (${ref.role} "${ref.name}")`);
+		return { ref, note: ` (stale ref [${refId}] auto-recovered as [${ref.id}])` };
+	}
+	return {
+		fail: {
+			ok: false,
+			text: `Ref [${refId}] not found — take a fresh observation${snapshot ? `\n\nCurrent page:\n\n${snapshot}` : ""}`,
+		},
+	};
 }
 
 async function failedWithSnapshot(ctx: InAppActionContext, ref: DurableRef, occluded: string[] = []): Promise<InteractionResult> {
@@ -278,19 +304,21 @@ async function typeReplace(ctx: InAppActionContext, value: string): Promise<"don
 }
 
 export async function clickRefInApp(ctx: InAppActionContext, refId: number): Promise<InteractionResult> {
-	const ref = ctx.registry.get(refId);
-	if (!ref) return { ok: false, text: `Ref [${refId}] not found — take a fresh observation` };
+	const resolved = await resolveRefOrFail(ctx, refId);
+	if ("fail" in resolved) return resolved.fail;
+	const { ref, note } = resolved;
 	const hit = await resolveWithRetry(ctx, ref, "click");
 	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 	if ((await clickAtPoint(ctx, hit)) === "userActive") return userTookWheel();
 	await waitForStability(ctx.page, { maxWait: 2500 });
 	const after = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
-	return { ok: true, text: `${viaMessage(ref, "click", hit)}\nPage: ${ctx.page.url()}\n\n${after}` };
+	return { ok: true, text: `${viaMessage(ref, "click", hit)}${note}\nPage: ${ctx.page.url()}\n\n${after}` };
 }
 
 export async function fillRefInApp(ctx: InAppActionContext, refId: number, value: string): Promise<InteractionResult> {
-	const ref = ctx.registry.get(refId);
-	if (!ref) return { ok: false, text: `Ref [${refId}] not found — take a fresh observation` };
+	const resolved = await resolveRefOrFail(ctx, refId);
+	if ("fail" in resolved) return resolved.fail;
+	const { ref, note } = resolved;
 	const hit = await resolveWithRetry(ctx, ref, "fill");
 	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 
@@ -304,11 +332,11 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 		if (!res.ok) {
 			return { ok: false, text: `[${ref.id}] fill failed: ${res.error} — re-observe, or use select with a CSS selector` };
 		}
-		return { ok: true, text: `${viaMessage(ref, "fill", hit)} — ${value.length} chars` };
+		return { ok: true, text: `${viaMessage(ref, "fill", hit)}${note} — ${value.length} chars` };
 	}
 	if ((await clickAtPoint(ctx, hit)) === "userActive") return userTookWheel();
 	if ((await typeReplace(ctx, value)) === "userActive") return userTookWheel();
-	return { ok: true, text: `${viaMessage(ref, "fill", hit)} — ${value.length} chars` };
+	return { ok: true, text: `${viaMessage(ref, "fill", hit)}${note} — ${value.length} chars` };
 }
 
 export async function clickTextInApp(
@@ -344,52 +372,4 @@ export async function clickTextInApp(
 	};
 }
 
-interface ScrollMetrics { vw: number; vh: number; top: number; height: number; dpr: number; zoom: number }
 
-function asScrollMetrics(raw: unknown): ScrollMetrics {
-	const m = (raw ?? {}) as Partial<Record<keyof ScrollMetrics, unknown>>;
-	const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
-	return {
-		vw: num(m.vw, 1280),
-		vh: num(m.vh, 800),
-		top: num(m.top, 0),
-		height: num(m.height, 800),
-		dpr: num(m.dpr, 1),
-		zoom: num(m.zoom, 1),
-	};
-}
-
-export async function scrollInApp(ctx: InAppActionContext, opts: ScrollOptions): Promise<string> {
-	if (opts.refId !== undefined) {
-		const ref = ctx.registry.get(opts.refId);
-		if (!ref) return `Ref [${opts.refId}] not found — re-observe first`;
-		// The resolution script scrolls the element into view as a side effect;
-		// an occluded hit-test still means the scroll happened.
-		const out = asResolveOutcome(await execChecked(ctx.viewId, resolutionScript(ref, "click")));
-		if (!out.found && !(out.occluded && out.occluded.length > 0)) {
-			return `Could not scroll ref [${opts.refId}]: element not found — re-observe first`;
-		}
-		await waitForStability(ctx.page, { maxWait: 1500 });
-		return `Scrolled ref [${opts.refId}] into view`;
-	}
-	const m = asScrollMetrics(await execChecked(ctx.viewId, SCROLL_METRICS_SCRIPT));
-	const amount = opts.amount ?? DEFAULT_SCROLL_AMOUNT_PX;
-	const dir = opts.direction ?? "down";
-	// CSS scroll delta, positive = down — scrollPage's window.scrollBy semantics.
-	let cssDelta: number;
-	if (dir === "top") cssDelta = -m.top;
-	else if (dir === "bottom") cssDelta = Math.max(0, m.height - m.top - m.vh);
-	else cssDelta = dir === "up" ? -amount : amount;
-	const center = cssToViewDip(m.vw / 2, m.vh / 2, m.zoom, m.dpr);
-	// Electron mouseWheel: positive deltaY scrolls UP (wheel-tick convention) — invert.
-	const result = await browserInput(ctx.viewId, {
-		type: "mouseWheel",
-		x: center.x,
-		y: center.y,
-		deltaX: 0,
-		deltaY: -cssDelta,
-	});
-	if (isUserActiveResult(result)) return USER_TOOK_WHEEL;
-	await waitForStability(ctx.page, { maxWait: 1500 });
-	return `Scrolled ${dir} (${amount}px)`;
-}

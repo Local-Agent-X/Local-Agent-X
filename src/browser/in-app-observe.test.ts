@@ -72,6 +72,7 @@ function fakeDocument(cfg: FakeDoc) {
 		querySelectorAll: () => cfg.byRole,
 		elementFromPoint: (x: number, y: number) => cfg.atPoint(x, y),
 		evaluate: () => ({ singleNodeValue: null }),
+		documentElement: { clientWidth: 1280, clientHeight: 800 },
 	};
 }
 
@@ -115,6 +116,36 @@ describe("resolutionScript hit-test contract", () => {
 		const out = runResolution(mkRef(), doc) as { found: boolean; occluded: string[] };
 		expect(out.found).toBe(false);
 		expect(out.occluded).toContain("role:div#modal-backdrop");
+	});
+
+	it("clicks THROUGH a benign overlapper (small unrelated sibling within the target's bounds)", () => {
+		// An icon/ripple-style span sitting on top of the link: same footprint,
+		// no overlay markers. A human click lands on it — so must ours.
+		const link = el("a", { textContent: "purchase orders" });
+		const icon = el("span", { className: "btn-icon" });
+		const doc = fakeDocument({ byRole: [link], atPoint: () => icon });
+		const out = runResolution(mkRef(), doc) as { found: boolean; via?: string; through?: string };
+		expect(out.found).toBe(true);
+		expect(out.via).toBe("role");
+		expect(out.through).toBe("span.btn-icon");
+	});
+
+	it("still refuses when the overlapper is overlay-like even if geometrically small", () => {
+		const link = el("a", { textContent: "purchase orders" });
+		const toast = el("div", { className: "toast-notification" });
+		const doc = fakeDocument({ byRole: [link], atPoint: () => toast });
+		const out = runResolution(mkRef(), doc) as { found: boolean; occluded: string[] };
+		expect(out.found).toBe(false);
+		expect(out.occluded).toContain("role:div.toast-notification");
+	});
+
+	it("still refuses when the overlapper dwarfs the target (nav bar / banner class)", () => {
+		const link = el("a", { textContent: "purchase orders" });
+		const banner = el("div", { className: "site-header", rect: { left: 0, top: 80, width: 1280, height: 120 } });
+		const doc = fakeDocument({ byRole: [link], atPoint: () => banner });
+		const out = runResolution(mkRef(), doc) as { found: boolean; occluded: string[] };
+		expect(out.found).toBe(false);
+		expect(out.occluded).toContain("role:div.site-header");
 	});
 
 	it("pierces shadow DOM: a hit inside a shadow root whose host is the target counts as related", () => {

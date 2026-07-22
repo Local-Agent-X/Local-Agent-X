@@ -128,3 +128,81 @@ describe("degraded observation — a failed extractor must never masquerade as a
     );
   });
 });
+
+describe("recoverStaleRef — remapping a stale id after a page re-render", () => {
+  beforeEach(() => {
+    mockExtract.mockReset();
+    mockExtract.mockResolvedValue([]);
+    mockObstructions.mockReset();
+    mockObstructions.mockResolvedValue([]);
+  });
+
+  it("returns the live ref directly when the id is still current", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page);
+    expect(reg.recoverStaleRef(1)?.name).toBe("Submit");
+  });
+
+  it("remaps by SIGNATURE when the element dropped out and came back under a new id", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page); // Submit = [1]
+    mockExtract.mockResolvedValueOnce([]);
+    await reg.observe(page); // Submit removed → retired
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    const back = await reg.observe(page); // Submit re-added under a NEW id
+
+    const newId = back.currentRefs[0].id;
+    expect(newId).not.toBe(1);
+    expect(reg.get(1)).toBeUndefined();
+    expect(reg.recoverStaleRef(1)?.id).toBe(newId);
+  });
+
+  it("falls back to a UNIQUE role+name match when the signature changed", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page);
+    // Re-render moved the button: same role+name, different ancestor chain.
+    const moved = { ...SUBMIT, signature: "button|Submit|BUTTON|main", xpath: "/main/button[1]" };
+    mockExtract.mockResolvedValueOnce([moved]);
+    const obs = await reg.observe(page);
+
+    const newId = obs.currentRefs[0].id;
+    expect(reg.recoverStaleRef(1)?.id).toBe(newId);
+  });
+
+  it("refuses an AMBIGUOUS role+name remap — never guesses between two candidates", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page);
+    const twinA = { ...SUBMIT, signature: "button|Submit|BUTTON|header" };
+    const twinB = { ...SUBMIT, signature: "button|Submit|BUTTON|footer" };
+    mockExtract.mockResolvedValueOnce([twinA, twinB]);
+    await reg.observe(page);
+
+    expect(reg.recoverStaleRef(1)).toBeUndefined();
+  });
+
+  it("returns undefined for an id that never existed", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page);
+    expect(reg.recoverStaleRef(99)).toBeUndefined();
+  });
+
+  it("reset() clears tombstones — no remapping across an origin change", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page);
+    mockExtract.mockResolvedValueOnce([]);
+    await reg.observe(page); // retire [1]
+    reg.reset();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    await reg.observe(page);
+
+    expect(reg.recoverStaleRef(1)?.id).toBe(1); // live hit only — [1] is the NEW ref
+    // A retired-only id from before the reset must not remap.
+    expect(reg.recoverStaleRef(2)).toBeUndefined();
+  });
+});

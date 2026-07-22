@@ -235,15 +235,15 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		expect(inputEvents.map((e) => e.type)).toEqual(["mouseMove", "mouseDown", "mouseUp"]);
 	});
 
-	it("a ref the registry never minted refuses WITHOUT touching the page (isError), through the tool layer", async () => {
+	it("a ref the registry never minted refuses with a FRESH snapshot and never dispatches input, through the tool layer", async () => {
 		await handleNavigate(backend, { url: PAGE_URL }, undefined);
-		const execsBefore = sent.filter((m) => m.type === "lax:browser-exec").length;
 		const result = await handleClick(backend, { ref: 99 });
 		expect(result.isError).toBe(true);
 		expect(String(result.content)).toContain("Ref [99] not found");
-		// Pure registry miss — no further exec dispatched to resolve a ghost ref.
-		const execsAfter = sent.filter((m) => m.type === "lax:browser-exec").length;
-		expect(execsAfter).toBe(execsBefore);
+		// The miss re-observes (stale-ref recovery + fresh snapshot for the
+		// retry) but a ghost ref must NEVER become a click: no input events.
+		expect(String(result.content)).toContain("Current page:");
+		expect(inputEvents).toEqual([]);
 	});
 
 	it("screenshot (via handleScreenshot) captures over the bridge and returns the CDP-shaped saved report", async () => {

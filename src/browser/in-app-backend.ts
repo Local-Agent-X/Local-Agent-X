@@ -69,14 +69,10 @@ import {
 	clickRefInApp,
 	clickTextInApp,
 	fillRefInApp,
-	scrollInApp,
 	type InAppActionContext,
 } from "./in-app-actions.js";
-import {
-	clickSelectorInApp,
-	fillSelectorInApp,
-	selectOptionInApp,
-} from "./in-app-selector-actions.js";
+import { scrollInApp } from "./in-app-scroll.js";
+import { clickSelectorOrTextFallback, fillSelectorInApp, selectOptionInApp } from "./in-app-selector-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
 import type { BrowserEngine } from "./launcher.js";
 import type { Page } from "playwright";
@@ -230,7 +226,8 @@ export class ElectronInAppBackend implements BrowserBackend {
 
 	async click(selector: string): Promise<string> {
 		await this.ensureView();
-		await clickSelectorInApp(this.viewId, selector);
+		const viaText = await clickSelectorOrTextFallback(this.viewId, selector, this.actionContext());
+		if (viaText) return viaText;
 		const snap = await this.snapshot(); // refreshes state.url too
 		return `Clicked: ${selector}\nPage: ${this.state.url}\n\n${snap}`;
 	}

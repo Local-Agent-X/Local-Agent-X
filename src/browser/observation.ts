@@ -101,12 +101,22 @@ export async function withWedgeTimeout<T>(work: Promise<T>, ms = OBSERVE_WEDGE_T
   }
 }
 
+/** Retired-ref memory cap — enough for many observation cycles on a heavy
+ *  page without unbounded growth across a long session. */
+const RETIRED_REF_CAP = 300;
+
 export class ObservationRegistry {
   private refs = new Map<number, DurableRef>();
   private signatureToRef = new Map<string, number>();
   private nextId = 1;
   private observationCount = 0;
   private lastUrl = "";
+  /** Tombstones for refs that dropped out of the live map: id → identity of
+   *  the element it pointed at. recoverStaleRef uses these to remap a stale
+   *  id the model is still holding onto after the page re-rendered. Cleared
+   *  on reset() — a tombstone must never remap across an origin change or a
+   *  wedge recovery, where "same role+name" can be a different control. */
+  private retired = new Map<number, { signature: string; role: string; name: string }>();
   /** Bumped on every reset. A scan that was in flight when a reset happened
    *  (wedge recovery abandons the hung scan, then resets this registry) must
    *  NOT commit its stale refs over the clean state when it finally settles —
@@ -117,6 +127,7 @@ export class ObservationRegistry {
     this.epoch++;
     this.refs.clear();
     this.signatureToRef.clear();
+    this.retired.clear();
     this.nextId = 1;
     this.observationCount = 0;
     this.lastUrl = "";
@@ -124,6 +135,40 @@ export class ObservationRegistry {
 
   get(id: number): DurableRef | undefined {
     return this.refs.get(id);
+  }
+
+  /**
+   * Remap a stale ref id to the live ref for the same logical element. When a
+   * page re-renders, an element can drop out of one observation and come back
+   * in the next under a NEW id — but the model may still be holding the old
+   * one. Match by signature first (exact identity), then by unique role+name
+   * (the element re-rendered with a changed ancestor chain). Ambiguous or
+   * unknown ids return undefined — never guess between two candidates.
+   */
+  recoverStaleRef(id: number): DurableRef | undefined {
+    const live = this.refs.get(id);
+    if (live) return live;
+    const t = this.retired.get(id);
+    if (!t) return undefined;
+    const bySignature = this.signatureToRef.get(t.signature);
+    if (bySignature !== undefined) return this.refs.get(bySignature);
+    let match: DurableRef | undefined;
+    for (const ref of this.refs.values()) {
+      if (ref.role !== t.role || ref.name !== t.name) continue;
+      if (match) return undefined;
+      match = ref;
+    }
+    return match;
+  }
+
+  private retire(ref: DurableRef): void {
+    this.retired.set(ref.id, { signature: ref.signature, role: ref.role, name: ref.name });
+    if (this.retired.size > RETIRED_REF_CAP) {
+      for (const key of this.retired.keys()) {
+        if (this.retired.size <= RETIRED_REF_CAP) break;
+        this.retired.delete(key);
+      }
+    }
   }
 
   async observe(page: Page): Promise<BrowserObservation> {
@@ -230,6 +275,7 @@ export class ObservationRegistry {
       if (!newRefs.has(id)) {
         removed.push(prev);
         this.signatureToRef.delete(prev.signature);
+        this.retire(prev);
       }
     }
 

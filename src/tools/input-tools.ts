@@ -223,7 +223,10 @@ export const computerTool: ToolDefinition = collapseFamily({
     "MULTI-MONITOR: a second monitor is offset (often NEGATIVE x/y) from the primary; add that monitor's top-left " +
     "offset (from screen_size) to what you see in its screenshot before moving/clicking. " +
     "For web pages where you have a snapshot with refs, prefer the " +
-    "`browser` tool — it's more precise than coordinate clicks.",
+    "`browser` tool — it's more precise than coordinate clicks. " +
+    "While this session has a live in-app browser view open, coordinate actions (move/click/drag) WITHOUT " +
+    "target:'os-desktop' are DENIED: the in-app page must be driven with `browser` refs, never with pixels " +
+    "guessed off a monitor capture. Pass target:'os-desktop' only when operating a DIFFERENT desktop app.",
   actions: {
     screen_size: screenSizeTool,
     move: moveTool,
@@ -244,5 +247,13 @@ export const computerTool: ToolDefinition = collapseFamily({
     to_y: { type: "number", description: "Drag end Y" },
     text: { type: "string", description: "Text to type (type)" },
     keys: { type: "array", items: { type: "string" }, description: "Keys to press together (press)" },
+    target: {
+      type: "string",
+      enum: ["os-desktop"],
+      description:
+        "Explicit override required for coordinate actions (move/click/drag) while this session has a live " +
+        "in-app browser view: without it those are denied (drive the in-app page with `browser` refs instead). " +
+        "Pass 'os-desktop' ONLY when operating another desktop app — never to click on the in-app browser pane.",
+    },
   },
 });

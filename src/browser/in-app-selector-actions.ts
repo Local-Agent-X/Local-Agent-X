@@ -12,12 +12,39 @@
 
 import { asExecResult, clickScript, fillScript, selectScript } from "./in-app-scripts.js";
 import { execChecked } from "./in-app-observe.js";
+import { clickTextInApp, type InAppActionContext } from "./in-app-actions.js";
+import { selectorTextHint } from "./selector-compat.js";
 
 export async function clickSelectorInApp(viewId: string, selector: string): Promise<void> {
 	const res = asExecResult(await execChecked(viewId, clickScript(selector)));
 	if (res.ok) return;
 	if (res.error === "not-found") throw new Error(`Element not found: ${selector}`);
 	throw new Error(`Cannot click ${selector}: ${res.error}`);
+}
+
+/**
+ * Selector click with a click-by-text fallback: when the selector misses but
+ * named its target text (text=, :has-text()), run the click-by-text chain
+ * (scroll retries + hit-test) before failing the model back for another
+ * round-trip. Returns null when the plain selector click landed (caller owns
+ * its own snapshot flow), the text-path result text when the fallback fired,
+ * and rethrows the original selector error when both miss.
+ */
+export async function clickSelectorOrTextFallback(
+	viewId: string,
+	selector: string,
+	ctx: InAppActionContext,
+): Promise<string | null> {
+	try {
+		await clickSelectorInApp(viewId, selector);
+		return null;
+	} catch (e) {
+		const hint = selectorTextHint(selector);
+		if (!hint) throw e;
+		const result = await clickTextInApp(ctx, hint);
+		if (!result.ok) throw e;
+		return `${result.text}\n(selector "${selector}" resolved via visible text "${hint}")`;
+	}
 }
 
 export async function fillSelectorInApp(viewId: string, selector: string, value: string): Promise<string> {

@@ -36,12 +36,12 @@ import {
 	clickRefInApp,
 	fillRefInApp,
 	clickTextInApp,
-	scrollInApp,
 	USER_TOOK_WHEEL,
 	FILE_INPUT_NEEDS_HUMAN,
 	type InAppActionContext,
 	type ResolvedTarget,
 } from "./in-app-actions.js";
+import { scrollInApp } from "./in-app-scroll.js";
 import { CREDENTIAL_FOCUS_SCRIPT } from "./in-app-page-io.js";
 import { ObservationRegistry, type BrowserObservation, type DurableRef } from "./observation.js";
 import type { Page } from "playwright";
@@ -86,6 +86,7 @@ function makeCtx(ref: DurableRef | undefined, over: Partial<InAppActionContext> 
 	const obs = makeObs(ref ? [ref] : []);
 	const registry = {
 		get: (id: number) => (ref && id === ref.id ? ref : undefined),
+		recoverStaleRef: (id: number) => (ref && id === ref.id ? ref : undefined),
 		observe: vi.fn().mockResolvedValue(obs),
 	} as unknown as ObservationRegistry;
 	const page = { url: () => "https://x/" } as unknown as Page;
@@ -182,6 +183,32 @@ describe("clickRefInApp — resolution + real input", () => {
 		expect(res.ok).toBe(false);
 		expect(res.text).toContain("Ref [99] not found");
 		expect(browserExec).not.toHaveBeenCalled();
+	});
+
+	it("transparently recovers a STALE ref: re-observes, remaps, clicks, and says so", async () => {
+		vi.mocked(browserExec).mockResolvedValue(resolved());
+		const fresh = makeRef({ id: 58 });
+		const ctx = makeCtx(fresh);
+		const registry = ctx.registry as unknown as {
+			get: (id: number) => DurableRef | undefined;
+			recoverStaleRef: (id: number) => DurableRef | undefined;
+			observe: ReturnType<typeof vi.fn>;
+		};
+		// The model still holds [36]; the live map only knows [58]. Recovery
+		// must observe FIRST (refreshing the map), then remap 36 → 58.
+		registry.recoverStaleRef = vi.fn((id: number) => (id === 36 || id === 58 ? fresh : undefined));
+		const res = await clickRefInApp(ctx, 36);
+		expect(res.ok).toBe(true);
+		expect(res.text).toContain("(stale ref [36] auto-recovered as [58])");
+		expect(registry.observe).toHaveBeenCalled();
+		expect(inputTypes()).toEqual(["mouseMove", "mouseDown", "mouseUp"]);
+	});
+
+	it("an unrecoverable ref fails WITH a fresh snapshot appended", async () => {
+		const res = await clickRefInApp(makeCtx(undefined), 99);
+		expect(res.ok).toBe(false);
+		expect(res.text).toContain("Ref [99] not found");
+		expect(res.text).toContain("Current page:");
 	});
 
 	it("surfaces USER_TOOK_WHEEL when the desktop refuses the input (human driving)", async () => {

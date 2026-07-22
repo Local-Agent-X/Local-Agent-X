@@ -58,22 +58,32 @@ function resolveFrame(page: Page, ref: DurableRef): Frame | Page {
   return nonMain ?? page;
 }
 
+// A ref id the model is holding can go stale when the page re-renders: the
+// element re-enters the registry under a NEW id. recoverStaleRef remaps by
+// signature (or unique role+name); the outer clickRefOn/fillRefOn wrappers
+// re-observe between attempts, so a first-pass miss becomes a second-pass
+// recovery instead of a dead "take a fresh observation" round-trip.
+function staleNote(refId: number, ref: DurableRef): string {
+  return ref.id === refId ? "" : ` (stale ref [${refId}] auto-recovered as [${ref.id}])`;
+}
+
 export async function clickRef(
   page: Page,
   registry: ObservationRegistry,
   refId: number
 ): Promise<ActionResult> {
-  const ref = registry.get(refId);
+  const ref = registry.recoverStaleRef(refId);
   if (!ref) {
     return { ok: false, via: "none", message: `Ref [${refId}] not found — take a fresh observation` };
   }
 
   await scrollRefIntoView(page, ref);
   const trace = await tryResolutionChain(page, ref, "click");
-  if (trace.ok) return trace;
+  if (trace.ok) return { ...trace, message: trace.message + staleNote(refId, ref) };
 
   await page.waitForTimeout(1500);
-  return tryResolutionChain(page, ref, "click");
+  const retry = await tryResolutionChain(page, ref, "click");
+  return retry.ok ? { ...retry, message: retry.message + staleNote(refId, ref) } : retry;
 }
 
 export async function fillRef(
@@ -82,16 +92,17 @@ export async function fillRef(
   refId: number,
   value: string
 ): Promise<ActionResult> {
-  const ref = registry.get(refId);
+  const ref = registry.recoverStaleRef(refId);
   if (!ref) {
     return { ok: false, via: "none", message: `Ref [${refId}] not found — take a fresh observation` };
   }
 
   await scrollRefIntoView(page, ref);
   const trace = await tryResolutionChain(page, ref, "fill", value);
-  if (trace.ok) return trace;
+  if (trace.ok) return { ...trace, message: trace.message + staleNote(refId, ref) };
   await page.waitForTimeout(1500);
-  return tryResolutionChain(page, ref, "fill", value);
+  const retry = await tryResolutionChain(page, ref, "fill", value);
+  return retry.ok ? { ...retry, message: retry.message + staleNote(refId, ref) } : retry;
 }
 
 async function scrollRefIntoView(page: Page, ref: DurableRef): Promise<void> {

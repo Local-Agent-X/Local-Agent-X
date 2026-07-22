@@ -11,7 +11,7 @@
  *  4. The App-Map security line derives from the schema (no hand-typed drift).
  */
 import { describe, it, expect } from "vitest";
-import { KILL_SWITCH_GATES, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
+import { computerRedirectBlock, KILL_SWITCH_GATES, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
 import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS } from "../settings-schema.js";
 import { securitySettingsLine } from "../manifest-generator/summary.js";
 import { USER_HINTS } from "../types.js";
@@ -122,6 +122,54 @@ describe("screen-capture redirect gate", () => {
     let consulted = false;
     const block = await screenCaptureRedirectBlock(
       { name: "browser", args: { action: "screenshot" } },
+      () => { consulted = true; return true; },
+    );
+    expect(block).toBeNull();
+    expect(consulted).toBe(false);
+  });
+});
+
+describe("computer redirect gate — actuation half of the escape hatch", () => {
+  const computer = (args: Record<string, unknown> = {}) => ({ name: "computer", args });
+
+  it.each(["click", "move", "drag"])("live in-app view + %s without override → denied, steered back to browser refs", async (action) => {
+    const block = await computerRedirectBlock(computer({ action, x: 1680, y: 220 }), () => true);
+    expect(block).not.toBeNull();
+    expect(block!.reason).toContain(`computer {action:"${action}"}`);
+    expect(block!.recovery).toContain(`{action:"snapshot"}`);
+    expect(block!.recovery).toContain(`{action:"click", ref}`);
+    expect(block!.recovery).toContain(`target:"os-desktop"`);
+  });
+
+  it("non-coordinate actions (type/press/position/screen_size) stay open with a live view", async () => {
+    for (const action of ["type", "press", "position", "screen_size"]) {
+      expect(await computerRedirectBlock(computer({ action }), () => true)).toBeNull();
+    }
+  });
+
+  it("target:'os-desktop' overrides — a deliberate desktop-app assertion — without consulting the view accessor", async () => {
+    let consulted = false;
+    const block = await computerRedirectBlock(
+      computer({ action: "click", x: 5, y: 5, target: "os-desktop" }),
+      () => { consulted = true; return true; },
+    );
+    expect(block).toBeNull();
+    expect(consulted).toBe(false);
+  });
+
+  it("screen_capture's 'os-screen' token must NOT unlock actuation — the tokens are deliberately distinct", async () => {
+    const block = await computerRedirectBlock(computer({ action: "click", target: "os-screen" }), () => true);
+    expect(block).not.toBeNull();
+  });
+
+  it("no in-app view → allowed (normal desktop automation unchanged)", async () => {
+    expect(await computerRedirectBlock(computer({ action: "click", x: 1, y: 1 }), () => false)).toBeNull();
+  });
+
+  it("other tools never consult the view accessor", async () => {
+    let consulted = false;
+    const block = await computerRedirectBlock(
+      { name: "browser", args: { action: "click" } },
       () => { consulted = true; return true; },
     );
     expect(block).toBeNull();

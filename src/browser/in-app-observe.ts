@@ -18,6 +18,7 @@
 import type { Page } from "playwright";
 import { browserCapture, browserExec } from "./bridge-client.js";
 import { checkedScript } from "./in-app-scripts.js";
+import { selectorQuery } from "./selector-compat.js";
 
 /** Mutable url/title cache shared with the owning backend — updated on
  *  navigate results and lifecycle pings, read synchronously by url(). */
@@ -97,11 +98,13 @@ export class BridgeObservePage {
 		}
 	}
 
-	/** page-ops.extractTextFrom seam: $(sel) → handle-with-innerText or null. */
+	/** page-ops.extractTextFrom seam: $(sel) → handle-with-innerText or null.
+	 *  Resolves through the compat engine so Playwright-style selectors
+	 *  (text=, :has-text()) work here the same as on the click/fill paths. */
 	async $(selector: string): Promise<{ innerText(): Promise<string> } | null> {
 		const exists = await execChecked(
 			this.viewId,
-			`!!document.querySelector(${JSON.stringify(selector)})`,
+			`(() => { const el = ${selectorQuery(selector)}; return !!el && !el.bad; })()`,
 		);
 		if (exists !== true) return null;
 		return { innerText: () => this.innerText(selector) };
@@ -110,7 +113,7 @@ export class BridgeObservePage {
 	async innerText(selector: string): Promise<string> {
 		const text = await execChecked(
 			this.viewId,
-			`(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el ? el.innerText : ""; })()`,
+			`(() => { const el = ${selectorQuery(selector)}; return el && !el.bad ? el.innerText : ""; })()`,
 		);
 		return typeof text === "string" ? text : "";
 	}

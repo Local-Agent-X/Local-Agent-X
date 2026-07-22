@@ -147,3 +147,42 @@ export async function screenCaptureRedirectBlock(
       `the in-app browser), retry screen_capture with target:"os-screen".`,
   };
 }
+
+/** Coordinate-bearing `computer` actions: the ones that aim at screen pixels.
+ *  type/press/position/screen_size don't guess coordinates and stay open. */
+const COMPUTER_COORDINATE_ACTIONS = new Set(["click", "move", "drag"]);
+
+/**
+ * Computer-tool redirect gate — the actuation half of the escape hatch the
+ * screen-capture gate closes on the perception side. Observed live (Clover
+ * dashboard, 2026-07-22): a failed in-app browser interaction fell through to
+ * `screen_capture target:"os-screen"` + `computer action:"click" x:1680 y:220`
+ * — blind absolute-pixel clicks aimed at the agent's own browser pane. When a
+ * live in-app view exists, coordinate actions are denied unless the call
+ * carries target:"os-desktop" — a deliberate assertion that the target is a
+ * DIFFERENT desktop app, not the pane. The override token is distinct from
+ * screen_capture's "os-screen" on purpose: an agent that just learned
+ * "os-screen" from the capture recovery must not be able to parrot it into an
+ * actuation override.
+ */
+export async function computerRedirectBlock(
+  call: { name: string; args: Record<string, unknown> },
+  hasLiveInAppView: () => boolean | Promise<boolean>,
+): Promise<ScreenCaptureRedirectBlock | null> {
+  if (call.name !== "computer") return null;
+  const action = String((call.args as { action?: unknown }).action ?? "");
+  if (!COMPUTER_COORDINATE_ACTIONS.has(action)) return null;
+  if ((call.args as { target?: unknown }).target === "os-desktop") return null;
+  if (!(await hasLiveInAppView())) return null;
+  return {
+    reason:
+      `computer {action:"${action}"} is blocked while this session has a live in-app browser view: ` +
+      `pixel coordinates guessed from a monitor capture routinely miss, and the in-app page must be driven ` +
+      `with the \`browser\` tool, not OS-level clicks.`,
+    recovery:
+      `If your target is the in-app browser page: call \`browser\` {action:"snapshot"} for refs, then ` +
+      `{action:"click", ref} / {action:"click_text", text} / {action:"fill", ref}. A failed browser action ` +
+      `means re-observe and retry THERE — never fall back to screen coordinates for the pane. Only if you are ` +
+      `operating a DIFFERENT desktop app (not the in-app browser), retry with target:"os-desktop" to assert that.`,
+  };
+}

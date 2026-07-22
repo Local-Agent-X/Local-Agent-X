@@ -23,7 +23,7 @@ import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/layer/index.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
-import { killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
+import { computerRedirectBlock, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
@@ -157,16 +157,21 @@ export async function assertToolCallAllowed(
   // guess coordinates off a whole-monitor image. Live session state, not
   // config, so it sits beside (not in) the kill-switch table; the getter is
   // lazy so the browser subsystem is only consulted for screen_capture calls.
-  const captureRedirect = await screenCaptureRedirectBlock(call, () =>
-    d.hasInAppBrowserView(ctx.sessionId),
-  );
-  if (captureRedirect) {
+  // Its actuation sibling: `computer` coordinate actions (click/move/drag)
+  // while a live in-app view exists are the same escape hatch one step later
+  // — a failed browser interaction falling back to blind monitor-pixel
+  // clicks on the agent's own pane. Both gates share the redirect shape; the
+  // computer override token (target:"os-desktop") is deliberately distinct.
+  const redirect =
+    (await screenCaptureRedirectBlock(call, () => d.hasInAppBrowserView(ctx.sessionId))) ??
+    (await computerRedirectBlock(call, () => d.hasInAppBrowserView(ctx.sessionId)));
+  if (redirect) {
     // No USER_HINTS entry fits (the `policy` hint points at tool-policy.json —
     // the wrong layer here); the reason is already user-comprehensible.
     throw new ToolBlocked({
       stage: "tool-policy",
-      reason: captureRedirect.reason,
-      recovery: captureRedirect.recovery,
+      reason: redirect.reason,
+      recovery: redirect.recovery,
     });
   }
   // Supervised browser mode. DEFAULT OFF — the in-app browser is autonomous,

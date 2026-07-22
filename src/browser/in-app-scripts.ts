@@ -14,6 +14,7 @@
  */
 
 import type { DurableRef } from "./observation.js";
+import { selectorQuery } from "./selector-compat.js";
 
 /**
  * Wrap an expression script so an in-page throw comes back as a marker object
@@ -41,10 +42,15 @@ export function asExecResult(raw: unknown): ExecActionResult {
 	return { ok: false, error: "unexpected exec result shape" };
 }
 
+// A1 scripts resolve their selector through the compat engine (selector-compat
+// .ts): Playwright idioms the model emits (text=, :has-text(), >>) work, and a
+// selector the browser itself rejects returns a typed "invalid-selector" error
+// instead of an in-page SyntaxError throw.
+
 export function clickScript(selector: string): string {
-	const sel = JSON.stringify(selector);
 	return `(() => {
-	const el = document.querySelector(${sel});
+	const el = ${selectorQuery(selector)};
+	if (el && el.bad) return { ok: false, error: "invalid-selector: " + el.bad };
 	if (!el) return { ok: false, error: "not-found" };
 	if (typeof el.click !== "function") return { ok: false, error: "not-clickable" };
 	el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
@@ -54,10 +60,10 @@ export function clickScript(selector: string): string {
 }
 
 export function fillScript(selector: string, value: string): string {
-	const sel = JSON.stringify(selector);
 	const val = JSON.stringify(value);
 	return `(() => {
-	const el = document.querySelector(${sel});
+	const el = ${selectorQuery(selector)};
+	if (el && el.bad) return { ok: false, error: "invalid-selector: " + el.bad };
 	if (!el) return { ok: false, error: "not-found" };
 	const type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
 	if ("value" in el) el.value = ${val};
@@ -70,10 +76,10 @@ export function fillScript(selector: string, value: string): string {
 }
 
 export function selectScript(selector: string, value: string): string {
-	const sel = JSON.stringify(selector);
 	const val = JSON.stringify(value);
 	return `(() => {
-	const el = document.querySelector(${sel});
+	const el = ${selectorQuery(selector)};
+	if (el && el.bad) return { ok: false, error: "invalid-selector: " + el.bad };
 	if (!el) return { ok: false, error: "not-found" };
 	if (el.tagName !== "SELECT") return { ok: false, error: "not-a-select" };
 	const match = [...el.options].find((o) => o.value === ${val} || o.label === ${val} || o.text === ${val});
@@ -89,6 +95,47 @@ export function selectScript(selector: string, value: string): string {
 // Pure string builders consumed by the in-app-actions.ts drivers. They live
 // here beside the A1 scripts so all isolated-world page code shares one home;
 // the drivers (retry/hit-test-fallthrough/real-input) stay in in-app-actions.ts.
+
+/**
+ * Occlusion classification, shared by resolutionScript and textSearchScript.
+ * A failed hit-test does NOT always mean a blocking overlay: cosmetic siblings
+ * (icons, ripple spans, styled sibling elements) routinely sit on top of the
+ * target without being DOM-related — and a HUMAN click lands on exactly that
+ * topmost element. Those are BENIGN: dispatch the click at the point anyway.
+ * Blocking overlays (modals, backdrops, toasts, full-viewport fixed layers)
+ * stay refused, so the model gets the named occluder instead of a blind click.
+ * Benign requires the overlapper to be small (≤2× the target's area) and to
+ * sit mostly WITHIN the target's bounds — a nav bar or banner covering the
+ * point fails both and stays a refusal.
+ */
+const OCCLUSION_HELPERS = `
+	const overlayLike = (n) => {
+		const vw = document.documentElement.clientWidth || 1;
+		const vh = document.documentElement.clientHeight || 1;
+		let m = n, hops = 0;
+		while (m && m.getBoundingClientRect && hops < 5) {
+			const role = (m.getAttribute && (m.getAttribute("role") || "")) || "";
+			if (m.tagName === "DIALOG" || role === "dialog" || role === "alertdialog" || role === "status" || role === "alert"
+				|| (m.getAttribute && (m.getAttribute("aria-modal") === "true" || m.getAttribute("aria-live")))) return true;
+			const label = ((typeof m.className === "string" ? m.className : "") + " " + (m.id || ""));
+			if (/(overlay|backdrop|modal|dialog|drawer|toast|snackbar|interstitial|cookie|consent|paywall)/i.test(label)) return true;
+			const rr = m.getBoundingClientRect();
+			const ss = getComputedStyle(m);
+			if ((ss.position === "fixed" || ss.position === "sticky") && rr.width >= vw * 0.9 && rr.height >= vh * 0.5) return true;
+			m = m.parentElement; hops++;
+		}
+		return false;
+	};
+	const benignOverlap = (hit, r) => {
+		if (!hit || !hit.getBoundingClientRect || overlayLike(hit)) return false;
+		const rh = hit.getBoundingClientRect();
+		const hitArea = Math.max(1, rh.width * rh.height);
+		if (hitArea > Math.max(1, r.width * r.height) * 2) return false;
+		const ix = Math.max(0, Math.min(r.left + r.width, rh.left + rh.width) - Math.max(r.left, rh.left));
+		const iy = Math.max(0, Math.min(r.top + r.height, rh.top + rh.height) - Math.max(r.top, rh.top));
+		return (ix * iy) / hitArea >= 0.5;
+	};
+`;
 
 /**
  * The whole ref resolution chain in ONE round-trip: role+name → visible text
@@ -116,6 +163,7 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string 
 	const p = ${params};
 	const occluded = [];
 	const lname = (p.name || "").toLowerCase();
+${OCCLUSION_HELPERS}
 	const env = () => ({
 		dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
 		zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1,
@@ -179,7 +227,18 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string 
 				|| (el.contains && el.contains(hitHost))
 				|| (hitHost.contains && hitHost.contains(el))))
 			|| (!!label && !!el.id && label.getAttribute("for") === el.id));
-		if (!related) { occluded.push(via + ":" + describe(hit)); return null; }
+		if (!related) {
+			if (p.op === "click" && benignOverlap(hit, r)) {
+				const e2 = env();
+				return { found: true, via, x, y, w: r.width, h: r.height, dpr: e2.dpr, zoom: e2.zoom,
+					tag: el.tagName || "",
+					type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
+					editable: el.isContentEditable === true,
+					through: describe(hit) };
+			}
+			occluded.push(via + ":" + describe(hit));
+			return null;
+		}
 		const e = env();
 		return { found: true, via, x, y, w: r.width, h: r.height, dpr: e.dpr, zoom: e.zoom,
 			tag: el.tagName || "",
@@ -237,6 +296,7 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string 
 export function textSearchScript(text: string): string {
 	return `(() => {
 	const q = ${JSON.stringify(text)}.toLowerCase();
+${OCCLUSION_HELPERS}
 	const CLICKABLE = 'a[href],button,[role="button"],[role="link"],[role="menuitem"],[role="tab"],[role="checkbox"],input[type="submit"],input[type="button"],label';
 	const vis = (el) => {
 		if (!el || !el.getBoundingClientRect) return false;
@@ -273,7 +333,8 @@ export function textSearchScript(text: string): string {
 		const r = el.getBoundingClientRect();
 		const x = r.left + r.width / 2, y = r.top + r.height / 2;
 		const hit = document.elementFromPoint(x, y);
-		if (!hit || !(hit === el || (el.contains && el.contains(hit)) || (hit.contains && hit.contains(el)))) continue;
+		const related = !!hit && (hit === el || (el.contains && el.contains(hit)) || (hit.contains && hit.contains(el)));
+		if (!related && !benignOverlap(hit, r)) continue;
 		return { found: true, role: roleOf(el), x, y,
 			dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
 			zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1 };

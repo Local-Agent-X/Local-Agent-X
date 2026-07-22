@@ -16,7 +16,7 @@ import {
 
 const token = "a".repeat(64);
 const SESSION = "s1";
-const VIEW = `view-${SESSION}-default`; // sessionIdFromViewId(VIEW) === SESSION
+const VIEW = `view-${SESSION}-default`; // owned by SESSION (viewBelongsToSession)
 const handles: BrowserRelayServerHandle[] = [];
 const original = {
 	flag: process.env[CONTAINER_BROWSER_RELAY_FLAG],
@@ -90,6 +90,92 @@ describe("container browser relay", () => {
 		const message = { type: "lax:browser-capture", viewId: foreignView };
 		await expect(relayBrowserRequest({ op: "capture", viewId: foreignView, message, timeoutMs: 5_000 }))
 			.rejects.toThrow("not owned by this session");
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it("accepts a same-session view whose profile id itself contains hyphens", async () => {
+		// Custom profiles are minted `prof-<b36>-<hex>` (two hyphens); the tab
+		// variant appends `-tN`. The lossy sessionIdFromViewId parser split these
+		// wrong and rejected the session's OWN legitimate ops — would-fail-before.
+		const socketPath = endpoint("hyphen-profile");
+		const request = vi.fn(async () => ({ result: { ok: true } }));
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request, abort: vi.fn() },
+		}));
+		activate(socketPath);
+		for (const viewId of [`view-${SESSION}-prof-lz9k2p-4f2a1c`, `view-${SESSION}-prof-lz9k2p-4f2a1c-t3`]) {
+			request.mockClear();
+			const message = { type: "lax:browser-capture", viewId };
+			await expect(relayBrowserRequest({ op: "capture", viewId, message, timeoutMs: 5_000 }))
+				.resolves.toEqual({ result: { ok: true } });
+			expect(request).toHaveBeenCalledWith({ op: "capture", viewId, message, timeoutMs: 5_000 });
+		}
+	});
+
+	it("refuses a sibling session whose id merely shares this session's prefix", async () => {
+		// `view-s1-…` must never match a distinct session named `s12`: the trailing
+		// hyphen in the owner prefix is what keeps the ids apart.
+		const socketPath = endpoint("sibling-prefix");
+		const request = vi.fn();
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request, abort: vi.fn() },
+		}));
+		activate(socketPath);
+		const foreignView = "view-s12-default";
+		const message = { type: "lax:browser-capture", viewId: foreignView };
+		await expect(relayBrowserRequest({ op: "capture", viewId: foreignView, message, timeoutMs: 5_000 }))
+			.rejects.toThrow("not owned by this session");
+		expect(request).not.toHaveBeenCalled();
+	});
+
+	it("filters a pool list down to the caller's own views and passes the * sentinel", async () => {
+		// lifecycle:list is a whole-pool query the desktop answers ignoring the
+		// viewId. Before the fix a container received every session's url/title;
+		// the "*" sentinel the list caller sends was also rejected outright.
+		const socketPath = endpoint("list-filter");
+		const own = `view-${SESSION}-default`;
+		const request = vi.fn(async () => ({
+			views: [
+				{ viewId: own, partition: "p", url: "https://own.example", title: "Own", attached: true, agentDriven: true },
+				{ viewId: "view-s2-default", partition: "p", url: "https://secret.example", title: "Secret", attached: true, agentDriven: true },
+				{ viewId: "foreground", partition: "p", url: "https://user.example", title: "User", attached: true, agentDriven: false },
+			],
+		}));
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request, abort: vi.fn() },
+		}));
+		activate(socketPath);
+		const message = { type: "lax:browser-lifecycle", op: "list", viewId: "*" };
+		const result = await relayBrowserRequest({ op: "lifecycle:list", viewId: "*", message, timeoutMs: 5_000 });
+		expect(request).toHaveBeenCalled(); // the "*" sentinel was NOT rejected
+		expect(result).toEqual({ views: [expect.objectContaining({ viewId: own, url: "https://own.example" })] });
+	});
+
+	it("refuses clear-partition from a container caller without invoking the handler", async () => {
+		// clear-partition wipes a profile-scoped, cross-session login partition;
+		// no in-container caller legitimately mints it.
+		const socketPath = endpoint("clear-partition");
+		const request = vi.fn();
+		handles.push(await startBrowserContainerRelay({
+			socketPath,
+			token,
+			ownerSessionId: SESSION,
+			handler: { request, abort: vi.fn() },
+		}));
+		activate(socketPath);
+		const partition = "persist:lax-profile-prof-lz9k2p-4f2a1c";
+		const message = { type: "lax:browser-clear-partition", partition };
+		await expect(relayBrowserRequest({ op: "clear-partition", viewId: partition, message, timeoutMs: 5_000 }))
+			.rejects.toThrow("clear-partition is not available to container sessions");
 		expect(request).not.toHaveBeenCalled();
 	});
 

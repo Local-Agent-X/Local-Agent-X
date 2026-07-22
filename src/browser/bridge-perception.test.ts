@@ -13,6 +13,7 @@ import {
 	handleBrowserUiEvent,
 	sessionIdFromViewId,
 	setAgentViewClosedHandler,
+	viewBelongsToSession,
 } from "./bridge-perception.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { sanitizeUiEvent } from "../orchestrator/ui-event-store.js";
@@ -35,6 +36,25 @@ describe("sessionIdFromViewId", () => {
 		expect(sessionIdFromViewId("view-x")).toBeUndefined(); // no profile segment
 		expect(sessionIdFromViewId(42)).toBeUndefined();
 		expect(sessionIdFromViewId(undefined)).toBeUndefined();
+	});
+});
+
+describe("viewBelongsToSession (authorization-grade ownership)", () => {
+	it("owns same-session views including HYPHENATED profiles and -tN tabs the lossy parser breaks", () => {
+		expect(viewBelongsToSession("view-sess-1-default", "sess-1")).toBe(true);
+		// prof-<b36>-<hex> — two hyphens; sessionIdFromViewId mis-splits these.
+		expect(viewBelongsToSession("view-sess-1-prof-lz9k2p-4f2a1c", "sess-1")).toBe(true);
+		expect(viewBelongsToSession("view-sess-1-prof-lz9k2p-4f2a1c-t3", "sess-1")).toBe(true);
+	});
+
+	it("rejects cross-session, sibling-prefix, user and malformed ids", () => {
+		expect(viewBelongsToSession("view-sess-2-default", "sess-1")).toBe(false);
+		expect(viewBelongsToSession("view-sess-12-default", "sess-1")).toBe(false); // sibling prefix
+		expect(viewBelongsToSession("foreground", "sess-1")).toBe(false);
+		expect(viewBelongsToSession("view-sess-1", "sess-1")).toBe(false); // no profile segment
+		expect(viewBelongsToSession("view-sess-1-", "sess-1")).toBe(false); // empty profile
+		expect(viewBelongsToSession(42, "sess-1")).toBe(false);
+		expect(viewBelongsToSession("view-sess-1-default", "")).toBe(false);
 	});
 });
 

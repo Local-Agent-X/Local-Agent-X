@@ -2,7 +2,8 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, rmSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
-import { sessionIdFromViewId } from "./bridge-perception.js";
+import type { BrowserViewInfo } from "./bridge-client-contract.js";
+import { viewBelongsToSession } from "./bridge-perception.js";
 
 export const CONTAINER_BROWSER_RELAY_FLAG = "LAX_CONTAINER_BROWSER_RELAY";
 export const CONTAINER_BROWSER_RELAY_SOCKET = "LAX_CONTAINER_BROWSER_RELAY_SOCKET";
@@ -196,13 +197,12 @@ async function serveFrame(
 	try {
 		const payload = frame.payload as RelayPayload;
 		if (payload.kind === "abort") {
-			assertViewOwnership(payload.viewId as string, ownerSessionId);
+			assertOwnedView(payload.viewId as string, ownerSessionId);
 			await handler.abort(payload.viewId as string);
 			response = { ok: true };
 		} else {
 			const request = payload.request as BrowserRelayRequest;
-			assertViewOwnership(request.viewId, ownerSessionId);
-			response = { ok: true, result: await handler.request(request) };
+			response = { ok: true, result: await authorizeAndRun(request, ownerSessionId, handler) };
 		}
 	} catch (error) {
 		response = { ok: false, error: serializeError(error) };
@@ -306,13 +306,48 @@ function assertOwnerSessionId(value: string): void {
 	}
 }
 
-// Server-side authorization: the relay token only proves container membership,
-// so a well-formed, authenticated request must additionally target a view the
-// container's OWN session owns. Agent views are named view-<sessionId>-<profile>;
-// a viewId whose parsed session differs (cross-session) or is absent (a user /
-// foreground view the container never owns) is refused before the handler runs.
-function assertViewOwnership(viewId: string, ownerSessionId: string): void {
-	if (sessionIdFromViewId(viewId) !== ownerSessionId) {
+// Server-side authorization for a relayed request. The relay token only proves
+// container MEMBERSHIP, so every op is additionally confined to the container's
+// OWN session here — the token by itself would let any in-container code drive
+// another session's browser views.
+async function authorizeAndRun(
+	request: BrowserRelayRequest,
+	ownerSessionId: string,
+	handler: BrowserRelayHandler,
+): Promise<unknown> {
+	// clear-partition wipes a whole profile's saved logins, and its target is a
+	// `persist:lax-profile-<id>` partition SHARED across every session on that
+	// profile — it cannot be confined to one session's views. No in-container
+	// caller mints it (browserClearPartition is only reached from the host-side
+	// profile-management route), so a container framing it is out of contract.
+	if (request.op === "clear-partition") {
+		throw new Error("browser relay clear-partition is not available to container sessions");
+	}
+	// lifecycle:list is a POOL query — the desktop ignores the viewId and returns
+	// every session's views (url + title). It can't be gated by a single viewId,
+	// so instead the whole-pool reply is filtered down to the caller's own views
+	// before it leaves the relay. The list caller (mergeTabs) passes a "*"
+	// sentinel viewId, so no per-view ownership assertion applies to this op.
+	if (request.op === "lifecycle:list") {
+		return filterViewsToSession(await handler.request(request), ownerSessionId);
+	}
+	// Every other op targets one view (or, for the co-drive `input`/`exec` family,
+	// the view named in request.viewId); confine it to a view this session owns.
+	assertOwnedView(request.viewId, ownerSessionId);
+	return handler.request(request);
+}
+
+// Strip other sessions' views out of a pool-list reply so a container never
+// learns another session's browsing (url/title). Non-list shapes pass through.
+function filterViewsToSession(result: unknown, ownerSessionId: string): unknown {
+	if (!isRecord(result) || !Array.isArray(result.views)) return result;
+	const views = (result.views as BrowserViewInfo[])
+		.filter(view => isRecord(view) && viewBelongsToSession(view.viewId, ownerSessionId));
+	return { ...result, views };
+}
+
+function assertOwnedView(viewId: string, ownerSessionId: string): void {
+	if (!viewBelongsToSession(viewId, ownerSessionId)) {
 		throw new Error("browser relay view is not owned by this session");
 	}
 }

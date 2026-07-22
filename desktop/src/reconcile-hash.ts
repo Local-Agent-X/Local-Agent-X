@@ -1,10 +1,79 @@
 import { createHash } from "crypto";
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { relative, join } from "path";
 import { homedir } from "os";
 
 export const STATE_PATH = join(homedir(), ".lax", "reconcile-state.json");
+
+/**
+ * A node_modules npm finished installing carries a `.package-lock.json` manifest.
+ * Its absence — or a missing node_modules — means the install is incomplete: a
+ * fresh tree, an interrupted install, or (the bug this guards) an update whose
+ * worktree merge deleted node_modules on macOS while package-lock.json stayed
+ * put. Reconcile keys its `npm install` on lockfile-hash CHANGES, so without this
+ * a gutted node_modules boots the server straight into "Cannot find package" and
+ * bricks the app with no self-recovery — Repair re-runs reconcile and skips the
+ * install for the same reason. Cheap (two stats); npm writes this on every install.
+ *
+ * markerPkg: a load-bearing package whose package.json must ALSO exist. The
+ * manifest alone is not proof — a gutted tree (observed: an EMPTY
+ * node_modules/electron) can keep `.package-lock.json` and pass for days while
+ * the loader silently falls back to the bundled main. Desktop passes "electron";
+ * root has no equally clear single marker, so it stays manifest-only.
+ */
+export function depsInstalled(dir: string, markerPkg?: string): boolean {
+  if (!existsSync(join(dir, "node_modules", ".package-lock.json"))) return false;
+  if (markerPkg !== undefined && !existsSync(join(dir, "node_modules", markerPkg, "package.json"))) return false;
+  return true;
+}
+
+// ── Desktop pre-build marker (cross-side, sibling of reconcile-state.json) ──
+// The SERVER-side update pipeline (src/desktop-prebuild-marker.ts) writes this
+// file when an update's desktop pre-build fails, so the next desktop boot knows
+// a rebuild was expected and can escalate loudly if dist is still stale. The
+// two sides share the path by convention (desktop is CJS, server is ESM — they
+// cannot import each other); test/desktop-reconcile-deps.test.ts pins it.
+export const DESKTOP_PREBUILD_MARKER_PATH = join(homedir(), ".lax", "desktop-prebuild-pending.json");
+
+export interface DesktopPrebuildMarker { failedAt: string; detail: string }
+
+export function readDesktopPrebuildMarker(markerPath: string = DESKTOP_PREBUILD_MARKER_PATH): DesktopPrebuildMarker | null {
+  if (!existsSync(markerPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(markerPath, "utf-8"));
+    if (parsed && typeof parsed.detail === "string") return parsed as DesktopPrebuildMarker;
+  } catch { /* corrupt marker reads as absent — never blocks boot */ }
+  return null;
+}
+
+export function clearDesktopPrebuildMarker(markerPath: string = DESKTOP_PREBUILD_MARKER_PATH): void {
+  try { rmSync(markerPath, { force: true }); } catch { /* leftover marker just re-notifies */ }
+}
+
+/**
+ * Pure decision: does a boot need to SURFACE a stale desktop dist? Returns the
+ * human-readable reason to show, or null to stay quiet. Quiet when dist is
+ * fresh, or when a rebuild is planned this boot (the rebuild + relaunch fixes
+ * it — nothing to warn about). Otherwise the app is about to run old desktop
+ * code with no self-recovery scheduled — the 3-day-silent failure class.
+ */
+export function staleDistDecision(opts: {
+  distFresh: boolean;
+  rebuildPlanned: boolean;
+  depsWereMissing: boolean;
+  prebuildFailDetail: string | null;
+}): string | null {
+  if (opts.distFresh || opts.rebuildPlanned) return null;
+  const base = "Desktop build (desktop/dist) is older than its source and no rebuild is scheduled this boot";
+  if (opts.prebuildFailDetail) {
+    return `${base} — the last update's desktop build failed: ${opts.prebuildFailDetail.split("\n")[0].slice(0, 200)}`;
+  }
+  if (opts.depsWereMissing) {
+    return `${base} — desktop dependencies were incomplete (e.g. node_modules/electron gutted)`;
+  }
+  return `${base} — the app is likely running an older desktop build`;
+}
 
 // sha256 of an empty buffer — sha256SrcTree returns this when the walk
 // finds zero .ts files (typically: projectRoot points at a directory that

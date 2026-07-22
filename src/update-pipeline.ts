@@ -34,6 +34,7 @@ import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edi
 import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restoreUpdateLanding, type PreparedUpdateLanding } from "./update-git-rollback.js";
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
+import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("update-pipeline");
@@ -253,12 +254,11 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       // then avoids the rebuild + relaunch (the second cold boot). Runs before
       // this function returns "Restart to finish", so the user can't restart
       // into a half-written dist. Non-fatal: the server update already landed;
-      // a failure leaves the prior dist intact (--noEmitOnError) and next-boot
-      // reconcile rebuilds it.
+      // a failure leaves the prior dist intact (--noEmitOnError), next-boot
+      // reconcile rebuilds it, and the recorded marker makes that boot loud.
       if (sh(`git diff --name-only ${mergeInfo.sha} ${postSha} -- desktop/src`, repoRoot)) {
         const dt = runDesktopTscBuild(repoRoot, BUILD_TIMEOUT_MS);
-        if (dt.ok) logger.info(`[update] pre-built desktop/dist for single-boot restart`);
-        else logger.warn(`[update] desktop pre-build failed; reconcile will rebuild next boot: ${dt.detail.slice(0, 300)}`);
+        recordDesktopPrebuildOutcome(dt.ok, dt.detail);
       }
     }
 

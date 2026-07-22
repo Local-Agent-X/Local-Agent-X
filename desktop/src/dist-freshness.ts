@@ -116,6 +116,15 @@ export async function serverDistIsFresh(projectRoot: string): Promise<boolean> {
 // and the relaunch it forces — when the loaded main process is already current.
 export async function desktopDistIsFresh(projectRoot: string): Promise<boolean> {
   const distDir = join(projectRoot, "desktop", "dist");
-  return await distNewerThanSources(join(distDir, "main.js"), join(projectRoot, "desktop", "src"))
-    && builtRefFresh(distDir, projectRoot);
+  return await desktopDistMtimeFresh(projectRoot) && builtRefFresh(distDir, projectRoot);
+}
+
+// Mtime-only desktop freshness — deliberately WITHOUT the git-stamp component.
+// The stamp goes stale on any HEAD move that never touches desktop/src (a
+// server-only pull), where no rebuild is scheduled to re-stamp it; a caller
+// deciding whether to WARN about a stale dist (reconcile's stale-dist signal,
+// not the rebuild decision) must use this or it nags forever over a dist whose
+// content is actually current.
+export async function desktopDistMtimeFresh(projectRoot: string): Promise<boolean> {
+  return distNewerThanSources(join(projectRoot, "desktop", "dist", "main.js"), join(projectRoot, "desktop", "src"));
 }

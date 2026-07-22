@@ -1,18 +1,9 @@
-/**
- * Browser bridge client — server→desktop IPC for driving the pooled
- * WebContentsViews (desktop/src/browser-views.ts). Same correlation idiom
- * as src/desktop-bridge.ts (seq id + pending map) but self-contained with
- * its OWN process.on("message") listener. That listener also serves the
- * desktop-initiated channels: the REVERSE egress asks (answered from the
- * canonical evaluateEgressForUrl — URL policy is never duplicated in
- * Electron main; arm at boot via initBrowserBridgeClient), plus the
- * fire-and-forget ui-event and download-event pushes (bridge-perception).
- * Fail-closed throughout: no bridge → reject; timeout → typed error
- * naming op + viewId; closing a view rejects its pending ops immediately.
- */
+/** Canonical server→desktop browser bridge. Container callers use the
+ * authenticated relay, whose parent re-enters the same request seam. */
 
 import { createLogger } from "../logger.js";
 import { answerEgressAsk } from "./bridge-egress.js";
+import { browserContainerRelayActivated, relayBrowserAbort, relayBrowserRequest, type BrowserRelayRequest } from "./container-bridge-relay.js";
 import {
 	handleAgentViewClosed,
 	handleBrowserDownloadEvent,
@@ -51,7 +42,6 @@ export interface BrowserViewInfo {
 
 export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list";
 
-/** Input shapes match Electron webContents.sendInputEvent. */
 export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
 export interface BridgeMouseEvent {
 	type: "mouseDown" | "mouseUp" | "mouseMove";
@@ -171,8 +161,10 @@ const pendingOps = new Map<number, PendingOp>();
 let listenerAttached = false;
 
 export function browserBridgeAvailable(): boolean {
-	return process.env.LAX_DESKTOP_BRIDGE === "1" && typeof process.send === "function";
+	return browserContainerRelayActivated() || desktopBrowserBridgeAvailable();
 }
+
+const desktopBrowserBridgeAvailable = (): boolean => process.env.LAX_DESKTOP_BRIDGE === "1" && typeof process.send === "function";
 
 function ensureListener(): void {
 	if (listenerAttached) return;
@@ -221,7 +213,7 @@ function ensureListener(): void {
  *  issuing an op. Wire this once at server boot when running under the
  *  desktop; harmless no-op elsewhere. */
 export function initBrowserBridgeClient(): void {
-	if (!browserBridgeAvailable()) return;
+	if (!desktopBrowserBridgeAvailable()) return;
 	ensureListener();
 }
 
@@ -239,7 +231,15 @@ function request(
 	message: Record<string, unknown>,
 	timeoutMs: number,
 ): Promise<BridgeReply> {
-	if (!browserBridgeAvailable()) return Promise.reject(new BridgeUnavailableError(op));
+	if (browserContainerRelayActivated()) {
+		return relayBrowserRequest({ op, viewId, message, timeoutMs }) as Promise<BridgeReply>;
+	}
+	return requestDesktopBrowserBridge({ op, viewId, message, timeoutMs });
+}
+
+export function requestDesktopBrowserBridge(request: BrowserRelayRequest): Promise<BridgeReply> {
+	const { op, viewId, message, timeoutMs } = request;
+	if (!desktopBrowserBridgeAvailable()) return Promise.reject(new BridgeUnavailableError(op));
 	ensureListener();
 	const id = ++seq;
 	return new Promise<BridgeReply>((resolve, reject) => {
@@ -374,7 +374,15 @@ export async function browserClearPartition(partition: string): Promise<void> {
 
 /** Fire-and-forget: stop the view's in-flight load. No id, no reply. */
 export function browserAbort(viewId: string): void {
-	if (!browserBridgeAvailable()) return;
+	if (browserContainerRelayActivated()) {
+		void relayBrowserAbort(viewId).catch(error => logger.warn(`[browser-bridge] relay abort failed (viewId=${viewId}): ${(error as Error).message}`));
+		return;
+	}
+	browserAbortDesktop(viewId);
+}
+
+export function browserAbortDesktop(viewId: string): void {
+	if (!desktopBrowserBridgeAvailable()) return;
 	try {
 		process.send!({ type: "lax:browser-abort", viewId });
 	} catch (e) {

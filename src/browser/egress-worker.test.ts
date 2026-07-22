@@ -20,6 +20,7 @@ import { startEgressWorkerHost, stopEgressWorkerHost, currentEgressEndpoint, _cr
 import { answerEgressAsk, peekEgressDeny, type EgressAskMessage } from "./bridge-egress.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries } from "../threat/canaries.js";
+import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../local-runtimes/cache.js";
 
 const TAINT_SESSION = "wrk-taint-sess";
 const TAINT_VIEW = `view-${TAINT_SESSION}-default`;
@@ -104,11 +105,24 @@ beforeAll(async () => {
 	await waitFor(() => endpoints.length >= 1, 30_000, "first worker endpoint");
 }, 40_000);
 
+/** Poll one pipe ask until it reaches `want` (mirror delivery is
+ *  eventually-consistent) — or time out and return the last answer. */
+async function askPipeUntil(ask: Omit<EgressAskMessage, "id">, want: boolean, timeoutMs = 5000): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	let allowed = (await askPipe(pipe(), ask)).allowed;
+	while (allowed !== want && Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, 50));
+		allowed = (await askPipe(pipe(), ask)).allowed;
+	}
+	return allowed;
+}
+
 afterAll(async () => {
 	await stopEgressWorkerHost();
 	process.send = originalSend;
 	clearSessionTaint(TAINT_SESSION);
 	clearSessionCanaries(CANARY_SESSION);
+	invalidateLocalRuntimes();
 	delete process.env.LAX_DATA_DIR;
 	delete process.env.LAX_PORT;
 	rmSync(laxDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -257,6 +271,60 @@ describe("egress worker — stall immunity", () => {
 		expect(r.reply?.allowed).toBe(true);
 		expect(r.elapsedMs!).toBeLessThan(1000); // answered well inside the stall
 		expect(r.replyAt!).toBeLessThan(blockEnd); // ...i.e. WHILE main was blocked
+	});
+});
+
+describe("egress worker — discovered local-runtime port parity (mirror)", () => {
+	const PORT = "18777";
+	const runtimeUrl = `http://127.0.0.1:${PORT}/v1/models`;
+
+	it("denies a not-yet-discovered runtime port on both paths (fail-toward-deny)", async () => {
+		expect((await askPipe(pipe(), { url: runtimeUrl })).allowed).toBe(false);
+		expect(askFallback({ url: runtimeUrl })).toBe(false);
+	});
+
+	it("allows the port on both paths once the cache updates, and re-denies after invalidation", async () => {
+		const projected = join(laxDir, "projected-runtime.json");
+		writeFileSync(projected, JSON.stringify({
+			kind: "openai-compat",
+			id: "rt-parity-test",
+			label: "rt-parity-test",
+			endpoint: { origin: "auto", baseUrl: `http://127.0.0.1:${PORT}` },
+			chatBaseUrl: `http://127.0.0.1:${PORT}/v1`,
+			models: [],
+			refreshedAt: Date.now(),
+		}), "utf-8");
+		try {
+			restoreProjectedLocalRuntime(projected);
+			// In-loop reads the cache module directly → allowed immediately.
+			expect(askFallback({ url: runtimeUrl })).toBe(true);
+			// The worker's mirror is eventually-consistent → poll to allow.
+			expect(await askPipeUntil({ url: runtimeUrl }, true)).toBe(true);
+		} finally {
+			invalidateLocalRuntimes();
+			unlinkSync(projected);
+		}
+		// Invalidation empties the mirror → the deny returns on both paths.
+		expect(await askPipeUntil({ url: runtimeUrl }, false)).toBe(false);
+		expect(askFallback({ url: runtimeUrl })).toBe(false);
+	});
+});
+
+describe("egress worker — config-cache staleness includes port sources", () => {
+	it("an ollamaUrl (config.json) change flips the worker decision without touching the policy files", async () => {
+		const url = "http://127.0.0.1:18901/api/tags";
+		expect((await askPipe(pipe(), { url })).allowed).toBe(false);
+		// Only config.json changes — egress-allowlist.json / security.json are
+		// untouched, so the old mtime key would have kept serving the stale set.
+		writeFileSync(join(laxDir, "config.json"), JSON.stringify({ ollamaUrl: "http://127.0.0.1:18901" }), "utf-8");
+		try {
+			expect((await askPipe(pipe(), { url })).allowed).toBe(true);
+			expect(askFallback({ url })).toBe(true);
+		} finally {
+			unlinkSync(join(laxDir, "config.json"));
+		}
+		expect((await askPipe(pipe(), { url })).allowed).toBe(false);
+		expect(askFallback({ url })).toBe(false);
 	});
 });
 

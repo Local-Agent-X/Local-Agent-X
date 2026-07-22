@@ -15,7 +15,7 @@ repo-root Commons Clause `LICENSE`; no separate license file ships in
 - **If a specific bug or gap requires a change here**, edit with care and
   only in scope of the bug. No refactors, no renames, no "while I'm here".
 - **Don't add packages here.** `sidecar`, `adapters`, and `control-plane`
-  were intentionally removed in commit 3278e5f because they existed only
+  were intentionally removed in commit 310829a2 because they existed only
   to support the now-deleted sidecar mode. Keep it lean — 6 packages total:
   `core`, `runtime`, `taint-tracker`, `policy-engine`, `audit-log`, `tool-executors`.
 - **Build with `npm run build:ari`.** Triggered automatically by `npm run build`

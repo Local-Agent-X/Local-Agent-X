@@ -1,10 +1,13 @@
-import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync,
+  readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   computeDurableRecordMac,
   verifyDurableRecordMac,
 } from "../app-runtime/audit-signing.js";
 import type { ContainerLaunchProjection } from "./container-execution-backend.js";
+import { fsyncDirectory } from "../persistence/durable-directory.js";
 
 const DOMAIN = "canonical-container-projection-reservation-v1";
 
@@ -23,8 +26,17 @@ export function writeProjectionReservation(
   descriptorMac: string,
 ): void {
   const payload = { schemaVersion: 1 as const, projectionId, opId, descriptorMac };
-  writeFileSync(join(root, "reservation.json"), JSON.stringify({ ...payload,
-    mac: computeDurableRecordMac(DOMAIN, JSON.stringify(payload)) }), { mode: 0o600, flag: "wx" });
+  const path = join(root, "reservation.json");
+  const tmp = join(root, `reservation.${process.pid}.${randomUUID()}.tmp`);
+  fsyncDirectory(dirname(root));
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
+    writeFileSync(fd, JSON.stringify({ ...payload,
+      mac: computeDurableRecordMac(DOMAIN, JSON.stringify(payload)) }), "utf8");
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
+  renameSync(tmp, path);
+  fsyncDirectory(root);
 }
 
 export function reopenReservedProjection(
@@ -34,20 +46,47 @@ export function reopenReservedProjection(
   descriptorMac: string,
 ): ContainerLaunchProjection | null {
   if (existsSync(join(root, "projection.json"))) return null;
-  const reservation = readReservation(root);
+  let reservation: Reservation;
+  try { reservation = readReservation(root); }
+  catch (error) {
+    if (!isRecoverableEmptyReservation(root)) throw error;
+    return interruptedProjection(root, projectionId, false);
+  }
   if (reservation.projectionId !== projectionId || reservation.opId !== opId
     || reservation.descriptorMac !== descriptorMac) {
     throw new Error("container projection reservation identity changed");
   }
+  return interruptedProjection(root, projectionId, true);
+}
+
+function interruptedProjection(
+  root: string,
+  projectionId: string,
+  verifyReservation: boolean,
+): ContainerLaunchProjection {
   return {
     durableId: projectionId,
     buildSpec() { throw new Error("container projection creation was interrupted"); },
     writeBootstrap() { throw new Error("container projection creation was interrupted"); },
     cleanup() {
-      readReservation(root);
+      if (verifyReservation) readReservation(root);
+      else if (!isRecoverableEmptyReservation(root)) {
+        throw new Error("container projection reservation changed before cleanup");
+      }
       rmSync(root, { recursive: true, force: true });
+      fsyncDirectory(dirname(root));
     },
   };
+}
+
+function isRecoverableEmptyReservation(root: string): boolean {
+  const rootStat = lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
+  return readdirSync(root).every(name => {
+    if (!/^reservation(?:\.\d+\.[a-f0-9-]+\.tmp|\.json)$/.test(name)) return false;
+    const stat = lstatSync(join(root, name));
+    return stat.isFile() && !stat.isSymbolicLink() && stat.size <= 16 * 1024;
+  });
 }
 
 function readReservation(root: string): Reservation {

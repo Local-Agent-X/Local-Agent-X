@@ -29,4 +29,17 @@ describe("container projection reservation", () => {
     await projection?.cleanup();
     expect(existsSync(projectionRoot)).toBe(false);
   });
+
+  it("cleans the pre-bound empty-root crash boundary", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-projection-reservation-"));
+    const projectionId = "12345678-1234-4123-8123-123456789abc";
+    const projectionRoot = join(root, projectionId);
+    mkdirSync(projectionRoot, { mode: 0o700 });
+
+    const projection = reopenReservedProjection(
+      projectionRoot, projectionId, "op-reserved", "a".repeat(64),
+    );
+    await projection?.cleanup();
+    expect(existsSync(projectionRoot)).toBe(false);
+  });
 });

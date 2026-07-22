@@ -12,6 +12,7 @@ const original = {
   openai: process.env.OPENAI_API_KEY,
   network: process.env.LAX_CONTAINER_EXECUTION_NETWORK,
   networkId: process.env.LAX_CONTAINER_EXECUTION_NETWORK_ID,
+  networkGateway: process.env.LAX_CONTAINER_EXECUTION_NETWORK_GATEWAY,
 };
 let root: string | null = null;
 
@@ -24,6 +25,7 @@ afterEach(() => {
   restore("OPENAI_API_KEY", original.openai);
   restore("LAX_CONTAINER_EXECUTION_NETWORK", original.network);
   restore("LAX_CONTAINER_EXECUTION_NETWORK_ID", original.networkId);
+  restore("LAX_CONTAINER_EXECUTION_NETWORK_GATEWAY", original.networkGateway);
 });
 
 describe.skipIf(!enabled)("production container runtime projection", () => {

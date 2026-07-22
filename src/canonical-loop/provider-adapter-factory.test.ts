@@ -62,9 +62,9 @@ afterEach(() => { delete process.env.LAX_CONTAINER_HOST_GATEWAY; });
 
 describe("delegated provider runtime identity", () => {
   it("rewrites only a verified loopback endpoint to the explicit container gateway", () => {
-    process.env.LAX_CONTAINER_HOST_GATEWAY = "host.docker.internal";
+    process.env.LAX_CONTAINER_HOST_GATEWAY = "172.18.0.1";
     expect(rewriteVerifiedLocalEndpointForContainer("http://127.0.0.1:11434/v1"))
-      .toBe("http://host.docker.internal:11434/v1");
+      .toBe("http://172.18.0.1:11434/v1");
     expect(() => rewriteVerifiedLocalEndpointForContainer("https://remote.example/v1"))
       .toThrow("container_gateway_non_loopback");
     process.env.LAX_CONTAINER_HOST_GATEWAY = "evil.example.com";

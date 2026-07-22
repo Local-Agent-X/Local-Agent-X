@@ -69,7 +69,7 @@ export interface DockerExecutionRuntime {
 
 export interface DockerExecutionPolicy {
   approvedMountRoots: readonly string[];
-  allowedNetwork: { name: string; id: string } | null;
+  allowedNetwork: { name: string; id: string; gateway?: string } | null;
 }
 
 export class DockerCreateOutcomeAmbiguousError extends Error {
@@ -180,6 +180,10 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
           this.pendingMountReleases.set(recovered.containerId, heldMounts.close);
           return recovered;
         }
+        if (!isDefinitiveCreateRejection(error)) {
+          this.pendingMountReleases.set(spec.name, heldMounts.close);
+          throw new DockerCreateOutcomeAmbiguousError(spec.name, error);
+        }
       } catch (reconcileError) {
         if (reconcileError instanceof DockerCreateOutcomeAmbiguousError) throw reconcileError;
         this.pendingMountReleases.set(spec.name, heldMounts.close);
@@ -193,12 +197,14 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   private async resolveApprovedNetwork(name: string): Promise<string> {
     const result = await this.run([
       "network", "inspect", name,
-      "--format", "{{.Id}}\n{{.Name}}\n{{.Driver}}\n{{.Scope}}\n{{.Internal}}",
+      "--format", "{{.Id}}\n{{.Name}}\n{{.Driver}}\n{{.Scope}}\n{{.Internal}}\n{{(index .IPAM.Config 0).Gateway}}",
     ]);
-    const [id, actualName, driver, scope, internal] = result.stdout.trim().split(/\r?\n/);
+    const [id, actualName, driver, scope, internal, gateway] = result.stdout.trim().split(/\r?\n/);
     if (!this.policy.allowedNetwork || id !== this.policy.allowedNetwork.id
       || actualName !== this.policy.allowedNetwork.name || actualName !== name || driver !== "bridge"
-      || scope !== "local" || internal !== "false") {
+      || scope !== "local" || internal !== "false"
+      || (this.policy.allowedNetwork.gateway !== undefined
+        && gateway !== this.policy.allowedNetwork.gateway)) {
       throw new Error("container execution network properties are not approved");
     }
     return id;
@@ -306,6 +312,12 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
     }
   }
   for (const mount of spec.mounts) validateMountShape(mount);
+}
+
+function isDefinitiveCreateRejection(error: unknown): boolean {
+  const command = error as { code?: unknown; signal?: unknown; killed?: unknown } | null;
+  return !!command && command.killed !== true && command.signal == null
+    && (typeof command.code === "number" || command.code === "ENOENT");
 }
 
 function validMemoryLimit(value: string): boolean {

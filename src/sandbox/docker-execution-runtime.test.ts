@@ -94,6 +94,16 @@ describe("DockerCliExecutionRuntime", () => {
     ]));
   });
 
+  it("does not treat one negative inspect as proof after a transport timeout", async () => {
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockRejectedValueOnce(new Error("create response timed out"))
+      .mockRejectedValueOnce(new Error("No such container: lax-op-abc"));
+
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
+      .rejects.toBeInstanceOf(DockerCreateOutcomeAmbiguousError);
+  });
+
   it("rejects a same-name network with different security properties", async () => {
     const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
       stdout: `${networkId}\nlax-egress\nmacvlan\nswarm\ntrue\n`, stderr: "",
@@ -101,6 +111,17 @@ describe("DockerCliExecutionRuntime", () => {
     await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
       .rejects.toThrow("network properties are not approved");
     expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("binds the local remap gateway to inspected network IPAM", async () => {
+    const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
+      stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n172.18.0.2\n`, stderr: "",
+    });
+    const exactPolicy = { ...policy(), allowedNetwork: {
+      name: "lax-egress", id: networkId, gateway: "172.18.0.1",
+    } };
+    await expect(new DockerCliExecutionRuntime(run, exactPolicy).create(spec()))
+      .rejects.toThrow("network properties are not approved");
   });
 
   it.skipIf(process.platform !== "linux")(
@@ -171,7 +192,7 @@ describe("DockerCliExecutionRuntime", () => {
       .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
       .mockImplementationOnce(async args => {
         heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
-        throw new Error("create failed");
+        throw Object.assign(new Error("create failed"), { code: 125 });
       })
       .mockRejectedValueOnce(new Error("No such container: lax-op-abc"));
     const input = spec();

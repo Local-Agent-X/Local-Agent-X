@@ -78,7 +78,10 @@ async function cleanTerminalIntent(
   }
   const state = intent.container
     ? await runtime.inspect(intent.container.containerId)
-    : await runtime.inspectNamed(intent.name, ownershipLabels(intent));
+    : await runtime.inspectNamed(intent.name, ownershipLabels(intent))
+      ?? await runtime.fenceCreateName({ name: intent.name,
+        image: await runtime.resolvePinnedImage(intent.imageReference),
+        labels: ownershipLabels(intent) });
   if (state) {
     if (state.imageId !== intent.imageId || (intent.container
       && (state.containerId !== intent.container.containerId

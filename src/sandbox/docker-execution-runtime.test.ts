@@ -104,6 +104,30 @@ describe("DockerCliExecutionRuntime", () => {
       .rejects.toBeInstanceOf(DockerCreateOutcomeAmbiguousError);
   });
 
+  it("atomically fences an absent create name before recovery cleanup", async () => {
+    const labels = { "lax.execution.op": "op-1" };
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
+      .mockResolvedValueOnce({
+        stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "",
+      })
+      .mockResolvedValueOnce({
+        stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "",
+      });
+    const runtime = new DockerCliExecutionRuntime(run, policy());
+
+    await expect(runtime.fenceCreateName({ name: "lax-op-fence",
+      image: { reference, requestedDigest: digest, imageId }, labels })).resolves.toEqual({
+        containerId, createdAt, imageId, running: false, exitCode: 0,
+      });
+    const args = run.mock.calls[0][0];
+    expect(args).toEqual(expect.arrayContaining([
+      "create", "--name", "lax-op-fence", "--read-only", "--cap-drop", "ALL",
+      "--network", "none", reference, "__lax_terminal_name_fence__",
+    ]));
+    expect(args.join(" ")).not.toContain("--mount");
+  });
+
   it("rejects a same-name network with different security properties", async () => {
     const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
       stdout: `${networkId}\nlax-egress\nmacvlan\nswarm\ntrue\n`, stderr: "",

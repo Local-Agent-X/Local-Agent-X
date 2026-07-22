@@ -63,6 +63,11 @@ export interface DockerExecutionRuntime {
   start(containerId: string): Promise<void>;
   inspect(containerId: string): Promise<DockerContainerState | null>;
   inspectNamed(name: string, labels: Readonly<Record<string, string>>): Promise<DockerContainerState | null>;
+  fenceCreateName(input: {
+    name: string;
+    image: DockerImageIdentity;
+    labels: Readonly<Record<string, string>>;
+  }): Promise<DockerContainerState>;
   wait(containerId: string): Promise<number>;
   stop(containerId: string): Promise<void>;
 }
@@ -192,6 +197,31 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
       heldMounts.close();
       throw error;
     }
+  }
+
+  async fenceCreateName(input: {
+    name: string;
+    image: DockerImageIdentity;
+    labels: Readonly<Record<string, string>>;
+  }): Promise<DockerContainerState> {
+    const identity = await this.create({
+      name: input.name,
+      image: input.image,
+      command: ["__lax_terminal_name_fence__"],
+      environment: {},
+      mounts: [],
+      network: "none",
+      user: { uid: 1000, gid: 1000 },
+      memoryLimit: "64m",
+      pidsLimit: 16,
+      labels: input.labels,
+    });
+    const state = await this.inspect(identity.containerId);
+    if (!state || state.containerId !== identity.containerId || state.createdAt !== identity.createdAt
+      || state.imageId !== identity.imageId) {
+      throw new DockerCreateOutcomeAmbiguousError(input.name, new Error("name fence identity changed"));
+    }
+    return state;
   }
 
   private async resolveApprovedNetwork(name: string): Promise<string> {

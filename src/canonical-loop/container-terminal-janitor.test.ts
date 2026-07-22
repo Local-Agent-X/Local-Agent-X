@@ -48,7 +48,7 @@ describe("terminal container janitor", () => {
     expect(readContainerLaunchIntent(op.id)).toBeNull();
   });
 
-  it("reconciles a named container when create completed before intent binding", async () => {
+  it("fences an absent name before removing an unbound launch intent", async () => {
     const op = terminalOp("op-terminal-unbound");
     writeOp(op);
     let intent = createContainerLaunchIntent({ opId: op.id,
@@ -57,9 +57,12 @@ describe("terminal container janitor", () => {
     intent = bindContainerLaunchProjection(intent, "projection-unbound");
     writeContainerLaunchIntent(intent);
     let removed = false;
-    const runtime = { probe: vi.fn().mockResolvedValue(true), inspectNamed: vi.fn(async () => ({
-      ...container, running: false, exitCode: 0,
-    })), inspect: vi.fn(async () => removed ? null : { ...container, running: false, exitCode: 0 }),
+    const runtime = { probe: vi.fn().mockResolvedValue(true),
+      resolvePinnedImage: vi.fn().mockResolvedValue({ reference: imageReference,
+        requestedDigest: `sha256:${"a".repeat(64)}`, imageId: container.imageId }),
+      inspectNamed: vi.fn().mockResolvedValue(null),
+      fenceCreateName: vi.fn().mockResolvedValue({ ...container, running: false, exitCode: 0 }),
+      inspect: vi.fn(async () => removed ? null : { ...container, running: false, exitCode: 0 }),
       stop: vi.fn(async () => { removed = true; }) } as unknown as DockerExecutionRuntime;
 
     const result = await reconcileTerminalContainerExecutions({ runtime, listOpIds: () => [op.id],
@@ -68,6 +71,10 @@ describe("terminal container janitor", () => {
     expect(result).toEqual({ cleaned: [op.id], deferred: [] });
     expect(runtime.inspectNamed).toHaveBeenCalledWith("lax-op-unbound", expect.objectContaining({
       "lax.execution.op": op.id,
+    }));
+    expect(runtime.fenceCreateName).toHaveBeenCalledWith(expect.objectContaining({
+      name: "lax-op-unbound",
+      labels: expect.objectContaining({ "lax.execution.op": op.id }),
     }));
   });
 });

@@ -276,6 +276,8 @@ function fakeRuntime(overrides: Partial<DockerExecutionRuntime> = {}): DockerExe
     inspect: vi.fn(async () => removed ? null
       : { containerId, createdAt, imageId, running: true, exitCode: null }),
     inspectNamed: vi.fn().mockResolvedValue(null),
+    fenceCreateName: vi.fn(async () => { removed = false;
+      return { containerId, createdAt, imageId, running: false, exitCode: 0 }; }),
     wait: vi.fn().mockResolvedValue(0),
     stop: vi.fn(async () => { removed = true; }),
     ...overrides,

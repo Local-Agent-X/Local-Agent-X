@@ -76,6 +76,7 @@ export function createProductionContainerRuntime(): DockerExecutionRuntime {
     start: id => runtime().start(id),
     inspect: id => runtime().inspect(id),
     inspectNamed: (name, labels) => runtime().inspectNamed(name, labels),
+    fenceCreateName: input => runtime().fenceCreateName(input),
     wait: id => runtime().wait(id),
     stop: id => runtime().stop(id),
   };

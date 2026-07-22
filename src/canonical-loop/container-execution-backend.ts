@@ -216,7 +216,9 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     }
     const state = intent.container
       ? await this.runtime.inspect(intent.container.containerId)
-      : await this.runtime.inspectNamed(intent.name, ownershipLabels(request.op.id, request.placement));
+      : await this.runtime.inspectNamed(intent.name, ownershipLabels(request.op.id, request.placement))
+        ?? await this.runtime.fenceCreateName({ name: intent.name, image,
+          labels: ownershipLabels(request.op.id, request.placement) });
     if (!state) {
       await (await this.reopenProjection(request.op, intent))?.cleanup();
       removeContainerLaunchIntent(intent);

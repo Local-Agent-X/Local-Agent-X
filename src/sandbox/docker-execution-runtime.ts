@@ -35,6 +35,7 @@ export interface DockerBindMount {
   source: string;
   target: string;
   readOnly: boolean;
+  identity?: { device: string; inode: string };
 }
 
 export interface DockerContainerSpec {

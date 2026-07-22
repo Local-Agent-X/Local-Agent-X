@@ -44,6 +44,7 @@ interface ProjectionManifest {
   opId: string;
   descriptorMac: string;
   files: Record<string, string>;
+  mounts: Record<string, { device: string; inode: string }>;
 }
 
 interface SealedProjectionManifest { manifest: ProjectionManifest; mac: string }
@@ -106,7 +107,13 @@ export async function createContainerRuntimeProjection(op: Op): Promise<Containe
       .filter(path => existsSync(join(root, path)));
     const manifest: ProjectionManifest = { schemaVersion: 1, projectionId, opId: op.id,
       descriptorMac: descriptor.integrity.mac,
-      files: Object.fromEntries(tracked.map(path => [path, hashFile(join(root, path))])) };
+      files: Object.fromEntries(tracked.map(path => [path, hashFile(join(root, path))])),
+      mounts: Object.fromEntries([
+        ["state", state], ["operation", opDir(op.id)], ["workspace", realpathSync(workspaceRoot())],
+        ["credential", credentialPath], ["audit", auditPath], ["bootstrap", bootstrapPath],
+        ...(localRuntimePath ? [["localRuntime", localRuntimePath]] : []),
+      ].map(([name, path]) => [name, fileIdentity(path)])),
+    };
     writeJson(join(root, "projection.json"), sealManifest(manifest));
     return materializeProjection(op, projectionId, root, localRuntimePath !== null);
   } catch (error) {
@@ -170,16 +177,21 @@ function materializeProjection(
             : {}),
         },
         mounts: [
-          { source: state, target: CONTAINER_DATA, readOnly: false },
-          { source: operation, target: `${CONTAINER_DATA}/operations/${op.id}`, readOnly: false },
-          { source: workspace, target: workspace, readOnly: false },
-          { source: credentialPath, target: `${CONTAINER_SECRETS}/runtime-credential.json`, readOnly: true },
-          { source: auditPath, target: `${CONTAINER_SECRETS}/audit-key`, readOnly: true },
-          { source: bootstrapPath, target: `${CONTAINER_SECRETS}/bootstrap.json`, readOnly: true },
+          { source: state, target: CONTAINER_DATA, readOnly: false, identity: manifest.mounts.state },
+          { source: operation, target: `${CONTAINER_DATA}/operations/${op.id}`, readOnly: false,
+            identity: manifest.mounts.operation },
+          { source: workspace, target: workspace, readOnly: false, identity: manifest.mounts.workspace },
+          { source: credentialPath, target: `${CONTAINER_SECRETS}/runtime-credential.json`, readOnly: true,
+            identity: manifest.mounts.credential },
+          { source: auditPath, target: `${CONTAINER_SECRETS}/audit-key`, readOnly: true,
+            identity: manifest.mounts.audit },
+          { source: bootstrapPath, target: `${CONTAINER_SECRETS}/bootstrap.json`, readOnly: true,
+            identity: manifest.mounts.bootstrap },
           ...(localRuntimePath ? [{
             source: localRuntimePath,
             target: `${CONTAINER_SECRETS}/local-runtime.json`,
             readOnly: true,
+            identity: manifest.mounts.localRuntime,
           }] : []),
         ],
         network: network ? { name: network.name } : "none",
@@ -250,9 +262,14 @@ function readManifest(root: string): ProjectionManifest {
   if (!manifest || manifest.schemaVersion !== 1 || manifest.projectionId !== basename(root)
     || !manifest.opId || typeof manifest.descriptorMac !== "string"
     || !/^[a-f0-9]{64}$/.test(manifest.descriptorMac)
-    || !manifest.files || typeof manifest.files !== "object"
+    || !manifest.files || typeof manifest.files !== "object" || !manifest.mounts
+    || typeof manifest.mounts !== "object"
     || Object.entries(manifest.files).some(([file, hash]) => !/^(?:state|secrets)\/[A-Za-z0-9._-]+$/.test(file)
       || !/^[a-f0-9]{64}$/.test(hash))
+    || Object.entries(manifest.mounts).some(([name, identity]) => !/^[A-Za-z]+$/.test(name)
+      || !identity || !/^\d+$/.test(identity.device) || !/^\d+$/.test(identity.inode))
+    || !["state", "operation", "workspace", "credential", "audit", "bootstrap"]
+      .every(name => name in (manifest.mounts ?? {}))
     || typeof sealed.mac !== "string"
     || !verifyDurableRecordMac(PROJECTION_DOMAIN, JSON.stringify(manifest), sealed.mac)) {
     throw new Error("container projection manifest integrity check failed");
@@ -272,6 +289,11 @@ function verifyManifestFiles(root: string, manifest: ProjectionManifest): void {
 
 function hashFile(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function fileIdentity(path: string): { device: string; inode: string } {
+  const stat = lstatSync(path, { bigint: true });
+  return { device: stat.dev.toString(), inode: stat.ino.toString() };
 }
 
 function configuredNetwork(): { name: string; id: string } | null {

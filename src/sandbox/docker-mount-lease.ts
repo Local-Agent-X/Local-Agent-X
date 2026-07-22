@@ -27,6 +27,12 @@ export function holdValidatedMounts(
       if (!identity.isFile() && !identity.isDirectory()) {
         throw new Error("container execution mount source must be a regular file or directory");
       }
+      if (mount.identity) {
+        const exact = fstatSync(fd, { bigint: true });
+        if (exact.dev.toString() !== mount.identity.device || exact.ino.toString() !== mount.identity.inode) {
+          throw new Error("container execution mount source identity changed");
+        }
+      }
       return { ...mount, source: fdPath(fd) };
     });
     return { mounts: held, close: () => closeAll(descriptors) };
@@ -43,6 +49,9 @@ export function validateMountShape(mount: DockerBindMount): void {
   }
   if (mount.target === "/var/run/docker.sock" || dockerSocketPath(resolve(mount.source))) {
     throw new Error("Docker socket mount is forbidden");
+  }
+  if (mount.identity && (!/^\d+$/.test(mount.identity.device) || !/^\d+$/.test(mount.identity.inode))) {
+    throw new Error("invalid container execution mount identity");
   }
 }
 

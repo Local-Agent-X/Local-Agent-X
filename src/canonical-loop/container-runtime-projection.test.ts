@@ -45,6 +45,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     const spec = projection.buildSpec({ op, image: image(), token: "token", placement: placement() });
     expect(projection.durableId).toMatch(/^[a-f0-9-]{36}$/);
     expect(spec.mounts.some(mount => mount.source === root || mount.source.endsWith("docker.sock"))).toBe(false);
+    expect(spec.mounts.every(mount => mount.identity?.device && mount.identity.inode)).toBe(true);
     expect(spec.network).toEqual({ name: "lax-egress" });
     const credential = spec.mounts.find(mount => mount.target.endsWith("runtime-credential.json"))!;
     expect(readFileSync(credential.source, "utf8")).toContain("scoped-openai-key");

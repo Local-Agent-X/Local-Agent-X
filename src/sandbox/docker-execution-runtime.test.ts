@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -159,6 +159,19 @@ describe("DockerCliExecutionRuntime", () => {
 
     await expect(new DockerCliExecutionRuntime(run, policy()).create(input)).rejects.toThrow("create failed");
     expect(() => readFileSync(heldSource)).toThrow();
+  });
+
+  it.skipIf(process.platform !== "linux")("rejects a mount whose sealed inode identity changed", async () => {
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" });
+    const actual = lstatSync(mountSource, { bigint: true });
+    const input = spec();
+    input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false,
+      identity: { device: actual.dev.toString(), inode: (actual.ino + 1n).toString() } }];
+
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(input))
+      .rejects.toThrow("mount source identity changed");
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it.skipIf(process.platform !== "linux")("releases held mounts when Docker start fails", async () => {

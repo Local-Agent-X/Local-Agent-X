@@ -82,11 +82,33 @@ export function checkCanaries(output: string, canaries: string[]): string | null
 
 const sessionCanaries = new Map<string, string[]>();
 
+// Mirror seam: the egress worker thread (browser/egress-worker.ts) keeps a
+// shadow copy of this registry (worker_threads get their own module instance).
+// Every register/clear notifies with the session's current set ([] = cleared).
+type CanaryChangeListener = (sessionId: string, canaries: readonly string[]) => void;
+const canaryListeners = new Set<CanaryChangeListener>();
+
+/** Subscribe to session-canary changes. Replays the full current registry
+ *  synchronously on subscribe (restarted mirrors start from complete state),
+ *  then fires on every register/clear. Returns an unsubscribe. */
+export function subscribeCanaryChanges(cb: CanaryChangeListener): () => void {
+  canaryListeners.add(cb);
+  for (const [sessionId, canaries] of sessionCanaries) cb(sessionId, canaries);
+  return () => { canaryListeners.delete(cb); };
+}
+
+function notifyCanariesChanged(sessionId: string): void {
+  if (canaryListeners.size === 0) return;
+  const canaries = sessionCanaries.get(sessionId) ?? [];
+  for (const cb of canaryListeners) cb(sessionId, canaries);
+}
+
 /** Record (or replace) the active canary set for a session. Called by the
  *  ThreatEngine whose canaries are also embedded in the model's system prompt,
  *  so the egress check uses exactly the tokens the model could leak. */
 export function registerSessionCanaries(sessionId: string, canaries: string[]): void {
   sessionCanaries.set(sessionId, canaries);
+  notifyCanariesChanged(sessionId);
 }
 
 /** The session's active canary tokens (empty when none registered). */
@@ -96,7 +118,7 @@ export function getSessionCanaries(sessionId: string): string[] {
 
 /** Drop a session's canaries (e.g. on session teardown). */
 export function clearSessionCanaries(sessionId: string): void {
-  sessionCanaries.delete(sessionId);
+  if (sessionCanaries.delete(sessionId)) notifyCanariesChanged(sessionId);
 }
 
 /**
@@ -110,11 +132,20 @@ export function clearSessionCanaries(sessionId: string): void {
  * legitimately appear in a tool payload (near-zero false positives).
  */
 export function checkCanariesInPayload(sessionId: string, payload: string): string | null {
-  if (!payload) return null;
-  const canaries = sessionCanaries.get(sessionId);
-  if (!canaries || canaries.length === 0) return null;
+  return checkCanariesInPayloadList(sessionCanaries.get(sessionId) ?? [], payload);
+}
+
+/**
+ * The pure core of checkCanariesInPayload, over an EXPLICIT canary list instead
+ * of the module-level registry. The egress worker thread runs this against its
+ * mirrored per-session sets (its module instance's registry is always empty);
+ * in-process callers keep using checkCanariesInPayload. ONE matcher.
+ */
+export function checkCanariesInPayloadList(canaries: readonly string[], payload: string): string | null {
+  if (!payload || canaries.length === 0) return null;
+  const list = [...canaries]; // checkCanaries takes a mutable string[]
   for (const view of decodedPayloadViews(payload)) {
-    const hit = checkCanaries(view, canaries);
+    const hit = checkCanaries(view, list);
     if (hit) return hit;
   }
   return null;

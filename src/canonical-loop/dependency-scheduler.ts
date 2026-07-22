@@ -10,6 +10,7 @@ import {
   unregisterDependencyWaiter,
 } from "./dependencies.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
+import { dependencyBatchAdmissionError } from "./dependency-batch.js";
 
 export type DependencyGateDisposition = "runnable" | "blocked" | "settled";
 
@@ -22,6 +23,11 @@ export class DependencySchedulerCoordinator {
   constructor(private readonly callbacks: DependencySchedulerCallbacks) {}
 
   gate(op: Op): DependencyGateDisposition {
+    const admissionError = dependencyBatchAdmissionError(op);
+    if (admissionError) {
+      this.settle(op, { kind: "invalid", prerequisiteId: op.id, reason: admissionError });
+      return "settled";
+    }
     if (!op.dependsOn?.length) return "runnable";
     const readiness = evaluateDependencyReadiness(op);
     if (readiness.kind === "runnable") {

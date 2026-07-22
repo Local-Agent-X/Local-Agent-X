@@ -1,9 +1,6 @@
 /**
  * Single-process canonical-loop scheduler (Issue 03 scope).
  *
- * The `interactive` cap is config-driven (maxInteractiveSessions) so chat
- * sessions run concurrently; other lanes use STATIC_LANE_CAPS.
- *
  * The scheduler holds no DB-level row lease — for Issue 03 the in-process
  * `active` map is the single source of who is driving an op. Issue 08
  * promotes leasing to the DB (heartbeat-driven re-leasing).
@@ -234,10 +231,11 @@ export function pumpScheduler(): void {
       if (anyHeld(op.resourceLocks)) { i++; continue; }
       activeByLane.set(q.lane, inUse + 1);
       launching.add(q.opId);
-      acquire(op.resourceLocks); // hold the resource for THIS committed slot
-      activeLocks.set(op.id, op.resourceLocks); // record for disk-free release
+      const heldLocks = op.resourceLocks ? [...op.resourceLocks] : undefined;
+      acquire(heldLocks); // hold the resource for THIS committed slot
+      activeLocks.set(op.id, heldLocks); // record for disk-free release
       queue.splice(i, 1);
-      void launch(op, factory, backend, placement);
+      void launch(op, factory, backend, placement, heldLocks);
     }
   } finally {
     pumping = false;
@@ -249,6 +247,7 @@ async function launch(
   factory: (() => Adapter | Promise<Adapter>) | null,
   backend: ExecutionBackend,
   placement: NonNullable<NonNullable<Op["canonical"]>["executionPlacement"]>,
+  heldLocks: string[] | undefined,
 ): Promise<void> {
   const lane = op.lane as CanonicalLane;
   let handle: ExecutionHandle | null = null;
@@ -287,7 +286,7 @@ async function launch(
       // stillOurs guard decides WHETHER to release; releasing the closure's own
       // resourceLocks (exactly what THIS launch acquired) keeps acquire/release
       // balanced regardless of the map.
-      release(op.resourceLocks);
+      release(heldLocks);
       activeLocks.delete(op.id);
     }
     const backendOwnedSettlement = backend.adapterProvisioning === "backend";

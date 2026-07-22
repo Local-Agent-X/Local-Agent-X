@@ -25,6 +25,7 @@ import {
   resetScheduler,
   resetBus,
   awaitIdle,
+  resolveAdapterFactory,
 } from "../src/canonical-loop/index.js";
 import type {
   Adapter,
@@ -33,7 +34,8 @@ import type {
   TurnResult,
 } from "../src/canonical-loop/adapter-contract.js";
 import type { ProviderStateEnvelope } from "../src/canonical-loop/types.js";
-import { readOp } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
+import { _setStrictOpWriteFailureForTest, readOp } from "../src/ops/op-store.js";
 
 const runtimeFixture = vi.hoisted(() => ({
   configure: vi.fn(),
@@ -120,6 +122,7 @@ async function runBatch(tasks: unknown[], concurrency?: number): Promise<{ isErr
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
   runtimeFixture.configure.mockReset();
+  _setStrictOpWriteFailureForTest(null);
 });
 
 afterEach(async () => {
@@ -133,6 +136,7 @@ afterEach(async () => {
   }
   createdOpIds.length = 0;
   delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
+  _setStrictOpWriteFailureForTest(null);
 });
 
 describe("op_submit_batch — fan-out launcher", () => {
@@ -252,6 +256,36 @@ describe("op_submit_batch — fan-out launcher", () => {
     expect(cycle.isError).toBe(true);
     expect(cycle.content).toContain("cycle");
     expect(runtimeFixture.configure).not.toHaveBeenCalled();
+  });
+
+  it("rolls back all staged rows and adapters when an Nth strict write fails", async () => {
+    const counter = installCountingLaneAdapter(5);
+    const configuredIds: string[] = [];
+    const configure = runtimeFixture.configure.getMockImplementation()!;
+    runtimeFixture.configure.mockImplementation(async (op) => {
+      configuredIds.push(op.id);
+      await configure(op);
+    });
+    _setStrictOpWriteFailureForTest(
+      Object.assign(new Error("injected batch write failure"), { code: "EIO" }),
+      "before_write",
+      2,
+    );
+
+    const result = await opSubmitBatchTool.execute({ tasks: [
+      { ...task("atomic root one"), task_key: "one" },
+      { ...task("atomic root two"), task_key: "two" },
+      { ...task("atomic dependent"), task_key: "three", depends_on: ["one"] },
+    ], concurrency: 1 });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("rejected before launch");
+    expect(configuredIds).toHaveLength(3);
+    expect(counter.max).toBe(0);
+    for (const id of configuredIds) {
+      expect(readOp(id)).toBeNull();
+      expect(resolveAdapterFactory({ id } as Op)).toBeNull();
+    }
   });
 
   it("honors concurrency for independent keyed tasks without coupling failure state", async () => {

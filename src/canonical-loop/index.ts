@@ -22,7 +22,6 @@ import { transitionOp } from "./state-machine.js";
 import { readCanonicalEvents as readCanonicalEventsInternal } from "./store.js";
 import type { CanonicalLane, StateChangedBody } from "./types.js";
 import { registerDependencyWaiter, validateOpDependencies } from "./dependencies.js";
-
 export {
   isCanonicalLoopEnabled,
   envVarForLane,
@@ -30,7 +29,7 @@ export {
 
 export { decideSubmitRouting, type SubmitRouting } from "./router.js";
 export { validateDependencyBatch } from "./dependencies.js";
-
+export { admitDependencyBatch } from "./dependency-batch.js";
 export {
   appendCanonicalEvent,
   readCanonicalEvents,

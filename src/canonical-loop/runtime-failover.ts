@@ -41,7 +41,15 @@ export interface FailoverCandidate {
   descriptor: ExactDelegatedRuntimeDescriptor;
   certified: boolean;
 }
-
+export function resourceLocksAfterRuntimeFailover(
+  locks: readonly string[] | undefined,
+  priorProvider: string,
+  nextProvider: string,
+): string[] {
+  const priorProviderLocks = new Set(resourceLocksForProvider(priorProvider));
+  const durable = (locks ?? []).filter(lock => !priorProviderLocks.has(lock));
+  return Array.from(new Set([...durable, ...resourceLocksForProvider(nextProvider)]));
+}
 export type FailoverResult =
   | { kind: "switched"; delayMs: number; targetIdentity: string; provider: ProviderId; model: string }
   | { kind: "waiting"; delayMs: number }
@@ -215,7 +223,11 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
     if (runtimeTargetIdentity(fresh.runtimeDescriptor) !== currentIdentity) return false;
     fresh.runtimeDescriptor = selected.descriptor;
     fresh.model = selected.descriptor.model;
-    fresh.resourceLocks = resourceLocksForProvider(selected.descriptor.provider);
+    fresh.resourceLocks = resourceLocksAfterRuntimeFailover(
+      fresh.resourceLocks,
+      current.provider,
+      selected.descriptor.provider,
+    );
     fresh.attemptCount = (fresh.attemptCount ?? 0) + 1;
     fresh.lastFailureAt = new Date(now).toISOString();
     fresh.lastFailureReason = `runtime_failover:${normalized}`;

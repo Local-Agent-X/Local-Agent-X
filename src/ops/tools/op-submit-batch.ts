@@ -20,6 +20,7 @@
 import type { ToolDefinition } from "../../types.js";
 import {
   awaitCanonicalOp,
+  admitDependencyBatch,
   canonicalLoopEntry,
   validateDependencyBatch,
 } from "../../canonical-loop/index.js";
@@ -110,9 +111,11 @@ async function runDependencyBatch(
   }
 
   const startedAt = new Map<string, number>();
+  const runtimeSessionIds = ordered.map(op => delegatedRuntimeSessionId(op.id, sessionId));
+  const admissionStartedAt = Date.now();
+  admitDependencyBatch(ordered, runtimeSessionIds);
   for (const op of ordered) {
-    startedAt.set(op.id, Date.now());
-    canonicalLoopEntry(op, { sessionId: delegatedRuntimeSessionId(op.id, sessionId) });
+    startedAt.set(op.id, admissionStartedAt);
     if (sessionId) trackOpForSession(op.id, sessionId, op.task);
   }
 

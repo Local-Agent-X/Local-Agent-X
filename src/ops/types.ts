@@ -250,6 +250,8 @@ export interface Op {
   /** Durable canonical-op prerequisite ids. The scheduler consumes no worker
    * capacity until every prerequisite succeeds. */
   dependsOn?: string[];
+  /** Durable admission transaction containing this dependency-batch row. */
+  dependencyBatchId?: string;
   // Reserved for later steps:
   outputContract?: string[];
   inputBindings?: Record<string, string>;

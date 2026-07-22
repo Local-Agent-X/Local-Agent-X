@@ -8,6 +8,7 @@ import {
   normalizeRuntimeFailure,
   runtimeFailoverEnabled,
   runtimeFailureFeedsRouting,
+  resourceLocksAfterRuntimeFailover,
   targetMeetsRequirements,
 } from "./runtime-failover.js";
 import type { TargetCapabilitySnapshot } from "../ops/operation-requirements.js";
@@ -15,6 +16,7 @@ import { BROADCAST_KEYS, FLIPPABLE_SETTINGS } from "../settings-schema.js";
 import { providerStateAcrossRuntimeBoundary } from "./turn-loop/build-input.js";
 import { isRuntimeFailoverBoundary } from "../ops/target-identity.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
+import { bootstrapProviderMatrix } from "../ops/provider-matrix.js";
 
 const capable: TargetCapabilitySnapshot = {
   tools: "supported",
@@ -69,6 +71,16 @@ describe("runtime failover policy boundary", () => {
 
   it("allows unattended normalized runtime failures without asking", () => {
     expect(failoverPolicyAllows(base)).toBe(true);
+  });
+
+  it("preserves batch locks while replacing provider locks", () => {
+    bootstrapProviderMatrix();
+    expect(resourceLocksAfterRuntimeFailover(
+      ["batch:op-root:slot:0", "gpu:0"], "local", "openai",
+    )).toEqual(["batch:op-root:slot:0"]);
+    expect(resourceLocksAfterRuntimeFailover(
+      ["batch:op-root:slot:0"], "openai", "local",
+    )).toEqual(["batch:op-root:slot:0", "gpu:0"]);
   });
 
   it("defaults cross-runtime switching off and requires the exact persisted opt-in", () => {

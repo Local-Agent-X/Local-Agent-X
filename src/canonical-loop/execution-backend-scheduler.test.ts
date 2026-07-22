@@ -425,6 +425,22 @@ describe("scheduler execution-backend parity", () => {
     backend.latest(second.id).resolve();
   });
 
+  it("releases the acquired lock snapshot when failover mutates durable locks", async () => {
+    backend = new ControlledBackend();
+    _setExecutionBackendResolverForTest(() => backend);
+    const first = makeOp("lock-swap-a", "interactive", ["batch:test:slot:0"]);
+    const second = makeOp("lock-swap-b", "interactive", ["batch:test:slot:0"]);
+    submit(first);
+    submit(second);
+
+    await waitForStarts(backend, 1);
+    backend.starts.mock.calls[0][0].op.resourceLocks = ["replacement:provider-lock"];
+    backend.latest(first.id).resolve();
+    await waitForStarts(backend, 2);
+    expect(backend.starts.mock.calls[1][0].op.id).toBe(second.id);
+    backend.latest(second.id).resolve();
+  });
+
   it("starts a replacement through the backend after recovery evicts the stale execution", async () => {
     backend = new ControlledBackend();
     _setExecutionBackendResolverForTest(() => backend);

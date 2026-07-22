@@ -191,6 +191,16 @@ const MIGRATE_NEVER = new Set([".git", ".worktrees", "node_modules", ".pnpm-stor
 // skipped rather than aborting startup.
 export function migrateWorkspace(oldWorkspace: string, newWorkspace: string): void {
   if (oldWorkspace === newWorkspace) return;
+  // A source checkout is NEVER a user workspace. If the resolved "old workspace"
+  // is itself a git repo root (has .git), refuse to migrate FROM it — moving its
+  // files out guts the checkout. 2026-07-22: the server's cwd is the dev repo, so
+  // the legacy-workspace resolution pointed here and relocated src/desktop/public
+  // into Documents (the per-entry .git skip saved .git, but the source still had
+  // to be left whole). Better to leave a mis-resolved source untouched than move it.
+  if (existsSync(join(oldWorkspace, ".git"))) {
+    logger.warn(`[config] refusing to migrate workspace FROM ${oldWorkspace}: it is a git checkout, not a workspace`);
+    return;
+  }
   mkdirSync(newWorkspace, { recursive: true });
   if (!existsSync(oldWorkspace)) return;
   let moved = 0;

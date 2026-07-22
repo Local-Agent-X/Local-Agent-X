@@ -48,9 +48,15 @@ function buildV11Db(): Db {
       invalidated_by INTEGER,
       invalidation_reason TEXT
     );
+    CREATE TABLE entity_mentions (
+      fact_id INTEGER NOT NULL,
+      entity_slug TEXT NOT NULL,
+      PRIMARY KEY (fact_id, entity_slug)
+    );
     INSERT INTO facts (kind, content, source_file, timestamp, last_updated, valid_from)
     VALUES ('world', 'pre-migration fact one', 'daily.md', 1000, 1000, 1000),
            ('opinion', 'pre-migration fact two', 'daily.md', 2000, 2000, 2000);
+    INSERT INTO entity_mentions (fact_id, entity_slug) VALUES (1, 'p');
   `);
   return db;
 }
@@ -67,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(12);
+      expect(CURRENT_SCHEMA_VERSION).toBe(13);
     } finally {
       db.close();
     }
@@ -104,6 +110,33 @@ describe("schema v12 fact provenance migration", () => {
       ).run();
       const row = db.prepare("SELECT provenance FROM facts").get() as { provenance: string };
       expect(row.provenance).toBe("user_statement");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("schema v13 entity-link backfill", () => {
+  it("purges junk mentions and links untagged legacy facts by content", () => {
+    const db = buildV11Db();
+    try {
+      db.prepare(
+        `INSERT INTO facts (kind, content, source_file, timestamp, last_updated, valid_from)
+         VALUES ('observation', 'User selected Merchhelm after StockPilot was taken.', 'daily.md', 3000, 3000, 3000)`
+      ).run();
+
+      migrateSchema(db, 11);
+
+      // Junk slug 'p' from the fixture is gone.
+      const junk = db.prepare("SELECT COUNT(*) n FROM entity_mentions WHERE entity_slug = 'p'").get() as { n: number };
+      expect(junk.n).toBe(0);
+      // The untagged fact is now reachable by entity.
+      const slugs = (db
+        .prepare("SELECT entity_slug FROM entity_mentions WHERE fact_id = 3")
+        .all() as Array<{ entity_slug: string }>)
+        .map((r) => r.entity_slug);
+      expect(slugs).toContain("merchhelm");
+      expect(slugs).toContain("stockpilot");
     } finally {
       db.close();
     }

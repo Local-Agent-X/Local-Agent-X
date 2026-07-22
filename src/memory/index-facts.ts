@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { FactKind, RetainedFact } from "./types.js";
 import { parseFactLine, rowToFact, slugify } from "./utils.js";
 import { extractRelations } from "./index-relations.js";
+import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 
 // GC + validity accounting moved to index-facts-purge.ts (LOC cap).
 export { purgeInvalidatedFacts, validityStats } from "./index-facts-purge.js";
@@ -20,6 +21,7 @@ export function retain(
   assertMemoryPromotionAllowed(text, promotion?.target ?? "memory:retain", promotion);
   const facts: RetainedFact[] = [];
   const lines = text.split("\n");
+  const knownSlugs = loadKnownEntitySlugs(db);
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -31,10 +33,15 @@ export function retain(
 
     if (parsed.content.length < 3) continue;
 
-    const validEntities = parsed.entities.filter((e) => e.length > 0);
+    // Entities are derived in code, never trusted to model-typed @-tags —
+    // under the tag-only contract 91% of facts shipped with zero entity
+    // links, leaving name recognition blind. Content order (subject first)
+    // is load-bearing: recallRecentFacts dedups on (kind, entities[0]).
+    const validEntities = deriveEntitySlugs(parsed.content, parsed.entities, knownSlugs);
+    for (const s of validEntities) knownSlugs.add(s);
 
     const now = Date.now();
-    const entitiesJson = JSON.stringify(validEntities.sort());
+    const entitiesJson = JSON.stringify(validEntities);
 
     try {
       const result = db
@@ -129,6 +136,7 @@ export async function retainSmart(
   const facts: RetainedFact[] = [];
   const decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> = [];
   const lines = text.split("\n");
+  const knownSlugs = loadKnownEntitySlugs(db);
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -136,7 +144,9 @@ export async function retainSmart(
     const bullet = line.slice(2).trim();
     const parsed = parseFactLine(bullet);
     if (!parsed || parsed.content.length < 3) continue;
-    const validEntities = parsed.entities.filter((e) => e.length > 0);
+    // Same code-derived entity contract as retain() above.
+    const validEntities = deriveEntitySlugs(parsed.content, parsed.entities, knownSlugs);
+    for (const s of validEntities) knownSlugs.add(s);
 
     const candidates = findResolverCandidates(db, hasFts, parsed.content, validEntities, candidateLimit);
     const decision = await resolveFact(parsed.content, candidates, opts?.resolverOpts);
@@ -150,7 +160,7 @@ export async function retainSmart(
     }
 
     const now = Date.now();
-    const entitiesJson = JSON.stringify(validEntities.sort());
+    const entitiesJson = JSON.stringify(validEntities);
     try {
       const result = db.prepare(
         `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,

@@ -9,10 +9,11 @@
  */
 import type Database from "better-sqlite3";
 
+import { backfillEntityLinks } from "./entity-derive.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 12;
+export const CURRENT_SCHEMA_VERSION = 13;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db
@@ -310,6 +311,24 @@ export function migrateSchema(
       // it so recall can attribute each fact. Pre-existing rows stay NULL =
       // unknown origin.
       try { db.exec(`ALTER TABLE facts ADD COLUMN provenance TEXT`); } catch { /* column may already exist */ }
+    }
+
+    if (fromVersion < 13) {
+      // Entity-link backfill. Entity indexing used to depend on model-typed
+      // @-tags, which models near-never emit — 91% of facts (2061/2261 on
+      // the reference DB, 2026-07-22) had zero entity_mentions rows, so
+      // name recognition (<known_entities>, recallByEntity) was blind to
+      // them. The write seam now derives entities in code
+      // (entity-derive.ts); this step back-links history and purges junk
+      // slugs ("p", "mj", "5") the tag-only path let through.
+      try {
+        const r = backfillEntityLinks(db);
+        logger.info(
+          `[memory] v13 entity backfill: linked ${r.factsLinked} facts (+${r.mentionsAdded} mentions), removed ${r.junkMentionsRemoved} junk mentions`
+        );
+      } catch (e) {
+        logger.warn(`[memory] v13 entity backfill failed (non-fatal): ${(e as Error).message}`);
+      }
     }
 
     db

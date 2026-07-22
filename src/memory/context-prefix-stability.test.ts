@@ -177,7 +177,8 @@ describe("context block prefix stability", () => {
       setFactClock(r.fact!.id!, ts, ts);
 
       const today = await buildContextBlockParts(memory, { skipDailyLog: true });
-      expect(today.stable).toContain("moved to Austin — still fresh");
+      // (@austin) is the code-derived entity annotation (entity-derive.ts).
+      expect(today.stable).toContain("moved to Austin (@austin) — still fresh");
 
       vi.setSystemTime(t0 + DAY_MS); // next local day
       const tomorrow = await buildContextBlockParts(memory, { skipDailyLog: true });

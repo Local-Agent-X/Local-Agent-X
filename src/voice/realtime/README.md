@@ -19,14 +19,19 @@ LAX_REALTIME_INSTRUCTIONS=...     # optional system-style prompt
 The dispatcher in `voice-session/index.ts` checks `realtimeReadiness()` and,
 when ready, builds a session via `createRealtimeSessionFromEnv(ctx, overrides)`
 — same shape as `createGpuSession`. The optional `overrides` (`{ voice, model }`)
-let settings.json win over the `LAX_REALTIME_*` env vars per session, so a UI
-change applies on the next session without a restart; any field absent from
-overrides falls back to env.
+let settings.json win over the `LAX_REALTIME_*` env vars per session, so a
+settings.json change to `realtimeVoice`/`realtimeModel` applies on the next
+session without a restart; any field absent from overrides falls back to env.
+(Realtime is no longer in the voice picker — these overrides come from
+hand-edited settings.json, not a UI control.)
 
 If `realtimeReadiness()` reports not-ready (no `OPENAI_REALTIME_KEY` /
 `OPENAI_API_KEY`), the dispatcher logs a `warn` (`voiceMode=realtime but
 <reason> — falling back to normal pipeline`) and continues into the standard
-local STT + LLM + TTS pipeline rather than failing the session.
+local STT + LLM + TTS pipeline rather than failing the session. Realtime is
+also gated on env: it is skipped entirely in strict local-only mode, and it is
+activated only by `LAX_VOICE_MODE=realtime` — a stale `voiceMode:"realtime"`
+left in settings.json is deliberately ignored and will not route to the cloud.
 
 ## Audio path
 

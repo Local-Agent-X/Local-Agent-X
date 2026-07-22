@@ -46,5 +46,5 @@ Default voice `am_michael`. Override with `--voice af_bella` etc. — see `kokor
 ## What's NOT here
 
 - Voice cloning. `chatterbox-clone-stub.ts` validates the reference WAV but does not run inference (see its in-file TODO for the path forward).
-- Live voice switching mid-session. Voice fixes at session start.
+- Live voice switching mid-session for the Kokoro/clone paths — those fix voice at session start. The edge-tts adapter is the exception: it implements `setVoice()` for live swaps.
 - CUDA EP. Stock onnxruntime-node only ships CPU + DirectML; CUDA needs a custom build.

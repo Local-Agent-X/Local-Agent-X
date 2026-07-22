@@ -1,10 +1,6 @@
 /**
  * canonical-loop — module entry point.
  *
- * Issue 01 landed `canonicalLoopEntry(op)` as a stub that captured the flag
- * value, persisted the op into canonical state `queued`, and emitted the
- * opening `state_changed` event.
- *
  * Issue 03 lights up the loop: when an adapter factory has been registered
  * for the op (per-op or per-lane via runtime.ts), the entry also enqueues
  * the op and kicks the scheduler. The scheduler grants an in-process lease
@@ -25,6 +21,7 @@ import { enqueueOp, pumpScheduler } from "./scheduler.js";
 import { transitionOp } from "./state-machine.js";
 import { readCanonicalEvents as readCanonicalEventsInternal } from "./store.js";
 import type { CanonicalLane, StateChangedBody } from "./types.js";
+import { registerDependencyWaiter, validateOpDependencies } from "./dependencies.js";
 
 export {
   isCanonicalLoopEnabled,
@@ -102,6 +99,7 @@ export {
   schedulerSnapshot,
   setLaneCapConfigReader,
   wakeExecutionPlacement,
+  rebuildDependencyScheduling,
 } from "./scheduler.js";
 
 export {
@@ -312,6 +310,8 @@ export function canonicalLoopEntry(
   op: Op,
   opts: { sessionId?: string; confirmRunning?: boolean } = {},
 ): void {
+  const dependencyIds = validateOpDependencies(op);
+  if (dependencyIds.length) op.dependsOn = dependencyIds;
   if (!op.canonical) op.canonical = {};
   op.canonical.flagValue = true;
   op.canonical.state = "queued";
@@ -338,6 +338,7 @@ export function canonicalLoopEntry(
   }
 
   writeOp(op);
+  registerDependencyWaiter(op);
 
   const body: StateChangedBody = { from: null, to: "queued", reason: "submitted" };
   emit(op.id, "state_changed", body);

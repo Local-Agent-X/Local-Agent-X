@@ -1,6 +1,5 @@
 /**
  * Crash recovery for canonical-loop ops (Issue 08).
- *
  * When a worker dies mid-turn its lease (`leaseOwner`, `leaseExpiresAt`)
  * stays on disk. After `leaseExpiresAt` passes any worker can take over.
  * `recoverStaleOp` is the canonical primitive that does the takeover
@@ -46,7 +45,7 @@ import {
   leaseClaimFromOp,
   withObservedExpiredLeaseRecovery,
 } from "./lease.js";
-import { evictWorker, enqueueOp, pumpScheduler } from "./scheduler.js";
+import { evictWorker, enqueueOp, pumpScheduler, rebuildDependencyScheduling } from "./scheduler.js";
 import { resolveExpiredPendingApproval } from "./control-api-approvals.js";
 import { rehydrateRecoveredRuntime } from "./runtime.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
@@ -275,6 +274,7 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  * Returns the list of outcomes for logging by the caller.
  */
 export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutcome }[] {
+  rebuildDependencyScheduling();
   const opIds = listOperationIds();
   const out: { opId: string; outcome: RecoveryOutcome }[] = [];
   for (const opId of opIds) {

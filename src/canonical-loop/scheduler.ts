@@ -1,13 +1,8 @@
 /**
  * Single-process canonical-loop scheduler (Issue 03 scope).
  *
- * One in-process queue, lane-keyed concurrency caps, FIFO within lane.
- * `enqueueOp` adds an op for scheduling; `pumpScheduler` drains as much
- * as the current caps allow, spawning an in-process worker per slot.
- *
  * The `interactive` cap is config-driven (maxInteractiveSessions) so chat
- * sessions run concurrently; other lanes use STATIC_LANE_CAPS. Per-session
- * turn ordering is handled upstream by the inject queue, not by this cap.
+ * sessions run concurrently; other lanes use STATIC_LANE_CAPS.
  *
  * The scheduler holds no DB-level row lease — for Issue 03 the in-process
  * `active` map is the single source of who is driving an op. Issue 08
@@ -31,9 +26,10 @@ import {
   type PlacementWakeResult,
 } from "./execution-placement.js";
 import { emit } from "./event-emitter.js";
-import { transitionOp, IllegalTransitionError } from "./state-machine.js";
+import { transitionOp, IllegalTransitionError, registerTerminalObserver } from "./state-machine.js";
 import { createLogger } from "../logger.js";
 import { recoverRejectedExecutionLaunch } from "./execution-launch-recovery.js";
+import { DependencySchedulerCoordinator } from "./dependency-scheduler.js";
 
 const logger = createLogger("canonical-loop.scheduler");
 const defaultExecutionBackendResolver = resolveRegisteredExecutionBackend;
@@ -112,6 +108,11 @@ const activeByLane = new Map<CanonicalLane, number>();
 const activeLocks = new Map<string, string[] | undefined>();
 const deferred = new Map<string, NodeJS.Timeout>();
 let pumping = false;
+const dependencyCoordinator = new DependencySchedulerCoordinator({
+  enqueue: enqueueOp,
+  pump: pumpScheduler,
+});
+registerTerminalObserver((op) => dependencyCoordinator.terminal(op.id));
 
 /** Re-enter the existing scheduler after a durable retry backoff. The op's
  * retryNotBefore column is the source of truth across restart; this timer is
@@ -202,6 +203,8 @@ export function pumpScheduler(): void {
       const op = readOp(q.opId);
       if (!op) { queue.splice(i, 1); continue; }
       if (applyPreLeaseCancel(op)) { queue.splice(i, 1); continue; }
+      const dependencyDisposition = dependencyCoordinator.gate(op);
+      if (dependencyDisposition !== "runnable") { queue.splice(i, 1); continue; }
       let backend: ExecutionBackend;
       let placement;
       try {
@@ -382,6 +385,11 @@ export function resetScheduler(): void {
   pumping = false;
   capConfigReader = null;
   resolveExecutionBackend = defaultExecutionBackendResolver;
+  dependencyCoordinator.reset();
+}
+
+export function rebuildDependencyScheduling(): void {
+  dependencyCoordinator.rebuild();
 }
 
 export function schedulerSnapshot(): { queueDepth: number; activeCount: number } {

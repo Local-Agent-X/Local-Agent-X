@@ -73,6 +73,13 @@ const LEGACY_STATUS: Record<CanonicalState, OpStatus> = {
 
 const TERMINAL: ReadonlySet<CanonicalState> = new Set(["succeeded", "failed", "cancelled"]);
 let beforePersistHook: () => void = () => undefined;
+type TerminalObserver = (op: Op, state: CanonicalState) => void;
+const terminalObservers = new Set<TerminalObserver>();
+
+export function registerTerminalObserver(observer: TerminalObserver): () => void {
+  terminalObservers.add(observer);
+  return () => terminalObservers.delete(observer);
+}
 
 /** Deterministic persistence-failure seam for cross-platform recovery tests. */
 export function _setBeforePersistHookForTests(hook: () => void = () => undefined): void {
@@ -166,7 +173,16 @@ export function transitionOp(
     }
   }
 
-  return emit(op.id, "state_changed", { from, to, reason });
+  const event = emit(op.id, "state_changed", { from, to, reason });
+  if (TERMINAL.has(to)) {
+    for (const observer of terminalObservers) {
+      try { observer(op, to); }
+      catch (error) {
+        logger.warn(`[terminal-observer] ${op.id}: ${(error as Error).message}`);
+      }
+    }
+  }
+  return event;
 }
 
 export function isTerminalCanonicalState(s: CanonicalState): boolean {

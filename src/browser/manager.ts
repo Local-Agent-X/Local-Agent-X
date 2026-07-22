@@ -20,6 +20,7 @@ import { getRuntimeConfig } from "../config.js";
 import {
   extractTextFrom, screenshotAsBase64, evaluateScript,
   listTabs as listTabsOp, resolveSwitchTab, pageInfo,
+  type ScreenshotResult,
 } from "./page-ops.js";
 import { isBlankish } from "./blankish.js";
 import type { BrowserMode } from "../types.js";
@@ -305,7 +306,7 @@ export class BrowserManager implements BrowserBackend {
   async extractText(selector?: string, find?: string): Promise<string> {
     return extractTextFrom(await this.getPage(), selector, find);
   }
-  async screenshot(): Promise<string> {
+  async screenshot(): Promise<ScreenshotResult> {
     return screenshotAsBase64(await this.getPage(), this.currentEngine);
   }
   async evaluate(script: string): Promise<string> {

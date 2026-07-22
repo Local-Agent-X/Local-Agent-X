@@ -13,6 +13,7 @@ export { getRecentDownloads } from "./downloads.js";
 export { setBrowserAuthContext } from "./auth-context.js";
 export { BrowserManager } from "./manager.js";
 export type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
+export type { ScreenshotImage, ScreenshotResult } from "./page-ops.js";
 export {
   registerSessionOwner,
   getSessionOwner,

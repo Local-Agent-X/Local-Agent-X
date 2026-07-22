@@ -14,7 +14,7 @@
 import type { Page } from "playwright";
 import { browserDialogs, browserExec, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
 import { formatConsoleReport, formatNetworkReport } from "./bridge-perception.js";
-import { screenshotAsBase64 } from "./page-ops.js";
+import { screenshotAsBase64, type ScreenshotResult } from "./page-ops.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
 
 /** The engine label surfaced in getInfo/screenshot output. */
@@ -63,9 +63,10 @@ export const IN_APP_NO_DIALOG =
 /** KB1 (plan invariant S1-5): never paint pixels while a credential field is
  *  focused in the co-driven view — the user may be mid-password. Probe the
  *  isolated world FIRST; if blocked, do NOT reach browserCapture. */
-export async function captureScreenshotInApp(viewId: string, page: Page): Promise<string> {
+export async function captureScreenshotInApp(viewId: string, page: Page): Promise<ScreenshotResult> {
+	// Blocked: text-only result — no pixels were painted, so no inline image.
 	const credentialFocused = await browserExec(viewId, CREDENTIAL_FOCUS_SCRIPT);
-	if (credentialFocused === true) return CREDENTIAL_CAPTURE_BLOCKED;
+	if (credentialFocused === true) return { text: CREDENTIAL_CAPTURE_BLOCKED };
 	return screenshotAsBase64(page, IN_APP_ENGINE);
 }
 

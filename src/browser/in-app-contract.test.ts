@@ -255,6 +255,13 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		expect(content).toContain(`URL: ${PAGE_URL}`);
 		expect(content).toContain("Engine: electron");
 		expect(sent.some((m) => m.type === "lax:browser-capture" && m.viewId === VIEW_ID)).toBe(true);
+		// The ToolResult carries the page INLINE on the vision-only _image
+		// envelope (never _media — that would auto-deliver the file off-box).
+		const shaped = result as { _image?: { mime: string; b64: string; path: string; question: string }; _media?: unknown };
+		expect(shaped._image?.mime).toBe("image/jpeg");
+		expect(Buffer.from(shaped._image!.b64, "base64").length).toBeGreaterThan(0);
+		expect(shaped._image!.path.endsWith(".png")).toBe(true);
+		expect(shaped._media).toBeUndefined();
 	});
 
 	it("full sequence integrates: navigate → observe → click → screenshot, all over one live view", async () => {

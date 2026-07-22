@@ -29,6 +29,7 @@
 import type { BrowserObservation } from "./observation.js";
 import type { DownloadApprovalBinding } from "./downloads.js";
 import type { BrowserEngine } from "./launcher.js";
+import type { ScreenshotResult } from "./page-ops.js";
 
 /** Keeps ref-resolution failures distinct from successful action text. */
 export interface InteractionResult { ok: boolean; text: string; }
@@ -66,7 +67,9 @@ export interface BrowserBackend {
 
   // ── Page reads / tabs ──
   extractText(selector?: string, find?: string): Promise<string>;
-  screenshot(): Promise<string>;
+  /** Text report + inline downscaled JPEG for the `_image` vision envelope
+   *  (see page-ops.ts ScreenshotResult). */
+  screenshot(): Promise<ScreenshotResult>;
   evaluate(script: string): Promise<string>;
   getInfo(): Promise<string>;
   listTabs(): Promise<string>;

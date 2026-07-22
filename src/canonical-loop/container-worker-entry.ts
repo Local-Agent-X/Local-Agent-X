@@ -44,4 +44,3 @@ function required(name: string): string {
   if (!value) throw new Error(`missing ${name}`);
   return value;
 }
-

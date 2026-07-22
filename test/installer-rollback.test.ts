@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInstallRollback } from "../scripts/installer/rollback.mjs";
+import { installCheckpointPath } from "../scripts/installer/checkpoint.mjs";
+import { installTransactionPath } from "../scripts/installer/install-journal.mjs";
+import { installerContract, stepIntent } from "../scripts/installer/contract.mjs";
 import { createReporter } from "../scripts/installer/reporter.mjs";
 import { runInstaller } from "../scripts/installer/orchestrator.mjs";
 import { CAN_CREATE_DIRECTORY_LINK } from "../src/symlink-capabilities.test-helper.js";
@@ -78,7 +81,8 @@ describe("installer artifact rollback", () => {
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("partial");
     resumed.rollback("later required failure");
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
-    expect(createInstallRollback(f).reconcile().outcome).toBe("none");
+    expect(createInstallRollback(f).reconcile().outcome).toBe("prior-installation-restored");
+    expect(existsSync(installTransactionPath(f.dataDirectory))).toBe(true);
   });
 
   it("retains a verified install if cleanup was interrupted", () => {
@@ -303,12 +307,13 @@ describe("installer artifact rollback", () => {
     } });
     transaction.begin();
     mkdirSync(join(f.installRoot, "dist"));
-    const checkpoint = join(f.dataDirectory, "install-checkpoint.json");
-    writeFileSync(checkpoint, "stale-in-flight");
     expect(() => transaction.rollback("failed")).toThrow("kill");
-    expect(existsSync(checkpoint)).toBe(true);
-    expect(createInstallRollback(f).reconcile().restored).toBe(true);
-    expect(existsSync(checkpoint)).toBe(false);
+    expect(existsSync(installTransactionPath(f.dataDirectory))).toBe(true);
+    const recovered = createInstallRollback(f);
+    expect(recovered.reconcile().restored).toBe(true);
+    expect(existsSync(installTransactionPath(f.dataDirectory))).toBe(true);
+    recovered.begin();
+    expect(JSON.parse(readFileSync(installTransactionPath(f.dataDirectory), "utf-8")).status).toBe("active");
   });
 
   it("restores an interrupted backup before any installer step can run", () => {
@@ -336,7 +341,9 @@ describe("installer artifact rollback", () => {
       posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
     })).rejects.toThrow("exit:1");
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
-    expect(existsSync(join(f.dataDirectory, "install-checkpoint.json"))).toBe(false);
+    const recoveredJournal = JSON.parse(readFileSync(installTransactionPath(f.dataDirectory), "utf-8"));
+    expect(recoveredJournal.status).toBe("restored");
+    expect(recoveredJournal.steps.inFlight).toBe(null);
 
     const retryReporter = createReporter({ ipcMode: true, stdout: { write: () => true } as NodeJS.WriteStream });
     await runInstaller({ ...f, reporter: retryReporter, platform: "linux", selections: {}, verifyInstallStep: () => "absent" }, {
@@ -350,6 +357,58 @@ describe("installer artifact rollback", () => {
       posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
     });
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-new");
+  });
+
+  it("migrates a valid legacy checkpoint into the rollback journal atomically", async () => {
+    const f = fixture();
+    mkdirSync(f.dataDirectory, { recursive: true });
+    const contract = installerContract("linux", {});
+    writeFileSync(installCheckpointPath(f.dataDirectory), JSON.stringify({
+      version: 1, contract,
+      completed: [{ id: "node", intent: stepIntent(contract, "node") }],
+      inFlight: null, degraded: [], outputs: {},
+    }));
+    const reporter = createReporter({ ipcMode: true, stdout: { write: () => true } as NodeJS.WriteStream });
+    await expect(runInstaller({
+      ...f, reporter, platform: "linux", selections: {}, verifyInstallStep: (id: string) => id === "node" ? "present" : "absent",
+    }, {
+      prerequisites: async () => { expect(reporter.step("node")).toBe(false); },
+      core: async () => { throw new Error("kill-after-migration"); },
+      posixShell: async () => {}, desktop: async () => ({}), persist: () => true,
+    })).rejects.toThrow("kill-after-migration");
+    expect(existsSync(join(f.dataDirectory, "install-checkpoint.json"))).toBe(false);
+    const journal = JSON.parse(readFileSync(installTransactionPath(f.dataDirectory), "utf-8"));
+    expect(journal.version).toBe(2);
+    expect(journal.steps.completed.map((item: { id: string }) => item.id)).toContain("node");
+  });
+
+  it("fails closed when legacy and unified step state conflict", () => {
+    const f = fixture();
+    createInstallRollback(f).begin();
+    const contract = installerContract("linux", {});
+    writeFileSync(join(f.dataDirectory, "install-checkpoint.json"), JSON.stringify({
+      version: 1, contract, completed: [{ id: "node", intent: "different" }], inFlight: null, degraded: [], outputs: {},
+    }));
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/conflicts with the unified/i);
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it("upgrades an interrupted version-one rollback journal with its matching checkpoint", () => {
+    const f = fixture();
+    createInstallRollback(f).begin();
+    const journalPath = installTransactionPath(f.dataDirectory);
+    const journal = JSON.parse(readFileSync(journalPath, "utf-8"));
+    const legacy = { version: 1, ...journal.steps };
+    journal.version = 1;
+    delete journal.steps;
+    writeFileSync(journalPath, JSON.stringify(journal));
+    writeFileSync(join(f.dataDirectory, "install-checkpoint.json"), JSON.stringify(legacy));
+    expect(createInstallRollback(f).reconcile().outcome).toBe("installer-transaction-resumed");
+    const migrated = JSON.parse(readFileSync(journalPath, "utf-8"));
+    expect(migrated.version).toBe(2);
+    const { version: _version, ...expectedSteps } = legacy;
+    expect(migrated.steps).toEqual(expectedSteps);
+    expect(existsSync(join(f.dataDirectory, "install-checkpoint.json"))).toBe(false);
   });
 
   it("does not roll back optional degradation", async () => {

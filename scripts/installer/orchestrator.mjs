@@ -41,7 +41,10 @@ export async function runInstaller(context, stages = DEFAULT_STAGES) {
     if (restored.blocked) context.reporter.abort(restored.blocked);
     context.reporter.attachStepLifecycle(checkpoint);
     context.reporter.attachRequiredFailure((message) => rollback.rollback(message));
-    try { if (!reconciled.resumed) rollback.begin(); }
+    try {
+      if (!reconciled.resumed) rollback.begin(checkpoint.snapshot());
+      if (rollback.enabled) checkpoint.bindUnified();
+    }
     catch (error) {
       try { rollback.rollback(`backup preparation failed: ${error.message}`); }
       catch (restoreError) { context.reporter.abort(`Installer backup failed and recovery is ambiguous: ${restoreError.message}`); }

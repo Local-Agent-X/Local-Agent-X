@@ -4,9 +4,14 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
-import { resetInstallCheckpoint, writeDurableJson } from "./checkpoint.mjs";
+import {
+  loadLegacyCheckpointState, removeLegacyCheckpoint, writeDurableJson,
+} from "./checkpoint.mjs";
+import {
+  defaultStepState, INSTALL_JOURNAL_VERSION, stepStatesEqual, validStepState,
+} from "./install-journal.mjs";
 
-const VERSION = 1;
+const VERSION = INSTALL_JOURNAL_VERSION;
 const ARTIFACTS = ["node_modules", "dist", join("desktop", "node_modules"), join("desktop", "dist")];
 
 function samePath(left, right) {
@@ -97,7 +102,8 @@ function safePathChain(base, relativePath) {
 }
 
 function validJournal(value, root, dataDirectory, backupRoot) {
-  if (!value || value.version !== VERSION || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
+  if (!value || ![1, VERSION].includes(value.version) || !["backing-up", "active", "rolling-back", "verified", "restored"].includes(value.status)) return false;
+  if (value.version === VERSION && !validStepState(value.steps)) return false;
   if (resolve(value.identity?.root || "") !== resolve(root)) return false;
   let installBase;
   let dataBase;
@@ -132,6 +138,7 @@ function validJournal(value, root, dataDirectory, backupRoot) {
 export function createInstallRollback(context) {
   if (!context.installRoot) {
     return {
+      enabled: false,
       reconcile: () => ({ restored: false, outcome: "disabled" }), begin() {},
       rollback: () => ({ restored: false, outcome: "disabled" }), verified() {},
     };
@@ -225,6 +232,21 @@ export function createInstallRollback(context) {
     }
     boundBases = { install: value.identity.installBase, data: value.identity.dataBase };
     context.installerDataRootIdentity = value.identity.dataBase;
+    const legacy = loadLegacyCheckpointState(context);
+    if (legacy.kind === "corrupt") throw new Error("Legacy installer checkpoint is corrupt or truncated; refusing ambiguous migration.");
+    if (value.version === 1) {
+      const { version: _legacyVersion, ...legacySteps } = legacy.value || {};
+      value.version = VERSION;
+      value.steps = legacy.value ? legacySteps : defaultStepState(context);
+      save(value);
+      removeLegacyCheckpoint(context);
+    } else if (legacy.kind === "valid") {
+      const { version: _legacyVersion, ...legacySteps } = legacy.value;
+      if (!stepStatesEqual(value.steps, legacySteps)) {
+        throw new Error("Legacy checkpoint conflicts with the unified installer transaction journal.");
+      }
+      removeLegacyCheckpoint(context);
+    }
     return value;
   };
   const save = (journal) => {
@@ -233,7 +255,6 @@ export function createInstallRollback(context) {
   };
   const restore = (journal, reason) => {
     if (journal.status === "restored") {
-      removePath(dataDirectory, "install-rollback", { recursive: true, force: true });
       return { restored: true, outcome: "prior-installation-restored" };
     }
     if (journal.status === "verified") {
@@ -271,7 +292,7 @@ export function createInstallRollback(context) {
     assertPath(dataDirectory, "installed-source.json");
     if (journal.identity.source) writeDurableJson(sourcePath, journal.identity.source);
     else removePath(dataDirectory, "installed-source.json", { force: true });
-    resetInstallCheckpoint(dataDirectory, context);
+    journal.steps.inFlight = null;
     journal.status = "restored";
     journal.restoredAt = new Date().toISOString();
     journal.reason = reason;
@@ -280,11 +301,12 @@ export function createInstallRollback(context) {
     writeDurableJson(join(dataDirectory, "install-rollback-report.json"), journal);
     fault("after-restore");
     assertJournalPaths(journal);
-    removePath(dataDirectory, "install-rollback", { recursive: true, force: true });
+    removePath(dataDirectory, join("install-rollback", "artifacts"), { recursive: true, force: true });
     return { restored: true, outcome: "prior-installation-restored" };
   };
 
   return {
+    enabled: true,
     reconcile() {
       const journal = load();
       if (!journal) return { restored: false, resumed: false, outcome: "none" };
@@ -298,8 +320,11 @@ export function createInstallRollback(context) {
       }
       return { ...restore(journal, "interrupted installer backup"), resumed: false };
     },
-    begin() {
-      if (load()) throw new Error("Installer rollback reconciliation must complete before a new transaction.");
+    begin(initialSteps = defaultStepState(context)) {
+      const prior = load();
+      if (prior && prior.status !== "restored") throw new Error("Installer rollback reconciliation must complete before a new transaction.");
+      if (!validStepState(initialSteps)) throw new Error("Installer checkpoint state is invalid before backup preparation.");
+      if (prior) removePath(dataDirectory, "install-rollback", { recursive: true, force: true });
       const identity = installIdentity(root, dataDirectory);
       const installBase = directoryIdentity(root);
       const dataBase = ensureDataDirectory(dataDirectory);
@@ -315,6 +340,7 @@ export function createInstallRollback(context) {
       }
       const journal = {
         version: VERSION, status: "backing-up", identity, startedAt: new Date().toISOString(),
+        steps: initialSteps,
         artifacts: ARTIFACTS.map((item) => ({ relative: item, existed: existsSync(join(root, item)) })),
       };
       assertPath(dataDirectory, join("install-rollback", "artifacts"));

@@ -3,12 +3,14 @@ import {
   readFileSync, realpathSync, renameSync, rmSync, writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { installerContract, stepIntent } from "./contract.mjs";
+import { stepIntent } from "./contract.mjs";
 import { mutateInstallerDataRoot } from "./data-root.mjs";
-
-const FILE = "install-checkpoint.json";
+import {
+  activeCheckpointPath, checkpointContract, defaultStepState, INSTALL_JOURNAL_VERSION,
+  INSTALL_TRANSACTION_RELATIVE, installTransactionPath, legacyCheckpointPath,
+  LEGACY_CHECKPOINT_FILE, validLegacyCheckpoint, validStepState,
+} from "./install-journal.mjs";
 
 function samePath(left, right) {
   return process.platform === "win32"
@@ -111,32 +113,41 @@ export function writeDurableJson(path, value, options = {}) {
   } catch {}
 }
 
-function validRecord(value) {
-  if (!value || value.version !== 1 || !value.contract || !Array.isArray(value.completed)) return false;
-  if (!value.completed.every((item) => item && typeof item.id === "string" && typeof item.intent === "string")) return false;
-  if (value.inFlight !== null && (!value.inFlight || typeof value.inFlight.id !== "string" || typeof value.inFlight.intent !== "string")) return false;
-  return Array.isArray(value.degraded) && value.degraded.every((item) => typeof item?.step === "string" && typeof item?.message === "string");
-}
-
 function readRecord(path) {
   if (!existsSync(path)) return { kind: "empty", value: null };
   try {
-    const value = JSON.parse(readFileSync(path, "utf-8"));
-    return validRecord(value) ? { kind: "valid", value } : { kind: "corrupt", value: null };
+    const invalid = {};
+    const value = readDurableJson(path, invalid);
+    return validLegacyCheckpoint(value) ? { kind: "valid", value } : { kind: "corrupt", value: null };
   } catch {
     return { kind: "corrupt", value: null };
   }
 }
 
+export function loadLegacyCheckpointState(context) {
+  return readRecord(legacyCheckpointPath(context.dataDirectory));
+}
+
+export function removeLegacyCheckpoint(context) {
+  const path = legacyCheckpointPath(context.dataDirectory);
+  mutateInstallerDataRoot(context, [LEGACY_CHECKPOINT_FILE], () => rmSync(path, { force: true }));
+}
+
 export function createInstallCheckpoint(context, { verifyStep = context.verifyInstallStep } = {}) {
-  const directory = context.dataDirectory || join(homedir(), ".lax");
-  const path = join(directory, FILE);
-  const contract = installerContract(context.platform || process.platform, context.selections || {
-    ollamaRuntime: Boolean(context.wantOllama),
-    ollamaMemoryModel: Boolean(context.wantOllamaMemoryModel),
-  });
-  const loaded = readRecord(path);
-  let record = loaded.value || { version: 1, contract, completed: [], inFlight: null, degraded: [], outputs: {} };
+  const directory = context.dataDirectory;
+  const legacyPath = legacyCheckpointPath(directory);
+  const transactionPath = installTransactionPath(directory);
+  const contract = checkpointContract(context);
+  let unified = existsSync(transactionPath);
+  let loaded;
+  if (unified) {
+    try {
+      const journal = readDurableJson(transactionPath, null);
+      loaded = journal?.version === INSTALL_JOURNAL_VERSION && validStepState(journal.steps)
+        ? { kind: "valid", value: journal.steps } : { kind: "corrupt", value: null };
+    } catch { loaded = { kind: "corrupt", value: null }; }
+  } else loaded = readRecord(legacyPath);
+  let record = loaded.value || defaultStepState(context);
 
   const verify = (id, evidence) => {
     if (!verifyStep) return "ambiguous";
@@ -144,7 +155,21 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
     return result === true || result === "present" ? "present"
       : result === false || result === "absent" ? "absent" : "ambiguous";
   };
-  const save = () => mutateInstallerDataRoot(context, [FILE], () => writeDurableJson(path, record));
+  const save = () => {
+    if (!unified) {
+      const legacy = { version: 1, ...record };
+      mutateInstallerDataRoot(context, [LEGACY_CHECKPOINT_FILE], () => writeDurableJson(legacyPath, legacy));
+      return;
+    }
+    mutateInstallerDataRoot(context, [INSTALL_TRANSACTION_RELATIVE], () => {
+      const journal = readDurableJson(transactionPath, null);
+      if (journal?.version !== INSTALL_JOURNAL_VERSION || !validStepState(journal.steps)) {
+        throw new Error("Installer transaction journal is corrupt or truncated.");
+      }
+      journal.steps = record;
+      writeDurableJson(transactionPath, journal);
+    });
+  };
   const resetForContract = () => { record.contract = contract; };
   const clearStepState = (id, reporter, { output = false } = {}) => {
     reporter.clearDegraded?.(id);
@@ -153,7 +178,16 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
   };
 
   return {
-    path,
+    get path() { return unified ? transactionPath : legacyPath; },
+    snapshot() { return structuredClone(record); },
+    bindUnified() {
+      const journal = readDurableJson(transactionPath, null);
+      if (journal?.version !== INSTALL_JOURNAL_VERSION) throw new Error("Installer transaction journal is missing after backup preparation.");
+      journal.steps = record;
+      mutateInstallerDataRoot(context, [INSTALL_TRANSACTION_RELATIVE], () => writeDurableJson(transactionPath, journal));
+      unified = true;
+      removeLegacyCheckpoint(context);
+    },
     restore(reporter) {
       if (loaded.kind === "corrupt") return { blocked: "Installer checkpoint is corrupt or truncated. Restore or remove it only after verifying prior installer side effects." };
       reporter.restoreDegraded?.(record.degraded);
@@ -211,16 +245,16 @@ export function createInstallCheckpoint(context, { verifyStep = context.verifyIn
       if (output !== undefined) record.outputs[id] = output;
       save();
     },
-    finish() { mutateInstallerDataRoot(context, [FILE], () => rmSync(path, { force: true })); },
+    finish() { removeLegacyCheckpoint(context); },
   };
 }
 
-export function installCheckpointPath(dataDirectory = join(homedir(), ".lax")) {
-  return join(dataDirectory, FILE);
+export function installCheckpointPath(dataDirectory) {
+  return activeCheckpointPath(dataDirectory);
 }
 
-export function resetInstallCheckpoint(dataDirectory = join(homedir(), ".lax"), context) {
-  const path = installCheckpointPath(dataDirectory);
+export function resetInstallCheckpoint(dataDirectory, context) {
+  const path = legacyCheckpointPath(dataDirectory);
   const remove = () => {
     rmSync(path, { force: true });
     try {
@@ -228,6 +262,6 @@ export function resetInstallCheckpoint(dataDirectory = join(homedir(), ".lax"), 
       try { fsyncSync(directory); } finally { closeSync(directory); }
     } catch {}
   };
-  if (context) mutateInstallerDataRoot(context, [FILE], remove);
+  if (context) mutateInstallerDataRoot(context, [LEGACY_CHECKPOINT_FILE], remove);
   else remove();
 }

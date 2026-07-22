@@ -13,7 +13,7 @@
  */
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { redactEventForDisk } from "./redactor.js";
 import type { OpEvent } from "./types.js";
@@ -22,10 +22,27 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("workers.event-log");
 
 const OPS_BASE = join(getLaxDir(), "operations");
+const OPS_ROOT = resolve(OPS_BASE);
 
-/** Resolve the on-disk dir for an op. Creates if missing. */
+/**
+ * Resolve the on-disk dir for an op. Creates if missing.
+ *
+ * Containment gate: opId reaches here from model-controlled surfaces — the op
+ * "type" seeds minted ids (op-store.newOpId) and op tools (op_status/op_kill)
+ * pass a raw `op_id` straight through readOp → here. A `..`/separator-laden id
+ * would otherwise let join() escape the operations root and read or create
+ * files anywhere under ~/.lax. Assert the resolved path stays strictly inside
+ * the root before touching disk.
+ */
 export function opDir(opId: string): string {
   const dir = join(OPS_BASE, opId);
+  const resolved = resolve(dir);
+  if (resolved !== OPS_ROOT && !resolved.startsWith(OPS_ROOT + sep)) {
+    throw new Error(`[event-log] op id escapes operations root: ${JSON.stringify(opId)}`);
+  }
+  if (resolved === OPS_ROOT) {
+    throw new Error(`[event-log] op id resolves to the operations root itself: ${JSON.stringify(opId)}`);
+  }
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;
 }

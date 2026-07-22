@@ -254,8 +254,21 @@ export function setOpStatus(opId: string, status: OpStatus, extras: Partial<Op> 
   });
 }
 
+/**
+ * Restrict an op-id prefix to a filesystem-safe charset before it becomes a
+ * path segment under the operations root. The prefix is seeded by the op
+ * "type", which is model-controlled at the op_submit_async seam
+ * (ops/tools/shared.ts) — so path metacharacters (`..`, `/`, `\`, drive
+ * colons, NULs) must never survive into opDir()'s join(). Disallowed runs
+ * collapse to a single `_`; an all-unsafe prefix falls back to `op`.
+ */
+export function sanitizeIdPrefix(prefix: string, fallback = "op"): string {
+  const safe = prefix.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safe || fallback;
+}
+
 export function newOpId(prefix = "op"): string {
-  return randomId(prefix);
+  return randomId(sanitizeIdPrefix(prefix));
 }
 
 const TERMINAL_STATUSES: OpStatus[] = ["completed", "failed", "cancelled"];

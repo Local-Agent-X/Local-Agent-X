@@ -23,6 +23,24 @@ export function snapshotSecurityRuntime(
   return { workspace, fileAccessMode, inlineEvalPolicy, allowedPaths };
 }
 
+/**
+ * Category kill-switches (shell/http/browser) plus the local-only and
+ * supervised-browser toggles. These live in the runtime config, not in the
+ * SecurityLayer, but they are security policy the pre-dispatch gates enforce
+ * (killSwitchBlock / localOnlyToolDecision / supervisedEvaluateBlock), so they
+ * belong INSIDE the sealed policy fingerprint: a delegated/container runtime
+ * that cannot reproduce the host's toggles must fail the runtime-surface check
+ * CLOSED rather than fall back to schema defaults (all categories ON,
+ * localOnly OFF, supervised OFF) and quietly run tools the host disabled.
+ */
+export interface CategoryPolicyFingerprintInput {
+  enableShell: boolean;
+  enableHttp: boolean;
+  enableBrowser: boolean;
+  localOnlyMode: boolean;
+  supervisedBrowser: boolean;
+}
+
 export function fingerprintSecurityPolicy(
   fileAccessMode: FileAccessMode,
   inlineEvalPolicy: InlineEvalPolicy,
@@ -31,6 +49,7 @@ export function fingerprintSecurityPolicy(
   egressAllowlist: string[],
   localServicePorts: string[],
   selfPort: string,
+  categoryPolicy: CategoryPolicyFingerprintInput,
 ): string {
   return createHash("sha256").update(JSON.stringify({
     fileAccessMode,
@@ -40,6 +59,11 @@ export function fingerprintSecurityPolicy(
     egressAllowlist: [...egressAllowlist].sort(),
     localServicePorts: [...localServicePorts].sort(),
     selfPort,
+    enableShell: categoryPolicy.enableShell,
+    enableHttp: categoryPolicy.enableHttp,
+    enableBrowser: categoryPolicy.enableBrowser,
+    localOnlyMode: categoryPolicy.localOnlyMode,
+    supervisedBrowser: categoryPolicy.supervisedBrowser,
   })).digest("hex");
 }
 

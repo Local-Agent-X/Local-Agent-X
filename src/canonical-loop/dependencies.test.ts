@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../ops/types.js";
@@ -225,6 +225,16 @@ describe("durable dependency scheduling", () => {
     const child = persisted("missing-child", "queued", { dependsOn: ["missing-root"] });
     registerAdapterForOp(child.id, () => adapter);
     rmSync(join(dataDir, "operations", "missing-root"), { recursive: true, force: true });
+    rebuildDependencyScheduling();
+    expect(readOp(child.id)?.canonical?.state).toBe("failed");
+    expect(backend.starts).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a persisted prerequisite is corrupt", () => {
+    persisted("corrupt-root", "queued");
+    const child = persisted("corrupt-child", "queued", { dependsOn: ["corrupt-root"] });
+    registerAdapterForOp(child.id, () => adapter);
+    writeFileSync(join(dataDir, "operations", "corrupt-root", "operation.json"), "{broken");
     rebuildDependencyScheduling();
     expect(readOp(child.id)?.canonical?.state).toBe("failed");
     expect(backend.starts).not.toHaveBeenCalled();

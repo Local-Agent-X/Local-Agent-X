@@ -193,6 +193,24 @@ describe("ContainerExecutionBackend", () => {
       .rejects.toThrow("fresh launch blocked");
     expect(recovered.cleanup).toHaveBeenCalledOnce();
   });
+
+  it("awaits projection cleanup when launch fails before a container exists", async () => {
+    const runtime = fakeRuntime({ create: vi.fn().mockRejectedValue(new Error("create failed")) });
+    const projection = fakeProjection();
+    let cleaned = false;
+    projection.cleanup = vi.fn(async () => {
+      await Promise.resolve();
+      cleaned = true;
+    });
+    const backend = backendWith(runtime, projection);
+    const op = fixtureOp("create-failure-cleanup", backend);
+
+    await expect(backend.startWithoutAdapter({
+      op, placement: op.canonical!.executionPlacement!,
+    }).done).rejects.toThrow("create failed");
+    expect(cleaned).toBe(true);
+    expect(readContainerLaunchIntent(op.id)).toBeNull();
+  });
 });
 
 function backendWith(runtime: DockerExecutionRuntime, projection = fakeProjection()): ContainerExecutionBackend {

@@ -47,6 +47,10 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     expect(spec.mounts.some(mount => mount.source === root || mount.source.endsWith("docker.sock"))).toBe(false);
     expect(spec.mounts.every(mount => mount.identity?.device && mount.identity.inode)).toBe(true);
     expect(spec.network).toEqual({ name: "lax-egress" });
+    expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY).toBe("1");
+    expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY_SOCKET)
+      .toBe("/var/lib/lax/browser-relay.sock");
+    expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY_TOKEN).toMatch(/^[a-f0-9]{64}$/);
     const credential = spec.mounts.find(mount => mount.target.endsWith("runtime-credential.json"))!;
     expect(readFileSync(credential.source, "utf8")).toContain("scoped-openai-key");
     projection.writeBootstrap({ op, token: "token", placement: placement(), container: container() });
@@ -57,7 +61,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     expect(reopened.buildSpec({ op, image: image(), token: "token", placement: placement() }).mounts)
       .toHaveLength(spec.mounts.length);
     const projectionRoot = join(root, "container-runtime", projection.durableId!);
-    reopened.cleanup();
+    await reopened.cleanup();
     expect(existsSync(projectionRoot)).toBe(false);
   });
 
@@ -74,10 +78,13 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     opDir(op.id);
     const projection = await createContainerRuntimeProjection(op);
     const credential = join(root, "container-runtime", projection.durableId!, "secrets", "runtime-credential.json");
+    const originalCredential = readFileSync(credential, "utf8");
     writeFileSync(credential, "{}", "utf8");
 
     await expect(reopenContainerRuntimeProjection(op, projection.durableId!))
       .rejects.toThrow("file integrity check failed");
+    writeFileSync(credential, originalCredential, "utf8");
+    await projection.cleanup();
   });
 });
 

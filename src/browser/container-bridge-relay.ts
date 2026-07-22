@@ -50,6 +50,7 @@ const ALLOWED_OPS = new Set([
 	"read-console", "read-network", "dialogs:list", "dialogs:accept",
 	"dialogs:dismiss", "exec", "input", "capture", "clear-partition",
 ]);
+const activeServers = new Map<string, BrowserRelayServerHandle>();
 
 export function browserContainerRelayActivated(env = process.env): boolean {
 	return env[CONTAINER_BROWSER_RELAY_FLAG] === "1";
@@ -71,6 +72,7 @@ export async function startBrowserContainerRelay(options: {
 	handler: BrowserRelayHandler;
 }): Promise<BrowserRelayServerHandle> {
 	validateEndpoint(options.socketPath, options.token);
+	await activeServers.get(options.socketPath)?.close();
 	removeStaleSocket(options.socketPath);
 	const sockets = new Set<Socket>();
 	const server = createServer(socket => {
@@ -81,7 +83,7 @@ export async function startBrowserContainerRelay(options: {
 	await listen(server, options.socketPath);
 	if (process.platform !== "win32") chmodSync(options.socketPath, 0o600);
 	let closed = false;
-	return {
+	const handle: BrowserRelayServerHandle = {
 		socketPath: options.socketPath,
 		async close(): Promise<void> {
 			if (closed) return;
@@ -89,8 +91,13 @@ export async function startBrowserContainerRelay(options: {
 			for (const socket of sockets) socket.destroy();
 			await closeServer(server);
 			removeOwnedSocket(options.socketPath);
+			if (activeServers.get(options.socketPath) === handle) {
+				activeServers.delete(options.socketPath);
+			}
 		},
 	};
+	activeServers.set(options.socketPath, handle);
+	return handle;
 }
 
 async function exchange(payload: RelayPayload, timeoutMs: number): Promise<unknown> {

@@ -31,6 +31,11 @@ import {
 } from "../sandbox/docker-execution-runtime.js";
 import type { ContainerLaunchProjection } from "./container-execution-backend.js";
 import { sealContainerBootstrap } from "./container-bootstrap.js";
+import {
+  BROWSER_RELAY_TOKEN_FILE,
+  createProjectionBrowserRelayToken,
+  openProjectionBrowserRelay,
+} from "./container-runtime-browser-relay.js";
 
 const CONTAINER_DATA = "/var/lib/lax";
 const CONTAINER_SECRETS = "/run/lax-secrets";
@@ -96,14 +101,16 @@ export async function createContainerRuntimeProjection(op: Op): Promise<Containe
       credential,
       mac: computeDurableRecordMac(CREDENTIAL_DOMAIN, JSON.stringify(credential)),
     });
-  const auditPath = join(secrets, "audit-key");
-  const key = getAuditHmacKey();
-  writeJson(auditPath, { schemaVersion: 1, key: Buffer.from(key).toString("base64") });
+    const auditPath = join(secrets, "audit-key");
+    const key = getAuditHmacKey();
+    writeJson(auditPath, { schemaVersion: 1, key: Buffer.from(key).toString("base64") });
     const bootstrapPath = join(secrets, "bootstrap.json");
     writeJson(bootstrapPath, { schemaVersion: 1, state: "pending" });
+    const browserRelayTokenPath = createProjectionBrowserRelayToken(root);
     const localRuntimePath = projectLocalRuntime(descriptor, secrets);
     const tracked = ["state/config.json", "state/settings.json", "state/tool-policy.json",
-      "secrets/runtime-credential.json", "secrets/audit-key", "secrets/local-runtime.json"]
+      "secrets/runtime-credential.json", "secrets/audit-key", BROWSER_RELAY_TOKEN_FILE,
+      "secrets/local-runtime.json"]
       .filter(path => existsSync(join(root, path)));
     const manifest: ProjectionManifest = { schemaVersion: 1, projectionId, opId: op.id,
       descriptorMac: descriptor.integrity.mac,
@@ -111,11 +118,12 @@ export async function createContainerRuntimeProjection(op: Op): Promise<Containe
       mounts: Object.fromEntries([
         ["state", state], ["operation", opDir(op.id)], ["workspace", realpathSync(workspaceRoot())],
         ["credential", credentialPath], ["audit", auditPath], ["bootstrap", bootstrapPath],
+        ["browserRelayToken", browserRelayTokenPath],
         ...(localRuntimePath ? [["localRuntime", localRuntimePath]] : []),
       ].map(([name, path]) => [name, fileIdentity(path)])),
     };
     writeJson(join(root, "projection.json"), sealManifest(manifest));
-    return materializeProjection(op, projectionId, root, localRuntimePath !== null);
+    return await materializeProjection(op, projectionId, root, localRuntimePath !== null);
   } catch (error) {
     rmSync(root, { recursive: true, force: true });
     throw error;
@@ -133,15 +141,16 @@ export async function reopenContainerRuntimeProjection(
     throw new Error("container projection identity changed");
   }
   verifyManifestFiles(root, manifest);
-  return materializeProjection(op, projectionId, root, "secrets/local-runtime.json" in manifest.files);
+  return await materializeProjection(op, projectionId, root,
+    "secrets/local-runtime.json" in manifest.files);
 }
 
-function materializeProjection(
+async function materializeProjection(
   op: Op,
   projectionId: string,
   root: string,
   hasLocalRuntime: boolean,
-): ContainerLaunchProjection {
+): Promise<ContainerLaunchProjection> {
   const state = join(root, "state");
   const secrets = join(root, "secrets");
   const credentialPath = join(secrets, "runtime-credential.json");
@@ -150,6 +159,9 @@ function materializeProjection(
   const localRuntimePath = hasLocalRuntime ? join(secrets, "local-runtime.json") : null;
   const workspace = realpathSync(workspaceRoot());
   const operation = opDir(op.id);
+  const projectionManifest = readManifest(root);
+  const browserRelay = await openProjectionBrowserRelay(root,
+    projectionManifest.mounts.browserRelayToken);
   return {
     durableId: projectionId,
     buildSpec({ image, placement }): DockerContainerSpec {
@@ -169,6 +181,7 @@ function materializeProjection(
           LAX_CONTAINER_BOOTSTRAP: `${CONTAINER_SECRETS}/bootstrap.json`,
           LAX_SCOPED_RUNTIME_CREDENTIAL_FILE: `${CONTAINER_SECRETS}/runtime-credential.json`,
           LAX_AUDIT_KEY_FILE: `${CONTAINER_SECRETS}/audit-key`,
+          ...browserRelay.environment,
           ...(process.env.LAX_CONTAINER_HOST_GATEWAY
             ? { LAX_CONTAINER_HOST_GATEWAY: process.env.LAX_CONTAINER_HOST_GATEWAY }
             : {}),
@@ -219,7 +232,8 @@ function materializeProjection(
         imageDigest: container.imageId,
       }));
     },
-    cleanup(): void {
+    async cleanup(): Promise<void> {
+      await browserRelay.close();
       readManifest(root);
       rmSync(root, { recursive: true, force: true });
     },
@@ -268,7 +282,8 @@ function readManifest(root: string): ProjectionManifest {
       || !/^[a-f0-9]{64}$/.test(hash))
     || Object.entries(manifest.mounts).some(([name, identity]) => !/^[A-Za-z]+$/.test(name)
       || !identity || !/^\d+$/.test(identity.device) || !/^\d+$/.test(identity.inode))
-    || !["state", "operation", "workspace", "credential", "audit", "bootstrap"]
+    || !["state", "operation", "workspace", "credential", "audit", "bootstrap",
+      "browserRelayToken"]
       .every(name => name in (manifest.mounts ?? {}))
     || typeof sealed.mac !== "string"
     || !verifyDurableRecordMac(PROJECTION_DOMAIN, JSON.stringify(manifest), sealed.mac)) {

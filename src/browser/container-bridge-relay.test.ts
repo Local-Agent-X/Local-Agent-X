@@ -84,12 +84,11 @@ describe("container browser relay", () => {
 		expect(abort).toHaveBeenCalledWith("view-2");
 	});
 
-	it("can close and restart on the same endpoint", async () => {
+	it("replaces the prior in-process owner when reopening the same endpoint", async () => {
 		const socketPath = endpoint("restart");
 		const handler = { request: vi.fn(), abort: vi.fn() };
 		const first = await startBrowserContainerRelay({ socketPath, token, handler });
 		handles.push(first);
-		await first.close();
 		const second = await startBrowserContainerRelay({ socketPath, token, handler });
 		handles.push(second);
 		activate(socketPath);

@@ -53,7 +53,7 @@ export interface ContainerLaunchProjection {
     placement: ExecutionPlacement;
     container: DockerContainerIdentity;
   }): void;
-  cleanup(): void;
+  cleanup(): void | Promise<void>;
 }
 
 export type ContainerProjectionFactory = (op: Op) => Promise<ContainerLaunchProjection>;
@@ -146,7 +146,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       const projection = await this.reopenProjection(request.op, intent);
       await this.stopAndConfirm(existing.containerId);
       if (!removeProcessExecutionClaim(existing)) throw new Error("container ownership changed during reclaim");
-      projection?.cleanup();
+      await projection?.cleanup();
       removeContainerLaunchIntent(intent);
     }
 
@@ -157,13 +157,14 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     let intent = createContainerLaunchIntent({ opId: request.op.id, placement: request.placement,
       token, name, imageReference: image.reference, imageId: image.imageId });
     writeContainerLaunchIntent(intent);
-    const projection = await this.projectionFactory(request.op);
-    if (projection.durableId) {
-      intent = bindContainerLaunchProjection(intent, projection.durableId);
-      writeContainerLaunchIntent(intent);
-    }
+    let projection: ContainerLaunchProjection | null = null;
     let container: DockerContainerIdentity | null = null;
     try {
+      projection = await this.projectionFactory(request.op);
+      if (projection.durableId) {
+        intent = bindContainerLaunchProjection(intent, projection.durableId);
+        writeContainerLaunchIntent(intent);
+      }
       const projected = projection.buildSpec({
         op: request.op,
         image,
@@ -185,9 +186,9 @@ export class ContainerExecutionBackend implements ExecutionBackend {
         if (claim?.ownerKind === "container" && claim.containerId === container.containerId) {
           removeProcessExecutionClaim(claim);
         }
-        projection.cleanup();
-        removeContainerLaunchIntent(intent);
       }
+      await projection?.cleanup();
+      removeContainerLaunchIntent(intent);
       throw error;
     }
   }
@@ -205,7 +206,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       ? await this.runtime.inspect(intent.container.containerId)
       : await this.runtime.inspectNamed(intent.name, ownershipLabels(request.op.id, request.placement));
     if (!state) {
-      (await this.reopenProjection(request.op, intent))?.cleanup();
+      await (await this.reopenProjection(request.op, intent))?.cleanup();
       removeContainerLaunchIntent(intent);
       return false;
     }
@@ -215,7 +216,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     }
     if (!state.running) {
       await this.stopAndConfirm(state.containerId);
-      (await this.reopenProjection(request.op, intent))?.cleanup();
+      await (await this.reopenProjection(request.op, intent))?.cleanup();
       removeContainerLaunchIntent(intent);
       return false;
     }
@@ -279,7 +280,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       await this.stopAndConfirm(claim.containerId);
       const current = readProcessExecutionClaim(opId);
       if (current && processClaimMatches(current, claim)) removeProcessExecutionClaim(current);
-      projection?.cleanup();
+      await projection?.cleanup();
       if (intent) removeContainerLaunchIntent(intent);
     }
   }

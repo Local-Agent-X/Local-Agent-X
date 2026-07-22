@@ -56,6 +56,20 @@ describe("viewBelongsToSession (authorization-grade ownership)", () => {
 		expect(viewBelongsToSession(42, "sess-1")).toBe(false);
 		expect(viewBelongsToSession("view-sess-1-default", "")).toBe(false);
 	});
+
+	it("documents the enforced boundary: admits own hyphen-nested descendants, never an unrelated top-level session", () => {
+		// Because a profileId may itself contain hyphens, the reconstruct-the-mint
+		// check cannot separate session `chat-1` (profile `b0-default`) from a
+		// spawned dream-branch session `chat-1-b0` (profile `default`). The
+		// enforced invariant is therefore "own session PLUS its own hyphen-nested
+		// descendants" — the check must ADMIT the lineage descendant (asserting the
+		// exact scope the code+claim state, not a stricter own-session-only one).
+		expect(viewBelongsToSession("view-chat-1-b0-default", "chat-1")).toBe(true);
+		// The security guarantee that DOES hold: an unrelated top-level session
+		// (uuid/agent/chat-N shapes never prefix-nest under another) is rejected.
+		expect(viewBelongsToSession("view-chat-2-default", "chat-1")).toBe(false);
+		expect(viewBelongsToSession("view-agent-9f3c-default", "chat-1")).toBe(false);
+	});
 });
 
 describe("handleAgentViewClosed → registered handler", () => {

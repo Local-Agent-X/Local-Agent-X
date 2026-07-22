@@ -73,9 +73,11 @@ export async function startBrowserContainerRelay(options: {
 	token: string;
 	/** The session that owns this relay. Every relayed op may only target a
 	 *  view named for this session (view-<ownerSessionId>-<profile>); a viewId
-	 *  parsed to a different (or no) session is refused — the token proves only
-	 *  container membership, so this is what keeps one container off another
-	 *  session's browser views. */
+	 *  belonging to an unrelated session (or none) is refused — see
+	 *  viewBelongsToSession for the exact boundary, which admits this session's
+	 *  own hyphen-nested descendants but never an unrelated top-level session.
+	 *  The token proves only container membership, so this is what keeps one
+	 *  container off another session's browser views. */
 	ownerSessionId: string;
 	handler: BrowserRelayHandler;
 }): Promise<BrowserRelayServerHandle> {

@@ -356,8 +356,27 @@ function assertProjectionPaths(descriptor: ExactDelegatedRuntimeDescriptor): voi
   }
 }
 
-function projectedConfig(): Record<string, unknown> {
-  return { authToken: randomBytes(32).toString("hex"), workspace: workspaceRoot() };
+// The container's config.json. It gets a FRESH auth token (never the host's)
+// and the host workspace path, PLUS the host's category kill-switches and the
+// local-only / supervised-browser toggles. Projecting those is load-bearing:
+// inside the container getRuntimeConfig() reads this file, and the pre-dispatch
+// gates (killSwitchBlock, localOnlyToolDecision, supervisedEvaluateBlock) key
+// off exactly these fields. Omitting them made getRuntimeConfig() fall back to
+// schema defaults (every category ON, localOnly OFF, supervised OFF), so a host
+// that had disabled Shell still ran bash inside the sandbox. These same five
+// values are folded into the sealed policy fingerprint (runtimePolicyFingerprint),
+// so a projected-vs-expected divergence fails the runtime surface CLOSED.
+export function projectedConfig(): Record<string, unknown> {
+  const cfg = getRuntimeConfig();
+  return {
+    authToken: randomBytes(32).toString("hex"),
+    workspace: workspaceRoot(),
+    enableShell: cfg.enableShell,
+    enableHttp: cfg.enableHttp,
+    enableBrowser: cfg.enableBrowser,
+    localOnlyMode: cfg.localOnlyMode,
+    supervisedBrowser: cfg.supervisedBrowser,
+  };
 }
 
 function copyOptionalJson(source: string, destination: string): void {

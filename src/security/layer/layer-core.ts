@@ -2,6 +2,7 @@ import { resolve, relative, join, isAbsolute } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { SecurityDecision } from "../../types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { getRuntimeConfig } from "../../config.js";
 import { USER_HINTS } from "../../types.js";
 import {
   CONTEXT_RESTRICTED_TOOLS,
@@ -166,8 +167,22 @@ export class SecurityLayer {
     return snapshotSecurityRuntime(this.workspace, this.fileAccessMode, this.inlineEvalPolicy, this.sessionAllowedPaths, sessionId); }
 
   runtimePolicyFingerprint(): string {
+    // Category kill-switches + local-only/supervised toggles come from the
+    // runtime config (getRuntimeConfig), NOT the SecurityLayer, but they are
+    // part of the sealed policy surface: a recovered/container runtime that
+    // reads different toggles (e.g. a container falling back to schema defaults,
+    // or a tampered projected config.json) recomputes a different fingerprint
+    // and the runtime-surface check fails CLOSED — see rehydrateAgentRuntimeSurface.
+    const cfg = getRuntimeConfig();
     return fingerprintSecurityPolicy(this.fileAccessMode, this.inlineEvalPolicy, this.egressMode,
-      this.egressAllowlistConfigured, [...this.egressAllowlist], [...this.localServicePorts], String(SecurityLayer._selfPort || "7007"));
+      this.egressAllowlistConfigured, [...this.egressAllowlist], [...this.localServicePorts], String(SecurityLayer._selfPort || "7007"),
+      {
+        enableShell: cfg.enableShell,
+        enableHttp: cfg.enableHttp,
+        enableBrowser: cfg.enableBrowser,
+        localOnlyMode: cfg.localOnlyMode,
+        supervisedBrowser: cfg.supervisedBrowser,
+      });
   }
 
   restoreAllowedPaths(entries: Array<{ sessionId: string; path: string }>): void {

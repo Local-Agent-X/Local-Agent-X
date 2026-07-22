@@ -208,9 +208,11 @@ beforeEach(() => {
 
   const artifactsSrc = readFileSync(join(here, "../public/js/chat-artifacts.js"), "utf8");
   new Function(`${artifactsSrc}\nwindow.switchSidePanelTab = switchSidePanelTab;`)();
-  // Strip module first, then the tab module — same order as app.html.
+  // Strip + error-card modules first, then the tab module — same order as app.html.
   const stripSrc = readFileSync(join(here, "../public/js/browser-tab-strip.js"), "utf8");
   new Function(stripSrc)();
+  const errorCardSrc = readFileSync(join(here, "../public/js/browser-error-card.js"), "utf8");
+  new Function(errorCardSrc)();
   const browserTabSrc = readFileSync(join(here, "../public/js/browser-tab.js"), "utf8");
   new Function(browserTabSrc)();
 });
@@ -377,7 +379,7 @@ describe("browser tab in the right side panel", () => {
     expect(bridge.setVisible).toHaveBeenLastCalledWith(true);
   });
 
-  it("a failed load hides the native view and shows the error card; Retry reloads", () => {
+  it("a failed load hides the native view and shows the error card; Retry re-navigates", () => {
     // Regression: a dead local server (ComfyUI stopped, dev server down) or an
     // egress-blocked page left the pane silently WHITE — the native view renders
     // a blank error document and nothing told the user what happened.
@@ -395,9 +397,12 @@ describe("browser tab in the right side panel", () => {
     expect(anchor.textContent).toContain("ERR_CONNECTION_REFUSED");
     expect(anchor.textContent).toContain("http://127.0.0.1:8188/");
 
+    // Retry re-NAVIGATES to the failed URL — reload() on a navigation that
+    // never committed can no-op (nothing to reload).
     document.getElementById("browser-load-error-retry")!
       .dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(bridge.reload).toHaveBeenCalledTimes(1);
+    expect(bridge.navigate).toHaveBeenCalledWith("http://127.0.0.1:8188/");
+    expect(bridge.reload).not.toHaveBeenCalled();
 
     // The retry's load-start clears the error → card gone, view returns.
     navStateCb!({

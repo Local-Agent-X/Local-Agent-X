@@ -12,41 +12,42 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1393 non-test source files · 1 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1416 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 102 | 24 | XL |  |
-| `src/security/` | 75 | 30 | XL |  |
-| `src/tools/` | 59 | 148 | XL |  |
+| `src/ops/` | 110 | 24 | XL |  |
+| `src/security/` | 77 | 30 | XL |  |
+| `src/tools/` | 60 | 148 | XL |  |
 | `src/providers/` | 55 | 20 | XL |  |
-| `src/canonical-loop/` | 53 | 187 | XL |  |
+| `src/canonical-loop/` | 53 | 202 | XL |  |
 | `src/memory/` | 42 | 118 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 33 | 2 | M |  |
 | `src/session/` | 31 | 7 | L |  |
-| `src/auth/` | 29 | 10 | L |  |
-| `src/util/` | 28 | 2 | S |  |
+| `src/auth/` | 30 | 10 | L |  |
+| `src/util/` | 29 | 2 | S |  |
+| `src/threat/` | 28 | 11 | L |  |
 | `src/agency/` | 26 | 18 | L |  |
-| `src/threat/` | 26 | 11 | L |  |
+| `src/browser/` | 26 | 56 | XL |  |
+| `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/tool-policy/` | 25 | 20 | L |  |
-| `src/browser/` | 24 | 51 | XL | 1 |
-| `src/local-runtimes/` | 23 | 18 | L |  |
+| `src/app-runtime/` | 22 | 12 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
 | `src/agent-request/` | 18 | 14 | L |  |
-| `src/app-runtime/` | 17 | 12 | L |  |
 | `src/chat-ws/` | 17 | 14 | L |  |
 | `src/context/` | 17 | 3 | M |  |
 | `src/agent-guards/` | 16 | 14 | L |  |
 | `src/agents/` | 16 | 13 | L |  |
+| `src/data-lineage/` | 15 | 6 | L |  |
 | `src/protocols/` | 15 | 39 | XL |  |
 | `src/anthropic-client/` | 14 | 19 | L |  |
-| `src/data-lineage/` | 13 | 6 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
+| `src/sandbox/` | 12 | 8 | L |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
@@ -54,17 +55,16 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/cron/` | 10 | 8 | L |  |
 | `src/self-edit/` | 10 | 20 | L |  |
 | `src/integrations/` | 9 | 15 | M |  |
+| `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/tool-execution/` | 9 | 33 | XL |  |
-| `src/sandbox/` | 8 | 6 | L |  |
+| `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/sync/` | 8 | 18 | L |  |
-| `src/ari-kernel/` | 7 | 11 | L |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |
-| `src/persistence/` | 7 | 2 | S |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
-| `src/routes/` | 7 | 85 | XL |  |
+| `src/routes/` | 7 | 86 | XL |  |
 | `src/server/` *(entrypoint)* | 7 | 40 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
@@ -119,6 +119,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/db-migrations.ts` | S |
 | `src/demo-recorder.ts` | M |
 | `src/desktop-bridge.ts` | S |
+| `src/desktop-prebuild-marker.ts` | S |
 | `src/doctor.ts` | M |
 | `src/embedding-singleton.ts` | S |
 | `src/event-bus.ts` | S |
@@ -188,14 +189,4 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | S |
 | `src/worker-session.ts` | S |
-
-## God files (> 400 LOC)
-
-Burn-down targets for `/refactor-godfiles`. Membership only (not exact LOC),
-so a god file growing a little doesn't churn this doc — only crossing the
-400-line line does.
-
-| File | Size |
-|---|:--:|
-| `src/browser/in-app-backend.ts` | M |
 

@@ -38,8 +38,9 @@ Roll back if any of these are observed:
   `recoverStaleOp` doesn't restore it.
 - `op_events` seq gaps appear for any op (per-op monotonic invariant
   broken — Issue 11 invariants test would catch this).
-- `op_submit_async` response shape regresses (Issue 10 compat test
-  would catch this).
+- `op_submit_async` response shape regresses (the Issue 10 golden-master
+  fixtures in `test/canonical-loop/fixtures/` capture the contract; note
+  there is currently no automated test wired to replay them).
 - Adapter conformance fails on a real-CLI smoke (Issue 09 gated suite).
 - A user-visible regression: terminal events missing, sidebar cards
   stuck, cancel button no-ops, etc.
@@ -60,7 +61,7 @@ Most likely candidates:
   lifecycle`) — restores fork-based execution outright.
 - A specific canonical-loop change that landed on top — narrower revert.
 
-`git log --oneline -- src/canonical-loop/ src/workers/` is the fastest
+`git log --oneline -- src/canonical-loop/ src/ops/` is the fastest
 way to find what shipped recently.
 
 ### 2. Revert + build + smoke

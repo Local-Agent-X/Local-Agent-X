@@ -40,7 +40,7 @@ describe("execution backend interface seal", () => {
     expect(scheduler).not.toMatch(/backend\.admit\s*\(/);
   });
 
-  it("keeps worker dispatch behind the two canonical backend entrypoints", () => {
+  it("keeps worker dispatch behind the canonical registry, public entrypoint, and worker runtime", () => {
     const importers: string[] = [];
     for (const entry of readdirSync(LOOP_DIR, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) continue;
@@ -49,8 +49,8 @@ describe("execution backend interface seal", () => {
     }
     expect(importers.sort()).toEqual([
       "execution-backend-registry.ts",
+      "execution-worker-runtime.ts",
       "index.ts",
-      "process-worker-entry.ts",
     ].sort());
     const scheduler = readFileSync(join(LOOP_DIR, "scheduler.ts"), "utf8");
     expect(scheduler).not.toMatch(/\brunWorker\s*\(/);

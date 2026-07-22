@@ -103,7 +103,6 @@ export class ElectronInAppBackend implements BrowserBackend {
 	}
 
 	// ── Active-tab accessors (every action routes through the active tab) ──
-
 	private get activeTab(): InAppTab {
 		return this.tabs.active;
 	}

@@ -12,141 +12,32 @@ import {
 	type BridgeConsoleEntry,
 	type BridgeNetworkEntry,
 } from "./bridge-perception.js";
+import {
+	BridgeOpError, BridgeTimeoutError, BridgeUnavailableError, BridgeViewClosedError,
+	CAPTURE_TIMEOUT_MS, CLEAR_PARTITION_TIMEOUT_MS, EXEC_TIMEOUT_MS, INPUT_TIMEOUT_MS,
+	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS,
+	RESULT_TYPES,
+	type BridgeInputEvent, type BridgeReply, type BridgeRect, type BrowserInputResult,
+	type BrowserLifecycleOp, type BrowserLifecycleResult, type BrowserNavigateResult,
+	type InAppDialogSummary, type UserActiveResult,
+} from "./bridge-client-contract.js";
+
+export {
+	BridgeOpError, BridgeTimeoutError, BridgeUnavailableError, BridgeViewClosedError,
+	CAPTURE_TIMEOUT_MS, CLEAR_PARTITION_TIMEOUT_MS, EXEC_TIMEOUT_MS, INPUT_TIMEOUT_MS,
+	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS,
+} from "./bridge-client-contract.js";
+export type {
+	BridgeInputEvent, BridgeInputModifier, BridgeKeyEvent, BridgeMouseEvent,
+	BridgeMouseWheelEvent, BridgeRect, BrowserInputResult, BrowserLifecycleOp,
+	BrowserLifecycleResult, BrowserNavigateResult, BrowserViewInfo, InAppDialogSummary,
+	UserActiveResult,
+} from "./bridge-client-contract.js";
 
 const logger = createLogger("browser-bridge");
 
-// ── Per-op timeouts ─────────
-// navigate: the desktop enforces its own load deadline (sent in the message);
-// the client waits that plus a reply grace — 28s ceiling, under the tool wedge.
-export const LIFECYCLE_TIMEOUT_MS = 8_000;
-export const NAVIGATE_DESKTOP_TIMEOUT_MS = 25_000;
-export const NAVIGATE_REPLY_GRACE_MS = 3_000; // 25s + 3s = 28s total
-export const EXEC_TIMEOUT_MS = 10_000;
-export const INPUT_TIMEOUT_MS = 5_000;
-export const CAPTURE_TIMEOUT_MS = 10_000;
-// clear-partition blanks every open view on the partition THEN clears storage
-// (loads + a storage flush) — longer ceiling than a bare lifecycle op.
-export const CLEAR_PARTITION_TIMEOUT_MS = 12_000;
-
-// ── Wire types (mirrored in desktop/src/server-bridge-browser.ts) ─────────
-export interface BridgeRect { x: number; y: number; width: number; height: number }
-
-export interface BrowserViewInfo {
-	viewId: string;
-	partition: string;
-	url: string;
-	title: string;
-	attached: boolean;
-	/** Set at creation: agent-driving bridge view vs. the renderer's own. */
-	agentDriven: boolean;
-}
-
-export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list";
-
-export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
-export interface BridgeMouseEvent {
-	type: "mouseDown" | "mouseUp" | "mouseMove";
-	x: number;
-	y: number;
-	button?: "left" | "middle" | "right";
-	clickCount?: number;
-	modifiers?: BridgeInputModifier[];
-}
-export interface BridgeMouseWheelEvent {
-	type: "mouseWheel";
-	x: number;
-	y: number;
-	deltaX?: number;
-	deltaY?: number;
-	modifiers?: BridgeInputModifier[];
-}
-export interface BridgeKeyEvent {
-	type: "keyDown" | "keyUp" | "char";
-	keyCode: string;
-	modifiers?: BridgeInputModifier[];
-}
-export type BridgeInputEvent = BridgeMouseEvent | BridgeMouseWheelEvent | BridgeKeyEvent;
-
-export interface BrowserLifecycleResult {
-	view?: BrowserViewInfo;
-	views?: BrowserViewInfo[];
-	// userActive: the co-drive lock says the human is driving — read by the
-	// in-app backend's pre-exec arbitration (eval bypasses the input gate).
-	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
-}
-/** status: main-frame HTTP response code, when the desktop observed one
- *  (did-navigate). Absent for non-HTTP loads → callers print "unknown". */
-export interface BrowserNavigateResult { url: string; title: string; status?: number }
-
-/** The desktop refused an agent input: the HUMAN is driving the view
- *  (co-drive lock). A STATUS ("user took the wheel"), not an error. */
-export interface UserActiveResult { userActive: true }
-/** browserInput outcome: undefined = the event was dispatched;
- *  UserActiveResult = refused, human is driving. */
-export type BrowserInputResult = UserActiveResult | undefined;
-
 export function isUserActiveResult(result: BrowserInputResult): result is UserActiveResult {
 	return result?.userActive === true;
-}
-
-// Inbound reply envelope shared by every "-result" message.
-interface BridgeReply {
-	type: string;
-	id: number;
-	ok: boolean;
-	error?: string;
-	view?: BrowserViewInfo;
-	views?: BrowserViewInfo[];
-	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
-	url?: string;
-	title?: string;
-	result?: unknown;
-	pngB64?: string;
-	allowed?: boolean;
-	userActive?: boolean;
-	status?: number;
-	entries?: BridgeConsoleEntry[];
-	network?: { entries: BridgeNetworkEntry[]; inFlight: number };
-	dialogs?: InAppDialogSummary[];
-	handled?: InAppDialogSummary | null;
-}
-
-const RESULT_TYPES = new Set([
-	"lax:browser-lifecycle-result",
-	"lax:browser-navigate-result",
-	"lax:browser-exec-result",
-	"lax:browser-input-result",
-	"lax:browser-capture-result",
-	"lax:browser-clear-partition-result",
-	"lax:browser-read-console-result",
-	"lax:browser-read-network-result",
-	"lax:browser-dialogs-result",
-]);
-
-// ── Typed errors ─────────
-export class BridgeUnavailableError extends Error {
-	constructor(op: string) {
-		super(`browser bridge unavailable for ${op} — not running under the desktop app`);
-		this.name = "BridgeUnavailableError";
-	}
-}
-export class BridgeTimeoutError extends Error {
-	constructor(op: string, viewId: string, timeoutMs: number) {
-		super(`browser ${op} timed out after ${timeoutMs}ms (viewId=${viewId})`);
-		this.name = "BridgeTimeoutError";
-	}
-}
-export class BridgeOpError extends Error {
-	constructor(op: string, viewId: string, detail: string) {
-		super(`browser ${op} failed (viewId=${viewId}): ${detail}`);
-		this.name = "BridgeOpError";
-	}
-}
-export class BridgeViewClosedError extends Error {
-	constructor(op: string, viewId: string) {
-		super(`browser ${op} cancelled — view "${viewId}" was closed`);
-		this.name = "BridgeViewClosedError";
-	}
 }
 
 // ── Correlation state ─────────
@@ -312,9 +203,6 @@ export async function browserReadNetwork(viewId: string): Promise<{ entries: Bri
 	const net = reply.network;
 	return { entries: Array.isArray(net?.entries) ? net.entries : [], inFlight: typeof net?.inFlight === "number" ? net.inFlight : 0 };
 }
-
-/** Desktop beforeunload-dialog queue entry (desktop/src/browser-dialogs.ts). */
-export interface InAppDialogSummary { type: string; message: string }
 
 /** Dialog queue ops: list pending, or accept/dismiss the next queued entry
  *  (handled: null when nothing was pending). */

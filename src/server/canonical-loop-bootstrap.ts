@@ -21,7 +21,7 @@ import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
-import { reconcileTerminalContainerExecutions } from "../canonical-loop/container-terminal-janitor.js";
+import { reconcileTerminalContainerExecutions } from "../canonical-loop/public/container-recovery.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 

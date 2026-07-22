@@ -88,27 +88,70 @@ describe("DockerCliExecutionRuntime", () => {
   });
 
   it.skipIf(!canSymlink || process.platform !== "linux")(
-    "holds the canonical mount inode across Docker create",
+    "holds the canonical mount inode until Docker start completes",
     async () => {
       const replacement = join(mountRoot, "replacement");
       writeFileSync(replacement, "replacement");
+      rmSync(mountLink, { force: true });
+      symlinkSync(mountSource, mountLink, "file");
+      let heldSource = "";
       const run = vi.fn<DockerCommandRunner>()
         .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
         .mockImplementationOnce(async (args) => {
-          rmSync(mountLink);
-          symlinkSync(replacement, mountLink, "file");
-          const source = /source=([^,]+)/.exec(args.join(" "))?.[1];
-          expect(source).toMatch(/^\/proc\/\d+\/fd\/\d+$/);
-          expect(readFileSync(source!, "utf8")).toBe("state");
+          heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
+          expect(heldSource).toMatch(/^\/proc\/\d+\/fd\/\d+$/);
           return { stdout: `${containerId}\n`, stderr: "" };
         })
-        .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" });
+        .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" })
+        .mockImplementationOnce(async () => {
+          expect(readFileSync(heldSource, "utf8")).toBe("state");
+          return { stdout: containerId, stderr: "" };
+        });
       const input = spec();
       input.mounts = [{ source: mountLink, target: "/var/lib/lax-op", readOnly: false }];
-      await new DockerCliExecutionRuntime(run, policy()).create(input);
+      const runtime = new DockerCliExecutionRuntime(run, policy());
+      await runtime.create(input);
+      rmSync(mountLink);
+      symlinkSync(replacement, mountLink, "file");
+      await runtime.start(containerId);
       expect(run.mock.calls[1][0].join(" ")).not.toContain(`source=${mountLink}`);
+      expect(() => readFileSync(heldSource)).toThrow();
     },
   );
+
+  it.skipIf(process.platform !== "linux")("releases held mounts when Docker create fails", async () => {
+    let heldSource = "";
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockImplementationOnce(async args => {
+        heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
+        throw new Error("create failed");
+      });
+    const input = spec();
+    input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
+
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(input)).rejects.toThrow("create failed");
+    expect(() => readFileSync(heldSource)).toThrow();
+  });
+
+  it.skipIf(process.platform !== "linux")("releases held mounts when Docker start fails", async () => {
+    let heldSource = "";
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockImplementationOnce(async args => {
+        heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
+        return { stdout: `${containerId}\n`, stderr: "" };
+      })
+      .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" })
+      .mockRejectedValueOnce(new Error("start failed"));
+    const input = spec();
+    input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
+    const runtime = new DockerCliExecutionRuntime(run, policy());
+    await runtime.create(input);
+
+    await expect(runtime.start(containerId)).rejects.toThrow("start failed");
+    expect(() => readFileSync(heldSource)).toThrow();
+  });
 
   it.skipIf(process.platform === "linux")("fails closed for bind mounts without inode-stable handoff", async () => {
     const run = vi.fn<DockerCommandRunner>()

@@ -85,6 +85,8 @@ export function createDockerCommandRunner(binary = "docker"): DockerCommandRunne
 }
 
 export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
+  private readonly pendingMountReleases = new Map<string, () => void>();
+
   constructor(
     private readonly run: DockerCommandRunner = createDockerCommandRunner(),
     private readonly policy: DockerExecutionPolicy = { approvedMountRoots: [], allowedNetwork: null },
@@ -142,16 +144,21 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
       args.push("--mount", bindMountArg(mount));
     }
     args.push(spec.image.reference, ...spec.command);
-    let created: string;
-    try { created = (await this.run(args, { timeoutMs: 60_000 })).stdout.trim(); }
-    finally { heldMounts.close(); }
-    if (!CONTAINER_ID.test(created)) throw new Error("Docker returned an ambiguous container id");
-    const identity = await this.inspect(created);
-    if (!identity || identity.imageId !== spec.image.imageId) {
-      await this.stop(created);
-      throw new Error("created container image identity changed");
+    let created = "";
+    try {
+      created = (await this.run(args, { timeoutMs: 60_000 })).stdout.trim();
+      if (!CONTAINER_ID.test(created)) throw new Error("Docker returned an ambiguous container id");
+      const identity = await this.inspect(created);
+      if (!identity || identity.imageId !== spec.image.imageId) {
+        await this.stop(created);
+        throw new Error("created container image identity changed");
+      }
+      this.pendingMountReleases.set(created, heldMounts.close);
+      return identity;
+    } catch (error) {
+      heldMounts.close();
+      throw error;
     }
-    return identity;
   }
 
   private async resolveApprovedNetwork(name: string): Promise<string> {
@@ -170,7 +177,8 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
 
   async start(containerId: string): Promise<void> {
     assertContainerId(containerId);
-    await this.run(["start", containerId], { timeoutMs: 60_000 });
+    try { await this.run(["start", containerId], { timeoutMs: 60_000 }); }
+    finally { this.releasePendingMounts(containerId); }
   }
 
   async inspect(containerId: string): Promise<DockerContainerState | null> {
@@ -225,6 +233,12 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
     assertContainerId(containerId);
     try { await this.run(["rm", "--force", containerId], { timeoutMs: 30_000 }); }
     catch (error) { if (!isNoSuchContainer(error)) throw error; }
+    finally { this.releasePendingMounts(containerId); }
+  }
+
+  private releasePendingMounts(containerId: string): void {
+    this.pendingMountReleases.get(containerId)?.();
+    this.pendingMountReleases.delete(containerId);
   }
 }
 

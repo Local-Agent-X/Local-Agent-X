@@ -19,7 +19,7 @@ import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
-import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
+import { fingerprintSecurityPolicy, parseJsonPathArray, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
@@ -27,16 +27,6 @@ const logger = createLogger("security.layer-core");
 // Extract a list of path strings from a JSON-array-string arg (pdf_merge.files).
 // A malformed value yields no paths — the tool's own JSON.parse then fails, so
 // nothing is opened; never throw out of the security gate.
-function parseJsonPathArray(raw: unknown): string[] {
-  if (typeof raw !== "string" || raw.length === 0) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Security layer that evaluates tool calls before execution.
  * Principles:
@@ -167,22 +157,13 @@ export class SecurityLayer {
     return snapshotSecurityRuntime(this.workspace, this.fileAccessMode, this.inlineEvalPolicy, this.sessionAllowedPaths, sessionId); }
 
   runtimePolicyFingerprint(): string {
-    // Category kill-switches + local-only/supervised toggles come from the
-    // runtime config (getRuntimeConfig), NOT the SecurityLayer, but they are
-    // part of the sealed policy surface: a recovered/container runtime that
-    // reads different toggles (e.g. a container falling back to schema defaults,
-    // or a tampered projected config.json) recomputes a different fingerprint
-    // and the runtime-surface check fails CLOSED — see rehydrateAgentRuntimeSurface.
-    const cfg = getRuntimeConfig();
+    // Kill-switches + local-only/supervised toggles are sealed into the policy surface:
+    // a container reading different toggles (schema-default fallback or a tampered projected
+    // config) recomputes a divergent fingerprint → fails CLOSED (see rehydrateAgentRuntimeSurface).
+    const { enableShell, enableHttp, enableBrowser, localOnlyMode, supervisedBrowser } = getRuntimeConfig();
     return fingerprintSecurityPolicy(this.fileAccessMode, this.inlineEvalPolicy, this.egressMode,
       this.egressAllowlistConfigured, [...this.egressAllowlist], [...this.localServicePorts], String(SecurityLayer._selfPort || "7007"),
-      {
-        enableShell: cfg.enableShell,
-        enableHttp: cfg.enableHttp,
-        enableBrowser: cfg.enableBrowser,
-        localOnlyMode: cfg.localOnlyMode,
-        supervisedBrowser: cfg.supervisedBrowser,
-      });
+      { enableShell, enableHttp, enableBrowser, localOnlyMode, supervisedBrowser });
   }
 
   restoreAllowedPaths(entries: Array<{ sessionId: string; path: string }>): void {

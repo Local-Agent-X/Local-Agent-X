@@ -9,6 +9,18 @@ export interface SecurityRuntimeIdentity {
   allowedPaths: Array<{ sessionId: string; path: string }>;
 }
 
+/** Parse a JSON string into a string[], returning [] on any non-string,
+ *  non-array, or malformed input (fail-safe for policy list config). */
+export function parseJsonPathArray(raw: unknown): string[] {
+  if (typeof raw !== "string" || raw.length === 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function snapshotSecurityRuntime(
   workspace: string,
   fileAccessMode: FileAccessMode,

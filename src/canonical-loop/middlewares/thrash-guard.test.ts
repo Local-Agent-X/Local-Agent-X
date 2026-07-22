@@ -87,7 +87,10 @@ describe("thrash-guard middleware", () => {
       fail("browser", "Blocked: script contains restricted pattern"),
       fail("browser", 'no clickable element matching text "S54488" found'),
       flip("browserMode", "isolated"),                    // reactive flip 1
-      fail("browser", "action 'navigate' hung past 29000ms — session force-reset"), // cycle 1
+      // Current wedge-recovery wording (browser-tools wedgeRecoveryMessage).
+      // The guard keys on the result STATUS ("error"), never on this prose —
+      // reworded recovery messages must keep tripping it.
+      fail("browser", "The browser hung on that action, but the page is still responsive — the browser recovered in place (same tab, same page). The action did not complete; simply retry it."), // cycle 1
       flip("browserMode", "advanced-shared"),             // reactive flip 2
       fail("http_request", "HTTP 400 Bad Request"),       // cycle 2
     ]);

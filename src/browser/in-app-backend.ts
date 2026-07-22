@@ -42,9 +42,11 @@ import {
 } from "./in-app-page-io.js";
 import {
 	closeOwnedTabs,
+	dropTabsForWedgeRecovery,
 	ensureTabView,
 	formatTabsListing,
 	navigationReport,
+	probeTabAfterWedge,
 	refreshTabState,
 	switchMergedTab,
 	TabList,
@@ -52,7 +54,7 @@ import {
 } from "./in-app-tabs.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost } from "./redirect.js";
-import { scanEvaluateScript, sensitivePageStub } from "./guards.js";
+import { EvaluateBlockedError, scanEvaluateScript, sensitivePageStub } from "./guards.js";
 import { formatRecentDownloads, getDownloadApprovalBinding, releaseQuarantinedDownload, type DownloadApprovalBinding } from "./downloads.js";
 import { fingerprintPage } from "./interactions.js";
 import {
@@ -82,21 +84,8 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("browser.in-app-backend");
 
-// ── Typed errors ─────────
-
-/** Same message shape the CDP path produces, thrown BEFORE any bridge call —
- *  a blocked script never reaches the view. */
-export class EvaluateBlockedError extends Error {
-	constructor(pattern: string) {
-		super(
-			`Blocked: script contains restricted pattern (${pattern}). ` +
-				`evaluate() is for DOM inspection only — use http_request for API calls.`,
-		);
-		this.name = "EvaluateBlockedError";
-	}
-}
-
 // ── Backend ─────────
+// (EvaluateBlockedError lives in guards.ts, beside the scan that triggers it.)
 
 export class ElectronInAppBackend implements BrowserBackend {
 	/** All per-view state lives in the tabs; the first tab keeps the legacy
@@ -120,10 +109,6 @@ export class ElectronInAppBackend implements BrowserBackend {
 
 	private get state(): BridgePageState {
 		return this.activeTab.state;
-	}
-
-	private get registry(): ObservationRegistry {
-		return this.activeTab.registry;
 	}
 
 	private get page(): Page {
@@ -162,6 +147,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 	async navigate(url: string, _engine?: BrowserEngine): Promise<string> {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
+		this.activeTab.lastUrl = ""; // this call supplies the URL — never reload a preserved one
 		await this.ensureView();
 		const viewId = this.viewId;
 		let result;
@@ -185,10 +171,11 @@ export class ElectronInAppBackend implements BrowserBackend {
 		const minted = this.isActive();
 		const prevActive = this.activeTab; // rollback target — openOwned moves the active pointer
 		const tab = minted ? this.tabs.openOwned() : this.activeTab;
+		tab.lastUrl = ""; // this call supplies the URL — never reload a preserved one
 		try {
 			await this.ensureView(tab);
 		} catch (e) {
-			if (minted) this.rollbackMintedTab(tab, prevActive); // roll back the tab that never materialized
+			if (minted) this.tabs.rollbackMinted(tab, prevActive); // roll back the tab that never materialized
 			throw e;
 		}
 		let result;
@@ -211,7 +198,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 				} catch (closeErr) {
 					logger.warn(`[in-app] rollback close failed (viewId=${tab.viewId}): ${(closeErr as Error).message}`);
 				}
-				this.rollbackMintedTab(tab, prevActive);
+				this.tabs.rollbackMinted(tab, prevActive);
 			}
 			throw enrichBlockedNavigation(e, url, tab.viewId);
 		}
@@ -220,21 +207,10 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return navigationReport(`Opened new tab (${this.tabs.all().length} tabs total)\nURL: `, result, requestedHost);
 	}
 
-	/** Drop a tab minted by openOwned for a new_tab that failed, and put the
-	 *  active pointer back on the tab that was active before the call.
-	 *  TabList.remove only CLAMPS activeIdx (it would land on the new last
-	 *  tab, not necessarily the previous active), so the restore is explicit.
-	 *  Minted tabs are never index 0 — openOwned pushes onto a non-empty
-	 *  list — so remove's never-remove-the-first-tab guard cannot fire here. */
-	private rollbackMintedTab(tab: InAppTab, prevActive: InAppTab): void {
-		this.tabs.remove(tab);
-		this.tabs.setActive(prevActive);
-	}
-
 	async observe(): Promise<BrowserObservation> {
 		await this.ensureView();
 		await this.refreshState();
-		return this.registry.observe(this.page);
+		return this.activeTab.registry.observe(this.page);
 	}
 
 	async snapshot(): Promise<string> {
@@ -280,7 +256,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  backend's registry/page/viewId so refs resolve against the same
 	 *  observation state the snapshot minted. */
 	private actionContext(): InAppActionContext {
-		return { viewId: this.viewId, page: this.page, registry: this.registry };
+		return { viewId: this.viewId, page: this.page, registry: this.activeTab.registry };
 	}
 
 	async clickByRef(ref: number): Promise<InteractionResult> {
@@ -402,8 +378,19 @@ export class ElectronInAppBackend implements BrowserBackend {
 		if (!tab) return;
 		tab.closed = true;
 		tab.created = false;
+		tab.lastUrl = tab.state.url || tab.lastUrl; // the recreated view reloads it
 		tab.state.url = "";
 		tab.state.title = "";
+	}
+
+	/** Wedge recovery (instance.ts resetWedgedBrowser). Soft first: a view that
+	 *  still answers a ping keeps its tab/URL (only observation state resets;
+	 *  returns true). Otherwise drop the views but KEEP the backend — the
+	 *  preserved URL reloads on the next ensureView. */
+	async recoverFromWedge(): Promise<boolean> {
+		if (await probeTabAfterWedge(this.activeTab)) return true;
+		dropTabsForWedgeRecovery(this.tabs, this.sessionId);
+		return false;
 	}
 
 	/** Closes owned views only; adopted user tabs are dropped, never closed. */

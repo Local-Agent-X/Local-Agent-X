@@ -96,8 +96,14 @@ export class ObservationRegistry {
   private nextId = 1;
   private observationCount = 0;
   private lastUrl = "";
+  /** Bumped on every reset. A scan that was in flight when a reset happened
+   *  (wedge recovery abandons the hung scan, then resets this registry) must
+   *  NOT commit its stale refs over the clean state when it finally settles —
+   *  observeInner checks its captured epoch before committing. */
+  private epoch = 0;
 
   reset(): void {
+    this.epoch++;
     this.refs.clear();
     this.signatureToRef.clear();
     this.nextId = 1;
@@ -121,6 +127,9 @@ export class ObservationRegistry {
     const originChanged = safeOrigin(url) !== safeOrigin(this.lastUrl);
     if (originChanged && this.lastUrl !== "") this.reset();
     this.lastUrl = url;
+    // Captured AFTER the origin-change reset so this scan's own reset doesn't
+    // invalidate it — only an external reset during the awaits below does.
+    const epoch = this.epoch;
 
     const [raw, obstructions, iframesAll] = await Promise.all([
       extractInteractiveElements(page).catch((e) => {
@@ -139,6 +148,12 @@ export class ObservationRegistry {
       logger.info(`obstruction(s) detected: ${obstructions.map(o => o.kind).join(", ")} (${obstructions.length})`);
     }
     const dialogs = pendingDialogs(page);
+    if (epoch !== this.epoch) {
+      // The registry was reset while this scan was in flight (wedge recovery
+      // abandoned it). Discard instead of committing stale refs over the clean
+      // state; withWedgeTimeout already swallows this promise's rejection.
+      throw new BrowserWedgeError("stale page scan discarded after registry reset");
+    }
     this.observationCount++;
 
     const prevRefs = new Map(this.refs);

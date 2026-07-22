@@ -14,7 +14,7 @@
 import type { Page } from "playwright";
 import { ObservationRegistry } from "./observation.js";
 import { asObservePage, BridgeObservePage, type BridgePageState } from "./in-app-observe.js";
-import { browserLifecycle, type BrowserNavigateResult, type BrowserViewInfo } from "./bridge-client.js";
+import { browserAbort, browserLifecycle, browserNavigate, type BrowserNavigateResult, type BrowserViewInfo } from "./bridge-client.js";
 import { profilePartition } from "./profile-store.js";
 import { redirectMessage, safeHost } from "./redirect.js";
 import { sensitivePageStub } from "./guards.js";
@@ -27,6 +27,10 @@ const logger = createLogger("browser.in-app-tabs");
 export class InAppTab {
 	created: boolean;
 	closed = false;
+	/** URL to reload when the view is recreated after dying out from under the
+	 *  agent (wedge teardown, user ✕). Survives resetToFirst; cleared by
+	 *  navigate/new_tab (which supply their own URL) and by the reload itself. */
+	lastUrl = "";
 	readonly state: BridgePageState = { url: "", title: "" };
 	readonly registry = new ObservationRegistry();
 	readonly page: Page;
@@ -101,11 +105,23 @@ export class TabList {
 		else if (this.activeIdx > idx) this.activeIdx--;
 	}
 
+	/** Drop a minted tab that failed to materialize and restore the active
+	 *  pointer to the tab active BEFORE the call — remove() only CLAMPS
+	 *  activeIdx, which would land on the new last tab instead. Minted tabs are
+	 *  never index 0, so remove's first-tab guard cannot fire here. */
+	rollbackMinted(tab: InAppTab, prevActive: InAppTab): void {
+		this.remove(tab);
+		this.setActive(prevActive);
+	}
+
 	/** close() bookkeeping: reset every tab's observation state, then drop all
-	 *  but the first tab. The new_tab counter is NOT reset — Ns never recur. */
+	 *  but the first tab. The new_tab counter is NOT reset — Ns never recur.
+	 *  lastUrl is RETAINED (per tab): a backend that survives this reset (wedge
+	 *  teardown) reloads the page on the next ensureTabView. */
 	resetToFirst(): void {
 		for (const tab of this.tabs) {
 			tab.registry.reset();
+			tab.lastUrl = tab.state.url || tab.lastUrl;
 			tab.state.url = "";
 			tab.state.title = "";
 			tab.closed = true;
@@ -138,6 +154,64 @@ export async function ensureTabView(tab: InAppTab, profileId: string): Promise<v
 	}
 	tab.created = true;
 	tab.closed = false;
+	// A recreated view (wedge teardown, user ✕) lands on about:blank — put it
+	// back on the page the tab was on so the agent's next action still has its
+	// page. Advisory: a failed reload leaves the blank view rather than failing
+	// the caller's action; navigate()/newTab() clear lastUrl before ensureView,
+	// so they never pay for a reload they are about to replace.
+	const lastUrl = tab.lastUrl;
+	tab.lastUrl = "";
+	if (lastUrl) {
+		try {
+			const result = await browserNavigate(tab.viewId, lastUrl);
+			tab.state.url = result.url;
+			tab.state.title = result.title;
+		} catch (e) {
+			logger.warn(`[in-app] recovery reload failed (viewId=${tab.viewId}, url=${lastUrl}): ${(e as Error).message}`);
+		}
+	}
+}
+
+/** Soft wedge probe (instance.ts resetWedgedBrowser): abort the tab's
+ *  in-flight load, then ping its view. A live view answers within
+ *  LIFECYCLE_TIMEOUT_MS: refresh the cached url/title and reset the tab's
+ *  observation state — the wedged scan was abandoned, and its late completion
+ *  is discarded by the registry's epoch guard. A dead, never-created, or
+ *  unpingable view reports false and the caller falls back to teardown. */
+export async function probeTabAfterWedge(tab: InAppTab): Promise<boolean> {
+	if (!tab.created || tab.closed) return false;
+	browserAbort(tab.viewId);
+	try {
+		const { ping } = await browserLifecycle("ping", tab.viewId);
+		if (!ping?.ok) return false;
+		if (typeof ping.url === "string") tab.state.url = ping.url;
+		if (typeof ping.title === "string") tab.state.title = ping.title;
+	} catch (e) {
+		logger.warn(`[in-app] wedge probe failed (viewId=${tab.viewId}): ${(e as Error).message}`);
+		return false;
+	}
+	tab.registry.reset();
+	return true;
+}
+
+/** Hard wedge teardown: same bookkeeping as closeOwnedTabs but SYNCHRONOUS —
+ *  the bridge closes are fire-and-forget because the bridge may itself be the
+ *  thing that is wedged, and the caller must not hang on it. The active tab's
+ *  URL survives on the first tab as lastUrl so the next ensureTabView
+ *  re-navigates to it instead of leaving the agent on about:blank. */
+export function dropTabsForWedgeRecovery(list: TabList, sessionId?: string): void {
+	if (sessionId) unregisterAdoptedViews(sessionId);
+	const url = list.active.state.url || list.active.lastUrl;
+	const owned = list.all().filter((t) => t.owned && t.created && !t.closed);
+	for (const tab of owned) {
+		tab.closed = true;
+		tab.created = false;
+		browserLifecycle("close", tab.viewId).catch((e) => {
+			logger.warn(`[in-app] wedge close failed (viewId=${tab.viewId}): ${(e as Error).message}`);
+		});
+	}
+	list.resetToFirst();
+	if (url) list.active.lastUrl = url;
 }
 
 /**

@@ -3,7 +3,6 @@ import { BrowserManager } from "./manager.js";
 import type { BrowserBackend } from "./backend.js";
 import type { BrowserMode } from "../types.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
-import { browserAbort } from "./bridge-client.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
 import { resolveSessionBrowserProfileId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
@@ -272,14 +271,29 @@ export async function closeBrowser(sessionId: string = "default"): Promise<void>
 	if (cdpManagers.size === 0) await closeSharedBrowser();
 }
 
+/** How resetWedgedBrowser resolved a wedge — drives what the tool layer tells
+ *  the agent (browser-tools wedgeRecoveryMessage). */
+export type WedgeRecoveryOutcome =
+	/** In-app view answered a liveness ping: same backend, same view, same URL —
+	 *  only observation state was reset. The agent just retries. */
+	| "recovered-in-place"
+	/** In-app view was dead: owned views dropped, backend kept, and the active
+	 *  tab's URL preserved so the recreated view re-navigates to it. */
+	| "view-recreated"
+	/** CDP arm: shared Chrome force-killed; the next call launches a fresh one. */
+	| "cdp-reset";
+
 /**
  * In-process wedge recovery (no LAX restart). When a browser action hangs and
- * its deadline fires, drop the offending session's backend.
+ * its deadline fires, recover the offending session's backend.
  *
- * In-app: abort the view's in-flight load (fire-and-forget) and close the
- * view; only this session's view dies — no shared process to kill. close()
- * is fire-and-forget too: awaiting a wedged bridge can hang, and
- * bridge-client's close rejects the view's other pending ops immediately.
+ * In-app: SOFT first — abort the active view's in-flight load and ping it
+ * (bounded by LIFECYCLE_TIMEOUT_MS). A live view keeps its backend, view and
+ * URL, so a 10s page-scan wedge no longer costs the tab and every ref on it.
+ * Only a dead ping falls back to teardown (fire-and-forget closes — awaiting
+ * a wedged bridge can hang) — and even then the backend stays in the map with
+ * the active tab's URL preserved, so the next action's ensureView recreates
+ * the view AND re-navigates instead of landing on about:blank.
  *
  * CDP: force-kill the shared Chrome. Every session's cached page now points
  * at a dead connection, so the next browser call re-launches a fresh Chrome
@@ -287,18 +301,21 @@ export async function closeBrowser(sessionId: string = "default"): Promise<void>
  * dead page and re-acquires). Synchronous + force: we must NOT await graceful
  * teardown on a wedged connection — that can hang too.
  */
-export function resetWedgedBrowser(sessionId: string = "default"): void {
+export async function resetWedgedBrowser(sessionId: string = "default"): Promise<WedgeRecoveryOutcome> {
 	const key = sessionId || "default";
-	routeReported.delete(key);
 	const inApp = inAppBackends.get(key);
 	if (inApp) {
-		inAppBackends.delete(key);
-		browserAbort(inApp.viewId);
-		void inApp.backend.close().catch(() => {});
-		return;
+		if (await inApp.backend.recoverFromWedge()) {
+			// Same backend, same view — the session's route did not change.
+			return "recovered-in-place";
+		}
+		routeReported.delete(key);
+		return "view-recreated";
 	}
+	routeReported.delete(key);
 	cdpManagers.delete(key);
 	forceKillSharedBrowser();
+	return "cdp-reset";
 }
 
 export async function closeAllBrowsers(): Promise<void> {

@@ -368,17 +368,20 @@ describe("closeBrowser / closeAllBrowsers", () => {
 });
 
 describe("resetWedgedBrowser", () => {
-	it("drops a wedged in-app backend without force-killing shared Chrome", () => {
+	it("KEEPS a wedged in-app backend (recoverable) and never force-kills shared Chrome", async () => {
 		setInApp();
 		const first = getBrowserManager("chat-1");
-		resetWedgedBrowser("chat-1");
-		expect(getBrowserManager("chat-1")).not.toBe(first);
+		// No live view to ping in this env → the teardown arm. The backend
+		// SURVIVES in the map so its preserved URL can reload on the next
+		// action; full recovery behavior is pinned in wedge-recovery.test.ts.
+		await expect(resetWedgedBrowser("chat-1")).resolves.toBe("view-recreated");
+		expect(getBrowserManager("chat-1")).toBe(first);
 		expect(runtimeMocks.forceKillSharedBrowser).not.toHaveBeenCalled();
 	});
 
-	it("force-kills the shared Chrome on the CDP path", () => {
+	it("force-kills the shared Chrome on the CDP path", async () => {
 		const first = getBrowserManager("chat-1");
-		resetWedgedBrowser("chat-1");
+		await expect(resetWedgedBrowser("chat-1")).resolves.toBe("cdp-reset");
 		expect(getBrowserManager("chat-1")).not.toBe(first);
 		expect(runtimeMocks.forceKillSharedBrowser).toHaveBeenCalledOnce();
 	});

@@ -211,6 +211,19 @@ export function scanEvaluateScript(script: string): string | null {
   return null;
 }
 
+/** Typed refusal for a scanEvaluateScript hit — same message shape the CDP
+ *  path produces, thrown BEFORE any bridge call: a blocked script never
+ *  reaches the view. */
+export class EvaluateBlockedError extends Error {
+  constructor(pattern: string) {
+    super(
+      `Blocked: script contains restricted pattern (${pattern}). ` +
+        `evaluate() is for DOM inspection only — use http_request for API calls.`,
+    );
+    this.name = "EvaluateBlockedError";
+  }
+}
+
 export type SensitivePageCategory =
   | "password manager"
   | "cloud metadata"

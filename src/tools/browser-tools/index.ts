@@ -17,7 +17,7 @@
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import type { ServerEvent } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
-import type { BrowserEngine, BrowserBackend } from "../../browser/index.js";
+import type { BrowserEngine, BrowserBackend, WedgeRecoveryOutcome } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
 import { VALID_ENGINES, err } from "./shared.js";
@@ -70,6 +70,30 @@ const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
 // are excluded: they legitimately return varying data off an unchanged page.
 const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "observe", "snapshot", "act"]);
 const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "history", "bookmarks"]);
+
+/** Wedge outcome → what the agent is told. Honest about what survived: an
+ *  in-place recovery keeps the tab and page; a recreated view reloads its last
+ *  page on the next action; a CDP reset opens a fresh Chrome. All three end
+ *  the same way — the action never completed, so retry it. */
+function wedgeRecoveryMessage(outcome: WedgeRecoveryOutcome): string {
+  switch (outcome) {
+    case "recovered-in-place":
+      return (
+        "The browser hung on that action, but the page is still responsive — the browser " +
+        "recovered in place (same tab, same page). The action did not complete; simply retry it."
+      );
+    case "view-recreated":
+      return (
+        "The browser view stopped responding and was recreated; it will reload its last page " +
+        "on your next browser action. The action did not complete — retry it."
+      );
+    case "cdp-reset":
+      return (
+        "The browser stopped responding and its session was reset. The action did not " +
+        "complete — retry it and a fresh browser will open."
+      );
+  }
+}
 
 /**
  * After an advancing action, fingerprint the page and trip a no-progress stop
@@ -219,19 +243,23 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           })();
 
           // In-process hang recovery: fire just under the per-tool browser
-          // timeout (tool-timeout.ts) and force-reset the wedged session so the
-          // NEXT call re-acquires a fresh Chrome — instead of the outer timeout
-          // abandoning the call and leaving the wedged Chrome to be reused until
-          // LAX restarts. See wedge-deadline.ts / instance.ts:resetWedgedBrowser.
+          // timeout (tool-timeout.ts) and recover the wedged session so the
+          // NEXT call works — instead of the outer timeout abandoning the call
+          // and leaving the wedged session to be reused until LAX restarts.
+          // See wedge-deadline.ts / instance.ts:resetWedgedBrowser.
           const toolMs = getToolTimeout(BROWSER_TOOL_NAME);
           const deadlineMs = toolMs > 0 ? Math.max(1_000, toolMs - 1_000) : 0;
-          const result = await raceWedgeDeadline(dispatch, deadlineMs, () => resetWedgedBrowser(sessionId));
+          let recovery: Promise<WedgeRecoveryOutcome> | undefined;
+          const result = await raceWedgeDeadline(dispatch, deadlineMs, () => {
+            recovery = resetWedgedBrowser(sessionId);
+          });
           if (result === WEDGED) {
-            log.warn(`action '${action}' hung past ${deadlineMs}ms — session force-reset`);
-            return err(
-              "The browser stopped responding (an action hung) and its session was reset. " +
-              "Your last action did not complete — retry it and a fresh browser will open.",
-            );
+            // raceWedgeDeadline invoked the reset callback before returning
+            // WEDGED, so `recovery` is set; await it so the next action (the
+            // per-session lock releases when we return) sees settled state.
+            const outcome = await recovery!;
+            log.warn(`action '${action}' hung past ${deadlineMs}ms — wedge recovery: ${outcome}`);
+            return err(wedgeRecoveryMessage(outcome));
           }
           const sensitive = sensitivePageStub(manager.getCurrentUrl());
           if (sensitive) {
@@ -248,15 +276,12 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           if (sensitive) return blocked(sensitive, { layer: "browser-sensitive-page", browserStatus: "sensitive-content-withheld" });
           const message = (e as Error).message;
           if (e instanceof BrowserWedgeError) {
-            // A page scan hung (wedged CDP connection). Reset now — ~10s — so
-            // the next call re-acquires a fresh Chrome, rather than waiting out
-            // the 30s tool timeout and reusing the wedged session.
-            log.warn(`action '${action}' wedged during page scan — session force-reset`);
-            resetWedgedBrowser(sessionId);
-            return err(
-              "The browser stopped responding while scanning the page and its session was reset. " +
-              "Retry your last action — a fresh browser will open.",
-            );
+            // A page scan hung. Recover now — ~10s in — so the next call
+            // works, rather than waiting out the 30s tool timeout and reusing
+            // the wedged session. Soft recovery keeps the view and its URL.
+            const outcome = await resetWedgedBrowser(sessionId);
+            log.warn(`action '${action}' wedged during page scan — wedge recovery: ${outcome}`);
+            return err(wedgeRecoveryMessage(outcome));
           }
           if (message.includes("Timeout")) {
             // Auto-recovery: snapshot the page anyway — it may be partially usable

@@ -36,6 +36,12 @@ runtime by [`src/ari-kernel/`](../src/ari-kernel/). No tool execution path bypas
   de-leeted view, so digit-substituted directives are caught) — before the model sees it.
 - **Memory protection.** Writes to memory are gated: secrets are redacted and durable
   prompt-injection is blocked (`writeMemorySafely`).
+- **Escalation / quarantine (restricted mode).** Repeated denied sensitive actions
+  (default threshold 5), or a single behavioral-rule match on a sensitive access, put
+  the run into *restricted mode* — only read-only safe actions pass, and even safe GETs
+  are blocked if they look like exfil. The run's state lives on the `Firewall` with no
+  in-place reset, so each op refreshes a stuck run fresh at start
+  (`refreshAriKernelScopeIfStuck`) — a prior op's escalation doesn't brick the next one.
 - **Tamper-evident audit trail.** Every decision is logged to a SHA-256/HMAC hash chain.
 
 ## What it's for — and what it is not
@@ -54,9 +60,12 @@ ARI's value rises exactly as the model's reliability falls: weaker / local / fin
 not the careful driver.
 
 **Scope of the content sanitizer.** It wraps + flags *untrusted external* channels
-(web / http / browser / MCP / SQL). It does **not** wrap owned-source reads (your own
-files via `read`, `bash` output, email, memory) — those are treated as your data and get
-secret-redaction + taint tracking instead, not the untrusted-content boundary wrapper.
+(web / http / browser / MCP / SQL). It does **not** boundary-wrap owned-source reads
+(your own files via `read`, `bash` output, memory) — those are treated as your data and
+get secret-redaction + taint tracking instead. Inbound **email** (`email_read`/
+`email_search`) is *untrusted external* content and a primary injection channel: it is
+secret-redacted and marks the session as externally-ingested (gating durable memory
+promotion), but is **not** boundary-wrapped.
 
 **Known gaps (honest):**
 - `chunked-half` — a secret split below detection length can slip the scanners (same

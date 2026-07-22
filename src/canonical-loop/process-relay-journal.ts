@@ -376,12 +376,10 @@ function writeAtomic(path: string, content: string): void {
   renameSync(tmp, path);
   fsyncDirectory(dirname(path));
 }
-
 function appendAndFlush(path: string, content: string): void {
   const fd = openSync(path, "a", 0o600);
   try { writeFileSync(fd, content, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
 }
-
 function withOpLock<T>(opId: string, fn: () => T): T {
   const result = tryWithOpLock(opId, fn);
   if (!result.acquired) throw new Error("process relay operation lock is busy");

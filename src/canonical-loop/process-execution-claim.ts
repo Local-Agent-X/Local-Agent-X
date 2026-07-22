@@ -9,7 +9,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { ensureDurableDirectory, fsyncDirectory } from "../persistence/durable-directory.js";
 import { opDir } from "../ops/event-log.js";
@@ -129,7 +128,7 @@ export function isLiveProcessExecutionClaim(
   if (claim.ownerKind === "container") {
     const inspection = options.isContainerAlive
       ? (options.isContainerAlive(claim) ? "live" : "dead")
-      : (options.inspectContainer ?? inspectContainerClaim)(claim);
+      : options.inspectContainer?.(claim) ?? "unavailable";
     return inspection === "live";
   }
   return (options.isPidAlive ?? isPidAlive)(claim.pid);
@@ -144,10 +143,10 @@ export function checkProcessExecutionRecoveryOwnership(
   if (!claim) return "clear";
   if (isLiveProcessExecutionClaim(claim, options)) return "live";
   if (claim.ownerKind === "container") {
-    const inspection = options.inspectContainer?.(claim) ?? inspectContainerClaim(claim);
+    const inspection = options.inspectContainer?.(claim) ?? "unavailable";
     if (inspection === "changed" || inspection === "unavailable") return "changed";
     if (!cleanupStale) return "clear";
-    if (inspection === "live" && !(options.stopContainer ?? stopContainerClaim)(claim)) return "changed";
+    if (inspection === "live" && (!options.stopContainer || !options.stopContainer(claim))) return "changed";
   }
   if (!cleanupStale) return "clear";
   return removeProcessExecutionClaim(claim) ? "clear" : "changed";
@@ -227,28 +226,4 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-function inspectContainerClaim(claim: ContainerExecutionClaim): ContainerClaimInspection {
-  const result = spawnSync("docker", [
-    "container", "inspect", claim.containerId,
-    "--format", "{{.Id}}\n{{.Created}}\n{{.Image}}\n{{.State.Running}}",
-  ], { encoding: "utf8", windowsHide: true, timeout: 5_000 });
-  if (result.error) return "unavailable";
-  if (result.status !== 0) {
-    return /no such (?:object|container)/i.test(result.stderr ?? "") ? "dead" : "unavailable";
-  }
-  const [id, createdAt, imageId, running] = (result.stdout ?? "").trim().split(/\r?\n/);
-  if (id !== claim.containerId || createdAt !== claim.containerCreatedAt || imageId !== claim.imageDigest) {
-    return "changed";
-  }
-  return running === "true" ? "live" : running === "false" ? "dead" : "changed";
-}
-
-function stopContainerClaim(claim: ContainerExecutionClaim): boolean {
-  if (inspectContainerClaim(claim) !== "live") return false;
-  const result = spawnSync("docker", ["rm", "--force", claim.containerId], {
-    encoding: "utf8", windowsHide: true, timeout: 30_000,
-  });
-  return !result.error && result.status === 0;
 }

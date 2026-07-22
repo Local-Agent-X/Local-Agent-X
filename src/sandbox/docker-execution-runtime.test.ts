@@ -13,6 +13,7 @@ const imageId = `sha256:${"b".repeat(64)}`;
 const reference = `registry.example/lax-worker@${digest}`;
 const containerId = "c".repeat(64);
 const createdAt = "2026-07-21T12:00:00.000Z";
+const networkId = "e".repeat(64);
 const mountRoot = mkdtempSync(join(tmpdir(), "lax-docker-runtime-"));
 const mountSource = join(mountRoot, "op-1");
 writeFileSync(mountSource, "state");
@@ -34,6 +35,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("creates a non-root read-only container without a Docker socket", async () => {
     const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
       .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
       .mockResolvedValueOnce({
         stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "",
@@ -43,10 +45,10 @@ describe("DockerCliExecutionRuntime", () => {
       containerId, createdAt, imageId, running: false, exitCode: 0,
     });
 
-    const args = run.mock.calls[0][0];
+    const args = run.mock.calls[1][0];
     expect(args).toEqual(expect.arrayContaining([
       "--read-only", "--cap-drop", "ALL", "--user", "1000:1000",
-      "--security-opt", "no-new-privileges:true", "--network", "lax-egress",
+      "--security-opt", "no-new-privileges:true", "--network", networkId,
     ]));
     expect(args.join(" ")).not.toContain("docker.sock");
   });
@@ -62,6 +64,7 @@ describe("DockerCliExecutionRuntime", () => {
 
   it("fails closed if inspect reports a different image id", async () => {
     const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
       .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
       .mockResolvedValueOnce({
         stdout: `${containerId}\n${createdAt}\nsha256:${"d".repeat(64)}\nfalse\n0\n`, stderr: "",
@@ -69,7 +72,16 @@ describe("DockerCliExecutionRuntime", () => {
       .mockResolvedValueOnce({ stdout: containerId, stderr: "" });
     await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
       .rejects.toThrow("image identity changed");
-    expect(run.mock.calls[2][0]).toEqual(["rm", "--force", containerId]);
+    expect(run.mock.calls[3][0]).toEqual(["rm", "--force", containerId]);
+  });
+
+  it("rejects a same-name network with different security properties", async () => {
+    const run = vi.fn<DockerCommandRunner>().mockResolvedValue({
+      stdout: `${networkId}\nlax-egress\nmacvlan\nswarm\ntrue\n`, stderr: "",
+    });
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
+      .rejects.toThrow("network properties are not approved");
+    expect(run).toHaveBeenCalledOnce();
   });
 
   it("rejects host networking and a zero memory fence", async () => {

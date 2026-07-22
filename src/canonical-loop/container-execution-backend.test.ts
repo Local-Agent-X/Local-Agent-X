@@ -15,8 +15,13 @@ const previousDataDir = process.env.LAX_DATA_DIR;
 const dataDir = mkdtempSync(join(tmpdir(), "lax-container-backend-"));
 process.env.LAX_DATA_DIR = dataDir;
 const { ContainerExecutionBackend: Backend } = await import("./container-execution-backend.js");
-const { claimProcessExecution } = await import("./process-execution-claim.js");
+const { claimProcessExecution, readProcessExecutionClaim } = await import("./process-execution-claim.js");
 const { writeOp } = await import("../ops/op-store.js");
+const {
+  bindContainerLaunchIntent,
+  createContainerLaunchIntent,
+  writeContainerLaunchIntent,
+} = await import("./container-launch-intent.js");
 
 const digest = `sha256:${"a".repeat(64)}`;
 const imageId = `sha256:${"b".repeat(64)}`;
@@ -72,6 +77,68 @@ describe("ContainerExecutionBackend", () => {
 
     await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
     expect(runtime.create).not.toHaveBeenCalled();
+    expect(runtime.inspect).toHaveBeenCalledTimes(2);
+    expect(runtime.wait).toHaveBeenCalledWith(containerId);
+  });
+
+  it("rejects a live container claim from a stale placement revision", async () => {
+    const runtime = fakeRuntime();
+    const backend = backendWith(runtime);
+    const op = fixtureOp("stale-placement", backend);
+    const placement = op.canonical!.executionPlacement!;
+    expect(claimProcessExecution(claim(op, placement.targetId, placement.revision + 1, "stale"))).toBe(true);
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done)
+      .rejects.toThrow("does not match the recorded placement");
+    expect(runtime.inspect).not.toHaveBeenCalled();
+    expect(runtime.create).not.toHaveBeenCalled();
+  });
+
+  it("reconciles a parent crash after create without a name collision", async () => {
+    let backend: ContainerExecutionBackend;
+    const projection = fakeProjection();
+    const runtime = fakeRuntime({
+      inspectNamed: vi.fn().mockResolvedValue({
+        containerId, createdAt, imageId, running: false, exitCode: 0,
+      }),
+      start: vi.fn(async () => {
+        const placement = op.canonical!.executionPlacement!;
+        expect(claimProcessExecution(claim(op, placement.targetId, placement.revision, projection.token!))).toBe(true);
+      }),
+    });
+    backend = backendWith(runtime, projection);
+    const op = fixtureOp("create-crash", backend);
+    const placement = op.canonical!.executionPlacement!;
+    writeContainerLaunchIntent(createContainerLaunchIntent({ opId: op.id, placement,
+      token: "old-token", name: "lax-op-orphan", imageReference, imageId }));
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
+    expect(runtime.inspectNamed).toHaveBeenCalledWith("lax-op-orphan", expect.objectContaining({
+      "lax.execution.op": op.id,
+    }));
+    expect(runtime.stop).toHaveBeenCalledWith(containerId);
+    expect(runtime.create).toHaveBeenCalledOnce();
+  });
+
+  it("reattaches after start-before-claim using the durable launch identity", async () => {
+    let op: Op;
+    const runtime = fakeRuntime({ inspect: vi.fn(async () => {
+      const placement = op.canonical!.executionPlacement!;
+      const current = readProcessExecutionClaim(op.id);
+      if (!current) expect(claimProcessExecution(claim(op, placement.targetId,
+        placement.revision, "kept-token"))).toBe(true);
+      return { containerId, createdAt, imageId, running: true, exitCode: null };
+    }) });
+    const backend = backendWith(runtime);
+    op = fixtureOp("start-crash", backend);
+    const placement = op.canonical!.executionPlacement!;
+    let intent = createContainerLaunchIntent({ opId: op.id, placement, token: "kept-token",
+      name: "lax-op-started", imageReference, imageId });
+    intent = bindContainerLaunchIntent(intent, { containerId, createdAt, imageId });
+    writeContainerLaunchIntent(intent);
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
+    expect(runtime.create).not.toHaveBeenCalled();
     expect(runtime.wait).toHaveBeenCalledWith(containerId);
   });
 });
@@ -94,6 +161,7 @@ function fakeRuntime(overrides: Partial<DockerExecutionRuntime> = {}): DockerExe
     create: vi.fn().mockResolvedValue({ containerId, createdAt, imageId }),
     start: vi.fn().mockResolvedValue(undefined),
     inspect: vi.fn().mockResolvedValue({ containerId, createdAt, imageId, running: true, exitCode: null }),
+    inspectNamed: vi.fn().mockResolvedValue(null),
     wait: vi.fn().mockResolvedValue(0),
     stop: vi.fn().mockResolvedValue(undefined),
     ...overrides,

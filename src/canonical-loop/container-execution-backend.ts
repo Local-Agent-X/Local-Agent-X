@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Op } from "../ops/types.js";
 import type {
   DockerContainerIdentity,
@@ -23,6 +23,15 @@ import {
   type ContainerExecutionClaim,
 } from "./process-execution-claim.js";
 import { ProcessExecutionBackend } from "./process-execution-backend.js";
+import {
+  bindContainerLaunchIntent,
+  createContainerLaunchIntent,
+  intentMatchesPlacement,
+  readContainerLaunchIntent,
+  removeContainerLaunchIntent,
+  writeContainerLaunchIntent,
+  type ContainerLaunchIntent,
+} from "./container-launch-intent.js";
 
 export const CONTAINER_EXECUTION_BACKEND_ID = "local-container";
 export const CONTAINER_EXECUTION_TARGET_PREFIX = "canonical-worker-container-v1";
@@ -110,10 +119,16 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     const existing = readProcessExecutionClaim(request.op.id);
     if (existing) {
       if (existing.ownerKind !== "container") throw new Error("operation already has a non-container owner");
+      if (!claimMatchesPlacement(existing, request.placement)) {
+        throw new Error("container ownership does not match the recorded placement");
+      }
       const state = await this.runtime.inspect(existing.containerId);
       if (state && state.running && containerStateMatchesClaim(state, existing)
-        && isLiveProcessExecutionClaim(existing)) {
-        return this.waitForCompletion(request.op.id, existing, null);
+        && isLiveProcessExecutionClaim(existing, {
+          inspectContainer: claim => state.running && containerStateMatchesClaim(state, claim)
+            ? "live" : "changed",
+        })) {
+        return this.waitForCompletion(request.op.id, existing, null, null);
       }
       if (state && containerStateMatchesClaim(state, existing)) await this.runtime.stop(existing.containerId);
       if (!removeProcessExecutionClaim(existing)) throw new Error("container ownership changed during reclaim");
@@ -121,20 +136,30 @@ export class ContainerExecutionBackend implements ExecutionBackend {
 
     if (!await this.runtime.probe()) throw new Error("Docker is unavailable for recorded container execution");
     const image = await this.runtime.resolvePinnedImage(this.imageReference);
-    const projection = await this.projectionFactory(request.op);
+    const resumed = await this.reconcileLaunchIntent(request, image);
+    if (resumed) return;
     const token = randomUUID();
+    const name = launchName(request.op.id, request.placement.revision, token);
+    let intent = createContainerLaunchIntent({ opId: request.op.id, placement: request.placement,
+      token, name, imageReference: image.reference, imageId: image.imageId });
+    writeContainerLaunchIntent(intent);
+    const projection = await this.projectionFactory(request.op);
     let container: DockerContainerIdentity | null = null;
     try {
-      container = await this.runtime.create(projection.buildSpec({
+      const projected = projection.buildSpec({
         op: request.op,
         image,
         token,
         placement: request.placement,
-      }));
+      });
+      container = await this.runtime.create({ ...projected, name,
+        labels: { ...projected.labels, ...ownershipLabels(request.op.id, request.placement) } });
+      intent = bindContainerLaunchIntent(intent, container);
+      writeContainerLaunchIntent(intent);
       projection.writeBootstrap({ op: request.op, token, placement: request.placement, container });
       await this.runtime.start(container.containerId);
       const claim = await this.awaitClaim(request.op.id, request.placement, token, container);
-      return await this.waitForCompletion(request.op.id, claim, projection);
+      return await this.waitForCompletion(request.op.id, claim, projection, intent);
     } catch (error) {
       if (container) {
         const claim = readProcessExecutionClaim(request.op.id);
@@ -144,8 +169,41 @@ export class ContainerExecutionBackend implements ExecutionBackend {
         await this.runtime.stop(container.containerId).catch(() => {});
       }
       projection.cleanup();
+      removeContainerLaunchIntent(intent);
       throw error;
     }
+  }
+
+  private async reconcileLaunchIntent(
+    request: ExecutionBackendStartWithoutAdapterRequest,
+    image: DockerImageIdentity,
+  ): Promise<boolean> {
+    const intent = readContainerLaunchIntent(request.op.id);
+    if (!intent) return false;
+    if (!intentMatchesPlacement(intent, request.placement, image.reference, image.imageId)) {
+      throw new Error("container launch intent does not match the recorded placement");
+    }
+    const state = intent.container
+      ? await this.runtime.inspect(intent.container.containerId)
+      : await this.runtime.inspectNamed(intent.name, ownershipLabels(request.op.id, request.placement));
+    if (!state) {
+      removeContainerLaunchIntent(intent);
+      return false;
+    }
+    if (state.imageId !== image.imageId || (intent.container
+      && (state.containerId !== intent.container.containerId || state.createdAt !== intent.container.createdAt))) {
+      throw new Error("container launch identity changed during recovery");
+    }
+    if (!state.running) {
+      await this.runtime.stop(state.containerId);
+      removeContainerLaunchIntent(intent);
+      return false;
+    }
+    const bound = intent.container ? intent : bindContainerLaunchIntent(intent, state);
+    if (!intent.container) writeContainerLaunchIntent(bound);
+    const claim = await this.awaitClaim(request.op.id, request.placement, intent.token, state);
+    await this.waitForCompletion(request.op.id, claim, null, bound);
+    return true;
   }
 
   private async awaitClaim(
@@ -177,6 +235,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     opId: string,
     claim: ContainerExecutionClaim,
     projection: ContainerLaunchProjection | null,
+    intent: ContainerLaunchIntent | null,
   ): Promise<void> {
     const reconcile = setInterval(() => {
       try { this.onFinalReconcile(opId); } catch { /* durable relay remains pending */ }
@@ -196,6 +255,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       if (current && processClaimMatches(current, claim)) removeProcessExecutionClaim(current);
       await this.runtime.stop(claim.containerId).catch(() => {});
       projection?.cleanup();
+      if (intent) removeContainerLaunchIntent(intent);
     }
   }
 
@@ -220,6 +280,24 @@ function containerStateMatchesClaim(
 ): boolean {
   return state.containerId === claim.containerId && state.createdAt === claim.containerCreatedAt
     && state.imageId === claim.imageDigest;
+}
+
+function claimMatchesPlacement(
+  claim: ContainerExecutionClaim,
+  placement: ExecutionPlacement,
+): boolean {
+  return claim.backendId === placement.backendId && claim.targetId === placement.targetId
+    && claim.placementRevision === placement.revision;
+}
+
+function ownershipLabels(opId: string, placement: ExecutionPlacement): Record<string, string> {
+  return { "lax.execution.backend": placement.backendId, "lax.execution.op": opId,
+    "lax.execution.revision": String(placement.revision), "lax.execution.target": placement.targetId };
+}
+
+function launchName(opId: string, revision: number, token: string): string {
+  const suffix = createHash("sha256").update(`${opId}\0${revision}\0${token}`).digest("hex").slice(0, 32);
+  return `lax-op-${suffix}`;
 }
 
 async function unconfiguredProjection(): Promise<ContainerLaunchProjection> {

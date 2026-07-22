@@ -1,5 +1,5 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -61,6 +61,7 @@ export interface DockerExecutionRuntime {
   create(spec: DockerContainerSpec): Promise<DockerContainerIdentity>;
   start(containerId: string): Promise<void>;
   inspect(containerId: string): Promise<DockerContainerState | null>;
+  inspectNamed(name: string, labels: Readonly<Record<string, string>>): Promise<DockerContainerState | null>;
   wait(containerId: string): Promise<number>;
   stop(containerId: string): Promise<void>;
 }
@@ -119,6 +120,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
 
   async create(spec: DockerContainerSpec): Promise<DockerContainerIdentity> {
     validateSpec(spec, this.policy);
+    const network = spec.network === "none" ? "none" : await this.resolveApprovedNetwork(spec.network.name);
     const args = [
       "create", "--name", spec.name,
       "--read-only", "--cap-drop", "ALL",
@@ -127,7 +129,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
       "--pids-limit", String(spec.pidsLimit),
       "--memory", spec.memoryLimit,
       "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
-      "--network", spec.network === "none" ? "none" : spec.network.name,
+      "--network", network,
     ];
     for (const [key, value] of Object.entries(spec.labels).sort(([a], [b]) => a.localeCompare(b))) {
       args.push("--label", `${key}=${value}`);
@@ -149,6 +151,19 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
     return identity;
   }
 
+  private async resolveApprovedNetwork(name: string): Promise<string> {
+    const result = await this.run([
+      "network", "inspect", name,
+      "--format", "{{.Id}}\n{{.Name}}\n{{.Driver}}\n{{.Scope}}\n{{.Internal}}",
+    ]);
+    const [id, actualName, driver, scope, internal] = result.stdout.trim().split(/\r?\n/);
+    if (!/^[a-f0-9]{64}$/.test(id ?? "") || actualName !== name || driver !== "bridge"
+      || scope !== "local" || internal !== "false") {
+      throw new Error("container execution network properties are not approved");
+    }
+    return id;
+  }
+
   async start(containerId: string): Promise<void> {
     assertContainerId(containerId);
     await this.run(["start", containerId], { timeoutMs: 60_000 });
@@ -162,18 +177,33 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
         "--format", "{{.Id}}\n{{.Created}}\n{{.Image}}\n{{.State.Running}}\n{{.State.ExitCode}}",
       ]);
       const [id, createdAt, imageId, runningRaw, exitRaw] = result.stdout.trim().split(/\r?\n/);
-      if (id !== containerId || !canonicalIso(createdAt) || !SHA256.test(imageId ?? "")
-        || (runningRaw !== "true" && runningRaw !== "false") || !/^-?\d+$/.test(exitRaw ?? "")) {
-        throw new Error("Docker returned ambiguous container metadata");
+      if (id !== containerId) throw new Error("Docker returned ambiguous container metadata");
+      return parseContainerState(containerId, createdAt, imageId, runningRaw, exitRaw);
+    } catch (error) {
+      if (isNoSuchContainer(error)) return null;
+      throw error;
+    }
+  }
+
+  async inspectNamed(name: string, labels: Readonly<Record<string, string>>): Promise<DockerContainerState | null> {
+    if (!DOCKER_NAME.test(name)) throw new Error("invalid container execution name");
+    try {
+      const result = await this.run([
+        "container", "inspect", name,
+        "--format", "{{.Id}}\n{{.Created}}\n{{.Image}}\n{{.State.Running}}\n{{.State.ExitCode}}\n{{.Name}}\n{{json .Config.Labels}}",
+      ]);
+      const [id, createdAt, imageId, runningRaw, exitRaw, actualName, labelsRaw] = result.stdout.trim().split(/\r?\n/);
+      if (!CONTAINER_ID.test(id ?? "") || actualName !== `/${name}`) {
+        throw new Error("Docker returned ambiguous named container metadata");
       }
-      const running = runningRaw === "true";
-      return {
-        containerId,
-        createdAt,
-        imageId,
-        running,
-        exitCode: running ? null : Number(exitRaw),
-      };
+      let actualLabels: unknown;
+      try { actualLabels = JSON.parse(labelsRaw ?? "null"); }
+      catch { throw new Error("Docker returned ambiguous named container labels"); }
+      if (!actualLabels || typeof actualLabels !== "object"
+        || Object.entries(labels).some(([key, value]) => (actualLabels as Record<string, unknown>)[key] !== value)) {
+        throw new Error("named container ownership labels changed");
+      }
+      return parseContainerState(id, createdAt, imageId, runningRaw, exitRaw);
     } catch (error) {
       if (isNoSuchContainer(error)) return null;
       throw error;
@@ -230,6 +260,10 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
     if (dockerSocketPath(canonical)) {
       throw new Error("Docker socket mount is forbidden");
     }
+    const sourceType = lstatSync(canonical);
+    if (!sourceType.isFile() && !sourceType.isDirectory()) {
+      throw new Error("container execution mount source must be a regular file or directory");
+    }
     const roots = policy.approvedMountRoots.map(root => {
       try { return realpathSync(resolve(root)); }
       catch { throw new Error("approved container mount root is unavailable"); }
@@ -261,6 +295,21 @@ function bindMountArg(mount: DockerBindMount): string {
 
 function assertContainerId(containerId: string): void {
   if (!CONTAINER_ID.test(containerId)) throw new Error("invalid container id");
+}
+
+function parseContainerState(
+  containerId: string,
+  createdAt: string | undefined,
+  imageId: string | undefined,
+  runningRaw: string | undefined,
+  exitRaw: string | undefined,
+): DockerContainerState {
+  if (!canonicalIso(createdAt) || !SHA256.test(imageId ?? "")
+    || (runningRaw !== "true" && runningRaw !== "false") || !/^-?\d+$/.test(exitRaw ?? "")) {
+    throw new Error("Docker returned ambiguous container metadata");
+  }
+  const running = runningRaw === "true";
+  return { containerId, createdAt, imageId: imageId!, running, exitCode: running ? null : Number(exitRaw) };
 }
 
 function canonicalIso(value: string | undefined): value is string {

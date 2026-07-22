@@ -54,6 +54,7 @@ import { releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { CanonicalLane } from "./types.js";
 import { reconcilePublishedTurnCommitsForRecovery } from "./checkpoint.js";
 import { checkProcessExecutionRecoveryOwnership } from "./process-execution-claim.js";
+import { routeContainerRecovery } from "./container-recovery-routing.js";
 export type RecoveryOutcomeKind =
   | "recovered"     // running → queued (or an already-queued op that crashed
                     //   before launch), op re-enqueued for a replacement worker.
@@ -74,7 +75,6 @@ export interface RecoveryOutcome {
   /** Worker id that lost the lease (when applicable). */
   expiredWorkerId?: string;
 }
-
 export function recoverStaleOp(opId: string): RecoveryOutcome {
   reconcilePublishedTurnCommitsForRecovery(opId);
   const op = readOp(opId);
@@ -83,6 +83,10 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   if (state !== "running" && state !== "cancelling" && state !== "queued") {
     return { ok: false, kind: "not_running" };
   }
+  const containerRecovery = routeContainerRecovery(op);
+  if (containerRecovery === "changed") return { ok: false, kind: "lease_changed" };
+  if (containerRecovery === "routed") return { ok: true, kind: "recovered",
+    expiredWorkerId: op.canonical?.leaseOwner ?? undefined };
 
   // Recover only ownerless operations: an expired lease, or the C3 orphan
   // shape where worker cleanup released its lease before a terminal write.

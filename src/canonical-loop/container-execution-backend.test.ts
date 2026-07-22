@@ -19,8 +19,10 @@ const { claimProcessExecution, readProcessExecutionClaim } = await import("./pro
 const { writeOp } = await import("../ops/op-store.js");
 const {
   bindContainerLaunchIntent,
+  bindContainerLaunchProjection,
   createContainerLaunchIntent,
   writeContainerLaunchIntent,
+  readContainerLaunchIntent,
 } = await import("./container-launch-intent.js");
 
 const digest = `sha256:${"a".repeat(64)}`;
@@ -74,10 +76,11 @@ describe("ContainerExecutionBackend", () => {
     const op = fixtureOp("reattach", backend);
     const placement = op.canonical!.executionPlacement!;
     expect(claimProcessExecution(claim(op, placement.targetId, placement.revision, "kept"))).toBe(true);
+    writeBoundIntent(op, placement, "kept");
 
     await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
     expect(runtime.create).not.toHaveBeenCalled();
-    expect(runtime.inspect).toHaveBeenCalledTimes(2);
+    expect(runtime.inspect).toHaveBeenCalledTimes(3);
     expect(runtime.wait).toHaveBeenCalledWith(containerId);
   });
 
@@ -121,25 +124,56 @@ describe("ContainerExecutionBackend", () => {
   });
 
   it("reattaches after start-before-claim using the durable launch identity", async () => {
-    let op: Op;
-    const runtime = fakeRuntime({ inspect: vi.fn(async () => {
-      const placement = op.canonical!.executionPlacement!;
-      const current = readProcessExecutionClaim(op.id);
-      if (!current) expect(claimProcessExecution(claim(op, placement.targetId,
-        placement.revision, "kept-token"))).toBe(true);
-      return { containerId, createdAt, imageId, running: true, exitCode: null };
-    }) });
+    const runtime = fakeRuntime();
     const backend = backendWith(runtime);
-    op = fixtureOp("start-crash", backend);
+    const op = fixtureOp("start-crash", backend);
     const placement = op.canonical!.executionPlacement!;
     let intent = createContainerLaunchIntent({ opId: op.id, placement, token: "kept-token",
       name: "lax-op-started", imageReference, imageId });
     intent = bindContainerLaunchIntent(intent, { containerId, createdAt, imageId });
     writeContainerLaunchIntent(intent);
+    setTimeout(() => {
+      expect(claimProcessExecution(claim(op, placement.targetId,
+        placement.revision, "kept-token"))).toBe(true);
+    }, 0);
 
     await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
     expect(runtime.create).not.toHaveBeenCalled();
     expect(runtime.wait).toHaveBeenCalledWith(containerId);
+  });
+
+  it("retains claim, intent and projection when container stop cannot be confirmed", async () => {
+    const runtime = fakeRuntime({ stop: vi.fn().mockRejectedValue(new Error("daemon unavailable")) });
+    const projection = fakeProjection();
+    const backend = backendWith(runtime, projection);
+    const op = fixtureOp("stop-failure", backend);
+    const placement = op.canonical!.executionPlacement!;
+    expect(claimProcessExecution(claim(op, placement.targetId, placement.revision, "stop-token"))).toBe(true);
+    writeBoundIntent(op, placement, "stop-token");
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done)
+      .rejects.toThrow("daemon unavailable");
+    expect(readProcessExecutionClaim(op.id)).not.toBeNull();
+    expect(readContainerLaunchIntent(op.id)).not.toBeNull();
+    expect(projection.cleanup).not.toHaveBeenCalled();
+  });
+
+  it("reopens and cleans the durable projection on parent reattach", async () => {
+    const runtime = fakeRuntime();
+    const recovered = fakeProjection();
+    const backend = new Backend({ imageReference, runtime,
+      projectionFactory: async () => fakeProjection(),
+      projectionRecovery: async (_op, id) => {
+        expect(id).toBe("projection-1");
+        return recovered;
+      } });
+    const op = fixtureOp("projection-reattach", backend);
+    const placement = op.canonical!.executionPlacement!;
+    expect(claimProcessExecution(claim(op, placement.targetId, placement.revision, "projection-token"))).toBe(true);
+    writeBoundIntent(op, placement, "projection-token", "projection-1");
+
+    await expect(backend.startWithoutAdapter({ op, placement }).done).resolves.toBeUndefined();
+    expect(recovered.cleanup).toHaveBeenCalledOnce();
   });
 });
 
@@ -155,17 +189,32 @@ function backendWith(runtime: DockerExecutionRuntime, projection = fakeProjectio
 
 function fakeRuntime(overrides: Partial<DockerExecutionRuntime> = {}): DockerExecutionRuntime {
   const image: DockerImageIdentity = { reference: imageReference, requestedDigest: digest, imageId };
+  let removed = false;
   return {
     probe: vi.fn().mockResolvedValue(true),
     resolvePinnedImage: vi.fn().mockResolvedValue(image),
-    create: vi.fn().mockResolvedValue({ containerId, createdAt, imageId }),
+    create: vi.fn(async () => { removed = false; return { containerId, createdAt, imageId }; }),
     start: vi.fn().mockResolvedValue(undefined),
-    inspect: vi.fn().mockResolvedValue({ containerId, createdAt, imageId, running: true, exitCode: null }),
+    inspect: vi.fn(async () => removed ? null
+      : { containerId, createdAt, imageId, running: true, exitCode: null }),
     inspectNamed: vi.fn().mockResolvedValue(null),
     wait: vi.fn().mockResolvedValue(0),
-    stop: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn(async () => { removed = true; }),
     ...overrides,
   };
+}
+
+function writeBoundIntent(
+  op: Op,
+  placement: NonNullable<Op["canonical"]>["executionPlacement"],
+  token: string,
+  projectionId?: string,
+): void {
+  let intent = createContainerLaunchIntent({ opId: op.id, placement: placement!, token,
+    name: `lax-op-${token}`, imageReference, imageId });
+  if (projectionId) intent = bindContainerLaunchProjection(intent, projectionId);
+  intent = bindContainerLaunchIntent(intent, { containerId, createdAt, imageId });
+  writeContainerLaunchIntent(intent);
 }
 
 function fakeProjection(): ContainerLaunchProjection & {

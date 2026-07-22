@@ -25,6 +25,7 @@ import {
 import { ProcessExecutionBackend } from "./process-execution-backend.js";
 import {
   bindContainerLaunchIntent,
+  bindContainerLaunchProjection,
   createContainerLaunchIntent,
   intentMatchesPlacement,
   readContainerLaunchIntent,
@@ -39,6 +40,7 @@ const READY_TIMEOUT_MS = 60_000;
 const CLAIM_POLL_MS = 100;
 
 export interface ContainerLaunchProjection {
+  durableId?: string;
   buildSpec(input: {
     op: Op;
     image: DockerImageIdentity;
@@ -55,11 +57,13 @@ export interface ContainerLaunchProjection {
 }
 
 export type ContainerProjectionFactory = (op: Op) => Promise<ContainerLaunchProjection>;
+export type ContainerProjectionRecovery = (op: Op, durableId: string) => Promise<ContainerLaunchProjection>;
 
 export interface ContainerBackendOptions {
   imageReference?: string;
   runtime?: DockerExecutionRuntime;
   projectionFactory?: ContainerProjectionFactory;
+  projectionRecovery?: ContainerProjectionRecovery;
   now?: () => number;
   readyTimeoutMs?: number;
   claimPollMs?: number;
@@ -72,6 +76,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
   private readonly imageReference: string;
   private readonly runtime: DockerExecutionRuntime;
   private readonly projectionFactory: ContainerProjectionFactory;
+  private readonly projectionRecovery: ContainerProjectionRecovery;
   private readonly now: () => number;
   private readonly readyTimeoutMs: number;
   private readonly claimPollMs: number;
@@ -82,6 +87,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     this.imageReference = options.imageReference ?? process.env.LAX_CONTAINER_EXECUTION_IMAGE ?? "";
     this.runtime = options.runtime ?? new DockerCliExecutionRuntime();
     this.projectionFactory = options.projectionFactory ?? unconfiguredProjection;
+    this.projectionRecovery = options.projectionRecovery ?? unconfiguredProjectionRecovery;
     this.now = options.now ?? Date.now;
     this.readyTimeoutMs = options.readyTimeoutMs ?? READY_TIMEOUT_MS;
     this.claimPollMs = options.claimPollMs ?? CLAIM_POLL_MS;
@@ -116,26 +122,32 @@ export class ContainerExecutionBackend implements ExecutionBackend {
   }
 
   private async launchOrReattach(request: ExecutionBackendStartWithoutAdapterRequest): Promise<void> {
+    if (!await this.runtime.probe()) throw new Error("Docker is unavailable for recorded container execution");
+    const image = await this.runtime.resolvePinnedImage(this.imageReference);
     const existing = readProcessExecutionClaim(request.op.id);
     if (existing) {
       if (existing.ownerKind !== "container") throw new Error("operation already has a non-container owner");
       if (!claimMatchesPlacement(existing, request.placement)) {
         throw new Error("container ownership does not match the recorded placement");
       }
+      const intent = readProcessExecutionClaimIntent(request.op.id, request.placement, image, existing);
       const state = await this.runtime.inspect(existing.containerId);
       if (state && state.running && containerStateMatchesClaim(state, existing)
         && isLiveProcessExecutionClaim(existing, {
           inspectContainer: claim => state.running && containerStateMatchesClaim(state, claim)
             ? "live" : "changed",
         })) {
-        return this.waitForCompletion(request.op.id, existing, null, null);
+        const projection = await this.reopenProjection(request.op, intent);
+        return this.waitForCompletion(request.op.id, existing, projection, intent);
       }
-      if (state && containerStateMatchesClaim(state, existing)) await this.runtime.stop(existing.containerId);
+      if (state && !containerStateMatchesClaim(state, existing)) {
+        throw new Error("container execution identity changed before reclaim");
+      }
+      await this.stopAndConfirm(existing.containerId);
       if (!removeProcessExecutionClaim(existing)) throw new Error("container ownership changed during reclaim");
+      removeContainerLaunchIntent(intent);
     }
 
-    if (!await this.runtime.probe()) throw new Error("Docker is unavailable for recorded container execution");
-    const image = await this.runtime.resolvePinnedImage(this.imageReference);
     const resumed = await this.reconcileLaunchIntent(request, image);
     if (resumed) return;
     const token = randomUUID();
@@ -144,6 +156,10 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       token, name, imageReference: image.reference, imageId: image.imageId });
     writeContainerLaunchIntent(intent);
     const projection = await this.projectionFactory(request.op);
+    if (projection.durableId) {
+      intent = bindContainerLaunchProjection(intent, projection.durableId);
+      writeContainerLaunchIntent(intent);
+    }
     let container: DockerContainerIdentity | null = null;
     try {
       const projected = projection.buildSpec({
@@ -162,14 +178,14 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       return await this.waitForCompletion(request.op.id, claim, projection, intent);
     } catch (error) {
       if (container) {
+        await this.stopAndConfirm(container.containerId);
         const claim = readProcessExecutionClaim(request.op.id);
         if (claim?.ownerKind === "container" && claim.containerId === container.containerId) {
           removeProcessExecutionClaim(claim);
         }
-        await this.runtime.stop(container.containerId).catch(() => {});
+        projection.cleanup();
+        removeContainerLaunchIntent(intent);
       }
-      projection.cleanup();
-      removeContainerLaunchIntent(intent);
       throw error;
     }
   }
@@ -187,6 +203,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       ? await this.runtime.inspect(intent.container.containerId)
       : await this.runtime.inspectNamed(intent.name, ownershipLabels(request.op.id, request.placement));
     if (!state) {
+      (await this.reopenProjection(request.op, intent))?.cleanup();
       removeContainerLaunchIntent(intent);
       return false;
     }
@@ -195,15 +212,21 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       throw new Error("container launch identity changed during recovery");
     }
     if (!state.running) {
-      await this.runtime.stop(state.containerId);
+      await this.stopAndConfirm(state.containerId);
+      (await this.reopenProjection(request.op, intent))?.cleanup();
       removeContainerLaunchIntent(intent);
       return false;
     }
     const bound = intent.container ? intent : bindContainerLaunchIntent(intent, state);
     if (!intent.container) writeContainerLaunchIntent(bound);
     const claim = await this.awaitClaim(request.op.id, request.placement, intent.token, state);
-    await this.waitForCompletion(request.op.id, claim, null, bound);
+    const projection = await this.reopenProjection(request.op, bound);
+    await this.waitForCompletion(request.op.id, claim, projection, bound);
     return true;
+  }
+
+  private reopenProjection(op: Op, intent: ContainerLaunchIntent): Promise<ContainerLaunchProjection | null> {
+    return intent.projectionId ? this.projectionRecovery(op, intent.projectionId) : Promise.resolve(null);
   }
 
   private async awaitClaim(
@@ -251,11 +274,18 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     } finally {
       clearInterval(reconcile);
       try { this.onFinalReconcile(opId); } catch { /* startup janitor retries */ }
+      await this.stopAndConfirm(claim.containerId);
       const current = readProcessExecutionClaim(opId);
       if (current && processClaimMatches(current, claim)) removeProcessExecutionClaim(current);
-      await this.runtime.stop(claim.containerId).catch(() => {});
       projection?.cleanup();
       if (intent) removeContainerLaunchIntent(intent);
+    }
+  }
+
+  private async stopAndConfirm(containerId: string): Promise<void> {
+    await this.runtime.stop(containerId);
+    if (await this.runtime.inspect(containerId)) {
+      throw new Error("container termination could not be confirmed");
     }
   }
 
@@ -271,7 +301,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
 
 function targetIdForImage(reference: string): string {
   const match = /@sha256:([a-f0-9]{64})$/.exec(reference);
-  return match ? `${CONTAINER_EXECUTION_TARGET_PREFIX}-${match[1].slice(0, 16)}` : "";
+  return match ? `${CONTAINER_EXECUTION_TARGET_PREFIX}-${match[1]}` : "";
 }
 
 function containerStateMatchesClaim(
@@ -290,6 +320,23 @@ function claimMatchesPlacement(
     && claim.placementRevision === placement.revision;
 }
 
+function readProcessExecutionClaimIntent(
+  opId: string,
+  placement: ExecutionPlacement,
+  image: DockerImageIdentity,
+  claim: ContainerExecutionClaim,
+): ContainerLaunchIntent {
+  const intent = readContainerLaunchIntent(opId);
+  if (!intent || !intent.container
+    || !intentMatchesPlacement(intent, placement, image.reference, image.imageId)
+    || intent.container.containerId !== claim.containerId
+    || intent.container.createdAt !== claim.containerCreatedAt
+    || intent.container.imageId !== claim.imageDigest) {
+    throw new Error("container ownership is missing its exact sealed launch intent");
+  }
+  return intent;
+}
+
 function ownershipLabels(opId: string, placement: ExecutionPlacement): Record<string, string> {
   return { "lax.execution.backend": placement.backendId, "lax.execution.op": opId,
     "lax.execution.revision": String(placement.revision), "lax.execution.target": placement.targetId };
@@ -302,6 +349,10 @@ function launchName(opId: string, revision: number, token: string): string {
 
 async function unconfiguredProjection(): Promise<ContainerLaunchProjection> {
   throw new Error("container execution state projection is not configured");
+}
+
+async function unconfiguredProjectionRecovery(): Promise<ContainerLaunchProjection> {
+  throw new Error("container execution projection recovery is not configured");
 }
 
 function delay(ms: number): Promise<void> {

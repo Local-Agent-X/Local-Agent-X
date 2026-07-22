@@ -68,7 +68,7 @@ export interface DockerExecutionRuntime {
 
 export interface DockerExecutionPolicy {
   approvedMountRoots: readonly string[];
-  allowedNetwork: string | null;
+  allowedNetwork: { name: string; id: string } | null;
 }
 
 export function createDockerCommandRunner(binary = "docker"): DockerCommandRunner {
@@ -121,6 +121,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   async create(spec: DockerContainerSpec): Promise<DockerContainerIdentity> {
     validateSpec(spec, this.policy);
     const network = spec.network === "none" ? "none" : await this.resolveApprovedNetwork(spec.network.name);
+    const mounts = validatedMounts(spec.mounts, this.policy.approvedMountRoots);
     const args = [
       "create", "--name", spec.name,
       "--read-only", "--cap-drop", "ALL",
@@ -137,7 +138,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
     for (const [key, value] of Object.entries(spec.environment).sort(([a], [b]) => a.localeCompare(b))) {
       args.push("--env", `${key}=${value}`);
     }
-    for (const mount of spec.mounts) {
+    for (const mount of mounts) {
       args.push("--mount", bindMountArg(mount));
     }
     args.push(spec.image.reference, ...spec.command);
@@ -157,7 +158,8 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
       "--format", "{{.Id}}\n{{.Name}}\n{{.Driver}}\n{{.Scope}}\n{{.Internal}}",
     ]);
     const [id, actualName, driver, scope, internal] = result.stdout.trim().split(/\r?\n/);
-    if (!/^[a-f0-9]{64}$/.test(id ?? "") || actualName !== name || driver !== "bridge"
+    if (!this.policy.allowedNetwork || id !== this.policy.allowedNetwork.id
+      || actualName !== this.policy.allowedNetwork.name || actualName !== name || driver !== "bridge"
       || scope !== "local" || internal !== "false") {
       throw new Error("container execution network properties are not approved");
     }
@@ -232,7 +234,7 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
     throw new Error("invalid container execution network");
   }
   if (spec.network !== "none" && (policy.allowedNetwork === null
-    || spec.network.name !== policy.allowedNetwork
+    || spec.network.name !== policy.allowedNetwork.name
     || ["host", "default", "bridge", "none"].includes(spec.network.name.toLowerCase()))) {
     throw new Error("container execution network is not approved");
   }
@@ -245,11 +247,15 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
       throw new Error("invalid container execution metadata");
     }
   }
-  for (const mount of spec.mounts) {
-    if (!mount.source || !/^\/[A-Za-z0-9._/-]+$/.test(mount.target)
-      || mount.target === "/" || mount.source.includes("\0") || mount.target.includes("..")) {
-      throw new Error("invalid container execution mount");
-    }
+  for (const mount of spec.mounts) validateMountShape(mount);
+}
+
+function validatedMounts(
+  mounts: readonly DockerBindMount[],
+  approvedMountRoots: readonly string[],
+): DockerBindMount[] {
+  return mounts.map(mount => {
+    validateMountShape(mount);
     const source = resolve(mount.source);
     if (mount.target === "/var/run/docker.sock" || dockerSocketPath(source)) {
       throw new Error("Docker socket mount is forbidden");
@@ -264,13 +270,29 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
     if (!sourceType.isFile() && !sourceType.isDirectory()) {
       throw new Error("container execution mount source must be a regular file or directory");
     }
-    const roots = policy.approvedMountRoots.map(root => {
+    const roots = approvedMountRoots.map(root => {
       try { return realpathSync(resolve(root)); }
       catch { throw new Error("approved container mount root is unavailable"); }
     });
     if (!roots.some(root => canonical === root || canonical.startsWith(root.endsWith(sep) ? root : root + sep))) {
       throw new Error("container execution mount source is outside approved roots");
     }
+    const before = lstatSync(canonical);
+    const after = lstatSync(canonical);
+    if (before.dev !== after.dev || before.ino !== after.ino) {
+      throw new Error("container execution mount source identity changed");
+    }
+    return { ...mount, source: canonical };
+  });
+}
+
+function validateMountShape(mount: DockerBindMount): void {
+  if (!mount.source || !/^\/[A-Za-z0-9._/-]+$/.test(mount.target)
+    || mount.target === "/" || mount.source.includes("\0") || mount.target.includes("..")) {
+    throw new Error("invalid container execution mount");
+  }
+  if (mount.target === "/var/run/docker.sock" || dockerSocketPath(resolve(mount.source))) {
+    throw new Error("Docker socket mount is forbidden");
   }
 }
 

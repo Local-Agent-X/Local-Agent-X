@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,9 @@ const networkId = "e".repeat(64);
 const mountRoot = mkdtempSync(join(tmpdir(), "lax-docker-runtime-"));
 const mountSource = join(mountRoot, "op-1");
 writeFileSync(mountSource, "state");
+const mountLink = join(mountRoot, "op-link");
+let canSymlink = true;
+try { symlinkSync(mountSource, mountLink, "file"); } catch { canSymlink = false; }
 afterAll(() => rmSync(mountRoot, { recursive: true, force: true }));
 
 describe("DockerCliExecutionRuntime", () => {
@@ -84,6 +87,18 @@ describe("DockerCliExecutionRuntime", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
+  it.skipIf(!canSymlink)("passes the canonical mount source to Docker", async () => {
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${containerId}\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" });
+    const input = spec();
+    input.mounts = [{ source: mountLink, target: "/var/lib/lax-op", readOnly: false }];
+    await new DockerCliExecutionRuntime(run, policy()).create(input);
+    expect(run.mock.calls[1][0].join(" ")).toContain(`source=${realpathSync(mountSource)}`);
+    expect(run.mock.calls[1][0].join(" ")).not.toContain(`source=${mountLink}`);
+  });
+
   it("rejects host networking and a zero memory fence", async () => {
     const run = vi.fn<DockerCommandRunner>();
     const runtime = new DockerCliExecutionRuntime(run, policy());
@@ -110,5 +125,5 @@ function spec(): DockerContainerSpec {
 }
 
 function policy() {
-  return { approvedMountRoots: [mountRoot], allowedNetwork: "lax-egress" };
+  return { approvedMountRoots: [mountRoot], allowedNetwork: { name: "lax-egress", id: networkId } };
 }

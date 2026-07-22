@@ -19,6 +19,7 @@ export interface ContainerLaunchIntent {
   name: string;
   imageReference: string;
   imageId: string;
+  projectionId?: string;
   container?: DockerContainerIdentity;
   mac: string;
 }
@@ -62,6 +63,14 @@ export function bindContainerLaunchIntent(
   return seal({ ...unsigned(intent), container });
 }
 
+export function bindContainerLaunchProjection(
+  intent: ContainerLaunchIntent,
+  projectionId: string,
+): ContainerLaunchIntent {
+  if (!projectionId || projectionId.includes("\0")) throw new Error("invalid container projection identity");
+  return seal({ ...unsigned(intent), projectionId });
+}
+
 export function removeContainerLaunchIntent(expected: ContainerLaunchIntent): boolean {
   const current = readContainerLaunchIntent(expected.opId);
   if (!current || current.mac !== expected.mac) return false;
@@ -87,6 +96,9 @@ function validate(intent: ContainerLaunchIntent, opId: string): void {
     || !intent.token || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(intent.name)
     || !intent.imageReference || !/^sha256:[a-f0-9]{64}$/.test(intent.imageId)
     || !/^[a-f0-9]{64}$/.test(intent.mac)) throw new Error("invalid container launch intent");
+  if (intent.projectionId !== undefined && (!intent.projectionId || intent.projectionId.includes("\0"))) {
+    throw new Error("invalid container projection identity");
+  }
   if (intent.container && (intent.container.imageId !== intent.imageId
     || !/^[a-f0-9]{64}$/.test(intent.container.containerId)
     || !Number.isFinite(Date.parse(intent.container.createdAt)))) {

@@ -32,6 +32,7 @@ export {
   resetWedgedBrowser,
   setCurrentBrowserSession,
 } from "./instance.js";
+export type { WedgeRecoveryOutcome } from "./instance.js";
 export type {
   SecretBrowserOps,
   SecretElementDescriptor,

@@ -30,10 +30,8 @@ import {
 	browserReadConsole,
 	browserReadNetwork,
 } from "./bridge-client.js";
-import {
-	ElectronInAppBackend,
-	EvaluateBlockedError,
-} from "./in-app-backend.js";
+import { ElectronInAppBackend } from "./in-app-backend.js";
+import { EvaluateBlockedError } from "./guards.js";
 import { IN_APP_NO_DIALOG } from "./in-app-page-io.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { handleNewTab } from "../tools/browser-tools/navigation.js";

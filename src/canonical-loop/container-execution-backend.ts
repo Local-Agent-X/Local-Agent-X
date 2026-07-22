@@ -6,7 +6,10 @@ import type {
   DockerExecutionRuntime,
   DockerImageIdentity,
 } from "../sandbox/docker-execution-runtime.js";
-import { DockerCliExecutionRuntime } from "../sandbox/docker-execution-runtime.js";
+import {
+  DockerCliExecutionRuntime,
+  DockerCreateOutcomeAmbiguousError,
+} from "../sandbox/docker-execution-runtime.js";
 import type {
   ExecutionBackend,
   ExecutionBackendStartRequest,
@@ -56,8 +59,14 @@ export interface ContainerLaunchProjection {
   cleanup(): void | Promise<void>;
 }
 
-export type ContainerProjectionFactory = (op: Op) => Promise<ContainerLaunchProjection>;
-export type ContainerProjectionRecovery = (op: Op, durableId: string) => Promise<ContainerLaunchProjection>;
+export type ContainerProjectionFactory = (
+  op: Op,
+  durableId: string,
+) => Promise<ContainerLaunchProjection>;
+export type ContainerProjectionRecovery = (
+  op: Op,
+  durableId: string,
+) => Promise<ContainerLaunchProjection | null>;
 
 export interface ContainerBackendOptions {
   imageReference?: string;
@@ -153,17 +162,19 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     const resumed = await this.reconcileLaunchIntent(request, image);
     if (resumed) return;
     const token = randomUUID();
+    const projectionId = randomUUID();
     const name = launchName(request.op.id, request.placement.revision, token);
-    let intent = createContainerLaunchIntent({ opId: request.op.id, placement: request.placement,
-      token, name, imageReference: image.reference, imageId: image.imageId });
+    let intent = bindContainerLaunchProjection(createContainerLaunchIntent({
+      opId: request.op.id, placement: request.placement,
+      token, name, imageReference: image.reference, imageId: image.imageId,
+    }), projectionId);
     writeContainerLaunchIntent(intent);
     let projection: ContainerLaunchProjection | null = null;
     let container: DockerContainerIdentity | null = null;
     try {
-      projection = await this.projectionFactory(request.op);
-      if (projection.durableId) {
-        intent = bindContainerLaunchProjection(intent, projection.durableId);
-        writeContainerLaunchIntent(intent);
+      projection = await this.projectionFactory(request.op, projectionId);
+      if (projection.durableId !== projectionId) {
+        throw new Error("container projection factory returned the wrong durable identity");
       }
       const projected = projection.buildSpec({
         op: request.op,
@@ -180,6 +191,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
       const claim = await this.awaitClaim(request.op.id, request.placement, token, container);
       return await this.waitForCompletion(request.op.id, claim, projection, intent);
     } catch (error) {
+      if (!container && error instanceof DockerCreateOutcomeAmbiguousError) throw error;
       if (container) {
         await this.stopAndConfirm(container.containerId);
         const claim = readProcessExecutionClaim(request.op.id);
@@ -350,11 +362,11 @@ function launchName(opId: string, revision: number, token: string): string {
   return `lax-op-${suffix}`;
 }
 
-async function unconfiguredProjection(): Promise<ContainerLaunchProjection> {
+async function unconfiguredProjection(_op: Op, _durableId: string): Promise<ContainerLaunchProjection> {
   throw new Error("container execution state projection is not configured");
 }
 
-async function unconfiguredProjectionRecovery(): Promise<ContainerLaunchProjection> {
+async function unconfiguredProjectionRecovery(): Promise<ContainerLaunchProjection | null> {
   throw new Error("container execution projection recovery is not configured");
 }
 

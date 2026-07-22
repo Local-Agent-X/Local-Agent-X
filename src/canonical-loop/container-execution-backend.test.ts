@@ -8,6 +8,7 @@ import type {
   DockerExecutionRuntime,
   DockerImageIdentity,
 } from "../sandbox/docker-execution-runtime.js";
+import { DockerCreateOutcomeAmbiguousError } from "../sandbox/docker-execution-runtime.js";
 import type { ContainerExecutionBackend, ContainerLaunchProjection } from "./container-execution-backend.js";
 import type { ContainerExecutionClaim } from "./process-execution-claim.js";
 
@@ -211,13 +212,54 @@ describe("ContainerExecutionBackend", () => {
     expect(cleaned).toBe(true);
     expect(readContainerLaunchIntent(op.id)).toBeNull();
   });
+
+  it("durably owns the projection id before creating projected secrets", async () => {
+    const runtime = fakeRuntime();
+    let observedId = "";
+    const backend = new Backend({ imageReference, runtime,
+      projectionFactory: async (op, durableId) => {
+        observedId = durableId;
+        expect(readContainerLaunchIntent(op.id)?.projectionId).toBe(durableId);
+        throw new Error("projection interrupted");
+      } });
+    const op = fixtureOp("projection-prebound", backend);
+
+    await expect(backend.startWithoutAdapter({
+      op, placement: op.canonical!.executionPlacement!,
+    }).done).rejects.toThrow("projection interrupted");
+    expect(observedId).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it("retains intent and projection when Docker create outcome is ambiguous", async () => {
+    const runtime = fakeRuntime({
+      create: vi.fn().mockRejectedValue(
+        new DockerCreateOutcomeAmbiguousError("lax-op-ambiguous", new Error("daemon unavailable")),
+      ),
+    });
+    const projection = fakeProjection();
+    const backend = backendWith(runtime, projection);
+    const op = fixtureOp("create-ambiguous", backend);
+
+    await expect(backend.startWithoutAdapter({
+      op, placement: op.canonical!.executionPlacement!,
+    }).done).rejects.toBeInstanceOf(DockerCreateOutcomeAmbiguousError);
+    const intent = readContainerLaunchIntent(op.id);
+    expect(intent).toEqual(expect.objectContaining({
+      opId: op.id, projectionId: projection.durableId,
+    }));
+    expect(intent?.container).toBeUndefined();
+    expect(projection.cleanup).not.toHaveBeenCalled();
+  });
 });
 
 function backendWith(runtime: DockerExecutionRuntime, projection = fakeProjection()): ContainerExecutionBackend {
   return new Backend({
     imageReference,
     runtime,
-    projectionFactory: async () => projection,
+    projectionFactory: async (_op, durableId) => {
+      projection.durableId = durableId;
+      return projection;
+    },
     claimPollMs: 1,
     readyTimeoutMs: 100,
   });

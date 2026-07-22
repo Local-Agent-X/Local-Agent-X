@@ -67,6 +67,9 @@ describe("delegated provider runtime identity", () => {
       .toBe("http://host.docker.internal:11434/v1");
     expect(() => rewriteVerifiedLocalEndpointForContainer("https://remote.example/v1"))
       .toThrow("container_gateway_non_loopback");
+    process.env.LAX_CONTAINER_HOST_GATEWAY = "evil.example.com";
+    expect(() => rewriteVerifiedLocalEndpointForContainer("http://127.0.0.1:11434/v1"))
+      .toThrow("container_gateway_invalid");
   });
 
   it("persists rejection over prior certification for the exact local target", () => {

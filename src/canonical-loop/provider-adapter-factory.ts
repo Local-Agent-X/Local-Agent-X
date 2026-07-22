@@ -16,6 +16,7 @@ import {
   assertPersistedTargetCapabilitySnapshot,
   captureTargetCapabilitySnapshot,
 } from "./target-capability-snapshot.js";
+import { validatedHostGateway } from "./container-connectivity.js";
 export { captureTargetCapabilitySnapshot } from "./target-capability-snapshot.js";
 
 interface ProviderRuntimeOptions {
@@ -240,11 +241,10 @@ async function resolvePersistedTarget(
 }
 
 export function rewriteVerifiedLocalEndpointForContainer(raw: string): string {
-  const gateway = process.env.LAX_CONTAINER_HOST_GATEWAY?.trim();
+  let gateway: string | null;
+  try { gateway = validatedHostGateway(); }
+  catch { throw new RuntimeIdentityMismatchError("container_gateway_invalid"); }
   if (!gateway) return raw;
-  if (!/^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[A-Fa-f0-9:]+\])$/.test(gateway)) {
-    throw new RuntimeIdentityMismatchError("container_gateway_invalid");
-  }
   const url = new URL(raw);
   if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname.toLowerCase())) {
     throw new RuntimeIdentityMismatchError("container_gateway_non_loopback");

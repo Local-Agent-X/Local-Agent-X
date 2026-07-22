@@ -72,6 +72,13 @@ export interface DockerExecutionPolicy {
   allowedNetwork: { name: string; id: string } | null;
 }
 
+export class DockerCreateOutcomeAmbiguousError extends Error {
+  constructor(name: string, cause: unknown) {
+    super(`Docker create outcome is ambiguous for ${name}`, { cause });
+    this.name = "DockerCreateOutcomeAmbiguousError";
+  }
+}
+
 export function createDockerCommandRunner(binary = "docker"): DockerCommandRunner {
   return async (args, options = {}) => {
     const execOptions: ExecFileOptions = {
@@ -146,17 +153,38 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
     }
     args.push(spec.image.reference, ...spec.command);
     let created = "";
+    let confirmedRemoved = false;
     try {
       created = (await this.run(args, { timeoutMs: 60_000 })).stdout.trim();
       if (!CONTAINER_ID.test(created)) throw new Error("Docker returned an ambiguous container id");
       const identity = await this.inspect(created);
       if (!identity || identity.imageId !== spec.image.imageId) {
         await this.stop(created);
+        confirmedRemoved = true;
         throw new Error("created container image identity changed");
       }
       this.pendingMountReleases.set(created, heldMounts.close);
       return identity;
     } catch (error) {
+      if (confirmedRemoved) {
+        heldMounts.close();
+        throw error;
+      }
+      try {
+        const recovered = await this.inspectNamed(spec.name, spec.labels);
+        if (recovered) {
+          if (recovered.imageId !== spec.image.imageId) {
+            this.pendingMountReleases.set(spec.name, heldMounts.close);
+            throw new DockerCreateOutcomeAmbiguousError(spec.name, error);
+          }
+          this.pendingMountReleases.set(recovered.containerId, heldMounts.close);
+          return recovered;
+        }
+      } catch (reconcileError) {
+        if (reconcileError instanceof DockerCreateOutcomeAmbiguousError) throw reconcileError;
+        this.pendingMountReleases.set(spec.name, heldMounts.close);
+        throw new DockerCreateOutcomeAmbiguousError(spec.name, reconcileError);
+      }
       heldMounts.close();
       throw error;
     }
@@ -216,9 +244,18 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
         || Object.entries(labels).some(([key, value]) => (actualLabels as Record<string, unknown>)[key] !== value)) {
         throw new Error("named container ownership labels changed");
       }
-      return parseContainerState(id, createdAt, imageId, runningRaw, exitRaw);
+      const state = parseContainerState(id, createdAt, imageId, runningRaw, exitRaw);
+      const release = this.pendingMountReleases.get(name);
+      if (release) {
+        this.pendingMountReleases.delete(name);
+        this.pendingMountReleases.set(state.containerId, release);
+      }
+      return state;
     } catch (error) {
-      if (isNoSuchContainer(error)) return null;
+      if (isNoSuchContainer(error)) {
+        this.releasePendingMounts(name);
+        return null;
+      }
       throw error;
     }
   }

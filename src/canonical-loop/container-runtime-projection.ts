@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -31,11 +31,15 @@ import {
 } from "../sandbox/docker-execution-runtime.js";
 import type { ContainerLaunchProjection } from "./container-execution-backend.js";
 import { sealContainerBootstrap } from "./container-bootstrap.js";
+import { assertCurrentContainerConnectivity, captureContainerConnectivity,
+  configuredContainerNetwork, isContainerConnectivityIdentity,
+  type ContainerConnectivityIdentity } from "./container-connectivity.js";
 import {
   BROWSER_RELAY_TOKEN_FILE,
   createProjectionBrowserRelayToken,
   openProjectionBrowserRelay,
 } from "./container-runtime-browser-relay.js";
+import { reopenReservedProjection, writeProjectionReservation } from "./container-projection-reservation.js";
 
 const CONTAINER_DATA = "/var/lib/lax";
 const CONTAINER_SECRETS = "/run/lax-secrets";
@@ -48,6 +52,7 @@ interface ProjectionManifest {
   projectionId: string;
   opId: string;
   descriptorMac: string;
+  connectivity: ContainerConnectivityIdentity;
   files: Record<string, string>;
   mounts: Record<string, { device: string; inode: string }>;
 }
@@ -59,7 +64,7 @@ export function createProductionContainerRuntime(): DockerExecutionRuntime {
   const runtime = (): DockerExecutionRuntime => {
     delegate ??= new DockerCliExecutionRuntime(undefined, {
       approvedMountRoots: productionMountRoots(),
-      allowedNetwork: configuredNetwork(),
+      allowedNetwork: configuredContainerNetwork(),
     });
     return delegate;
   };
@@ -75,15 +80,19 @@ export function createProductionContainerRuntime(): DockerExecutionRuntime {
   };
 }
 
-export async function createContainerRuntimeProjection(op: Op): Promise<ContainerLaunchProjection> {
+export async function createContainerRuntimeProjection(
+  op: Op,
+  projectionId: string,
+): Promise<ContainerLaunchProjection> {
   verifyDelegatedRuntimeIntegrity(op);
   const descriptor = op.runtimeDescriptor;
   assertProjectionPaths(descriptor);
-  const projectionId = randomUUID();
-  const root = join(containerStateRoot(), projectionId);
+  const root = projectionRoot(projectionId);
   const state = join(root, "state");
   const secrets = join(root, "secrets");
-  mkdirSync(state, { recursive: true, mode: 0o700 });
+  mkdirSync(root, { mode: 0o700 });
+  writeProjectionReservation(root, projectionId, op.id, descriptor.integrity.mac);
+  mkdirSync(state, { mode: 0o700 });
   mkdirSync(secrets, { mode: 0o700 });
   try {
     writeJson(join(state, "config.json"), projectedConfig());
@@ -107,13 +116,15 @@ export async function createContainerRuntimeProjection(op: Op): Promise<Containe
     const bootstrapPath = join(secrets, "bootstrap.json");
     writeJson(bootstrapPath, { schemaVersion: 1, state: "pending" });
     const browserRelayTokenPath = createProjectionBrowserRelayToken(root);
-    const localRuntimePath = projectLocalRuntime(descriptor, secrets);
+    const connectivity = captureContainerConnectivity(descriptor.target.kind === "local-runtime");
+    const localRuntimePath = projectLocalRuntime(descriptor, secrets, connectivity);
     const tracked = ["state/config.json", "state/settings.json", "state/tool-policy.json",
       "secrets/runtime-credential.json", "secrets/audit-key", BROWSER_RELAY_TOKEN_FILE,
       "secrets/local-runtime.json"]
       .filter(path => existsSync(join(root, path)));
     const manifest: ProjectionManifest = { schemaVersion: 1, projectionId, opId: op.id,
       descriptorMac: descriptor.integrity.mac,
+      connectivity,
       files: Object.fromEntries(tracked.map(path => [path, hashFile(join(root, path))])),
       mounts: Object.fromEntries([
         ["state", state], ["operation", opDir(op.id)], ["workspace", realpathSync(workspaceRoot())],
@@ -133,9 +144,13 @@ export async function createContainerRuntimeProjection(op: Op): Promise<Containe
 export async function reopenContainerRuntimeProjection(
   op: Op,
   projectionId: string,
-): Promise<ContainerLaunchProjection> {
+): Promise<ContainerLaunchProjection | null> {
   verifyDelegatedRuntimeIntegrity(op);
   const root = projectionRoot(projectionId);
+  if (!existsSync(root)) return null;
+  const reserved = reopenReservedProjection(root, projectionId, op.id,
+    op.runtimeDescriptor.integrity.mac);
+  if (reserved) return reserved;
   const manifest = readManifest(root);
   if (manifest.opId !== op.id || manifest.descriptorMac !== op.runtimeDescriptor.integrity.mac) {
     throw new Error("container projection identity changed");
@@ -171,7 +186,8 @@ async function materializeProjection(
         throw new Error("container projection identity changed");
       }
       verifyManifestFiles(root, manifest);
-      const network = configuredNetwork();
+      assertCurrentContainerConnectivity(projectionManifest.connectivity);
+      const network = projectionManifest.connectivity.network;
       return {
         name: `lax-op-${op.id.slice(0, 48)}-${randomBytes(4).toString("hex")}`,
         image,
@@ -182,8 +198,8 @@ async function materializeProjection(
           LAX_SCOPED_RUNTIME_CREDENTIAL_FILE: `${CONTAINER_SECRETS}/runtime-credential.json`,
           LAX_AUDIT_KEY_FILE: `${CONTAINER_SECRETS}/audit-key`,
           ...browserRelay.environment,
-          ...(process.env.LAX_CONTAINER_HOST_GATEWAY
-            ? { LAX_CONTAINER_HOST_GATEWAY: process.env.LAX_CONTAINER_HOST_GATEWAY }
+          ...(projectionManifest.connectivity.hostGateway
+            ? { LAX_CONTAINER_HOST_GATEWAY: projectionManifest.connectivity.hostGateway }
             : {}),
           ...(localRuntimePath
             ? { LAX_PROJECTED_LOCAL_RUNTIME_FILE: `${CONTAINER_SECRETS}/local-runtime.json` }
@@ -276,6 +292,7 @@ function readManifest(root: string): ProjectionManifest {
   if (!manifest || manifest.schemaVersion !== 1 || manifest.projectionId !== basename(root)
     || !manifest.opId || typeof manifest.descriptorMac !== "string"
     || !/^[a-f0-9]{64}$/.test(manifest.descriptorMac)
+    || !isContainerConnectivityIdentity(manifest.connectivity)
     || !manifest.files || typeof manifest.files !== "object" || !manifest.mounts
     || typeof manifest.mounts !== "object"
     || Object.entries(manifest.files).some(([file, hash]) => !/^(?:state|secrets)\/[A-Za-z0-9._-]+$/.test(file)
@@ -309,16 +326,6 @@ function hashFile(path: string): string {
 function fileIdentity(path: string): { device: string; inode: string } {
   const stat = lstatSync(path, { bigint: true });
   return { device: stat.dev.toString(), inode: stat.ino.toString() };
-}
-
-function configuredNetwork(): { name: string; id: string } | null {
-  const name = process.env.LAX_CONTAINER_EXECUTION_NETWORK?.trim();
-  const id = process.env.LAX_CONTAINER_EXECUTION_NETWORK_ID?.trim();
-  if (!name && !id) return null;
-  if (!name || !id || !/^[a-f0-9]{64}$/.test(id)) {
-    throw new Error("container execution network requires an exact name and id");
-  }
-  return { name, id };
 }
 
 function containerUser(): { uid: number; gid: number } {
@@ -375,9 +382,10 @@ function writeJson(path: string, value: unknown): void {
 function projectLocalRuntime(
   descriptor: ExactDelegatedRuntimeDescriptor,
   secrets: string,
+  connectivity: ContainerConnectivityIdentity,
 ): string | null {
   if (descriptor.target.kind !== "local-runtime") return null;
-  if (!process.env.LAX_CONTAINER_HOST_GATEWAY?.trim() || !configuredNetwork()) {
+  if (!connectivity.hostGateway || !connectivity.network) {
     throw new Error("local container execution requires an explicit host gateway and network");
   }
   const runtime = getLocalRuntimeById(descriptor.target.runtimeId);

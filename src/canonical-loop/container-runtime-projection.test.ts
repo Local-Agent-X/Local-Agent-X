@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -41,7 +42,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     const op = fixtureOp(sealDelegatedRuntime);
     opDir(op.id);
 
-    const projection = await createContainerRuntimeProjection(op);
+    const projection = await createContainerRuntimeProjection(op, randomUUID());
     const spec = projection.buildSpec({ op, image: image(), token: "token", placement: placement() });
     expect(projection.durableId).toMatch(/^[a-f0-9-]{36}$/);
     expect(spec.mounts.some(mount => mount.source === root || mount.source.endsWith("docker.sock"))).toBe(false);
@@ -58,10 +59,10 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     expect(verifyContainerBootstrap(JSON.parse(readFileSync(bootstrap.source, "utf8"))).opId).toBe(op.id);
 
     const reopened = await reopenContainerRuntimeProjection(op, projection.durableId!);
-    expect(reopened.buildSpec({ op, image: image(), token: "token", placement: placement() }).mounts)
+    expect(reopened!.buildSpec({ op, image: image(), token: "token", placement: placement() }).mounts)
       .toHaveLength(spec.mounts.length);
     const projectionRoot = join(root, "container-runtime", projection.durableId!);
-    await reopened.cleanup();
+    await reopened!.cleanup();
     expect(existsSync(projectionRoot)).toBe(false);
   });
 
@@ -76,7 +77,7 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
       await import("./container-runtime-projection.js");
     const op = fixtureOp(sealDelegatedRuntime);
     opDir(op.id);
-    const projection = await createContainerRuntimeProjection(op);
+    const projection = await createContainerRuntimeProjection(op, randomUUID());
     const credential = join(root, "container-runtime", projection.durableId!, "secrets", "runtime-credential.json");
     const originalCredential = readFileSync(credential, "utf8");
     writeFileSync(credential, "{}", "utf8");

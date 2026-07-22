@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   DockerCliExecutionRuntime,
+  DockerCreateOutcomeAmbiguousError,
   type DockerCommandRunner,
   type DockerContainerSpec,
 } from "./docker-execution-runtime.js";
@@ -73,6 +74,24 @@ describe("DockerCliExecutionRuntime", () => {
     await expect(new DockerCliExecutionRuntime(run, policy()).create(spec()))
       .rejects.toThrow("image identity changed");
     expect(run.mock.calls[3][0]).toEqual(["rm", "--force", containerId]);
+  });
+
+  it("recovers an exact named container when create delivery is ambiguous", async () => {
+    const labels = { "local-agent-x.op-id": "op-1" };
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockRejectedValueOnce(new Error("create response timed out"))
+      .mockResolvedValueOnce({
+        stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n/lax-op-abc\n${JSON.stringify(labels)}\n`,
+        stderr: "",
+      });
+
+    await expect(new DockerCliExecutionRuntime(run, policy()).create(spec())).resolves.toEqual({
+      containerId, createdAt, imageId, running: false, exitCode: 0,
+    });
+    expect(run.mock.calls[2][0]).toEqual(expect.arrayContaining([
+      "container", "inspect", "lax-op-abc",
+    ]));
   });
 
   it("rejects a same-name network with different security properties", async () => {
@@ -153,13 +172,46 @@ describe("DockerCliExecutionRuntime", () => {
       .mockImplementationOnce(async args => {
         heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
         throw new Error("create failed");
-      });
+      })
+      .mockRejectedValueOnce(new Error("No such container: lax-op-abc"));
     const input = spec();
     input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
 
     await expect(new DockerCliExecutionRuntime(run, policy()).create(input)).rejects.toThrow("create failed");
     expect(() => readFileSync(heldSource)).toThrow();
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "retains held mounts while a timed-out create remains ambiguous",
+    async () => {
+      let heldSource = "";
+      const run = vi.fn<DockerCommandRunner>()
+        .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+        .mockImplementationOnce(async args => {
+          heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
+          throw new Error("create timed out");
+        })
+        .mockRejectedValueOnce(new Error("Docker daemon unavailable"))
+        .mockResolvedValueOnce({
+          stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n/lax-op-abc\n${JSON.stringify({
+            "local-agent-x.op-id": "op-1",
+          })}\n`, stderr: "",
+        })
+        .mockResolvedValueOnce({ stdout: containerId, stderr: "" });
+      const input = spec();
+      input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
+      const runtime = new DockerCliExecutionRuntime(run, policy());
+
+      await expect(runtime.create(input)).rejects.toBeInstanceOf(DockerCreateOutcomeAmbiguousError);
+      expect(readFileSync(heldSource, "utf8")).toBe("state");
+      await expect(runtime.inspectNamed(input.name, input.labels)).resolves.toEqual({
+        containerId, createdAt, imageId, running: false, exitCode: 0,
+      });
+      expect(readFileSync(heldSource, "utf8")).toBe("state");
+      await runtime.start(containerId);
+      expect(() => readFileSync(heldSource)).toThrow();
+    },
+  );
 
   it.skipIf(process.platform !== "linux")("rejects a mount whose sealed inode identity changed", async () => {
     const run = vi.fn<DockerCommandRunner>()

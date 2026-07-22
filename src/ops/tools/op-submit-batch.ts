@@ -22,6 +22,8 @@ import {
   awaitCanonicalOp,
   canonicalLoopEntry,
 } from "../../canonical-loop/index.js";
+import { validateDependencyBatch } from "../../canonical-loop/dependencies.js";
+import type { Op } from "../types.js";
 import { trackOpForSession } from "../session-bridge.js";
 import {
   buildOpFromArgs,
@@ -42,6 +44,82 @@ interface BatchTaskResult {
   filesChanged: string[];
   error?: string;
   wallMs?: number;
+}
+
+function hasDependencyMetadata(task: Record<string, unknown>): boolean {
+  return Object.hasOwn(task, "task_key") || Object.hasOwn(task, "depends_on");
+}
+
+async function runDependencyBatch(
+  tasks: Record<string, unknown>[],
+  sessionId: string,
+): Promise<BatchTaskResult[]> {
+  const keys = new Map<string, Op>();
+  const ops: Op[] = [];
+  for (const rawTask of tasks) {
+    const op = await buildOpFromArgs({ ...rawTask, ...(sessionId ? { _sessionId: sessionId } : {}) });
+    const rawKey = rawTask.task_key;
+    if (rawKey !== undefined) {
+      const key = typeof rawKey === "string" ? rawKey.trim() : "";
+      if (!key) throw new Error("batch task_key must be a non-empty string");
+      if (keys.has(key)) throw new Error(`duplicate batch task_key: ${key}`);
+      keys.set(key, op);
+    }
+    ops.push(op);
+  }
+
+  for (let index = 0; index < ops.length; index++) {
+    const rawDependencies = tasks[index].depends_on;
+    if (rawDependencies === undefined) continue;
+    if (!Array.isArray(rawDependencies)) throw new Error("batch depends_on must be an array");
+    ops[index].dependsOn = rawDependencies.map((value) => {
+      const reference = typeof value === "string" ? value.trim() : "";
+      if (!reference) throw new Error("batch depends_on contains an empty reference");
+      return keys.get(reference)?.id ?? reference;
+    });
+  }
+  validateDependencyBatch(ops);
+
+  for (const op of ops) {
+    await configureDelegatedRuntime(op, delegatedRuntimeSessionId(op.id, sessionId));
+  }
+
+  const localIds = new Set(ops.map((op) => op.id));
+  const remaining = new Set(ops.map((op) => op.id));
+  const ordered: Op[] = [];
+  while (remaining.size > 0) {
+    const ready = ops.filter((op) => remaining.has(op.id)
+      && (op.dependsOn ?? []).every((id) => !localIds.has(id) || !remaining.has(id)));
+    if (ready.length === 0) throw new Error("batch dependency graph contains a cycle");
+    for (const op of ready) {
+      remaining.delete(op.id);
+      ordered.push(op);
+    }
+  }
+
+  const startedAt = new Map<string, number>();
+  for (const op of ordered) {
+    startedAt.set(op.id, Date.now());
+    canonicalLoopEntry(op, { sessionId: delegatedRuntimeSessionId(op.id, sessionId) });
+    if (sessionId) trackOpForSession(op.id, sessionId, op.task);
+  }
+
+  return Promise.all(ops.map(async (op): Promise<BatchTaskResult> => {
+    const result = await awaitCanonicalOp(op.id, PER_OP_TIMEOUT_MS);
+    const wallMs = Date.now() - (startedAt.get(op.id) ?? Date.now());
+    if (!result) {
+      return { task: op.task, opId: op.id, status: "timeout", finalSummary: `op ${op.id} did not complete within 30 min`, filesChanged: [], error: "timed out", wallMs };
+    }
+    return {
+      task: op.task,
+      opId: op.id,
+      status: result.status,
+      finalSummary: result.finalSummary,
+      filesChanged: result.filesChanged,
+      ...(result.error ? { error: result.error.message } : {}),
+      wallMs,
+    };
+  }));
 }
 
 /** Clamp the requested concurrency into [1,12], defaulting to 4. */
@@ -128,7 +206,13 @@ export const opSubmitBatchTool: ToolDefinition = {
     properties: {
       tasks: {
         type: "array",
-        items: submitParameters,
+        items: {
+          ...submitParameters,
+          properties: {
+            ...submitParameters.properties,
+            task_key: { type: "string", description: "Batch-local stable key. Other tasks may name this key in depends_on; only the translated durable op id is persisted." },
+          },
+        },
         description: "The DISTINCT tasks to run in parallel. Each item takes the same shape as a single op_submit call (task description + optional success_criteria / constraints / context_files / scope_hint / lane / etc.). Must be genuinely different jobs, not repeats.",
       },
       concurrency: {
@@ -148,7 +232,14 @@ export const opSubmitBatchTool: ToolDefinition = {
     const concurrency = clampConcurrency(args.concurrency);
 
     const startMs = Date.now();
-    const results = await runPool(rawTasks, concurrency, sessionId);
+    let results: BatchTaskResult[];
+    try {
+      results = rawTasks.some(hasDependencyMetadata)
+        ? await runDependencyBatch(rawTasks, sessionId)
+        : await runPool(rawTasks, concurrency, sessionId);
+    } catch (error) {
+      return { content: `Dependency batch rejected before launch: ${(error as Error).message}`, isError: true };
+    }
     const wallMs = Date.now() - startMs;
 
     const succeeded = results.filter(r => r.status === "completed").length;

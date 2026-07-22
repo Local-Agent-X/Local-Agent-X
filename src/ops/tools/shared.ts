@@ -38,6 +38,7 @@ export interface SubmitArgs {
   max_iterations?: number;
   max_wall_time_ms?: number;
   pre_blessed_secrets?: string[];
+  depends_on?: string[];
 }
 
 /**
@@ -178,6 +179,7 @@ export async function buildOpFromArgs(rawArgs: Record<string, unknown>): Promise
     createdAt: new Date().toISOString(),
     attemptCount: 0,
     ...(parentOpId ? { parentOpId } : {}),
+    ...(Array.isArray(args.depends_on) ? { dependsOn: args.depends_on.map(String) } : {}),
   };
 }
 
@@ -198,6 +200,7 @@ export const submitParameters = {
     max_iterations: { type: "number", description: "Cap on agent iterations. Default 30." },
     max_wall_time_ms: { type: "number", description: "Hard wall-time cap. Default 900000 (15 min)." },
     pre_blessed_secrets: { type: "array", items: { type: "string" }, description: "Secret NAMES (SCREAMING_SNAKE_CASE, already in the vault) the USER has explicitly authorized this op to auto-fill into login forms without stopping for first-use approval. ONLY set this when the user told you to pre-approve them — it lets browser_fill_from_secret fill these names while the op runs. Origin binding still applies (a secret only fills on its own recorded site) and the value never passes through you. Leave empty otherwise." },
+    depends_on: { type: "array", items: { type: "string" }, description: "Existing canonical op ids that must succeed before this op may consume a worker slot. Failed or cancelled prerequisites propagate without a new permission prompt." },
   },
   required: ["task"],
 };

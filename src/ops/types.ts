@@ -3,8 +3,7 @@
  *
  * The Op shape is the lingua franca between submitters (op_submit_async,
  * delegation-handoff) and the canonical-loop runtime. Some optional fields
- * (dependsOn, outputContract, inputBindings, resourceLocks) are reserved
- * for future DAG / locking work and currently unused.
+ * (outputContract, inputBindings) are reserved for later materialization.
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
@@ -248,8 +247,10 @@ export interface Op {
    * created before this field existed.
    */
   parentOpId?: string;
-  // Reserved for later steps:
+  /** Durable canonical-op prerequisite ids. The scheduler consumes no worker
+   * capacity until every prerequisite succeeds. */
   dependsOn?: string[];
+  // Reserved for later steps:
   outputContract?: string[];
   inputBindings?: Record<string, string>;
   resourceLocks?: string[];

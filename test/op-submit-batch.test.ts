@@ -33,6 +33,7 @@ import type {
   TurnResult,
 } from "../src/canonical-loop/adapter-contract.js";
 import type { ProviderStateEnvelope } from "../src/canonical-loop/types.js";
+import { readOp } from "../src/ops/op-store.js";
 
 const runtimeFixture = vi.hoisted(() => ({
   configure: vi.fn(),
@@ -211,5 +212,45 @@ describe("op_submit_batch — fan-out launcher", () => {
     const res = await opSubmitBatchTool.execute({ tasks: [] });
     expect(res.isError).toBe(true);
     expect(res.content).toContain("non-empty");
+  });
+
+  it("translates stable batch task keys to durable dependency ids before persistence", async () => {
+    const counter = installCountingLaneAdapter(20);
+    const tasks = [
+      { ...task("dependency root"), task_key: "root" },
+      { ...task("dependency left"), task_key: "left", depends_on: ["root"] },
+      { ...task("dependency right"), task_key: "right", depends_on: ["root"] },
+      { ...task("dependency join"), task_key: "join", depends_on: ["left", "right"] },
+    ];
+
+    const { meta } = await runBatch(tasks, 4);
+    expect(meta.succeeded).toBe(4);
+    const byTask = new Map(meta.results.map((result) => [result.task, result.opId!]));
+    expect(readOp(byTask.get("dependency left")!)?.dependsOn)
+      .toEqual([byTask.get("dependency root")]);
+    expect(readOp(byTask.get("dependency right")!)?.dependsOn)
+      .toEqual([byTask.get("dependency root")]);
+    expect(readOp(byTask.get("dependency join")!)?.dependsOn)
+      .toEqual([byTask.get("dependency left"), byTask.get("dependency right")]);
+    expect(counter.max).toBe(2);
+  });
+
+  it("rejects duplicate keys and cycles before configuring or persisting any task", async () => {
+    installCountingLaneAdapter(5);
+    const duplicate = await opSubmitBatchTool.execute({ tasks: [
+      { ...task("duplicate one"), task_key: "same" },
+      { ...task("duplicate two"), task_key: "same" },
+    ] });
+    expect(duplicate.isError).toBe(true);
+    expect(duplicate.content).toContain("duplicate batch task_key");
+    expect(runtimeFixture.configure).not.toHaveBeenCalled();
+
+    const cycle = await opSubmitBatchTool.execute({ tasks: [
+      { ...task("cycle one"), task_key: "one", depends_on: ["two"] },
+      { ...task("cycle two"), task_key: "two", depends_on: ["one"] },
+    ] });
+    expect(cycle.isError).toBe(true);
+    expect(cycle.content).toContain("cycle");
+    expect(runtimeFixture.configure).not.toHaveBeenCalled();
   });
 });

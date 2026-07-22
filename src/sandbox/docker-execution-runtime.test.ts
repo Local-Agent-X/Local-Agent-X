@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -17,9 +17,6 @@ const networkId = "e".repeat(64);
 const mountRoot = mkdtempSync(join(tmpdir(), "lax-docker-runtime-"));
 const mountSource = join(mountRoot, "op-1");
 writeFileSync(mountSource, "state");
-const mountLink = join(mountRoot, "op-link");
-let canSymlink = true;
-try { symlinkSync(mountSource, mountLink, "file"); } catch { canSymlink = false; }
 afterAll(() => rmSync(mountRoot, { recursive: true, force: true }));
 
 describe("DockerCliExecutionRuntime", () => {
@@ -87,13 +84,10 @@ describe("DockerCliExecutionRuntime", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it.skipIf(!canSymlink || process.platform !== "linux")(
+  it.skipIf(process.platform !== "linux")(
     "holds the canonical mount inode until Docker start completes",
     async () => {
-      const replacement = join(mountRoot, "replacement");
-      writeFileSync(replacement, "replacement");
-      rmSync(mountLink, { force: true });
-      symlinkSync(mountSource, mountLink, "file");
+      writeFileSync(mountSource, "state");
       let heldSource = "";
       const run = vi.fn<DockerCommandRunner>()
         .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
@@ -108,16 +102,49 @@ describe("DockerCliExecutionRuntime", () => {
           return { stdout: containerId, stderr: "" };
         });
       const input = spec();
-      input.mounts = [{ source: mountLink, target: "/var/lib/lax-op", readOnly: false }];
+      input.mounts = [{ source: mountSource, target: "/var/lib/lax-op", readOnly: false }];
       const runtime = new DockerCliExecutionRuntime(run, policy());
       await runtime.create(input);
-      rmSync(mountLink);
-      symlinkSync(replacement, mountLink, "file");
+      rmSync(mountSource);
+      writeFileSync(mountSource, "replacement");
       await runtime.start(containerId);
-      expect(run.mock.calls[1][0].join(" ")).not.toContain(`source=${mountLink}`);
+      expect(run.mock.calls[1][0].join(" ")).not.toContain(`source=${mountSource}`);
       expect(() => readFileSync(heldSource)).toThrow();
     },
   );
+
+  it.skipIf(process.platform !== "linux")("walks mounts from the pinned approved root", async () => {
+    const approved = join(mountRoot, "approved-race");
+    const displaced = join(mountRoot, "approved-displaced");
+    const replacement = join(mountRoot, "approved-replacement");
+    const trigger = join(mountRoot, "approved-trigger");
+    for (const path of [approved, replacement, trigger]) mkdirSync(path);
+    writeFileSync(join(approved, "state"), "approved");
+    writeFileSync(join(replacement, "state"), "attacker");
+    const roots = [approved, trigger];
+    Object.defineProperty(roots, 1, { get() {
+      renameSync(approved, displaced);
+      renameSync(replacement, approved);
+      return trigger;
+    } });
+    let heldSource = "";
+    const run = vi.fn<DockerCommandRunner>()
+      .mockResolvedValueOnce({ stdout: `${networkId}\nlax-egress\nbridge\nlocal\nfalse\n`, stderr: "" })
+      .mockImplementationOnce(async args => {
+        heldSource = /source=([^,]+)/.exec(args.join(" "))?.[1] ?? "";
+        expect(readFileSync(heldSource, "utf8")).toBe("approved");
+        expect(readFileSync(join(approved, "state"), "utf8")).toBe("attacker");
+        return { stdout: `${containerId}\n`, stderr: "" };
+      })
+      .mockResolvedValueOnce({ stdout: `${containerId}\n${createdAt}\n${imageId}\nfalse\n0\n`, stderr: "" })
+      .mockResolvedValueOnce({ stdout: containerId, stderr: "" });
+    const input = spec();
+    input.mounts = [{ source: join(approved, "state"), target: "/var/lib/lax-op", readOnly: false }];
+    const runtime = new DockerCliExecutionRuntime(run, { approvedMountRoots: roots,
+      allowedNetwork: { name: "lax-egress", id: networkId } });
+    await runtime.create(input);
+    await runtime.start(containerId);
+  });
 
   it.skipIf(process.platform !== "linux")("releases held mounts when Docker create fails", async () => {
     let heldSource = "";

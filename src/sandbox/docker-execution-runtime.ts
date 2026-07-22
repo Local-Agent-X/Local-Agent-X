@@ -1,7 +1,6 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
-import { closeSync, constants, fstatSync, lstatSync, openSync, realpathSync } from "node:fs";
-import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { holdValidatedMounts, validateMountShape } from "./docker-mount-lease.js";
 
 const execFileAsync = promisify(execFile);
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
@@ -266,83 +265,6 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
   for (const mount of spec.mounts) validateMountShape(mount);
 }
 
-function holdValidatedMounts(
-  mounts: readonly DockerBindMount[],
-  approvedMountRoots: readonly string[],
-): { mounts: DockerBindMount[]; close: () => void } {
-  if (mounts.length > 0 && process.platform !== "linux") {
-    throw new Error("inode-stable container bind mounts require a Linux host");
-  }
-  const descriptors: number[] = [];
-  try {
-    const roots = mounts.length > 0
-      ? approvedMountRoots.map(root => holdDirectory(resolve(root), descriptors))
-      : [];
-    const held = mounts.map(mount => {
-      validateMountShape(mount);
-      const source = resolve(mount.source);
-      if (mount.target === "/var/run/docker.sock" || dockerSocketPath(source)) {
-        throw new Error("Docker socket mount is forbidden");
-      }
-      let canonical: string;
-      try { canonical = realpathSync(source); }
-      catch { throw new Error("container execution mount source is unavailable"); }
-      if (dockerSocketPath(canonical)) {
-        throw new Error("Docker socket mount is forbidden");
-      }
-      const fd = openSync(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-      descriptors.push(fd);
-      const heldIdentity = fstatSync(fd);
-      if (!heldIdentity.isFile() && !heldIdentity.isDirectory()) {
-        throw new Error("container execution mount source must be a regular file or directory");
-      }
-      const heldPath = realpathSync(fdPath(fd));
-      if (!roots.some(root => heldPath === root.path
-        || heldPath.startsWith(root.path.endsWith(sep) ? root.path : root.path + sep))) {
-        throw new Error("container execution mount source is outside approved roots");
-      }
-      return { ...mount, source: fdPath(fd) };
-    });
-    return { mounts: held, close: () => closeAll(descriptors) };
-  } catch (error) {
-    closeAll(descriptors);
-    throw error;
-  }
-}
-
-function holdDirectory(path: string, descriptors: number[]): { path: string } {
-  let canonical: string;
-  try { canonical = realpathSync(path); }
-  catch { throw new Error("approved container mount root is unavailable"); }
-  const before = lstatSync(canonical);
-  if (!before.isDirectory()) throw new Error("approved container mount root is unavailable");
-  const fd = openSync(canonical, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0));
-  descriptors.push(fd);
-  const held = fstatSync(fd);
-  if (!held.isDirectory() || before.dev !== held.dev || before.ino !== held.ino) {
-    throw new Error("approved container mount root identity changed");
-  }
-  return { path: realpathSync(fdPath(fd)) };
-}
-
-function fdPath(fd: number): string {
-  return `/proc/${process.pid}/fd/${fd}`;
-}
-
-function closeAll(descriptors: number[]): void {
-  for (const fd of descriptors.splice(0)) closeSync(fd);
-}
-
-function validateMountShape(mount: DockerBindMount): void {
-  if (!mount.source || !/^\/[A-Za-z0-9._/-]+$/.test(mount.target)
-    || mount.target === "/" || mount.source.includes("\0") || mount.target.includes("..")) {
-    throw new Error("invalid container execution mount");
-  }
-  if (mount.target === "/var/run/docker.sock" || dockerSocketPath(resolve(mount.source))) {
-    throw new Error("Docker socket mount is forbidden");
-  }
-}
-
 function validMemoryLimit(value: string): boolean {
   const match = /^(\d+)([kmg])?$/i.exec(value);
   if (!match) return false;
@@ -352,10 +274,6 @@ function validMemoryLimit(value: string): boolean {
       : match[2]?.toLowerCase() === "k" ? 1024 : 1;
   const bytes = amount * multiplier;
   return Number.isSafeInteger(bytes) && bytes >= 64 * 1024 ** 2 && bytes <= 64 * 1024 ** 3;
-}
-
-function dockerSocketPath(path: string): boolean {
-  return path.replace(/\\/g, "/").toLowerCase().endsWith("/docker.sock");
 }
 
 function bindMountArg(mount: DockerBindMount): string {

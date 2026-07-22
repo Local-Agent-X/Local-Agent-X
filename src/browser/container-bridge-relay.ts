@@ -1,14 +1,37 @@
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, rmSync } from "node:fs";
-import { connect, createServer, type Server, type Socket } from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
 import type { BrowserViewInfo } from "./bridge-client-contract.js";
 import { viewBelongsToSession } from "./bridge-perception.js";
+import {
+	encodeFrame,
+	exchange,
+	isRecord,
+	MAX_BROWSER_RELAY_FRAME_BYTES,
+	sealFrame,
+	validateEndpoint,
+	verifyFrame,
+	type RelayFrame,
+	type RelayResponse,
+} from "./container-bridge-transport.js";
+import {
+	applyForwardedLineage,
+	assertLineagePayload,
+	type BrowserRelayLineageSink,
+	type RelayLineagePayload,
+} from "./container-bridge-lineage.js";
 
-export const CONTAINER_BROWSER_RELAY_FLAG = "LAX_CONTAINER_BROWSER_RELAY";
-export const CONTAINER_BROWSER_RELAY_SOCKET = "LAX_CONTAINER_BROWSER_RELAY_SOCKET";
-export const CONTAINER_BROWSER_RELAY_TOKEN = "LAX_CONTAINER_BROWSER_RELAY_TOKEN";
-export const MAX_BROWSER_RELAY_FRAME_BYTES = 16 * 1024 * 1024;
+// The wire framing/crypto/client transport and the relay-activation config now
+// live in container-bridge-transport.ts (shared with the lineage forwarder);
+// re-exported here so existing importers keep their import site unchanged.
+export {
+	CONTAINER_BROWSER_RELAY_FLAG,
+	CONTAINER_BROWSER_RELAY_SOCKET,
+	CONTAINER_BROWSER_RELAY_TOKEN,
+	MAX_BROWSER_RELAY_FRAME_BYTES,
+	browserContainerRelayActivated,
+} from "./container-bridge-transport.js";
+export type { BrowserRelayLineageSink } from "./container-bridge-lineage.js";
 
 export interface BrowserRelayRequest {
 	op: string;
@@ -28,22 +51,12 @@ export interface BrowserRelayServerHandle {
 }
 
 interface RelayPayload {
-	kind: "request" | "abort";
+	// "taint"/"canaries" carry data-lineage forwarding (see
+	// container-bridge-lineage.ts); their sessionId/entries/canaries fields are
+	// validated by assertLineagePayload rather than typed on this op shape.
+	kind: "request" | "abort" | "taint" | "canaries";
 	request?: BrowserRelayRequest;
 	viewId?: string;
-}
-
-interface RelayFrame {
-	version: 1;
-	id: string;
-	payload: unknown;
-	mac: string;
-}
-
-interface RelayResponse {
-	ok: boolean;
-	result?: unknown;
-	error?: { name: string; message: string };
 }
 
 const ALLOWED_OPS = new Set([
@@ -53,10 +66,6 @@ const ALLOWED_OPS = new Set([
 	"dialogs:dismiss", "exec", "input", "capture", "clear-partition",
 ]);
 const activeServers = new Map<string, BrowserRelayServerHandle>();
-
-export function browserContainerRelayActivated(env = process.env): boolean {
-	return env[CONTAINER_BROWSER_RELAY_FLAG] === "1";
-}
 
 export async function relayBrowserRequest(request: BrowserRelayRequest): Promise<unknown> {
 	validateRequest(request);
@@ -80,6 +89,10 @@ export async function startBrowserContainerRelay(options: {
 	 *  container off another session's browser views. */
 	ownerSessionId: string;
 	handler: BrowserRelayHandler;
+	/** Optional sink for forwarded data-lineage state (container taint/canaries).
+	 *  Absent → lineage frames are still authenticated + session-checked but
+	 *  applied nowhere. The host wiring binds it to the canonical registries. */
+	lineage?: BrowserRelayLineageSink;
 }): Promise<BrowserRelayServerHandle> {
 	validateEndpoint(options.socketPath, options.token);
 	assertOwnerSessionId(options.ownerSessionId);
@@ -89,7 +102,7 @@ export async function startBrowserContainerRelay(options: {
 	const server = createServer(socket => {
 		sockets.add(socket);
 		socket.once("close", () => sockets.delete(socket));
-		handleSocket(socket, options.token, options.ownerSessionId, options.handler);
+		handleSocket(socket, options.token, options.ownerSessionId, options.handler, options.lineage);
 	});
 	await listen(server, options.socketPath);
 	if (process.platform !== "win32") chmodSync(options.socketPath, 0o600);
@@ -111,56 +124,12 @@ export async function startBrowserContainerRelay(options: {
 	return handle;
 }
 
-async function exchange(payload: RelayPayload, timeoutMs: number): Promise<unknown> {
-	const { socketPath, token } = configuredEndpoint();
-	const frame = sealFrame(payload, token);
-	const encoded = encodeFrame(frame);
-	const response = await new Promise<RelayResponse>((resolve, reject) => {
-		const socket = connect(socketPath);
-		let settled = false;
-		let bytes = 0;
-		let body = "";
-		const decoder = new StringDecoder("utf8");
-		const finish = (fn: () => void) => {
-			if (settled) return;
-			settled = true;
-			socket.destroy();
-			fn();
-		};
-		socket.setTimeout(timeoutMs, () => finish(() => reject(new Error("browser relay timed out"))));
-		socket.once("error", error => finish(() => reject(error)));
-		socket.once("close", () => finish(() => reject(new Error("browser relay closed before replying"))));
-		socket.on("data", chunk => {
-			bytes += chunk.length;
-			if (bytes > MAX_BROWSER_RELAY_FRAME_BYTES) {
-				finish(() => reject(new Error("browser relay response exceeded its limit")));
-				return;
-			}
-			body += decoder.write(chunk);
-			const newline = body.indexOf("\n");
-			if (newline < 0) return;
-			try {
-				const reply = verifyFrame(body.slice(0, newline), token, frame.id);
-				finish(() => resolve(reply.payload as RelayResponse));
-			} catch (error) {
-				finish(() => reject(error));
-			}
-		});
-		socket.once("connect", () => socket.write(encoded));
-	});
-	if (!response.ok) {
-		const error = new Error(response.error?.message ?? "browser relay request failed");
-		error.name = response.error?.name ?? "Error";
-		throw error;
-	}
-	return response.result;
-}
-
 function handleSocket(
 	socket: Socket,
 	token: string,
 	ownerSessionId: string,
 	handler: BrowserRelayHandler,
+	lineage: BrowserRelayLineageSink | undefined,
 ): void {
 	let bytes = 0;
 	let body = "";
@@ -176,7 +145,7 @@ function handleSocket(
 		if (newline < 0) return;
 		if (body.slice(newline + 1).trim() !== "") { socket.destroy(); return; }
 		handled = true;
-		void serveFrame(socket, body.slice(0, newline), token, ownerSessionId, handler);
+		void serveFrame(socket, body.slice(0, newline), token, ownerSessionId, handler, lineage);
 	});
 }
 
@@ -186,6 +155,7 @@ async function serveFrame(
 	token: string,
 	ownerSessionId: string,
 	handler: BrowserRelayHandler,
+	lineage: BrowserRelayLineageSink | undefined,
 ): Promise<void> {
 	let frame: RelayFrame;
 	try {
@@ -201,6 +171,11 @@ async function serveFrame(
 		if (payload.kind === "abort") {
 			assertOwnedView(payload.viewId as string, ownerSessionId);
 			await handler.abort(payload.viewId as string);
+			response = { ok: true };
+		} else if (payload.kind === "taint" || payload.kind === "canaries") {
+			// Data-lineage forwarding: session-binding enforced inside (a
+			// cross-session forward throws → the whole frame is refused).
+			applyForwardedLineage(frame.payload as RelayLineagePayload, ownerSessionId, lineage);
 			response = { ok: true };
 		} else {
 			const request = payload.request as BrowserRelayRequest;
@@ -223,6 +198,7 @@ async function serveFrame(
 function validatePayload(payload: unknown): asserts payload is RelayPayload {
 	if (!isRecord(payload)) throw new Error("invalid browser relay payload");
 	if (payload.kind === "abort") { assertViewId(payload.viewId); return; }
+	if (payload.kind === "taint" || payload.kind === "canaries") { assertLineagePayload(payload); return; }
 	if (payload.kind !== "request") throw new Error("invalid browser relay operation");
 	validateRequest(payload.request);
 }
@@ -253,47 +229,6 @@ function expectedMessageType(op: string): string {
 	if (op.startsWith("lifecycle:")) return "lax:browser-lifecycle";
 	if (op.startsWith("dialogs:")) return "lax:browser-dialogs";
 	return `lax:browser-${op}`;
-}
-
-function sealFrame(payload: unknown, token: string, id: string = randomUUID()): RelayFrame {
-	const unsigned = { version: 1 as const, id, payload };
-	return { ...unsigned, mac: createHmac("sha256", token).update(JSON.stringify(unsigned)).digest("hex") };
-}
-
-function encodeFrame(frame: RelayFrame): string {
-	const encoded = `${JSON.stringify(frame)}\n`;
-	if (Buffer.byteLength(encoded) > MAX_BROWSER_RELAY_FRAME_BYTES) {
-		throw new Error("browser relay frame exceeded its limit");
-	}
-	return encoded;
-}
-
-function verifyFrame(body: string, token: string, expectedId?: string): RelayFrame {
-	const frame = JSON.parse(body) as Partial<RelayFrame>;
-	if (frame.version !== 1 || typeof frame.id !== "string" || frame.id.length > 64
-		|| (expectedId !== undefined && frame.id !== expectedId) || !isRecord(frame.payload)
-		|| typeof frame.mac !== "string" || !/^[a-f0-9]{64}$/.test(frame.mac)) {
-		throw new Error("invalid browser relay frame");
-	}
-	const expected = sealFrame(frame.payload, token, frame.id).mac;
-	if (!timingSafeEqual(Buffer.from(frame.mac, "hex"), Buffer.from(expected, "hex"))) {
-		throw new Error("browser relay authentication failed");
-	}
-	return frame as RelayFrame;
-}
-
-function configuredEndpoint(): { socketPath: string; token: string } {
-	if (!browserContainerRelayActivated()) throw new Error("container browser relay is not activated");
-	const socketPath = process.env[CONTAINER_BROWSER_RELAY_SOCKET]?.trim() ?? "";
-	const token = process.env[CONTAINER_BROWSER_RELAY_TOKEN]?.trim() ?? "";
-	validateEndpoint(socketPath, token);
-	return { socketPath, token };
-}
-
-function validateEndpoint(socketPath: string, token: string): void {
-	if (!socketPath || socketPath.length > 512 || !/^[a-f0-9]{64}$/.test(token)) {
-		throw new Error("container browser relay configuration is invalid");
-	}
 }
 
 function assertViewId(value: unknown): asserts value is string {
@@ -352,10 +287,6 @@ function assertOwnedView(viewId: string, ownerSessionId: string): void {
 	if (!viewBelongsToSession(viewId, ownerSessionId)) {
 		throw new Error("browser relay view is not owned by this session");
 	}
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function serializeError(error: unknown): { name: string; message: string } {

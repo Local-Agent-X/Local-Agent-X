@@ -14,6 +14,7 @@ import {
   type ExecutionOwnerClaim,
 } from "./process-execution-claim.js";
 import { startProcessControlRelay } from "./process-control-relay.js";
+import { startContainerLineageForwarding } from "../browser/container-taint-forward.js";
 import {
   appendProcessRelayRecord,
   backfillCanonicalRelayTail,
@@ -49,6 +50,11 @@ export async function runClaimedExecutionWorker(
   let heartbeat: NodeJS.Timeout | undefined;
   let ownershipLost = false;
   const stopControl = startProcessControlRelay(op.id);
+  // Forward this process's sensitive-read taint / canaries to the host when the
+  // browser relay is active (container browsing) — no-op otherwise, so host-side
+  // execution is unaffected. Keeps the host page-egress scan from being blind to
+  // taint accrued inside the container (audit finding 5).
+  const stopLineageForwarding = startContainerLineageForwarding();
   try {
     initializeProcessRelayJournal(expected, sessionId);
     setProcessRelayOutputWriter((kind, payload) => {
@@ -95,6 +101,7 @@ export async function runClaimedExecutionWorker(
     throw error;
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    stopLineageForwarding();
     stopControl();
     setProcessRelayOutputWriter(null);
     setSessionRelayWriter(null);

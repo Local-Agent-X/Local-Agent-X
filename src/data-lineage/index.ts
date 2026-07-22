@@ -28,6 +28,7 @@ export {
   findTaintInEntries,
   subscribeTaintChanges,
   checkEgressTaintWithPayload,
+  setForwardedSessionTaint,
   clearSessionTaint,
   getKernelTaintSources,
   propagateTaint,

@@ -29,6 +29,7 @@ export {
 } from "./feature-flag.js";
 
 export { decideSubmitRouting, type SubmitRouting } from "./router.js";
+export { validateDependencyBatch } from "./dependencies.js";
 
 export {
   appendCanonicalEvent,
@@ -202,7 +203,6 @@ export { startRecoveryJanitor } from "./recovery-janitor.js";
 
 export { evictWorker } from "./scheduler.js";
 
-// Test-only crash simulation primitive: stops a worker's heartbeat
 // without releasing its lease. Lease will expire on its own and
 // `recoverStaleOp` can then recover it. Underscore marks it internal.
 export { _pauseHeartbeat } from "./worker.js";

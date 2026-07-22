@@ -21,8 +21,8 @@ import type { ToolDefinition } from "../../types.js";
 import {
   awaitCanonicalOp,
   canonicalLoopEntry,
+  validateDependencyBatch,
 } from "../../canonical-loop/index.js";
-import { validateDependencyBatch } from "../../canonical-loop/dependencies.js";
 import type { Op } from "../types.js";
 import { trackOpForSession } from "../session-bridge.js";
 import {

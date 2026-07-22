@@ -74,11 +74,14 @@ const LEGACY_STATUS: Record<CanonicalState, OpStatus> = {
 const TERMINAL: ReadonlySet<CanonicalState> = new Set(["succeeded", "failed", "cancelled"]);
 let beforePersistHook: () => void = () => undefined;
 type TerminalObserver = (op: Op, state: CanonicalState) => void;
-const terminalObservers = new Set<TerminalObserver>();
+// Lazy `var` is deliberate: event-emitter telemetry reaches scheduler during
+// state-machine initialization, so eager lexical initialization has a TDZ in
+// that valid import cycle.
+var terminalObservers: Set<TerminalObserver> | undefined;
 
 export function registerTerminalObserver(observer: TerminalObserver): () => void {
-  terminalObservers.add(observer);
-  return () => terminalObservers.delete(observer);
+  (terminalObservers ??= new Set()).add(observer);
+  return () => terminalObservers?.delete(observer);
 }
 
 /** Deterministic persistence-failure seam for cross-platform recovery tests. */
@@ -175,7 +178,7 @@ export function transitionOp(
 
   const event = emit(op.id, "state_changed", { from, to, reason });
   if (TERMINAL.has(to)) {
-    for (const observer of terminalObservers) {
+    for (const observer of terminalObservers ?? []) {
       try { observer(op, to); }
       catch (error) {
         logger.warn(`[terminal-observer] ${op.id}: ${(error as Error).message}`);

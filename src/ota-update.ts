@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile, rm, copyFile, utimes } from "node:fs/promises";
+import { mkdir, writeFile, rm, copyFile, utimes } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -6,6 +6,10 @@ import { extractTarball } from "./ota-extract.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import { createLogger } from "./logger.js";
 import { UpdateRollbackTransaction } from "./update-rollback.js";
+import {
+  markHistoryRolledBack, readInstalledCommit, readUpdateHistory, upsertAppliedHistory,
+  writeInstalledCommit, writeUpdateHistory, type UpdateHistoryEntry,
+} from "./ota-update-state.js";
 
 const logger = createLogger("ota-update");
 
@@ -41,14 +45,6 @@ export function assertSha256(buf: Buffer, expectedHex: string): void {
   }
 }
 
-interface UpdateHistoryEntry {
-  version: string;
-  appliedAt: string;
-  status: "applied" | "rolled-back";
-  previousVersion: string;
-  targetVersion?: string;
-}
-
 export class OTAManager {
   private laxDir: string;
   private historyPath: string;
@@ -82,22 +78,12 @@ export class OTAManager {
   // remote main HEAD to decide "is there an update".
 
   async readInstalledCommit(): Promise<string | null> {
-    try {
-      const raw = await readFile(this.installedCommitPath, "utf-8");
-      const v = JSON.parse(raw) as { commit?: string };
-      return v.commit || null;
-    } catch {
-      return null;
-    }
+    return readInstalledCommit(this.installedCommitPath);
   }
 
   async writeInstalledCommit(commit: string): Promise<void> {
     await this.init();
-    await writeFile(
-      this.installedCommitPath,
-      JSON.stringify({ commit, updatedAt: new Date().toISOString() }, null, 2),
-      "utf-8"
-    );
+    await writeInstalledCommit(this.installedCommitPath, commit);
   }
 
   // Remote main HEAD via the unauthenticated commits API — the same public
@@ -176,7 +162,7 @@ export class OTAManager {
       }
     }
     if (!existsSync(this.historyPath)) {
-      await writeFile(this.historyPath, "[]", "utf-8");
+      await writeUpdateHistory(this.historyPath, []);
     }
   }
 
@@ -203,13 +189,7 @@ export class OTAManager {
       );
     }
 
-    const pending = await this.rollback.read(installDir);
-    if (pending?.status === "verified") await this.rollback.clearVerified();
-    else if (pending && pending.status !== "restored") {
-      await this.rollback.restore(installDir, pending.targetVersion, "interrupted update transaction");
-      if (/^[0-9a-f]{40}$/.test(pending.previousVersion)) await this.writeInstalledCommit(pending.previousVersion);
-      await this.rollback.clearRestored();
-    } else if (pending?.status === "restored") await this.rollback.clearRestored();
+    await this.recoverPendingUpdate(installDir);
 
     // Extract first so we can back up exactly what this update will overwrite.
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
@@ -271,15 +251,19 @@ export class OTAManager {
     // record in history
     const newVersion = tarPath.match(/([^/\\]+)\.tar\.gz$/)?.[1] ?? "unknown";
     try {
-      await this.addHistoryEntry({
+      const applied = await this.rollback.read(installDir);
+      if (!applied || applied.status !== "applied") throw new Error("Applied update transaction is missing.");
+      await upsertAppliedHistory(this.historyPath, {
         version: newVersion,
         appliedAt: new Date().toISOString(),
         status: "applied",
-      previousVersion: currentVersion,
-      targetVersion: expectedCommit,
+        previousVersion: currentVersion,
+        targetVersion: expectedCommit,
+        transactionId: applied.id,
       });
     } catch (error) {
-      await this.rollback.restore(installDir, expectedCommit, `update report failed: ${(error as Error).message}`);
+      const restored = await this.rollback.restore(installDir, expectedCommit, `update report failed: ${(error as Error).message}`);
+      await markHistoryRolledBack(this.historyPath, restored.id, restored.previousVersion, restored.targetVersion);
       throw new Error(`Update rolled back after report persistence failed: ${(error as Error).message}`);
     }
 
@@ -292,6 +276,19 @@ export class OTAManager {
     await this.rollback.markVerified(commit);
   }
 
+  async recoverPendingUpdate(installDir: string): Promise<void> {
+    let pending = await this.rollback.read(installDir);
+    if (!pending) return;
+    if (pending.status === "verified") { await this.rollback.clearVerified(); return; }
+    if (pending.status !== "restored") {
+      pending = await this.rollback.restore(installDir, pending.targetVersion, "interrupted update transaction");
+    }
+    if (/^[0-9a-f]{40}$/.test(pending.previousVersion)) await this.writeInstalledCommit(pending.previousVersion);
+    else await rm(this.installedCommitPath, { force: true });
+    await markHistoryRolledBack(this.historyPath, pending.id, pending.previousVersion, pending.targetVersion);
+    await this.rollback.clearRestored();
+  }
+
   async rollbackUpdate(installDir: string, expectedCommit?: string): Promise<void> {
     const pending = await this.rollback.read(installDir);
     if (!pending) throw new Error("No update to roll back");
@@ -300,14 +297,8 @@ export class OTAManager {
     }
     await this.rollback.restore(installDir, pending.targetVersion, "update verification failed");
     if (/^[0-9a-f]{40}$/.test(pending.previousVersion)) await this.writeInstalledCommit(pending.previousVersion);
-    const history = await this.readHistory();
-    const lastApplied = [...history].reverse()
-      .find((entry) => entry.status === "applied" && entry.previousVersion === pending.previousVersion
-        && (!entry.targetVersion || entry.targetVersion === pending.targetVersion));
-    if (lastApplied) {
-      lastApplied.status = "rolled-back";
-      await this.writeHistory(history);
-    }
+    else await rm(this.installedCommitPath, { force: true });
+    await markHistoryRolledBack(this.historyPath, pending.id, pending.previousVersion, pending.targetVersion);
   }
 
   async getHistory(): Promise<UpdateHistoryEntry[]> {
@@ -315,22 +306,7 @@ export class OTAManager {
   }
 
   private async readHistory(): Promise<UpdateHistoryEntry[]> {
-    try {
-      const raw = await readFile(this.historyPath, "utf-8");
-      return JSON.parse(raw) as UpdateHistoryEntry[];
-    } catch {
-      return [];
-    }
-  }
-
-  private async writeHistory(entries: UpdateHistoryEntry[]): Promise<void> {
-    await writeFile(this.historyPath, JSON.stringify(entries, null, 2), "utf-8");
-  }
-
-  private async addHistoryEntry(entry: UpdateHistoryEntry): Promise<void> {
-    const history = await this.readHistory();
-    history.push(entry);
-    await this.writeHistory(history);
+    return readUpdateHistory(this.historyPath);
   }
 
   private async copyDirectory(src: string, dest: string, topLevel = true): Promise<void> {

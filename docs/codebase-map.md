@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1390 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1393 non-test source files · 1 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -28,12 +28,12 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/workspace/` | 33 | 2 | M |  |
 | `src/session/` | 31 | 7 | L |  |
 | `src/auth/` | 29 | 10 | L |  |
-| `src/util/` | 27 | 2 | S |  |
-| `src/agency/` | 26 | 16 | L |  |
+| `src/util/` | 28 | 2 | S |  |
+| `src/agency/` | 26 | 18 | L |  |
 | `src/threat/` | 26 | 11 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/tool-policy/` | 25 | 20 | L |  |
-| `src/browser/` | 24 | 51 | XL |  |
+| `src/browser/` | 24 | 51 | XL | 1 |
 | `src/local-runtimes/` | 23 | 18 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
@@ -52,7 +52,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/self-edit/` | 10 | 19 | L |  |
+| `src/self-edit/` | 10 | 20 | L |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/tool-execution/` | 9 | 33 | XL |  |
@@ -135,8 +135,10 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/mcp-bridge.ts` | S |
 | `src/model-fallback.ts` | S |
 | `src/model-tiers.ts` | S |
+| `src/mutation-lock.ts` | S |
 | `src/ollama-cloud.ts` | S |
 | `src/ota-extract.ts` | S |
+| `src/ota-update-state.ts` | S |
 | `src/ota-update.ts` | M |
 | `src/pid-probe.ts` | S |
 | `src/platform-root.ts` | S |
@@ -182,7 +184,18 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/types.ts` | M |
 | `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
+| `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | S |
 | `src/worker-session.ts` | S |
+
+## God files (> 400 LOC)
+
+Burn-down targets for `/refactor-godfiles`. Membership only (not exact LOC),
+so a god file growing a little doesn't churn this doc — only crossing the
+400-line line does.
+
+| File | Size |
+|---|:--:|
+| `src/browser/in-app-backend.ts` | M |
 

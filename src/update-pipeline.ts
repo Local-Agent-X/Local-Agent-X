@@ -287,6 +287,7 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
   }
   try {
     const ota = new OTAManager();
+    await ota.recoverPendingUpdate(installDir);
     const installed = (await ota.readInstalledCommit()) || "";
     const { commit } = await ota.checkMainCommit();
     if (installed && installed === commit) {

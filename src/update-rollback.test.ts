@@ -195,10 +195,42 @@ describe("update rollback transaction", () => {
     writeFileSync(join(f.install, "src", "app.ts"), "new");
     writeFileSync(join(f.install, added), "added");
     await expect(first.restore(f.install, target, "failed")).rejects.toThrow("kill");
+    expect((await new UpdateRollbackTransaction(f.state).read())?.restoreComplete).toHaveLength(1);
 
     const resumed = new UpdateRollbackTransaction(f.state);
     await expect(resumed.restore(f.install, target, "retry")).resolves.toMatchObject({ status: "restored" });
     expect(readFileSync(join(f.install, "src", "app.ts"), "utf-8")).toBe("old");
     expect(existsSync(join(f.install, added))).toBe(false);
+  });
+
+  it("repairs the state journal when a crash follows anchor publication", async () => {
+    const f = fixture();
+    let publications = 0;
+    const interrupted = new UpdateRollbackTransaction(f.state, (point) => {
+      if (point === "after-anchor-publication" && ++publications === 2) throw new Error("kill");
+    });
+    const target = "b".repeat(40);
+    await expect(interrupted.begin(f.install, "a".repeat(40), target, [join("src", "app.ts")]))
+      .rejects.toThrow("kill");
+
+    const resumed = new UpdateRollbackTransaction(f.state);
+    expect((await resumed.read(f.install))?.backupComplete).toEqual([join("src", "app.ts")]);
+    await expect(resumed.restore(f.install, target, "interrupted backup publication")).resolves.toMatchObject({ status: "restored" });
+  });
+
+  it("reapplies a completed restore entry if its target changes before resume", async () => {
+    const f = fixture();
+    const path = join("src", "app.ts");
+    const target = "b".repeat(40);
+    const interrupted = new UpdateRollbackTransaction(f.state, (point) => {
+      if (point === `after-restore-entry:${path}`) throw new Error("kill");
+    });
+    await interrupted.begin(f.install, "a".repeat(40), target, [path]);
+    writeFileSync(join(f.install, path), "new");
+    await expect(interrupted.restore(f.install, target, "failed")).rejects.toThrow("kill");
+    writeFileSync(join(f.install, path), "changed-after-checkpoint");
+
+    await new UpdateRollbackTransaction(f.state).restore(f.install, target, "retry");
+    expect(readFileSync(join(f.install, path), "utf-8")).toBe("old");
   });
 });

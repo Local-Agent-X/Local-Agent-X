@@ -1,128 +1,16 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync, constants, existsSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, writeFileSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
+import { constants, existsSync } from "node:fs";
 import { lstat, mkdir, open, readFile, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import {
+  createJournal, directoryIdentity, durableJson, hash, parseJson, safePathChain, safeRelative, sameIdentity, samePath,
+  UPDATE_ROLLBACK_ANCHOR, UPDATE_ROLLBACK_VERSION, validAnchor, validJournal,
+  type TransactionAnchor, type UpdateRollbackEntry, type UpdateRollbackJournal,
+} from "./update-rollback-state.js";
 
-const VERSION = 1;
-const ANCHOR_FILE = ".lax-update-rollback.json";
-
-interface DirectoryIdentity { path: string; real: string; dev: number; ino: number; birthtimeMs: number }
-export interface UpdateRollbackEntry { path: string; existed: boolean; sha256: string | null }
-export interface UpdateRollbackJournal {
-  version: 1; id: string;
-  status: "backing-up" | "active" | "applied" | "verified" | "restored";
-  installRoot: string; stateRoot: string;
-  installBase: DirectoryIdentity; stateBase: DirectoryIdentity;
-  previousVersion: string; targetVersion: string;
-  entries: UpdateRollbackEntry[]; manifestCommitment: string; startedAt: string;
-  restoredAt?: string; reason?: string;
-}
-
-interface TransactionAnchor { version: 1; journal: UpdateRollbackJournal; previousCommitment: string | null }
-
-function durableJson(path: string, value: unknown): void {
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(value, null, 2), { encoding: "utf-8", mode: 0o600 });
-  const file = openSync(temporary, "r+");
-  try { fsyncSync(file); } finally { closeSync(file); }
-  renameSync(temporary, path);
-  try {
-    const directory = openSync(dirname(path), "r");
-    try { fsyncSync(directory); } finally { closeSync(directory); }
-  } catch { /* Windows cannot fsync directories; the atomic rename still holds. */ }
-}
-
-function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+export type { UpdateRollbackEntry, UpdateRollbackJournal } from "./update-rollback-state.js";
 
 async function digest(path: string): Promise<string> { return createHash("sha256").update(await readFile(path)).digest("hex"); }
-
-function samePath(left: string, right: string): boolean {
-  const [a, b] = [resolve(left), resolve(right)];
-  return process.platform === "win32" ? a.toLocaleLowerCase("en-US") === b.toLocaleLowerCase("en-US") : a === b;
-}
-
-function inside(base: string, path: string): boolean {
-  const rel = relative(resolve(base), resolve(path));
-  return rel !== "" && !isAbsolute(rel) && !rel.split(/[\\/]/).includes("..");
-}
-
-function directoryIdentity(path: string): DirectoryIdentity {
-  let info;
-  try { info = lstatSync(path); } catch { throw new Error(`Trusted rollback base is missing: ${path}`); }
-  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Trusted rollback base is linked or not a directory: ${path}`);
-  const real = realpathSync(path);
-  if (!samePath(real, path)) throw new Error(`Trusted rollback base has a linked ancestor: ${path}`);
-  return { path: resolve(path), real: resolve(real), dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
-}
-
-function sameIdentity(expected: DirectoryIdentity, actual: DirectoryIdentity): boolean {
-  return samePath(expected.path, actual.path) && samePath(expected.real, actual.real)
-    && expected.dev === actual.dev && expected.ino === actual.ino && expected.birthtimeMs === actual.birthtimeMs;
-}
-
-function safeRelative(path: string): boolean {
-  return Boolean(path) && path !== "." && !isAbsolute(path) && normalize(path) === path
-    && !path.split(/[\\/]/).some((part) => !part || part === "." || part === "..");
-}
-
-function safePathChain(base: string, relativePath: string): boolean {
-  if (!safeRelative(relativePath) || !inside(base, resolve(base, relativePath))) return false;
-  let current = resolve(base);
-  for (const part of relativePath.split(/[\\/]/)) {
-    current = join(current, part);
-    try {
-      const info = lstatSync(current);
-      if (info.isSymbolicLink() || !inside(base, realpathSync(current))) return false;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
-    }
-  }
-  return true;
-}
-
-function validIdentity(value: unknown): value is DirectoryIdentity {
-  const item = value as Partial<DirectoryIdentity> | null;
-  return !!item && typeof item.path === "string" && typeof item.real === "string"
-    && typeof item.dev === "number" && typeof item.ino === "number" && typeof item.birthtimeMs === "number";
-}
-
-function manifest(journal: Omit<UpdateRollbackJournal, "manifestCommitment">): unknown {
-  return {
-    id: journal.id, installRoot: journal.installRoot, stateRoot: journal.stateRoot,
-    installBase: journal.installBase, stateBase: journal.stateBase, previousVersion: journal.previousVersion,
-    targetVersion: journal.targetVersion, entries: journal.entries, startedAt: journal.startedAt,
-  };
-}
-
-function validJournal(value: unknown): value is UpdateRollbackJournal {
-  const journal = value as UpdateRollbackJournal | null;
-  if (!journal || journal.version !== VERSION || !["backing-up", "active", "applied", "verified", "restored"].includes(journal.status)) return false;
-  if (typeof journal.id !== "string" || !journal.id || typeof journal.installRoot !== "string"
-    || typeof journal.stateRoot !== "string" || typeof journal.previousVersion !== "string" || !journal.previousVersion
-    || typeof journal.targetVersion !== "string" || !journal.targetVersion || typeof journal.startedAt !== "string"
-    || !validIdentity(journal.installBase) || !validIdentity(journal.stateBase) || !Array.isArray(journal.entries)) return false;
-  if (!journal.entries.every((entry) => entry && safeRelative(entry.path) && typeof entry.existed === "boolean"
-    && (entry.sha256 === null || /^[0-9a-f]{64}$/.test(entry.sha256)))) return false;
-  const folded = journal.entries.map((entry) => entry.path.toLocaleLowerCase("en-US"));
-  if (new Set(folded).size !== folded.length) return false;
-  if (!journal.entries.every((entry, index) => !index
-    || journal.entries[index - 1]!.path.localeCompare(entry.path) <= 0)) return false;
-  const { manifestCommitment: _commitment, ...unsigned } = journal;
-  return /^[0-9a-f]{64}$/.test(journal.manifestCommitment) && hash(manifest(unsigned)) === journal.manifestCommitment;
-}
-
-function validAnchor(value: unknown): value is TransactionAnchor {
-  const anchor = value as TransactionAnchor | null;
-  return !!anchor && anchor.version === VERSION && validJournal(anchor.journal)
-    && (anchor.previousCommitment === null || /^[0-9a-f]{64}$/.test(anchor.previousCommitment));
-}
-function parseJson(path: string): unknown {
-  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { return JSON.parse(readFileSync(descriptor, "utf-8")); }
-  finally { closeSync(descriptor); }
-}
 
 export class UpdateRollbackTransaction {
   readonly directory: string;
@@ -149,7 +37,7 @@ export class UpdateRollbackTransaction {
       if (!journalPresent) return null;
       throw this.ambiguous();
     }
-    const anchorPath = join(installRoot, ANCHOR_FILE);
+    const anchorPath = join(installRoot, UPDATE_ROLLBACK_ANCHOR);
     let anchor: unknown;
     try { anchor = parseJson(anchorPath); }
     catch (error) {
@@ -183,7 +71,7 @@ export class UpdateRollbackTransaction {
     }
     const entries: UpdateRollbackEntry[] = [];
     for (const path of ordered) {
-      if (!safeRelative(path) || path.toLocaleLowerCase("en-US") === ANCHOR_FILE.toLocaleLowerCase("en-US")) throw new Error(`Unsafe update path '${path}'.`);
+      if (!safeRelative(path) || path.toLocaleLowerCase("en-US") === UPDATE_ROLLBACK_ANCHOR.toLocaleLowerCase("en-US")) throw new Error(`Unsafe update path '${path}'.`);
       this.assertRawPath(root, path, "install");
       const source = resolve(root, path);
       try {
@@ -195,12 +83,7 @@ export class UpdateRollbackTransaction {
         else throw error;
       }
     }
-    const unsigned = {
-      version: VERSION as 1, id: randomUUID(), status: "backing-up" as const, installRoot: root,
-      stateRoot: resolve(this.stateRoot), installBase, stateBase, previousVersion, targetVersion, entries,
-      startedAt: new Date().toISOString(),
-    };
-    const journal: UpdateRollbackJournal = { ...unsigned, manifestCommitment: hash(manifest(unsigned as Omit<UpdateRollbackJournal, "manifestCommitment">)) };
+    let journal = createJournal(root, resolve(this.stateRoot), previousVersion, targetVersion, entries, installBase, stateBase);
     this.assertRawPath(this.stateRoot, join("update-rollback", "artifacts"), "backup");
     await mkdir(this.backupRoot, { recursive: true });
     await this.persist(journal, null);
@@ -213,6 +96,7 @@ export class UpdateRollbackTransaction {
       this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       await this.copyNoFollow(join(root, entry.path), join(this.backupRoot, entry.path), entry.sha256!, journal, entry);
+      journal = await this.checkpointEntry(journal, "backupComplete", entry.path);
       this.fault(`after-backup-entry:${entry.path}`);
     }
     await this.transition(journal, { ...journal, status: "active" });
@@ -232,7 +116,7 @@ export class UpdateRollbackTransaction {
   }
 
   async restore(installRoot: string, targetVersion: string, reason: string): Promise<UpdateRollbackJournal> {
-    const journal = await this.require(targetVersion, installRoot);
+    let journal = await this.require(targetVersion, installRoot);
     if (!samePath(installRoot, journal.installRoot)) throw new Error("Rollback install identity does not match this installation.");
     if (journal.status === "restored") { await this.publishReport(journal); return journal; }
     if (journal.status === "backing-up") {
@@ -258,6 +142,7 @@ export class UpdateRollbackTransaction {
       this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       const target = join(journal.installRoot, entry.path);
+      if ((journal.restoreComplete ?? []).includes(entry.path) && await this.entryMatchesRestoredState(target, entry)) continue;
       if (entry.existed) {
         const backup = join(this.backupRoot, entry.path);
         if (await digest(backup) !== entry.sha256) throw new Error(`Rollback backup failed integrity verification: ${entry.path}`);
@@ -270,6 +155,7 @@ export class UpdateRollbackTransaction {
         this.assertEntryPaths(journal, entry);
         await rm(target, { force: true });
       }
+      journal = await this.checkpointEntry(journal, "restoreComplete", entry.path);
       this.fault(`after-restore-entry:${entry.path}`);
     }
     return this.finishRestore(journal, reason);
@@ -315,8 +201,8 @@ export class UpdateRollbackTransaction {
 
   private assertBound(journal: UpdateRollbackJournal): void {
     this.assertJournal(journal);
-    const anchorPath = join(journal.installRoot, ANCHOR_FILE);
-    this.assertRawPath(journal.installRoot, ANCHOR_FILE, "anchor");
+    const anchorPath = join(journal.installRoot, UPDATE_ROLLBACK_ANCHOR);
+    this.assertRawPath(journal.installRoot, UPDATE_ROLLBACK_ANCHOR, "anchor");
     let anchor: unknown;
     try { anchor = parseJson(anchorPath); } catch (error) { throw this.ambiguous(error); }
     if (!validAnchor(anchor) || hash(anchor.journal) !== hash(journal)) throw this.ambiguous();
@@ -327,20 +213,36 @@ export class UpdateRollbackTransaction {
 
   private async persist(journal: UpdateRollbackJournal, previous: UpdateRollbackJournal | null): Promise<void> {
     if (previous) this.assertBound(previous);
-    else if (existsSync(join(journal.installRoot, ANCHOR_FILE))) throw this.ambiguous();
+    else if (existsSync(join(journal.installRoot, UPDATE_ROLLBACK_ANCHOR))) throw this.ambiguous();
     this.assertJournal(journal);
-    this.assertRawPath(journal.installRoot, ANCHOR_FILE, "anchor");
-    durableJson(join(journal.installRoot, ANCHOR_FILE), {
-      version: VERSION, journal, previousCommitment: previous ? hash(previous) : null,
+    this.assertRawPath(journal.installRoot, UPDATE_ROLLBACK_ANCHOR, "anchor");
+    durableJson(join(journal.installRoot, UPDATE_ROLLBACK_ANCHOR), {
+      version: UPDATE_ROLLBACK_VERSION, journal, previousCommitment: previous ? hash(previous) : null,
     } satisfies TransactionAnchor);
+    this.fault("after-anchor-publication");
     this.assertJournal(journal);
     this.assertRawPath(this.stateRoot, join("update-rollback", "transaction.json"), "journal");
     durableJson(this.journalPath, journal);
+    this.fault("after-journal-publication");
     this.assertBound(journal);
   }
 
   private async transition(previous: UpdateRollbackJournal, next: UpdateRollbackJournal): Promise<void> {
     await this.persist(next, previous);
+  }
+
+  private async checkpointEntry(
+    journal: UpdateRollbackJournal, field: "backupComplete" | "restoreComplete", path: string,
+  ): Promise<UpdateRollbackJournal> {
+    if ((journal[field] ?? []).includes(path)) return journal;
+    const next = { ...journal, [field]: [...(journal[field] ?? []), path] };
+    await this.transition(journal, next);
+    return next;
+  }
+
+  private async entryMatchesRestoredState(target: string, entry: UpdateRollbackEntry): Promise<boolean> {
+    if (!entry.existed) return !existsSync(target);
+    try { return await digest(target) === entry.sha256; } catch { return false; }
   }
   private async copyNoFollow(
     source: string, destination: string, expectedHash: string,
@@ -381,10 +283,10 @@ export class UpdateRollbackTransaction {
     this.assertRawPath(this.stateRoot, "update-rollback", "cleanup");
     await rm(this.directory, { recursive: true, force: true });
     this.assertJournalBases(journal);
-    this.assertRawPath(journal.installRoot, ANCHOR_FILE, "anchor");
-    const anchor = parseJson(join(journal.installRoot, ANCHOR_FILE));
+    this.assertRawPath(journal.installRoot, UPDATE_ROLLBACK_ANCHOR, "anchor");
+    const anchor = parseJson(join(journal.installRoot, UPDATE_ROLLBACK_ANCHOR));
     if (!validAnchor(anchor) || hash(anchor.journal) !== hash(journal)) throw this.ambiguous();
-    await rm(join(journal.installRoot, ANCHOR_FILE), { force: true });
+    await rm(join(journal.installRoot, UPDATE_ROLLBACK_ANCHOR), { force: true });
   }
 
   private async require(targetVersion: string, installRoot?: string): Promise<UpdateRollbackJournal> {

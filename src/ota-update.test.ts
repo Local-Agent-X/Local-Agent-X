@@ -98,6 +98,28 @@ describe("OTAManager — installed commit marker", () => {
 });
 
 describe("OTAManager — applyUpdate is userData-safe", () => {
+  it("removes a published commit marker when first-install verification rolls back", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-ota-first-rollback-"));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(join(installDir, "src"), { recursive: true });
+    mkdirSync(join(pkgDir, "src"), { recursive: true });
+    writeFileSync(join(installDir, "src", "app.ts"), "OLD");
+    writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
+    const target = "deadbeefcafebabe0000000000000000feedface";
+    const manager = new OTAManager("o", "r", join(root, "lax"));
+
+    await manager.applyUpdate(join(root, "rel.tar.gz"), installDir, "rolling", target);
+    await manager.writeInstalledCommit(target);
+    await manager.rollbackUpdate(installDir, target);
+
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("OLD");
+    expect(await manager.readInstalledCommit()).toBeNull();
+    expect(await manager.getHistory()).toMatchObject([{ status: "rolled-back" }]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("applies the update, backs up only overlapping source, and preserves install-only files", async () => {
     const root = mkdtempSync(join(tmpdir(), "lax-ota-apply-"));
     const installDir = join(root, "install");
@@ -118,9 +140,11 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     // ("Cannot connect to C:"). Relative names work for GNU tar and bsdtar alike.
     execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
 
+    const previous = "a".repeat(40);
+    const target = "deadbeefcafebabe0000000000000000feedface";
     const m = new OTAManager("o", "r", join(root, "lax"));
     await expect(
-      m.applyUpdate(tarPath, installDir, "v0", "deadbeefcafebabe0000000000000000feedface")
+      m.applyUpdate(tarPath, installDir, previous, target)
     ).resolves.toEqual({ depsChanged: false });
 
     // Update applied.
@@ -133,6 +157,16 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     const backupDir = join(root, "lax", "update-rollback", "artifacts");
     expect(readFileSync(join(backupDir, "src", "app.ts"), "utf-8")).toBe("OLD");
     expect(existsSync(join(backupDir, "keep.marker"))).toBe(false);
+
+    // A crash after publishing the new commit marker but before verification
+    // converges to the prior installation before the up-to-date fast path.
+    await m.writeInstalledCommit(target);
+    await m.recoverPendingUpdate(installDir);
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("OLD");
+    expect(existsSync(join(installDir, "added.txt"))).toBe(false);
+    expect(await m.readInstalledCommit()).toBe(previous);
+    expect(await m.getHistory()).toMatchObject([{ transactionId: expect.any(String), status: "rolled-back" }]);
+    expect(existsSync(join(installDir, ".lax-update-rollback.json"))).toBe(false);
 
     rmSync(root, { recursive: true, force: true });
   });

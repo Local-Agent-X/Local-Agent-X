@@ -10,7 +10,7 @@
 import { describe, it, expect, afterAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, existsSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import type { Op } from "./types.js";
 
 const fsReads = vi.hoisted(() => ({ operations: 0 }));
@@ -30,7 +30,7 @@ vi.mock("node:fs", async (importActual) => {
 const dataDir = mkdtempSync(join(tmpdir(), "lax-opstore-"));
 process.env.LAX_DATA_DIR = dataDir;
 
-const { writeOp, readOp, listRecentOps, setOpStatus, tryWithOpLock, withOpLock } = await import("./op-store.js");
+const { writeOp, readOp, listRecentOps, setOpStatus, tryWithOpLock, withOpLock, newOpId, sanitizeIdPrefix } = await import("./op-store.js");
 const { persistOpKeepingSignals } = await import("../canonical-loop/index.js");
 
 const opDirOf = (id: string) => join(dataDir, "operations", id);
@@ -173,5 +173,42 @@ describe("persistOpKeepingSignals — RMW serialized by the per-op lock", () => 
     const onDisk = readOp(id);
     expect(onDisk?.status).toBe("running");
     expect(onDisk?.canonical?.pauseRequestedAt).toBe(pausedAt);
+  });
+});
+
+describe("newOpId — model-controlled op type cannot escape the operations root", () => {
+  it("strips path metacharacters from a traversal-laden op type prefix", () => {
+    // `type` is model-controlled at op_submit_async; op-store mints the id as
+    // `op_${type}` which becomes a path segment under ~/.lax/operations.
+    const id = newOpId("op_../../../../etc/passwd");
+    expect(id).not.toContain("..");
+    expect(id).not.toContain("/");
+    expect(id).not.toContain("\\");
+    // Joining the sanitized id stays strictly inside the operations root.
+    const dir = opDirOf(id);
+    const root = join(dataDir, "operations");
+    expect(dir.startsWith(root + sep)).toBe(true);
+  });
+
+  it("leaves an ordinary op type prefix byte-for-byte intact (no regression)", () => {
+    const id = newOpId("op_build_app");
+    expect(id).toMatch(/^op_build_app_[0-9a-f]{16}$/);
+  });
+});
+
+describe("sanitizeIdPrefix", () => {
+  it("collapses separators, drive colons, dots and NULs to underscores", () => {
+    expect(sanitizeIdPrefix("op_../../x")).toBe("op__x");
+    expect(sanitizeIdPrefix("op_C:\\Windows")).toBe("op_C_Windows");
+    expect(sanitizeIdPrefix("op_a\0b")).toBe("op_a_b");
+  });
+
+  it("falls back when the prefix has no safe characters left", () => {
+    expect(sanitizeIdPrefix("../../")).toBe("op");
+    expect(sanitizeIdPrefix("///", "fallback")).toBe("fallback");
+  });
+
+  it("keeps already-safe prefixes unchanged", () => {
+    expect(sanitizeIdPrefix("op_chat_turn")).toBe("op_chat_turn");
   });
 });

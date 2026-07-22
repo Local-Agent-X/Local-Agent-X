@@ -77,6 +77,7 @@ type RowExpect =
       stage: ToolBlockedStage;
       disposition?: "hard-deny" | "approval-required";
       reason?: RegExp;
+      recovery?: RegExp;
     };
 
 interface MatrixRow {
@@ -143,6 +144,33 @@ const rows: MatrixRow[] = [
     call: { id: "m-comp", name: "computer", args: { action: "screen_size" } },
     deps: { getRuntimeConfig: () => flags({ enableComputerControl: false }) },
     expected: { outcome: "blocked", stage: "tool-policy", reason: /Computer control .* is disabled/ },
+  },
+  {
+    // The deny is the SAME ToolBlocked shape as every other pre-dispatch veto
+    // (stage + hard-deny + recovery), so downstream it renders as the standard
+    // status:"blocked" envelope — no retry-loop bait.
+    name: "screen_capture with a live in-app browser view → hard-denied at tool-policy, redirect recovery",
+    call: { id: "m-cap", name: "screen_capture", args: {} },
+    deps: { hasInAppBrowserView: () => true },
+    expected: {
+      outcome: "blocked",
+      stage: "tool-policy",
+      disposition: "hard-deny",
+      reason: /in-app browser view.*\{action:"screenshot"\}/,
+      recovery: /target:"os-screen"/,
+    },
+  },
+  {
+    name: "screen_capture with target:'os-screen' → allowed despite a live in-app view",
+    call: { id: "m-cap-os", name: "screen_capture", args: { target: "os-screen" } },
+    deps: { hasInAppBrowserView: () => true },
+    expected: { outcome: "allowed" },
+  },
+  {
+    name: "screen_capture with no in-app view → allowed (normal desktop use unchanged)",
+    call: { id: "m-cap-none", name: "screen_capture", args: {} },
+    deps: { hasInAppBrowserView: () => false },
+    expected: { outcome: "allowed" },
   },
   {
     name: "strict local-only mode → non-loopback network tool blocked (real policy fn, injected cfg)",
@@ -302,6 +330,7 @@ describe("pre-dispatch veto matrix — (tool, situation) → stage/disposition v
         expect(blocked?.stage).toBe(exp.stage);
         expect(blocked?.disposition).toBe(exp.disposition ?? "hard-deny");
         if (exp.reason) expect(blocked?.reason).toMatch(exp.reason);
+        if (exp.recovery) expect(blocked?.recovery).toMatch(exp.recovery);
         expect(prompts).toHaveLength(0);
       }
     });

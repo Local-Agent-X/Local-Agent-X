@@ -202,6 +202,9 @@ export const screenCaptureTool: ToolDefinition = {
     "website/web-app task (DNS setup, form filling, login, reading a page) use `browser` with " +
     "action:'snapshot' instead. browser's snapshot gives structured refs you can click/fill; " +
     "screen_capture just gives a flat image with no interaction handles. " +
+    "While this session has a live in-app browser view open, screen_capture WITHOUT target:'os-screen' is " +
+    "DENIED — use `browser` {action:'screenshot'} to see the browser pane, and pass target:'os-screen' only " +
+    "when the user's actual screen is genuinely what you need. " +
     "If the user mentions a non-primary display (\"second screen\", \"other monitor\", \"my laptop screen\"), " +
     "OR if the app they want isn't on monitor 0, call `list_monitors` FIRST to see what's connected, " +
     "then pass the right `monitor` index. Do NOT guess monitor:0 when the user hints at a different screen. " +
@@ -224,6 +227,15 @@ export const screenCaptureTool: ToolDefinition = {
       },
       scale: { type: "number", description: "Scale factor 0.1-1.0 to reduce image size (default 0.5). Lower = smaller file." },
       question: { type: "string", description: "What to analyze about the screen (default: describe it)" },
+      target: {
+        type: "string",
+        enum: ["os-screen"],
+        description:
+          "Explicit override required while this session has a live in-app browser view open: without " +
+          "target:'os-screen' the call is denied there (to see the browser pane, use `browser` " +
+          "{action:'screenshot'} instead). Pass 'os-screen' ONLY when the user's actual monitor — their " +
+          "desktop, another app — is genuinely what you need. Omit it otherwise.",
+      },
     },
     required: [],
   },

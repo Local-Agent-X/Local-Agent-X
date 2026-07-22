@@ -110,3 +110,40 @@ export function killSwitchBlock(
   }
   return null;
 }
+
+export interface ScreenCaptureRedirectBlock {
+  reason: string;
+  recovery: string;
+}
+
+/**
+ * Screen-capture redirect gate — same pre-dispatch seam as the kill-switches,
+ * but triggered by live session state instead of a config field: when the
+ * session owns a live in-app browser view, a whole-monitor screen_capture is
+ * almost always the agent trying to SEE its own browser pane after an in-app
+ * perception hiccup — and the flat monitor image then baits it into guessing
+ * coordinates. Prose in the tool description didn't stop this; the deny does,
+ * and its text names the right move in BOTH directions (browser screenshot
+ * for the pane, target:"os-screen" when the user's actual screen is wanted).
+ *
+ * `hasLiveInAppView` is a lazy getter (same shape as supervisedEvaluateBlock's
+ * getCurrentUrl) so the browser subsystem is only consulted for screen_capture
+ * calls, never on the general tool hot path.
+ */
+export async function screenCaptureRedirectBlock(
+  call: { name: string; args: Record<string, unknown> },
+  hasLiveInAppView: () => boolean | Promise<boolean>,
+): Promise<ScreenCaptureRedirectBlock | null> {
+  if (call.name !== "screen_capture") return null;
+  if ((call.args as { target?: unknown }).target === "os-screen") return null;
+  if (!(await hasLiveInAppView())) return null;
+  return {
+    reason:
+      `screen_capture is blocked while this session has a live in-app browser view: to SEE the browser pane, ` +
+      `use \`browser\` with {action:"screenshot"} — a whole-monitor capture of your own pane invites coordinate guessing.`,
+    recovery:
+      `Call \`browser\` with {action:"screenshot"} to see the browser pane, or {action:"snapshot"} for structured ` +
+      `refs you can click/fill. If you genuinely need the USER's actual screen (their desktop, another app — NOT ` +
+      `the in-app browser), retry screen_capture with target:"os-screen".`,
+  };
+}

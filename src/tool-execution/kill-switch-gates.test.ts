@@ -11,7 +11,7 @@
  *  4. The App-Map security line derives from the schema (no hand-typed drift).
  */
 import { describe, it, expect } from "vitest";
-import { KILL_SWITCH_GATES, killSwitchBlock } from "./kill-switch-gates.js";
+import { KILL_SWITCH_GATES, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
 import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS } from "../settings-schema.js";
 import { securitySettingsLine } from "../manifest-generator/summary.js";
 import { USER_HINTS } from "../types.js";
@@ -88,6 +88,44 @@ describe("kill-switch gate registry contract", () => {
   it("USER_HINTS.killSwitch exists and points at Settings → Security, not tool-policy.json", () => {
     expect(USER_HINTS.killSwitch).toContain("Settings → Security");
     expect(USER_HINTS.killSwitch).not.toContain("tool-policy.json");
+  });
+});
+
+describe("screen-capture redirect gate", () => {
+  const capture = (args: Record<string, unknown> = {}) => ({ name: "screen_capture", args });
+
+  it("live in-app view + no override → denied; text points at browser screenshot AND the os-screen retry", async () => {
+    const block = await screenCaptureRedirectBlock(capture(), () => true);
+    expect(block).not.toBeNull();
+    // Both halves of the redirect must be named: the pane move in the reason
+    // (it lands in the result content) and both moves in the recovery.
+    expect(block!.reason).toContain(`{action:"screenshot"}`);
+    expect(block!.recovery).toContain(`{action:"screenshot"}`);
+    expect(block!.recovery).toContain(`target:"os-screen"`);
+  });
+
+  it("live in-app view + target:'os-screen' → allowed, without consulting the browser subsystem", async () => {
+    let consulted = false;
+    const block = await screenCaptureRedirectBlock(
+      capture({ target: "os-screen" }),
+      () => { consulted = true; return true; },
+    );
+    expect(block).toBeNull();
+    expect(consulted).toBe(false);
+  });
+
+  it("no in-app view → allowed (normal desktop use unchanged)", async () => {
+    expect(await screenCaptureRedirectBlock(capture(), () => false)).toBeNull();
+  });
+
+  it("other tools never consult the view accessor", async () => {
+    let consulted = false;
+    const block = await screenCaptureRedirectBlock(
+      { name: "browser", args: { action: "screenshot" } },
+      () => { consulted = true; return true; },
+    );
+    expect(block).toBeNull();
+    expect(consulted).toBe(false);
   });
 });
 

@@ -23,7 +23,7 @@ import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/layer/index.js";
 import { isProtectedSetting } from "../settings-schema.js";
 import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
-import { killSwitchBlock } from "./kill-switch-gates.js";
+import { killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
@@ -148,6 +148,25 @@ export async function assertToolCallAllowed(
       reason: killSwitch.reason,
       recovery: killSwitch.recovery,
       userHint: USER_HINTS.killSwitch,
+    });
+  }
+  // Screen-capture redirect: a session that owns a live in-app browser view
+  // and calls screen_capture WITHOUT the explicit target:"os-screen" override
+  // is almost always trying to see its own browser pane — deny with the right
+  // move spelled out (browser {action:"screenshot"}) instead of letting it
+  // guess coordinates off a whole-monitor image. Live session state, not
+  // config, so it sits beside (not in) the kill-switch table; the getter is
+  // lazy so the browser subsystem is only consulted for screen_capture calls.
+  const captureRedirect = await screenCaptureRedirectBlock(call, () =>
+    d.hasInAppBrowserView(ctx.sessionId),
+  );
+  if (captureRedirect) {
+    // No USER_HINTS entry fits (the `policy` hint points at tool-policy.json —
+    // the wrong layer here); the reason is already user-comprehensible.
+    throw new ToolBlocked({
+      stage: "tool-policy",
+      reason: captureRedirect.reason,
+      recovery: captureRedirect.recovery,
     });
   }
   // Supervised browser mode. DEFAULT OFF — the in-app browser is autonomous,

@@ -22,6 +22,7 @@ export default defineConfig({
     include: [
       "test/**/*.test.ts",
       "src/**/*.test.ts",
+      "desktop/src/**/*.test.ts",
       "packages/**/__tests__/**/*.test.ts",
     ],
     exclude: [

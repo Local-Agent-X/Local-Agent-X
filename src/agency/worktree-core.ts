@@ -61,6 +61,26 @@ export function releaseWorktreeSlot(name: string): void {
 }
 
 /**
+ * Config flags prepended to EVERY git invocation this module makes.
+ *
+ * `gc.auto=0` disables Git's automatic garbage collection. Auto-gc is
+ * default-enabled and fires opportunistically after fetch/merge/commit; its
+ * repack+prune deletes objects it deems unreachable. A boot sweep that
+ * momentarily severs a reachability root (worktree prune, branch delete) can
+ * leave objects transiently unreachable exactly when the next op trips auto-gc
+ * — which then prunes them from a SHARED object store and corrupts the repo
+ * ("bad object HEAD"). Disabling auto-gc per-invocation makes that cascade
+ * impossible without persisting any config into the user's checkout.
+ */
+export const GIT_SAFETY_ARGS: readonly string[] = ["-c", "gc.auto=0"];
+
+/** Compose the full argv passed to git: safety flags first, then the command. */
+export function composeGitArgs(args: string[] | string): string[] {
+  const argv = Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);
+  return [...GIT_SAFETY_ARGS, ...argv];
+}
+
+/**
  * Run git with an explicit args array via execFileSync (no shell).
  *
  * The previous implementation used `execSync(\`git ${cmd}\`)` which spawns
@@ -69,12 +89,19 @@ export function releaseWorktreeSlot(name: string): void {
  * environment was missing ComSpec / SystemRoot. execFileSync calls git
  * directly with explicit env passthrough — no shell, no env-dependent
  * lookup, no quoting concerns.
+ *
+ * `cwd` is REQUIRED and must name the intended repo/worktree. It used to
+ * default to `process.cwd()`, which — when the app runs from a user's live dev
+ * checkout — silently pointed repo-global mutations (worktree prune, branch
+ * delete) at that checkout instead of the app's own %TEMP% worktree base,
+ * destroying it. Every call site now names its target explicitly; a caller that
+ * genuinely wants the ambient repo passes `process.cwd()` on purpose.
  */
-export function git(args: string[] | string, cwd?: string): string {
+export function git(args: string[] | string, cwd: string): string {
   const argv = Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);
   try {
-    return execFileSync("git", argv, {
-      cwd: cwd || process.cwd(),
+    return execFileSync("git", composeGitArgs(argv), {
+      cwd,
       encoding: "utf-8",
       timeout: 30_000,
       windowsHide: true,

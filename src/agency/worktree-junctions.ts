@@ -1,5 +1,10 @@
 /**
- * node_modules junction management + the boot-time orphan sweep.
+ * node_modules junction management + reparse-safe teardown helpers.
+ *
+ * The boot-time orphan sweep itself lives in worktree-recovery.ts
+ * (reconcileWorktreeBase); this module owns the junction primitives it and the
+ * lifecycle teardown rely on (unlink reparse points, prune merged agent
+ * branches).
  *
  * Junctions (Windows) / symlinks (Unix) share the parent repo's node_modules
  * and dist into a worktree so autopilot builds resolve deps without a per-shift
@@ -9,11 +14,10 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readdirSync, lstatSync, realpathSync, unlinkSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, readdirSync, lstatSync, realpathSync, unlinkSync, symlinkSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
-import { isSelfEditLockHeldByLiveProcess } from "../self-edit/global-lock.js";
-import { git, logger, WORKTREE_BASE } from "./worktree-core.js";
+import { git, logger } from "./worktree-core.js";
 
 /**
  * Junction (Windows) or symlink (Unix) a directory from src into dst.
@@ -124,32 +128,6 @@ export function unlinkSharedJunctions(wtPath: string): string[] {
  * walking the entire source tree. Used by the boot sweep so a raw recursive
  * delete can never traverse a reparse point this helper missed.
  */
-/**
- * Recursive-delete a directory, retrying on Windows transient lock errors.
- *
- * On Windows a just-released worktree dir is often still pinned for a few
- * hundred ms by an AV scanner, the file indexer, or git's own handle teardown,
- * surfacing as EBUSY / EPERM / ENOTEMPTY. The old single-shot rmSync logged and
- * gave up, so the orphan survived every boot and accumulated forever. A short
- * backoff lets the OS release the handle. ENOENT (already gone) is success.
- */
-async function rmDirWithRetry(dir: string, attempts = 5): Promise<boolean> {
-  const transient = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
-  for (let i = 0; i < attempts; i++) {
-    try { rmSync(dir, { recursive: true, force: true }); return true; }
-    catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return true;
-      if (!code || !transient.has(code) || i === attempts - 1) {
-        logger.warn(`[worktree] rm ${dir} failed (${code}): ${(e as Error).message}`);
-        return false;
-      }
-      await new Promise(r => setTimeout(r, 150 * (i + 1)));
-    }
-  }
-  return false;
-}
-
 function scanReparsePoints(wtPath: string): string[] {
   const found: string[] = [];
   const scanDir = (dir: string) => {
@@ -191,17 +169,17 @@ export function unlinkAllShallowReparsePoints(wtPath: string): string[] {
  * is abandoned. `git branch -d` (lower-case) refuses to delete an unmerged
  * branch, so even a misclassified branch can't lose work.
  */
-export function pruneMergedAgentBranches(): void {
+export function pruneMergedAgentBranches(repoRoot: string): void {
   const checkedOut = new Set<string>();
   try {
-    for (const line of git(["worktree", "list", "--porcelain"]).split("\n")) {
+    for (const line of git(["worktree", "list", "--porcelain"], repoRoot).split("\n")) {
       if (line.startsWith("branch ")) checkedOut.add(line.slice(7).replace(/^refs\/heads\//, ""));
     }
   } catch { return; }
 
   let branches: string[];
   try {
-    branches = git(["branch", "--merged"]).split("\n")
+    branches = git(["branch", "--merged"], repoRoot).split("\n")
       .map(l => l.replace(/^[*+]\s*/, "").trim())
       .filter(Boolean);
   } catch { return; }
@@ -209,87 +187,8 @@ export function pruneMergedAgentBranches(): void {
   let deleted = 0;
   for (const b of branches) {
     if (!(b.startsWith("selfedit/") || b.startsWith("autopilot/")) || checkedOut.has(b)) continue;
-    try { git(["branch", "-d", b]); deleted++; }
+    try { git(["branch", "-d", b], repoRoot); deleted++; }
     catch { /* unmerged or still in use — leave it */ }
   }
   if (deleted) logger.info(`[worktree] orphan sweep: deleted ${deleted} merged agent branch(es)`);
-}
-
-/**
- * Boot-time sweep of orphaned worktrees left in %TEMP%/lax-worktrees by a
- * self_edit / autopilot run that crashed between worktree-create and cleanup.
- *
- * Each orphan can still hold a LIVE junction (node_modules, packages/<pkg>/
- * node_modules, or any future shallow link) pointing at the parent repo's real
- * tree. A later `git worktree prune`, AV scan, or manual %TEMP% cleanup can
- * traverse that junction and delete the parent's real files — bricking the app
- * (#11). We scan for EVERY shallow reparse point and unlink it first (not just
- * the hardcoded node_modules paths), THEN remove the now-link-free orphan dir,
- * THEN prune git's stale registry. An orphan with any reparse point we could
- * NOT unlink is left untouched and logged — never deleted, since deleting it is
- * exactly the traversal we're guarding against.
- *
- * Safe to call at boot: the in-memory worktree registry is empty in a fresh
- * process, so everything on disk under WORKTREE_BASE is by definition an orphan
- * from a prior run.
- */
-export async function sweepOrphanWorktreeJunctions(): Promise<void> {
-  // A live self_edit holds the global lock while it builds inside a worktree
-  // under WORKTREE_BASE. During a restart overlap (old instance mid-self_edit,
-  // new instance booting) that worktree is NOT an orphan — unlinking its
-  // junction would brick the in-flight build. Skip the whole sweep; the next
-  // boot (no active self_edit) reclaims any genuine orphans.
-  if (await isSelfEditLockHeldByLiveProcess()) {
-    logger.info("[worktree] orphan sweep: a live self_edit holds the global lock — skipping to protect its active worktree");
-    return;
-  }
-  if (!existsSync(WORKTREE_BASE)) return;
-  let dirs: string[];
-  try {
-    dirs = readdirSync(WORKTREE_BASE);
-  } catch (e) {
-    logger.warn(`[worktree] orphan sweep: cannot read ${WORKTREE_BASE}: ${(e as Error).message}`);
-    return;
-  }
-  if (dirs.length === 0) return;
-
-  let removed = 0;
-  let stuckTotal = 0;
-  for (const name of dirs) {
-    const wtPath = join(WORKTREE_BASE, name);
-    try { if (!lstatSync(wtPath).isDirectory()) continue; } catch { continue; }
-
-    // Unlink EVERY shallow reparse point, not just the node_modules ones — an
-    // unknown/future junction (e.g. a dist link) must not survive into the
-    // recursive delete below and get traversed into the parent's real tree.
-    const points = scanReparsePoints(wtPath);
-    const stuck = points.filter(p => !unlinkReparsePoint(p));
-    // Belt-and-suspenders: re-scan. If ANY reparse point remains, refuse to
-    // recursive-delete this orphan — deletion would traverse the live link.
-    const remaining = scanReparsePoints(wtPath);
-    // realpath catch-all: scanReparsePoints relies on lstat, which can miss a
-    // junction Windows misclassifies as a plain directory. Confirm no shallow
-    // node_modules still resolves into a parent tree before the recursive
-    // delete, regardless of how lstat sees it.
-    const escaped = shallowNodeModules(wtPath).filter(nm => escapesSandbox(nm, wtPath));
-    if (stuck.length || remaining.length || escaped.length) {
-      stuckTotal += Math.max(stuck.length, remaining.length, escaped.length);
-      logger.warn(`[worktree] orphan sweep: live reparse point(s) in ${wtPath} (${[...new Set([...stuck, ...remaining, ...escaped])].join(", ")}) — left on disk to protect the parent tree`);
-      continue;
-    }
-    // Reparse-point-free now — safe to remove the orphan dir entirely. Retry
-    // on Windows transient locks (AV / indexer / git handle) rather than
-    // letting the orphan survive to the next boot.
-    if (await rmDirWithRetry(wtPath)) removed++;
-  }
-
-  // Prune git's registry of the worktrees we just removed. Run AFTER unlinking
-  // so prune can never traverse a live junction.
-  try { git(["worktree", "prune"]); }
-  catch (e) { logger.warn(`[worktree] orphan sweep: git worktree prune failed: ${(e as Error).message}`); }
-
-  // Now that the registry is pruned, drop dead agent branches (merged-only).
-  pruneMergedAgentBranches();
-
-  logger.info(`[worktree] orphan sweep: ${dirs.length} dir(s) scanned, ${removed} removed, ${stuckTotal} junction(s) stuck`);
 }

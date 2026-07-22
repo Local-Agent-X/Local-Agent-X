@@ -12,7 +12,8 @@ import {
   activeWorktrees, git, logger, MAX_PENDING_RECOVERED_WORKTREES,
   pendingRecoveredWorktrees, type WorktreeEntry, WORKTREE_BASE, worktreeSlotAvailable,
 } from "./worktree-core.js";
-import { pruneMergedAgentBranches, unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
+import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
+import { reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
 import { currentProcessIncarnation, processIncarnationIsLive } from "./worktree-process.js";
 
 interface OwnershipRecord {
@@ -364,8 +365,7 @@ export async function reconcileWorktreeBase(
     results.push(classifyDirectory(name, wtPath, base, probe, hooks));
   }
   if (canonical(base) === canonical(WORKTREE_BASE)) {
-    try { git(["worktree", "prune"]); } catch { /* current repo unavailable */ }
-    pruneMergedAgentBranches();
+    reapAppOwnWorktrees();
   }
   for (const result of results) {
     logger.info(`[worktree] recovery ${result.disposition}: ${result.path} (${result.reason})`);

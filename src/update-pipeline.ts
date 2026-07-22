@@ -75,8 +75,18 @@ export interface GitUpdateResult {
   gates?: UpdateGates;
 }
 
+/**
+ * Prepend `-c gc.auto=0` to a `git ...` command so the update's fetch / merge /
+ * commit can never trigger Git's default auto-gc, whose repack+prune would
+ * delete objects momentarily unreachable during the landing and corrupt the
+ * shared object store. Non-git commands (npm, etc.) pass through unchanged.
+ */
+export function gitSafeCmd(cmd: string): string {
+  return /^git\s/.test(cmd) ? cmd.replace(/^git\s/, "git -c gc.auto=0 ") : cmd;
+}
+
 function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): string {
-  return execSync(cmd, { cwd, encoding: "utf-8", timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }).trim();
+  return execSync(gitSafeCmd(cmd), { cwd, encoding: "utf-8", timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }).trim();
 }
 
 /** A Windows file lock (a loaded native module, AV, or the file indexer), as

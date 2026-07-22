@@ -16,7 +16,9 @@ export function createWorktree(agentId: string): { path: string; branch: string 
   let repoRoot: string;
   let baseBranch: string;
   try {
-    repoRoot = git("rev-parse --show-toplevel");
+    // Agency path: the repo is the one the app runs from — resolve it from the
+    // ambient cwd EXPLICITLY (git() no longer defaults cwd to process.cwd()).
+    repoRoot = git("rev-parse --show-toplevel", process.cwd());
     baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
   } catch (e) {
     logger.warn(`[worktree] Failed to resolve repository: ${(e as Error).message}`);
@@ -242,7 +244,10 @@ export function createNamedWorktree(
   let resolvedRoot: string;
   let baseBranch: string;
   try {
-    resolvedRoot = git("rev-parse --show-toplevel", repoRoot);
+    // repoRoot given → the caller's repo (auto-build's user app); absent → the
+    // LAX repo the server runs from. Name the discovery cwd explicitly either
+    // way — git() no longer falls back to process.cwd() on its own.
+    resolvedRoot = git("rev-parse --show-toplevel", repoRoot ?? process.cwd());
     baseBranch = git("rev-parse --abbrev-ref HEAD", resolvedRoot);
   } catch (e) {
     logger.warn(`[worktree] Failed to resolve named worktree repository: ${(e as Error).message}`);

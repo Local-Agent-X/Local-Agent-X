@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 
 import { getOrCreateMasterKey } from "../keychain.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -131,6 +131,11 @@ function loadOrCreateProtectedKey(): Buffer {
 
 export function getAuditHmacKey(): Buffer | string {
   if (cachedKey !== null) return cachedKey;
+  const keyFile = process.env.LAX_AUDIT_KEY_FILE;
+  if (keyFile) {
+    cachedKey = readProjectedAuditKey(keyFile);
+    return cachedKey;
+  }
   const envKey = process.env.LAX_AUDIT_KEY;
   if (envKey) {
     cachedKey = envKey;
@@ -176,8 +181,30 @@ export function _resetAuditKeyCacheForTests(): void {
  * the upstream signal that closes that downgrade.
  */
 export function hasPersistedAuditKey(): boolean {
-  if (process.env.LAX_AUDIT_KEY) return true;
+  if (process.env.LAX_AUDIT_KEY_FILE || process.env.LAX_AUDIT_KEY) return true;
   return existsSync(encPath()) || existsSync(plaintextPath());
+}
+
+function readProjectedAuditKey(path: string): Buffer {
+  if (!isAbsolute(path)) throw new Error("projected audit key path must be absolute");
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 256) {
+    throw new Error("projected audit key must be a small regular file");
+  }
+  const encoded = readFileSync(path, "utf8").trim();
+  if (/^[a-f0-9]{64}$/.test(encoded)) return Buffer.from(encoded, "hex");
+  let projected: { schemaVersion?: unknown; key?: unknown };
+  try { projected = JSON.parse(encoded); }
+  catch { throw new Error("projected audit key is invalid"); }
+  if (projected.schemaVersion !== 1 || typeof projected.key !== "string"
+    || !/^[A-Za-z0-9+/]+={0,2}$/.test(projected.key)) {
+    throw new Error("projected audit key is invalid");
+  }
+  const key = Buffer.from(projected.key, "base64");
+  if (key.length < 1 || key.length > 1024 || key.toString("base64") !== projected.key) {
+    throw new Error("projected audit key is invalid");
+  }
+  return key;
 }
 
 // Keyed MAC over a fixed marker string, used by the threat audit trail to seal

@@ -68,6 +68,7 @@ describe("loadOrCreateProtectedKey — plaintext seed shred", () => {
   let dir: string | null = null;
   const prevDataDir = process.env.LAX_DATA_DIR;
   const prevAuditKey = process.env.LAX_AUDIT_KEY;
+  const prevAuditKeyFile = process.env.LAX_AUDIT_KEY_FILE;
 
   afterEach(() => {
     _resetAuditKeyCacheForTests();
@@ -80,6 +81,40 @@ describe("loadOrCreateProtectedKey — plaintext seed shred", () => {
     else process.env.LAX_DATA_DIR = prevDataDir;
     if (prevAuditKey === undefined) delete process.env.LAX_AUDIT_KEY;
     else process.env.LAX_AUDIT_KEY = prevAuditKey;
+    if (prevAuditKeyFile === undefined) delete process.env.LAX_AUDIT_KEY_FILE;
+    else process.env.LAX_AUDIT_KEY_FILE = prevAuditKeyFile;
+  });
+
+  it("loads an exact projected seed without opening the host key store", () => {
+    dir = mkdtempSync(join(tmpdir(), "lax-audit-projected-"));
+    const projected = join(dir, "audit-key");
+    writeFileSync(projected, "ab".repeat(32), { mode: 0o600 });
+    process.env.LAX_AUDIT_KEY_FILE = projected;
+    delete process.env.LAX_AUDIT_KEY;
+    _resetAuditKeyCacheForTests();
+
+    expect(getAuditHmacKey()).toEqual(Buffer.from("ab".repeat(32), "hex"));
+  });
+
+  it("loads an exact variable-length projected HMAC key", () => {
+    dir = mkdtempSync(join(tmpdir(), "lax-audit-projected-"));
+    const projected = join(dir, "audit-key");
+    writeFileSync(projected, JSON.stringify({ schemaVersion: 1,
+      key: Buffer.from("exact-host-key").toString("base64") }), { mode: 0o600 });
+    process.env.LAX_AUDIT_KEY_FILE = projected;
+    _resetAuditKeyCacheForTests();
+
+    expect(getAuditHmacKey()).toEqual(Buffer.from("exact-host-key"));
+  });
+
+  it("rejects malformed projected seeds instead of minting a replacement", () => {
+    dir = mkdtempSync(join(tmpdir(), "lax-audit-projected-"));
+    const projected = join(dir, "audit-key");
+    writeFileSync(projected, "not-a-seed", { mode: 0o600 });
+    process.env.LAX_AUDIT_KEY_FILE = projected;
+    _resetAuditKeyCacheForTests();
+
+    expect(() => getAuditHmacKey()).toThrow("projected audit key is invalid");
   });
 
   it("migrates the legacy plaintext seed into the sealed store and removes the plaintext", () => {

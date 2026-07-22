@@ -44,6 +44,7 @@ export interface DockerContainerSpec {
   environment: Readonly<Record<string, string>>;
   mounts: readonly DockerBindMount[];
   network: "none" | { name: string };
+  user?: { uid: number; gid: number };
   memoryLimit: string;
   pidsLimit: number;
   labels: Readonly<Record<string, string>>;
@@ -127,7 +128,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
       "create", "--name", spec.name,
       "--read-only", "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges:true",
-      "--user", "1000:1000",
+      "--user", spec.user ? `${spec.user.uid}:${spec.user.gid}` : "1000:1000",
       "--pids-limit", String(spec.pidsLimit),
       "--memory", spec.memoryLimit,
       "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
@@ -254,6 +255,10 @@ function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy):
     throw new Error("container execution network is not approved");
   }
   if (!validMemoryLimit(spec.memoryLimit)) throw new Error("invalid container memory limit");
+  if (spec.user && (!Number.isSafeInteger(spec.user.uid) || spec.user.uid < 1
+    || !Number.isSafeInteger(spec.user.gid) || spec.user.gid < 1)) {
+    throw new Error("invalid non-root container user");
+  }
   if (!Number.isSafeInteger(spec.pidsLimit) || spec.pidsLimit < 16 || spec.pidsLimit > 4096) {
     throw new Error("invalid container pid limit");
   }

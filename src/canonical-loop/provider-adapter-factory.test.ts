@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 
 const fixture = vi.hoisted(() => ({
@@ -44,10 +44,12 @@ const {
   assertExactDelegatedRuntime,
   captureTargetCapabilitySnapshot,
   createProviderAdapterFactory,
+  rewriteVerifiedLocalEndpointForContainer,
   resolveProviderRuntime,
 } = await import("./provider-adapter-factory.js");
 
 beforeEach(() => {
+  delete process.env.LAX_CONTAINER_HOST_GATEWAY;
   fixture.cloudModels.clear();
   fixture.certified = false;
   vi.clearAllMocks();
@@ -56,8 +58,17 @@ beforeEach(() => {
   fixture.createAnthropicAdapter.mockReturnValue({ name: "anthropic" });
   fixture.createCodexAdapter.mockReturnValue({ name: "codex" });
 });
+afterEach(() => { delete process.env.LAX_CONTAINER_HOST_GATEWAY; });
 
 describe("delegated provider runtime identity", () => {
+  it("rewrites only a verified loopback endpoint to the explicit container gateway", () => {
+    process.env.LAX_CONTAINER_HOST_GATEWAY = "host.docker.internal";
+    expect(rewriteVerifiedLocalEndpointForContainer("http://127.0.0.1:11434/v1"))
+      .toBe("http://host.docker.internal:11434/v1");
+    expect(() => rewriteVerifiedLocalEndpointForContainer("https://remote.example/v1"))
+      .toThrow("container_gateway_non_loopback");
+  });
+
   it("persists rejection over prior certification for the exact local target", () => {
     fixture.certified = true;
     const snapshot = captureTargetCapabilitySnapshot({

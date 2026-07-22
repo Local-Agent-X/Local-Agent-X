@@ -14,6 +14,8 @@ import type { LocalModel, LocalRuntimeInfo } from "./types.js";
 import { classifyModel, maxToolsForTier, type ModelTier } from "../model-tiers.js";
 import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-store.js";
 import { isLocalModelQualificationBoot } from "../qualification-boot.js";
+import { lstatSync, readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 
 export interface LocalModelCapabilityProfile {
   runtimeId: string | null;
@@ -146,4 +148,32 @@ export function invalidateLocalRuntimes(): void {
   restoreEpoch += 1;
   pendingRestore = null;
   restoredSnapshot = null;
+}
+
+export function restoreProjectedLocalRuntime(path: string): void {
+  if (!isAbsolute(path)) throw new Error("projected local runtime path must be absolute");
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) {
+    throw new Error("projected local runtime must be a bounded regular file");
+  }
+  const runtime = parseProjectedRuntime(JSON.parse(readFileSync(path, "utf8")));
+  cache = [runtime];
+  refreshedAt = Date.now();
+}
+
+function parseProjectedRuntime(value: unknown): LocalRuntimeInfo {
+  const runtime = value as Partial<LocalRuntimeInfo> | null;
+  if (!runtime || !["ollama", "openai-compat"].includes(runtime.kind ?? "")
+    || typeof runtime.id !== "string" || !runtime.id
+    || typeof runtime.label !== "string" || !runtime.label
+    || !runtime.endpoint || !["auto", "manual"].includes(runtime.endpoint.origin)
+    || typeof runtime.endpoint.baseUrl !== "string"
+    || typeof runtime.chatBaseUrl !== "string" || !Array.isArray(runtime.models)
+    || runtime.models.length > 10_000 || !Number.isFinite(runtime.refreshedAt)
+    || runtime.models.some(model => !model || typeof model.id !== "string" || !model.id
+      || (model.contextWindow !== null && (!Number.isSafeInteger(model.contextWindow) || model.contextWindow < 1))
+      || (model.tools !== null && typeof model.tools !== "boolean"))) {
+    throw new Error("projected local runtime is invalid");
+  }
+  return runtime as LocalRuntimeInfo;
 }

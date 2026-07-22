@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChildProcess, fork } from "node:child_process";
 import type { Op } from "../src/ops/types.js";
 import type { ExecutionPlacement } from "../src/canonical-loop/types.js";
@@ -9,6 +9,12 @@ import {
   PROCESS_EXECUTION_TARGET_ID,
 } from "../src/canonical-loop/process-execution-backend.js";
 import { resolveRegisteredExecutionBackend } from "../src/canonical-loop/execution-backend-registry.js";
+
+const originalBackend = process.env.LAX_CANONICAL_EXECUTION_BACKEND;
+afterEach(() => {
+  if (originalBackend === undefined) delete process.env.LAX_CANONICAL_EXECUTION_BACKEND;
+  else process.env.LAX_CANONICAL_EXECUTION_BACKEND = originalBackend;
+});
 
 describe("process backend production routing and relay", () => {
   it("routes only eligible durable background operations to the process backend", () => {
@@ -25,6 +31,14 @@ describe("process backend production routing and relay", () => {
     ] as Op[]) {
       expect(resolveRegisteredExecutionBackend(undefined, candidate).id).toBe("in-process");
     }
+  });
+
+  it("honors explicit container selection without host fallback", () => {
+    process.env.LAX_CANONICAL_EXECUTION_BACKEND = "container";
+    expect(resolveRegisteredExecutionBackend(undefined, makeOp("container")).id).toBe("local-container");
+    process.env.LAX_CANONICAL_EXECUTION_BACKEND = "missing";
+    expect(() => resolveRegisteredExecutionBackend(undefined, makeOp("missing")))
+      .toThrow('Unknown configured execution backend "missing"');
   });
 
   it("reconciles relay notices and both successful and failed terminal exits through injected hooks", async () => {

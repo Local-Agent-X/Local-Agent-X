@@ -227,14 +227,30 @@ async function resolvePersistedTarget(
       throw new Error("persisted local runtime/model is no longer admitted");
     }
     assertFingerprint(runtime.chatBaseUrl, identity.target.endpointFingerprint);
-    return runtime.chatBaseUrl;
+    return rewriteVerifiedLocalEndpointForContainer(runtime.chatBaseUrl);
   }
   const target = await resolveOpenAITarget(identity.provider, identity.model, options);
   if (!target || !sameTargetKind(identity.target, target.identity)) {
     identityMismatch("target_kind_changed");
   }
   if ("endpointFingerprint" in identity.target) assertFingerprint(target.baseURL, identity.target.endpointFingerprint);
-  return target.baseURL;
+  return identity.provider === "local"
+    ? rewriteVerifiedLocalEndpointForContainer(target.baseURL)
+    : target.baseURL;
+}
+
+export function rewriteVerifiedLocalEndpointForContainer(raw: string): string {
+  const gateway = process.env.LAX_CONTAINER_HOST_GATEWAY?.trim();
+  if (!gateway) return raw;
+  if (!/^(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[A-Fa-f0-9:]+\])$/.test(gateway)) {
+    throw new RuntimeIdentityMismatchError("container_gateway_invalid");
+  }
+  const url = new URL(raw);
+  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(url.hostname.toLowerCase())) {
+    throw new RuntimeIdentityMismatchError("container_gateway_non_loopback");
+  }
+  url.hostname = gateway;
+  return url.href.replace(/\/$/, raw.endsWith("/") ? "/" : "");
 }
 
 async function resolveOpenAITarget(

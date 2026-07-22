@@ -1,23 +1,15 @@
 import { readFileSync } from "node:fs";
 import { claimProcessExecution, type ContainerExecutionClaim } from "./process-execution-claim.js";
 import { runClaimedExecutionWorker } from "./execution-worker-runtime.js";
-
-interface ContainerBootstrap {
-  schemaVersion: 1;
-  opId: string;
-  backendId: string;
-  targetId: string;
-  placementRevision: number;
-  token: string;
-  containerId: string;
-  containerCreatedAt: string;
-  imageDigest: string;
-}
+import { restoreProjectedLocalRuntime } from "../local-runtimes/index.js";
+import { verifyContainerBootstrap, type ContainerBootstrap } from "./container-bootstrap.js";
 
 const bootstrapPath = required("LAX_CONTAINER_BOOTSTRAP");
 let bootstrap: ContainerBootstrap;
 try {
-  bootstrap = parseBootstrap(JSON.parse(readFileSync(bootstrapPath, "utf8")));
+  bootstrap = verifyContainerBootstrap(JSON.parse(readFileSync(bootstrapPath, "utf8")));
+  const localRuntime = process.env.LAX_PROJECTED_LOCAL_RUNTIME_FILE;
+  if (localRuntime) restoreProjectedLocalRuntime(localRuntime);
 } catch {
   process.exit(2);
 }
@@ -47,28 +39,9 @@ try {
   process.exit(8);
 }
 
-function parseBootstrap(value: unknown): ContainerBootstrap {
-  const b = value as Partial<ContainerBootstrap> | null;
-  if (!b || b.schemaVersion !== 1 || !nonEmpty(b.opId) || !nonEmpty(b.backendId)
-    || !nonEmpty(b.targetId) || !Number.isSafeInteger(b.placementRevision) || (b.placementRevision as number) < 1
-    || !nonEmpty(b.token) || typeof b.containerId !== "string" || !/^[a-f0-9]{64}$/.test(b.containerId)
-    || !canonicalIso(b.containerCreatedAt) || typeof b.imageDigest !== "string"
-    || !/^sha256:[a-f0-9]{64}$/.test(b.imageDigest)) throw new Error("invalid container bootstrap");
-  return b as ContainerBootstrap;
-}
-
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`missing ${name}`);
   return value;
 }
 
-function nonEmpty(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function canonicalIso(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
-}

@@ -9,7 +9,7 @@ export const BROWSER_TOOL_NAME = "browser";
 
 export const BROWSER_TOOL_DESCRIPTION =
   "Control a REAL Chrome browser (visible window on user's desktop) to interact with web pages. " +
-  "Its screenshot action captures ONLY the current WEB PAGE/TAB, never the user's physical desktop, monitor, taskbar, or other apps. " +
+  "Its screenshot action captures ONLY the current WEB PAGE/TAB — shown to you INLINE in one call — never the user's physical desktop, monitor, taskbar, or other apps. " +
   "For requests like 'screenshot my screen', 'capture my desktop', or 'show my monitor', use `screen_capture` instead. " +
   "This is NOT headless — the user can see the browser window. " +
   "Use this for sites that require JavaScript rendering, form filling, authentication flows, " +
@@ -27,7 +27,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
   "- select: Choose dropdown option by CSS selector + value.\n" +
   "- extract: Get visible text from the page or a specific element. On a large page, pass 'find' to get only the matching lines instead of the whole page.\n" +
-  "- screenshot: Capture the current page.\n" +
+  "- screenshot: Capture the current page — the image is returned INLINE, so you SEE the page in this one call (no view_image or screen_capture needed). A full-resolution PNG is also saved; use its path with view_image to re-view later or send_image to share it.\n" +
   "- evaluate: Run JavaScript in the page.\n" +
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
   "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers.\n" +

@@ -29,18 +29,62 @@ export async function extractTextFrom(page: Page, selector?: string, find?: stri
   return wrapExternalContent(out, "browser.extract", { url: page.url(), selector: selector || "body" });
 }
 
-/** Capture a screenshot, persist the full PNG, and return a reference the model
- *  can actually SEE via `view_image`.
+/** Payload for the ToolResult `_image` envelope (audit-tool-call.ts shapes it
+ *  into a vision message). VISION-ONLY by project invariant: screenshots must
+ *  never ride `_media`, which the bridge auto-delivers off-box. */
+export interface ScreenshotImage {
+  mime: string;
+  b64: string;
+  path: string;
+  question: string;
+}
+
+export interface ScreenshotResult {
+  /** Human/tool-facing report: URL, title, engine, saved PNG path. */
+  text: string;
+  /** Downscaled inline JPEG when encoding succeeded; absent means `view_image`
+   *  on the saved path is the only way to see the page (reason is in `text`). */
+  image?: ScreenshotImage;
+}
+
+// Inline-vision sizing idiom shared with screen_capture (vision-tools.ts):
+// downscale + JPEG q80 so the model sees the page at screen-capture token
+// cost, not full-res-PNG cost. 0.6 keeps page text legible.
+const INLINE_IMAGE_SCALE = 0.6;
+const INLINE_IMAGE_JPEG_QUALITY = 80;
+
+/** Downscale the full PNG to the inline JPEG. Failure is returned (not thrown)
+ *  so the capture itself still succeeds — the PNG is already on disk and the
+ *  view_image path still works; the reason surfaces in the result text. */
+async function encodeInlineJpeg(buffer: Buffer): Promise<{ b64: string } | { error: string }> {
+  try {
+    // Same lazy-import idiom as office-chart.ts — sharp is heavy and native.
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(buffer).metadata();
+    if (!meta.width) return { error: "could not read image dimensions" };
+    const width = Math.max(1, Math.round(meta.width * INLINE_IMAGE_SCALE));
+    const jpeg = await sharp(buffer)
+      .resize({ width })
+      .jpeg({ quality: INLINE_IMAGE_JPEG_QUALITY })
+      .toBuffer();
+    return { b64: jpeg.toString("base64") };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+/** Capture a screenshot, persist the full PNG, and hand the model the pixels
+ *  INLINE via the `_image` envelope — one call, no view_image round-trip.
  *
- *  The prior implementation base64-encoded the buffer, sliced it to 200 chars,
- *  and returned that fragment inside a `[base64:…]` marker — then discarded the
- *  real bytes. Nothing downstream reconstitutes an image from that string (the
- *  canonical vision path is a ToolResult `_image` envelope / a `view_image`
- *  read), so every "let me screenshot to check the layout" flow was a silent
- *  no-op that read as success. We now write the whole PNG to the uploads dir —
- *  the same folder `view_image` resolves by basename — and hand back its path,
- *  mirroring preview-tools' render→view_image pattern. */
-export async function screenshotAsBase64(page: Page, engine: string): Promise<string> {
+ *  Two prior generations of this function: the first base64-sliced the buffer
+ *  to 200 chars and discarded the bytes (silent no-op); the second persisted
+ *  the PNG but only returned TEXT telling the model to call `view_image` on
+ *  the path — so seeing its own pane took two calls, and agents wrongly
+ *  reached for whole-monitor screen_capture (which is inline) instead. Now the
+ *  result carries a downscaled JPEG for immediate vision AND still writes the
+ *  full PNG to the uploads dir — the folder `view_image` resolves by basename —
+ *  because view_image re-reads and send_image/media delivery need the file. */
+export async function screenshotAsBase64(page: Page, engine: string): Promise<ScreenshotResult> {
   const buffer = await page.screenshot({ type: "png", fullPage: false });
   // Empty buffers come from Playwright timeout/closed-page paths — silently
   // returning a "Screenshot captured" prefix on a 0-byte buffer is the worst
@@ -54,7 +98,22 @@ export async function screenshotAsBase64(page: Page, engine: string): Promise<st
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `browser-screenshot-${Date.now()}.png`);
   writeFileSync(file, buffer);
-  return `Screenshot captured\nURL: ${url}\nTitle: ${title}\nEngine: ${engine}\nSize: ${buffer.length} bytes\nSaved: ${file}\n\nUse the 'view_image' tool on that path to SEE the page, or the 'extract' action to read its text content.`;
+  const header = `Screenshot captured\nURL: ${url}\nTitle: ${title}\nEngine: ${engine}\nSize: ${buffer.length} bytes\nSaved: ${file}`;
+  const inline = await encodeInlineJpeg(buffer);
+  if ("error" in inline) {
+    return {
+      text: `${header}\n\nInline preview unavailable (${inline.error}). Use the 'view_image' tool on that path to SEE the page, or the 'extract' action to read its text content.`,
+    };
+  }
+  return {
+    text: `${header}\n\nThe page is shown to you inline (downscaled JPEG) — no extra call needed. The saved path holds the full-resolution PNG for 'view_image' re-reads or send_image.`,
+    image: {
+      mime: "image/jpeg",
+      b64: inline.b64,
+      path: file,
+      question: `This is the current page in your browser pane: ${url} — "${title}".`,
+    },
+  };
 }
 
 // page.evaluate has no built-in timeout, so a model script that awaits

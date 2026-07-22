@@ -5,7 +5,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserBackend } from "../../browser/index.js";
+import type { BrowserBackend, ScreenshotImage } from "../../browser/index.js";
 import { closeBrowser } from "../../browser/index.js";
 import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
@@ -26,7 +26,12 @@ export async function handleExtract(
 export async function handleScreenshot(manager: BrowserBackend): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
-  return ok(await manager.screenshot());
+  const shot = await manager.screenshot();
+  if (!shot.image) return ok(shot.text);
+  // Inline vision rides `_image` ONLY (audit-tool-call.ts turns it into a
+  // vision message) — NEVER `_media`, which the bridge auto-delivers off-box.
+  const result: ToolResult & { _image: ScreenshotImage } = { content: shot.text, _image: shot.image };
+  return result;
 }
 
 export async function handleEvaluate(

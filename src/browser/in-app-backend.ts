@@ -60,6 +60,7 @@ import {
 	extractTextFrom,
 	listTabs as listTabsOp,
 	pageInfo,
+	type ScreenshotResult,
 } from "./page-ops.js";
 import type { BridgePageState } from "./in-app-observe.js";
 import {
@@ -310,7 +311,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return extractTextFrom(this.page, selector, find);
 	}
 
-	async screenshot(): Promise<string> {
+	async screenshot(): Promise<ScreenshotResult> {
 		await this.ensureView();
 		// KB1 credential-focus gate + capture live in in-app-page-io.ts.
 		return captureScreenshotInApp(this.viewId, this.page);

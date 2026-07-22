@@ -334,13 +334,17 @@ describe("ElectronInAppBackend (A1)", () => {
 
 	// ── Screenshot ─────────
 
-	it("screenshot captures via the bridge and returns the CDP-shaped saved-file report", async () => {
+	it("screenshot captures via the bridge and returns the CDP-shaped saved-file report with inline vision", async () => {
 		await backend.navigate(PAGE_URL);
 		const out = await backend.screenshot();
-		expect(out).toMatch(
+		expect(out.text).toMatch(
 			/^Screenshot captured\nURL: https:\/\/example\.com\/\nTitle: Example Domain\nEngine: electron\nSize: \d+ bytes\nSaved: /,
 		);
-		expect(out).toContain("view_image");
+		expect(out.text).toContain("view_image");
+		// Inline vision payload — downscaled JPEG the tool layer rides on _image.
+		expect(out.image?.mime).toBe("image/jpeg");
+		expect(out.image?.b64.length).toBeGreaterThan(0);
+		expect(out.image?.path.endsWith(".png")).toBe(true);
 		expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
 	});
 
@@ -407,7 +411,9 @@ describe("ElectronInAppBackend (A1)", () => {
 			return routeExec(script);
 		});
 		const out = await backend.screenshot();
-		expect(out).toBe(CREDENTIAL_CAPTURE_BLOCKED);
+		expect(out.text).toBe(CREDENTIAL_CAPTURE_BLOCKED);
+		// No pixels were painted — nothing may ride the vision envelope.
+		expect(out.image).toBeUndefined();
 		expect(browserCapture).not.toHaveBeenCalled();
 	});
 
@@ -415,7 +421,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		await backend.navigate(PAGE_URL);
 		// routeExec returns undefined for the credential probe (not === true) → proceed.
 		const out = await backend.screenshot();
-		expect(out).toContain("Screenshot captured");
+		expect(out.text).toContain("Screenshot captured");
 		expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
 	});
 

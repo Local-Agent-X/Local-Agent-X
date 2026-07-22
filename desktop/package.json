@@ -28,6 +28,7 @@
   "build": {
     "appId": "com.localagentx.desktop",
     "productName": "Local Agent X",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },

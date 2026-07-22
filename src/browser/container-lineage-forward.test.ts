@@ -10,7 +10,6 @@ import {
 } from "./container-bridge-relay.js";
 import { relayForwardCanaries, relayForwardTaint } from "./container-bridge-lineage.js";
 import { startContainerLineageForwarding } from "./container-taint-forward.js";
-import { sessionBelongsToSession } from "./bridge-perception.js";
 import { scanPageEgress } from "./page-egress-taint.js";
 import { computeFingerprints, type TaintEntry } from "../data-lineage/fingerprint.js";
 import {
@@ -157,15 +156,25 @@ describe("container lineage forwarding → host page-egress scan", () => {
 		expect(scanPageEgress(OWNER, crossHopCarrying(OTHER_SECRET))).toEqual({ allowed: true });
 	});
 
-	it("admits taint forwarded for the owner's own hyphen-nested descendant session", async () => {
+	it("refuses taint a container forwards for a hyphen-nested descendant and leaves it clean", async () => {
+		// A `<owner>-b<i>` branch is a SEPARATE op with its own container + relay, so
+		// OWNER's container is not its writer. The lineage sinks are full-state
+		// REPLACE, so the write is gated on an EXACT session match: a descendant
+		// forward is refused, keeping a container from injecting OR clobbering a
+		// sibling-descendant session's taint/canary state (audit finding). Pre-fix
+		// this used the descendant-admitting predicate, so the forward was accepted
+		// and the scan below blocked.
 		const descendant = `${OWNER}-b0`;
 		touchedSessions.add(descendant);
 		await startRelay(OWNER, { realHostSink: true });
 
-		await relayForwardTaint(descendant, [taintEntry(descendant, SECRET)]);
+		await expect(relayForwardTaint(descendant, [taintEntry(descendant, SECRET)]))
+			.rejects.toThrow("not owned by this session");
+		// The empty full-state REPLACE (the wipe primitive) is refused too.
+		await expect(relayForwardTaint(descendant, [])).rejects.toThrow("not owned by this session");
 
-		const verdict = scanPageEgress(descendant, crossHopCarrying(SECRET));
-		expect(verdict.allowed).toBe(false);
+		expect(findTaintInPayload(descendant, SECRET)).toEqual([]);
+		expect(scanPageEgress(descendant, crossHopCarrying(SECRET))).toEqual({ allowed: true });
 	});
 });
 
@@ -221,17 +230,6 @@ describe("container-side forwarder wiring", () => {
 		const stop = startContainerLineageForwarding();
 		expect(typeof stop).toBe("function");
 		stop(); // detaches nothing, must not throw
-	});
-});
-
-describe("sessionBelongsToSession boundary", () => {
-	it("admits the exact session and hyphen-nested descendants, rejects siblings and foreigners", () => {
-		expect(sessionBelongsToSession("s1", "s1")).toBe(true);
-		expect(sessionBelongsToSession("s1-b0", "s1")).toBe(true);
-		expect(sessionBelongsToSession("s12", "s1")).toBe(false);
-		expect(sessionBelongsToSession("s2", "s1")).toBe(false);
-		expect(sessionBelongsToSession("", "s1")).toBe(false);
-		expect(sessionBelongsToSession("s1", "")).toBe(false);
 	});
 });
 

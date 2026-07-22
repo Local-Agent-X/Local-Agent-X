@@ -21,13 +21,18 @@
  *
  * AUTHENTICATION / SESSION-BINDING: every frame is HMAC-authenticated with the
  * per-container relay token (proves container membership) and the host confines
- * each forwarded delta to the container's OWNING session (sessionBelongsToSession
- * against the relay's ownerSessionId). A container bound to session A therefore
- * cannot forward taint that attributes to an unrelated session B.
+ * each forwarded delta to EXACTLY the relay's owning session (payload.sessionId
+ * === ownerSessionId). A container runs a single claimed op = a single session
+ * (ownerSessionId = op.canonical.sessionId), so it is the sole writer of only
+ * that session's lineage; a spawned branch (`<owner>-b<i>`) is a SEPARATE op with
+ * its own container + relay and forwards its own taint under its own exact match.
+ * The write must therefore be an EXACT session match, not the descendant-admitting
+ * reach viewBelongsToSession grants for VIEW ownership: these sinks are full-state
+ * REPLACE, so admitting a descendant would let a container wipe/inject the taint
+ * and canary state of a sibling-descendant session it does not own.
  */
 
 import type { TaintEntry, TaintSource } from "../data-lineage/fingerprint.js";
-import { sessionBelongsToSession } from "./bridge-perception.js";
 import { exchange } from "./container-bridge-transport.js";
 
 /** The host-side application seam for forwarded lineage state. The relay server
@@ -116,17 +121,20 @@ export function assertLineagePayload(payload: unknown): asserts payload is Relay
 
 /**
  * Apply a forwarded lineage payload to the host registries via `sink`, confined
- * to the relay's owning session. The payload must already be shape-validated
- * (assertLineagePayload, run in the relay's validate stage). Throws — refusing
- * the whole frame — when the forwarded session is not owned by this relay, which
- * is what keeps container A from tainting/attributing to session B.
+ * to EXACTLY the relay's owning session. The payload must already be shape-
+ * validated (assertLineagePayload, run in the relay's validate stage). Throws —
+ * refusing the whole frame — when the forwarded session is not this relay's exact
+ * owner. The taint/canary sinks are full-state REPLACE, so the write is gated on
+ * an exact session match (not descendant reach): a container is the sole writer
+ * of only its own session's lineage, so admitting a descendant would let it
+ * clobber or inject a sibling-descendant session's state (audit finding).
  */
 export function applyForwardedLineage(
 	payload: RelayLineagePayload,
 	ownerSessionId: string,
 	sink: BrowserRelayLineageSink | undefined,
 ): void {
-	if (!sessionBelongsToSession(payload.sessionId, ownerSessionId)) {
+	if (payload.sessionId !== ownerSessionId) {
 		throw new Error("browser relay lineage is not owned by this session");
 	}
 	if (!sink) return;

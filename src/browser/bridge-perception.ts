@@ -76,21 +76,6 @@ export function viewBelongsToSession(viewId: unknown, sessionId: string): boolea
 	return viewId.startsWith(prefix) && viewId.length > prefix.length;
 }
 
-/**
- * Session-level counterpart to viewBelongsToSession: does `sessionId` name the
- * relay's OWNING session, or one of its hyphen-nested descendants? Used to
- * confine a container's forwarded data-lineage state (taint/canaries) to the
- * session that owns the relay — the same boundary viewBelongsToSession applies
- * to relayed browser ops, at the session-id granularity the lineage payload
- * carries. The trailing hyphen keeps siblings apart (`s1` never owns `s12`); a
- * spawned-branch id (`<owner>-b<i>`) IS admitted, matching viewBelongsToSession's
- * documented descendant reach.
- */
-export function sessionBelongsToSession(sessionId: unknown, ownerSessionId: string): boolean {
-	if (typeof sessionId !== "string" || !sessionId || !ownerSessionId) return false;
-	return sessionId === ownerSessionId || sessionId.startsWith(`${ownerSessionId}-`);
-}
-
 // ── Adopted-view session registry ─────────
 // A user view taken over via switch_tab keeps its USER viewId (foreground /
 // user-N), which sessionIdFromViewId can't attribute — downloads the agent

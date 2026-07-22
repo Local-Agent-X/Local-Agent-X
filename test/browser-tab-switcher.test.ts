@@ -24,6 +24,7 @@ interface ViewInfo {
 
 interface NavState {
 	viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+	loadError?: { code: number; description: string; url: string } | null;
 }
 
 function setDom(): void {
@@ -325,6 +326,67 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(bridge.closeView).toHaveBeenCalledWith("user-1");
 		expect(bridge.switchView).not.toHaveBeenCalled(); // ✕ must not fall through to select
 		expect(slot().querySelector('button[data-view-id="user-1"]')).toBeNull();
+	});
+
+	it("loading:true nav-state spins the view's pill; loading:false clears it", async () => {
+		const bridge = makeBridge([fgView(), agentView()]);
+		g.desktop = { browser: bridge };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		const pillOf = (id: string) =>
+			slot().querySelector(`button[data-view-id="${id}"]`) as HTMLButtonElement;
+		// Would have failed before this chunk: pills carried NO loading indicator
+		// element at all, and nav-state pushes never touched the strip.
+		expect(pillOf("view-s1-work").querySelector(".browser-tab-spinner")).toBeTruthy();
+		expect(pillOf("view-s1-work").classList.contains("loading")).toBe(false);
+		// A BACKGROUND view starts loading — its pill spins, the selected one's doesn't.
+		bridge.navStateCb!({
+			viewId: "view-s1-work", url: "https://job/", title: "Job",
+			canGoBack: false, canGoForward: false, loading: true, loadError: null,
+		});
+		expect(pillOf("view-s1-work").classList.contains("loading")).toBe(true);
+		expect(pillOf("foreground").classList.contains("loading")).toBe(false);
+		// did-stop-loading clears the spinner.
+		bridge.navStateCb!({
+			viewId: "view-s1-work", url: "https://job/", title: "Job",
+			canGoBack: false, canGoForward: false, loading: false, loadError: null,
+		});
+		expect(pillOf("view-s1-work").classList.contains("loading")).toBe(false);
+	});
+
+	it("a load error clears the pill spinner even while the push still says loading", async () => {
+		const bridge = makeBridge([fgView(), agentView()]);
+		g.desktop = { browser: bridge };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		const pill = () => slot().querySelector('button[data-view-id="view-s1-work"]') as HTMLButtonElement;
+		bridge.navStateCb!({
+			viewId: "view-s1-work", url: "https://job/", title: "Job",
+			canGoBack: false, canGoForward: false, loading: true, loadError: null,
+		});
+		expect(pill().classList.contains("loading")).toBe(true);
+		// Failed load: a dead pill must not spin forever.
+		bridge.navStateCb!({
+			viewId: "view-s1-work", url: "https://job/", title: "Job",
+			canGoBack: false, canGoForward: false, loading: true,
+			loadError: { code: -102, description: "ERR_CONNECTION_REFUSED", url: "https://job/" },
+		});
+		expect(pill().classList.contains("loading")).toBe(false);
+	});
+
+	it("a full re-render (the poll path) preserves a still-loading view's spinner", async () => {
+		const bridge = makeBridge([fgView(), agentView()]);
+		g.desktop = { browser: bridge };
+		loadTab();
+		await g.laxBrowserTab.refreshSwitcher();
+		bridge.navStateCb!({
+			viewId: "view-s1-work", url: "https://job/", title: "Job",
+			canGoBack: false, canGoForward: false, loading: true, loadError: null,
+		});
+		await g.laxBrowserTab.refreshSwitcher(); // rebuilds every pill from scratch
+		const pill = slot().querySelector('button[data-view-id="view-s1-work"]') as HTMLButtonElement;
+		expect(pill.classList.contains("loading")).toBe(true);
+		expect(pill.querySelector(".browser-tab-spinner")).toBeTruthy();
 	});
 
 	it("onTabShown starts polling; onTabHidden stops it", async () => {

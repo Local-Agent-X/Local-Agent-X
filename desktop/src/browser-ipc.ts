@@ -18,9 +18,14 @@
  * only updates the address bar for the view it is currently showing.
  */
 
-import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContents, type WebContentsView } from "electron";
+import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContentsView } from "electron";
 
 import { getMainWindow } from "./window";
+import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
+// The trusted-sender guard moved to browser-page-controls.ts in the find/zoom
+// split (this file sits at the 400-LOC ceiling); re-exported so existing
+// consumers keep importing it from here.
+export { isTrustedBrowserSender } from "./browser-page-controls";
 import {
 	closeBrowserView,
 	createBrowserView,
@@ -90,16 +95,6 @@ export function scaleRectToDip(rect: Rectangle, zoomFactor: number): Rectangle {
 		width: Math.round(rect.width * zoomFactor),
 		height: Math.round(rect.height * zoomFactor),
 	};
-}
-
-/**
- * Only the MAIN window may drive the browser views. /apps/<id> child windows
- * load the SAME preload (app-windows.ts) — without this gate an app window could
- * move/show an overlay, hijack the user's navigation, and read url/title.
- */
-export function isTrustedBrowserSender(sender: WebContents): boolean {
-	const win = getMainWindow();
-	return !!win && !win.isDestroyed() && sender === win.webContents;
 }
 
 /** `persist:lax-profile-work` → `work`; anything else → undefined. */
@@ -197,8 +192,12 @@ function pushAgentSurfaced(viewId: string): void {
 }
 
 export function setupBrowserIPC(): void {
-	// Pool membership/attachment changes → poke the renderer to re-list.
-	setPoolChangedListener(sendViewsChanged);
+	// Pool membership/attachment changes → poke the renderer to re-list, and
+	// give every pool view (incl. agent views minted over the server bridge)
+	// its find/zoom page controls (browser-page-controls.ts).
+	setPoolChangedListener(() => { sendViewsChanged(); wirePageControlsForPool(); });
+	// Find-in-page + per-view zoom command surface, acting on currentViewId.
+	setupBrowserPageControls(() => currentViewId);
 
 	ipcMain.handle("browser-set-bounds", (event: IpcMainInvokeEvent, rect: Rectangle) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
@@ -265,6 +264,13 @@ export function setupBrowserIPC(): void {
 	ipcMain.handle("browser-reload", (event: IpcMainInvokeEvent) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
 		getBrowserView(currentViewId)?.webContents.reload();
+	});
+
+	// Stop the current view's in-flight load — the renderer's ↻ becomes ✕ while
+	// the selected view is loading. Same idiom as browser-reload above.
+	ipcMain.handle("browser-stop", (event: IpcMainInvokeEvent) => {
+		if (!isTrustedBrowserSender(event.sender)) return;
+		getBrowserView(currentViewId)?.webContents.stop();
 	});
 
 	ipcMain.handle("browser-get-nav-state", (event: IpcMainInvokeEvent): BrowserNavState | null => {

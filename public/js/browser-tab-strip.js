@@ -81,6 +81,30 @@
 		return (v.title && String(v.title).trim()) || hostOf(v.url) || v.profileId || 'tab';
 	}
 
+	// Per-view loading state (viewId → true), fed by browser-tab.js from tagged
+	// nav-state pushes (noteNavState below). Presentation-only, like the drag
+	// order — render() paints it and prunes ids that left the pool; noteNavState
+	// pokes the live pill between renders so the spinner tracks did-start/
+	// did-stop-loading without waiting for the next poll.
+	var loadingViews = {};
+
+	/** Track a tagged nav-state push: spin the pill of a loading view, clear it
+	 *  on load end AND on a load failure (a dead pill must not spin forever). */
+	function noteNavState(state) {
+		if (!state || !state.viewId) return;
+		var isLoading = !!state.loading && !state.loadError;
+		if (isLoading) loadingViews[state.viewId] = true;
+		else delete loadingViews[state.viewId];
+		var pills = document.querySelectorAll('.browser-strip-tab[data-view-id]');
+		for (var i = 0; i < pills.length; i++) {
+			// Attribute compare instead of a selector interpolation — viewIds are
+			// not guaranteed selector-safe.
+			if (pills[i].getAttribute('data-view-id') !== state.viewId) continue;
+			if (isLoading) pills[i].classList.add('loading');
+			else pills[i].classList.remove('loading');
+		}
+	}
+
 	function reconcileSelection(views, selectedViewId) {
 		if (!views || !views.length) return null;
 		var attached = null;
@@ -101,12 +125,18 @@
 		views = applyOrder(views || [], loadOrder());
 		wireDragReorder(slot);
 		draggedPill = null; // a re-render mid-drag orphans the dragged node
+		// Prune loading state for views that left the pool — a reused viewId
+		// (foreground recreated) must not inherit a stale spinner.
+		var live = {};
+		for (var k = 0; k < views.length; k++) live[views[k].viewId] = true;
+		for (var id in loadingViews) { if (!live[id]) delete loadingViews[id]; }
 		slot.innerHTML = '';
 		for (var i = 0; i < views.length; i++) {
 			(function (v) {
 				var pill = document.createElement('button');
 				pill.className = 'browser-strip-tab' +
-					(v.viewId === opts.selectedViewId ? ' active' : '');
+					(v.viewId === opts.selectedViewId ? ' active' : '') +
+					(loadingViews[v.viewId] ? ' loading' : '');
 				pill.title = v.viewId + (v.url ? ('\n' + v.url) : '') +
 					(v.agentDriven ? '\n(agent-driven)' : '');
 				pill.setAttribute('data-view-id', v.viewId);
@@ -119,6 +149,12 @@
 					mark.alt = 'Agent';
 					pill.appendChild(mark);
 				}
+				// Spinner rides EVERY pill (hidden by CSS unless .loading) so the
+				// nav-state poke only has to toggle a class, never build DOM.
+				var spin = document.createElement('span');
+				spin.className = 'browser-tab-spinner';
+				spin.setAttribute('aria-hidden', 'true');
+				pill.appendChild(spin);
 				var name = document.createElement('span');
 				name.className = 'browser-tab-label';
 				name.textContent = stripLabel(v);
@@ -176,5 +212,6 @@
 		reconcileSelection: reconcileSelection,
 		render: render,
 		applyOrder: applyOrder,
+		noteNavState: noteNavState,
 	};
 })();

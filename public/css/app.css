@@ -1265,6 +1265,11 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .browser-tab-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:left}
 .browser-tab-agent-icon{width:13px;height:13px;border-radius:3px;flex-shrink:0}
 .browser-strip-tab.dragging{opacity:.45}
+/* Per-tab loading spinner: rides every pill, shown only while its view loads
+   (.loading toggled from nav-state pushes via browser-tab-strip.js). */
+.browser-tab-spinner{display:none;width:9px;height:9px;border-radius:50%;border:1.5px solid color-mix(in srgb,var(--text) 25%,transparent);border-top-color:var(--accent);flex-shrink:0;animation:browser-tab-spin .7s linear infinite}
+.browser-strip-tab.loading .browser-tab-spinner{display:inline-block}
+@keyframes browser-tab-spin{to{transform:rotate(360deg)}}
 .browser-tab-close{display:grid;place-items:center;width:16px;height:16px;border-radius:50%;opacity:.62;transition:opacity .12s,color .12s,background .12s;flex-shrink:0;font-size:.68rem;line-height:1}
 .browser-tab-close:hover{opacity:1;color:var(--text);background:color-mix(in srgb,var(--text) 12%,transparent)}
 .browser-new-tab{width:28px;height:28px;margin:0 2px 1px 0;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);font-size:1rem;line-height:1;cursor:pointer;flex:0 0 auto;transition:background .12s,color .12s}
@@ -1279,6 +1284,12 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .terminal-host .xterm{height:100%}
 .terminal-unavailable{position:absolute;inset:34px 0 0;display:grid;place-items:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:.72rem;text-align:center}
 .browser-toolbar{display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
+/* Find-in-page bar (browser-find.js): a normal-flow row between toolbar and
+   anchor — never an overlay, since the native view paints above the DOM and
+   anything covering the anchor trips the occlusion probe. */
+.browser-find-bar{display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface-2);border-bottom:1px solid var(--border);flex-shrink:0}
+.browser-find-bar input{flex:1;min-width:0;background:transparent;border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:.68rem;padding:3px 8px;border-radius:4px;outline:none}
+.browser-find-count{font-family:var(--mono);font-size:.62rem;color:var(--muted);white-space:nowrap}
 .artifacts-refresh{margin-left:auto}
 .artifacts-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
 .artifacts-empty{font-family:var(--mono);font-size:.7rem;color:var(--muted);text-align:center;padding:24px 8px}

@@ -154,6 +154,9 @@ contextBridge.exposeInMainWorld("desktop", {
     goBack: () => ipcRenderer.invoke("browser-go-back"),
     goForward: () => ipcRenderer.invoke("browser-go-forward"),
     reload: () => ipcRenderer.invoke("browser-reload"),
+    // Stop the current view's in-flight load (the toolbar's ↻ flips to ✕ while
+    // the selected view is loading; browser-tab.js routes the click here).
+    stop: () => ipcRenderer.invoke("browser-stop"),
     getNavState: (): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
       loadError: { code: number; description: string; url: string } | null;
@@ -197,6 +200,36 @@ contextBridge.exposeInMainWorld("desktop", {
     onViewsChanged: (cb: () => void) => {
       ipcRenderer.on("browser-views-changed", () => cb());
     },
+    // Find-in-page on the SELECTED view. Results arrive via the tagged
+    // "browser-found-in-page" push (same idiom as browser-nav-state — results
+    // are async events, possibly several per request). next/prev re-send the
+    // query; main continues the session with findNext:true.
+    findStart: (query: string) => ipcRenderer.invoke("browser-find-start", query),
+    findNext: (query: string) => ipcRenderer.invoke("browser-find-next", query),
+    findPrev: (query: string) => ipcRenderer.invoke("browser-find-prev", query),
+    findStop: () => ipcRenderer.invoke("browser-find-stop"),
+    onFoundInPage: (cb: (r: {
+      viewId: string; matches: number; activeMatchOrdinal: number; finalUpdate: boolean;
+    }) => void) => {
+      ipcRenderer.on("browser-found-in-page", (_e, r) => cb(r));
+    },
+    // Pushed when the user presses Ctrl+F / Esc while focus is INSIDE the
+    // page itself (the view's own before-input-event, browser-page-controls.ts).
+    onFindHotkey: (cb: (info: { viewId: string }) => void) => {
+      ipcRenderer.on("browser-find-hotkey", (_e, info) => cb(info));
+    },
+    onFindClosed: (cb: (info: { viewId: string }) => void) => {
+      ipcRenderer.on("browser-find-closed", (_e, info) => cb(info));
+    },
+    // Per-VIEW zoom — the page's own webContents, distinct from contentZoom
+    // above (which zooms the main WINDOW). Every applied change is mirrored
+    // back via "browser-zoom-changed" so the renderer's session map stays true.
+    setZoom: (factor: number) => ipcRenderer.invoke("browser-set-zoom", factor),
+    getZoom: (): Promise<{ viewId: string; factor: number } | null> =>
+      ipcRenderer.invoke("browser-get-zoom"),
+    onZoomChanged: (cb: (info: { viewId: string; factor: number }) => void) => {
+      ipcRenderer.on("browser-zoom-changed", (_e, info) => cb(info));
+    },
     // Agent auto-surface: main sends "browser-agent-surfaced" (with the viewId)
     // when an agent opens a website while the user isn't watching a real page —
     // the renderer opens the panel + switches to the Browser tab so the user
@@ -234,11 +267,13 @@ contextBridge.exposeInMainWorld("desktop", {
     ipcRenderer.on("server-crashed", (_e, info) => cb(info));
   },
 
-  // Stale desktop-build signal: main fires "desktop-build-stale" when boot
-  // found desktop/dist older than desktop/src with no rebuild scheduled
-  // (failed update pre-build / degraded deps). Same pattern as onServerCrash;
-  // shared-desktop.js surfaces it via the health banner.
-  onDesktopBuildStale: (cb: (info: { reason: string }) => void) => {
+  // Desktop-health signal: main fires "desktop-build-stale" when boot found
+  // desktop/dist older than desktop/src with no rebuild scheduled (failed
+  // update pre-build / degraded deps), or node_modules rewritten by a foreign
+  // package manager (pnpm) — see desktop/src/reconcile-surface.ts. Same
+  // pattern as onServerCrash; shared-desktop.js surfaces it via the health
+  // banner, using the optional headline as the banner lead-in.
+  onDesktopBuildStale: (cb: (info: { reason: string; headline?: string }) => void) => {
     ipcRenderer.on("desktop-build-stale", (_e, info) => cb(info));
   },
 

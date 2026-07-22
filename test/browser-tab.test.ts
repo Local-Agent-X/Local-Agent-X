@@ -142,6 +142,9 @@ interface FakeBridge {
   goBack: Mock;
   goForward: Mock;
   reload: Mock;
+  // Absent by default — mimics an OLD installed app whose preload predates
+  // browser-stop; the toolbar tests opt in per-test.
+  stop?: Mock;
   getNavState: Mock;
   onNavState: Mock;
 }
@@ -213,6 +216,10 @@ beforeEach(() => {
   new Function(stripSrc)();
   const errorCardSrc = readFileSync(join(here, "../public/js/browser-error-card.js"), "utf8");
   new Function(errorCardSrc)();
+  // Occlusion probe extracted to its own module (find-zoom chunk) — load it
+  // like app.html does or every occlusion test would see "unoccluded".
+  const occlusionSrc = readFileSync(join(here, "../public/js/browser-occlusion.js"), "utf8");
+  new Function(occlusionSrc)();
   const browserTabSrc = readFileSync(join(here, "../public/js/browser-tab.js"), "utf8");
   new Function(browserTabSrc)();
 });
@@ -414,6 +421,64 @@ describe("browser tab in the right side panel", () => {
     expect(anchor.textContent).not.toContain("Can't reach this page");
   });
 
+  it("selected-view loading flips ↻ to a Stop button and the click stops, not reloads", () => {
+    // The module captured the bridge object by reference — adding stop after
+    // load works, and its presence is checked per nav-state push.
+    bridge.stop = vi.fn();
+    const btn = document.getElementById("browser-nav-reload") as HTMLButtonElement;
+    navStateCb!({
+      viewId: "foreground", url: "https://x/", title: "",
+      canGoBack: false, canGoForward: false, loading: true, loadError: null,
+    });
+    // Would have failed before this chunk: the button only ever flipped its
+    // title between Loading…/Reload — never became a Stop affordance.
+    expect(btn.title).toBe("Stop");
+    expect(btn.textContent).toBe("✕");
+    window.laxBrowserTab.reload(); // the toolbar button's click handler
+    expect(bridge.stop).toHaveBeenCalledTimes(1);
+    expect(bridge.reload).not.toHaveBeenCalled();
+    // Load finished → back to ↻/Reload, and the click reloads again.
+    navStateCb!({
+      viewId: "foreground", url: "https://x/", title: "",
+      canGoBack: false, canGoForward: false, loading: false, loadError: null,
+    });
+    expect(btn.title).toBe("Reload");
+    expect(btn.textContent).toBe("↻");
+    window.laxBrowserTab.reload();
+    expect(bridge.reload).toHaveBeenCalledTimes(1);
+    expect(bridge.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("an old bridge without stop keeps the legacy Loading… title and reload click", () => {
+    const btn = document.getElementById("browser-nav-reload") as HTMLButtonElement;
+    navStateCb!({
+      viewId: "foreground", url: "https://x/", title: "",
+      canGoBack: false, canGoForward: false, loading: true, loadError: null,
+    });
+    expect(btn.title).toBe("Loading…");
+    window.laxBrowserTab.reload();
+    expect(bridge.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("a load error flips the button back off Stop (no stuck ✕ on a dead page)", () => {
+    bridge.stop = vi.fn();
+    const btn = document.getElementById("browser-nav-reload") as HTMLButtonElement;
+    navStateCb!({
+      viewId: "foreground", url: "https://x/", title: "",
+      canGoBack: false, canGoForward: false, loading: true, loadError: null,
+    });
+    expect(btn.title).toBe("Stop");
+    navStateCb!({
+      viewId: "foreground", url: "https://x/", title: "",
+      canGoBack: false, canGoForward: false, loading: true,
+      loadError: { code: -102, description: "ERR_CONNECTION_REFUSED", url: "https://x/" },
+    });
+    expect(btn.title).not.toBe("Stop");
+    window.laxBrowserTab.reload();
+    expect(bridge.stop).not.toHaveBeenCalled();
+    expect(bridge.reload).toHaveBeenCalledTimes(1);
+  });
+
   it("nav-state pushes update the URL field and button disabled states", () => {
     expect(navStateCb).toBeTypeOf("function");
     navStateCb!({
@@ -432,7 +497,8 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
   let trustedWC: { getZoomFactor(): number; send: Mock };
   let fakeWC: {
     isDestroyed(): boolean; isLoading(): boolean; getURL(): string; getTitle(): string;
-    loadURL: Mock; reload: Mock; on: Mock;
+    loadURL: Mock; reload: Mock; stop: Mock; on: Mock;
+    findInPage: Mock; stopFindInPage: Mock; setZoomFactor: Mock; getZoomFactor(): number;
     navigationHistory: { canGoBack(): boolean; canGoForward(): boolean; goBack: Mock; goForward: Mock };
   };
 
@@ -451,7 +517,12 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
       getTitle: () => "Private",
       loadURL: vi.fn().mockResolvedValue(undefined),
       reload: vi.fn(),
+      stop: vi.fn(),
       on: vi.fn(),
+      findInPage: vi.fn(),
+      stopFindInPage: vi.fn(),
+      setZoomFactor: vi.fn(),
+      getZoomFactor: () => 1,
       navigationHistory: { canGoBack: () => true, canGoForward: () => false, goBack: vi.fn(), goForward: vi.fn() },
     };
     h.fakeView = { webContents: fakeWC };
@@ -532,7 +603,26 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
     expect(fakeWC.navigationHistory.goBack).not.toHaveBeenCalled();
     h.handlers.get("browser-reload")!({ sender: appWindowWC });
     expect(fakeWC.reload).not.toHaveBeenCalled();
+    h.handlers.get("browser-stop")!({ sender: appWindowWC });
+    expect(fakeWC.stop).not.toHaveBeenCalled();
     expect(h.handlers.get("browser-get-nav-state")!({ sender: appWindowWC })).toBeNull();
+    // Find/zoom page controls (browser-page-controls.ts) — same trust gate.
+    h.handlers.get("browser-find-start")!({ sender: appWindowWC }, "secret");
+    h.handlers.get("browser-find-next")!({ sender: appWindowWC }, "secret");
+    h.handlers.get("browser-find-prev")!({ sender: appWindowWC }, "secret");
+    expect(fakeWC.findInPage).not.toHaveBeenCalled();
+    h.handlers.get("browser-find-stop")!({ sender: appWindowWC });
+    expect(fakeWC.stopFindInPage).not.toHaveBeenCalled();
+    h.handlers.get("browser-set-zoom")!({ sender: appWindowWC }, 2);
+    expect(fakeWC.setZoomFactor).not.toHaveBeenCalled();
+    expect(h.handlers.get("browser-get-zoom")!({ sender: appWindowWC })).toBeNull();
+  });
+
+  it("browser-stop stops the current view's load for the trusted sender", () => {
+    // Would have failed before this chunk: no browser-stop channel existed.
+    expect(h.handlers.get("browser-stop")).toBeTypeOf("function");
+    h.handlers.get("browser-stop")!({ sender: trustedWC });
+    expect(fakeWC.stop).toHaveBeenCalledTimes(1);
   });
 
   it("main-frame load failures surface in nav-state and clear on the next load", async () => {

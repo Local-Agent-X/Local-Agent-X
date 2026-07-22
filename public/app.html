@@ -342,6 +342,12 @@
           <!-- Address-bar suggestions: recent history urls, refreshed by browser-library.js
                on tab-shown + panel open (no per-keystroke queries). -->
           <datalist id="browser-url-suggestions"></datalist>
+          <!-- Per-VIEW page zoom (browser-find.js): distinct from the window zoom
+               in the titlebar menu. The % button shows the selected view's factor
+               and resets it. -->
+          <button id="browser-zoom-out" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('out')" title="Zoom page out">&#8722;</button>
+          <button id="browser-zoom-reset" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('reset')" title="Reset page zoom">100%</button>
+          <button id="browser-zoom-in" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('in')" title="Zoom page in">+</button>
           <button id="browser-profiles-btn" class="artifact-filter" onclick="window.laxBrowserProfiles&&laxBrowserProfiles.toggle()" title="Browser profiles &amp; saved logins">Profiles</button>
           <button id="browser-library-btn" class="artifact-filter" onclick="window.laxBrowserLibrary&&laxBrowserLibrary.toggle()" title="Bookmarks &amp; history">Library</button>
         </div>
@@ -1516,7 +1522,9 @@
 <script src="/js/browser-tab-strip.js?v=v4"></script>
 <script src="/js/browser-workspace.js?v=v1"></script>
 <script src="/js/browser-error-card.js?v=v1"></script>
-<script src="/js/browser-tab.js?v=v2"></script>
+<script src="/js/browser-occlusion.js?v=v1"></script>
+<script src="/js/browser-find.js?v=v1"></script>
+<script src="/js/browser-tab.js?v=v3"></script>
 <script src="/js/browser-profiles.js?v=v1"></script>
 <script src="/js/browser-library.js?v=v1"></script>
 <script src="/vendor/xterm/xterm.js?v=v1"></script>

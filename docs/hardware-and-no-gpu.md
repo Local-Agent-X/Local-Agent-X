@@ -16,15 +16,16 @@ LAX is a local-first agent — most of it runs fine on CPU. A few subsystems lea
 ## What needs a GPU (or runs dramatically slower without)
 
 ### Memory embeddings — Ollama (`nomic-embed-text` / `mxbai-embed-large`)
+- **Note**: Ollama embeddings are opt-in — the bundled local hash embedder is the code default (`DEFAULT_EMBEDDING_PROVIDER = "local"`), and the installer only seeds `"embeddingProvider": "ollama"` when it detected a ready Ollama embed model at install time. The stalls below only apply if Ollama is your embedding provider.
 - **GPU**: ~50–200 ms per call.
 - **CPU**: ~12–25 seconds per call. Memory-live indexing of a single chat session can queue 10+ embed calls and back-pressure the chat pipeline behind it.
 - **Symptom of CPU-bound Ollama**: chat hangs on first turn after restart while the embedding queue drains; logs show repeated `[memory] Embedding total timeout exceeded (60s)`.
-- **Fix**: switch to cloud embeddings (see "Cloud routing"), or set `"embeddingProvider": "local"` in `~/.lax/settings.json` to use the bundled hash embedder (free, no Ollama — lower-quality recall but no CPU stalls).
+- **Fix**: switch to cloud embeddings (see "Cloud routing"), or set `"embeddingProvider": "local"` in `~/.lax/settings.json` to return to the bundled hash embedder (free, no Ollama — lower-quality recall but no CPU stalls).
 
 ### Voice STT — local Whisper (`local-whisper` provider)
 - **GPU**: real-time transcription, ~300 ms after speech-end.
 - **CPU**: 3–10 seconds for a short utterance, 30+ seconds for long ones.
-- **Fix**: pick a non-local STT tier (Groq, OpenAI, Mistral) — see [voice picker](#voice-tier-recommendations).
+- **Fix**: pick a non-local STT tier (Groq, OpenAI, Mistral) — see [voice tier options](#2-voice-tier--browser-edge-cloud-or-openai-realtime).
 
 ### Voice TTS — Kokoro in-process (Tier 4 ONNX; env-only via `LAX_VOICE_TIER4_PROVIDER=kokoro`)
 - **GPU**: ~1.2 s first-audio.
@@ -39,8 +40,8 @@ LAX is a local-first agent — most of it runs fine on CPU. A few subsystems lea
 - **GPU (8–12 GB)**: 7B–13B at usable speed.
 - **CPU**: 7B models are 2–10 tokens/sec — unusably slow for agent use. Don't bother; use a cloud chat provider.
 
-### Voice cloning — Studio tier (Chatterbox)
-- **GPU required in practice.** Chatterbox has CPU-fallback code, but the bundled installs pull GPU-only wheels — on a CPU-only machine the sidecar fails to import its CUDA deps. Switch to a non-Studio voice tier on GPU-less machines.
+### Voice cloning — Studio local tier (VoxCPM primary, Chatterbox backup)
+- **GPU strongly recommended.** VoxCPM is the primary zero-shot clone engine, with Chatterbox as backup. Both have CPU-fallback code and their CUDA torch wheels import fine on a CPU-only box (Chatterbox even honors `LAX_FORCE_CPU_TORCH` to keep CPU torch), so the clone sidecars start — cloning is just very slow without CUDA. The real CPU-only blocker is the bundled **Lite** voice sidecar (Kokoro + faster-whisper), which is GPU-only by design — see [known-issues](known-issues.md#lite-voice-sidecar-is-gpu-only-the-ci-cpu-voice-artifacts-are-mislabeled-or-cpu-unverified). Switch to a non-Studio voice tier on GPU-less machines.
 
 ### Image / video generation
 - **GPU only.** Falls back to error if no compatible device.
@@ -59,7 +60,7 @@ Edit `~/.lax/settings.json`:
 }
 ```
 
-Cost: ~$0.02 per million tokens (a few cents/day for typical use). Vector format is the same as Ollama's nomic/mxbai once normalized — past content stays searchable. Restart the server after editing.
+Cost: ~$0.02 per million tokens (a few cents/day for typical use). Switching embedding providers changes vector dimensionality (nomic 768, mxbai 1024, OpenAI 1536), so previously-indexed content must be re-embedded before it's searchable again. LAX detects the provider change on the next boot, wipes the stale vectors, and re-embeds them in the background automatically — content is keyword-searchable meanwhile and returns to full vector search once the backfill completes. Restart the server after editing.
 
 Alternative: set `"embeddingProvider": "local"` in `~/.lax/settings.json`. Sessions are still indexed in real-time, but with the bundled hash-based embedder instead of Ollama — free and no CPU stalls, at the cost of lower-quality semantic recall. Restart the server after editing.
 
@@ -69,9 +70,10 @@ Open the Media tab and pick one of:
 
 - **Browser** — free, no install, works in any Chromium browser. Uses Web Speech API client-side for both STT and TTS. Robotic but instant. Recommended if you just want voice to work.
 - **Edge cloud** — Microsoft's edge-tts (no API key) for ~22 neural voices, paired with bundled local Whisper STT by default (no key). Ships with the app — no manual install. Optionally swap STT to cloud Groq/OpenAI/Mistral via the dropdown (needs the matching API key) for lower latency.
-- **OpenAI Realtime** — full-duplex, lowest latency, ~$0.06/min. Pay-per-minute. Needs `OPENAI_API_KEY` (or `OPENAI_REALTIME_KEY`).
 
-Don't pick "Studio local" without a GPU — its Python sidecars (Kokoro + faster-whisper, optional Chatterbox) are slow or won't start without CUDA.
+Not in the picker anymore: **OpenAI Realtime** (full-duplex, lowest latency, ~$0.06/min, pay-per-minute) proxies the whole session to OpenAI and bypasses LAX tools/memory/persona. Enable it out-of-band with `LAX_VOICE_MODE=realtime`; it needs `OPENAI_API_KEY` (or `OPENAI_REALTIME_KEY`).
+
+Don't pick "Studio local" without a GPU — its Python sidecars (Lite: Kokoro + faster-whisper, plus VoxCPM as the primary clone engine and optional Chatterbox as backup) are slow or won't start without CUDA.
 
 ### 3. Chat LLM → cloud provider (default)
 

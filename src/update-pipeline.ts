@@ -35,6 +35,7 @@ import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restor
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
 import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
+import { gitSafeCmd } from "./git-safety.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("update-pipeline");
@@ -76,7 +77,7 @@ export interface GitUpdateResult {
 }
 
 function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): string {
-  return execSync(cmd, { cwd, encoding: "utf-8", timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }).trim();
+  return execSync(gitSafeCmd(cmd), { cwd, encoding: "utf-8", timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }).trim();
 }
 
 /** A Windows file lock (a loaded native module, AV, or the file indexer), as

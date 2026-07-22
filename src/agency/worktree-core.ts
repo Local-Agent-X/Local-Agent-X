@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createLogger } from "../logger.js";
+import { composeGitArgs } from "../git-safety.js";
 
 export const logger = createLogger("agency.worktree");
 
@@ -69,12 +70,19 @@ export function releaseWorktreeSlot(name: string): void {
  * environment was missing ComSpec / SystemRoot. execFileSync calls git
  * directly with explicit env passthrough — no shell, no env-dependent
  * lookup, no quoting concerns.
+ *
+ * `cwd` is REQUIRED and must name the intended repo/worktree. It used to
+ * default to `process.cwd()`, which — when the app runs from a user's live dev
+ * checkout — silently pointed repo-global mutations (worktree prune, branch
+ * delete) at that checkout instead of the app's own %TEMP% worktree base,
+ * destroying it. Every call site now names its target explicitly; a caller that
+ * genuinely wants the ambient repo passes `process.cwd()` on purpose.
  */
-export function git(args: string[] | string, cwd?: string): string {
+export function git(args: string[] | string, cwd: string): string {
   const argv = Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);
   try {
-    return execFileSync("git", argv, {
-      cwd: cwd || process.cwd(),
+    return execFileSync("git", composeGitArgs(argv), {
+      cwd,
       encoding: "utf-8",
       timeout: 30_000,
       windowsHide: true,

@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeErrorMessage } from "./server-utils.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
+import { gitSafeCmd } from "./git-safety.js";
 
 export interface UpdateCheckResult {
   localVersion: string;
@@ -48,7 +49,7 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
     const localVersion = localPkg.version || "0.0.0";
 
     let localCommit = "";
-    try { localCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
+    try { localCommit = execSync(gitSafeCmd("git rev-parse --short HEAD"), { cwd: repoRoot, encoding: "utf-8" }).trim(); }
     catch {
       // Not a git checkout (rolling/tarball) — compare last-installed commit to
       // remote main HEAD. First check before any in-app update has no recorded
@@ -79,16 +80,16 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
 
     let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "", checkError: string | undefined;
     try {
-      execSync("git fetch origin main --quiet", { cwd: repoRoot, encoding: "utf-8", timeout: 30000 });
-      remoteCommit = execSync("git rev-parse --short origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim();
+      execSync(gitSafeCmd("git fetch origin main --quiet"), { cwd: repoRoot, encoding: "utf-8", timeout: 30000 });
+      remoteCommit = execSync(gitSafeCmd("git rev-parse --short origin/main"), { cwd: repoRoot, encoding: "utf-8" }).trim();
       try {
-        const remotePkgRaw = execSync("git show origin/main:package.json", { cwd: repoRoot, encoding: "utf-8" });
+        const remotePkgRaw = execSync(gitSafeCmd("git show origin/main:package.json"), { cwd: repoRoot, encoding: "utf-8" });
         remoteVersion = (JSON.parse(remotePkgRaw) as { version?: string }).version || localVersion;
       } catch { /* remote package.json may be missing — keep localVersion */ }
-      try { releaseNotes = execSync("git log -1 --format=%s origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim(); } catch { /* non-fatal */ }
+      try { releaseNotes = execSync(gitSafeCmd("git log -1 --format=%s origin/main"), { cwd: repoRoot, encoding: "utf-8" }).trim(); } catch { /* non-fatal */ }
       // "Behind", not "different": a developer_mode install carries local commits,
       // so an update exists only when origin/main has commits this install lacks.
-      const behind = parseInt(execSync("git rev-list --count HEAD..origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim(), 10) || 0;
+      const behind = parseInt(execSync(gitSafeCmd("git rev-list --count HEAD..origin/main"), { cwd: repoRoot, encoding: "utf-8" }).trim(), 10) || 0;
       updateAvailable = behind > 0;
     } catch (e) {
       const err = e as { stderr?: Buffer | string; message: string };
@@ -121,7 +122,7 @@ export async function applyUpdateNow(): Promise<ApplyUpdateResult> {
   bustUpdateCache();
 
   let isGitCheckout = true;
-  try { execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }); } catch { isGitCheckout = false; }
+  try { execSync(gitSafeCmd("git rev-parse --short HEAD"), { cwd: repoRoot, encoding: "utf-8" }); } catch { isGitCheckout = false; }
 
   if (!isGitCheckout) {
     const { applyRollingUpdate } = await import("./update-pipeline.js");

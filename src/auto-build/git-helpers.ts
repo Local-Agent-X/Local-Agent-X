@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
+import { composeGitArgs } from "../git-safety.js";
 
 export interface GitRunOptions {
   cwd: string;
@@ -46,7 +47,10 @@ function gitRun(args: string[], opts: GitRunOptions, stdin?: string): Promise<Gi
     // (shell:true below), and proc.kill signals only the wrapper — the real
     // git kept running holding .git/index.lock, wedging every later git op.
     const timer = setTimeout(() => { timedOut = true; killProcessTree(proc); }, opts.timeoutMs ?? 30_000);
-    const proc = spawn("git", args, {
+    // composeGitArgs prepends `-c gc.auto=0` so no auto-build op (commit / add /
+    // init) can trip Git's auto-gc and prune a shared object store — the single
+    // git-spawn seam for this module, so every exported helper inherits it.
+    const proc = spawn("git", composeGitArgs(args), {
       cwd: opts.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",

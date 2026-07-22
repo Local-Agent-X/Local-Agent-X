@@ -236,35 +236,22 @@
 
 	// Error card in the anchor while the selected view's last load failed. The
 	// native view is hidden by shouldShow() so the card is actually visible.
-	// Styling is inline — the card is built here and app.css stays untouched.
+	// Rendering — including the deny-reason lookup for egress-blocked loads —
+	// lives in browser-error-card.js (window.laxBrowserErrorCard, loaded just
+	// before this file); this module owns the state and the retry action.
 	function renderLoadError() {
-		var anchor = document.getElementById('browser-view-anchor');
-		if (!anchor) return;
-		if (!loadError) {
-			if (anchor.dataset.loadError) { anchor.innerHTML = ''; delete anchor.dataset.loadError; }
-			return;
-		}
-		anchor.dataset.loadError = '1';
-		anchor.innerHTML = '';
-		var box = document.createElement('div');
-		box.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;padding:24px;text-align:center';
-		var title = document.createElement('div');
-		title.style.cssText = 'font-size:.85rem;font-weight:600;color:var(--text)';
-		title.textContent = "Can't reach this page";
-		var detail = document.createElement('div');
-		detail.style.cssText = 'font-family:var(--mono);font-size:.7rem;color:var(--muted);word-break:break-all';
-		detail.textContent = (loadError.url || '') +
-			(loadError.description ? ' — ' + loadError.description : '') +
-			(typeof loadError.code === 'number' ? ' (' + loadError.code + ')' : '');
-		var btn = document.createElement('button');
-		btn.className = 'artifact-filter';
-		btn.id = 'browser-load-error-retry';
-		btn.textContent = 'Retry';
-		btn.addEventListener('click', function () { if (bridge) bridge.reload(); });
-		box.appendChild(title);
-		box.appendChild(detail);
-		box.appendChild(btn);
-		anchor.appendChild(box);
+		var card = window.laxBrowserErrorCard || null;
+		if (!card) return; // card script missing → no card, state intact
+		card.render(loadError, {
+			viewId: selectedViewId,
+			// Retry re-navigates to the failed URL — reload() on a navigation
+			// that never committed can no-op.
+			onRetry: function (url) {
+				if (!bridge) return;
+				if (url) bridge.navigate(url);
+				else bridge.reload();
+			},
+		});
 	}
 
 	function updateNavUI(state) {

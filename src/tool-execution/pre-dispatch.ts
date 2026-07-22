@@ -31,6 +31,7 @@ import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.
 import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.js";
 import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolvePreDispatchDeps, type PreDispatchDeps } from "./pre-dispatch-deps.js";
+import { formatConstraintSource } from "../canonical-loop/public/plan-ledger.js";
 
 export type { PreDispatchDeps, PreDispatchApprovalManager, PreDispatchRuntimeFlags } from "./pre-dispatch-deps.js";
 
@@ -225,7 +226,8 @@ export async function assertToolCallAllowed(
       throw new ToolBlocked({
         stage: "tool-policy",
         disposition: "hard-deny",
-        reason: `The user asked you not to ${verb} in this request; this ${call.name} call is blocked. Respond without it, or ask the user to lift the restriction.`,
+        // The quoted source phrase makes a ledger misextraction diagnosable.
+        reason: `The user asked you not to ${verb} in this request${formatConstraintSource(d.opConstraintPhrases(ctx.opId ?? ""))}; this ${call.name} call is blocked. Respond without it, or ask the user to lift the restriction.`,
         recovery,
         userHint: USER_HINTS.policy,
       });
@@ -242,7 +244,7 @@ export async function assertToolCallAllowed(
       const cmd = (call.args as { command?: unknown } | undefined)?.command;
       if (typeof cmd === "string" && shellCommandWritesFiles(cmd)) {
         const cause = opForbids("workspace-write")
-          ? "The user asked you not to edit or create files in this request"
+          ? `The user asked you not to edit or create files in this request${formatConstraintSource(d.opConstraintPhrases(ctx.opId ?? ""))}`
           : "Enforced plan mode is on for this session";
         throw new ToolBlocked({
           stage: "tool-policy",

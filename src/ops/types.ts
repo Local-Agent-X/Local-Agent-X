@@ -235,6 +235,16 @@ export interface Op {
    * canonical-loop/checkpoint.ts.
    */
   appUrl?: string;
+  /**
+   * Who authored this op's `task` text. "harness" marks synthetic contexts a
+   * subsystem composed itself (auto-build chunk-worker tasks with their
+   * working-directory preamble) — NOT something the user typed. The
+   * instruction-ledger middleware skips constraint extraction on those:
+   * running it on harness prose turned "Never touch paths outside it" into a
+   * blanket workspace-write ban that bricked a build's preflight
+   * (2026-07-22, op_18bf554cd4b8402e). Absent = user-authored.
+   */
+  taskProvenance?: "user" | "harness";
   lastFailureReason?: string;
   lastFailureAt?: string;
   /**

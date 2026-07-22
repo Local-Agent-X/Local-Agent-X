@@ -15,7 +15,7 @@ import type { LAXConfig } from "../types.js";
 import type { LocalOnlyDecision } from "../local-only-policy.js";
 import { getApprovalManager, getToolDecision, getRiskDecision } from "../approval-manager.js";
 import { hasCapability, type CapabilityClass } from "../tool-registry.js";
-import { opForbidsCapability, planModeForbidsCapability } from "../canonical-loop/public/plan-ledger.js";
+import { opForbidsCapability, opConstraintPhrases, planModeForbidsCapability } from "../canonical-loop/public/plan-ledger.js";
 import type { ServerEvent } from "../types.js";
 import type { RulePack } from "../tool-policy/evaluator.js";
 import { makeSpendCapPack } from "../tool-policy/packs/spend-cap-pack.js";
@@ -59,6 +59,9 @@ export interface PreDispatchDeps {
   ) => LocalOnlyDecision | Promise<LocalOnlyDecision>;
   /** Per-op instruction-ledger prohibition state. */
   opForbidsCapability?: (opId: string, cls: CapabilityClass) => boolean;
+  /** Literal phrases the op's constraints were parsed from — quoted in the
+   *  denial message so a misextraction is diagnosable from the transcript. */
+  opConstraintPhrases?: (opId: string) => string[];
   /** Session-scoped enforced-plan-mode state. */
   planModeForbidsCapability?: (sessionId: string, cls: CapabilityClass) => boolean;
   /** Tool-registry capability classification. */
@@ -102,6 +105,7 @@ export function resolvePreDispatchDeps(deps: PreDispatchDeps = {}): ResolvedPreD
       (async (name, args, cfg) =>
         (await import("../local-only-policy.js")).localOnlyToolDecision(name, args, cfg)),
     opForbidsCapability: deps.opForbidsCapability ?? opForbidsCapability,
+    opConstraintPhrases: deps.opConstraintPhrases ?? opConstraintPhrases,
     planModeForbidsCapability: deps.planModeForbidsCapability ?? planModeForbidsCapability,
     hasCapability: deps.hasCapability ?? hasCapability,
     makeSpendCapPack: deps.makeSpendCapPack ?? makeSpendCapPack,

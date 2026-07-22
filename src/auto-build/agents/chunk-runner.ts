@@ -208,6 +208,11 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     // without it the delegated-bash/write gate blocks the worker (live
     // failure 2026-07-01: chunk 1 denied "requires worktree isolation").
     workRoot: opts.projectDir,
+    // The task (preamble included) is harness prose, not user speech — without
+    // this, the instruction ledger reads "Never touch paths outside it" as a
+    // user workspace-write ban and every worker write is hard-denied (live
+    // failure 2026-07-22: Merchhelm preflight halt).
+    harnessAuthoredTask: true,
   });
   const agentId = ref.runId;
 

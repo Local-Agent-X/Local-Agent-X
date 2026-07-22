@@ -12,8 +12,12 @@ vi.mock("../skill-bodies.js", () => ({ loadSkillBody: () => "SKILL BODY" }));
 
 // Stub the canonical spawn — we only care about lifecycle, not a real run.
 const RUN_ID = "run-ab1";
+const invokeCalls: Array<{ task: string; opts: Record<string, unknown> }> = [];
 vi.mock("../../agents/invoke.js", () => ({
-  invokeDefinition: () => ({ runId: RUN_ID, definition: {} }),
+  invokeDefinition: (_def: unknown, task: string, opts: Record<string, unknown>) => {
+    invokeCalls.push({ task, opts });
+    return { runId: RUN_ID, definition: {} };
+  },
 }));
 
 import { runChunkAgent, _clearChunkAgentDefCache } from "./chunk-runner.js";
@@ -24,6 +28,7 @@ let cancelSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   _clearChunkAgentDefCache();
+  invokeCalls.length = 0;
   cancelSpy = vi.spyOn(Handler.getInstance(), "cancelAgent").mockImplementation(() => {});
 });
 
@@ -55,5 +60,19 @@ describe("runChunkAgent lifecycle cancellation (AB-1)", () => {
     const res = await p;
     expect(res.exitCode).toBe(0);
     expect(cancelSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("runChunkAgent task provenance", () => {
+  it("marks the spawn harness-authored so the instruction ledger skips its preamble", async () => {
+    // The working-directory preamble ("Never touch paths outside it") is
+    // harness prose. Without this flag it extracts as a user workspace-write
+    // ban and every worker write is hard-denied (2026-07-22 Merchhelm halt).
+    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "do the thing", projectDir: "/tmp/proj", timeoutMs: 60_000 });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "STATUS: done" });
+    await p;
+    expect(invokeCalls).toHaveLength(1);
+    expect(invokeCalls[0].opts.harnessAuthoredTask).toBe(true);
+    expect(invokeCalls[0].task).toContain("Never touch paths outside it");
   });
 });

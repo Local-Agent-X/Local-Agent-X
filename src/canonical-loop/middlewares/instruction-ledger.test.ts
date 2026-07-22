@@ -59,6 +59,32 @@ describe("instructionLedgerMiddleware", () => {
     expect(getOpLedger(c.op.id)).toEqual({ prohibitions: [], obligations: [], phrases: [] });
   });
 
+  it("harness-authored agent_spawn op: SKIPS extraction (taskProvenance beats op type)", async () => {
+    let called = false;
+    const spyExtract = (msg: string) => { called = true; return offlineExtract(msg); };
+    const mw = createInstructionLedgerMiddleware(spyExtract);
+    // The live 2026-07-22 Merchhelm failure: an auto-build chunk worker runs as
+    // op type agent_spawn (NOT app_build), and its harness-composed preamble
+    // says "Never touch paths outside it" — a STRONG-tier workspace-write match
+    // that bricked the preflight. The provenance stamp must skip extraction.
+    const c = ctx({
+      op: { id: "op-spawn-harness-x", type: "agent_spawn", lane: "agent", taskProvenance: "harness" } as never,
+      userMessage: "Your project root is /apps/x. Never touch paths outside it. 1. Read the sentinel. 2. Write the echo file.",
+    });
+    const r = await mw.beforeTurn!(c);
+    expect(r.kind).toBe("continue");
+    expect(called).toBe(false); // extractor never ran
+    expect(getOpLedger(c.op.id)).toEqual({ prohibitions: [], obligations: [], phrases: [] });
+  });
+
+  it("user-authored agent_spawn op (no provenance stamp): still extracts", async () => {
+    const mw = createInstructionLedgerMiddleware(offlineExtract);
+    const c = ctx({ userMessage: "Investigate the crash but don't edit any code." });
+    const r = await mw.beforeTurn!(c);
+    expect(r.kind).toBe("continue");
+    expect(getOpLedger(c.op.id)?.prohibitions).toContain("workspace-write");
+  });
+
   it("turn 0: records the EMPTY ledger for an unconstrained message", async () => {
     const mw = createInstructionLedgerMiddleware(offlineExtract);
     const c = ctx(); // "Fix the bug…" — no constraint cues

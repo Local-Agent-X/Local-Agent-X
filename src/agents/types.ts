@@ -144,6 +144,12 @@ export interface InvokeOpts {
    *  removes it when the run ends. Ignored when the definition provisions
    *  a real worktree. */
   workRoot?: string;
+  /** True when `task` is harness-composed prose (auto-build chunk workers),
+   *  not something the user typed. Threaded to the op as
+   *  taskProvenance="harness" so the instruction-ledger middleware skips
+   *  constraint extraction — harness directives like "Never touch paths
+   *  outside it" must never be read as a user workspace-write ban. */
+  harnessAuthoredTask?: boolean;
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via

@@ -228,7 +228,7 @@ export function registerHandlerEvents(deps: {
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
         lane: "agent",
-        runId: agentId,
+        runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask,
         signal,
         onEvent: (event) => {
           if (event.type === "stream" && "delta" in event && event.delta) {

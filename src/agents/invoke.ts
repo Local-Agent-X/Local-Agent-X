@@ -141,6 +141,7 @@ export function invokeDefinition(
       modelOverride,
       browserProfileId,
       workRoot: opts.workRoot,
+      harnessAuthoredTask: opts.harnessAuthoredTask,
     },
     abortController.signal,
   );

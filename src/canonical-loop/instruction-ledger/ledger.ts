@@ -62,6 +62,24 @@ export function opObligations(opId: string): Obligation[] {
   return LEDGERS.get(opId)?.obligations ?? [];
 }
 
+/** The literal phrases the op's constraints were parsed from — empty when no
+ *  ledger is set. Surfaced in pre-dispatch denial messages so a blocked agent
+ *  (and anyone reading its transcript) sees WHICH words caused the ban instead
+ *  of a bare "the user asked you not to" — a misextraction is then visible at
+ *  the point of failure, not after a log dig. */
+export function opConstraintPhrases(opId: string): string[] {
+  return LEDGERS.get(opId)?.phrases ?? [];
+}
+
+/** ` (from your instruction: "…")` — denial-message suffix quoting up to three
+ *  ledger phrases. Empty for an empty list, so callers can append it
+ *  unconditionally. */
+export function formatConstraintSource(phrases: string[]): string {
+  if (phrases.length === 0) return "";
+  const quoted = phrases.slice(0, 3).map((p) => JSON.stringify(p.slice(0, 80))).join(", ");
+  return ` (from your instruction: ${quoted})`;
+}
+
 /** True only when the op's ledger records at least one constraint or phrase. */
 export function opHasConstraints(opId: string): boolean {
   const l = LEDGERS.get(opId);

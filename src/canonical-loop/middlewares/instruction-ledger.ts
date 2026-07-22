@@ -51,9 +51,15 @@ export function createInstructionLedgerMiddleware(
     async beforeTurn(ctx) {
       if (ctx.turnIdx !== 0) return { kind: "continue" };
 
-      // Synthetic-context ops (app_build) carry harness directives, not user
-      // constraints — record an empty ledger and never run the extractor.
-      if (SYNTHETIC_CONTEXT_OP_TYPES.has(ctx.op.type)) {
+      // Synthetic-context ops carry harness directives, not user constraints —
+      // record an empty ledger and never run the extractor. Two signals, both
+      // honored: the op-type set (app_build's whole class is synthetic) and the
+      // per-op provenance stamp (agent_spawn is user-authored for normal
+      // delegation but harness-authored for auto-build chunk workers — op type
+      // alone can't tell them apart, which is how the 2026-07-22 Merchhelm
+      // preflight got bricked: the chunk preamble's "Never touch paths outside
+      // it" extracted as a blanket workspace-write ban).
+      if (SYNTHETIC_CONTEXT_OP_TYPES.has(ctx.op.type) || ctx.op.taskProvenance === "harness") {
         setOpLedger(ctx.op.id, emptyLedger());
         return { kind: "continue" };
       }

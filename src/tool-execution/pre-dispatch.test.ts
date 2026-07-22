@@ -185,6 +185,28 @@ describe("per-op instruction-ledger capability prohibitions", () => {
     }
   });
 
+  it("denial message QUOTES the ledger phrase the ban was extracted from", async () => {
+    // Provenance in the denial is what makes a misextraction diagnosable from
+    // the transcript (2026-07-22 Merchhelm: the bare wording left both the
+    // blocked worker and the parent agent guessing at anchoring bugs).
+    setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["Never touch paths outside it"] });
+    try {
+      await assertToolCallAllowed({ id: "p-w", name: "write", args: { path: "a.txt", content: "x" } }, opCtx("op-1"));
+      throw new Error("expected ToolBlocked");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolBlocked);
+      expect((e as ToolBlocked).reason).toContain('"Never touch paths outside it"');
+    }
+    // The shell escape hatch carries the same provenance.
+    try {
+      await assertToolCallAllowed({ id: "p-b", name: "bash", args: { command: "cp a.txt b.txt" } }, opCtx("op-1"));
+      throw new Error("expected ToolBlocked");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ToolBlocked);
+      expect((e as ToolBlocked).reason).toContain('"Never touch paths outside it"');
+    }
+  });
+
   it("blocks class synonyms (ari_file), not just canonical names", async () => {
     setOpLedger("op-1", { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit any code"] });
     await expect(

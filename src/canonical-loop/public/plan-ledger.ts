@@ -21,6 +21,8 @@ export {
 	opForbidsCapability,
 	opObligations,
 	opHasConstraints,
+	opConstraintPhrases,
+	formatConstraintSource,
 	setEnforcedPlanMode,
 	isEnforcedPlanMode,
 	planModeForbidsCapability,

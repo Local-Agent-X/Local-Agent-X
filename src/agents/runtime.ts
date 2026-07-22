@@ -55,6 +55,9 @@ export interface AgentRunDriverRequest {
    *  Set by callers whose workers operate on a project that is NOT the
    *  LAX repo (auto-build chunk workers). */
   workRoot?: string;
+  /** Mirrors InvokeOpts.harnessAuthoredTask — the driver forwards it so the
+   *  op records taskProvenance="harness" and skips constraint extraction. */
+  harnessAuthoredTask?: boolean;
 }
 
 /** What the driver returns when the canonical op reaches a terminal state. */

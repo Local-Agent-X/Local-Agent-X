@@ -6,6 +6,8 @@ export {
   opForbidsCapability,
   opObligations,
   opHasConstraints,
+  opConstraintPhrases,
+  formatConstraintSource,
 } from "./ledger.js";
 export type { InstructionLedger, Obligation } from "./ledger.js";
 export {

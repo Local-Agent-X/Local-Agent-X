@@ -79,12 +79,14 @@ export function createAgentOperation(args: {
   contextPack: Op["contextPack"];
   lane: OpLane;
   sessionId: string;
+  taskProvenance?: Op["taskProvenance"];
 }): Op {
   return {
     id: newOpId(`op_${args.opType}`),
     sessionId: args.sessionId,
     type: args.opType,
     task: args.userMessage,
+    taskProvenance: args.taskProvenance,
     contextPack: args.contextPack,
     lane: args.lane,
     retryPolicy: getRetryPolicy(args.opType),
@@ -131,7 +133,10 @@ export async function runAgentViaCanonical(
   });
   contextPack.promptTelemetry = options.promptTelemetry;
 
-  const op = createAgentOperation({ opType, userMessage, contextPack, lane, sessionId });
+  const op = createAgentOperation({
+    opType, userMessage, contextPack, lane, sessionId,
+    taskProvenance: options.harnessAuthoredTask ? "harness" : undefined,
+  });
 
   // Resolve and install every non-durable runtime dependency before the op is
   // visible to session tracking or the durable stores. A failed credential,

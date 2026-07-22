@@ -112,6 +112,22 @@ export async function runPreflightProbe(
   }
 }
 
+/** The worker's own account of the failure, appended verbatim to a fail
+ *  detail. The pre-2026-07-22 details GUESSED at causes ("anchoring or the
+ *  write gate is broken") while the worker's report — sitting right in
+ *  result.stdout — named the real one ("write/bash blocked by tool-policy").
+ *  The halt reason is what the parent chat agent diagnoses from, so it must
+ *  carry the evidence, not a guess. */
+function workerEvidence(result: ChunkAgentResult): string {
+  const report = parseChunkReport(result.stdout);
+  if (report.parsed) {
+    const note = report.note ? ` NOTE: ${JSON.stringify(report.note.slice(0, 300))}` : "";
+    return ` Worker's own report — STATUS: ${report.status}.${note}`;
+  }
+  const tail = result.stdout.trim().slice(-300);
+  return tail ? ` Worker output tail: ${JSON.stringify(tail)}` : "";
+}
+
 /** The verification ladder. Environment contract FIRST — that is what the
  *  preflight uniquely and cheaply verifies (paths, gates, cwd), and a break
  *  there bricks every chunk. Report discipline is checked LAST and only warns:
@@ -130,14 +146,14 @@ function verdict(result: ChunkAgentResult, token: string, paths: Record<"sentine
   // Environment contract — the preflight's reason to exist. A break here means
   // chunks cannot recover, so it halts.
   if (!existsSync(paths.echo)) {
-    return { status: "fail", contract: "file-write-anchoring", detail: `relative write of ${PREFLIGHT_FILES.echo} did not land in the project root — work-root anchoring or the delegated write gate is broken.` };
+    return { status: "fail", contract: "file-write-anchoring", detail: `relative write of ${PREFLIGHT_FILES.echo} did not land in the project root. Possible causes: a tool-policy denial (instruction-ledger / plan-mode / threat block on write), broken work-root anchoring, or the delegated write gate.${workerEvidence(result)}` };
   }
   const echoed = readFileSync(paths.echo, "utf-8").trim();
   if (echoed !== token) {
     return { status: "fail", contract: "file-read-anchoring", detail: `worker wrote ${JSON.stringify(echoed.slice(0, 80))} instead of the sentinel token — it could not read ${PREFLIGHT_FILES.sentinel} via a relative path (wrong anchor root).` };
   }
   if (!existsSync(paths.bash)) {
-    return { status: "fail", contract: "bash-cwd", detail: `bash \`cd "<project root>" && cp\` produced no file — shell policy, cwd anchoring, or path quoting is broken.` };
+    return { status: "fail", contract: "bash-cwd", detail: `bash \`cd "<project root>" && cp\` produced no file — shell policy (or a tool-policy denial), cwd anchoring, or path quoting is broken.${workerEvidence(result)}` };
   }
   const bashed = readFileSync(paths.bash, "utf-8").trim();
   if (bashed !== token) {

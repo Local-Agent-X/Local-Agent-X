@@ -34,6 +34,10 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  AgentRunStore record. Absent for callers that aren't an agent spawn
    *  (e.g. cron missions, memory consolidation). */
   runId?: string;
+  /** True when the userMessage is harness-composed, not user-typed (auto-build
+   *  chunk workers). Stamped as op.taskProvenance="harness" so the
+   *  instruction-ledger middleware never extracts constraints from it. */
+  harnessAuthoredTask?: boolean;
 }
 
 export const DEFAULT_WALL_CLOCK_MS = 15 * 60 * 1000;

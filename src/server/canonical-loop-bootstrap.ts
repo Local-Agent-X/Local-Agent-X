@@ -21,6 +21,7 @@ import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
+import { reconcileTerminalContainerExecutions } from "../canonical-loop/container-terminal-janitor.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 
@@ -101,11 +102,12 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   // backgrounded so server.listen() isn't gated by recovery work. New ops
   // submitted during the sweep window are unaffected — they go through
   // submitCanonicalOp which doesn't touch lease-expired rows.
-  setImmediate(() => {
+  setImmediate(async () => {
     const t = Date.now();
     try {
       const restored = restorePersistedAppBuildRuntimes();
       reconcileAllPendingProcessRelays();
+      await reconcileTerminalContainerExecutions();
       const recovered = sweepStaleCanonicalOps();
       const learned = reconcileCanonicalLearnedOutcomes();
       const dt = Date.now() - t;

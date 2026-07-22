@@ -2,6 +2,7 @@
 import { createLogger } from "../logger.js";
 import { getLeaseConfig } from "./lease.js";
 import { sweepStaleCanonicalOpsCooperatively } from "./recovery.js";
+import { reconcileTerminalContainerExecutions } from "./container-terminal-janitor.js";
 
 const logger = createLogger("canonical-loop.recovery-janitor");
 
@@ -28,7 +29,10 @@ export class RecoveryJanitor {
   constructor(options: RecoveryJanitorOptions = {}) {
     this.intervalMs = options.intervalMs ?? getLeaseConfig().leaseDurationMs;
     if (this.intervalMs <= 0) throw new Error("Recovery janitor interval must be positive");
-    this.sweep = options.sweep ?? sweepStaleCanonicalOpsCooperatively;
+    this.sweep = options.sweep ?? (async () => {
+      await reconcileTerminalContainerExecutions();
+      await sweepStaleCanonicalOpsCooperatively();
+    });
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs));
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer));
     this.onError = options.onError ?? ((error) => {

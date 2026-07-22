@@ -14,6 +14,19 @@ export async function handleObserve(manager: BrowserBackend): Promise<ToolResult
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   // Structured view grouped by role, viewport-first, diff-aware
   const obs = await manager.observe();
+  const extractFailure = obs.degraded?.find((d) => d.op === "elements");
+  if (extractFailure) {
+    // Element extraction failed — an empty grouped listing here would be
+    // indistinguishable from "page has no interactive elements". Degrade
+    // honestly instead of rendering misleading zero counts.
+    const reason = extractFailure.reason.replace(/\s+/g, " ").slice(0, 200);
+    return ok(
+      `Page: ${obs.title} (${obs.url})\n` +
+        `OBSERVATION DEGRADED: element extraction FAILED (${reason}). ` +
+        `The element list is unavailable — this does NOT mean the page has no interactive elements. ` +
+        `Use browser({action:"screenshot"}) to see the page before acting.`
+    );
+  }
   const source = obs.isInitial && obs.full ? obs.full : [...obs.added];
   const visible = source.filter((r) => r.inViewport);
 

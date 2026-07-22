@@ -75,12 +75,15 @@ const RAW_ELEMENTS: RawElement[] = [
 /** Routes mocked exec calls by distinctive markers in the canonical scripts. */
 function routeExec(script: string): unknown {
 	if (script.includes("computeSignature")) return RAW_ELEMENTS; // extract.ts extractor
+	// iframe-detector's script also mentions location.href — route it BEFORE the
+	// fingerprint marker or it gets a string back and fails (which the degraded-
+	// observation marker now surfaces instead of silently swallowing).
+	if (script.includes("'iframe, frame'")) return []; // iframe-detector
 	if (script.includes("location.href")) return `${PAGE_URL}|${PAGE_TITLE}|1234|56`; // fingerprint
 	if (script.includes("document.title")) return PAGE_TITLE;
 	if (script.includes("MutationObserver")) return true; // stability DOM-quiet wait
 	if (script.includes("readyState")) return true; // stability spinner poll
 	if (script.includes("xpathOf")) return []; // modal-detector
-	if (script.includes("'iframe, frame'")) return []; // iframe-detector
 	if (script.includes('"not-clickable"')) return { ok: true }; // A1 click script
 	if (script.includes('"not-fillable"')) return { ok: true, actual: "hello", type: "" }; // A1 fill
 	if (script.includes('"no-matching-option"')) return { ok: true, selected: ["opt1"] }; // A1 select

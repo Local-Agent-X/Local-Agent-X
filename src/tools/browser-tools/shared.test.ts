@@ -9,7 +9,8 @@
  * other pending work.
  */
 import { describe, it, expect } from "vitest";
-import { computeAuthWallPrefix } from "./shared.js";
+import { appendPostActionSnapshot, computeAuthWallPrefix } from "./shared.js";
+import { ObservationRegistry, type BrowserObservation } from "../../browser/observation.js";
 
 /** A snapshot that trips the detector: password field near the top with adjacent auth cues. */
 const AUTH_WALL_SNAPSHOT = [
@@ -68,5 +69,32 @@ describe("computeAuthWallPrefix — prefix wording is page-scoped", () => {
 
   it("tells the model to report which page is waiting on the user's login", () => {
     expect(prefix).toMatch(/tell the user which page is waiting on their login/i);
+  });
+});
+
+describe("appendPostActionSnapshot — a degraded observation stays loud in the tool result", () => {
+  it("the extraction-failure notice and screenshot steer survive the external-content wrap", async () => {
+    const obs: BrowserObservation = {
+      url: "https://example.com/a",
+      title: "Example",
+      isInitial: false,
+      added: [], removed: [], changed: [],
+      offscreenCount: 0, totalCount: 0, currentRefs: [],
+      obstructions: [], dialogs: [], crossOriginIframes: [],
+      degraded: [{ op: "elements", reason: "Execution context was destroyed" }],
+    };
+    const manager = {
+      snapshot: async () => ObservationRegistry.format(obs),
+      getCurrentUrl: () => "https://example.com/a",
+    };
+    const out = await appendPostActionSnapshot(manager, "Filled [3]");
+
+    expect(out).toContain("Filled [3]");
+    expect(out).toContain("== OBSERVATION DEGRADED");
+    expect(out).toContain("Element extraction FAILED: Execution context was destroyed");
+    expect(out).toContain('browser({action:"screenshot"})');
+    // Never the silent shape the bug produced: an unexplained clean page.
+    expect(out).not.toContain("Page unchanged since last observation");
+    expect(out).not.toContain("interactive elements:");
   });
 });

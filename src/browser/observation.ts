@@ -14,6 +14,7 @@ import { waitForStability } from "./stability.js";
 import { detectObstructions, type Obstruction } from "./modal-detector.js";
 import { listIframes, type IframeInfo } from "./iframe-detector.js";
 import { pendingDialogs, type CapturedDialog } from "./dialog-handler.js";
+import { formatDegraded, formatDialogs, formatIframes, formatObstructions, formatRef } from "./observation-format.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.observation");
@@ -35,6 +36,14 @@ export interface DurableRef {
   frameUrl?: string;
 }
 
+/** A sub-scan that failed during observe. The observation still returns
+ *  (fail-soft), but format() must render the failure loudly — an "elements"
+ *  entry means the ref list is incomplete/absent, NOT that the page is empty. */
+export interface ObservationDegradation {
+  op: "elements" | "obstructions" | "iframes";
+  reason: string;
+}
+
 export interface BrowserObservation {
   url: string;
   title: string;
@@ -50,6 +59,8 @@ export interface BrowserObservation {
   obstructions: Obstruction[];
   dialogs: CapturedDialog[];
   crossOriginIframes: IframeInfo[];
+  /** Present (non-empty) when a sub-scan failed this observation. */
+  degraded?: ObservationDegradation[];
 }
 
 /**
@@ -131,16 +142,22 @@ export class ObservationRegistry {
     // invalidate it — only an external reset during the awaits below does.
     const epoch = this.epoch;
 
+    const degraded: ObservationDegradation[] = [];
     const [raw, obstructions, iframesAll] = await Promise.all([
       extractInteractiveElements(page).catch((e) => {
         logger.warn(`[observation] extractor failed: ${(e as Error).message}`);
+        degraded.push({ op: "elements", reason: (e as Error).message || String(e) });
         return [] as RawElement[];
       }),
       detectObstructions(page).catch((e) => {
         logger.warn(`[observation] obstruction detector failed: ${(e as Error).message}`);
+        degraded.push({ op: "obstructions", reason: (e as Error).message || String(e) });
         return [] as Obstruction[];
       }),
-      listIframes(page).catch(() => [] as IframeInfo[]),
+      listIframes(page).catch((e) => {
+        degraded.push({ op: "iframes", reason: (e as Error).message || String(e) });
+        return [] as IframeInfo[];
+      }),
     ]);
     if (obstructions.length > 0) {
       // Observability: mark consent/cookie/modal blocks (the Guardian case) so
@@ -161,6 +178,15 @@ export class ObservationRegistry {
     const added: DurableRef[] = [];
     const changed: Array<{ before: DurableRef; after: DurableRef }> = [];
 
+    const extractFailed = degraded.some((d) => d.op === "elements");
+    if (extractFailed) {
+      // A failed extractor says NOTHING about the page. Committing its empty
+      // list would wipe still-valid refs and render as a clean "no interactive
+      // elements" page. Carry the previous refs forward untouched (raw is []
+      // so the loop below is a no-op and the removal sweep finds nothing);
+      // the `degraded` marker makes format() render the failure instead.
+      for (const [id, ref] of prevRefs) newRefs.set(id, ref);
+    }
     for (const el of raw) {
       const existingId = this.signatureToRef.get(el.signature);
       let ref: DurableRef;
@@ -225,19 +251,23 @@ export class ObservationRegistry {
       obstructions,
       dialogs,
       crossOriginIframes: iframesAll.filter((i) => i.crossOrigin),
+      ...(degraded.length > 0 ? { degraded } : {}),
     };
   }
 
   static format(obs: BrowserObservation): string {
     const sections: string[] = [];
 
+    if (obs.degraded && obs.degraded.length > 0) sections.push(formatDegraded(obs.degraded));
     if (obs.dialogs.length > 0) sections.push(formatDialogs(obs.dialogs));
     if (obs.obstructions.length > 0) sections.push(formatObstructions(obs.obstructions, obs.currentRefs));
     if (obs.crossOriginIframes.length > 0) sections.push(formatIframes(obs.crossOriginIframes));
 
     const header = `Page: ${obs.title} — ${obs.url}`;
 
-    if (obs.isInitial && obs.full) {
+    if (obs.degraded?.some((d) => d.op === "elements")) {
+      sections.push(`${header}\nInteractive element list unavailable — extraction failed (see notice above).`);
+    } else if (obs.isInitial && obs.full) {
       const lines = obs.full.map(formatRef);
       sections.push(`${header}\n${obs.totalCount} interactive elements:\n\n${lines.join("\n")}`);
     } else if (obs.added.length === 0 && obs.removed.length === 0 && obs.changed.length === 0) {
@@ -291,72 +321,6 @@ export interface SerializedRegistry {
   nextId: number;
   observationCount: number;
   lastUrl: string;
-}
-
-function formatRef(r: DurableRef): string {
-  const safeName = sanitizeText(r.name).slice(0, 80);
-  const safeRole = (r.role || r.tag.toLowerCase()).replace(/[\r\n<>]/g, "").slice(0, 20);
-  const typeAttr = r.type ? ` type=${r.type.replace(/[\r\n<>]/g, "").slice(0, 16)}` : "";
-  const offBadge = r.inViewport ? "" : " [offscreen]";
-  return `[${r.id}]<${safeRole}${typeAttr}>${safeName}</${safeRole}>${offBadge}`;
-}
-
-function formatDialogs(dialogs: CapturedDialog[]): string {
-  const lines: string[] = ["== NATIVE DIALOG (browser-level, blocks the page) =="];
-  for (const d of dialogs) {
-    lines.push(`  ${d.type}: "${sanitizeText(d.message).slice(0, 200)}"`);
-  }
-  lines.push(
-    `  Call browser({action:"dialog_accept"}) or browser({action:"dialog_dismiss"}) to handle. ` +
-      `For prompt() pass {action:"dialog_accept", value:"<text>"}.`
-  );
-  return lines.join("\n");
-}
-
-function formatObstructions(obstructions: Obstruction[], refs: DurableRef[]): string {
-  const xpathToRef = new Map<string, DurableRef>();
-  for (const r of refs) xpathToRef.set(r.xpath, r);
-
-  const lines: string[] = ["== OBSTRUCTION DETECTED (handle before interacting with the rest of the page) =="];
-  for (const o of obstructions.slice(0, 4)) {
-    const name = sanitizeText(o.name).slice(0, 80) || "(no label)";
-    lines.push(`  [${o.kind}] z=${o.zIndex} "${name}"`);
-    if (o.acceptXPath) {
-      const ref = xpathToRef.get(o.acceptXPath);
-      const label = sanitizeText(o.acceptText || "accept");
-      lines.push(`    Accept: ${ref ? `[${ref.id}] ` : ""}"${label}"${ref ? "" : " — not in ref list, use click_text"}`);
-    }
-    if (o.dismissXPath) {
-      const ref = xpathToRef.get(o.dismissXPath);
-      const label = sanitizeText(o.dismissText || "dismiss");
-      lines.push(`    Dismiss: ${ref ? `[${ref.id}] ` : ""}"${label}"${ref ? "" : " — not in ref list, use click_text"}`);
-    }
-    if (!o.acceptXPath && !o.dismissXPath) {
-      lines.push(`    No accept/dismiss button found — use evaluate or click_text`);
-    }
-  }
-  if (obstructions.length > 4) {
-    lines.push(`  ...and ${obstructions.length - 4} more`);
-  }
-  return lines.join("\n");
-}
-
-function formatIframes(frames: IframeInfo[]): string {
-  const lines: string[] = ["== IFRAMES (cross-origin — refs do NOT reach inside; use evaluate or interact with the container) =="];
-  for (const f of frames.slice(0, 6)) {
-    lines.push(`  ${f.origin} (${f.rect.width}×${f.rect.height} at ${f.rect.x},${f.rect.y})`);
-  }
-  if (frames.length > 6) lines.push(`  ...and ${frames.length - 6} more`);
-  return lines.join("\n");
-}
-
-function sanitizeText(s: string): string {
-  return s
-    .replace(/[\r\n\t]/g, " ")
-    .replace(/[\x00-\x1f\x7f]/g, "")
-    .replace(/</g, "(")
-    .replace(/>/g, ")")
-    .trim();
 }
 
 function safeOrigin(url: string): string {

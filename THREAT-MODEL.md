@@ -70,7 +70,7 @@ Key properties:
 
 | Technique | ID | Our Defense |
 |---|---|---|
-| LLM Prompt Injection | AML.T0051 | sanitize.ts (35 patterns), content wrapping, canary tokens |
+| LLM Prompt Injection | AML.T0051 | sanitize.ts (41 patterns), content wrapping, canary tokens |
 | LLM Jailbreak | AML.T0054 | Session policies, ARI Kernel behavioral rules |
 | Adversarial Input | AML.T0048 | Homoglyph normalization, control char stripping |
 | Exfiltration via ML Model | AML.T0024 | Data lineage tracking, egress allowlist, encoding detection |
@@ -89,7 +89,7 @@ Layer 2:  Data Lineage       — Tracks sensitive reads → blocks egress when t
 Layer 3:  RBAC               — Role-based tool permissions enforced at execution time
 Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-tool rate limits, host allowlists/denylists, configured via `~/.lax/tool-policy.json`
 Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
-Layer 6:  Content Sanitizer  — 36 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
+Layer 6:  Content Sanitizer  — 41 injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
 Layer 8:  Shell/Server Sandbox — Guarded by default: macOS `seatbelt` or Linux `bwrap` denies credential paths while retaining network access. Stricter native modes also deny external network; Docker provides hermetic isolation. Unsupported guarded backends visibly fall back to host and unattended shell paths require explicit acknowledgement. Whole-server confinement is available via boot re-exec on macOS/Linux. Windows has no native equivalent — Docker is the confinement answer there (see "Windows shell confinement" below)
 Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.lax/audit/`

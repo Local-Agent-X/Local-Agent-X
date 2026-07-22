@@ -22,6 +22,7 @@ tier-gate(developer_mode required; _unsafe rescue exempt)
   → fingerprint-parent-deps → spawnClaude[scrubbed env] → verify-parent-deps(restore+abort if mutated)
   → deps → build → bind → smoke → security-scope(HOLD if security/auth/policy touched)
   → exfil-scan(HOLD if secret-shaped content staged in diff)
+  → refute(HOLD if a strict majority of independent LLM skeptics reject the merge diff; fail-open on classifier outage)
   → merge → re-gate(rebuild merged main) → record(boot-pending)
   → [next boot] confirmMergeBoot on bind / revertPendingMergeIfCrashed on crash
 ```
@@ -51,10 +52,11 @@ lock before touching the shared tree (Pass 2, #9); the lock is atomic and the
 `_unsafe` rescue can force-steal it (Pass 3, #4).
 
 Key files:
-- `src/self-edit-sandbox.ts` — orchestrates the gate flow + merge + re-gate
-- `src/self-edit-sandbox-gates.ts` — gateDeps / gateBuild / gateBind / gateSmoke
-- `src/self-edit-smoke-suite.ts` — broad endpoint assertions for the smoke gate
-- `src/self-edit-rollback.ts` — merge record + revertLastMerge + boot notice + unsafe-edit snapshot
+- `src/self-edit/sandbox.ts` — orchestrates the gate flow + merge + re-gate
+- `src/self-edit/sandbox-gates.ts` — gateDeps / gateBuild / gateBind / gateSmoke
+- `src/self-edit/smoke-suite.ts` — broad endpoint assertions for the smoke gate
+- `src/self-edit/rollback.ts` — merge record + revertLastMerge + boot notice + unsafe-edit snapshot
+- `src/self-edit/refute-merge.ts` — refutation gate: independent LLM skeptics vote on the merge diff before merge
 - `src/self-edit/global-lock.ts` — machine-wide PID-file lock shared by sandbox + bypass (#9)
 - `src/agency/worktree.ts` — junctions, isolateNodeModules, security-scope matcher, orphan sweep, git/build primitives
 - `src/self-edit/tool.ts` — entrypoint; tier gate (developer_mode); sandbox vs bypass (_cwd / _unsafe) routing; bypass lock + unsafe snapshot
@@ -94,7 +96,7 @@ Verified: `npm run build` clean; both new suites green.
 
 - **Chunk 5 — Bypass safety (#9 + #3).**
   - *#9 shared-deps race:* extracted the machine-wide PID-file lock out of
-    `self-edit-sandbox.ts` into `src/self-edit/global-lock.ts` (one source of
+    `self-edit/sandbox.ts` into `src/self-edit/global-lock.ts` (one source of
     truth). The bypass path (`tool.ts`) now acquires it too, so an autopilot
     (`_cwd`) self_edit and a chat `_unsafe` self_edit can no longer build into
     the shared `node_modules` concurrently.
@@ -105,11 +107,13 @@ Verified: `npm run build` clean; both new suites green.
     never auto-merges to main — this is a human-merge signal. `_unsafe` stays
     gateless but now logs loudly + snapshots the pre-edit SHA (`recordUnsafeEdit`).
 - **Chunk 6 — Security diff-scope gate (#10).** `securitySensitiveChangedFiles`
-  (worktree.ts) + a hold in `self-edit-sandbox.ts` before `mergeWorktree`: if
-  the worktree diff touches `src/security/**`, `src/tool-policy/**`,
-  `src/auth/**`, or `config/protected-files.json`, the merge is HELD
-  (`heldForReview`), the branch preserved, and the result prints the exact
-  `git diff`/`git merge` commands for a human.
+  (worktree.ts) + a hold in `self-edit/sandbox.ts` before `mergeWorktree`: if
+  the worktree merge delta touches any path in `config/protected-files.json`
+  (the engine-core + safety-layer manifest the `edit`/`write` tools also
+  refuse — security, tool-policy, auth, the self-edit/worktree pipeline
+  itself, config, secrets, and the rest of the boot-critical core), the merge
+  is HELD (`heldForReview`), the branch preserved, and the result prints the
+  exact `git diff`/`git merge` commands for a human.
 - **Chunk 7 — Orphan junction boot sweep (#11).** `sweepOrphanWorktreeJunctions`
   (worktree.ts) unlinks junctions in every `%TEMP%/lax-worktrees/*` orphan,
   removes the now-safe dir, then `git worktree prune` — wired into
@@ -225,8 +229,13 @@ suites still green (27 tests).
 > not solved here.
 
 ### Accepted / out-of-scope (not brick vectors)
-- **Fail-open intent/scope gates** — deliberate: better to allow an occasional
-  misroute than block legit self_edits when the classifier is flaky. Left as-is.
+- **Intent gate fails CLOSED** — self_edit is destructive, so a 'mismatch', an
+  'unsure' verdict, or a classifier outage all BLOCK; it proceeds only on a
+  'match', or on an explicit affirmative go-ahead in the user's last message
+  when the classifier has not positively returned 'mismatch'. The deterministic
+  scope-evidence and workspace-misroute backstops run before it and block on
+  their own criteria. The refutation gate is the fail-open member — a
+  background-model outage must never block a self_edit.
 
 ## Pass 5 — SHIPPED (the four committed boot-sweep / probe follow-ups)
 
@@ -252,7 +261,7 @@ The backlog the prior passes deliberately tracked ("DO NOT DROP"), all closed.
   during the 2026-05-30 debugging). Both now call `killProcessTree(proc,
   "SIGKILL")`. The other `proc.kill` sites in the tree are unrelated subsystems
   (audio/browser/voice/mcp), out of scope.
-- **#7 probe-port collision.** `pickProbePort` (self-edit-sandbox.ts) no longer
+- **#7 probe-port collision.** `pickProbePort` (self-edit/sandbox.ts) no longer
   trusts a bare `pid+time` hash. It starts at the hashed offset and walks the
   7100–7999 range to the first port nothing is listening on (`isProbePortFree`
   binds a throwaway server to test). This fixes BOTH a false "did not bind" AND

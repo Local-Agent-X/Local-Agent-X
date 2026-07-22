@@ -155,7 +155,7 @@ A 250ms debounce coalesces editor save-events. No server restart required for: a
 
 **`Failed to connect to <name>`.** The handshake (`initialize` then `tools/list`) timed out at 30s. The server is probably hanging on something — try running the same `command` + `args` manually in a terminal to see what it does.
 
-**Tool not appearing in agent's tool list.** Confirm the server connected (look for `[mcp:<name>] Connected — N tools`). If the count is 0, the server didn't expose any tools. If non-zero but the agent doesn't pick them, the tool name might collide with a native one (LAX deduplicates by name).
+**Tool not appearing in agent's tool list.** Confirm the server connected (look for `[mcp:<name>] Connected — N tools`). If the count is 0, the server didn't expose any tools. If non-zero but the agent doesn't call them, that's expected on the first turn: MCP tools are registered **deferred** (`defer: true` in `bootstrap-tools.ts`), so they're surfaced through `tool_search`/RAG selection rather than pinned into the always-on tool list. Confirm they're discoverable under the `mcp_<server>_<tool>` namespace (`mcp_github_create_issue`, etc.).
 
 **Secret IS in the vault but server is still skipped.** Names are case-sensitive and must match exactly. `${secret:GITHUB_TOKEN}` looks up `GITHUB_TOKEN`, not `github_token`. Verify the saved name in the Secrets panel (or with the `list_secrets` tool).
 
@@ -178,5 +178,5 @@ The `mcp.json` template that ships with a fresh LAX install includes `github` an
 ## Architecture notes
 
 - **In-process tool execution stays the default for LAX-native tools.** ARI, type safety, and latency advantages matter too much to route the 170+ native tools through MCP. MCP is the *interop boundary*, not the *execution path*.
-- **Per-call ARI evaluation still applies.** MCP tool calls go through the same ARI path as native calls. Because MCP tool names aren't in the `TOOLS` registry, the **autonomy risk tier** falls back to `shell` (the most conservative non-destructive tier; `src/autonomy/risk.ts`), and the **kernel classifier fail-closes** — unmapped tools are treated as an unaudited I/O surface and blocked unless explicitly classified (`src/ari-kernel/tool-class-map.ts`).
+- **Per-call ARI evaluation still applies.** MCP tool calls go through the same ARI path as native calls. Because MCP tool names aren't in the `TOOLS` registry, the **autonomy risk tier** falls back to `shell` (the most conservative non-destructive tier; `src/autonomy/risk.ts`), and the **kernel classifier recognizes MCP tools by their `mcp_` prefix and classes them as `http`** (`src/ari-kernel/tool-class-map.ts`), so every MCP call is taint-checked and audited through the kernel's http pipeline and allowed only when clean — a prompt-injected argument reaching a real GitHub/Slack/DB API is exactly the http-exfiltration threat the kernel defends.
 - **No automatic trust of new servers.** Servers must be explicitly listed in `mcp.json` with `disabled: false`. Auto-discovery is not implemented and not planned.

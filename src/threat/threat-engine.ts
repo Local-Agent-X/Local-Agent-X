@@ -139,24 +139,24 @@ export class ThreatEngine {
     // Classify the data in the result
     const classification = classifyData(result);
 
-    // Snapshot the restriction state BEFORE this call scores anything. A tool
-    // blocked *because the session is already restricted* is a symptom, not new
-    // evidence: re-scoring it climbs the load and resets the decay clock, so the
-    // restriction reinforces itself and never lifts in-session (live failure
-    // 2026-06-23 — a flail spent its whole turn budget re-tripping its own
-    // restriction). While restricted we still ENFORCE every block and AUDIT it;
-    // we just stop scoring it so accrued time/turn decay credit can drain the
-    // load and recover.
+    // Snapshot the restriction state BEFORE this call scores anything. While
+    // restricted we still ENFORCE and AUDIT everything, but even genuine
+    // evidence events are not re-scored: every scorer.record() resets the
+    // decay clock, so re-scoring symptoms of the restriction itself would keep
+    // it from ever lifting in-session (live failure 2026-06-23 — a flail spent
+    // its whole turn budget re-tripping its own restriction).
     const alreadyRestricted = this.scorer.isRestricted();
 
     // Chain analysis (exfiltration + loop detection)
     const chainResult = this.chain.recordAndAnalyze(toolName, args, classification);
 
-    // Record threat events
+    // A tool blocked by ANOTHER security layer is audited but never scored.
+    // The scorer accumulates risk only from deterministic evidence this engine
+    // observes directly (secret-carrying payloads, tripped canaries,
+    // credentials/secrets in output); feeding other layers' block decisions
+    // back into the scorer made any false positive elsewhere an amplifier
+    // loop that accelerated threat restriction.
     if (!allowed) {
-      if (!alreadyRestricted) {
-        this.scorer.record("security_block", THREAT_SCORES.security_block, `${toolName} blocked`);
-      }
       this.audit.record({
         sessionId: this.sessionId,
         event: "tool_blocked",
@@ -169,12 +169,16 @@ export class ThreatEngine {
     }
 
     // Temporal staging signal (a sensitive read preceded this external call but
-    // nothing secret was on the wire). Not a block — a behavioral score so a
-    // persistent read-then-send pattern still escalates the session. Suppressed
-    // when the user consented to the flow, and while already restricted (same
-    // recovery rationale as blocks above).
+    // nothing secret was on the wire). Observability ONLY: audited but never
+    // scored. Temporal correlation is a heuristic, not evidence — 19 staging
+    // fires over 7 weeks produced 0 true positives, and because memory reads
+    // are always classified sensitive, scoring it turned ordinary
+    // memory_search → browser work into accumulating risk that restricted a
+    // live session mid-task (2026-07-23). Payload-based exfiltration evidence
+    // still blocks and scores above/below. The audit is suppressed when the
+    // user consented to the flow (recorded as exfiltration_allowed_by_consent
+    // instead) and while already restricted.
     if (chainResult.staging && !chainResult.allowedByConsent && !alreadyRestricted) {
-      this.scorer.record("exfiltration_staging", THREAT_SCORES.exfiltration_staging, chainResult.staging.description);
       this.audit.record({
         sessionId: this.sessionId,
         event: "exfiltration_staging_signal",

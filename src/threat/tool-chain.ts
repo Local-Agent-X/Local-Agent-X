@@ -76,8 +76,8 @@ export class ToolChainAnalyzer {
     reason?: string;
     exfil?: ExfilPattern;
     /** Non-blocking temporal signal: a sensitive read preceded this external
-     *  call but nothing secret was on the wire. The caller scores it (so
-     *  repeated staging escalates) without blocking the call. */
+     *  call but nothing secret was on the wire. The caller audits it as an
+     *  observability signal — never blocked, never scored. */
     staging?: ExfilPattern;
     loopDetected?: string;
     allowedByConsent?: string;
@@ -142,8 +142,8 @@ export class ToolChainAnalyzer {
       }
 
       // No secret on the wire, but a sensitive read preceded this external
-      // call: a staging SIGNAL, not a block. Scored by the caller so persistent
-      // read-then-send escalates the session, without trapping the legitimate
+      // call: a staging SIGNAL, not a block. Audited by the caller for
+      // observability only — never scored, so it can't trap the legitimate
       // configure-then-test / read-then-submit workflows that the temporal-only
       // block used to hard-fail. Consent (or a learned pattern) suppresses even
       // the signal — the user directed this flow.
@@ -296,8 +296,8 @@ export class ToolChainAnalyzer {
   }
 
   /** Temporal staging signal: a sensitive read within the window preceded this
-   *  external sink, but no secret reached the wire. Not a block — a behavioral
-   *  score the caller accumulates so persistent read-then-send still escalates. */
+   *  external sink, but no secret reached the wire. Not a block and not scored —
+   *  the caller records it to the audit trail as an observability signal only. */
   private checkTemporalStaging(sink: DataAccess): ExfilPattern | null {
     const lookback = 900_000; // 15 minutes
     const now = Date.now();
@@ -313,7 +313,7 @@ export class ToolChainAnalyzer {
           description:
             `Suspected staging: sensitive ${source.type} (${source.target.slice(0, 50)}) ` +
             `preceded external ${sink.type} (${sink.target.slice(0, 50)}) — no secret was in the payload, ` +
-            `so this is scored as a behavioral signal, not blocked.`,
+            `so this is recorded as an observability signal, not blocked or scored.`,
         };
       }
     }

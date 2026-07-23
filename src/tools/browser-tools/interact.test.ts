@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { BrowserManager } from "../../browser/manager.js";
 import type { InteractionResult } from "../../browser/backend.js";
 import { handleClick, handleFill, handleClickText } from "./interact.js";
-import { handleAct } from "./act.js";
+// handleAct's tests live in act.test.ts (they resolve via observe(), not snapshot()).
 
 /**
  * BR-2: a ref/text interaction that fails every resolution strategy must come
@@ -49,36 +49,5 @@ describe("BR-2 · interact handlers propagate InteractionResult.ok → isError",
     });
     const r = await handleClickText(manager, { text: "Buy" });
     expect(r.isError).toBe(true);
-  });
-});
-
-describe("BR-2 · handleAct propagates fill/click failures as isError", () => {
-  it("act fill returns isError when fillByRef fails every strategy", async () => {
-    const manager = fakeManager({
-      snapshot: async () => "[5]<input>email</input>",
-      fillByRef: async () => fail("[5] input — all resolution strategies failed. Re-observe the page."),
-    });
-    const r = await handleAct(manager, { text: "fill email with cats" });
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("Failed to fill");
-  });
-
-  it("act click returns isError when clickByRef fails every strategy", async () => {
-    const manager = fakeManager({
-      snapshot: async () => "[7]<button>login</button>",
-      clickByRef: async () => fail("[7] button — all resolution strategies failed. Re-observe the page."),
-    });
-    const r = await handleAct(manager, { text: "click the login button" });
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("Failed to click");
-  });
-
-  it("act fill stays a success when fillByRef lands", async () => {
-    const manager = fakeManager({
-      snapshot: async () => "[5]<input>email</input>",
-      fillByRef: async () => pass("[5] fill via role/name — 4 chars"),
-    });
-    const r = await handleAct(manager, { text: "fill email with cats" });
-    expect(r.isError).toBeFalsy();
   });
 });

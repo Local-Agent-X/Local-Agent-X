@@ -29,9 +29,9 @@ export {
 } from "./bridge-client-contract.js";
 export type {
 	BridgeInputEvent, BridgeInputModifier, BridgeKeyEvent, BridgeMouseEvent,
-	BridgeMouseWheelEvent, BridgeRect, BrowserInputResult, BrowserLifecycleOp,
-	BrowserLifecycleResult, BrowserNavigateResult, BrowserViewInfo, InAppDialogSummary,
-	UserActiveResult,
+	BridgeMouseWheelEvent, BridgePingResult, BridgeRect, BrowserInputResult,
+	BrowserLifecycleOp, BrowserLifecycleResult, BrowserNavigateResult,
+	BrowserViewInfo, InAppDialogSummary, UserActiveResult,
 } from "./bridge-client-contract.js";
 
 const logger = createLogger("browser-bridge");

@@ -25,6 +25,9 @@ import { selectorQuery } from "./selector-compat.js";
 export interface BridgePageState {
 	url: string;
 	title: string;
+	/** The view's REAL layout bounds, stamped from lifecycle pings
+	 *  (in-app-tabs.stampPingState). Absent until the first ping. */
+	viewport?: { width: number; height: number };
 }
 
 const WAIT_POLL_DEFAULT_MS = 150;
@@ -56,9 +59,13 @@ export class BridgeObservePage {
 		/* no-op */
 	}
 
-	/** null → extract/modal detectors fall back to their 1280×800 default. */
+	/** The view's real bounds once a lifecycle ping has reported them; null
+	 *  before the first ping → extract/modal detectors fall back to their
+	 *  1280×800 default. Real bounds make inViewport labels (and the
+	 *  obstruction detector's geometry) match the pane the user actually
+	 *  sees instead of a hardcoded window size. */
 	viewportSize(): { width: number; height: number } | null {
-		return null;
+		return this.state.viewport ?? null;
 	}
 
 	async title(): Promise<string> {

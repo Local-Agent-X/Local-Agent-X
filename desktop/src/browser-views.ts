@@ -284,11 +284,20 @@ export function closeBrowserView(viewId: string): void {
 	notifyPoolChanged();
 }
 
-/** Liveness probe: does the view exist and is its renderer alive? */
-export function pingBrowserView(viewId: string): { ok: boolean; url?: string; title?: string } {
+/** Liveness probe: does the view exist and is its renderer alive? Carries the
+ *  view's layout bounds so the server's observation pipeline labels
+ *  inViewport against the REAL pane size instead of a 1280×800 default
+ *  (entry.bounds is the stored intent — applied on attach, valid while
+ *  detached too). */
+export function pingBrowserView(viewId: string): { ok: boolean; url?: string; title?: string; bounds?: { width: number; height: number } } {
 	const entry = pool.get(viewId);
 	if (!entry || entry.view.webContents.isDestroyed()) return { ok: false };
-	return { ok: true, url: entry.view.webContents.getURL(), title: entry.view.webContents.getTitle() };
+	return {
+		ok: true,
+		url: entry.view.webContents.getURL(),
+		title: entry.view.webContents.getTitle(),
+		bounds: { width: entry.bounds.width, height: entry.bounds.height },
+	};
 }
 
 export function listBrowserViews(): BrowserViewInfo[] {

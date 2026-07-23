@@ -18,7 +18,7 @@
 import type { Page } from "playwright";
 import { ObservationRegistry } from "./observation.js";
 import { asObservePage, BridgeObservePage, type BridgePageState } from "./in-app-observe.js";
-import { browserAbort, browserLifecycle, browserNavigate, type BrowserNavigateResult, type BrowserViewInfo } from "./bridge-client.js";
+import { browserAbort, browserLifecycle, browserNavigate, type BridgePingResult, type BrowserNavigateResult, type BrowserViewInfo } from "./bridge-client.js";
 import { profilePartition } from "./profile-store.js";
 import { redirectMessage, safeHost } from "./redirect.js";
 import { sensitivePageStub } from "./guards.js";
@@ -176,6 +176,21 @@ export async function ensureTabView(tab: InAppTab, profileId: string): Promise<v
 	}
 }
 
+/** Stamp a successful ping's payload onto the tab's cached state: url/title,
+ *  and the view's REAL layout bounds — the source BridgeObservePage's
+ *  viewportSize() reads, so inViewport labels track the actual pane size
+ *  instead of the 1280×800 extract default. */
+export function stampPingState(tab: InAppTab, ping: BridgePingResult): void {
+	if (typeof ping.url === "string") tab.state.url = ping.url;
+	if (typeof ping.title === "string") tab.state.title = ping.title;
+	// >0 guard: a ping landing mid-layout (collapsed pane) must not stamp a
+	// 0×0 viewport and label every ref [offscreen] for a cycle.
+	if (ping.bounds && typeof ping.bounds.width === "number" && typeof ping.bounds.height === "number"
+		&& ping.bounds.width > 0 && ping.bounds.height > 0) {
+		tab.state.viewport = { width: ping.bounds.width, height: ping.bounds.height };
+	}
+}
+
 /** Soft wedge probe (instance.ts resetWedgedBrowser): abort the tab's
  *  in-flight load, then ping its view. A live view answers within
  *  LIFECYCLE_TIMEOUT_MS: refresh the cached url/title and reset the tab's
@@ -188,8 +203,7 @@ export async function probeTabAfterWedge(tab: InAppTab): Promise<boolean> {
 	try {
 		const { ping } = await browserLifecycle("ping", tab.viewId);
 		if (!ping?.ok) return false;
-		if (typeof ping.url === "string") tab.state.url = ping.url;
-		if (typeof ping.title === "string") tab.state.title = ping.title;
+		stampPingState(tab, ping);
 	} catch (e) {
 		logger.warn(`[in-app] wedge probe failed (viewId=${tab.viewId}): ${(e as Error).message}`);
 		return false;
@@ -241,10 +255,7 @@ export function navigationReport(
 export async function refreshTabState(tab: InAppTab): Promise<void> {
 	try {
 		const { ping } = await browserLifecycle("ping", tab.viewId);
-		if (ping?.ok) {
-			if (typeof ping.url === "string") tab.state.url = ping.url;
-			if (typeof ping.title === "string") tab.state.title = ping.title;
-		}
+		if (ping?.ok) stampPingState(tab, ping);
 	} catch (e) {
 		logger.warn(`[in-app] ping failed (viewId=${tab.viewId}): ${(e as Error).message}`);
 	}

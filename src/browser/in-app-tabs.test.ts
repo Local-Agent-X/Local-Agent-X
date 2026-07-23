@@ -18,7 +18,7 @@ vi.mock("./bridge-client.js", async (importOriginal) => {
 });
 
 import { browserLifecycle, type BrowserViewInfo } from "./bridge-client.js";
-import { noteTabClosedExternally, rollbackFailedNewTab, TabList } from "./in-app-tabs.js";
+import { noteTabClosedExternally, refreshTabState, rollbackFailedNewTab, TabList } from "./in-app-tabs.js";
 
 const FIRST_ID = "view-sess-9-work";
 
@@ -98,6 +98,44 @@ describe("TabList", () => {
 		expect(first.created).toBe(false);
 		expect(first.closed).toBe(true);
 		expect(first.state.url).toBe("");
+	});
+});
+
+describe("viewport bounds over the ping (real WebContentsView size, not 1280×800)", () => {
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("viewportSize() is null before any ping — extract's 1280×800 default applies", () => {
+		const list = new TabList(FIRST_ID);
+		expect(list.active.page.viewportSize()).toBeNull();
+	});
+
+	it("refreshTabState stamps url/title AND the view's real bounds; viewportSize() serves them", async () => {
+		const list = new TabList(FIRST_ID);
+		const tab = list.active;
+		tab.created = true;
+		vi.mocked(browserLifecycle).mockResolvedValue({
+			ping: { ok: true, url: "https://a.example/", title: "A", bounds: { width: 1024, height: 640 } },
+		});
+		await refreshTabState(tab);
+		expect(tab.state.url).toBe("https://a.example/");
+		expect(tab.state.title).toBe("A");
+		expect(tab.page.viewportSize()).toEqual({ width: 1024, height: 640 });
+	});
+
+	it("a ping WITHOUT bounds (older desktop build) keeps the last-known viewport", async () => {
+		const list = new TabList(FIRST_ID);
+		const tab = list.active;
+		tab.created = true;
+		vi.mocked(browserLifecycle).mockResolvedValue({
+			ping: { ok: true, url: "https://a.example/", title: "A", bounds: { width: 1024, height: 640 } },
+		});
+		await refreshTabState(tab);
+		vi.mocked(browserLifecycle).mockResolvedValue({ ping: { ok: true, url: "https://b.example/", title: "B" } });
+		await refreshTabState(tab);
+		expect(tab.state.url).toBe("https://b.example/");
+		expect(tab.page.viewportSize()).toEqual({ width: 1024, height: 640 });
 	});
 });
 

@@ -47,7 +47,16 @@ export type BridgeInputEvent = BridgeMouseEvent | BridgeMouseWheelEvent | Bridge
 export interface BrowserLifecycleResult {
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
-	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
+	ping?: BridgePingResult;
+}
+/** Ping payload: liveness + url/title + the view's real layout bounds (the
+ *  in-app viewportSize source — see in-app-observe.ts). */
+export interface BridgePingResult {
+	ok: boolean;
+	url?: string;
+	title?: string;
+	userActive?: boolean;
+	bounds?: { width: number; height: number };
 }
 export interface BrowserNavigateResult { url: string; title: string; status?: number }
 export interface UserActiveResult { userActive: true }
@@ -61,7 +70,7 @@ export interface BridgeReply {
 	error?: string;
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
-	ping?: { ok: boolean; url?: string; title?: string; userActive?: boolean };
+	ping?: BridgePingResult;
 	url?: string;
 	title?: string;
 	result?: unknown;

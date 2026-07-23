@@ -22,6 +22,7 @@ import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContentsView 
 
 import { getMainWindow } from "./window";
 import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
+import { setupBrowserDownloadsIPC } from "./browser-downloads-ipc";
 // The trusted-sender guard moved to browser-page-controls.ts in the find/zoom
 // split (this file sits at the 400-LOC ceiling); re-exported so existing
 // consumers keep importing it from here.
@@ -197,6 +198,7 @@ export function setupBrowserIPC(): void {
 	setPoolChangedListener(() => { sendViewsChanged(); wirePageControlsForPool(); });
 	// Find-in-page + per-view zoom command surface, acting on currentViewId.
 	setupBrowserPageControls(() => currentViewId);
+	setupBrowserDownloadsIPC();
 
 	ipcMain.handle("browser-set-bounds", (event: IpcMainInvokeEvent, rect: Rectangle) => {
 		if (!isTrustedBrowserSender(event.sender)) return;

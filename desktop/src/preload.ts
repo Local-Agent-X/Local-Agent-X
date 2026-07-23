@@ -195,6 +195,13 @@ contextBridge.exposeInMainWorld("desktop", {
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
       loadError: { code: number; description: string; url: string } | null;
     } | null> => ipcRenderer.invoke("browser-new-tab", url),
+    // Downloads panel: user-routed downloads (openable) + read-only quarantined.
+    listDownloads: (): Promise<{
+      user: Array<{ id: string; filename: string; savePath: string; url: string; bytes: number; totalBytes: number; state: string; startedAt: number; doneAt?: number }>;
+      quarantined: Array<{ id: string; filename: string; state: string; bytes: number; url: string }>;
+    } | null> => ipcRenderer.invoke("browser-downloads-list"),
+    openDownload: (id: string): Promise<boolean> => ipcRenderer.invoke("browser-download-open", id),
+    revealDownload: (id: string): Promise<boolean> => ipcRenderer.invoke("browser-download-reveal", id),
     // Pool-change poke: main sends "browser-views-changed" (no payload) when
     // views are created/closed or the attached view flips — re-list on it.
     onViewsChanged: (cb: () => void) => {

@@ -350,6 +350,7 @@
           <button id="browser-zoom-in" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('in')" title="Zoom page in">+</button>
           <button id="browser-profiles-btn" class="artifact-filter" onclick="window.laxBrowserProfiles&&laxBrowserProfiles.toggle()" title="Browser profiles &amp; saved logins">Profiles</button>
           <button id="browser-library-btn" class="artifact-filter" onclick="window.laxBrowserLibrary&&laxBrowserLibrary.toggle()" title="Bookmarks &amp; history">Library</button>
+          <button id="browser-downloads-btn" class="artifact-filter" onclick="window.laxBrowserDownloads&&laxBrowserDownloads.toggle()" title="Downloads">&#8595;</button>
         </div>
         <div id="browser-view-anchor" style="flex:1;min-height:0"></div>
         <!-- Profile manager overlay. Positioned over the whole pane so the native
@@ -359,6 +360,9 @@
         <!-- Library (bookmarks + history) overlay — same occlusion contract as the
              profiles panel above. Populated by browser-library.js. -->
         <div id="browser-library-panel" style="display:none;position:absolute;inset:0;z-index:5;background:var(--bg);overflow:auto"></div>
+        <!-- Downloads overlay — same occlusion contract. Populated by
+             browser-downloads-panel.js from the desktop bridge. -->
+        <div id="browser-downloads-panel" style="display:none;position:absolute;inset:0;z-index:5;background:var(--bg);overflow:auto"></div>
       </div>
       <div id="terminal-tab-body" class="side-tab-body terminal-panel" style="display:none">
         <div class="terminal-tab-strip">
@@ -1536,6 +1540,7 @@
 <script src="/js/chat-link-open.js?v=v1"></script>
 <script src="/js/browser-profiles.js?v=v1"></script>
 <script src="/js/browser-library.js?v=v1"></script>
+<script src="/js/browser-downloads-panel.js?v=v1"></script>
 <script src="/vendor/xterm/xterm.js?v=v1"></script>
 <script src="/vendor/xterm/addon-fit.js?v=v1"></script>
 <script src="/js/terminal-panel.js?v=v1"></script>

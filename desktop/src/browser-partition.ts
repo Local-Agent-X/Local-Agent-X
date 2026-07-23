@@ -21,6 +21,7 @@ import { LAX_DIR, getLAXConfig } from "./config";
 import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { shouldAllowUserLoopback, type ViewTrust } from "./browser-loopback-policy";
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
+import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
 import {
 	buildHardeningCspHeaders,
 	cacheGet,
@@ -222,7 +223,14 @@ function hardenSession(sess: Session, partition: string): void {
 		if (isUserDownload(wc && !wc.isDestroyed() ? wc.id : undefined, viewTrustResolver)) {
 			const savePath = uniqueDownloadPath(app.getPath("downloads"), item.getFilename(), existsSync);
 			item.setSavePath(savePath);
-			item.once("done", (_e: unknown, state: string) => {
+			const id = randomUUID();
+			recordUserDownload({
+				id, filename: item.getFilename(), savePath, url: item.getURL(),
+				bytes: 0, totalBytes: item.getTotalBytes(), state: "progressing", startedAt: Date.now(),
+			});
+			item.on("updated", () => updateUserDownload(id, { bytes: item.getReceivedBytes() }));
+			item.once("done", (_e: unknown, state: "completed" | "cancelled" | "interrupted") => {
+				updateUserDownload(id, { bytes: item.getReceivedBytes(), state, doneAt: Date.now() });
 				if (state === "completed" && process.platform === "darwin") app.dock?.downloadFinished(savePath);
 			});
 			return;

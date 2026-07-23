@@ -82,8 +82,22 @@ describe("transcribe injection gate — annotate, never silently drop", () => {
 	});
 });
 
+describe("bracket-annotation stripping is robust", () => {
+	it("strips a bracket span containing a newline (dotAll)", () => {
+		execFileSyncMock.mockReturnValue("hello [BLANK\nAUDIO] world");
+		expect(transcribe(Buffer.from("fake-audio"))).toBe("hello  world");
+	});
+
+	it("strips an unclosed trailing bracket so it cannot survive as text", () => {
+		execFileSyncMock.mockReturnValue("what is the time [inaudible");
+		const result = transcribe(Buffer.from("fake-audio"));
+		expect(result).toBe("what is the time");
+		expect(result).not.toContain("[");
+	});
+});
+
 describe("VOICE_INJECTION_NOTICE invariants", () => {
-	it("is bracket-marked so real speech (brackets stripped) can never spoof it", () => {
+	it("is a bracketed, human-readable notice (UX marker, not a security boundary)", () => {
 		expect(VOICE_INJECTION_NOTICE.startsWith("[")).toBe(true);
 		expect(VOICE_INJECTION_NOTICE.endsWith("]")).toBe(true);
 	});

@@ -6,10 +6,8 @@
 // Adversarial audio can make Whisper output prompt-injection text. The
 // detectInjection check on transcribe() withholds anything scoring >=0.7:
 // the flagged text itself is never returned (echoing it back to the model
-// would defeat the point), but the drop is surfaced as a clearly-marked
-// notice string so the user isn't left with silent nothing. Brackets are
-// stripped from raw Whisper output above, so a bracketed notice can only
-// originate here — real speech cannot spoof it.
+// would defeat the point), but the drop is surfaced as a clearly-marked,
+// human-readable notice string so the user isn't left with silent nothing.
 
 import { execFileSync } from "node:child_process";
 import { writeFileSync, existsSync, unlinkSync } from "node:fs";
@@ -23,8 +21,9 @@ const logger = createLogger("voice");
 
 /**
  * Returned in place of a transcription when the injection gate withholds it.
- * Deliberately bracketed: transcribe() strips [.*?] spans from Whisper output,
- * so this marker can never be produced by (or confused with) actual speech.
+ * A clearly-marked, human-readable notice the user sees instead of silence —
+ * bracketed so it reads as a system message, not as their own speech. This is
+ * a UX marker, not a security boundary: don't rely on it being unspoofable.
  * Must never contain the flagged text.
  */
 export const VOICE_INJECTION_NOTICE =
@@ -47,12 +46,21 @@ export function transcribe(audioBuffer: Buffer): string {
       timeout: 30_000,
     });
 
-    let text = output.trim().replace(/\[.*?\]/g, "").trim();
+    // Strip Whisper's bracketed annotations ([BLANK_AUDIO], [music], etc.).
+    // dotAll so a span containing a newline is removed, and a second pass
+    // clears an unclosed trailing "[..." with no closing bracket — otherwise
+    // stray bracketed Whisper text could survive and mimic our notice.
+    let text = output.trim().replace(/\[[^\]]*\]/gs, "").replace(/\[[^\]]*$/s, "").trim();
     const lower = text.toLowerCase();
     if (lower === "thank you." || lower === "thanks for watching." || text.length < 2) {
       return "";
     }
 
+    // NOTE: this gate guards only the continuousListen() path (the sole caller
+    // of transcribe()). The live voice paths — bridge dictation via
+    // bridge-voice/stt-helper.ts and realtime via whisper-stream.ts — do NOT
+    // route through here and are gated separately/not-yet. Defense-in-depth on
+    // this path; do not assume it covers all STT.
     const injections = detectInjection(text);
     if (injections.length > 0) {
       const maxScore = Math.max(...injections.map((i: { score: number }) => i.score));

@@ -7,7 +7,7 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend, ScreenshotImage } from "../../browser/index.js";
 import { closeBrowser } from "../../browser/index.js";
-import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
+import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { ok, err, appendPostActionSnapshot } from "./shared.js";
 
@@ -43,12 +43,7 @@ export async function handleEvaluate(
   const script = String(args.script || "");
   if (!script) return err("'script' parameter is required for evaluate action.");
   const blockedPattern = scanEvaluateScript(script);
-  if (blockedPattern) {
-    return err(
-      `Blocked: script contains restricted pattern (${blockedPattern}). ` +
-      `evaluate() is for DOM inspection only — use http_request for API calls.`
-    );
-  }
+  if (blockedPattern) return err(evaluateBlockMessage(blockedPattern));
   return ok(await manager.evaluate(script));
 }
 

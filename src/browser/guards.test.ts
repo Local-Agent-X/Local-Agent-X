@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { installRequestGuard, scanEvaluateScript } from "./guards.js";
+import { classifySensitivePage, evaluateBlockMessage, installRequestGuard, scanEvaluateScript } from "./guards.js";
 import { buildAgentCsp } from "./csp-policy.js";
 
 // The guard registers its handler via context.route(); we capture that handler
@@ -295,5 +295,78 @@ describe("scanEvaluateScript — evaluate() blocklist (CSP owns egress; this own
 		["Worker", 'new Worker("w.js")'],
 	])("STILL blocks dynamic-exec/worker: %s", (_label, script) => {
 		expect(scanEvaluateScript(script)).not.toBeNull();
+	});
+});
+
+describe("evaluateBlockMessage — remediation names the right alternative for the class blocked", () => {
+	// The old single message ("use http_request for API calls") was wrong for a
+	// storage/DOM read — http_request cannot read page state. Each class now gets
+	// accurate guidance, and the pattern source is always echoed for debugging.
+	it("read-leak (cookie/storage/password) → extract/snapshot + ask-user, and NEVER http_request", () => {
+		for (const script of ["return document.cookie", 'localStorage.getItem("t")', 'document.querySelector("[type=password]").value']) {
+			const src = scanEvaluateScript(script);
+			expect(src).not.toBeNull();
+			const msg = evaluateBlockMessage(src!);
+			expect(msg).toMatch(/extract|snapshot/);
+			expect(msg).toMatch(/ask the user/i);
+			expect(msg).not.toMatch(/http_request/);
+		}
+	});
+	it("dynamic-exec (Function/eval/import) → plain DOM inspection guidance", () => {
+		const src = scanEvaluateScript('new Function("x","return x")');
+		const msg = evaluateBlockMessage(src!);
+		expect(msg).toMatch(/dynamic code execution/i);
+		expect(msg).toMatch(/DOM inspection/i);
+		expect(msg).not.toMatch(/http_request/);
+	});
+	it("WebRTC/EventSource → the primitive is blocked (no evaluate-side substitute)", () => {
+		const src = scanEvaluateScript("new RTCPeerConnection()");
+		expect(evaluateBlockMessage(src!)).toMatch(/realtime connection primitive is blocked/i);
+	});
+	it("always echoes the offending pattern source for debugging", () => {
+		const src = scanEvaluateScript("return document.cookie")!;
+		expect(evaluateBlockMessage(src)).toContain(src);
+	});
+});
+
+describe("classifySensitivePage — host authoritative; generic SaaS paths no longer gated", () => {
+	// HOST-based classification stays authoritative and unchanged.
+	it.each([
+		["cloud metadata IP", "http://169.254.169.254/latest/meta-data/", "cloud metadata"],
+		["GCE metadata host", "http://metadata.google.internal/", "cloud metadata"],
+		["1password host", "https://my.1password.com/vaults", "password manager"],
+		["bitwarden vault host", "https://vault.bitwarden.com/", "password manager"],
+		["keeper subdomain host", "https://vault.keepersecurity.com/", "password manager"],
+		["aws console host", "https://console.aws.amazon.com/console/home", "administration panel"],
+		["azure portal host", "https://portal.azure.com/", "administration panel"],
+		["paypal host", "https://paypal.com/", "financial account"],
+		["stripe host", "https://stripe.com/", "financial account"],
+		["bank. host prefix", "https://bank.example.com/", "financial account"],
+	])("STILL classifies known sensitive host: %s", (_label, url, category) => {
+		expect(classifySensitivePage(url)?.category).toBe(category);
+	});
+
+	// Specific, genuinely-secret PATHs remain strong signals on ANY host.
+	it.each([
+		["account recovery flow", "https://randomsaas.com/account-recovery/start", "account recovery"],
+		["reset-password flow", "https://randomsaas.com/reset-password", "account recovery"],
+		["ssh-keys page", "https://randomsaas.com/settings/ssh-keys", "private key management"],
+		["private-keys page", "https://randomsaas.com/private-keys", "private key management"],
+	])("STILL classifies genuine-secret path on an arbitrary host: %s", (_label, url, category) => {
+		expect(classifySensitivePage(url)?.category).toBe(category);
+	});
+
+	// Generic SaaS words in an arbitrary host's PATH are no longer enough.
+	it.each([
+		["billing", "https://randomsaas.com/billing"],
+		["payments", "https://randomsaas.com/settings/payments"],
+		["admin toggle", "https://randomsaas.com/admin"],
+		["management", "https://randomsaas.com/management"],
+		["api-keys", "https://randomsaas.com/settings/api-keys"],
+		["certificates", "https://randomsaas.com/certificates"],
+		["passwords", "https://randomsaas.com/passwords"],
+		["vault", "https://randomsaas.com/vault"],
+	])("NO LONGER classifies generic SaaS path on an arbitrary host: %s", (_label, url) => {
+		expect(classifySensitivePage(url)).toBeNull();
 	});
 });

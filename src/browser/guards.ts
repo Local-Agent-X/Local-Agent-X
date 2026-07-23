@@ -211,15 +211,46 @@ export function scanEvaluateScript(script: string): string | null {
   return null;
 }
 
-/** Typed refusal for a scanEvaluateScript hit — same message shape the CDP
- *  path produces, thrown BEFORE any bridge call: a blocked script never
- *  reaches the view. */
+/**
+ * Remediation guidance for a blocked evaluate() pattern, categorized so the
+ * advice matches WHY the script was blocked. The previous single line ("use
+ * http_request for API calls") was actively wrong for storage/DOM reads —
+ * http_request cannot read page state — so it mis-steered the agent. Both block
+ * paths route through here (EvaluateBlockedError on the in-app backend and
+ * handleEvaluate at the tool layer) so their text stays identical.
+ *
+ * Classification reads the pattern source that scanEvaluateScript returns; every
+ * source in BLOCKED_EVAL_PATTERNS carries its identifying token verbatim (e.g.
+ * "cookie", "localStorage", "credentials", "password", "EventSource"), so a
+ * substring test on the source is a stable proxy for the pattern's class. The
+ * pattern source is always echoed for debugging.
+ */
+export function evaluateBlockMessage(patternSource: string): string {
+  const prefix = `Blocked: script contains restricted pattern (${patternSource}). `;
+  // (1) Read-into-model-context leaks: cookie / web storage / credentials /
+  //     password field. The read itself is the leak, so point at the sanctioned
+  //     read paths — NOT http_request, which can't see page state at all.
+  if (/cookie|localStorage|sessionStorage|indexedDB|credentials|password/i.test(patternSource)) {
+    return prefix +
+      "Reading page storage or cookies through evaluate() is blocked to keep secrets out of tool output. " +
+      "To read visible page content use the `extract` or `snapshot` actions; if you need the page's login state, ask the user.";
+  }
+  // (3) WebRTC / EventSource: realtime egress primitives that bypass the
+  //     request-layer gate. There is no evaluate-side substitute.
+  if (/EventSource|RTCPeerConnection/i.test(patternSource)) {
+    return prefix + "This realtime connection primitive is blocked in evaluate().";
+  }
+  // (2)/(4) Dynamic code execution, workers, and nav/origin manipulation.
+  return prefix +
+    "Dynamic code execution is not allowed in evaluate() — use plain DOM inspection (querySelector, textContent, getAttribute) instead.";
+}
+
+/** Typed refusal for a scanEvaluateScript hit — same categorized message the
+ *  tool-layer (CDP) path produces, thrown BEFORE any bridge call: a blocked
+ *  script never reaches the view. */
 export class EvaluateBlockedError extends Error {
   constructor(pattern: string) {
-    super(
-      `Blocked: script contains restricted pattern (${pattern}). ` +
-        `evaluate() is for DOM inspection only — use http_request for API calls.`,
-    );
+    super(evaluateBlockMessage(pattern));
     this.name = "EvaluateBlockedError";
   }
 }
@@ -275,9 +306,32 @@ export function sensitivePageStub(rawUrl: string): string | null {
     `Page: ${sensitive.page}`,
     "Status: Page content, title, controls, and values were not read or returned.",
     "Explicit user approval is required for high-risk actions; structural and secret-reading actions remain blocked.",
+    "You can still navigate away, switch_tab, or close the browser without approval.",
   ].join("\n");
 }
 
+/**
+ * Classify a URL as a sensitive page. HOST-based signals are authoritative and
+ * kept intact. PATH-only signals are deliberately narrow: a generic word in an
+ * arbitrary host's path is NOT sufficient, because routine SaaS navigation lives
+ * at exactly those words ("update billing address", "toggle an admin setting",
+ * "view my api-keys page") and gating it walls off ordinary use.
+ *
+ * KEPT — HOST (always authoritative): cloud-metadata IPs; password-manager hosts
+ *   (1password/bitwarden/lastpass/dashlane/keeper); cloud consoles (aws/gcp/
+ *   azure/m365); known bank & payment hosts + the `bank.`/`banking.` host prefix.
+ * KEPT — PATH (specific enough to signal a real secret on ANY host): the account
+ *   -recovery / reset-password flow; literal key-material pages (private-keys /
+ *   ssh-keys / signing-keys).
+ * DROPPED — generic PATH-only matches that used to fire on an arbitrary host and
+ *   over-matched routine SaaS: `/passwords`, `/vault` (from password manager),
+ *   `/api-keys`, `/certificates` (from the key group), `/admin`, `/administrator`,
+ *   `/control-panel`, `/management` (the whole admin-panel path group), and
+ *   `/banking`, `/billing`, `/payments`, `/payouts`, `/transfers`, `/wire` (the
+ *   whole financial path group). These now classify ONLY when the HOST itself is
+ *   known-sensitive. Fail-safe rule applied: where a path token was ambiguous
+ *   between generic-SaaS and a genuine secret, it was KEPT (recovery + key paths).
+ */
 export function classifySensitivePage(rawUrl: string): { category: SensitivePageCategory; page: string } | null {
   let url: URL;
   try { url = new URL(rawUrl); } catch { return null; }
@@ -287,15 +341,15 @@ export function classifySensitivePage(rawUrl: string): { category: SensitivePage
   const secretPage = `${url.origin}/[sensitive-path-redacted]`;
 
   if (host === "169.254.169.254" || host === "metadata.google.internal") return { category: "cloud metadata", page };
-  if (/(^|\.)(1password|bitwarden|lastpass|dashlane)\.(com|eu)$/.test(host) || host.endsWith(".keepersecurity.com") || /\/(passwords?|vault)(\/|$)/.test(path)) {
+  if (/(^|\.)(1password|bitwarden|lastpass|dashlane)\.(com|eu)$/.test(host) || host.endsWith(".keepersecurity.com")) {
     return { category: "password manager", page: secretPage };
   }
   if (/\/(recover|recovery|forgot-password|reset-password|account-recovery)(\/|$)/.test(path)) return { category: "account recovery", page: secretPage };
-  if (/\/(private-?keys?|ssh-keys?|api-keys?|signing-keys?|certificates?)(\/|$)/.test(path)) return { category: "private key management", page: secretPage };
-  if (["console.aws.amazon.com", "console.cloud.google.com", "portal.azure.com", "admin.microsoft.com"].includes(host) || /\/(admin|administrator|control-panel|management)(\/|$)/.test(path)) {
+  if (/\/(private-?keys?|ssh-keys?|signing-keys?)(\/|$)/.test(path)) return { category: "private key management", page: secretPage };
+  if (["console.aws.amazon.com", "console.cloud.google.com", "portal.azure.com", "admin.microsoft.com"].includes(host)) {
     return { category: "administration panel", page };
   }
-  if (/(^|\.)(paypal|stripe|coinbase|venmo|wise|chase|bankofamerica|wellsfargo|capitalone|fidelity|schwab|americanexpress)\.com$/.test(host) || /(^|\.)(bank|banking)\./.test(host) || /\/(banking|billing|payments?|payouts?|transfers?|wire)(\/|$)/.test(path)) {
+  if (/(^|\.)(paypal|stripe|coinbase|venmo|wise|chase|bankofamerica|wellsfargo|capitalone|fidelity|schwab|americanexpress)\.com$/.test(host) || /(^|\.)(bank|banking)\./.test(host)) {
     return { category: "financial account", page };
   }
   return null;

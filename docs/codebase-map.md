@@ -12,48 +12,48 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1434 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1439 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 110 | 24 | XL |  |
-| `src/security/` | 77 | 30 | XL |  |
+| `src/security/` | 78 | 31 | XL |  |
 | `src/tools/` | 60 | 148 | XL |  |
 | `src/providers/` | 55 | 20 | XL |  |
 | `src/canonical-loop/` | 54 | 203 | XL |  |
 | `src/memory/` | 42 | 121 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
-| `src/workspace/` | 33 | 2 | M |  |
+| `src/workspace/` | 34 | 2 | M |  |
 | `src/session/` | 31 | 7 | L |  |
 | `src/auth/` | 30 | 10 | L |  |
-| `src/threat/` | 30 | 11 | L |  |
+| `src/threat/` | 30 | 12 | L |  |
 | `src/util/` | 29 | 2 | S |  |
-| `src/browser/` | 27 | 69 | XL |  |
+| `src/browser/` | 28 | 69 | XL |  |
 | `src/agency/` | 26 | 19 | L |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
+| `src/tool-policy/` | 26 | 20 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
-| `src/tool-policy/` | 25 | 20 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
+| `src/data-lineage/` | 19 | 6 | L |  |
 | `src/agent-request/` | 18 | 14 | L |  |
-| `src/data-lineage/` | 18 | 6 | L |  |
 | `src/chat-ws/` | 17 | 14 | L |  |
 | `src/context/` | 17 | 3 | M |  |
 | `src/agent-guards/` | 16 | 14 | L |  |
 | `src/agents/` | 16 | 13 | L |  |
 | `src/protocols/` | 15 | 39 | XL |  |
+| `src/sandbox/` | 15 | 8 | L |  |
 | `src/anthropic-client/` | 14 | 19 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
-| `src/sandbox/` | 12 | 8 | L |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
+| `src/tool-execution/` | 11 | 36 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/tool-execution/` | 10 | 33 | XL |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |

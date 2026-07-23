@@ -261,7 +261,10 @@ const rows: MatrixRow[] = [
     name: "threat engine restricted (confirmed breach) → external tool blocked at threat",
     call: { id: "m-threat", name: "http_request", args: { url: "https://example.com" } },
     ctx: { get threatEngine() { return restrictedThreat; } },
-    expected: { outcome: "blocked", stage: "threat", reason: /threat level elevated/i },
+    // The restriction deny is the truthful buildDenyReason message (chunks B/H):
+    // it names a security restriction + /approve and explicitly is NOT a network
+    // failure. The retired "threat level elevated" lie must never come back.
+    expected: { outcome: "blocked", stage: "threat", reason: /Security restriction:.*NOT a network failure/is },
   },
   {
     name: "autonomy profile says ask → approval requested, call proceeds once granted",

@@ -12,6 +12,7 @@ import { logToolUsage } from "./tool-usage-telemetry.js";
 import { spillFullResult } from "../tools/result-spill.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
+import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
 
 interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };
@@ -76,25 +77,13 @@ export function threatBlockMessage(reason: string | undefined, loop: boolean): s
   );
 }
 
-// Mirror of threat-engine-pack.ts:buildDenyReason (the canonical PRE-dispatch
-// restriction deny). This POST-execution restriction deny fires only on the
-// FLIP turn — when evaluating THIS tool's result is what pushed the session
-// into restricted mode, so the pre-dispatch pack couldn't have caught it. It
-// needs the same truthful, evidence-naming message; the old line ("Session
-// threat level elevated") carried USER_HINTS.network and sent a live session
-// into a connectivity-debugging flail (2026-07-23). Kept in sync with the pack
-// — both derive from getRestrictionEvidence().
-export function restrictionDenyReason(evidence: { types: string[]; sinks: string[] }): string {
-  const types = evidence.types.length > 0 ? evidence.types.join(", ") : "confirmed breach";
-  const sinkPart = evidence.sinks.length > 0
-    ? ` implicating external sink(s): ${evidence.sinks.join(", ")};`
-    : "";
-  return (
-    `Security restriction: this session recorded ${types} evidence;${sinkPart} ` +
-    `external calls are blocked by the threat engine. This is NOT a network failure — the destination was never contacted. ` +
-    `Recovery: the user can run /approve <reason> to consent, or the restriction decays on its own with quiet turns/time.`
-  );
-}
+// The POST-execution (flip-turn) restriction deny fires only on the FLIP turn —
+// when evaluating THIS tool's result is what pushed the session into restricted
+// mode, so the pre-dispatch pack couldn't have caught it. It renders the SAME
+// truthful, evidence-naming message as the pre-dispatch path by calling the one
+// canonical builder, buildDenyReason (threat-engine-pack.ts). The old line
+// ("Session threat level elevated") carried USER_HINTS.network and sent a live
+// session into a connectivity-debugging flail (2026-07-23).
 
 function evaluateThreat(ctx: ToolCallContext): void {
   const { threatEngine, tc, args } = ctx;
@@ -124,7 +113,7 @@ function evaluateThreat(ctx: ToolCallContext): void {
     if (!isOwnApp) {
       const evidence = threatEngine.getRestrictionEvidence();
       ctx.result = {
-        content: `BLOCKED: ${restrictionDenyReason(evidence)}`,
+        content: `BLOCKED: ${buildDenyReason(evidence)}`,
         isError: true,
         status: "blocked",
         metadata: { layer: "threat", userHint: USER_HINTS.threatRestricted },

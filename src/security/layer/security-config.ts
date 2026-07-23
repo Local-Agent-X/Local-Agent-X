@@ -9,6 +9,45 @@ import type { EgressMode } from "./network-policy.js";
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
 
+/**
+ * Load the egress allowlist from ~/.lax/egress-allowlist.json.
+ *
+ * In permissive mode (default): the allowlist is the "trusted destinations"
+ * list — hosts the agent may send secret-shaped payloads to. Hosts not listed
+ * are still reachable for plain surfing; only secret-bearing POST/PUT/PATCH/
+ * DELETE bodies are gated (enforced at the tool layer).
+ *
+ * In strict mode: the allowlist is the only set of hosts the agent may reach at
+ * all. A missing file in strict mode → deny-with-hint.
+ *
+ * `configured` is true once a file loaded successfully (even content `[]`), so
+ * evaluateWebFetch can distinguish "operator configured an empty allowlist
+ * (deny everything)" from "no file present". A missing file previously fell open
+ * to every public host — the feature failed-open on a default install.
+ */
+export function loadEgressAllowlist(egressMode: EgressMode): { allowlist: Set<string>; configured: boolean } {
+  try {
+    const allowlistPath = join(getLaxDir(), "egress-allowlist.json");
+    if (existsSync(allowlistPath)) {
+      const parsed = JSON.parse(readFileSync(allowlistPath, "utf-8"));
+      if (Array.isArray(parsed)) {
+        const allowlist = new Set(parsed.map((d: unknown) => String(d).toLowerCase()));
+        logger.info(`[security] Egress allowlist loaded: ${allowlist.size} domains (mode=${egressMode})`);
+        return { allowlist, configured: true };
+      }
+      logger.warn(`[security] ${allowlistPath} is not a JSON array — treating as missing`);
+    } else if (egressMode === "strict") {
+      logger.warn(
+        `[security] strict mode but no allowlist at ${allowlistPath} — all outbound requests will be denied. ` +
+        `Create the file with a JSON array of allowed domains or set egressMode to "permissive" in ~/.lax/security.json.`,
+      );
+    }
+  } catch (e) {
+    logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
+  }
+  return { allowlist: new Set(), configured: false };
+}
+
 export function loadEgressMode(): EgressMode {
   try {
     const cfgPath = join(getLaxDir(), "security.json");

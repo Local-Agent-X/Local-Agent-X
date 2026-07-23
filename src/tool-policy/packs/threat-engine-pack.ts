@@ -46,8 +46,11 @@ function describeRules(): RulePackRule[] {
 }
 
 /** The truthful deny reason: names the evidence, denies the network-failure
- *  reading explicitly, and states both recovery paths. */
-function buildDenyReason(evidence: { types: string[]; sinks: string[] }): string {
+ *  reading explicitly, and states both recovery paths. This is the ONE source
+ *  of truth for the restriction message — both the pre-dispatch pack (below) and
+ *  the flip-turn post-execution deny (audit-tool-call.ts) render from here so the
+ *  two paths can never drift. */
+export function buildDenyReason(evidence: { types: string[]; sinks: string[] }): string {
   const types = evidence.types.length > 0 ? evidence.types.join(", ") : "confirmed breach";
   const sinkPart = evidence.sinks.length > 0
     ? ` implicating external sink(s): ${evidence.sinks.join(", ")};`

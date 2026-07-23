@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { threatBlockMessage, restrictionDenyReason } from "./audit-tool-call.js";
+import { threatBlockMessage } from "./audit-tool-call.js";
+// The flip-turn restriction deny (audit-tool-call.ts) renders from the one
+// canonical builder in threat-engine-pack.ts — same function the pre-dispatch
+// pack uses, so the two paths can never drift.
+import { buildDenyReason } from "../tool-policy/packs/threat-engine-pack.js";
 import { USER_HINTS } from "../types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 
@@ -40,11 +44,12 @@ describe("threatBlockMessage — renders by block kind", () => {
 // emit "Session threat level elevated" carrying USER_HINTS.network — a lie that
 // sent a live session into a network-debugging flail (2026-07-23). It must now
 // name the real layer (a security restriction) and a real recovery (/approve),
-// and must NEVER read as a connectivity failure. Mirrors the canonical
-// pre-dispatch message in threat-engine-pack.ts:buildDenyReason.
-describe("restrictionDenyReason — the flip-turn restriction message is truthful", () => {
+// and must NEVER read as a connectivity failure. The flip-turn path renders from
+// the canonical buildDenyReason in threat-engine-pack.ts — the same function the
+// pre-dispatch pack uses, asserted here at its source.
+describe("buildDenyReason — the flip-turn restriction message is truthful", () => {
   it("names the evidence + sinks and states /approve recovery, never a network failure", () => {
-    const msg = restrictionDenyReason({ types: ["exfiltration"], sinks: ["evil.example.com"] });
+    const msg = buildDenyReason({ types: ["exfiltration"], sinks: ["evil.example.com"] });
     expect(msg).toMatch(/security restriction/i);
     expect(msg).toMatch(/exfiltration/);
     expect(msg).toMatch(/evil\.example\.com/);
@@ -55,7 +60,7 @@ describe("restrictionDenyReason — the flip-turn restriction message is truthfu
   });
 
   it("with no attributable sink it still reads as a security restriction, not a network error", () => {
-    const msg = restrictionDenyReason({ types: ["canary"], sinks: [] });
+    const msg = buildDenyReason({ types: ["canary"], sinks: [] });
     expect(msg).toMatch(/security restriction/i);
     expect(msg).toMatch(/\/approve/);
     expect(msg).not.toMatch(/implicating external sink/); // no empty sink clause
@@ -63,7 +68,7 @@ describe("restrictionDenyReason — the flip-turn restriction message is truthfu
   });
 
   it("the threat-restricted user hint is the truthful template, distinct from the network hint", () => {
-    // What audit-tool-call.ts attaches alongside restrictionDenyReason.
+    // What audit-tool-call.ts attaches alongside the buildDenyReason message.
     expect(USER_HINTS.threatRestricted).not.toBe(USER_HINTS.network);
     expect(USER_HINTS.threatRestricted).toMatch(/not a network failure/i);
     expect(USER_HINTS.threatRestricted).toMatch(/\/approve/);

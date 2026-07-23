@@ -34,6 +34,7 @@ import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerState }
 import { readThreatScorerOptions } from "./scorer-options.js";
 import { ToolChainAnalyzer, type ToolChainState } from "./tool-chain.js";
 import { restoreLastBlockedFingerprint } from "./consent-store.js";
+import { emitPreScoreChainAudit } from "./threat-audit-events.js";
 
 export interface ThreatEngineState {
   scorer: ThreatScorerState;
@@ -193,61 +194,11 @@ export class ThreatEngine {
     // Chain analysis (exfiltration + loop detection)
     const chainResult = this.chain.recordAndAnalyze(toolName, args, classification);
 
-    // A tool blocked by ANOTHER security layer is audited but never scored.
-    // The scorer accumulates risk only from deterministic evidence this engine
-    // observes directly (secret-carrying payloads, tripped canaries,
-    // credentials/secrets in output); feeding other layers' block decisions
-    // back into the scorer made any false positive elsewhere an amplifier
-    // loop that accelerated threat restriction.
-    if (!allowed) {
-      this.audit.record({
-        sessionId: this.sessionId,
-        event: "tool_blocked",
-        toolName,
-        decision: "block",
-        reason: "Security layer blocked",
-        threatScore: this.scorer.getStatus().score,
-        threatLevel: this.scorer.getStatus().level,
-      });
-    }
-
-    // Temporal staging signal (a sensitive read preceded this external call but
-    // nothing secret was on the wire). Observability ONLY: audited but never
-    // scored. Temporal correlation is a heuristic, not evidence — 19 staging
-    // fires over 7 weeks produced 0 true positives, and because memory reads
-    // are always classified sensitive, scoring it turned ordinary
-    // memory_search → browser work into accumulating risk that restricted a
-    // live session mid-task (2026-07-23). Payload-based exfiltration evidence
-    // still blocks and scores above/below. The audit is suppressed when the
-    // user consented to the flow (recorded as exfiltration_allowed_by_consent
-    // instead) and while already restricted.
-    if (chainResult.staging && !chainResult.allowedByConsent && !alreadyRestricted) {
-      this.audit.record({
-        sessionId: this.sessionId,
-        event: "exfiltration_staging_signal",
-        toolName,
-        decision: "allow",
-        reason: chainResult.staging.description,
-        threatScore: this.scorer.getStatus().score,
-        threatLevel: this.scorer.getStatus().level,
-      });
-    }
-
-    // An exfil pattern fired but was let through by user-consent. Audit
-    // it as an "allowed exfiltration" event so the security record is
-    // preserved — we ALLOWED it because the user consented, not because
-    // the threat didn't exist.
-    if (chainResult.allowedByConsent && (chainResult.exfil || chainResult.staging)) {
-      this.audit.record({
-        sessionId: this.sessionId,
-        event: "exfiltration_allowed_by_consent",
-        toolName,
-        decision: "allow",
-        reason: `${(chainResult.exfil ?? chainResult.staging)!.description} — allowed by ${chainResult.allowedByConsent}`,
-        threatScore: this.scorer.getStatus().score,
-        threatLevel: this.scorer.getStatus().level,
-      });
-    }
+    // Pre-score audit events (blocked-by-other-layer / staging observability /
+    // consent-allowed exfil) — emitted but NEVER scored. See threat-audit-events.ts
+    // for the full rationale (staging is a 0-true-positive heuristic; another
+    // layer's block must not feed this scorer).
+    emitPreScoreChainAudit(this.audit, this.scorer, this.sessionId, toolName, allowed, alreadyRestricted, chainResult);
 
     if (chainResult.blocked) {
       // Exfiltration evidence names its sink — record the registrable domain so

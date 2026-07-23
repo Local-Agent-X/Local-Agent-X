@@ -17,11 +17,12 @@ import { getSandboxStatus } from "../../sandbox/index.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { evaluateBrowser as evaluateBrowserAction } from "./browser-egress-eval.js";
 import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
-import { TOOL_PATH_ARGS, hasCapability, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
+import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
-import { loadEgressMode, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
+import { loadEgressMode, loadEgressAllowlist, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
 import { fingerprintSecurityPolicy, parseJsonPathArray, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
+import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
@@ -153,35 +154,9 @@ export class SecurityLayer {
     this.inlineEvalPolicy = inlineEvalPolicy || loadInlineEvalPolicy();
     this.egressMode = loadEgressMode();
     this.localServicePorts = loadLocalServicePorts();
-    // Load egress allowlist from ~/.lax/egress-allowlist.json.
-    //
-    // In permissive mode (default): allowlist is the "trusted destinations"
-    // list — hosts the agent may send secret-shaped payloads to. Hosts not
-    // listed are still reachable for plain surfing; only secret-bearing
-    // POST/PUT/PATCH/DELETE bodies are gated (enforced at the tool layer).
-    //
-    // In strict mode: allowlist is the only set of hosts the agent may
-    // reach at all. Missing file in strict mode → deny-with-hint.
-    try {
-      const allowlistPath = join(getLaxDir(), "egress-allowlist.json");
-      if (existsSync(allowlistPath)) {
-        const parsed = JSON.parse(readFileSync(allowlistPath, "utf-8"));
-        if (Array.isArray(parsed)) {
-          this.egressAllowlist = new Set(parsed.map((d: unknown) => String(d).toLowerCase()));
-          this.egressAllowlistConfigured = true;
-          logger.info(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains (mode=${this.egressMode})`);
-        } else {
-          logger.warn(`[security] ${allowlistPath} is not a JSON array — treating as missing`);
-        }
-      } else if (this.egressMode === "strict") {
-        logger.warn(
-          `[security] strict mode but no allowlist at ${allowlistPath} — all outbound requests will be denied. ` +
-          `Create the file with a JSON array of allowed domains or set egressMode to "permissive" in ~/.lax/security.json.`,
-        );
-      }
-    } catch (e) {
-      logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
-    }
+    const egress = loadEgressAllowlist(this.egressMode);
+    this.egressAllowlist = egress.allowlist;
+    this.egressAllowlistConfigured = egress.configured;
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
   }
 
@@ -227,80 +202,16 @@ export class SecurityLayer {
       };
     }
 
-    // Delegated agents using write/edit/bash must have worktree isolation
-    // IF they're modifying repo SOURCE code. Writes to user-content
-    // territory (workspace/, ~/Documents, ~/Desktop, anywhere outside the
-    // repo) don't need isolation — the sandbox protects the agent's own running
-    // code from mid-task mutation, NOT the workers producing user-facing
-    // artifacts. The old blanket rule killed every content-creation worker where
-    // worktree provisioning wasn't wired up (the polish-the-pptx case).
-    //
-    // For shell tools the requirement is STRICTER (see the shell branch below):
-    // worktree isolation is not enough — a self-verify shell also needs effective
-    // OS containment, because a shell's children / redirects / expansions escape
-    // the worktree that write/edit's explicit `path` arg keeps them inside.
+    // Delegated agents modifying repo SOURCE (or running an uncontained shell)
+    // must be worktree-isolated; user-content writes and doubly-contained
+    // self-verify shells pass through. Full rationale lives in the extracted gate.
     if (callCtx === "delegated" && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
-      const sessionKey = ctx.sessionId;
-      const hasWorktree = this.hasSessionWorktree(sessionKey);
-      if (hasCapability(toolName, "shell")) {
-        // ── Delegated-shell containment gate (chunk K) ──
-        // A delegated agent MAY run shell to self-verify its own work (build /
-        // type-check / test — the aider-polyglot / workflow-subagent case that
-        // was blocked for 7 weeks) ONLY when it is DOUBLY contained:
-        //   (1) worktree isolation      — its writes can't reach the main agent's
-        //                                  live running source, AND
-        //   (2) effective OS containment — a confined sandbox (or an acknowledged
-        //                                  host / scoped work root; see
-        //                                  delegatedShellOsContained), so the
-        //                                  shell's children/redirects/expansions
-        //                                  are caged, not just its top-level argv.
-        // Missing EITHER → block (err safe). cron never reaches here: shell is in
-        // CONTEXT_RESTRICTED_TOOLS for cron and was denied above. The command
-        // denylist / rm / egress / network-client rules run downstream regardless
-        // (evaluateShellCommandAndPaths), so a dangerous command (rm -rf, curl,
-        // …) stays blocked even when the agent is fully contained.
-        if (!hasWorktree) {
-          return {
-            allowed: false,
-            reason: `Blocked: delegated shell tool "${toolName}" requires worktree isolation to run (no worktree is provisioned for this session)`,
-            userHint: USER_HINTS.worktreeIsolation,
-          };
-        }
-        if (!this.delegatedShellOsContained(sessionKey)) {
-          return {
-            allowed: false,
-            reason: `Blocked: delegated shell tool "${toolName}" requires an effectively-confined sandbox — the selected sandbox fell back to the unconfined host and this run has no operator acknowledgement or scoped work root, so a self-verify shell cannot be contained`,
-            userHint: USER_HINTS.policy,
-          };
-        }
-        // Contained (worktree + OS containment) → fall through to the shared
-        // command-shape / file-access vetting below.
-      } else if (!hasWorktree) {
-        // Non-shell workspace-write tools (write/edit/ari_file/delete_file):
-        // isolation is required only for repo SOURCE paths — user-content writes
-        // are exempt (they don't touch the agent's running code).
-        //
-        // ari_file is a single bridge tool whose action (read|write) lives in
-        // args.action — a read never mutates source, and a write to user-content
-        // territory is exempt just like write/edit. So gate only ari_file WRITES
-        // to source paths, mirroring the write/edit reasoning above.
-        const ariFileAction = toolName === "ari_file" ? String(args.action || "read") : null;
-        const ariFileExempt = ariFileAction === "read" ||
-          (ariFileAction === "write" && this.isUserContentPath(String(args.path || "")));
-        // delete_file shares edit's `path` arg + blast radius → a user-content
-        // delete skips the worktree too (else all delegated deletes were refused).
-        const isContentWrite =
-          ((toolName === "write" || toolName === "edit" || toolName === "delete_file") &&
-            this.isUserContentPath(String(args.path || ""))) ||
-          ariFileExempt;
-        if (!isContentWrite) {
-          return {
-            allowed: false,
-            reason: `Blocked: delegated agent "${toolName}" requires worktree isolation for source-code paths (writes to workspace/, ~/Documents, or anywhere outside the repo don't need it)`,
-            userHint: USER_HINTS.worktreeIsolation,
-          };
-        }
-      }
+      const blocked = evaluateDelegatedWorktreeGate(ctx, {
+        hasSessionWorktree: (s) => this.hasSessionWorktree(s),
+        delegatedShellOsContained: (s) => this.delegatedShellOsContained(s),
+        isUserContentPath: (p) => this.isUserContentPath(p),
+      });
+      if (blocked) return blocked;
     }
 
     let decision: SecurityDecision;

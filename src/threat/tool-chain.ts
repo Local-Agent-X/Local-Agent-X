@@ -4,6 +4,7 @@ import type { DataClassification } from "./classification.js";
 import { fingerprintOf, isLearned } from "./trust-ledger.js";
 import { isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
+import { STATEFUL_LIVE_STATE_TOOLS } from "../tool-execution/stateful-tools.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration
@@ -95,7 +96,7 @@ export class ToolChainAnalyzer {
     const hash = hashToolCall(toolName, args);
     this.callHashes.push(hash);
     if (this.callHashes.length > this.MAX_HISTORY) this.callHashes.shift();
-    const loopResult = this.detectLoops(hash);
+    const loopResult = this.detectLoops(hash, toolName);
     if (loopResult) {
       return { blocked: true, reason: loopResult, loopDetected: loopResult };
     }
@@ -321,8 +322,19 @@ export class ToolChainAnalyzer {
   }
 
   /** Detect tool call loops (generic repeat + ping-pong + multi-pattern) */
-  private detectLoops(currentHash: string): string | null {
+  private detectLoops(currentHash: string, toolName: string): string | null {
     const recent = this.callHashes.slice(-30);
+
+    // Stateful live-state tools (browser, process/op/agent polling, live
+    // captures) are exempt from the SPECIFIC-pattern arms below: an identical
+    // repeat there is a legitimate poll returning FRESH results (op_wait ×12,
+    // agent_status↔agent_output ×8), not a stuck loop — and this hash-only
+    // guard can't tell the difference. The result-aware agent-guards
+    // checkToolLoops layer catches genuine identical-RESULT loops, and the
+    // global 40-call circuit breaker below stays active as a runaway backstop.
+    // (This loop block is not scored into the threat scorer, so exempting it
+    // doesn't touch restriction.) See tool-execution/stateful-tools.ts.
+    const stateful = STATEFUL_LIVE_STATE_TOOLS.has(toolName);
 
     // Generic repeat: same exact call 12+ times consecutively
     let repeatCount = 0;
@@ -330,12 +342,12 @@ export class ToolChainAnalyzer {
       if (recent[i] === currentHash) repeatCount++;
       else break;
     }
-    if (repeatCount >= 12) {
+    if (!stateful && repeatCount >= 12) {
       return `Tool loop detected: same call repeated ${repeatCount} times. Agent may be stuck.`;
     }
 
     // Ping-pong: A-B-A-B pattern (4+ alternations = 8 calls)
-    if (recent.length >= 8) {
+    if (!stateful && recent.length >= 8) {
       const last8 = recent.slice(-8);
       let pingPong = true;
       for (let i = 0; i < last8.length; i++) {
@@ -350,7 +362,7 @@ export class ToolChainAnalyzer {
     }
 
     // Triple-pattern loop: A-B-C-A-B-C (3+ cycles = 9 calls)
-    if (recent.length >= 9) {
+    if (!stateful && recent.length >= 9) {
       const last9 = recent.slice(-9);
       let tripleLoop = true;
       for (let i = 3; i < last9.length; i++) {

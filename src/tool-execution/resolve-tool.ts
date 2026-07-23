@@ -13,6 +13,7 @@ import { terminate, CONTINUE, HALT } from "./context.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
+import { STATEFUL_LIVE_STATE_TOOLS } from "./stateful-tools.js";
 
 // Eval scaffolding — see markDryRunSession docstring below.
 const dryRunSessions = new Set<string>();
@@ -66,6 +67,11 @@ const SESSION_REPEAT_SKIP_TOOLS = new Set([
   // that a new guard now rejects the path. Returning a prior success is false
   // progress.
   "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file",
+  // STATEFUL live-state tools (browser, process/op/agent polling, live
+  // captures) share one source of truth with the 60s dedup cache and the
+  // threat-engine loop guard — see stateful-tools.ts for the rationale and the
+  // 2026-07-23 stale-snapshot failure that motivated the exemption.
+  ...STATEFUL_LIVE_STATE_TOOLS,
 ]);
 
 // Scan back through prior assistant tool_calls for an exact match (name +

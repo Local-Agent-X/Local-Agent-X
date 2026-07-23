@@ -23,6 +23,7 @@
  * orchestrator) and re-exports the public types.
  */
 
+import { registrableDomain } from "../browser/csp-policy.js";
 import { canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries } from "./canaries.js";
 import { classifyData, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
@@ -35,13 +36,33 @@ export interface ThreatEngineState {
   scorer: ThreatScorerState;
   chain: ToolChainState;
   canaries: string[];
+  /** Registrable domains implicated as exfiltration sinks. Optional so state
+   *  persisted by older versions (which lacks the field) restores cleanly —
+   *  missing means "none recorded", and a restricted session restored that way
+   *  falls back to the conservative deny-all-external behavior. */
+  implicatedSinks?: string[];
+}
+
+/** Registrable domain (eTLD+1) of an external sink target, or the bare
+ *  lowercased hostname when eTLD+1 does not apply (IP literals, single-label
+ *  hosts), or null when the target has no parseable host. The tool-policy
+ *  threat pack MUST derive the domain of a call's target with this same
+ *  function so implicated-sink matching can never drift. */
+export function externalSinkDomain(target: string): string | null {
+  try {
+    const host = new URL(target).hostname;
+    if (!host) return null;
+    return registrableDomain(host) ?? host.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 export { _invalidateThreatSettingsCacheForTests } from "./scorer-options.js";
 
 export { classifyData, type DataClassification, type DataLabel } from "./classification.js";
 export { generateCanaries, canaryPromptBlock, checkCanaries, checkCanariesInPayload, getSessionCanaries, registerSessionCanaries, clearSessionCanaries } from "./canaries.js";
-export { ThreatScorer, THREAT_SCORES, type ThreatLevel } from "./scoring.js";
+export { ThreatScorer, THREAT_SCORES, DETERMINISTIC_EVIDENCE_TYPES, type ThreatLevel } from "./scoring.js";
 export { ToolChainAnalyzer } from "./tool-chain.js";
 export { CryptoAuditTrail } from "./audit-trail.js";
 
@@ -55,6 +76,13 @@ export class ThreatEngine {
   readonly audit: CryptoAuditTrail;
   private canaries: string[];
   private sessionId: string;
+  /** Registrable domains of external sinks implicated by exfiltration evidence
+   *  (a blocked outbound call whose payload carried secret-shaped content).
+   *  Restriction is scoped to these domains when non-empty; credential/secret
+   *  -in-output and canary evidence has no attributable sink, so a session
+   *  restricted on those alone keeps the conservative deny-all behavior. */
+  private implicatedSinks = new Set<string>();
+  private static readonly MAX_IMPLICATED_SINKS = 50;
 
   /** Mark the next `durationMs` window as user-consented. Chat entrypoint
    *  calls this when the user message has attachments + directive language
@@ -99,6 +127,7 @@ export class ThreatEngine {
       scorer: this.scorer.snapshot(),
       chain: this.chain.snapshot(),
       canaries: [...this.canaries],
+      implicatedSinks: [...this.implicatedSinks],
     };
   }
 
@@ -107,8 +136,19 @@ export class ThreatEngine {
       || state.canaries.some(canary => typeof canary !== "string" || canary.length < 8)) {
       throw new Error("invalid persisted threat canary state");
     }
+    // Optional field — absent in state persisted before sink scoping existed.
+    // Missing must not throw: restore to "none recorded" (conservative
+    // deny-all-external while restricted).
+    if (state.implicatedSinks !== undefined) {
+      if (!Array.isArray(state.implicatedSinks)
+        || state.implicatedSinks.length > ThreatEngine.MAX_IMPLICATED_SINKS
+        || state.implicatedSinks.some(d => typeof d !== "string" || !d || d.length > 253)) {
+        throw new Error("invalid persisted implicated-sink state");
+      }
+    }
     this.scorer.restore(state.scorer);
     this.chain.restore(state.chain);
+    this.implicatedSinks = new Set(state.implicatedSinks ?? []);
     this.canaries = [...state.canaries];
     registerSessionCanaries(this.sessionId, this.canaries);
     if (state.chain.lastBlockedFingerprint && state.chain.lastBlockedAt !== null) {
@@ -207,6 +247,15 @@ export class ThreatEngine {
     }
 
     if (chainResult.blocked) {
+      // Exfiltration evidence names its sink — record the registrable domain so
+      // restriction can be scoped to the implicated destination instead of
+      // denying the entire external internet. Recorded even while already
+      // restricted (it only tightens the scoped set; it does not touch the
+      // scorer, so it cannot reset the recovery clock).
+      if (chainResult.exfil && this.implicatedSinks.size < ThreatEngine.MAX_IMPLICATED_SINKS) {
+        const sinkDomain = externalSinkDomain(chainResult.exfil.sink.target);
+        if (sinkDomain) this.implicatedSinks.add(sinkDomain);
+      }
       // A runaway loop is a circuit-breaker concern, not a security threat. The
       // block itself already halts the loop; scoring it into the SECURITY scorer
       // would push a benign read-only loop (e.g. grep↔read making no progress)
@@ -314,10 +363,20 @@ export class ThreatEngine {
     return this.scorer.isRestricted();
   }
 
+  /** What the current restriction is grounded on: the deterministic evidence
+   *  event types recorded, and the implicated sink domains (empty when the
+   *  evidence has no attributable external destination). The tool-policy pack
+   *  uses this to scope the deny to implicated sinks and to tell the user the
+   *  true cause instead of a fake network failure. */
+  getRestrictionEvidence(): { types: string[]; sinks: string[] } {
+    return { types: this.scorer.getEvidenceTypes(), sinks: [...this.implicatedSinks] };
+  }
+
   /** Reset for new session */
   reset(newSessionId?: string): void {
     this.chain.reset();
     this.scorer.reset();
+    this.implicatedSinks.clear();
     this.canaries = generateCanaries();
     if (newSessionId) this.sessionId = newSessionId;
     registerSessionCanaries(this.sessionId, this.canaries);

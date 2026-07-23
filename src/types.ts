@@ -201,9 +201,17 @@ export interface SecurityDecision {
  * import the matching key — they MUST NOT invent per-site prose.
  */
 export const USER_HINTS = {
-  /** SSRF, egress allowlist, invalid URL, threat-elevated external, data lineage taint. */
+  /** SSRF, egress allowlist, invalid URL, data lineage taint. NOT the
+   *  threat-restriction deny — that uses `threatRestricted`, because framing a
+   *  security block as a connectivity problem sent a live session into a
+   *  network-debugging flail (2026-07-23). */
   network:
     "I can't reach that URL or network address right now — want me to skip it, use a local file, or try a different address?",
+  /** Session threat restriction denied an external call. Must never read as a
+   *  network failure: the destination was never contacted — the security layer
+   *  blocked the call because of recorded evidence (the reason line names it). */
+  threatRestricted:
+    "A security check is blocking external calls in this session because of earlier evidence (see the reason above) — this is not a network failure; the site was never contacted. Type `/approve <one-line reason>` if this work is legitimate, or keep working locally and the restriction lifts on its own after quiet turns or time.",
   /** Path traversal, workspace boundary, file-access-mode restrictions. */
   fileSystem:
     "I can't access that file path — try a path inside the project or your usual user folders, or broaden file access in Settings.",

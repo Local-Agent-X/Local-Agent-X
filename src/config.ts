@@ -134,7 +134,30 @@ export function loadConfig(): LAXConfig {
   const ariReqEnv = process.env.LAX_ARI_REQUIRED;
   if (ariReqEnv !== undefined) raw.ariRequired = ariReqEnv !== "false" && ariReqEnv !== "0";
 
-  const config = configSchema.parse(raw);
+  // A field this binary can't parse degrades to this binary's default for
+  // that field — it must never kill boot. Live failure (2026-07-22): the dev
+  // server (newer schema) wrote browserMode:"in-app" into the shared
+  // ~/.lax/config.json; the installed app (older schema without that enum
+  // value) then died on an uncaught ZodError at every boot — three rapid
+  // crashes and the desktop shell showed its "broken build" recovery screen.
+  // Any mixed-version pair sharing one data-dir reproduces this unless
+  // invalid fields are dropped per-field: a newer writer must never brick an
+  // older reader. The on-disk value is deliberately left untouched so the
+  // newer binary keeps it.
+  let config: LAXConfig;
+  const strict = configSchema.safeParse(raw);
+  if (strict.success) {
+    config = strict.data;
+  } else {
+    const badKeys = [...new Set(strict.error.issues.map((i) => String(i.path[0] ?? "")))].filter(Boolean);
+    const salvaged = { ...raw };
+    for (const key of badKeys) delete salvaged[key];
+    config = configSchema.parse(salvaged);
+    logger.warn(
+      `[config] ignoring invalid config field(s) ${badKeys.join(", ")} in ${configPath} ` +
+      `(likely written by a newer app version) — running with defaults for them`,
+    );
+  }
 
   // Floor the per-message iteration cap. Clamp — not schema-reject — so legacy
   // config.json files with the old tiny caps (Settings default was 25) still

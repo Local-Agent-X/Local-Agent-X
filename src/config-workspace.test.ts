@@ -345,3 +345,48 @@ describe("ensureWorkspaceLink retargets + migrates on a workspace change", () =>
     expect(readFileSync(join(newWs, "apps", "demo", "index.html"), "utf-8")).toBe("<h1>old</h1>"); // migrated
   });
 });
+
+// Forward-compat contract for loadConfig(): ~/.lax/config.json is shared by
+// every installed binary on the machine, and a NEWER version may persist enum
+// values an OLDER schema doesn't know. The old strict parse turned that into
+// an uncaught ZodError at boot — the 2026-07-22 live failure: the dev server
+// wrote browserMode:"in-app", and the installed app (older schema) crash-
+// looped into its "broken build" recovery screen. Invalid fields must degrade
+// to this binary's defaults, without rewriting the newer value on disk.
+describe("loadConfig() forward-compat salvage", () => {
+  let dataDir: string;
+  let previousDataDir: string | undefined;
+  let configPath: string;
+
+  beforeAll(() => {
+    previousDataDir = process.env.LAX_DATA_DIR;
+    dataDir = mkdtempSync(join(tmpdir(), "config-salvage-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    configPath = join(dataDir, "config.json");
+  });
+
+  afterAll(() => {
+    if (previousDataDir === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = previousDataDir;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("boots with defaults for a field holding a value only a newer schema knows", () => {
+    writeFileSync(configPath, JSON.stringify({
+      authToken: "test-token",
+      workspace: resolve("workspace"),
+      sandboxModeMigrated: true,
+      browserMode: "mode-from-the-future",
+      model: "test-model",
+    }), "utf-8");
+
+    const config = loadConfig();
+
+    // Boot survived, the bad field fell back to this schema's default, and
+    // the rest of the config was honored.
+    expect(config.browserMode).toBe("in-app");
+    expect(config.model).toBe("test-model");
+    // The newer writer's value stays on disk for the newer binary to use.
+    expect(JSON.parse(readFileSync(configPath, "utf-8")).browserMode).toBe("mode-from-the-future");
+  });
+});

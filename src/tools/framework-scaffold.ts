@@ -132,7 +132,7 @@ export function viteScaffoldPlan(appName: string): ScaffoldPlan {
 	};
 }
 
-function viteConfigText(appName: string): string {
+export function viteConfigText(appName: string): string {
 	return `import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -145,6 +145,16 @@ import tailwindcss from '@tailwindcss/vite'
 // live hot-reload is lost.
 const devPort = Number(process.env.LAX_DEV_PORT) || undefined
 
+// Also injected by app_serve_frontend: the dev proxy below forwards
+// /api/connectors/* to LAX stamped with the app-scoped connector capability
+// (connectors-only — the same value LAX embeds in every served app page), so
+// this app's API calls work even when the page is opened on the DEV origin
+// itself (in-app browser, a pasted vite URL) where window.__LAX_CONNECTOR_TOKEN__
+// is never injected. Without the env (vite run by hand) there's no proxy and
+// the app only works behind /apps/${appName}/, as before.
+const laxPort = Number(process.env.LAX_SERVER_PORT) || undefined
+const connectorToken = process.env.LAX_CONNECTOR_TOKEN || ''
+
 export default defineConfig({
   base: '/apps/${appName}/',
   plugins: [react(), tailwindcss()],
@@ -152,6 +162,15 @@ export default defineConfig({
     host: true,
     strictPort: true,
     ...(devPort ? { port: devPort, hmr: { clientPort: devPort, host: 'localhost' } } : {}),
+    ...(laxPort ? {
+      proxy: {
+        '/api/connectors': {
+          target: 'http://127.0.0.1:' + laxPort,
+          changeOrigin: true,
+          ...(connectorToken ? { headers: { authorization: 'Bearer ' + connectorToken } } : {}),
+        },
+      },
+    } : {}),
   },
 })
 `;

@@ -29,8 +29,8 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
-import { stripRedundantInstall } from "./dev-server-command.js";
-import { withNodeTitleGuard } from "./env-contamination.js";
+import { stripRedundantInstall, frontendEnv } from "./dev-server-command.js";
+import { refreshOwnedViteConfig } from "./framework-scaffold-run.js";
 import { reclaimPort, verifyDevServerStartup } from "./dev-server-readiness.js";
 import { killProcessGroupSync } from "../process-tree-kill.js";
 import { createLogger } from "../logger.js";
@@ -77,18 +77,8 @@ export interface DevServerRecord {
   kind?: DevServerKind;
 }
 
-/** Env a dev-server child needs. A frontend gets LAX_DEV_PORT so the harness-owned
- *  vite.config points HMR at the actual dev port (the /apps proxy can't carry the
- *  HMR websocket, so the browser connects ws://localhost:<port> directly). BOTH
- *  kinds get the macOS process.title crash guard (withNodeTitleGuard): a node dev
- *  server spawned under the desktop's app-bundle responsibility context SIGSEGVs
- *  the instant it sets process.title — the "code null / no output" death this
- *  module fought for days. Returns undefined only when there's nothing to add. */
-function frontendEnv(kind: DevServerKind, port: number): Record<string, string> | undefined {
-  const base: Record<string, string> = kind === "frontend" ? { LAX_DEV_PORT: String(port) } : {};
-  const env = withNodeTitleGuard(base) as Record<string, string>;
-  return Object.keys(env).length ? env : undefined;
-}
+// Child env for dev-server spawns (LAX_DEV_PORT + the direct-origin connector
+// proxy env + the macOS title guard) lives in dev-server-command.ts.
 
 /** Test seam: swap process control so unit tests never spawn a real server. */
 export interface DevServerDeps {
@@ -236,6 +226,9 @@ export function registerDevServer(
     logger.warn(`[dev-server] ${appId}: killed ${reclaimed.length} untracked process(es) holding port ${port} (pids ${reclaimed.join(", ")}) before start`);
   }
 
+  if (kind === "frontend" && refreshOwnedViteConfig(cwd, appId)) {
+    logger.info(`[dev-server] ${appId}: refreshed harness-owned vite.config to the current template`);
+  }
   const started = dd.start(command, cwd, frontendEnv(kind, port));
   if ("error" in started) return { ok: false, error: started.error };
 
@@ -296,7 +289,11 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   // Strip the redundant `npm install &&` before restarting: on this lazy-restart
   // hot path it's the wedge that leaves the app stuck on "Starting…" forever
   // (install segfaults under the sandbox, so the bind step never runs).
-  const restartCmd = stripRedundantInstall(rec.command, rec.cwd || workspacePath("apps", appId));
+  const appDir = rec.cwd || workspacePath("apps", appId);
+  const restartCmd = stripRedundantInstall(rec.command, appDir);
+  if ((rec.kind ?? "backend") === "frontend" && refreshOwnedViteConfig(appDir, appId)) {
+    logger.info(`[dev-server] ${appId}: refreshed harness-owned vite.config to the current template`);
+  }
   const started = dd.start(restartCmd, rec.cwd || undefined, frontendEnv(rec.kind ?? "backend", rec.port));
   if ("error" in started) { logger.warn(`[dev-server] ${appId}: restart failed: ${started.error}`); return { status: "error", error: started.error }; }
   const updated: DevServerRecord = { ...rec, sessionId: started.session.sessionId };

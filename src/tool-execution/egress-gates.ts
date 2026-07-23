@@ -135,7 +135,7 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
       return {
         layer: "egress-guard", label: "egress guard", reason: att.message,
         recovery: "Remove the sensitive file from the attachment list — credential/secret files may not be sent off-box.",
-        userHint: USER_HINTS.network, meta: att.meta,
+        userHint: USER_HINTS.outboundContent, meta: att.meta,
       };
     }
   }
@@ -157,7 +157,7 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   return {
     layer: "egress-guard", label: "egress guard", reason: block.message,
     recovery: "Use {{SECRET_NAME}} placeholders instead of hardcoded credentials, or remove the secret from the outbound payload. Add a trusted destination to ~/.lax/egress-allowlist.json only if it legitimately needs credentials.",
-    userHint: USER_HINTS.network, meta: block.meta,
+    userHint: USER_HINTS.outboundContent, meta: block.meta,
   };
 }
 
@@ -179,7 +179,7 @@ export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
     layer: "data-lineage", label: "data lineage",
     reason: egress.reason ?? "The session is tainted by an earlier sensitive read; outbound data is blocked.",
     recovery: "Sensitive data was tainted earlier this session and may not egress. Either don't include the tainted data or end the session.",
-    userHint: USER_HINTS.network,
+    userHint: USER_HINTS.outboundContent,
   };
 }
 
@@ -197,7 +197,7 @@ export function probeCanary(ctx: ToolCallContext): EgressBlocker | null {
     layer: "canary", label: "canary tripwire",
     reason: `a session canary token was detected in the outbound payload of "${ctx.tc.name}". This is definitive exfiltration of protected context.`,
     recovery: "Do not include internal reference codes in outbound payloads. This call was blocked and recorded.",
-    userHint: USER_HINTS.network,
+    userHint: USER_HINTS.outboundContent,
   };
 }
 

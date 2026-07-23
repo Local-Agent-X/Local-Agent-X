@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { threatBlockMessage } from "./audit-tool-call.js";
+import { threatBlockMessage, restrictionDenyReason } from "./audit-tool-call.js";
+import { USER_HINTS } from "../types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 
 // Cross-seam contract for the loop ↔ exfil decoupling. One block path used to
@@ -32,6 +33,41 @@ describe("threatBlockMessage — renders by block kind", () => {
     const msg = threatBlockMessage("Exfiltration pattern detected: outbound http_request carries secret-shaped content.", false);
     expect(msg).toMatch(/\/approve/);
     expect(msg).toMatch(/consent/i);
+  });
+});
+
+// The POST-execution (flip-turn) restriction deny in audit-tool-call.ts used to
+// emit "Session threat level elevated" carrying USER_HINTS.network — a lie that
+// sent a live session into a network-debugging flail (2026-07-23). It must now
+// name the real layer (a security restriction) and a real recovery (/approve),
+// and must NEVER read as a connectivity failure. Mirrors the canonical
+// pre-dispatch message in threat-engine-pack.ts:buildDenyReason.
+describe("restrictionDenyReason — the flip-turn restriction message is truthful", () => {
+  it("names the evidence + sinks and states /approve recovery, never a network failure", () => {
+    const msg = restrictionDenyReason({ types: ["exfiltration"], sinks: ["evil.example.com"] });
+    expect(msg).toMatch(/security restriction/i);
+    expect(msg).toMatch(/exfiltration/);
+    expect(msg).toMatch(/evil\.example\.com/);
+    expect(msg).toMatch(/\/approve/);
+    expect(msg).toMatch(/NOT a network failure/i);
+    // The lie this chunk retired: it must not claim a connectivity problem.
+    expect(msg).not.toMatch(/can't reach|different address|network address/i);
+  });
+
+  it("with no attributable sink it still reads as a security restriction, not a network error", () => {
+    const msg = restrictionDenyReason({ types: ["canary"], sinks: [] });
+    expect(msg).toMatch(/security restriction/i);
+    expect(msg).toMatch(/\/approve/);
+    expect(msg).not.toMatch(/implicating external sink/); // no empty sink clause
+    expect(msg).not.toMatch(/can't reach|different address/i);
+  });
+
+  it("the threat-restricted user hint is the truthful template, distinct from the network hint", () => {
+    // What audit-tool-call.ts attaches alongside restrictionDenyReason.
+    expect(USER_HINTS.threatRestricted).not.toBe(USER_HINTS.network);
+    expect(USER_HINTS.threatRestricted).toMatch(/not a network failure/i);
+    expect(USER_HINTS.threatRestricted).toMatch(/\/approve/);
+    expect(USER_HINTS.network).not.toMatch(/\/approve/);
   });
 });
 

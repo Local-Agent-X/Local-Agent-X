@@ -201,10 +201,12 @@ export interface SecurityDecision {
  * import the matching key — they MUST NOT invent per-site prose.
  */
 export const USER_HINTS = {
-  /** SSRF, egress allowlist, invalid URL, data lineage taint. NOT the
-   *  threat-restriction deny — that uses `threatRestricted`, because framing a
-   *  security block as a connectivity problem sent a live session into a
-   *  network-debugging flail (2026-07-23). */
+  /** SSRF, egress allowlist, invalid URL, blocked protocol — genuine
+   *  destination/connectivity failures ONLY. NOT the threat-restriction deny
+   *  (that uses `threatRestricted`) and NOT outbound-content blocks — secret in
+   *  payload, session taint, canary trip, sensitive attachment (those use
+   *  `outboundContent`). Framing a security block as a connectivity problem
+   *  sent a live session into a network-debugging flail (2026-07-23). */
   network:
     "I can't reach that URL or network address right now — want me to skip it, use a local file, or try a different address?",
   /** Session threat restriction denied an external call. Must never read as a
@@ -212,6 +214,13 @@ export const USER_HINTS = {
    *  blocked the call because of recorded evidence (the reason line names it). */
   threatRestricted:
     "A security check is blocking external calls in this session because of earlier evidence (see the reason above) — this is not a network failure; the site was never contacted. Type `/approve <one-line reason>` if this work is legitimate, or keep working locally and the restriction lifts on its own after quiet turns or time.",
+  /** Outbound payload blocked for its CONTENT, not its destination: a hardcoded
+   *  secret, a sensitive file attachment, session-tainted data, or a tripped
+   *  canary token. Must never read as a network failure — the address is fine,
+   *  the DATA can't leave. The old `network` hint told the model to "use a local
+   *  file / try a different address", the exact opposite of the fix (2026-07-23). */
+  outboundContent:
+    "That outbound call was blocked for what it carries, not where it's going — the payload contains a secret, a sensitive file, or data that can't leave this session. This is not a network problem; changing the address won't help. Remove or mask the sensitive content (use {{SECRET_NAME}} placeholders for credentials) and retry.",
   /** Path traversal, workspace boundary, file-access-mode restrictions. */
   fileSystem:
     "I can't access that file path — try a path inside the project or your usual user folders, or broaden file access in Settings.",

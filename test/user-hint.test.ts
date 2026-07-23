@@ -25,7 +25,7 @@ import { renderToolResultForModel } from "../src/tools/result-helpers.js";
  * sites that don't set userHint still render via the reason path.
  */
 describe("userHint on blocked-tool responses", () => {
-  describe("network category (SSRF, egress, threat-restricted, data lineage)", () => {
+  describe("network category (SSRF, egress, invalid URL — genuine connectivity only)", () => {
     it("network-policy: invalid URL", () => {
       const d = evaluateWebFetch(new Set(), false, "7007", "not a url");
       expect(d.allowed).toBe(false);
@@ -50,18 +50,23 @@ describe("userHint on blocked-tool responses", () => {
       expect(d.userHint).toBe(USER_HINTS.network);
     });
 
-    it("threat-engine pack: restricted external tools tag the network hint", async () => {
+    it("threat-engine pack: a restricted external call tags the threat-restriction hint, NOT the network hint", async () => {
       const pack = makeThreatEnginePack({
         isRestricted: () => true,
-        // unused by this pack
+        // Sink domain is the registrable domain (eTLD+1) the pack derives from
+        // the call URL — must match for the sink-scoped deny to fire.
+        getRestrictionEvidence: () => ({ types: ["exfiltration"], sinks: ["example.com"] }),
       } as never);
       const decision = await pack.evaluate(
-        { id: "1", name: "http_request", args: { url: "https://example.com" } },
+        { id: "1", name: "http_request", args: { url: "https://evil.example.com/collect" } },
         { sessionId: "s", callContext: "local" },
       );
       expect(decision.allowed).toBe(false);
       if (!decision.allowed) {
-        expect(decision.userHint).toBe(USER_HINTS.network);
+        // The truthful layer: a security restriction, never a connectivity failure.
+        expect(decision.userHint).toBe(USER_HINTS.threatRestricted);
+        expect(decision.userHint).not.toBe(USER_HINTS.network);
+        expect(decision.userHint).not.toMatch(/can't reach/i);
       }
     });
   });

@@ -8,7 +8,11 @@
 
 import type { Rectangle } from "electron";
 
-export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list";
+// "adopt"/"release": server-pushed mirror of user-view adoption — trust flips
+// to "agent" while the agent drives an adopted tab (downloads → quarantine,
+// loopback carve-out closed). Must stay in lockstep with
+// src/browser/bridge-client-contract.ts.
+export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release";
 
 export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
 export interface BridgeMouseEvent {

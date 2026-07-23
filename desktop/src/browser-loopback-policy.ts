@@ -23,8 +23,10 @@
  * What stays closed: an INTERNET page in a user tab still cannot touch
  * loopback (its initiator is non-loopback and its subresource requests are
  * not mainFrame navigations), and AGENT views — including views the trust
- * resolver cannot attribute (popups, unknown webContents) — remain governed
- * by the strict server-side policy. The cross-origin SSRF invariant the
+ * resolver cannot attribute (popups, unknown webContents) and user views the
+ * agent currently ADOPTED via switch_tab (trust flips to "agent" while
+ * adopted; see browser-download-routing.viewTrust) — remain governed by the
+ * strict server-side policy. The cross-origin SSRF invariant the
  * agent policy enforces is intact; only the user's deliberate local browsing
  * is opened.
  *

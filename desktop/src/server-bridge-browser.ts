@@ -28,6 +28,7 @@ import {
 	listBrowserViews,
 	pingBrowserView,
 	setBrowserViewBounds,
+	setViewAdopted,
 	setViewLifecycleObserver,
 	type BrowserViewInfo,
 } from "./browser-views";
@@ -324,6 +325,10 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 			setBrowserViewBounds(msg.viewId, msg.bounds);
 			return {};
 		}
+		case "adopt":
+		case "release":
+			setViewAdopted(msg.viewId, msg.op === "adopt");
+			return {};
 		case "ping":
 			// userActive lets the server-side pre-exec arbitration (eval-driven
 			// mutations bypass the input gate) see the co-drive lock.

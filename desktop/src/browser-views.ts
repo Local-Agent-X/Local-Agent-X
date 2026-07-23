@@ -13,6 +13,7 @@ import { join } from "path";
 
 import { getMainWindow } from "./window";
 import { getHardenedPartitionSession, hardenWebContents, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
+import { viewTrust } from "./browser-download-routing";
 import { managePopups, type PopupTracker } from "./browser-view-popups";
 import { armCoDrive } from "./in-app-browser";
 
@@ -44,11 +45,31 @@ const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
 
 const pool = new Map<string, PoolEntry>();
 // webContents.id → agentDriven, for the partition layer's per-request
-// user-vs-agent trust question (the user-loopback egress carve-out). Only
+// user-vs-agent trust question (loopback carve-out + download routing). Only
 // pool views are listed — popups and unknown webContents resolve to null,
-// which the policy treats as strict.
+// which the policies treat as strict. Adoption (server push, mirrored via
+// setViewAdopted) flips a user view to "agent" while the agent drives it —
+// see viewTrust in browser-download-routing.ts for why.
 const wcTrust = new Map<number, boolean>();
-setViewTrustResolver((id) => (wcTrust.has(id) ? (wcTrust.get(id) ? "agent" : "user") : null));
+const adoptedViews = new Set<string>();
+setViewTrustResolver((id) => {
+	if (!wcTrust.has(id)) return null;
+	return viewTrust(wcTrust.get(id), adoptedViews.has(viewIdForWebContents(id) ?? ""));
+});
+
+/** Server-pushed adoption mirror (lifecycle "adopt"/"release"): the agent
+ *  took over / let go of a user view. */
+export function setViewAdopted(viewId: string, adopted: boolean): void {
+	if (adopted) adoptedViews.add(viewId);
+	else adoptedViews.delete(viewId);
+}
+
+/** A (re)spawned server child means every old adoption died with its backend
+ *  and no "release" will ever arrive — without this, a mid-adoption server
+ *  crash left the user's own tab quarantining downloads until it closed. */
+export function clearAdoptedViews(): void {
+	adoptedViews.clear();
+}
 let attachedId: string | null = null;
 // Minimal pool-change seam: fired on membership changes (create/close) and
 // attach flips (show). No payload by design — the consumer re-lists; the pool
@@ -281,6 +302,7 @@ export function closeBrowserView(viewId: string): void {
 	if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
 	pool.delete(viewId);
 	wcTrust.delete(entry.wcId);
+	adoptedViews.delete(viewId);
 	notifyPoolChanged();
 }
 

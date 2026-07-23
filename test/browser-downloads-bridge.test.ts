@@ -47,6 +47,9 @@ vi.mock("../desktop/src/config", () => ({
 vi.mock("../desktop/src/browser-views", () => ({
   getBrowserView: (viewId: string) => h.viewsById.get(viewId),
   listBrowserViews: () => h.poolList,
+  // Respawn hygiene called by wireDownloadBridge; adoption itself is pinned
+  // in browser-download-routing.test.ts (viewTrust) — a no-op here.
+  clearAdoptedViews: () => {},
 }));
 
 import {

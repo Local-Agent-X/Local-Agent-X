@@ -20,7 +20,12 @@ export interface BrowserViewInfo {
 	attached: boolean;
 	agentDriven: boolean;
 }
-export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list";
+// "adopt"/"release": server → desktop mirror of user-view adoption (the agent
+// took over / let go of a user tab via switch_tab), so the desktop's trust
+// resolver treats the view as agent-driven while adopted (downloads →
+// quarantine, no user-loopback carve-out) — matching the server egress gate's
+// attribution of adopted-tab requests to the driving session.
+export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release";
 export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
 export interface BridgeMouseEvent {
 	type: "mouseDown" | "mouseUp" | "mouseMove";

@@ -226,7 +226,9 @@ export async function inspectBrowserDownload(input: InspectInput): Promise<Downl
 
 // ── In-app (Electron) download ingest ─────────
 // The desktop's per-partition will-download handler (desktop/src/
-// browser-partition.ts) saves every download to <LAX_DIR>/quarantine/<id>.part
+// browser-partition.ts) saves every AGENT-attributed download to
+// <LAX_DIR>/quarantine/<id>.part (a positively USER-attributed download is
+// the user's own browsing and lands in ~/Downloads, never reaching this seam)
 // and pushes terminal entries over the bridge (browser-downloads-bridge.ts →
 // bridge-perception.handleBrowserDownloadEvent → here). This seam runs the
 // SAME inspection pipeline (inspectBrowserDownload: size cap + sha256 + magic

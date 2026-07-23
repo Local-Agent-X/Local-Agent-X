@@ -13,13 +13,14 @@
  */
 
 import { randomUUID } from "crypto";
-import { mkdirSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { app, session, type DownloadItem, type Session, type WebContents, type WebPreferences } from "electron";
 
 import { LAX_DIR, getLAXConfig } from "./config";
 import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { shouldAllowUserLoopback, type ViewTrust } from "./browser-loopback-policy";
+import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import {
 	buildHardeningCspHeaders,
 	cacheGet,
@@ -140,23 +141,9 @@ async function evaluateEgress(req: EgressRequest): Promise<boolean> {
 }
 
 // ── Download quarantine registry ─────────
-export interface QuarantinedDownload {
-	id: string;
-	/** Pool view that triggered the download; null when the webContents is not
-	 *  a pool view (popup / unresolvable). Resolved at will-download time. */
-	viewId: string | null;
-	/** Page URL of the triggering webContents at will-download time. */
-	pageUrl: string;
-	url: string;
-	filename: string;
-	mime: string;
-	bytes: number;
-	state: "progressing" | "completed" | "cancelled" | "interrupted";
-	savePath: string;
-	/** Set by browser-downloads-bridge once the entry reached a live server
-	 *  child (outbox flag — mark ONLY after a successful send). */
-	reported: boolean;
-}
+// Record shape lives in browser-download-routing.ts; re-exported so the
+// bridge keeps its import surface.
+export type { QuarantinedDownload } from "./browser-download-routing";
 
 const QUARANTINE_DIR = join(LAX_DIR, "quarantine");
 const downloadRegistry = new Map<string, QuarantinedDownload>();
@@ -225,10 +212,21 @@ function hardenSession(sess: Session, partition: string): void {
 		(_wc: WebContents | null, permission: string) => VIEW_ALLOWED_PERMISSIONS.has(permission),
 	);
 
-	// Nothing lands outside quarantine, nothing auto-opens. The server owns
-	// the release/approval flow: terminal entries are pushed to it by the
-	// done-listener seam (browser-downloads-bridge.ts).
+	// Agent downloads land ONLY in quarantine, nothing auto-opens; the server
+	// owns release/approval via the done-listener seam
+	// (browser-downloads-bridge.ts). A download the trust resolver POSITIVELY
+	// attributes to a USER view is the user's own browsing and lands in
+	// ~/Downloads like any browser (browser-download-routing.ts); popups and
+	// unresolvable webContents fail safe into quarantine.
 	sess.on("will-download", (_event: unknown, item: DownloadItem, wc?: WebContents) => {
+		if (isUserDownload(wc && !wc.isDestroyed() ? wc.id : undefined, viewTrustResolver)) {
+			const savePath = uniqueDownloadPath(app.getPath("downloads"), item.getFilename(), existsSync);
+			item.setSavePath(savePath);
+			item.once("done", (_e: unknown, state: string) => {
+				if (state === "completed" && process.platform === "darwin") app.dock?.downloadFinished(savePath);
+			});
+			return;
+		}
 		const id = randomUUID();
 		mkdirSync(QUARANTINE_DIR, { recursive: true });
 		const savePath = join(QUARANTINE_DIR, `${id}.part`);

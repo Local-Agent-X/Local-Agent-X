@@ -27,7 +27,7 @@ import {
 	setDownloadDoneListener,
 	type QuarantinedDownload,
 } from "./browser-partition";
-import { getBrowserView, listBrowserViews } from "./browser-views";
+import { clearAdoptedViews, getBrowserView, listBrowserViews } from "./browser-views";
 
 /** Returns true only when the message reached the child (proc.send truth). */
 export type DownloadEventSink = (msg: Record<string, unknown>) => boolean;
@@ -86,6 +86,9 @@ export function flushUnreportedDownloads(): void {
  */
 export function wireDownloadBridge(send: DownloadEventSink): void {
 	sink = send;
+	// The old child's adoptions died with it and no "release" will arrive —
+	// clear the trust mirror; the new child replays live ones on subscribe.
+	clearAdoptedViews();
 	setDownloadContextResolver((wc) => ({
 		viewId: resolveViewId(wc),
 		pageUrl: wc && !wc.isDestroyed() ? wc.getURL() : "",

@@ -262,6 +262,11 @@ export async function startServer(config: LAXConfig) {
     // fail closed until this answers), same bridge, same lifetime.
     const { initBrowserBridgeClient } = await import("../browser/bridge-client.js");
     initBrowserBridgeClient();
+    // Mirror user-view adoptions to the desktop's trust resolver (downloads
+    // stay quarantined + loopback carve-out closes while the agent drives an
+    // adopted tab) — same bridge, same lifetime.
+    const { wireAdoptionMirror } = await import("../browser/adoption-mirror.js");
+    wireAdoptionMirror();
     // Record user browser navigations (ui:browser bus) into shared history —
     // same lifetime as the bridge listener that produces those events.
     const { initHistoryRecorder } = await import("../browser/history-recorder.js");

@@ -93,6 +93,7 @@ async function loadApps() {
         _appsRenderKey = '__empty__';
       }
       if (empty) empty.style.display = '';
+      if (typeof applyAppsSearchFilter === 'function') applyAppsSearchFilter();
       return;
     }
 
@@ -111,7 +112,7 @@ async function loadApps() {
       const visibilityIcon = a.visibility === 'private' ? '&#128274;' : a.visibility === 'public' ? '&#127760;' : '&#128101;';
 
       return `
-      <div class="app-card${statusClass}" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')">
+      <div class="app-card${statusClass}" data-search="${esc(((a.name || '') + ' ' + (a.description || '')).toLowerCase())}" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')">
         <div class="app-card-header">
           <span class="app-card-name" data-id="${esc(a.id)}" onclick="event.stopPropagation(); renameApp(this)" title="Click to rename">${esc(a.name)}</span>
           <div style="display:flex;gap:6px;align-items:center">
@@ -144,6 +145,8 @@ async function loadApps() {
     if (typeof Spring !== 'undefined') {
       Spring.staggerIn(Array.from(grid.querySelectorAll('.app-card')), { delay: 40, preset: 'stiff' });
     }
+    // Re-apply the search filter — the rebuild above wiped display state.
+    if (typeof applyAppsSearchFilter === 'function') applyAppsSearchFilter();
   } catch (e) {
     grid.innerHTML = '<p style="color:var(--muted)">Failed to load apps</p>';
   }
@@ -165,7 +168,7 @@ async function loadCustomPages() {
 
     section.style.display = '';
     list.innerHTML = pages.map(p => `
-      <div class="app-card small" onclick="window.open('/${p.name}.html','_blank')">
+      <div class="app-card small" data-search="${esc(((p.title || '') + ' ' + (p.name || '')).toLowerCase())}" onclick="window.open('/${p.name}.html','_blank')">
         <div class="app-card-name">${esc(p.title || p.name)}</div>
         <div class="app-card-footer">
           <span>/${p.name}.html</span>
@@ -173,6 +176,7 @@ async function loadCustomPages() {
         </div>
       </div>
     `).join('');
+    if (typeof applyAppsSearchFilter === 'function') applyAppsSearchFilter();
   } catch {
     section.style.display = 'none';
   }
@@ -212,6 +216,7 @@ async function deleteApp(id, name) {
         if (empty) empty.style.display = '';
         _appsRenderKey = '__empty__';
       }
+      if (typeof applyAppsSearchFilter === 'function') applyAppsSearchFilter();
     }, 180);
   } catch { loadApps(); }
 }

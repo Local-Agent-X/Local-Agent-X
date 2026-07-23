@@ -164,23 +164,32 @@
     }
     const requested = _pendingNames.slice();
     const saved = [];
+    const failed = [];
     for (const inp of inputs) {
       const name = inp.getAttribute('data-secret-name');
       const value = inp.value.trim();
       if (!name || !value) continue;
+      // apiPost resolves for ANY JSON response, including 401/429/500 error
+      // bodies — the POST route's success contract is {ok:true}. Trusting a
+      // bare resolve told users "captured and ready for use" while the vault
+      // had rejected the save (the GEMINI_API_KEY ×5 incident).
       try {
-        await apiPost('/api/secrets', { name, value });
-        saved.push(name);
+        const res = await apiPost('/api/secrets', { name, value });
+        if (res && res.ok) {
+          saved.push(name);
+        } else {
+          failed.push(`${name} (${(res && res.error) || 'unexpected response'})`);
+        }
       } catch (e) {
         console.error('Failed saving secret', name, e);
+        failed.push(`${name} (${(e && e.message) || 'network error'})`);
       }
     }
     _afterClose();
-    if (saved.length) {
-      _localNote(`${saved.join(', ')} captured and ready for use.`);
-    } else {
-      _localNote(`Couldn't save ${requested.join(', ') || 'the secret'} — try again.`);
-    }
+    const parts = [];
+    if (saved.length) parts.push(`${saved.join(', ')} captured and ready for use.`);
+    if (failed.length) parts.push(`Couldn't save ${failed.join(', ')} — try again, or add it in Settings → Secrets.`);
+    _localNote(parts.join(' ') || `Couldn't save ${requested.join(', ') || 'the secret'} — try again.`);
   }
 
   // Drop an instant confirmation straight into the chat. Client-only: the note

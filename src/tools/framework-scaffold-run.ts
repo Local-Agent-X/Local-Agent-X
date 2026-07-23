@@ -7,7 +7,7 @@
  * NOT duplicated here — it comes from viteScaffoldPlan.
  */
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
 import { hardenChildEnv } from "./env-contamination.js";
@@ -63,6 +63,38 @@ export async function runFrameworkScaffold(
   mkdirSync(dirname(manifestPath), { recursive: true });
   writeFileSync(manifestPath, JSON.stringify(plan.manifest, null, 2), "utf-8");
   return { scaffolded: true, framework: "vite" };
+}
+
+/**
+ * Converge an EXISTING harness-owned vite.config to the current canonical
+ * template — the template evolves (base path → HMR env → the /api/connectors
+ * dev proxy) and already-scaffolded apps would otherwise keep the old behavior
+ * forever. Only touches apps whose scaffold manifest proves the harness owns
+ * vite.config.ts (the write-guard rejects model writes to it, so overwriting
+ * can't clobber app-authored config). Called by the dev-server spawn paths so
+ * the refresh lands exactly when the config is next read. Returns true when
+ * the file was rewritten; never throws (a broken manifest just skips).
+ */
+export function refreshOwnedViteConfig(appDir: string, appName: string): boolean {
+  try {
+    const manifestPath = resolve(appDir, SCAFFOLD_MANIFEST_REL);
+    if (!existsSync(manifestPath)) return false;
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Partial<ScaffoldManifestShape>;
+    if (manifest.framework !== "vite" || !manifest.ownedPaths?.includes("vite.config.ts")) return false;
+    const configPath = resolve(appDir, "vite.config.ts");
+    if (!existsSync(configPath)) return false;
+    const canonical = viteScaffoldPlan(appName).files.find((f) => f.path === "vite.config.ts")?.content;
+    if (!canonical || readFileSync(configPath, "utf-8") === canonical) return false;
+    writeFileSync(configPath, canonical, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface ScaffoldManifestShape {
+  framework: string;
+  ownedPaths: string[];
 }
 
 function runScaffoldCommand(

@@ -59,13 +59,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/self-edit/` | 9 | 20 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
+| `src/server/` *(entrypoint)* | 8 | 40 | XL |  |
 | `src/sync/` | 8 | 18 | L |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
 | `src/routes/` | 7 | 86 | XL |  |
-| `src/server/` *(entrypoint)* | 7 | 40 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |

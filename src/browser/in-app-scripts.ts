@@ -15,6 +15,7 @@
 
 import type { DurableRef } from "./observation.js";
 import { selectorQuery } from "./selector-compat.js";
+import { nativeValueSetStmt, selectOptionMatchExpr } from "./in-app-script-helpers.js";
 
 /**
  * Wrap an expression script so an in-page throw comes back as a marker object
@@ -66,7 +67,7 @@ export function fillScript(selector: string, value: string): string {
 	if (el && el.bad) return { ok: false, error: "invalid-selector: " + el.bad };
 	if (!el) return { ok: false, error: "not-found" };
 	const type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
-	if ("value" in el) el.value = ${val};
+	if ("value" in el) { ${nativeValueSetStmt("el", val)} }
 	else if (el.isContentEditable) el.textContent = ${val};
 	else return { ok: false, error: "not-fillable" };
 	el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -82,7 +83,7 @@ export function selectScript(selector: string, value: string): string {
 	if (el && el.bad) return { ok: false, error: "invalid-selector: " + el.bad };
 	if (!el) return { ok: false, error: "not-found" };
 	if (el.tagName !== "SELECT") return { ok: false, error: "not-a-select" };
-	const match = [...el.options].find((o) => o.value === ${val} || o.label === ${val} || o.text === ${val});
+	const match = ${selectOptionMatchExpr("[...el.options]", val)};
 	if (!match) return { ok: false, error: "no-matching-option" };
 	el.value = match.value;
 	el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -277,14 +278,30 @@ ${OCCLUSION_HELPERS}
 	if (p.op === "click" && p.cw > 0 && p.ch > 0) {
 		const el = document.elementFromPoint(p.cx, p.cy);
 		if (el) {
-			const e = env();
-			return { found: true, via: "coords", x: p.cx, y: p.cy, w: p.cw, h: p.ch, dpr: e.dpr, zoom: e.zoom,
-				tag: el.tagName || "", type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
-				editable: el.isContentEditable === true };
+			// Every earlier strategy (role+name, text, xpath) missed, so this
+			// pixel is UNVERIFIED after a re-layout. Accept a blind coords click
+			// ONLY on positive identity: the stored name must actually appear on
+			// the hit's role-matching container (known role) or the hit itself
+			// (unknown/absent role), and that element must be visible. No stored
+			// name, or the name isn't there → reject. Over-reject re-snapshots
+			// (safe); a blind click on an unverified hit lands on whatever
+			// unrelated control now sits at the point. (Residual: a container
+			// whose HIDDEN subtree text contains the generic name as a substring
+			// can still over-accept — narrow, name-anchored; see LIVE-VERIFY.)
+			const roleSel = p.role && ROLE_SEL[p.role];
+			const idEl = roleSel ? (el.closest && el.closest(roleSel)) : el;
+			if (lname && idEl && vis(idEl) && acc(idEl).includes(lname)) {
+				const e = env();
+				return { found: true, via: "coords", x: p.cx, y: p.cy, w: p.cw, h: p.ch, dpr: e.dpr, zoom: e.zoom,
+					tag: el.tagName || "", type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
+					editable: el.isContentEditable === true };
+			}
+			occluded.push("coords:" + describe(el) + " — element moved or was replaced, re-snapshot");
+		} else {
+			// elementFromPoint returned null → the stored point is outside the
+			// current viewport (page scrolled/re-laid-out since the observation).
+			occluded.push("coords:offscreen(" + ((p.cx | 0)) + "," + ((p.cy | 0)) + ")");
 		}
-		// elementFromPoint returned null → the stored point is outside the
-		// current viewport (page scrolled/re-laid-out since the observation).
-		occluded.push("coords:offscreen(" + ((p.cx | 0)) + "," + ((p.cy | 0)) + ")");
 	}
 	return { found: false, occluded };
 })()`;
@@ -325,6 +342,13 @@ ${OCCLUSION_HELPERS}
 		}
 	}
 	picks.sort((a, b) => b[0] - a[0]);
+	// On a tie at the top score the DOM order carries no signal — prefer a
+	// candidate already in the viewport so the click is predictable, and warn
+	// the model the match was ambiguous so it can disambiguate with a ref.
+	const top = picks.length ? picks[0][0] : -1;
+	const tied = picks.filter((pk) => pk[0] === top).length;
+	const inVp = (e) => { const r = e.getBoundingClientRect(); const vw = document.documentElement.clientWidth || 1; const vh = document.documentElement.clientHeight || 1; return r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw; };
+	if (tied > 1) picks.sort((a, b) => (b[0] - a[0]) || ((inVp(b[1]) ? 1 : 0) - (inVp(a[1]) ? 1 : 0)));
 	for (const pick of picks) {
 		const el = pick[1];
 		// instant: a smooth-scrolling page would animate past the synchronous
@@ -335,9 +359,11 @@ ${OCCLUSION_HELPERS}
 		const hit = document.elementFromPoint(x, y);
 		const related = !!hit && (hit === el || (el.contains && el.contains(hit)) || (hit.contains && hit.contains(el)));
 		if (!related && !benignOverlap(hit, r)) continue;
-		return { found: true, role: roleOf(el), x, y,
+		const res = { found: true, role: roleOf(el), x, y,
 			dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
 			zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1 };
+		if (tied > 1) res.note = 'matched ' + tied + ' elements for "' + ${JSON.stringify(text)} + '", clicked the first visible — use a ref to target a specific one';
+		return res;
 	}
 	return { found: false };
 })()`;
@@ -358,7 +384,7 @@ export function selectFillScript(ref: DurableRef, value: string): string {
 		}
 	}
 	if (!el || el.tagName !== "SELECT") return { ok: false, error: "not-found" };
-	const match = [...el.options].find((o) => o.value === p.value || o.label === p.value || o.text === p.value);
+	const match = ${selectOptionMatchExpr("[...el.options]", "p.value")};
 	if (!match) return { ok: false, error: "no-matching-option" };
 	el.value = match.value;
 	el.dispatchEvent(new Event("input", { bubbles: true }));

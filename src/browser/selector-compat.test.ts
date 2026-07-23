@@ -13,7 +13,8 @@ import {
 	selectorTextHint,
 	SELECTOR_ENGINE_FN,
 } from "./selector-compat.js";
-import { clickScript, fillScript } from "./in-app-scripts.js";
+import { clickScript, fillScript, selectScript, selectFillScript, resolutionScript, textSearchScript } from "./in-app-scripts.js";
+import type { DurableRef } from "./observation.js";
 
 // ── Fake DOM ─────────
 
@@ -79,8 +80,18 @@ function runQuery(selector: string, doc: unknown): unknown {
 }
 
 function runScript(script: string, doc: unknown): unknown {
-	const fn = new Function("document", "getComputedStyle", `return ${script}`);
-	return fn(doc, () => ({ visibility: "visible", display: "block" }));
+	// HTMLInputElement / HTMLTextAreaElement are free identifiers in fillScript's
+	// native-setter path — only a browser realm defines them. Supply inert
+	// stand-ins so the node harness can execute the script; a plain fake element
+	// is not an instance of either, so resolution falls to the bare-assignment
+	// fallback (which is what these plain-DOM assertions exercise).
+	const fn = new Function("document", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", `return ${script}`);
+	return fn(
+		doc,
+		() => ({ visibility: "visible", display: "block" }),
+		function HTMLInputElement() {},
+		function HTMLTextAreaElement() {},
+	);
 }
 
 // ── Compiler ─────────
@@ -213,5 +224,94 @@ describe("A1 scripts through the compat engine", () => {
 		const out = runScript(fillScript("input#email", "x@y.z"), fakeDoc([input])) as { ok: boolean; actual?: string };
 		expect(out.ok).toBe(true);
 		expect(out.actual).toBe("x@y.z");
+	});
+});
+
+// ── Browser-fix campaign: React-safe fill, <select> case fallback, coords /
+//    click_text disambiguation (2026-07-22) ─────────
+
+describe("in-app script correctness fixes", () => {
+	function fakeSelect(matches: string[], options: Array<{ value: string; label?: string; text: string }>): FakeEl {
+		const sel = fel("select", { matches });
+		(sel as unknown as { options: unknown[]; value: string }).options = options;
+		(sel as unknown as { value: string }).value = "";
+		return sel;
+	}
+
+	function mkRef(over: Partial<DurableRef> = {}): DurableRef {
+		return { id: 7, role: "button", name: "Save", xpath: "//button", rect: { x: 40, y: 60, width: 30, height: 20 }, ...over } as DurableRef;
+	}
+
+	// Bug 1 — React-blind fill: a bare `el.value =` write is deduped by React's
+	// value tracker, so onChange never fires (field reads back as filled while
+	// framework state stays empty). The script must write through the prototype's
+	// native setter (parity with secret-ops.ts fillSecretScript).
+	it("fillScript writes through the prototype's native value setter, not bare assignment", () => {
+		const script = fillScript("input#email", "hello");
+		expect(script).toContain('Object.getOwnPropertyDescriptor(__proto, "value")');
+		expect(script).toContain("__desc.set.call(el,");
+		expect(script).toContain("HTMLTextAreaElement.prototype");
+		// The bare assignment survives exactly once — the else-branch fallback for
+		// exotic value-bearing elements.
+		expect(script.match(/el\.value = /g) ?? []).toHaveLength(1);
+	});
+
+	// Bug 4 — <select> exact-only matching: a model emitting "In Stock" must still
+	// resolve an "in stock" option, but exact matches win first.
+	it("selectScript matches an option case-insensitively + trimmed when there is no exact match", () => {
+		const sel = fakeSelect(["select#c", "select", "*"], [
+			{ value: "in_stock", label: "In Stock", text: "In Stock" },
+			{ value: "oos", label: "Out of Stock", text: "Out of Stock" },
+		]);
+		const out = runScript(selectScript("select#c", "  in stock "), fakeDoc([sel])) as { ok: boolean; selected?: string[] };
+		expect(out.ok).toBe(true);
+		expect(out.selected).toEqual(["in_stock"]);
+	});
+
+	it("selectScript prefers an exact match over the case-insensitive fallback", () => {
+		const sel = fakeSelect(["select#c", "select", "*"], [
+			{ value: "v1", label: "Ready", text: "ready" }, // exact (lowercase) text
+			{ value: "v2", label: "READY", text: "READY" }, // would also match loosely
+		]);
+		const out = runScript(selectScript("select#c", "ready"), fakeDoc([sel])) as { ok: boolean; selected?: string[] };
+		expect(out.ok).toBe(true);
+		expect(out.selected).toEqual(["v1"]);
+	});
+
+	it("selectScript still returns no-matching-option when nothing matches even loosely", () => {
+		const sel = fakeSelect(["select#c", "select", "*"], [{ value: "a", label: "Alpha", text: "Alpha" }]);
+		const out = runScript(selectScript("select#c", "Zeta"), fakeDoc([sel])) as { ok: boolean; error?: string };
+		expect(out.ok).toBe(false);
+		expect(out.error).toBe("no-matching-option");
+	});
+
+	it("selectFillScript (ref path) shares the same case-insensitive option fallback", () => {
+		// selectFillScript resolves by xpath, not a CSS selector, so it isn't driven
+		// by this file's selector harness — pin the shared fallback at string level.
+		expect(selectFillScript(mkRef(), "In Stock")).toContain(".trim().toLowerCase()");
+	});
+
+	// Bug 2 — unconditional coords-fallback success: a non-null elementFromPoint
+	// hit was accepted blindly, so a re-rendered target meant clicking whatever
+	// unrelated element now sat at the pixels. The hit must still carry the stored
+	// role/name, else the chain reports the target moved.
+	it("resolutionScript's coords fallback only accepts a hit that still matches the stored identity", () => {
+		const script = resolutionScript(mkRef(), "click");
+		expect(script).toContain("element moved or was replaced, re-snapshot");
+		// Conservative: a blind coords click is accepted ONLY on positive name
+		// verification — the stored name present on the visible role-matching
+		// element. No stored name, or no match → reject (safe re-snapshot). This
+		// prevents a blind click on an unverified hit after a re-layout.
+		expect(script).toContain("lname && idEl && vis(idEl) && acc(idEl).includes(lname)");
+	});
+
+	// Bug 3 — click_text silent first-match: a tie at the top score clicked the
+	// first DOM node with no signal. Prefer an in-viewport candidate and surface
+	// the ambiguity so the model can target a specific ref.
+	it("textSearchScript breaks score ties toward the viewport and notes the ambiguity", () => {
+		const script = textSearchScript("Submit");
+		expect(script).toContain("inVp");
+		expect(script).toContain("use a ref to target a specific one");
+		expect(script).toContain("matched ");
 	});
 });

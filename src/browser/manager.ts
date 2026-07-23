@@ -1,4 +1,4 @@
-import type { Page, BrowserContext } from "playwright";
+import type { Page, BrowserContext, Response } from "playwright";
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, clickTextOn } from "./interactions.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
@@ -43,6 +43,7 @@ export class BrowserManager implements BrowserBackend {
   private registry = new ObservationRegistry();
   private onIdle: (() => void) | null = null;
   private peerPages: (() => Page[]) | null = null;
+  private popupWiredContexts = new WeakSet<BrowserContext>();
 
   constructor(
     private readonly sessionId: string = "default",
@@ -94,6 +95,49 @@ export class BrowserManager implements BrowserBackend {
     return this.adoptPage(page);
   }
 
+  /** Subscribe once per context to its "page" event so a page the SITE opens —
+   *  a window.open popup or a target=_blank link — is adopted into `owned`
+   *  instead of being stranded off-list. Without this the popup's Page is never
+   *  ours: it can't appear in listTabs and switch_tab can't reach it, so the
+   *  agent stays pinned to the opener. Idempotent per context (the WeakSet):
+   *  shared mode hands every session the same context, and getPage() re-acquires
+   *  whenever its page dies, so a naive subscribe would stack handlers. */
+  private wirePopupAdoption(ctx: BrowserContext): void {
+    if (this.popupWiredContexts.has(ctx)) return;
+    this.popupWiredContexts.add(ctx);
+    ctx.on("page", (p) => { void this.adoptOpenedPage(p); });
+  }
+
+  /** Adopt a site-opened page IFF one of OUR tabs opened it. opener() is the
+   *  ownership signal that preserves advanced-shared isolation: a page a peer
+   *  session's tab opened has an opener we don't own, so we never adopt it (no
+   *  cross-session leak). Pages WE open (acquirePage/newTab) have a null opener
+   *  and are pushed into `owned` explicitly, so they're skipped here — no
+   *  double-adopt. Limitation: a rel="noopener" _blank also has a null opener,
+   *  so it isn't adopted — declining is the conservative choice over guessing
+   *  ownership. Adopted into `owned` (listable, switch_tab-reachable) but NOT
+   *  made the active page — a site-initiated popup must never steal the agent's
+   *  current tab. */
+  private async adoptOpenedPage(p: Page): Promise<void> {
+    try {
+      if (p.isClosed() || this.owned.includes(p)) return;
+      let peers = this.peerPages ? this.peerPages() : [];
+      if (peers.includes(p)) return;
+      const opener = await p.opener();
+      if (!opener || !this.owned.includes(opener)) return;
+      // Re-check across the await — closed/owned AND peers. In shared mode a
+      // peer manager's acquirePage can grab this still-blank popup during the
+      // await; without the peer re-check we would double-own it.
+      peers = this.peerPages ? this.peerPages() : [];
+      if (p.isClosed() || this.owned.includes(p) || peers.includes(p)) return;
+      this.adoptPage(p);
+      this.owned.push(p);
+      // Do NOT set this.page: a "page" event is SITE-initiated (ad, analytics,
+      // background window.open, OAuth). The popup is now listable and
+      // switch_tab-reachable; the agent moves to it deliberately.
+    } catch { /* the page/opener raced with a close — safe to skip */ }
+  }
+
   async getPage(engine?: BrowserEngine): Promise<Page> {
     if (engine && engine !== this.currentEngine && this.context) {
       await this.close();
@@ -133,6 +177,7 @@ export class BrowserManager implements BrowserBackend {
     // egress-checked at the request layer — not just the initial navigate URL.
     // Idempotent: guards each context at most once (shared mode reuses one).
     await installRequestGuard(this.context);
+    this.wirePopupAdoption(this.context);
     this.page = await this.acquirePage();
     this.armIdle();
     return this.page;
@@ -144,28 +189,41 @@ export class BrowserManager implements BrowserBackend {
     const requestedHost = safeHost(url);
     const newPage = this.adoptPage(await this.context!.newPage());
     this.owned.push(newPage);
-    const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-    if (this.mode === "continuity") await waitForContinuityCacheRestore(newPage);
-    const status = response?.status() ?? "unknown";
-    // Same HTTP ≥400 guard as navigate() below — reporting "Status: 404" as a
-    // success string let the agent interact with an error page. Close the
-    // failed tab so it doesn't linger in the tab list, then surface via throw.
-    if (typeof status === "number" && status >= 400) {
-      const failedUrl = newPage.url();
+    // Any failure AFTER the page is created — goto (DNS/timeout/egress-abort),
+    // continuity restore, or a page that self-closes on an OAuth/redirect
+    // bounce before bringToFront/title — must unwind the just-pushed page so it
+    // never strands in `owned`, and this.page is never left pointing at a dead
+    // tab. (Previously only a throwing goto was unwound.)
+    const unwind = async () => {
       this.owned = this.owned.filter((p) => p !== newPage);
+      if (this.page === newPage) this.page = null;
       try { await newPage.close(); } catch { /* already closed */ }
-      throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(failedUrl)})`);
+    };
+    try {
+      const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+      if (this.mode === "continuity") await waitForContinuityCacheRestore(newPage);
+      const status = response?.status() ?? "unknown";
+      // Same HTTP ≥400 guard as navigate() — reporting "Status: 404" as success
+      // let the agent interact with an error page. Unwind, then surface a throw.
+      if (typeof status === "number" && status >= 400) {
+        const failedUrl = newPage.url();
+        await unwind();
+        throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(failedUrl)})`);
+      }
+      const sensitive = sensitivePageStub(newPage.url());
+      try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
+      await newPage.waitForTimeout(1000);
+      this.page = newPage;
+      await newPage.bringToFront();
+      if (sensitive) return sensitive;
+      const title = await newPage.title();
+      const tabCount = this.listOwnedPages().length;
+      const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
+      return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
+    } catch (error) {
+      if (this.owned.includes(newPage)) await unwind();
+      throw error;
     }
-    const sensitive = sensitivePageStub(newPage.url());
-    try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
-    await newPage.waitForTimeout(1000);
-    this.page = newPage;
-    await newPage.bringToFront();
-    if (sensitive) return sensitive;
-    const title = await newPage.title();
-    const tabCount = this.listOwnedPages().length;
-    const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
-    return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {

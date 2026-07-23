@@ -203,6 +203,35 @@ describe("BrowserManager.newTab — HTTP ≥400 guard (parity with navigate)", (
     expect(mgr.listOwnedPages()).toHaveLength(0);
   });
 
+  it("removes AND closes a tab whose goto THROWS so it never leaks into owned", async () => {
+    // A goto that rejects (DNS, NAV_TIMEOUT, egress-abort) — not just an HTTP
+    // ≥400 response — must also unwind the just-pushed page, else a dead/blank
+    // tab lingers in every future listTabs and shifts switch_tab indexes.
+    const page = navFakePage(200, "http://does-not-resolve.example/");
+    page.goto = vi.fn().mockRejectedValue(new Error("net::ERR_NAME_NOT_RESOLVED"));
+    const mgr = makeTabManager(page);
+
+    await expect(mgr.newTab("http://does-not-resolve.example/")).rejects.toThrow(
+      /ERR_NAME_NOT_RESOLVED/,
+    );
+    expect(page.close).toHaveBeenCalled();
+    expect(mgr.listOwnedPages()).toHaveLength(0);
+  });
+
+  it("unwinds the tab when a POST-goto op throws (OAuth/redirect bounce) — no strand, no dead active page", async () => {
+    // goto succeeds but the page self-closes before bringToFront (common on an
+    // OAuth/redirect bounce). The whole newTab must unwind — not just a throwing
+    // goto — and this.page must not be left pointing at the dead tab.
+    const page = navFakePage(200, "http://example.com/bounce");
+    page.bringToFront = vi.fn().mockRejectedValue(new Error("Target page closed"));
+    const mgr = makeTabManager(page);
+
+    await expect(mgr.newTab("http://example.com/bounce")).rejects.toThrow(/Target page closed/);
+    expect(page.close).toHaveBeenCalled();
+    expect(mgr.listOwnedPages()).toHaveLength(0);
+    expect(mgr.getCurrentUrl()).not.toContain("bounce");
+  });
+
   it("still reports success for a 200 response", async () => {
     const page = navFakePage(200, "http://example.com/");
     const mgr = makeTabManager(page);
@@ -514,5 +543,135 @@ describe("installRequestGuard — context-level SSRF/scheme guard", () => {
     await handler(route, fakeRequest("http://93.184.216.34/"));
     expect(route.fulfill).toHaveBeenCalled();
     expect(route.abort).not.toHaveBeenCalled();
+  });
+});
+
+// ── Context "page" event → popup / target=_blank adoption ──
+// The CDP backend must subscribe to context "page" so a page the SITE opens
+// (window.open / target=_blank) lands in `owned` — otherwise it never reaches
+// listTabs/switch_tab and the agent stays pinned to the useless opener tab.
+// advanced-shared mode shares ONE context across sessions, so adoption is gated
+// on opener() ownership: a manager never adopts a popup a PEER's tab opened
+// (the cross-session-leak guard). We don't launch Playwright — wirePopupAdoption
+// registers via context.on("page", h), so we capture h and drive it with fakes.
+
+describe("BrowserManager — context 'page' event adopts site-opened tabs", () => {
+  type PageHandler = (p: Page) => void;
+
+  /** Drive wirePopupAdoption with a fake context that captures the "page"
+   *  handler, then let the test emit pages through it (mirrors captureGuard). */
+  function wire(mgr: BrowserManager): { emit: (p: NavFakePage) => void; on: ReturnType<typeof vi.fn> } {
+    let handler: PageHandler | undefined;
+    const on = vi.fn((event: string, h: PageHandler) => { if (event === "page") handler = h; });
+    (mgr as unknown as { wirePopupAdoption: (c: unknown) => void }).wirePopupAdoption({ on });
+    return {
+      emit: (p) => { if (!handler) throw new Error("no 'page' handler was wired"); handler(p as unknown as Page); },
+      on,
+    };
+  }
+
+  function withOpener(page: NavFakePage, opener: NavFakePage | null): NavFakePage {
+    (page as unknown as { opener: () => Promise<unknown> }).opener = vi.fn().mockResolvedValue(opener);
+    return page;
+  }
+
+  function seedOwned(mgr: BrowserManager, pages: NavFakePage[]): void {
+    (mgr as unknown as { owned: Page[] }).owned = pages as unknown as Page[];
+    (mgr as unknown as { page: Page | null }).page = (pages[0] as unknown as Page) ?? null;
+  }
+
+  // Let the handler's single `await p.opener()` settle: a macrotask fires only
+  // after the microtask queue (the opener() continuation) has fully drained.
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("adopts a popup opened by one of our tabs → listTabs shows it and switchTab reaches it", async () => {
+    const mgr = new BrowserManager("test-session");
+    const opener = navFakePage(200, "https://opener.example/");
+    seedOwned(mgr, [opener]);
+    const popup = withOpener(navFakePage(200, "https://popup.example/"), opener);
+
+    const { emit } = wire(mgr);
+    emit(popup);
+    await flush();
+
+    expect(mgr.listOwnedPages()).toHaveLength(2);
+    expect(mgr.listOwnedPages()).toContain(popup as unknown as Page);
+    expect(await mgr.listTabs()).toContain("https://popup.example/");
+    // switch_tab can now reach the adopted popup (index 1 = the second owned tab).
+    expect(await mgr.switchTab(1)).toContain("https://popup.example/");
+  });
+
+  it("adopts a popup but does NOT steal focus — this.page stays on the current tab", async () => {
+    // A context "page" event is SITE-initiated (ad / analytics / background
+    // window.open / OAuth). Adopting it must not hijack the agent off the tab
+    // it is driving; the agent moves to the popup deliberately via switch_tab.
+    const mgr = new BrowserManager("test-session");
+    const opener = navFakePage(200, "https://opener.example/");
+    seedOwned(mgr, [opener]); // this.page = opener
+    const popup = withOpener(navFakePage(200, "https://popup.example/"), opener);
+
+    const { emit } = wire(mgr);
+    emit(popup);
+    await flush();
+
+    expect(mgr.listOwnedPages()).toContain(popup as unknown as Page); // listable
+    expect(mgr.getCurrentUrl()).toBe("https://opener.example/"); // but NOT stolen
+  });
+
+  it("adopts a popup our tab opened even in advanced-shared mode (opener is ours)", async () => {
+    // Positive control for the peer test below: proves the opener gate ALLOWS
+    // our own popups in shared mode — it isn't just blanket-refusing everything.
+    const mgr = new BrowserManager("test-session", "advanced-shared");
+    const mine = navFakePage(200, "https://mine.example/");
+    seedOwned(mgr, [mine]);
+    mgr.setPeerPages(() => []);
+    const popup = withOpener(navFakePage(200, "https://mine-popup.example/"), mine);
+
+    const { emit } = wire(mgr);
+    emit(popup);
+    await flush();
+
+    expect(mgr.listOwnedPages()).toContain(popup as unknown as Page);
+  });
+
+  it("in advanced-shared mode does NOT adopt a popup a PEER session's tab opened", async () => {
+    const mgr = new BrowserManager("test-session", "advanced-shared");
+    const mine = navFakePage(200, "https://mine.example/");
+    const peerTab = navFakePage(200, "https://peer.example/");
+    seedOwned(mgr, [mine]);
+    mgr.setPeerPages(() => [peerTab as unknown as Page]);
+    // The popup's opener is the PEER's tab — not one of ours — so adopting it
+    // would be a cross-session leak.
+    const peerPopup = withOpener(navFakePage(200, "https://peer-popup.example/"), peerTab);
+
+    const { emit } = wire(mgr);
+    emit(peerPopup);
+    await flush();
+
+    expect(mgr.listOwnedPages()).toHaveLength(1);
+    expect(mgr.listOwnedPages()).not.toContain(peerPopup as unknown as Page);
+  });
+
+  it("does not adopt a page with a null opener (our own newPage / rel=noopener) — conservative", async () => {
+    const mgr = new BrowserManager("test-session");
+    const mine = navFakePage(200, "https://mine.example/");
+    seedOwned(mgr, [mine]);
+    const orphan = withOpener(navFakePage(200, "https://orphan.example/"), null);
+
+    const { emit } = wire(mgr);
+    emit(orphan);
+    await flush();
+
+    expect(mgr.listOwnedPages()).toHaveLength(1);
+    expect(mgr.listOwnedPages()).not.toContain(orphan as unknown as Page);
+  });
+
+  it("wires the 'page' handler at most once per context (no stacked handlers on re-acquire)", () => {
+    const mgr = new BrowserManager("test-session");
+    const on = vi.fn();
+    const ctx = { on };
+    const wireOnce = () => (mgr as unknown as { wirePopupAdoption: (c: unknown) => void }).wirePopupAdoption(ctx);
+    wireOnce(); wireOnce(); wireOnce();
+    expect(on.mock.calls.filter(([event]) => event === "page")).toHaveLength(1);
   });
 });

@@ -74,6 +74,10 @@ export interface BrowserBackend {
   getInfo(): Promise<string>;
   listTabs(): Promise<string>;
   switchTab(index: number): Promise<string>;
+  /** Close ONE tab by its index in the `tabs` listing — never the whole
+   *  session. Backends refuse what ownership forbids (user tabs, the in-app
+   *  first tab, the CDP last tab) with a message pointing at `close`. */
+  closeTab(index: number): Promise<string>;
 
   // ── Perception (console / network capture) ──
   /** Recent console output of the active tab (bounded ring, newest last).

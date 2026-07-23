@@ -30,7 +30,7 @@ const MEMORY_WRITE_TOOLS = new Set([
 ]);
 
 const SILENT_BROWSER_ACTIONS = new Set([
-  "navigate", "new_tab", "close", "switch_tab", "back", "forward", "reload",
+  "navigate", "new_tab", "close", "switch_tab", "close_tab", "back", "forward", "reload",
   "click", "type", "scroll", "focus", "hover", "press_key", "select",
 ]);
 

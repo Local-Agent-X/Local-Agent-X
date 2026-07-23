@@ -306,7 +306,7 @@ export function sensitivePageStub(rawUrl: string): string | null {
     `Page: ${sensitive.page}`,
     "Status: Page content, title, controls, and values were not read or returned.",
     "Explicit user approval is required for high-risk actions; structural and secret-reading actions remain blocked.",
-    "You can still navigate away, switch_tab, or close the browser without approval.",
+    "You can still navigate away, switch_tab, close_tab, or close the browser without approval.",
   ].join("\n");
 }
 

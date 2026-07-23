@@ -17,7 +17,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "The browser session persists across calls — navigate once, then click/fill/extract as needed. " +
   "IMPORTANT: When a fill or click fails, retry with a different selector or use evaluate to find the right one. " +
   "Don't just tell the user you'll retry — actually call this tool again.\n\n" +
-  "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are durable WITHIN the current page — [5] stays [5] across snapshots while that element is on the page. But a navigation to a NEW origin, or switching to another tab, RE-NUMBERS elements (each tab numbers its own refs), so after navigate or switch_tab take a FRESH snapshot before using a ref. Repeat snapshots on the same page emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
+  "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are durable WITHIN the current page — [5] stays [5] across snapshots while that element is on the page. Ref ids are globally unique (a ref never means two different elements), but they only RESOLVE on the page that minted them: after a navigation to a new origin or a switch_tab, old refs are gone, so take a FRESH snapshot before using a ref. Repeat snapshots on the same page emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
   "Actions:\n" +
   "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
   "- new_tab: Open a URL — or MULTIPLE urls at once via 'urls' — in additional co-drivable tabs (keeps current tab open). When the user asks to open several sites, make ONE call with all of them in 'urls'.\n" +
@@ -34,6 +34,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- scroll: Scroll the page. value='up'|'down'|'top'|'bottom' OR ref=N to scroll that element into view.\n" +
   "- tabs: List all open tabs with URLs and titles — including the user's own browser tabs, marked [user tab].\n" +
   "- switch_tab: Switch to a tab by index (set 'value' to tab number). Switching onto a [user tab] row TAKES CONTROL of the user's own tab — use it when the user says they're already logged in, or asks you to act on the page they have open. Indexes are as-of the LAST 'tabs' listing; taking over a user tab requires a current listing, and if the tabs changed in between the switch refuses — run 'tabs' again.\n" +
+  "- close_tab: Close ONE tab by index (set 'value' to tab number from 'tabs') — done with a tab you opened, close it instead of ending the whole session. Refuses user tabs and the first/only tab (use 'close' for the whole session). Indexes SHIFT after a close; the result includes the fresh listing.\n" +
   "- info: Get current page URL, title, and engine.\n" +
   "- read_console: Read the page's recent console output (errors/warnings/logs, newest last). Check this after acting — especially when verifying an app you're building — instead of guessing why a page is broken. Reads the in-app browser's console; on the external-Chrome fallback it's unavailable.\n" +
   "- read_network: Read recent network request outcomes (HTTP status or failure per request, plus in-flight count). Use it to spot failed API calls / 4xx-5xx responses after acting, especially when verifying an app you're building. Reads the in-app browser's network; unavailable on the external-Chrome fallback.\n" +
@@ -66,7 +67,7 @@ export const BROWSER_TOOL_PARAMETERS = {
   properties: {
     action: {
       type: "string",
-      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "info", "read_console", "read_network", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
+      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
       description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
     },
     url: {
@@ -105,7 +106,7 @@ export const BROWSER_TOOL_PARAMETERS = {
     },
     value: {
       type: "string",
-      description: "Text to type, option to select, or tab index number for 'switch_tab'",
+      description: "Text to type, option to select, or tab index number for 'switch_tab'/'close_tab'",
     },
     script: {
       type: "string",

@@ -1,7 +1,7 @@
 /**
  * Per-page utility actions — extract / screenshot / evaluate / info / tabs /
- * switch_tab / dialog_accept / dialog_dismiss / close. Grouped together because
- * each handler is small and shares no domain-specific state.
+ * switch_tab / close_tab / dialog_accept / dialog_dismiss / close. Grouped
+ * together because each handler is small and shares no domain-specific state.
  */
 
 import type { ToolResult } from "../../types.js";
@@ -78,6 +78,22 @@ export async function handleSwitchTab(
   if (isNaN(tabIndex)) return err("'value' must be a tab index number. Use 'tabs' action to list tabs.");
   const base = await manager.switchTab(tabIndex);
   return ok(await appendPostActionSnapshot(manager, base));
+}
+
+export async function handleCloseTab(
+  manager: BrowserBackend,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  if (args.value === undefined || args.value === "") {
+    return err("'value' must be the index of the tab to close. Use 'tabs' action to list tabs.");
+  }
+  const tabIndex = parseInt(String(args.value), 10);
+  if (isNaN(tabIndex)) return err("'value' must be a tab index number. Use 'tabs' action to list tabs.");
+  const base = await manager.closeTab(tabIndex);
+  // A close SHIFTS the remaining indexes — append the fresh listing so the
+  // agent's next tab op can't act on a stale index. Refusals return as-is.
+  if (!base.startsWith("Closed tab")) return ok(base);
+  return ok(`${base}\n\n${await manager.listTabs()}`);
 }
 
 export async function handleDialogAccept(

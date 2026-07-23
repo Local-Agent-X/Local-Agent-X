@@ -41,6 +41,7 @@ import {
   handleInfo,
   handleTabs,
   handleSwitchTab,
+  handleCloseTab,
   handleDialogAccept,
   handleDialogDismiss,
   handleClose,
@@ -64,7 +65,8 @@ import { blocked, declined } from "../result-helpers.js";
 const log = createLogger("browser.wedge");
 
 // Actions that establish a fresh page context — clear stall state, don't compare.
-const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
+// close_tab counts: closing the active tab moves the agent onto a different page.
+const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close_tab", "close"]);
 // Advancing actions where "page never changed" means the agent is stuck.
 // Click-style actions AND local edits (fill / select / scroll) all count: the
 // enriched fingerprint (interactions.ts) tracks value length, scroll position,
@@ -242,6 +244,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "scroll": return await handleScroll(manager, args);
             case "tabs": return await handleTabs(manager);
             case "switch_tab": return await handleSwitchTab(manager, args);
+            case "close_tab": return await handleCloseTab(manager, args);
             case "info": return await handleInfo(manager);
             case "downloads": return await handleDownloads(manager);
             case "release_download": return await handleReleaseDownload(manager, args);

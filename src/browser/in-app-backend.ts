@@ -29,7 +29,7 @@
  */
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { browserLifecycle, browserNavigate } from "./bridge-client.js";
+import { browserNavigate } from "./bridge-client.js";
 import { enrichBlockedNavigation } from "./bridge-egress.js";
 import {
 	acceptDialogInApp,
@@ -44,15 +44,15 @@ import {
 	closeOwnedTabs,
 	dropTabsForWedgeRecovery,
 	ensureTabView,
-	formatTabsListing,
 	navigationReport,
+	noteTabClosedExternally,
 	probeTabAfterWedge,
 	refreshTabState,
-	surfaceActiveTab,
-	switchMergedTab,
+	rollbackFailedNewTab,
 	TabList,
 	type InAppTab,
 } from "./in-app-tabs.js";
+import { closeMergedTab, formatTabsListing, surfaceActiveTab, switchMergedTab } from "./in-app-tab-merge.js";
 import { injectTokenIfLocal } from "./auth-context.js";
 import { safeHost } from "./redirect.js";
 import { EvaluateBlockedError, scanEvaluateScript, sensitivePageStub } from "./guards.js";
@@ -78,9 +78,6 @@ import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend
 import type { BrowserEngine } from "./launcher.js";
 import type { Page } from "playwright";
 import { createInAppSecretOps, type SecretBrowserOps } from "./secret-ops.js";
-import { createLogger } from "../logger.js";
-
-const logger = createLogger("browser.in-app-backend");
 
 // ── Backend ─────────
 // (EvaluateBlockedError lives in guards.ts, beside the scan that triggers it.)
@@ -179,24 +176,12 @@ export class ElectronInAppBackend implements BrowserBackend {
 		try {
 			result = await browserNavigate(tab.viewId, url, this.sessionId);
 		} catch (e) {
-			// The view materialized but the navigation itself failed (bridge
-			// timeout, DNS): without rollback a ghost blank tab would stay in
-			// the list AND remain active. Close the created view (tolerating an
-			// already-gone view, like closeOwnedTabs), drop the tab, restore
-			// the previous active pointer, and rethrow — callers (including
-			// multi-URL new_tab's per-URL loop) rely on the throw.
-			// minted === false is the first-tab materialization: today's
+			// The view materialized but the navigation itself failed — unwind
+			// the ghost tab (in-app-tabs.rollbackFailedNewTab) and rethrow;
+			// callers (incl. multi-URL new_tab's per-URL loop) rely on the
+			// throw. minted === false is the first-tab materialization: today's
 			// behavior stands — the first tab is never rolled back.
-			if (minted) {
-				tab.closed = true;
-				tab.created = false;
-				try {
-					await browserLifecycle("close", tab.viewId);
-				} catch (closeErr) {
-					logger.warn(`[in-app] rollback close failed (viewId=${tab.viewId}): ${(closeErr as Error).message}`);
-				}
-				this.tabs.rollbackMinted(tab, prevActive);
-			}
+			if (minted) await rollbackFailedNewTab(this.tabs, tab, prevActive);
 			throw enrichBlockedNavigation(e, url, tab.viewId);
 		}
 		tab.state.url = result.url;
@@ -325,6 +310,14 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return sensitive ?? `Switched to tab [${index}]: ${this.state.title} — ${this.state.url}`;
 	}
 
+	/** Close ONE owned tab over the same merged ordering `tabs` prints. The
+	 *  ownership rules (never a user tab, never the first tab) and active-tab
+	 *  adjustment live in in-app-tab-merge.closeMergedTab. */
+	async closeTab(index: number): Promise<string> {
+		if (!this.isActive()) return listTabsOp([], null); // "No browser session active."
+		return closeMergedTab(this.tabs, index, this.sessionId);
+	}
+
 	// ── Perception (desktop console/network rings, active tab) ──
 
 	async readConsole(): Promise<string> {
@@ -369,17 +362,9 @@ export class ElectronInAppBackend implements BrowserBackend {
 	// ── Lifecycle ──
 
 	/** The desktop reported the USER closed one of this backend's views (tab
-	 *  strip ✕). Mark the tab gone so the next op's ensureView recreates the
-	 *  view instead of driving a dead viewId. Adopted user tabs keep their own
-	 *  desktop lifecycle — the existing user tab-close flow covers those. */
+	 *  strip ✕) — bookkeeping in in-app-tabs.noteTabClosedExternally. */
 	noteViewClosedExternally(viewId: string): void {
-		const tab = this.tabs.all().find((t) => t.viewId === viewId && t.owned);
-		if (!tab) return;
-		tab.closed = true;
-		tab.created = false;
-		tab.lastUrl = tab.state.url || tab.lastUrl; // the recreated view reloads it
-		tab.state.url = "";
-		tab.state.title = "";
+		noteTabClosedExternally(this.tabs, viewId);
 	}
 
 	/** Wedge recovery (instance.ts resetWedgedBrowser). Soft first: a view that

@@ -9,6 +9,10 @@
  * owned:true and are closed on backend close(). Tabs ADOPTED from the user's
  * own browser (switch_tab onto a "[user tab]" row) are owned:false — the
  * agent drives them but never closes them; close() just drops them.
+ *
+ * The COMBINED ordering (own tabs + user views) that `tabs` prints — merge,
+ * listing format, switch/adopt, close_tab — lives in in-app-tab-merge.ts
+ * (split for the 400-LOC ceiling).
  */
 
 import type { Page } from "playwright";
@@ -18,7 +22,7 @@ import { browserAbort, browserLifecycle, browserNavigate, type BrowserNavigateRe
 import { profilePartition } from "./profile-store.js";
 import { redirectMessage, safeHost } from "./redirect.js";
 import { sensitivePageStub } from "./guards.js";
-import { registerAdoptedView, unregisterAdoptedViews } from "./bridge-perception.js";
+import { unregisterAdoptedViews } from "./bridge-perception.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("browser.in-app-tabs");
@@ -265,122 +269,34 @@ export async function closeOwnedTabs(list: TabList, sessionId?: string): Promise
 	list.resetToFirst(); // per-tab registry/state reset lives there
 }
 
-/** One row of the combined ordering `tabs` prints and `switch_tab` indexes. */
-export type MergedTab =
-	| { kind: "own"; tab: InAppTab; url: string; title: string }
-	| { kind: "user"; view: BrowserViewInfo; url: string; title: string };
+/** The desktop reported the USER closed one of this backend's views (tab
+ *  strip ✕). Mark the tab gone so the next op's ensureTabView recreates the
+ *  view instead of driving a dead viewId. Adopted user tabs keep their own
+ *  desktop lifecycle — the existing user tab-close flow covers those. */
+export function noteTabClosedExternally(list: TabList, viewId: string): void {
+	const tab = list.all().find((t) => t.viewId === viewId && t.owned);
+	if (!tab) return;
+	tab.closed = true;
+	tab.created = false;
+	tab.lastUrl = tab.state.url || tab.lastUrl; // the recreated view reloads it
+	tab.state.url = "";
+	tab.state.title = "";
+}
 
-/**
- * Recompute the combined ordering: this backend's tabs first (list order),
- * then the user's own views (agentDriven === false) not already adopted.
- * Other sessions' agent-driven views are deliberately EXCLUDED — switching
- * onto them would be cross-session interference. Both listTabs and switchTab
- * recompute this merge the same way, so indexes are stable as-of the last
- * `tabs` listing (until views change).
- */
-export async function mergeTabs(list: TabList): Promise<MergedTab[]> {
-	const merged: MergedTab[] = list
-		.all()
-		.map((tab) => ({ kind: "own", tab, url: tab.state.url, title: tab.state.title }));
-	let views: BrowserViewInfo[] = [];
+/** Unwind a minted new_tab tab whose NAVIGATION failed (bridge timeout, DNS):
+ *  without rollback a ghost blank tab would stay in the list AND remain
+ *  active. Close the created view (tolerating an already-gone view, like
+ *  closeOwnedTabs), drop the tab, and restore the previous active pointer —
+ *  callers rethrow so per-URL loops (multi-URL new_tab) see the failure.
+ *  The FIRST-tab materialization (minted === false) is never rolled back —
+ *  callers must not invoke this for it. */
+export async function rollbackFailedNewTab(list: TabList, tab: InAppTab, prevActive: InAppTab): Promise<void> {
+	tab.closed = true;
+	tab.created = false;
 	try {
-		views = (await browserLifecycle("list", "*")).views ?? [];
-	} catch (e) {
-		// Advisory: the agent's own tabs must stay listable when the pool
-		// listing hiccups — degrade to own-tabs-only, loudly.
-		logger.warn(`[in-app-tabs] desktop view listing failed: ${(e as Error).message}`);
+		await browserLifecycle("close", tab.viewId);
+	} catch (closeErr) {
+		logger.warn(`[in-app] rollback close failed (viewId=${tab.viewId}): ${(closeErr as Error).message}`);
 	}
-	for (const view of views) {
-		if (view.agentDriven !== false) continue; // other sessions' agent views: excluded
-		if (list.has(view.viewId)) continue; // already adopted by this backend
-		merged.push({ kind: "user", view, url: view.url, title: view.title });
-	}
-	return merged;
-}
-
-/** Format the merged rows in the page-ops listTabs family, refreshing each
- *  live own tab first so titles/urls aren't stale. Sensitive pages are
- *  withheld by the same rule page-ops applies (guards.sensitivePageStub). */
-export async function formatTabsListing(
-	list: TabList,
-	refresh: (tab: InAppTab) => Promise<void>,
-): Promise<string> {
-	for (const tab of list.all()) {
-		if (tab.created && !tab.closed) await refresh(tab);
-	}
-	const merged = await mergeTabs(list);
-	const rows = merged.map((entry, i) => {
-		const active = entry.kind === "own" && entry.tab === list.active ? " ← active" : "";
-		const label = sensitivePageStub(entry.url)
-			? "[sensitive page withheld]"
-			: `${entry.title || "(no title)"} — ${entry.url}`;
-		const userMark = entry.kind === "user" ? ` [user tab — switch_tab(${i}) takes control]` : "";
-		return `[${i}] ${label}${active}${userMark}`;
-	});
-	list.lastListing = merged.map((entry) => (entry.kind === "own" ? entry.tab.viewId : entry.view.viewId));
-	return `${merged.length} tab(s) open:\n${rows.join("\n")}`;
-}
-
-export type MergedSwitchResult =
-	| { ok: true; tab: InAppTab }
-	| { ok: false; message: string };
-
-/** Fire-and-forget: ask the desktop to SURFACE the agent's new active view so
- *  the visible browser pane FOLLOWS the agent's active tab whenever it changes
- *  (new_tab / switch_tab). A UI-surface hint must NEVER block or fail the tool
- *  action, so a vanished view or an unavailable bridge is swallowed — the
- *  desktop side (browser-ipc autoSurfaceAgentView) owns the "follow the agent
- *  but never steal a real user page" policy. Only the agent's OWN active-tab
- *  change fires this; merely LISTING adopted user tabs must not. */
-export function surfaceActiveTab(viewId: string, sessionId?: string): void {
-	browserLifecycle("show", viewId, { sessionId }).catch(() => { /* UI hint — never fails the action */ });
-}
-
-/** Resolve a switch over the same combined ordering the listing printed:
- *  an own tab becomes active; a user view is ADOPTED (owned:false) and
- *  becomes active — the takeover seam.
- *
- *  Takeover is PINNED to the last listing: the pool can change between the
- *  `tabs` call and the switch (the human opens/closes tabs), and an index
- *  alone would then silently grab whatever slid into that slot. Adopting a
- *  user view therefore requires a prior listing whose viewId at this index
- *  still matches; a mismatch (or no listing at all) refuses and asks for a
- *  fresh `tabs`. Switches onto the agent's OWN tabs stay index-based — that
- *  list only changes by the agent's own actions. */
-export async function switchMergedTab(list: TabList, index: number, sessionId?: string): Promise<MergedSwitchResult> {
-	const merged = await mergeTabs(list);
-	if (index < 0 || index >= merged.length) {
-		return {
-			ok: false,
-			message: `Invalid tab index ${index}. Use 'tabs' action to see available tabs (0-${merged.length - 1}).`,
-		};
-	}
-	const entry = merged[index];
-	if (entry.kind === "user") {
-		const pinned = list.lastListing?.[index];
-		if (pinned === undefined) {
-			return {
-				ok: false,
-				message: `Taking control of a user tab requires a current listing. Run 'tabs' first, then switch_tab(${index}).`,
-			};
-		}
-		if (pinned !== entry.view.viewId) {
-			return {
-				ok: false,
-				message: "The browser's tabs changed since the last 'tabs' listing — refusing to take over a tab that may not be the one you meant. Run 'tabs' again and retry.",
-			};
-		}
-	}
-	if (entry.kind === "own") {
-		list.setActive(entry.tab);
-		surfaceActiveTab(entry.tab.viewId, sessionId); // the active tab moved — the visible pane follows it
-		return { ok: true, tab: entry.tab };
-	}
-	const tab = list.adopt(entry.view);
-	list.setActive(tab);
-	// Attribution follows the takeover: downloads the agent triggers on this
-	// user view must land in the adopting session's records.
-	if (sessionId) registerAdoptedView(tab.viewId, sessionId);
-	surfaceActiveTab(tab.viewId, sessionId); // taking over a user tab is an active-tab change — surface it
-	return { ok: true, tab };
+	list.rollbackMinted(tab, prevActive);
 }

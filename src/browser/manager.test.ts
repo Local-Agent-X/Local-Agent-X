@@ -681,6 +681,67 @@ describe("BrowserManager — context 'page' event adopts site-opened tabs", () =
     expect(mgr.listOwnedPages()).not.toContain(orphan as unknown as Page);
   });
 
+  it("closeTab closes ONE owned tab and leaves the active page alone when it wasn't the one closed", async () => {
+    const mgr = new BrowserManager("test-session");
+    const a = navFakePage(200, "https://a.example/");
+    const b = navFakePage(200, "https://b.example/");
+    seedOwned(mgr, [a, b]); // this.page = a
+
+    const result = await mgr.closeTab(1);
+    expect(result).toContain("Closed tab [1]: Fake Title — https://b.example/");
+    expect(b.close).toHaveBeenCalled();
+    expect(mgr.listOwnedPages()).toEqual([a]);
+    expect(mgr.getCurrentUrl()).toBe("https://a.example/");
+  });
+
+  it("closeTab on the ACTIVE tab re-points this.page to the neighbor and brings it to front", async () => {
+    const mgr = new BrowserManager("test-session");
+    const a = navFakePage(200, "https://a.example/");
+    const b = navFakePage(200, "https://b.example/");
+    seedOwned(mgr, [a, b]);
+    (mgr as unknown as { page: Page | null }).page = b as unknown as Page;
+
+    const result = await mgr.closeTab(1);
+    expect(result).toContain("Closed tab [1]:");
+    expect(result).toContain("Active tab is now: Fake Title — https://a.example/");
+    expect(mgr.getCurrentUrl()).toBe("https://a.example/");
+    expect(a.bringToFront).toHaveBeenCalled();
+  });
+
+  it("closeTab REFUSES the only remaining tab — ending the session is `close`'s job", async () => {
+    const mgr = new BrowserManager("test-session");
+    const a = navFakePage(200, "https://a.example/");
+    seedOwned(mgr, [a]);
+
+    const result = await mgr.closeTab(0);
+    expect(result).toContain("only tab");
+    expect(result).toContain("'close'");
+    expect(a.close).not.toHaveBeenCalled();
+    expect(mgr.listOwnedPages()).toEqual([a]);
+  });
+
+  it("closeTab rejects an out-of-range index and reports no-session when there are no tabs", async () => {
+    const mgr = new BrowserManager("test-session");
+    const a = navFakePage(200, "https://a.example/");
+    const b = navFakePage(200, "https://b.example/");
+    seedOwned(mgr, [a, b]);
+    expect(await mgr.closeTab(5)).toBe("Invalid tab index 5. Use 'tabs' action to see available tabs (0-1).");
+
+    const empty = new BrowserManager("test-session-2");
+    expect(await empty.closeTab(0)).toBe("No browser session active.");
+  });
+
+  it("closeTab withholds the sensitive label of a closed sensitive tab", async () => {
+    const mgr = new BrowserManager("test-session");
+    const a = navFakePage(200, "https://a.example/");
+    const vault = navFakePage(200, "https://vault.bitwarden.com/passwords");
+    seedOwned(mgr, [a, vault]);
+
+    const result = await mgr.closeTab(1);
+    expect(result).toContain("Closed tab [1]: [sensitive page withheld]");
+    expect(result).not.toContain("bitwarden");
+  });
+
   it("wires the 'page' handler at most once per context (no stacked handlers on re-acquire)", () => {
     const mgr = new BrowserManager("test-session");
     const on = vi.fn();

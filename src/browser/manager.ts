@@ -4,6 +4,7 @@ import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, clickTextOn } from 
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
+import { closeCdpTab, openCdpTab, type CdpTabHost } from "./manager-tabs.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
 import { profileUserDataDir } from "./profile-store.js";
@@ -149,47 +150,29 @@ export class BrowserManager implements BrowserBackend {
     return this.page;
   }
 
-  async newTab(url: string): Promise<string> {
-    url = injectTokenIfLocal(url);
-    await this.getPage();
-    const requestedHost = safeHost(url);
-    const newPage = this.adoptPage(await this.context!.newPage());
-    this.owned.push(newPage);
-    // Any failure AFTER the page is created — goto (DNS/timeout/egress-abort),
-    // continuity restore, or a page that self-closes on an OAuth/redirect
-    // bounce before bringToFront/title — must unwind the just-pushed page so it
-    // never strands in `owned`, and this.page is never left pointing at a dead
-    // tab. (Previously only a throwing goto was unwound.)
-    const unwind = async () => {
-      this.owned = this.owned.filter((p) => p !== newPage);
-      if (this.page === newPage) this.page = null;
-      try { await newPage.close(); } catch { /* already closed */ }
+  /** The accessor host manager-tabs.ts drives new_tab/close_tab through —
+   *  `owned`/`page` stay owned HERE (see CdpTabHost's raw-vs-live contract). */
+  private tabHost(): CdpTabHost {
+    return {
+      mode: () => this.mode,
+      ensureContext: async () => { await this.getPage(); },
+      newPage: () => this.context!.newPage(),
+      adoptPage: (p) => this.adoptPage(p),
+      listOwnedPages: () => this.listOwnedPages(),
+      isOwned: (p) => this.owned.includes(p),
+      addOwned: (p) => { this.owned.push(p); },
+      removeOwned: (p) => { this.owned = this.owned.filter((x) => x !== p); },
+      getActive: () => this.page,
+      setActive: (p) => { this.page = p; },
     };
-    try {
-      const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
-      if (this.mode === "continuity") await waitForContinuityCacheRestore(newPage);
-      const status = response?.status() ?? "unknown";
-      // Same HTTP ≥400 guard as navigate() — reporting "Status: 404" as success
-      // let the agent interact with an error page. Unwind, then surface a throw.
-      if (typeof status === "number" && status >= 400) {
-        const failedUrl = newPage.url();
-        await unwind();
-        throw new Error(`Navigation failed: HTTP ${status} (${safeBrowserPageLabel(failedUrl)})`);
-      }
-      const sensitive = sensitivePageStub(newPage.url());
-      try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
-      await newPage.waitForTimeout(1000);
-      this.page = newPage;
-      await newPage.bringToFront();
-      if (sensitive) return sensitive;
-      const title = await newPage.title();
-      const tabCount = this.listOwnedPages().length;
-      const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
-      return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
-    } catch (error) {
-      if (this.owned.includes(newPage)) await unwind();
-      throw error;
-    }
+  }
+
+  async newTab(url: string): Promise<string> {
+    return openCdpTab(this.tabHost(), url);
+  }
+
+  async closeTab(index: number): Promise<string> {
+    return closeCdpTab(this.tabHost(), index);
   }
 
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {

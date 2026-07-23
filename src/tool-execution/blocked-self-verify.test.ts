@@ -48,4 +48,23 @@ describe("blockedSelfVerifyGuidance", () => {
     expect(blockedSelfVerifyGuidance("bash", undefined)).toBeNull();
     expect(blockedSelfVerifyGuidance("bash", { command: 42 })).toBeNull();
   });
+
+  // Chunk K: when shell IS available to the delegated agent (worktree +
+  // effective OS containment → SecurityLayer.delegatedShellContained), the
+  // "you can't run shell, the harness verifies" redirect would MISINFORM — the
+  // agent can run its own verify. Suppress it. When shell is genuinely
+  // unavailable (default false), the redirect still fires.
+  it("SUPPRESSES the redirect when the delegated agent's shell is available (contained)", () => {
+    for (const command of verifyCommands) {
+      expect(blockedSelfVerifyGuidance("bash", { command }, true)).toBeNull();
+    }
+  });
+
+  it("STILL fires the redirect when shell is unavailable (no worktree / unconfined / cron)", () => {
+    // shellAvailable=false is the default and the still-blocked case.
+    expect(blockedSelfVerifyGuidance("bash", { command: "npm test" }, false)).not.toBeNull();
+    expect(blockedSelfVerifyGuidance("bash", { command: "vitest run" }, false)).not.toBeNull();
+    // omitted arg defaults to false → fires
+    expect(blockedSelfVerifyGuidance("bash", { command: "npm test" })).not.toBeNull();
+  });
 });

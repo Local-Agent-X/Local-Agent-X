@@ -49,12 +49,22 @@ const SELF_VERIFY_CMD =
 
 /** When a shell-class tool is blocked running the project's build/type-check,
  *  return guidance aligned with the harness's auto-verify (so the model stops
- *  retrying the blocked command); otherwise null. Pure + exported for its test. */
+ *  retrying the blocked command); otherwise null. Pure + exported for its test.
+ *
+ *  `shellAvailable` — pass true when shell IS available to this delegated agent
+ *  (worktree isolation + effective OS containment; see
+ *  SecurityLayer.delegatedShellContained). A contained delegated agent CAN run
+ *  its verify, so a block it hit was NOT "delegated agents can't run shell" — the
+ *  redirect would misinform. Suppress it (return null) and let the caller's real
+ *  block reason stand. When shell is genuinely unavailable (no worktree /
+ *  unconfined-unacknowledged / cron / non-delegated), the redirect fires. */
 export function blockedSelfVerifyGuidance(
   toolName: string,
   args: unknown,
+  shellAvailable = false,
 ): { recovery: string; userHint: string } | null {
   if (!hasCapability(toolName, "shell")) return null;
+  if (shellAvailable) return null;
   const cmd = args && typeof args === "object" ? (args as { command?: unknown }).command : undefined;
   if (typeof cmd !== "string" || !SELF_VERIFY_CMD.test(cmd)) return null;
   return {

@@ -4,9 +4,12 @@
 //   - multiLanguageTranscribe: detect language, then re-transcribe in it
 //
 // Adversarial audio can make Whisper output prompt-injection text. The
-// detectInjection check on transcribe() drops anything scoring >=0.7 —
-// silently, because surfacing the malicious transcription back to the
-// model would defeat the point.
+// detectInjection check on transcribe() withholds anything scoring >=0.7:
+// the flagged text itself is never returned (echoing it back to the model
+// would defeat the point), but the drop is surfaced as a clearly-marked
+// notice string so the user isn't left with silent nothing. Brackets are
+// stripped from raw Whisper output above, so a bracketed notice can only
+// originate here — real speech cannot spoof it.
 
 import { execFileSync } from "node:child_process";
 import { writeFileSync, existsSync, unlinkSync } from "node:fs";
@@ -17,6 +20,15 @@ import { detectInjection } from "../sanitize.js";
 import { WHISPER_EXE, WHISPER_MODEL, VOICE_DIR, tmpPath } from "./paths.js";
 
 const logger = createLogger("voice");
+
+/**
+ * Returned in place of a transcription when the injection gate withholds it.
+ * Deliberately bracketed: transcribe() strips [.*?] spans from Whisper output,
+ * so this marker can never be produced by (or confused with) actual speech.
+ * Must never contain the flagged text.
+ */
+export const VOICE_INJECTION_NOTICE =
+  "[voice input withheld — it looked like a command-injection phrase; please rephrase or type it instead]";
 
 export function transcribe(audioBuffer: Buffer): string {
   const wavPath = tmpPath("wav");
@@ -45,8 +57,9 @@ export function transcribe(audioBuffer: Buffer): string {
     if (injections.length > 0) {
       const maxScore = Math.max(...injections.map((i: { score: number }) => i.score));
       if (maxScore >= 0.7) {
-        logger.warn(`[voice] Injection detected in transcription (score=${maxScore.toFixed(2)}): "${text.slice(0, 80)}"`);
-        return "";
+        const labels = injections.map((i: { label: string }) => i.label).join(", ");
+        logger.warn(`[voice] Transcription withheld — injection patterns [${labels}] (score=${maxScore.toFixed(2)}): "${text.slice(0, 80)}"`);
+        return VOICE_INJECTION_NOTICE;
       }
     }
 

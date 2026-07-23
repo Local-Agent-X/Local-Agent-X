@@ -1,11 +1,17 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstat, mkdir, readdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { MAX_FILE_SIZE, SKIP_DIRS, SYNC_EXTENSIONS } from "./constants.js";
 
 const logger = createLogger("sync.mirror");
+
+// Git for Windows refuses paths past ~260 chars ("Filename too long"), so any
+// entry the mirror writes deeper than this would wedge every later git
+// add/status in sync-repo. Skip-and-warn instead of copying a path git can
+// never read back. 240 leaves headroom for .git/objects bookkeeping.
+const MAX_DEST_PATH = 240;
 
 /**
  * Mirror src → dest: copies files. When `additiveOnly` is true, dest entries
@@ -29,15 +35,24 @@ export async function mirrorDir(src: string, dest: string, additiveOnly = false)
 
   for (const entry of await readdir(src)) {
     const srcPath = join(src, entry);
-    const st = await stat(srcPath);
+    const destPath = join(dest, entry);
+    // lstat, not stat: a symlink must never be followed. pnpm stores and
+    // container-extracted trees carry links pointing back up the tree; a
+    // followed loop materializes as endless real directories in dest.
+    const st = await lstat(srcPath);
+    if (st.isSymbolicLink()) continue;
+    if (destPath.length > MAX_DEST_PATH) {
+      logger.warn(`[sync] skipping ${srcPath}: dest path ${destPath.length} chars exceeds git-safe limit ${MAX_DEST_PATH}`);
+      continue;
+    }
     if (st.isDirectory()) {
-      if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); await mirrorDir(srcPath, join(dest, entry), additiveOnly); }
+      if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); await mirrorDir(srcPath, destPath, additiveOnly); }
     } else if (st.isFile()) {
       const ext = extname(entry).toLowerCase();
       const isDoc = /^(PROJECT|CHANGELOG|TODO|README)\.md$/i.test(entry);
       if ((SYNC_EXTENSIONS.has(ext) || isDoc) && st.size <= MAX_FILE_SIZE) {
         srcEntries.add(entry);
-        await writeFile(join(dest, entry), await readFile(srcPath));
+        await writeFile(destPath, await readFile(srcPath));
       }
     }
   }
@@ -68,14 +83,25 @@ export function pullDir(src: string, dest: string, additiveOnly = false): void {
   if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
   const remoteEntries = new Set<string>();
   for (const entry of readdirSync(src)) {
+    // Present-in-remote is recorded even for entries the guards below skip:
+    // a skipped entry must read as "exists remotely, not copied", never as
+    // "deleted remotely" (legacy destructive mode deletes on that signal).
     remoteEntries.add(entry);
     const srcPath = join(src, entry);
     const destPath = join(dest, entry);
-    const stat = statSync(srcPath);
+    // Same guards as mirrorDir: never follow symlinks, never write past the
+    // git-safe path limit, never import tooling state (a sync-repo poisoned
+    // by a machine running pre-guard code must not propagate junk here).
+    const stat = lstatSync(srcPath);
+    if (stat.isSymbolicLink()) continue;
+    if (destPath.length > MAX_DEST_PATH) {
+      logger.warn(`[sync] skipping pull of ${srcPath}: dest path ${destPath.length} chars exceeds git-safe limit ${MAX_DEST_PATH}`);
+      continue;
+    }
     if (stat.isDirectory()) {
-      pullDir(srcPath, destPath, additiveOnly);
+      if (!SKIP_DIRS.has(entry)) pullDir(srcPath, destPath, additiveOnly);
     } else if (stat.isFile()) {
-      if (!existsSync(destPath) || statSync(destPath).mtimeMs < stat.mtimeMs) writeFileSync(destPath, readFileSync(srcPath));
+      if (!existsSync(destPath) || lstatSync(destPath).mtimeMs < stat.mtimeMs) writeFileSync(destPath, readFileSync(srcPath));
     }
   }
   if (!additiveOnly) {
@@ -85,7 +111,7 @@ export function pullDir(src: string, dest: string, additiveOnly = false): void {
       if (!remoteEntries.has(entry)) {
         const p = join(dest, entry);
         logger.info(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
-        if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+        if (lstatSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
       }
     }
   }

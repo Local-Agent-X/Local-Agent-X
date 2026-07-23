@@ -52,6 +52,13 @@ export const SYNC_EXTENSIONS = new Set([
 export const SKIP_DIRS = new Set([
   "node_modules", ".next", "dist", "build", ".cache", "__pycache__",
   ".git", ".venv", "venv", "sd-server", "models", "checkpoints", "weights",
+  // Tooling state that must never ride the sync mirror. Live failure
+  // (2026-07-22): container worktrees under workspace/.worktrees carried a
+  // .pnpm-store whose project index held a materialized workspace→workspace
+  // recursion 16 levels deep; mirrorDir copied ~4 GB of it into sync-repo and
+  // every git command there died on Windows path-length limits ("Filename too
+  // long"), wedging sync entirely.
+  ".worktrees", ".pnpm-store", ".pnpm", ".yarn", ".turbo",
 ]);
 
 export const MAX_FILE_SIZE = 10_000_000;

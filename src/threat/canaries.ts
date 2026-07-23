@@ -122,6 +122,49 @@ export function clearSessionCanaries(sessionId: string): void {
 }
 
 /**
+ * Mint a fresh canary set for a session and publish it to the shared registry,
+ * REPLACING whatever was there. The single mint-and-register path used by both
+ * ThreatEngine (construct / reset / approveRecovery) and the session-scoped
+ * `/approve` recovery below — so a re-mint always updates the exact tokens the
+ * egress gate reads, never a second generator. Returns the new set so an engine
+ * caller can adopt it into the tokens embedded in its system prompt.
+ */
+export function remintSessionCanaries(sessionId: string): string[] {
+  const fresh = generateCanaries();
+  registerSessionCanaries(sessionId, fresh);
+  return fresh;
+}
+
+// ── Session confirmed-breach signal ──────────────────────────────────────────
+//
+// A tripped canary is a CONFIRMED breach. The ThreatScorer latches it per-engine
+// (ThreatScorer.confirmedBreach) for ENFORCEMENT — isRestricted() reads it. But
+// recovery is authorized from the chat `/approve` handler, which holds only a
+// sessionId, not the per-turn engine. This session-scoped flag — co-located with
+// the canary registry it guards — is the cross-turn signal that lets the
+// `/approve` path know a breach latch is live for the session and gate recovery
+// on it. It is NOT a second enforcement authority (the scorer's isRestricted()
+// remains that); it is the recovery signal, set at the trip and cleared only by
+// an authorized recovery (or new-session teardown).
+const breachedSessions = new Set<string>();
+
+/** Mark that this session tripped a canary (a confirmed breach). Called by
+ *  ThreatEngine.checkOutput at the same point the scorer latches. */
+export function markSessionBreach(sessionId: string): void {
+  breachedSessions.add(sessionId);
+}
+
+/** Is a confirmed-breach latch live (unacknowledged) for this session? */
+export function isSessionBreached(sessionId: string): boolean {
+  return breachedSessions.has(sessionId);
+}
+
+/** Clear the session breach signal (authorized recovery / new-session teardown). */
+export function clearSessionBreach(sessionId: string): boolean {
+  return breachedSessions.delete(sessionId);
+}
+
+/**
  * Check an OUTBOUND payload against a session's active canaries — across the raw
  * text AND the secret-scanner's decoded/normalized views, so a base64/hex/
  * percent-encoded or homoglyph copy of a canary is still caught. Reuses
@@ -188,4 +231,41 @@ export function recordCanaryExfilAudit(sessionId: string, toolName: string): voi
     reason: `Canary token detected in outbound payload of egress sink "${toolName}" — definitive context exfiltration. Hard-blocked.`,
     controlsApplied: ["Canary"],
   });
+}
+
+/**
+ * Append a tamper-evident recovery event when a user EXPLICITLY authorizes
+ * lifting a confirmed-breach (canary) latch via `/approve`. Written to the SAME
+ * hash-chained trail as recordCanaryExfilAudit — one channel, so the breach and
+ * its authorized recovery sit on the same chain in review, not a parallel log.
+ * decision:"allow" — the recovery is an authorized allow. The reason records that
+ * recovery was USER-AUTHORIZED and why; it must NEVER contain a canary token
+ * (old or new) — the caller redacts any leaked token from `reason` first, and no
+ * token is passed here.
+ */
+export function recordCanaryRecoveryAudit(sessionId: string, reason: string): void {
+  getCanaryAuditTrail().record({
+    sessionId,
+    event: "canary_breach_approved",
+    decision: "allow",
+    reason: `Confirmed-breach (canary) latch lifted by USER AUTHORIZATION via /approve; fresh canaries minted. Reason: ${reason}`,
+    controlsApplied: ["Canary"],
+  });
+}
+
+/**
+ * Session-scoped recovery for the chat `/approve` handler, which has a sessionId
+ * but no engine. Self-gated: a no-op returning false when no confirmed-breach
+ * latch is live for the session (so an ordinary `/approve` is unchanged). When a
+ * breach IS live it clears the session breach signal, mints FRESH canaries — the
+ * leaked tokens are known to the model and worthless as a tripwire — replacing
+ * the exact set the egress gate reads, and writes the tamper-evident recovery
+ * event. Shares the mint + audit surfaces with ThreatEngine.approveRecovery, so
+ * there is one recovery flow, not a fork. Returns whether it acted.
+ */
+export function recoverSessionBreach(sessionId: string, reason: string): boolean {
+  if (!breachedSessions.delete(sessionId)) return false;
+  remintSessionCanaries(sessionId);
+  recordCanaryRecoveryAudit(sessionId, reason.slice(0, 160));
+  return true;
 }

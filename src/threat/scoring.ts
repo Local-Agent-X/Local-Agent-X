@@ -155,6 +155,26 @@ export class ThreatScorer {
     return this.confirmedBreach || this.effectiveLoad() >= this.HIGH_THRESHOLD;
   }
 
+  /**
+   * Clear ONLY the confirmed-breach latch. Load, decay clock, and event log are
+   * left untouched — if residual effective load still exceeds HIGH_THRESHOLD the
+   * session stays restricted on its own merits.
+   *
+   * SECURITY LATCH — reachable ONLY from ThreatEngine.approveRecovery (the
+   * explicit user-authorized `/approve` recovery path). This reverses the one
+   * restriction the trust-budget model is forbidden from excusing (a tripped
+   * canary is PROOF of exfiltration, not a probabilistic signal), so it must not
+   * be lifted by ordinary scorer activity: no record() of a benign event, no
+   * recordSuccessfulTurn(), and no decay tick clears it — only this call or a
+   * full reset() (new-session teardown). Returns whether a breach was in effect,
+   * so the caller can distinguish a real recovery from a no-op.
+   */
+  clearConfirmedBreach(): boolean {
+    const was = this.confirmedBreach;
+    this.confirmedBreach = false;
+    return was;
+  }
+
   /** Raw accumulated load before budget/decay credits — for diagnostics. */
   getRawLoad(): number {
     return this.rawLoad;

@@ -1,11 +1,14 @@
 // Best-effort shell lexing primitives shared by the shell-command detectors and
 // policy engine: quote stripping, whitespace tokenization, command-separator
-// segmentation, and executable-basename normalization. Pure string walks — no
+// segmentation, executable-basename normalization, and effective-argv[0]
+// resolution (keyword/wrapper stripping). Pure string walks — no
 // operator-precedence parsing, subshell, or backslash-escape handling — just
 // enough to isolate command positions and inspect argv[0]/flags. Split out of
 // shell-detectors.ts to keep that module under the 400-LOC ceiling;
 // shell-detectors.ts re-exports the three primitives its callers import so no
 // consumer import path changes.
+
+import { SHELL_KEYWORD_PREFIXES, SHELL_WRAPPER_PREFIXES, WRAPPER_VALUE_OPTIONS } from "./shell-rules.js";
 
 // Remove the contents of single- and double-quoted spans (and the quotes)
 // so shell separators that are literal inside an argument — e.g. the `;` in
@@ -109,4 +112,69 @@ export function execBasename(token: string): string {
   const base = token.replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "");
   if (/^python(?:w|\d+(?:\.\d+)*)?$/.test(base)) return "python";
   return base;
+}
+
+// A duration/number positional (`timeout 30s`, `nice 10`) or a `VAR=val`
+// assignment (`env NODE_ENV=prod`) — a wrapper arg that can never be a command
+// name, so consuming it can't hide a real invocation.
+function isPositionalWrapperArg(t: string): boolean {
+  return /^\d+(\.\d+)?[smhd]?$/.test(t) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t);
+}
+
+// Resolve a segment's REAL command basename by skipping leading shell keywords
+// (then/do/else/elif) and command-modifier wrappers (env/time/xargs/timeout/…),
+// then returning the basename of the first genuine command word (null if the
+// segment is only keywords/wrappers). Keeps `then dig`, `env dig`, `timeout 5
+// dig`, `xargs -I {} dig` resolving to the real bin so the argv[0] scans
+// (detectNetworkClientArgv0 / detectDangerousInvokeBin) DENY them once
+// separators are relaxed under a confined backend.
+//
+// A wrapper's own args are skipped PRECISELY (not "skip until a non-flag"): a
+// SHORT option that takes a DETACHED value (WRAPPER_VALUE_OPTIONS — `xargs -I
+// {}`, `env -u NAME`, `timeout -s TERM`) consumes the option AND its value
+// token, so the value ({} / NAME / TERM) isn't mistaken for the command; a
+// glued `-I{}` / `-n10` / `-oL`, a no-value flag, a long `--preserve-status`, a
+// duration/number positional, and `VAR=val` each consume just themselves; `--`
+// ends option processing. This bounded map is why `time grep host /etc/hosts`
+// stays ALLOWED (grep is the argv[0]; host is never reached) — a "scan every
+// token" approach would false-block it on the dictionary word `host`.
+//
+// KNOWN LIMITATION (parked — NOT fully closable by string parsing): the
+// argv[0]-only bins (dig/host/nslookup/getent/traceroute/mail + network
+// clients) have no raw-string denylist backstop, so a wrapper/quoting/PATH
+// trick can still evade — `\dig`, an unlisted busybox applet, a binary renamed
+// on PATH, a long option with a detached value, or `sh -c "dig …"` whose `-c`
+// body is a deliberately opaque quoted token (out of scope by design). The
+// durable fix for egress under confinement is NETWORK-LAYER egress control at
+// the sandbox/proxy, not shell parsing; this closes the realistic keyword/
+// wrapper forms, not the ungameable general case.
+export function resolveRealArgv0(tokens: string[]): string | null {
+  let i = 0;
+  while (i < tokens.length) {
+    const base = execBasename(tokens[i]);
+    if (SHELL_KEYWORD_PREFIXES.has(base)) {
+      i++; // a keyword takes no args; the next token is the command position
+      continue;
+    }
+    if (SHELL_WRAPPER_PREFIXES.has(base)) {
+      const valueOpts = WRAPPER_VALUE_OPTIONS[base];
+      i++;
+      while (i < tokens.length) {
+        const t = tokens[i];
+        if (t === "--") { i++; break; } // end of options; next token is argv[0]
+        if (t.startsWith("-")) {
+          // Exact `-X` form of a value-taking option → also eat its detached
+          // value. Glued (`-I{}`/`-n10`/`-oL`), no-value, and long options
+          // carry no separate value token, so eat only the option itself.
+          i += valueOpts && /^-[A-Za-z]$/.test(t) && valueOpts.has(t) ? 2 : 1;
+          continue;
+        }
+        if (isPositionalWrapperArg(t)) { i++; continue; }
+        break; // a real command word
+      }
+      continue;
+    }
+    return base;
+  }
+  return null;
 }

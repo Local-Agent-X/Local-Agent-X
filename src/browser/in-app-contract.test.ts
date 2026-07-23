@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ElectronInAppBackend } from "./in-app-backend.js";
+import { __resetRefIdsForTest } from "./observation.js";
 import type { RawElement } from "./extract.js";
 import { handleNavigate } from "../tools/browser-tools/navigation.js";
 import { handleObserve } from "../tools/browser-tools/observe.js";
@@ -164,6 +165,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 	let prevLaxDir: string | undefined;
 
 	beforeEach(() => {
+		__resetRefIdsForTest(); // deterministic refs [1],[2] per test; the module counter is globally monotonic in prod
 		laxDir = mkdtempSync(join(tmpdir(), "lax-contract-test-"));
 		prevLaxDir = process.env.LAX_DATA_DIR;
 		process.env.LAX_DATA_DIR = laxDir;

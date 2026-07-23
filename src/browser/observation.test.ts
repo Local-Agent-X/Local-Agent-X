@@ -10,7 +10,7 @@ vi.mock("./modal-detector.js", () => ({ detectObstructions: vi.fn(async () => []
 vi.mock("./iframe-detector.js", () => ({ listIframes: vi.fn(async () => []) }));
 vi.mock("./dialog-handler.js", () => ({ pendingDialogs: vi.fn(() => []) }));
 
-import { BrowserWedgeError, ObservationRegistry, withWedgeTimeout } from "./observation.js";
+import { BrowserWedgeError, ObservationRegistry, withWedgeTimeout, __resetRefIdsForTest } from "./observation.js";
 import { extractInteractiveElements } from "./extract.js";
 import { detectObstructions } from "./modal-detector.js";
 
@@ -42,6 +42,7 @@ describe("withWedgeTimeout", () => {
 
 describe("degraded observation — a failed extractor must never masquerade as an empty page", () => {
   beforeEach(() => {
+    __resetRefIdsForTest(); // deterministic small ids per test; prod never resets the shared counter (see uniqueness block)
     mockExtract.mockReset();
     mockExtract.mockResolvedValue([]);
     mockObstructions.mockReset();
@@ -131,6 +132,7 @@ describe("degraded observation — a failed extractor must never masquerade as a
 
 describe("viewport perception — a scroll must surface the newly-visible set, not 'Page unchanged'", () => {
   beforeEach(() => {
+    __resetRefIdsForTest(); // deterministic small ids per test; prod never resets the shared counter (see uniqueness block)
     mockExtract.mockReset();
     mockExtract.mockResolvedValue([]);
     mockObstructions.mockReset();
@@ -197,6 +199,7 @@ describe("viewport perception — a scroll must surface the newly-visible set, n
 
 describe("recoverStaleRef — remapping a stale id after a page re-render", () => {
   beforeEach(() => {
+    __resetRefIdsForTest(); // deterministic small ids per test; prod never resets the shared counter (see uniqueness block)
     mockExtract.mockReset();
     mockExtract.mockResolvedValue([]);
     mockObstructions.mockReset();
@@ -257,18 +260,65 @@ describe("recoverStaleRef — remapping a stale id after a page re-render", () =
     expect(reg.recoverStaleRef(99)).toBeUndefined();
   });
 
-  it("reset() clears tombstones — no remapping across an origin change", async () => {
+  it("reset() clears tombstones and never recycles the id — no remapping across an origin change", async () => {
     const reg = new ObservationRegistry();
     mockExtract.mockResolvedValueOnce([SUBMIT]);
-    await reg.observe(page);
+    const oldId = (await reg.observe(page)).currentRefs[0].id;
     mockExtract.mockResolvedValueOnce([]);
-    await reg.observe(page); // retire [1]
+    await reg.observe(page); // retire the ref
     reg.reset();
     mockExtract.mockResolvedValueOnce([SUBMIT]);
-    await reg.observe(page);
+    const newId = (await reg.observe(page)).currentRefs[0].id;
 
-    expect(reg.recoverStaleRef(1)?.id).toBe(1); // live hit only — [1] is the NEW ref
-    // A retired-only id from before the reset must not remap.
-    expect(reg.recoverStaleRef(2)).toBeUndefined();
+    // The re-observed element draws a FRESH global id — reset() recycles nothing.
+    expect(newId).not.toBe(oldId);
+    expect(reg.get(newId)?.name).toBe("Submit"); // reachable only via its new id
+    // The stale id is gone: not live, and its tombstone was cleared by reset(),
+    // so it must not remap to the new element (would be wrong across an origin).
+    expect(reg.recoverStaleRef(oldId)).toBeUndefined();
+  });
+});
+
+describe("globally-unique ref ids — never reused across registries (cross-tab collision fix)", () => {
+  beforeEach(() => {
+    // Reset only to make the demonstrated ids small ([1],[2]); the uniqueness
+    // proven below holds for ANY counter value, since both registries draw from
+    // the SAME module-level counter.
+    __resetRefIdsForTest();
+    mockExtract.mockReset();
+    mockExtract.mockResolvedValue([]);
+    mockObstructions.mockReset();
+    mockObstructions.mockResolvedValue([]);
+  });
+
+  it("two registries never mint the same id; a ref minted in A is absent from B", async () => {
+    const a = new ObservationRegistry();
+    const b = new ObservationRegistry();
+
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    const idA = (await a.observe(page)).currentRefs[0].id;
+    // The SAME element in a DIFFERENT registry (a different tab): under the old
+    // per-instance counter both were [1] — the silent cross-tab collision that
+    // made a reused ref resolve against the wrong tab's element.
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    const idB = (await b.observe(page)).currentRefs[0].id;
+
+    expect(idB).not.toBe(idA);          // no numeric collision across tabs
+    expect(idB).toBeGreaterThan(idA);   // B drew the NEXT global id, not a reset-to-1
+    expect(b.get(idA)).toBeUndefined(); // A's id resolves to nothing in B
+    expect(a.get(idB)).toBeUndefined(); // …and B's id resolves to nothing in A
+  });
+
+  it("distinct elements across two registries stay globally distinct", async () => {
+    const a = new ObservationRegistry();
+    const b = new ObservationRegistry();
+    const CANCEL: RawElement = { ...SUBMIT, name: "Cancel", signature: "button|Cancel|BUTTON|form" };
+
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    const idA = (await a.observe(page)).currentRefs[0].id;
+    mockExtract.mockResolvedValueOnce([CANCEL]);
+    const idB = (await b.observe(page)).currentRefs[0].id;
+
+    expect(new Set([idA, idB]).size).toBe(2); // every id across both registries is unique
   });
 });

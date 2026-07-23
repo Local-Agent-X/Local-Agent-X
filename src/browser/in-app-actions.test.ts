@@ -304,6 +304,23 @@ describe("clickTextInApp — budget + scroll retry", () => {
 		expect(vi.mocked(browserInput).mock.calls[0][1]).toMatchObject({ x: 200, y: 100 });
 	});
 
+	it("surfaces the in-page disambiguation note when several elements tied on score", async () => {
+		const note = 'matched 3 elements for "Sign in", clicked the first visible — use a ref to target a specific one';
+		vi.mocked(browserExec).mockResolvedValue({ found: true, role: "button", x: 200, y: 100, dpr: 1, zoom: 1, note });
+		const res = await clickTextInApp(makeCtx(makeRef()), "Sign in");
+		expect(res.ok).toBe(true);
+		expect(res.text).toContain(note);                       // the hint reached the model-facing text
+		expect(res.text).toContain(`clicked button "Sign in"`); // …alongside the normal click line
+	});
+
+	it("omits the note when the text match was unambiguous", async () => {
+		vi.mocked(browserExec).mockResolvedValue({ found: true, role: "button", x: 200, y: 100, dpr: 1, zoom: 1 });
+		const res = await clickTextInApp(makeCtx(makeRef()), "Sign in");
+		expect(res.ok).toBe(true);
+		expect(res.text).not.toContain("matched");
+		expect(res.text).not.toContain("use a ref");
+	});
+
 	it("scrolls a viewport and retries when the first pass misses", async () => {
 		let searches = 0;
 		vi.mocked(browserExec).mockImplementation(async (_v, s) => {

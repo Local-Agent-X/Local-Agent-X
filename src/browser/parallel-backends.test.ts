@@ -6,8 +6,10 @@
  * desktop transport (process.send capture + process.emit("message") replies),
  * so the correlation-by-(id, viewId) + view-scoped rejection paths are exercised
  * for real. Proves:
- *   - each backend has its OWN ObservationRegistry: a ref minted only in A
- *     (ref [2]) is unknown to B (B holds only ref [1]) — no shared singleton.
+ *   - each backend has its OWN ObservationRegistry, but ref ids are GLOBALLY
+ *     unique across registries: a ref minted only in A (ref [2]) is unknown to
+ *     B, and B's sole element draws the NEXT global id [3] — never a per-
+ *     instance reset to [1] (which would collide with A's [1] across tabs).
  *   - concurrent navigate/observe interleave correctly, keyed by viewId — each
  *     backend sees only its own page's url/title/elements.
  *   - aborting + closing A does NOT reject B's still-pending op (view-scoped
@@ -19,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ElectronInAppBackend } from "./in-app-backend.js";
+import { __resetRefIdsForTest } from "./observation.js";
 import { browserAbort, browserLifecycle, browserNavigate } from "./bridge-client.js";
 import type { RawElement } from "./extract.js";
 
@@ -29,8 +32,9 @@ const URL_B = "https://b.example.net/";
 const TITLE_A = "Site A";
 const TITLE_B = "Site B";
 
-// A has TWO interactive elements → refs [1],[2]; B has ONE → ref [1] only.
-// So ref [2] can only ever exist in A's registry — the cross-talk probe.
+// A has TWO interactive elements → refs [1],[2]; B has ONE → the NEXT global
+// id [3] (ids are unique across registries). So ref [2] exists ONLY in A — the
+// cross-talk probe.
 const RAW_A: RawElement[] = [
 	{ role: "button", name: "A-Submit", tag: "BUTTON", type: "", xpath: "/button[1]",
 		signature: "button|A-Submit|BUTTON|form", inViewport: true, rect: { x: 10, y: 10, width: 80, height: 20 } },
@@ -131,6 +135,7 @@ describe("parallel ElectronInAppBackend instances (M1)", () => {
 	let prevLaxDir: string | undefined;
 
 	beforeEach(() => {
+		__resetRefIdsForTest(); // deterministic global ids per test: A→[1],[2], B→[3]; prod never resets the shared counter
 		laxDir = mkdtempSync(join(tmpdir(), "lax-parallel-test-"));
 		prevLaxDir = process.env.LAX_DATA_DIR;
 		process.env.LAX_DATA_DIR = laxDir;
@@ -169,9 +174,12 @@ describe("parallel ElectronInAppBackend instances (M1)", () => {
 		expect(snapB).toContain("B-Only");
 		expect(snapB).not.toContain("A-Submit");
 
-		// B's ref counter is its OWN — B's single element is ref [1], not [3];
-		// a shared module-singleton registry would have continued A's numbering.
-		expect(snapB).toContain("[1]<button>B-Only</button>");
+		// Global-unique ids (cross-tab collision fix): B's sole element draws the
+		// NEXT global id after A's [1],[2] — [3] — NOT a per-registry reset to [1].
+		// Two registries independently resetting to [1] is the exact collision this
+		// prevents; a ref number is never reused across registries.
+		expect(snapB).toContain("[3]<button>B-Only</button>");
+		expect(snapA).not.toContain("[3]"); // [3] is B's alone — disjoint from A's [1],[2]
 
 		// Ref [2] exists ONLY in A. Resolving it in A works; B has no such ref
 		// and refuses WITHOUT touching the page — the cross-talk proof.

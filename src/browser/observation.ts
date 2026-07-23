@@ -68,10 +68,42 @@ export async function withWedgeTimeout<T>(work: Promise<T>, ms = OBSERVE_WEDGE_T
  *  page without unbounded growth across a long session. */
 const RETIRED_REF_CAP = 300;
 
+/**
+ * Ref ids are GLOBALLY unique across every ObservationRegistry in the process.
+ * Each browser tab owns its own registry (in-app-tabs.ts), so a per-instance
+ * counter that started (and reset) at 1 made ref numbers COLLIDE across tabs:
+ * after a switch_tab, reusing an old ref like [5] would resolve against the NEW
+ * tab's element #5 — a silent wrong-element click. A single module-level,
+ * monotonic counter guarantees a ref number is NEVER reused by a different
+ * tab/page. reset() (cross-origin nav / wedge recovery) still clears a
+ * registry's refs, but the next mint draws a FRESH global id — never one seen
+ * before.
+ */
+let nextRefId = 1;
+function mintRefId(): number {
+  return nextRefId++;
+}
+
+/** Lift the module counter past a persisted registry's high-water mark on
+ *  restore(). Only ever RAISES the floor — lowering it would let a fresh mint
+ *  reuse an id the model may still be holding from before the restart. */
+function advanceRefIdFloor(highWater: number): void {
+  if (highWater > nextRefId) nextRefId = highWater;
+}
+
+/**
+ * TEST-ONLY: reset the module-level ref-id counter so tests that assert small
+ * absolute ref numbers ([1], [2], …) stay deterministic. MUST NOT be called in
+ * production — resetting the shared counter would let two registries mint
+ * colliding ids, reintroducing the exact cross-tab collision it prevents.
+ */
+export function __resetRefIdsForTest(): void {
+  nextRefId = 1;
+}
+
 export class ObservationRegistry {
   private refs = new Map<number, DurableRef>();
   private signatureToRef = new Map<string, number>();
-  private nextId = 1;
   private observationCount = 0;
   private lastUrl = "";
   /** Tombstones for refs that dropped out of the live map: id → identity of
@@ -91,7 +123,9 @@ export class ObservationRegistry {
     this.refs.clear();
     this.signatureToRef.clear();
     this.retired.clear();
-    this.nextId = 1;
+    // The ref-id counter is module-level and deliberately NOT reset here — a
+    // ref number must never be reused after a cross-origin nav / wedge recovery
+    // (nor across tabs). See mintRefId / nextRefId.
     this.observationCount = 0;
     this.lastUrl = "";
   }
@@ -215,7 +249,7 @@ export class ObservationRegistry {
         }
       } else {
         ref = {
-          id: this.nextId++,
+          id: mintRefId(),
           signature: el.signature,
           role: el.role,
           name: el.name,
@@ -322,7 +356,10 @@ export class ObservationRegistry {
   serialize(): SerializedRegistry {
     return {
       refs: [...this.refs.values()],
-      nextId: this.nextId,
+      // The GLOBAL high-water mark (≥ every id this registry ever minted,
+      // including retired ones). On restore it lifts the module counter so no
+      // reused id can be re-minted after the round-trip.
+      nextId: nextRefId,
       observationCount: this.observationCount,
       lastUrl: this.lastUrl,
     };
@@ -337,8 +374,11 @@ export class ObservationRegistry {
     for (const r of s.refs) {
       this.refs.set(r.id, r);
       this.signatureToRef.set(r.signature, r.id);
+      // A restored ref's id must never be handed out again by a later mint —
+      // advance the shared counter past it even if `nextId` is stale/absent.
+      advanceRefIdFloor(r.id + 1);
     }
-    this.nextId = typeof s.nextId === "number" ? s.nextId : this.nextId;
+    if (typeof s.nextId === "number") advanceRefIdFloor(s.nextId);
     this.observationCount = typeof s.observationCount === "number" ? s.observationCount : 0;
     this.lastUrl = typeof s.lastUrl === "string" ? s.lastUrl : "";
   }

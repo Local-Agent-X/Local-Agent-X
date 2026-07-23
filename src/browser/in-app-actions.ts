@@ -349,16 +349,19 @@ export async function clickTextInApp(
 	for (let attempt = 0; attempt < CLICK_TEXT_ATTEMPTS; attempt++) {
 		const raw = await execChecked(ctx.viewId, textSearchScript(text));
 		const found = raw && typeof raw === "object" && (raw as { found?: unknown }).found === true
-			? (raw as { role?: string; x: number; y: number; dpr: number; zoom: number })
+			? (raw as { role?: string; x: number; y: number; dpr: number; zoom: number; note?: string })
 			: null;
 		if (found) {
 			if ((await clickAtPoint(ctx, { x: found.x, y: found.y, zoom: found.zoom, dpr: found.dpr })) === "userActive") {
 				return userTookWheel();
 			}
 			const message = found.role ? `clicked ${found.role} "${text}"` : `clicked visible text "${text}"`;
+			// Surface the in-page disambiguation hint (set when several elements
+			// tied on score) so the model knows to target a specific ref next time.
+			const note = typeof found.note === "string" && found.note ? ` — ${found.note}` : "";
 			await waitForStability(ctx.page, { maxWait: 2500 });
 			const after = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
-			return { ok: true, text: `${message}\nPage: ${ctx.page.url()}\n\n${after}` };
+			return { ok: true, text: `${message}${note}\nPage: ${ctx.page.url()}\n\n${after}` };
 		}
 		if (Date.now() >= deadline) break;
 		if (attempt < CLICK_TEXT_ATTEMPTS - 1) {

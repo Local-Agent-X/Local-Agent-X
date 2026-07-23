@@ -66,9 +66,15 @@ const log = createLogger("browser.wedge");
 // Actions that establish a fresh page context — clear stall state, don't compare.
 const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close"]);
 // Advancing actions where "page never changed" means the agent is stuck.
-// Pure reads/utilities (extract, screenshot, evaluate, info, tabs, dialogs)
-// are excluded: they legitimately return varying data off an unchanged page.
-const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "observe", "snapshot", "act"]);
+// Click-style actions AND local edits (fill / select / scroll) all count: the
+// enriched fingerprint (interactions.ts) tracks value length, scroll position,
+// checked/selected state, and aria-expanded, so a PRODUCTIVE edit moves the
+// fingerprint (never false-trips) while a dead one that changes nothing is
+// still caught — this tracker is the ONLY browser-layer spin bound. Only pure
+// READS (snapshot / observe / extract / screenshot / info / tabs) are excluded:
+// a read never "tries to move the page", and blocking the agent's own
+// re-perceive recovery move with the stall error is the opposite of helpful.
+const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "act"]);
 const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "history", "bookmarks"]);
 
 /** Wedge outcome → what the agent is told. Honest about what survived: an
@@ -119,12 +125,26 @@ async function applyProgressGuard(
     return result;
   }
   if (!TRACKED_ACTIONS.has(action) || result.isError) return result;
-  const { stalled, unchanged } = recordProgress(sessionId, await manager.fingerprint());
+  // Defense in depth: a read-only action never represents "trying to move the
+  // page", so its result — often the agent's own re-perceive recovery move —
+  // must never be replaced by the stall error. TRACKED_ACTIONS already excludes
+  // reads; this makes the invariant explicit and regression-proof.
+  if (READ_ONLY_ACTIONS.has(action)) return result;
+  // Cap the fingerprint read: a hung page-eval here must not ride the outer
+  // tool timeout and report a completed action as a timeout. Timing out yields
+  // "" — recordProgress treats that as "unknown" (neither progress nor stall).
+  let fpTimer: ReturnType<typeof setTimeout> | undefined;
+  const fingerprint = await Promise.race([
+    manager.fingerprint(),
+    new Promise<string>((resolve) => { fpTimer = setTimeout(() => resolve(""), 2000); }),
+  ]);
+  clearTimeout(fpTimer);
+  const { stalled, unchanged } = recordProgress(sessionId, fingerprint);
   if (!stalled) return result;
   return err(
     `No page change after ${unchanged} consecutive browser actions — the page is not responding to what you're doing. ` +
     `Stop repeating the same action. Try a different approach: a different ref/selector, scroll to reveal off-screen ` +
-    `elements, re-navigate, or stop and ask the user. Repeating will open the circuit breaker.`,
+    `elements, navigate elsewhere, or stop and ask the user. Repeating will open the circuit breaker.`,
   );
 }
 

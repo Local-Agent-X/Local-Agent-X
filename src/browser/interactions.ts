@@ -11,17 +11,24 @@ import { clickRef, fillRef, clickByText as clickByTextAction } from "./actions.j
 import { waitForStability } from "./stability.js";
 import type { InteractionResult, ScrollOptions } from "./backend.js";
 
-// Cheap progress fingerprint: URL + title + text length + element count.
-// Deliberately bypasses the observation registry so reading it never
-// disturbs the diff state the agent's own observe() calls depend on. A click
-// that toggles a seat (changing the "selected / total" text) or loads new DOM
-// moves at least one of these; a no-op action leaves all four identical.
+// Cheap progress fingerprint: URL + title + text length + element count +
+// scroll position + checked-input count + input/textarea value-length sum +
+// select selected-index sum + aria-expanded count. Deliberately bypasses the
+// observation registry so reading it never disturbs the diff state the agent's
+// own observe() calls depend on. A click that toggles a seat (changing the
+// "selected / total" text) or loads new DOM moves one of the first four; a
+// fill / native-select / scroll / disclosure-toggle that leaves href, title,
+// and the DOM identical still moves scrollY, the checked/selected state, the
+// value-length sum, or the aria-expanded count — so those legitimate edits
+// register as progress, not a stall, which is what makes them safe to TRACK.
+// Only lengths and counts cross the boundary — never a field's value — so no
+// form contents can leak through the fingerprint.
 // Returns "" if the page can't be read (mid-navigation) — the caller treats
 // that as "unknown", not "no progress". See progress-tracker.ts.
 export async function fingerprintPage(page: Page): Promise<string> {
   try {
     const sig = await page.evaluate(
-      "[location.href, document.title, (document.body && document.body.textContent ? document.body.textContent.length : 0), document.querySelectorAll('*').length].join('|')",
+      "[location.href, document.title, (document.body && document.body.textContent ? document.body.textContent.length : 0), document.querySelectorAll('*').length, window.scrollY, document.querySelectorAll('input:checked').length, [...document.querySelectorAll('input,textarea')].reduce((n,e)=>n+(e.value?e.value.length:0),0), [...document.querySelectorAll('select')].reduce((n,e)=>n+e.selectedIndex,0), document.querySelectorAll('[aria-expanded=true]').length].join('|')",
     );
     return typeof sig === "string" ? sig : "";
   } catch {

@@ -3,9 +3,10 @@
  *
  * Replaces what the old count-based rate limit was crudely approximating: not
  * "too many calls" but "calls that go nowhere". We fingerprint the page after
- * each advancing action (navigate / click / fill / scroll / observe). When a
- * session takes NO_PROGRESS_LIMIT consecutive advancing actions whose
- * fingerprint never changes, the page isn't responding to the agent — it's
+ * each page-advancing action (click / click_text / act — the caller's
+ * TRACKED_ACTIONS; reads and local edits like fill / select / scroll are not
+ * tracked). When a session takes NO_PROGRESS_LIMIT consecutive such actions
+ * whose fingerprint never changes, the page isn't responding to the agent — it's
  * stuck. The caller turns that into an isError result, which feeds the circuit
  * breaker (run-sandboxed records isError as a failure) and gives the agent a
  * clear "change approach" signal instead of silently looping.
@@ -16,7 +17,8 @@
 
 // Consecutive unchanged advancing actions before we call it stuck. Sized to
 // give legitimate "click, nothing visibly moved, click again" retries slack
-// while still catching a real spin well inside the per-session 100 ceiling.
+// while still catching a real spin quickly. This tracker is the ONLY
+// browser-layer spin bound — there is no separate call-count ceiling.
 const NO_PROGRESS_LIMIT = 6;
 
 interface ProgressState {

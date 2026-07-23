@@ -85,6 +85,17 @@ describe("Browser full-page workspace", () => {
     expect(CSS).toContain("body.browser-chat-overlay-renderer");
   });
 
+  it("suppresses the darwin drag-strip and scanline pseudo-elements in the overlay renderer", () => {
+    // The overlay WebContentsView runs the same preload, so body gets
+    // platform-darwin and #main::before would paint the opaque 28px titlebar
+    // strip (a window-drag region) across the top of the transparent overlay.
+    expect(CSS).toContain("body.browser-chat-overlay-renderer #main::before,");
+    expect(CSS).toContain("body.browser-chat-overlay-renderer::after,");
+    expect(CSS).toMatch(
+      /body\.browser-chat-overlay-renderer #main::after\{content:none!important;display:none!important\}/,
+    );
+  });
+
   it("reserves a native overlay only for the compact chat card", async () => {
     const setChatOverlay = vi.fn().mockResolvedValue(undefined);
     (window as any).desktop = { browser: { setChatOverlay } };

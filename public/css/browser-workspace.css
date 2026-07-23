@@ -126,6 +126,15 @@ body.browser-chat-overlay-renderer{
   margin:0!important;height:100vh!important;background:transparent!important;overflow:hidden!important;
 }
 body.browser-chat-overlay-renderer > :not(#main){display:none!important}
+/* The overlay view runs the same preload, so body gets platform-darwin and
+   #main::before paints the 28px opaque titlebar drag strip across the top of
+   the overlay bounds (and turns that strip into a window-drag region). The
+   `#main > :not(#page-chat)` hide below can't catch it — pseudo-elements
+   aren't element children. */
+body.browser-chat-overlay-renderer::before,
+body.browser-chat-overlay-renderer::after,
+body.browser-chat-overlay-renderer #main::before,
+body.browser-chat-overlay-renderer #main::after{content:none!important;display:none!important}
 body.browser-chat-overlay-renderer #main{
   position:fixed!important;inset:0!important;width:100%!important;height:100%!important;
   margin:0!important;background:transparent!important;

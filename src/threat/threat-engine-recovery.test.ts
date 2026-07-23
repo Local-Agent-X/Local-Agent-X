@@ -311,6 +311,21 @@ describe("ThreatEngine — user-authorized recovery from a confirmed-breach (can
     expect(recoverSessionBreach(sessionId, "again")).toBe(false);
     expect(getSessionCanaries(sessionId)).toEqual(afterSnapshot);
   });
+
+  it("(f2) recoverSessionBreach redacts a user-pasted leaked token from the audit reason", () => {
+    const sessionId = "sess-breach-f2";
+    const engine = freshEngine(sessionId);
+    const leaked = tripCanary(engine, sessionId);
+    expect(isSessionBreached(sessionId)).toBe(true);
+
+    // User pastes the already-leaked token into their /approve reason.
+    expect(recoverSessionBreach(sessionId, `page just echoed ${leaked}, harmless`)).toBe(true);
+
+    const raw = auditRaw();
+    expect(raw).toContain("canary_breach_approved");
+    expect(raw).not.toContain(leaked);
+    expect(raw).toContain("[redacted-canary]");
+  });
 });
 
 describe("ThreatEngine — implicated-sink tracking + persistence compatibility", () => {

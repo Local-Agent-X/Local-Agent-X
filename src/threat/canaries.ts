@@ -265,7 +265,13 @@ export function recordCanaryRecoveryAudit(sessionId: string, reason: string): vo
  */
 export function recoverSessionBreach(sessionId: string, reason: string): boolean {
   if (!breachedSessions.delete(sessionId)) return false;
+  // Capture the leaked (about-to-be-burned) tokens BEFORE re-minting, then redact
+  // any that a user pasted into their /approve reason — the NEVER-log-a-canary
+  // invariant must hold even for caller-supplied text (mirrors approveRecovery).
+  const old = getSessionCanaries(sessionId);
   remintSessionCanaries(sessionId);
-  recordCanaryRecoveryAudit(sessionId, reason.slice(0, 160));
+  let safeReason = reason;
+  for (const c of old) safeReason = safeReason.split(c).join("[redacted-canary]");
+  recordCanaryRecoveryAudit(sessionId, safeReason.slice(0, 160));
   return true;
 }

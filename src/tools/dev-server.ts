@@ -24,15 +24,20 @@
  * Records live under ~/.lax/dev-servers/<appId>.json — server-side only, never
  * under workspace/apps/<id>/ where the static route would serve them to apps.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync, appendFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { workspacePath } from "../config.js";
 import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
 import { stripRedundantInstall } from "./dev-server-command.js";
 import { withNodeTitleGuard } from "./env-contamination.js";
-import { waitForBackend, exitDescriptor, type BackendOutcome } from "./dev-server-readiness.js";
+import { reclaimPort, verifyDevServerStartup } from "./dev-server-readiness.js";
+import { killProcessGroupSync } from "../process-tree-kill.js";
 import { createLogger } from "../logger.js";
+
+// Startup-failure capture moved to dev-server-readiness.ts (its natural home,
+// and this file sits at the LOC cap); re-exported for existing importers.
+export { formatStartupFailure, persistDevServerStartupFailure } from "./dev-server-readiness.js";
 
 const logger = createLogger("tools.dev-server");
 import {
@@ -101,6 +106,10 @@ export interface DevServerDeps {
    *  that's still BOOTING (young, not yet bound) from one that's genuinely stuck,
    *  so the lazy-restart path doesn't kill a dev server mid-cold-start. */
   sessionStartedAt?: (sessionId: string) => number | null;
+  /** Kill untracked processes holding the dev port (orphans from a previous LAX
+   *  run) so a `--strictPort` respawn doesn't die against them. Returns killed
+   *  pids. The real impl sync-kills via the OS, so tests inject a stub. */
+  reclaimPort?: (port: number) => number[];
 }
 
 function deps(d: DevServerDeps): Required<DevServerDeps> {
@@ -109,8 +118,9 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
     isAlive: d.isAlive ?? ((sid) => { const s = SESSIONS.get(sid); return !!s && !s.exitedAt; }),
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
     portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
-    verifyStartup: d.verifyStartup ?? ((appId, sessionId, port) => { void defaultVerifyStartup(appId, sessionId, port); }),
+    verifyStartup: d.verifyStartup ?? ((appId, sessionId, port) => { void verifyDevServerStartup(appId, sessionId, port); }),
     sessionStartedAt: d.sessionStartedAt ?? ((sid) => { const s = SESSIONS.get(sid); return s ? s.startedAt : null; }),
+    reclaimPort: d.reclaimPort ?? reclaimPort,
   };
 }
 
@@ -126,54 +136,6 @@ const DEV_SERVER_BIND_GRACE_MS = 30_000;
 
 // The port-readiness check + the app_serve_* tools that use it live in
 // dev-server-tools.ts (kept this file under the LOC cap).
-
-/** How long the lazy-restart verifier waits for a re-spawned dev server to bind.
- *  Matches the frontend serve timeout so a slow (but fine) cold `npm install`
- *  isn't falsely reported; a crash returns immediately regardless. */
-const LAZY_RESTART_VERIFY_MS = 60_000;
-
-/** Where a failed lazy restart's diagnostic (the child's captured stderr) is
- *  persisted. Server-side only, NOT under workspace/apps/<id>/. */
-function devServerLogPath(appId: string): string {
-  return join(getLaxDir(), "logs", "dev-servers", `${appId}.log`);
-}
-
-/** Turn a non-listening readiness outcome into a human diagnostic. Pure, so the
- *  format is unit-testable without spawning a real process. */
-export function formatStartupFailure(appId: string, sessionId: string, port: number, outcome: BackendOutcome): string {
-  const head = `lazy restart of dev server "${appId}" (session ${sessionId}) FAILED`;
-  const body =
-    outcome.status === "crashed"
-      ? `process exited (${exitDescriptor(outcome.code, outcome.signal)}) without binding port ${port}`
-      : `process did NOT bind port ${port} within ${LAZY_RESTART_VERIFY_MS / 1000}s`;
-  const out = outcome.status === "listening" ? "" : outcome.output;
-  return `${head}: ${body}` + (out ? `\n--- output (tail) ---\n${out}` : "\n(no output captured)");
-}
-
-/** Persist a startup-failure diagnostic to server.log (via the logger) AND to a
- *  per-app file, so the cause survives the in-memory session eviction that
- *  previously erased it. Best-effort — never throws into the caller. */
-export function persistDevServerStartupFailure(appId: string, diagnostic: string): void {
-  logger.warn(`[dev-server] ${diagnostic}`);
-  try {
-    const p = devServerLogPath(appId);
-    mkdirSync(dirname(p), { recursive: true });
-    appendFileSync(p, `\n===== ${new Date().toISOString()} =====\n${diagnostic}\n`);
-  } catch { /* logging must never break the request path */ }
-}
-
-/** Real verifyStartup: poll the re-spawned session; on a crash or never-bind,
- *  persist the diagnostic. Non-blocking (the caller voids the promise) so the
- *  request that triggered the lazy restart isn't stalled — the proxy has its own
- *  cold-start retry; this exists purely to CAPTURE why a restart didn't bind. */
-async function defaultVerifyStartup(appId: string, sessionId: string, port: number): Promise<void> {
-  const outcome = await waitForBackend(sessionId, port, LAZY_RESTART_VERIFY_MS);
-  if (outcome.status === "listening") {
-    logger.info(`[dev-server] ${appId}: restart confirmed listening on port ${port}`);
-    return;
-  }
-  persistDevServerStartupFailure(appId, formatStartupFailure(appId, sessionId, port, outcome));
-}
 
 /** Idle auto-stop: a backend untouched for this long is killed (its record is
  *  kept, so opening the app — or any connector request — wakes it again). */
@@ -266,6 +228,14 @@ export function registerDevServer(
   // proxied transparently at /apps/<id>/, so it needs no connector manifest.
   if (kind === "backend") saveConnectorManifest(connector, devConnectorManifest(port));
 
+  // Free the port before spawning: the kill above is async (the old tree may
+  // still be dying), and an orphan from a previous LAX run holds it invisibly —
+  // either way a `--strictPort` child spawned now dies on arrival.
+  const reclaimed = dd.reclaimPort(port);
+  if (reclaimed.length > 0) {
+    logger.warn(`[dev-server] ${appId}: killed ${reclaimed.length} untracked process(es) holding port ${port} (pids ${reclaimed.join(", ")}) before start`);
+  }
+
   const started = dd.start(command, cwd, frontendEnv(kind, port));
   if ("error" in started) return { ok: false, error: started.error };
 
@@ -311,6 +281,16 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
     if (booting) return { status: "started", record: rec };
     logger.info(`[dev-server] ${appId}: session ${rec.sessionId} alive but port ${rec.port} dead past ${DEV_SERVER_BIND_GRACE_MS / 1000}s — restarting`);
     dd.kill(rec.sessionId!);
+  }
+
+  // Reclaim the port from holders this server doesn't track — the orphan class
+  // (a dev server that outlived a previous LAX process). Without this, every
+  // respawn dies instantly on `--strictPort` against the orphan while the port
+  // probe reads "listening": one doomed spawn per request, forever — the
+  // restart storm that broke HMR and flapped the app after a LAX restart.
+  const reclaimed = dd.reclaimPort(rec.port);
+  if (reclaimed.length > 0) {
+    logger.warn(`[dev-server] ${appId}: killed ${reclaimed.length} untracked process(es) holding port ${rec.port} (pids ${reclaimed.join(", ")}) before restart`);
   }
 
   // Strip the redundant `npm install &&` before restarting: on this lazy-restart
@@ -388,10 +368,21 @@ export function startDevServerSweeper(): void {
   // but the desktop quits the server with SIGTERM — whose handler (and SIGINT's)
   // both call process.exit, so the 'exit' event is the one signal-agnostic hook
   // that fires for a normal quit, a force-quit, and a parent-death shutdown.
-  // Without it, the detached dev servers orphan past LAX and hold their ports
-  // (so a restart hits the stale server). SIGKILL/crash can't be trapped — those
-  // still orphan, and the next app-open reclaims the port via restart.
-  process.on("exit", () => { try { stopAllDevServers(); } catch { /* exiting */ } });
+  // The kill MUST be synchronous here: exit handlers run after the event loop
+  // drains, so the default kill path's async taskkill never executed — on
+  // Windows every dev server orphaned past a graceful quit and kept its port
+  // (feeding the restart storm above). SIGKILL/crash still can't be trapped —
+  // those orphans are reclaimed by reclaimPort on the next lazy start.
+  process.on("exit", () => {
+    try {
+      stopAllDevServers({
+        kill: (sid) => {
+          const s = SESSIONS.get(sid);
+          if (s && !s.exitedAt && s.pid) killProcessGroupSync(s.pid, s.child ?? undefined);
+        },
+      });
+    } catch { /* exiting */ }
+  });
 }
 
 // Connector traffic for dev-<appId> wakes a backend idle-stop took down while

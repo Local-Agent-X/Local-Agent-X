@@ -14,6 +14,7 @@ import {
   persistDevServerStartupFailure,
   type DevServerDeps,
 } from "./dev-server.js";
+import { formatBoundThenDied } from "./dev-server-readiness.js";
 import { appServeBackendTool } from "./dev-server-tools.js";
 import { clearDevServerActivity, devServerActivity } from "./dev-server-access.js";
 
@@ -29,11 +30,13 @@ function fakeDeps(): {
   startTimes: Map<string, number>;
   starts: string[];
   verifyCalls: { appId: string; sessionId: string; port: number }[];
+  reclaimCalls: number[];
 } {
   const sessions = new Map<string, boolean>();
   const startTimes = new Map<string, number>();   // sessionId → epoch-ms start (backdate to simulate a stuck one)
   const starts: string[] = [];
   const verifyCalls: { appId: string; sessionId: string; port: number }[] = [];
+  const reclaimCalls: number[] = [];
   let n = 0;
   const deps: Required<DevServerDeps> = {
     start: (command) => { const id = `s${++n}`; sessions.set(id, true); startTimes.set(id, Date.now()); starts.push(command); return { session: { sessionId: id } }; },
@@ -42,8 +45,9 @@ function fakeDeps(): {
     portBound: () => true,   // default: an alive session is also bound to its port
     verifyStartup: (appId, sessionId, port) => { verifyCalls.push({ appId, sessionId, port }); },
     sessionStartedAt: (sid) => startTimes.get(sid) ?? null,
+    reclaimPort: (port) => { reclaimCalls.push(port); return []; },
   };
-  return { deps, sessions, startTimes, starts, verifyCalls };
+  return { deps, sessions, startTimes, starts, verifyCalls, reclaimCalls };
 }
 
 beforeEach(() => {
@@ -198,6 +202,40 @@ describe("ensureDevServerRunning — lazy start-on-access", () => {
   });
 });
 
+// The restart-storm regression: after a LAX restart the record's session is
+// unknown to the new process, but the ORPHANED dev server still holds the port.
+// Every request then spawned a replacement that died instantly on --strictPort
+// while the port probe read "listening" — one doomed spawn per request, forever.
+// The fix: reclaim (kill) untracked port holders BEFORE every respawn.
+describe("port reclaim before spawn", () => {
+  it("ensureDevServerRunning reclaims the port before a lazy restart", () => {
+    const { deps, sessions, reclaimCalls } = fakeDeps();
+    const reg = registerDevServer({ appId: "storm", command: "npx vite --strictPort", port: 5220, cwd: "/tmp/x" }, deps);
+    const oldId = reg.ok ? reg.sessionId : "";
+    sessions.set(oldId, false);       // LAX restarted: session unknown/dead...
+    reclaimCalls.length = 0;          // ...but the orphan still holds 5220
+
+    const res = ensureDevServerRunning("storm", deps);
+    expect(res.status).toBe("started");
+    expect(reclaimCalls).toEqual([5220]);                       // orphan killed first
+    if (res.status === "started") expect(res.record.sessionId).not.toBe(oldId);
+  });
+
+  it("ensureDevServerRunning does NOT reclaim on the healthy fast path", () => {
+    const { deps, reclaimCalls } = fakeDeps();
+    registerDevServer({ appId: "healthy", command: "vite", port: 5221, cwd: "/tmp/x" }, deps);
+    reclaimCalls.length = 0;
+    expect(ensureDevServerRunning("healthy", deps).status).toBe("running");
+    expect(reclaimCalls).toHaveLength(0);   // nothing killed under a live server
+  });
+
+  it("registerDevServer reclaims the port before starting (restart race + orphan)", () => {
+    const { deps, reclaimCalls } = fakeDeps();
+    registerDevServer({ appId: "reg", command: "vite", port: 5222, cwd: "/tmp/x" }, deps);
+    expect(reclaimCalls).toEqual([5222]);
+  });
+});
+
 describe("startup-failure capture (survives session eviction)", () => {
   it("formatStartupFailure surfaces the exit code + captured stderr tail", () => {
     const crashed = formatStartupFailure("notes", "s1", 5180, {
@@ -216,6 +254,23 @@ describe("startup-failure capture (survives session eviction)", () => {
     const timedOut = formatStartupFailure("notes", "s1", 5180, { status: "timeout", output: "" });
     expect(timedOut).toMatch(/did NOT bind port 5180/);
     expect(timedOut).toMatch(/no output captured/);
+  });
+
+  it("formatBoundThenDied names the foreign port owner (the storm's false 'listening')", () => {
+    // Port still bound after our child died = something we don't track owns it.
+    const foreign = formatBoundThenDied("notes", "s1", 5220, {
+      code: 1, signal: null, output: "Port 5220 is already in use", portStillBound: true,
+    });
+    expect(foreign).toMatch(/session then exited \(code 1\)/);
+    expect(foreign).toMatch(/STILL bound/);
+    expect(foreign).toMatch(/does not track/);
+    expect(foreign).toMatch(/already in use/);
+
+    const flap = formatBoundThenDied("notes", "s1", 5220, {
+      code: null, signal: "SIGKILL", output: "", portStillBound: false,
+    });
+    expect(flap).toMatch(/killed by SIGKILL/);
+    expect(flap).toMatch(/no longer bound/);
   });
 
   it("persistDevServerStartupFailure appends the diagnostic to a per-app log file", () => {

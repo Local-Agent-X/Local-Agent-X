@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type { ChildProcess } from "node:child_process";
-import { killProcessGroup } from "./process-tree-kill.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import { killProcessGroup, killProcessGroupSync } from "./process-tree-kill.js";
 
 // Regression guard for the load-bearing platform logic in killProcessGroup.
 // The three detached-spawn sites (process-session killSession + killWinPid, the
@@ -47,4 +47,41 @@ describe("killProcessGroup", () => {
       expect(() => killProcessGroup(4321)).not.toThrow();
     },
   );
+});
+
+// killProcessGroupSync must be usable from a process.on("exit") handler, where
+// the event loop is drained and an async spawn'd taskkill never runs — the gap
+// that orphaned dev-server children past a graceful LAX quit (they kept their
+// ports and fed the lazy-restart storm). Unlike the mocked group-kill specs
+// above, this spawns a real (benign, self-owned) child: the sync/async split is
+// exactly the part a mock can't see.
+describe("killProcessGroupSync", () => {
+  const isRunning = (pid: number): boolean => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  };
+
+  it("terminates a live detached child before returning control", async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+      windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: "ignore",
+    });
+    child.unref();
+    const pid = child.pid;
+    expect(pid).toBeTruthy();
+    expect(isRunning(pid!)).toBe(true);
+
+    killProcessGroupSync(pid!, child);
+
+    // The kill is synchronous but the OS may take a beat to reap; poll briefly.
+    const deadline = Date.now() + 3000;
+    while (isRunning(pid!) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(isRunning(pid!)).toBe(false);
+  }, 10_000);
+
+  it("never throws on an already-dead pid", () => {
+    expect(() => killProcessGroupSync(999_999_999)).not.toThrow();
+  });
 });

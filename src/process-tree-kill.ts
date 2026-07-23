@@ -55,3 +55,25 @@ export function killProcessGroup(pid: number, fallbackChild?: ChildProcess): voi
     }
   } catch { /* best-effort */ }
 }
+
+/**
+ * Synchronous {@link killProcessGroup}. Required in two places the async spawn
+ * can't serve: `process.on("exit")` handlers (the event loop is already drained,
+ * so a spawned taskkill never runs — on Windows that silently orphaned every
+ * dev-server child past a graceful LAX quit, leaving them holding their ports)
+ * and callers that must observe the port free before spawning a replacement.
+ * POSIX group-kill is synchronous either way. Never throws.
+ */
+export function killProcessGroupSync(pid: number, fallbackChild?: ChildProcess): void {
+  try {
+    if (process.platform === "win32") {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("node:child_process").execSync(
+        `taskkill /PID ${pid} /F /T`,
+        { stdio: "ignore", windowsHide: true, timeout: 5000 },
+      );
+    } else {
+      try { process.kill(-pid, "SIGKILL"); } catch { fallbackChild?.kill("SIGKILL"); }
+    }
+  } catch { /* best-effort */ }
+}

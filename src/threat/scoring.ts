@@ -4,6 +4,36 @@
 
 export type ThreatLevel = "normal" | "elevated" | "high" | "critical";
 
+/**
+ * Event types that are DETERMINISTIC EVIDENCE of data actually being at risk —
+ * each one is grounded in observed bytes, not temporal correlation or another
+ * layer's block decision:
+ *
+ * - "exfiltration"         — secret-shaped content was ACTUALLY IN an outbound
+ *                            payload (URL/body/headers). Data-flow proof, not
+ *                            a read-then-send timing heuristic.
+ * - "credential_in_output" — a credential materially appeared in a tool result
+ *                            the model now holds in context.
+ * - "secrets_in_output"    — same, for other secret-shaped content.
+ * - "canary_tripped"       — a canary token from the system prompt appeared in
+ *                            model output: confirmed prompt-injection exfil.
+ *
+ * Deliberately NOT evidence: "loop" (covers both runaway loops and the
+ * encoding-prep block — behavioral heuristics), "exfiltration_staging"
+ * (temporal correlation; 0 true positives in 7 weeks), "security_block" /
+ * "policy_block" (another layer's decision, whose false positives amplified
+ * into restriction — live failure 2026-07-23).
+ *
+ * Accumulated load alone (≥ HIGH_THRESHOLD) no longer restricts the session;
+ * it must be corroborated by at least one recorded event from this set.
+ */
+export const DETERMINISTIC_EVIDENCE_TYPES: ReadonlySet<string> = new Set([
+  "exfiltration",
+  "credential_in_output",
+  "secrets_in_output",
+  "canary_tripped",
+]);
+
 export interface ThreatEvent {
   type: string;
   score: number;
@@ -150,9 +180,26 @@ export class ThreatScorer {
   }
 
   /** Check if we should restrict operations — uses effective load, but a
-   *  confirmed breach latches restriction on regardless of trust budget. */
+   *  confirmed breach latches restriction on regardless of trust budget.
+   *  Load alone is not enough: heuristic signals (sensitive reads, shell
+   *  commands, …) can accumulate past the threshold on a legitimate session,
+   *  so restriction additionally requires at least one recorded event whose
+   *  type is deterministic evidence (see DETERMINISTIC_EVIDENCE_TYPES). */
   isRestricted(): boolean {
-    return this.confirmedBreach || this.effectiveLoad() >= this.HIGH_THRESHOLD;
+    if (this.confirmedBreach) return true;
+    return this.effectiveLoad() >= this.HIGH_THRESHOLD && this.getEvidenceTypes().length > 0;
+  }
+
+  /** Unique deterministic-evidence event types recorded this session, in
+   *  first-seen order. Non-empty is a precondition for load-based restriction;
+   *  the tool-policy pack also uses it to tell the user WHAT evidence tripped
+   *  the restriction instead of a generic (or false) failure message. */
+  getEvidenceTypes(): string[] {
+    const seen: string[] = [];
+    for (const e of this.events) {
+      if (DETERMINISTIC_EVIDENCE_TYPES.has(e.type) && !seen.includes(e.type)) seen.push(e.type);
+    }
+    return seen;
   }
 
   /**

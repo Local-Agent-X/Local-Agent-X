@@ -86,6 +86,10 @@ describe("loop ↔ exfil decoupling — end to end through the threat engine", (
     // The security scorer still rises for a real exfil event (decoupling cuts
     // only the loop path, not this one).
     expect(engine.scorer.getRawLoad()).toBeGreaterThan(0);
+    // The exfil is deterministic evidence AND names its sink: both feed the
+    // evidence-gated, sink-scoped restriction model.
+    expect(engine.getRestrictionEvidence().types).toContain("exfiltration");
+    expect(engine.getRestrictionEvidence().sinks).toContain("example.com");
     expect(threatBlockMessage(r.reason, !!r.loop)).toMatch(/\/approve/);
   });
 });

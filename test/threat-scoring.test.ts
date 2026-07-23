@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ThreatScorer, THREAT_SCORES } from "../src/threat/scoring.js";
+import { DETERMINISTIC_EVIDENCE_TYPES, ThreatScorer, THREAT_SCORES } from "../src/threat/scoring.js";
 
 // Tests against the raw threshold mechanism use startingBudget: 0 so the
 // effective load equals the raw load — the new fresh-install calibration
@@ -25,9 +25,11 @@ describe("ThreatScorer — level thresholds (no budget, no decay)", () => {
     expect(s.getStatus().level).toBe("elevated");
   });
 
-  it("crosses to high at 60 and triggers restricted mode", () => {
+  it("crosses to high at 60 and triggers restricted mode (with evidence-type event)", () => {
     const s = new ThreatScorer(RAW);
-    s.record("test", 60, "x");
+    // credential_in_output is a deterministic-evidence type — restriction
+    // requires load ≥ 60 AND evidence, and this event supplies both.
+    s.record("credential_in_output", 60, "x");
     expect(s.getStatus().level).toBe("high");
     expect(s.isRestricted()).toBe(true);
   });
@@ -271,29 +273,118 @@ describe("ThreatScorer — turn-based decay", () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════
+// Evidence gate — load alone must not restrict
+//
+// A session that accumulates heuristic signal (sensitive reads, shell
+// commands) past HIGH_THRESHOLD with ZERO deterministic evidence was being
+// network-restricted with a message claiming a network failure (live flail
+// 2026-07-23). Restriction now requires load ≥ 60 AND at least one recorded
+// event from DETERMINISTIC_EVIDENCE_TYPES. confirmedBreach latch unchanged.
+// ═══════════════════════════════════════════════════════════════════
+
+describe("ThreatScorer — deterministic-evidence gate", () => {
+  it("names exactly the four deterministic evidence types", () => {
+    expect([...DETERMINISTIC_EVIDENCE_TYPES].sort()).toEqual([
+      "canary_tripped", "credential_in_output", "exfiltration", "secrets_in_output",
+    ]);
+  });
+
+  it("load ≥ 60 from heuristic-only events does NOT restrict", () => {
+    const s = new ThreatScorer(RAW);
+    // Many sensitive reads + shell commands: level climbs, but none of these
+    // is deterministic evidence, so restriction must not engage.
+    for (let i = 0; i < 30; i++) {
+      s.record("sensitive_file_read", THREAT_SCORES.sensitive_file_read, `read #${i}`);
+      s.record("shell_command", THREAT_SCORES.shell_command, `cmd #${i}`);
+    }
+    expect(s.getStatus().score).toBeGreaterThanOrEqual(s.HIGH_THRESHOLD);
+    expect(s.isRestricted()).toBe(false);
+    expect(s.getEvidenceTypes()).toEqual([]);
+  });
+
+  it("loop-type events (incl. encoding-prep, scored as 'loop') are not evidence", () => {
+    const s = new ThreatScorer(RAW);
+    for (let i = 0; i < 30; i++) s.record("loop", THREAT_SCORES.loop_detected, `loop #${i}`);
+    expect(s.getStatus().score).toBeGreaterThanOrEqual(s.HIGH_THRESHOLD);
+    expect(s.isRestricted()).toBe(false);
+  });
+
+  it("the same heuristic load plus ONE exfiltration evidence event DOES restrict", () => {
+    const s = new ThreatScorer(RAW);
+    for (let i = 0; i < 30; i++) {
+      s.record("sensitive_file_read", THREAT_SCORES.sensitive_file_read, `read #${i}`);
+      s.record("shell_command", THREAT_SCORES.shell_command, `cmd #${i}`);
+    }
+    expect(s.isRestricted()).toBe(false);
+    s.record("exfiltration", THREAT_SCORES.exfiltration_pattern, "secret on the wire");
+    expect(s.isRestricted()).toBe(true);
+    expect(s.getEvidenceTypes()).toEqual(["exfiltration"]);
+  });
+
+  it("evidence with load still below threshold does not restrict (gate needs BOTH)", () => {
+    const s = new ThreatScorer(RAW);
+    s.record("exfiltration", THREAT_SCORES.exfiltration_pattern, "one exfil, 25 < 60");
+    expect(s.isRestricted()).toBe(false);
+  });
+
+  it("canary latch is unchanged — restricts regardless of load/budget", () => {
+    const s = new ThreatScorer(); // default budget 60 absorbs the 50 score
+    s.record("canary_tripped", THREAT_SCORES.canary_tripped, "leak");
+    expect(s.getStatus().score).toBe(0);
+    expect(s.isRestricted()).toBe(true);
+  });
+});
+
+describe("ThreatScorer — snapshot/restore carries the evidence gate", () => {
+  it("round-trips a restricted-with-evidence scorer (evidence derives from persisted events — no new fields)", () => {
+    const s = new ThreatScorer(RAW);
+    for (let i = 0; i < 30; i++) s.record("sensitive_file_read", THREAT_SCORES.sensitive_file_read, `r${i}`);
+    s.record("exfiltration", THREAT_SCORES.exfiltration_pattern, "wire");
+    expect(s.isRestricted()).toBe(true);
+
+    const restored = new ThreatScorer(RAW);
+    restored.restore(s.snapshot());
+    expect(restored.isRestricted()).toBe(true);
+    expect(restored.getEvidenceTypes()).toEqual(["exfiltration"]);
+  });
+
+  it("round-trips a high-load evidence-free scorer as still unrestricted", () => {
+    const s = new ThreatScorer(RAW);
+    for (let i = 0; i < 40; i++) s.record("sensitive_file_read", THREAT_SCORES.sensitive_file_read, `r${i}`);
+    expect(s.getStatus().score).toBeGreaterThanOrEqual(s.HIGH_THRESHOLD);
+    expect(s.isRestricted()).toBe(false);
+
+    const restored = new ThreatScorer(RAW);
+    restored.restore(s.snapshot());
+    expect(restored.isRestricted()).toBe(false);
+    expect(restored.getStatus()).toEqual(s.getStatus());
+  });
+});
+
 describe("ThreatScorer — settings override (constructor injection)", () => {
   it("a configured budget of 0 reproduces the pre-calibration behavior", () => {
     const s = new ThreatScorer({ startingBudget: 0, decayPerHour: 0, decayPerTurn: 0 });
-    s.record("test", 60, "x");
+    s.record("credential_in_output", 60, "x");
     expect(s.isRestricted()).toBe(true);
   });
 
   it("a configured budget of 120 makes the gate need twice the signal", () => {
     const s = new ThreatScorer({ startingBudget: 120, decayPerHour: 0, decayPerTurn: 0 });
-    s.record("test", 60, "x");
+    s.record("credential_in_output", 60, "x");
     expect(s.isRestricted()).toBe(false);
     // Need to push rawLoad past 120 + 60 = 180 → asymptotic with 60-class
     // events takes a few iterations: 60, 60+57=117, 117*.95+60=171, *.95+60=222.
-    s.record("test", 60, "x");
-    s.record("test", 60, "x");
-    s.record("test", 60, "x");
+    s.record("credential_in_output", 60, "x");
+    s.record("credential_in_output", 60, "x");
+    s.record("credential_in_output", 60, "x");
     expect(s.isRestricted()).toBe(true);
   });
 
   it("decayPerHour is honored — 0 disables time decay entirely", () => {
     let clock = 1_000_000;
     const s = new ThreatScorer({ startingBudget: 0, decayPerHour: 0, decayPerTurn: 0, now: () => clock });
-    s.record("test", 60, "x");
+    s.record("credential_in_output", 60, "x");
     clock += 10_000 * 60 * 60 * 1000; // 10k hours
     expect(s.isRestricted()).toBe(true);
   });

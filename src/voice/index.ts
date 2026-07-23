@@ -7,7 +7,7 @@ export type { EQPreset } from "./eq-presets.js";
 export { registerTTSProcess, interruptSpeech, wasTTSInterrupted } from "./tts-interruption.js";
 export { detectCapabilities } from "./capabilities.js";
 export type { VoiceCapabilities } from "./capabilities.js";
-export { transcribe, whisperTranscribe, multiLanguageTranscribe } from "./stt.js";
+export { transcribe, whisperTranscribe, multiLanguageTranscribe, VOICE_INJECTION_NOTICE } from "./stt.js";
 export type { WhisperModel } from "./stt.js";
 export { synthesizeKokoro, synthesizePiper } from "./tts-local.js";
 export { continuousListen } from "./continuous-listen.js";

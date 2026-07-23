@@ -268,6 +268,35 @@ describe("same-origin iframe descent (Stripe/embedded-editor/consent-in-iframe c
 		expect(out.occluded).toContain("role:offscreen-frame(2140,110)");
 	});
 
+	it("REFUSES a frame candidate COVERED by a main-document overlay (invisible to the frame-local hit-test)", () => {
+		// The modal lives in the MAIN document, stacked over the iframe: the
+		// in-frame hit-test passes (it can't see main-doc layers), so the final
+		// main-page point must be re-hit-tested in the main document.
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const modal = el("div", { id: "modal-backdrop", rect: { left: 0, top: 0, width: 1280, height: 800 } });
+		const doc = fakeDocument({ byRole: [], atPoint: () => modal, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://pay.example/embed" }), doc) as {
+			found: boolean; occluded: string[];
+		};
+		expect(out.found).toBe(false);
+		expect(out.occluded).toContain("role:covered-frame:div#modal-backdrop");
+	});
+
+	it("ACCEPTS a frame candidate when the main-document hit at the point is the iframe element itself", () => {
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => frame, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://pay.example/embed" }), doc) as {
+			found: boolean; x?: number; y?: number;
+		};
+		expect(out.found).toBe(true);
+		expect(out.x).toBe(440);
+		expect(out.y).toBe(310);
+	});
+
 	it("click_text skips an offscreen-frame text match instead of clicking dead air", () => {
 		const btn = el("button", { textContent: "Pay now" });
 		const inner = fakeDocument({ byRole: [btn], atPoint: () => btn });

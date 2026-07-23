@@ -144,6 +144,20 @@ function allowToCapabilitiesAndPolicies(allow: KernelAllow): {
 
 	if (allow.shell) {
 		capabilities.push({ toolClass: "shell", actions: ["exec"] });
+		// SHELL APPROVAL TIERING lives in the HOST, not here. This kernel policy
+		// stays a blanket `require-approval` for shell, but the host's
+		// onApprovalRequired hook returns true unconditionally (it delegates the
+		// user-facing decision to LAX's require-approval phase), so this rule never
+		// prompts or blocks on its own. LAX risk-tiers each command by its resolved
+		// argv[0] (src/tool-execution/shell-approval-tier.ts): a tier-0 command —
+		// confined sandbox + in-scope + every segment's argv[0] in the read-only/
+		// build/test SAFE_BIN set — auto-allows with NO prompt in that phase, while
+		// installs/rm/sudo/network/out-of-scope stay tier-1 (prompt) and rm -rf/dd/
+		// force-push stay tier-2 (destructive floor). The classifier cannot be
+		// imported here: arikernel is an upstream package with no access to src/'s
+		// SAFE_BIN list or getSandboxStatus(), and duplicating either would fork the
+		// single source of truth. So the tier is enforced host-side; this rule is
+		// the deny-by-default backstop for when a host hook is absent.
 		policies.push({
 			id: "approve-shell",
 			name: "Shell requires approval",

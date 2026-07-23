@@ -30,6 +30,8 @@ import {
   trustedCurrentUserEvidence,
 } from "../memory/promotion-gate.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
+import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
+import { getSandboxStatus } from "../sandbox/index.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
   const promotion = describeMemoryPromotionRequest(
@@ -74,6 +76,39 @@ export const requireApprovalPhase: Phase = async (ctx) => {
       metadata: { layer: "approval", userHint: USER_HINTS.policy },
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
+  }
+
+  // Tier-0 shell fast-path — the biggest autonomy win. A genuinely-safe shell
+  // command (effectively-confined sandbox, in scope, EVERY chain segment's
+  // resolved argv[0] in the read-only/build/test SAFE_BIN set) auto-allows with
+  // NO prompt, even on a profile whose shell tier is "ask" (Safe). This bypasses
+  // ONLY the interactive profile prompt: the SecurityLayer denylist / egress /
+  // network-argv0 / rm-floor / file-access boundary already ran in
+  // enforcePolicyPhase's runPreDispatch BEFORE this phase, so a blocked command
+  // never arrives here — tier-0 cannot resurrect a denied command. Placed AFTER
+  // the profile hard-deny above (a profile that DENIES shell still wins) and
+  // guarded so it never overrides a destructive op, a policy-required approval,
+  // or a memory promotion. Interactive-only (callContext==="local"): unattended
+  // runs stay governed by the profile + unattended-shell-gate, unchanged.
+  //
+  // The kernel is NOT a second prompt here: its `approve-shell` policy resolves
+  // through onApprovalRequired (lifecycle.ts) which returns true unconditionally,
+  // so the kernel never prompts/blocks shell — this require-approval phase is the
+  // sole shell-prompt gate, and a tier-0 CONTINUE here yields ZERO prompts
+  // end-to-end. (The tier classifier lives in src/ and cannot be imported by the
+  // separate arikernel package without a dependency cycle / a forked SAFE_BIN
+  // list, so the tier is enforced HERE, where the classifier + sandbox signal +
+  // profile all live.)
+  if (
+    ctx.callContext === "local" &&
+    !destructive &&
+    !ctx.policyApprovalReason &&
+    !promotion &&
+    isShellTierTool(ctx.tc.name) &&
+    typeof ctx.args.command === "string" &&
+    classifyShellTier(ctx.args.command, { sandboxConfined: getSandboxStatus().confined }) === 0
+  ) {
+    return CONTINUE;
   }
 
   if (promotion && trustedEvidence) {

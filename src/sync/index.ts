@@ -16,10 +16,36 @@ export type { SyncConfig } from "./constants.js";
 const logger = createLogger("sync");
 const execFileAsync = promisify(execFile);
 
-// Every git child this class spawns runs with a 30s timeout, so a lock file
-// older than this cannot belong to a live git we started — it was left by a
-// killed process. Younger locks are left alone (an op may be in flight).
-const STALE_GIT_LOCK_MS = 60_000;
+// Every git child this class spawns runs with GIT_TIMEOUT_MS, so a lock file
+// older than STALE_GIT_LOCK_MS cannot belong to a live git we started — it
+// was left by a killed process. Younger locks are left alone (an op may be
+// in flight). Keep STALE > TIMEOUT or live locks get stolen.
+//
+// 120s, not 30s: the first sync after a long outage is a catch-up commit of
+// the entire backlog (2026-07-23: 8 wedged days ≈ 18k paths + memory.db), and
+// add/commit/push over that legitimately outlast 30s on cold disk/uplink.
+const GIT_TIMEOUT_MS = 120_000;
+const STALE_GIT_LOCK_MS = 180_000;
+
+// Git warnings scale with the file count, not the failure count — a catch-up
+// `add -A` over ~18k files emits one "LF will be replaced by CRLF" line each,
+// ~2 MB of stderr. execFile's default maxBuffer is 1 MB, which KILLED the
+// child mid-add and surfaced the truncated warning stream as the sync error
+// (2026-07-23 live failure). Warnings must never be able to kill the op.
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Compress a failed git child into a message fit for the UI/log. Git prints
+ * per-file warnings FIRST and the actual fatal error LAST, so surface the
+ * tail — the old code threw the whole stderr, and a warning flood buried the
+ * real failure under megabytes of "LF will be replaced by CRLF" noise.
+ * Exported for tests.
+ */
+export function formatGitError(e: { stderr?: string; message: string }): string {
+  const stderr = (e.stderr ?? "").trim();
+  if (!stderr) return e.message;
+  return stderr.length > 2000 ? `… ${stderr.slice(-2000)}` : stderr;
+}
 
 export class AgentSync {
   private config: SyncConfig;
@@ -64,12 +90,12 @@ export class AgentSync {
     const token = this.getToken();
     try {
       const { stdout } = await execFileAsync("git", [...gitCredentialArgs(token), ...args], {
-        cwd: this.syncDir, timeout: 30_000, windowsHide: true,
+        cwd: this.syncDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, windowsHide: true,
         env: { ...process.env, ...gitCredentialEnv(token) },
       });
       return stdout.trim();
     } catch (e) {
-      throw new Error((e as { stderr?: string; message: string }).stderr || (e as Error).message);
+      throw new Error(formatGitError(e as { stderr?: string; message: string }));
     }
   };
 
@@ -115,7 +141,7 @@ export class AgentSync {
     // Let a failed clone throw. The old silent `git init` fallback is what
     // manufactured the wedged non-repo: an empty dir is retried on the next
     // sync, but a broken one is forever.
-    await execFileAsync("git", [...gitCredentialArgs(token), "clone", url, this.syncDir], { timeout: 60_000, windowsHide: true, env: { ...process.env, ...gitCredentialEnv(token) } });
+    await execFileAsync("git", [...gitCredentialArgs(token), "clone", url, this.syncDir], { timeout: 300_000, maxBuffer: GIT_MAX_BUFFER, windowsHide: true, env: { ...process.env, ...gitCredentialEnv(token) } });
   }
 
   // A git child killed mid-flight (e.g. a hard app exit during a heartbeat

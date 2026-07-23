@@ -163,3 +163,50 @@ describe("behavioral rules — in-window detection", () => {
 		expect(evaluateBehavioralRules(state)).toBeNull();
 	});
 });
+
+// Chunk L — payload-evidence relaxation of Rule 1. A kernel shell event carries no
+// command payload, so a bare "web taint → shell" sequence cannot be evidence-checked
+// and must NOT quarantine (that temporal-only FP bricked benchmark runs). These pins
+// prove the corrected behavior AND that the genuinely-dangerous followups still fire.
+describe("behavioral rules — Rule 1 no longer quarantines on a bare tainted shell", () => {
+	it("web taint + bare shell (allowed) → no quarantine (FP removed)", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		state.pushEvent(makeEvent("taint_observed", { taintSources: ["web"] }));
+		state.markTainted("web");
+		state.pushEvent(makeEvent("tool_call_allowed", { toolClass: "shell", action: "exec" }));
+		expect(evaluateBehavioralRules(state)).toBeNull();
+	});
+
+	it("web taint + bare shell (denied) → no quarantine (denial alone is not exfil evidence)", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		state.pushEvent(makeEvent("taint_observed", { taintSources: ["web"] }));
+		state.markTainted("web");
+		state.pushEvent(makeEvent("tool_call_denied", { toolClass: "shell", action: "exec" }));
+		expect(evaluateBehavioralRules(state)).toBeNull();
+	});
+
+	it("no within-op cascade: a benign shell then a file write after taint → still no quarantine", () => {
+		const state = new RunStateTracker({ behavioralRules: true });
+		state.pushEvent(makeEvent("taint_observed", { taintSources: ["web"] }));
+		state.markTainted("web");
+		state.pushEvent(makeEvent("tool_call_allowed", { toolClass: "shell", action: "exec" }));
+		state.pushEvent(makeEvent("tool_call_allowed", { toolClass: "file", action: "write" }));
+		// No quarantine ⇒ never enters restricted mode ⇒ the write (and later shells)
+		// keep flowing. This is the whole-run brick that chunk L removes at the source.
+		expect(evaluateBehavioralRules(state)).toBeNull();
+	});
+
+	it("still fires on the genuinely dangerous followups: sensitive read and egress after taint", () => {
+		const readState = new RunStateTracker({ behavioralRules: true });
+		readState.pushEvent(makeEvent("taint_observed", { taintSources: ["web"] }));
+		readState.markTainted("web");
+		readState.pushEvent(makeEvent("sensitive_read_attempt", { toolClass: "file", action: "read" }));
+		expect(evaluateBehavioralRules(readState)?.ruleId).toBe("web_taint_sensitive_probe");
+
+		const egressState = new RunStateTracker({ behavioralRules: true });
+		egressState.pushEvent(makeEvent("taint_observed", { taintSources: ["web"] }));
+		egressState.markTainted("web");
+		egressState.pushEvent(makeEvent("egress_attempt", { toolClass: "http", action: "post" }));
+		expect(evaluateBehavioralRules(egressState)?.ruleId).toBe("web_taint_sensitive_probe");
+	});
+});

@@ -244,7 +244,13 @@ describe("tool cannot drop taint metadata", () => {
 // ── Tainted content triggers behavioral rules ────────────────────────
 
 describe("tainted content triggers behavioral rules", () => {
-	it("web taint followed by shell exec matches web_taint_sensitive_probe", () => {
+	// Chunk L (payload-evidence): a bare shell exec after web taint no longer
+	// matches Rule 1 — the kernel shell event carries no payload, so the temporal
+	// sequence can't be evidence-checked and quarantining on it was the FP that
+	// bricked benchmark runs. Enforcement moved to the LAX payload gate (command
+	// text overlaps tainted bytes / carries secret-shaped content) + Rule 5 for
+	// data-carrying (long) commands. Egress after taint (next test) still fires.
+	it("web taint followed by bare shell exec does NOT match Rule 1 (temporal FP removed)", () => {
 		const state = new RunStateTracker({ behavioralRules: true });
 		state.pushEvent({
 			timestamp: new Date().toISOString(),
@@ -257,9 +263,7 @@ describe("tainted content triggers behavioral rules", () => {
 			toolClass: "shell",
 			action: "exec",
 		});
-		const match = evaluateBehavioralRules(state);
-		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
+		expect(evaluateBehavioralRules(state)).toBeNull();
 	});
 
 	it("web taint followed by egress attempt matches sensitive probe", () => {

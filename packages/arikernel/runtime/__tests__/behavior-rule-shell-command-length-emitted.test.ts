@@ -113,7 +113,7 @@ describe("Rule 5: tainted_shell_with_data — commandLength metadata", () => {
 		).rejects.toThrow(ToolCallDeniedError);
 	});
 
-	it("short shell command with web taint is still blocked by Rule 1 (web_taint_sensitive_probe)", async () => {
+	it("short shell command with web taint is still blocked by the deny-tainted-shell policy", async () => {
 		const fw = makeFirewall("short-cmd-tainted");
 
 		const httpGrant = fw.requestCapability("http.read");
@@ -130,7 +130,9 @@ describe("Rule 5: tainted_shell_with_data — commandLength metadata", () => {
 			grantId: httpGrant.grant?.id,
 		});
 
-		// Short command — Rule 1 (web taint → shell) fires before Rule 5
+		// Short command: the deny-tainted-shell POLICY denies it. Chunk L removed
+		// shell from Rule 1's followups (temporal FP), so the behavioral quarantine
+		// no longer fires here — but the policy deny is independent and still blocks.
 		await expect(
 			fw.execute({
 				toolClass: "shell",

@@ -10,7 +10,7 @@ import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserve
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
 import { WORKTREE_PATH_TOOLS, hasCapability } from "../tool-registry.js";
-import { taintedShellBlockReason, blockedSelfVerifyGuidance } from "./shell-block-guidance.js";
+import { taintedShellBlockReason, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
@@ -80,30 +80,48 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // dead code. The MODEL can't supply taint — it comes from the trusted
     // runtime tracker keyed off the session id.
     const taintLabels = getKernelTaintSources(sessionId || "default");
-    // Tainted-shell pre-gate: deny here, BEFORE ariEvaluate, so the kernel never
-    // observes a taint+shell event and quarantines the run (which would also
-    // block file writes for the rest of this op). Shell stays denied; editing
-    // keeps working. See taintedShellBlockReason for the full rationale.
-    const shellTaintBlock = taintedShellBlockReason(tc.name, taintLabels);
-    if (shellTaintBlock) {
-      // Envelope (not raw) so the block carries layer metadata: the chat UI
-      // keys its declassify-and-retry action off layer === "tainted-shell".
-      return terminate(ctx, {
-        rendered: "model",
-        result: {
-          content: shellTaintBlock,
-          isError: true,
-          status: "blocked",
-          metadata: {
-            layer: "tainted-shell",
-            userHint: USER_HINTS.policy,
-            recovery: "If the sensitive read that tainted this session was intended and safe, ask the user to declassify (one click on this card, or Settings → Security), then retry.",
+    // Tainted-shell PAYLOAD-EVIDENCE pre-gate (chunk L). LAX owns the tainted-shell
+    // decision — it front-runs the kernel's PURELY-TEMPORAL deny-tainted-shell. The
+    // gate now denies a shell command ONLY when the command text carries the
+    // tainted/secret bytes (see taintedShellBlockReason); a benign command after a
+    // web read (npm test, pytest) is ALLOWED. This kills the false-positive class
+    // that bricked benchmark runs — "web read then any shell" is no longer exfil.
+    let kernelTaintLabels = taintLabels;
+    if (hasCapability(tc.name, "shell") && taintLabels.some((s) => SHELL_TAINT_DENY_SOURCES.has(s))) {
+      const shellTaintBlock = taintedShellBlockReason(tc.name, taintLabels, sessionId || "default", args);
+      if (shellTaintBlock) {
+        // Payload evidence present → deny HERE, BEFORE ariEvaluate, so the kernel
+        // never observes the taint+shell event and quarantines the run (a
+        // quarantine also blocks file WRITES for the rest of the op). Envelope (not
+        // raw) so the block carries layer metadata: the chat UI keys its
+        // declassify-and-retry action off layer === "tainted-shell".
+        return terminate(ctx, {
+          rendered: "model",
+          result: {
+            content: shellTaintBlock,
+            isError: true,
+            status: "blocked",
+            metadata: {
+              layer: "tainted-shell",
+              userHint: USER_HINTS.policy,
+              recovery: "If the sensitive read that tainted this session was intended and safe, ask the user to declassify (one click on this card, or Settings → Security), then retry.",
+            },
           },
-        },
-        allowed: false,
-      });
+          allowed: false,
+        });
+      }
+      // CLEARED (no payload evidence). Strip the untrusted-content taint from the
+      // labels handed to the kernel for THIS shell call: the LAX gate is the
+      // authoritative tainted-shell adjudicator, so feeding web/rag/email taint to
+      // ariEvaluate would let the kernel's temporal deny-tainted-shell policy +
+      // web_taint_sensitive_probe rule RE-deny and quarantine the exact benign
+      // command the payload gate just cleared — the whole-run brick this chunk
+      // removes. The kernel still enforces grants / approve-shell / everything
+      // non-taint on the shell call; genuine exfil (secret bytes in the command)
+      // was already terminated above and never reaches here.
+      kernelTaintLabels = taintLabels.filter((s) => !SHELL_TAINT_DENY_SOURCES.has(s));
     }
-    const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, taintLabels, ariScopeId);
+    const ariResult = await ariEvaluate(tc.name, deriveAriAction(tc.name, args), args, kernelTaintLabels, ariScopeId);
     if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
       // SC-10: an egress-class tool denied at the KERNEL (e.g. TD-11 derives a

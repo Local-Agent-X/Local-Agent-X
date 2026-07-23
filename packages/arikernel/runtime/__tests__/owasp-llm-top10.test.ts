@@ -75,15 +75,30 @@ function makeFirewall(name: string, threshold = 3): Firewall {
 // ── LLM01: Prompt Injection (tool-call layer) ──────────────────────
 
 describe("LLM01 — Prompt Injection", () => {
-	it("web-tainted input followed by shell exec triggers quarantine", () => {
+	// Chunk L (payload-evidence): a BARE shell exec after web taint is NO LONGER a
+	// quarantine trigger — a kernel shell event carries no payload, so the temporal
+	// sequence alone can't prove exfil (that FP bricked benchmark runs). A shell
+	// that carries DATA (long command) is still caught by Rule 5, and a shell whose
+	// command text carries the tainted/secret bytes is caught with evidence by the
+	// LAX payload gate. This test now pins the corrected behavior for both cases.
+	it("bare shell exec after web taint does NOT quarantine (temporal FP removed)", () => {
 		const state = new RunStateTracker();
 		pushEvents(state, [
 			{ timestamp: ts(), type: "taint_observed", taintSources: ["web"] },
 			{ timestamp: ts(), type: "tool_call_allowed", toolClass: "shell", action: "exec" },
 		]);
+		expect(evaluateBehavioralRules(state)).toBeNull();
+	});
+
+	it("data-carrying shell after web taint still quarantines (Rule 5, evidence = long command)", () => {
+		const state = new RunStateTracker();
+		pushEvents(state, [
+			{ timestamp: ts(), type: "taint_observed", taintSources: ["web"] },
+			{ timestamp: ts(), type: "tool_call_allowed", toolClass: "shell", action: "exec", metadata: { commandLength: 200 } },
+		]);
 		const match = evaluateBehavioralRules(state);
 		expect(match).not.toBeNull();
-		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
+		expect(match?.ruleId).toBe("tainted_shell_with_data");
 	});
 
 	it("RAG-tainted input followed by file write is blocked by policy", async () => {
@@ -346,7 +361,9 @@ describe("LLM07 — Insecure Plugin Design (behavioral patterns)", () => {
 		]);
 		const match = evaluateBehavioralRules(state);
 		expect(match).not.toBeNull();
-		// Rule 1 catches taint→shell first; rule 5 would also match but rule 1 has priority
-		expect(match?.ruleId).toBe("web_taint_sensitive_probe");
+		// Chunk L: Rule 1 no longer fires on a shell event (temporal FP removed), so
+		// the data-carrying shell is now caught by Rule 5 (tainted_shell_with_data),
+		// whose evidence is the >100-char command length.
+		expect(match?.ruleId).toBe("tainted_shell_with_data");
 	});
 });

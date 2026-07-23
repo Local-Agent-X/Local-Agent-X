@@ -62,7 +62,23 @@ export function applyBehavioralRule(
 // ── Rule 1: web_taint_sensitive_probe ──────────────────────────────
 //
 // If untrusted web taint was recently observed, and shortly after the run
-// attempts sensitive file reads, shell exec, or outbound egress → quarantine.
+// attempts a sensitive file read or outbound egress → quarantine.
+//
+// PAYLOAD-EVIDENCE RELAXATION (chunk L — fixes the temporal-only FP that bricked
+// benchmark runs). This rule previously also fired on a bare shell tool_call
+// (allowed OR denied) after web taint. But a kernel SecurityEvent for a shell call
+// carries only toolClass/action + commandLength — NOT the command PAYLOAD — so
+// this rule CANNOT verify the shell actually exfiltrates the tainted bytes.
+// Quarantining the whole run on the mere sequence "web taint → shell" was a false
+// positive: it flipped the run into restricted mode and cascaded denials onto
+// every later write/shell (a benign `npm test` after reading docs was enough).
+// Shell tool_call is removed from the dangerous-followup set below. Actual shell
+// exfil is now caught with EVIDENCE by the LAX payload gate (taintedShellBlockReason
+// — command text overlaps the tainted bytes OR carries secret-shaped content) plus
+// the payload-based egress/canary gates; a data-CARRYING shell (long command) is
+// still caught by Rule 5 (tainted_shell_with_data), left intact. The retained
+// followups here — sensitive_read_attempt and egress_attempt — are the genuinely
+// dangerous ones, and the downstream egress/canary gates evidence-check those too.
 
 function checkWebTaintSensitiveProbe(
 	events: readonly SecurityEvent[],
@@ -84,13 +100,14 @@ function checkWebTaintSensitiveProbe(
 	// If taint was evicted from window but sticky flag is set, any dangerous event in window triggers
 	const searchFromIdx = taintEvent ? events.indexOf(taintEvent) : -1;
 
+	// NOTE: shell tool_call (allowed/denied) is DELIBERATELY excluded — see the
+	// payload-evidence relaxation note above. A shell event here carries no payload,
+	// so it cannot be evidence-checked; blocking on it was the temporal-only FP.
 	const dangerousFollowup = findAfter(
 		events,
 		searchFromIdx,
 		(e) =>
 			e.type === "sensitive_read_attempt" ||
-			(e.type === "tool_call_denied" && e.toolClass === "shell") ||
-			(e.type === "tool_call_allowed" && e.toolClass === "shell") ||
 			e.type === "egress_attempt",
 	);
 

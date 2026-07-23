@@ -548,6 +548,11 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .model-chip .mc-model{overflow:hidden;text-overflow:ellipsis}
 .model-chip .mc-caret{color:var(--muted);font-size:.5rem}
 .composer-pop{position:absolute;bottom:calc(100% + 8px);z-index:600;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.45);font-family:var(--mono);font-size:.7rem}
+/* Chat-link right-click menu (chat-link-open.js): composer-pop look, but
+   fixed at the cursor instead of anchored above the composer. */
+.link-menu{position:fixed;bottom:auto;z-index:900;padding:4px;min-width:190px}
+.link-menu-item{padding:8px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;color:var(--text)}
+.link-menu-item:hover{background:var(--hover)}
 #model-menu{left:0}
 #voice-pop{right:0;width:280px;padding:12px}
 #voice-pop .vp-row{display:flex;align-items:center;gap:8px;margin-top:10px}

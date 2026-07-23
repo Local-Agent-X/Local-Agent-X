@@ -188,9 +188,13 @@
 	}
 
 	// "+" button: mint a fresh user tab, adopt it, and mirror its nav state.
-	function newTab() {
+	// An optional url loads immediately in the new tab (chat-link-open.js);
+	// the strip's "+" click handler passes no argument, and a stray event
+	// object must not become a load target.
+	function newTab(url) {
 		if (!bridge || !bridge.newTab) return;
-		Promise.resolve(bridge.newTab()).then(function (state) {
+		var target = (typeof url === 'string' && url) ? url : undefined;
+		Promise.resolve(bridge.newTab(target)).then(function (state) {
 			if (state) {
 				selectedViewId = state.viewId;
 				updateNavUI(state);
@@ -366,6 +370,12 @@
 		refreshSwitcher: refreshSwitcher,
 		switchTo: switchTo,
 		newTab: newTab,
+		// Chat links (chat-link-open.js): open url as a fresh USER tab and
+		// raise the Browser panel so the page is actually visible.
+		openUrl: function (url) {
+			if (typeof switchSidePanelTab === 'function') switchSidePanelTab('browser');
+			newTab(url);
+		},
 	};
 
 	if (document.readyState === 'loading') {

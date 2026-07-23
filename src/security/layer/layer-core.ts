@@ -13,6 +13,7 @@ import {
 } from "./types.js";
 import { evaluateFileAccess, realpathDeep, pathIsWithin, canonicalAllowForms } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
+import { getSandboxStatus } from "../../sandbox/index.js";
 import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { evaluateBrowser as evaluateBrowserAction } from "./browser-egress-eval.js";
 import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
@@ -261,6 +262,12 @@ export class SecurityLayer {
         workspace: this.workspace,
         fileAccessMode: this.fileAccessMode,
         inlineEvalPolicy: this.inlineEvalPolicy,
+        // EFFECTIVE confinement of the spawn this decision gates: bash wraps
+        // its spawn via wrapSpawnForSandbox, so .confined (which folds in
+        // fallback — a guarded selection that fell back to host reports
+        // false) is exactly what will hold at execution time. Read fresh per
+        // call so a runtime mode change takes effect without a restart.
+        sandboxConfined: getSandboxStatus().confined,
         allowedPathCheck: (rp, sid) => this.isInAllowedPaths(rp, sid),
         sessionId: ctx.sessionId,
       });

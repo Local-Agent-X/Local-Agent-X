@@ -24,9 +24,12 @@ import { isLockedBaselinePath } from "../../tools/app-tools/write-guard.js";
 // file tools use whether each is inside the approved roots. It rejects the
 // realistic escapes (an absolute or ~-expanded path, a `..` climb, a redirect
 // target outside the boundary). It CANNOT see a path that only exists at
-// runtime (`$VAR`, `$(...)`) — but shell-policy already blocks command
-// substitution, chaining, and `${}`, so those avenues are mostly closed
-// upstream. The dedicated tools remain the real wall for file work.
+// runtime (`$VAR`, `$(...)`) — when the spawn is UNCONFINED, shell-policy
+// blocks command substitution, chaining, and `${}`, so those avenues are
+// mostly closed upstream; under a CONFINED backend those string rules stand
+// down and the kernel cage itself (credential-path denials enforced on the
+// whole process tree) is the wall the runtime-only path can't cross. The
+// dedicated tools remain the real wall for file work.
 //
 // Single source of truth: the per-path decision is evaluateFileAccess — the
 // exact gate the file tools use — so the mode means the same thing everywhere.
@@ -37,6 +40,14 @@ export interface ShellPathGuardCtx {
   // Inline-eval (R4-11/R4-13) policy — independent of fileAccessMode. Optional
   // so callers that omit it fail SAFE: an unset policy refuses inline-eval.
   inlineEvalPolicy?: InlineEvalPolicy;
+  // EFFECTIVE OS-level confinement of the spawn being vetted — callers derive
+  // it from getSandboxStatus().confined (false when a guarded selection FELL
+  // BACK to host). Gates ONLY the structural string heuristics in
+  // evaluateShellCommand (substitution/separators/pipe-cap/script-write/
+  // interpreter-escape/inline-eval-form); the egress, rm, denylist, and
+  // file-access rules ignore it. Optional so callers that omit it fail SAFE
+  // (treated as unconfined → every rule applies).
+  sandboxConfined?: boolean;
   allowedPathCheck: (realPath: string, sessionId?: string) => boolean;
   sessionId?: string;
 }
@@ -101,7 +112,10 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // policy (NOT the file-access mode) and resolve the rename-escape path against
   // the workspace tree. Unset policy → "refuse" (fail safe). This is the
   // canonical seam; the redundant secondary scan in process-session runs AFTER it.
-  const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace, ctx.fileAccessMode);
+  // platform is left to its default (process.platform); ctx.sandboxConfined
+  // rides through so the structural heuristics can stand down under a
+  // confined backend (see evaluateShellCommand).
+  const cmdDecision = evaluateShellCommand(command, ctx.inlineEvalPolicy ?? "refuse", ctx.workspace, ctx.fileAccessMode, undefined, ctx.sandboxConfined);
   if (!cmdDecision.allowed) return cmdDecision;
   // ALWAYS-ON (mode-independent) self-brick guard: refuse a shell command that
   // would DELETE or OVERWRITE the platform's own protected engine source. The

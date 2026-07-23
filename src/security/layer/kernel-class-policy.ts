@@ -5,6 +5,7 @@ import { evaluateFileAccess } from "./file-access.js";
 import { resolvePath as resolveSqlDbPath } from "../../tools/sql-tools.js";
 import { evaluateWebFetch, type EgressMode } from "./network-policy.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
+import { getSandboxStatus } from "../../sandbox/index.js";
 import type { KernelClass } from "../../tool-registry.js";
 
 export interface KernelClassPolicyCtx {
@@ -105,6 +106,11 @@ export function evaluateByKernelClass(
           workspace: policy.workspace,
           fileAccessMode: policy.fileAccessMode,
           inlineEvalPolicy: policy.inlineEvalPolicy,
+          // Same effective-confinement signal the bash path passes: the
+          // shell-class tools spawn through wrapSpawnForSandbox too (and
+          // process_start refuses docker outright), so .confined — fallback-
+          // aware — describes the cage this spawn will actually run in.
+          sandboxConfined: getSandboxStatus().confined,
           allowedPathCheck: (rp, sid) => policy.isInAllowedPaths(rp, sid),
           sessionId: ctx.sessionId,
         });

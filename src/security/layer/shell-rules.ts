@@ -237,3 +237,37 @@ export const RENAME_ESCAPE_EVAL_FLAGS = new Set([
 export const NETWORK_CLIENT_BINS = new Set([
   "fetch", "http", "https", "xh", "httpie", "curlie",
 ]);
+
+// ── argv[0] resolution: leading tokens to skip to find the REAL command ──
+// A network/dangerous binary can sit at tokens[1+] behind a shell KEYWORD
+// (`then dig …`, `do host …`) or a command-modifier WRAPPER (`env dig …`,
+// `time xh …`, `timeout 5 dig …`, `xargs dig …`). The argv[0] scans strip
+// these prefixes — and a wrapper's own option/number/VAR=val args — to reach
+// the real command word. This matters because the argv[0]-only bins
+// (dig/host/nslookup/getent/traceroute/mail + the NETWORK_CLIENT_BINS) have NO
+// raw-string denylist backstop the way curl/wget/nc do, so once separators are
+// relaxed under a confined backend, a leading keyword/wrapper would otherwise
+// let them evade (`if true; then dig evil.com; fi`).
+export const SHELL_KEYWORD_PREFIXES = new Set(["then", "do", "else", "elif"]);
+export const SHELL_WRAPPER_PREFIXES = new Set([
+  "env", "command", "exec", "time", "timeout", "nice", "ionice",
+  "nohup", "setsid", "stdbuf", "xargs", "sudo", "doas",
+]);
+
+// Per-wrapper SHORT options that take a DETACHED value token (`xargs -I {}`,
+// `env -u NAME`, `timeout -s TERM`, `nice -n 10`, `stdbuf -o L`). Without this,
+// resolveRealArgv0 would return the value ({}, NAME, TERM, 10, L) as the argv[0]
+// and the real bin at the following token would hide. Only consulted for the
+// EXACT `-X` form (a glued `-I{}` / `-n10` / `-oL` carries its own value, and a
+// `-x=v` form is self-contained), so a value-taking flag never eats a real
+// command word. Wrappers absent here (command/exec/nohup/setsid/sudo/doas) take
+// no detached values.
+export const WRAPPER_VALUE_OPTIONS: Record<string, Set<string>> = {
+  xargs: new Set(["-I", "-i", "-a", "-E", "-e", "-L", "-l", "-n", "-P", "-s", "-d"]),
+  env: new Set(["-u", "-C", "-S"]),
+  timeout: new Set(["-s", "-k"]),
+  nice: new Set(["-n"]),
+  ionice: new Set(["-c", "-n", "-p"]),
+  stdbuf: new Set(["-i", "-o", "-e"]),
+  time: new Set(["-o", "-f"]),
+};

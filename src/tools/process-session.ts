@@ -17,7 +17,7 @@ import { buildSanitizedEnv } from "./shell-tools.js";
 import { resolveWindowsShell } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/layer/index.js";
-import { getSandboxMode, wrapSpawnForSandbox } from "../sandbox/index.js";
+import { getSandboxMode, getSandboxStatus, wrapSpawnForSandbox } from "../sandbox/index.js";
 import { projectRoot } from "../workspace/paths.js";
 
 import { createLogger } from "../logger.js";
@@ -103,8 +103,15 @@ export function startSession(
 ): { session: ProcessSession } | { error: string } {
   // Same command vetting bash gets: denylist + metachar/obfuscation scan.
   // process_start spawns through /bin/bash -c (or powershell -Command), so an
-  // unvetted command here is identical RCE to an unvetted bash call.
-  const verdict = evaluateShellCommand(command);
+  // unvetted command here is identical RCE to an unvetted bash call. The
+  // effective-confinement signal rides along for the same reason it does on
+  // the canonical evaluateShellCommandAndPaths path: this session spawns
+  // through wrapSpawnForSandbox below, so under a confined backend the
+  // structural string heuristics stand down (docker reports confined but is
+  // refused just after — the rules-skip is moot on that branch).
+  const verdict = evaluateShellCommand(
+    command, undefined, undefined, undefined, undefined, getSandboxStatus().confined,
+  );
   if (!verdict.allowed) {
     return { error: `blocked by shell policy: ${verdict.reason}` };
   }

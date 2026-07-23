@@ -30,11 +30,24 @@ describe("SecurityLayer", () => {
   // literal IPs that the existing tests rely on.
   let sec: SecurityLayer;
   let savedLaxDir: string | undefined;
+  let savedSandbox: string | undefined;
   let suiteLaxDir: string;
   let suiteWorkspaceRoot: string;
 
   beforeAll(() => {
     savedLaxDir = process.env.LAX_DATA_DIR;
+    // Pin the sandbox selection to HOST for this suite. SecurityLayer now
+    // derives effective confinement from getSandboxStatus() and skips the
+    // STRUCTURAL string heuristics (substitution/separators/pipe-cap/
+    // inline-eval form) when the spawn is kernel-confined — so without
+    // pinning, the assertions below would depend on whether THIS machine's
+    // guarded cage happens to be usable (green on a bare Linux CI runner,
+    // red on a macOS dev box). host selection → confined=false → this suite
+    // asserts the UNCONFINED posture, where every string rule applies. The
+    // confined posture is covered deterministically by the parameterized
+    // matrix in src/security/layer/shell-policy.test.ts.
+    savedSandbox = process.env.LAX_SANDBOX;
+    process.env.LAX_SANDBOX = "host";
     suiteLaxDir = mkdtempSync(join(tmpdir(), "security-test-"));
     process.env.LAX_DATA_DIR = suiteLaxDir;
     writeFileSync(
@@ -54,6 +67,8 @@ describe("SecurityLayer", () => {
   afterAll(() => {
     if (savedLaxDir === undefined) delete process.env.LAX_DATA_DIR;
     else process.env.LAX_DATA_DIR = savedLaxDir;
+    if (savedSandbox === undefined) delete process.env.LAX_SANDBOX;
+    else process.env.LAX_SANDBOX = savedSandbox;
     rmSync(suiteLaxDir, { recursive: true, force: true });
     rmSync(suiteWorkspaceRoot, { recursive: true, force: true });
   });

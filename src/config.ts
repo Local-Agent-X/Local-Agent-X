@@ -144,7 +144,7 @@ export function loadConfig(): LAXConfig {
   // invalid fields are dropped per-field: a newer writer must never brick an
   // older reader. The on-disk value is deliberately left untouched so the
   // newer binary keeps it.
-  let config: LAXConfig;
+  let config: ReturnType<typeof configSchema.parse>;
   const strict = configSchema.safeParse(raw);
   if (strict.success) {
     config = strict.data;

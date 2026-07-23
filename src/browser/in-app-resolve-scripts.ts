@@ -20,7 +20,9 @@
  * level deep, matching extract.ts collectRoots (the coords fallback follows
  * up to two nested hops); cross-origin frames are skipped. A frame candidate
  * whose final main-page point is outside the MAIN viewport (offscreen/
- * clipped/hidden iframes) is rejected — never a dead-air click.
+ * clipped/hidden iframes) or covered by a MAIN-document layer over the iframe
+ * (modal/backdrop — invisible to the frame-local hit-test) is rejected —
+ * never a dead-air or click-through-an-overlay click.
  *
  * Every script runs ONLY in the view's isolated world (1901, enforced in
  * desktop/src/server-bridge-browser.ts). Free identifiers are limited to
@@ -130,6 +132,15 @@ ${FRAME_HELPERS}
 		// not report a "clicked" that landed in dead air.
 		if (mainViewportMiss(root, x + o.dx, y + o.dy)) {
 			occluded.push(via + ":offscreen-frame(" + ((x + o.dx) | 0) + "," + ((y + o.dy) | 0) + ")");
+			return null;
+		}
+		// The frame-local hit-test above cannot see a MAIN-document layer over
+		// the iframe (modal/backdrop/toast) — re-hit-test the final main-page
+		// point in the main document and name the occluder on refusal.
+		const cover = frameCover(root, x + o.dx, y + o.dy,
+			{ left: r.left + o.dx, top: r.top + o.dy, width: r.width, height: r.height });
+		if (!cover.ok) {
+			occluded.push(via + ":covered-frame:" + describe(cover.hit));
 			return null;
 		}
 		if (!related) {
@@ -292,6 +303,10 @@ ${FRAME_HELPERS}
 		if (!related && !benignOverlap(hit, r, root.doc)) continue;
 		const o = frameOffset(root); // AFTER the scroll — the frame rect moves with it
 		if (mainViewportMiss(root, x + o.dx, y + o.dy)) continue; // offscreen frame — never a dead-air click
+		// A main-document overlay above the iframe is invisible to the
+		// frame-local hit-test — skip the candidate, same as in-frame occlusion.
+		if (!frameCover(root, x + o.dx, y + o.dy,
+			{ left: r.left + o.dx, top: r.top + o.dy, width: r.width, height: r.height }).ok) continue;
 		const res = { found: true, role: roleOf(el), x: x + o.dx, y: y + o.dy,
 			dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
 			zoom: (typeof visualViewport !== "undefined" && visualViewport && visualViewport.scale) || 1 };

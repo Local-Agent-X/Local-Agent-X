@@ -85,7 +85,16 @@ export const OCCLUSION_HELPERS = `
  *  read at USE time, never cached — scrollIntoView moves the frame's rect.
  *  mainViewportMiss guards frame-derived coords: a frame candidate whose
  *  final MAIN-page point falls outside the main viewport (offscreen/clipped/
- *  hidden iframes) must be rejected, not clicked into dead air. */
+ *  hidden iframes) must be rejected, not clicked into dead air.
+ *  frameCover closes the other half of that contract: the frame-local
+ *  hit-test cannot see a MAIN-document layer stacked over the iframe (modal,
+ *  backdrop, toast), so the final main-page point is re-hit-tested in the
+ *  main document and must land on the frame element itself (or a benign
+ *  cosmetic overlap, same rule as in-frame occlusion). Requires
+ *  OCCLUSION_HELPERS in scope when actually invoked. Residual: an
+ *  overflow:hidden ANCESTOR that clips the iframe is accepted by the
+ *  hit-contains-frame arm and stays undetected — narrower than the modal
+ *  class this guards against. */
 export const FRAME_HELPERS = `
 	const sameOriginRoots = () => {
 		const out = [];
@@ -110,5 +119,15 @@ export const FRAME_HELPERS = `
 		if (!root.frameEl) return false; // main-doc candidates keep pre-frame behavior
 		const de = document.documentElement;
 		return x < 0 || y < 0 || x >= ((de && de.clientWidth) || 1) || y >= ((de && de.clientHeight) || 1);
+	};
+	const frameCover = (root, mx, my, mr) => {
+		if (!root.frameEl) return { ok: true }; // main-doc candidates keep their own hit-test
+		const hit = document.elementFromPoint(mx, my);
+		if (!hit) return { ok: true }; // nothing stacked at the point (or bare fake DOM)
+		const rel = hit === root.frameEl
+			|| (root.frameEl.contains && root.frameEl.contains(hit))
+			|| (hit.contains && hit.contains(root.frameEl));
+		if (rel || benignOverlap(hit, mr, document)) return { ok: true };
+		return { ok: false, hit };
 	};
 `;

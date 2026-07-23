@@ -277,6 +277,46 @@ describe("same-origin iframe descent (Stripe/embedded-editor/consent-in-iframe c
 		expect(out.found).toBe(false);
 	});
 
+	it("REFUSES a frame candidate under a MAIN-document modal/backdrop and names the occluder", () => {
+		// The frame-local hit-test passes (it cannot see main-doc layers), but
+		// the main document has a full-page backdrop stacked over the iframe —
+		// clicking would land on the backdrop, not the frame's button.
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const backdrop = el("div", { rect: { left: 0, top: 0, width: 1280, height: 800 } });
+		const doc = fakeDocument({ byRole: [], atPoint: () => backdrop, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://pay.example/embed" }), doc) as {
+			found: boolean; occluded: string[];
+		};
+		expect(out.found).toBe(false);
+		expect(out.occluded).toContain("role:covered-frame:div");
+	});
+
+	it("ACCEPTS a frame candidate under a small cosmetic main-doc overlap (benign rule, same as in-frame)", () => {
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		// Icon-sized element sitting mostly WITHIN the target's main-page rect
+		// (400,300,80,20): ≤2× area, ≥50% inside — benign, click proceeds.
+		const icon = el("span", { rect: { left: 430, top: 302, width: 20, height: 16 } });
+		const doc = fakeDocument({ byRole: [], atPoint: () => icon, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://pay.example/embed" }), doc) as {
+			found: boolean; via?: string; x?: number; y?: number;
+		};
+		expect(out).toMatchObject({ found: true, via: "role", x: 440, y: 310 });
+	});
+
+	it("click_text skips a frame match covered by a main-document layer", () => {
+		const btn = el("button", { textContent: "Pay now" });
+		const inner = fakeDocument({ byRole: [btn], atPoint: () => btn });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const backdrop = el("div", { rect: { left: 0, top: 0, width: 1280, height: 800 } });
+		const doc = fakeDocument({ byRole: [], atPoint: () => backdrop, frames: [frame] });
+		const out = runTextSearch("Pay now", doc) as { found: boolean };
+		expect(out.found).toBe(false);
+	});
+
 	it("click_text finds text living only inside an iframe and returns MAIN-page coords", () => {
 		const btn = el("button", { textContent: "Pay now" });
 		const inner = fakeDocument({ byRole: [btn], atPoint: () => btn });

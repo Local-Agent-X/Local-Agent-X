@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { Page } from "playwright";
+import type { Page, BrowserContext } from "playwright";
 import { BrowserManager } from "./manager.js";
+import { wirePopupAdoption } from "./manager-popups.js";
 import { installRequestGuard } from "./guards.js";
 import { installDownloadHandler } from "./downloads.js";
 import { handleNewTab } from "../tools/browser-tools/navigation.js";
@@ -563,7 +564,21 @@ describe("BrowserManager — context 'page' event adopts site-opened tabs", () =
   function wire(mgr: BrowserManager): { emit: (p: NavFakePage) => void; on: ReturnType<typeof vi.fn> } {
     let handler: PageHandler | undefined;
     const on = vi.fn((event: string, h: PageHandler) => { if (event === "page") handler = h; });
-    (mgr as unknown as { wirePopupAdoption: (c: unknown) => void }).wirePopupAdoption({ on });
+    // wirePopupAdoption is now a free function (split from manager.ts for the LOC
+    // ceiling); drive it with a fake context + a host over the manager's privates.
+    const m = mgr as unknown as {
+      owned: Page[];
+      peerPages: (() => Page[]) | null;
+      adoptPage: (p: Page) => Page;
+      popupWiredContexts: WeakSet<object>;
+    };
+    wirePopupAdoption({ on } as unknown as BrowserContext, {
+      wired: m.popupWiredContexts,
+      isOwned: (p) => m.owned.includes(p),
+      addOwned: (p) => { m.owned.push(p); },
+      peers: () => (m.peerPages ? m.peerPages() : []),
+      adopt: (p) => m.adoptPage(p),
+    });
     return {
       emit: (p) => { if (!handler) throw new Error("no 'page' handler was wired"); handler(p as unknown as Page); },
       on,
@@ -669,9 +684,12 @@ describe("BrowserManager — context 'page' event adopts site-opened tabs", () =
   it("wires the 'page' handler at most once per context (no stacked handlers on re-acquire)", () => {
     const mgr = new BrowserManager("test-session");
     const on = vi.fn();
-    const ctx = { on };
-    const wireOnce = () => (mgr as unknown as { wirePopupAdoption: (c: unknown) => void }).wirePopupAdoption(ctx);
-    wireOnce(); wireOnce(); wireOnce();
+    const ctx = { on } as unknown as BrowserContext;
+    const m = mgr as unknown as { owned: Page[]; peerPages: (() => Page[]) | null; adoptPage: (p: Page) => Page; popupWiredContexts: WeakSet<object> };
+    // Same host (same popupWiredContexts WeakSet) across all three calls — the
+    // WeakSet dedups so only the first registers a "page" handler.
+    const host = { wired: m.popupWiredContexts, isOwned: (p: Page) => m.owned.includes(p), addOwned: (p: Page) => { m.owned.push(p); }, peers: () => (m.peerPages ? m.peerPages() : []), adopt: (p: Page) => m.adoptPage(p) };
+    wirePopupAdoption(ctx, host); wirePopupAdoption(ctx, host); wirePopupAdoption(ctx, host);
     expect(on.mock.calls.filter(([event]) => event === "page")).toHaveLength(1);
   });
 });

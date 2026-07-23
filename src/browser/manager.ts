@@ -3,6 +3,7 @@ import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, clickTextOn } from "./interactions.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
+import { wirePopupAdoption } from "./manager-popups.js";
 import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
 import { profileUserDataDir } from "./profile-store.js";
@@ -95,49 +96,6 @@ export class BrowserManager implements BrowserBackend {
     return this.adoptPage(page);
   }
 
-  /** Subscribe once per context to its "page" event so a page the SITE opens —
-   *  a window.open popup or a target=_blank link — is adopted into `owned`
-   *  instead of being stranded off-list. Without this the popup's Page is never
-   *  ours: it can't appear in listTabs and switch_tab can't reach it, so the
-   *  agent stays pinned to the opener. Idempotent per context (the WeakSet):
-   *  shared mode hands every session the same context, and getPage() re-acquires
-   *  whenever its page dies, so a naive subscribe would stack handlers. */
-  private wirePopupAdoption(ctx: BrowserContext): void {
-    if (this.popupWiredContexts.has(ctx)) return;
-    this.popupWiredContexts.add(ctx);
-    ctx.on("page", (p) => { void this.adoptOpenedPage(p); });
-  }
-
-  /** Adopt a site-opened page IFF one of OUR tabs opened it. opener() is the
-   *  ownership signal that preserves advanced-shared isolation: a page a peer
-   *  session's tab opened has an opener we don't own, so we never adopt it (no
-   *  cross-session leak). Pages WE open (acquirePage/newTab) have a null opener
-   *  and are pushed into `owned` explicitly, so they're skipped here — no
-   *  double-adopt. Limitation: a rel="noopener" _blank also has a null opener,
-   *  so it isn't adopted — declining is the conservative choice over guessing
-   *  ownership. Adopted into `owned` (listable, switch_tab-reachable) but NOT
-   *  made the active page — a site-initiated popup must never steal the agent's
-   *  current tab. */
-  private async adoptOpenedPage(p: Page): Promise<void> {
-    try {
-      if (p.isClosed() || this.owned.includes(p)) return;
-      let peers = this.peerPages ? this.peerPages() : [];
-      if (peers.includes(p)) return;
-      const opener = await p.opener();
-      if (!opener || !this.owned.includes(opener)) return;
-      // Re-check across the await — closed/owned AND peers. In shared mode a
-      // peer manager's acquirePage can grab this still-blank popup during the
-      // await; without the peer re-check we would double-own it.
-      peers = this.peerPages ? this.peerPages() : [];
-      if (p.isClosed() || this.owned.includes(p) || peers.includes(p)) return;
-      this.adoptPage(p);
-      this.owned.push(p);
-      // Do NOT set this.page: a "page" event is SITE-initiated (ad, analytics,
-      // background window.open, OAuth). The popup is now listable and
-      // switch_tab-reachable; the agent moves to it deliberately.
-    } catch { /* the page/opener raced with a close — safe to skip */ }
-  }
-
   async getPage(engine?: BrowserEngine): Promise<Page> {
     if (engine && engine !== this.currentEngine && this.context) {
       await this.close();
@@ -177,7 +135,15 @@ export class BrowserManager implements BrowserBackend {
     // egress-checked at the request layer — not just the initial navigate URL.
     // Idempotent: guards each context at most once (shared mode reuses one).
     await installRequestGuard(this.context);
-    this.wirePopupAdoption(this.context);
+    // Adopt site-opened popups (window.open / target=_blank) into `owned`.
+    // Accessors, not `this.owned` by ref — newTab reassigns it on cleanup.
+    wirePopupAdoption(this.context, {
+      wired: this.popupWiredContexts,
+      isOwned: (p) => this.owned.includes(p),
+      addOwned: (p) => { this.owned.push(p); },
+      peers: () => (this.peerPages ? this.peerPages() : []),
+      adopt: (p) => this.adoptPage(p),
+    });
     this.page = await this.acquirePage();
     this.armIdle();
     return this.page;

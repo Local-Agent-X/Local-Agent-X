@@ -32,12 +32,8 @@ import {
 	type BridgeInputModifier,
 } from "./bridge-client.js";
 import { execChecked } from "./in-app-observe.js";
-import {
-	asExecResult,
-	resolutionScript,
-	selectFillScript,
-	textSearchScript,
-} from "./in-app-scripts.js";
+import { asExecResult } from "./in-app-scripts.js";
+import { resolutionScript, selectFillScript, textSearchScript } from "./in-app-resolve-scripts.js";
 import type { InteractionResult } from "./backend.js";
 import { createLogger } from "../logger.js";
 

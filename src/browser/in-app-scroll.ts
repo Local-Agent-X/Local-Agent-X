@@ -8,7 +8,7 @@
 import { waitForStability } from "./stability.js";
 import { browserInput, isUserActiveResult } from "./bridge-client.js";
 import { execChecked } from "./in-app-observe.js";
-import { resolutionScript } from "./in-app-scripts.js";
+import { resolutionScript } from "./in-app-resolve-scripts.js";
 import type { ScrollOptions } from "./backend.js";
 import {
 	asResolveOutcome,

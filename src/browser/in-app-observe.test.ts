@@ -12,7 +12,8 @@
  *     Electron's generic "Script failed to execute".
  */
 import { describe, it, expect, vi } from "vitest";
-import { checkedScript, resolutionScript } from "./in-app-scripts.js";
+import { checkedScript } from "./in-app-scripts.js";
+import { resolutionScript, textSearchScript } from "./in-app-resolve-scripts.js";
 import type { DurableRef } from "./observation.js";
 
 // ── Fake DOM ─────────
@@ -35,6 +36,8 @@ interface FakeElement {
 	children: FakeElement[];
 	isContentEditable: boolean;
 	value?: string;
+	/** Present on fake IFRAME elements: the frame's fake document. */
+	contentDocument?: unknown;
 }
 
 function el(tagName: string, opts: Partial<FakeElement> = {}): FakeElement {
@@ -65,15 +68,29 @@ function el(tagName: string, opts: Partial<FakeElement> = {}): FakeElement {
 interface FakeDoc {
 	byRole: FakeElement[];
 	atPoint: (x: number, y: number) => FakeElement | null;
+	/** Fake IFRAME elements returned for the "iframe, frame" descent query. */
+	frames?: FakeElement[];
 }
 
 function fakeDocument(cfg: FakeDoc) {
 	return {
-		querySelectorAll: () => cfg.byRole,
+		querySelectorAll: (sel?: string) => (sel === "iframe, frame" ? cfg.frames ?? [] : cfg.byRole),
 		elementFromPoint: (x: number, y: number) => cfg.atPoint(x, y),
 		evaluate: () => ({ singleNodeValue: null }),
 		documentElement: { clientWidth: 1280, clientHeight: 800 },
 	};
+}
+
+function fakeIframe(
+	inner: unknown,
+	src: string,
+	rect: { left: number; top: number; width: number; height: number },
+): FakeElement {
+	return el("iframe", {
+		rect,
+		contentDocument: inner,
+		getAttribute: (name: string) => (name === "src" ? src : null),
+	});
 }
 
 function runResolution(ref: DurableRef, doc: unknown): unknown {
@@ -164,6 +181,109 @@ describe("resolutionScript hit-test contract", () => {
 		) as { found: boolean; occluded: string[] };
 		expect(out.found).toBe(false);
 		expect(out.occluded).toContain("coords:offscreen(340,912)");
+	});
+});
+
+describe("same-origin iframe descent (Stripe/embedded-editor/consent-in-iframe class)", () => {
+	function runTextSearch(text: string, doc: unknown): unknown {
+		const fn = new Function("document", "getComputedStyle", "devicePixelRatio", "visualViewport", `return ${textSearchScript(text)}`);
+		return fn(doc, () => ({ visibility: "visible", display: "block" }), 1, { scale: 1 });
+	}
+
+	it("resolves a frame ref inside its src-matching iframe and OFFSETS coords to main-page space", () => {
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://pay.example/embed" }), doc) as {
+			found: boolean; via?: string; x?: number; y?: number;
+		};
+		expect(out.found).toBe(true);
+		expect(out.via).toBe("role");
+		// target center (140,110) + iframe offset (300,200) — browserInput needs MAIN-page coords
+		expect(out.x).toBe(440);
+		expect(out.y).toBe(310);
+	});
+
+	it("falls back to OTHER same-origin frames when no src matches (frame navigated after extract)", () => {
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/v2", { left: 50, top: 60, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://pay.example/v1" }), doc) as {
+			found: boolean; via?: string; x?: number; y?: number;
+		};
+		expect(out.found).toBe(true);
+		expect(out.x).toBe(190); // 140 + 50
+		expect(out.y).toBe(170); // 110 + 60
+	});
+
+	it("a main-frame ref (no frameUrl) never searches iframe documents", () => {
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [frame] });
+		const out = runResolution(mkRef(), doc) as { found: boolean };
+		expect(out.found).toBe(false);
+	});
+
+	it("skips a cross-origin frame whose contentDocument access THROWS", () => {
+		const hostile = el("iframe", {
+			rect: { left: 0, top: 0, width: 600, height: 400 },
+			getAttribute: (name: string) => (name === "src" ? "https://bank.example/login" : null),
+		});
+		Object.defineProperty(hostile, "contentDocument", { get() { throw new Error("cross-origin"); } });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [hostile] });
+		const out = runResolution(mkRef({ frameUrl: "https://bank.example/login" }), doc) as { found: boolean };
+		expect(out.found).toBe(false); // refused cleanly, no throw
+	});
+
+	it("coords fallback DESCENDS through an iframe at the stored point and verifies identity inside it", () => {
+		const target = el("button", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [], atPoint: (x, y) => (x === 40 && y === 712 ? target : null) });
+		const frame = fakeIframe(inner, "", { left: 300, top: 200, width: 600, height: 720 });
+		const doc = fakeDocument({ byRole: [], atPoint: (x, y) => (x === 340 && y === 912 ? frame : null), frames: [frame] });
+		const out = runResolution(
+			mkRef({ role: "", rect: { x: 340, y: 912, width: 80, height: 20 } }),
+			doc,
+		) as { found: boolean; via?: string; x?: number; y?: number };
+		expect(out.found).toBe(true);
+		expect(out.via).toBe("coords");
+		expect(out.x).toBe(340); // stored coords are already main-page space
+		expect(out.y).toBe(912);
+	});
+
+	it("REJECTS a frame candidate whose main-page point is outside the MAIN viewport (offscreen iframe)", () => {
+		// Hidden/clipped ad-style iframe parked at x=2000 on a 1280-wide viewport:
+		// the frame-local hit-test passes, but the final main-page point is
+		// unclickable — the old pre-frame behavior was found:false, keep it.
+		const target = el("a", { textContent: "purchase orders" });
+		const inner = fakeDocument({ byRole: [target], atPoint: () => target });
+		const frame = fakeIframe(inner, "https://ads.example/slot", { left: 2000, top: 0, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [frame] });
+		const out = runResolution(mkRef({ frameUrl: "https://ads.example/slot" }), doc) as {
+			found: boolean; occluded: string[];
+		};
+		expect(out.found).toBe(false);
+		expect(out.occluded).toContain("role:offscreen-frame(2140,110)");
+	});
+
+	it("click_text skips an offscreen-frame text match instead of clicking dead air", () => {
+		const btn = el("button", { textContent: "Pay now" });
+		const inner = fakeDocument({ byRole: [btn], atPoint: () => btn });
+		const frame = fakeIframe(inner, "https://ads.example/slot", { left: 2000, top: 0, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [frame] });
+		const out = runTextSearch("Pay now", doc) as { found: boolean };
+		expect(out.found).toBe(false);
+	});
+
+	it("click_text finds text living only inside an iframe and returns MAIN-page coords", () => {
+		const btn = el("button", { textContent: "Pay now" });
+		const inner = fakeDocument({ byRole: [btn], atPoint: () => btn });
+		const frame = fakeIframe(inner, "https://pay.example/embed", { left: 300, top: 200, width: 600, height: 400 });
+		const doc = fakeDocument({ byRole: [], atPoint: () => null, frames: [frame] });
+		const out = runTextSearch("Pay now", doc) as { found: boolean; role?: string; x?: number; y?: number };
+		expect(out).toMatchObject({ found: true, role: "button", x: 440, y: 310 });
 	});
 });
 

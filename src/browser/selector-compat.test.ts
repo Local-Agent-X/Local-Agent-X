@@ -13,7 +13,8 @@ import {
 	selectorTextHint,
 	SELECTOR_ENGINE_FN,
 } from "./selector-compat.js";
-import { clickScript, fillScript, selectScript, selectFillScript, resolutionScript, textSearchScript } from "./in-app-scripts.js";
+import { clickScript, fillScript, selectScript } from "./in-app-scripts.js";
+import { selectFillScript, resolutionScript, textSearchScript } from "./in-app-resolve-scripts.js";
 import type { DurableRef } from "./observation.js";
 
 // ── Fake DOM ─────────

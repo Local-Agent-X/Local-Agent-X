@@ -17,7 +17,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "The browser session persists across calls — navigate once, then click/fill/extract as needed. " +
   "IMPORTANT: When a fill or click fails, retry with a different selector or use evaluate to find the right one. " +
   "Don't just tell the user you'll retry — actually call this tool again.\n\n" +
-  "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are DURABLE — [5] stays [5] across snapshots as long as the element is still on the page. Subsequent snapshots emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
+  "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are durable WITHIN the current page — [5] stays [5] across snapshots while that element is on the page. But a navigation to a NEW origin, or switching to another tab, RE-NUMBERS elements (each tab numbers its own refs), so after navigate or switch_tab take a FRESH snapshot before using a ref. Repeat snapshots on the same page emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
   "Actions:\n" +
   "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
   "- new_tab: Open a URL — or MULTIPLE urls at once via 'urls' — in additional co-drivable tabs (keeps current tab open). When the user asks to open several sites, make ONE call with all of them in 'urls'.\n" +
@@ -35,12 +35,12 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- tabs: List all open tabs with URLs and titles — including the user's own browser tabs, marked [user tab].\n" +
   "- switch_tab: Switch to a tab by index (set 'value' to tab number). Switching onto a [user tab] row TAKES CONTROL of the user's own tab — use it when the user says they're already logged in, or asks you to act on the page they have open. Indexes are as-of the LAST 'tabs' listing; taking over a user tab requires a current listing, and if the tabs changed in between the switch refuses — run 'tabs' again.\n" +
   "- info: Get current page URL, title, and engine.\n" +
-  "- read_console: Read the page's recent console output (errors/warnings/logs, newest last). Check this after acting — especially when verifying an app you're building — instead of guessing why a page is broken.\n" +
-  "- read_network: Read recent network request outcomes (HTTP status or failure per request, plus in-flight count). Use it to spot failed API calls / 4xx-5xx responses after acting, especially when verifying an app you're building.\n" +
+  "- read_console: Read the page's recent console output (errors/warnings/logs, newest last). Check this after acting — especially when verifying an app you're building — instead of guessing why a page is broken. Reads the in-app browser's console; on the external-Chrome fallback it's unavailable.\n" +
+  "- read_network: Read recent network request outcomes (HTTP status or failure per request, plus in-flight count). Use it to spot failed API calls / 4xx-5xx responses after acting, especially when verifying an app you're building. Reads the in-app browser's network; unavailable on the external-Chrome fallback.\n" +
   "- downloads: List released, quarantined, rejected, and failed browser downloads for this session.\n" +
   "- release_download: Release a quarantined archive or macro-enabled document after user approval (set 'download_id').\n" +
-  "- dialog_accept: Accept a pending native browser dialog (alert/confirm/prompt). Pass 'value' for prompt() responses.\n" +
-  "- dialog_dismiss: Dismiss a pending native browser dialog.\n" +
+  "- dialog_accept: Accept a pending dialog. The in-app browser only intercepts beforeunload prompts — alert/confirm/prompt render natively to the co-driving user to handle (the external-Chrome fallback does capture all three). Pass 'value' for a prompt() response on that fallback.\n" +
+  "- dialog_dismiss: Dismiss a pending dialog (same caveat: in-app, only beforeunload is interceptable; native alert/confirm/prompt popups belong to the user).\n" +
   "- history: Search shared browser history (pass 'find' to filter, 'limit' to cap rows; newest first). It covers the user's own browsing too — when they mention 'that site from yesterday' or a page they had open, check history FIRST instead of web-searching for it.\n" +
   "- bookmark_add: Save a bookmark. With no 'url'/'title' it bookmarks the CURRENT page. Bookmarks are shared with the user — when they say 'post it to the usual place' or 'save it where I keep those', this is that place.\n" +
   "- bookmarks: List shared bookmarks (pass 'find' to filter). Shared both ways: check here first when the user refers to a saved/usual site.\n" +

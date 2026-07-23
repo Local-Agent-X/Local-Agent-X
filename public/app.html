@@ -1296,6 +1296,13 @@
           <span id="apps-chat-hint">&#9650; Build — guided, asks a few questions, can go full-stack &nbsp;·&nbsp; &#9889; Quick — instant HTML app</span>
         </div>
       </div>
+      <!-- Search bar — filters the app grid + custom pages below -->
+      <div id="apps-search-box" style="display:none">
+        <input id="apps-search-input" type="text" placeholder="Search apps..." autocomplete="off"
+          oninput="onAppsSearchInput(this.value)"
+          onkeydown="if(event.key==='Escape'){this.value='';onAppsSearchInput('')}">
+      </div>
+      <div id="apps-search-empty" style="display:none;text-align:center;padding:24px 20px;color:var(--muted);font-size:.78rem">No apps match your search.</div>
       <div id="apps-empty" style="text-align:center;padding:40px 20px;color:var(--muted);display:none">
         <p style="font-size:.78rem">No apps yet — describe what you want above and the agent will build it.</p>
       </div>
@@ -1626,6 +1633,7 @@
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>
+<script src="/js/apps-search.js?v=v1"></script>
 <script src="/js/apps-build-entry.js"></script>
 <!-- apps-ide split: core (state + lifecycle) loads first, then the WS
      handler and the tool/file rendering helpers, then the agent panel

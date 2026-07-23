@@ -946,6 +946,12 @@ body.platform-win .settings-overlay{top:32px}
 #apps-provider-select:hover,#apps-model-select:hover,#apps-provider-select:focus,#apps-model-select:focus{border-color:var(--accent);color:var(--text)}
 #apps-chat-hint{flex:1;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-align:right}
 
+/* ── Apps Search ── */
+#apps-search-box{max-width:420px;margin:0 auto 24px;padding:0 4px}
+#apps-search-input{width:100%;background:var(--input-bg,var(--surface));border:1px solid var(--border);border-radius:18px;padding:9px 16px;color:var(--text);font-size:.85rem;font-family:var(--font);outline:none;transition:border-color .2s,box-shadow .2s}
+#apps-search-input:focus{border-color:var(--accent);box-shadow:0 0 12px color-mix(in srgb, var(--accent) 10%, transparent)}
+#apps-search-input::placeholder{color:var(--muted)}
+
 /* ── App Cards ── */
 .app-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:border-color .15s,box-shadow .15s;position:relative}
 .app-card:hover{border-color:var(--accent);box-shadow:0 0 20px color-mix(in srgb, var(--accent) 8%, transparent)}

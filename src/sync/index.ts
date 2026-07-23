@@ -21,11 +21,13 @@ const execFileAsync = promisify(execFile);
 // was left by a killed process. Younger locks are left alone (an op may be
 // in flight). Keep STALE > TIMEOUT or live locks get stolen.
 //
-// 120s, not 30s: the first sync after a long outage is a catch-up commit of
-// the entire backlog (2026-07-23: 8 wedged days ≈ 18k paths + memory.db), and
-// add/commit/push over that legitimately outlast 30s on cold disk/uplink.
-const GIT_TIMEOUT_MS = 120_000;
-const STALE_GIT_LOCK_MS = 180_000;
+// 300s, not 30s: the first sync after a long outage is a catch-up commit of
+// the entire backlog (2026-07-23: 8 wedged days ≈ 36k paths, hundreds of MB
+// incl. memory.db), and add/commit/push over that legitimately outlast small
+// timeouts on cold disk or a residential uplink. Failure detection is slower
+// but a killed catch-up push re-wedges sync entirely — headroom wins.
+const GIT_TIMEOUT_MS = 300_000;
+const STALE_GIT_LOCK_MS = 360_000;
 
 // Git warnings scale with the file count, not the failure count — a catch-up
 // `add -A` over ~18k files emits one "LF will be replaced by CRLF" line each,

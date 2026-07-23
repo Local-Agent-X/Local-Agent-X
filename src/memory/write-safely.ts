@@ -23,6 +23,7 @@ import {
   sanitizeForMemory,
   stripControlChars,
 } from "../sanitize.js";
+import { MEMORY_BLOCK_CUMULATIVE } from "../injection-patterns.js";
 import { redact } from "../security/secrets/index.js";
 import { createLogger } from "../logger.js";
 import { atomicWriteFileSync } from "./utils.js";
@@ -58,7 +59,7 @@ export interface MemoryWriteParams {
   source: MemoryWriteSource;
   /** Absolute file path being written; used for routing + audit records. */
   target: string;
-  /** Block when injection score ≥ threshold. Default 0.3 (strict). */
+  /** Block when injection score ≥ threshold. Defaults to MEMORY_BLOCK_CUMULATIVE (0.3). */
   threshold?: number;
   mode?: "append" | "overwrite";
   promotion?: MemoryPromotionContext;
@@ -86,7 +87,10 @@ export class MemoryWriteBlocked extends Error {
   }
 }
 
-const DEFAULT_THRESHOLD = 0.3;
+// One source of truth: the memory-write gate blocks at the same cumulative
+// score checkMemoryTaint uses (MEMORY_BLOCK_CUMULATIVE, currently 0.3, owned by
+// injection-patterns.ts). Don't fork a divergent literal here.
+const DEFAULT_THRESHOLD = MEMORY_BLOCK_CUMULATIVE;
 const auditMode = (): boolean => process.env.LAX_MEMORY_WRITE_AUDIT === "1";
 
 // ── Write clock ──

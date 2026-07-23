@@ -19,7 +19,11 @@ import {
   MEMORY_INJECTION_EXTRA,
   MEMORY_BLOCK_SINGLE,
   MEMORY_BLOCK_CUMULATIVE,
+  MEMORY_SOAK_ADMIT_CEIL,
 } from "./injection-patterns.js";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("sanitize.memory-taint");
 
 // Re-export the known-secret registry surface from its canonical home
 // (security/known-secrets.ts) so existing importers of sanitize.ts keep
@@ -351,6 +355,18 @@ export function checkMemoryTaint(content: string): MemoryTaintResult {
   const injectionScore = Math.min(Math.max(cumulative, maxScore), 1.0);
 
   if (maxScore >= MEMORY_BLOCK_SINGLE || cumulative >= MEMORY_BLOCK_CUMULATIVE) {
+    // Band observability (pure measurement — does NOT change this block). A
+    // cumulative-only block (no strong single pattern) whose score would be
+    // ADMITTED under a hypothetical 0.6 gate is a "would-admit-at-0.6 candidate".
+    // Logging the score + matched labels (never the memory content) measures the
+    // benign-vs-malicious mix in [0.3, 0.6) so a future threshold decision uses
+    // real data instead of guessing. The write is still blocked here, exactly as
+    // the 0.3 gate always did.
+    if (maxScore < MEMORY_BLOCK_SINGLE && cumulative < MEMORY_SOAK_ADMIT_CEIL) {
+      logger.warn(
+        `would-admit-at-0.6 candidate: score=${cumulative.toFixed(2)} labels=[${matches.join(", ")}]`,
+      );
+    }
     return {
       safe: false,
       reason: `Content has high injection score (${injectionScore.toFixed(2)}). ` +

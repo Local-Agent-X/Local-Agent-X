@@ -24,7 +24,10 @@
  */
 
 import { registrableDomain } from "../browser/csp-policy.js";
-import { canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries } from "./canaries.js";
+import {
+  canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries,
+  remintSessionCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,
+} from "./canaries.js";
 import { classifyData, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
 import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerState } from "./scoring.js";
@@ -61,7 +64,7 @@ export function externalSinkDomain(target: string): string | null {
 export { _invalidateThreatSettingsCacheForTests } from "./scorer-options.js";
 
 export { classifyData, type DataClassification, type DataLabel } from "./classification.js";
-export { generateCanaries, canaryPromptBlock, checkCanaries, checkCanariesInPayload, getSessionCanaries, registerSessionCanaries, clearSessionCanaries } from "./canaries.js";
+export { generateCanaries, canaryPromptBlock, checkCanaries, checkCanariesInPayload, getSessionCanaries, registerSessionCanaries, clearSessionCanaries, isSessionBreached, recoverSessionBreach } from "./canaries.js";
 export { ThreatScorer, THREAT_SCORES, DETERMINISTIC_EVIDENCE_TYPES, type ThreatLevel } from "./scoring.js";
 export { ToolChainAnalyzer } from "./tool-chain.js";
 export { CryptoAuditTrail } from "./audit-trail.js";
@@ -346,6 +349,10 @@ export class ThreatEngine {
     const canaryResult = checkCanaries(text, this.canaries);
     if (canaryResult) {
       this.scorer.record("canary_tripped", THREAT_SCORES.canary_tripped, canaryResult);
+      // Session-scoped mirror of the confirmed breach (the scorer latch is
+      // per-engine; this survives across the per-turn engines the chat path
+      // rebuilds) so the `/approve` handler can find and lift the latch.
+      markSessionBreach(this.sessionId);
       this.audit.record({
         sessionId: this.sessionId,
         event: "canary_tripped",
@@ -363,6 +370,42 @@ export class ThreatEngine {
     return this.scorer.isRestricted();
   }
 
+  /**
+   * User-authorized recovery from a confirmed-breach (canary) latch — the
+   * `/approve` path. A tripped canary latches the session restricted and the
+   * trust-budget model is forbidden from excusing it (it's proof, not a
+   * probabilistic signal), so the only in-session exit short of a full reset is
+   * an explicit user authorization. This is that exit, and the SOLE caller of
+   * scorer.clearConfirmedBreach(). It:
+   *   1. Clears the breach latch (load/decay untouched — if residual effective
+   *      load still exceeds HIGH_THRESHOLD the session stays restricted on its
+   *      own merits), and clears the session-scoped breach signal.
+   *   2. Re-mints the session's canaries. The old tokens leaked into model
+   *      output, so the model now KNOWS them — worthless as a tripwire. We
+   *      replace this.canaries AND the shared registry (remintSessionCanaries →
+   *      registerSessionCanaries, the exact set the egress gate reads) so future
+   *      output/egress is guarded by tokens the model has never seen.
+   *   3. Writes a tamper-evident recovery event on the SAME audit chain as the
+   *      trip — never logging any canary token, old or new (the reason is
+   *      redacted of any leaked token first).
+   * Returns whether a breach latch was actually in effect, so the caller can
+   * tailor its reply (an /approve with no active latch is a plain consent grant).
+   */
+  approveRecovery(reason: string): { recovered: boolean } {
+    const old = this.canaries;
+    const recovered = this.scorer.clearConfirmedBreach();
+    clearSessionBreach(this.sessionId);
+    // Burn the leaked tokens: mint fresh, register, and adopt into the set this
+    // engine embeds in the system prompt + watches in checkOutput.
+    this.canaries = remintSessionCanaries(this.sessionId);
+    // Defensive: a user could paste a leaked (now-old) token into their reason.
+    // Redact it so the NEVER-log-a-canary invariant holds even for caller text.
+    let safeReason = reason;
+    for (const c of old) safeReason = safeReason.split(c).join("[redacted-canary]");
+    recordCanaryRecoveryAudit(this.sessionId, safeReason);
+    return { recovered };
+  }
+
   /** What the current restriction is grounded on: the deterministic evidence
    *  event types recorded, and the implicated sink domains (empty when the
    *  evidence has no attributable external destination). The tool-policy pack
@@ -376,6 +419,7 @@ export class ThreatEngine {
   reset(newSessionId?: string): void {
     this.chain.reset();
     this.scorer.reset();
+    clearSessionBreach(this.sessionId);
     this.implicatedSinks.clear();
     this.canaries = generateCanaries();
     if (newSessionId) this.sessionId = newSessionId;

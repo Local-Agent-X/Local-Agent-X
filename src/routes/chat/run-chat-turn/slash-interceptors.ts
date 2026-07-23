@@ -24,6 +24,19 @@ export async function handleApproveCommand(
   const reason = (message.replace(/^\s*\/approve\s*/i, "").trim() || "user-typed-/approve").slice(0, 160);
   const { grantConsent, getLastBlockedFingerprint } = await import("../../../threat/consent-store.js");
   grantConsent(sessionId, 30 * 60_000, reason);
+  // Confirmed-breach (canary) recovery. A tripped canary latches the session
+  // restricted and, unlike an exfil/loop block, the trust-budget model cannot
+  // decay it away — only an explicit user authorization lifts it. recoverSessionBreach
+  // is self-gated: it clears the session breach signal, mints FRESH canaries (the
+  // leaked tokens are known to the model, worthless as a tripwire — this replaces
+  // the exact set the egress gate reads), and writes a tamper-evident recovery
+  // event; it is a no-op returning false when no breach latch is live, so an
+  // ordinary /approve is unchanged.
+  const { recoverSessionBreach } = await import("../../../threat/canaries.js");
+  const breachRecovered = recoverSessionBreach(sessionId, reason);
+  const breachNote = breachRecovered
+    ? `\n\nConfirmed-breach (canary) restriction lifted by your authorization, and this session's canary tripwires were re-minted.`
+    : "";
   // Layer C: record the last blocked pattern's fingerprint into the
   // trust ledger so future sessions auto-allow without /approve.
   let ledgerNote = "";
@@ -33,10 +46,10 @@ export async function handleApproveCommand(
     recordApproval(fp, reason);
     ledgerNote = `\n\nLearned pattern: \`${fp}\` — future sessions hitting this pattern will auto-allow without /approve.`;
   }
-  logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}${fp ? ` (ledger fingerprint=${fp})` : ""}`);
+  logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}${breachRecovered ? " (canary breach recovered)" : ""}${fp ? ` (ledger fingerprint=${fp})` : ""}`);
   if (sseSink) sseSink({
     type: "stream",
-    delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.${ledgerNote}`,
+    delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.${breachNote}${ledgerNote}`,
   });
   if (sseSink) sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
   return { handled: true };

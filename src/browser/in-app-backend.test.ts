@@ -36,7 +36,7 @@ import { IN_APP_NO_DIALOG } from "./in-app-page-io.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { handleNewTab } from "../tools/browser-tools/navigation.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
-import { ObservationRegistry, type DurableRef } from "./observation.js";
+import { ObservationRegistry, __resetRefIdsForTest, type DurableRef } from "./observation.js";
 import type { RawElement } from "./extract.js";
 import * as bridgeEgress from "./bridge-egress.js";
 
@@ -96,6 +96,7 @@ describe("ElectronInAppBackend (A1)", () => {
 	let prevLaxDir: string | undefined;
 
 	beforeEach(() => {
+		__resetRefIdsForTest(); // deterministic refs [1],[2] per test; the module counter is globally monotonic in prod
 		laxDir = mkdtempSync(join(tmpdir(), "lax-inapp-test-"));
 		prevLaxDir = process.env.LAX_DATA_DIR;
 		process.env.LAX_DATA_DIR = laxDir;
@@ -131,7 +132,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(browserLifecycle).toHaveBeenCalledWith("create", VIEW_ID, {
 			partition: "persist:lax-profile-work",
 		});
-		expect(browserNavigate).toHaveBeenCalledWith(VIEW_ID, PAGE_URL);
+		expect(browserNavigate).toHaveBeenCalledWith(VIEW_ID, PAGE_URL, "sess-1");
 		expect(backend.getCurrentUrl()).toBe(PAGE_URL);
 		expect(backend.isActive()).toBe(true);
 	});
@@ -192,7 +193,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t2`, {
 			partition: "persist:lax-profile-work",
 		});
-		expect(browserNavigate).toHaveBeenLastCalledWith(`${VIEW_ID}-t2`, PAGE_URL);
+		expect(browserNavigate).toHaveBeenLastCalledWith(`${VIEW_ID}-t2`, PAGE_URL, "sess-1");
 		// Active tab followed: subsequent ops target the NEW view.
 		await backend.screenshot();
 		expect(browserCapture).toHaveBeenCalledWith(`${VIEW_ID}-t2`);
@@ -217,9 +218,9 @@ describe("ElectronInAppBackend (A1)", () => {
 		// One REAL view per url (monotonic -tN ids), each navigated to its url.
 		const creates = vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create").map(([, id]) => id);
 		expect(creates).toEqual(expect.arrayContaining([`${VIEW_ID}-t2`, `${VIEW_ID}-t3`, `${VIEW_ID}-t4`]));
-		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t2`, "https://one.example/");
-		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t3`, "https://two.example/");
-		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t4`, "https://three.example/");
+		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t2`, "https://one.example/", "sess-1");
+		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t3`, "https://two.example/", "sess-1");
+		expect(browserNavigate).toHaveBeenCalledWith(`${VIEW_ID}-t4`, "https://three.example/", "sess-1");
 		// Tab count via the backend's own tab list: first tab + 3 opened.
 		const tabs = await backend.listTabs();
 		expect(tabs).toContain("4 tab(s) open:");
@@ -817,6 +818,54 @@ describe("ElectronInAppBackend (A1)", () => {
 			expect(backend.isActive()).toBe(true);
 			const tabs = await backend.listTabs();
 			expect(tabs).toContain("1 tab(s) open:");
+		});
+
+		// ── Visible-pane-follows-agent surface signal ─────────
+		// Every agent active-tab change fires a fire-and-forget browserLifecycle
+		// ("show", activeViewId); the desktop side surfaces it (policy tested in
+		// desktop/src/browser-surface-policy.test.ts). Plain navigate does NOT
+		// signal — the desktop navigate onSuccess already surfaces that path.
+
+		it("newTab fires browserLifecycle('show', <new active viewId>, { sessionId })", async () => {
+			await backend.navigate(PAGE_URL); // first tab active
+			vi.mocked(browserLifecycle).mockClear();
+			await backend.newTab(PAGE_URL); // active becomes -t2
+			// sessionId rides the show op so the desktop anchors the surface to THIS
+			// session only (per-session anchor — never a cross-session steal).
+			expect(browserLifecycle).toHaveBeenCalledWith("show", `${VIEW_ID}-t2`, { sessionId: "sess-1" });
+		});
+
+		it("switchTab fires browserLifecycle('show', <newly active viewId>, { sessionId })", async () => {
+			await backend.navigate(PAGE_URL);
+			await backend.newTab(PAGE_URL); // -t2 active
+			vi.mocked(browserLifecycle).mockClear();
+			await backend.switchTab(0); // back to the first own tab
+			expect(browserLifecycle).toHaveBeenCalledWith("show", VIEW_ID, { sessionId: "sess-1" });
+		});
+
+		it("plain navigate does NOT fire a 'show' signal (desktop navigate-onSuccess owns that path)", async () => {
+			vi.mocked(browserLifecycle).mockClear();
+			await backend.navigate(PAGE_URL);
+			expect(vi.mocked(browserLifecycle).mock.calls.some(([op]) => op === "show")).toBe(false);
+		});
+
+		it("listTabs does NOT fire a 'show' signal (merely listing adopted user tabs must not surface)", async () => {
+			await backend.navigate(PAGE_URL);
+			vi.mocked(browserLifecycle).mockClear();
+			await backend.listTabs();
+			expect(vi.mocked(browserLifecycle).mock.calls.some(([op]) => op === "show")).toBe(false);
+		});
+
+		it("the surface signal is fire-and-forget: a rejected 'show' never fails newTab/switchTab", async () => {
+			await backend.navigate(PAGE_URL);
+			const base = vi.mocked(browserLifecycle).getMockImplementation()!;
+			vi.mocked(browserLifecycle).mockImplementation(async (op, id, opts) => {
+				if (op === "show") throw new Error("view vanished");
+				return base(op, id, opts);
+			});
+			// The new_tab and the switch still return their normal reports.
+			await expect(backend.newTab(PAGE_URL)).resolves.toContain("Opened new tab");
+			await expect(backend.switchTab(0)).resolves.toContain("Switched to tab [0]");
 		});
 
 		it("sensitive user rows are withheld in the listing and on switch (same rule as page-ops)", async () => {

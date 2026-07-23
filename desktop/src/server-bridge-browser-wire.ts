@@ -41,8 +41,11 @@ export interface BrowserLifecycleRequest {
 	viewId: string;
 	partition?: string;
 	bounds?: Rectangle;
+	/** The agent session driving the surface (op "show") — attributes the anchor
+	 *  follow so browser-ipc records a per-session anchor (never a cross-session steal). */
+	sessionId?: string;
 }
-export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number }
+export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number; sessionId?: string }
 export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated"; allFrames?: boolean }
 export interface BrowserInputRequest { type: "lax:browser-input"; id: number; viewId: string; event: BridgeInputEvent }
 export interface BrowserCaptureRequest { type: "lax:browser-capture"; id: number; viewId: string }

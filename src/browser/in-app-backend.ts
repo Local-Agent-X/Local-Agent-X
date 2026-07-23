@@ -48,6 +48,7 @@ import {
 	navigationReport,
 	probeTabAfterWedge,
 	refreshTabState,
+	surfaceActiveTab,
 	switchMergedTab,
 	TabList,
 	type InAppTab,
@@ -148,7 +149,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 		const viewId = this.viewId;
 		let result;
 		try {
-			result = await browserNavigate(viewId, url);
+			result = await browserNavigate(viewId, url, this.sessionId);
 		} catch (e) {
 			throw enrichBlockedNavigation(e, url, viewId);
 		}
@@ -176,7 +177,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 		}
 		let result;
 		try {
-			result = await browserNavigate(tab.viewId, url);
+			result = await browserNavigate(tab.viewId, url, this.sessionId);
 		} catch (e) {
 			// The view materialized but the navigation itself failed (bridge
 			// timeout, DNS): without rollback a ghost blank tab would stay in
@@ -200,6 +201,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 		}
 		tab.state.url = result.url;
 		tab.state.title = result.title;
+		surfaceActiveTab(tab.viewId, this.sessionId); // the agent's active tab changed — the visible pane follows it
 		return navigationReport(`Opened new tab (${this.tabs.all().length} tabs total)\nURL: `, result, requestedHost);
 	}
 

@@ -177,17 +177,21 @@ export function requestDesktopBrowserBridge(request: BrowserRelayRequest): Promi
 export async function browserLifecycle(
 	op: BrowserLifecycleOp,
 	viewId: string,
-	opts?: { partition?: string; bounds?: BridgeRect },
+	opts?: { partition?: string; bounds?: BridgeRect; sessionId?: string },
 ): Promise<BrowserLifecycleResult> {
 	if (op === "create" && !opts?.partition) {
 		throw new BridgeOpError(`lifecycle:${op}`, viewId, "create requires a partition");
 	}
-	const reply = await request(`lifecycle:${op}`, viewId, { type: "lax:browser-lifecycle", op, viewId, partition: opts?.partition, bounds: opts?.bounds }, LIFECYCLE_TIMEOUT_MS);
+	// sessionId rides the "show" op so the desktop anchors the surface to THIS
+	// session (browser-surface-policy per-session anchor); ignored by other ops.
+	const reply = await request(`lifecycle:${op}`, viewId, { type: "lax:browser-lifecycle", op, viewId, partition: opts?.partition, bounds: opts?.bounds, sessionId: opts?.sessionId }, LIFECYCLE_TIMEOUT_MS);
 	return { view: reply.view, views: reply.views, ping: reply.ping };
 }
 
-export async function browserNavigate(viewId: string, url: string): Promise<BrowserNavigateResult> {
-	const reply = await request("navigate", viewId, { type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS }, NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS);
+export async function browserNavigate(viewId: string, url: string, sessionId?: string): Promise<BrowserNavigateResult> {
+	// sessionId lets the desktop navigate-onSuccess SEED this session's anchor —
+	// the first surface is usually a navigate, so a later new_tab/switch follows.
+	const reply = await request("navigate", viewId, { type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS, sessionId }, NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS);
 	return { url: reply.url ?? "", title: reply.title ?? "", ...(typeof reply.status === "number" ? { status: reply.status } : {}) };
 }
 

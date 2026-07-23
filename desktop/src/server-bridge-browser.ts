@@ -29,7 +29,6 @@ import {
 	pingBrowserView,
 	setBrowserViewBounds,
 	setViewLifecycleObserver,
-	showBrowserView,
 	type BrowserViewInfo,
 } from "./browser-views";
 import { autoSurfaceAgentView } from "./browser-ipc";
@@ -299,7 +298,14 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 			return { view: createBrowserView(msg.viewId, { partition: msg.partition, bounds: msg.bounds, agentDriven: true }) };
 		}
 		case "show":
-			showBrowserView(msg.viewId);
+			// Route through browser-ipc's surfacing path (currentViewId + nav
+			// pushes + bounds + Browser-tab raise), NOT raw showBrowserView — so
+			// bounds/nav/address-bar follow the agent's new active view. It owns
+			// the "follow the agent but never steal a real user page" policy and
+			// is robust to a vanished view. The server fires this fire-and-forget
+			// on every agent active-tab change (new_tab / switch_tab). sessionId
+			// attributes the surface so the anchor follows the SAME session only.
+			autoSurfaceAgentView(msg.viewId, msg.sessionId);
 			return {};
 		case "hide":
 			hideBrowserView(msg.viewId);
@@ -339,10 +345,11 @@ function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>>
 		onBeforeLoad: () => markAgentNavigation(msg.viewId),
 		onSuccess: () => {
 			// Successful AGENT navigate → offer the view to the renderer's anchor.
-			// browser-ipc owns the policy (blank-foreground only); this path only
-			// fires for bridge-owned agentDriven views.
+			// browser-ipc owns the policy; sessionId SEEDS the per-session anchor —
+			// (the first surface is usually a navigate, so a later new_tab/switch has
+			// an anchor to follow).
 			if (listBrowserViews().some((v) => v.viewId === msg.viewId && v.agentDriven)) {
-				autoSurfaceAgentView(msg.viewId);
+				autoSurfaceAgentView(msg.viewId, msg.sessionId);
 			}
 		},
 	});

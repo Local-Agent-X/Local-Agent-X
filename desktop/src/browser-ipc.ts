@@ -46,6 +46,7 @@ import {
 	wireNavPushes,
 } from "./browser-ipc-navstate";
 import { emitAgentViewClosed } from "./browser-perception";
+import { decideAgentSurface, isSessionAgentView } from "./browser-surface-policy";
 
 const FOREGROUND_ID = "foreground";
 const FOREGROUND_PARTITION = "persist:lax-profile-default";
@@ -149,38 +150,36 @@ function currentViewIsBlank(): boolean {
 	return url === "" || url === "about:blank";
 }
 
-/**
- * Auto-surface policy, called by the server bridge after a successful AGENT
- * navigate. If the anchor currently drives the foreground family (the user's
- * own foreground/profile view) and that view is effectively blank, retarget the
- * anchor to the agent's view so the user sees the agent working the moment the
- * Browser tab opens. Attach only when something was ALREADY attached — when
- * nothing is attached the user is on a non-browser tab and painting an overlay
- * would cover it; the retarget alone means the next set-visible shows it, and
- * the "browser-agent-surfaced" push below brings the Browser tab up so that
- * next set-visible actually fires. A non-blank current view is never stolen —
- * the renderer just badges.
- */
-export function autoSurfaceAgentView(viewId: string): void {
-	const foregroundFamily = currentViewId === FOREGROUND_ID || currentViewId.startsWith("profile-");
-	if (foregroundFamily && currentViewIsBlank()) {
-		const view = getBrowserView(viewId);
-		if (!view || view.webContents.isDestroyed()) return; // vanished between navigate and surface
-		currentViewId = viewId;
-		wireNavPushes(viewId, view.webContents);
-		if (getAttachedViewId() !== null) {
-			showBrowserView(viewId);
-			if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
-		}
-		pushNavState(viewId, view.webContents);
-		// Tell the renderer to bring the Browser tab up (open the panel if
-		// collapsed, switch the side panel to browser). We only reach here when
-		// the user wasn't already watching a real page, so this can't yank them
-		// off something they were reading — it just surfaces the agent's browsing
-		// the moment it starts. On a non-browser tab this is what makes the view
-		// actually paint (onTabShown → set-visible → attach).
-		pushAgentSurfaced(viewId);
+/** Retarget the anchor to an agent view and surface it: wire nav pushes, attach
+ *  only when something is ALREADY attached (else the next set-visible shows it),
+ *  snap to the anchor geometry, mirror nav-state, and raise the Browser tab.
+ *  Guards a view that vanished between the trigger and here. */
+function applyAgentSurface(viewId: string): void {
+	const view = getBrowserView(viewId);
+	if (!view || view.webContents.isDestroyed()) return; // vanished before we surfaced it
+	currentViewId = viewId;
+	wireNavPushes(viewId, view.webContents);
+	if (getAttachedViewId() !== null) {
+		showBrowserView(viewId);
+		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
 	}
+	pushNavState(viewId, view.webContents);
+	pushAgentSurfaced(viewId);
+}
+
+/**
+ * Surface an agent view when the agent's active view changes (agent navigate, or
+ * an active-tab "show" op). Follows a blank foreground OR an agent view the
+ * SURFACING session owns (`view-<sid>-…`); a hand-navigated page, an adopted
+ * view, and other sessions' views are never yanked. See browser-surface-policy.ts.
+ */
+export function autoSurfaceAgentView(viewId: string, sessionId?: string): void {
+	const surface = decideAgentSurface({
+		isForegroundFamily: currentViewId === FOREGROUND_ID || currentViewId.startsWith("profile-"),
+		isBlank: currentViewIsBlank(),
+		currentIsSessionAgentView: isSessionAgentView(currentViewId, sessionId),
+	});
+	if (surface) applyAgentSurface(viewId);
 	sendViewsChanged();
 }
 

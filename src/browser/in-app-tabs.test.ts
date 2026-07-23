@@ -178,6 +178,19 @@ describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 		expect(list.active.owned).toBe(false);
 	});
 
+	it("the ADOPT branch fires browserLifecycle('show', <user viewId>, { sessionId }) so the pane follows the takeover", async () => {
+		mockList([userView("view-user-1", "https://u.example/", "U")]);
+		await formatTabsListing(list, async () => { /* refresh mocked out */ }); // pins the ordering
+		vi.mocked(browserLifecycle).mockClear(); // isolate the switch's own calls (keeps the mockResolvedValue)
+		const res = await switchMergedTab(list, 1, "sess-7");
+		expect(res.ok).toBe(true);
+		expect(list.active.viewId).toBe("view-user-1"); // adopted, owned:false
+		// Taking over a user tab is an active-tab change → the desktop is asked to
+		// SURFACE it, attributed to the adopting session (fire-and-forget; the show
+		// signal must never block or fail the switch, hence the swallowed rejection).
+		expect(browserLifecycle).toHaveBeenCalledWith("show", "view-user-1", { sessionId: "sess-7" });
+	});
+
 	it("REFUSES to adopt a user view without a prior listing (no pin to verify)", async () => {
 		mockList([userView("view-user-1", "https://u.example/", "U")]);
 		const res = await switchMergedTab(list, 1);

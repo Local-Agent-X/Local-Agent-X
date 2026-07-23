@@ -325,6 +325,17 @@ export type MergedSwitchResult =
 	| { ok: true; tab: InAppTab }
 	| { ok: false; message: string };
 
+/** Fire-and-forget: ask the desktop to SURFACE the agent's new active view so
+ *  the visible browser pane FOLLOWS the agent's active tab whenever it changes
+ *  (new_tab / switch_tab). A UI-surface hint must NEVER block or fail the tool
+ *  action, so a vanished view or an unavailable bridge is swallowed — the
+ *  desktop side (browser-ipc autoSurfaceAgentView) owns the "follow the agent
+ *  but never steal a real user page" policy. Only the agent's OWN active-tab
+ *  change fires this; merely LISTING adopted user tabs must not. */
+export function surfaceActiveTab(viewId: string, sessionId?: string): void {
+	browserLifecycle("show", viewId, { sessionId }).catch(() => { /* UI hint — never fails the action */ });
+}
+
 /** Resolve a switch over the same combined ordering the listing printed:
  *  an own tab becomes active; a user view is ADOPTED (owned:false) and
  *  becomes active — the takeover seam.
@@ -362,6 +373,7 @@ export async function switchMergedTab(list: TabList, index: number, sessionId?: 
 	}
 	if (entry.kind === "own") {
 		list.setActive(entry.tab);
+		surfaceActiveTab(entry.tab.viewId, sessionId); // the active tab moved — the visible pane follows it
 		return { ok: true, tab: entry.tab };
 	}
 	const tab = list.adopt(entry.view);
@@ -369,5 +381,6 @@ export async function switchMergedTab(list: TabList, index: number, sessionId?: 
 	// Attribution follows the takeover: downloads the agent triggers on this
 	// user view must land in the adopting session's records.
 	if (sessionId) registerAdoptedView(tab.viewId, sessionId);
+	surfaceActiveTab(tab.viewId, sessionId); // taking over a user tab is an active-tab change — surface it
 	return { ok: true, tab };
 }

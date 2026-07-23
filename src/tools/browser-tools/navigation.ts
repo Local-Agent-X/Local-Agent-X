@@ -6,6 +6,7 @@
 
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend, BrowserEngine } from "../../browser/index.js";
+import { ObservationRegistry, type BrowserObservation } from "../../browser/observation.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
 import { ok, err, computeAuthWallPrefix, appendPostActionSnapshot } from "./shared.js";
@@ -141,10 +142,27 @@ export async function handleNewTab(
   return ok(await appendPostActionSnapshot(manager, body));
 }
 
-export async function handleSnapshot(manager: BrowserBackend): Promise<ToolResult> {
+export async function handleSnapshot(
+  manager: BrowserBackend,
+  args: Record<string, unknown> = {},
+): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
-  const raw = await manager.snapshot();
+  let raw: string;
+  if (args.full === true) {
+    // Force a complete re-list. The diff protocol has no other way to
+    // re-request the full element list — after context compaction (or once
+    // the original full list scrolled out of the agent's window) the diffs
+    // reference refs the agent can no longer see. Reshaping the observation
+    // as initial re-prints every current ref; the registry's diff baseline
+    // advances exactly as on a normal observe, so later snapshots keep
+    // diffing correctly.
+    const obs = await manager.observe();
+    const forced: BrowserObservation = { ...obs, isInitial: true, full: obs.currentRefs, added: [], removed: [], changed: [] };
+    raw = ObservationRegistry.format(forced);
+  } else {
+    raw = await manager.snapshot();
+  }
   const prefix = computeAuthWallPrefix(raw);
   return ok(wrapExternalContent(prefix + raw, "browser.snapshot"));
 }

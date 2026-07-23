@@ -21,7 +21,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "Actions:\n" +
   "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
   "- new_tab: Open a URL — or MULTIPLE urls at once via 'urls' — in additional co-drivable tabs (keeps current tab open). When the user asks to open several sites, make ONE call with all of them in 'urls'.\n" +
-  "- snapshot: Observation with durable refs. First call after navigate → full list (viewport-first). Later calls → diff since last observation. Use 'observe' for structured buckets.\n" +
+  "- snapshot: Observation with durable refs. First call after navigate → full list (viewport-first). Later calls → diff since last observation. Pass full:true to force a complete re-list of EVERY current element and ref — use it when you no longer have the earlier full list (it scrolled out of your context) instead of guessing refs. Use 'observe' for structured buckets.\n" +
   "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
   "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
   "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
@@ -111,6 +111,12 @@ export const BROWSER_TOOL_PARAMETERS = {
     script: {
       type: "string",
       description: "JavaScript code to evaluate in the page (required for 'evaluate')",
+    },
+    full: {
+      type: "boolean",
+      description:
+        "For 'snapshot': force a complete re-list of ALL current elements with their refs instead of a diff. " +
+        "Use when the earlier full list is no longer in your context.",
     },
     find: {
       type: "string",

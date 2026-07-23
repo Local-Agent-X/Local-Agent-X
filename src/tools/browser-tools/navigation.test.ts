@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { BrowserBackend } from "../../browser/index.js";
-import { handleNewTab } from "./navigation.js";
+import type { DurableRef } from "../../browser/observation.js";
+import { handleNewTab, handleSnapshot } from "./navigation.js";
 
 /**
  * Multi-URL new_tab must be wedge-resilient. Opening N tabs sequentially can
@@ -36,6 +37,50 @@ const SIX = [
   "https://a.test/", "https://b.test/", "https://c.test/",
   "https://d.test/", "https://e.test/", "https://f.test/",
 ];
+
+describe("handleSnapshot full:true — force complete re-list", () => {
+	// The diff protocol had no way to re-request the full element list: after
+	// context compaction the agent holds refs it can no longer see, and every
+	// further snapshot just says "Page unchanged". full:true reshapes the
+	// observation as initial so EVERY current ref is re-printed.
+	const ref = (id: number, name: string): DurableRef =>
+		({
+			id, role: "button", name, tag: "BUTTON", type: "", xpath: "",
+			signature: `sig-${id}`, inViewport: true,
+			rect: { x: 0, y: 0, width: 10, height: 10 },
+		}) as DurableRef;
+
+	const baseObs = {
+		url: "https://a.example/", title: "A", isInitial: false,
+		added: [], removed: [], changed: [],
+		offscreenCount: 0, totalCount: 2,
+		currentRefs: [ref(3, "Save"), ref(7, "Cancel")],
+		viewport: [], viewportChanged: false,
+		obstructions: [], dialogs: [], crossOriginIframes: [],
+	};
+
+	function snapManager(): BrowserBackend {
+		return {
+			...fakeManager({
+				snapshot: async () => "Page unchanged since last observation — same refs still valid.",
+			}),
+			observe: async () => baseObs, // minimal observation for the format path
+		} as unknown as BrowserBackend;
+	}
+
+	it("re-lists EVERY current ref even when a plain snapshot would print 'Page unchanged'", async () => {
+		const result = await handleSnapshot(snapManager(), { full: true });
+		expect(result.content).toContain("2 interactive elements");
+		expect(result.content).toContain("[3]<button>Save</button>");
+		expect(result.content).toContain("[7]<button>Cancel</button>");
+		expect(result.content).not.toContain("Page unchanged");
+	});
+
+	it("without full:true the diff path is byte-untouched", async () => {
+		const result = await handleSnapshot(snapManager());
+		expect(result.content).toContain("Page unchanged since last observation");
+	});
+});
 
 describe("handleNewTab multi-URL time budget (wedge-resilience)", () => {
   it("stops opening tabs once the budget headroom is spent and reports opened vs not-attempted", async () => {

@@ -233,7 +233,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);
             case "new_tab": return await handleNewTab(manager, args);
-            case "snapshot": return await handleSnapshot(manager);
+            case "snapshot": return await handleSnapshot(manager, args);
             case "click": return await handleClick(manager, args);
             case "click_text": return await handleClickText(manager, args);
             case "fill": return await handleFill(manager, args);

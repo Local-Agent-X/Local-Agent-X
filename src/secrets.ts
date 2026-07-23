@@ -205,6 +205,10 @@ export class SecretsStore {
     this.save(nextSecrets, nextQuarantined);
     this.secrets = nextSecrets;
     this.quarantined = nextQuarantined;
+    // Name-only audit line (never the value): the vault's ground truth for
+    // "did the save actually land" — a UI that misreports a rejected save
+    // (the GEMINI_API_KEY ×5 incident) is caught by this line's absence.
+    logger.info(`[secrets] set "${name}" (${existing ? "updated" : "new"}, ${this.secrets.size} total)`);
     registerRedactedSecretValue(value);
     this.notifyAvailability({ type: "available", name });
   }

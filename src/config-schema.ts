@@ -140,6 +140,12 @@ export const configSchema = z.object({
   // drive social/composer sites stay unattended. Nobody turns autonomy on;
   // supervision is the switch.
   supervisedBrowser: z.boolean().default(false),
+  // Sensitive-page read ladder (src/browser/sensitive-pages.ts), strictest →
+  // most open. Default "ask": secret-bearing pages (password managers,
+  // account recovery, key material) need the user's approval to be read —
+  // a prompt beats guarded's silent withholding for non-technical users, and
+  // autonomous runs (no approval channel) stay hard-blocked, safe-by-default.
+  browserSecrecy: z.enum(["lockdown", "guarded", "ask", "open"]).default("ask"),
   // UI event bus: lets user-interface activity (in-app browser navigation,
   // page titles — hosts/paths only, values and credentials are redacted at
   // the store) surface as a short digest in the agent's context. Default ON —

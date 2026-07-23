@@ -174,6 +174,14 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Supervised browser mode. Off by default — the in-app browser is autonomous, so browser.evaluate runs without asking. When true, browser.evaluate requires your approval UNLESS the current page is on the trusted-origin allowlist (x.com, twitter.com, instagram.com, facebook.com, tiktok.com, linkedin.com and their subdomains). Supervision is the opt-in; you never have to turn autonomy on",
   },
   {
+    field: "browserSecrecy",
+    validate: z.enum(["lockdown", "guarded", "ask", "open"]),
+    runtime: true,
+    broadcast: true,
+    protected: true,
+    description: "Ordered sensitive-page read policy for the agent browser. lockdown = withhold ALL sensitive pages (administration/financial too); guarded = administration/financial readable, secret-bearing pages (password managers, account recovery, key material) silently withheld; ask (default) = secret-bearing reads require your approval; open = everything readable, with a one-time warning when a cloud model would receive page contents. Mutating actions on sensitive pages require approval below open",
+  },
+  {
     field: "enableUiEventBus",
     validate: z.boolean(),
     runtime: true,

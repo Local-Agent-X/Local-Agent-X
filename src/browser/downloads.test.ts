@@ -317,16 +317,20 @@ describe("browser sensitive-page gates", () => {
     expect(sensitivePageActionDecision("https://console.aws.amazon.com/console/home", "fill").disposition).toBe("approval-required");
   });
 
-  it("blocks secret-reading actions without exposing a recovery URL token", () => {
+  it("gates secret-reading actions without exposing a recovery URL token", () => {
+    // Real config default is browserSecrecy="ask": secret reads are
+    // approval-gated — never a silent "allow". The full level ladder
+    // (blocked at guarded/lockdown, allow at open) is pinned in
+    // sensitive-pages.test.ts.
     const decision = sensitivePageActionDecision("https://vault.bitwarden.com/passwords?token=secret", "extract");
-    expect(decision.disposition).toBe("blocked");
+    expect(decision.disposition).toBe("approval-required");
     expect(JSON.stringify(decision)).not.toContain("token=secret");
-    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "snapshot").disposition).toBe("blocked");
-    expect(sensitivePageActionDecision("https://example.com/account-recovery/token-value", "observe").disposition).toBe("blocked");
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "snapshot").disposition).toBe("approval-required");
+    expect(sensitivePageActionDecision("https://example.com/account-recovery/token-value", "observe").disposition).toBe("approval-required");
     // Console output and request URLs are page-controlled channels — the
     // perception reads are secret-reading actions on vault-ish pages too.
-    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "read_console").disposition).toBe("blocked");
-    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "read_network").disposition).toBe("blocked");
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "read_console").disposition).toBe("approval-required");
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "read_network").disposition).toBe("approval-required");
   });
 
   it("withholds navigation auto-snapshots, snapshots, and observations on secret-bearing pages", async () => {

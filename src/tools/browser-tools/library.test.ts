@@ -137,10 +137,13 @@ describe("3-place sync: enum, prose, read-only classification", () => {
 });
 
 describe("bookmark_add sensitive-page gate (skeptic regression)", () => {
-  it("is blocked on secret-bearing pages like the other secret-reading actions", async () => {
+  it("is gated on secret-bearing pages like the other secret-reading actions", async () => {
+    // Runs at the real config default (browserSecrecy="ask"): secret READS —
+    // bookmark_add persists the page's url+title — need approval, never pass
+    // silently. The full level ladder is pinned in sensitive-pages.test.ts.
     const { sensitivePageActionDecision } = await import("../../browser/guards.js");
-    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "bookmark_add").disposition).toBe("blocked");
-    expect(sensitivePageActionDecision("https://example.com/account-recovery/start", "bookmark_add").disposition).toBe("blocked");
+    expect(sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "bookmark_add").disposition).toBe("approval-required");
+    expect(sensitivePageActionDecision("https://example.com/account-recovery/start", "bookmark_add").disposition).toBe("approval-required");
     // Ordinary pages stay bookmarkable.
     expect(sensitivePageActionDecision("https://news.ycombinator.com/", "bookmark_add").disposition).toBe("allow");
   });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { classifySensitivePage, evaluateBlockMessage, installRequestGuard, scanEvaluateScript } from "./guards.js";
+import { evaluateBlockMessage, installRequestGuard, scanEvaluateScript } from "./guards.js";
 import { buildAgentCsp } from "./csp-policy.js";
 
 // The guard registers its handler via context.route(); we capture that handler
@@ -329,44 +329,6 @@ describe("evaluateBlockMessage — remediation names the right alternative for t
 	});
 });
 
-describe("classifySensitivePage — host authoritative; generic SaaS paths no longer gated", () => {
-	// HOST-based classification stays authoritative and unchanged.
-	it.each([
-		["cloud metadata IP", "http://169.254.169.254/latest/meta-data/", "cloud metadata"],
-		["GCE metadata host", "http://metadata.google.internal/", "cloud metadata"],
-		["1password host", "https://my.1password.com/vaults", "password manager"],
-		["bitwarden vault host", "https://vault.bitwarden.com/", "password manager"],
-		["keeper subdomain host", "https://vault.keepersecurity.com/", "password manager"],
-		["aws console host", "https://console.aws.amazon.com/console/home", "administration panel"],
-		["azure portal host", "https://portal.azure.com/", "administration panel"],
-		["paypal host", "https://paypal.com/", "financial account"],
-		["stripe host", "https://stripe.com/", "financial account"],
-		["bank. host prefix", "https://bank.example.com/", "financial account"],
-	])("STILL classifies known sensitive host: %s", (_label, url, category) => {
-		expect(classifySensitivePage(url)?.category).toBe(category);
-	});
-
-	// Specific, genuinely-secret PATHs remain strong signals on ANY host.
-	it.each([
-		["account recovery flow", "https://randomsaas.com/account-recovery/start", "account recovery"],
-		["reset-password flow", "https://randomsaas.com/reset-password", "account recovery"],
-		["ssh-keys page", "https://randomsaas.com/settings/ssh-keys", "private key management"],
-		["private-keys page", "https://randomsaas.com/private-keys", "private key management"],
-	])("STILL classifies genuine-secret path on an arbitrary host: %s", (_label, url, category) => {
-		expect(classifySensitivePage(url)?.category).toBe(category);
-	});
-
-	// Generic SaaS words in an arbitrary host's PATH are no longer enough.
-	it.each([
-		["billing", "https://randomsaas.com/billing"],
-		["payments", "https://randomsaas.com/settings/payments"],
-		["admin toggle", "https://randomsaas.com/admin"],
-		["management", "https://randomsaas.com/management"],
-		["api-keys", "https://randomsaas.com/settings/api-keys"],
-		["certificates", "https://randomsaas.com/certificates"],
-		["passwords", "https://randomsaas.com/passwords"],
-		["vault", "https://randomsaas.com/vault"],
-	])("NO LONGER classifies generic SaaS path on an arbitrary host: %s", (_label, url) => {
-		expect(classifySensitivePage(url)).toBeNull();
-	});
-});
+// classifySensitivePage / the browserSecrecy ladder are covered in
+// sensitive-pages.test.ts (they moved to sensitive-pages.ts and their
+// classification is now level-aware, which needs a mocked runtime config).

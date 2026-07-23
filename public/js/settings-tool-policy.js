@@ -18,6 +18,9 @@ async function loadToolPolicyToggles() {
     // Supervised browser defaults OFF (=== true) — the browser is autonomous
     // out of the box; supervision is the opt-in.
     setToolPolicyToggle('tp-toggle-supervised-browser', s.supervisedBrowser === true);
+    // Sensitive-page read ladder (enum select, default "ask").
+    const secrecySelect = document.getElementById('tp-select-browser-secrecy');
+    if (secrecySelect) secrecySelect.value = s.browserSecrecy || 'ask';
     // Computer control + phone remote control both default OFF (=== true).
     setToolPolicyToggle('tp-toggle-computer', s.enableComputerControl === true);
     setToolPolicyToggle('tp-toggle-remote', s.enableRemoteControl === true);
@@ -37,6 +40,23 @@ function setToolPolicyToggle(id, on) {
   const el = document.getElementById(id);
   if (!el) return;
   if (on) el.classList.add('on'); else el.classList.remove('on');
+}
+
+// Enum settings (e.g. browserSecrecy) save through the same generic
+// endpoint as the toggles; on failure, re-load so the select shows the
+// value that actually persisted.
+async function toolPolicySelect(field, value) {
+  try {
+    const r = await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value })
+    });
+    if (!r.ok) throw new Error('save failed');
+  } catch (e) {
+    console.warn('[tool-policy] save failed', e);
+    loadToolPolicyToggles();
+  }
 }
 
 async function toolPolicyToggle(field, el) {

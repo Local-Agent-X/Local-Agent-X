@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1432 non-test source files · 0 god files (>400 LOC).
+**Totals:** 63 top-level dirs · 63 live · 0 with no live importer · 1433 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -30,7 +30,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auth/` | 30 | 10 | L |  |
 | `src/threat/` | 30 | 11 | L |  |
 | `src/util/` | 29 | 2 | S |  |
-| `src/browser/` | 27 | 67 | XL |  |
+| `src/browser/` | 27 | 68 | XL |  |
 | `src/agency/` | 26 | 19 | L |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
@@ -78,9 +78,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
+| `src/types/` | 2 | 2 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/llm-dispatch/` | 1 | 1 | S |  |
-| `src/types/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
 

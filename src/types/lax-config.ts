@@ -9,6 +9,10 @@ import type { SandboxMode } from "../sandbox/types.js";
 export type DeploymentProfile = "home" | "dev" | "enterprise";
 export type BrowserMode = "isolated" | "continuity" | "advanced-shared" | "in-app";
 
+/** Sensitive-page read ladder for the agent browser, ordered strictest →
+ *  most open. See src/browser/sensitive-pages.ts for the level semantics. */
+export type BrowserSecrecy = "lockdown" | "guarded" | "ask" | "open";
+
 export interface ProfileDefaults {
   sandboxMode: SandboxMode;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
@@ -122,6 +126,13 @@ export interface LAXConfig {
    *  src/browser/trusted-origins.ts). Supervision is the opt-in; nobody has to
    *  turn autonomy ON. */
   supervisedBrowser: boolean;
+  /** Sensitive-page read ladder (default "ask"). lockdown withholds ALL
+   *  sensitive pages (administration/financial included); guarded silently
+   *  withholds secret-bearing pages only; ask prompts for approval before
+   *  revealing a secret-bearing page; open reads everything, with a one-time
+   *  per-session warning when a cloud model would receive the contents.
+   *  Mutations on sensitive pages stay approval-gated below open. */
+  browserSecrecy: BrowserSecrecy;
   /** UI activity context. When true (default), redacted UI events (browser
    *  navigation, tab activity) are buffered per session and distilled into a
    *  short digest signal in the agent's turn context. Never records field

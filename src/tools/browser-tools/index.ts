@@ -54,7 +54,7 @@ import { handleObserve } from "./observe.js";
 import { handleReadConsole, handleReadNetwork } from "./perception.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { createLogger } from "../../logger.js";
-import { sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
+import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
 import { getApprovalManager } from "../../approval-manager.js";
 import { blocked, declined } from "../result-helpers.js";
 
@@ -178,6 +178,11 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           return err(`Invalid engine: "${engine}". Must be one of: ${VALID_ENGINES.join(", ")}`);
         }
 
+        // Set when an ask-level secret-read approval unlocked this page's
+        // stub; the dispatch tail then runs inside runWithSensitiveReadGrant
+        // so the unlock is visible to exactly this call's async chain
+        // (handlers, backends, post-dispatch backstop) and to no one else.
+        let grantedReadUrl: string | null = null;
         try {
           if (action === "release_download") {
             const id = String(args.download_id || "");
@@ -204,7 +209,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             );
             args._downloadApproval = approvalBinding;
           } else {
-            const pageDecision = sensitivePageActionDecision(manager.getCurrentUrl(), action);
+            const pageUrl = manager.getCurrentUrl();
+            const pageDecision = sensitivePageActionDecision(pageUrl, action);
             if (pageDecision.disposition === "blocked") return blocked(
               `BLOCKED: ${pageDecision.reason}`,
               { layer: "browser-sensitive-page", browserStatus: "blocked", category: pageDecision.category },
@@ -227,8 +233,17 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
                 `Sensitive-page ${action} was not approved; no browser action was performed.`,
                 { layer: "browser-sensitive-page", browserStatus: "declined", category: pageDecision.category },
               );
+              // Ask-level secret READ approved: the dispatch tail below runs
+              // inside the read-grant async context for exactly this page
+              // URL, covering the post-dispatch stub backstop too — approved
+              // content is not clobbered on the way out.
+              if (pageDecision.unlocksRead) grantedReadUrl = pageUrl;
             }
           }
+          // Everything from dispatch through the post-dispatch stub backstop
+          // and the open-warning runs as ONE unit so an approved read grant
+          // can scope to exactly this call's async context.
+          const runGated = async (): Promise<ToolResult> => {
           const dispatch = (async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);
@@ -293,7 +308,19 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               metadata: { ...result.metadata, browserStatus: "sensitive-content-withheld" },
             };
           }
-          return await applyProgressGuard(action, manager, sessionId, result);
+          const finalResult = await applyProgressGuard(action, manager, sessionId, result);
+          // Open-level transparency: the first browser call of a session that
+          // ENDS on a secret-bearing page (any action — landing snapshots and
+          // post-mutation snapshots carry content at open too) names the
+          // cloud provider the contents go to.
+          const openWarning = secrecyOpenWarning(sessionId, manager.getCurrentUrl());
+          return openWarning && typeof finalResult.content === "string"
+            ? { ...finalResult, content: `${openWarning}\n\n${finalResult.content}` }
+            : finalResult;
+          };
+          return grantedReadUrl
+            ? await runWithSensitiveReadGrant(grantedReadUrl, runGated)
+            : await runGated();
         } catch (e) {
           const sensitive = sensitivePageStub(manager.getCurrentUrl());
           if (sensitive) return blocked(sensitive, { layer: "browser-sensitive-page", browserStatus: "sensitive-content-withheld" });

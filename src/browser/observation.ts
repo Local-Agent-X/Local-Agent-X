@@ -56,6 +56,18 @@ export interface BrowserObservation {
   totalCount: number;
   /** All current refs — used by format() to resolve obstruction button XPaths to refs. */
   currentRefs: DurableRef[];
+  /** Every current ref with inViewport===true, present on BOTH the initial and
+   *  diff paths (unlike `full`, which is initial-only). observe.ts groups THIS
+   *  into role buckets so a scroll — which adds nothing to the DOM, it just
+   *  brings offscreen elements into view — still lists the controls now on
+   *  screen instead of an empty diff. Optional so hand-built observations (in
+   *  tests) stay valid; the registry always populates it. */
+  viewport?: DurableRef[];
+  /** True on a diff observation whose DOM was otherwise unchanged (nothing
+   *  added/removed/changed) but whose set of in-viewport refs differs from the
+   *  previous scan — i.e. the page was scrolled. Lets format() report the scroll
+   *  instead of a misleading "Page unchanged". */
+  viewportChanged?: boolean;
   obstructions: Obstruction[];
   dialogs: CapturedDialog[];
   crossOriginIframes: IframeInfo[];
@@ -282,6 +294,18 @@ export class ObservationRegistry {
     this.refs = newRefs;
     const isInitial = this.observationCount === 1 || originChanged;
     const offscreenCount = [...newRefs.values()].filter((r) => !r.inViewport).length;
+    const viewport = [...newRefs.values()].filter((r) => r.inViewport);
+
+    // Pure viewport change (scroll): the ref set is otherwise identical (nothing
+    // added / removed / changed) but a different slice is now on screen. Compare
+    // the in-viewport id set against the previous scan's so format() can report
+    // the scroll instead of a misleading "Page unchanged".
+    const prevVisible = new Set<number>();
+    for (const r of prevRefs.values()) if (r.inViewport) prevVisible.add(r.id);
+    let viewportChanged = viewport.length !== prevVisible.size;
+    if (!viewportChanged) {
+      for (const r of viewport) { if (!prevVisible.has(r.id)) { viewportChanged = true; break; } }
+    }
 
     return {
       url,
@@ -294,6 +318,8 @@ export class ObservationRegistry {
       offscreenCount,
       totalCount: newRefs.size,
       currentRefs: [...newRefs.values()],
+      viewport,
+      viewportChanged: !isInitial && viewportChanged,
       obstructions,
       dialogs,
       crossOriginIframes: iframesAll.filter((i) => i.crossOrigin),
@@ -317,7 +343,12 @@ export class ObservationRegistry {
       const lines = obs.full.map(formatRef);
       sections.push(`${header}\n${obs.totalCount} interactive elements:\n\n${lines.join("\n")}`);
     } else if (obs.added.length === 0 && obs.removed.length === 0 && obs.changed.length === 0) {
-      sections.push(`${header}\nPage unchanged since last observation — same refs still valid.`);
+      if (obs.viewportChanged) {
+        const visibleNow = obs.totalCount - obs.offscreenCount;
+        sections.push(`${header}\nViewport changed: ${visibleNow} elements now visible (scroll) — same refs still valid.`);
+      } else {
+        sections.push(`${header}\nPage unchanged since last observation — same refs still valid.`);
+      }
     } else {
       const parts: string[] = [
         header,

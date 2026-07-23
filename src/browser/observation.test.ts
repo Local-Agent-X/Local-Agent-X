@@ -129,6 +129,72 @@ describe("degraded observation — a failed extractor must never masquerade as a
   });
 });
 
+describe("viewport perception — a scroll must surface the newly-visible set, not 'Page unchanged'", () => {
+  beforeEach(() => {
+    mockExtract.mockReset();
+    mockExtract.mockResolvedValue([]);
+    mockObstructions.mockReset();
+    mockObstructions.mockResolvedValue([]);
+  });
+
+  const ABOVE: RawElement = {
+    role: "button", name: "Above", tag: "BUTTON", type: "", xpath: "/button[1]",
+    signature: "button|Above|BUTTON|form", inViewport: true,
+    rect: { x: 10, y: 10, width: 80, height: 20 },
+  };
+  const BELOW: RawElement = {
+    role: "button", name: "Below", tag: "BUTTON", type: "", xpath: "/button[2]",
+    signature: "button|Below|BUTTON|form", inViewport: false,
+    rect: { x: 10, y: 900, width: 80, height: 20 },
+  };
+
+  it("exposes the CURRENT in-viewport set on every observation, and reports the scroll in format()", async () => {
+    const reg = new ObservationRegistry();
+
+    // Initial: ABOVE on screen, BELOW past the fold. `viewport` is the in-view
+    // slice — distinct from `full`/`currentRefs`, which carry both.
+    mockExtract.mockResolvedValueOnce([ABOVE, BELOW]);
+    const first = await reg.observe(page);
+    expect(first.isInitial).toBe(true);
+    expect(first.viewport?.map((r) => r.name)).toEqual(["Above"]);
+    expect(first.currentRefs.map((r) => r.name)).toEqual(["Above", "Below"]);
+
+    // Scroll: SAME DOM (identical signatures → nothing added/removed/changed),
+    // but the inViewport flags flip — ABOVE leaves the viewport, BELOW enters.
+    mockExtract.mockResolvedValueOnce([
+      { ...ABOVE, inViewport: false },
+      { ...BELOW, inViewport: true },
+    ]);
+    const scrolled = await reg.observe(page);
+
+    // (a) It is a pure scroll: no add/remove/change …
+    expect(scrolled.added).toEqual([]);
+    expect(scrolled.removed).toEqual([]);
+    expect(scrolled.changed).toEqual([]);
+    // … yet the observation exposes the NEW in-viewport set.
+    expect(scrolled.viewport?.map((r) => r.name)).toEqual(["Below"]);
+    expect(scrolled.viewportChanged).toBe(true);
+
+    // (b) format() reports the viewport change instead of "Page unchanged".
+    const text = ObservationRegistry.format(scrolled);
+    expect(text).toContain("Viewport changed: 1 elements now visible");
+    expect(text).not.toContain("Page unchanged since last observation");
+  });
+
+  it("no scroll → still 'Page unchanged' (the new branch never fires spuriously)", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([ABOVE, BELOW]);
+    await reg.observe(page); // initial
+    mockExtract.mockResolvedValueOnce([ABOVE, BELOW]); // identical viewport
+    const again = await reg.observe(page);
+
+    expect(again.viewportChanged).toBe(false);
+    const text = ObservationRegistry.format(again);
+    expect(text).toContain("Page unchanged since last observation");
+    expect(text).not.toContain("Viewport changed");
+  });
+});
+
 describe("recoverStaleRef — remapping a stale id after a page re-render", () => {
   beforeEach(() => {
     mockExtract.mockReset();

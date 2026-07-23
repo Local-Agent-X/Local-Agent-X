@@ -27,8 +27,12 @@ export async function handleObserve(manager: BrowserBackend): Promise<ToolResult
         `Use browser({action:"screenshot"}) to see the page before acting.`
     );
   }
-  const source = obs.isInitial && obs.full ? obs.full : [...obs.added];
-  const visible = source.filter((r) => r.inViewport);
+  // The current in-viewport set on EVERY observation (initial and diff). A
+  // scroll adds nothing to the DOM — it just moves elements into view — so the
+  // old `full`-or-`added` source rendered empty buckets after every scroll.
+  // `viewport` keeps the buckets reflecting what's actually on screen. Fall back
+  // to deriving it from currentRefs for observations that predate the field.
+  const visible = obs.viewport ?? obs.currentRefs.filter((r) => r.inViewport);
 
   const bucket = (names: string[]) => visible.filter((r) => names.includes(r.role));
   const buttons = bucket(["button"]);

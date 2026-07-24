@@ -131,12 +131,20 @@ export async function maybeAutostartLmStudio(
   // Already discovered (identify() labels the endpoint) — nothing to do.
   if (runtimes.some((r) => r.label === "LM Studio")) return false;
   if (now() - lastAttemptAt < ATTEMPT_INTERVAL_MS) return false;
-  lastAttemptAt = now();
 
+  // The throttle exists to stop a BROKEN `lms server start` from being
+  // hammered every 60s sweep — so it must only count an attempt we actually
+  // make. The common boot sequence is "LAX up, LM Studio not open yet"; if we
+  // burned the clock here, the four sweeps after the user finally opens LM
+  // Studio would all early-return and auto-start wouldn't fire for up to 5
+  // minutes (a restart resets this module and "fixes" it — the reported bug).
+  // The cli-exists (existsSync) and is-running (tasklist/pgrep) checks are
+  // cheap enough to run per-sweep unthrottled, so gate ONLY the real start.
   const cli = deps.lmsCliPath();
   if (!cli) return false;
   if (!(await deps.isLmStudioRunning())) return false;
 
+  lastAttemptAt = now();
   const ok = await deps.startServer(cli);
   if (ok) {
     startedAt = now();

@@ -64,6 +64,37 @@ describe("maybeAutostartLmStudio", () => {
     expect(d.startServer).not.toHaveBeenCalled();
   });
 
+  it("boot-time 'not running' does NOT burn the throttle for a later start", async () => {
+    // The reported bug: LAX boots before LM Studio, so the boot sweep sees it
+    // not-running. That must NOT start the 5-min throttle clock — otherwise the
+    // sweep right after the user opens LM Studio ~30s later gets throttled and
+    // auto-start only fires minutes later (or on a manual restart).
+    let running = false;
+    const d = deps({ isLmStudioRunning: vi.fn(async () => running) });
+    let t = 1_000_000;
+    expect(await maybeAutostartLmStudio([], d, () => t)).toBe(false);
+    expect(d.startServer).not.toHaveBeenCalled();
+    // User opens LM Studio; the very next 60s sweep must fire the start.
+    running = true;
+    t += 30_000;
+    expect(await maybeAutostartLmStudio([], d, () => t)).toBe(true);
+    expect(d.startServer).toHaveBeenCalledOnce();
+  });
+
+  it("cli-not-installed does NOT burn the throttle either", async () => {
+    // Same shape as above for the other cheap pre-check: no CLI yet (e.g. user
+    // hasn't finished installing) must not delay a start once it appears.
+    let cli: string | null = null;
+    const d = deps({ lmsCliPath: vi.fn(() => cli) });
+    let t = 1_000_000;
+    expect(await maybeAutostartLmStudio([], d, () => t)).toBe(false);
+    expect(d.startServer).not.toHaveBeenCalled();
+    cli = "C:\\Users\\u\\.lmstudio\\bin\\lms.exe";
+    t += 30_000;
+    expect(await maybeAutostartLmStudio([], d, () => t)).toBe(true);
+    expect(d.startServer).toHaveBeenCalledOnce();
+  });
+
   it("throttles: a second attempt inside the interval is skipped, after it retries", async () => {
     const d = deps({ startServer: vi.fn(async () => false) });
     let t = 1_000_000;

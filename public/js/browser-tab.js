@@ -33,11 +33,6 @@
 	var loadError = null;
 	// True while the SELECTED view is mid-load — the toolbar ↻ becomes ✕/Stop.
 	var selectedLoading = false;
-	// The chat session the browser panel is bound to (set on chat switch). While
-	// set, the panel surfaces that session's own agent view. Agent views are
-	// named view-<sessionId>-<profileId>[-tN], so a session owns every view whose
-	// id starts with view-<sessionId>-.
-	var boundSessionId = null;
 
 	function panelCollapsed() {
 		var panel = document.getElementById('agent-feeds');
@@ -180,34 +175,6 @@
 		}).catch(swallow);
 	}
 
-	// A session owns every view id prefixed view-<sessionId>- (base view + tabs).
-	function belongsToSession(viewId, sessionId) {
-		return !!viewId && !!sessionId && viewId.indexOf('view-' + sessionId + '-') === 0;
-	}
-
-	// Surface the bound session's browser view. Deliberately does nothing when
-	// the current selection already belongs to that session — so switching among
-	// a chat's own tabs (or an agent opening a new tab in the focused chat) is
-	// never yanked back to the first view. Only a selection from a DIFFERENT
-	// session (or none) triggers the switch.
-	function applySessionBinding(views) {
-		if (!boundSessionId || !bridge || !bridge.switchView || !Array.isArray(views)) return;
-		if (belongsToSession(selectedViewId, boundSessionId)) return;
-		for (var i = 0; i < views.length; i++) {
-			if (belongsToSession(views[i].viewId, boundSessionId)) { switchTo(views[i].viewId); return; }
-		}
-		// No view for this chat yet — leave the panel as-is (do not steal it); a
-		// later views-changed (agent opens a page) re-runs this and surfaces it.
-	}
-
-	// Bind the browser panel to a chat session (called on chat switch). null
-	// clears the binding without changing what's shown.
-	function bindSession(sessionId) {
-		boundSessionId = sessionId || null;
-		if (!boundSessionId || !bridge || !bridge.listViews) return;
-		Promise.resolve(bridge.listViews()).then(applySessionBinding).catch(swallow);
-	}
-
 	function switchTo(viewId) {
 		if (!bridge || !bridge.switchView) return;
 		selectedViewId = viewId; // optimistic — pill highlights immediately
@@ -343,7 +310,9 @@
 		// an agent view): re-list immediately — refreshSwitcher also re-adopts
 		// the attached view. The 2s poll below stays as fallback while shown.
 		if (bridge.onViewsChanged) bridge.onViewsChanged(function () {
-			refreshSwitcher().then(applySessionBinding).catch(swallow);
+			refreshSwitcher().then(function (views) {
+				if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.apply(views);
+			}).catch(swallow);
 		});
 		// Agent opened a website while the user wasn't watching a real page:
 		// bring the Browser tab up so the agent's browsing is visible. Open the
@@ -404,8 +373,9 @@
 		// Exposed for the switcher/strip tests + programmatic refresh.
 		refreshSwitcher: refreshSwitcher,
 		switchTo: switchTo,
-		// Bind the panel to the active chat (app-sidebar-actions.js on switch).
-		bindSession: bindSession,
+		// The view whose nav-state fills the toolbar — read by the session-bind
+		// module to decide whether the panel already shows the bound chat.
+		getSelectedViewId: function () { return selectedViewId; },
 		newTab: newTab,
 		// Chat links (chat-link-open.js): open url as a fresh USER tab and
 		// raise the Browser panel so the page is actually visible.

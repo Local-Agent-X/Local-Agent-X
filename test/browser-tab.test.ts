@@ -88,6 +88,7 @@ vi.mock("../desktop/src/browser-views", () => ({
   getBrowserView: (viewId: string) => (h.viewsById.has(viewId) ? h.viewsById.get(viewId) : h.fakeView),
   getAttachedViewId: () => h.attachedId,
   setPoolChangedListener: (fn: (() => void) | null) => { h.poolListener = fn; },
+  setAgentViewEvictedNotifier: () => {},
   listBrowserViews: () => h.poolList,
   pingBrowserView: () => ({ ok: true }),
   hideBrowserView: () => { h.hideCalls++; },
@@ -1090,6 +1091,50 @@ describe("browser-views pool seams (real module)", () => {
     }
   });
 
+  it("caps detached agent views with LRU eviction, notifies the server, spares attached + user views", () => {
+    const evicted: string[] = [];
+    realViews.setAgentViewEvictedNotifier((id: string) => { evicted.push(id); });
+    const cleanup = ["keep-user", "keep-attached", "ev-0", "ev-1", "ev-2", "ev-3", "ev-4"];
+    try {
+      // A user view and an ATTACHED agent view — both must be immune to the cap.
+      realViews.createBrowserView("keep-user", { partition: "persist:lax-profile-default", agentDriven: false });
+      realViews.createBrowserView("keep-attached", { partition: "persist:lax-profile-default", agentDriven: true });
+      realViews.showBrowserView("keep-attached");
+      // Cap is 4 detached agent views; creating a 5th evicts the LRU (ev-0).
+      for (let i = 0; i < 5; i++) {
+        realViews.createBrowserView("ev-" + i, { partition: "persist:lax-profile-default", agentDriven: true });
+      }
+      expect(realViews.getBrowserView("ev-0")).toBeUndefined();
+      expect(evicted).toEqual(["ev-0"]);
+      for (let i = 1; i < 5; i++) expect(realViews.getBrowserView("ev-" + i)).toBeDefined();
+      expect(realViews.getBrowserView("keep-attached")).toBeDefined(); // attached — never evicted
+      expect(realViews.getBrowserView("keep-user")).toBeDefined();     // user view — never evicted
+    } finally {
+      realViews.setAgentViewEvictedNotifier(null);
+      for (const id of cleanup) if (realViews.getBrowserView(id)) realViews.closeBrowserView(id);
+    }
+  });
+
+  it("a fresh ping keeps a detached agent view off the LRU chopping block", () => {
+    const evicted: string[] = [];
+    realViews.setAgentViewEvictedNotifier((id: string) => { evicted.push(id); });
+    const cleanup = ["p-0", "p-1", "p-2", "p-3", "p-4"];
+    try {
+      for (let i = 0; i < 4; i++) {
+        realViews.createBrowserView("p-" + i, { partition: "persist:lax-profile-default", agentDriven: true });
+      }
+      // p-0 is the LRU — but the agent is actively driving it, so a ping refreshes
+      // it. The next create must then evict p-1 (the new LRU), not p-0.
+      realViews.pingBrowserView("p-0");
+      realViews.createBrowserView("p-4", { partition: "persist:lax-profile-default", agentDriven: true });
+      expect(evicted).toEqual(["p-1"]);
+      expect(realViews.getBrowserView("p-0")).toBeDefined();
+    } finally {
+      realViews.setAgentViewEvictedNotifier(null);
+      for (const id of cleanup) if (realViews.getBrowserView(id)) realViews.closeBrowserView(id);
+    }
+  });
+
   it("attach flips between two views fire the listener and re-point getAttachedViewId", () => {
     realViews.createBrowserView("pv-a", { partition: "persist:lax-profile-default" });
     realViews.createBrowserView("pv-b", { partition: "persist:lax-profile-default" });
@@ -1138,14 +1183,16 @@ describe("browser-views pool seams (real module)", () => {
 describe("browser panel ↔ chat session binding", () => {
   const bindHere = dirname(fileURLToPath(import.meta.url));
   const flush = () => new Promise((r) => setTimeout(r, 0));
-  // Re-execute browser-tab.js against a bridge augmented with the multi-view
-  // ops (the default beforeEach bridge omits them). The fresh module instance
-  // binds to the same window.desktop.browser object we extended.
+  // Re-execute browser-tab.js + browser-session-bind.js against a bridge
+  // augmented with the multi-view ops (the default beforeEach bridge omits
+  // them). The session-bind module drives the panel through laxBrowserTab's
+  // public API, so both must load fresh against the same bridge object.
   function reload(extra: Record<string, unknown>) {
     Object.assign(bridge as object, extra);
-    const src = readFileSync(join(bindHere, "../public/js/browser-tab.js"), "utf8");
-    new Function(src)();
+    new Function(readFileSync(join(bindHere, "../public/js/browser-tab.js"), "utf8"))();
+    new Function(readFileSync(join(bindHere, "../public/js/browser-session-bind.js"), "utf8"))();
   }
+  const bind = (id: string | null) => window.laxBrowserSessionBind.bindSession(id);
 
   it("surfaces the view scoped to the bound session (view-<sessionId>-*)", async () => {
     const switchView = vi.fn().mockResolvedValue({ viewId: "view-chat-B-work" });
@@ -1156,7 +1203,7 @@ describe("browser panel ↔ chat session binding", () => {
       ]),
       switchView,
     });
-    window.laxBrowserTab.bindSession("chat-B");
+    bind("chat-B");
     await flush();
     expect(switchView).toHaveBeenCalledWith("view-chat-B-work");
   });
@@ -1167,7 +1214,7 @@ describe("browser panel ↔ chat session binding", () => {
       listViews: vi.fn().mockResolvedValue([{ viewId: "view-chat-A-work", url: "" }]),
       switchView,
     });
-    window.laxBrowserTab.bindSession("chat-Z");
+    bind("chat-Z");
     await flush();
     expect(switchView).not.toHaveBeenCalled();
   });
@@ -1184,7 +1231,7 @@ describe("browser panel ↔ chat session binding", () => {
     window.laxBrowserTab.switchTo("view-chat-A-t2"); // user is on a specific tab of chat A
     await flush();
     switchView.mockClear();
-    window.laxBrowserTab.bindSession("chat-A"); // same chat — must not yank to the first tab
+    bind("chat-A"); // same chat — must not yank to the first tab
     await flush();
     expect(switchView).not.toHaveBeenCalled();
   });
@@ -1200,7 +1247,7 @@ describe("browser panel ↔ chat session binding", () => {
     });
     window.laxBrowserTab.switchTo("view-chat-D-work"); // looking at a different chat's browser
     await flush();
-    window.laxBrowserTab.bindSession("chat-C"); // chat-C has no view yet
+    bind("chat-C"); // chat-C has no view yet
     await flush();
     switchView.mockClear();
     // Agent opens a page in chat C: the pool gains its view and main pokes us.
@@ -1224,7 +1271,11 @@ declare global {
       reload(): void;
       navigateFromInput(): void;
       switchTo(id: string): void;
+      getSelectedViewId(): string | null;
+    };
+    laxBrowserSessionBind: {
       bindSession(id: string | null): void;
+      apply(views: unknown): void;
     };
   }
 }

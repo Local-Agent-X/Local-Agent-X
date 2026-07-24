@@ -35,6 +35,7 @@ import {
 	hideBrowserView,
 	listBrowserViews,
 	setBrowserChatOverlay,
+	setAgentViewEvictedNotifier,
 	setBrowserViewBounds,
 	setPoolChangedListener,
 	showBrowserView,
@@ -196,6 +197,7 @@ export function setupBrowserIPC(): void {
 	// give every pool view (incl. agent views minted over the server bridge)
 	// its find/zoom page controls (browser-page-controls.ts).
 	setPoolChangedListener(() => { sendViewsChanged(); wirePageControlsForPool(); });
+	setAgentViewEvictedNotifier(emitAgentViewClosed); // LRU eviction → server, like a user ✕-close
 	// Find-in-page + per-view zoom command surface, acting on currentViewId.
 	setupBrowserPageControls(() => currentViewId);
 	setupBrowserDownloadsIPC();
@@ -313,13 +315,11 @@ export function setupBrowserIPC(): void {
 		return state;
 	});
 
-	// Close a tab from the strip. User views close outright. Agent views are
-	// closable too — RECOVERABLY: emitAgentViewClosed tells the server child,
-	// whose backend marks the tab gone and lazily recreates the view on the
-	// agent's next op (its in-flight ops are rejected with a typed view-closed
-	// error rather than left to time out). The server bridge's own close guard
-	// (agent views only) is unchanged — it protects user views from the server,
-	// not agent views from the user.
+	// Close a tab from the strip. User views close outright. Agent views close
+	// RECOVERABLY: emitAgentViewClosed tells the server child, whose backend marks
+	// the tab gone and lazily recreates it on the agent's next op (in-flight ops
+	// reject with a typed view-closed error). The server bridge's own close guard
+	// (agent views only) protects user views from the server, not the reverse.
 	// Returns true when the view was closed, false when absent.
 	ipcMain.handle("browser-close-view", (event: IpcMainInvokeEvent, viewId: string): boolean => {
 		if (!isTrustedBrowserSender(event.sender)) return false;

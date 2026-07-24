@@ -39,9 +39,28 @@ interface PoolEntry {
 	/** webContents.id captured at creation — cleanup must not read it off a
 	 *  possibly-destroyed webContents. */
 	wcId: number;
+	/** Monotonic recency for LRU eviction (create / attach / ping). A counter,
+	 *  not a clock, so ties never collide and tests stay deterministic. */
+	lastActiveSeq: number;
 }
 
 const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
+
+// Cap on DETACHED, agent-driven views kept alive in the pool. Each live view is
+// a full renderer; with per-chat browsers, unbounded background views starve
+// the desktop process (the CPU/main-thread contention that expired op leases
+// mid-run). Attached and user views are never evicted; the LRU detached agent
+// view is closed (recoverably — the server recreates it on the agent's next op)
+// when a new agent view would push past the cap.
+const MAX_DETACHED_AGENT_VIEWS = 4;
+let activityClock = 0;
+// Server-notify seam (wired to emitAgentViewClosed in browser-ipc). An evicted
+// agent view must reach the server the same way a user ✕-close does, so the
+// owning backend marks the tab gone and recreates it lazily.
+let agentViewEvictedNotifier: ((viewId: string) => void) | null = null;
+export function setAgentViewEvictedNotifier(fn: ((viewId: string) => void) | null): void {
+	agentViewEvictedNotifier = fn;
+}
 
 const pool = new Map<string, PoolEntry>();
 // webContents.id → agentDriven, for the partition layer's per-request
@@ -238,6 +257,7 @@ export function createBrowserView(
 		agentDriven: opts.agentDriven === true,
 		popups,
 		wcId: view.webContents.id,
+		lastActiveSeq: ++activityClock,
 	};
 	pool.set(viewId, entry);
 	wcTrust.set(entry.wcId, entry.agentDriven);
@@ -246,8 +266,25 @@ export function createBrowserView(
 	} catch {
 		/* perception must never break view creation */
 	}
+	evictDetachedAgentViewsOverCap(viewId);
 	notifyPoolChanged();
 	return describe(viewId, entry);
+}
+
+/** Enforce MAX_DETACHED_AGENT_VIEWS: close the least-recently-active detached
+ *  agent views until the cap holds. Never touches the attached view, user
+ *  views, or the just-created `keepId`. */
+function evictDetachedAgentViewsOverCap(keepId: string): void {
+	const detachedAgent = [...pool.entries()]
+		.filter(([id, e]) => e.agentDriven && id !== attachedId && id !== keepId)
+		.sort((a, b) => a[1].lastActiveSeq - b[1].lastActiveSeq);
+	// keepId counts toward the cap but is never itself the eviction target.
+	const overflow = detachedAgent.length + 1 - MAX_DETACHED_AGENT_VIEWS;
+	for (let i = 0; i < overflow && i < detachedAgent.length; i++) {
+		const evictId = detachedAgent[i][0];
+		closeBrowserView(evictId);
+		try { agentViewEvictedNotifier?.(evictId); } catch { /* child gone — backend closes with the session */ }
+	}
 }
 
 export function getBrowserView(viewId: string): WebContentsView | undefined {
@@ -268,6 +305,7 @@ export function showBrowserView(viewId: string): void {
 	win.contentView.addChildView(entry.view);
 	entry.view.setBounds(entry.bounds);
 	attachedId = viewId;
+	entry.lastActiveSeq = ++activityClock; // showing a view is activity (LRU)
 	attachChatOverlay();
 	if (flipped) notifyPoolChanged();
 }
@@ -314,6 +352,7 @@ export function closeBrowserView(viewId: string): void {
 export function pingBrowserView(viewId: string): { ok: boolean; url?: string; title?: string; bounds?: { width: number; height: number } } {
 	const entry = pool.get(viewId);
 	if (!entry || entry.view.webContents.isDestroyed()) return { ok: false };
+	entry.lastActiveSeq = ++activityClock; // agent driving a detached view keeps it off the LRU chopping block
 	return {
 		ok: true,
 		url: entry.view.webContents.getURL(),

@@ -104,6 +104,19 @@ describe("sensitivePageActionDecision — secret-bearing READ ladder", () => {
 		expect(sensitivePageActionDecision(VAULT, "snapshot").disposition).toBe(disposition);
 	});
 
+	// read_response returns the endpoint's response BODY, so it rides the same
+	// secret-READ ladder as snapshot/read_network — blocked below open on a
+	// secret-bearing page, approval-gated at ask, allowed at open.
+	it.each([
+		["lockdown", "blocked"],
+		["guarded", "blocked"],
+		["ask", "approval-required"],
+		["open", "allow"],
+	])("read_response on a password-manager host at %s → %s", (level, disposition) => {
+		state.level = level;
+		expect(sensitivePageActionDecision(VAULT, "read_response").disposition).toBe(disposition);
+	});
+
 	it("ask-level read approval carries unlocksRead (the tool layer must grant the stub unlock)", () => {
 		state.level = "ask";
 		const d = sensitivePageActionDecision(VAULT, "extract");

@@ -56,6 +56,7 @@ const BACKEND_METHODS = [
 	// Perception
 	"readConsole",
 	"readNetwork",
+	"readResponse",
 	// Dialogs
 	"dialogAccept",
 	"dialogDismiss",
@@ -88,11 +89,11 @@ const BACKENDS: Array<{ name: string; proto: object }> = [
 ];
 
 describe("BrowserBackend conformance — both backends implement the full contract", () => {
-	it("enumerates all 30 contract methods", () => {
+	it("enumerates all 31 contract methods", () => {
 		// A guard on the guard: if the contract grew and BACKEND_METHODS wasn't
 		// updated, the compile-time lock above already fails — but pin the count
 		// so a reviewer sees the expected surface size at a glance.
-		expect(BACKEND_METHODS.length).toBe(30);
+		expect(BACKEND_METHODS.length).toBe(31);
 		expect(new Set(BACKEND_METHODS).size).toBe(BACKEND_METHODS.length); // no dupes
 	});
 

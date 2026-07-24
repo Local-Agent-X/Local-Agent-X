@@ -51,7 +51,7 @@ import {
 import { handleAct } from "./act.js";
 import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
-import { handleReadConsole, handleReadNetwork } from "./perception.js";
+import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perception.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { createLogger } from "../../logger.js";
 import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
@@ -77,7 +77,7 @@ const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close_tab",
 // a read never "tries to move the page", and blocking the agent's own
 // re-perceive recovery move with the stall error is the opposite of helpful.
 const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "act"]);
-const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "history", "bookmarks"]);
+const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks"]);
 
 /** Wedge outcome → what the agent is told. Honest about what survived: an
  *  in-place recovery keeps the tab and page; a recreated view reloads its last
@@ -273,6 +273,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "observe": return await handleObserve(manager);
             case "read_console": return await handleReadConsole(manager);
             case "read_network": return await handleReadNetwork(manager);
+            case "read_response": return await handleReadResponse(manager, args);
             default:
               return err(
                 `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, tabs, switch_tab, info, close`

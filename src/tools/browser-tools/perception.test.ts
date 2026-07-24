@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BrowserBackend } from "../../browser/backend.js";
-import { handleReadConsole, handleReadNetwork } from "./perception.js";
+import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perception.js";
 import { BROWSER_TOOL_PARAMETERS } from "./description.js";
 
 function fakeManager(over: Partial<Record<keyof BrowserBackend, unknown>>): BrowserBackend {
@@ -29,6 +29,27 @@ describe("read_console / read_network handlers", () => {
     expect(r.content).toContain("UNTRUSTED");
   });
 
+  it("handleReadResponse returns the backend body wrapped as external content", async () => {
+    const manager = fakeManager({
+      readResponse: async (url: string) => `{"ok":true} for ${url}`,
+    });
+    const r = await handleReadResponse(manager, { action: "read_response", url: "https://api.example.com/data" });
+    expect(r.isError).toBeFalsy();
+    expect(r.content).toContain('{"ok":true}');
+    expect(r.content).toContain("UNTRUSTED");
+  });
+
+  it("handleReadResponse without a url returns a guidance message (no backend call)", async () => {
+    const manager = fakeManager({
+      readResponse: async () => {
+        throw new Error("backend must not be called without a url");
+      },
+    });
+    const r = await handleReadResponse(manager, { action: "read_response" });
+    expect(r.content).toContain("requires a 'url'");
+    expect(r.content).not.toContain("UNTRUSTED");
+  });
+
   it("the CDP backend's not-supported string flows through unchanged (no pretending)", async () => {
     const manager = fakeManager({
       readConsole: async () => "Console capture is not supported on the external-Chrome backend — it is available in the in-app browser. No console output was read.",
@@ -43,6 +64,7 @@ describe("action registration", () => {
     const actions = (BROWSER_TOOL_PARAMETERS.properties.action as { enum: string[] }).enum;
     expect(actions).toContain("read_console");
     expect(actions).toContain("read_network");
+    expect(actions).toContain("read_response");
   });
 
   it("both actions classify as read-only in the tool's effect discriminator", async () => {
@@ -51,6 +73,7 @@ describe("action registration", () => {
     const effect = tool.effect as (args: Record<string, unknown>) => { class: string };
     expect(effect({ action: "read_console" })).toEqual({ class: "read-only" });
     expect(effect({ action: "read_network" })).toEqual({ class: "read-only" });
+    expect(effect({ action: "read_response" })).toEqual({ class: "read-only" });
     expect(effect({ action: "navigate" })).toEqual({ class: "non-idempotent" });
   });
 });

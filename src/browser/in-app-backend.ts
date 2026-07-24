@@ -39,6 +39,7 @@ import {
 	IN_APP_NO_DIALOG,
 	readConsoleInApp,
 	readNetworkInApp,
+	readResponseInApp,
 } from "./in-app-page-io.js";
 import {
 	closeOwnedTabs,
@@ -327,6 +328,10 @@ export class ElectronInAppBackend implements BrowserBackend {
 	async readNetwork(): Promise<string> {
 		await this.ensureView();
 		return readNetworkInApp(this.viewId);
+	}
+	async readResponse(url: string): Promise<string> {
+		await this.ensureView();
+		return readResponseInApp(this.viewId, url);
 	}
 
 	// ── Dialogs (beforeunload queue on the desktop — browser-dialogs.ts) ──

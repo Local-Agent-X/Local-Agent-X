@@ -38,6 +38,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- info: Get current page URL, title, and engine.\n" +
   "- read_console: Read the page's recent console output (errors/warnings/logs, newest last). Check this after acting — especially when verifying an app you're building — instead of guessing why a page is broken. Reads the in-app browser's console; on the external-Chrome fallback it's unavailable.\n" +
   "- read_network: Read recent network request outcomes (HTTP status or failure per request, plus in-flight count). Use it to spot failed API calls / 4xx-5xx responses after acting, especially when verifying an app you're building. When a page's data comes from a JSON/XHR/RSS endpoint, read_network surfaces it under 'API/data endpoints observed' (GET, 2xx, path-only — query strings are stripped); prefer replaying a complete URL with http_request for clean structured data over scraping, but add back any needed query params and verify the response since a param-driven endpoint won't replay as-is. Reads the in-app browser's network; unavailable on the external-Chrome fallback.\n" +
+  "- read_response: Fetch the actual JSON/text BODY a data endpoint returned (not just its status). After read_network surfaces an 'API/data endpoints observed' URL, use read_response with that full 'url' to read the structured payload directly instead of scraping the rendered page. JSON/text/XML/RSS only (binary/media refused); the body is size-capped and treated as untrusted external content. In-app browser only; unavailable on the external-Chrome fallback and blocked on sensitive/secret-bearing pages.\n" +
   "- downloads: List released, quarantined, rejected, and failed browser downloads for this session.\n" +
   "- release_download: Release a quarantined archive or macro-enabled document after user approval (set 'download_id').\n" +
   "- dialog_accept: Accept a pending dialog. The in-app browser only intercepts beforeunload prompts — alert/confirm/prompt render natively to the co-driving user to handle (the external-Chrome fallback does capture all three). Pass 'value' for a prompt() response on that fallback.\n" +
@@ -67,13 +68,13 @@ export const BROWSER_TOOL_PARAMETERS = {
   properties: {
     action: {
       type: "string",
-      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
+      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
       description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
     },
     url: {
       type: "string",
       maxLength: MAX_BROWSER_URL_LENGTH,
-      description: "URL to navigate to (required for 'navigate')",
+      description: "URL to navigate to (required for 'navigate'; also the endpoint URL for 'read_response')",
     },
     urls: {
       type: "array",

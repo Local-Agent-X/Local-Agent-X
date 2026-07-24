@@ -13,6 +13,7 @@
 
 import type { Page } from "playwright";
 import { browserDialogs, browserExec, browserReadConsole, browserReadNetwork } from "./bridge-client.js";
+import { readResponseBody } from "./cdp-network.js";
 import { formatConsoleReport, formatNetworkReport } from "./bridge-perception.js";
 import { screenshotAsBase64, type ScreenshotResult } from "./page-ops.js";
 import { CREDENTIAL_CAPTURE_BLOCKED } from "./in-app-actions.js";
@@ -79,6 +80,12 @@ export async function readConsoleInApp(viewId: string): Promise<string> {
 export async function readNetworkInApp(viewId: string): Promise<string> {
 	const { entries, inFlight } = await browserReadNetwork(viewId);
 	return formatNetworkReport(entries, inFlight);
+}
+
+/** On-demand response-body read — thin passthrough to the CDP leaf, which
+ *  resolves its own live Page via getPageForView(viewId). */
+export async function readResponseInApp(viewId: string, url: string): Promise<string> {
+	return readResponseBody(viewId, url);
 }
 
 // ── Dialogs (beforeunload queue on the desktop — browser-dialogs.ts) ──

@@ -55,10 +55,13 @@ const MUTATING_BROWSER_ACTIONS = new Set([
 ]);
 // read_console/read_network belong here too: a secret-bearing page's console
 // output and request URLs are page-controlled channels that can carry the
-// same secrets its DOM does. bookmark_add reads the page's url+title AND
-// persists them to disk — on a vault-ish page that's a secret write-out.
+// same secrets its DOM does. read_response is strictly MORE sensitive — it
+// returns the endpoint's response BODY, not just the URL, so a vault/account
+// API's secret payload would flow straight into the tool result. bookmark_add
+// reads the page's url+title AND persists them to disk — on a vault-ish page
+// that's a secret write-out.
 const SECRET_READING_ACTIONS = new Set([
-  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "bookmark_add",
+  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "read_response", "bookmark_add",
 ]);
 
 export function browserSecrecyLevel(): BrowserSecrecy {

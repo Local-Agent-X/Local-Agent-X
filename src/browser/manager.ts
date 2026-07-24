@@ -301,6 +301,12 @@ export class BrowserManager implements BrowserBackend {
       "it is available in the in-app browser. No network activity was read."
     );
   }
+  async readResponse(_url: string): Promise<string> {
+    return (
+      "Response-body capture is not supported on the external-Chrome backend — " +
+      "it is available in the in-app browser. Use http_request to fetch the URL instead."
+    );
+  }
 
   async dialogAccept(promptText?: string): Promise<string> {
     const page = await this.getPage();

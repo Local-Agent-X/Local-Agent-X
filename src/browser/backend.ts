@@ -86,6 +86,10 @@ export interface BrowserBackend {
   /** Recent network request outcomes (status or error per line) plus the
    *  in-flight count for the active tab's partition. In-app backend only. */
   readNetwork(): Promise<string>;
+  /** The JSON/text body a data endpoint (surfaced by readNetwork's replay
+   *  candidates) returned for `url`, bounded + content-type-allowlisted.
+   *  In-app backend only; the CDP backend reports not-supported. */
+  readResponse(url: string): Promise<string>;
 
   // ── Dialogs ──
   dialogAccept(promptText?: string): Promise<string>;

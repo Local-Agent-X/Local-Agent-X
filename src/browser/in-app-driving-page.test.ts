@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	realDrivingPage,
 	resolveDrivingPage,
 	invalidateDrivingPage,
 	_setPageResolverForTest,
@@ -90,6 +91,35 @@ describe("resolveDrivingPage", () => {
 
 		const page = await resolveDrivingPage("view-1", fallback as never);
 		expect(page).toBe(fallback);
+	});
+});
+
+describe("realDrivingPage", () => {
+	it("returns the live real Page when the resolver yields one", async () => {
+		const real = fakePage("real");
+		_setPageResolverForTest(async () => real as never);
+
+		expect(await realDrivingPage("view-1")).toBe(real);
+	});
+
+	it("returns null when the resolver yields null (no CDP / not found)", async () => {
+		_setPageResolverForTest(async () => null);
+
+		expect(await realDrivingPage("view-1")).toBeNull();
+	});
+
+	it("returns null when the resolver yields an already-closed page (never a stale handle)", async () => {
+		_setPageResolverForTest(async () => fakePage("closed", true) as never);
+
+		expect(await realDrivingPage("view-1")).toBeNull();
+	});
+
+	it("returns null and never throws when the resolver throws", async () => {
+		_setPageResolverForTest(async () => {
+			throw new Error("boom");
+		});
+
+		expect(await realDrivingPage("view-1")).toBeNull();
 	});
 });
 

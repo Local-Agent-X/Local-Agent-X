@@ -67,12 +67,12 @@ function isLive(page: Page): boolean {
 }
 
 /**
- * Return the real CDP-backed Page for this view if the embedded browser's CDP
- * endpoint is connected and a live Page exists; otherwise the passed-in fallback
- * (the isolated-world bridge adapter). Cached per viewId, self-healing, never
- * throws.
+ * The real CDP-backed Page for this view, or null when CDP is absent / not
+ * found. Cached + self-healing like resolveDrivingPage, but returns null instead
+ * of a fallback — for DRIVING primitives (goto/input) that only work on a real
+ * Page. Never throws: any failure yields null so the caller degrades cleanly.
  */
-export async function resolveDrivingPage(viewId: string, fallback: Page): Promise<Page> {
+export async function realDrivingPage(viewId: string): Promise<Page | null> {
 	try {
 		// Serve a still-live cached real Page without a round-trip.
 		const cached = cache.get(viewId);
@@ -90,12 +90,22 @@ export async function resolveDrivingPage(viewId: string, fallback: Page): Promis
 			return page;
 		}
 		// null (no CDP / not found) or a page that is somehow already closed —
-		// fall back to the bridge adapter. Never cache the fallback.
-		return fallback;
+		// no real Page. Never cache the (absent) result.
+		return null;
 	} catch (err) {
-		logger.warn(`resolveDrivingPage(${viewId}) failed: ${(err as Error).message}`);
-		return fallback;
+		logger.warn(`realDrivingPage(${viewId}) failed: ${(err as Error).message}`);
+		return null;
 	}
+}
+
+/**
+ * Return the real CDP-backed Page for this view if the embedded browser's CDP
+ * endpoint is connected and a live Page exists; otherwise the passed-in fallback
+ * (the isolated-world bridge adapter). Cached per viewId, self-healing, never
+ * throws — shares realDrivingPage's ONE cache + liveness path.
+ */
+export async function resolveDrivingPage(viewId: string, fallback: Page): Promise<Page> {
+	return (await realDrivingPage(viewId)) ?? fallback;
 }
 
 /**

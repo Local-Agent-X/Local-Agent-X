@@ -7,10 +7,40 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright";
 import { sensitivePageStub } from "./guards.js";
-import { MAX_TEXT_LENGTH } from "./launcher.js";
+import { MAX_TEXT_LENGTH, NAV_TIMEOUT } from "./launcher.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { capBody, findInBody } from "../tools/paginate-body.js";
 import { getLaxDir } from "../lax-data-dir.js";
+
+/** Raw native-navigation outcome: the landed URL and the real main-frame HTTP
+ *  status (omitted for a non-HTTP load — no Response). Deliberately NO title:
+ *  each backend reads the title on ITS OWN schedule (the external-Chrome manager
+ *  waits for `load` + a settle before reading, so a client-rendered title isn't
+ *  stale; the in-app native path reads it right after goto). */
+export interface NativeNavResult {
+  url: string;
+  status?: number;
+}
+
+/**
+ * The native-Page navigation both backends share (the external-Chrome manager
+ * and the in-app CDP-backed embedded view). ONE native-nav semantic: the goto
+ * plus the landed url/status read — each caller applies its own >=400 /
+ * redirect / sensitive-withhold / title handling on top.
+ *
+ * SECURITY: rides the page's NORMAL session network stack — no page.route() /
+ * context.route() / Fetch.enable interception is added — so the partition's
+ * webRequest egress guard fires on this navigation exactly as it does on a
+ * user load. Never add interception here.
+ */
+export async function gotoPage(page: Page, url: string): Promise<NativeNavResult> {
+  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+  const status = response?.status();
+  return {
+    url: page.url(),
+    ...(typeof status === "number" ? { status } : {}),
+  };
+}
 
 /** Extract visible text from body or a specific selector. `find` narrows to the
  *  matching lines (case-insensitive) instead of returning the whole extract. */

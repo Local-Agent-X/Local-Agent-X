@@ -5,7 +5,7 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
 import { closeCdpTab, openCdpTab, type CdpTabHost } from "./manager-tabs.js";
-import { ACTION_TIMEOUT, NAV_TIMEOUT, type BrowserEngine } from "./launcher.js";
+import { ACTION_TIMEOUT, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
 import { profileUserDataDir } from "./profile-store.js";
 import {
@@ -20,7 +20,7 @@ import { safeHost, redirectMessage } from "./redirect.js";
 import { safeBrowserPageLabel, sensitivePageStub } from "./guards.js";
 import { getRuntimeConfig } from "../config.js";
 import {
-  extractTextFrom, screenshotAsBase64, evaluateScript,
+  extractTextFrom, screenshotAsBase64, evaluateScript, gotoPage,
   listTabs as listTabsOp, resolveSwitchTab, pageInfo,
   type ScreenshotResult,
 } from "./page-ops.js";
@@ -179,9 +179,13 @@ export class BrowserManager implements BrowserBackend {
     url = injectTokenIfLocal(url);
     const requestedHost = safeHost(url);
     const page = await this.getPage(engine);
-    const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    // gotoPage owns the shared native goto + status read (page-ops.ts); this
+    // backend keeps its OWN settle/title/redirect handling below unchanged —
+    // the title is read AFTER the load-settle waits so a client-rendered title
+    // is never stale.
+    const nav = await gotoPage(page, url);
     if (this.mode === "continuity") await waitForContinuityCacheRestore(page);
-    const status = response?.status() ?? "unknown";
+    const status = nav.status ?? "unknown";
     // HTTP error responses (404, 500, etc.) are NOT a successful navigation
     // outcome — silently returning "Status: 404" as ok let agents treat broken
     // pages as live. Surface via thrown Error so the outer handler converts to err().

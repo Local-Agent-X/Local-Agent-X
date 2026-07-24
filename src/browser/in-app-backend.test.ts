@@ -31,6 +31,7 @@ import {
 	browserReadNetwork,
 } from "./bridge-client.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
+import { _setPageResolverForTest } from "./in-app-driving-page.js";
 import { EvaluateBlockedError } from "./guards.js";
 import { IN_APP_NO_DIALOG } from "./in-app-page-io.js";
 import { ingestInAppDownload } from "./downloads.js";
@@ -121,6 +122,9 @@ describe("ElectronInAppBackend (A1)", () => {
 		if (prevLaxDir === undefined) delete process.env.LAX_DATA_DIR;
 		else process.env.LAX_DATA_DIR = prevLaxDir;
 		rmSync(laxDir, { recursive: true, force: true });
+		// Restore the default real-Page resolver (clears the module cache too) so a
+		// fake injected by a native-path test never leaks into a bridge-path suite.
+		_setPageResolverForTest(null);
 		vi.clearAllMocks();
 	});
 
@@ -164,6 +168,29 @@ describe("ElectronInAppBackend (A1)", () => {
 		vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("ERR_BLOCKED_BY_CLIENT"));
 		await expect(backend.navigate(PAGE_URL)).rejects.toThrow("ERR_BLOCKED_BY_CLIENT");
 		expect(enrich).toHaveBeenCalledWith(expect.any(Error), PAGE_URL, VIEW_ID);
+	});
+
+	// ── Native driving path: navigate() delegates to navigateInAppView ──
+	// The leaf's full native/egress/fallback matrix is covered in
+	// in-app-navigate.test.ts; here we assert the BACKEND wiring — with a real
+	// Page injected, page.goto drives, the bridge is bypassed, and the report +
+	// cached state come from the native result. (The bridge/fallback wiring is
+	// already exercised by the tests above, which run with no real Page.)
+	it("navigate drives the NATIVE page.goto through the leaf when a real Page is present", async () => {
+		const real = {
+			isClosed: () => false,
+			goto: vi.fn(async () => ({ status: () => 200 })),
+			url: () => PAGE_URL,
+			title: vi.fn(async () => PAGE_TITLE),
+		};
+		_setPageResolverForTest(async () => real as never);
+
+		const out = await backend.navigate(PAGE_URL);
+
+		expect(real.goto).toHaveBeenCalledWith(PAGE_URL, expect.objectContaining({ waitUntil: "domcontentloaded" }));
+		expect(browserNavigate).not.toHaveBeenCalled();
+		expect(out).toBe(`Navigated to: ${PAGE_URL}\nStatus: 200\nTitle: ${PAGE_TITLE}`);
+		expect(backend.getCurrentUrl()).toBe(PAGE_URL);
 	});
 
 	it("new_tab prints the REAL HTTP status when the bridge reply carries one", async () => {

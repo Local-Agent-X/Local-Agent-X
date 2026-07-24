@@ -66,6 +66,7 @@ import {
 	pageInfo,
 	type ScreenshotResult,
 } from "./page-ops.js";
+import { navigateInAppView } from "./in-app-navigate.js";
 import type { BridgePageState } from "./in-app-observe.js";
 import {
 	clickRefInApp,
@@ -144,13 +145,9 @@ export class ElectronInAppBackend implements BrowserBackend {
 		const requestedHost = safeHost(url);
 		this.activeTab.lastUrl = ""; // this call supplies the URL — never reload a preserved one
 		await this.ensureView();
-		const viewId = this.viewId;
-		let result;
-		try {
-			result = await browserNavigate(viewId, url, this.sessionId);
-		} catch (e) {
-			throw enrichBlockedNavigation(e, url, viewId);
-		}
+		// Native page.goto when a real CDP-backed Page exists, else the bridge —
+		// egress enrichment is driver-agnostic (in-app-navigate.ts).
+		const result = await navigateInAppView(this.viewId, url, this.sessionId);
 		this.state.url = result.url;
 		this.state.title = result.title;
 		return navigationReport("Navigated to: ", result, requestedHost);
@@ -159,7 +156,9 @@ export class ElectronInAppBackend implements BrowserBackend {
 	/** Open a REAL additional view (viewId `<first>-t<N>`, N monotonic) and make
 	 *  it the active tab. Same output shape as CDP newTab. When the backend has
 	 *  no live view yet, this just materializes the first tab — there is no
-	 *  "current tab" to keep open. */
+	 *  "current tab" to keep open.
+	 *  NOTE: newTab stays bridge-driven (browserNavigate); the native gotoPage
+	 *  path is a later chunk — this chunk wires navigate() only. */
 	async newTab(url: string): Promise<string> {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);

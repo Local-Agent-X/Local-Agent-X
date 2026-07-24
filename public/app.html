@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb29"/>
+<link rel="stylesheet" href="/css/app.css?v=vb30"/>
 <link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
@@ -261,6 +261,13 @@
         </div>
       </div>
       <div id="input-area">
+        <!-- Jump-to-bottom: shown by chat-ws.js when the reader scrolls up away
+             from the newest content (streaming or not); click re-engages
+             sticky-follow and rides down to the tail. Anchored to the composer's
+             top edge so it clears the controls at any composer height. -->
+        <button id="scroll-bottom-btn" class="scroll-bottom-btn" type="button" aria-label="Scroll to latest">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 5v13m0 0l-6-6m6 6l6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <div id="context-bar"></div>
         <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" aria-hidden="true"/>
         <div id="input-wrapper">
@@ -1575,12 +1582,12 @@
      chat-ws.js so its onopen hook + onmessage intercept can reference
      rediscoverPendingApprovals / handleDurableApprovalReply. -->
 <script src="/js/chat-approval-rediscovery.js?v=v1"></script>
-<script src="/js/chat-ws.js?v=v3"></script>
+<script src="/js/chat-ws.js?v=v4"></script>
 <script src="/js/chat-render-artifacts.js?v=v3"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
-<script src="/js/chat-render.js?v=v6"></script>
+<script src="/js/chat-render.js?v=v7"></script>
 <script src="/js/chat-render-open-state.js?v=v1"></script>
 <script src="/js/chat-render-live.js?v=v2"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so

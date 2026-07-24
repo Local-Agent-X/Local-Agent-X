@@ -276,19 +276,35 @@ function isChatActive(sessionId) {
   return ChatStreamStore.isActive(sessionId);
 }
 
-// Detect when user scrolls away from bottom — pause auto-scroll
-(function initScrollPause() {
+// Single source of truth for "is the reader parked at the bottom?" Drives BOTH
+// the sticky-follow pause (autoScroll respects userScrolledUp) AND the
+// jump-to-bottom button's visibility. Runs on every scroll/resize AND is
+// re-invoked by autoScroll after content changes (content growth alone doesn't
+// fire a scroll event). Content-aware distance (chat-render.js) so the last
+// assistant's reserved .pin-bottom room never reads as "scrolled up".
+(function initScrollTracking() {
   const el = document.getElementById('messages');
-  if (!el) { document.addEventListener('DOMContentLoaded', initScrollPause); return; }
-  el.addEventListener('wheel', () => {
-    if (!(activeChat && ChatStreamStore.isStreaming(activeChat.id))) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
-    userScrolledUp = !atBottom;
-  });
-  el.addEventListener('scroll', () => {
-    if (!(activeChat && ChatStreamStore.isStreaming(activeChat.id))) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
-    if (atBottom) userScrolledUp = false;
+  if (!el) { document.addEventListener('DOMContentLoaded', initScrollTracking); return; }
+  const AWAY_THRESHOLD = 80; // px below the fold before the reader counts as scrolled up
+  const btn = document.getElementById('scroll-bottom-btn');
+  const sync = () => {
+    const dist = (typeof _distFromContentBottom === 'function')
+      ? _distFromContentBottom(el)
+      : el.scrollHeight - el.scrollTop - el.clientHeight;
+    const away = dist > AWAY_THRESHOLD;
+    userScrolledUp = away;
+    if (btn) btn.classList.toggle('show', away);
+  };
+  window._syncScrollBottomBtn = sync;
+  el.addEventListener('scroll', sync, { passive: true });
+  window.addEventListener('resize', sync);
+  // Click: re-engage follow and ride the content-aware scroll down to the tail.
+  // The button only shows when there IS content below the fold, so autoScroll
+  // always has somewhere to go here.
+  if (btn) btn.addEventListener('click', () => {
+    userScrolledUp = false;
+    if (typeof autoScroll === 'function') autoScroll();
+    else { el.scrollTop = el.scrollHeight; sync(); }
   });
 })();
 

@@ -23,17 +23,46 @@
 //   - addMessageEl, appendStaticWorkerBubble, appendToolCardGrouped
 //                                             (chat-helpers.js / chat-tool-cards.js — auto-window)
 
+// The last on-screen CONTENT element — the streaming bubble's body while a
+// turn runs, else the final message's body. Distinct from the scroll
+// container's bottom because the last assistant reserves a viewport of empty
+// room (.pin-bottom min-height) so its prompt can sit at the top; that reserved
+// space must NOT count as "content", or the follow math chases empty pixels.
+function _lastContentEl(el) {
+  const liveBody = el.querySelector('.msg.assistant[data-live="1"] .msg-body');
+  if (liveBody) return liveBody;
+  const msgs = el.querySelectorAll('.msg');
+  const last = msgs[msgs.length - 1];
+  if (!last) return null;
+  return last.querySelector('.msg-body') || last;
+}
+
+// Pixels the newest content sits BELOW the visible bottom of the scroller:
+// ~0 while following, negative when the reply fits with reserved room to spare,
+// large positive once the reader has scrolled up into history.
+function _distFromContentBottom(el) {
+  const c = _lastContentEl(el);
+  if (!c) return 0;
+  return Math.round(c.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom);
+}
+
+// Sticky-follow auto-scroll. Keeps the newest streamed line just above the
+// bottom edge while the reader is parked at the bottom (userScrolledUp === false
+// — chat-ws.js flips it from the scroll listener). Content-aware: a SHORT reply
+// stays anchored where it is (the reserved .pin-bottom room shows below, no
+// scroll), and only a reply that overflows the viewport actually tracks the
+// tail — so a long streaming answer no longer "stops" once it runs off-screen.
+// The reader scrolling up disengages it; scrolling back to the bottom
+// re-engages it. Also refreshes the jump-to-bottom button after any content
+// change (growth doesn't fire a scroll event on its own).
 function autoScroll() {
-  // ChatGPT-style: during an active streaming turn we DO NOT auto-scroll.
-  // The user message was scrolled to the top of the viewport at send time,
-  // and the assistant placeholder reserves viewport-height of room below
-  // (see .pin-bottom). The response fills that space; the reader controls
-  // scroll afterward. Per-session: another chat streaming (IDE while user
-  // views main) must not suppress main's auto-scroll.
-  if (typeof window.activeChat !== 'undefined' && window.activeChat && ChatStreamStore.isStreaming(window.activeChat.id)) return;
-  if (userScrolledUp) return;
   const el = document.getElementById('messages');
-  if (el) el.scrollTop = el.scrollHeight;
+  if (!el) return;
+  if (!userScrolledUp) {
+    const overflow = _distFromContentBottom(el);
+    if (overflow > 0) el.scrollTop += overflow;
+  }
+  if (typeof window._syncScrollBottomBtn === 'function') window._syncScrollBottomBtn();
 }
 
 // Voice state
@@ -85,6 +114,10 @@ function renderMessage(msg, ctx) {
     // Block-timeline rows carry their text inside _blocks — pass an empty
     // body to addMessageEl so the content isn't rendered twice.
     const node = addMessageEl('assistant', hasBlocks ? '' : (msg.content || ''), null, msg.timestamp);
+    // Client-only receipts (secret cancel/save confirmations pushed by
+    // secret-modal.js) are trailing one-liners, not answers — tag them so
+    // _applyPinBottom never hands them the ~100vh streaming-room reservation.
+    if (node && msg._localNote) node.classList.add('local-note');
     const lastBody = node ? node.querySelector('.msg-body') : null;
     if (lastBody && hasBlocks) {
       // Persisted timeline: thinking / text / inline injects in arrival
@@ -189,10 +222,18 @@ function renderMessages() {
 function _applyPinBottom(el) {
   const allAssistant = el.querySelectorAll('.msg.assistant');
   allAssistant.forEach(m => m.classList.remove('pin-bottom'));
-  const lastAssistant = allAssistant[allAssistant.length - 1];
+  // Local-note receipts (secret cancel/save confirmations) are trailing
+  // one-liners, not answers. Pinning one reserves a full viewport of dead
+  // space beneath it and glues the preceding approval card + note cluster to
+  // the bottom of the scroll region — the "stuck to the bottom" bug. Exclude
+  // them from both the pin target and the "is this the last message" test so
+  // a real answer above a receipt keeps (or forgoes) the pin correctly.
+  const isNote = m => m.classList.contains('local-note');
+  const realAssistant = Array.from(allAssistant).filter(m => !isNote(m));
+  const lastAssistant = realAssistant[realAssistant.length - 1];
   if (!lastAssistant) return;
-  const allMsgs = el.querySelectorAll('.msg');
-  if (allMsgs[allMsgs.length - 1] === lastAssistant) {
+  const realMsgs = Array.from(el.querySelectorAll('.msg')).filter(m => !isNote(m));
+  if (realMsgs[realMsgs.length - 1] === lastAssistant) {
     lastAssistant.classList.add('pin-bottom');
   }
 }

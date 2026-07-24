@@ -506,6 +506,24 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 @media (max-width:560px){.home-launcher .hl-starters{grid-template-columns:1fr}}
 #empty h2{font-family:var(--mono);color:var(--accent);font-size:1.5rem;letter-spacing:3px;text-shadow:0 0 20px var(--accent-dim)}
 #empty p{font-size:.85rem;max-width:400px;text-align:center;line-height:1.6}
+/* Jump-to-bottom pill — floats centered just above the composer. Anchored to
+   #input-area's top edge (bottom:100%) so it clears the composer controls at
+   any composer height. Hidden by default (opacity + pointer-events); chat-ws.js
+   adds .show when the reader is scrolled away from the newest content. */
+#input-area{position:relative}
+.scroll-bottom-btn{
+  position:absolute;left:50%;bottom:calc(100% + 10px);z-index:4;
+  width:34px;height:34px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  cursor:pointer;opacity:0;pointer-events:none;
+  transform:translateX(-50%) translateY(8px);
+  transition:opacity .16s ease,transform .16s ease,border-color .16s ease,color .16s ease;
+  box-shadow:0 4px 16px rgba(0,0,0,.30);
+}
+.scroll-bottom-btn.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+.scroll-bottom-btn:hover{border-color:var(--accent);color:var(--accent)}
+.scroll-bottom-btn svg{display:block}
 #input-area{padding:6px 20px 12px;border-top:1px solid var(--border)}
 #context-bar{display:none;max-width:800px;margin:0 auto 6px;padding:6px 12px;border-radius:8px;font-family:var(--mono);font-size:.68rem;align-items:center;gap:8px}
 #context-bar.visible{display:flex}

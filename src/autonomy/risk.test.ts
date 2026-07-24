@@ -52,7 +52,9 @@ describe("TOOL_RISK", () => {
     expect(classifyToolRisk("memory_save")).toBe("workspace-write");
     expect(classifyToolRisk("memory_search")).toBe("safe");
     expect(classifyToolRisk("browser_fill_from_secret")).toBe("secrets");
-    expect(classifyToolRisk("browser_capture_to_secret")).toBe("secrets");
+    // Capture is the ingest direction (page → vault, model-blind, no egress), so
+    // it is a local write — not a credential-exposure risk like fill/request.
+    expect(classifyToolRisk("browser_capture_to_secret")).toBe("workspace-write");
     expect(classifyToolRisk("request_secret")).toBe("secrets");
     // Read-only secret introspection (names/metadata only, no values) is "safe"
     // — it must not trip an approval prompt the way value-touching tools do.

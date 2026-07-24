@@ -21,7 +21,14 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
       { id: "allow-browser", decision: "allow", reason: "Browser allowed (paced + no-progress guarded)", priority: 40, constraints: { maxCallsPerSession: 100 } },
     ],
   },
-  browser_capture_to_secret: { kernel: "secret-vault", risk: "secrets", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
+  // Capture is the INGEST direction: page → vault, model-blind, zero egress. The
+  // value is read server-side and written straight to the encrypted vault; the
+  // tool result carries only {name, service, length}. That is a local write, not a
+  // credential-exposure risk, so it is "workspace-write" (auto-allowed like any
+  // local write) rather than "secrets" (which gates the exfiltration-capable
+  // fill_from_secret / request_secret). Overwrite integrity is guarded inside the
+  // tool (confirm only when the name already exists), not by a blanket prompt.
+  browser_capture_to_secret: { kernel: "secret-vault", risk: "workspace-write", rules: [{ id: "allow-browser-capture-to-secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 }] },
   browser_fill_from_secret:  { kernel: "secret-vault", risk: "secrets", rules: [{ id: "allow-browser-fill-from-secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 }] },
   http_request: {
     kernel: "http", risk: "network-write",

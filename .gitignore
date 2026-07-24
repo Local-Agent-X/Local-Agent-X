@@ -129,3 +129,13 @@ bench/**/runs/
 # Rolling OTA source asset, built locally by scripts/build-rolling-source.mjs
 # (the workflow builds it ephemerally in CI; a local run must never be committed)
 rolling-dist/
+
+# Third-party ComfyUI clone dropped next to the repo for local experiments —
+# it carries its OWN .git (origin comfyanonymous/ComfyUI), so committing it
+# would embed a foreign repo into our history. Local tool, never ours to ship.
+ComfyUI/
+
+# Ephemeral cross-session handoff notes (to-do context written for a future
+# Claude Code session). Working scratch, not product docs — kept local.
+CDP-WIRING-HANDOFF.md
+*-HANDOFF.md

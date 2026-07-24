@@ -208,8 +208,30 @@ export function formatConsoleReport(entries: BridgeConsoleEntry[]): string {
 	return `Console: ${entries.length} message(s) (${errors} error(s), ${warnings} warning(s)), newest last:\n${lines.join("\n")}`;
 }
 
+/** Is this captured request an API/data endpoint (JSON/XHR/RSS/Atom), as
+ *  opposed to page chrome (html document, image, css, font, script)? Used to
+ *  surface replay candidates in the network report. */
+export function isDataEndpoint(entry: BridgeNetworkEntry): boolean {
+	if (entry.resourceType === "xhr" || entry.resourceType === "fetch") return true;
+	const ct = entry.contentType?.toLowerCase();
+	if (ct === undefined) return false;
+	if (ct === "application/rss+xml" || ct === "application/atom+xml") return true;
+	if (ct === "text/json" || ct === "text/xml") return true;
+	return /^application\/([a-z0-9.-]+\+)?(json|xml)$/.test(ct);
+}
+
+// Cap the replay-candidate rows: a busy page fires dozens of fetch/xhr calls
+// (analytics, beacons, session pings), all of which classify as data
+// endpoints. Show only the most-recent N so tracking chatter can't bury the
+// real endpoint; the count of the rest is disclosed, never silently dropped.
+const MAX_ENDPOINT_ROWS = 12;
+
 /** Compact network report: one line per request (status or error), newest
- *  last, plus the live in-flight count. */
+ *  last, plus the live in-flight count. When the page hit any replayable
+ *  data endpoints (GET, classified, 2xx), append them as replay candidates so
+ *  the agent can http_request them instead of scraping. Surfaced URLs are
+ *  PATH-ONLY (query strings are scrubbed at store time), so the section says
+ *  so — a param-driven endpoint won't replay as-is. */
 export function formatNetworkReport(entries: BridgeNetworkEntry[], inFlight: number): string {
 	const tail = `${inFlight} request(s) in flight`;
 	if (entries.length === 0) return `No network requests captured for this tab. ${tail}`;
@@ -219,5 +241,32 @@ export function formatNetworkReport(entries: BridgeNetworkEntry[], inFlight: num
 			? `${e.method} FAILED (${e.error}) ${e.url}`
 			: `${e.method} ${e.status ?? "?"} ${e.url}`,
 	);
-	return `Network: ${entries.length} request(s) captured (${failures} failed/error status), newest last:\n${lines.join("\n")}\n${tail}`;
+	let report = `Network: ${entries.length} request(s) captured (${failures} failed/error status), newest last:\n${lines.join("\n")}\n${tail}`;
+
+	// Replay candidates: GET reads of structured-data endpoints that returned a
+	// 2xx. A 3xx/4xx/5xx is not a data source — and a 401/403 only "succeeded"
+	// in-browser via the page's session cookies, which http_request won't carry,
+	// so replaying it would fail or mislead. Dedupe identical method+url (pages
+	// poll the same endpoint); delete-then-set keeps the newest occurrence in
+	// newest-last order.
+	const candidates = new Map<string, BridgeNetworkEntry>();
+	for (const e of entries) {
+		if (e.method !== "GET" || e.status === undefined || e.status < 200 || e.status >= 300) continue;
+		if (!isDataEndpoint(e)) continue;
+		const key = `${e.method} ${e.url}`;
+		candidates.delete(key);
+		candidates.set(key, e);
+	}
+	if (candidates.size > 0) {
+		const all = [...candidates.values()];
+		const shown = all.slice(-MAX_ENDPOINT_ROWS);
+		const dropped = all.length - shown.length;
+		const more = dropped > 0 ? ` (+${dropped} older not shown)` : "";
+		const rows = shown.map((e) => {
+			const type = e.contentType ?? e.resourceType ?? "?";
+			return `  ${e.method} ${e.status} ${type} ${e.url}`;
+		});
+		report += `\nAPI/data endpoints observed${more} — these GET URLs are PATH-ONLY (query strings were stripped). Prefer replaying a COMPLETE url with http_request for clean structured data over scraping, but add back any needed query params and verify the response, since a param-driven endpoint won't replay as-is:\n${rows.join("\n")}`;
+	}
+	return report;
 }

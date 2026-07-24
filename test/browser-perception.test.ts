@@ -62,6 +62,7 @@ import {
   _resetBrowserPerceptionForTest,
 } from "../desktop/src/browser-perception";
 import { handleBrowserBridgeMessage, wireBrowserEgressEvaluator } from "../desktop/src/server-bridge-browser";
+import { isDataEndpoint, formatNetworkReport } from "../src/browser/bridge-perception";
 
 /** EventEmitter-ish fake webContents that records on/off and can fire events. */
 function fakeWc() {
@@ -418,5 +419,92 @@ describe("bridge ops + wiring (server-bridge-browser.ts)", () => {
     expect(reply).toBeDefined();
     expect(reply!.ok).toBe(true);
     expect("status" in reply!).toBe(false);
+  });
+});
+
+describe("data-endpoint classification + replay-candidate report", () => {
+  it("isDataEndpoint: xhr/fetch resourceType and structured MIMEs are true; chrome is false", () => {
+    const at = (partial: Partial<import("../src/browser/bridge-perception").BridgeNetworkEntry>) =>
+      ({ url: "https://x/", method: "GET", ts: 1, ...partial });
+    expect(isDataEndpoint(at({ resourceType: "xhr" }))).toBe(true);
+    expect(isDataEndpoint(at({ resourceType: "fetch" }))).toBe(true);
+    expect(isDataEndpoint(at({ contentType: "application/json" }))).toBe(true);
+    expect(isDataEndpoint(at({ contentType: "application/rss+xml" }))).toBe(true);
+    expect(isDataEndpoint(at({ contentType: "application/vnd.api+json" }))).toBe(true);
+    // charset params are not part of the path-only capture, but be robust to case:
+    expect(isDataEndpoint(at({ contentType: "APPLICATION/JSON" }))).toBe(true);
+    expect(isDataEndpoint(at({ resourceType: "document", contentType: "text/html" }))).toBe(false);
+    expect(isDataEndpoint(at({ resourceType: "image" }))).toBe(false);
+    expect(isDataEndpoint(at({ resourceType: "stylesheet" }))).toBe(false);
+    expect(isDataEndpoint({ url: "https://x/", method: "GET", ts: 1 })).toBe(false); // empty
+  });
+
+  it("formatNetworkReport surfaces ONLY GET data endpoints that completed OK", () => {
+    const entries: import("../src/browser/bridge-perception").BridgeNetworkEntry[] = [
+      { url: "https://api.example/data", method: "GET", status: 200, resourceType: "xhr", contentType: "application/json", ts: 1 },
+      { url: "https://cdn.example/logo.png", method: "GET", status: 200, resourceType: "image", contentType: "image/png", ts: 2 },
+      { url: "https://api.example/submit", method: "POST", status: 200, resourceType: "xhr", contentType: "application/json", ts: 3 },
+      { url: "https://api.example/dead", method: "GET", error: "net::ERR_FAILED", resourceType: "xhr", ts: 4 },
+    ];
+    const report = formatNetworkReport(entries, 0);
+    // Isolate the replay section (the top per-request list always names every
+    // request, so scope the negative checks to the appended section only).
+    const section = report.slice(report.indexOf("API/data endpoints observed"));
+    expect(section).toContain("API/data endpoints observed");
+    expect(section).toContain("  GET 200 application/json https://api.example/data");
+    // the appended section must NOT list the image, the POST, or the failed xhr:
+    expect(section).not.toContain("logo.png");
+    expect(section).not.toContain("submit");
+    expect(section).not.toContain("dead");
+  });
+
+  it("formatNetworkReport dedupes a polled endpoint, newest occurrence last", () => {
+    const entries: import("../src/browser/bridge-perception").BridgeNetworkEntry[] = [
+      { url: "https://api.example/poll", method: "GET", status: 200, resourceType: "xhr", contentType: "application/json", ts: 1 },
+      { url: "https://api.example/poll", method: "GET", status: 200, resourceType: "xhr", contentType: "application/json", ts: 2 },
+    ];
+    const report = formatNetworkReport(entries, 0);
+    const rows = report.split("\n").filter((l) => l.includes("api.example/poll") && l.startsWith("  GET"));
+    expect(rows.length).toBe(1);
+  });
+
+  it("formatNetworkReport appends NO section when no entry classifies (byte-check)", () => {
+    const entries: import("../src/browser/bridge-perception").BridgeNetworkEntry[] = [
+      { url: "https://api.example/x", method: "GET", status: 500, ts: 1 },
+      { url: "https://api.example/y", method: "POST", error: "net::ERR_FAILED", ts: 2 },
+    ];
+    const report = formatNetworkReport(entries, 3);
+    expect(report).not.toContain("API/data endpoints observed");
+    expect(report.endsWith("3 request(s) in flight")).toBe(true);
+  });
+
+  it("formatNetworkReport EXCLUDES non-2xx data endpoints (skeptic: 401/403/404/500 only 'worked' via session cookies)", () => {
+    const entries: import("../src/browser/bridge-perception").BridgeNetworkEntry[] = [
+      { url: "https://api.example/protected", method: "GET", status: 403, resourceType: "xhr", contentType: "application/json", ts: 1 },
+      { url: "https://api.example/missing", method: "GET", status: 404, resourceType: "xhr", contentType: "application/json", ts: 2 },
+      { url: "https://api.example/boom", method: "GET", status: 500, resourceType: "xhr", contentType: "application/json", ts: 3 },
+      { url: "https://api.example/moved", method: "GET", status: 302, resourceType: "xhr", contentType: "application/json", ts: 4 },
+      { url: "https://api.example/ok", method: "GET", status: 200, resourceType: "xhr", contentType: "application/json", ts: 5 },
+    ];
+    const report = formatNetworkReport(entries, 0);
+    const section = report.slice(report.indexOf("API/data endpoints observed"));
+    expect(section).toContain("  GET 200 application/json https://api.example/ok");
+    for (const bad of ["protected", "missing", "boom", "moved"]) expect(section).not.toContain(bad);
+  });
+
+  it("formatNetworkReport caps the section at 12 rows and discloses the rest (skeptic: tracking chatter flood)", () => {
+    const entries: import("../src/browser/bridge-perception").BridgeNetworkEntry[] = [];
+    for (let i = 0; i < 20; i++) {
+      entries.push({ url: `https://api.example/e${i}`, method: "GET", status: 200, resourceType: "fetch", contentType: "application/json", ts: i });
+    }
+    const report = formatNetworkReport(entries, 0);
+    const section = report.slice(report.indexOf("API/data endpoints observed"));
+    const rows = section.split("\n").filter((l) => l.startsWith("  GET"));
+    expect(rows.length).toBe(12);
+    expect(section).toContain("(+8 older not shown)");
+    // the 12 shown are the most-recent (newest-last): e8..e19 kept, e0..e7 dropped.
+    expect(rows.some((r) => r.endsWith("/e19"))).toBe(true);
+    expect(rows.some((r) => r.endsWith("/e7"))).toBe(false);
+    expect(rows.some((r) => r.endsWith("/e0"))).toBe(false);
   });
 });

@@ -219,7 +219,21 @@ function finishRecoveredOp(
     const why = decision.shouldRetry
       ? `circuit breaker open for op type "${op.type}"`
       : decision.reason;
-    if (!safeRecoveryTransition(opId, "failed", `recovery_abandoned: ${why}`)) {
+    const abandonReason = `recovery_abandoned: ${why}`;
+    // Abandonment happens outside any live request, and a bare
+    // state_changed→failed is dropped by every chat surface — the `error`
+    // event is the one shape they all render, so without it the user watches
+    // the run go silent mid-task. Emitted before the transition (worker
+    // order) so the stream is still open to deliver it.
+    emit(opId, "error", {
+      code: "recovery_abandoned",
+      message:
+        `This task was interrupted repeatedly and could not be recovered (${why}). ` +
+        `Partial work may already be committed — check the last tool results before retrying.`,
+      retryable: false,
+    });
+    op.lastFailureReason = abandonReason;
+    if (!safeRecoveryTransition(opId, "failed", abandonReason, op)) {
       return { ok: false, kind: "persistence_failed", expiredWorkerId };
     }
     recordFailure(op.type);

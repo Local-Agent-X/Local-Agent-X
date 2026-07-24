@@ -935,6 +935,17 @@ describe("bounded recovery — retry policy + circuit breaker (OP-10)", () => {
     );
     expect(abandoned).toBeDefined();
 
+    // Abandonment must also be USER-VISIBLE: chat surfaces render only the
+    // `error` event — a bare state_changed→failed ends the stream silently.
+    const errorEvent = readCanonicalEvents(op.id).find(e =>
+      e.type === "error" &&
+      bodyOf<{ code: string }>(e).code === "recovery_abandoned",
+    );
+    expect(errorEvent).toBeDefined();
+    expect(bodyOf<{ retryable: boolean }>(errorEvent!).retryable).toBe(false);
+    // And the durable failure fact the sidebar summarizes from must be set.
+    expect(final?.lastFailureReason?.startsWith("recovery_abandoned")).toBe(true);
+
     // Terminal — a later recovery pass no longer touches it.
     expect(recoverStaleOp(op.id).kind).toBe("not_running");
     resetCircuit(op.type);

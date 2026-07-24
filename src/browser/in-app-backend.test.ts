@@ -226,6 +226,70 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(browserCapture).toHaveBeenCalledWith(`${VIEW_ID}-t2`);
 	});
 
+	// ── Native driving path: newTab delegates to navigateInAppView too ──
+	// Same leaf navigate() rides, but on the NEW tab's viewId: with a real Page
+	// present for -t2 (and none for the first tab), page.goto drives the new tab,
+	// the bridge is bypassed for it, and the report + cached state come native.
+	it("newTab drives the NATIVE page.goto on the NEW tab's view when a real Page is present", async () => {
+		const real = {
+			isClosed: () => false,
+			goto: vi.fn(async () => ({ status: () => 200 })),
+			url: () => PAGE_URL,
+			title: vi.fn(async () => PAGE_TITLE),
+		};
+		// Real Page ONLY for the minted second tab (-t2); the first tab resolves to
+		// null → bridge, so we can prove the native path is the new tab's alone.
+		_setPageResolverForTest(async (viewId) => (viewId === `${VIEW_ID}-t2` ? (real as never) : null));
+
+		await backend.navigate(PAGE_URL); // first tab via the bridge (no real Page for VIEW_ID)
+		const out = await backend.newTab(PAGE_URL); // -t2 drives native
+
+		expect(real.goto).toHaveBeenCalledWith(PAGE_URL, expect.objectContaining({ waitUntil: "domcontentloaded" }));
+		// The bridge navigate drove the FIRST tab only — never the native new tab.
+		expect(browserNavigate).toHaveBeenCalledTimes(1);
+		expect(browserNavigate).toHaveBeenCalledWith(VIEW_ID, PAGE_URL, "sess-1");
+		expect(browserNavigate).not.toHaveBeenCalledWith(`${VIEW_ID}-t2`, PAGE_URL, "sess-1");
+		// Report + cached state reflect the NATIVE result (real HTTP status, real title).
+		expect(out).toBe(`Opened new tab (2 tabs total)\nURL: ${PAGE_URL}\nStatus: 200\nTitle: ${PAGE_TITLE}`);
+		expect(backend.getCurrentUrl()).toBe(PAGE_URL);
+	});
+
+	it("a native newTab navigation BLOCKED by egress rolls back the minted tab and throws the ENRICHED error", async () => {
+		await backend.navigate(PAGE_URL); // first tab (bridge — no real Page for VIEW_ID)
+		const real = {
+			isClosed: () => false,
+			goto: vi.fn(async () => {
+				throw new Error("page.goto: net::ERR_BLOCKED_BY_CLIENT at " + PAGE_URL);
+			}),
+			url: () => PAGE_URL,
+			title: vi.fn(async () => PAGE_TITLE),
+		};
+		// Real Page for the minted -t2 only; the first tab already navigated via the bridge.
+		_setPageResolverForTest(async (viewId) => (viewId === `${VIEW_ID}-t2` ? (real as never) : null));
+		// Prime the recent-deny cache (as the egress answerer would) so the shared
+		// enricher has a policy reason to surface for this exact view+url.
+		bridgeEgress.recordEgressDeny(PAGE_URL, `${VIEW_ID}-t2`, "SSRF: loopback host denied", "use http_request instead");
+
+		const err = await backend.newTab(PAGE_URL).then(
+			() => {
+				throw new Error("newTab should have rejected");
+			},
+			(e: Error) => e,
+		);
+
+		// ENRICHED by navigateInAppView — the raw ERR_BLOCKED_BY_CLIENT is gone.
+		expect(err.message).toContain("blocked by the egress policy: SSRF: loopback host denied");
+		expect(err.message).toContain("Recovery: use http_request instead");
+		expect(err.message).not.toContain("ERR_BLOCKED_BY_CLIENT");
+		// The minted tab rolled back — count back to 1, no ghost -t2 row.
+		const tabs = await backend.listTabs();
+		expect(tabs).toContain("1 tab(s) open:");
+		expect(tabs).not.toContain("-t2");
+		// Active pointer back on the tab that was active BEFORE the call.
+		await backend.screenshot();
+		expect(browserCapture).toHaveBeenCalledWith(VIEW_ID);
+	});
+
 	// ── Multi-URL new_tab fan-out (C4) — handler-level, real backend ──
 
 	it("ONE new_tab call with multiple urls opens one REAL view per url and lists them all", async () => {

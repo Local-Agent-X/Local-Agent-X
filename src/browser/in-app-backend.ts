@@ -29,8 +29,6 @@
  */
 
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
-import { browserNavigate } from "./bridge-client.js";
-import { enrichBlockedNavigation } from "./bridge-egress.js";
 import {
 	acceptDialogInApp,
 	captureScreenshotInApp,
@@ -157,8 +155,8 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  it the active tab. Same output shape as CDP newTab. When the backend has
 	 *  no live view yet, this just materializes the first tab — there is no
 	 *  "current tab" to keep open.
-	 *  NOTE: newTab stays bridge-driven (browserNavigate); the native gotoPage
-	 *  path is a later chunk — this chunk wires navigate() only. */
+	 *  Drives through navigateInAppView (native page.goto on the NEW tab's view
+	 *  when a real Page exists, else the bridge) — the same driver navigate() uses. */
 	async newTab(url: string): Promise<string> {
 		url = injectTokenIfLocal(url);
 		const requestedHost = safeHost(url);
@@ -174,15 +172,17 @@ export class ElectronInAppBackend implements BrowserBackend {
 		}
 		let result;
 		try {
-			result = await browserNavigate(tab.viewId, url, this.sessionId);
+			result = await navigateInAppView(tab.viewId, url, this.sessionId);
 		} catch (e) {
 			// The view materialized but the navigation itself failed — unwind
 			// the ghost tab (in-app-tabs.rollbackFailedNewTab) and rethrow;
 			// callers (incl. multi-URL new_tab's per-URL loop) rely on the
-			// throw. minted === false is the first-tab materialization: today's
-			// behavior stands — the first tab is never rolled back.
+			// throw. navigateInAppView already enriches egress blocks, so we
+			// rethrow its (already-enriched) error unchanged. minted === false is
+			// the first-tab materialization: today's behavior stands — the first
+			// tab is never rolled back.
 			if (minted) await rollbackFailedNewTab(this.tabs, tab, prevActive);
-			throw enrichBlockedNavigation(e, url, tab.viewId);
+			throw e;
 		}
 		tab.state.url = result.url;
 		tab.state.title = result.title;

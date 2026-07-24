@@ -194,27 +194,33 @@ export function projectSessionForUI(session: Session): Session {
   type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[] };
 
   const messages: ChatCompletionMessageParam[] = [];
-  // Tool-call breadcrumbs accumulated across one assistant turn. The live
-  // UI builds a single streaming bubble per turn and stacks `tool_start →
-  // tool_end` events into its `_tools` array — even if the model emits
-  // multiple intermediate `assistant` entries (one carrying tool_calls,
-  // another carrying text). The projection mirrors that: tools accumulate
-  // until the next visible text bubble (same turn) and attach there.
+  // One assistant bubble per turn — the SAME shape the live UI persists
+  // (promoteLiveToMessages emits one row per turn carrying ALL of the turn's
+  // tool events in a single `_tools` array). The model often emits several
+  // `assistant` entries for one turn (one carrying tool_calls, another carrying
+  // narration text, a third the final answer); an earlier projection flushed a
+  // separate bubble at EACH text entry, so a reloaded turn showed a little
+  // "Agent activity" bar under every step instead of one long-running bar.
+  // Accumulate BOTH the text fragments and the tool breadcrumbs across the
+  // whole turn and emit exactly one consolidated bubble at the turn boundary.
   let pendingTools: ToolEvent[] = [];
-  const flushPending = () => {
-    if (pendingTools.length === 0) return;
-    const out: UIAssistant = { role: "assistant", content: "", _tools: pendingTools };
+  let pendingText: string[] = [];
+  const flushTurn = () => {
+    if (pendingTools.length === 0 && pendingText.length === 0) return;
+    const out: UIAssistant = { role: "assistant", content: pendingText.join("\n\n") };
+    if (pendingTools.length > 0) out._tools = pendingTools;
     messages.push(out);
     pendingTools = [];
+    pendingText = [];
   };
 
   for (const m of session.messages) {
     if (m.role === "tool") continue;
     if (m.role === "user") {
-      // User message marks the end of the prior assistant turn. If tools
-      // accumulated without a text bubble to attach to, emit them as a
-      // standalone empty-content assistant so the cards still render.
-      flushPending();
+      // User message ends the prior assistant turn — flush its one bubble
+      // (tools-only turns still emit, as an empty-content assistant with the
+      // activity bar) before pushing the prompt.
+      flushTurn();
       messages.push(m);
       continue;
     }
@@ -231,21 +237,15 @@ export function projectSessionForUI(session: Session): Session {
         }
       }
       const text = typeof m.content === "string" ? m.content : "";
-      // No text → defer; the next text bubble (same turn) inherits these
-      // tools as its _tools. The flush on the next user message (or at
-      // end-of-walk) covers the turn-ends-with-no-text case.
-      if (!text) continue;
-      const out: UIAssistant = { role: "assistant", content: text };
-      if (pendingTools.length > 0) {
-        out._tools = pendingTools;
-        pendingTools = [];
-      }
-      messages.push(out);
+      if (text) pendingText.push(text);
       continue;
     }
+    // Non-user/assistant/tool row (e.g. a system message mid-thread): it ends
+    // the current turn's accumulation, then passes through in place.
+    flushTurn();
     messages.push(m);
   }
-  flushPending();
+  flushTurn();
   return { ...session, messages };
 }
 

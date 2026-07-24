@@ -90,3 +90,17 @@ export function classifyData(content: string): DataClassification {
 
   return { labels: Array.from(labels), confidence: maxConfidence };
 }
+
+/** Remove EXTERNAL_UNTRUSTED_CONTENT blocks (whole, and a truncated trailing
+ *  one) from a tool result. The threat engine classifies credential/secret
+ *  LEAK evidence on the stripped text: credential-shaped strings inside inbound
+ *  third-party content — an API-doc page thick with `Bearer <token>` and
+ *  example keys is the classic case — are the SITE's content, not the session
+ *  leaking its own secret, so they must not latch the session into restriction.
+ *  A local secret-file read (never wrapped) still classifies and scores, and a
+ *  real session secret returning in a response is caught separately as a canary. */
+export function stripExternalUntrusted(content: string): string {
+  return content
+    .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT id="[^"]*">>>[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT id="[^"]*">>>/g, " ")
+    .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT id="[^"]*">>>[\s\S]*$/, " ");
+}

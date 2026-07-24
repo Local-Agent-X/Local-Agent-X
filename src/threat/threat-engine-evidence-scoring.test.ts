@@ -74,4 +74,38 @@ describe("ThreatEngine — evidence-only scoring", () => {
     expect(events.some(e => e.type === "credential_in_output")).toBe(true);
     expect(engine.scorer.getRawLoad()).toBeGreaterThanOrEqual(THREAT_SCORES.credential_in_output);
   });
+
+  it("example credentials INSIDE fetched external content never score or restrict (the Clover-docs false positive)", () => {
+    const engine = freshEngine();
+
+    // A fetched API-doc page: wrapped as untrusted, thick with example tokens —
+    // exactly what docs.clover.com returned in the 2026-07-23 run before this fix.
+    const docPage =
+      '<<<EXTERNAL_UNTRUSTED_CONTENT id="a1b2">>>\n' +
+      'Clover REST API: send `Authorization: Bearer c0ffee1234567890abcdef` and set\n' +
+      'api_key: sk-example000111222333444 in every request. JWT sample:\n' +
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N\n' +
+      '<<<END_EXTERNAL_UNTRUSTED_CONTENT id="a1b2">>>';
+
+    // The run fetched the docs many times; none must latch the session.
+    for (let i = 0; i < 10; i++) {
+      const res = engine.evaluateToolResult("web_fetch", { url: `https://docs.clover.com/p-${i}` }, docPage, true);
+      expect(res.blocked).toBe(false);
+    }
+    expect(engine.scorer.getEvents().some(e => e.type === "credential_in_output")).toBe(false);
+    expect(engine.isRestricted()).toBe(false);
+  });
+
+  it("a real credential OUTSIDE the external wrapper still scores (mixed result)", () => {
+    const engine = freshEngine();
+
+    // Agent-side output (unwrapped) carrying a real key, plus a quoted external
+    // snippet. Only the agent-side portion is leak evidence.
+    const mixed =
+      'resolved config apiKey: sk-abcdefghijklmnopqrstuv\n' +
+      '<<<EXTERNAL_UNTRUSTED_CONTENT id="x9">>>\nexample: Bearer tok999888777\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="x9">>>';
+    engine.evaluateToolResult("read", { path: "/tmp/c.json" }, mixed, true);
+
+    expect(engine.scorer.getEvents().some(e => e.type === "credential_in_output")).toBe(true);
+  });
 });

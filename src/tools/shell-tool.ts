@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
-import { detectTargetShell, translateForShell } from "./shell-translate.js";
+import { detectTargetShell, translateForShell, powershellCmdletHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { projectRoot } from "../workspace/paths.js";
@@ -286,7 +286,12 @@ export const bashTool: ToolDefinition = {
       // bare "Operation not permitted" reads as a mystery — name the sandbox + the
       // off switch so the agent reports it right instead of flailing.
       const cageNotice = sandboxDenialHint(sandboxMode, out);
-      return err((cageNotice ? cageNotice + "\n" : "") + (out || `Exit code: ${code}`), {
+      // A PowerShell cmdlet fired into POSIX bash surfaces only as "command not
+      // found" (exit 127) — name the mistake so the agent switches tools instead
+      // of re-emitting the same cmdlet (it did this 3× in one session).
+      const cmdletNotice = powershellCmdletHint(stderr);
+      const notices = [cmdletNotice, cageNotice].filter(Boolean).join("\n");
+      return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,
         stderr: stderr || undefined,

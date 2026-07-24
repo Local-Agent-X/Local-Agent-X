@@ -19,7 +19,7 @@ import { app, session, type DownloadItem, type Session, type WebContents, type W
 
 import { LAX_DIR, getLAXConfig } from "./config";
 import { noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
-import { shouldAllowUserLoopback, type ViewTrust } from "./browser-loopback-policy";
+import { shouldAllowLocalLoopback, type ViewTrust } from "./browser-loopback-policy";
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
 import {
@@ -292,12 +292,14 @@ function hardenSession(sess: Session, partition: string): void {
 			callback({ cancel: true });
 			return;
 		}
-		// USER-view loopback carve-out (browser-loopback-policy.ts): the user's
-		// own tabs may reach literal-loopback services (their ComfyUI, their dev
-		// server) the way Chrome allows — top-level navs + loopback-initiated
-		// subresources. Decided HERE, never through evaluateEgress: the decision
-		// cache is keyed by URL alone, so a user-view allow cached there would
-		// leak to an agent view requesting the same URL within the TTL.
+		// Local loopback carve-out (browser-loopback-policy.ts): a user's own tab
+		// may reach literal-loopback services (their ComfyUI, their dev server) the
+		// way Chrome allows — top-level navs + loopback-initiated subresources — and
+		// an agent view may load loopback SUBRESOURCES of a same-machine page (the
+		// app it's building, served on the self-port, pulling its own dev-server
+		// chunks + HMR). Decided HERE, never through evaluateEgress: the decision
+		// cache is keyed by URL alone, so an allow cached there would leak across
+		// views requesting the same URL within the TTL.
 		// Electron's webRequest details carry no `initiator`; the requesting
 		// frame's URL is the equivalent (and page-unforgeable) signal, with the
 		// referrer as fallback (referrer-policy can only SHRINK it, so it can
@@ -310,7 +312,7 @@ function hardenSession(sess: Session, partition: string): void {
 		}
 		if (
 			viewTrustResolver &&
-			shouldAllowUserLoopback(
+			shouldAllowLocalLoopback(
 				{
 					url: details.url,
 					resourceType: details.resourceType,

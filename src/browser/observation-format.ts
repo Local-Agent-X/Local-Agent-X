@@ -15,7 +15,19 @@ export function formatRef(r: DurableRef): string {
   const safeRole = (r.role || r.tag.toLowerCase()).replace(/[\r\n<>]/g, "").slice(0, 20);
   const typeAttr = r.type ? ` type=${r.type.replace(/[\r\n<>]/g, "").slice(0, 16)}` : "";
   const offBadge = r.inViewport ? "" : " [offscreen]";
-  return `[${r.id}]<${safeRole}${typeAttr}>${safeName}</${safeRole}>${offBadge}`;
+  return `[${r.id}]<${safeRole}${typeAttr}>${safeName}</${safeRole}>${formatState(r.state)}${offBadge}`;
+}
+
+/** Render form-control state as compact badges appended to a ref line, so the
+ *  agent sees checked/filled/disabled without a DOM sweep. Booleans only. */
+function formatState(state: DurableRef["state"]): string {
+  if (!state) return "";
+  const badges: string[] = [];
+  if (state.checked === true) badges.push("checked");
+  else if (state.checked === false) badges.push("unchecked");
+  if (state.filled) badges.push("filled");
+  if (state.disabled) badges.push("disabled");
+  return badges.length ? ` {${badges.join(",")}}` : "";
 }
 
 export function formatDegraded(degraded: ObservationDegradation[]): string {

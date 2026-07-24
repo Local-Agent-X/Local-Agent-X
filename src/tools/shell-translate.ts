@@ -18,6 +18,37 @@
 
 export type TargetShell = "powershell-51" | "pwsh-7" | "bash";
 
+// The PowerShell cmdlets agents most often misfire into the bash tool, with the
+// POSIX equivalent to reach for instead (or a purpose-built LAX tool).
+const CMDLET_POSIX: Record<string, string> = {
+  "Get-ChildItem": "ls (or the glob tool)",
+  "Get-Content": "cat (or the read tool)",
+  "Select-String": "grep (or the grep tool)",
+  "Select-Object": "head / tail / sed -n",
+  "Where-Object": "grep / awk",
+  "ForEach-Object": "a for loop or xargs",
+  "Set-Content": "the write tool (or a > redirect)",
+  "Copy-Item": "cp",
+  "Remove-Item": "rm",
+  "Test-Path": "test -e",
+  "Write-Output": "echo",
+};
+
+/** When a POSIX-bash run fails because the model sent a PowerShell cmdlet
+ *  (`Get-ChildItem: command not found`), return a one-line steer to the right
+ *  tool. The Verb-Noun-with-hyphen shape is unique to cmdlets — bash builtins
+ *  and binaries are lowercase — so this never fires on a genuine bash command.
+ *  Returns null when the failure isn't a cmdlet misfire. */
+export function powershellCmdletHint(stderr: string): string | null {
+  const m = stderr.match(/\b([A-Z][a-z]+-[A-Z][a-zA-Z]+)\b\s*:\s*command not found/);
+  if (!m) return null;
+  const cmdlet = m[1];
+  const posix = CMDLET_POSIX[cmdlet];
+  return `'${cmdlet}' is a PowerShell cmdlet, but the bash tool runs POSIX sh. ` +
+    (posix ? `Use \`${posix}\` here, or ` : "Use the POSIX equivalent, or ") +
+    `call the PowerShell tool for cmdlets.`;
+}
+
 export function detectTargetShell(shellPath: string): TargetShell {
   const base = shellPath.toLowerCase().replace(/\\/g, "/").split("/").pop() || "";
   if (base === "pwsh.exe" || base === "pwsh") return "pwsh-7";

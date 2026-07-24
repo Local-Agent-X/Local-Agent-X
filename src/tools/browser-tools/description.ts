@@ -30,7 +30,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- screenshot: Capture the current page — the image is returned INLINE, so you SEE the page in this one call (no view_image or screen_capture needed). A full-resolution PNG is also saved; use its path with view_image to re-view later or send_image to share it.\n" +
   "- evaluate: Run JavaScript in the page.\n" +
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
-  "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers.\n" +
+  "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers. Form controls also show live state as {checked}/{unchecked}/{filled}/{disabled}, so re-observe after a click to confirm a checkbox toggled instead of reading the DOM by hand.\n" +
   "- scroll: Scroll the page. value='up'|'down'|'top'|'bottom' OR ref=N to scroll that element into view.\n" +
   "- tabs: List all open tabs with URLs and titles — including the user's own browser tabs, marked [user tab].\n" +
   "- switch_tab: Switch to a tab by index (set 'value' to tab number). Switching onto a [user tab] row TAKES CONTROL of the user's own tab — use it when the user says they're already logged in, or asks you to act on the page they have open. Indexes are as-of the LAST 'tabs' listing; taking over a user tab requires a current listing, and if the tabs changed in between the switch refuses — run 'tabs' again.\n" +

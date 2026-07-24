@@ -20,6 +20,11 @@ export interface RawElement {
   signature: string;
   inViewport: boolean;
   rect: { x: number; y: number; width: number; height: number };
+  /** Live control state for form elements, so a snapshot shows whether a
+   *  checkbox is checked or a field is filled without the agent hand-rolling a
+   *  DOM sweep. Never carries the field's VALUE (leak guard) — only booleans.
+   *  Absent for elements with no meaningful state (links, plain buttons). */
+  state?: { checked?: boolean; disabled?: boolean; filled?: boolean };
   /** When the element lives inside a same-origin iframe, this is the
    *  iframe's `src` URL (or empty string for srcdoc/about:blank frames
    *  with no src). undefined for main-frame elements. Used by actions.ts
@@ -142,6 +147,24 @@ const EXTRACTOR_SCRIPT = `(function(args) {
     return role + '|' + name.slice(0, 40) + '|' + el.tagName + '|' + ancestors.join('>');
   }
 
+  function computeState(el) {
+    // Booleans only — NEVER the field value (that's the password-leak class).
+    const s = {};
+    if (el.disabled === true) s.disabled = true;
+    const tag = el.tagName;
+    const t = el.type;
+    if (tag === 'INPUT' && (t === 'checkbox' || t === 'radio')) {
+      s.checked = !!el.checked;
+    } else {
+      const ariaChecked = el.getAttribute('aria-checked');
+      if (ariaChecked === 'true' || ariaChecked === 'false') s.checked = ariaChecked === 'true';
+    }
+    if ((tag === 'INPUT' || tag === 'TEXTAREA') && t !== 'checkbox' && t !== 'radio' && t !== 'password') {
+      if (el.value && String(el.value).length > 0) s.filled = true;
+    }
+    return s.checked !== undefined || s.disabled || s.filled ? s : undefined;
+  }
+
   function isVisible(el) {
     // Skip display:none, visibility:hidden, zero-size boxes.
     if (!el.getClientRects().length) return false;
@@ -255,6 +278,8 @@ const EXTRACTOR_SCRIPT = `(function(args) {
       },
     };
     if (root && root.frameUrl !== undefined) entry.frameUrl = root.frameUrl;
+    const state = computeState(el);
+    if (state) entry.state = state;
     out.push(entry);
   }
 

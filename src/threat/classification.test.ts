@@ -1,5 +1,25 @@
 import { describe, it, expect } from "vitest";
-import { classifyData, luhnValid } from "./classification.js";
+import { classifyData, luhnValid, stripExternalUntrusted } from "./classification.js";
+
+describe("stripExternalUntrusted — inbound third-party content is not the session's own output", () => {
+  it("removes a whole external block so its example credentials don't classify", () => {
+    const wrapped =
+      '<<<EXTERNAL_UNTRUSTED_CONTENT id="z1">>>\nAuthorization: Bearer abc123def456\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id="z1">>>';
+    expect(classifyData(wrapped).labels).toContain("credentials");
+    expect(classifyData(stripExternalUntrusted(wrapped)).labels).not.toContain("credentials");
+  });
+
+  it("removes a truncated (unterminated) external block too", () => {
+    const truncated = 'ok\n<<<EXTERNAL_UNTRUSTED_CONTENT id="z2">>>\napi_key: sk-aaaaaaaaaaaaaaaa and the response was cut off';
+    expect(stripExternalUntrusted(truncated).trim()).toBe("ok");
+  });
+
+  it("leaves unwrapped content untouched (a local secret-file read still classifies)", () => {
+    const local = '{ "apiKey": "sk-abcdefghijklmnopqrstuv" }';
+    expect(stripExternalUntrusted(local)).toBe(local);
+    expect(classifyData(stripExternalUntrusted(local)).labels).toContain("credentials");
+  });
+});
 
 describe("luhnValid", () => {
   it.each([

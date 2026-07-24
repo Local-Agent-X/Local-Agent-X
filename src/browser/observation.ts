@@ -238,13 +238,14 @@ export class ObservationRegistry {
           ...prev,
           role: el.role,
           name: el.name,
+          state: el.state,
           inViewport: el.inViewport,
           rect: el.rect,
           xpath: el.xpath,
           lastSeen: this.observationCount,
           ...(el.frameUrl !== undefined ? { frameUrl: el.frameUrl } : {}),
         };
-        if (prev.name !== el.name || prev.role !== el.role) {
+        if (prev.name !== el.name || prev.role !== el.role || prev.state?.checked !== el.state?.checked) {
           changed.push({ before: prev, after: ref });
         }
       } else {
@@ -253,6 +254,7 @@ export class ObservationRegistry {
           signature: el.signature,
           role: el.role,
           name: el.name,
+          state: el.state,
           tag: el.tag,
           type: el.type,
           xpath: el.xpath,
@@ -342,7 +344,7 @@ export class ObservationRegistry {
       ];
       for (const r of obs.added) parts.push(`+ ${formatRef(r)}`);
       for (const c of obs.changed) {
-        parts.push(`~ [${c.after.id}]<${c.after.role}> "${c.before.name}" → "${c.after.name}"`);
+        parts.push(`~ ${formatRef(c.after)}`);
       }
       for (const r of obs.removed) parts.push(`- [${r.id}]<${r.role}> "${r.name}"`);
       sections.push(parts.join("\n"));

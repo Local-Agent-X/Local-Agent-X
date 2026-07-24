@@ -20,6 +20,10 @@ export interface DurableRef {
   inViewport: boolean;
   lastSeen: number;
   rect: { x: number; y: number; width: number; height: number };
+  /** Live form-control state (checked / filled / disabled) surfaced in the
+   *  ref line. Booleans only — never the field value. Absent for elements with
+   *  no meaningful state. */
+  state?: { checked?: boolean; disabled?: boolean; filled?: boolean };
   /** Set when the element lives inside a same-origin iframe. Carries the
    *  iframe's `src` URL (or "" for srcdoc / about:blank). actions.ts
    *  uses this to scope locators into the right Playwright Frame. */

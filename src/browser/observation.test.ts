@@ -322,3 +322,53 @@ describe("globally-unique ref ids — never reused across registries (cross-tab 
     expect(new Set([idA, idB]).size).toBe(2); // every id across both registries is unique
   });
 });
+
+describe("control state surfaces in the ref line (checkbox checked/unchecked, filled, disabled)", () => {
+  beforeEach(() => {
+    __resetRefIdsForTest();
+    mockExtract.mockReset();
+    mockExtract.mockResolvedValue([]);
+    mockObstructions.mockReset();
+    mockObstructions.mockResolvedValue([]);
+  });
+
+  const CHECKBOX = (checked: boolean): RawElement => ({
+    role: "checkbox", name: "Inventory", tag: "INPUT", type: "checkbox",
+    xpath: "/input[1]", signature: "checkbox|Inventory|INPUT|form",
+    inViewport: true, rect: { x: 5, y: 5, width: 16, height: 16 },
+    state: { checked },
+  });
+
+  it("renders an unchecked checkbox with a {unchecked} badge", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([CHECKBOX(false)]);
+    const text = ObservationRegistry.format(await reg.observe(page));
+    expect(text).toContain("Inventory");
+    expect(text).toContain("{unchecked}");
+  });
+
+  it("shows a toggle as a ~changed diff with the new {checked} state", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([CHECKBOX(false)]);
+    await reg.observe(page); // initial
+
+    mockExtract.mockResolvedValueOnce([CHECKBOX(true)]);
+    const obs = await reg.observe(page);
+    expect(obs.changed).toHaveLength(1); // same element, state flipped
+    const text = ObservationRegistry.format(obs);
+    expect(text).toContain("{checked}");
+  });
+
+  it("never carries a field value — filled is a boolean badge only", async () => {
+    const reg = new ObservationRegistry();
+    const filledInput: RawElement = {
+      role: "textbox", name: "Email", tag: "INPUT", type: "email",
+      xpath: "/input[2]", signature: "textbox|Email|INPUT|form",
+      inViewport: true, rect: { x: 5, y: 30, width: 200, height: 24 },
+      state: { filled: true },
+    };
+    mockExtract.mockResolvedValueOnce([filledInput]);
+    const text = ObservationRegistry.format(await reg.observe(page));
+    expect(text).toContain("{filled}");
+  });
+});

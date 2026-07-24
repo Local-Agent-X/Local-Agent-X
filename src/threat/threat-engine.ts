@@ -28,7 +28,7 @@ import {
   canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries,
   remintSessionCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,
 } from "./canaries.js";
-import { classifyData, type DataLabel } from "./classification.js";
+import { classifyData, stripExternalUntrusted, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
 import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerState } from "./scoring.js";
 import { readThreatScorerOptions } from "./scorer-options.js";
@@ -256,10 +256,19 @@ export class ThreatEngine {
     // restricted session that reads its own secret files (e.g. ~/.lax/config.json
     // during recovery) would perpetually wipe the time+turn credit it needs to
     // lift the restriction. We still ENFORCE and (below) AUDIT the read.
-    if (!alreadyRestricted && classification.labels.includes("credentials")) {
+    // Credential/secret LEAK evidence must reflect the SESSION's OWN output, not
+    // credential-shaped strings inside inbound third-party content (a fetched
+    // API-doc page is thick with example `Bearer` tokens and keys — scoring
+    // those latched a benign research session into network-restriction,
+    // 2026-07-23). Classify leak evidence on the result with external-untrusted
+    // blocks stripped; a local secret-file read (unwrapped) still scores, and a
+    // real session secret returning in a response is still caught as a canary.
+    const ownStripped = stripExternalUntrusted(result);
+    const leakLabels = ownStripped === result ? classification.labels : classifyData(ownStripped).labels;
+    if (!alreadyRestricted && leakLabels.includes("credentials")) {
       this.scorer.record("credential_in_output", THREAT_SCORES.credential_in_output, `Credentials detected in ${toolName} result`);
     }
-    if (!alreadyRestricted && classification.labels.includes("secrets")) {
+    if (!alreadyRestricted && leakLabels.includes("secrets")) {
       this.scorer.record("secrets_in_output", THREAT_SCORES.sensitive_data_external, `Secrets detected in ${toolName} result`);
     }
 

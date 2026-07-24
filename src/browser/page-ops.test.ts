@@ -105,3 +105,31 @@ describe("evaluateScript timeout", () => {
     expect(await evaluateScript(page, "document.title", 1_000)).toBe("Acme Corp");
   });
 });
+
+describe("evaluateScript return semantics (REPL completion value)", () => {
+  // Mock page that actually runs the wrapped script through a JS engine, so the
+  // wrap is verified against real evaluation instead of a canned return value.
+  const jsPage = { evaluate: async (expr: string) => eval(expr) } as unknown as Page;
+
+  it("returns the value of a self-contained IIFE (double-wrap regression)", async () => {
+    // Old wrapper re-wrapped this in an outer arrow with no return → dropped
+    // the value → "(no return value)". This shape cost ~9 dead calls in one run.
+    expect(await evaluateScript(jsPage, "(() => { const x = 21; return x * 2; })()")).toBe("42");
+  });
+
+  it("returns the last expression of a statement list", async () => {
+    expect(await evaluateScript(jsPage, 'const a = [1, 2, 3]; a.map((n) => n * 2).join(",")')).toBe("2,4,6");
+  });
+
+  it("still supports a top-level return (function-body fallback)", async () => {
+    expect(await evaluateScript(jsPage, "const n = 6; return n + 1")).toBe("7");
+  });
+
+  it("evaluates a bare expression", async () => {
+    expect(await evaluateScript(jsPage, "2 + 3")).toBe("5");
+  });
+
+  it("reports (no return value) for a declaration-only / side-effect script", async () => {
+    expect(await evaluateScript(jsPage, "const z = 9;")).toBe("(no return value)");
+  });
+});

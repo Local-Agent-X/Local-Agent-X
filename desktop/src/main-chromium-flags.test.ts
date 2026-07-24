@@ -3,27 +3,22 @@ import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 
 /**
- * C9 left this test for C8: prove main.ts registers the DNS-label-exfil
- * hardening Chromium flags at launch, and — critically — that the consolidated
- * `--disable-features` switch keeps BOTH features (Chromium honors only the
- * LAST appendSwitch("disable-features", …), so a careless edit that adds a
- * third disable elsewhere, or drops one here, silently un-hardens the app).
+ * Prove the desktop registers the DNS-label-exfil hardening Chromium flags at
+ * launch, and — critically — that the consolidated `--disable-features` switch
+ * keeps BOTH features (Chromium honors only the LAST appendSwitch(
+ * "disable-features", …), so a careless edit that adds a third disable
+ * elsewhere, or drops one here, silently un-hardens the app).
  *
- * WHY A SOURCE-LEVEL ASSERTION rather than a module-load with a mocked electron:
- * main.ts's Chromium flags are TOP-LEVEL side effects that run at import time,
- * and main.ts's import graph pulls in the entire Electron app wiring (config,
- * window, server-process, tray, ipc, native-speech, …), much of which needs a
- * live Electron main-process runtime — it cannot be import-evaluated under a
- * plain vitest/node worker without a large, brittle mock of every sibling
- * module. Extracting a testable helper would mean editing production security
- * code, which C8's scope forbids. The faithful, robust guard is therefore to
- * assert the exact appendSwitch calls exist in the source. This catches the
- * regression C9 cared about (a feature silently dropped from disable-features,
- * or dns-prefetch-disable removed) without refactoring the launch path.
+ * The flags now live in chromium-flags.ts (extracted from main.ts, a launch
+ * orchestrator at the size ceiling). We keep a SOURCE-LEVEL assertion rather
+ * than a module-load with a mocked electron: the flags module's import graph
+ * still pulls in browser-partition and cdp-endpoint (electron-coupled), and a
+ * source assertion catches the exact regression cared about (a feature
+ * silently dropped from disable-features, or dns-prefetch-disable removed).
  */
-const MAIN_TS = readFileSync(join(__dirname, "main.ts"), "utf8");
+const MAIN_TS = readFileSync(join(__dirname, "chromium-flags.ts"), "utf8");
 
-describe("main.ts Chromium launch flags — DNS-label exfil hardening (C9)", () => {
+describe("Chromium launch flags — DNS-label exfil hardening", () => {
 	it("consolidates disable-features to EXACTLY AudioServiceSandbox + NetworkPrediction (nothing dropped)", () => {
 		// The one and only disable-features appendSwitch must list both features.
 		expect(MAIN_TS).toContain(

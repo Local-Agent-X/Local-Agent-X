@@ -241,6 +241,9 @@ export function createBrowserView(
 	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
 	hardenWebContents(view.webContents);
 	armCoDrive(viewId, view.webContents);
+	// Stamp a per-view marker on the top frame so the CDP driver (electron-cdp.ts)
+	// can map this viewId back to its Playwright Page via window.name. Fire-and-forget.
+	view.webContents.executeJavaScript(`window.name=${JSON.stringify(viewId)}`).catch(() => {});
 	// window.open children (popup-mode OAuth lives or dies on these) get the
 	// managed discipline: same-partition webPreferences, per-webContents
 	// hardening, recursive window-open handling, and a tracked lifetime that

@@ -30,12 +30,9 @@ import {
   applyBoundaryCancel,
   type CancelTracker,
 } from "./cancel-handler.js";
-import {
-  acquireLease,
-  heartbeatLease,
-  releaseLease,
-  getLeaseConfig,
-} from "./lease.js";
+import { acquireLease, releaseLease } from "./lease.js";
+import { startHeartbeat, stopHeartbeat } from "./worker-heartbeat.js";
+export { _pauseHeartbeat } from "./worker-heartbeat.js";
 import { readLatestOpTurn, readOpTurn } from "./store.js";
 import { aggregateOpUsage } from "./op-usage.js";
 import { ensureAriKernelScope, releaseAriKernelScope } from "../ari-kernel/index.js";
@@ -49,11 +46,6 @@ import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js
 // this only guards a budget-less op against a runaway script.
 const DEFAULT_MAX_TURNS = 64;
 
-// Internal registry of live heartbeat timers keyed by workerId. Tests use
-// `_pauseHeartbeat` to simulate a crashed worker (heartbeat stops, lease
-// expires naturally).
-const HEARTBEATS = new Map<string, NodeJS.Timeout>();
-
 export interface WorkerHandle {
   workerId: string;
   done: Promise<void>;
@@ -65,19 +57,6 @@ export function runWorker(op: Op, adapter: Adapter): WorkerHandle {
   return { workerId, done };
 }
 
-/**
- * Test-only: stop the heartbeat for a worker without releasing its lease.
- * Simulates a process death — the lease will expire naturally and recovery
- * can pick up the op. NOT exported as part of the canonical-loop API; the
- * leading underscore signals "internal".
- */
-export function _pauseHeartbeat(workerId: string): boolean {
-  const t = HEARTBEATS.get(workerId);
-  if (!t) return false;
-  clearInterval(t);
-  HEARTBEATS.delete(workerId);
-  return true;
-}
 
 async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> {
   // Pre-lease cancel: an opCancel that landed before the scheduler pumped
@@ -108,20 +87,14 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   let deadlineExceeded = false;
   let wallClockTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Heartbeat interval: extend the lease periodically. If the lease was
-  // stolen out from under us (recovery), abort the adapter and let the
-  // turn-loop bail without committing the partial turn.
-  const cfg = getLeaseConfig();
-  const hb = setInterval(() => {
-    const heartbeat = heartbeatLease(op.id, leaseClaim);
-    if (!heartbeat.ok) {
-      leaseLost = true;
-      clearInterval(hb);
-      HEARTBEATS.delete(workerId);
-      void adapter.abort().catch(() => undefined);
-    }
-  }, cfg.heartbeatIntervalMs);
-  HEARTBEATS.set(workerId, hb);
+  // Heartbeat: extend the lease periodically. Failure policy (transient
+  // contention tolerated, stolen claim fatal) lives in worker-heartbeat.ts;
+  // on a genuine loss, abort the adapter and let the turn-loop bail without
+  // committing the partial turn.
+  startHeartbeat(op.id, workerId, leaseClaim, () => {
+    leaseLost = true;
+    void adapter.abort().catch(() => undefined);
+  });
 
   // Operation boundary: each canonical op owns independent ARI run-state while
   // all scopes append to the same process-owned audit chain.
@@ -385,9 +358,8 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       }
     }
   } finally {
-    clearInterval(hb);
+    stopHeartbeat(workerId);
     if (wallClockTimer) clearTimeout(wallClockTimer);
-    HEARTBEATS.delete(workerId);
     tracker.off();
     const release = releaseLease(op.id, leaseClaim);
     if (release.ok) {

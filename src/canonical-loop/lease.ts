@@ -33,8 +33,25 @@ export type LeaseClaimRunResult<T> =
   | { ok: true; value: T }
   | { ok: false; reason: "unknown_op" | "claim_lost" | "lock_unavailable" };
 
+// Ops can widen the default lease window without a code change via
+// LAX_LEASE_DURATION_MS, read once at module load. The floor keeps a briefly
+// starved event loop from expiring a lease mid-turn (a live-run failure at the
+// old 30s default); the ceiling keeps a dead worker from wedging an op past ten
+// minutes. Out-of-range or unset falls back to 60s (6 heartbeats per lease).
+const MIN_LEASE_DURATION_MS = 30_000;
+const MAX_LEASE_DURATION_MS = 600_000;
+const FALLBACK_LEASE_DURATION_MS = 60_000;
+
+function resolveDefaultLeaseDurationMs(): number {
+  const parsed = Number(process.env.LAX_LEASE_DURATION_MS);
+  if (Number.isInteger(parsed) && parsed >= MIN_LEASE_DURATION_MS && parsed <= MAX_LEASE_DURATION_MS) {
+    return parsed;
+  }
+  return FALLBACK_LEASE_DURATION_MS;
+}
+
 const DEFAULT_LEASE_CONFIG: LeaseConfig = {
-  leaseDurationMs: 30_000,
+  leaseDurationMs: resolveDefaultLeaseDurationMs(),
   heartbeatIntervalMs: 10_000,
 };
 

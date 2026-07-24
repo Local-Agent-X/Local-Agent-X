@@ -21,7 +21,18 @@ export function gitCredentialArgs(token: string | undefined): string[] {
     : ["-c", "credential.helper="];
 }
 
-/** Env additions for an authenticated git child — merge over process.env. */
+/** Env additions for an authenticated git child — merge over process.env.
+ *
+ * The author/committer identity rides along for the same self-containment
+ * reason as the credential helper: sync's git must never depend on host git
+ * config. Live failure (2026-07-23): a machine with no global user.email made
+ * every sync commit die with "Author identity unknown", wedging sync — on
+ * that box only. All four vars are needed; git requires author AND committer.
+ */
 export function gitCredentialEnv(token: string | undefined): Record<string, string> {
-  return { GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GIT_SYNC_TOKEN: token ?? "" };
+  return {
+    GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GIT_SYNC_TOKEN: token ?? "",
+    GIT_AUTHOR_NAME: "Local Agent X Sync", GIT_AUTHOR_EMAIL: "sync@localagentx.invalid",
+    GIT_COMMITTER_NAME: "Local Agent X Sync", GIT_COMMITTER_EMAIL: "sync@localagentx.invalid",
+  };
 }

@@ -27,4 +27,17 @@ describe("git sync credentials", () => {
     expect(gitCredentialArgs(undefined)).toEqual(["-c", "credential.helper="]);
     expect(gitCredentialEnv(undefined).GIT_SYNC_TOKEN).toBe("");
   });
+
+  // 2026-07-23 live failure: a machine with no global user.email made every
+  // sync commit die with "Author identity unknown" — sync must supply its own
+  // identity and never depend on host git config. Git requires BOTH author
+  // and committer; losing either var regresses fresh-machine sync.
+  it("supplies a self-contained commit identity — a user never has to run git config", () => {
+    for (const env of [gitCredentialEnv(TOKEN), gitCredentialEnv(undefined)]) {
+      expect(env.GIT_AUTHOR_NAME).toBeTruthy();
+      expect(env.GIT_AUTHOR_EMAIL).toBeTruthy();
+      expect(env.GIT_COMMITTER_NAME).toBeTruthy();
+      expect(env.GIT_COMMITTER_EMAIL).toBeTruthy();
+    }
+  });
 });

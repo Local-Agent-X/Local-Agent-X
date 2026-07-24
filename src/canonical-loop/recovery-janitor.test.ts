@@ -84,6 +84,27 @@ describe("RecoveryJanitor", () => {
     }
   });
 
+  it("terminal ops skip turn-commit reconcile entirely — only non-terminal ops pay for repair", async () => {
+    // Regression guard: reconciling every canonical op (terminal included)
+    // re-projected the full turn history of every op ever run on each sweep —
+    // 167-216s per pass at ~420 finished ops, keeping the 30s janitor
+    // permanently mid-sweep and blocking boot for minutes.
+    const reconciled: string[] = [];
+    const recovered: string[] = [];
+    const states: Record<string, string> = {
+      "op-done": "done", "op-failed": "failed", "op-running": "running", "op-queued": "queued",
+    };
+    const outcomes = await sweepStaleCanonicalOpsCooperatively({
+      listOpIds: () => Object.keys(states),
+      readCandidate: (opId: string) => ({ canonical: { flagValue: true, state: states[opId] } } as Op),
+      reconcileCandidate: (opId: string) => { reconciled.push(opId); return false; },
+      recoverCandidate: (opId: string) => { recovered.push(opId); return { ok: true, kind: "requeued" } as never; },
+    });
+    expect(reconciled).toEqual(["op-running", "op-queued"]);
+    expect(recovered).toEqual(["op-running", "op-queued"]);
+    expect(outcomes.map(o => o.opId)).toEqual(["op-running", "op-queued"]);
+  });
+
   it("never overlaps a sweep and schedules the next tick after completion", async () => {
     const timers = timerHarness();
     let release!: () => void;

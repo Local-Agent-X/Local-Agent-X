@@ -195,6 +195,7 @@ export {
   recoverStaleOp,
   recoverStaleOps,
   sweepStaleCanonicalOps,
+  sweepStaleCanonicalOpsCooperatively,
   type RecoveryOutcome,
   type RecoveryOutcomeKind,
 } from "./recovery.js";

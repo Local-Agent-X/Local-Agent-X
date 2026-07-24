@@ -8,7 +8,7 @@
 import {
   setDefaultAdapterForLane,
   createAnthropicAdapter,
-  sweepStaleCanonicalOps,
+  sweepStaleCanonicalOpsCooperatively,
   setLaneCapConfigReader,
   startRecoveryJanitor,
   lostRegistrationAdapterFactory,
@@ -97,27 +97,35 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   });
 
   // Stale-op recovery sweep is a fire-and-forget — no caller waits for the
-  // result. Used to run synchronously inside this function and added 9-18s
-  // to boot (it scans every op directory on disk and re-reads JSON). Now
-  // backgrounded so server.listen() isn't gated by recovery work. New ops
-  // submitted during the sweep window are unaffected — they go through
-  // submitCanonicalOp which doesn't touch lease-expired rows.
+  // result. Backgrounded so server.listen() isn't gated by recovery work,
+  // and using the COOPERATIVE sweep (yields every batch/time-slice) so the
+  // event loop stays responsive while it runs — the blocking variant kept
+  // the just-listening server unresponsive for the whole pass. Each step is
+  // timed individually: this block once cost 167-216s and the aggregate
+  // number hid which step was burning it. New ops submitted during the
+  // sweep window are unaffected — they go through submitCanonicalOp which
+  // doesn't touch lease-expired rows.
   setImmediate(async () => {
     const t = Date.now();
+    const stepMs: string[] = [];
+    const timed = async <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
+      const s = Date.now();
+      try { return await fn(); } finally { stepMs.push(`${name}=${Date.now() - s}ms`); }
+    };
     try {
-      const restored = restorePersistedAppBuildRuntimes();
-      reconcileAllPendingProcessRelays();
-      await reconcileTerminalContainerExecutions();
-      const recovered = sweepStaleCanonicalOps();
-      const learned = reconcileCanonicalLearnedOutcomes();
+      const restored = await timed("restoreAppBuildRuntimes", () => restorePersistedAppBuildRuntimes());
+      await timed("processRelays", () => reconcileAllPendingProcessRelays());
+      await timed("containerExecutions", () => reconcileTerminalContainerExecutions());
+      const recovered = await timed("staleOpSweep", () => sweepStaleCanonicalOpsCooperatively());
+      const learned = await timed("learnedOutcomes", () => reconcileCanonicalLearnedOutcomes());
       const dt = Date.now() - t;
       if (recovered.length > 0) {
         const summary = recovered
           .map(r => `${r.opId}=${r.outcome.kind}`)
           .join(", ");
-        logger.info(`[canonical-loop] background sweep recovered ${recovered.length} stale op(s) and reconciled ${learned.committed.length} learned outcome(s) in ${dt}ms: ${summary}`);
+        logger.info(`[canonical-loop] background sweep recovered ${recovered.length} stale op(s) and reconciled ${learned.committed.length} learned outcome(s) in ${dt}ms (${stepMs.join(", ")}): ${summary}`);
       } else {
-        logger.info(`[canonical-loop] background sweep completed in ${dt}ms (restored ${restored.length} app build runtime(s), reconciled ${learned.committed.length} learned outcome(s), no stale ops)`);
+        logger.info(`[canonical-loop] background sweep completed in ${dt}ms (${stepMs.join(", ")}; restored ${restored.length} app build runtime(s), reconciled ${learned.committed.length} learned outcome(s), no stale ops)`);
       }
     } catch (e) {
       logger.warn(`[canonical-loop] background sweep failed: ${(e as Error).message}`);

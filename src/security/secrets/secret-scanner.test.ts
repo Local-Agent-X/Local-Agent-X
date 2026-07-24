@@ -425,6 +425,23 @@ describe("scanForSecrets — migrated catalog shapes (now gate egress)", () => {
   });
 });
 
+describe("scanForSecrets — Password in URL is scheme-anchored", () => {
+  it("detects userinfo credentials in a real URL and redacts them", () => {
+    const url = "https://svc:s3cr3tPass@api.example.com/v1";
+    const r = scanForSecrets(url);
+    expect(r.matches.some(m => m.pattern === "Password in URL")).toBe(true);
+    expect(redactSecrets(url)).not.toContain("s3cr3tPass");
+  });
+
+  // The old pattern (`//[^:]+:[^@]+@[^\s/]+`) matched any `//…:…@…` span, so a
+  // schema.org JSON-LD blob full of `@type`/`@context` latched a research
+  // session into network-restriction (2026-07-23). A doc page is not a secret.
+  it("stays clean on schema.org JSON-LD (no bare-// false positive)", () => {
+    const jsonld = String.raw`{"@context":"https://schema.org","@type":"Person","sameAs":["https://x.com/y"]}`;
+    expect(scanForSecrets(jsonld).clean).toBe(true);
+  });
+});
+
 // ── Shannon-entropy detector for UNKNOWN (unprefixed) secrets ────────────────
 describe("scanForSecrets — high-entropy detector (positives)", () => {
   // base64url alphabet, no `=` padding, no `-`/`_` runs that would read as a

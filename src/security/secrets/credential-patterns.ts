@@ -100,7 +100,10 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   { type: "generic", name: "Bearer Token", regex: /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi },
   // Basic auth carries base64(user:password) — same leak class as Bearer.
   { type: "generic", name: "Basic Auth Header", regex: /Basic\s+([A-Za-z0-9+/]{16,}={0,2})/g },
-  { type: "generic", name: "Password in URL", regex: /\/\/[^:]+:[^@]+@[^\s/]+/g },
+  // Requires a real URL scheme and userinfo chars that can't span JSON/prose
+  // punctuation (no quotes/slashes/@) — a bare `//a:b@c` or a schema.org JSON-LD
+  // blob (`//schema.org","@type":…@…`) is not a credential.
+  { type: "generic", name: "Password in URL", regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/"']+:[^\s@/"']+@[^\s/"']+/gi },
   { type: "generic", name: "Key-Value Secret", regex: /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];

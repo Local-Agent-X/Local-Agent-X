@@ -53,6 +53,7 @@ vi.mock("electron", () => {
         getURL: () => "",
         getTitle: () => "",
         loadURL: () => Promise.resolve(),
+        executeJavaScript: () => Promise.resolve(),
         send: () => {},
         setWindowOpenHandler: () => {},
         on: () => {},

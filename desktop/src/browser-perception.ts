@@ -66,6 +66,23 @@ export function trimText(text: unknown, max: number): string {
 	return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+/**
+ * The bare content-type (no charset parameter) from a completed response's
+ * headers. Electron's responseHeaders is Record<string, string[]> with
+ * arbitrary header-name casing, so match the key case-insensitively and take
+ * the first value. undefined when the header is absent (e.g. a bodyless
+ * 204/304). Pure (no Electron), so it lives in this leaf next to scrubRingUrl;
+ * length-bounding is the ring's store-time job (noteRequestDone), not here.
+ */
+export function contentTypeFromHeaders(headers: Record<string, string[]> | undefined): string | undefined {
+	if (!headers) return undefined;
+	const key = Object.keys(headers).find((k) => k.toLowerCase() === "content-type");
+	const raw = key ? headers[key]?.[0] : undefined;
+	if (typeof raw !== "string") return undefined;
+	const bare = raw.split(";")[0].trim();
+	return bare === "" ? undefined : bare;
+}
+
 // Legacy console-message levels (Electron passes 0..3 in the positional
 // signature; newer Electron also puts a string level on the event object).
 const LEGACY_LEVELS = ["debug", "info", "warning", "error"] as const;

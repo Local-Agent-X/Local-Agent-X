@@ -51,6 +51,7 @@ import {
   noteRequestDone,
   noteRequestFailed,
   noteRequestStart,
+  contentTypeFromHeaders,
   pushBounded,
   readConsoleEntries,
   readNetworkEntries,
@@ -116,6 +117,16 @@ describe("bounded ring helpers (pure)", () => {
     expect(trimmed.endsWith("…")).toBe(true);
     expect(trimText("short", 300)).toBe("short");
     expect(trimText(undefined, 10)).toBe("");
+  });
+
+  it("contentTypeFromHeaders: case-insensitive key, first value, charset stripped, undefined when absent", () => {
+    expect(contentTypeFromHeaders({ "Content-Type": ["application/json; charset=utf-8"] })).toBe("application/json");
+    expect(contentTypeFromHeaders({ "content-type": ["text/html"] })).toBe("text/html");
+    expect(contentTypeFromHeaders({ "CONTENT-TYPE": ["application/rss+xml"] })).toBe("application/rss+xml");
+    expect(contentTypeFromHeaders({ "x-other": ["v"] })).toBeUndefined();
+    expect(contentTypeFromHeaders({ "content-type": [] })).toBeUndefined();
+    expect(contentTypeFromHeaders({ "content-type": ["  "] })).toBeUndefined();
+    expect(contentTypeFromHeaders(undefined)).toBeUndefined();
   });
 });
 

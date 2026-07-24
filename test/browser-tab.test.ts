@@ -1135,6 +1135,83 @@ describe("browser-views pool seams (real module)", () => {
   });
 });
 
+describe("browser panel ↔ chat session binding", () => {
+  const bindHere = dirname(fileURLToPath(import.meta.url));
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  // Re-execute browser-tab.js against a bridge augmented with the multi-view
+  // ops (the default beforeEach bridge omits them). The fresh module instance
+  // binds to the same window.desktop.browser object we extended.
+  function reload(extra: Record<string, unknown>) {
+    Object.assign(bridge as object, extra);
+    const src = readFileSync(join(bindHere, "../public/js/browser-tab.js"), "utf8");
+    new Function(src)();
+  }
+
+  it("surfaces the view scoped to the bound session (view-<sessionId>-*)", async () => {
+    const switchView = vi.fn().mockResolvedValue({ viewId: "view-chat-B-work" });
+    reload({
+      listViews: vi.fn().mockResolvedValue([
+        { viewId: "view-chat-A-work", url: "https://a" },
+        { viewId: "view-chat-B-work", url: "https://b" },
+      ]),
+      switchView,
+    });
+    window.laxBrowserTab.bindSession("chat-B");
+    await flush();
+    expect(switchView).toHaveBeenCalledWith("view-chat-B-work");
+  });
+
+  it("does not steal the panel when the bound chat has no view yet", async () => {
+    const switchView = vi.fn();
+    reload({
+      listViews: vi.fn().mockResolvedValue([{ viewId: "view-chat-A-work", url: "" }]),
+      switchView,
+    });
+    window.laxBrowserTab.bindSession("chat-Z");
+    await flush();
+    expect(switchView).not.toHaveBeenCalled();
+  });
+
+  it("leaves the selection alone when it already belongs to the bound session (its own tabs)", async () => {
+    const switchView = vi.fn().mockResolvedValue({ viewId: "view-chat-A-t2" });
+    reload({
+      listViews: vi.fn().mockResolvedValue([
+        { viewId: "view-chat-A-work", url: "" },
+        { viewId: "view-chat-A-t2", url: "" },
+      ]),
+      switchView,
+    });
+    window.laxBrowserTab.switchTo("view-chat-A-t2"); // user is on a specific tab of chat A
+    await flush();
+    switchView.mockClear();
+    window.laxBrowserTab.bindSession("chat-A"); // same chat — must not yank to the first tab
+    await flush();
+    expect(switchView).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the session view when it appears later via onViewsChanged", async () => {
+    let viewsChangedCb: (() => void) | null = null;
+    let views: Array<{ viewId: string; url: string }> = [{ viewId: "view-chat-D-work", url: "https://d" }];
+    const switchView = vi.fn().mockImplementation((id: string) => Promise.resolve({ viewId: id }));
+    reload({
+      listViews: vi.fn(() => Promise.resolve(views)),
+      switchView,
+      onViewsChanged: (cb: () => void) => { viewsChangedCb = cb; },
+    });
+    window.laxBrowserTab.switchTo("view-chat-D-work"); // looking at a different chat's browser
+    await flush();
+    window.laxBrowserTab.bindSession("chat-C"); // chat-C has no view yet
+    await flush();
+    switchView.mockClear();
+    // Agent opens a page in chat C: the pool gains its view and main pokes us.
+    views = [{ viewId: "view-chat-D-work", url: "https://d" }, { viewId: "view-chat-C-work", url: "https://c" }];
+    expect(typeof viewsChangedCb).toBe("function");
+    viewsChangedCb!();
+    await flush();
+    expect(switchView).toHaveBeenCalledWith("view-chat-C-work");
+  });
+});
+
 declare global {
   interface Window {
     switchSidePanelTab(tab: string): void;
@@ -1146,6 +1223,8 @@ declare global {
       goForward(): void;
       reload(): void;
       navigateFromInput(): void;
+      switchTo(id: string): void;
+      bindSession(id: string | null): void;
     };
   }
 }

@@ -187,6 +187,9 @@ function newChat(projectId) {
   // the next 10s tick even though clicking would work.
   try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(true); } catch {}
   navigate('chat');
+  // Bind the browser panel to the new chat (no view yet — panel stays as-is
+  // until the agent opens a page in it).
+  try { if (window.laxBrowserTab && window.laxBrowserTab.bindSession) window.laxBrowserTab.bindSession(activeChat.id); } catch {}
   if (window.renderMessages) renderMessages();
   // New chat is never streaming — reset UI
   const stopBtn = document.getElementById('stop-btn');
@@ -244,6 +247,9 @@ function selectChat(id) {
   if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
     window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
   }
+  // Bind the browser panel to this chat so its own agent view is surfaced (and
+  // the previous chat's browser stays alive, detached, in the pool).
+  try { if (window.laxBrowserTab && window.laxBrowserTab.bindSession) window.laxBrowserTab.bindSession(id); } catch {}
   focusChatInput();
   // Lazy hydration: if the sidebar handed us a metadata stub (or a known-stale
   // local copy), fetch the full session JSON now. One fetch per click instead
@@ -265,6 +271,7 @@ function deleteChat(id, e) {
   markDeleted(id);
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
+  try { if (window.laxBrowserTab && window.laxBrowserTab.bindSession) window.laxBrowserTab.bindSession(activeChat ? activeChat.id : null); } catch {}
   apiFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
 }
 
@@ -288,6 +295,7 @@ function archiveChat(id, e) {
   if (chat.archived && activeChat && activeChat.id === id) activeChat = null;
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
+  try { if (window.laxBrowserTab && window.laxBrowserTab.bindSession) window.laxBrowserTab.bindSession(activeChat ? activeChat.id : null); } catch {}
 }
 
 async function exportChat(id, e) {

@@ -114,31 +114,45 @@ async function onEmbProviderChange(provider) {
     if (modelInput) modelInput.style.display = 'none';
     modelSelect.innerHTML = '<option value="">Loading...</option>';
     try {
-      // ?include=embeddings — the default endpoint filters embedding-only
-      // models out (they can't serve chat). This dropdown specifically
-      // wants embedding models, so opt in.
+      // ?include=embeddings — the default endpoint filters embedding models
+      // out (they can't serve chat). This dropdown specifically wants
+      // embedding models, so opt in. Entries carry `embeddingOnly` when the
+      // runtime authoritatively declared the model an embedder.
       const data = await apiJson('/api/models/local?include=embeddings');
-      const models = (data.models || []).map(function(m) { return m.name; });
+      const models = (data.models || []).map(function(m) { return { name: m.name, embeddingOnly: !!m.embeddingOnly }; });
       if (models.length === 0) {
         modelSelect.innerHTML = '<option value="">No models found — run ollama pull nomic-embed-text</option>';
         return;
       }
-      // Embedding-friendly models get sorted to top
+      // A model counts as an embedder if the runtime says so, or its name
+      // matches a known embedding family (backstop for older runtimes).
       var embModels = ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm', 'snowflake-arctic-embed', 'bge-large', 'bge-base'];
+      var isEmbedder = function(m) {
+        return m.embeddingOnly || embModels.some(function(e) { return m.name.includes(e); });
+      };
+      // Embedders sort to top; chat models stay listed (a custom embedder
+      // may have an unrecognized name) but are labeled as unsuitable.
       var sorted = models.slice().sort(function(a, b) {
-        var aEmb = embModels.some(function(e) { return a.includes(e); }) ? 0 : 1;
-        var bEmb = embModels.some(function(e) { return b.includes(e); }) ? 0 : 1;
-        return aEmb - bEmb || a.localeCompare(b);
+        return (isEmbedder(a) ? 0 : 1) - (isEmbedder(b) ? 0 : 1) || a.name.localeCompare(b.name);
       });
-      modelSelect.innerHTML = sorted.map(function(m) {
-        var isEmb = embModels.some(function(e) { return m.includes(e); });
-        var label = isEmb ? m + ' (embedding)' : m;
-        return '<option value="' + esc(m) + '">' + esc(label) + '</option>';
+      // Explicit blank option: the dropdown must be able to say "nothing
+      // chosen". Without it the browser auto-selects the first option, which
+      // once silently saved a 65GB chat model as the embedding model.
+      modelSelect.innerHTML = '<option value="">— select an embedding model —</option>' + sorted.map(function(m) {
+        var label = isEmbedder(m) ? m.name + ' (embedding)' : m.name + ' (chat model — not for embeddings)';
+        return '<option value="' + esc(m.name) + '">' + esc(label) + '</option>';
       }).join('');
-      // Try to select saved or default
+      // Selection: saved value wins; otherwise auto-pick only a known
+      // EMBEDDER (nomic first, then any). Never auto-select a chat model —
+      // if no embedder exists, stay on the blank option.
       var saved = modelInput ? modelInput.value : '';
-      if (saved && sorted.includes(saved)) modelSelect.value = saved;
-      else if (sorted.find(function(m) { return m.includes('nomic-embed'); })) modelSelect.value = sorted.find(function(m) { return m.includes('nomic-embed'); });
+      var savedEntry = sorted.find(function(m) { return m.name === saved; });
+      var firstNomic = sorted.find(function(m) { return m.name.includes('nomic-embed'); });
+      var firstEmb = sorted.find(isEmbedder);
+      if (savedEntry) modelSelect.value = saved;
+      else if (firstNomic) modelSelect.value = firstNomic.name;
+      else if (firstEmb) modelSelect.value = firstEmb.name;
+      else modelSelect.value = '';
       // Sync hidden input
       if (modelInput) modelInput.value = modelSelect.value;
       modelSelect.onchange = function() { if (modelInput) modelInput.value = modelSelect.value; };

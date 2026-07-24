@@ -66,14 +66,30 @@ export async function initOrRefreshEmbeddingProvider(deps: {
     const embModel = settings.embeddingModel || undefined;
 
     let degraded = false;
+    // The model the provider is actually created with. For the ollama path
+    // this is the guard-resolved target (a refused settings value falls back
+    // to the default embedder) — the raw settings value must never reach
+    // createEmbeddingProvider, or the pre-warm below would load it anyway.
+    let resolvedEmbModel = embModel;
 
     if (embProvider === "ollama") {
-      const targetModel = embModel || "mxbai-embed-large";
+      let targetModel = embModel || "mxbai-embed-large";
       const fallbackModel = "nomic-embed-text";
       try {
         const ollamaUrl = (settings.ollamaUrl || "http://127.0.0.1:11434").replace(/\/$/, "");
         const tags = await fetchLocalOllamaTags(ollamaUrl);
-        const decision = decideEmbeddingModelAction(targetModel, tags);
+        let decision = decideEmbeddingModelAction(targetModel, tags);
+        if (decision.action === "refuse") {
+          // Invariant: never use or auto-pull a non-embedding model, no
+          // matter what settings.json says (a broken Settings dropdown once
+          // saved gpt-oss:120b here and boot pulled+warmed 65GB). Fall back
+          // to the default embedder and say so loudly — the setting itself
+          // is only fixable by the user.
+          logger.error(`[memory] embeddingModel "${targetModel}" ${decision.reason}. Using mxbai-embed-large instead — fix Settings → Memory → Embedding Model.`);
+          targetModel = "mxbai-embed-large";
+          decision = decideEmbeddingModelAction(targetModel, tags);
+        }
+        resolvedEmbModel = targetModel;
         if (decision.action !== "retry") {
           const installed = tags.models.map(m => m.name);
           if (decision.action === "pull") {
@@ -142,7 +158,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
     let apiKey: string | undefined;
     if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
     else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
-    const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
+    const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: resolvedEmbModel });
     await memoryIndex.setEmbeddingProvider(provider);
     // Share the same provider with anyone else that needs embeddings (protocol
     // dedup, future similar) — single warm-up cost, single source of truth on

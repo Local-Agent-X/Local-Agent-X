@@ -36,6 +36,17 @@ export interface LocalModel {
   contextWindow: number | null;
   /** Runtime-declared tool-call support. null = unknown (self-heal decides). */
   tools: boolean | null;
+  /**
+   * True only when the runtime AUTHORITATIVELY declares this model embeds
+   * and cannot chat. Probes must report such models (marked), never drop
+   * them — the embedding-settings picker and the boot-time embedding
+   * warmer consume this seam too, and dropping at list time blinded both
+   * (they saw a world with no embedders and mis-picked chat models).
+   * Chat-facing consumers filter on this flag in discovery.ts. Absent =
+   * unknown; the name-regex backstop (isEmbeddingModel) still applies
+   * downstream for runtimes that won't say.
+   */
+  embeddingOnly?: boolean;
   sizeBytes?: number;
   modifiedAt?: string;
 }

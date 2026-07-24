@@ -126,17 +126,18 @@ export function entryToModel(raw: unknown): LocalModel | null {
   if (!raw || typeof raw !== "object") return null;
   const e = raw as RawEntry;
   if (typeof e.id !== "string" || e.id.length === 0) return null;
-  // This seam serves the CHAT picker. When the runtime declares the model
-  // type authoritatively (LM Studio /api/v0), drop embeddings models here
-  // rather than leaning on the downstream name-regex (isEmbeddingModel),
-  // which is a heuristic backstop for runtimes that won't say.
-  if (e.type === "embeddings") return null;
+  // When the runtime declares the model type authoritatively (LM Studio
+  // /api/v0), MARK embeddings models rather than dropping them — this seam
+  // also serves embedding-model consumers; the chat-only filter lives in
+  // discovery.ts. The downstream name-regex (isEmbeddingModel) stays the
+  // heuristic backstop for runtimes that won't say.
+  const embeddingOnly = e.type === "embeddings";
   // Served-window sources only; LM Studio's max_context_length is
   // deliberately ignored (it's a ceiling, not the loaded reality).
   const loaded = e.state === "loaded" ? posInt(e.loaded_context_length) : null;
   const contextWindow = loaded ?? posInt(e.max_model_len);
   const tools = Array.isArray(e.capabilities) ? e.capabilities.includes("tool_use") : null;
-  return { id: e.id, contextWindow, tools };
+  return { id: e.id, contextWindow, tools, ...(embeddingOnly ? { embeddingOnly: true } : {}) };
 }
 
 function listFrom(data: Record<string, unknown> | null): unknown[] | null {

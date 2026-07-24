@@ -58,4 +58,43 @@ describe("decideEmbeddingModelAction", () => {
     });
     expect(decision).toEqual({ action: "pull" });
   });
+
+  // The auto-pull invariant. Regression 2026-07-23: a broken Settings
+  // dropdown saved "gpt-oss:120b" as embeddingModel; boot silently pulled
+  // 65GB and pre-warmed a 120B chat model, saturating VRAM and wedging
+  // live chat turns. The warmer must never pull OR use a model it cannot
+  // justify as an embedder.
+  it("refuses to auto-pull a target that is not a recognized embedding model", () => {
+    const decision = decideEmbeddingModelAction("gpt-oss:120b", {
+      reachable: true,
+      models: [{ name: "llama3:8b" }],
+    });
+    expect(decision.action).toBe("refuse");
+  });
+
+  it("refuses to USE an installed model the runtime reports as chat-capable when its name matches no embedding family", () => {
+    const decision = decideEmbeddingModelAction("gpt-oss:120b", {
+      reachable: true,
+      models: [{ name: "gpt-oss:120b" }],
+    });
+    expect(decision.action).toBe("refuse");
+  });
+
+  it("uses an installed odd-named model when the runtime authoritatively flags it embedding-only", () => {
+    // Custom embedders with unrecognized names stay usable — the runtime's
+    // capabilities flag is the authority; the name regex is only a backstop.
+    const decision = decideEmbeddingModelAction("my-custom-vectors:1b", {
+      reachable: true,
+      models: [{ name: "my-custom-vectors:1b", embeddingOnly: true }],
+    });
+    expect(decision).toEqual({ action: "use" });
+  });
+
+  it("embedding-family names still pull when missing and use when installed (flag absent on older Ollama)", () => {
+    expect(decideEmbeddingModelAction("nomic-embed-text", { reachable: true, models: [] }).action).toBe("pull");
+    expect(decideEmbeddingModelAction("nomic-embed-text", {
+      reachable: true,
+      models: [{ name: "nomic-embed-text:latest" }],
+    })).toEqual({ action: "use" });
+  });
 });

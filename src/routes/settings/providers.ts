@@ -269,8 +269,8 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const { reachable, models: all } = await fetchLocalOllamaTags(getRuntimeConfig().ollamaUrl);
     if (!reachable) { json(502, { error: "Ollama not running. Start it with: ollama serve" }); return true; }
     const includeEmbeddings = url.searchParams.get("include") === "embeddings";
-    const filtered = includeEmbeddings ? all : all.filter(m => !isEmbeddingModel(m.name));
-    json(200, { models: filtered.map(m => ({ name: m.name, size: m.size, modified: m.modified_at })) });
+    const filtered = includeEmbeddings ? all : all.filter(m => !m.embeddingOnly && !isEmbeddingModel(m.name));
+    json(200, { models: filtered.map(m => ({ name: m.name, size: m.size, modified: m.modified_at, ...(m.embeddingOnly ? { embeddingOnly: true } : {}) })) });
     return true;
   }
   // Test the Ollama Cloud connection. Used by the settings UI's "Connect"

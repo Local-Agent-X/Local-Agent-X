@@ -93,16 +93,21 @@ describe("ollamaProbe.listModels", () => {
     stubFetch({ "/api/tags": { unexpected: true } });
     expect(await ollamaProbe.listModels(EP)).toEqual([]);
   });
-  // This seam feeds the chat picker and background dispatch. An embedder that
-  // survives to either one 404s /api/generate or offers a model nobody can
-  // chat with. Ollama 0.32's /api/tags declares this, so drop it here rather
-  // than leaning on the downstream name-regex.
-  it("drops embedding-only models when /api/tags declares capabilities", async () => {
+  // This seam feeds BOTH the chat picker AND embedding-model consumers
+  // (the Settings embedding dropdown, the boot-time embedding warmer, via
+  // fetchLocalOllamaTags). Embedders must be MARKED, never dropped —
+  // dropping them here once blinded the embedding picker to every
+  // installed embedder and it auto-saved a 65GB chat model instead
+  // (regression 6e27ff0f). Chat-facing consumers filter in discovery.ts.
+  it("marks (not drops) embedding-only models when /api/tags declares capabilities", async () => {
     stubFetch({ "/api/tags": { models: [
       { name: "qwen3.6:27b", capabilities: ["completion", "tools"] },
       { name: "mxbai-embed-large:latest", capabilities: ["embedding"] },
     ] } });
-    expect((await ollamaProbe.listModels(EP)).map(m => m.id)).toEqual(["qwen3.6:27b"]);
+    const models = await ollamaProbe.listModels(EP);
+    expect(models.map(m => m.id)).toEqual(["qwen3.6:27b", "mxbai-embed-large:latest"]);
+    expect(models.find(m => m.id === "qwen3.6:27b")?.embeddingOnly).toBeUndefined();
+    expect(models.find(m => m.id === "mxbai-embed-large:latest")?.embeddingOnly).toBe(true);
   });
   it("keeps models on older Ollama builds that omit capabilities — never drop what we can't disprove", async () => {
     stubFetch({ "/api/tags": { models: [{ name: "llama3:8b" }] } });

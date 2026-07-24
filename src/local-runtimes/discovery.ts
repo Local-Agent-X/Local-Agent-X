@@ -46,7 +46,12 @@ async function claimProbe(c: CandidateEndpoint): Promise<LocalRuntimeProbe | nul
 async function surveyEndpoint(c: CandidateEndpoint): Promise<LocalRuntimeInfo | null> {
   const probe = await claimProbe(c);
   if (!probe) return null;
-  const listed = await probe.listModels(c.endpoint);
+  // The runtime REGISTRY is chat-facing (picker, per-model routing, context
+  // windows), so embedding-only models are filtered here — the ONE place
+  // that owns that rule. Probes report them marked (never dropped) because
+  // the embedding-settings picker and boot-time embedding warmer read the
+  // probes directly via fetchLocalOllamaTags and need to see embedders.
+  const listed = (await probe.listModels(c.endpoint)).filter((m) => !m.embeddingOnly);
   const models: LocalModel[] = await mapBounded(listed, MODEL_PROBE_CONCURRENCY, async (m) => ({
     ...m,
     ...(await probe.probeModel(c.endpoint, m.id)),

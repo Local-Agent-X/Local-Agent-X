@@ -47,10 +47,11 @@ const EMBEDDING_NAME_RE = /(^|[/_:.\-])(embed|embedding|embeddings)([_:.\-]|$)|^
  * embedding model and get a runtime "model does not generate" error.
  *
  * Now the BACKSTOP rather than the only signal: the local-runtimes seam
- * drops embedders at list time wherever the runtime declares them
- * authoritatively (LM Studio `type: "embeddings"`, Ollama 0.32+ /api/tags
- * `capabilities: ["embedding"]`). This regex still covers runtimes and
- * older builds that won't say.
+ * MARKS embedders (LocalModel.embeddingOnly) wherever the runtime declares
+ * them authoritatively (LM Studio `type: "embeddings"`, Ollama 0.32+
+ * /api/tags `capabilities: ["embedding"]`), and chat-facing consumers
+ * filter on the mark in discovery.ts. This regex still covers runtimes
+ * and older builds that won't say.
  */
 export function isEmbeddingModel(name: string): boolean {
   if (!name) return false;

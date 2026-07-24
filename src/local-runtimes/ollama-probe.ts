@@ -73,13 +73,15 @@ export function parseToolCapability(capabilities: unknown): boolean | null {
 
 /**
  * True only when the runtime AUTHORITATIVELY says this model embeds and
- * cannot chat. This seam serves the chat picker, so — same rule as the
- * openai-compat probe's `type === "embeddings"` drop — an embedder is
- * excluded at list time rather than left for the downstream name-regex
- * (isEmbeddingModel), which stays the backstop for runtimes that won't say.
- * Absent/unknown capabilities → false: never drop a model we can't prove is
- * an embedder. (Ollama 0.32's /api/tags carries capabilities per model;
- * older versions omit it and fall through to the regex.)
+ * cannot chat. Used to MARK the model (LocalModel.embeddingOnly), never to
+ * drop it at list time — this seam also serves the embedding-settings
+ * picker and the boot-time embedding warmer, and dropping here blinded
+ * both to every installed embedder (regression 6e27ff0f: the Settings
+ * dropdown auto-picked a 65GB chat model as the embedding model). The
+ * chat-only filter lives in discovery.ts. Absent/unknown capabilities →
+ * false: never flag a model we can't prove is an embedder. (Ollama 0.32's
+ * /api/tags carries capabilities per model; older versions omit it and
+ * fall through to the downstream name-regex backstop.)
  */
 export function isEmbeddingOnly(capabilities: unknown): boolean {
   if (!Array.isArray(capabilities)) return false;
@@ -122,11 +124,11 @@ export const ollamaProbe: LocalRuntimeProbe = {
         name?: unknown; size?: unknown; modified_at?: unknown; capabilities?: unknown;
       };
       if (typeof row.name !== "string" || row.name.length === 0) continue;
-      if (isEmbeddingOnly(row.capabilities)) continue;
       out.push({
         id: row.name,
         contextWindow: null,
         tools: null,
+        ...(isEmbeddingOnly(row.capabilities) ? { embeddingOnly: true } : {}),
         sizeBytes: typeof row.size === "number" ? row.size : undefined,
         modifiedAt: typeof row.modified_at === "string" ? row.modified_at : undefined,
       });

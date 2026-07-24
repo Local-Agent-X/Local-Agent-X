@@ -149,6 +149,8 @@ export interface OllamaTag {
   name: string;
   size?: number;
   modified_at?: string;
+  /** Runtime-declared embedding-only model (see LocalModel.embeddingOnly). */
+  embeddingOnly?: boolean;
 }
 
 let cachedLocal: LocalState | null = null;
@@ -171,6 +173,7 @@ export async function fetchLocalOllamaTags(
     name: m.id,
     size: m.sizeBytes,
     modified_at: m.modifiedAt,
+    ...(m.embeddingOnly ? { embeddingOnly: true } : {}),
   }));
   return { reachable: true, models };
 }
@@ -182,7 +185,7 @@ export async function refreshLocalOllama(ollamaUrl: string): Promise<LocalState>
   const { reachable, models } = await fetchLocalOllamaTags(ollamaUrl);
   cachedLocal = {
     reachable,
-    models: models.map(m => m.name).filter(n => !isEmbeddingModel(n)),
+    models: models.filter(m => !m.embeddingOnly && !isEmbeddingModel(m.name)).map(m => m.name),
     refreshedAt: Date.now(),
   };
   return cachedLocal;

@@ -172,6 +172,27 @@ export function describeMemoryPromotionRequest(
   return { content, target, sessionId, source: `model-tool:${toolName}`, ...metadata, origin: "assistant" };
 }
 
+/** Plain-English name for a promotion target, for the approval card. The raw
+ *  target ("memory:daily-log", "memory:profile:user-field") is an internal
+ *  routing key; a person approving the write needs to know WHERE it lands. */
+function friendlyTarget(target: string): string {
+  if (target === "memory:daily-log") return "your daily activity log";
+  if (target === "memory:retain" || target.startsWith("memory:update:")) return "your long-term memory";
+  if (target === "memory:project-brief") return "the project brief";
+  if (target.startsWith("memory:profile")) return "your saved profile";
+  return "long-term memory";
+}
+
+/** The approval-card question a non-engineer can actually act on: says what is
+ *  being saved and where, in plain language, with the content quoted. Replaces
+ *  the old "Promote this exact model-originated content… Source=…; target=…"
+ *  wording that read as jargon to everyone but its author. */
+export function describePromotionForHuman(promotion: MemoryPromotionClaims): string {
+  const oneLine = promotion.content.trim().replace(/\s+/g, " ");
+  const excerpt = oneLine.length > 240 ? oneLine.slice(0, 240) + "…" : oneLine;
+  return `Save this to ${friendlyTarget(promotion.target)} so I can use it in future chats?\n\n“${excerpt}”`;
+}
+
 const UNTRUSTED_MARKERS = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
 
 function currentUserTurn(priorMessages: unknown[] | undefined): { text: string; turnTail: string } {

@@ -12,7 +12,7 @@ import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ServerEvent } from "../types.js";
 import { MemoryIndex } from "./index.js";
 import { createFactsTools } from "./tools/facts.js";
-import { createImportedMemoryContext, createInternalMemoryContext } from "./promotion-gate.js";
+import { createImportedMemoryContext, createInternalMemoryContext, describePromotionForHuman } from "./promotion-gate.js";
 
 let dir: string;
 let memory: MemoryIndex;
@@ -292,5 +292,31 @@ describe("memory promotion through the canonical tool pipeline", () => {
       ...promotion,
       origin: "durable_memory",
     })).toThrow(/claims do not match/);
+  });
+});
+
+describe("describePromotionForHuman — the approval card a non-engineer can act on", () => {
+  const base = { content: "", target: "", source: "model-tool:x", sessionId: "s", provenance: "inference", confidence: 0.6, origin: "assistant" as const };
+
+  it("names WHERE it lands in plain words and quotes the content", () => {
+    const msg = describePromotionForHuman({ ...base, content: "Merchhelm full-catalog sync shipped.", target: "memory:daily-log" });
+    expect(msg).toContain("your daily activity log");
+    expect(msg).toContain("Merchhelm full-catalog sync shipped.");
+    // No internal routing jargon leaks to the human.
+    expect(msg).not.toMatch(/memory:daily-log|provenance|Source=|model-originated/);
+  });
+
+  it("maps each target to a human label", () => {
+    expect(describePromotionForHuman({ ...base, content: "x", target: "memory:retain" })).toContain("your long-term memory");
+    expect(describePromotionForHuman({ ...base, content: "x", target: "memory:project-brief" })).toContain("the project brief");
+    expect(describePromotionForHuman({ ...base, content: "x", target: "memory:profile:user-field" })).toContain("your saved profile");
+  });
+
+  it("collapses whitespace and truncates a long body so the card stays readable", () => {
+    const long = "word ".repeat(200);
+    const msg = describePromotionForHuman({ ...base, content: long, target: "memory:daily-log" });
+    expect(msg).toContain("…");
+    expect(msg).not.toContain("\n\nword word word word"); // one-lined, not a wall of text
+    expect(msg.length).toBeLessThan(360);
   });
 });

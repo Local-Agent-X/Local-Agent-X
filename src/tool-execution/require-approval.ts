@@ -21,6 +21,7 @@ import { terminate, CONTINUE } from "./context.js";
 import {
   cleanTurnForModelSelfSave,
   describeMemoryPromotionRequest,
+  describePromotionForHuman,
   isFactDbPromotion,
   stampApprovedMemoryPromotion,
   stampCleanModelPromotion,
@@ -190,7 +191,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     toolCallId: ctx.tc.id,
     sessionId: ctx.sessionId || "default",
     context: promotion
-      ? `Promote this exact model-originated content to durable memory? Source=${promotion.source}; target=${promotion.target}; session=${promotion.sessionId}.`
+      ? describePromotionForHuman(promotion)
       : destructive
       ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approvalContext}`
       : ctx.policyApprovalReason

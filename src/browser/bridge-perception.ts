@@ -36,6 +36,8 @@ export interface BridgeNetworkEntry {
 	method: string;
 	status?: number;
 	error?: string;
+	resourceType?: string;
+	contentType?: string;
 	ts: number;
 }
 

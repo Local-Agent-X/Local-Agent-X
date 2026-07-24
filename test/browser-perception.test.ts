@@ -20,6 +20,7 @@ vi.mock("../desktop/src/browser-views", () => ({
   closeBrowserView: () => {},
   getBrowserView: (viewId: string) => h.viewsById.get(viewId),
   listBrowserViews: () => h.poolList,
+  clearAdoptedViews: () => {},
   pingBrowserView: () => ({ ok: true }),
   hideBrowserView: () => {},
   setBrowserViewBounds: () => {},
@@ -178,6 +179,32 @@ describe("per-partition network ring", () => {
       ["GET", 200, undefined],
       ["POST", undefined, "net::ERR_FAILED"],
     ]);
+  });
+
+  it("stores resourceType + contentType on completions and resourceType on failures", () => {
+    noteRequestStart(PART, 1);
+    noteRequestStart(PART, 2);
+    noteRequestDone(PART, {
+      id: 1, url: "https://api.example/data.json", method: "GET", statusCode: 200,
+      resourceType: "xhr", contentType: "application/json",
+    });
+    noteRequestFailed(PART, { id: 2, url: "https://api.example/dead", method: "POST", error: "net::ERR_FAILED", resourceType: "xhr" });
+    const { entries } = readNetworkEntries(PART);
+    expect(entries.map((e) => [e.resourceType, e.contentType])).toEqual([
+      ["xhr", "application/json"],
+      ["xhr", undefined], // no response on a failure → no contentType
+    ]);
+  });
+
+  it("bounds an oversized contentType at store time (skeptic: attacker-controlled header)", () => {
+    noteRequestStart(PART, 5);
+    noteRequestDone(PART, {
+      id: 5, url: "https://api.example/x", method: "GET", statusCode: 200,
+      resourceType: "xhr", contentType: "a".repeat(5000),
+    });
+    const { entries } = readNetworkEntries(PART);
+    const last = entries[entries.length - 1];
+    expect(last.contentType!.length).toBeLessThanOrEqual(100);
   });
 
   it("redirect chains do NOT drift the in-flight count (skeptic regression)", () => {

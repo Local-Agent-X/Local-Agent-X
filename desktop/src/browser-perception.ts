@@ -39,6 +39,8 @@ export interface NetworkEntry {
 	method: string;
 	status?: number;
 	error?: string;
+	resourceType?: string;
+	contentType?: string;
 	ts: number;
 }
 
@@ -46,6 +48,11 @@ export const RING_MAX_ENTRIES = 100;
 export const CONSOLE_MESSAGE_MAX_CHARS = 300;
 export const UI_TITLE_MAX_CHARS = 120;
 const URL_MAX_CHARS = 200;
+// content-type is attacker-controlled (any server sets its own) and becomes
+// model-facing once read_network surfaces it, so it is bounded at store time
+// the way scrubRingUrl bounds the url — a real MIME type is short; anything
+// longer is smuggling, not a media type.
+const CONTENT_TYPE_MAX_CHARS = 100;
 const MAX_PARTITION_RINGS = 32;
 
 /** Push onto a bounded ring: oldest entries fall off the front. */
@@ -248,7 +255,7 @@ export function noteRequestStart(partition: string, requestId: number): void {
 
 export function noteRequestDone(
 	partition: string,
-	outcome: { id: number; url: string; method: string; statusCode: number },
+	outcome: { id: number; url: string; method: string; statusCode: number; resourceType?: string; contentType?: string },
 ): void {
 	const net = partitionNet(partition);
 	net.unsettled.delete(outcome.id);
@@ -256,13 +263,15 @@ export function noteRequestDone(
 		url: scrubRingUrl(outcome.url),
 		method: outcome.method,
 		status: outcome.statusCode,
+		resourceType: outcome.resourceType,
+		contentType: outcome.contentType === undefined ? undefined : trimText(outcome.contentType, CONTENT_TYPE_MAX_CHARS),
 		ts: Date.now(),
 	});
 }
 
 export function noteRequestFailed(
 	partition: string,
-	outcome: { id: number; url: string; method: string; error: string },
+	outcome: { id: number; url: string; method: string; error: string; resourceType?: string },
 ): void {
 	const net = partitionNet(partition);
 	net.unsettled.delete(outcome.id);
@@ -270,6 +279,7 @@ export function noteRequestFailed(
 		url: scrubRingUrl(outcome.url),
 		method: outcome.method,
 		error: outcome.error,
+		resourceType: outcome.resourceType,
 		ts: Date.now(),
 	});
 }

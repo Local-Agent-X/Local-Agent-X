@@ -134,8 +134,14 @@ describe("browser bridge client — happy paths", () => {
 		const p = browserReadNetwork("v1");
 		const msg = lastSent();
 		expect(msg).toMatchObject({ type: "lax:browser-read-network", viewId: "v1" });
-		const network = { entries: [{ url: "https://x/", method: "GET", status: 500, ts: 9 }], inFlight: 2 };
-		receive({ type: "lax:browser-read-network-result", id: msg.id, ok: true, network });
+		const network = {
+			entries: [{ url: "https://x/", method: "GET", status: 500, resourceType: "xhr", contentType: "application/json", ts: 9 }],
+			inFlight: 2,
+		};
+		// Serialize the reply the way child-process IPC actually does (structured
+		// clone / JSON), so this genuinely proves resourceType + contentType
+		// survive the wire — not a by-reference self-comparison.
+		receive(JSON.parse(JSON.stringify({ type: "lax:browser-read-network-result", id: msg.id, ok: true, network })));
 		await expect(p).resolves.toEqual(network);
 
 		const p2 = browserReadNetwork("v1");

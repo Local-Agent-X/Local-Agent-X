@@ -203,6 +203,22 @@ const VIEW_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
 // Set<string> rather than a (type-error) literal comparison.
 const SW_RESOURCE_TYPES: ReadonlySet<string> = new Set(["serviceWorker"]);
 
+// Perception metadata: the bare content-type (no charset parameter) from a
+// completed response. Electron's responseHeaders is Record<string, string[]>
+// with arbitrary header-name casing, so match the key case-insensitively and
+// take the first value. Returns undefined when the header is absent (e.g. a
+// bodyless 204/304) — the ring field is optional by design. Length-bounding is
+// the ring's store-time job (noteRequestDone, next to scrubRingUrl), not this
+// extractor's — this only parses the header.
+function contentTypeFromHeaders(headers: Record<string, string[]> | undefined): string | undefined {
+	if (!headers) return undefined;
+	const key = Object.keys(headers).find((k) => k.toLowerCase() === "content-type");
+	const raw = key ? headers[key]?.[0] : undefined;
+	if (typeof raw !== "string") return undefined;
+	const bare = raw.split(";")[0].trim();
+	return bare === "" ? undefined : bare;
+}
+
 function hardenSession(sess: Session, partition: string): void {
 	sess.setPermissionRequestHandler(
 		(_wc: WebContents | null, permission: string, callback: (granted: boolean) => void) => {
@@ -345,10 +361,14 @@ function hardenSession(sess: Session, partition: string): void {
 	// network ring (browser-perception.ts). Session-scoped by design — the
 	// read op resolves a viewId to its partition.
 	sess.webRequest.onCompleted((details) => {
-		noteRequestDone(partition, { id: details.id, url: details.url, method: details.method, statusCode: details.statusCode });
+		noteRequestDone(partition, {
+			id: details.id, url: details.url, method: details.method, statusCode: details.statusCode,
+			resourceType: details.resourceType,
+			contentType: contentTypeFromHeaders(details.responseHeaders),
+		});
 	});
 	sess.webRequest.onErrorOccurred((details) => {
-		noteRequestFailed(partition, { id: details.id, url: details.url, method: details.method, error: details.error });
+		noteRequestFailed(partition, { id: details.id, url: details.url, method: details.method, error: details.error, resourceType: details.resourceType });
 	});
 
 	// Hardening-only CSP on the TOP-LEVEL document. A same-site *fetch-scoping* CSP

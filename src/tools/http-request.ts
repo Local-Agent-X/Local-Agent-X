@@ -36,7 +36,8 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       "Make a full HTTP request to any API. Supports all methods, custom headers, authentication, and request bodies. " +
       "Use {{SECRET_NAME}} syntax in header values to securely inject stored secrets (e.g. \"Authorization\": \"Bearer {{GITHUB_TOKEN}}\"). " +
       "Use request_secret first if the needed secret isn't stored yet. " +
-      "Use this to integrate with external services (GitHub, Slack, Jira, Linear, Discord, REST/GraphQL APIs, etc.).",
+      "Use this to integrate with external services (GitHub, Slack, Jira, Linear, Discord, REST/GraphQL APIs, etc.). " +
+      "You can also replay an API endpoint that the in-app browser surfaced via read_network (the browser's 'API/data endpoints observed' list) to fetch a page's data directly — those URLs are path-only, so add back any needed query params and verify the response.",
     parameters: {
       type: "object",
       properties: {

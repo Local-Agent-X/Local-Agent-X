@@ -50,9 +50,6 @@ interface PoolEntry {
 	 *  anchor rect — that report IS the negotiation). While false, `bounds` is
 	 *  only the DEFAULT_BOUNDS placeholder, so the view attaches HIDDEN. */
 	boundsNegotiated: boolean;
-	/** Fail-open handle armed when an un-negotiated view attaches; cleared on
-	 *  negotiation, hide and close. */
-	revealTimer: ReturnType<typeof setTimeout> | null;
 }
 
 // Placeholder rect for a view whose geometry has NOT been negotiated yet. It is
@@ -60,6 +57,11 @@ interface PoolEntry {
 // *some* value at attach time, but whether the view is actually shown is gated
 // on entry.boundsNegotiated (see showBrowserView / setBrowserViewBounds).
 const DEFAULT_BOUNDS: Rectangle = { x: 0, y: 0, width: 800, height: 600 };
+
+// What an un-negotiated view is ACTUALLY attached with. Zero area produces no
+// pixels no matter how Electron treats visibility across addChildView, which
+// setVisible(false) alone did not (observed 2026-07-25).
+const ZERO_AREA_BOUNDS: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
 
 // Cap on DETACHED, agent-driven views kept alive in the pool. Each live view is
 // a full renderer; with per-chat browsers, unbounded background views starve
@@ -200,7 +202,6 @@ export function createBrowserView(
 		wcId: view.webContents.id,
 		lastActiveSeq: ++activityClock,
 		boundsNegotiated: opts.bounds !== undefined,
-		revealTimer: null,
 	};
 	pool.set(viewId, entry);
 	wcTrust.set(entry.wcId, entry.agentDriven);
@@ -234,16 +235,6 @@ export function getBrowserView(viewId: string): WebContentsView | undefined {
 	return pool.get(viewId)?.view;
 }
 
-// Bounded fail-open for the hidden-until-negotiated invariant: if the renderer
-// never reports an anchor rect (panel crashed, never mounted), reveal the view
-// anyway at whatever bounds it has. Visible-but-misplaced beats a black hole.
-const UNNEGOTIATED_REVEAL_MS = 2000;
-
-function clearRevealTimer(entry: PoolEntry): void {
-	if (entry.revealTimer) clearTimeout(entry.revealTimer);
-	entry.revealTimer = null;
-}
-
 /** Attach to the main window (detaching whichever view was attached). */
 export function showBrowserView(viewId: string): void {
 	const entry = requireEntry(viewId);
@@ -255,27 +246,27 @@ export function showBrowserView(viewId: string): void {
 		attachedId = null;
 	}
 	const flipped = attachedId !== viewId;
-	// Order is load-bearing: addChildView paints IMMEDIATELY, so bounds and
-	// visibility must be on the view BEFORE it joins the tree (the overlay's own
-	// attachChatOverlay does the same). A view with no negotiated geometry
-	// carries only the DEFAULT_BOUNDS placeholder, so it attaches invisible —
-	// setVisible keeps it attached and live while unpainted — and
-	// setBrowserViewBounds reveals it the moment the renderer reports its
-	// measured anchor.
-	entry.view.setBounds(entry.bounds);
+	// Order is load-bearing: addChildView paints IMMEDIATELY, so geometry must be
+	// on the view BEFORE it joins the tree (attachChatOverlay does the same).
+	//
+	// An un-negotiated view attaches with a ZERO-AREA rect. setVisible(false) is
+	// kept as a hint but is NOT the mechanism — it did not survive addChildView
+	// on Electron 35 (observed 2026-07-25: the page painted at the placeholder
+	// anyway). Zero area cannot produce pixels under any visibility semantics,
+	// so geometry is the guarantee.
+	//
+	// There is deliberately NO timed "reveal it anyway" fallback. One existed and
+	// WAS the bug it was meant to guard against: the renderer can take seconds to
+	// report (6.3s measured), the timer fired at 2s, and the only rect it had to
+	// reveal at was the DEFAULT_BOUNDS placeholder — so it painted the page at
+	// 800x600 in the window corner and left it there until the real rect landed.
+	// A fallback that can only guess is worse than no fallback: an un-negotiated
+	// view simply stays zero-area, which is invisible, not a black hole — the
+	// view is attached and live, and the DOM panel is what the user actually
+	// sees until real geometry arrives.
+	entry.view.setBounds(entry.boundsNegotiated ? entry.bounds : ZERO_AREA_BOUNDS);
 	entry.view.setVisible(entry.boundsNegotiated);
 	win.contentView.addChildView(entry.view);
-	clearRevealTimer(entry);
-	if (!entry.boundsNegotiated) {
-		const timer = setTimeout(() => {
-			entry.revealTimer = null;
-			if (entry.boundsNegotiated || attachedId !== viewId) return;
-			entry.view.setBounds(entry.bounds);
-			entry.view.setVisible(true);
-		}, UNNEGOTIATED_REVEAL_MS);
-		timer.unref?.(); // never hold the process open for a reveal
-		entry.revealTimer = timer;
-	}
 	attachedId = viewId;
 	entry.lastActiveSeq = ++activityClock; // showing a view is activity (LRU)
 	attachChatOverlay(attachedId);
@@ -288,7 +279,6 @@ export function hideBrowserView(viewId: string): void {
 	if (attachedId !== viewId) return;
 	const win = getMainWindow();
 	if (win && !win.isDestroyed()) win.contentView.removeChildView(entry.view);
-	clearRevealTimer(entry); // nothing to reveal once detached
 	detachChatOverlay();
 	attachedId = null;
 }
@@ -299,7 +289,6 @@ export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
 	// The renderer reporting its measured anchor rect IS the negotiation.
 	const firstNegotiation = !entry.boundsNegotiated;
 	entry.boundsNegotiated = true;
-	clearRevealTimer(entry);
 	if (attachedId !== viewId) return;
 	entry.view.setBounds(bounds);
 	if (firstNegotiation) entry.view.setVisible(true); // real geometry — safe to paint
@@ -308,7 +297,6 @@ export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
 export function closeBrowserView(viewId: string): void {
 	const entry = requireEntry(viewId);
 	if (attachedId === viewId) hideBrowserView(viewId);
-	clearRevealTimer(entry); // hide covers the attached case; this covers the rest
 	entry.popups.closeAll();
 	try {
 		// Observed BEFORE the webContents dies so listener cleanup still has a

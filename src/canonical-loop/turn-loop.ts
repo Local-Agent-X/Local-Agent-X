@@ -45,7 +45,7 @@ export async function driveTurn(
     middlewareAbortResult, buildTurnInput, readPendingRedirect,
     drainInjectsIntoTurn, opConsumesInjects, dispatchTools, createIdleWatchdog,
     readIdleTimeoutMs, snapshotTouchedApps, decideTurnOutcome,
-    createTurnContextComposer, resolveLearningSessionId,
+    createTurnContextComposer, resolveLearningSessionId, requestSkillReviewForOp,
   } = resolveTurnLoopDeps(depsIn);
 
   // Recover a preceding committed pivot before composing this turn.
@@ -360,6 +360,7 @@ export async function driveTurn(
       ? { message: middlewareDirective.message, metadata: { strategyPivot: middlewareDirective.metadata.strategyPivot } }
       : undefined,
   });
+  if (learningSessionId) requestSkillReviewForOp(op, learningSessionId, turnIdx); // post-commit ONLY — see record-outcome.ts
 
   // Tier 1.C: per-turn snapshot of any app files this turn wrote/edited.
   // Powers the IDE topbar's ↺ Revert dropdown so the user can undo a bad

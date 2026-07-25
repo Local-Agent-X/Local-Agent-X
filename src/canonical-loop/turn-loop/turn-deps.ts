@@ -24,7 +24,7 @@ import { createIdleWatchdog, readIdleTimeoutMs } from "./idle-watchdog.js";
 import { snapshotTouchedApps } from "./snapshot-apps.js";
 import { decideTurnOutcome } from "./decide-outcome.js";
 import { createTurnContextComposer } from "./context-composition.js";
-import { resolveLearningSessionId } from "./record-outcome.js";
+import { resolveLearningSessionId, requestSkillReviewForOp } from "./record-outcome.js";
 
 /** Overrides for the collaborators the conductor drives. Every field is
  *  optional; an absent field means "the real module function, resolved at
@@ -68,6 +68,9 @@ export interface TurnLoopDeps {
   decideTurnOutcome?: typeof decideTurnOutcome;
   /** Durable self-learning receipt. Called only after commitTurn succeeds. */
   resolveLearningSessionId?: typeof resolveLearningSessionId;
+  /** Post-turn procedural-learning trigger. Also strictly post-commitTurn — it
+   *  renders the op's own committed transcript. */
+  requestSkillReviewForOp?: typeof requestSkillReviewForOp;
   /** Per-turn CanonicalLoopContext factory — wraps the middleware stack,
    *  evidence history, and per-op tool registry reads. */
   createTurnContextComposer?: typeof createTurnContextComposer;
@@ -102,6 +105,7 @@ export function resolveTurnLoopDeps(deps: TurnLoopDeps = {}): ResolvedTurnLoopDe
     snapshotTouchedApps: deps.snapshotTouchedApps ?? snapshotTouchedApps,
     decideTurnOutcome: deps.decideTurnOutcome ?? decideTurnOutcome,
     resolveLearningSessionId: deps.resolveLearningSessionId ?? resolveLearningSessionId,
+    requestSkillReviewForOp: deps.requestSkillReviewForOp ?? requestSkillReviewForOp,
     createTurnContextComposer: deps.createTurnContextComposer ?? createTurnContextComposer,
   };
 }

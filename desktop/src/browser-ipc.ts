@@ -161,9 +161,9 @@ function applyAgentSurface(viewId: string): void {
 	if (!view || view.webContents.isDestroyed()) return; // vanished before we surfaced it
 	currentViewId = viewId;
 	wireNavPushes(viewId, view.webContents);
+	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
 	if (getAttachedViewId() !== null) {
 		showBrowserView(viewId);
-		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
 	}
 	pushNavState(viewId, view.webContents);
 	pushAgentSurfaced(viewId);
@@ -387,9 +387,9 @@ export function setupBrowserIPC(): void {
 		const view = getBrowserView(viewId)!;
 		wireNavPushes(viewId, view.webContents);
 		currentViewId = viewId;
+		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
 		if (getAttachedViewId() !== null) {
 			showBrowserView(viewId);
-			if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
 		}
 		const target = (typeof url === "string" && url.trim()) || "about:blank";
 		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });

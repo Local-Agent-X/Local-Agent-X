@@ -435,10 +435,57 @@ describe("checkedScript error surfacing + clone safety", () => {
 		expect(out).toEqual({ ok: true, frame: "[unreadable]" });
 	});
 
-	it("caps a huge array and says how much was dropped", () => {
+	// THE INVARIANT: for any input structured clone would have accepted, the
+	// sanitizer is the identity. A breadth cap here truncated extract.ts's
+	// RawElement[] on a dense purchase-order page (>200 elements) AND appended a
+	// "[... N more]" STRING as the last entry of a typed array, which
+	// ObservationRegistry then processed as an element. Never again.
+	it("round-trips a 300-element array of objects with NO truncation and NO injected marker", () => {
+		const out = evalScript(checkedScript(
+			`Array.from({ length: 300 }, (_, i) => ({ ref: i, tag: "button" }))`,
+		)) as unknown[];
+		expect(out).toHaveLength(300);
+		expect(out.every((e) => typeof e === "object" && e !== null)).toBe(true);
+		// The exact regression: the final entry must be an element, not a string.
+		expect(typeof out[out.length - 1]).toBe("object");
+		expect(out[299]).toEqual({ ref: 299, tag: "button" });
+		expect(out).not.toContain("[... 100 more]");
+	});
+
+	it("round-trips a flat number array of 250 unchanged", () => {
 		const out = evalScript(checkedScript(`Array.from({ length: 250 }, (_, i) => i)`)) as unknown[];
-		expect(out).toHaveLength(201);
-		expect(out[200]).toBe("[... 50 more]");
+		expect(out).toHaveLength(250);
+		expect(out[249]).toBe(249);
+	});
+
+	it("keeps all 250 own keys of a wide object", () => {
+		const out = evalScript(checkedScript(
+			`(() => { const o = {}; for (let i = 0; i < 250; i++) o["k" + i] = i; return o; })()`,
+		)) as Record<string, number>;
+		expect(Object.keys(out)).toHaveLength(250);
+		expect(out.k249).toBe(249);
+	});
+
+	// The depth cap exists only to bound recursion, not to limit data; the old
+	// value of 6 truncated legitimately nested page structures.
+	it("round-trips a structure nested 20 deep (the old depth cap of 6 truncated it)", () => {
+		const out = evalScript(checkedScript(
+			`(() => { let node = { leaf: "bottom" }; for (let i = 0; i < 20; i++) node = { depth: i, child: node }; return node; })()`,
+		));
+		let cur = out as Record<string, unknown>;
+		for (let i = 0; i < 20; i++) cur = cur.child as Record<string, unknown>;
+		expect(cur).toEqual({ leaf: "bottom" });
+	});
+
+	it("keeps every entry of a large Map and Set", () => {
+		const mapOut = evalScript(checkedScript(
+			`(() => { const m = new Map(); for (let i = 0; i < 150; i++) m.set("k" + i, i); return m; })()`,
+		)) as Record<string, number>;
+		expect(Object.keys(mapOut)).toHaveLength(150);
+		const setOut = evalScript(checkedScript(
+			`(() => { const s = new Set(); for (let i = 0; i < 250; i++) s.add(i); return s; })()`,
+		)) as unknown[];
+		expect(setOut).toHaveLength(250);
 	});
 
 	// Host objects whose data lives OFF own-enumerable keys: these

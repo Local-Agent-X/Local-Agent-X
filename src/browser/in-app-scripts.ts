@@ -30,10 +30,37 @@ import { nativeValueSetStmt, selectOptionMatchExpr } from "./in-app-script-helpe
  * which reached the agent as an opaque browser failure with nothing to act on.
  * So the value is rebuilt out of clone-safe parts, describing what it couldn't
  * carry instead of failing the action.
+ *
+ * INVARIANT — load-bearing, do not weaken:
+ *
+ *   For any input the structured-clone algorithm would have accepted,
+ *   __laxSafe must be the IDENTITY.
+ *
+ * The sanitizer's only job is to make NON-cloneable values cloneable. It has no
+ * licence to reshape a value the bridge would have carried fine. This is why
+ * the original breadth caps (ARR_CAP 200 / KEY_CAP 100) were REMOVED: they
+ * truncated extract.ts's RawElement[] on dense pages — a purchase-order page
+ * with >200 interactive elements silently lost every element past 200 — and the
+ * "[... N more]" marker injected a STRING into a typed array, which
+ * ObservationRegistry then processed as an element. They also bought no safety:
+ * before this wrapper existed Electron structured-cloned a million-element
+ * array in full anyway, so capping here protected nothing and cost data
+ * integrity. Do not "add a sensible cap" back.
+ *
+ * The single KNOWING deviation is cycle detection ("[circular]", below) — a
+ * rebuild cannot represent a cycle the way structured clone natively does, and
+ * the alternative is infinite recursion.
  */
 const CLONE_SAFE_HELPER = `
 	const __laxSafe = (() => {
-		const DEPTH_CAP = 6, ARR_CAP = 200, KEY_CAP = 100, DESC_CAP = 120;
+		// DEPTH_CAP exists ONLY to stop unbounded JS recursion from overflowing
+		// the stack — it is not a data limit. The old value of 6 was low enough
+		// to truncate legitimately nested page data; 100 is far beyond any real
+		// DOM-derived structure while still bounding the recursion.
+		// DESC_CAP bounds a descriptor the sanitizer CREATES for a value that
+		// could not be cloned at all, so it does not touch the identity
+		// invariant. There is deliberately no array/key/entry cap.
+		const DEPTH_CAP = 100, DESC_CAP = 120;
 		// SECURITY, load-bearing: an element descriptor is built ONLY from
 		// tagName, id and class. It must NEVER include the element's value,
 		// textContent, innerText, innerHTML, or ANY other attribute — turning a
@@ -61,33 +88,28 @@ const CLONE_SAFE_HELPER = `
 			// Structured clone handles cycles natively; this REBUILD does not, so
 			// the ancestor stack stops the recursion. A repeated sibling
 			// reference is a DAG, not a cycle, and still serializes in full.
+			// This is the ONE knowing, necessary deviation from the identity
+			// invariant documented above — the alternative is infinite recursion.
 			if (stack.indexOf(v) !== -1) return "[circular]";
 			stack.push(v);
 			try {
+				// Every element, no cap: extract.ts returns one RawElement per
+				// interactive element and a dense page exceeds any cap we'd pick.
 				if (Array.isArray(v)) {
 					const out = [];
-					const n = v.length > ARR_CAP ? ARR_CAP : v.length;
-					for (let i = 0; i < n; i++) out.push(walk(v[i], depth + 1, stack));
-					if (v.length > n) out.push("[... " + (v.length - n) + " more]");
+					for (let i = 0; i < v.length; i++) out.push(walk(v[i], depth + 1, stack));
 					return out;
 				}
 				if (typeof Date !== "undefined" && v instanceof Date) return v; // clone-safe as-is
 				if (typeof RegExp !== "undefined" && v instanceof RegExp) return String(v);
 				if (typeof Map !== "undefined" && v instanceof Map) {
 					const out = {};
-					let n = 0;
-					for (const pair of v) {
-						if (n++ >= KEY_CAP) break;
-						out[String(pair[0])] = walk(pair[1], depth + 1, stack);
-					}
+					for (const pair of v) out[String(pair[0])] = walk(pair[1], depth + 1, stack);
 					return out;
 				}
 				if (typeof Set !== "undefined" && v instanceof Set) {
 					const out = [];
-					for (const item of v) {
-						if (out.length >= ARR_CAP) break;
-						out.push(walk(item, depth + 1, stack));
-					}
+					for (const item of v) out.push(walk(item, depth + 1, stack));
 					return out;
 				}
 				// Structural node test — never the Node/Element globals: these
@@ -117,11 +139,12 @@ const CLONE_SAFE_HELPER = `
 				}
 				const out = {};
 				const keys = Object.keys(v);
-				const n = keys.length > KEY_CAP ? KEY_CAP : keys.length;
-				for (let i = 0; i < n; i++) {
+				for (let i = 0; i < keys.length; i++) {
 					const k = keys[i];
 					// A property whose getter throws (cross-origin contentDocument,
 					// a hostile accessor) must cost one key, not the whole read.
+					// Substituting for a key that CANNOT be read at all does not
+					// break the invariant: structured clone would have failed too.
 					try { out[k] = walk(v[k], depth + 1, stack); } catch { out[k] = "[unreadable]"; }
 				}
 				// A keyless NON-plain object (exotic host class with no toJSON)

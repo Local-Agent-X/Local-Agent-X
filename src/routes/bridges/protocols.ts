@@ -185,15 +185,30 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
   // Unarchive — the undo half of the default (soft) delete. Without this the
   // archive is only reachable from agent tools, so the user's undo doesn't
   // exist in the UI.
+  //
+  // `?archivedTs=` picks WHICH version to restore. The archive keeps every
+  // archived version of a name (see archive.ts), and GET /api/protocols/archived
+  // already returns one row per version stamped with `archivedTs` — so without
+  // this parameter the UI can render three cards for a name and restore the
+  // newest whichever one the user clicked. Omitted still means newest, matching
+  // unarchiveProtocol()'s default and protocol(action:'unarchive').
   if (method === "POST" && url.pathname.match(/^\/api\/protocols\/[^/]+\/unarchive$/)) {
     const name = decodeURIComponent(url.pathname.split("/")[3]);
     try {
+      const rawTs = url.searchParams.get("archivedTs");
+      let archivedTs: number | undefined;
+      if (rawTs !== null && rawTs !== "") {
+        const parsed = Number(rawTs);
+        if (!Number.isFinite(parsed)) { json(400, { ok: false, error: "archivedTs must be a number" }); return true; }
+        archivedTs = parsed;
+      }
       const { unarchiveProtocol } = await import("../../protocols/archive.js");
-      const { restored, error } = unarchiveProtocol(name);
+      const { restored, error } = unarchiveProtocol(name, { archivedTs });
       if (error) {
-        // "not archived" = nothing to restore (404). A live name collision is a
-        // conflict the caller resolves by renaming or removing the live copy.
-        json(/not archived/.test(error) ? 404 : 409, { ok: false, error });
+        // Nothing to restore — the name isn't archived, or no version carries
+        // that stamp — is a 404. A live name collision is a conflict the caller
+        // resolves by archiving (now non-destructive) or removing the live copy.
+        json(/not archived|no archived version/.test(error) ? 404 : 409, { ok: false, error });
         return true;
       }
       json(200, { ok: true, protocol: restored });
@@ -228,21 +243,17 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         }
         json(200, { ok: true, mode: "permanent" });
       } else {
-        const { archiveProtocol, loadArchived } = await import("../../protocols/archive.js");
+        const { archiveProtocol } = await import("../../protocols/archive.js");
         const reason = url.searchParams.get("reason") || undefined;
-        // The archive holds ONE record per name. When the name is already in
-        // archived.json, archiveProtocol() "resolves" the clash by hard-deleting
-        // the live record without archiving it — the live content is then gone
-        // for good. That is reachable on the normal path, because createProtocol
-        // only rejects collisions against the LIVE catalog, so an archived name
-        // is immediately re-creatable. Refuse before taking the side effect.
-        if (loadArchived().some((r) => r.protocol.name === name)) {
-          json(409, {
-            ok: false, mode: "archived",
-            error: `"${name}" is already in the archive, and the archive keeps one copy per name — archiving this one would destroy it. Delete this copy permanently, then restore the archived one if you want it back.`,
-          });
-          return true;
-        }
+        // An existing archive record for this name is NOT a conflict: the archive
+        // is versioned, so archiveProtocol() appends a second record and the two
+        // are told apart by `archivedTs`. This route used to refuse with a 409,
+        // because the primitive resolved the clash by hard-deleting the live copy
+        // without archiving it. It no longer does, and the refusal outlived the
+        // hazard — it left the UI with a dead end (archive → 409, unarchive → 409,
+        // permanent delete → the content is gone) on a state the agent reaches
+        // routinely, since createProtocol only rejects collisions against the LIVE
+        // catalog. null now means exactly one thing: not in custom.json.
         if (archiveProtocol(name, reason) === null) {
           json(409, { ok: false, mode: "archived", error: `"${name}" isn't in the editable catalog — only user-custom protocols can be archived.` });
           return true;

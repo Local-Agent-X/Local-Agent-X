@@ -125,22 +125,41 @@ describe("DELETE /api/protocols/:name — archive is the default, permanent is o
     expect(res.status).toBe(403);
   });
 
-  it("refuses to archive onto an existing archive record instead of destroying it", async () => {
-    // The archive keeps ONE record per name, and archiveProtocol() resolves a
-    // clash by hard-deleting the live record without archiving it. createProtocol
-    // only rejects collisions against the LIVE catalog, so an archived name is
-    // instantly re-creatable — which makes this reachable on the ordinary path,
-    // and doubly so for an agent that re-authors protocols on its own.
+  it("archiving an already-archived name keeps BOTH versions", async () => {
+    // This used to be a 409. The archive kept one record per name, and
+    // archiveProtocol() resolved the clash by hard-deleting the live record
+    // without archiving it, so the route refused before taking that side effect.
+    // The archive is versioned now, so the refusal was over-strict and left the
+    // user a dead end (archive → 409, unarchive → 409, permanent delete → gone)
+    // on a state the agent hits routinely: createProtocol only rejects collisions
+    // against the LIVE catalog, so an archived name is instantly re-creatable.
+    // What must never regress is the data: no archive may lose a version.
     createProtocol(mkProtocol("notes", { description: "VERSION ONE" }));
     expect((await call("DELETE", "/api/protocols/notes")).status).toBe(200);
     expect((await call("POST", "/api/protocols", { name: "notes", description: "VERSION TWO" })).status).toBe(200);
 
     const res = await call("DELETE", "/api/protocols/notes");
-    expect(res.status).toBe(409);
-    expect(res.json<{ ok: boolean; error: string }>().ok).toBe(false);
-    // Neither copy may be lost: VERSION TWO stays live, VERSION ONE stays archived.
-    expect(loadCustomProtocols().find((p) => p.name === "notes")?.description).toBe("VERSION TWO");
-    expect(loadArchived().map((r) => r.protocol.description)).toEqual(["VERSION ONE"]);
+    expect(res.status).toBe(200);
+    expect(res.json()).toMatchObject({ ok: true, mode: "archived" });
+
+    // Neither copy may be lost, and they must be distinguishable — archivedTs is
+    // the discriminator every restore path keys on.
+    expect(loadCustomProtocols().map((p) => p.name)).not.toContain("notes");
+    const archived = loadArchived().filter((r) => r.protocol.name === "notes");
+    expect(archived.map((r) => r.protocol.description).sort()).toEqual(["VERSION ONE", "VERSION TWO"]);
+    expect(new Set(archived.map((r) => r.archivedTs)).size).toBe(2);
+  });
+
+  it("archives a third version too — the archive is not capped at two", async () => {
+    createProtocol(mkProtocol("thrice", { description: "V1" }));
+    await call("DELETE", "/api/protocols/thrice");
+    await call("POST", "/api/protocols", { name: "thrice", description: "V2" });
+    await call("DELETE", "/api/protocols/thrice");
+    await call("POST", "/api/protocols", { name: "thrice", description: "V3" });
+    expect((await call("DELETE", "/api/protocols/thrice")).status).toBe(200);
+
+    expect(loadArchived().filter((r) => r.protocol.name === "thrice").map((r) => r.protocol.description).sort())
+      .toEqual(["V1", "V2", "V3"]);
   });
 
   it("reports a no-op removal instead of claiming success (imported tier)", async () => {
@@ -217,6 +236,63 @@ describe("POST /api/protocols/:name/unarchive", () => {
     const res = await call("POST", "/api/protocols/never_existed/unarchive");
     expect(res.status).toBe(404);
     expect(res.json<{ ok: boolean }>().ok).toBe(false);
+  });
+
+  /** Archive `name` twice with different bodies. Returns the two stamps, oldest
+   *  first — the state the archived view renders as two cards. */
+  async function archiveTwoVersions(name: string): Promise<{ older: number; newer: number }> {
+    createProtocol(mkProtocol(name, { description: "OLDER" }));
+    await call("DELETE", `/api/protocols/${name}`);
+    await call("POST", "/api/protocols", { name, description: "NEWER" });
+    await call("DELETE", `/api/protocols/${name}`);
+    const stamps = loadArchived().filter((r) => r.protocol.name === name)
+      .sort((a, b) => a.archivedTs - b.archivedTs);
+    expect(stamps).toHaveLength(2);
+    return { older: stamps[0].archivedTs, newer: stamps[1].archivedTs };
+  }
+
+  it("?archivedTs restores THAT version and leaves the sibling archived", async () => {
+    // The UI renders one card per archived version. Without this the newest is
+    // restored no matter which card was clicked.
+    const { older } = await archiveTwoVersions("versioned");
+
+    const res = await call("POST", `/api/protocols/versioned/unarchive?archivedTs=${older}`);
+    expect(res.status).toBe(200);
+    expect(res.json<{ protocol: Protocol }>().protocol.description).toBe("OLDER");
+
+    expect(loadCustomProtocols().find((p) => p.name === "versioned")?.description).toBe("OLDER");
+    const left = loadArchived().filter((r) => r.protocol.name === "versioned");
+    expect(left.map((r) => r.protocol.description)).toEqual(["NEWER"]);
+  });
+
+  it("restores the NEWEST version when no stamp is given", async () => {
+    await archiveTwoVersions("defaulted");
+
+    const res = await call("POST", "/api/protocols/defaulted/unarchive");
+    expect(res.status).toBe(200);
+    expect(res.json<{ protocol: Protocol }>().protocol.description).toBe("NEWER");
+    expect(loadArchived().filter((r) => r.protocol.name === "defaulted").map((r) => r.protocol.description))
+      .toEqual(["OLDER"]);
+  });
+
+  it("404s for a stamp no archived version carries — and restores nothing", async () => {
+    const { older, newer } = await archiveTwoVersions("wrong_stamp");
+
+    const res = await call(`POST`, `/api/protocols/wrong_stamp/unarchive?archivedTs=${older - 5}`);
+    expect(res.status).toBe(404);
+    expect(res.json<{ ok: boolean }>().ok).toBe(false);
+    // Nothing may be restored on a miss — falling back to "newest" would restore
+    // a version the caller did not ask for.
+    expect(loadCustomProtocols()).toHaveLength(0);
+    expect(loadArchived().filter((r) => r.protocol.name === "wrong_stamp").map((r) => r.archivedTs).sort((a, b) => a - b))
+      .toEqual([older, newer]);
+  });
+
+  it("400s on a non-numeric archivedTs instead of silently restoring the newest", async () => {
+    await archiveTwoVersions("bad_stamp");
+    const res = await call("POST", "/api/protocols/bad_stamp/unarchive?archivedTs=newest");
+    expect(res.status).toBe(400);
+    expect(loadCustomProtocols()).toHaveLength(0);
   });
 
   it("409s rather than clobbering a live protocol of the same name", async () => {

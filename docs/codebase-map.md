@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 64 top-level dirs · 64 live · 0 with no live importer · 1456 non-test source files · 0 god files (>400 LOC).
+**Totals:** 64 top-level dirs · 64 live · 0 with no live importer · 1457 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,8 +21,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 112 | 24 | XL |  |
 | `src/security/` | 79 | 32 | XL |  |
 | `src/tools/` | 60 | 148 | XL |  |
+| `src/providers/` | 57 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 206 | XL |  |
-| `src/providers/` | 56 | 20 | XL |  |
 | `src/memory/` | 43 | 121 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 34 | 2 | M |  |
@@ -81,7 +81,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/manifest-generator/` | 2 | 8 | M |  |
 | `src/types/` | 2 | 2 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
-| `src/llm-dispatch/` | 1 | 1 | S |  |
+| `src/llm-dispatch/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
 
@@ -132,7 +132,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/keychain.ts` | M |
 | `src/lax-data-dir.ts` | S |
 | `src/lifecycle.ts` | S |
-| `src/llm-dispatch.ts` | M |
+| `src/llm-dispatch.ts` | S |
 | `src/local-only-policy.ts` | S |
 | `src/logger.ts` | S |
 | `src/mcp-bridge.ts` | S |

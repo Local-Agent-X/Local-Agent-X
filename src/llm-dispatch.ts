@@ -67,10 +67,13 @@ export interface DispatchOptions {
   rejectOAuth?: boolean;
   /**
    * Base64 PNG images (no `data:` prefix) attached BEFORE the prompt text.
-   * Anthropic-only: sent as base64 image content blocks per the Messages API.
-   * Every other provider ignores this silently — callers doing vision work
-   * must pin `provider: "anthropic"`. Absent/empty → the request body is
-   * byte-identical to before this option existed.
+   * Carried on the Anthropic path (Messages image blocks) AND the OpenAI-compat
+   * path (openai/xai → `image_url` blocks), so a vision dispatch works on
+   * whichever provider the user is on. When images are present the router grades
+   * with the ACTIVE model (not the cheap background one). Codex/ollama can't
+   * carry images and degrade to null. Absent/empty → the body is byte-identical
+   * to before this option existed. Anthropic subscription-OAuth still degrades
+   * (that credential can't carry images over the only path open to it).
    */
   images?: string[];
   /**
@@ -107,6 +110,15 @@ const DISPATCH_MODEL_FALLBACK: Record<RegistryDispatchProvider, string> = {
  *  by hidden chain-of-thought (which returns empty → null). */
 export function dispatchBackgroundModel(provider: RegistryDispatchProvider): string {
   return backgroundModelFor(DISPATCH_REGISTRY_ID[provider], DISPATCH_MODEL_FALLBACK[provider]);
+}
+
+/** The provider's DEFAULT (chat) model — the multimodal one actually in play for
+ *  a user's work. Used for vision dispatches (images present) instead of the
+ *  cheap background model, because a provider's background pick isn't uniformly
+ *  vision-capable (xAI's is a non-reasoning text model). Single source of truth:
+ *  the registry's defaultModel. */
+export function dispatchDefaultModel(provider: RegistryDispatchProvider): string {
+  return PROVIDERS[DISPATCH_REGISTRY_ID[provider]]?.defaultModel || DISPATCH_MODEL_FALLBACK[provider];
 }
 
 /** Whether a dispatch provider's registry entry advertises wire-level
@@ -175,10 +187,36 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
       temp, maxTokens, timeout, undefined, target.apiKey,
     );
   }
-  if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? dispatchBackgroundModel("anthropic"), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
-  if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? dispatchBackgroundModel("openai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
-  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? dispatchBackgroundModel("xai"), temp, maxTokens, timeout, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
-  if (provider === "codex") return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
+  // A screenshot riding along (vision) grades with the model the user is
+  // ACTIVELY on — subscription plans make that free, and a provider's cheap
+  // background model isn't uniformly vision-capable (xAI's is a non-reasoning
+  // text model). The active model comes from the resolved provider context;
+  // falls back to the provider's default chat model. Text dispatches keep the
+  // cheap background model unchanged, and never touch resolveProviderContext.
+  const hasImages = (opts.images?.length ?? 0) > 0;
+  const modelFor = async (p: RegistryDispatchProvider, pinned: string | undefined): Promise<string> => {
+    if (pinned) return pinned;
+    if (!hasImages) return dispatchBackgroundModel(p);
+    // Anthropic's background model (Haiku) is already vision-capable, so keep it
+    // — and skip the provider-context resolve (it would also consume a
+    // credential the caller may have mocked). openai/xai backgrounds are NOT
+    // vision-capable (xAI's is a non-reasoning text model), so grade with the
+    // user's ACTIVE model when the resolved provider matches this one (the vision
+    // judge dispatches "auto", so it does), else the provider's default.
+    if (p === "anthropic") return dispatchBackgroundModel(p);
+    const ctx = await resolveProviderContext().catch(() => null);
+    const active = ctx && ctx.provider === p ? (ctx as { model?: string }).model : undefined;
+    return active || dispatchDefaultModel(p);
+  };
+  if (provider === "anthropic") return callAnthropic(opts.prompt, await modelFor("anthropic", opts.anthropicModel), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
+  if (provider === "openai") return callOpenAI(opts.prompt, await modelFor("openai", opts.openaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
+  if (provider === "xai") return callXai(opts.prompt, await modelFor("xai", opts.xaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
+  if (provider === "codex") {
+    // The Codex path streams over ChatGPT OAuth and doesn't carry image content;
+    // grading a screenshot it can't see is worse than skipping, so degrade.
+    if (hasImages) { logger.warn("codex dispatch can't carry images — degrading to null"); return null; }
+    return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
+  }
   return null;
 }
 
@@ -296,18 +334,28 @@ async function callOpenAICompatible(
   prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number,
   responseFormat?: ProviderRequest["responseFormat"],
   explicitApiKey?: string,
+  images?: string[],
 ): Promise<string | null> {
   try {
     const resolved = credentialProvider ? await resolveCredential(credentialProvider) : null;
     const apiKey = explicitApiKey ?? resolved?.credential;
     if (!apiKey) return null;
+    // Vision on the OpenAI wire shape: base64 image_url content blocks precede
+    // the text (mirroring the Anthropic path). No images → content stays the bare
+    // prompt string, so text dispatches produce a byte-identical body.
+    const userContent = images && images.length > 0
+      ? [
+          ...images.map((data) => ({ type: "image_url" as const, image_url: { url: `data:image/png;base64,${data}` } })),
+          { type: "text" as const, text: prompt },
+        ]
+      : prompt;
     const send = (rf: ProviderRequest["responseFormat"]) =>
       fetch(`${baseURL}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model, temperature, max_tokens: maxTokens,
-          messages: [{ role: "user", content: prompt }],
+          messages: [{ role: "user", content: userContent }],
           // Structured output on the OpenAI wire shape. Absent → the body is
           // byte-identical to before responseFormat existed.
           ...(rf
@@ -349,18 +397,18 @@ async function callOpenAICompatible(
   }
 }
 
-function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
-  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat);
+function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
+  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images);
 }
 
-function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
+function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
   // xAI exposes an OpenAI-compatible endpoint at api.x.ai/v1; the OpenAI body
   // works unchanged. Auth comes from env XAI_API_KEY or the secrets store (the
   // chat path stores it there). Without this, every background classifier
   // (identity-extract, claim-verify, intent-classifier, …) silently no-ops for
   // xAI users — classify-with-llm hits the xAI fallback that returns null
   // before reaching this dispatcher.
-  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat);
+  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images);
 }
 
 async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number): Promise<string | null> {

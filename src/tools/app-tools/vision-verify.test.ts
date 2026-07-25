@@ -130,12 +130,15 @@ describe("visionVerdictForScreenshot — degradation", () => {
 });
 
 describe("visionVerdictForScreenshot — dispatch request mapping", () => {
-  it("pins Anthropic, attaches the screenshot as an image, and bounds output", async () => {
+  it("routes to the active provider (auto), attaches the screenshot as an image, and bounds output", async () => {
     const spy = dispatchReturning('{"ok": true, "reason": "fine"}');
     await visionVerdictForScreenshot(PNG, "a weather dashboard", { dispatch: spy });
     expect(spy).toHaveBeenCalledTimes(1);
     const opts = spy.mock.calls[0][0];
-    expect(opts.provider).toBe("anthropic");
+    // "auto" → dispatch grades with whatever provider/model the user is on; the
+    // judge no longer hardcodes Anthropic (which can't carry images over OAuth).
+    expect(opts.provider).toBe("auto");
+    expect(opts.anthropicModel).toBeUndefined();
     expect(opts.images).toEqual([PNG]);
     expect(opts.maxTokens).toBe(200);
     expect(opts.temperature).toBe(0);

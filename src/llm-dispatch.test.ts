@@ -76,9 +76,10 @@ describe("dispatchStructuredOutputEnabled reads the canonical registry", () => {
   });
 });
 
-// Regression lock for the additive `images` option: a call WITHOUT images
-// must produce the exact request body the pre-images dispatcher sent, and
-// non-Anthropic providers must ignore images entirely.
+// The `images` option: text-only calls (no images) must produce the exact
+// pre-images body, and a vision call carries the screenshot on whichever
+// provider is in play — Anthropic image blocks, openai/xai image_url blocks —
+// while Codex (no image transport) degrades to null.
 describe("dispatch request shape (fetch stubbed — no network)", () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
 
@@ -132,14 +133,41 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     expect(sentBody().messages).toEqual([{ role: "user", content: "ping" }]);
   });
 
-  it("openai ignores images silently — same body with or without them", async () => {
-    await dispatch({ prompt: "ping", provider: "openai", images: ["QUJD"] });
-    expect(sentBody()).toEqual({
-      model: dispatchBackgroundModel("openai"),
-      temperature: 0,
-      max_tokens: 200,
-      messages: [{ role: "user", content: "ping" }],
-    });
+  it("openai WITH images carries image_url blocks and grades with the given (non-background) model", async () => {
+    await dispatch({ prompt: "judge this", provider: "openai", openaiModel: "gpt-5.5", images: ["QUJD"] });
+    const body = sentBody();
+    expect(body.model).toBe("gpt-5.5");
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+          { type: "text", text: "judge this" },
+        ],
+      },
+    ]);
+  });
+
+  it("xai WITH images carries image_url blocks on the api.x.ai endpoint", async () => {
+    await dispatch({ prompt: "judge this", provider: "xai", xaiModel: "grok-4.5", images: ["QUJD"] });
+    expect(fetchSpy.mock.calls[0][0]).toBe("https://api.x.ai/v1/chat/completions");
+    const body = sentBody();
+    expect(body.model).toBe("grok-4.5");
+    expect(body.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+          { type: "text", text: "judge this" },
+        ],
+      },
+    ]);
+  });
+
+  it("codex WITH images degrades to null — no image transport, grading blind is worse than skipping", async () => {
+    const out = await dispatch({ prompt: "judge this", provider: "codex", images: ["QUJD"] });
+    expect(out).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   // A VALID strict schema — strict mode requires `required` covering every

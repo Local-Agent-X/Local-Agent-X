@@ -1,18 +1,21 @@
 /**
- * Screenshot judge — asks a cheap vision-capable model whether a just-built
- * app's screenshot looks like a working page or a clearly broken render
+ * Screenshot judge — asks the vision-capable model the user is on whether a
+ * just-built app's screenshot looks like a working page or a clearly broken render
  * (blank page, stack trace, framework error overlay, raw unstyled dump).
  *
- * Anthropic-only: the shared llm-dispatch layer carries images only on its
- * Anthropic path, so this pins provider "anthropic" and the registry's
- * background model. Missing credential, dispatch failure, and unparseable
- * replies ALL degrade to null ("no verdict — skip the check"), never a throw:
- * a lost free check must not fail a build.
+ * Provider-agnostic: dispatches with provider "auto" so it grades with whatever
+ * provider the user is on, and — because a screenshot rides along — with that
+ * provider's ACTIVE model (grok-4.5 on grok, opus-5 on Claude). The llm-dispatch
+ * layer carries the image on both the Anthropic and OpenAI-compat (openai/xai)
+ * paths. Missing credential, a provider that can't carry images (Anthropic
+ * subscription-OAuth, Codex), dispatch failure, and unparseable replies ALL
+ * degrade to null ("no verdict — skip the check"), never a throw: a lost free
+ * check must not fail a build.
  */
 
 import { z } from "zod";
 import type { DispatchOptions } from "../../llm-dispatch.js";
-import { dispatch, dispatchBackgroundModel } from "../../llm-dispatch.js";
+import { dispatch } from "../../llm-dispatch.js";
 
 export interface VisionVerdict {
   /** Catastrophic-broken check — biased toward true (see prompt). Unchanged semantics. */
@@ -94,9 +97,11 @@ export async function visionVerdictForScreenshot(
   let raw: string | null;
   try {
     raw = await call({
+      // "auto" resolves the provider the user is on; the screenshot rides along,
+      // so the router grades with that provider's ACTIVE model (no per-provider
+      // model pin here). Providers that can't carry images degrade to null.
       prompt,
-      provider: "anthropic",
-      anthropicModel: dispatchBackgroundModel("anthropic"),
+      provider: "auto",
       images: shots,
       temperature: 0,
       maxTokens: 200,

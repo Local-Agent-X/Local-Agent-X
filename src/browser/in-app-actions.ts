@@ -34,7 +34,6 @@ import {
 import { execChecked } from "./in-app-observe.js";
 import { asExecResult } from "./in-app-scripts.js";
 import { resolutionScript, selectFillScript, textSearchScript } from "./in-app-resolve-scripts.js";
-import { realDrivingPage } from "./in-app-driving-page.js";
 import type { InteractionResult } from "./backend.js";
 import { createLogger } from "../logger.js";
 
@@ -72,8 +71,6 @@ const RESOLVE_RETRY_DELAY_MS = 1_500; // CDP parity: actions.ts waits 1.5s befor
 const CLICK_TEXT_BUDGET_MS = 12_000; // CDP parity: actions.ts CLICK_TEXT_BUDGET
 const CLICK_TEXT_ATTEMPTS = 3;
 const TEXT_SCROLL_SETTLE_MS = 400;
-/** Native fast-path budget — short so a native MISS falls back PROMPTLY (Playwright's default 30s would stall). */
-const NATIVE_ACTION_TIMEOUT_MS = 3_000;
 
 // ── Coordinate conversion ─────────
 
@@ -306,19 +303,6 @@ export async function clickRefInApp(ctx: InAppActionContext, refId: number): Pro
 	const resolved = await resolveRefOrFail(ctx, refId);
 	if ("fail" in resolved) return resolved.fail;
 	const { ref, note } = resolved;
-	// Native Playwright fast-path (reliability win): real CDP-backed Page clicks ref.xpath (MAIN frame) with actionability auto-wait;
-	// any miss (no CDP, iframe-nested, occluded/detached) throws → UNCHANGED resolve chain below. clickByText/scroll stay on it (later chunk).
-	const real = await realDrivingPage(ctx.viewId);
-	if (real && ref.xpath) {
-		try {
-			await real.locator(`xpath=${ref.xpath}`).click({ timeout: NATIVE_ACTION_TIMEOUT_MS });
-			await waitForStability(ctx.page, { maxWait: 2500 });
-			const after = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
-			return { ok: true, text: `[${ref.id}] click (native) via ${ref.role} "${ref.name}"${note}\nPage: ${ctx.page.url()}\n\n${after}` };
-		} catch (e) {
-			logger.info(`[in-app] ref ${ref.id}: native click missed (${(e as Error).message.split("\n")[0]}) — falling back to resolve chain`);
-		}
-	}
 	const hit = await resolveWithRetry(ctx, ref, "click");
 	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 	if ((await clickAtPoint(ctx, hit)) === "userActive") return userTookWheel();
@@ -331,17 +315,6 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 	const resolved = await resolveRefOrFail(ctx, refId);
 	if ("fail" in resolved) return resolved.fail;
 	const { ref, note } = resolved;
-	// Native fill fast-path: locator.fill drives a plain text input with the correct focus/input/change events (what React-Select-style
-	// widgets need). It THROWS on a <select>/file/non-fillable/iframe-nested target → fall through to the UNCHANGED SELECT/file/type path.
-	const real = await realDrivingPage(ctx.viewId);
-	if (real && ref.xpath) {
-		try {
-			await real.locator(`xpath=${ref.xpath}`).fill(value, { timeout: NATIVE_ACTION_TIMEOUT_MS });
-			return { ok: true, text: `[${ref.id}] fill (native) via ${ref.role} "${ref.name}"${note} — ${value.length} chars` };
-		} catch (e) {
-			logger.info(`[in-app] ref ${ref.id}: native fill missed (${(e as Error).message.split("\n")[0]}) — falling back to resolve chain`);
-		}
-	}
 	const hit = await resolveWithRetry(ctx, ref, "fill");
 	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
 
@@ -397,3 +370,5 @@ export async function clickTextInApp(
 		text: `no clickable element matching text "${text}" found (it may be covered by an overlay — try web_fetch or a different source)`,
 	};
 }
+
+

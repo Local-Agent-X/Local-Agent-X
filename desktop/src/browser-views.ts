@@ -8,10 +8,13 @@
  * only close() destroys them.
  */
 
-import { shell, WebContentsView, type Rectangle, type WebContents } from "electron";
-import { join } from "path";
+import { WebContentsView, type Rectangle, type WebContents } from "electron";
 
 import { getMainWindow } from "./window";
+// The chat overlay moved to browser-chat-overlay.ts (this file sits at the
+// 400-LOC ceiling); its lifetime is driven from here because the pool owns
+// which view is attached.
+import { applyChatOverlay, attachChatOverlay, detachChatOverlay, type BrowserChatOverlayState } from "./browser-chat-overlay";
 import { getHardenedPartitionSession, hardenWebContents, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
 import { viewTrust } from "./browser-download-routing";
 import { managePopups, type PopupTracker } from "./browser-view-popups";
@@ -95,94 +98,17 @@ let attachedId: string | null = null;
 // stays ignorant of who is watching.
 let poolChangedListener: (() => void) | null = null;
 
-export interface BrowserChatOverlayState {
-	sessionId: string | null;
-	collapsed: boolean;
-	latestOpen: boolean;
-}
-
-let chatOverlayView: WebContentsView | null = null;
-let chatOverlayBounds: Rectangle | null = null;
-let chatOverlayState: BrowserChatOverlayState | null = null;
-let chatOverlayLoaded = false;
-let chatOverlayUrl: string | null = null;
-let chatOverlayViewUrl: string | null = null;
-
-function sendChatOverlayState(): void {
-	if (!chatOverlayLoaded || !chatOverlayView || !chatOverlayState) return;
-	chatOverlayView.webContents.send("browser-chat-overlay-state", chatOverlayState);
-}
-
-function ensureChatOverlayView(url: string): WebContentsView {
-	if (chatOverlayView && !chatOverlayView.webContents.isDestroyed() && chatOverlayViewUrl === url) {
-		return chatOverlayView;
-	}
-	if (chatOverlayView && !chatOverlayView.webContents.isDestroyed()) {
-		detachChatOverlay();
-		chatOverlayView.webContents.close();
-	}
-	const origin = new URL(url).origin;
-	const view = new WebContentsView({
-		webPreferences: {
-			preload: join(__dirname, "preload.js"),
-			contextIsolation: true,
-			nodeIntegration: false,
-			sandbox: true,
-			spellcheck: true,
-		},
-	});
-	view.setBackgroundColor("#00000000");
-	view.setBorderRadius(14);
-	view.webContents.setWindowOpenHandler(({ url }) => {
-		const target = new URL(url);
-		if ((target.protocol === "http:" || target.protocol === "https:") && target.origin !== origin) {
-			void shell.openExternal(url);
-		}
-		return { action: "deny" };
-	});
-	view.webContents.on("will-navigate", (event, url) => {
-		if (new URL(url).origin !== origin) event.preventDefault();
-	});
-	view.webContents.on("did-finish-load", () => {
-		chatOverlayLoaded = true;
-		sendChatOverlayState();
-	});
-	chatOverlayView = view;
-	chatOverlayLoaded = false;
-	chatOverlayViewUrl = url;
-	void view.webContents.loadURL(url).catch(() => {});
-	return view;
-}
-
-function attachChatOverlay(): void {
-	if (!chatOverlayBounds || !chatOverlayState || !chatOverlayUrl || !attachedId) return;
-	const win = getMainWindow();
-	if (!win || win.isDestroyed()) return;
-	const view = ensureChatOverlayView(chatOverlayUrl);
-	view.setBounds(chatOverlayBounds);
-	win.contentView.addChildView(view);
-	sendChatOverlayState();
-}
-
-function detachChatOverlay(): void {
-	if (!chatOverlayView) return;
-	const win = getMainWindow();
-	if (win && !win.isDestroyed()) win.contentView.removeChildView(chatOverlayView);
-}
-
+/** Renderer-driven overlay report, forwarded to browser-chat-overlay.ts with
+ *  the pool's current attachment bound on. The overlay may only float above an
+ *  attached view, and `attachedId` lives here — passing it in keeps this file
+ *  the single owner instead of exporting mutable state for two modules to
+ *  read. */
 export function setBrowserChatOverlay(
 	bounds: Rectangle | null,
 	state: BrowserChatOverlayState | null,
 	url: string | null,
 ): void {
-	chatOverlayBounds = bounds;
-	chatOverlayState = state;
-	if (url) chatOverlayUrl = url;
-	if (!bounds || !state) {
-		detachChatOverlay();
-		return;
-	}
-	attachChatOverlay();
+	applyChatOverlay(bounds, state, url, attachedId);
 }
 
 export function setPoolChangedListener(fn: (() => void) | null): void {
@@ -309,7 +235,7 @@ export function showBrowserView(viewId: string): void {
 	entry.view.setBounds(entry.bounds);
 	attachedId = viewId;
 	entry.lastActiveSeq = ++activityClock; // showing a view is activity (LRU)
-	attachChatOverlay();
+	attachChatOverlay(attachedId);
 	if (flipped) notifyPoolChanged();
 }
 

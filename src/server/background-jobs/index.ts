@@ -16,6 +16,7 @@ import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js"
 import { makeRunMemBg } from "./memory-bg.js";
 import { makeRunMemoryHygiene } from "./memory-hygiene.js";
 import { registerDreamRunnerForServer } from "./dream-check.js";
+import { registerSkillReviewRunner, runSkillReviewPass } from "./skill-review.js";
 import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../../local-only-policy.js";
 
 const logger = createLogger("server.background-jobs");
@@ -95,6 +96,12 @@ export function startBackgroundJobs(deps: {
     config, dataDir, sessionStore, secretsStore, security, toolPolicy, allAgentTools, saveSession,
   });
 
+  // Post-turn procedural learning. The turn-loop only ENQUEUES a review; the
+  // scheduler below drains the queue, so no turn pays for its own review.
+  registerSkillReviewRunner({
+    config, dataDir, secretsStore, security, toolPolicy, allAgentTools,
+  });
+
   // Generic (in-loop) self_edit surgeon — last resort for providers with no
   // coding CLI. Builds its own per-worktree SecurityLayer, so no `security` dep.
   registerSelfEditSurgeonForServer({
@@ -150,6 +157,22 @@ export function startBackgroundJobs(deps: {
     run: async () => {
       const { triggerDream } = await import("../../memory/dream.js");
       await triggerDream({ force: false }); // shouldDream() gates inside the runner
+    },
+  });
+
+  scheduler.register({
+    name: "skill-review",
+    // Poll often enough that a procedure is captured while the session is
+    // still the user's current one; the queue is empty on most ticks, and
+    // foregroundIdle keeps it off the provider key during a live turn.
+    intervalMs: 5 * 60 * 1000,
+    startupDelayMs: 3 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: async () => {
+      const r = await runSkillReviewPass();
+      if (r.reviewed > 0 || r.failed > 0) {
+        logger.info(`[skill-review] pass: reviewed=${r.reviewed} failed=${r.failed}`);
+      }
     },
   });
 

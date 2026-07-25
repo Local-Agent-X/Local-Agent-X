@@ -20,9 +20,10 @@
  * "Active" vs "stale" is computed from telemetry, not stored — see
  * computeProtocolState().
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getRuntimeConfig } from "../config.js";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import type { Protocol } from "../protocols/index.js";
 import { loadCustomProtocols, saveCustomProtocols, deleteProtocol } from "./builder.js";
 import { getProtocolStats, readAllUsage } from "./usage.js";
@@ -59,13 +60,22 @@ export function loadArchived(): ArchivedRecord[] {
   }
 }
 
+/** Atomic for the same reason as saveCustomProtocols: archived.json is the
+ *  only copy of a soft-deleted protocol, and loadArchived() reads a torn file
+ *  as an empty archive — which would turn a recoverable delete into a silent
+ *  permanent one. */
 export function saveArchived(records: ArchivedRecord[]): void {
-  writeFileSync(archivePath(), JSON.stringify(records, null, 2), "utf-8");
+  atomicWriteFileSync(archivePath(), JSON.stringify(records, null, 2), { encoding: "utf-8" });
 }
 
 /** Move a custom protocol from live → archived. Returns null if not found in
- *  custom.json or already archived. The embedding cache is preserved so an
- *  unarchive doesn't have to re-embed. */
+ *  custom.json or already archived. This does not drop the embedding cache
+ *  entry, so an unarchive that happens before the next dedup pass skips the
+ *  re-embed — but the entry is not durable: refreshCache() reconciles the
+ *  cache against the LIVE catalog, so an archived protocol's vector is pruned
+ *  the next time anything authors a protocol. Correct trade: one re-embed on
+ *  a late unarchive, versus orphans accumulating forever in a git-synced
+ *  file. */
 export function archiveProtocol(name: string, reason?: string): ArchivedRecord | null {
   const live = loadCustomProtocols();
   const idx = live.findIndex((p) => p.name === name);

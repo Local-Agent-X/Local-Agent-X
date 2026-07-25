@@ -93,7 +93,16 @@ function getOrBuildIndex(): SearchIndex {
   return _index;
 }
 
-/** Drop the cached index. Call after the catalog changes (create/edit/delete). */
+/** Drop the cached index. Called from saveCustomProtocols() — the single write
+ *  choke point for custom.json, so create/edit/delete/archive/unarchive and
+ *  marketplace installs all land here.
+ *
+ *  Boundary, stated exactly: this covers the CUSTOM tier only. The
+ *  `_indexedCount` check above catches a SKILL.md appearing on or vanishing
+ *  from disk, because that changes the count. Neither mechanism sees a
+ *  SKILL.md rewritten IN PLACE — learned-lifecycle.ts does that on activate —
+ *  so a re-activated learned protocol's new text stays invisible to search
+ *  for the rest of the process's life. Recorded, owned by the learned tier. */
 export function invalidateSearchIndex(): void {
   _index = null;
   _indexedCount = 0;

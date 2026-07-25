@@ -128,6 +128,34 @@ function runProtocolMigrations(): void {
   }
 }
 
+// ── Catalog read health ───────────────────────────────────────────────────
+//
+// Every tier read below swallows an I/O failure and returns what it managed to
+// read — the right call for a READ (a corrupt SKILL.md must not take the app
+// down), but it makes "this dir is empty" and "this dir could not be read"
+// indistinguishable to the caller. A caller that DELETES things the catalog no
+// longer claims (dedup's embedding-cache reconcile) would treat one EBUSY, one
+// AV lock, or one git-merge-conflict blob as "the user deleted everything".
+//
+// This is a monotonic counter, not a flag, so a caller can bracket its own
+// read — snapshot before, compare after — with no reset protocol and no
+// cross-call leakage.
+
+let _readFailures = 0;
+
+/** Count of tier-read failures swallowed since process start. Bracket a
+ *  catalog read with two calls; an increase means the result is PARTIAL and
+ *  must not be treated as authoritative for anything destructive. */
+export function catalogReadFailureCount(): number {
+  return _readFailures;
+}
+
+/** Record a swallowed read failure. Exported for builder.ts, which owns the
+ *  custom.json read and swallows its parse errors the same way. */
+export function noteCatalogReadFailure(): void {
+  _readFailures += 1;
+}
+
 // ── SKILL.md directory scanning ───────────────────────────────────────────
 
 function scanSkillMdDir(
@@ -141,18 +169,19 @@ function scanSkillMdDir(
   try {
     entries = readdirSync(dir);
   } catch {
+    noteCatalogReadFailure();
     return [];
   }
   for (const name of entries) {
     const subdir = join(dir, name);
     let isDir = false;
-    try { isDir = statSync(subdir).isDirectory(); } catch { continue; }
+    try { isDir = statSync(subdir).isDirectory(); } catch { noteCatalogReadFailure(); continue; }
     if (!isDir) continue;
     if (rejectManagedMarker && existsSync(join(subdir, "learned.json"))) continue;
     const skillFile = join(subdir, "SKILL.md");
     if (!existsSync(skillFile)) continue;
     let raw: string;
-    try { raw = readFileSync(skillFile, "utf-8"); } catch { continue; }
+    try { raw = readFileSync(skillFile, "utf-8"); } catch { noteCatalogReadFailure(); continue; }
     const source: ProtocolSource = { type: sourceType, sourcePath: skillFile };
     const protocol = parseSkillMd(raw, { source, fallbackName: name });
     if (protocol) out.push(protocol);
@@ -172,7 +201,13 @@ let _bundledCache: Protocol[] | null = null;
 
 export function loadBundledProtocols(): Protocol[] {
   if (_bundledCache) return _bundledCache;
-  _bundledCache = scanSkillMdDir(bundledProtocolsDir(), "bundled");
+  // Never memoize a FAILED read. invalidateBundledCache() has no callers, so a
+  // poisoned memo is permanent for the process: one transient EBUSY at boot
+  // would make the bundled tier look empty on every later call, forever.
+  const before = _readFailures;
+  const scanned = scanSkillMdDir(bundledProtocolsDir(), "bundled");
+  if (_readFailures !== before) return scanned;
+  _bundledCache = scanned;
   return _bundledCache;
 }
 

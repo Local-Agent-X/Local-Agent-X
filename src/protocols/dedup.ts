@@ -16,9 +16,10 @@
  * the provider is degraded, dedup degrades to a no-op rather than blocking
  * protocol creation. Logged as a warning so the user knows.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getRuntimeConfig } from "../config.js";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import { getEmbeddingProviderSingleton } from "../embedding-singleton.js";
 import { createLogger } from "../logger.js";
 import type { Protocol } from "../protocols/index.js";
@@ -47,7 +48,10 @@ function embeddingsPath(): string {
   return join(dir, "embeddings.json");
 }
 
-function textOf(p: Protocol): string {
+/** The exact text a protocol's dedup embedding is computed from. Exported so
+ *  write paths can tell whether an edit invalidated the cached vector without
+ *  re-deriving (and drifting from) this definition. */
+export function dedupTextOf(p: Pick<Protocol, "name" | "description" | "triggers">): string {
   const triggers = (p.triggers || []).join(" | ");
   return `${p.name}\n${p.description}\n${triggers}`;
 }
@@ -66,8 +70,12 @@ function loadCache(): EmbeddingCache {
   try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return {}; }
 }
 
+/** Atomic so a half-written sidecar can never be observed: the background
+ *  review fork embeds concurrently with foreground protocol writes, and a
+ *  torn embeddings.json parses as `{}` — silently discarding every cached
+ *  vector and forcing a full re-embed of the catalog. */
 function saveCache(cache: EmbeddingCache): void {
-  writeFileSync(embeddingsPath(), JSON.stringify(cache, null, 2), "utf-8");
+  atomicWriteFileSync(embeddingsPath(), JSON.stringify(cache, null, 2));
 }
 
 function cosine(a: number[], b: number[]): number {
@@ -78,28 +86,73 @@ function cosine(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
-/** Ensure every protocol in `all` has a current embedding in the cache.
- *  Re-embeds entries whose text hash has changed. Returns the cache (which
- *  may have been mutated). */
+/** Ensure every protocol in `all` has a current embedding in the cache, and
+ *  reconcile the cache against the live catalog. Returns the cache.
+ *
+ *  Two rules make this safe under concurrent writers, which the background
+ *  review fork introduces:
+ *
+ *  1. Embed into a DELTA map, then re-read the cache after the awaits and
+ *     apply the delta onto that fresh copy. Writing back a snapshot loaded
+ *     before `await provider.embed(...)` would silently revert everything
+ *     another writer did inside that window — including a dropEmbedding()
+ *     that landed there, which resurrects the exact orphan it removed.
+ *  2. Prune every key no live protocol claims. This is what makes the cache
+ *     self-correcting rather than dependent on a drop and a refresh never
+ *     overlapping: a rename leaves an entry under the old name that nothing
+ *     would ever revisit, and embeddings.json is workspace-git-synced, so
+ *     orphans accumulate across every machine forever. dropEmbedding() is now
+ *     a fast path, not the only defence.
+ *
+ *  The read-modify-write at the end is await-free on purpose — within this
+ *  process the event loop serializes it. */
 async function refreshCache(all: Protocol[]): Promise<EmbeddingCache> {
   const provider = getEmbeddingProviderSingleton();
   if (!provider) return loadCache(); // soft-degrade — caller handles
-  const cache = loadCache();
-  let dirty = false;
+
+  const seen = loadCache();
+  const delta: EmbeddingCache = {};
   for (const p of all) {
-    const text = textOf(p);
+    const text = dedupTextOf(p);
     const hash = hashText(text);
-    const existing = cache[p.name];
+    const existing = seen[p.name];
     if (existing && existing.textHash === hash) continue;
     try {
-      const vec = await provider.embed(text);
-      cache[p.name] = { vec, textHash: hash };
-      dirty = true;
+      delta[p.name] = { vec: await provider.embed(text), textHash: hash };
     } catch (e) {
       logger.warn(`[dedup] embed failed for ${p.name}: ${(e as Error).message}`);
     }
   }
-  if (dirty) {
+
+  // Resolve the authoritative name set BEFORE re-reading, so load → mutate →
+  // save below contains no await. Read from the catalog rather than from the
+  // caller's `all` so a caller that passes a subset can never wipe the cache.
+  //
+  // Bracket that read: EVERY tier degrades an I/O failure to "empty" (a git
+  // merge-conflict blob in custom.json, an EBUSY readdir during a sync or AV
+  // scan), and pruning against a partial catalog deletes vectors for
+  // protocols that still exist. Skipping the prune costs one pass of orphan
+  // retention; pruning on bad data costs a full re-embed of the catalog,
+  // atomically written and git-synced to every machine. A `live.size === 0`
+  // check would not do: the dangerous case is PARTIAL, where built-ins load
+  // fine and only the custom tier failed.
+  const { getAllProtocols } = await import("../protocols/index.js");
+  const { catalogReadFailureCount } = await import("./loader.js");
+  const failuresBefore = catalogReadFailureCount();
+  const live = new Set(getAllProtocols().map((p) => p.name));
+  const catalogComplete = catalogReadFailureCount() === failuresBefore;
+
+  const cache = loadCache();
+  Object.assign(cache, delta);
+  let pruned = 0;
+  if (catalogComplete) {
+    for (const name of Object.keys(cache)) {
+      if (!live.has(name)) { delete cache[name]; pruned += 1; }
+    }
+  } else {
+    logger.warn(`[dedup] catalog read was partial — skipping embedding-cache prune`);
+  }
+  if (Object.keys(delta).length > 0 || pruned > 0) {
     try { saveCache(cache); } catch (e) { logger.warn(`[dedup] cache save failed: ${(e as Error).message}`); }
   }
   return cache;
@@ -132,7 +185,7 @@ export async function findDuplicate(
 
   let candidateVec: number[];
   try {
-    candidateVec = await provider.embed(textOf(candidate as Protocol));
+    candidateVec = await provider.embed(dedupTextOf(candidate));
   } catch (e) {
     logger.warn(`[dedup] candidate embed failed: ${(e as Error).message} — skipped`);
     return null;
@@ -149,6 +202,25 @@ export async function findDuplicate(
   }
   if (bestSim >= threshold) return { name: bestName, similarity: bestSim };
   return null;
+}
+
+/**
+ * The dedup gate as the write paths actually use it: candidate vs. the whole
+ * live catalog. Both the `protocol_create` tool and `authorProtocol()` call
+ * this, so there is exactly one definition of "is this a near-duplicate" —
+ * previously the check existed only inside the tool wrapper, which is why a
+ * programmatic caller could create duplicates freely.
+ *
+ * `getAllProtocols` is imported lazily: protocols/index.ts imports builder.ts,
+ * which is the other half of this pair, and a static import here would make
+ * that a load-time cycle.
+ */
+export async function findCatalogDuplicate(
+  candidate: { name: string; description: string; triggers: string[] },
+  threshold?: number,
+): Promise<DuplicateMatch | null> {
+  const { getAllProtocols } = await import("../protocols/index.js");
+  return findDuplicate(candidate, getAllProtocols(), threshold);
 }
 
 /** Drop an entry from the cache (call after protocol_delete). */

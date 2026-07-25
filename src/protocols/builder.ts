@@ -8,12 +8,16 @@
  * file to the new location if present.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Protocol, ProtocolStep } from "../protocols/index.js";
+import { authorProtocol } from "./authoring.js";
+import { noteCatalogReadFailure } from "./loader.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { getRuntimeConfig } from "../config.js";
+import { atomicWriteFileSync } from "../util/json-store.js";
+import { invalidateSearchIndex } from "./search.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("protocols.builder");
@@ -57,15 +61,38 @@ export function loadCustomProtocols(): Protocol[] {
     try {
       return JSON.parse(readFileSync(path, "utf-8"));
     } catch {
+      // Degrading to [] is right for a read — a half-synced file or a git
+      // merge-conflict blob must not take the app down. But the result is
+      // now indistinguishable from "the user has no custom protocols", and
+      // custom.json is workspace-git-synced, so that state is reachable in
+      // normal use. Record it so destructive reconcilers can tell.
+      noteCatalogReadFailure();
       return [];
     }
   }
   return [];
 }
 
+/**
+ * The single write choke point for custom.json — every create/edit/delete, the
+ * archive/unarchive moves, and the marketplace installer land here.
+ *
+ * Atomic (tmp + rename) because this file now has more than one writer: a
+ * background review fork authors protocols while a foreground tool or the user
+ * may be writing too. A torn write is worse than a lost one here —
+ * loadCustomProtocols() swallows a parse failure as `[]`, so a half-written
+ * file reads back as "the user has no custom protocols" and the very next save
+ * persists that emptiness.
+ *
+ * Dropping the search index here is what makes an in-place EDIT discoverable.
+ * The index only rebuilt when the protocol COUNT changed, so rewording or
+ * re-triggering a protocol was invisible to protocol(action:'search') for the
+ * rest of the process's life.
+ */
 export function saveCustomProtocols(protocols: Protocol[]): void {
   migrateLegacyCustomProtocols();
-  writeFileSync(customProtocolsPath(), JSON.stringify(protocols, null, 2), "utf-8");
+  atomicWriteFileSync(customProtocolsPath(), JSON.stringify(protocols, null, 2), { encoding: "utf-8" });
+  invalidateSearchIndex();
 }
 
 export function createProtocol(protocol: Protocol): Protocol {
@@ -82,9 +109,21 @@ export function editProtocol(name: string, updates: Partial<Protocol>): Protocol
   const protocols = loadCustomProtocols();
   const idx = protocols.findIndex(m => m.name === name);
   if (idx === -1) throw new Error(`Protocol "${name}" not found`);
-  protocols[idx] = { ...protocols[idx], ...updates, name: updates.name ?? protocols[idx].name };
+  const before = protocols[idx];
+  const after = { ...before, ...updates, name: updates.name ?? before.name };
+  protocols[idx] = after;
   saveCustomProtocols(protocols);
-  return protocols[idx];
+
+  // The dedup embedding is keyed by name and derived from name + description +
+  // triggers. An edit to any of those leaves the cached vector describing text
+  // that no longer exists — and a rename orphans it under a key nothing will
+  // ever refresh. Drop the pre-edit key so the next dedup pass re-embeds.
+  // Lazy import for the same reason as deleteProtocol below.
+  void import("./dedup.js").then((m) => {
+    if (m.dedupTextOf(before) !== m.dedupTextOf(after)) m.dropEmbedding(before.name);
+  }).catch(() => { /* best-effort — dedup is a soft dependency */ });
+
+  return after;
 }
 
 export function deleteProtocol(name: string): boolean {
@@ -103,6 +142,15 @@ export function getProtocol(name: string): Protocol | undefined {
   return loadCustomProtocols().find(m => m.name === name);
 }
 
+// The authoring path (dedup + provenance + markdown body) lives in
+// authoring.ts — this file owns persistence. Re-exported so every existing
+// `from "./builder.js"` import site keeps working.
+export {
+  authorProtocol,
+  type AuthorProtocolInput,
+  type AuthorProtocolResult,
+} from "./authoring.js";
+
 export function createBuilderTools(): ToolDefinition[] {
   return [
     {
@@ -119,72 +167,37 @@ export function createBuilderTools(): ToolDefinition[] {
           triggers: { type: "array", items: { type: "string" }, description: "Phrases that activate this protocol" },
           steps: { type: "array", items: { type: "object" }, description: "Array of ProtocolStep objects" },
           rules: { type: "array", items: { type: "string" }, description: "Rules to follow during execution" },
+          body: { type: "string", description: "Optional markdown body. Preferred over `steps` when the protocol reads as prose; protocol(action:'get') returns it in place of the step list." },
           supersedes: { type: "string", description: "Name of an existing protocol this replaces. Bypasses dedup; deletes the named target." },
         },
         required: ["name", "description", "triggers", "steps"],
       },
       async execute(args) {
         try {
-          const name = String(args.name);
-          const description = String(args.description);
-          const triggers = (args.triggers as string[]) || [];
-          const supersedes = typeof args.supersedes === "string" ? args.supersedes : undefined;
-
-          // Dedup check — refuse near-duplicates unless the caller explicitly
-          // names what they're replacing. Soft-degrades to no-op if the
-          // embedding provider isn't available (memory init didn't run).
-          if (!supersedes) {
-            const { findDuplicate } = await import("./dedup.js");
-            const { getAllProtocols } = await import("../protocols/index.js");
-            const dup = await findDuplicate(
-              { name, description, triggers },
-              getAllProtocols(),
-            );
-            if (dup) {
-              return {
-                content:
-                  `Refused: protocol "${name}" is too similar to existing "${dup.name}" ` +
-                  `(cosine similarity ${dup.similarity.toFixed(2)}). ` +
-                  `Either use \`protocol(action:'edit')\` to update "${dup.name}", or re-call with ` +
-                  `\`supersedes: "${dup.name}"\` to replace it.`,
-                isError: true,
-                metadata: { recovery: "Edit the existing protocol or pass supersedes to replace it." },
-              };
-            }
-          }
-
-          const protocol = createProtocol({
-            name,
-            description,
-            triggers,
+          const result = await authorProtocol({
+            name: String(args.name),
+            description: String(args.description),
+            triggers: (args.triggers as string[]) || [],
             steps: args.steps as ProtocolStep[],
             rules: (args.rules as string[]) || [],
-            learnablePreferences: [],
-            ...(supersedes ? { supersedes } : {}),
+            body: typeof args.body === "string" ? args.body : undefined,
+            supersedes: typeof args.supersedes === "string" ? args.supersedes : undefined,
+            sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
           });
 
-          // If superseding, drop the old protocol + its embedding cache entry.
-          let supersededNote = "";
-          if (supersedes) {
-            try {
-              const removed = deleteProtocol(supersedes);
-              const { dropEmbedding } = await import("./dedup.js");
-              dropEmbedding(supersedes);
-              supersededNote = removed ? ` Replaced "${supersedes}".` : ` (Note: "${supersedes}" not found.)`;
-            } catch (e) {
-              supersededNote = ` (Failed to remove "${supersedes}": ${(e as Error).message})`;
-            }
+          if (!result.ok) {
+            const dup = result.duplicate;
+            return {
+              content:
+                `Refused: protocol "${String(args.name)}" is too similar to existing "${dup.name}" ` +
+                `(cosine similarity ${dup.similarity.toFixed(2)}). ` +
+                `Either use \`protocol(action:'edit')\` to update "${dup.name}", or re-call with ` +
+                `\`supersedes: "${dup.name}"\` to replace it.`,
+              isError: true,
+              metadata: { recovery: "Edit the existing protocol or pass supersedes to replace it." },
+            };
           }
-
-          try {
-            const { recordUsage } = await import("./usage.js");
-            recordUsage({
-              action: "built",
-              name: protocol.name,
-              sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
-            });
-          } catch { /* telemetry never fails the call */ }
-          return { content: `Created protocol "${protocol.name}" with ${protocol.steps.length} steps.${supersededNote}` };
+          return { content: `Created protocol "${result.protocol.name}" with ${result.protocol.steps.length} steps.${result.supersededNote}` };
         } catch (e: any) {
           return { content: e.message, isError: true };
         }

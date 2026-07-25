@@ -45,6 +45,7 @@ import { registerLearnedProtocolEnvelopeForOp } from "../canonical-loop/public/l
 
 // Core modules
 export { loadCustomProtocols, saveCustomProtocols, createProtocol, editProtocol, deleteProtocol, getProtocol, createBuilderTools } from "./builder.js";
+export { authorProtocol, type AuthorProtocolInput, type AuthorProtocolResult } from "./authoring.js";
 export {
   loadArchived, saveArchived, archiveProtocol, unarchiveProtocol, purgeArchivedProtocol,
   computeProtocolState, applyAutomaticTransitions,

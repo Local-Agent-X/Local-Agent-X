@@ -34,6 +34,22 @@ import type { DurableRef } from "./observation.js";
 import { FRAME_HELPERS, OCCLUSION_HELPERS, selectOptionMatchExpr } from "./in-app-script-helpers.js";
 
 /**
+ * The in-page name-match accumulator, as a shared source string so the resolver
+ * script and its regression test exercise the SAME matcher. It reads the SAME
+ * identity sources the extractor derives a ref's name from (extract.ts
+ * computeName) — critically the HTML `name` attribute and `title`, not just
+ * aria-label/placeholder. Without the `name` source, AngularJS fields whose
+ * only identity is name/id (e.g. `<input id=po-number name="PO NUMBER">` with
+ * an empty accessible name) are observed as "PO NUMBER" yet match NOTHING here,
+ * so role+name fails and fill dies with "all resolution strategies failed".
+ */
+export const ACC_MATCH_SRC = `(el) => {
+	const at = (n) => (el && el.getAttribute && el.getAttribute(n)) || "";
+	return (at("aria-label") + " " + at("placeholder") + " " + at("name") + " " + at("title")
+		+ " " + ((el && el.value) || "") + " " + ((el && el.textContent) || "")).toLowerCase();
+}`;
+
+/**
  * The whole ref resolution chain in ONE round-trip: role+name → visible text
  * (click only) → XPath → stored coords (click only), each strategy searching
  * the ref's frame roots (main document for main-frame refs). Each candidate is
@@ -73,8 +89,7 @@ ${FRAME_HELPERS}
 		const s = getComputedStyle(el);
 		return s.visibility !== "hidden" && s.display !== "none";
 	};
-	const acc = (el) => (((el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("placeholder") || "")) || "")
-		+ " " + (el.value || "") + " " + (el.textContent || "")).toLowerCase();
+	const acc = ${ACC_MATCH_SRC};
 	const ROLE_SEL = {
 		button: 'button,[role="button"],input[type="button"],input[type="submit"],input[type="reset"]',
 		link: 'a[href],[role="link"]',

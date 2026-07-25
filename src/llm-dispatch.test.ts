@@ -366,11 +366,17 @@ describe("anthropic subscription auth never hits direct HTTP", () => {
     expect(vi.mocked(streamAnthropicResponse)).not.toHaveBeenCalled();
   });
 
-  it("subscription auth with images degrades to null instead of a doomed direct fetch", async () => {
+  it("subscription auth WITH images routes through the CLI proxy carrying image_url content (no direct fetch)", async () => {
     vi.mocked(resolveCredential).mockResolvedValueOnce({ credential: "oauth:sub-token" } as never);
     const out = await dispatch({ prompt: "judge", provider: "anthropic", images: ["QUJD"] });
-    expect(out).toBeNull();
+    // No longer degraded: convertUserContent maps the image_url part to an
+    // Anthropic image block, so Claude-on-subscription vision works.
+    expect(out).toBe("cli-proxy-reply");
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(vi.mocked(streamAnthropicResponse)).not.toHaveBeenCalled();
+    const call = vi.mocked(streamAnthropicResponse).mock.calls[0][0] as { messages: Array<{ content: unknown }> };
+    expect(call.messages[0].content).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+      { type: "text", text: "judge" },
+    ]);
   });
 });

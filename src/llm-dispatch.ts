@@ -70,10 +70,11 @@ export interface DispatchOptions {
    * Carried on the Anthropic path (Messages image blocks) AND the OpenAI-compat
    * path (openai/xai → `image_url` blocks), so a vision dispatch works on
    * whichever provider the user is on. When images are present the router grades
-   * with the ACTIVE model (not the cheap background one). Codex/ollama can't
-   * carry images and degrade to null. Absent/empty → the body is byte-identical
-   * to before this option existed. Anthropic subscription-OAuth still degrades
-   * (that credential can't carry images over the only path open to it).
+   * with the ACTIVE model (not the cheap background one). Anthropic carries
+   * images on BOTH the API-key path (direct HTTP) and the subscription/OAuth path
+   * (via the CLI proxy — convertUserContent maps them to image blocks). Only
+   * Codex (no image transport in its client protocol) and ollama degrade to null.
+   * Absent/empty → the body is byte-identical to before this option existed.
    */
   images?: string[];
   /**
@@ -242,13 +243,13 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
       // anthropic client, which routes them via the official CLI proxy —
       // same seam chat and classify-with-llm use. Never Bearer-fetch them.
       if (rejectOAuth) return null;
-      if (images && images.length > 0) {
-        // The CLI proxy carries text prompts only; the direct HTTP path is
-        // banned for this credential. Degrade rather than send a doomed 429.
-        logger.warn("anthropic subscription auth cannot carry images; degrading to null");
-        return null;
-      }
-      return callAnthropicViaCliProxy(apiKey, prompt, model, temperature, timeoutMs);
+      // Images ride the CLI-proxy path too: streamAnthropicResponse's
+      // convertUserContent turns image_url parts into Anthropic image blocks and
+      // the OAuth/Claude-Code-identity request carries them (chat vision uses the
+      // very same seam). Previously degraded to null on the mistaken belief the
+      // proxy was text-only — that dropped every Claude-on-subscription vision
+      // check (the build design judge included).
+      return callAnthropicViaCliProxy(apiKey, prompt, model, temperature, timeoutMs, images);
     }
     if (rejectOAuth && !apiKey.startsWith("sk-ant-api")) return null;
     const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": apiKey };
@@ -283,17 +284,25 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
  *  CLI-proxy-vs-direct-HTTP decision, so this can never regress into a
  *  banned Bearer fetch. Pass the credential UNSTRIPPED — the client's own
  *  usesAnthropicSubscriptionAuth check needs the oauth:/cli shape intact. */
-async function callAnthropicViaCliProxy(token: string, prompt: string, model: string, temperature: number, timeoutMs: number): Promise<string | null> {
+async function callAnthropicViaCliProxy(token: string, prompt: string, model: string, temperature: number, timeoutMs: number, images?: string[]): Promise<string | null> {
   const ac = new AbortController();
   const abortTimer = setTimeout(() => ac.abort(), timeoutMs);
   let raceTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const { streamAnthropicResponse } = await import("./anthropic-client/index.js");
+    // OpenAI-style image_url parts; convertUserContent (anthropic-client) maps
+    // them to Anthropic image blocks. No images → bare string, byte-identical.
+    const content = images && images.length > 0
+      ? [
+          ...images.map((data) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } })),
+          { type: "text", text: prompt },
+        ]
+      : prompt;
     const run = (async () => {
       let acc = "";
       for await (const event of streamAnthropicResponse({
         token, model, temperature,
-        messages: [{ role: "user", content: prompt } as never],
+        messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
       })) {
         // A transport error (e.g. CLI "Please run /login") means there is no

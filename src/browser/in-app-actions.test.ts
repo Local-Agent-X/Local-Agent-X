@@ -13,7 +13,7 @@
  * The in-page SCRIPTS themselves are pure string builders (in-app-observe.ts);
  * here we mock browserExec to stand in for their DOM-side result.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./bridge-client.js", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("./bridge-client.js")>();
@@ -41,6 +41,7 @@ import {
 	type InAppActionContext,
 	type ResolvedTarget,
 } from "./in-app-actions.js";
+import { _setPageResolverForTest } from "./in-app-driving-page.js";
 import { scrollInApp } from "./in-app-scroll.js";
 import { CREDENTIAL_FOCUS_SCRIPT } from "./in-app-page-io.js";
 import { ObservationRegistry, type BrowserObservation, type DurableRef } from "./observation.js";
@@ -108,6 +109,28 @@ beforeEach(() => {
 	vi.mocked(browserExec).mockResolvedValue(undefined);
 	vi.mocked(browserLifecycle).mockResolvedValue({ ping: { ok: true, userActive: false } });
 });
+
+// The native fast-path resolver is a module-level seam; every test that injects
+// a fake real Page must restore the default (getPageForView, null in tests) so
+// the non-native tests below keep exercising the existing resolve chain.
+afterEach(() => _setPageResolverForTest(null));
+
+/** A fake real Playwright Page for the native fast-path: only isClosed() +
+ *  locator(sel) are used. locator returns a stub whose click()/fill() are the
+ *  injected mocks, and records the selector it was asked for. */
+function fakeRealPage(over: { click?: () => Promise<void>; fill?: (v: string) => Promise<void> } = {}) {
+	const locatorArgs: string[] = [];
+	const click = vi.fn(over.click ?? (async () => {}));
+	const fill = vi.fn(over.fill ?? (async () => {}));
+	const page = {
+		isClosed: () => false,
+		locator: vi.fn((sel: string) => {
+			locatorArgs.push(sel);
+			return { click, fill };
+		}),
+	} as unknown as Page;
+	return { page, click, fill, locatorArgs, locator: (page as unknown as { locator: ReturnType<typeof vi.fn> }).locator };
+}
 
 // ── Pure helpers ─────────
 
@@ -217,6 +240,33 @@ describe("clickRefInApp — resolution + real input", () => {
 		const res = await clickRefInApp(makeCtx(makeRef()), 1);
 		expect(res).toEqual({ ok: false, text: USER_TOOK_WHEEL });
 	});
+
+	it("NATIVE fast-path: a real Page clicks via the xpath locator and skips the resolve chain", async () => {
+		const fake = fakeRealPage(); // locator.click() resolves
+		_setPageResolverForTest(async () => fake.page);
+		const res = await clickRefInApp(makeCtx(makeRef()), 1);
+		expect(res.ok).toBe(true);
+		expect(res.text).toContain(`[1] click (native) via button "Submit"`);
+		// The native locator targeted ref.xpath in the MAIN frame…
+		expect(fake.locatorArgs).toEqual(["xpath=/button[1]"]);
+		expect(fake.click).toHaveBeenCalledTimes(1);
+		// …and the existing isolated-world resolve/sendInputEvent chain never ran.
+		expect(browserExec).not.toHaveBeenCalled();
+		expect(browserInput).not.toHaveBeenCalled();
+	});
+
+	it("FALLBACK: a native click miss falls through to the existing resolve + real-input chain", async () => {
+		const fake = fakeRealPage({ click: async () => { throw new Error("locator.click: Timeout 3000ms exceeded"); } });
+		_setPageResolverForTest(async () => fake.page);
+		vi.mocked(browserExec).mockResolvedValue(resolved());
+		const res = await clickRefInApp(makeCtx(makeRef()), 1);
+		expect(res.ok).toBe(true);
+		// The NORMAL (non-native) via message and the real input events prove the
+		// existing chain took over after the native throw.
+		expect(res.text).toContain(`[1] click via role/name (button "Submit")`);
+		expect(res.text).not.toContain("native");
+		expect(inputTypes()).toEqual(["mouseMove", "mouseDown", "mouseUp"]);
+	});
 });
 
 // ── fill ─────────
@@ -294,6 +344,37 @@ describe("fillRefInApp — typed input, select, contenteditable, file", () => {
 		const res = await fillRefInApp(ctx, 1, "opt1");
 		expect(res.ok).toBe(true);
 		// The mutating selectFillScript MUST have run despite the user being active.
+		expect(vi.mocked(browserExec).mock.calls.some(([, s]) => s.includes("no-matching-option"))).toBe(true);
+	});
+
+	it("NATIVE fast-path: a real Page fills a text input via locator.fill and skips typeReplace", async () => {
+		const fake = fakeRealPage(); // locator.fill() resolves
+		_setPageResolverForTest(async () => fake.page);
+		const ctx = makeCtx(makeRef({ role: "textbox", name: "Email" }));
+		const res = await fillRefInApp(ctx, 1, "hi");
+		expect(res.ok).toBe(true);
+		expect(res.text).toBe(`[1] fill (native) via textbox "Email" — 2 chars`);
+		expect(fake.locatorArgs).toEqual(["xpath=/button[1]"]);
+		expect(fake.fill).toHaveBeenCalledWith("hi", expect.objectContaining({ timeout: expect.any(Number) }));
+		// The existing hit-resolve + typeReplace path never ran.
+		expect(browserExec).not.toHaveBeenCalled();
+		expect(browserInput).not.toHaveBeenCalled();
+	});
+
+	it("FALLBACK: a native fill throw (e.g. <select>/non-fillable) falls through to the existing SELECT path", async () => {
+		const fake = fakeRealPage({ fill: async () => { throw new Error("locator.fill: Element is not an <input>"); } });
+		_setPageResolverForTest(async () => fake.page);
+		vi.mocked(browserExec).mockImplementation(async (_v, s) => {
+			if (s.includes("ROLE_SEL")) return resolved({ tag: "SELECT" });
+			if (s.includes("no-matching-option")) return { ok: true, selected: ["opt1"] };
+			return undefined;
+		});
+		const ctx = makeCtx(makeRef({ role: "combobox", name: "Country" }));
+		const res = await fillRefInApp(ctx, 1, "opt1");
+		expect(res.ok).toBe(true);
+		// The NORMAL via message (not "native") + the selectFillScript prove the
+		// existing SELECT path took over after the native throw.
+		expect(res.text).toBe(`[1] fill via role/name (combobox "Country") — 4 chars`);
 		expect(vi.mocked(browserExec).mock.calls.some(([, s]) => s.includes("no-matching-option"))).toBe(true);
 	});
 });

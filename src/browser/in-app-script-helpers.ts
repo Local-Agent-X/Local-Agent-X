@@ -37,6 +37,53 @@ export function selectOptionMatchExpr(optionsExpr: string, valExpr: string): str
 }
 
 /**
+ * EXACT ref resolution by stable identifier — the strategy that runs BEFORE
+ * the fuzzy role+name / text / xpath / coords chain (in-app-resolve-scripts.ts
+ * resolutionScript). `sels` is stableSelectors(ref.ids, ref.tag) from
+ * stable-ids.ts; each entry's `sel` already constrains the match to the ref's
+ * tag, so an INPUT ref can never land on the LABEL sharing its data-testid.
+ *
+ * Exported as a bare arrow source (like ACC_MATCH_SRC) so the candidate-choice
+ * rules are executable in a unit test rather than asserted by reading the
+ * emitted string. Params are passed in — no free identifiers — so the fragment
+ * is independent of the enclosing script's scope: `vis` is the visibility
+ * predicate, `finish` the scroll + hit-test + frame-offset step (returns the
+ * resolved hit, or null after recording an occlusion), and cx/cy the ref's
+ * observed centre.
+ */
+export const EXACT_MATCH_SRC = `(roots, sels, vis, finish, cx, cy) => {
+	const dist = (el) => {
+		const r = el.getBoundingClientRect && el.getBoundingClientRect();
+		if (!r) return Number.MAX_VALUE;
+		const dx = r.left + r.width / 2 - cx, dy = r.top + r.height / 2 - cy;
+		return dx * dx + dy * dy;
+	};
+	for (const s of sels) {
+		for (const root of roots) {
+			let list = [];
+			try { list = root.doc.querySelectorAll(s.sel); } catch { continue; }
+			const cands = [];
+			for (const el of list) if (vis(el)) cands.push(el);
+			if (cands.length === 0) continue;
+			// A key CAN be shared (a radio group's name, a repeated placeholder).
+			// Pick the candidate nearest the observed centre: the coords came from
+			// the same snapshot as the ref, so proximity is the only ordering that
+			// reflects the element the model actually saw. DOM order does not.
+			let best = cands[0];
+			if (cands.length > 1) for (const el of cands) if (dist(el) < dist(best)) best = el;
+			const hit = finish(best, root, "exact");
+			if (hit) { hit.key = s.key; return hit; }
+		}
+	}
+	return null;
+}`;
+
+/** EXACT_MATCH_SRC bound to the name resolutionScript calls it by. */
+export const EXACT_MATCH_HELPER = `
+	const exactMatch = ${EXACT_MATCH_SRC};
+`;
+
+/**
  * Occlusion classification, shared by resolutionScript and textSearchScript
  * (in-app-resolve-scripts.ts). A failed hit-test does NOT always mean a
  * blocking overlay: cosmetic siblings (icons, ripple spans, styled sibling

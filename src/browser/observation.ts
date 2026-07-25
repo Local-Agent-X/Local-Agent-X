@@ -15,7 +15,7 @@ import { detectObstructions, type Obstruction } from "./modal-detector.js";
 import { listIframes, type IframeInfo } from "./iframe-detector.js";
 import { pendingDialogs } from "./dialog-handler.js";
 import { formatDegraded, formatDialogs, formatIframes, formatObstructions, formatRef } from "./observation-format.js";
-import type { DurableRef, ObservationDegradation, BrowserObservation } from "./observation-types.js";
+import type { DurableRef, ObservationDegradation, BrowserObservation, SerializedRegistry } from "./observation-types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.observation");
@@ -24,7 +24,7 @@ const logger = createLogger("browser.observation");
 // BrowserObservation) live in observation-types.ts to keep this file under the
 // 400-LOC source ceiling; re-exported so consumers still import them from
 // "./observation.js".
-export type { DurableRef, ObservationDegradation, BrowserObservation } from "./observation-types.js";
+export type { DurableRef, ObservationDegradation, BrowserObservation, SerializedRegistry } from "./observation-types.js";
 
 /**
  * Hard ceiling on a single page scan. waitForStability caps at 3s and the DOM
@@ -242,6 +242,7 @@ export class ObservationRegistry {
           inViewport: el.inViewport,
           rect: el.rect,
           xpath: el.xpath,
+          ids: el.ids,
           lastSeen: this.observationCount,
           ...(el.frameUrl !== undefined ? { frameUrl: el.frameUrl } : {}),
         };
@@ -258,6 +259,7 @@ export class ObservationRegistry {
           tag: el.tag,
           type: el.type,
           xpath: el.xpath,
+          ids: el.ids,
           inViewport: el.inViewport,
           rect: el.rect,
           lastSeen: this.observationCount,
@@ -384,13 +386,6 @@ export class ObservationRegistry {
     this.observationCount = typeof s.observationCount === "number" ? s.observationCount : 0;
     this.lastUrl = typeof s.lastUrl === "string" ? s.lastUrl : "";
   }
-}
-
-export interface SerializedRegistry {
-  refs: DurableRef[];
-  nextId: number;
-  observationCount: number;
-  lastUrl: string;
 }
 
 function safeOrigin(url: string): string {

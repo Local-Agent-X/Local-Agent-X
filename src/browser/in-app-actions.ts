@@ -3,10 +3,10 @@
  * REAL input events for the embedded WebContentsView.
  *
  * Ports the CDP semantics from actions.ts / interactions.ts:
- *   resolution order role+name → visible text (click only) → XPath → stored
- *   coords (click only), retry after 1.5s on a total miss, then once more
- *   after a re-observe. Return strings match interactions.ts shapes exactly —
- *   the model consumes them.
+ *   resolution order exact stable identifier (stable-ids.ts) → role+name →
+ *   visible text (click only) → XPath → stored coords (click only), retry
+ *   after 1.5s on a total miss, then once more after a re-observe. Return
+ *   strings match interactions.ts shapes exactly — the model consumes them.
  *
  * Two deliberate improvements over the CDP path:
  *   - Each resolution attempt is ONE isolated-world exec round-trip: the
@@ -33,7 +33,9 @@ import {
 } from "./bridge-client.js";
 import { execChecked } from "./in-app-observe.js";
 import { asExecResult } from "./in-app-scripts.js";
-import { resolutionScript, selectFillScript, textSearchScript } from "./in-app-resolve-scripts.js";
+import { resolutionScript, textSearchScript } from "./in-app-resolve-scripts.js";
+import { selectFillScript, stableFillScript } from "./in-app-fill-scripts.js";
+import { hasStableIds } from "./stable-ids.js";
 import type { InteractionResult } from "./backend.js";
 import { createLogger } from "../logger.js";
 
@@ -122,7 +124,9 @@ function sleep(ms: number): Promise<void> {
  *  the viewport, measured AFTER scrollIntoView + hit-test. */
 export interface ResolvedTarget {
 	found: true;
-	via: "role" | "text" | "xpath" | "coords";
+	via: "exact" | "role" | "text" | "xpath" | "coords";
+	/** Set on an "exact" hit: the stable key that matched, e.g. `id="po-number"`. */
+	key?: string;
 	x: number;
 	y: number;
 	w: number;
@@ -212,6 +216,8 @@ function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget):
 	// reads as "clicked the thing on top" instead of a silent mystery.
 	const through = hit.through ? ` (through overlapping ${hit.through})` : "";
 	switch (hit.via) {
+		case "exact":
+			return `[${ref.id}] ${op} via ${hit.key || "stable id"}${through}`;
 		case "role":
 			return `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${through}`;
 		case "text":
@@ -316,7 +322,21 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 	if ("fail" in resolved) return resolved.fail;
 	const { ref, note } = resolved;
 	const hit = await resolveWithRetry(ctx, ref, "fill");
-	if (!hit.found) return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
+	if (!hit.found) {
+		// The coordinate path missed — but a hit-test refusal is about PIXELS
+		// (covered, clipped, un-scrollable frame), and a ref with a stable
+		// identifier has no doubt about WHICH element to write to. Write to the
+		// node directly rather than failing a fill that is perfectly well-defined.
+		if (hasStableIds(ref.ids)) {
+			const res = asExecResult(await execChecked(ctx.viewId, stableFillScript(ref, value)));
+			if (res.ok) {
+				const key = (res as { key?: string }).key || "stable id";
+				return { ok: true, text: `[${ref.id}] fill via ${key}${note} — ${value.length} chars (element was not clickable; wrote to the field directly)` };
+			}
+			if (res.error === "file-input") return { ok: false, text: `[${ref.id}] ${FILE_INPUT_NEEDS_HUMAN}` };
+		}
+		return failedWithSnapshot(ctx, ref, hit.occluded ?? []);
+	}
 
 	if (hit.tag === "INPUT" && hit.type === "file") {
 		return { ok: false, text: `[${ref.id}] ${FILE_INPUT_NEEDS_HUMAN}` };

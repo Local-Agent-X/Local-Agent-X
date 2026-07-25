@@ -2,22 +2,26 @@
  * Browser actions with progressive fallback.
  *
  * Resolution order when clicking/filling a DurableRef:
- *   1. role + name (Playwright getByRole) — most reliable
- *   2. visible text (getByText)
- *   3. XPath stored in the ref
- *   4. bounding-box click (last resort — will miss if layout changed)
+ *   1. exact stable identifier — unique id / test hook / HTML name /
+ *      placeholder (stable-ids.ts). The only strategy that isn't a guess.
+ *   2. role + name (Playwright getByRole) — accessible-name match, fuzzy, and
+ *      blind to the HTML `name` attribute
+ *   3. visible text (getByText)
+ *   4. XPath stored in the ref
+ *   5. bounding-box click (last resort — will miss if layout changed)
  *
  * If the ref is offscreen we scroll it into view first. If text-based search
  * finds nothing, we scroll down a viewport at a time and retry — saves the
  * agent from giving up on virtualized/long lists.
  */
-import type { Frame, Page } from "playwright";
+import type { Frame, Locator, Page } from "playwright";
 import type { DurableRef, ObservationRegistry } from "./observation.js";
 import { waitForStability } from "./stability.js";
+import { stableSelectors } from "./stable-ids.js";
 
 export interface ActionResult {
   ok: boolean;
-  via: "role" | "text" | "xpath" | "coords" | "none";
+  via: "exact" | "role" | "text" | "xpath" | "coords" | "none";
   message: string;
 }
 
@@ -115,6 +119,37 @@ async function scrollRefIntoView(page: Page, ref: DurableRef): Promise<void> {
   }
 }
 
+/**
+ * Narrow a stable-key locator to ONE element, or null when it matches nothing.
+ *
+ * A key can legitimately be shared — a radio group's `name`, a placeholder
+ * repeated down a table — so ambiguity is resolved the same way the in-app
+ * chain resolves it (in-app-script-helpers.ts EXACT_MATCH_SRC): pick the
+ * candidate nearest the ref's observed centre. The coordinates come from the
+ * same snapshot as the ref, so proximity reflects the element the model saw;
+ * DOM order carries no such signal. Capped so a pathological page can't turn
+ * one strategy into hundreds of round-trips.
+ */
+const AMBIGUOUS_CANDIDATE_CAP = 12;
+
+async function pickStable(loc: Locator, ref: DurableRef): Promise<Locator | null> {
+  const count = await loc.count();
+  if (count === 0) return null;
+  if (count === 1) return loc.first();
+  let best = loc.first();
+  let bestDist = Number.MAX_VALUE;
+  for (let i = 0; i < Math.min(count, AMBIGUOUS_CANDIDATE_CAP); i++) {
+    const candidate = loc.nth(i);
+    const box = await candidate.boundingBox().catch(() => null);
+    if (!box) continue;
+    const dx = box.x + box.width / 2 - ref.rect.x;
+    const dy = box.y + box.height / 2 - ref.rect.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; best = candidate; }
+  }
+  return best;
+}
+
 async function tryResolutionChain(
   page: Page,
   ref: DurableRef,
@@ -129,6 +164,22 @@ async function tryResolutionChain(
   const root = resolveFrame(page, ref);
   const inIframe = root !== page;
   const viaSuffix = inIframe ? " (iframe)" : "";
+
+  // EXACT identity first. Everything below guesses: getByRole matches the
+  // ACCESSIBLE name (which excludes the HTML `name` attribute entirely, so
+  // `<input id="po-number" name="PO NUMBER">` is unmatchable there), getByText
+  // matches rendered content, the XPath is an index path that rots on the first
+  // re-render, and coords rot on the first re-layout. A durable identifier
+  // needs none of that.
+  for (const s of stableSelectors(ref.ids, ref.tag)) {
+    try {
+      const loc = await pickStable(root.locator(s.sel), ref);
+      if (!loc) continue;
+      if (op === "click") await loc.click({ timeout: CLICK_TIMEOUT });
+      else await loc.fill(value, { timeout: CLICK_TIMEOUT });
+      return { ok: true, via: "exact", message: `[${ref.id}] ${op} via ${s.key}${viaSuffix}` };
+    } catch { /* fall through */ }
+  }
 
   if (ref.role && ref.name) {
     try {

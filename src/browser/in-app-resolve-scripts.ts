@@ -1,10 +1,11 @@
 /**
  * A2 resolution-chain scripts (isolated world) — pure STRING BUILDERS, split
- * from in-app-scripts.ts for the 400-LOC gate: resolutionScript /
- * textSearchScript / selectFillScript plus their shared occlusion and
- * same-origin-frame helpers. The A1 selector scripts and checkedScript stay
- * in in-app-scripts.ts; the drivers (retry/hit-test-fallthrough/real-input)
- * stay in in-app-actions.ts.
+ * from in-app-scripts.ts for the 400-LOC gate: resolutionScript and
+ * textSearchScript, over the shared exact-match / occlusion / same-origin-frame
+ * helpers in in-app-script-helpers.ts. The A1 selector scripts and
+ * checkedScript stay in in-app-scripts.ts, the fill scripts (select + exact
+ * identity) in in-app-fill-scripts.ts; the drivers (retry/hit-test-
+ * fallthrough/real-input) stay in in-app-actions.ts.
  *
  * Same-origin IFRAME descent: extract.ts records iframe elements with
  * frameUrl (the iframe's src attribute, "" for srcdoc/about:blank) and rects
@@ -31,7 +32,8 @@
  */
 
 import type { DurableRef } from "./observation.js";
-import { FRAME_HELPERS, OCCLUSION_HELPERS, selectOptionMatchExpr } from "./in-app-script-helpers.js";
+import { EXACT_MATCH_HELPER, FRAME_HELPERS, OCCLUSION_HELPERS } from "./in-app-script-helpers.js";
+import { stableSelectors } from "./stable-ids.js";
 
 /**
  * The in-page name-match accumulator, as a shared source string so the resolver
@@ -50,14 +52,19 @@ export const ACC_MATCH_SRC = `(el) => {
 }`;
 
 /**
- * The whole ref resolution chain in ONE round-trip: role+name → visible text
- * (click only) → XPath → stored coords (click only), each strategy searching
- * the ref's frame roots (main document for main-frame refs). Each candidate is
- * scrolled into view, re-measured, and hit-tested with its document's
- * elementFromPoint; an occluded candidate is recorded in `occluded` and the
- * chain falls through instead of blind-clicking. Returns {found:true, via, x,
- * y, w, h, dpr, zoom, tag, type, editable} (CSS px, MAIN-page viewport-
- * relative) or {found:false, occluded}.
+ * The whole ref resolution chain in ONE round-trip: EXACT stable identifier →
+ * role+name → visible text (click only) → XPath → stored coords (click only),
+ * each strategy searching the ref's frame roots (main document for main-frame
+ * refs). Each candidate is scrolled into view, re-measured, and hit-tested with
+ * its document's elementFromPoint; an occluded candidate is recorded in
+ * `occluded` and the chain falls through instead of blind-clicking. Returns
+ * {found:true, via, key?, x, y, w, h, dpr, zoom, tag, type, editable} (CSS px,
+ * MAIN-page viewport-relative) or {found:false, occluded}.
+ *
+ * The exact strategy leads because everything after it is a GUESS: role+name
+ * matches a fuzzy label substring, text matches rendered content, xpath is an
+ * index path that rots on re-render, coords rot on re-layout. When the element
+ * published a durable identifier (stable-ids.ts) there is nothing to guess at.
  */
 export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string {
 	const params = JSON.stringify({
@@ -65,6 +72,7 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string 
 		name: ref.name,
 		xpath: ref.xpath,
 		frameUrl: ref.frameUrl,
+		exact: stableSelectors(ref.ids, ref.tag),
 		cx: ref.rect.x,
 		cy: ref.rect.y,
 		cw: ref.rect.width,
@@ -77,6 +85,7 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill"): string 
 	const lname = (p.name || "").toLowerCase();
 ${OCCLUSION_HELPERS}
 ${FRAME_HELPERS}
+${EXACT_MATCH_HELPER}
 	const roots = rootsForRef(p.frameUrl);
 	const env = () => ({
 		dpr: (typeof devicePixelRatio === "number" && devicePixelRatio) || 1,
@@ -176,6 +185,10 @@ ${FRAME_HELPERS}
 			type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
 			editable: el.isContentEditable === true };
 	};
+	if (p.exact && p.exact.length) {
+		const hit = exactMatch(roots, p.exact, vis, finish, p.cx, p.cy);
+		if (hit) return hit;
+	}
 	if (p.role && p.name && ROLE_SEL[p.role]) {
 		for (const root of roots) {
 			for (const el of root.doc.querySelectorAll(ROLE_SEL[p.role])) {
@@ -332,37 +345,3 @@ ${FRAME_HELPERS}
 })()`;
 }
 
-/** <select> fill: CDP parity — never typed; .value + input/change events.
- *  Searches the ref's frame roots (main document for main-frame refs). */
-export function selectFillScript(ref: DurableRef, value: string): string {
-	const params = JSON.stringify({ xpath: ref.xpath, name: ref.name, frameUrl: ref.frameUrl, value });
-	return `(() => {
-	const p = ${params};
-${FRAME_HELPERS}
-	const roots = rootsForRef(p.frameUrl);
-	let el = null;
-	if (p.xpath) {
-		for (const root of roots) {
-			try { el = root.doc.evaluate(p.xpath, root.doc, null, 9, null).singleNodeValue; } catch { /* stale */ }
-			if (el && el.tagName === "SELECT") break;
-			el = null;
-		}
-	}
-	if (!el) {
-		const lname = (p.name || "").toLowerCase();
-		outer: for (const root of roots) {
-			for (const c of root.doc.querySelectorAll("select")) {
-				const acc = (((c.getAttribute("aria-label") || "") + " " + (c.name || "") + " " + (c.id || ""))).toLowerCase();
-				if (!lname || acc.includes(lname)) { el = c; break outer; }
-			}
-		}
-	}
-	if (!el || el.tagName !== "SELECT") return { ok: false, error: "not-found" };
-	const match = ${selectOptionMatchExpr("[...el.options]", "p.value")};
-	if (!match) return { ok: false, error: "no-matching-option" };
-	el.value = match.value;
-	el.dispatchEvent(new Event("input", { bubbles: true }));
-	el.dispatchEvent(new Event("change", { bubbles: true }));
-	return { ok: true, selected: [match.value] };
-})()`;
-}

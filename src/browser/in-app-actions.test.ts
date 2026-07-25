@@ -298,6 +298,63 @@ describe("fillRefInApp — typed input, select, contenteditable, file", () => {
 	});
 });
 
+/**
+ * A hit-test refusal is a statement about PIXELS — covered, clipped, an iframe
+ * that won't come into the main viewport. When the ref carries a durable
+ * identifier there is no doubt about WHICH element to write to, so the fill
+ * writes to the node instead of failing. (Parity, not a new liberty: the CDP
+ * path's Playwright fill() checks visible/enabled/editable and never occlusion,
+ * so it already writes through an overlay.)
+ */
+describe("fillRefInApp — exact-identity fallback when the coordinate path misses", () => {
+	const PO_REF = makeRef({ role: "textbox", name: "PO NUMBER", tag: "INPUT", ids: { id: "po-number" } });
+	const isStableFill = (s: string) => s.includes("not-found") && s.includes('id=\\"po-number\\"');
+
+	it("writes to the field by its stable id and says the element was not clickable", async () => {
+		vi.mocked(browserExec).mockImplementation(async (_v, s) => {
+			if (s.includes("ROLE_SEL")) return { found: false, occluded: ["exact:div#modal-backdrop"] };
+			if (isStableFill(s)) return { ok: true, key: 'id="po-number"' };
+			return undefined;
+		});
+		const res = await fillRefInApp(makeCtx(PO_REF), 1, "PO-4471");
+		expect(res.ok).toBe(true);
+		expect(res.text).toContain('[1] fill via id="po-number"');
+		expect(res.text).toContain("wrote to the field directly");
+		// No synthetic input: the point was refused, so nothing is clicked or typed.
+		expect(browserInput).not.toHaveBeenCalled();
+	});
+
+	it("still fails with the occluder diagnostics when the exact write also misses", async () => {
+		vi.mocked(browserExec).mockImplementation(async (_v, s) => {
+			if (s.includes("ROLE_SEL")) return { found: false, occluded: ["exact:div#modal-backdrop"] };
+			if (isStableFill(s)) return { ok: false, error: "not-found" };
+			return undefined;
+		});
+		const res = await fillRefInApp(makeCtx(PO_REF), 1, "PO-4471");
+		expect(res.ok).toBe(false);
+		expect(res.text).toContain("all resolution strategies failed");
+		expect(res.text).toContain("div#modal-backdrop");
+	});
+
+	it("routes a file input to the human rather than writing a path into it", async () => {
+		vi.mocked(browserExec).mockImplementation(async (_v, s) => {
+			if (s.includes("ROLE_SEL")) return { found: false, occluded: [] };
+			if (isStableFill(s)) return { ok: false, error: "file-input" };
+			return undefined;
+		});
+		const res = await fillRefInApp(makeCtx(PO_REF), 1, "/tmp/x");
+		expect(res.ok).toBe(false);
+		expect(res.text).toContain(FILE_INPUT_NEEDS_HUMAN);
+	});
+
+	it("never attempts the DOM write for a ref with no durable identity", async () => {
+		vi.mocked(browserExec).mockResolvedValue({ found: false, occluded: ["role:div#overlay"] });
+		const res = await fillRefInApp(makeCtx(makeRef({ role: "textbox", name: "Email" })), 1, "x");
+		expect(res.ok).toBe(false);
+		expect(vi.mocked(browserExec).mock.calls.some(([, s]) => s.includes("not-found"))).toBe(false);
+	});
+});
+
 // ── clickByText ─────────
 
 describe("clickTextInApp — budget + scroll retry", () => {

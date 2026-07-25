@@ -372,3 +372,61 @@ describe("control state surfaces in the ref line (checkbox checked/unchecked, fi
     expect(text).toContain("{filled}");
   });
 });
+
+/**
+ * The registry is the seam between extraction and resolution. Stable
+ * identifiers are useless if they are computed and then dropped here — which is
+ * exactly what happened to every identity the extractor derived before the
+ * 2026-07-25 fix.
+ */
+describe("stable identifiers survive into the ref", () => {
+  beforeEach(() => {
+    __resetRefIdsForTest();
+    mockExtract.mockReset();
+    mockExtract.mockResolvedValue([]);
+    mockObstructions.mockReset();
+    mockObstructions.mockResolvedValue([]);
+  });
+
+  const PO_FIELD: RawElement = {
+    role: "textbox", name: "PO NUMBER", tag: "INPUT", type: "text",
+    xpath: '//*[@id="po-number"]', signature: 'textbox|PO NUMBER|INPUT|div>form',
+    inViewport: true, rect: { x: 140, y: 110, width: 80, height: 20 },
+    ids: { id: "po-number", name: "PO NUMBER" },
+  };
+
+  it("carries ids onto a newly minted ref", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([PO_FIELD]);
+    const obs = await reg.observe(page);
+    expect(obs.currentRefs[0].ids).toEqual({ id: "po-number", name: "PO NUMBER" });
+  });
+
+  it("REFRESHES ids on a re-observation instead of pinning the first ones seen", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([PO_FIELD]);
+    const first = (await reg.observe(page)).currentRefs[0].id;
+
+    // Same element (same signature), re-rendered with a new test hook.
+    mockExtract.mockResolvedValueOnce([{ ...PO_FIELD, ids: { id: "po-number", testId: "po-input" } }]);
+    const obs = await reg.observe(page);
+    expect(obs.currentRefs[0].id).toBe(first); // ref stayed durable
+    expect(obs.currentRefs[0].ids).toEqual({ id: "po-number", testId: "po-input" });
+  });
+
+  it("leaves ids absent for an element with no durable identity", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([SUBMIT]);
+    expect((await reg.observe(page)).currentRefs[0].ids).toBeUndefined();
+  });
+
+  it("round-trips ids through serialize/restore so a restart keeps exact resolution", async () => {
+    const reg = new ObservationRegistry();
+    mockExtract.mockResolvedValueOnce([PO_FIELD]);
+    const id = (await reg.observe(page)).currentRefs[0].id;
+
+    const restored = new ObservationRegistry();
+    restored.restore(JSON.parse(JSON.stringify(reg.serialize())));
+    expect(restored.get(id)?.ids).toEqual({ id: "po-number", name: "PO NUMBER" });
+  });
+});

@@ -8,6 +8,7 @@
 import type { Obstruction } from "./modal-detector.js";
 import type { CapturedDialog } from "./dialog-handler.js";
 import type { IframeInfo } from "./iframe-detector.js";
+import type { StableIds } from "./stable-ids.js";
 
 export interface DurableRef {
   id: number;
@@ -20,6 +21,12 @@ export interface DurableRef {
   inViewport: boolean;
   lastSeen: number;
   rect: { x: number; y: number; width: number; height: number };
+  /** Durable identifiers observed on the element (unique id, test hook, HTML
+   *  name, placeholder). Both resolution chains match these EXACTLY before
+   *  falling back to the fuzzy role+name / text / xpath / coords chain, which
+   *  is what makes a re-rendered form field still addressable. Absent when the
+   *  element carries no durable identity. See stable-ids.ts. */
+  ids?: StableIds;
   /** Live form-control state (checked / filled / disabled) surfaced in the
    *  ref line. Booleans only — never the field value. Absent for elements with
    *  no meaningful state. */
@@ -67,4 +74,13 @@ export interface BrowserObservation {
   crossOriginIframes: IframeInfo[];
   /** Present (non-empty) when a sub-scan failed this observation. */
   degraded?: ObservationDegradation[];
+}
+
+/** A registry snapshot as persisted across a restart (ObservationRegistry
+ *  serialize/restore). */
+export interface SerializedRegistry {
+  refs: DurableRef[];
+  nextId: number;
+  observationCount: number;
+  lastUrl: string;
 }

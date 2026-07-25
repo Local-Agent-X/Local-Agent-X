@@ -79,6 +79,37 @@ describe("streamViaAPI — usage capture", () => {
   });
 });
 
+describe("streamViaAPI — max_tokens default derives from the model", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "x" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+
+  it("defaults an unset max_tokens to the model's real output ceiling (opus-5 → 128K), not a legacy 8192", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5" });
+    expect(cap.calls[0].body.max_tokens).toBe(128_000);
+  });
+
+  it("derives the lower Haiku 4.5 ceiling (64K) — a real per-model value, not a flat constant", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-haiku-4-5" });
+    expect(cap.calls[0].body.max_tokens).toBe(64_000);
+  });
+
+  it("an explicit max_tokens still wins over the derived default", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", maxTokens: 512 });
+    expect(cap.calls[0].body.max_tokens).toBe(512);
+  });
+
+  it("derives the ceiling on the OAuth path too (this is exactly where app builds truncated at 8192)", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "direct-oauth:sk-ant-oat-fake", model: "claude-opus-5", systemPrompt: "build" });
+    expect(cap.calls[0].body.max_tokens).toBe(128_000);
+  });
+});
+
 describe("streamViaAPI — direct-HTTP OAuth path", () => {
   const OAUTH = "direct-oauth:sk-ant-oat-fake";
 

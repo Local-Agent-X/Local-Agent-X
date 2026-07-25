@@ -1,4 +1,4 @@
-import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking } from "../anthropic-models.js";
+import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicMaxOutputTokens } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
@@ -13,12 +13,19 @@ import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 const logger = createLogger("anthropic-client.stream-api");
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal, temperature, disableThinking } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
   // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
   // only subscription path that streams real thinking text. See oauth-direct.ts.
   const oauth = isDirectOAuthToken(token);
   const resolvedModel = normalizeAnthropicModel(model, oauth ? "subscription" : "api");
+  // max_tokens is REQUIRED on every Messages request. When the caller doesn't set
+  // one, derive it from the model's real output ceiling — NOT a flat legacy
+  // 8192, which truncated large single-turn generations (an app build emitting a
+  // whole file in one write hit stop_reason:max_tokens and shipped the starter).
+  // Streaming (this path) makes a 128K ceiling safe. Single source of truth:
+  // anthropicMaxOutputTokens.
+  const resolvedMaxTokens = maxTokens ?? anthropicMaxOutputTokens(resolvedModel);
   const adaptive = anthropicUsesAdaptiveThinking(resolvedModel);
 
   // Fail fast if the caller already cancelled before we started.
@@ -40,7 +47,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
 
   const body: Record<string, unknown> = {
     model: resolvedModel,
-    max_tokens: maxTokens,
+    max_tokens: resolvedMaxTokens,
     // OAuth routing keys on the system prompt STARTING with the Claude Code
     // identity block; prepend it as a separate text block so the caller's own
     // system prompt still applies verbatim below it.

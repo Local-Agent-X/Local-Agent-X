@@ -5,7 +5,7 @@
 // call 400s in production while unit-per-module tests stay green.
 
 import { describe, it, expect } from "vitest";
-import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking } from "./anthropic-models.js";
+import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicMaxOutputTokens } from "./anthropic-models.js";
 import { classifyModel } from "./model-tiers.js";
 
 describe("Claude Sonnet 5 wiring", () => {
@@ -63,5 +63,37 @@ describe("Claude Opus 5 wiring", () => {
 
   it("classifies as a strong tool-use tier", () => {
     expect(classifyModel("claude-opus-5")).toBe("strong");
+  });
+});
+
+describe("anthropicMaxOutputTokens — per-model output ceiling (single source of truth)", () => {
+  it("returns 128K for the current Opus/Sonnet/Fable tiers, incl. Opus 5", () => {
+    for (const m of [
+      "claude-opus-5", "claude-opus-4-8", "claude-opus-4-6",
+      "claude-sonnet-5", "claude-sonnet-4-6", "claude-fable-5",
+    ]) {
+      expect(anthropicMaxOutputTokens(m)).toBe(128_000);
+    }
+  });
+
+  it("returns 64K for Haiku 4.5 (the one current model with a lower cap)", () => {
+    expect(anthropicMaxOutputTokens("claude-haiku-4-5")).toBe(64_000);
+  });
+
+  it("resolves aliases before looking up the ceiling", () => {
+    expect(anthropicMaxOutputTokens("anthropic/claude-opus-5")).toBe(128_000);
+    expect(anthropicMaxOutputTokens("claude-opus-5[1m]")).toBe(128_000);
+    expect(anthropicMaxOutputTokens("Claude-Opus-5")).toBe(128_000);
+  });
+
+  it("falls back to the 8192 floor for unknown / pre-4.5 ids — never truncates worse than the old default", () => {
+    expect(anthropicMaxOutputTokens("claude-opus-4-0")).toBe(8_192);
+    expect(anthropicMaxOutputTokens("some-unknown-model-xyz")).toBe(8_192);
+  });
+
+  it("is never below the legacy 8192 for any input (regression: the fix must not lower a ceiling)", () => {
+    for (const m of ["claude-opus-5", "claude-haiku-4-5", "claude-opus-4-0", "", "garbage"]) {
+      expect(anthropicMaxOutputTokens(m)).toBeGreaterThanOrEqual(8_192);
+    }
   });
 });

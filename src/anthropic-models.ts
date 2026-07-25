@@ -76,6 +76,39 @@ export function anthropicUsesAdaptiveThinking(model: string): boolean {
   return /^claude-(fable-5|mythos-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
 }
 
+/**
+ * Maximum OUTPUT tokens for a Claude model — the single source of truth for the
+ * `max_tokens` request ceiling when a caller doesn't pass an explicit one. The
+ * Messages API REQUIRES max_tokens on every request and has no "unlimited"
+ * value, so a number is always sent; deriving it from the model's real ceiling
+ * (rather than one flat legacy constant) is what stops a large single-turn
+ * generation — e.g. an app build that emits a whole HTML file in one write —
+ * from silently truncating at `stop_reason: max_tokens` and shipping a partial.
+ * The sole consumer (streamViaAPI) always streams, so a large ceiling is safe
+ * from the non-streaming HTTP-timeout concern that gates big max_tokens.
+ *
+ * Every current Claude model streams up to 128K output except Haiku 4.5 (64K).
+ * Unknown / pre-4.5 ids fall back to the historical 8192 floor — conservative:
+ * never below the old default, and never above a small legacy model's real cap.
+ * Keyed off the normalized id so aliases (`claude-opus-5[1m]`, `anthropic/…`)
+ * resolve correctly. New models: add the id to the 128K/64K list here — this is
+ * the one place the ceiling is defined.
+ */
+export function anthropicMaxOutputTokens(model: string): number {
+  const id = normalizeAnthropicModel(model);
+  if (matchesModelRef(id, ["claude-haiku-4-5"])) return 64_000;
+  if (
+    matchesModelRef(id, [
+      "claude-fable-5", "claude-mythos-5", "claude-opus-5", "claude-sonnet-5",
+      "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
+      "claude-sonnet-4-7", "claude-sonnet-4-6", "claude-sonnet-4-5",
+    ])
+  ) {
+    return 128_000;
+  }
+  return 8_192;
+}
+
 export function usesAnthropicSubscriptionAuth(token: string): boolean {
   return token === "cli" || token.startsWith("oauth:") || token.includes("sk-ant-oat");
 }

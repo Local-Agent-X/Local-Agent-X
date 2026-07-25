@@ -1,0 +1,326 @@
+#!/usr/bin/env node
+/**
+ * Plug-and-play conformance gate for the integration registry.
+ *
+ * The product promise is: user saves a credential in Settings, the capability
+ * appears, and it works no matter which model is driving (Grok, Ollama, GPT,
+ * Claude). ~100 tools cannot be hand-tested one at a time, so this audits the
+ * DECLARATIONS over the whole registry in one pass — the same move as the
+ * user-owned-controls contract test (d0bb7247).
+ *
+ * Four failure classes, all statically decidable:
+ *
+ *   steer:<tool>      tool description steers at a model-locked path. A tool
+ *                     that says "use the Gmail MCP tool instead" is dead advice
+ *                     on every non-Anthropic model, and actively suppresses the
+ *                     portable tool the user actually configured.
+ *   authtype:<id>     declared authType cannot carry the declared endpoints. An
+ *                     api_key identifies a PROJECT, not a user — so it can never
+ *                     satisfy a user-scoped path (/users/me, /me, primary).
+ *                     Those endpoints 403 forever, no matter the model.
+ *   transport:<id>    the integration is shaped like an HTTP API (baseUrl +
+ *                     endpoints consumed by http_request) but its endpoints
+ *                     aren't HTTP paths, or it has no baseUrl to join them to.
+ *   secret:<id>       the credentials the runtime resolves don't match the
+ *                     single secretName the install path stores — so Settings
+ *                     reports CONNECTED while the capability stays dead.
+ *   runtime:<id>      no runtime path at all: not reachable via http_request,
+ *                     no dedicated tool family. Phantom capability.
+ *
+ * Parses source text (no imports) so it is fast and side-effect-free — same
+ * shape as check-pricing-coverage.mjs. Run via `npm run check:integrations`.
+ *
+ * Known-violation baseline lives in scripts/integration-conformance-baseline.json.
+ * It exists so the gate can land on a repo that already has violations without
+ * flipping the build red on day one (same convention as check-source-hygiene's
+ * GRANDFATHERED list). It is a RATCHET, not a mute: every baselined finding is
+ * printed on every run, and a baseline entry that no longer reproduces FAILS the
+ * build so the list can only shrink.
+ */
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const BUILTINS_DIR = join(root, "src/integrations/builtins");
+const BASELINE_PATH = join(root, "scripts/integration-conformance-baseline.json");
+
+const findings = [];
+const add = (id, file, detail) => findings.push({ id, file, detail });
+
+// ---------------------------------------------------------------- source scan
+
+const isSource = (n) => n.endsWith(".ts") && !n.endsWith(".d.ts") && !n.endsWith(".test.ts");
+
+function walk(dir) {
+  const out = [];
+  let entries;
+  try { entries = readdirSync(dir); } catch { return out; }
+  for (const name of entries) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...walk(p));
+    else if (isSource(name)) out.push(p);
+  }
+  return out;
+}
+
+const sourceFiles = walk(join(root, "src"));
+const rel = (p) => relative(root, p).split("\\").join("/");
+
+/** Read one or more `+`-concatenated string literals starting at `i`. */
+function readConcatString(text, i) {
+  let out = "";
+  for (;;) {
+    while (i < text.length && /\s/.test(text[i])) i++;
+    const quote = text[i];
+    if (quote !== '"' && quote !== "'" && quote !== "`") return out || null;
+    i++;
+    let buf = "";
+    while (i < text.length && text[i] !== quote) {
+      if (text[i] === "\\") { buf += text[i + 1] === "n" ? " " : text[i + 1]; i += 2; continue; }
+      buf += text[i++];
+    }
+    i++; // closing quote
+    out += buf;
+    const save = i;
+    while (i < text.length && /\s/.test(text[i])) i++;
+    if (text[i] !== "+") { i = save; return out; }
+    i++;
+  }
+}
+
+const lineOf = (text, idx) => text.slice(0, idx).split("\n").length;
+
+// ------------------------------------------------- CHECK 1: model-locked steer
+
+// Phrases that bind a tool's advice to one vendor's runtime. The MCP connector
+// names are the confirmed offenders; the rest are the same failure shape.
+// Each pattern requires a ROUTING cue ("use X instead", "when connected"), not
+// a bare vendor name — a tool that merely *names* a vendor is fine (memory_ingest
+// legitimately lists ChatGPT/Claude.ai/Codex as supported import formats). What
+// breaks portability is a description that sends the model somewhere else.
+const STEERS = [
+  /\b(gmail|google calendar|google drive)\s+mcp\b/i,
+  /\bmcp (tool|server|connector)\b[^.]{0,40}\b(instead|when connected|if connected)\b/i,
+  /\buse the\b[^.]{0,40}\bmcp\b[^.]{0,30}\b(instead|when connected)\b/i,
+  /\b(use|prefer|switch to|route to)\b[^.]{0,60}\b(claude\.ai|chatgpt|copilot)\b[^.]{0,60}\b(connector|integration|tool)\b/i,
+  /\bwhen (you are|you're|using) (claude|chatgpt|gpt|gemini|grok)\b/i,
+  /\bif (you are|you're) (claude|chatgpt|gpt|gemini|grok)\b/i,
+];
+
+for (const file of sourceFiles) {
+  const text = readFileSync(file, "utf8");
+  // Attribute each `description:` to the nearest preceding `name: "<snake>"`,
+  // which is the ToolDefinition shape used across src/tools.
+  for (const m of text.matchAll(/\bname:\s*["']([a-z][a-z0-9_]*)["']/g)) {
+    const toolName = m[1];
+    const after = text.slice(m.index, m.index + 4000);
+    const d = after.match(/\bdescription:\s*/);
+    if (!d) continue;
+    // Only take a description that belongs to this object (no intervening name:).
+    const between = after.slice(0, d.index);
+    if (/\bname:\s*["']/.test(between.slice(m[0].length))) continue;
+    const desc = readConcatString(text, m.index + d.index + d[0].length);
+    if (!desc) continue;
+    for (const re of STEERS) {
+      if (re.test(desc)) {
+        const snippet = desc.match(new RegExp(`.{0,60}${re.source}.{0,60}`, "i"))?.[0] ?? desc.slice(0, 120);
+        add(`steer:${toolName}`, `${rel(file)}:${lineOf(text, m.index)}`, `"…${snippet.trim()}…"`);
+        break;
+      }
+    }
+  }
+}
+
+// -------------------------------------------------- integration declarations
+
+const field = (text, key) => {
+  const m = text.match(new RegExp(`\\b${key}:\\s*`));
+  return m ? readConcatString(text, m.index + m[0].length) : null;
+};
+
+const integrations = [];
+for (const name of readdirSync(BUILTINS_DIR)) {
+  if (name === "index.ts" || !isSource(name)) continue;
+  const file = join(BUILTINS_DIR, name);
+  const text = readFileSync(file, "utf8");
+  const endpoints = [];
+  for (const m of text.matchAll(/\{\s*name:\s*["'][^"']*["'],\s*method:\s*["'](\w+)["'],\s*path:\s*["']([^"']*)["']/g)) {
+    endpoints.push({ method: m[1], path: m[2] });
+  }
+  integrations.push({
+    file: rel(file),
+    id: field(text, "id"),
+    authType: field(text, "authType"),
+    baseUrl: field(text, "baseUrl") ?? "",
+    secretName: field(text, "secretName"),
+    authInstructions: field(text, "authInstructions") ?? "",
+    endpoints,
+  });
+}
+
+// Cross-check against BUILTIN_INTEGRATIONS so a new builtin that lives outside
+// this directory (or is declared and never registered) can't slip the audit.
+const indexText = readFileSync(join(BUILTINS_DIR, "index.ts"), "utf8");
+const registered = [...indexText.matchAll(/^\s*(\w+Integration),$/gm)].map((m) => m[1]);
+if (registered.length !== integrations.length) {
+  console.error(
+    `check-integration-conformance: FAIL — BUILTIN_INTEGRATIONS registers ${registered.length} integrations but ${integrations.length} declaration files were parsed. Update this script if the registry shape changed.`,
+  );
+  process.exit(1);
+}
+if (integrations.length === 0) {
+  console.error("check-integration-conformance: FAIL — parsed 0 integrations (shape changed? update this script).");
+  process.exit(1);
+}
+
+// ----------------------------------------- CHECK 2: authType vs endpoint scope
+
+// An api_key authenticates the CALLING PROJECT. Any endpoint addressing "the
+// signed-in user" therefore cannot be satisfied by it — it needs a user-context
+// OAuth2 token. These paths are the giveaway.
+const USER_SCOPED = [
+  /\/users\/me(\/|$)/,
+  /\/users\/@me(\/|$)/,
+  /\/@me(\/|$)/,
+  /\/me(\/|$)/,
+  /\/user(s)?(\/|$)/,
+  /\/calendars\/primary(\/|$)/,
+  /\/drive\/v\d+\/files(\/|$)/,
+];
+
+for (const i of integrations) {
+  if (i.authType !== "api_key") continue;
+  const bad = i.endpoints.filter((e) => USER_SCOPED.some((re) => re.test(e.path)));
+  if (bad.length > 0) {
+    add(
+      `authtype:${i.id}`,
+      i.file,
+      `authType "api_key" cannot satisfy ${bad.length}/${i.endpoints.length} user-scoped endpoint(s) — needs OAuth2 user context: ${bad.map((e) => `${e.method} ${e.path}`).join(", ")}`,
+    );
+  }
+}
+
+// ------------------------------------------------- CHECK 3: transport coherence
+
+for (const i of integrations) {
+  const nonHttp = i.endpoints.filter((e) => !e.path.startsWith("/"));
+  if (i.baseUrl && nonHttp.length > 0) {
+    add(`transport:${i.id}`, i.file, `baseUrl declares an HTTP API but ${nonHttp.length} endpoint path(s) are not HTTP paths: ${nonHttp.map((e) => e.path).join(", ")}`);
+  }
+  if (!i.baseUrl && i.endpoints.length > 0) {
+    add(
+      `transport:${i.id}`,
+      i.file,
+      `baseUrl is empty, so http_request cannot reach these ${i.endpoints.length} endpoint(s) (${i.endpoints.map((e) => e.path).join(", ")}); the agent prompt still advertises them under an empty "Base URL:", and /api/integrations/test joins them onto "" to build a nonsense test URL`,
+    );
+  }
+}
+
+// ----------------------------------------------------- CHECK 4: secretName drift
+
+// What the install path can actually persist: exactly one vault entry, named
+// by config.secretName (src/routes/bridges/integrations.ts).
+const CRED_SUFFIX = /_(PASS|PASSWORD|TOKEN|KEY|SECRET)$/;
+const toolFamilyFiles = new Map(); // integration id -> source files of its tool family
+const toolNames = new Set();
+
+for (const file of sourceFiles) {
+  const text = readFileSync(file, "utf8");
+  for (const m of text.matchAll(/\bname:\s*["']([a-z][a-z0-9_]*_[a-z0-9_]+)["']/g)) toolNames.add(m[1]);
+}
+for (const i of integrations) {
+  const files = sourceFiles.filter((f) => rel(f).startsWith(`src/tools/${i.id}-`) || rel(f).startsWith(`src/tools/${i.id}/`));
+  if (files.length) toolFamilyFiles.set(i.id, files);
+}
+
+for (const i of integrations) {
+  const declared = i.secretName;
+  if (!declared) { add(`secret:${i.id}`, i.file, "no secretName declared — install path has nothing to store"); continue; }
+
+  // (a) Credentials the dedicated tool family actually resolves at runtime.
+  const resolved = new Set();
+  for (const f of toolFamilyFiles.get(i.id) ?? []) {
+    const text = readFileSync(f, "utf8");
+    for (const m of text.matchAll(/\b(?:vault|env)\(\s*["']([A-Z][A-Z0-9_]*)["']\s*\)/g)) resolved.add(m[1]);
+    for (const m of text.matchAll(/\bprocess\.env\.([A-Z][A-Z0-9_]*)/g)) resolved.add(m[1]);
+    for (const m of text.matchAll(/\bkey\s*===\s*["']([A-Z][A-Z0-9_]*_(?:PASS|TOKEN|KEY|SECRET))["']/g)) resolved.add(m[1]);
+  }
+  const unstorable = [...resolved].filter((n) => CRED_SUFFIX.test(n) && n !== declared);
+  if (unstorable.length > 0) {
+    add(
+      `secret:${i.id}`,
+      i.file,
+      `runtime resolves credential(s) the install path never stores: ${unstorable.join(", ")} (integration declares only secretName "${declared}")`,
+    );
+  }
+
+  // (b) authInstructions that promise more config than one secret field holds.
+  // The Settings modal renders exactly ONE input, labelled with secretName.
+  const promised = [...new Set([...i.authInstructions.matchAll(/\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/g)].map((m) => m[1]))];
+  const extra = promised.filter((n) => n !== declared);
+  if (extra.length > 0) {
+    add(
+      `secret:${i.id}`,
+      i.file,
+      `authInstructions ask the user for ${promised.length} values (${promised.join(", ")}) but the install modal renders one field and /api/integrations/install persists only "${declared}" — the other ${extra.length} are silently dropped`,
+    );
+  }
+}
+
+// ------------------------------------------------------ CHECK 5: runtime path
+
+for (const i of integrations) {
+  const viaHttp = Boolean(i.baseUrl) && i.endpoints.every((e) => e.path.startsWith("/"));
+  const viaTools = [...toolNames].some((t) => t.startsWith(`${i.id}_`));
+  if (!viaHttp && !viaTools) {
+    add(`runtime:${i.id}`, i.file, "no runtime path — not reachable via http_request (no usable baseUrl) and no dedicated tool family exists");
+  }
+}
+
+// ------------------------------------------------------------------- baseline
+
+let baseline = [];
+if (existsSync(BASELINE_PATH)) {
+  try { baseline = JSON.parse(readFileSync(BASELINE_PATH, "utf8")).known ?? []; }
+  catch { console.error(`check-integration-conformance: FAIL — ${rel(BASELINE_PATH)} is not valid JSON.`); process.exit(1); }
+}
+const baselined = new Map(baseline.map((b) => [b.id, b.note ?? ""]));
+const fresh = findings.filter((f) => !baselined.has(f.id));
+const seen = new Set(findings.map((f) => f.id));
+const stale = [...baselined.keys()].filter((id) => !seen.has(id));
+
+const group = (list) => {
+  const out = new Map();
+  for (const f of list) (out.get(f.id) ?? out.set(f.id, []).get(f.id)).push(f);
+  return out;
+};
+
+if (baselined.size > 0) {
+  console.warn(`check-integration-conformance: ${baselined.size} KNOWN violation(s) held in the baseline — this is the fix backlog, not a pass:`);
+  for (const [id, items] of group(findings.filter((f) => baselined.has(f.id)))) {
+    console.warn(`  - ${id} (${items[0].file})`);
+    console.warn(`      ${items[0].detail}`);
+    if (baselined.get(id)) console.warn(`      note: ${baselined.get(id)}`);
+  }
+}
+
+if (stale.length > 0) {
+  console.error("check-integration-conformance: FAIL — baseline entries that no longer reproduce. Delete them (the baseline may only shrink):");
+  for (const id of stale) console.error(`  - ${id}`);
+  process.exit(1);
+}
+
+if (fresh.length > 0) {
+  console.error(`check-integration-conformance: FAIL — ${fresh.length} new plug-and-play violation(s):`);
+  for (const [id, items] of group(fresh)) {
+    console.error(`  - ${id} (${items[0].file})`);
+    for (const it of items) console.error(`      ${it.detail}`);
+  }
+  console.error("\nFix the declaration or the runtime path. Do not add to the baseline to silence this.");
+  process.exit(1);
+}
+
+console.log(
+  `check-integration-conformance: OK (${integrations.length} integrations, ${toolNames.size} tool names scanned, ${baselined.size} known violation(s) in baseline)`,
+);

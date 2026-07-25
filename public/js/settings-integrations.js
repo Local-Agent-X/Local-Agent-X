@@ -183,6 +183,18 @@ async function showInstallModal(id) {
   try {
     const config = await apiJson('/api/integrations/' + id);
     const instructions = esc(config.authInstructions || '').replace(/\n/g, '<br>');
+    // One field per DECLARED credential — most services need one, some (email)
+    // need several. A config with no list falls back to its derived primary.
+    const credentials = Array.isArray(config.credentials) && config.credentials.length > 0
+      ? config.credentials
+      : [{ name: config.secretName }];
+    const single = credentials.length === 1;
+    const fields = credentials.map(c => `
+          <div style="margin-bottom:12px">
+            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">${single ? 'API Key / Token' : esc(c.service || c.name)} (${esc(c.name)})</label>
+            ${c.description ? `<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px">${esc(c.description)}</div>` : ''}
+            <input type="${c.secret === false ? 'text' : 'password'}" data-install-secret="${esc(c.name)}" class="field-input" placeholder="${single ? 'Paste your key or token here' : esc('Enter ' + c.name)}" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-family:var(--mono);font-size:.8rem" autocomplete="off"/>
+          </div>`).join('');
     const html = `
       <div id="install-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999" onclick="if(event.target===this)this.remove()">
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:500px;width:90%">
@@ -192,10 +204,7 @@ async function showInstallModal(id) {
             <div style="color:var(--accent);font-weight:600;margin-bottom:6px">How to get your credentials:</div>
             ${instructions}
           </div>
-          <div style="margin-bottom:12px">
-            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">API Key / Token (${esc(config.secretName)})</label>
-            <input type="password" id="install-secret-value" class="field-input" placeholder="Paste your key or token here" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-family:var(--mono);font-size:.8rem" autocomplete="off"/>
-          </div>
+          ${fields}
           ${config.docsUrl ? `<div style="margin-bottom:16px"><a href="${/^https?:\/\//i.test(config.docsUrl || '') ? esc(config.docsUrl) : '#'}" target="_blank" style="font-size:.72rem;color:var(--accent)">📄 Official API Docs →</a></div>` : ''}
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="action-btn secondary" onclick="document.getElementById('install-modal').remove()">Cancel</button>
@@ -205,18 +214,25 @@ async function showInstallModal(id) {
       </div>
     `;
     document.body.insertAdjacentHTML('beforeend', html);
-    document.getElementById('install-secret-value')?.focus();
+    document.querySelector('#install-modal [data-install-secret]')?.focus();
   } catch (e) {
     console.error('Failed to load integration:', e);
   }
 }
 
 async function doInstallIntegration(id) {
-  const input = document.getElementById('install-secret-value');
-  const value = input?.value?.trim();
-  if (!value) { alert('Please enter your API key or token.'); return; }
+  const inputs = [...document.querySelectorAll('#install-modal [data-install-secret]')];
+  const secretValues = {};
+  for (const input of inputs) {
+    const value = input.value?.trim();
+    if (!value) {
+      alert(inputs.length === 1 ? 'Please enter your API key or token.' : 'Please enter a value for ' + input.dataset.installSecret + '.');
+      return;
+    }
+    secretValues[input.dataset.installSecret] = value;
+  }
   try {
-    await apiPost('/api/integrations/install', { id, secretValue: value });
+    await apiPost('/api/integrations/install', { id, secretValues });
     document.getElementById('install-modal')?.remove();
     loadIntegrations();
   } catch (e) {

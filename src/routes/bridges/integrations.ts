@@ -2,6 +2,43 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { IntegrationRegistry } from "../../integrations/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
+import { isSecretRequirement, type CredentialRequirement } from "../../credentials/requirements.js";
+
+type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown };
+
+/**
+ * Pairs each supplied install value with the credential it was DECLARED under.
+ * `secretValues` is the multi-credential shape; a bare `secretValue` still means
+ * "the primary credential", so every caller written against the single-field
+ * install keeps working unchanged.
+ *
+ * A name the integration does not declare is rejected outright, and resolution
+ * completes before anything is written — this route is a network-reachable vault
+ * write, and it must not become an arbitrary-secret-write primitive, nor leave a
+ * partial write behind when it rejects.
+ */
+function resolveInstallValues(
+  credentials: CredentialRequirement[],
+  body: InstallBody,
+): { values: Array<{ requirement: CredentialRequirement; value: string }> } | { error: string } {
+  const declared = new Map(credentials.map(c => [c.name, c]));
+  const supplied = new Map<string, string>();
+  if (body.secretValues !== undefined) {
+    const raw = body.secretValues;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "secretValues must be an object" };
+    for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (!declared.has(name)) return { error: `Integration does not declare credential ${name}` };
+      if (typeof value !== "string") return { error: `Credential ${name} must be a string` };
+      if (value) supplied.set(name, value);
+    }
+  }
+  if (typeof body.secretValue === "string" && body.secretValue) {
+    const primary = credentials[0];
+    if (!primary) return { error: "Integration declares no credentials" };
+    if (!supplied.has(primary.name)) supplied.set(primary.name, body.secretValue);
+  }
+  return { values: [...supplied].map(([name, value]) => ({ requirement: declared.get(name)!, value })) };
+}
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -19,18 +56,32 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     json(200, config); return true;
   }
   if (method === "POST" && url.pathname === "/api/integrations/install") {
-    const body = await safeParseBody(req) as { id: string; secretValue?: string };
+    const body = await safeParseBody(req) as InstallBody | null;
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
     const config = ctx.integrations.get(body.id);
     if (!config) { json(404, { error: "Integration not found" }); return true; }
-    if (body.secretValue) ctx.secretsStore.set(config.secretName, body.secretValue, config.name);
+    const resolved = resolveInstallValues(config.credentials, body);
+    if ("error" in resolved) { json(400, { error: resolved.error }); return true; }
+    for (const { requirement, value } of resolved.values) {
+      // A `secret: false` requirement is non-secret config (e.g. SMTP_HOST) and
+      // must never reach the encrypted vault. There is no non-vault sink on this
+      // seam yet, so such a value is collected by the modal and dropped here
+      // rather than persisted somewhere it does not belong.
+      if (!isSecretRequirement(requirement)) continue;
+      ctx.secretsStore.set(requirement.name, value, config.name);
+    }
     ctx.integrations.markInstalled(body.id, true);
     json(200, { ok: true, id: body.id, secretName: config.secretName }); return true;
   }
   if (method === "POST" && url.pathname === "/api/integrations/uninstall") {
-    const body = await safeParseBody(req) as { id: string };
+    const body = await safeParseBody(req) as { id: string } | null;
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
     const config = ctx.integrations.get(body.id);
     if (!config) { json(404, { error: "Integration not found" }); return true; }
-    ctx.secretsStore.delete(config.secretName);
+    // Every DECLARED credential, not just the primary: install writes one vault
+    // entry per credential, so deleting `secretName` alone would orphan the rest
+    // of a multi-credential integration's secrets.
+    for (const requirement of config.credentials) ctx.secretsStore.delete(requirement.name);
     ctx.integrations.markInstalled(body.id, false);
     json(200, { ok: true, id: body.id }); return true;
   }

@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { CredentialRequirement } from "../credentials/requirements.js";
-import type { IntegrationConfig, IntegrationDeclaration } from "./types.js";
+import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
+import { missingCredentials } from "../credentials/requirements.js";
+import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
+import { canAuthTypeReach } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
@@ -58,7 +60,15 @@ export class IntegrationRegistry {
   private filePath: string;
   private integrations: Map<string, IntegrationConfig> = new Map();
 
-  constructor(dataDir: string) {
+  /**
+   * `secrets` is REQUIRED on purpose. getAgentContext() may only advertise an
+   * integration whose credentials the vault actually holds, and an optional
+   * port would let a mis-wired construction site silently fall back to
+   * "advertise everything" — the exact dishonest behaviour this gate exists to
+   * remove — while every unit test still passed. Required makes the wiring
+   * compiler-enforced.
+   */
+  constructor(dataDir: string, private secrets: SecretAvailabilityPort) {
     this.filePath = join(dataDir, "integrations.json");
     this.load();
   }
@@ -161,16 +171,37 @@ export class IntegrationRegistry {
     return true;
   }
 
+  /**
+   * The installed+enabled integrations the model can HONESTLY be told about,
+   * each paired with the endpoints its declared auth can actually reach.
+   *
+   * Two dishonest advertisements are dropped here: an integration whose
+   * credentials are not in the vault (every call would 401), and an endpoint
+   * needing a user-context grant the declared auth type cannot produce. An
+   * integration left with no reachable endpoint is dropped entirely — a heading
+   * with an empty endpoint list teaches the model nothing.
+   */
+  private advertisable(): Array<{ integration: IntegrationConfig; endpoints: IntegrationEndpoint[] }> {
+    return Array.from(this.integrations.values())
+      .filter(i => i.installed && i.enabled)
+      .map(integration => ({
+        integration,
+        endpoints: integration.endpoints.filter(ep => canAuthTypeReach(integration.authType, ep)),
+      }))
+      .filter(({ integration, endpoints }) =>
+        endpoints.length > 0 && missingCredentials(integration.credentials, this.secrets).length === 0);
+  }
+
   getAgentContext(): string {
     if (isLocalOnlyMode()) return "";
-    const installed = Array.from(this.integrations.values()).filter(i => i.installed && i.enabled);
+    const installed = this.advertisable();
     if (installed.length === 0) return "";
 
     let ctx = "\n## Connected API Integrations\n";
     ctx += "These APIs are configured and ready to use via the http_request tool.\n";
     ctx += "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n";
 
-    for (const i of installed) {
+    for (const { integration: i, endpoints } of installed) {
       ctx += `### ${i.icon} ${i.name} (${i.id})\n`;
       ctx += `Base URL: ${i.baseUrl}\n`;
       ctx += `Auth: ${i.credentials.map(c => `{{${c.name}}}`).join(", ")} as ${i.authType === "bearer_token" || i.authType === "bot_token" ? "Bearer token" : i.authType}\n`;
@@ -178,7 +209,7 @@ export class IntegrationRegistry {
         ctx += `Extra headers: ${JSON.stringify(i.headers)}\n`;
       }
       ctx += `Endpoints:\n`;
-      for (const ep of i.endpoints) {
+      for (const ep of endpoints) {
         ctx += `- ${ep.method} ${ep.path} — ${ep.description}\n`;
       }
       ctx += "\n";

@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IntegrationRegistry } from "./registry.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
+import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
+import type { SecretAvailabilityPort } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration } from "./types.js";
 
 let dir: string;
@@ -28,7 +30,12 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 const savedFile = () => join(dir, "integrations.json");
 const write = (configs: unknown[]) => writeFileSync(savedFile(), JSON.stringify(configs, null, 2), "utf-8");
-const load = () => new IntegrationRegistry(dir);
+
+/** A vault holding exactly these names — anything else reads as never-set/deleted. */
+const vault = (...names: string[]): SecretAvailabilityPort => ({ has: (name) => names.includes(name) });
+/** Every credential present: the state the pre-gate build effectively assumed. */
+const FULL_VAULT: SecretAvailabilityPort = { has: () => true };
+const load = (secrets: SecretAvailabilityPort = FULL_VAULT) => new IntegrationRegistry(dir, secrets);
 
 /** A config exactly as the pre-list build wrote it: one `secretName`, no list. */
 function preListConfig(id: string, secretName: string, extra: Record<string, unknown> = {}) {
@@ -195,6 +202,135 @@ describe("adding an integration", () => {
     expect(() => load().addIntegration({
       ...base, baseUrl: "http://169.254.169.254/latest/meta-data", credentials: [{ name: "ACME_TOKEN" }],
     })).toThrow(/SSRF/);
+  });
+});
+
+/**
+ * The full context the PRE-gate build rendered for a lone installed GitHub,
+ * pinned character-for-character. The gate may only REMOVE dishonest entries;
+ * if it ever reformats, reorders or re-words an honest one this fails.
+ */
+const PRE_GATE_GITHUB_CONTEXT =
+  "\n## Connected API Integrations\n" +
+  "These APIs are configured and ready to use via the http_request tool.\n" +
+  "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n" +
+  "### 🐙 GitHub (github)\n" +
+  "Base URL: https://api.github.com\n" +
+  "Auth: {{GITHUB_TOKEN}} as Bearer token\n" +
+  'Extra headers: {"Accept":"application/vnd.github.v3+json"}\n' +
+  "Endpoints:\n" +
+  "- GET /user/repos — List your repositories\n" +
+  "- POST /repos/{owner}/{repo}/issues — Create an issue\n" +
+  "- GET /repos/{owner}/{repo}/pulls — List pull requests\n" +
+  "- POST /repos/{owner}/{repo}/pulls — Create a pull request\n" +
+  "- GET /user — Get authenticated user profile\n" +
+  "- GET /notifications — List notifications\n\n";
+
+/** A custom integration whose auth type and endpoint scopes the test picks. */
+function custom(overrides: Partial<IntegrationDeclaration>): IntegrationDeclaration {
+  return {
+    id: "acme", name: "Acme", icon: "🔌", description: "", authType: "api_key",
+    authInstructions: "", baseUrl: "https://api.acme.test", docsUrl: "",
+    credentials: [{ name: "ACME_TOKEN" }],
+    endpoints: [{ name: "Ping", method: "GET", path: "/ping", description: "ping" }],
+    headers: {}, enabled: true, installed: true, builtin: false, ...overrides,
+  };
+}
+
+describe("agent context credential gate", () => {
+  it("renders an integration whose credentials are all present exactly as the pre-gate build did", () => {
+    const registry = load(vault("GITHUB_TOKEN"));
+    registry.markInstalled("github", true);
+
+    expect(registry.getAgentContext()).toBe(PRE_GATE_GITHUB_CONTEXT);
+  });
+
+  it("drops an installed+enabled integration whose secret is not in the vault", () => {
+    // Core new behaviour: the user deleted GITHUB_TOKEN but never uninstalled
+    // GitHub. Every call would 401, so the model must not be told it can.
+    const registry = load(vault("NOTION_API_KEY"));
+    registry.markInstalled("github", true);
+    registry.markInstalled("notion", true);
+
+    const ctx = registry.getAgentContext();
+    expect(ctx).not.toContain("(github)");
+    expect(ctx).toContain("(notion)");
+  });
+
+  it("drops a multi-credential integration when only some of its credentials are present", () => {
+    const registry = load(vault("ACME_TOKEN"));
+    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_HOST", secret: false }] }));
+
+    expect(registry.getAgentContext()).toBe("");
+  });
+
+  it("advertises a multi-credential integration once every credential is present", () => {
+    const registry = load(vault("ACME_TOKEN", "ACME_HOST"));
+    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_HOST", secret: false }] }));
+
+    expect(registry.getAgentContext()).toContain("(acme)");
+  });
+
+  it("still short-circuits to nothing in local-only mode", () => {
+    const saved = getRuntimeConfig();
+    setRuntimeConfig({ ...saved, localOnlyMode: true });
+    try {
+      const registry = load(vault("GITHUB_TOKEN"));
+      registry.markInstalled("github", true);
+      expect(registry.getAgentContext()).toBe("");
+    } finally {
+      setRuntimeConfig(saved);
+    }
+  });
+});
+
+describe("agent context endpoint feasibility", () => {
+  it("advertises only the google endpoints an api_key can actually reach", () => {
+    const registry = load(vault("GOOGLE_API_KEY"));
+    registry.markInstalled("google", true);
+
+    const ctx = registry.getAgentContext();
+    expect(ctx).toContain("/youtube/v3/search");
+    for (const path of [
+      "/gmail/v1/users/me/messages",
+      "/gmail/v1/users/me/messages/send",
+      "/calendar/v3/calendars/primary/events",
+      "/drive/v3/files",
+    ]) {
+      expect(ctx, `${path} needs a user grant an api_key cannot produce`).not.toContain(path);
+    }
+  });
+
+  it("advertises user-scoped endpoints to an oauth2 integration", () => {
+    // The gate turns on auth type, not on the endpoint alone — otherwise the
+    // annotation would just be a delete.
+    const registry = load(vault("ACME_TOKEN"));
+    registry.addIntegration(custom({
+      authType: "oauth2",
+      endpoints: [{ name: "Me", method: "GET", path: "/me", description: "my data", authScope: "user" }],
+    }));
+
+    expect(registry.getAgentContext()).toContain("- GET /me — my data");
+  });
+
+  it("does not advertise an integration whose every endpoint is out of reach", () => {
+    const registry = load(vault("ACME_TOKEN"));
+    registry.addIntegration(custom({
+      endpoints: [{ name: "Me", method: "GET", path: "/me", description: "my data", authScope: "user" }],
+    }));
+
+    expect(registry.getAgentContext()).toBe("");
+  });
+
+  it("leaves email's smtp/imap pseudo-paths advertised — its transport is a separate concern", () => {
+    // email declares no authScope and an empty baseUrl. The gate must neither
+    // crash on that nor silently retire the integration.
+    const registry = load(vault("SMTP_PASS"));
+    registry.markInstalled("email", true);
+
+    const ctx = registry.getAgentContext();
+    expect(ctx).toContain("(email)");
+    expect(ctx).toContain("- POST smtp — Send an email via SMTP");
   });
 });
 

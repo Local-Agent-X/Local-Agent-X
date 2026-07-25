@@ -17,6 +17,11 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly StringBuilder _log = new();
     private string _repoRoot = "";
 
+    // The full install log is mirrored to disk as it streams, so the user can
+    // open the complete record even after output scrolls out of the panel.
+    private StreamWriter? _logWriter;
+    private string _logFilePath = "";
+
     public ObservableCollection<StepViewModel> Steps { get; } = new();
 
     // welcome | progress | done | error
@@ -25,6 +30,8 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string _currentStepDetail = "";
     [ObservableProperty] private bool _showLog = false;
     [ObservableProperty] private string _logText = "";
+    [ObservableProperty] private int _logLineCount;
+    [ObservableProperty] private bool _hasLogFile;
     [ObservableProperty] private string _errorMessage = "";
 
     // Live progress bar. While a step runs we show an indeterminate (pulsing)
@@ -60,11 +67,7 @@ public partial class MainWindowViewModel : ObservableObject
         _process.OnEvent += HandleEvent;
         _process.OnExit += HandleExit;
         _node.OnStatus  += s => Dispatcher.UIThread.Post(() => { CurrentStepLabel = s; });
-        _node.OnLogLine += line => Dispatcher.UIThread.Post(() =>
-        {
-            _log.AppendLine($"[node-bootstrap] {line}");
-            LogText = _log.ToString();
-        });
+        _node.OnLogLine += line => Dispatcher.UIThread.Post(() => AppendLog($"[node-bootstrap] {line}"));
         _source.OnStatus += s => Dispatcher.UIThread.Post(() => { CurrentStepDetail = s; });
         _source.OnProgress += (got, total) => Dispatcher.UIThread.Post(() =>
         {
@@ -85,6 +88,8 @@ public partial class MainWindowViewModel : ObservableObject
         Steps.Clear();
         _log.Clear();
         LogText = "";
+        LogLineCount = 0;
+        OpenLogFile();
 
         // Environment.ProcessPath returns the actual on-disk .exe location
         // even when run as a single-file PublishSingleFile binary (where
@@ -205,8 +210,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            _log.AppendLine($"[error] Launch failed: {ex.Message}");
-            LogText = _log.ToString();
+            AppendLog($"[error] Launch failed: {ex.Message}");
         }
         Environment.Exit(0);
     }
@@ -261,8 +265,7 @@ public partial class MainWindowViewModel : ObservableObject
                 break;
 
             case "log":
-                _log.AppendLine($"[{evt.Level ?? "info"}] {evt.Line}");
-                LogText = _log.ToString();
+                AppendLog($"[{evt.Level ?? "info"}] {evt.Line}");
                 break;
 
             case "complete":
@@ -287,6 +290,57 @@ public partial class MainWindowViewModel : ObservableObject
                     ErrorMessage = $"Installer exited with code {code}. See log for details.";
             }
         });
+    }
+
+    // Single sink for every log line: mirrors to the visible panel and to the
+    // on-disk log. Must be called on the UI thread (it touches observables).
+    private void AppendLog(string text)
+    {
+        _log.AppendLine(text);
+        LogText = _log.ToString();
+        LogLineCount++;
+        // Logging must never break the install — a locked/unwritable file is
+        // downgraded to panel-only output rather than surfaced as a failure.
+        try { _logWriter?.WriteLine(text); } catch { /* best-effort */ }
+    }
+
+    // Open a fresh timestamped log file in a stable, discoverable location
+    // (%LOCALAPPDATA%\Local Agent X\installer-logs on Windows). AutoFlush so
+    // the file is complete-to-the-last-line whenever the user opens it.
+    private void OpenLogFile()
+    {
+        try
+        {
+            var dir = Path.Combine(InstallLocation.GetSourceDir(), "installer-logs");
+            Directory.CreateDirectory(dir);
+            _logFilePath = Path.Combine(dir, $"install-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+            _logWriter?.Dispose();
+            _logWriter = new StreamWriter(_logFilePath, append: false) { AutoFlush = true };
+            HasLogFile = true;
+        }
+        catch
+        {
+            // Non-fatal: the install still runs, just without an on-disk copy.
+            _logWriter = null;
+            _logFilePath = "";
+            HasLogFile = false;
+        }
+    }
+
+    [RelayCommand]
+    private void OpenLog()
+    {
+        if (string.IsNullOrEmpty(_logFilePath) || !File.Exists(_logFilePath)) return;
+        try
+        {
+            // UseShellExecute lets the OS open the .log with its default handler
+            // (Notepad on Windows, Console/TextEdit on macOS).
+            Process.Start(new ProcessStartInfo { FileName = _logFilePath, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"[error] Couldn't open log file: {ex.Message}");
+        }
     }
 
     // Walk up from the exe's directory looking for scripts/install-common.mjs.

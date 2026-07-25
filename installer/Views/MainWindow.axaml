@@ -9,7 +9,8 @@
         Title="Local Agent X Installer"
         Icon="avares://LocalAgentXInstaller/Assets/icon.png"
         Width="820" Height="580"
-        CanResize="False"
+        MinWidth="720" MinHeight="520"
+        CanResize="True"
         WindowStartupLocation="CenterScreen">
 
     <Grid ColumnDefinitions="260,*">
@@ -129,33 +130,55 @@
                                      Height="6" Margin="0,6,0,0"/>
                     </StackPanel>
 
-                    <ScrollViewer Grid.Row="1" Margin="0,14,0,0">
-                        <ItemsControl ItemsSource="{Binding Steps}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="vm:StepViewModel">
-                                    <Grid ColumnDefinitions="28,*" Margin="0,3">
-                                        <TextBlock Grid.Column="0" Text="{Binding Icon}"
-                                                   FontSize="14" VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding Label}"
-                                                   FontSize="13" VerticalAlignment="Center"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                    <!-- The step checklist and the live log share this flexible
+                         region. "Show details" swaps the checklist for a
+                         full-height, tail-following log so output is actually
+                         readable — the old panel was a fixed 120px sliver that
+                         scrolled new lines off-screen with no way to view the
+                         whole thing. The full log is also written to disk (see
+                         "Open log"). -->
+                    <Panel Grid.Row="1" Margin="0,14,0,0">
+                        <ScrollViewer IsVisible="{Binding !ShowLog}">
+                            <ItemsControl ItemsSource="{Binding Steps}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:StepViewModel">
+                                        <Grid ColumnDefinitions="28,*" Margin="0,3">
+                                            <TextBlock Grid.Column="0" Text="{Binding Icon}"
+                                                       FontSize="14" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Label}"
+                                                       FontSize="13" VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
 
-                    <Grid Grid.Row="2" Margin="0,12,0,0" RowDefinitions="Auto,Auto">
-                        <ToggleButton Grid.Row="0" Content="Show details"
-                                      IsChecked="{Binding ShowLog}" HorizontalAlignment="Left"/>
-                        <Border Grid.Row="1" IsVisible="{Binding ShowLog}" Margin="0,8,0,0"
+                        <Border IsVisible="{Binding ShowLog}"
                                 BorderThickness="1" BorderBrush="#333" Background="#1a1a1a"
-                                CornerRadius="4" MaxHeight="120">
-                            <ScrollViewer>
+                                CornerRadius="4">
+                            <ScrollViewer x:Name="LogScroller"
+                                          HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Auto">
                                 <TextBlock Text="{Binding LogText}"
                                            FontFamily="Consolas,Menlo,monospace"
-                                           FontSize="11" Padding="8" Foreground="#cfcfcf"/>
+                                           FontSize="11" Padding="8" Foreground="#cfcfcf"
+                                           TextWrapping="NoWrap"/>
                             </ScrollViewer>
                         </Border>
+                    </Panel>
+
+                    <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="Auto,*,Auto,Auto">
+                        <ToggleButton Grid.Column="0" Content="Show details"
+                                      IsChecked="{Binding ShowLog}"/>
+                        <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                   IsVisible="{Binding ShowLog}"
+                                   Text="{Binding LogLineCount, StringFormat='{}{0} lines'}"
+                                   Opacity="0.5" FontSize="11" Margin="0,0,10,0"/>
+                        <Button Grid.Column="3" Content="Open log"
+                                Command="{Binding OpenLogCommand}"
+                                IsVisible="{Binding ShowLog}"
+                                IsEnabled="{Binding HasLogFile}"
+                                Padding="10,4" MinWidth="0"/>
                     </Grid>
                 </Grid>
 
@@ -178,11 +201,16 @@
                     <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" FontSize="13" Opacity="0.85"/>
                     <Border BorderThickness="1" BorderBrush="#444" Background="#1a1a1a"
                             CornerRadius="4" MaxHeight="200" Margin="0,4,0,0">
-                        <ScrollViewer>
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto">
                             <TextBlock Text="{Binding LogText}" FontFamily="Consolas,Menlo,monospace"
-                                       FontSize="11" Padding="8" Foreground="#cfcfcf"/>
+                                       FontSize="11" Padding="8" Foreground="#cfcfcf"
+                                       TextWrapping="NoWrap"/>
                         </ScrollViewer>
                     </Border>
+                    <Button Content="Open full log" HorizontalAlignment="Left"
+                            Command="{Binding OpenLogCommand}"
+                            IsVisible="{Binding HasLogFile}"
+                            Padding="12,6"/>
                 </StackPanel>
             </Panel>
 

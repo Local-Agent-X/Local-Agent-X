@@ -1,0 +1,23 @@
+# Studio-Vox tier (VoxCPM) sidecar - pinned direct dependencies.
+#
+# Installed into ~/.lax/python-voxcpm/venv/ by install.ps1 / install.sh.
+# These were floating (bare `pip install voxcpm faster-whisper ...`) until
+# 2026-07-25, so every install grabbed whatever PyPI served that day. The
+# versions below are the ones verified working on the RTX 5090 box: voxcpm,
+# faster_whisper, fastapi and soundfile all import and torch reports cuda=True.
+#
+# torch/torchaudio are deliberately NOT pinned here - see the same note in
+# python/chatterbox/requirements.txt. Windows force-reinstalls the CUDA 12.8
+# build (Blackwell needs it) from the pytorch index; macOS/Linux take the
+# default CPU/MPS build. A +cu128 pin in this shared file would break the .sh
+# installer, which has no CUDA step.
+#
+# faster-whisper transcribes the reference clip at registration time - VoxCPM
+# conditions on the transcript, so this is load-bearing, not optional.
+
+setuptools==78.1.0        # audio deps import pkg_resources; py3.12 venvs ship without it
+voxcpm==2.0.3
+faster-whisper==1.2.1
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+soundfile==0.14.0

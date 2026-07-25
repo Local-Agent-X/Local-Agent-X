@@ -12,6 +12,11 @@
 
 $ErrorActionPreference = "Stop"
 $venvDir = "$env:USERPROFILE\.lax\python-voxcpm\venv"
+# CUDA 12.8 torch pair, pinned to the versions verified on the RTX 5090 box.
+# Not in requirements.txt: +cu128 is a local version that only exists on the
+# pytorch index and has no macOS wheel, so it would break install.sh.
+# PowerShell splats an array into separate native-command arguments.
+$TorchPin = @("torch==2.11.0+cu128", "torchaudio==2.11.0+cu128")
 
 # 1) Locate Python 3.12+
 $pythonExe = $null
@@ -39,17 +44,16 @@ $pyExe = "$venvDir\Scripts\python.exe"
 #    resolve can't leave a half-built venv, and it is far faster than pip on the
 #    ~3 GB torch wheels below. setuptools is still installed - py3.12 venvs ship
 #    without it and the audio deps import pkg_resources.
-Write-Host "Bootstrapping uv + setuptools ..."
+Write-Host "Bootstrapping uv ..."
 & $pyExe -m pip install --upgrade uv --quiet
 if ($LASTEXITCODE -ne 0) { Write-Error "uv bootstrap failed (exit $LASTEXITCODE)" }
 $uvExe = Join-Path $venvDir "Scripts\uv.exe"
-& $uvExe pip install --python $pyExe setuptools
-if ($LASTEXITCODE -ne 0) { Write-Error "setuptools install failed (exit $LASTEXITCODE)" }
+$reqs = Join-Path $PSScriptRoot "requirements.txt"
 
 # 4) voxcpm + server deps + faster-whisper (auto-transcribes reference clips
 #    at registration; VoxCPM conditions on the transcript)
-Write-Host "Installing voxcpm + server deps ..."
-& $uvExe pip install --python $pyExe voxcpm faster-whisper fastapi "uvicorn[standard]" soundfile
+Write-Host "Installing pinned base (voxcpm + server deps) ..."
+& $uvExe pip install --python $pyExe -r $reqs
 if ($LASTEXITCODE -ne 0) { Write-Error "voxcpm install failed (exit $LASTEXITCODE)" }
 
 # 5) Force the CUDA 12.8 torch AFTER everything else. Blackwell GPUs
@@ -62,7 +66,9 @@ if ($LASTEXITCODE -ne 0) { Write-Error "voxcpm install failed (exit $LASTEXITCOD
 if ($env:LAX_FORCE_CPU_TORCH -ne "1") {
     Write-Host "Installing CUDA 12.8 torch build (~3 GB) ..."
     # uv's --reinstall is the equivalent of pip's --force-reinstall here.
-    & $uvExe pip install --python $pyExe --reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    # Pinned rather than floating so a cu128 index bump can't silently swap the
+    # torch under a working install; $TorchPin is the pair verified on the 5090.
+    & $uvExe pip install --python $pyExe --reinstall $TorchPin --index-url https://download.pytorch.org/whl/cu128
     if ($LASTEXITCODE -ne 0) { Write-Error "CUDA torch override failed (exit $LASTEXITCODE)" }
 }
 

@@ -50,21 +50,18 @@ PY="$VENV_DIR/bin/python"
 # all wheels before installing, so a failed resolve can't leave a half-built
 # venv; far faster than pip). setuptools still needed - librosa imports
 # pkg_resources and Python 3.12 venvs no longer ship it.
-echo "Bootstrapping uv + setuptools..."
+echo "Bootstrapping uv..."
 "$PY" -m pip install --upgrade uv --quiet
 UV="$VENV_DIR/bin/uv"
-"$UV" pip install --python "$PY" setuptools
+REQS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/requirements.txt"
 
 # 4) Install chatterbox-streaming. CPU/MPS torch is the default index — no
 #    cu128 wheel index like Windows. Apple Silicon gets MPS automatically;
 #    Intel/Linux without a GPU falls back to CPU.
-echo "Installing chatterbox-streaming (~1-2 GB of torch wheels)..."
-"$UV" pip install --python "$PY" chatterbox-streaming
+echo "Installing pinned base (chatterbox-streaming + server deps, ~1-2 GB of torch wheels)..."
+"$UV" pip install --python "$PY" -r "$REQS"
 
-# 5) FastAPI runtime + audio helpers (usually already pulled in)
-"$UV" pip install --python "$PY" fastapi "uvicorn[standard]" soundfile
-
-# 6) Sanity check
+# 5) Sanity check
 echo "Verifying install..."
 "$PY" -c "import chatterbox; print('chatterbox: OK')"
 "$PY" -c "import torch; mps = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(); print('torch:', torch.__version__, 'mps:', mps)"

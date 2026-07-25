@@ -13,6 +13,11 @@
 
 $ErrorActionPreference = "Stop"
 $venvDir = "$env:USERPROFILE\.lax\python-chatterbox\venv"
+# CUDA 12.8 torch pair, pinned to the versions verified on the RTX 5090 box.
+# Not in requirements.txt: +cu128 is a local version that only exists on the
+# pytorch index and has no macOS wheel, so it would break install.sh.
+# PowerShell splats an array into separate native-command arguments.
+$TorchPin = @("torch==2.11.0+cu128", "torchaudio==2.11.0+cu128")
 
 # 1) Locate Python 3.12+
 $pythonExe = $null
@@ -41,21 +46,22 @@ $pyExe = "$venvDir\Scripts\python.exe"
 #    half-built venv, and it is far faster than pip on the ~3 GB torch wheels
 #    below. setuptools is still installed into the venv - librosa needs
 #    pkg_resources, and Python 3.12 venvs no longer ship setuptools by default.
-Write-Host "Bootstrapping uv + setuptools ..."
+Write-Host "Bootstrapping uv ..."
 & $pyExe -m pip install --upgrade uv --quiet
 if ($LASTEXITCODE -ne 0) { Write-Error "uv bootstrap failed (exit $LASTEXITCODE)" }
 $uvExe = Join-Path $venvDir "Scripts\uv.exe"
-& $uvExe pip install --python $pyExe setuptools
-if ($LASTEXITCODE -ne 0) { Write-Error "setuptools install failed (exit $LASTEXITCODE)" }
+$reqs = Join-Path $PSScriptRoot "requirements.txt"
 
-# 4) Install chatterbox-streaming FIRST. It hard-pins torch==2.6.0, and no
-#    CUDA-12.8 wheel exists for 2.6.0 — so on this step pip lands the CPU
-#    torch no matter which index we point it at.
-Write-Host "Installing chatterbox-streaming ..."
+# 4) Install the pinned base FIRST (setuptools + chatterbox-streaming + the
+#    FastAPI/audio runtime; see requirements.txt). chatterbox-streaming hard-pins
+#    torch==2.6.0, and no CUDA-12.8 wheel exists for 2.6.0 - so on this step the
+#    CPU torch lands no matter which index we point at. The torch override in
+#    step 5 is what fixes that, and it MUST run after this.
+Write-Host "Installing pinned base (chatterbox-streaming + server deps) ..."
 # --index-strategy unsafe-best-match makes uv consider both PyPI and the cu128
 # index like pip does; without it uv stops at the first index that has a package.
-& $uvExe pip install --python $pyExe chatterbox-streaming --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
-if ($LASTEXITCODE -ne 0) { Write-Error "chatterbox-streaming install failed (exit $LASTEXITCODE)" }
+& $uvExe pip install --python $pyExe -r $reqs --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
+if ($LASTEXITCODE -ne 0) { Write-Error "pinned base install failed (exit $LASTEXITCODE)" }
 
 # 5) THEN force the CUDA torch over the pin. Blackwell GPUs (RTX 50-series,
 #    sm_120) need torch>=2.7 cu128; chatterbox works fine on newer torch —
@@ -66,17 +72,14 @@ if ($LASTEXITCODE -ne 0) { Write-Error "chatterbox-streaming install failed (exi
 #    is exactly right.
 if ($env:LAX_FORCE_CPU_TORCH -ne "1") {
     Write-Host "Overriding torch with CUDA 12.8 build (~3 GB; upstream pin lags Blackwell) ..."
-    # --force-reinstall, not --upgrade: PyPI's torch can be NEWER than the
-    # cu128 index's latest, and --upgrade won't downgrade — leaving a
-    # torch/torchaudio mismatch. Force-reinstall lands the matched pair.
-    # uv's --reinstall is the equivalent of pip's --force-reinstall here.
-    & $uvExe pip install --python $pyExe --reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    # --reinstall (uv's --force-reinstall), not --upgrade: PyPI's torch can be
+    # NEWER than the cu128 index's latest, and --upgrade won't downgrade —
+    # leaving a torch/torchaudio mismatch. Reinstall lands the matched pair.
+    # Pinned rather than floating so a cu128 index bump can't silently swap the
+    # torch under a working install; $TorchPin is the pair verified on the 5090.
+    & $uvExe pip install --python $pyExe --reinstall $TorchPin --index-url https://download.pytorch.org/whl/cu128
     if ($LASTEXITCODE -ne 0) { Write-Error "CUDA torch override failed (exit $LASTEXITCODE)" }
 }
-
-# 6) FastAPI runtime + audio helpers (most likely already pulled in by chatterbox)
-& $uvExe pip install --python $pyExe fastapi "uvicorn[standard]" soundfile
-if ($LASTEXITCODE -ne 0) { Write-Error "fastapi/uvicorn/soundfile install failed (exit $LASTEXITCODE)" }
 
 # 7) Sanity check. MUST fail the script on a bad import: PowerShell 5.1 does
 #    not stop on a native command's non-zero exit even with

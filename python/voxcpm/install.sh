@@ -46,16 +46,16 @@ PY="$VENV_DIR/bin/python"
 # all wheels before installing, so a failed resolve can't leave a half-built
 # venv; far faster than pip). setuptools still needed - audio deps import
 # pkg_resources.
-echo "Bootstrapping uv + setuptools..."
+echo "Bootstrapping uv..."
 "$PY" -m pip install --upgrade uv --quiet
 UV="$VENV_DIR/bin/uv"
-"$UV" pip install --python "$PY" setuptools
+REQS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/requirements.txt"
 
 # 4) voxcpm + server deps + faster-whisper (auto-transcribes reference
 #    clips; VoxCPM conditions on the transcript). Default index torch is
 #    CPU/MPS - fine here; the cu128 override is a Windows/Blackwell concern.
-echo "Installing voxcpm + server deps (~2-3 GB)..."
-"$UV" pip install --python "$PY" voxcpm faster-whisper fastapi "uvicorn[standard]" soundfile
+echo "Installing pinned base (voxcpm + server deps, ~2-3 GB)..."
+"$UV" pip install --python "$PY" -r "$REQS"
 
 # 5) Sanity check (set -e makes any failure fatal)
 echo "Verifying install..."

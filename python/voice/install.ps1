@@ -14,7 +14,14 @@ $ErrorActionPreference = "Stop"
 
 $VenvDir = Join-Path $env:USERPROFILE ".lax\python-voice\venv"
 $ModelsDir = Join-Path $env:USERPROFILE ".lax\python-voice\kokoro"
-$Requirements = Join-Path $PSScriptRoot "requirements.txt"
+# Install from the COMPILED LOCK, not requirements.txt. requirements.txt pins
+# only direct deps; the lock pins every transitive too, with hashes. That gap is
+# not theoretical - huggingface_hub 1.x silently dropped `requests`, which
+# faster_whisper imports at module scope, and the tier stopped importing on a
+# pip run that reported success. Regenerate after editing requirements.txt:
+#   uv pip compile python/voice/requirements.txt --python-version 3.12 \
+#     --python-platform windows --generate-hashes -o python/voice/requirements.lock
+$Requirements = Join-Path $PSScriptRoot "requirements.lock"
 $SmokeScript = Join-Path $PSScriptRoot "_smoke.py"
 
 Write-Host ""

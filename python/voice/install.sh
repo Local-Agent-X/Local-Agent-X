@@ -15,7 +15,13 @@ set -euo pipefail
 VENV_DIR="$HOME/.lax/python-voice/venv"
 MODELS_DIR="$HOME/.lax/python-voice/kokoro"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REQS="$HERE/requirements-mac.txt"
+# Install from the COMPILED LOCK, not requirements-mac.txt — the lock pins every
+# transitive dep too, with hashes (see the note in install.ps1 for the
+# huggingface_hub/requests breakage this closes). Regenerate after editing
+# requirements-mac.txt:
+#   uv pip compile python/voice/requirements-mac.txt --python-version 3.12 \
+#     --python-platform macos --generate-hashes -o python/voice/requirements-mac.lock
+REQS="$HERE/requirements-mac.lock"
 
 echo ""
 echo "==> Local Agent X — voice sidecar installer"

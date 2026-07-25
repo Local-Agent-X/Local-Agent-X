@@ -1,0 +1,22 @@
+# Studio tier (Chatterbox) sidecar - pinned direct dependencies.
+#
+# Installed into ~/.lax/python-chatterbox/venv/ by install.ps1 / install.sh.
+# These were floating (bare `pip install chatterbox-streaming fastapi ...`) until
+# 2026-07-25, so every install grabbed whatever PyPI served that day. The
+# versions below are the ones verified working on the RTX 5090 box: chatterbox
+# imports and torch reports cuda=True.
+#
+# torch/torchaudio are deliberately NOT pinned here. They are installed in a
+# separate, conditional step:
+#   * Windows gets the CUDA 12.8 build force-reinstalled over chatterbox's
+#     torch==2.6.0 pin (Blackwell/sm_120 needs >=2.7 cu128), from the pytorch
+#     index - a +cu128 local version that does not exist on PyPI and has no
+#     macOS wheel.
+#   * macOS/Linux take whatever chatterbox-streaming resolves (CPU/MPS).
+# Putting a +cu128 pin in this shared file would break the .sh installer.
+
+setuptools==78.1.0        # librosa imports pkg_resources; py3.12 venvs ship without it
+chatterbox-streaming==0.1.2
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+soundfile==0.14.0

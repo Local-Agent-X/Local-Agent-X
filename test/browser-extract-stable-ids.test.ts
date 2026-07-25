@@ -89,10 +89,26 @@ describe("extractor: signature collisions no longer drop elements", () => {
 		expect(new Set(els.map((e) => e.signature)).size).toBe(3);
 	});
 
-	it("leaves a NON-colliding element's signature byte-identical (refs stay durable)", () => {
+	it("a signature depends on the ELEMENT ALONE, never on what else is in the snapshot", () => {
+		// The invariant that keeps refs durable on a re-rendering SPA. A first cut
+		// suffixed only elements whose base signature collided IN THAT SCAN, so
+		// removing an unrelated sibling silently rotated the survivor's signature
+		// — a new ref id, and the id the model was holding went stale.
+		document.body.innerHTML = `
+			<div><div><div><input id="focusser-0" type="text"></div></div></div>
+			<div><div><div><input id="focusser-1" type="text"></div></div></div>`;
+		const withSibling = extract().find((e) => e.ids?.id === "focusser-0")!.signature;
+
+		document.body.innerHTML = `<div><div><div><input id="focusser-0" type="text"></div></div></div>`;
+		const alone = extract().find((e) => e.ids?.id === "focusser-0")!.signature;
+
+		expect(alone).toBe(withSibling);
+	});
+
+	it("carries the stable key so two same-shaped elements can never dedup into one", () => {
 		document.body.innerHTML = `<button id="save-btn">Save</button>`;
 		const [only] = extract();
-		expect(only.signature).not.toContain("@");
+		expect(only.signature).toContain("@save-btn");
 		expect(only.signature).toContain("Save");
 	});
 

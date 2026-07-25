@@ -192,6 +192,31 @@ export const EXTRACTOR_SCRIPT = `(function(args) {
     return (ids.id || ids.testId || ids.name || ids.placeholder) ? ids : undefined;
   }
 
+  /**
+   * The element's stable key, folded into its signature.
+   *
+   * INVARIANT: a signature is a function of the ELEMENT ALONE. It must never
+   * depend on what else happens to be in the snapshot. A first cut applied this
+   * suffix only to elements whose base signature COLLIDED with another in the
+   * same scan — which meant an element's signature changed when an unrelated
+   * sibling appeared or disappeared, so on a re-rendering SPA a ref rotated for
+   * reasons that had nothing to do with its own element. That is ref churn: the
+   * id the model is holding goes stale and the action has to be repeated.
+   *
+   * Applying it unconditionally is what makes the three ui-select focussers
+   * (id=focusser-0/1/2, otherwise identical) distinct refs, permanently, rather
+   * than three elements deduped down to one.
+   *
+   * Residual: an id that is REGENERATED per mount (React useId, ember123)
+   * rotates the signature on remount. That is defensible — a remount is a new
+   * element instance — and ObservationRegistry.recoverStaleRef still remaps the
+   * model's held id by unique role+name.
+   */
+  const stableSuffix = (ids) => {
+    const key = ids && (ids.id || ids.testId || ids.name || ids.placeholder);
+    return key ? '|@' + key : '';
+  };
+
   function computeSignature(el, role, name) {
     // Structural signature: role + name + tag + ancestor chain (tag names only,
     // 4 deep). This survives sibling reorderings but rotates when an element is
@@ -321,13 +346,14 @@ export const EXTRACTOR_SCRIPT = `(function(args) {
       absBottom > 0 && absRight > 0 &&
       absY < vpHeight && absX < vpWidth;
 
+    const ids = computeIds(el, root);
     const entry = {
       role,
       name: name.replace(/\\s+/g, ' ').trim().slice(0, 120),
       tag: el.tagName,
       type: el.type || '',
       xpath: computeXPath(el, root),
-      signature: computeSignature(el, role, name),
+      signature: computeSignature(el, role, name) + stableSuffix(ids),
       inViewport,
       rect: {
         x: Math.round(absX + rect.width / 2),
@@ -337,35 +363,10 @@ export const EXTRACTOR_SCRIPT = `(function(args) {
       },
     };
     if (root && root.frameUrl !== undefined) entry.frameUrl = root.frameUrl;
-    const ids = computeIds(el, root);
     if (ids) entry.ids = ids;
     const state = computeState(el);
     if (state) entry.state = state;
     out.push(entry);
-  }
-
-  // Signature collisions used to silently DROP elements: the three AngularJS
-  // ui-select focussers on the Thrive PO form (id=focusser-0/1/2, no name, no
-  // text, identical 4-deep ancestor tags) share ONE signature, so dedup kept
-  // the first and the agent could never address the 2nd or 3rd — the page
-  // looked like it had one combobox. Disambiguate the colliding group by each
-  // member's stable key instead. ONLY colliding elements are touched: a
-  // signature that is already unique stays byte-identical, so refs stay durable
-  // across this change and a per-render generated id (React useId, ember123)
-  // can never rotate a ref that was stable before. Residual: colliding elements
-  // with NO stable key still collapse — nothing durable tells them apart, and
-  // an ordinal would rotate on reorder.
-  const groups = new Map();
-  for (const el of out) {
-    const g = groups.get(el.signature);
-    if (g) g.push(el); else groups.set(el.signature, [el]);
-  }
-  for (const [sig, group] of groups) {
-    if (group.length < 2) continue;
-    for (const el of group) {
-      const key = el.ids && (el.ids.id || el.ids.testId || el.ids.name || el.ids.placeholder);
-      if (key) el.signature = sig + '|@' + key;
-    }
   }
 
   // Dedup by signature (keeps first occurrence — usually the topmost, most-visible).

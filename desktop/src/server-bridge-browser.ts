@@ -18,7 +18,7 @@
  */
 
 import type { ChildProcess } from "child_process";
-import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent, WebContents } from "electron";
+import type { WebContents } from "electron";
 
 import {
 	closeBrowserView,
@@ -46,6 +46,7 @@ import {
 	setBrowserUiEventSink,
 } from "./browser-perception";
 import { isUserActive, markAgentInput, showAgentCursor } from "./in-app-browser";
+import { dispatchAgentInput, toElectronInputEvent } from "./browser-agent-input";
 import { settleNavigation } from "./navigate-settle";
 
 // Isolated world for agent scripts — never the main world, so page JS
@@ -155,10 +156,9 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 				// Bank the attribution token BEFORE dispatch so the event's own
 				// before-input-event/focus echo can't arm the user lock.
 				markAgentInput(msg.viewId);
-				if (event.type === "mouseDown" || event.type === "mouseUp" || event.type === "mouseMove" || event.type === "mouseWheel") {
-					showAgentCursor(wc, event.x, event.y); // fire-and-forget, never blocks input
-				}
-				wc.sendInputEvent(event);
+				// Key events follow FOCUS, mouse events follow coordinates — the
+				// routing rule lives in browser-agent-input.ts.
+				dispatchAgentInput(wc, event, (x, y) => showAgentCursor(wc, x, y));
 				return {};
 			});
 			return;
@@ -381,19 +381,3 @@ async function clearPartition(partition: string): Promise<Record<string, unknown
 	return {};
 }
 
-function toElectronInputEvent(ev: BridgeInputEvent): MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent | null {
-	switch (ev.type) {
-		case "mouseDown":
-		case "mouseUp":
-		case "mouseMove":
-			return { type: ev.type, x: ev.x, y: ev.y, button: ev.button, clickCount: ev.clickCount, modifiers: ev.modifiers };
-		case "mouseWheel":
-			return { type: "mouseWheel", x: ev.x, y: ev.y, deltaX: ev.deltaX, deltaY: ev.deltaY, modifiers: ev.modifiers };
-		case "keyDown":
-		case "keyUp":
-		case "char":
-			return { type: ev.type, keyCode: ev.keyCode, modifiers: ev.modifiers };
-		default:
-			return null;
-	}
-}

@@ -11,18 +11,32 @@ import {
 import {
   createProtocol, loadCustomProtocols, saveCustomProtocols, editProtocol,
 } from "../src/protocols/builder.js";
+import { getAllProtocols } from "../src/protocols/index.js";
 import { recordUsage } from "../src/protocols/usage.js";
 import type { Protocol } from "../src/protocols/types.js";
 
 const DAY = 86_400_000;
 
 let TEMP: string;
+let TEMP_LAX: string;
 let ORIGINAL_CFG: LAXConfig;
+let ORIGINAL_LAX_DATA_DIR: string | undefined;
 
 beforeAll(() => {
   TEMP = mkdtempSync(join(tmpdir(), "lax-archive-test-"));
   ORIGINAL_CFG = getRuntimeConfig();
   setRuntimeConfig({ ...ORIGINAL_CFG, workspace: TEMP } as LAXConfig);
+
+  // Pin the LAX data dir too. getAllProtocols() reaches the loader, which runs
+  // the legacy migrations (~/.lax/skills, ~/.lax/protocols/imported) by
+  // renameSync-ing their contents INTO the workspace — here a temp dir that
+  // afterAll deletes. Unpinned, running this suite on a machine that still has
+  // those legacy dirs would destroy the user's real imported protocols. Pinning
+  // also makes the managed-learned tier deterministic instead of reading
+  // whatever happens to be on the dev box.
+  TEMP_LAX = mkdtempSync(join(tmpdir(), "lax-archive-test-laxdir-"));
+  ORIGINAL_LAX_DATA_DIR = process.env.LAX_DATA_DIR;
+  process.env.LAX_DATA_DIR = TEMP_LAX;
 });
 
 beforeEach(() => {
@@ -38,7 +52,10 @@ beforeEach(() => {
 
 afterAll(() => {
   setRuntimeConfig(ORIGINAL_CFG);
+  if (ORIGINAL_LAX_DATA_DIR === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = ORIGINAL_LAX_DATA_DIR;
   rmSync(TEMP, { recursive: true, force: true });
+  rmSync(TEMP_LAX, { recursive: true, force: true });
 });
 
 function mkProtocol(name: string, extra: Partial<Protocol> = {}): Protocol {
@@ -240,5 +257,80 @@ describe("smoke: full archive/unarchive/pin lifecycle", () => {
     expect(r.error).toBeUndefined();
     expect(loadCustomProtocols().map((p) => p.name)).toContain("lifecycle");
     expect(loadArchived()).toHaveLength(0);
+  });
+});
+
+describe("authorship provenance survives the archive round-trip", () => {
+  // Why this is pinned: agent-authored protocols are written with no user
+  // confirmation gate, so "archive it" IS the user's undo — and the undo is
+  // only usable if the user can still tell agent work from their own after a
+  // restore. Provenance is therefore load-bearing for the recovery story, not
+  // decoration. Every hop below is a place a refactor could plausibly rebuild
+  // the source object (loader stamping, JSON round-trips, the archive
+  // hand-off); toEqual on the whole object fails on a dropped OR an invented
+  // field, so any reconstruction anywhere on the path breaks this test.
+  const PROV = {
+    type: "custom" as const,
+    authoredBy: "agent" as const,
+    authoredAt: 1_700_000_000_123,
+    authoredFromSession: "sess-round-trip",
+  };
+
+  it("preserves authoredBy/authoredAt/authoredFromSession from create through unarchive", () => {
+    createProtocol(mkProtocol("prov-lifecycle", { source: { ...PROV } }));
+
+    // 1. Persisted to custom.json — assert the bytes on disk, not just the
+    //    in-memory object we handed in.
+    const liveRaw = JSON.parse(
+      readFileSync(join(TEMP, "protocols", "custom.json"), "utf-8"),
+    ) as Protocol[];
+    expect(liveRaw.find((p) => p.name === "prov-lifecycle")?.source).toEqual(PROV);
+
+    // 2. Survives the real read path (stampCustomSource must not clobber an
+    //    existing source; mergeByName must not rebuild the record).
+    const loaded = getAllProtocols().find((p) => p.name === "prov-lifecycle");
+    expect(loaded?.source).toEqual(PROV);
+
+    // 3. Survives the move into archived.json.
+    const rec = archiveProtocol("prov-lifecycle", "user rejected agent's work");
+    expect(rec!.protocol.source).toEqual(PROV);
+    const archRaw = JSON.parse(
+      readFileSync(join(TEMP, "protocols", "archived.json"), "utf-8"),
+    ) as Array<{ protocol: Protocol }>;
+    expect(archRaw.find((r) => r.protocol.name === "prov-lifecycle")?.protocol.source).toEqual(PROV);
+
+    // 4. Survives the restore back into custom.json — the recovery story.
+    const restored = unarchiveProtocol("prov-lifecycle");
+    expect(restored.error).toBeUndefined();
+    expect(restored.restored?.source).toEqual(PROV);
+    expect(loadCustomProtocols().find((p) => p.name === "prov-lifecycle")?.source).toEqual(PROV);
+    const backRaw = JSON.parse(
+      readFileSync(join(TEMP, "protocols", "custom.json"), "utf-8"),
+    ) as Protocol[];
+    expect(backRaw.find((p) => p.name === "prov-lifecycle")?.source).toEqual(PROV);
+
+    // 5. Still distinguishable as agent work after the full trip.
+    expect(getAllProtocols().find((p) => p.name === "prov-lifecycle")?.source?.authoredBy).toBe("agent");
+  });
+
+  it("reads a protocol with no source as unknown authorship, never as user-authored", () => {
+    // Every protocol written before provenance existed has no `source` at all.
+    // The loader stamps type="custom" but must leave authorship blank —
+    // three-state (agent / user / unknown). A consumer that treats
+    // `authoredBy !== "agent"` as "user" would mislabel the entire legacy
+    // catalog as user-authored and hide it from an agent-work review.
+    createProtocol(mkProtocol("prov-legacy"));
+
+    const loaded = getAllProtocols().find((p) => p.name === "prov-legacy");
+    expect(loaded).toBeDefined();
+    expect(loaded?.source?.type).toBe("custom");
+    expect(loaded?.source?.authoredBy).toBeUndefined();
+    expect(loaded?.source?.authoredBy).not.toBe("user");
+
+    // Absence must also survive the round trip — an archive/restore cycle must
+    // not invent authorship that was never recorded.
+    archiveProtocol("prov-legacy");
+    const restored = unarchiveProtocol("prov-legacy");
+    expect(restored.restored?.source?.authoredBy).toBeUndefined();
   });
 });

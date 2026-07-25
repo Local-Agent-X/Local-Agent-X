@@ -45,6 +45,16 @@ export interface ProtocolSource {
   attribution?: string;
   /** Path on disk to the source file (for hot-reload + edit-in-place) */
   sourcePath?: string;
+  /** Who wrote this protocol. Agent-authored protocols are written on the
+   *  agent's own initiative, without a user confirmation gate — provenance is
+   *  what makes that recoverable: the user can tell agent work from their own
+   *  and archive it. Absent on every protocol written before provenance
+   *  existed; treat absent as "unknown", not as "user". */
+  authoredBy?: "agent" | "user";
+  /** When it was authored — ms since epoch, matching archivedTs/usage.ts ts. */
+  authoredAt?: number;
+  /** Session the authoring happened in, so a review can be traced back. */
+  authoredFromSession?: string;
 }
 
 export interface Protocol {

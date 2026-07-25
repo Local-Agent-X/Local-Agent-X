@@ -139,3 +139,7 @@ ComfyUI/
 # Claude Code session). Working scratch, not product docs — kept local.
 CDP-WIRING-HANDOFF.md
 *-HANDOFF.md
+
+# Campaign ledgers at the repo root. Same class as the handoff notes above:
+# live resume state for an in-flight campaign, deleted when it completes.
+CAMPAIGN-*.md

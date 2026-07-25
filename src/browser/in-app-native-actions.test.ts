@@ -1,71 +1,81 @@
 /**
- * Native ref-action fast-path contract (in-app-native-actions.ts): the in-app
- * backend prefers the frame-aware CDP path but must degrade to the bridge chain
- * on every miss. Regression for the reverted Job A ch4a — the fix's value is
- * that a miss/absence NEVER throws and ALWAYS signals fall-through (null).
+ * Native ref-action fast-path contract (in-app-native-actions.ts). Guards two
+ * regressions at once:
+ *   - ch4a: iframe refs must resolve in the correct FRAME (resolveFrame), not
+ *     the main document.
+ *   - the ch4a-reuse hang: the native action MUST be bounded (3s), so a miss
+ *     falls back to the bridge promptly instead of stalling ~30s.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const realDrivingPage = vi.fn();
-const clickRefOn = vi.fn();
-const fillRefOn = vi.fn();
+const resolveFrame = vi.fn();
+const clickSpy = vi.fn();
+const fillSpy = vi.fn();
 
 vi.mock("./in-app-driving-page.js", () => ({ realDrivingPage: (...a: unknown[]) => realDrivingPage(...a) }));
-vi.mock("./interactions.js", () => ({
-	clickRefOn: (...a: unknown[]) => clickRefOn(...a),
-	fillRefOn: (...a: unknown[]) => fillRefOn(...a),
-}));
+vi.mock("./actions.js", () => ({ resolveFrame: (...a: unknown[]) => resolveFrame(...a) }));
+vi.mock("./stability.js", () => ({ waitForStability: vi.fn() }));
+vi.mock("./observation.js", () => ({ ObservationRegistry: { format: () => "SNAPSHOT" } }));
 
 const { nativeClickRef, nativeFillRef } = await import("./in-app-native-actions.js");
 
-const ctx = { viewId: "view-sess-p1", registry: {} as never, page: {} as never };
 const fakePage = { __real: true } as never;
+const iframeRef = { id: 42, role: "textbox", name: "Vendor", xpath: "/html/body/input[1]", frameUrl: "https://cloud.thrivemetrics.com/app/shopventory/" };
+
+function makeCtx(ref: unknown) {
+	return {
+		viewId: "view-sess-p1",
+		page: { url: () => "https://cloud.thrivemetrics.com/app/purchase-orders/external/create" } as never,
+		registry: { recoverStaleRef: vi.fn().mockReturnValue(ref), observe: vi.fn().mockResolvedValue({}) } as never,
+	};
+}
 
 beforeEach(() => {
 	realDrivingPage.mockReset();
-	clickRefOn.mockReset();
-	fillRefOn.mockReset();
+	resolveFrame.mockReset();
+	clickSpy.mockReset();
+	fillSpy.mockReset();
+	resolveFrame.mockReturnValue({ locator: () => ({ click: clickSpy, fill: fillSpy }) });
 });
 
 describe("native ref-action fast-path", () => {
 	it("returns null (fall through) when there is no CDP real Page", async () => {
 		realDrivingPage.mockResolvedValue(null);
-		expect(await nativeClickRef(ctx, 3)).toBeNull();
-		expect(await nativeFillRef(ctx, 3, "x")).toBeNull();
-		expect(clickRefOn).not.toHaveBeenCalled();
-		expect(fillRefOn).not.toHaveBeenCalled();
+		expect(await nativeClickRef(makeCtx(iframeRef), 42)).toBeNull();
+		expect(resolveFrame).not.toHaveBeenCalled();
 	});
 
-	it("returns the native result on success, targeting the real Page", async () => {
+	it("returns null when the ref can't be recovered or has no xpath", async () => {
 		realDrivingPage.mockResolvedValue(fakePage);
-		clickRefOn.mockResolvedValue({ ok: true, text: "clicked native" });
-		const res = await nativeClickRef(ctx, 7);
-		expect(res).toEqual({ ok: true, text: "clicked native" });
-		// It drove the REAL page through the shared frame-aware entry.
-		expect(clickRefOn).toHaveBeenCalledWith(fakePage, ctx.registry, 7);
+		expect(await nativeClickRef(makeCtx(undefined), 42)).toBeNull();
+		expect(await nativeClickRef(makeCtx({ ...iframeRef, xpath: "" }), 42)).toBeNull();
+		expect(clickSpy).not.toHaveBeenCalled();
 	});
 
-	it("returns null (fall through) when the native attempt misses (ok:false)", async () => {
+	it("resolves the ref's FRAME (not the main page) and clicks its xpath", async () => {
 		realDrivingPage.mockResolvedValue(fakePage);
-		clickRefOn.mockResolvedValue({ ok: false, text: "not found" });
-		fillRefOn.mockResolvedValue({ ok: false, text: "not fillable" });
-		// A SELECT/file/iframe-miss must degrade to the bridge chain, not surface
-		// the native failure — so the caller's bridge fallback still runs.
-		expect(await nativeClickRef(ctx, 7)).toBeNull();
-		expect(await nativeFillRef(ctx, 7, "v")).toBeNull();
+		clickSpy.mockResolvedValue(undefined);
+		const res = await nativeClickRef(makeCtx(iframeRef), 42);
+		// frame-aware: resolveFrame got the real page + the iframe ref
+		expect(resolveFrame).toHaveBeenCalledWith(fakePage, iframeRef);
+		expect(res?.ok).toBe(true);
+		expect(res?.text).toContain("click (native)");
 	});
 
-	it("never throws — a native throw becomes a fall-through null", async () => {
+	it("BOUNDS the native action to 3s so a miss can't hang (regression guard)", async () => {
 		realDrivingPage.mockResolvedValue(fakePage);
-		clickRefOn.mockRejectedValue(new Error("Timeout 3000ms exceeded\nlocator.click"));
-		await expect(nativeClickRef(ctx, 7)).resolves.toBeNull();
+		clickSpy.mockResolvedValue(undefined);
+		fillSpy.mockResolvedValue(undefined);
+		await nativeClickRef(makeCtx(iframeRef), 42);
+		await nativeFillRef(makeCtx(iframeRef), 42, "Acme");
+		expect(clickSpy).toHaveBeenCalledWith({ timeout: 3000 });
+		expect(fillSpy).toHaveBeenCalledWith("Acme", { timeout: 3000 });
 	});
 
-	it("native fill forwards the value to the shared entry", async () => {
+	it("never throws — a native miss/timeout becomes a fall-through null", async () => {
 		realDrivingPage.mockResolvedValue(fakePage);
-		fillRefOn.mockResolvedValue({ ok: true, text: "filled" });
-		const res = await nativeFillRef(ctx, 9, "hello");
-		expect(res).toEqual({ ok: true, text: "filled" });
-		expect(fillRefOn).toHaveBeenCalledWith(fakePage, ctx.registry, 9, "hello");
+		clickSpy.mockRejectedValue(new Error("Timeout 3000ms exceeded\nlocator.click"));
+		await expect(nativeClickRef(makeCtx(iframeRef), 42)).resolves.toBeNull();
 	});
 });

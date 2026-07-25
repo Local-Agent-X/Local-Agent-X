@@ -45,7 +45,7 @@ const CLICK_TEXT_BUDGET = 12_000;
  * main page — the coords-based click can still hit the right pixel
  * because extract.ts now records iframe-offset rects.
  */
-function resolveFrame(page: Page, ref: DurableRef): Frame | Page {
+export function resolveFrame(page: Page, ref: DurableRef): Frame | Page {
   if (!ref.frameUrl && ref.frameUrl !== "") return page;
   const frames = page.frames();
   if (ref.frameUrl) {

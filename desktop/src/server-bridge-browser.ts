@@ -147,10 +147,10 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 			reply(proc, "lax:browser-input-result", msg.id, () => {
 				const event = toElectronInputEvent(msg.event);
 				if (!event) throw new Error(`unsupported input event type "${(msg.event as { type?: string })?.type}"`);
-				// Human-priority co-drive: while the user is driving this view,
-				// refuse agent input as a STATUS (not an error) — the client
-				// surfaces userActive so the model knows the user took the wheel.
-				if (isUserActive(msg.viewId)) return { ok: false, userActive: true };
+				// Per A1 the agent is no longer auto-yielded while the user is
+				// driving — agent input always dispatches; the user interrupts
+				// via the Stop button. The user-active state machine stays wired
+				// for attribution (markAgentInput) and the visible agent cursor.
 				const wc = requireWebContents(msg.viewId);
 				// Bank the attribution token BEFORE dispatch so the event's own
 				// before-input-event/focus echo can't arm the user lock.

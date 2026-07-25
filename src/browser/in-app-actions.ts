@@ -322,8 +322,8 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 		return { ok: false, text: `[${ref.id}] ${FILE_INPUT_NEEDS_HUMAN}` };
 	}
 	if (hit.tag === "SELECT") {
-		// Exec-driven mutation — arbitrate against the co-drive lock first.
-		if (await isViewUserActive(ctx.viewId)) return userTookWheel();
+		// Per A1 the agent is no longer auto-yielded while the user is driving —
+		// the SELECT mutation proceeds regardless; the user interrupts via Stop.
 		const res = asExecResult(await execChecked(ctx.viewId, selectFillScript(ref, value)));
 		if (!res.ok) {
 			return { ok: false, text: `[${ref.id}] fill failed: ${res.error} — re-observe, or use select with a CSS selector` };

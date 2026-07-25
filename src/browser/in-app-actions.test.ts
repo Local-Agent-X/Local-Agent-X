@@ -281,14 +281,20 @@ describe("fillRefInApp — typed input, select, contenteditable, file", () => {
 		expect(browserInput).not.toHaveBeenCalled();
 	});
 
-	it("pre-exec arbitration: a <select> fill aborts BEFORE mutating when the human is driving", async () => {
+	it("A1: a <select> fill proceeds even when the human is driving (no auto-yield)", async () => {
+		// Even with the co-drive lock reporting userActive, the agent is NOT
+		// auto-yielded — the SELECT mutation runs (the user interrupts via Stop).
 		vi.mocked(browserLifecycle).mockResolvedValue({ ping: { ok: true, userActive: true } });
-		vi.mocked(browserExec).mockImplementation(async (_v, s) => (s.includes("ROLE_SEL") ? resolved({ tag: "SELECT" }) : undefined));
+		vi.mocked(browserExec).mockImplementation(async (_v, s) => {
+			if (s.includes("ROLE_SEL")) return resolved({ tag: "SELECT" });
+			if (s.includes("no-matching-option")) return { ok: true, selected: ["opt1"] };
+			return undefined;
+		});
 		const ctx = makeCtx(makeRef({ role: "combobox", name: "Country" }));
 		const res = await fillRefInApp(ctx, 1, "opt1");
-		expect(res).toEqual({ ok: false, text: USER_TOOK_WHEEL });
-		// The mutating selectFillScript must NOT have run.
-		expect(vi.mocked(browserExec).mock.calls.every(([, s]) => !s.includes("no-matching-option"))).toBe(true);
+		expect(res.ok).toBe(true);
+		// The mutating selectFillScript MUST have run despite the user being active.
+		expect(vi.mocked(browserExec).mock.calls.some(([, s]) => s.includes("no-matching-option"))).toBe(true);
 	});
 });
 

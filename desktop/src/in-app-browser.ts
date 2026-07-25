@@ -1,10 +1,12 @@
 /**
  * Local Agent X — in-app browser co-drive arbitration + agent cursor.
  *
- * Human-priority lock: the user and the agent share one WebContentsView.
- * Any USER input marks the view user-active for USER_ACTIVE_HOLD_MS; while
- * active the bridge input branch (server-bridge-browser.ts) refuses agent
- * input with { ok:false, userActive:true } instead of dispatching it.
+ * User-active tracking: the user and the agent share one WebContentsView.
+ * Any USER input marks the view user-active for USER_ACTIVE_HOLD_MS. Per A1
+ * this NO LONGER refuses agent input — the agent is not auto-yielded; the
+ * user interrupts via the Stop button. The state machine stays for
+ * attribution (markAgentInput tokens) and the visible agent cursor, and the
+ * lifecycle ping still surfaces isUserActive for telemetry.
  *
  * Observation hook: "input-event" — it fires for EVERY WebInputEvent the
  * renderer receives (mouse, wheel, key, char), unlike "before-input-event"

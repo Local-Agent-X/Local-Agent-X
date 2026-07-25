@@ -35,8 +35,8 @@ describe("design-spec stash — feeds the vision judges' token-adherence scoring
   });
 });
 
-describe("runDesignVerifyGate — threshold", () => {
-  it("a weak score (≤2) recorded by the probe triggers ONE capped retry", () => {
+describe("runDesignVerifyGate — threshold (Aggressive bar: retry at ≤3)", () => {
+  it("a weak score (≤2) recorded by the probe triggers a capped retry", () => {
     recordDesignVerdict("op-weak", { score: 2, issues: ["emoji used as icons", "low text contrast"] });
     const gate = runDesignVerifyGate(op("op-weak"));
     expect(gate.shouldRetry).toBe(true);
@@ -46,8 +46,16 @@ describe("runDesignVerifyGate — threshold", () => {
     expect(gate.nudge).toContain("emoji used as icons");
   });
 
-  it("a passable score (>2) does not retry", () => {
-    recordDesignVerdict("op-ok", { score: 3, issues: ["cramped spacing"] });
+  it("a mediocre score of 3 now retries too — the whole point of the Aggressive bar", () => {
+    // Under the old ≤2 threshold a 3/5 shipped untouched; now it earns a repolish.
+    recordDesignVerdict("op-mid", { score: 3, issues: ["flat hierarchy"] });
+    const gate = runDesignVerifyGate(op("op-mid"));
+    expect(gate.shouldRetry).toBe(true);
+    expect(gate.nudge).toContain("3/5");
+  });
+
+  it("a genuinely good score (>3) does not retry", () => {
+    recordDesignVerdict("op-ok", { score: 4, issues: ["minor: footer a touch tight"] });
     const gate = runDesignVerifyGate(op("op-ok"));
     expect(gate.shouldRetry).toBe(false);
     expect(gate.capReached).toBe(false);
@@ -78,18 +86,20 @@ describe("runDesignVerifyGate — no verdict never fires (score-absent ⇒ no re
 });
 
 describe("runDesignVerifyGate — cap", () => {
-  it("stops after MAX_RETRIES (1): the second weak verdict reports capReached, not a retry", () => {
-    recordDesignVerdict("op-cap", { score: 1, issues: ["no hierarchy"] });
-    const first = runDesignVerifyGate(op("op-cap"));
-    expect(first.shouldRetry).toBe(true);
-
-    recordDesignVerdict("op-cap", { score: 1, issues: ["still no hierarchy"] });
-    const second = runDesignVerifyGate(op("op-cap"));
-    expect(second.shouldRetry).toBe(false);
-    expect(second.capReached).toBe(true);
-    // The label is NOT demoted — capReached carries no ledger verdict; it only
-    // signals the loop to stop. (No recordOrchestratorVerify call exists here.)
-    expect(getDesignVerifyRetries("op-cap")).toBe(1);
+  it("retries up to MAX_RETRIES (3), then reports capReached instead of looping forever", () => {
+    // Three successive weak verdicts each earn a repolish pass…
+    for (let i = 1; i <= 3; i++) {
+      recordDesignVerdict("op-cap", { score: 1, issues: [`weak pass ${i}`] });
+      const r = runDesignVerifyGate(op("op-cap"));
+      expect(r.shouldRetry).toBe(true);
+      expect(getDesignVerifyRetries("op-cap")).toBe(i);
+    }
+    // …the fourth is capped: stop, but do NOT demote the label (no ledger verdict).
+    recordDesignVerdict("op-cap", { score: 1, issues: ["still weak"] });
+    const capped = runDesignVerifyGate(op("op-cap"));
+    expect(capped.shouldRetry).toBe(false);
+    expect(capped.capReached).toBe(true);
+    expect(getDesignVerifyRetries("op-cap")).toBe(3);
   });
 });
 
@@ -141,5 +151,26 @@ describe("formatDesignNudgeForAgent", () => {
   it("degrades to a default line when the judge listed no specific issues", () => {
     const nudge = formatDesignNudgeForAgent({ score: 1, issues: [] });
     expect(nudge).toContain("no clear visual hierarchy");
+  });
+
+  it("leads with the weakest named axes (worst-first) when a dimensions breakdown is present", () => {
+    const nudge = formatDesignNudgeForAgent({
+      score: 2,
+      issues: ["low text contrast"],
+      dimensions: { hierarchy: 1, spacing: 2, color: 4, states: 5 },
+    });
+    expect(nudge).toContain("Weakest axes");
+    // Weak axes (≤3) named and scored; worst (hierarchy 1) before spacing 2.
+    expect(nudge).toMatch(/visual hierarchy[\s\S]*\(scored 1\/5\)[\s\S]*spacing & alignment[\s\S]*\(scored 2\/5\)/);
+    // Strong axes (color 4, states 5) are NOT nagged.
+    expect(nudge).not.toContain("color & contrast");
+    expect(nudge).not.toContain("states & affordances");
+    // The concrete issue list still rides along after the axes.
+    expect(nudge).toContain("- low text contrast");
+  });
+
+  it("omits the weak-axes lead entirely when the judge gave no dimensions", () => {
+    const nudge = formatDesignNudgeForAgent({ score: 2, issues: ["cramped spacing"] });
+    expect(nudge).not.toContain("Weakest axes");
   });
 });

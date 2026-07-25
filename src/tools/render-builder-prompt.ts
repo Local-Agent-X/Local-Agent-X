@@ -12,7 +12,7 @@ import { join, relative } from "node:path";
 import type { AppTier } from "./app-tier.js";
 import { inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
 import { frontendScaffoldRecipeLines, harnessOwnsScaffold } from "./framework-scaffold.js";
-import { selectDesignBrief, DESIGN_ANTI_PATTERNS } from "./design-brief.js";
+import { selectDesignBrief, DESIGN_ANTI_PATTERNS, DESIGN_CRAFT } from "./design-brief.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
   /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
@@ -175,7 +175,8 @@ export function renderPerBuildContext(input: BuilderPromptInput): string {
   // the app DESCRIPTION, which only a CREATE carries; an UPDATE's prompt is a
   // change instruction ("add a payments page"), so classifying it would inject a
   // mismatched archetype — the established design in the existing files governs
-  // the look on updates. Updates still get the universal anti-patterns.
+  // the look on updates. Updates still get the universal CRAFT + anti-patterns
+  // (both archetype-independent), so an edit still holds the polish/states bar.
   const design = isUpdate ? null : selectDesignBrief(prompt);
 
   const context = contextFiles.length > 0
@@ -226,12 +227,14 @@ RULES:
 ${starterLine}${updateRules}- Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in ${appDir}/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
 ${NATIVE_BUILD_RULE_LINES.join("\n")}${tierBlock}
 - The app will be served at ${appUrl}
 - Do NOT ask questions — just build it based on the instructions
 
-${design ? `${design.brief}\n\n` : ""}${DESIGN_ANTI_PATTERNS}
+${design ? `${design.brief}\n\n` : ""}${DESIGN_CRAFT}
+
+${DESIGN_ANTI_PATTERNS}
 
 - After writing files, output: APP_READY: ${appUrl}`;
 }

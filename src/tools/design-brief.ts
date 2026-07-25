@@ -40,6 +40,31 @@ export const DESIGN_ANTI_PATTERNS = [
   "• RESPONSIVE: lay out and test at the common breakpoints ~375 (mobile), ~768 (tablet), ~1024 (small laptop), and ~1440 (desktop); no horizontal scroll or clipped content at any of them.",
 ].join("\n");
 
+/**
+ * Craft rules — the POSITIVE half of the anti-patterns. The anti-patterns say
+ * what not to do; these say concretely what "polished" IS, because "make it
+ * look polished, use good colors" (the line this replaces) is too vague to act
+ * on — a model with no visual taste of its own reads it as "I already did".
+ * These are the execution details that separate a working page from a designed
+ * one: depth, a real type ladder, spacing rhythm, alignment, and — the big one
+ * a happy-path build skips — every STATE (empty / loading / error /
+ * hover-focus-active-disabled). Applied to EVERY build (create AND update),
+ * archetype-independent, so it also lifts an update and the neutral fallback.
+ * Kept tight and imperative like DESIGN_ANTI_PATTERNS, not an essay; it does not
+ * repeat the anti-patterns (icons, contrast, motion, focus visibility live there).
+ */
+export const DESIGN_CRAFT = [
+  "CRAFT — what a polished, designed result concretely means (apply to every build):",
+  "• DEPTH: build a layered surface hierarchy with the archetype's shadow/border tokens — page background sits under cards, cards under any popover/menu. Flat, borderless blocks on a same-color background read as unfinished; separate surfaces with a subtle shadow OR a 1px border, not both heavy.",
+  "• TYPE LADDER: use the archetype's type scale to make hierarchy obvious at a glance — ONE dominant page title, clearly smaller/lighter section headings, and body/label tiers that differ visibly in BOTH size and weight. If headings and body look nearly the same size, the hierarchy has failed.",
+  "• SPACING RHYTHM: commit to one spacing scale (the archetype's base) and use it everywhere — generous, even padding inside cards and around sections; related items grouped tighter than unrelated ones. Cramped or arbitrary, inconsistent gaps are the fastest tell of an unpolished UI.",
+  "• ALIGNMENT: align everything to a shared grid and shared edges — labels, values, controls, and card contents line up column-to-column. Ragged, off-by-a-few-pixels alignment looks broken even when nothing is.",
+  "• STATES (do not ship only the happy path): design the EMPTY state as a real, intentional view (one short line + the primary action, never a blank void); show a LOADING state (skeletons or a spinner, never a frozen blank); handle ERRORS inline with a plain human message; and give every interactive element distinct HOVER, ACTIVE, FOCUS, and DISABLED styling. A UI that only looks right when it is full of data is not finished.",
+  "• FOCAL POINT: give each view one clear center of gravity — the primary action or the key figure is visually dominant (size, weight, or color), and secondary things recede. Avoid a flat field where every element competes for attention.",
+  "• COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.",
+  "• CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.",
+].join("\n");
+
 export interface DesignArchetype {
   /** Stable slug used by callers and tests. */
   id: string;

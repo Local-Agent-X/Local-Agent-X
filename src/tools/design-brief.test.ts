@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DESIGN_ANTI_PATTERNS, selectDesignBrief } from "./design-brief.js";
+import { DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, selectDesignBrief } from "./design-brief.js";
 
 describe("selectDesignBrief — archetype classification", () => {
   const cases: Array<[string, string]> = [
@@ -103,5 +103,30 @@ describe("DESIGN_ANTI_PATTERNS — universal constraints", () => {
 
   it("references a minimum text contrast ratio", () => {
     expect(DESIGN_ANTI_PATTERNS).toContain("4.5:1");
+  });
+});
+
+describe("DESIGN_CRAFT — the positive half (what 'polished' concretely means)", () => {
+  it("is a non-empty imperative block headed CRAFT", () => {
+    expect(DESIGN_CRAFT).toContain("CRAFT");
+    expect(DESIGN_CRAFT.length).toBeGreaterThan(0);
+  });
+
+  it("mandates the states a happy-path build skips (empty / loading / interactive)", () => {
+    expect(DESIGN_CRAFT).toMatch(/EMPTY state/);
+    expect(DESIGN_CRAFT).toMatch(/LOADING state/);
+    expect(DESIGN_CRAFT).toContain("HOVER, ACTIVE, FOCUS, and DISABLED");
+  });
+
+  it("covers depth, a real type ladder, spacing rhythm, and cohesion", () => {
+    expect(DESIGN_CRAFT).toContain("DEPTH");
+    expect(DESIGN_CRAFT).toContain("TYPE LADDER");
+    expect(DESIGN_CRAFT).toContain("SPACING RHYTHM");
+    expect(DESIGN_CRAFT).toContain("COHESION");
+  });
+
+  it("does NOT repeat the anti-patterns — icons/contrast/motion specifics live there, not here", () => {
+    expect(DESIGN_CRAFT).not.toContain("4.5:1");
+    expect(DESIGN_CRAFT).not.toContain("prefers-reduced-motion");
   });
 });

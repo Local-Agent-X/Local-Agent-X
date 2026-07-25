@@ -83,6 +83,25 @@ describe("renderPerBuildContext — design-brief seam", () => {
   });
 });
 
+describe("renderPerBuildContext — craft execution layer", () => {
+  it("injects the CRAFT rules on EVERY build — create AND update (archetype-independent)", () => {
+    const create = renderPerBuildContext(inputFor("a fintech trading dashboard"));
+    const update = renderPerBuildContext({ ...inputFor("add a settings page"), isUpdate: true });
+    for (const out of [create, update]) {
+      expect(out).toContain("CRAFT — what a polished");
+      // The states axis is the big lever a happy-path build skips.
+      expect(out).toMatch(/EMPTY state/);
+      expect(out).toContain("HOVER, ACTIVE, FOCUS, and DISABLED");
+      expect(out).toContain("TYPE LADDER");
+    }
+  });
+
+  it("retired the vague 'make it look polished' one-liner — its job moved to CRAFT", () => {
+    const out = renderPerBuildContext(inputFor("a maze game"));
+    expect(out).not.toContain("Make it look polished — use modern CSS, good colors, responsive design");
+  });
+});
+
 describe("renderBuilderPrompt — legacy path carries the same design seam", () => {
   it("includes the archetype brief and anti-patterns for the CLI-subprocess prompt", () => {
     const out = renderBuilderPrompt(inputFor("a fintech trading dashboard"));

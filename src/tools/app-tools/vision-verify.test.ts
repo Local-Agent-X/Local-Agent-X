@@ -140,7 +140,7 @@ describe("visionVerdictForScreenshot — dispatch request mapping", () => {
     expect(opts.maxTokens).toBe(200);
     expect(opts.temperature).toBe(0);
     expect(opts.prompt).toContain("a weather dashboard");
-    expect(opts.prompt).toContain('{"ok": boolean, "reason": string, "design": {"score": integer, "issues": [string]}}');
+    expect(opts.prompt).toContain('{"ok": boolean, "reason": string, "design": {"score": integer, "dimensions": {"hierarchy": integer, "spacing": integer, "color": integer, "states": integer}, "issues": [string]}}');
     // Both jobs ride the SAME single dispatch — the prompt asks for the design rubric too.
     expect(opts.prompt).toContain("Design assessment");
   });
@@ -236,6 +236,42 @@ describe("visionVerdictForScreenshot — graded design rubric", () => {
       dispatch: dispatchReturning('{"reason": "no ok", "design": {"score": 5, "issues": []}}'),
     });
     expect(verdict).toBeNull();
+  });
+});
+
+describe("visionVerdictForScreenshot — per-axis design dimensions", () => {
+  it("parses the dimensions breakdown and clamps each axis to an integer 0-5", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning(
+        '{"ok":true,"reason":"ok","design":{"score":3,"dimensions":{"hierarchy":1,"spacing":9,"color":-2,"states":4.6},"issues":[]}}',
+      ),
+    });
+    expect(verdict?.design?.dimensions).toEqual({ hierarchy: 1, spacing: 5, color: 0, states: 5 });
+  });
+
+  it("keeps a valid design verdict when dimensions are absent (no dimensions key at all)", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok":true,"reason":"ok","design":{"score":3,"issues":[]}}'),
+    });
+    expect(verdict?.design).toEqual({ score: 3, issues: [] });
+    expect(verdict?.design?.dimensions).toBeUndefined();
+  });
+
+  it("defaults a single garbled axis to a neutral 3 rather than dropping the whole breakdown", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning(
+        '{"ok":true,"reason":"ok","design":{"score":2,"dimensions":{"hierarchy":"bad","spacing":2,"color":2,"states":2},"issues":[]}}',
+      ),
+    });
+    expect(verdict?.design?.dimensions).toEqual({ hierarchy: 3, spacing: 2, color: 2, states: 2 });
+  });
+
+  it("drops a non-object dimensions block but preserves the design score/issues", async () => {
+    const verdict = await visionVerdictForScreenshot(PNG, "a todo app", {
+      dispatch: dispatchReturning('{"ok":true,"reason":"ok","design":{"score":3,"dimensions":"great","issues":["x"]}}'),
+    });
+    expect(verdict?.design?.score).toBe(3);
+    expect(verdict?.design?.dimensions).toBeUndefined();
   });
 });
 

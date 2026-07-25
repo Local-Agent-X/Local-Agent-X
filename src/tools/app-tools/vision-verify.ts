@@ -24,8 +24,16 @@ export interface VisionVerdict {
    * (5 = polished, intentional design); `issues` lists concrete problems
    * visible in the screenshot (e.g. low text contrast, emoji used as icons,
    * unstyled/generic look, no visual hierarchy / cramped spacing, overflow).
+   * `dimensions` is a per-axis breakdown (each int 0–5) so the refine nudge can
+   * lead with the weakest axis ("hierarchy 1/5") instead of one opaque number.
+   * Optional and degrade-safe: an old/garbled reply drops it without nulling the
+   * verdict, and the aggregate `score` still drives the gate on its own.
    */
-  design?: { score: number; issues: string[] };
+  design?: {
+    score: number;
+    issues: string[];
+    dimensions?: { hierarchy: number; spacing: number; color: number; states: number };
+  };
 }
 
 /** Matches how llm-dispatch is invoked — injectable so tests never hit the network. */
@@ -57,7 +65,7 @@ export async function visionVerdictForScreenshot(
       ? `You are judging ${shots.length} screenshots of a just-built web app: the first is the app as it loaded, the next was taken AFTER clicking its primary action (e.g. a Start button). The app is described as: "${appDescription}". Judge the post-interaction state with the same rigor — an app that renders garbage after its Start button is broken.`
       : `You are judging a screenshot of a just-built web app. The app is described as: "${appDescription}".`,
     "",
-    'Respond with strict JSON only, no prose: {"ok": boolean, "reason": string, "design": {"score": integer, "issues": [string]}}',
+    'Respond with strict JSON only, no prose: {"ok": boolean, "reason": string, "design": {"score": integer, "dimensions": {"hierarchy": integer, "spacing": integer, "color": integer, "states": integer}, "issues": [string]}}',
     "",
     "1) Broken-check (the `ok` field):",
     "Set ok=false ONLY when the screenshot is clearly broken: a blank/empty page, visible stack trace or error text, a framework error overlay, or a completely unstyled raw-text dump.",
@@ -66,6 +74,7 @@ export async function visionVerdictForScreenshot(
     "",
     "2) Design assessment (the `design` field), independent of the broken-check:",
     "Rate `score` from 0 to 5 as an integer, where 5 is polished and intentional and 0 is crude or unstyled. Judge only what is visible against general design and accessibility principles: legible text contrast, a clear visual hierarchy, comfortable and deliberate spacing, real iconography rather than emoji standing in for UI controls, and a layout that reads as designed rather than a default template or an overflowing/broken responsive grid.",
+    "Also rate each axis 0–5 as an integer in `dimensions`: `hierarchy` — is there a clear type/size hierarchy with one dominant title and headings distinct from body, or does everything look the same size? `spacing` — consistent rhythm, comfortable padding, content aligned to a grid, or cramped/ragged/arbitrary gaps? `color` — a coherent, deliberate palette with sufficient contrast, or a generic template look? `states` — does it read as designed real content with proper affordances (buttons look clickable, a real empty state rather than a bare void), or an unstyled data dump? The overall `score` should broadly reflect these axes.",
     "List each concrete, visible problem in `issues` as one short phrase (for example: low text contrast, emoji used as icons, generic unstyled look, no visual hierarchy or cramped spacing, content overflow or broken responsive layout). Use an empty list when nothing is wrong.",
     // When the build MANDATED an exact design system, adherence to it is the
     // heaviest factor in the score — a render that ignores the required palette
@@ -109,14 +118,37 @@ export async function visionVerdictForScreenshot(
 // `issues` is coerced to its string entries, while an absent or garbled block
 // degrades to undefined (via the outer .catch) instead of nulling an
 // otherwise valid ok/reason verdict.
+// Clamp any finite number to an integer 0–5.
+const clamp05 = (n: number): number => Math.min(5, Math.max(0, Math.round(n)));
+
+// Per-axis breakdown. Each field independently degrades to a neutral 3 if the
+// model omits or garbles it; the whole block degrades to undefined (via the
+// outer .catch in DesignSchema) so a reply without `dimensions` still yields a
+// valid design verdict driven by the aggregate `score`.
+const DimensionsSchema = z
+  .object({
+    hierarchy: z.number().finite().catch(3),
+    spacing: z.number().finite().catch(3),
+    color: z.number().finite().catch(3),
+    states: z.number().finite().catch(3),
+  })
+  .transform((d) => ({
+    hierarchy: clamp05(d.hierarchy),
+    spacing: clamp05(d.spacing),
+    color: clamp05(d.color),
+    states: clamp05(d.states),
+  }));
+
 const DesignSchema = z
   .object({
     score: z.number().finite(),
     issues: z.array(z.unknown()).catch([]),
+    dimensions: DimensionsSchema.optional().catch(undefined),
   })
   .transform((d) => ({
-    score: Math.min(5, Math.max(0, Math.round(d.score))),
+    score: clamp05(d.score),
     issues: d.issues.filter((x): x is string => typeof x === "string"),
+    ...(d.dimensions ? { dimensions: d.dimensions } : {}),
   }));
 
 // A valid `ok` boolean is the ONLY hard requirement for a verdict; a missing

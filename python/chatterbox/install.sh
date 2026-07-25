@@ -46,17 +46,23 @@ PY="$VENV_DIR/bin/python"
 
 # 3) Upgrade pip + setuptools (librosa needs pkg_resources; Python 3.12
 #    venvs no longer ship setuptools by default)
-echo "Upgrading pip + setuptools..."
-"$PY" -m pip install --upgrade pip setuptools --quiet
+# Bootstrap uv into the venv, then use it as the installer (resolves + downloads
+# all wheels before installing, so a failed resolve can't leave a half-built
+# venv; far faster than pip). setuptools still needed - librosa imports
+# pkg_resources and Python 3.12 venvs no longer ship it.
+echo "Bootstrapping uv + setuptools..."
+"$PY" -m pip install --upgrade uv --quiet
+UV="$VENV_DIR/bin/uv"
+"$UV" pip install --python "$PY" setuptools
 
 # 4) Install chatterbox-streaming. CPU/MPS torch is the default index — no
 #    cu128 wheel index like Windows. Apple Silicon gets MPS automatically;
 #    Intel/Linux without a GPU falls back to CPU.
 echo "Installing chatterbox-streaming (~1-2 GB of torch wheels)..."
-"$PY" -m pip install chatterbox-streaming
+"$UV" pip install --python "$PY" chatterbox-streaming
 
 # 5) FastAPI runtime + audio helpers (usually already pulled in)
-"$PY" -m pip install fastapi "uvicorn[standard]" soundfile
+"$UV" pip install --python "$PY" fastapi "uvicorn[standard]" soundfile
 
 # 6) Sanity check
 echo "Verifying install..."

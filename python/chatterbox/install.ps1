@@ -35,17 +35,26 @@ if (-not (Test-Path "$venvDir\Scripts\python.exe")) {
 }
 $pyExe = "$venvDir\Scripts\python.exe"
 
-# 3) Upgrade pip + setuptools (librosa needs pkg_resources; Python 3.12
-#    venvs no longer ship setuptools by default)
-Write-Host "Upgrading pip + setuptools ..."
-& $pyExe -m pip install --upgrade pip setuptools
-if ($LASTEXITCODE -ne 0) { Write-Error "pip/setuptools upgrade failed (exit $LASTEXITCODE)" }
+# 3) Bootstrap uv into the venv, then use it as the installer. uv is a single
+#    dependency-free wheel; it resolves the whole graph and downloads every
+#    wheel BEFORE installing anything, so a failed resolve can no longer leave a
+#    half-built venv, and it is far faster than pip on the ~3 GB torch wheels
+#    below. setuptools is still installed into the venv - librosa needs
+#    pkg_resources, and Python 3.12 venvs no longer ship setuptools by default.
+Write-Host "Bootstrapping uv + setuptools ..."
+& $pyExe -m pip install --upgrade uv --quiet
+if ($LASTEXITCODE -ne 0) { Write-Error "uv bootstrap failed (exit $LASTEXITCODE)" }
+$uvExe = Join-Path $venvDir "Scripts\uv.exe"
+& $uvExe pip install --python $pyExe setuptools
+if ($LASTEXITCODE -ne 0) { Write-Error "setuptools install failed (exit $LASTEXITCODE)" }
 
 # 4) Install chatterbox-streaming FIRST. It hard-pins torch==2.6.0, and no
 #    CUDA-12.8 wheel exists for 2.6.0 — so on this step pip lands the CPU
 #    torch no matter which index we point it at.
 Write-Host "Installing chatterbox-streaming ..."
-& $pyExe -m pip install chatterbox-streaming --extra-index-url https://download.pytorch.org/whl/cu128
+# --index-strategy unsafe-best-match makes uv consider both PyPI and the cu128
+# index like pip does; without it uv stops at the first index that has a package.
+& $uvExe pip install --python $pyExe chatterbox-streaming --extra-index-url https://download.pytorch.org/whl/cu128 --index-strategy unsafe-best-match
 if ($LASTEXITCODE -ne 0) { Write-Error "chatterbox-streaming install failed (exit $LASTEXITCODE)" }
 
 # 5) THEN force the CUDA torch over the pin. Blackwell GPUs (RTX 50-series,
@@ -60,12 +69,13 @@ if ($env:LAX_FORCE_CPU_TORCH -ne "1") {
     # --force-reinstall, not --upgrade: PyPI's torch can be NEWER than the
     # cu128 index's latest, and --upgrade won't downgrade — leaving a
     # torch/torchaudio mismatch. Force-reinstall lands the matched pair.
-    & $pyExe -m pip install --force-reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+    # uv's --reinstall is the equivalent of pip's --force-reinstall here.
+    & $uvExe pip install --python $pyExe --reinstall torch torchaudio --index-url https://download.pytorch.org/whl/cu128
     if ($LASTEXITCODE -ne 0) { Write-Error "CUDA torch override failed (exit $LASTEXITCODE)" }
 }
 
 # 6) FastAPI runtime + audio helpers (most likely already pulled in by chatterbox)
-& $pyExe -m pip install fastapi "uvicorn[standard]" soundfile
+& $uvExe pip install --python $pyExe fastapi "uvicorn[standard]" soundfile
 if ($LASTEXITCODE -ne 0) { Write-Error "fastapi/uvicorn/soundfile install failed (exit $LASTEXITCODE)" }
 
 # 7) Sanity check. MUST fail the script on a bad import: PowerShell 5.1 does

@@ -42,16 +42,21 @@ if (-not (Test-Path $VenvDir)) {
 }
 
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
-$VenvPip = Join-Path $VenvDir "Scripts\pip.exe"
 
-# 3. Upgrade pip + install requirements
-Write-Host "[3/5] upgrading pip..."
-& $VenvPython -m pip install --upgrade pip --quiet
+# 3. Bootstrap uv into the venv, then use it as the installer. uv is a single
+# dependency-free wheel; it resolves the whole graph and downloads every wheel
+# BEFORE installing anything, so a failed resolve can no longer leave a
+# half-built venv (the state _smoke.py exists to catch) - and it is far faster
+# than pip on the multi-GB CUDA wheels below.
+Write-Host "[3/5] bootstrapping uv..."
+& $VenvPython -m pip install --upgrade uv --quiet
+if ($LASTEXITCODE -ne 0) { Write-Host "uv bootstrap failed" -ForegroundColor Red; exit 1 }
+$VenvUv = Join-Path $VenvDir "Scripts\uv.exe"
 
 Write-Host "[4/5] installing GPU voice deps (slow part - ~2GB of CUDA wheels)..."
-& $VenvPip install -r $Requirements
+& $VenvUv pip install --python $VenvPython -r $Requirements
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "pip install failed - check the output above" -ForegroundColor Red
+    Write-Host "uv pip install failed - check the output above" -ForegroundColor Red
     exit 1
 }
 

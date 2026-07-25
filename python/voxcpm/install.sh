@@ -42,14 +42,20 @@ fi
 PY="$VENV_DIR/bin/python"
 
 # 3) pip + setuptools (py3.12 venvs ship without setuptools)
-echo "Upgrading pip + setuptools..."
-"$PY" -m pip install --upgrade pip setuptools --quiet
+# Bootstrap uv into the venv, then use it as the installer (resolves + downloads
+# all wheels before installing, so a failed resolve can't leave a half-built
+# venv; far faster than pip). setuptools still needed - audio deps import
+# pkg_resources.
+echo "Bootstrapping uv + setuptools..."
+"$PY" -m pip install --upgrade uv --quiet
+UV="$VENV_DIR/bin/uv"
+"$UV" pip install --python "$PY" setuptools
 
 # 4) voxcpm + server deps + faster-whisper (auto-transcribes reference
 #    clips; VoxCPM conditions on the transcript). Default index torch is
 #    CPU/MPS - fine here; the cu128 override is a Windows/Blackwell concern.
 echo "Installing voxcpm + server deps (~2-3 GB)..."
-"$PY" -m pip install voxcpm faster-whisper fastapi "uvicorn[standard]" soundfile
+"$UV" pip install --python "$PY" voxcpm faster-whisper fastapi "uvicorn[standard]" soundfile
 
 # 5) Sanity check (set -e makes any failure fatal)
 echo "Verifying install..."

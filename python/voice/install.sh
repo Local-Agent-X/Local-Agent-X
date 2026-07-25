@@ -42,14 +42,17 @@ else
 fi
 
 VENV_PYTHON="$VENV_DIR/bin/python"
-VENV_PIP="$VENV_DIR/bin/pip"
 
-# 3. Upgrade pip + install requirements
-echo "[3/5] upgrading pip..."
-"$VENV_PYTHON" -m pip install --upgrade pip --quiet
+# 3. Bootstrap uv into the venv, then use it as the installer. uv resolves the
+# whole graph and downloads every wheel BEFORE installing, so a failed resolve
+# can't leave a half-built venv (the state _smoke.py exists to catch), and it is
+# far faster than pip.
+echo "[3/5] bootstrapping uv..."
+"$VENV_PYTHON" -m pip install --upgrade uv --quiet
+VENV_UV="$VENV_DIR/bin/uv"
 
 echo "[4/5] installing voice deps (~500 MB-1 GB)..."
-"$VENV_PIP" install -r "$REQS"
+"$VENV_UV" pip install --python "$VENV_PYTHON" -r "$REQS"
 
 # 4. Download Kokoro model files
 mkdir -p "$MODELS_DIR"

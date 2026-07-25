@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const ebayIntegration: IntegrationConfig = {
+export const ebayIntegration: IntegrationDeclaration = {
   id: "ebay",
   name: "eBay",
   icon: "🛒",
@@ -9,7 +9,7 @@ export const ebayIntegration: IntegrationConfig = {
   authInstructions: "1. Go to developer.ebay.com\n2. Create an Application (Production or Sandbox)\n3. Get your App ID (Client ID) and Cert ID (Client Secret)\n4. Use Client Credentials grant to get an Application token\n5. For user-level access (selling): use Authorization Code grant",
   baseUrl: "https://api.ebay.com",
   docsUrl: "https://developer.ebay.com/docs",
-  secretName: "EBAY_ACCESS_TOKEN",
+  credentials: [{ name: "EBAY_ACCESS_TOKEN" }],
   scopes: ["https://api.ebay.com/oauth/api_scope", "https://api.ebay.com/oauth/api_scope/sell.inventory"],
   endpoints: [
     { name: "Search Items", method: "GET", path: "/buy/browse/v1/item_summary/search", description: "Search for items on eBay", params: { q: { type: "string", required: true, description: "Search keywords" }, limit: { type: "number", description: "Max results (1-200)" }, filter: { type: "string", description: "Filter string (price, condition, etc.)" } } },

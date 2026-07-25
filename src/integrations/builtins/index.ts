@@ -1,4 +1,4 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 import { googleIntegration } from "./google.js";
 import { githubIntegration } from "./github.js";
 import { slackIntegration } from "./slack.js";
@@ -11,7 +11,7 @@ import { ebayIntegration } from "./ebay.js";
 import { notionIntegration } from "./notion.js";
 import { emailIntegration } from "./email.js";
 
-export const BUILTIN_INTEGRATIONS: IntegrationConfig[] = [
+export const BUILTIN_INTEGRATIONS: IntegrationDeclaration[] = [
   googleIntegration,
   githubIntegration,
   slackIntegration,

@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const googleIntegration: IntegrationConfig = {
+export const googleIntegration: IntegrationDeclaration = {
   id: "google",
   name: "Google",
   icon: "🔍",
@@ -9,7 +9,7 @@ export const googleIntegration: IntegrationConfig = {
   authInstructions: "1. Go to console.cloud.google.com\n2. Create a project\n3. Enable APIs (YouTube Data API v3, etc.)\n4. Create credentials → API key\n5. Copy the API key",
   baseUrl: "https://www.googleapis.com",
   docsUrl: "https://developers.google.com/apis-explorer",
-  secretName: "GOOGLE_API_KEY",
+  credentials: [{ name: "GOOGLE_API_KEY" }],
   scopes: ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/calendar", "https://www.googleapis.com/auth/drive"],
   endpoints: [
     { name: "List Emails", method: "GET", path: "/gmail/v1/users/me/messages", description: "List Gmail messages", params: { q: { type: "string", description: "Search query (same as Gmail search)" }, maxResults: { type: "number", description: "Max results (default 10)" } } },

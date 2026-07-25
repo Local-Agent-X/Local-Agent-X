@@ -101,7 +101,17 @@ const ROLE_PERMISSIONS: Record<Role, {
     // never needs it — its chat/routing path reads runtimes from the in-process
     // cache (local-runtimes getLocalRuntimes), not this route, which exists for
     // the operator settings UI. Keep this in sync with manualRuntimeHostPorts.
-    deniedEndpoints: ["/api/secrets", "/api/tokens", "/api/plugins", "/api/auth", "/api/audit", "/api/logs", "/api/local-runtimes"],
+    //
+    // /api/security and /api/tool-policy are SELF-GATING: they mutate the very
+    // controls that bound the agent. POST /api/security/file-access sets the
+    // file-access mode ("unrestricted" widens every write sink), and POST
+    // /api/tool-policy/toggle flips the bash/http/browser policy rules. Neither
+    // route carries its own operator check, so RBAC is the only thing standing
+    // between a blocked agent and its own leash — same confused-deputy shape as
+    // /api/local-runtimes above, observed in the wild 2026-07-25. User-owned
+    // security controls are changed by the operator UI (which holds a real
+    // operator token) or by the `setting` tool, which asks the user to approve.
+    deniedEndpoints: ["/api/secrets", "/api/tokens", "/api/plugins", "/api/auth", "/api/audit", "/api/logs", "/api/local-runtimes", "/api/security", "/api/tool-policy"],
   },
 };
 

@@ -2,9 +2,9 @@ import { resolve, relative, dirname, basename, isAbsolute, sep } from "node:path
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { FileAccessMode } from "./types.js";
-import { isAppAtRestSecretBasename } from "../secrets/known-secrets.js";
 import { classifySensitivePath } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
+import { isLaxControlFile, isAppAtRestSecretUnderLax } from "./lax-control-files.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { platformRoot } from "../../platform-root.js";
@@ -31,25 +31,6 @@ export function pathIsWithin(
 ): boolean {
   const rel = pathImpl.relative(root, target);
   return !rel.startsWith("..") && !pathImpl.isAbsolute(rel);
-}
-
-// ── The app's OWN at-rest secret/key/seed files under a `.lax` data dir ──
-//
-// Derived from the ONE canonical enumeration (security/known-secrets.ts) so this
-// read gate / write block can never drift from the read-taint classifier or the
-// attachment denylist. We scope the match to a `.lax` dir segment so a user file
-// that happens to be named e.g. `auth.json` outside the data dir isn't caught by
-// THIS rule (auth.json/master.* still match the cross-location SENSITIVE_PATTERNS
-// below where they already did) — the new coverage this adds is `audit-key` /
-// `audit-key.enc` / `secrets.salt` under the app's data dir.
-function isAppAtRestSecretUnderLax(p: string): boolean {
-  const segs = p.split(/[\\/]/).filter(Boolean);
-  if (segs.length < 2) return false;
-  if (!isAppAtRestSecretBasename(segs[segs.length - 1])) return false;
-  for (let i = 0; i < segs.length - 1; i++) {
-    if (segs[i].toLowerCase() === ".lax") return true;
-  }
-  return false;
 }
 
 // Whether a (already case-normalized) path matches any always-blocked sensitive
@@ -246,6 +227,20 @@ export function evaluateFileAccess(
       return { allowed: false, reason: "Blocked: symlink loop detected (possible attack)", userHint: USER_HINTS.fileSystem };
     }
     realPath = resolved;
+  }
+
+  // Capability-control files in the data dir are read-only to the file tools, in
+  // EVERY access mode — placed above the mode branches precisely because
+  // "unrestricted" must not mean "may rewrite my own permissions". Reads fall
+  // through untouched; only mutation is refused. See isLaxControlFile.
+  if (action === "write" || action === "edit" || action === "delete") {
+    if (isLaxControlFile(realPath)) {
+      return {
+        allowed: false,
+        reason: `Blocked: ${basename(realPath)} is a user-owned control file — it defines what you are allowed to do, so it cannot be rewritten directly.`,
+        userHint: USER_HINTS.policy,
+      };
+    }
   }
 
   // Check for directory traversal (target resolved OUTSIDE the workspace).

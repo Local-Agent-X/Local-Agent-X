@@ -21,7 +21,7 @@ import {
 } from "../approval-manager.js";
 import type { CapabilityClass } from "../tool-registry.js";
 import { shellCommandWritesFiles } from "../security/layer/index.js";
-import { isProtectedSetting } from "../settings-schema.js";
+import { enforceProtectedSettingGate, ProtectedSettingDenied } from "./protected-setting-gate.js";
 import { supervisedEvaluateBlock } from "./supervised-browser-gate.js";
 import { computerRedirectBlock, killSwitchBlock, screenCaptureRedirectBlock } from "./kill-switch-gates.js";
 import type { ServerEvent } from "../types.js";
@@ -294,59 +294,26 @@ export async function assertToolCallAllowed(
     });
   }
 
-  // User-owned security controls (kill-switches, approval mode, browser mode)
-  // may be changed when the user asks in an interactive session, but NEVER in
-  // an autonomous run (cron/api/delegated sub-agent) where no user is present.
-  // That autonomous block is the hard guarantee; the prompt-side rule "only
-  // when the user asks" keeps the agent from flipping one on its own initiative
-  // — e.g. re-enabling its own kill-switch to get past a block.
-  if (
-    call.name === "setting" &&
-    isProtectedSetting(String((call.args as { field?: unknown }).field ?? "")) &&
-    ctx.callContext !== "local"
-  ) {
-    const field = String((call.args as { field?: unknown }).field ?? "");
-    throw new ToolBlocked({
-      stage: "approval",
-      reason: `"${field}" is a user-controlled security setting and cannot be changed in an automated/background run.`,
-      recovery: "Security settings can only be changed when the user asks in an interactive chat. Surface this to the user instead.",
-      userHint: USER_HINTS.policy,
-    });
-  }
-
-  // Lowering the strict local-only boundary is never delegated to the active
-  // autonomy profile. Even an "allow" profile or remembered setting grant
-  // must produce a fresh, explicit user confirmation every time.
-  if (
-    call.name === "setting" &&
-    String((call.args as { field?: unknown }).field ?? "") === "localOnlyMode" &&
-    (call.args as { value?: unknown }).value === false
-  ) {
-    if (ctx.callContext !== "local" || !ctx.approval) {
+  // User-owned security controls (kill-switches, approval mode, browser
+  // identity/secrecy, local-only, developer_mode). The agent may REQUEST one;
+  // it may never self-apply one. Autonomous runs are refused outright;
+  // interactive runs require a fresh explicit approval every time, which
+  // outranks any remembered grant or permissive autonomy profile — so an
+  // approval here is terminal and skips the generic profile gate below.
+  // The invariant and its incident history live in protected-setting-gate.ts.
+  try {
+    const outcome = await enforceProtectedSettingGate(call, ctx, d.getApprovalManager());
+    if (outcome === "approved") return;
+  } catch (err) {
+    if (err instanceof ProtectedSettingDenied) {
       throw new ToolBlocked({
         stage: "approval",
-        reason: "Disabling strict local-only mode requires explicit user approval in an interactive session.",
-        userHint: USER_HINTS.policy,
+        reason: err.reason,
+        ...(err.recovery !== undefined ? { recovery: err.recovery } : {}),
+        userHint: err.userHint,
       });
     }
-    const approved = await d.getApprovalManager().requestApproval({
-      toolName: call.name,
-      toolCallId: call.id,
-      sessionId: ctx.sessionId,
-      context: "Disable strict local-only mode and restore remote network access?",
-      args: call.args,
-      alwaysAsk: true,
-      opId: ctx.opId,
-      emit: ctx.approval.onEvent,
-    });
-    if (!approved) {
-      throw new ToolBlocked({
-        stage: "approval",
-        reason: "The user did not approve disabling strict local-only mode.",
-        userHint: USER_HINTS.policy,
-      });
-    }
-    return;
+    throw err;
   }
 
   // Per-user gate (not a rule pack — interactive consent driven by the

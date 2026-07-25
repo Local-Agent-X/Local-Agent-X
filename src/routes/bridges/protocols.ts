@@ -1,4 +1,5 @@
 import type { RouteHandler } from "../../server-context.js";
+import type { Protocol, ProtocolStep } from "../../protocols/types.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 
 export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {
@@ -36,6 +37,29 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
     } catch { json(200, { protocols: [] }); }
     return true;
   }
+  // Archived list — the read half of the recoverable delete. MUST stay above the
+  // /:name detail route below, whose regex would otherwise swallow this path;
+  // "archived" is therefore a reserved protocol name at the HTTP layer.
+  if (method === "GET" && url.pathname === "/api/protocols/archived") {
+    try {
+      const { loadArchived } = await import("../../protocols/archive.js");
+      const archived = loadArchived().map((r) => ({
+        name: r.protocol.name,
+        description: r.protocol.description,
+        triggers: (r.protocol.triggers || []).slice(0, 3),
+        steps: r.protocol.steps?.length ?? 0,
+        category: r.protocol.category,
+        tags: r.protocol.tags || [],
+        // Archive only ever holds custom-tier records (archiveProtocol reads
+        // custom.json), so the fallback matches what the loader would stamp.
+        source: r.protocol.source || { type: "custom" as const },
+        archivedTs: r.archivedTs,
+        reason: r.reason,
+      }));
+      json(200, { archived });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
   // Detail endpoint — full record including body, steps, rules, allowedTools.
   if (method === "GET" && url.pathname.match(/^\/api\/protocols\/[^/]+$/)) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);
@@ -65,7 +89,10 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         body: typeof p.body === "string" ? (p.body as string) : undefined,
         category: typeof p.category === "string" ? (p.category as string) : undefined,
         tags: Array.isArray(p.tags) ? (p.tags as string[]) : undefined,
-        source: { type: "custom" },
+        // This route IS the user's authoring path (the Protocols tab posts
+        // here), so stamp user provenance. Deliberately not settable from the
+        // body: an HTTP caller must not be able to forge agent authorship.
+        source: { type: "custom", authoredBy: "user", authoredAt: Date.now() },
       });
       json(200, { ok: true, protocol: created });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
@@ -85,7 +112,26 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         return true;
       }
       const { editProtocol, createProtocol, loadCustomProtocols } = await import("../../protocols/builder.js");
-      const updates = body as Partial<{ description: string; body: string; triggers: string[]; category: string; tags: string[]; steps: []; rules: string[] }>;
+      // Whitelist at RUNTIME, not just in the type. `body as Partial<...>` is a
+      // cast that filters nothing, and both branches below shallow-merge whatever
+      // they're handed — so an unfiltered body could rewrite `source` and forge
+      // agent authorship over HTTP. Authorship is set by create/fork only.
+      // NOTE: this also stops PATCH renaming a record — `editProtocol` honours
+      // `updates.name` (builder.ts: `name: updates.name ?? existing.name`), and a
+      // rename would strand usage rows, the dedup embedding and the archive, all
+      // of which key on name. The UI is unaffected only because `#edit-name` is
+      // disabled while editing, so protocolSave always resends the current name.
+      // Re-enabling that input means building a real rename path, not widening
+      // this list.
+      const raw = body as Record<string, unknown>;
+      const updates: Partial<Protocol> = {};
+      if (typeof raw.description === "string") updates.description = raw.description;
+      if (typeof raw.body === "string") updates.body = raw.body;
+      if (Array.isArray(raw.triggers)) updates.triggers = raw.triggers as string[];
+      if (typeof raw.category === "string") updates.category = raw.category;
+      if (Array.isArray(raw.tags)) updates.tags = raw.tags as string[];
+      if (Array.isArray(raw.steps)) updates.steps = raw.steps as ProtocolStep[];
+      if (Array.isArray(raw.rules)) updates.rules = raw.rules as string[];
       // Imported (SKILL.md) entries don't live in custom-protocols.json yet —
       // first edit promotes them to a custom override. The original SKILL.md
       // file stays on disk so re-import of the upstream is still possible.
@@ -110,12 +156,47 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
       if (!original) { json(404, { error: "Source protocol not found" }); return true; }
       const { createProtocol } = await import("../../protocols/builder.js");
       const newName = (body?.newName?.trim()) || `${sourceName}_mine`;
+      // A fork is a NEW user-authored copy: rebuild `source` rather than spread
+      // the original's. Upstream identity (repo/commit/license) is carried for
+      // attribution; `sourcePath` is dropped on purpose — the fork lives in
+      // custom.json, not behind the original SKILL.md file. Authorship is
+      // stamped "user" explicitly so forking an agent-authored protocol yields
+      // an honest record instead of inheriting "agent" or going unlabelled.
+      // `pinned` is NOT inherited: pinning is a decision about one protocol's
+      // exemption from auto-archive, not a property of its content.
       const forked = createProtocol({
         ...original,
         name: newName,
-        source: { type: "custom", repo: original.source?.repo, attribution: `forked from ${sourceName}` },
+        pinned: undefined,
+        source: {
+          type: "custom",
+          repo: original.source?.repo,
+          commit: original.source?.commit,
+          license: original.source?.license,
+          attribution: `forked from ${sourceName}`,
+          authoredBy: "user",
+          authoredAt: Date.now(),
+        },
       });
       json(200, { ok: true, protocol: forked });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+  // Unarchive — the undo half of the default (soft) delete. Without this the
+  // archive is only reachable from agent tools, so the user's undo doesn't
+  // exist in the UI.
+  if (method === "POST" && url.pathname.match(/^\/api\/protocols\/[^/]+\/unarchive$/)) {
+    const name = decodeURIComponent(url.pathname.split("/")[3]);
+    try {
+      const { unarchiveProtocol } = await import("../../protocols/archive.js");
+      const { restored, error } = unarchiveProtocol(name);
+      if (error) {
+        // "not archived" = nothing to restore (404). A live name collision is a
+        // conflict the caller resolves by renaming or removing the live copy.
+        json(/not archived/.test(error) ? 404 : 409, { ok: false, error });
+        return true;
+      }
+      json(200, { ok: true, protocol: restored });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
@@ -131,19 +212,42 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         json(403, { error: "built-in/bundled protocols cannot be deleted — they're vendored. Override locally instead." });
         return true;
       }
-      // Mirror the protocol_delete tool semantics: ?permanent=true hard-deletes,
+      // Mirror the protocol tool's delete semantics: ?permanent=true hard-deletes,
       // default soft-archives (recoverable via POST /api/protocols/:name/unarchive
-      // or the protocol_unarchive tool).
+      // or protocol(action:"unarchive")).
+      // Both paths only reach custom.json. An `imported` SKILL.md that has never
+      // been edited isn't in there yet, so both would no-op — reported honestly
+      // as 409 rather than a 200 the UI shows as success.
       const permanent = url.searchParams.get("permanent") === "true";
       if (permanent) {
         const { deleteProtocol } = await import("../../protocols/builder.js");
         const ok = deleteProtocol(name);
-        json(200, { ok, mode: "permanent" });
+        if (!ok) {
+          json(409, { ok: false, mode: "permanent", error: `"${name}" isn't in the editable catalog — edit it once to promote it, then delete.` });
+          return true;
+        }
+        json(200, { ok: true, mode: "permanent" });
       } else {
-        const { archiveProtocol } = await import("../../protocols/archive.js");
+        const { archiveProtocol, loadArchived } = await import("../../protocols/archive.js");
         const reason = url.searchParams.get("reason") || undefined;
-        const rec = archiveProtocol(name, reason);
-        json(200, { ok: rec !== null, mode: "archived" });
+        // The archive holds ONE record per name. When the name is already in
+        // archived.json, archiveProtocol() "resolves" the clash by hard-deleting
+        // the live record without archiving it — the live content is then gone
+        // for good. That is reachable on the normal path, because createProtocol
+        // only rejects collisions against the LIVE catalog, so an archived name
+        // is immediately re-creatable. Refuse before taking the side effect.
+        if (loadArchived().some((r) => r.protocol.name === name)) {
+          json(409, {
+            ok: false, mode: "archived",
+            error: `"${name}" is already in the archive, and the archive keeps one copy per name — archiving this one would destroy it. Delete this copy permanently, then restore the archived one if you want it back.`,
+          });
+          return true;
+        }
+        if (archiveProtocol(name, reason) === null) {
+          json(409, { ok: false, mode: "archived", error: `"${name}" isn't in the editable catalog — only user-custom protocols can be archived.` });
+          return true;
+        }
+        json(200, { ok: true, mode: "archived" });
       }
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;

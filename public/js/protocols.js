@@ -1,5 +1,6 @@
 // ── Protocols Page (master/detail editor) ──
 // Categories sidebar with search → click protocol → full detail/edit on the right.
+// The archived view + restore live in protocols-archive.js, which must load first.
 
 let protocolList = [];           // abbreviated records from /api/protocols
 let selectedName = null;         // currently-selected protocol name
@@ -9,6 +10,37 @@ let editDraft = null;            // working copy while editing
 let searchQuery = "";
 
 const SOURCE_ORDER = { custom: 0, imported: 1, bundled: 2, builtin: 3 };
+
+// Authorship is THREE-state, not a boolean: `authoredBy` is absent on every
+// protocol predating provenance, so absent means UNKNOWN — showing it as "you"
+// would credit the user with work the agent may have done.
+function protocolAuthorship(p) {
+  const by = p?.source?.authoredBy;
+  return by === 'agent' ? { key: 'agent', label: 'the agent, unprompted' }
+    : by === 'user' ? { key: 'user', label: 'you' } : { key: 'unknown', label: 'not recorded' };
+}
+// Tag precedence: agent-authored wins, then imported/custom collapse to one
+// "custom" tag (internal plumbing); app-shipped tiers get no tag.
+function protocolSourceTag(p) {
+  if (protocolAuthorship(p).key === 'agent') return `<span class="proto-item-source" style="margin-left:auto;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:0 5px" title="Written by the agent on its own. Open it to review or archive.">agent</span>`;
+  return (p.source?.type === 'imported' || p.source?.type === 'custom') ? `<span class="proto-item-source" style="margin-left:auto">custom</span>` : '';
+}
+
+// esc() escapes & < > only (textContent → innerHTML). Attribute values also need
+// the quotes, or a name containing one closes the attribute early.
+function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+// Card actions are delegated, never inlined. Protocol names and descriptions are
+// agent-authored strings with no write-time validation, and `onclick="fn('${name}')"`
+// would execute whatever a name like  x'); alert(1); //  contains — HTML decodes
+// the attribute before the JS is parsed, so escaping the quote cannot help there.
+// Values ride in data-* attributes and come back through dataset, never as code.
+function protocolTreeClick(e) {
+  const restore = e.target.closest('[data-proto-restore]');
+  if (restore) { protocolRestore(restore.dataset.protoRestore); return; }
+  const card = e.target.closest('[data-proto-open]');
+  if (card) protocolSelect(card.dataset.protoOpen);
+}
 
 function init_protocols() { protocolLoad(); }
 if (document.getElementById('stab-protocols')?.classList.contains('active')) { protocolLoad(); }
@@ -21,6 +53,7 @@ async function protocolLoad() {
     const data = await apiFetch('/api/protocols').then(r => r.json());
     protocolList = Array.isArray(data.protocols) ? data.protocols : [];
     document.getElementById('protocol-count').textContent = `${protocolList.length} protocols`;
+    await protocolLoadArchived();
     protocolRenderTree();
   } catch (e) {
     tree.innerHTML = `<div style="padding:12px;color:#e88;font-size:.75rem">Failed to load protocols.</div>`;
@@ -33,6 +66,11 @@ function protocolFilter() {
 }
 
 function protocolRenderTree() {
+  protocolSyncArchivedToggle();
+  // Bound per render, not once at load, so no render path can produce cards with
+  // no handler. addEventListener de-dupes an identical function reference.
+  document.getElementById('protocol-tree')?.addEventListener('click', protocolTreeClick);
+  if (viewMode === 'archived') { protocolRenderArchived(); return; }
   const tree = document.getElementById('protocol-tree');
   const filtered = searchQuery
     ? protocolList.filter(p =>
@@ -67,18 +105,9 @@ function protocolRenderTree() {
       <div class="drill-section-head"><span>${esc(cat)}</span><span class="drill-section-count">${items.length}</span></div>
       <div class="drill-grid">
         ${items.map(p => {
-          // Only user-created protocols get a tag. builtin (typed packs)
-          // and bundled (SKILL.md vendored in protocols/bundled/) both
-          // ship with the app — same tier from the user's perspective —
-          // so neither shows a label. imported and custom collapse to a
-          // single "custom" tag since the distinction is internal plumbing.
-          const stype = p.source?.type;
-          const sourceTag = (stype === 'imported' || stype === 'custom')
-            ? `<span class="proto-item-source" style="margin-left:auto">custom</span>`
-            : '';
           const desc = (p.description || '').slice(0, 110);
-          return `<div class="drill-card" onclick="protocolSelect('${esc(p.name)}')" title="${esc(p.description || '')}">
-            <div class="drill-card-title">${esc(p.name)}${sourceTag}</div>
+          return `<div class="drill-card" data-proto-open="${escAttr(p.name)}" title="${escAttr(p.description || '')}">
+            <div class="drill-card-title">${esc(p.name)}${protocolSourceTag(p)}</div>
             ${desc ? `<div class="drill-card-sub" style="font-family:inherit;line-height:1.35">${esc(desc)}${p.description && p.description.length > 110 ? '…' : ''}</div>` : ''}
           </div>`;
         }).join('')}
@@ -131,9 +160,14 @@ function protocolRenderDetail() {
     // built-in (ships with the app) vs custom (user-created or imported).
     const tier = (stype === 'imported' || stype === 'custom') ? 'custom' : 'built-in';
     parts.push(`source: <strong>${esc(tier)}</strong>`);
+    // Only custom records carry provenance; other tiers are rebuilt from disk.
+    if (tier === 'custom') {
+      parts.push(`written by: <strong>${esc(protocolAuthorship(p).label)}</strong>${esc(p.source?.authoredAt ? ` on ${new Date(p.source.authoredAt).toLocaleDateString()}` : '')}`);
+      if (p.source?.authoredFromSession) parts.push(`session: ${esc(p.source.authoredFromSession)}`);
+    }
     if (p.source?.repo) {
       const url = p.source.repo.startsWith('http') ? p.source.repo : `https://github.com/${p.source.repo}`;
-      parts.push(`repo: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.source.repo)}</a>`);
+      parts.push(`repo: <a href="${escAttr(url)}" target="_blank" rel="noopener">${esc(p.source.repo)}</a>`);
     }
     if (p.source?.license) parts.push(`license: ${esc(p.source.license)}`);
     if (p.source?.commit) parts.push(`commit: ${esc(p.source.commit.slice(0, 7))}`);
@@ -162,9 +196,14 @@ function protocolRenderDetail() {
     bodyHtml = `<div class="proto-section"><div class="proto-body-render" style="color:var(--muted)">(no body, no steps — likely a placeholder)</div></div>`;
   }
 
+  // No confirmation prompt precedes an agent write, so this is the first place
+  // the user can review one — say it plainly, next to the recoverable exit.
+  const agentNotice = protocolAuthorship(p).key === 'agent'
+    ? `<div class="proto-meta" style="border-left:2px solid var(--accent);padding-left:10px;margin-top:10px">The agent wrote this itself after a task — you weren't asked. <strong>Archive</strong> removes it and keeps it restorable.</div>` : '';
   view.innerHTML = `
     <h2>${esc(p.name)}</h2>
     <div class="proto-meta">${sourceLine}</div>
+    ${agentNotice}
     <div class="proto-section">
       <h4>Description</h4>
       <div class="proto-body-render">${esc(p.description || '(no description)')}</div>
@@ -176,7 +215,7 @@ function protocolRenderDetail() {
       <button class="proto-btn" onclick="protocolStartEdit()" ${readOnly ? 'disabled title="Built-in/bundled — fork to mine first"' : ''}>Edit</button>
       <button class="proto-btn" onclick="protocolFork()" ${readOnly ? '' : 'disabled title="Already editable"'}>Fork to mine</button>
       <button class="proto-btn primary" onclick="protocolRun()">Run in chat</button>
-      ${!readOnly ? `<button class="proto-btn danger" onclick="protocolDelete()">Delete</button>` : ''}
+      ${!readOnly ? `<button class="proto-btn" onclick="protocolArchive()" title="Removes it from the catalog. Restorable from Archived.">Archive</button><button class="proto-btn danger" onclick="protocolDeletePermanent()" title="Erases it. Not restorable.">Delete permanently</button>` : ''}
     </div>
   `;
 }
@@ -203,24 +242,24 @@ function protocolRenderEdit() {
     <h2>${isNew ? 'New Protocol' : esc(d.name)}</h2>
     <div class="proto-section">
       <h4>Name</h4>
-      <input class="proto-edit-input" id="edit-name" value="${esc(d.name || '')}" ${isNew ? '' : 'disabled'} placeholder="snake_case_name"/>
+      <input class="proto-edit-input" id="edit-name" value="${escAttr(d.name || '')}" ${isNew ? '' : 'disabled'} placeholder="snake_case_name"/>
     </div>
     <div class="proto-section">
       <h4>Description</h4>
-      <input class="proto-edit-input" id="edit-description" value="${esc(d.description)}" placeholder="One-line summary of what this protocol does"/>
+      <input class="proto-edit-input" id="edit-description" value="${escAttr(d.description)}" placeholder="One-line summary of what this protocol does"/>
     </div>
     <div class="proto-section">
       <h4>Triggers (comma-separated)</h4>
-      <input class="proto-edit-input" id="edit-triggers" value="${esc(d.triggers)}" placeholder="post on instagram, share on ig, ig post"/>
+      <input class="proto-edit-input" id="edit-triggers" value="${escAttr(d.triggers)}" placeholder="post on instagram, share on ig, ig post"/>
     </div>
     <div class="proto-section" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>
         <h4>Category</h4>
-        <input class="proto-edit-input" id="edit-category" value="${esc(d.category)}" placeholder="Developer / Research / ..."/>
+        <input class="proto-edit-input" id="edit-category" value="${escAttr(d.category)}" placeholder="Developer / Research / ..."/>
       </div>
       <div>
         <h4>Tags (comma-separated)</h4>
-        <input class="proto-edit-input" id="edit-tags" value="${esc(d.tags)}" placeholder="git, deploy, ci"/>
+        <input class="proto-edit-input" id="edit-tags" value="${escAttr(d.tags)}" placeholder="git, deploy, ci"/>
       </div>
     </div>
     <div class="proto-section">
@@ -308,21 +347,25 @@ async function protocolFork() {
   }
 }
 
-async function protocolDelete() {
+// Two distinct removals, each labelled for what it does. The old single "Delete"
+// button warned "irreversible" then called the soft-archive endpoint — wrong in
+// both directions.
+function protocolArchive() { return protocolRemove(false); }
+function protocolDeletePermanent() { return protocolRemove(true); }
+async function protocolRemove(permanent) {
   if (!selectedRecord) return;
-  if (!confirm(`Delete protocol "${selectedRecord.name}"? This is irreversible.`)) return;
+  const name = selectedRecord.name, verb = permanent ? 'Delete' : 'Archive';
+  if (!confirm(permanent
+    ? `Permanently delete "${name}"?\n\nThis erases it — it will NOT appear under Archived and cannot be restored. Use Archive if you might want it back.`
+    : `Archive "${name}"?\n\nIt leaves the catalog and the agent stops using it. Restore it any time from Archived.`)) return;
   try {
-    const res = await apiFetch(`/api/protocols/${encodeURIComponent(selectedRecord.name)}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(err.error || `Delete failed (${res.status})`);
-      return;
-    }
+    const res = await apiFetch(`/api/protocols/${encodeURIComponent(name)}${permanent ? '?permanent=true' : ''}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    // Trust `ok`, not just the status — the route reports a no-op removal there.
+    if (!res.ok || data.ok === false) { alert(data.error || `${verb} failed (${res.status})`); return; }
     backToProtocolsList();
     await protocolLoad();
-  } catch (e) {
-    alert(`Delete failed: ${e.message || e}`);
-  }
+  } catch (e) { alert(`${verb} failed: ${e.message || e}`); }
 }
 
 function protocolRun() {

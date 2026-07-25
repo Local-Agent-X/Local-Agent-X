@@ -34,7 +34,6 @@ import {
 import { execChecked } from "./in-app-observe.js";
 import { asExecResult } from "./in-app-scripts.js";
 import { resolutionScript, selectFillScript, textSearchScript } from "./in-app-resolve-scripts.js";
-import { nativeClickRef, nativeFillRef } from "./in-app-native-actions.js";
 import type { InteractionResult } from "./backend.js";
 import { createLogger } from "../logger.js";
 
@@ -301,11 +300,6 @@ async function typeReplace(ctx: InAppActionContext, value: string): Promise<"don
 }
 
 export async function clickRefInApp(ctx: InAppActionContext, refId: number): Promise<InteractionResult> {
-	// Native fast-path (in-app-native-actions.ts): drive the ref frame-aware on
-	// the CDP real Page so iframe refs (the Shopventory form) resolve; any miss
-	// falls through to the isolated-world bridge chain below.
-	const nativeClick = await nativeClickRef(ctx, refId);
-	if (nativeClick) return nativeClick;
 	const resolved = await resolveRefOrFail(ctx, refId);
 	if ("fail" in resolved) return resolved.fail;
 	const { ref, note } = resolved;
@@ -318,12 +312,6 @@ export async function clickRefInApp(ctx: InAppActionContext, refId: number): Pro
 }
 
 export async function fillRefInApp(ctx: InAppActionContext, refId: number, value: string): Promise<InteractionResult> {
-	// Native fill fast-path: locator.fill on the real Page fires the focus/input/
-	// change sequence React-Select-style widgets (the Thrive vendor picker) need
-	// to commit, and reaches into the Shopventory iframe. A SELECT/file/miss
-	// returns null → fall through to the bridge chain (SELECT, file, occlusion).
-	const nativeFill = await nativeFillRef(ctx, refId, value);
-	if (nativeFill) return nativeFill;
 	const resolved = await resolveRefOrFail(ctx, refId);
 	if ("fail" in resolved) return resolved.fail;
 	const { ref, note } = resolved;

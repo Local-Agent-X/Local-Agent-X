@@ -368,6 +368,68 @@ describe("evaluateBlockMessage — remediation names the right alternative for t
 		const src = scanEvaluateScript("return document.cookie")!;
 		expect(evaluateBlockMessage(src)).toContain(src);
 	});
+
+	// --- The offending-text excerpt -------------------------------------------
+	// server.log recorded blocks that named ONLY the pattern, which made it
+	// impossible to tell a genuine bypass attempt from a false positive after the
+	// fact. The message now quotes the slice that tripped the scan.
+	it("omitting `script` returns the byte-identical message it did before the excerpt existed", () => {
+		const src = scanEvaluateScript("return document.cookie")!;
+		expect(evaluateBlockMessage(src)).toBe(
+			`Blocked: script contains restricted pattern (${src}). ` +
+			"Reading page storage or cookies through evaluate() is blocked to keep secrets out of tool output. " +
+			"To read visible page content use the `extract` or `snapshot` actions; if you need the page's login state, ask the user.",
+		);
+		const dyn = scanEvaluateScript('eval("1+1")')!;
+		expect(evaluateBlockMessage(dyn)).toBe(
+			`Blocked: script contains restricted pattern (${dyn}). ` +
+			"Dynamic code execution is not allowed in evaluate() — use plain DOM inspection (querySelector, textContent, getAttribute) instead.",
+		);
+	});
+
+	it("names the offending text when the script is supplied", () => {
+		const script = "const rows = document.querySelectorAll('tr'); const c = document.cookie; return rows.length + c";
+		const src = scanEvaluateScript(script)!;
+		const msg = evaluateBlockMessage(src, script);
+		expect(msg).toContain("Offending text");
+		expect(msg).toContain("document.cookie");
+		// The message still leads with the pattern + its class guidance.
+		expect(msg.startsWith(evaluateBlockMessage(src))).toBe(true);
+	});
+
+	it("keeps a multi-line script's message on ONE log line", () => {
+		const script = "const a = 1;\nconst b = 2;\nreturn document.cookie;\n// trailing\n";
+		const src = scanEvaluateScript(script)!;
+		const msg = evaluateBlockMessage(src, script);
+		expect(msg).toContain("Offending text");
+		expect(msg).not.toContain("\n");
+	});
+
+	it("caps the excerpt so a huge script is never dumped wholesale", () => {
+		const filler = "x".repeat(5000);
+		const script = `${filler} document.cookie ${filler}`;
+		const src = scanEvaluateScript(script)!;
+		const msg = evaluateBlockMessage(src, script);
+		const excerpt = /Offending text[^:]*: "(.*)"$/.exec(msg)?.[1];
+		expect(excerpt).toBeDefined();
+		expect(excerpt!.length).toBeLessThanOrEqual(160);
+		expect(msg.length).toBeLessThan(evaluateBlockMessage(src).length + 200);
+	});
+
+	it("labels an excerpt that only exists AFTER folding, instead of passing it off as the raw script", () => {
+		const script = 'const k = "loc" + "alStorage"; return window[k]';
+		const src = scanEvaluateScript(script)!;
+		const msg = evaluateBlockMessage(src, script);
+		expect(msg).toMatch(/Offending text \(after unescaping\/joining concatenated strings\)/);
+		// The quoted text is the REASSEMBLED identifier, which never appears in
+		// what the agent actually sent — hence the label.
+		expect(msg).toContain("localStorage");
+		expect(script).not.toContain("localStorage");
+	});
+
+	it("omits the sentence entirely when the pattern source cannot be relocated", () => {
+		expect(evaluateBlockMessage("not-a-real-pattern-source", "return 1")).not.toContain("Offending text");
+	});
 });
 
 // classifySensitivePage / the browserSecrecy ladder are covered in

@@ -43,7 +43,7 @@ export async function handleEvaluate(
   const script = String(args.script || "");
   if (!script) return err("'script' parameter is required for evaluate action.");
   const blockedPattern = scanEvaluateScript(script);
-  if (blockedPattern) return err(evaluateBlockMessage(blockedPattern));
+  if (blockedPattern) return err(evaluateBlockMessage(blockedPattern, script));
   return ok(await manager.evaluate(script));
 }
 

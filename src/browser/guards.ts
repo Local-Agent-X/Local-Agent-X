@@ -250,29 +250,81 @@ function foldStringConcats(text: string): string {
 }
 
 /**
- * Check a user-supplied evaluate() script against the block list. Returns
- * the offending pattern's source if blocked, or null if safe.
- *
- * Every pattern is tested against THREE variants of the script:
+ * The THREE variants every pattern is tested against, in the order tried:
  *   1. the raw text exactly as supplied;
  *   2. the escape-normalized text (`\uXXXX` / `\xXX` decoded), so an escaped
  *      identifier cannot hide from a literal pattern;
  *   3. the constant-folded text (adjacent string literals merged, applied to
  *      the NORMALIZED text so an escape+concat combo collapses too), so an
  *      identifier reassembled from pieces hits the pattern it was hiding from.
+ *
+ * ONE definition of the pipeline: scanEvaluateScript matches against these and
+ * offendingExcerpt quotes its slice out of the SAME list, so an excerpt can
+ * never claim a normalization the scanner did not actually perform. `note`
+ * names the transform — a transformed variant must never be quoted back as if
+ * it were the script the agent sent.
  */
-export function scanEvaluateScript(script: string): string | null {
-  // Normalize common obfuscations before matching.
+function scriptVariants(script: string): readonly { text: string; note: string | null }[] {
   const normalized = script
     .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-  const variants = [script, normalized, foldStringConcats(normalized)];
+  return [
+    { text: script, note: null },
+    { text: normalized, note: "after unescaping" },
+    { text: foldStringConcats(normalized), note: "after unescaping/joining concatenated strings" },
+  ];
+}
+
+/**
+ * Check a user-supplied evaluate() script against the block list. Returns
+ * the offending pattern's source if blocked, or null if safe.
+ */
+export function scanEvaluateScript(script: string): string | null {
+  const variants = scriptVariants(script);
   for (const pat of BLOCKED_EVAL_PATTERNS) {
     for (const variant of variants) {
-      if (pat.test(variant)) return pat.source;
+      if (pat.test(variant.text)) return pat.source;
     }
   }
   return null;
+}
+
+/** Characters quoted either side of the match, and the hard cap on the slice. */
+const EXCERPT_WINDOW = 40;
+const EXCERPT_MAX = 160;
+
+/**
+ * Render the ` Offending text: "…"` sentence, or "" when no match can be
+ * relocated (defensive — the scan just matched; an invented excerpt would be
+ * worse than none). WHY it exists: this message is what lands in server.log,
+ * and the pattern source ALONE leaves a block undiagnosable after the fact —
+ * nobody can tell a genuine bypass attempt from a false positive without the
+ * text that tripped it. Whitespace runs collapse so the message stays ONE line.
+ *
+ * SECURITY: this echoes a slice of the AGENT'S OWN script into the message and
+ * therefore the local log. Deliberate and acceptable — it is the agent's own
+ * generated input, not page content, and the tool-call arguments are already
+ * recorded. The window and cap exist so a large or secret-bearing script cannot
+ * be dumped wholesale. Do NOT extend this to echo page data.
+ */
+function offendingExcerpt(patternSource: string, script: string): string {
+  const pattern = BLOCKED_EVAL_PATTERNS.find((p) => p.source === patternSource);
+  if (!pattern) return "";
+  for (const variant of scriptVariants(script)) {
+    const match = pattern.exec(variant.text);
+    if (!match) continue;
+    const start = Math.max(0, match.index - EXCERPT_WINDOW);
+    const end = Math.min(variant.text.length, match.index + match[0].length + EXCERPT_WINDOW);
+    const core = variant.text.slice(start, end).replace(/\s+/g, " ").trim();
+    let excerpt = `${start > 0 ? "…" : ""}${core}${end < variant.text.length ? "…" : ""}`;
+    if (excerpt.length > EXCERPT_MAX) excerpt = `${excerpt.slice(0, EXCERPT_MAX - 1)}…`;
+    // A normalized/folded variant is NOT what the agent sent, so it is labelled
+    // rather than passed off as raw — the honest form matters most precisely
+    // when someone is reading the log to judge an obfuscation attempt.
+    const note = variant.note && variant.text !== script ? ` (${variant.note})` : "";
+    return ` Offending text${note}: "${excerpt}"`;
+  }
+  return "";
 }
 
 /**
@@ -288,33 +340,41 @@ export function scanEvaluateScript(script: string): string | null {
  * "cookie", "localStorage", "credentials", "password", "EventSource"), so a
  * substring test on the source is a stable proxy for the pattern's class. The
  * pattern source is always echoed for debugging.
+ *
+ * With `script` supplied the message also quotes the offending slice (see
+ * offendingExcerpt) — capped and whitespace-collapsed for one-line logging — so
+ * a block can be diagnosed after the fact as a genuine bypass attempt or a
+ * false positive. `script` stays OPTIONAL: callers omitting it get byte-
+ * identical text.
  */
-export function evaluateBlockMessage(patternSource: string): string {
+export function evaluateBlockMessage(patternSource: string, script?: string): string {
   const prefix = `Blocked: script contains restricted pattern (${patternSource}). `;
+  const suffix = script ? offendingExcerpt(patternSource, script) : "";
   // (1) Read-into-model-context leaks: cookie / web storage / credentials /
   //     password field. The read itself is the leak, so point at the sanctioned
   //     read paths — NOT http_request, which can't see page state at all.
   if (/cookie|localStorage|sessionStorage|indexedDB|credentials|password/i.test(patternSource)) {
     return prefix +
       "Reading page storage or cookies through evaluate() is blocked to keep secrets out of tool output. " +
-      "To read visible page content use the `extract` or `snapshot` actions; if you need the page's login state, ask the user.";
+      "To read visible page content use the `extract` or `snapshot` actions; if you need the page's login state, ask the user." + suffix;
   }
   // (3) WebRTC / EventSource: realtime egress primitives that bypass the
   //     request-layer gate. There is no evaluate-side substitute.
   if (/EventSource|RTCPeerConnection/i.test(patternSource)) {
-    return prefix + "This realtime connection primitive is blocked in evaluate().";
+    return prefix + "This realtime connection primitive is blocked in evaluate()." + suffix;
   }
   // (2)/(4) Dynamic code execution, workers, and nav/origin manipulation.
   return prefix +
-    "Dynamic code execution is not allowed in evaluate() — use plain DOM inspection (querySelector, textContent, getAttribute) instead.";
+    "Dynamic code execution is not allowed in evaluate() — use plain DOM inspection (querySelector, textContent, getAttribute) instead." + suffix;
 }
 
 /** Typed refusal for a scanEvaluateScript hit — same categorized message the
  *  tool-layer (CDP) path produces, thrown BEFORE any bridge call: a blocked
- *  script never reaches the view. */
+ *  script never reaches the view. `script` is optional so the message can name
+ *  the offending slice; omitting it keeps the older text. */
 export class EvaluateBlockedError extends Error {
-  constructor(pattern: string) {
-    super(evaluateBlockMessage(pattern));
+  constructor(pattern: string, script?: string) {
+    super(evaluateBlockMessage(pattern, script));
     this.name = "EvaluateBlockedError";
   }
 }

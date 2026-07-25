@@ -280,7 +280,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 		// Guarded here AND at the tool layer (defense in depth): a blocked
 		// script must never reach the bridge from any caller.
 		const blockedPattern = scanEvaluateScript(script);
-		if (blockedPattern) throw new EvaluateBlockedError(blockedPattern);
+		if (blockedPattern) throw new EvaluateBlockedError(blockedPattern, script);
 		await this.ensureView();
 		return evaluateScript(this.page, script);
 	}

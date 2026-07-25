@@ -26,9 +26,17 @@ const logger = createLogger("browser.electron-cdp");
  */
 export type CdpConnector = (cdpUrl: string) => Promise<Browser>;
 
+// The endpoint is first-party loopback: a ready endpoint connects in well
+// under a second. Playwright's 30s default would instead pin the FIRST caller
+// (e.g. an agent navigate) for 30s whenever the endpoint isn't up yet before
+// falling back to the legacy bridge — a cold-start freeze. Bound it so a
+// not-yet-ready endpoint fails fast (→ bridge fallback) and native driving
+// picks up on a later call once the endpoint is live.
+const CDP_CONNECT_TIMEOUT_MS = 5000;
+
 const defaultConnector: CdpConnector = async (cdpUrl) => {
   const pw = await import("playwright");
-  return pw.chromium.connectOverCDP(cdpUrl);
+  return pw.chromium.connectOverCDP(cdpUrl, { timeout: CDP_CONNECT_TIMEOUT_MS });
 };
 
 let connector: CdpConnector = defaultConnector;

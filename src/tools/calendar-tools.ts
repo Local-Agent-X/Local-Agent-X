@@ -43,7 +43,7 @@ const fail = (content: string): ToolResult => ({ content, isError: true });
 const calendarListEvents: ToolDefinition = {
   name: 'calendar_list_events',
   description:
-    'List events from LAX\'s local calendar (calendar.json) — NOT the user\'s Google Calendar. For their real Google account, use the Google Calendar MCP tool when connected. ' +
+    'List events from LAX\'s local calendar (calendar.json) — NOT the user\'s Google Calendar or any other external calendar account. ' +
     'Example: start_date="2026-04-01", end_date="2026-04-30" returns all April events.',
   parameters: {
     type: 'object',
@@ -88,8 +88,7 @@ const calendarListEvents: ToolDefinition = {
 const calendarCreateEvent: ToolDefinition = {
   name: 'calendar_create_event',
   description:
-    'Create a calendar event in LAX\'s local calendar (calendar.json) — NOT the user\'s Google Calendar. ' +
-    'If the user means their real Google account, use the Google Calendar MCP tool instead when it is connected. ' +
+    'Create a calendar event in LAX\'s local calendar (calendar.json) — NOT the user\'s Google Calendar or any other external calendar account. ' +
     'Example: title="Team Standup", start="2026-04-02T09:00:00", end="2026-04-02T09:30:00", description="Daily sync"',
   parameters: {
     type: 'object',

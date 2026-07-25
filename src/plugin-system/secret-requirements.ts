@@ -1,10 +1,8 @@
+import { missingCredentials, type SecretAvailabilityPort } from "../credentials/requirements.js";
 import type { PluginManifest, PluginSecretRequirement } from "./manifest.js";
 import type { TrustLevel } from "./publisher-trust.js";
 
-export interface SecretAvailabilityPort {
-  has(name: string): boolean;
-  onAvailabilityChange?(listener: (change: { type: "available" | "deleted"; name: string }) => void): () => void;
-}
+export type { SecretAvailabilityPort };
 
 export interface SecretBlockedPlugin {
   manifest: PluginManifest;
@@ -36,16 +34,7 @@ export function missingSecrets(
   manifest: PluginManifest,
   availability: SecretAvailabilityPort | undefined,
 ): string[] {
-  return missingRequiredSecrets(requiredSecrets(manifest), availability);
-}
-
-function missingRequiredSecrets(
-  requirements: PluginSecretRequirement[],
-  availability: SecretAvailabilityPort | undefined,
-): string[] {
-  return requirements
-    .filter((item) => !availability?.has(item.name))
-    .map((item) => item.name);
+  return missingCredentials(requiredSecrets(manifest), availability);
 }
 
 export class PluginSecretLifecycle {
@@ -61,7 +50,7 @@ export class PluginSecretLifecycle {
   }
 
   missing(requirements: PluginSecretRequirement[]): string[] {
-    return missingRequiredSecrets(requirements, this.availability);
+    return missingCredentials(requirements, this.availability);
   }
 
   assertAvailable(manifest: PluginManifest, path: string, trustLevel: TrustLevel, manifestHash?: string): void {

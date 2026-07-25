@@ -349,10 +349,18 @@ function promptCreateApp() {
   }
 }
 
+// LAST of three global esc() declarations in app.html (also shared-escape.js,
+// protocols.js) — a classic-script function declaration overwrites the binding,
+// so THIS body runs for every esc() call in every page module. It must be the
+// strongest of the three, not the weakest: ~40 call sites across 16 files sit in
+// attribute position (title=, alt=, value=, data-*) where escaping only & < >
+// leaves the value quote-injectable. Quotes now match shared-escape.js; text
+// position is unchanged (&quot;/&#39; parse back to " and '). Perma-fix is
+// deleting two of the three so shared-escape.js owns it — its own change.
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s || '';
-  return d.innerHTML;
+  return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function timeAgo(ts) {

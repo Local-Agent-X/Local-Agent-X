@@ -1646,6 +1646,11 @@
 <script src="/js/cron-schedule-picker.js?v=v1"></script>
 <script src="/js/cron-detail.js?v=v1"></script>
 <script src="/js/cron-actions.js?v=v2"></script>
+<!-- Protocols modules. protocols-provenance.js owns escAttr + the authorship
+     badges and must load first; protocols-archive.js owns archivedList/viewMode
+     (a classic-script `let` is shared but stays in TDZ until its own script
+     runs), so it must precede protocols.js, which reads both at load time. -->
+<script src="/js/protocols-provenance.js"></script>
 <script src="/js/protocols-archive.js"></script>
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>

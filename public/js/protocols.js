@@ -1,6 +1,8 @@
 // ── Protocols Page (master/detail editor) ──
 // Categories sidebar with search → click protocol → full detail/edit on the right.
-// The archived view + restore live in protocols-archive.js, which must load first.
+// The archived view + restore live in protocols-archive.js, and authorship
+// rendering (plus the self-contained escAttr) in protocols-provenance.js. Both
+// must load first.
 
 let protocolList = [];           // abbreviated records from /api/protocols
 let selectedName = null;         // currently-selected protocol name
@@ -9,26 +11,11 @@ let editing = false;             // toggles view ↔ edit
 let editDraft = null;            // working copy while editing
 let searchQuery = "";
 
-const SOURCE_ORDER = { custom: 0, imported: 1, bundled: 2, builtin: 3 };
-
-// Authorship is THREE-state, not a boolean: `authoredBy` is absent on every
-// protocol predating provenance, so absent means UNKNOWN — showing it as "you"
-// would credit the user with work the agent may have done.
-function protocolAuthorship(p) {
-  const by = p?.source?.authoredBy;
-  return by === 'agent' ? { key: 'agent', label: 'the agent, unprompted' }
-    : by === 'user' ? { key: 'user', label: 'you' } : { key: 'unknown', label: 'not recorded' };
-}
-// Tag precedence: agent-authored wins, then imported/custom collapse to one
-// "custom" tag (internal plumbing); app-shipped tiers get no tag.
-function protocolSourceTag(p) {
-  if (protocolAuthorship(p).key === 'agent') return `<span class="proto-item-source" style="margin-left:auto;color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:0 5px" title="Written by the agent on its own. Open it to review or archive.">agent</span>`;
-  return (p.source?.type === 'imported' || p.source?.type === 'custom') ? `<span class="proto-item-source" style="margin-left:auto">custom</span>` : '';
-}
-
-// esc() escapes & < > only (textContent → innerHTML). Attribute values also need
-// the quotes, or a name containing one closes the attribute early.
-function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+// `__proto__: null` for the same reason the category grouping is null-prototype:
+// source.type is read straight off disk, and SOURCE_ORDER["__proto__"] would
+// otherwise return Object.prototype, which `?? 99` cannot catch and which turns
+// the sort comparator into NaN.
+const SOURCE_ORDER = { __proto__: null, custom: 0, imported: 1, bundled: 2, builtin: 3 };
 
 // Card actions are delegated, never inlined. Protocol names and descriptions are
 // agent-authored strings with no write-time validation, and `onclick="fn('${name}')"`
@@ -85,7 +72,14 @@ function protocolRenderTree() {
   }
 
   // Group by category, sort items by source priority then name.
-  const groups = {};
+  // Null-prototype: `category` is an agent-writable string that no write path
+  // validates, and on a plain `{}` the key "__proto__" resolves to
+  // Object.prototype — truthy, so `if (!groups[cat])` never fires and the next
+  // line throws "groups[cat].push is not a function". That empties the whole
+  // tree, which would take every provenance badge with it: one agent edit
+  // setting category to "__proto__" or "constructor" would blank the only
+  // surface where a user can see what the agent did.
+  const groups = Object.create(null);
   for (const p of filtered) {
     const cat = p.category || 'General';
     if (!groups[cat]) groups[cat] = [];
@@ -162,12 +156,20 @@ function protocolRenderDetail() {
     parts.push(`source: <strong>${esc(tier)}</strong>`);
     // Only custom records carry provenance; other tiers are rebuilt from disk.
     if (tier === 'custom') {
-      parts.push(`written by: <strong>${esc(protocolAuthorship(p).label)}</strong>${esc(p.source?.authoredAt ? ` on ${new Date(p.source.authoredAt).toLocaleDateString()}` : '')}`);
+      parts.push(...protocolProvenanceParts(p));
       if (p.source?.authoredFromSession) parts.push(`session: ${esc(p.source.authoredFromSession)}`);
     }
     if (p.source?.repo) {
-      const url = p.source.repo.startsWith('http') ? p.source.repo : `https://github.com/${p.source.repo}`;
-      parts.push(`repo: <a href="${escAttr(url)}" target="_blank" rel="noopener">${esc(p.source.repo)}</a>`);
+      // startsWith('http') only decides github-slug vs full URL — no known
+      // string passes it AND yields a dangerous scheme, so this is defence in
+      // depth, not a live exploit being closed: sanitizeUrl (shared-escape.js)
+      // is the canonical scheme check, and repo is written from disk with no
+      // validation, so the href should not rest on one prefix test.
+      // String(): repo is typed string but arrives from JSON, and a number
+      // would throw on .startsWith and blank the whole detail pane.
+      const repo = String(p.source.repo);
+      const url = sanitizeUrl(repo.startsWith('http') ? repo : `https://github.com/${repo}`);
+      parts.push(`repo: <a href="${escAttr(url)}" target="_blank" rel="noopener">${esc(repo)}</a>`);
     }
     if (p.source?.license) parts.push(`license: ${esc(p.source.license)}`);
     if (p.source?.commit) parts.push(`commit: ${esc(p.source.commit.slice(0, 7))}`);
@@ -196,14 +198,10 @@ function protocolRenderDetail() {
     bodyHtml = `<div class="proto-section"><div class="proto-body-render" style="color:var(--muted)">(no body, no steps — likely a placeholder)</div></div>`;
   }
 
-  // No confirmation prompt precedes an agent write, so this is the first place
-  // the user can review one — say it plainly, next to the recoverable exit.
-  const agentNotice = protocolAuthorship(p).key === 'agent'
-    ? `<div class="proto-meta" style="border-left:2px solid var(--accent);padding-left:10px;margin-top:10px">The agent wrote this itself after a task — you weren't asked. <strong>Archive</strong> removes it and keeps it restorable.</div>` : '';
   view.innerHTML = `
     <h2>${esc(p.name)}</h2>
     <div class="proto-meta">${sourceLine}</div>
-    ${agentNotice}
+    ${protocolAgentNotice(p)}
     <div class="proto-section">
       <h4>Description</h4>
       <div class="proto-body-render">${esc(p.description || '(no description)')}</div>
@@ -376,4 +374,13 @@ function protocolRun() {
   if (input) { input.value = trigger; input.focus(); }
 }
 
+// Third of three global esc() declarations (shared-escape.js, here, apps.js).
+// app.html loads apps.js last, so THAT one wins for every call below — this
+// body never runs. Kept rather than deleted: deleting it would not promote
+// shared-escape.js to source of truth (apps.js still clobbers it), it would
+// only trade a visible implementation for a silent load-order dependency. The
+// real fix deletes all three duplicates so shared-escape.js is the sole
+// declaration, which needs apps.js and is therefore its own change. What
+// mattered here — escAttr's correctness — is fixed: it is self-contained in
+// protocols-provenance.js and calls nothing it does not own.
 function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }

@@ -8,6 +8,9 @@
 // MUST load BEFORE protocols.js: that file calls protocolLoadArchived() at load
 // time, and reads archivedList/viewMode declared here (a `let` in a classic
 // script is shared across scripts but is in TDZ until its own script runs).
+// Calls escAttr/protocolSourceTag from protocols-provenance.js, which loads
+// before both — function declarations, so only call order matters, not load
+// order, but app.html keeps the order honest anyway.
 
 let archivedList = [];           // abbreviated records from /api/protocols/archived
 let viewMode = 'live';           // 'live' | 'archived'

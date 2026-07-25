@@ -49,12 +49,15 @@ function mountProtocolsUi(): Harness {
     });
   };
 
-  // Load order mirrors app.html: the archived module first (protocols.js reads
+  // Load order mirrors app.html: shared helpers, then provenance (owns escAttr
+  // and the authorship badges), then the archived module (protocols.js reads
   // archivedList/viewMode from it and calls protocolLoadArchived at load time).
+  const sharedSrc = readFileSync(join(here, "../public/js/shared-escape.js"), "utf8");
+  const provSrc = readFileSync(join(here, "../public/js/protocols-provenance.js"), "utf8");
   const archiveSrc = readFileSync(join(here, "../public/js/protocols-archive.js"), "utf8");
   const protoSrc = readFileSync(join(here, "../public/js/protocols.js"), "utf8");
   // eslint-disable-next-line no-new-func
-  const factory = new Function("apiFetch", "navigate", `${archiveSrc}\n${protoSrc}\n` + `return {
+  const factory = new Function("apiFetch", "navigate", `${sharedSrc}\n${provSrc}\n${archiveSrc}\n${protoSrc}\n` + `return {
     protocolRenderTree,
     setLive: v => { protocolList = v; },
     setArchived: v => { archivedList = v; },

@@ -3,32 +3,16 @@
     "Known plug-and-play violations, recorded 2026-07-25 when check-integration-conformance",
     "landed. This is the FIX BACKLOG, not a mute list: every entry is printed on every build,",
     "and an entry that no longer reproduces fails the build so the list can only shrink.",
-    "Do NOT add entries to silence a new violation — fix the declaration or the runtime path."
+    "Do NOT add entries to silence a new violation — fix the declaration or the runtime path.",
+    "",
+    "2026-07-25: the five steer:* entries were removed when the model-locked routing clauses",
+    "were deleted from the email and calendar tool descriptions. test/tool-description-portability.test.ts",
+    "is now the runtime mirror of that check."
   ],
   "known": [
     {
-      "id": "steer:calendar_list_events",
-      "note": "Steers at the claude.ai Google Calendar MCP connector, which does not exist on Grok/Ollama/GPT. Fix: describe the local calendar honestly and drop the vendor routing."
-    },
-    {
-      "id": "steer:calendar_create_event",
-      "note": "Same as calendar_list_events."
-    },
-    {
-      "id": "steer:email_read",
-      "note": "Tells the model to prefer the Gmail MCP tool. On any non-Anthropic model that tool is absent, so this suppresses the portable IMAP path the user actually configured."
-    },
-    {
-      "id": "steer:email_search",
-      "note": "Same as email_read."
-    },
-    {
-      "id": "steer:email_send",
-      "note": "Same as email_read, on the send path."
-    },
-    {
       "id": "authtype:google",
-      "note": "Declares authType api_key but 5 of 6 endpoints are user-scoped (Gmail/Calendar/Drive) and require OAuth2 user context. Only /youtube/v3/search works with an API key — /api/integrations/test already hardcodes YouTube as the probe, which is the tell. Decision pending: split a youtube integration out, or implement OAuth2."
+      "note": "Declares authType api_key but 5 of 6 endpoints are user-scoped (Gmail/Calendar/Drive) and require OAuth2 user context. Only /youtube/v3/search works with an API key — /api/integrations/test already hardcodes YouTube as the probe, which is the tell. Resolved 2026-07-25: no OAuth2 for now; narrow the integration to api-key-honest scope."
     },
     {
       "id": "transport:email",

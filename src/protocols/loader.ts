@@ -142,6 +142,7 @@ function runProtocolMigrations(): void {
 // cross-call leakage.
 
 let _readFailures = 0;
+let _ioFailures = 0;
 
 /** Count of tier-read failures swallowed since process start. Bracket a
  *  catalog read with two calls; an increase means the result is PARTIAL and
@@ -150,9 +151,27 @@ export function catalogReadFailureCount(): number {
   return _readFailures;
 }
 
-/** Record a swallowed read failure. Exported for builder.ts, which owns the
- *  custom.json read and swallows its parse errors the same way. */
+/** Record a swallowed read failure. Exported for builder.ts and archive.ts,
+ *  which own the custom.json / archived.json reads and swallow their parse
+ *  errors the same way. */
 export function noteCatalogReadFailure(): void {
+  _readFailures += 1;
+}
+
+/** An I/O failure specifically — the read itself did not complete. A strict
+ *  subset of the above, kept apart for ONE consumer: the bundled memo.
+ *
+ *  The distinction is between a TRANSIENT failure and a STABLE gap. An EBUSY
+ *  scandir may succeed on the next call, so memoizing it would poison the cache
+ *  for the process's life. A SKILL.md that parses to nothing fails identically
+ *  every time, so refusing to memoize on it means re-scanning the bundled dir
+ *  on every call forever — and, because the bracket would then report failure
+ *  on every call too, silently disabling the embedding prune for the whole
+ *  process. Both consumers get what they need: the prune still sees a partial
+ *  catalog (the protocol IS missing), the memo only distrusts a read that
+ *  might succeed later. */
+function noteCatalogIoFailure(): void {
+  _ioFailures += 1;
   _readFailures += 1;
 }
 
@@ -169,22 +188,28 @@ function scanSkillMdDir(
   try {
     entries = readdirSync(dir);
   } catch {
-    noteCatalogReadFailure();
+    noteCatalogIoFailure();
     return [];
   }
   for (const name of entries) {
     const subdir = join(dir, name);
     let isDir = false;
-    try { isDir = statSync(subdir).isDirectory(); } catch { noteCatalogReadFailure(); continue; }
+    try { isDir = statSync(subdir).isDirectory(); } catch { noteCatalogIoFailure(); continue; }
     if (!isDir) continue;
     if (rejectManagedMarker && existsSync(join(subdir, "learned.json"))) continue;
     const skillFile = join(subdir, "SKILL.md");
     if (!existsSync(skillFile)) continue;
     let raw: string;
-    try { raw = readFileSync(skillFile, "utf-8"); } catch { noteCatalogReadFailure(); continue; }
+    try { raw = readFileSync(skillFile, "utf-8"); } catch { noteCatalogIoFailure(); continue; }
     const source: ProtocolSource = { type: sourceType, sourcePath: skillFile };
     const protocol = parseSkillMd(raw, { source, fallbackName: name });
     if (protocol) out.push(protocol);
+    // A SKILL.md that exists but yields nothing (empty file, truncated sync,
+    // frontmatter-only stub) is a PARTIAL read, not an empty directory: the
+    // protocol is on disk and missing from the catalog. readFileSync succeeded,
+    // so nothing above counted it, and a destructive reconciler would read the
+    // gap as "the user deleted it" and prune its vector.
+    else noteCatalogReadFailure();
   }
   return out;
 }
@@ -204,9 +229,14 @@ export function loadBundledProtocols(): Protocol[] {
   // Never memoize a FAILED read. invalidateBundledCache() has no callers, so a
   // poisoned memo is permanent for the process: one transient EBUSY at boot
   // would make the bundled tier look empty on every later call, forever.
-  const before = _readFailures;
+  //
+  // Brackets I/O failures only. An unparseable SKILL.md is a stable gap, not a
+  // transient failure — treating it as one would mean never memoizing again,
+  // and the every-call re-scan would report a read failure every time, which
+  // silently disables the embedding prune for the process's life.
+  const before = _ioFailures;
   const scanned = scanSkillMdDir(bundledProtocolsDir(), "bundled");
-  if (_readFailures !== before) return scanned;
+  if (_ioFailures !== before) return scanned;
   _bundledCache = scanned;
   return _bundledCache;
 }

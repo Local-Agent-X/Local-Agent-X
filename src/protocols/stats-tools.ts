@@ -236,9 +236,20 @@ export function createProtocolStatsTools(): ToolDefinition[] {
           if (!p) { skipped.push(`${name}: not found`); continue; }
           if (p.source?.type !== "custom") { skipped.push(`${name}: not custom (${p.source?.type})`); continue; }
           if (p.pinned) { skipped.push(`${name}: pinned`); continue; }
-          const rec = archiveProtocol(name, reason);
+          let rec: ReturnType<typeof archiveProtocol> = null;
+          try {
+            rec = archiveProtocol(name, reason);
+          } catch (e) {
+            // Unreadable archive — the same failure for every remaining name,
+            // so stop rather than repeat it once per entry.
+            skipped.push(`${name}: ${(e as Error).message}`);
+            break;
+          }
           if (rec) archived.push(name);
-          else skipped.push(`${name}: already archived or not in live catalog`);
+          // null now means one thing only: the name isn't in custom.json. It
+          // used to also mean "already archived", which was reported AFTER the
+          // live copy had been deleted to resolve the clash.
+          else skipped.push(`${name}: not in the live custom catalog`);
         }
         const out = [`Archived ${archived.length}/${names.length}.`];
         if (archived.length > 0) out.push(`Archived: ${archived.join(", ")}`);

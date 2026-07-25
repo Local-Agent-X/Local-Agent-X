@@ -18,7 +18,7 @@
  */
 import type { Protocol, ProtocolSource, ProtocolStep } from "../protocols/index.js";
 import type { DuplicateMatch } from "./dedup.js";
-import { createProtocol, deleteProtocol } from "./builder.js";
+import { createProtocol } from "./builder.js";
 
 export interface AuthorProtocolInput {
   name: string;
@@ -34,7 +34,8 @@ export interface AuthorProtocolInput {
   body?: string;
   tags?: string[];
   category?: string;
-  /** Existing protocol this replaces. Bypasses dedup and deletes the target. */
+  /** Existing protocol this replaces. Bypasses dedup and ARCHIVES the target
+   *  (recoverable via protocol(action:'unarchive')), never hard-deletes it. */
   supersedes?: string;
   /** Who wrote this. Absent means UNKNOWN authorship and is persisted as
    *  absent — never defaulted to "user", which would mislabel the entire
@@ -99,16 +100,28 @@ export async function authorProtocol(input: AuthorProtocolInput): Promise<Author
     ...(source ? { source } : {}),
   });
 
-  // If superseding, drop the old protocol + its embedding cache entry.
+  // If superseding, ARCHIVE the old protocol — never hard-delete it.
+  //
+  // `supersedes` is reachable from the ordinary agent path
+  // (protocol(action:"create")), which is not in DESTRUCTIVE_TOOL_ACTIONS and
+  // is blanket-allowed by the orchestration policy. A hard delete there meant
+  // the model could irrecoverably erase a user-authored protocol with no
+  // approval prompt and no undo. Archiving makes the operation recoverable,
+  // which is the property that made the approval gate necessary in the first
+  // place — so this is a fix at the primitive, not a policy-table change.
+  //
+  // Lazy import for the same reason builder.ts uses one: archive.js → builder.js
+  // → authoring.js is a cycle at module-init time.
   let supersededNote = "";
   if (supersedes) {
     try {
-      const removed = deleteProtocol(supersedes);
-      const { dropEmbedding } = await import("./dedup.js");
-      dropEmbedding(supersedes);
-      supersededNote = removed ? ` Replaced "${supersedes}".` : ` (Note: "${supersedes}" not found.)`;
+      const { archiveProtocol } = await import("./archive.js");
+      const record = archiveProtocol(supersedes, `superseded by "${name}"`);
+      supersededNote = record
+        ? ` Archived "${supersedes}" — restore with protocol(action:'unarchive').`
+        : ` (Note: "${supersedes}" is not in the editable catalog, so nothing was replaced.)`;
     } catch (e) {
-      supersededNote = ` (Failed to remove "${supersedes}": ${(e as Error).message})`;
+      supersededNote = ` (Failed to archive "${supersedes}": ${(e as Error).message})`;
     }
   }
 

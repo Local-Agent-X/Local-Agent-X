@@ -59,7 +59,19 @@ export function loadCustomProtocols(): Protocol[] {
   const path = customProtocolsPath();
   if (existsSync(path)) {
     try {
-      return JSON.parse(readFileSync(path, "utf-8"));
+      const parsed = JSON.parse(readFileSync(path, "utf-8"));
+      // Parseable but not a Protocol[] — an object, a string, `null`. Nothing
+      // downstream survives it: stampCustomSource() does `records.map(...)` and
+      // throws "records.map is not a function", which takes down getAllProtocols()
+      // and with it the whole authoring path. Same class as the parse failure
+      // below (a hand-edited or half-synced file), so it degrades the same way
+      // and is counted the same way — a destructive reconciler must not read
+      // this as "the user has no custom protocols".
+      if (!Array.isArray(parsed)) {
+        noteCatalogReadFailure();
+        return [];
+      }
+      return parsed;
     } catch {
       // Degrading to [] is right for a read — a half-synced file or a git
       // merge-conflict blob must not take the app down. But the result is
@@ -158,7 +170,7 @@ export function createBuilderTools(): ToolDefinition[] {
       description:
         "Create a new custom protocol with steps, rules, and triggers. " +
         "Refuses to create near-duplicates of existing protocols (cosine similarity > 0.85 on name+description+triggers). " +
-        "If you intentionally want to replace an existing similar protocol, pass `supersedes: \"<existing-name>\"` — that bypasses the dedup check and auto-deletes the old one.",
+        "If you intentionally want to replace an existing similar protocol, pass `supersedes: \"<existing-name>\"` — that bypasses the dedup check and archives the old one (recoverable via protocol(action:'unarchive')).",
       parameters: {
         type: "object",
         properties: {
@@ -168,7 +180,7 @@ export function createBuilderTools(): ToolDefinition[] {
           steps: { type: "array", items: { type: "object" }, description: "Array of ProtocolStep objects" },
           rules: { type: "array", items: { type: "string" }, description: "Rules to follow during execution" },
           body: { type: "string", description: "Optional markdown body. Preferred over `steps` when the protocol reads as prose; protocol(action:'get') returns it in place of the step list." },
-          supersedes: { type: "string", description: "Name of an existing protocol this replaces. Bypasses dedup; deletes the named target." },
+          supersedes: { type: "string", description: "Name of an existing protocol this replaces. Bypasses dedup; archives the named target (recoverable, not deleted)." },
         },
         required: ["name", "description", "triggers", "steps"],
       },
@@ -248,10 +260,20 @@ export function createBuilderTools(): ToolDefinition[] {
         }
         const { archiveProtocol } = await import("./archive.js");
         const reason = typeof (args as { reason?: string }).reason === "string" ? (args as { reason?: string }).reason : undefined;
-        const rec = archiveProtocol(name, reason);
+        let rec: Awaited<ReturnType<typeof archiveProtocol>>;
+        try {
+          rec = archiveProtocol(name, reason);
+        } catch (e) {
+          // An unreadable archive. Report it as itself — the one thing this
+          // path must never do is turn a storage failure into "not found".
+          return { content: (e as Error).message, isError: true };
+        }
         if (!rec) {
+          // null now means exactly one thing: the name isn't in custom.json.
+          // It used to ALSO mean "already archived, and I just deleted the live
+          // copy to resolve that" — a claim the call itself made true.
           return {
-            content: `Protocol "${name}" not found in active catalog. (Already archived? Use protocol(action:'unarchive') to restore.)`,
+            content: `Protocol "${name}" isn't in the editable catalog, so there was nothing to archive. (Built-in/bundled/imported protocols can't be archived. Use protocol(action:'list_archived') to see what's already in the archive.)`,
             isError: true,
           };
         }
@@ -261,19 +283,24 @@ export function createBuilderTools(): ToolDefinition[] {
     {
       name: "protocol_unarchive",
       description:
-        "Restore an archived protocol back to the active catalog. " +
-        "Fails if a live protocol of the same name already exists — either rename the conflict or remove it first.",
+        "Restore an archived protocol back to the active catalog. Restores the most recent archived " +
+        "version of that name; pass `archivedTs` (from protocol(action:'list_archived')) to restore an " +
+        "older one. Fails if a live protocol of the same name already exists — archive that one first " +
+        "(archiving never destroys anything), then restore.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Archived protocol name to restore" },
+          archivedTs: { type: "integer", description: "Optional: the exact archive timestamp to restore, when several versions of the name are archived. Defaults to the newest." },
         },
         required: ["name"],
       },
       async execute(args) {
         const name = String(args.name);
+        const rawTs = (args as { archivedTs?: unknown }).archivedTs;
+        const archivedTs = typeof rawTs === "number" && Number.isFinite(rawTs) ? rawTs : undefined;
         const { unarchiveProtocol } = await import("./archive.js");
-        const result = unarchiveProtocol(name);
+        const result = unarchiveProtocol(name, { archivedTs });
         if (result.error) return { content: result.error, isError: true };
         return { content: `Restored protocol "${name}" with ${result.restored?.steps.length ?? 0} steps.` };
       },
@@ -304,7 +331,10 @@ export function createBuilderTools(): ToolDefinition[] {
     },
     {
       name: "protocol_list_archived",
-      description: "List archived protocols (soft-deleted, recoverable). Shows when each was archived and why.",
+      description:
+        "List archived protocols (soft-deleted, recoverable). Shows when each was archived and why. " +
+        "A name can appear more than once — the archive keeps every version — and `archivedTs` is what " +
+        "tells them apart when restoring.",
       parameters: { type: "object", properties: {} },
       async execute() {
         const { loadArchived } = await import("./archive.js");
@@ -315,7 +345,7 @@ export function createBuilderTools(): ToolDefinition[] {
           .map((r) => {
             const daysAgo = Math.floor((Date.now() - r.archivedTs) / 86_400_000);
             const why = r.reason ? ` — ${r.reason}` : "";
-            return `- ${r.protocol.name} (archived ${daysAgo}d ago)${why}`;
+            return `- ${r.protocol.name} (archived ${daysAgo}d ago, archivedTs ${r.archivedTs})${why}`;
           });
         return { content: `Archived protocols (${archived.length}):\n${lines.join("\n")}\n\nRestore with \`protocol({action: "unarchive", params: {name}})\`.` };
       },

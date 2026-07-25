@@ -2,6 +2,7 @@ import crossSessionLearner from "../cognition/cross-session-learning/index.js";
 import type { LearnedCandidate } from "../cognition/cross-session-learning/types.js";
 import { getAllProtocols } from "./index.js";
 import { loadLearnedProtocol, type LearnedProtocolRecord } from "./learned-lifecycle.js";
+import { STOP_TERMS, GENERIC_TERMS } from "./generic-terms.js";
 import type { Protocol } from "./types.js";
 
 /**
@@ -91,16 +92,11 @@ const SUGGESTIBLE_NAME = /^[a-z0-9][a-z0-9_-]{0,47}$/;
  * validation follow-up (F23), not in this chunk.
  */
 const LEARNED_SLUG = /^learned-[a-f0-9]{20}$/;
-const GENERIC_TERMS = new Set([
-  "active", "agent", "automatic", "coding", "handle", "learned", "process",
-  "protocol", "request", "task", "use", "using", "workflow",
-]);
-const STOP_TERMS = new Set([
-  "a", "about", "an", "and", "are", "as", "at", "be", "by", "can", "do",
-  "for", "from", "how", "i", "in", "into", "is", "it", "me", "my", "of",
-  "on", "or", "our", "please", "that", "the", "then", "this", "to", "we",
-  "what", "when", "with", "you", "your",
-]);
+// STOP_TERMS / GENERIC_TERMS moved to ./generic-terms.js — protocol(action:
+// 'search') makes the same admission decision and now shares the sets rather
+// than keeping a second copy that drifts. The file is a leaf on purpose: this
+// module imports ./index.js, which imports ./search.js, so search.ts importing
+// this one directly would close a cycle.
 
 export interface LearnedProtocolSuggestion {
   name: string;

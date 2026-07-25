@@ -278,11 +278,13 @@ export interface ReviewProtocolToolContext {
  * model has no argument that reaches `authoredBy`, and `edit` has provenance
  * stripped out entirely.
  *
- * `supersedes` is dropped for the same class of reason: it hard-deletes the
- * named protocol (authoring.ts calls deleteProtocol, not archiveProtocol), so
- * honouring it would let an autonomous background pass destroy user-authored
- * work irrecoverably. Dedup refusals push the fork to `edit` instead, which is
- * the preference order the prompt already asks for.
+ * `supersedes` is dropped. Its original reason — authoring.ts hard-deleted the
+ * named protocol — no longer holds: that path ARCHIVES now, so the operation is
+ * recoverable. What remains is quieter (a background pass would move a
+ * user-authored protocol out of the live catalog with no user-visible event),
+ * so restoring it here is a safe deliberate choice rather than a correctness
+ * fix. Until someone makes that call, dedup refusals push the fork to `edit`,
+ * which is the preference order the prompt already asks for.
  */
 export function narrowProtocolToolForReview(
   base: ToolDefinition,

@@ -27,6 +27,7 @@ const fsSpy = vi.hoisted(() => ({
   writes: [] as string[],
   renames: [] as Array<{ from: string; to: string }>,
   failReaddir: new Set<string>(),
+  failStat: new Set<string>(),
 }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -49,6 +50,18 @@ vi.mock("node:fs", async (importOriginal) => {
       }
       return actual.readdirSync(path, opts as never);
     },
+    statSync(path: Parameters<typeof actual.statSync>[0], opts?: Parameters<typeof actual.statSync>[1]) {
+      // Same fault class as failReaddir, one level down: the directory listed
+      // fine but one entry couldn't be stat'd (EPERM on a locked dir, a broken
+      // junction, a dir deleted between readdir and stat). The protocol behind
+      // it silently vanishes from the catalog.
+      if (fsSpy.failStat.has(String(path))) {
+        const err = new Error(`EPERM: operation not permitted, stat '${String(path)}'`) as NodeJS.ErrnoException;
+        err.code = "EPERM";
+        throw err;
+      }
+      return actual.statSync(path, opts as never);
+    },
   };
 });
 
@@ -58,10 +71,14 @@ import {
   createProtocol, editProtocol, saveCustomProtocols, loadCustomProtocols, authorProtocol,
   createBuilderTools,
 } from "../src/protocols/builder.js";
-import { archiveProtocol } from "../src/protocols/archive.js";
+import { archiveProtocol, loadArchived, unarchiveProtocol } from "../src/protocols/archive.js";
 import { createProtocolSearchTool } from "../src/protocols/search.js";
 import { dropEmbedding, findCatalogDuplicate } from "../src/protocols/dedup.js";
-import { bundledProtocolsDir, invalidateBundledCache, loadBundledProtocols } from "../src/protocols/loader.js";
+import {
+  bundledProtocolsDir, invalidateBundledCache, loadBundledProtocols,
+  catalogReadFailureCount, importedProtocolsDir, loadImportedProtocols,
+} from "../src/protocols/loader.js";
+import { getAllProtocols } from "../src/protocols/index.js";
 import { setEmbeddingProviderSingleton } from "../src/embedding-singleton.js";
 import type { ExtendedEmbeddingProvider } from "../src/embedding-providers/types.js";
 import type { Protocol } from "../src/protocols/types.js";
@@ -146,6 +163,8 @@ beforeEach(() => {
   fsSpy.writes.length = 0;
   fsSpy.renames.length = 0;
   fsSpy.failReaddir.clear();
+  fsSpy.failStat.clear();
+  if (existsSync(importedProtocolsDir())) rmSync(importedProtocolsDir(), { recursive: true, force: true });
 });
 
 afterAll(() => {
@@ -225,6 +244,164 @@ describe("search index sees in-place edits (F1)", () => {
     expect(await searchFor("frobnicator")).toContain("pin-target");
     editProtocol("pin-target", { description: "wibble sprocket tuner", triggers: ["tune sprocket"] });
     expect(await searchFor("sprocket")).toContain("pin-target");
+  });
+});
+
+describe("search relevance gate (F18)", () => {
+  // The defect this fixes was observed in the real usage log, twice:
+  //   searched "purchase order" → hit:true → instagram_post
+  // against a catalog with no purchasing protocol at all. The filter was
+  // `score > 0`, so one shared token — "order", from a step instruction — made
+  // a hit. A confident wrong answer is worse than a miss: the miss is what tells
+  // the agent to write the protocol.
+  function usageRows(): Array<Record<string, unknown>> {
+    const p = join(TEMP, "protocols", "usage.jsonl");
+    if (!existsSync(p)) return [];
+    return readFileSync(p, "utf-8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  }
+
+  it("does not answer 'purchase order' with an unrelated protocol", async () => {
+    const out = await searchFor("purchase order");
+    expect(out).not.toContain("instagram_post");
+    expect(out).toContain("No protocol in the catalog is about");
+  });
+
+  it("does not answer bare 'order' either — the one-word retry is not a bypass", async () => {
+    // The first version of this gate required 2 matched terms, and the tool text
+    // told the model to "retry with the single most distinctive word" on a miss.
+    // On a one-term query that requirement collapsed to 1, i.e. back to the
+    // pre-fix `score > 0`, and `order` returned instagram_post with hit:true —
+    // regenerating the exact usage.jsonl row this was opened on, in one hop the
+    // tool itself prescribed.
+    const out = await searchFor("order");
+    expect(out).not.toContain("instagram_post");
+    const row = usageRows().find((r) => r.action === "searched" && r.query === "order");
+    expect(row!.hit).toBe(false);
+  });
+
+  it("a more descriptive query never removes the answer a shorter one found", async () => {
+    // Measured inversion in the first version of this gate: requiring N matched
+    // terms makes every added word a new obligation, so `research` found
+    // web_research and `company research` found NOTHING. Making a request more
+    // specific must not make it less answerable — that is backwards, and it is
+    // the same shape as the density inversion this subsystem has been bitten by
+    // twice. Each pair below is (short query, the same query plus a word the
+    // catalog doesn't know).
+    const PAIRS: Array<[string, string, string]> = [
+      ["research", "company research", "web_research"],
+      ["slack", "slack webhook", "send_slack"],
+      ["deploy", "roll back a deploy", "deploy"],
+      ["git", "git commit please", "git_workflow"],
+    ];
+    for (const [short, longer, expected] of PAIRS) {
+      expect(await searchFor(short)).toContain(expected);
+      expect(await searchFor(longer)).toContain(expected);
+    }
+  });
+
+  it("a generic verb is not evidence, even when the protocol really uses it", async () => {
+    // `create purchase order` is the natural phrasing of the request that opened
+    // this finding. It used to return instagram_post (two body words), and after
+    // the identity rule it still returned git_workflow — "create a branch" is one
+    // of that protocol's own triggers, so "create" was a genuine identity match.
+    // It just isn't evidence about the SUBJECT. The generic-term set is shared
+    // with learned-suggestion.ts so there is one answer to "is this word topical".
+    const out = await searchFor("create purchase order");
+    expect(out).not.toContain("git_workflow");
+    expect(out).not.toContain("instagram_post");
+    expect(out).toContain("No protocol in the catalog is about");
+    const row = usageRows().find((r) => r.action === "searched" && r.query === "create purchase order");
+    expect(row!.hit).toBe(false);
+
+    // Same defect, different verb and different victim: "make an instagram post"
+    // is one of instagram_post's triggers, so `make` matched its identity too.
+    const other = await searchFor("make a new purchase order");
+    expect(other).not.toContain("instagram_post");
+    // NOT asserted: that this query misses entirely. It still matches app-build
+    // on "new", and "new" cannot join the generic set — it moves a pinned aside
+    // in learned-suggestion's labelled corpus over MIN_COVERAGE (2/6 → 2/5),
+    // because dropping a term there shrinks the coverage DENOMINATOR and loosens
+    // admission. The residual class is documented in generic-terms.ts rather
+    // than closed by breaking the other consumer.
+  });
+
+  it("still finds the protocol when the same verb comes with a subject", async () => {
+    // The filter must remove "create" as EVIDENCE without making requests that
+    // contain it unanswerable — the subject word carries the match.
+    createProtocol(mkProtocol("branch_flow", {
+      description: "Create a git branch and push it",
+      triggers: ["create a branch"],
+    }));
+    expect(await searchFor("create a branch")).toContain("branch_flow");
+  });
+
+  it("admits a match that is only in the description, not just the name", async () => {
+    // `duplicate systems` matches brownfield on a description word alone. An
+    // earlier candidate rule that trusted only name/triggers/tags dropped it.
+    expect(await searchFor("duplicate systems")).toContain("brownfield");
+  });
+
+  it("records the miss as hit:false so the catalog gap is visible in telemetry", async () => {
+    await searchFor("purchase order");
+    const row = usageRows().find((r) => r.action === "searched" && r.query === "purchase order");
+    expect(row).toBeDefined();
+    expect(row!.hit).toBe(false);
+    expect(row!.name).toBe("");
+  });
+
+  it("still hits when the protocol really does cover the query", async () => {
+    createProtocol(mkProtocol("po_intake", {
+      description: "Create a purchase order from a supplier invoice",
+      triggers: ["purchase order intake"],
+    }));
+    const out = await searchFor("purchase order");
+    expect(out).toContain("po_intake");
+    expect(out).not.toContain("instagram_post");
+
+    const row = usageRows().find((r) => r.action === "searched" && r.query === "purchase order");
+    expect(row!.hit).toBe(true);
+    expect(row!.name).toBe("po_intake");
+  });
+
+  it("keeps single-word search working — one term is all the evidence there is", async () => {
+    createProtocol(mkProtocol("sprocket_flow", { description: "zzqx sprocket handling", triggers: ["sprocket"] }));
+    expect(await searchFor("sprocket")).toContain("sprocket_flow");
+  });
+
+  it("does not become less useful as the catalog fills up with one topic", async () => {
+    // The inversion that has bitten this campaign twice: an admission rule built
+    // on corpus statistics gets STRICTER as more protocols share a topic, so the
+    // more the agent writes about the user's actual work, the less any of it can
+    // be retrieved. This gate reads only the query and the document, so density
+    // cannot move it. Sweep 1 → 5 → 20 neighbours.
+    for (const n of ["po_intake", "po_receiving", "po_reconcile", "po_close", "po_audit"]) {
+      createProtocol(mkProtocol(n, {
+        description: `${n}: a step in the purchase order lifecycle`,
+        triggers: ["purchase order"],
+      }));
+    }
+    expect(await searchFor("purchase order")).toContain("po_");
+
+    for (let i = 0; i < 15; i += 1) {
+      createProtocol(mkProtocol(`po_extra_${i}`, {
+        description: `another purchase order variant ${i}`,
+        triggers: ["purchase order"],
+      }));
+    }
+    const out = await searchFor("purchase order");
+    expect(out).not.toContain("No protocols matched");
+    expect(out).toContain("po_");
+  });
+
+  it("drops the tail whose only overlap is a word buried in its body", async () => {
+    // instagram_post matches on name, description AND body. git_workflow and
+    // send_email match this query only on "new", and only inside their step
+    // text — nothing in what either one says it is. They used to be listed as
+    // matches alongside the right answer.
+    const out = await searchFor("post the new product photos to instagram with a caption");
+    expect(out).toContain("instagram_post");
+    expect(out).not.toContain("git_workflow");
+    expect(out).not.toContain("send_email");
   });
 });
 
@@ -351,6 +528,144 @@ describe("dedup gate is shared by both create paths (F3)", () => {
     const names = loadCustomProtocols().map((p) => p.name);
     expect(names).toContain("download-chatgpt-image-v2");
     expect(names).not.toContain(EXISTING.name);
+  });
+});
+
+describe("supersedes archives the target, never hard-deletes it (F27/F37)", () => {
+  // `supersedes` is reachable from protocol(action:"create"), which is not in
+  // DESTRUCTIVE_TOOL_ACTIONS and is blanket-allowed by the orchestration policy.
+  // While it hard-deleted, the ordinary agent could erase a user-authored
+  // protocol with no approval prompt and no undo — the one thing the recoverable
+  // archive is supposed to guarantee.
+  it("moves the superseded protocol into the archive, content intact", async () => {
+    createProtocol(mkProtocol("po-intake", {
+      description: "the user's own hand-written flow",
+      steps: [{ id: "s1", instruction: "IRREPLACEABLE USER CONTENT" }],
+      source: { type: "custom", authoredBy: "user", authoredAt: 111 },
+    }));
+
+    const res = await authorProtocol({
+      name: "po-intake-v2",
+      description: "the agent's rewrite",
+      triggers: ["po intake"],
+      supersedes: "po-intake",
+    });
+
+    expect(res.ok).toBe(true);
+    expect(loadCustomProtocols().map((p) => p.name)).not.toContain("po-intake");
+
+    const record = loadArchived().find((r) => r.protocol.name === "po-intake");
+    expect(record).toBeDefined();
+    expect(record!.protocol.steps[0].instruction).toBe("IRREPLACEABLE USER CONTENT");
+    expect(record!.protocol.source?.authoredBy).toBe("user");
+    expect(record!.reason).toContain("po-intake-v2");
+  });
+
+  it("is undoable — the superseded protocol restores with its content", async () => {
+    createProtocol(mkProtocol("old-flow", { description: "ORIGINAL" }));
+    await authorProtocol({
+      name: "new-flow", description: "replacement", triggers: ["new flow"], supersedes: "old-flow",
+    });
+
+    const restored = unarchiveProtocol("old-flow");
+    expect(restored.error).toBeUndefined();
+    expect(restored.restored?.description).toBe("ORIGINAL");
+    expect(loadCustomProtocols().map((p) => p.name)).toEqual(
+      expect.arrayContaining(["old-flow", "new-flow"]),
+    );
+  });
+
+  it("tells the caller the old one is recoverable instead of implying it's gone", async () => {
+    createProtocol(mkProtocol("superseded-note"));
+    const res = await authorProtocol({
+      name: "superseded-note-v2", description: "x", triggers: ["y"], supersedes: "superseded-note",
+    });
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.supersededNote).toMatch(/archived/i);
+    expect(res.supersededNote).toMatch(/unarchive/);
+  });
+
+  it("reports honestly when the superseded name isn't in the editable catalog", async () => {
+    const res = await authorProtocol({
+      name: "supersedes-nothing", description: "x", triggers: ["y"], supersedes: "instagram_post",
+    });
+    if (!res.ok) throw new Error("unreachable");
+    expect(res.supersededNote).toMatch(/nothing was replaced/);
+    // A built-in isn't in custom.json, so there was nothing to archive — and
+    // nothing may be silently removed from anywhere else either.
+    expect(loadArchived()).toHaveLength(0);
+  });
+});
+
+describe("the agent's own archive action never destroys the live copy (F24)", () => {
+  // Chunk G guarded the HTTP route. This is the OTHER path: the model calling
+  // protocol(action:'delete'), which reaches the raw primitive. It only ever
+  // inspected the null return, so it reported "not found in active catalog"
+  // for a record that its own call had just deleted.
+  const del = createBuilderTools().find((t) => t.name === "protocol_delete")!;
+
+  it("archives a re-created name alongside the older archived version", async () => {
+    createProtocol(mkProtocol("agentpath", { description: "VERSION ONE" }));
+    expect((await del.execute({ name: "agentpath" })).isError).toBeFalsy();
+
+    // Re-creatable because createProtocol only checks the LIVE catalog — the
+    // normal state of affairs for an agent that re-authors protocols.
+    createProtocol(mkProtocol("agentpath", { description: "VERSION TWO" }));
+    const out = await del.execute({ name: "agentpath" });
+
+    expect(out.isError).toBeFalsy();
+    expect(String(out.content)).toContain("Archived");
+    const archived = loadArchived()
+      .filter((r) => r.protocol.name === "agentpath")
+      .map((r) => r.protocol.description)
+      .sort();
+    expect(archived).toEqual(["VERSION ONE", "VERSION TWO"]);
+    expect(loadCustomProtocols().map((p) => p.name)).not.toContain("agentpath");
+  });
+
+  it("still refuses names that aren't in the editable catalog, without touching anything", async () => {
+    const out = await del.execute({ name: "instagram_post" });
+    expect(out.isError).toBe(true);
+    expect(String(out.content)).toContain("nothing to archive");
+    expect(loadArchived()).toHaveLength(0);
+  });
+
+  it("restores the version the user last archived", async () => {
+    createProtocol(mkProtocol("restore-newest", { description: "VERSION ONE" }));
+    await del.execute({ name: "restore-newest" });
+    createProtocol(mkProtocol("restore-newest", { description: "VERSION TWO" }));
+    await del.execute({ name: "restore-newest" });
+
+    const unarchive = createBuilderTools().find((t) => t.name === "protocol_unarchive")!;
+    const out = await unarchive.execute({ name: "restore-newest" });
+    expect(out.isError).toBeFalsy();
+    expect(loadCustomProtocols().find((p) => p.name === "restore-newest")?.description)
+      .toBe("VERSION TWO");
+  });
+
+  it("restores an older version when the agent passes its archivedTs", async () => {
+    createProtocol(mkProtocol("restore-older", { description: "VERSION ONE" }));
+    const first = archiveProtocol("restore-older")!;
+    createProtocol(mkProtocol("restore-older", { description: "VERSION TWO" }));
+    await del.execute({ name: "restore-older" });
+
+    const unarchive = createBuilderTools().find((t) => t.name === "protocol_unarchive")!;
+    const out = await unarchive.execute({ name: "restore-older", archivedTs: first.archivedTs });
+    expect(out.isError).toBeFalsy();
+    expect(loadCustomProtocols().find((p) => p.name === "restore-older")?.description)
+      .toBe("VERSION ONE");
+  });
+
+  it("lists every archived version with the stamp needed to restore it", async () => {
+    createProtocol(mkProtocol("listed", { description: "VERSION ONE" }));
+    await del.execute({ name: "listed" });
+    createProtocol(mkProtocol("listed", { description: "VERSION TWO" }));
+    await del.execute({ name: "listed" });
+
+    const list = createBuilderTools().find((t) => t.name === "protocol_list_archived")!;
+    const content = String((await list.execute({})).content);
+    expect(content.match(/- listed \(/g) ?? []).toHaveLength(2);
+    for (const r of loadArchived()) expect(content).toContain(String(r.archivedTs));
   });
 });
 
@@ -537,6 +852,105 @@ describe("a degraded catalog read prunes nothing (R3)", () => {
     const keys = Object.keys(readEmbeddingCache());
     expect(keys).toEqual(expect.arrayContaining(bundledNames));
     expect(keys).toContain("delta");
+  });
+
+  /** Write a SKILL.md pack into the workspace imported tier. */
+  function mkImported(name: string, contents: string): string {
+    const dir = join(importedProtocolsDir(), name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), contents, "utf-8");
+    return dir;
+  }
+
+  it("counts a SKILL.md that exists but parses to nothing", () => {
+    // readFileSync SUCCEEDS on a zero-byte file, so nothing upstream notices;
+    // parseSkillMd returns null, the protocol drops out of the catalog, and a
+    // trusting prune deletes its vector. The file is right there on disk — this
+    // is a partial read, not a deletion.
+    mkImported("real-one", "---\nname: real-one\ndescription: a real one\n---\n\nDo it.\n");
+    mkImported("empty-one", "");
+
+    const before = catalogReadFailureCount();
+    const names = loadImportedProtocols().map((p) => p.name);
+    const after = catalogReadFailureCount();
+
+    expect(names).toContain("real-one");
+    expect(names).not.toContain("empty-one");
+    expect(after).toBe(before + 1);
+  });
+
+  it("counts a SKILL.md that can't be read at all", () => {
+    // A directory where the file should be: existsSync says yes, readFileSync
+    // throws EISDIR. Same shape as an EPERM or a mid-sync lock.
+    mkdirSync(join(importedProtocolsDir(), "unreadable-one", "SKILL.md"), { recursive: true });
+
+    const before = catalogReadFailureCount();
+    loadImportedProtocols();
+    expect(catalogReadFailureCount()).toBe(before + 1);
+  });
+
+  it("counts an entry that can't be stat'd", () => {
+    const dir = mkImported("unstattable-one", "---\nname: unstattable-one\ndescription: x\n---\n\nBody.\n");
+    fsSpy.failStat.add(dir);
+
+    const before = catalogReadFailureCount();
+    const names = loadImportedProtocols().map((p) => p.name);
+    expect(names).not.toContain("unstattable-one");
+    expect(catalogReadFailureCount()).toBe(before + 1);
+  });
+
+  it("survives a custom.json that parses but isn't an array", () => {
+    // `{"name":"oops"}` parses fine, so the parse-error branch never fires;
+    // stampCustomSource() then does records.map(...) and throws
+    // "records.map is not a function", taking down getAllProtocols() and with it
+    // the whole authoring path.
+    writeFileSync(join(TEMP, "protocols", "custom.json"), '{"name":"oops"}', "utf-8");
+
+    const before = catalogReadFailureCount();
+    expect(loadCustomProtocols()).toEqual([]);
+    expect(catalogReadFailureCount()).toBe(before + 1);
+    // The real read path must not throw either — that is where the crash landed.
+    expect(() => getAllProtocols()).not.toThrow();
+    expect(getAllProtocols().length).toBeGreaterThan(0);
+  });
+
+  it("keeps custom-tier vectors when custom.json isn't an array", async () => {
+    createProtocol(mkProtocol("kappa", { description: "zzqx kappa wibble", triggers: ["kappa"] }));
+    await findCatalogDuplicate({ name: "primer", description: "zzqx primer kappa", triggers: ["primer"] });
+    expect(readEmbeddingCache()).toHaveProperty("kappa");
+
+    writeFileSync(join(TEMP, "protocols", "custom.json"), '{"name":"oops"}', "utf-8");
+    await findCatalogDuplicate({ name: "after-shape", description: "zzqx shape sprocket", triggers: ["after"] });
+
+    expect(readEmbeddingCache()).toHaveProperty("kappa");
+  });
+
+  it("still memoizes the bundled tier when one pack is unparseable", () => {
+    // The memo must distrust a TRANSIENT failure (EBUSY may succeed next call)
+    // but not a STABLE gap. A zero-byte SKILL.md fails identically forever, so
+    // treating it as a failed read means never memoizing again — and because
+    // every call then re-scans and re-reports failure, the embedding prune is
+    // silently disabled for the whole process.
+    const probe = join(bundledProtocolsDir(), "__memo_probe__");
+    try {
+      mkdirSync(probe, { recursive: true });
+      writeFileSync(join(probe, "SKILL.md"), "", "utf-8");
+      invalidateBundledCache();
+
+      const before = catalogReadFailureCount();
+      const first = loadBundledProtocols();
+      const afterFirst = catalogReadFailureCount();
+      expect(afterFirst).toBeGreaterThan(before); // the gap IS reported, once
+      expect(first.map((p) => p.name)).not.toContain("__memo_probe__");
+
+      // Second call must come from the memo: no re-scan, no further report.
+      loadBundledProtocols();
+      expect(catalogReadFailureCount()).toBe(afterFirst);
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+      invalidateBundledCache();
+    }
+    expect(existsSync(probe)).toBe(false);
   });
 
   it("does not memoize a failed bundled read", () => {

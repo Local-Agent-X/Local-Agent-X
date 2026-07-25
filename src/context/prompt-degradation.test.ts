@@ -132,6 +132,43 @@ describe("capability-aware prompt degradation", () => {
     expect(second.telemetry).toEqual(first.telemetry);
   });
 
+  it("drops the protocol-load notice last, after every other optional section", () => {
+    // Budget is 8_192 * 0.35 tokens; every degradable section here is far too
+    // big to co-exist, so all of them must be shed. Order of shedding is the
+    // assertion: retrieval is what survives longest.
+    // The REQUIRED section alone busts the budget, so the loop cannot stop
+    // early and every degradable section is shed — which is what makes the
+    // shed sequence observable.
+    const bulk = (tag: string) => tag.repeat(6_000);
+    const sections = [
+      section("core-identity", "required", "i".repeat(40_000), "static"),
+      section("app-manifest", "degradable", bulk("m"), "static"),
+      section("smart-context", "degradable", bulk("s")),
+      section("memory-orchestrator", "degradable", bulk("o")),
+      section("memory-curate", "degradable", bulk("c")),
+      section("learned-protocol", "degradable", "\n\n[HARNESS NOTE: LEARNED WORKFLOW]\nload it\n[END HARNESS NOTE]\n"),
+    ];
+    const shedOrder = applyCapabilityAwarePromptDegradation(sections, profile(8_192))
+      .telemetry.degradedSections.map((item) => item.id);
+
+    expect(shedOrder.indexOf("learned-protocol")).toBe(shedOrder.length - 1);
+    for (const earlier of ["app-manifest", "smart-context", "memory-orchestrator", "memory-curate"]) {
+      expect(shedOrder.indexOf(earlier), earlier).toBeLessThan(shedOrder.indexOf("learned-protocol"));
+    }
+  });
+
+  it("keeps the protocol-load notice while any other optional section is still affordable", () => {
+    const sections = [
+      section("core-identity", "required", "identity", "static"),
+      section("smart-context", "degradable", "s".repeat(40_000)),
+      section("memory-curate", "degradable", "curate hint"),
+      section("learned-protocol", "degradable", "load the protocol"),
+    ];
+    const result = applyCapabilityAwarePromptDegradation(sections, profile(8_192));
+    expect(result.telemetry.degradedSections.map((item) => item.id)).toEqual(["smart-context"]);
+    expect(result.prompt).toContain("load the protocol");
+  });
+
   it("preserves required sections appended before and after the canonical builder render", async () => {
     const built = await new SystemPromptBuilder()
       .addSection({

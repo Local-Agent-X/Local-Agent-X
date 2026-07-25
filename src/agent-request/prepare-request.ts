@@ -260,6 +260,20 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     systemPrompt: promptBuild.prompt,
     renderedPromptSections: [...promptBuild.renderedSections],
   };
+  // Protocol-load notice. Appended here rather than folded into smartContext
+  // because smartContext is fenced by asRecalledData as untrusted DATA, and a
+  // "load this protocol" nudge is an instruction. buildContext has already
+  // wrapped it with harnessNotice — the same first-party format the file-access
+  // grounding and turn directives use. Degradable, and ranked LAST in the
+  // kill order (context/prompt-degradation.ts) so retrieval is the final thing
+  // a constrained local profile gives up rather than nearly the first.
+  appendSystemPromptSection(sectionAwarePrompt, {
+    id: "learned-protocol",
+    label: "Learned Workflow",
+    type: "dynamic",
+    policy: "degradable",
+    text: ctx.protocolNotice,
+  });
   appendSystemPromptSection(sectionAwarePrompt, {
     id: "file-attachments",
     label: "File Attachments",

@@ -8,6 +8,8 @@ const CONSTRAINED_CONTEXT_WINDOW = 32_768;
 // This is a sizing policy only: required prompt sections can exceed it.
 const PROMPT_WINDOW_SHARE = 0.35;
 
+// Kill order: index 0 is dropped FIRST. Ids absent from this list rank after
+// every entry here, so they are dropped last.
 const DEGRADATION_PRIORITY = [
   "app-manifest",
   "smart-context",
@@ -17,6 +19,19 @@ const DEGRADATION_PRIORITY = [
   "relevant-memories",
   "memory-orchestrator",
   "memory-curate",
+  // Ranked last on purpose. The protocol-load notice used to ride inside
+  // smart-context (index 1), so on any constrained or weak local profile
+  // retrieval died second — the agent lost the pointer to the procedure it
+  // had already learned, on exactly the models least able to reconstruct it.
+  // It is ~50 tokens and it is the only section that changes what the model
+  // DOES rather than what it knows, so it now outlives every other optional
+  // section. The trade, stated plainly: whatever previously died last now dies
+  // second-to-last, and because the notice adds its own tokens to the budget a
+  // marginal prompt can shed one extra section. On a DEFAULT install that
+  // victim is `memory-orchestrator`, not `memory-curate` — memoryCurateBlock is
+  // empty unless LAX_MEMORY_INPROMPT_NUDGE=1 (prepare-request.ts), so
+  // `memory-curate` is usually not a rendered section at all.
+  "learned-protocol",
 ] as const;
 
 export interface CapabilityAwarePromptResult {

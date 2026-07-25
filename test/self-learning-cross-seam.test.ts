@@ -207,10 +207,18 @@ describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s
       memoryManager: memoryManager(), isCodexProvider: false, isTrivialToolRequest: false,
       tier: "weak", resolvedModel: "test",
     });
+    for (const notice of [strong.protocolNotice, weak.protocolNotice]) {
+      // The nudge rides the FIRST-PARTY harness channel, not smartContext —
+      // smartContext is rendered through asRecalledData, which instructs the
+      // model to treat its contents as data and never as instructions.
+      expect(notice).toContain("[HARNESS NOTE: LEARNED WORKFLOW]");
+      expect(notice).toContain(`protocol(action:"get", params:{name:"${candidate.id}"})`);
+      expect(notice).not.toContain("allowed-tools");
+      expect(notice).not.toContain("untrusted-recalled-data");
+      expect(notice.length).toBeLessThan(320);
+    }
     for (const context of [strong.smartContext, weak.smartContext]) {
-      expect(context).toContain(`protocol(action:"get", params:{name:"${candidate.id}"})`);
-      expect(context).not.toContain("allowed-tools");
-      expect(context.length).toBeLessThan(260);
+      expect(context).not.toContain(`protocol(action:"get"`);
     }
     expect(weak.contextBlock).toBe("");
 

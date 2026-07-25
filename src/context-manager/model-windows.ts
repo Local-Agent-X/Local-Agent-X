@@ -24,6 +24,8 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-fable-5": 1_000_000,
   // Sonnet 5 — Claude 5 balanced tier, 1M context
   "claude-sonnet-5": 1_000_000,
+  // Opus 5 — Claude 5 Opus tier; 1M is both the default and the maximum
+  "claude-opus-5": 1_000_000,
   // Anthropic Claude 4.x family — 200k base window
   "claude-sonnet-4-5": 200_000,
   "claude-sonnet-4-6": 200_000,
@@ -37,6 +39,7 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-opus-4-6[1m]": 1_000_000,
   "claude-opus-4-7[1m]": 1_000_000,
   "claude-opus-4-8[1m]": 1_000_000,
+  "claude-opus-5[1m]": 1_000_000,
   // Gemini 2.x family (GA aliases)
   "gemini-2.0-flash": 1_000_000,
   "gemini-2.5-pro": 1_000_000,

@@ -24,6 +24,11 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
   // Sonnet 5 — Claude 5 balanced tier (1M context). Same adaptive-only request
   // shape as Fable 5: the request layer must not send budget_tokens/temperature.
   if (matchesModelRef(lower, ["claude-sonnet-5", "claude-sonnet.5"]) || lower === "claude-sonnet-5[1m]") return "claude-sonnet-5";
+  // Opus 5 — Claude 5 Opus tier (1M context, native default). Adaptive-only like
+  // the rest of the Claude 5 family, with one extra wrinkle: thinking is ON when
+  // the request omits it (4.8/4.7 ran thinking-off), and disabling it is only
+  // legal at effort `high` or below. Same $5/$25 as 4.8.
+  if (matchesModelRef(lower, ["claude-opus-5", "claude-opus.5"]) || lower === "claude-opus-5[1m]") return "claude-opus-5";
   // 4.8 family (May 2026 — Opus 4.8 ships with 1M context)
   if (matchesModelRef(lower, ["claude-opus-4-8", "claude-opus-4.8"]) || lower === "claude-opus-4-8[1m]") return "claude-opus-4-8";
   // 4.7 family (April 2026 — Opus 4.7 ships with 1M context)
@@ -54,17 +59,21 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
 
 /**
  * True for model families that use ADAPTIVE thinking on the Messages API:
- * Fable 5, Mythos 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6. For these the
- * request must send `thinking: {type: "adaptive"}` and must NOT send
- * `temperature`, `top_p`, `top_k`, or `budget_tokens` — Fable 5, Opus 4.7/4.8,
- * and Sonnet 5 return a 400 on any of them (4.6/Sonnet 4.6 accept them but
- * adaptive is the supported path). Older models (Opus 4.5, Sonnet 4.5, Opus
+ * Fable 5, Mythos 5, Opus 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6. For these
+ * the request must send `thinking: {type: "adaptive"}` and must NOT send
+ * `temperature`, `top_p`, `top_k`, or `budget_tokens` — Fable 5, Opus 5, Opus
+ * 4.7/4.8, and Sonnet 5 return a 400 on any of them (4.6/Sonnet 4.6 accept them
+ * but adaptive is the supported path). Older models (Opus 4.5, Sonnet 4.5, Opus
  * 4.0, Sonnet 4) keep the legacy `{type: "enabled", budget_tokens}` +
  * `temperature: 1` shape.
+ *
+ * `opus-5` is a separate alternation branch from `opus-4-[678]` on purpose:
+ * claude-opus-4-5 must NOT match (it is a legacy-shape model), and it doesn't —
+ * the pattern is anchored, so 4.5 falls through to the legacy branch.
  */
 export function anthropicUsesAdaptiveThinking(model: string): boolean {
   const m = normalizeAnthropicModel(model).toLowerCase();
-  return /^claude-(fable-5|mythos-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
+  return /^claude-(fable-5|mythos-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
 }
 
 export function usesAnthropicSubscriptionAuth(token: string): boolean {

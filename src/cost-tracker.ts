@@ -54,6 +54,7 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-sonnet-4": { input: 3, output: 15 },
   "claude-fable-5": { input: 10, output: 50 },
   "claude-sonnet-5": { input: 3, output: 15 },  // sticker; $2/$10 intro through 2026-08-31
+  "claude-opus-5": { input: 5, output: 25 },    // drop-in upgrade at Opus 4.8's pricing
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },
   "claude-opus-4-6": { input: 5, output: 25 },

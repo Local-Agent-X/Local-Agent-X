@@ -6,7 +6,16 @@
 ## RESUME HERE
 
 **Branch:** `campaign/integration-conformance` (do NOT merge to main until C9 passes)
-**Progress:** 2 of 9 chunks green (C1, C2). C3 was in flight when this was pushed.
+**Progress:** 3 of 9 chunks green (C1, C2, C3). Next wave is **W3: C4 + C5 in parallel** — their
+footprints are disjoint, so they can run together.
+
+### ⚠️ Worktree gotcha — put this in every chunk brief
+
+Workflow worktrees are cut from the **session-start HEAD**, not from current `main`. C3's worktree
+was created at `d0bb7247`, which predates C2, so `src/credentials/requirements.ts` did not exist in
+it. C3 recovered with `git merge --ff-only main` before starting. **Every future chunk brief must
+instruct the agent to fast-forward to `main` first and confirm its dependencies are present**,
+otherwise it will silently build against a tree missing the chunk it depends on.
 
 ### State of the tree when this was written
 
@@ -109,13 +118,29 @@ that already exists in the plugin system.
 |---|---|---|
 | C1 | **GREEN** | Merged `a3b4e1e4`. Skeptic `refuted=false`/high — independently re-derived both regex sets and proved them identical, verified the sweep is non-vacuous structurally rather than trusting the agent's revert experiment, confirmed the 80-char `searchHint` prefix is byte-identical so `tool_search` indexing is unaffected. |
 | C2 | **GREEN (after orchestrator fix)** | Merged `d89c7205`. Skeptic **REFUTED** it: adding top-level `src/credentials/` left `docs/codebase-map.md` stale → `npm run build` red at `check:codebase-map`, while the parent commit passed. Real defect, caused by the bad E4 verification standard. Map regenerated in `3251a3e2`. Substance survived: parser lifted byte-for-byte, 35 pre-existing plugin tests still green, mutation-tested. |
-| C3 | **IN FLIGHT** at push time | Workflow `wf_f6d9dbba-abb`. Its sharpest acceptance check: `npm run check:integrations` must STILL report exactly `authtype:google`, `transport:email`, `secret:email` afterward — proof the shape changed without the semantics moving. |
+| C3 | **GREEN** | Merged. `IntegrationConfig` now declares `credentials: CredentialRequirement[]`; `secretName` survives as a derived view of the primary so the HTTP route and Settings modal (both outside the footprint) behave identically. Skeptic `refuted=false`/high: ran 14 mutations against `registry.ts` (12 killed by the chunk's own tests), wrote its OWN pre-migration fixtures instead of trusting the agent's, and confirmed `getAgentContext()` output is byte-identical for all 11 integrations. The hard constraint held — the gate still reports exactly the three baselined findings, proving the shape changed without the semantics moving. |
 | C4 | pending | |
 | C5 | pending | |
 | C6 | pending | |
 | C7 | pending | |
 | C8 | pending | |
 | C9 | pending | |
+
+## ⚠️ MUST FIX IN C7 — a latent hazard C7 itself makes reachable
+
+`src/integrations/registry.ts:51-52` — on a pre-list `secretName` override, only the PRIMARY
+credential is cloned; the non-primary entries are returned as **the same object references** as the
+module-level `BUILTIN_INTEGRATIONS` declaration:
+
+```ts
+const [primary, ...rest] = current;
+return [primary ? { ...primary, name: legacy } : { name: legacy }, ...rest];
+```
+
+Unreachable today because every builtin declares exactly one credential, so `rest` is always empty.
+**C7 gives email a real multi-credential list, which makes it reachable** — at which point a
+per-registry mutation could write through into the shared builtin and leak across registries.
+Deep-clone `rest` in C7 and add the regression test.
 
 ## Open nits carried forward
 
@@ -127,10 +152,23 @@ that already exists in the plugin system.
 - The runtime steer test sweeps `allTools` only; ten plugin-registered tool families
   (memory, secrets, browser, protocol, cron, agent, project, mcp-admin, handler, arikernel-bridge)
   are outside it. No live escape today — the static gate still covers all 226 tool names.
+- **Behavior narrowing from C3, undocumented for users:** once the registry saves
+  `~/.lax/integrations.json` in the new shape, hand-editing `secretName` in that file is silently
+  ignored (the `credentials` list wins). Pre-existing overrides all survive the upgrade — verified
+  across all 11 builtins — so nobody loses wiring, but hand-editing is no longer the mechanism for
+  repointing an integration at a different vault entry. C5 should make that repointing possible in
+  the UI, or it needs a release note.
+- Two vacuous arms in `src/integrations/registry.test.ts`: mutations that truncate the non-primary
+  credentials, or drop non-name metadata when renaming the primary, both SURVIVE the suite (no
+  builtin declares a `description` today, so both sides are `undefined`). Self-disclosed by the
+  agent, not hidden. C7's real multi-credential list is what makes these arms testable.
+- `credentialNames()` in the conformance script counts raw `[`/`]` and is not string-aware; an
+  unbalanced bracket inside a credential `description` would mis-scope the block. Balanced brackets
+  are handled correctly. Robustness nit in a deliberate regex parser.
 
 ## Completion ledger (fill at end — honest four buckets)
 
-- **Shipped (green):** C1, C2
+- **Shipped (green):** C1, C2, C3
 - **Parked for you:** *(none open — P1 Google OAuth2 resolved: not doing it)*
 - **Failed and abandoned:** *(none)*
 - **Descoped:** see Out of scope

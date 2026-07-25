@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const instagramIntegration: IntegrationConfig = {
+export const instagramIntegration: IntegrationDeclaration = {
   id: "instagram",
   name: "Instagram",
   icon: "📷",
@@ -9,7 +9,7 @@ export const instagramIntegration: IntegrationConfig = {
   authInstructions: "1. Go to developers.facebook.com\n2. Create an App (Business type)\n3. Add Instagram Graph API product\n4. Connect your Instagram Business/Creator account to a Facebook Page\n5. Generate token in Graph API Explorer with instagram_basic, instagram_content_publish\n6. Get your Instagram Business Account ID from /me/accounts → page_id → ?fields=instagram_business_account",
   baseUrl: "https://graph.facebook.com/v21.0",
   docsUrl: "https://developers.facebook.com/docs/instagram-api",
-  secretName: "INSTAGRAM_ACCESS_TOKEN",
+  credentials: [{ name: "INSTAGRAM_ACCESS_TOKEN" }],
   scopes: ["instagram_basic", "instagram_content_publish", "instagram_manage_insights", "pages_show_list"],
   endpoints: [
     { name: "Get Profile", method: "GET", path: "/{ig_user_id}", description: "Get Instagram profile info", params: { fields: { type: "string", description: "username,media_count,followers_count,follows_count" } } },

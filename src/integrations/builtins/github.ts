@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const githubIntegration: IntegrationConfig = {
+export const githubIntegration: IntegrationDeclaration = {
   id: "github",
   name: "GitHub",
   icon: "🐙",
@@ -9,7 +9,7 @@ export const githubIntegration: IntegrationConfig = {
   authInstructions: "1. Go to github.com/settings/tokens\n2. Generate new token (classic or fine-grained)\n3. Select scopes: repo, read:user\n4. Copy the token",
   baseUrl: "https://api.github.com",
   docsUrl: "https://docs.github.com/en/rest",
-  secretName: "GITHUB_TOKEN",
+  credentials: [{ name: "GITHUB_TOKEN" }],
   scopes: ["repo", "read:user"],
   endpoints: [
     { name: "List Repos", method: "GET", path: "/user/repos", description: "List your repositories", params: { sort: { type: "string", description: "created, updated, pushed, full_name" }, per_page: { type: "number", description: "Results per page (max 100)" } } },

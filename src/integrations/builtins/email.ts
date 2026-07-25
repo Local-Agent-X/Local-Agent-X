@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const emailIntegration: IntegrationConfig = {
+export const emailIntegration: IntegrationDeclaration = {
   id: "email",
   name: "Email (SMTP/IMAP)",
   icon: "📧",
@@ -9,7 +9,7 @@ export const emailIntegration: IntegrationConfig = {
   authInstructions: "Gmail setup (recommended):\n1. Go to myaccount.google.com → Security\n2. Enable 2-Step Verification (required)\n3. Go to myaccount.google.com/apppasswords\n4. Create an App Password (select 'Mail')\n5. Fill in these 5 values below:\n\n• SMTP_HOST = smtp.gmail.com\n• SMTP_PORT = 587\n• SMTP_USER = your.email@gmail.com\n• SMTP_PASS = (the 16-char app password)\n• SMTP_FROM = your.email@gmail.com\n\nFor reading emails, also set:\n• IMAP_HOST = imap.gmail.com\n• IMAP_PORT = 993\n• IMAP_USER = your.email@gmail.com\n• IMAP_PASS = (same app password)\n\nOutlook: use smtp-mail.outlook.com (port 587) and outlook.office365.com (port 993)",
   baseUrl: "",
   docsUrl: "https://support.google.com/accounts/answer/185833",
-  secretName: "SMTP_PASS",
+  credentials: [{ name: "SMTP_PASS" }],
   endpoints: [
     { name: "Send Email", method: "POST", path: "smtp", description: "Send an email via SMTP" },
     { name: "Read Inbox", method: "GET", path: "imap", description: "Read emails from IMAP inbox" },

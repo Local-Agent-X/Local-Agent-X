@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const discordIntegration: IntegrationConfig = {
+export const discordIntegration: IntegrationDeclaration = {
   id: "discord",
   name: "Discord",
   icon: "🎮",
@@ -9,7 +9,7 @@ export const discordIntegration: IntegrationConfig = {
   authInstructions: "1. Go to discord.com/developers/applications\n2. Create New Application\n3. Go to Bot tab → Reset Token\n4. Copy the bot token\n5. Go to OAuth2 → URL Generator → Select 'bot' scope\n6. Add bot to your server with the generated URL",
   baseUrl: "https://discord.com/api/v10",
   docsUrl: "https://discord.com/developers/docs/reference",
-  secretName: "DISCORD_BOT_TOKEN",
+  credentials: [{ name: "DISCORD_BOT_TOKEN" }],
   endpoints: [
     { name: "Send Message", method: "POST", path: "/channels/{channel_id}/messages", description: "Send a message to a channel", params: { content: { type: "string", required: true, description: "Message content" } } },
     { name: "List Guilds", method: "GET", path: "/users/@me/guilds", description: "List servers the bot is in" },

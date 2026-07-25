@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const spotifyIntegration: IntegrationConfig = {
+export const spotifyIntegration: IntegrationDeclaration = {
   id: "spotify",
   name: "Spotify",
   icon: "🎵",
@@ -9,7 +9,7 @@ export const spotifyIntegration: IntegrationConfig = {
   authInstructions: "1. Go to developer.spotify.com/dashboard\n2. Create an App\n3. Copy Client ID + Client Secret\n4. For user-level access: use Authorization Code flow\n5. For search-only: use Client Credentials flow to get Bearer token",
   baseUrl: "https://api.spotify.com/v1",
   docsUrl: "https://developer.spotify.com/documentation/web-api",
-  secretName: "SPOTIFY_ACCESS_TOKEN",
+  credentials: [{ name: "SPOTIFY_ACCESS_TOKEN" }],
   scopes: ["user-read-playback-state", "user-modify-playback-state", "playlist-modify-public", "user-library-read"],
   endpoints: [
     { name: "Search", method: "GET", path: "/search", description: "Search for tracks, artists, albums, playlists", params: { q: { type: "string", required: true, description: "Search query" }, type: { type: "string", required: true, description: "track,artist,album,playlist" }, limit: { type: "number", description: "Max results (1-50)" } } },

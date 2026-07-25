@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const slackIntegration: IntegrationConfig = {
+export const slackIntegration: IntegrationDeclaration = {
   id: "slack",
   name: "Slack",
   icon: "💬",
@@ -9,7 +9,7 @@ export const slackIntegration: IntegrationConfig = {
   authInstructions: "1. Go to api.slack.com/apps\n2. Create New App → From Scratch\n3. Go to OAuth & Permissions\n4. Add scopes: chat:write, channels:read, files:write, users:read\n5. Install to workspace\n6. Copy Bot User OAuth Token (xoxb-...)",
   baseUrl: "https://slack.com/api",
   docsUrl: "https://api.slack.com/methods",
-  secretName: "SLACK_BOT_TOKEN",
+  credentials: [{ name: "SLACK_BOT_TOKEN" }],
   scopes: ["chat:write", "channels:read", "files:write", "users:read"],
   endpoints: [
     { name: "Send Message", method: "POST", path: "/chat.postMessage", description: "Send a message to a channel", params: { channel: { type: "string", required: true, description: "Channel ID or name" }, text: { type: "string", required: true, description: "Message text" } } },

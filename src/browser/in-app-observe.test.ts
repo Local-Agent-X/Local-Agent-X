@@ -356,13 +356,22 @@ describe("same-origin iframe descent (Stripe/embedded-editor/consent-in-iframe c
 	});
 });
 
-describe("checkedScript error surfacing", () => {
+describe("checkedScript error surfacing + clone safety", () => {
 	function evalScript(script: string): unknown {
 		return new Function(`return ${script}`)();
 	}
 
 	it("passes through a normal result untouched", () => {
 		expect(evalScript(checkedScript("1 + 1"))).toBe(2);
+	});
+
+	it("leaves a string result byte-identical (document.title must not be reshaped)", () => {
+		expect(evalScript(checkedScript(`"Purchase Orders — Thrive"`))).toBe("Purchase Orders — Thrive");
+	});
+
+	it("round-trips the action-result contract unchanged ({ok, actual, type})", () => {
+		expect(evalScript(checkedScript(`({ ok: true, actual: "x", type: "text" })`)))
+			.toEqual({ ok: true, actual: "x", type: "text" });
 	});
 
 	it("returns the REAL error message when the script throws", () => {
@@ -377,6 +386,97 @@ describe("checkedScript error surfacing", () => {
 			checkedScript(`Promise.reject(new Error("async boom"))`),
 		)) as { __laxScriptError?: string };
 		expect(out.__laxScriptError).toContain("async boom");
+	});
+
+	it("sanitizes a resolved promise value too (the async return path crosses the same bridge)", async () => {
+		const out = await evalScript(checkedScript(`Promise.resolve(function namedFn() {})`));
+		expect(out).toBe("[Function: namedFn]");
+	});
+
+	// The Electron bridge structured-clones the RETURN VALUE out of the
+	// renderer; an un-cloneable value used to fail the whole action with
+	// "An object could not be cloned" (2026-07-25).
+	it("describes a DOM element instead of failing the clone — and NEVER leaks its value", () => {
+		const out = evalScript(checkedScript(
+			`({ nodeType: 1, tagName: "INPUT", id: "email", className: "form-control", value: "hunter2" })`,
+		)) as string;
+		expect(out).toContain("INPUT");
+		expect(out).toContain("email");
+		expect(out).toContain("form-control");
+		// SECURITY: the descriptor must never carry the field's value —
+		// otherwise a clone crash becomes a password read-out.
+		expect(out).not.toContain("hunter2");
+	});
+
+	it("describes a function result", () => {
+		expect(evalScript(checkedScript(`(function clickHandler() {})`))).toBe("[Function: clickHandler]");
+		// Array-literal element: JS name inference doesn't apply, so .name is ""
+		// — the real nameless case (an arrow bound to the wrapper's own const
+		// would inherit that const's name).
+		expect(evalScript(checkedScript(`[() => {}][0]`))).toBe("[Function: anonymous]");
+	});
+
+	it("survives a circular object without hanging or throwing", () => {
+		const out = evalScript(checkedScript(`(() => { const a = { name: "root" }; a.self = a; return a; })()`)) as {
+			name: string; self: string;
+		};
+		expect(out.name).toBe("root");
+		expect(out.self).toBe("[circular]");
+	});
+
+	it("describes a Window-like host object", () => {
+		expect(evalScript(checkedScript(`({ document: {}, location: {} })`))).toBe("[Window]");
+	});
+
+	it("substitutes [unreadable] for a property whose getter throws", () => {
+		const out = evalScript(checkedScript(
+			`(() => { const o = { ok: true }; Object.defineProperty(o, "frame", { enumerable: true, get() { throw new Error("cross-origin"); } }); return o; })()`,
+		)) as { ok: boolean; frame: string };
+		expect(out).toEqual({ ok: true, frame: "[unreadable]" });
+	});
+
+	it("caps a huge array and says how much was dropped", () => {
+		const out = evalScript(checkedScript(`Array.from({ length: 250 }, (_, i) => i)`)) as unknown[];
+		expect(out).toHaveLength(201);
+		expect(out[200]).toBe("[... 50 more]");
+	});
+
+	// Host objects whose data lives OFF own-enumerable keys: these
+	// structured-cloned fine before the sanitizer existed, so degrading them to
+	// {} would silently feed the model empty data — worse than a visible crash.
+	it("serializes a rect-like host object through toJSON instead of flattening it to {}", () => {
+		const out = evalScript(checkedScript(
+			`(() => { const r = { toJSON: () => ({ x: 1, width: 2 }) }; return r; })()`,
+		));
+		expect(out).toEqual({ x: 1, width: 2 });
+	});
+
+	it("keeps a Date a Date (toJSON must not turn it into an ISO string)", () => {
+		expect(evalScript(checkedScript(`new Date(0)`))).toBeInstanceOf(Date);
+	});
+
+	it("describes an Error VALUE by name+message — and never its stack", () => {
+		const out = evalScript(checkedScript(`new TypeError("x is undefined")`)) as Record<string, unknown>;
+		expect(out).toEqual({ name: "TypeError", message: "x is undefined" });
+		// A stack carries page URLs (query params included) into model context.
+		expect(Object.keys(out)).not.toContain("stack");
+	});
+
+	it("still returns {} for a genuinely empty plain object", () => {
+		expect(evalScript(checkedScript(`({})`))).toEqual({});
+	});
+
+	it("labels a keyless class instance instead of lying with {}", () => {
+		const out = evalScript(checkedScript(
+			`(() => { class Rect { get width() { return 5; } } return new Rect(); })()`,
+		));
+		expect(typeof out).toBe("string");
+		expect(out).toContain("object");
+	});
+
+	it("keeps nested action results intact (no over-eager flattening)", () => {
+		expect(evalScript(checkedScript(`({ found: true, occluded: ["role:div#modal"], rect: { x: 1, y: 2 } })`)))
+			.toEqual({ found: true, occluded: ["role:div#modal"], rect: { x: 1, y: 2 } });
 	});
 });
 

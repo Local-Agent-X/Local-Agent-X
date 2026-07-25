@@ -15,6 +15,7 @@ vi.mock("./local-runtimes/index.js", () => ({
 import { dispatch, dispatchBackgroundModel, dispatchStructuredOutputEnabled } from "./llm-dispatch.js";
 import { resolveCredential } from "./auth/resolve.js";
 import { streamAnthropicResponse } from "./anthropic-client/index.js";
+import { streamCodexResponse } from "./codex-client/index.js";
 import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
 
 function ollamaRuntime(models: LocalRuntimeInfo["models"]): LocalRuntimeInfo {
@@ -47,6 +48,15 @@ vi.mock("./auth/resolve.js", () => ({
 vi.mock("./anthropic-client/index.js", () => ({
   streamAnthropicResponse: vi.fn(async function* () {
     yield { type: "text", delta: "cli-proxy-reply" };
+    yield { type: "done" };
+  }),
+}));
+
+// Codex client mocked so the codex vision test can assert dispatch forwards the
+// image content (convertMessagesToInput maps it to input_image downstream).
+vi.mock("./codex-client/index.js", () => ({
+  streamCodexResponse: vi.fn(async function* () {
+    yield { type: "text", delta: "codex-reply" };
     yield { type: "done" };
   }),
 }));
@@ -164,10 +174,15 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     ]);
   });
 
-  it("codex WITH images degrades to null — no image transport, grading blind is worse than skipping", async () => {
+  it("codex WITH images forwards image_url content to the codex client (→ input_image downstream)", async () => {
     const out = await dispatch({ prompt: "judge this", provider: "codex", images: ["QUJD"] });
-    expect(out).toBeNull();
+    expect(out).toBe("codex-reply");
     expect(fetchSpy).not.toHaveBeenCalled();
+    const call = vi.mocked(streamCodexResponse).mock.calls[0][0] as { messages: Array<{ content: unknown }> };
+    expect(call.messages[0].content).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
+      { type: "text", text: "judge this" },
+    ]);
   });
 
   // A VALID strict schema — strict mode requires `required` covering every

@@ -70,11 +70,11 @@ export interface DispatchOptions {
    * Carried on the Anthropic path (Messages image blocks) AND the OpenAI-compat
    * path (openai/xai → `image_url` blocks), so a vision dispatch works on
    * whichever provider the user is on. When images are present the router grades
-   * with the ACTIVE model (not the cheap background one). Anthropic carries
-   * images on BOTH the API-key path (direct HTTP) and the subscription/OAuth path
-   * (via the CLI proxy — convertUserContent maps them to image blocks). Only
-   * Codex (no image transport in its client protocol) and ollama degrade to null.
-   * Absent/empty → the body is byte-identical to before this option existed.
+   * with the ACTIVE model (not the cheap background one). Every hosted provider
+   * carries them: Anthropic (API-key direct HTTP AND subscription/OAuth via the
+   * CLI proxy — convertUserContent → image blocks), openai/xai (image_url), and
+   * Codex (convertMessagesToInput → Responses-API input_image). Only ollama/local
+   * ignore them. Absent/empty → the body is byte-identical to before this option.
    */
   images?: string[];
   /**
@@ -212,12 +212,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   if (provider === "anthropic") return callAnthropic(opts.prompt, await modelFor("anthropic", opts.anthropicModel), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
   if (provider === "openai") return callOpenAI(opts.prompt, await modelFor("openai", opts.openaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
   if (provider === "xai") return callXai(opts.prompt, await modelFor("xai", opts.xaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
-  if (provider === "codex") {
-    // The Codex path streams over ChatGPT OAuth and doesn't carry image content;
-    // grading a screenshot it can't see is worse than skipping, so degrade.
-    if (hasImages) { logger.warn("codex dispatch can't carry images — degrading to null"); return null; }
-    return callCodex(opts.prompt, opts.codexModel ?? dispatchBackgroundModel("codex"), temp, timeout);
-  }
+  if (provider === "codex") return callCodex(opts.prompt, await modelFor("codex", opts.codexModel), temp, timeout, opts.images);
   return null;
 }
 
@@ -420,23 +415,31 @@ function callXai(prompt: string, model: string, temperature: number, maxTokens: 
   return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images);
 }
 
-async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number): Promise<string | null> {
+async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number, images?: string[]): Promise<string | null> {
   // Codex is a ChatGPT-subscription OAuth token, not an API key — it goes
   // through the canonical streaming client (the same one chat and
   // classify-with-llm use), not a raw fetch. Accumulate the streamed text into
-  // a single completion. maxTokens has no equivalent here; extraction-shaped
+  // a single completion. maxTokens has no equivalent here; extraction/vision
   // outputs are short, so we read the stream to completion.
   try {
     const resolved = await resolveCredential("codex");
     if (!resolved) return null;
     const { streamCodexResponse } = await import("./codex-client/index.js");
+    // OpenAI-style image_url parts; convertMessagesToInput (codex-message-convert)
+    // maps them to the Responses-API `input_image` shape the codex endpoint reads.
+    const content = images && images.length > 0
+      ? [
+          ...images.map((data) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } })),
+          { type: "text", text: prompt },
+        ]
+      : prompt;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
       let acc = "";
       for await (const event of streamCodexResponse({
         token: resolved.credential, model, temperature,
-        messages: [{ role: "user", content: prompt } as never],
+        messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
       })) {
         if (event.type === "text") acc += (event as { delta?: string }).delta || "";

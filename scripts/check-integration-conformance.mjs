@@ -22,8 +22,8 @@
  *                     endpoints consumed by http_request) but its endpoints
  *                     aren't HTTP paths, or it has no baseUrl to join them to.
  *   secret:<id>       the credentials the runtime resolves don't match the
- *                     single secretName the install path stores — so Settings
- *                     reports CONNECTED while the capability stays dead.
+ *                     single primary credential the install path stores — so
+ *                     Settings reports CONNECTED while the capability stays dead.
  *   runtime:<id>      no runtime path at all: not reachable via http_request,
  *                     no dedicated tool family. Phantom capability.
  *
@@ -139,6 +139,24 @@ const field = (text, key) => {
   return m ? readConcatString(text, m.index + m[0].length) : null;
 };
 
+/**
+ * Names declared in the integration's `credentials: [...]` list, in order.
+ * Scoped to the bracketed list so the `name:` keys inside `endpoints` cannot
+ * leak in. Index 0 is the primary — the one entry the install path persists.
+ */
+function credentialNames(text) {
+  const m = text.match(/\bcredentials:\s*\[/);
+  if (!m) return [];
+  let i = m.index + m[0].length;
+  let depth = 1;
+  for (; i < text.length && depth > 0; i++) {
+    if (text[i] === "[") depth++;
+    else if (text[i] === "]") depth--;
+  }
+  const block = text.slice(m.index, i);
+  return [...block.matchAll(/\bname:\s*["']([^"']+)["']/g)].map((n) => n[1]);
+}
+
 const integrations = [];
 for (const name of readdirSync(BUILTINS_DIR)) {
   if (name === "index.ts" || !isSource(name)) continue;
@@ -153,7 +171,7 @@ for (const name of readdirSync(BUILTINS_DIR)) {
     id: field(text, "id"),
     authType: field(text, "authType"),
     baseUrl: field(text, "baseUrl") ?? "",
-    secretName: field(text, "secretName"),
+    credentials: credentialNames(text),
     authInstructions: field(text, "authInstructions") ?? "",
     endpoints,
   });
@@ -217,10 +235,12 @@ for (const i of integrations) {
   }
 }
 
-// ----------------------------------------------------- CHECK 4: secretName drift
+// ------------------------------------------------ CHECK 4: credential drift
 
-// What the install path can actually persist: exactly one vault entry, named
-// by config.secretName (src/routes/bridges/integrations.ts).
+// An integration may now DECLARE several credentials, but what the install path
+// can actually persist is still exactly one vault entry: the primary
+// requirement, surfaced as config.secretName (src/routes/bridges/integrations.ts).
+// So the primary is what the runtime and the instructions are measured against.
 const CRED_SUFFIX = /_(PASS|PASSWORD|TOKEN|KEY|SECRET)$/;
 const toolFamilyFiles = new Map(); // integration id -> source files of its tool family
 const toolNames = new Set();
@@ -235,8 +255,8 @@ for (const i of integrations) {
 }
 
 for (const i of integrations) {
-  const declared = i.secretName;
-  if (!declared) { add(`secret:${i.id}`, i.file, "no secretName declared — install path has nothing to store"); continue; }
+  const declared = i.credentials[0];
+  if (!declared) { add(`secret:${i.id}`, i.file, "no credentials declared — install path has nothing to store"); continue; }
 
   // (a) Credentials the dedicated tool family actually resolves at runtime.
   const resolved = new Set();
@@ -251,12 +271,12 @@ for (const i of integrations) {
     add(
       `secret:${i.id}`,
       i.file,
-      `runtime resolves credential(s) the install path never stores: ${unstorable.join(", ")} (integration declares only secretName "${declared}")`,
+      `runtime resolves credential(s) the install path never stores: ${unstorable.join(", ")} (integration declares credentials [${i.credentials.join(", ")}] and the install path persists only the primary, "${declared}")`,
     );
   }
 
   // (b) authInstructions that promise more config than one secret field holds.
-  // The Settings modal renders exactly ONE input, labelled with secretName.
+  // The Settings modal renders exactly ONE input, labelled with the primary.
   const promised = [...new Set([...i.authInstructions.matchAll(/\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/g)].map((m) => m[1]))];
   const extra = promised.filter((n) => n !== declared);
   if (extra.length > 0) {

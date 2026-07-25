@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const notionIntegration: IntegrationConfig = {
+export const notionIntegration: IntegrationDeclaration = {
   id: "notion",
   name: "Notion",
   icon: "📝",
@@ -9,7 +9,7 @@ export const notionIntegration: IntegrationConfig = {
   authInstructions: "1. Go to notion.so/my-integrations\n2. Create New Integration\n3. Give it a name and select your workspace\n4. Copy the Internal Integration Secret\n5. In Notion, share the pages/databases you want accessible with your integration",
   baseUrl: "https://api.notion.com/v1",
   docsUrl: "https://developers.notion.com/reference",
-  secretName: "NOTION_API_KEY",
+  credentials: [{ name: "NOTION_API_KEY" }],
   endpoints: [
     { name: "Search", method: "POST", path: "/search", description: "Search pages and databases", params: { query: { type: "string", description: "Search text" }, filter: { type: "object", description: "Filter by page or database" } } },
     { name: "Query Database", method: "POST", path: "/databases/{database_id}/query", description: "Query a Notion database", params: { filter: { type: "object", description: "Filter conditions" }, sorts: { type: "array", description: "Sort criteria" } } },

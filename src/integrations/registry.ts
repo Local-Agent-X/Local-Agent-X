@@ -1,9 +1,58 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { IntegrationConfig } from "./types.js";
+import type { CredentialRequirement } from "../credentials/requirements.js";
+import type { IntegrationConfig, IntegrationDeclaration } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
+
+/**
+ * The credential the single-entry install path acts on. `secretName` is this
+ * and nothing else — deriving it in exactly one place is what keeps the list
+ * and the single-name readers (the install route, the Settings modal) from
+ * drifting apart.
+ */
+function primaryCredentialName(credentials: CredentialRequirement[]): string {
+  return credentials[0]?.name ?? "";
+}
+
+function withDerivedSecretName(declaration: IntegrationDeclaration): IntegrationConfig {
+  return { ...declaration, secretName: primaryCredentialName(declaration.credentials) };
+}
+
+function isCredentialRequirement(value: unknown): value is CredentialRequirement {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const name = (value as { name?: unknown }).name;
+  return typeof name === "string" && name.length > 0;
+}
+
+/**
+ * Credentials declared by a persisted or user-supplied config, or undefined
+ * when it declares none — which is how a saved builtin says "keep the defaults".
+ *
+ * Configs written before the list existed carry a single `secretName`, and
+ * setting it was a real feature: it points an integration at a different vault
+ * entry than the builtin default. That override survives here as a rename of
+ * the primary requirement, leaving the rest of the declared list untouched.
+ * A partially malformed list is ignored rather than filtered, so a corrupt file
+ * can never silently promote a different credential to primary.
+ */
+function credentialsFrom(
+  saved: Partial<IntegrationConfig>,
+  current: CredentialRequirement[],
+): CredentialRequirement[] | undefined {
+  const raw: unknown = saved.credentials;
+  if (Array.isArray(raw)) {
+    const list = raw.filter(isCredentialRequirement);
+    if (list.length > 0 && list.length === raw.length) return list.map((c) => ({ ...c }));
+  }
+  const legacy = saved.secretName;
+  if (typeof legacy === "string" && legacy.length > 0) {
+    const [primary, ...rest] = current;
+    return [primary ? { ...primary, name: legacy } : { name: legacy }, ...rest];
+  }
+  return undefined;
+}
 
 export class IntegrationRegistry {
   private filePath: string;
@@ -15,8 +64,8 @@ export class IntegrationRegistry {
   }
 
   private load(): void {
-    for (const config of BUILTIN_INTEGRATIONS) {
-      this.integrations.set(config.id, { ...config });
+    for (const declaration of BUILTIN_INTEGRATIONS) {
+      this.integrations.set(declaration.id, withDerivedSecretName(declaration));
     }
 
     if (existsSync(this.filePath)) {
@@ -29,9 +78,13 @@ export class IntegrationRegistry {
             // Preserve built-in endpoints/auth metadata; only adopt user's installed/enabled state
             existing.installed = s.installed;
             existing.enabled = s.enabled;
-            if (s.secretName) existing.secretName = s.secretName;
+            const overrides = credentialsFrom(s, existing.credentials);
+            if (overrides) {
+              existing.credentials = overrides;
+              existing.secretName = primaryCredentialName(overrides);
+            }
           } else {
-            this.integrations.set(s.id, s);
+            this.integrations.set(s.id, withDerivedSecretName({ ...s, credentials: credentialsFrom(s, []) ?? [] }));
           }
         }
       } catch {}
@@ -67,7 +120,7 @@ export class IntegrationRegistry {
     return true;
   }
 
-  addIntegration(config: IntegrationConfig): void {
+  addIntegration(config: IntegrationDeclaration): void {
     config.builtin = false;
     if (config.baseUrl) {
       // Delegate to the ONE canonical egress policy (private/loopback/metadata
@@ -79,7 +132,10 @@ export class IntegrationRegistry {
         throw new Error(`Integration base URL rejected (SSRF protection): ${decision.reason}`);
       }
     }
-    this.integrations.set(config.id, config);
+    // Accepts either shape: POST /api/integrations still sends a bare
+    // secretName, and an agent authoring from getIntegrationSchema() sends a
+    // credential list.
+    this.integrations.set(config.id, withDerivedSecretName({ ...config, credentials: credentialsFrom(config, []) ?? [] }));
     this.save();
   }
 
@@ -94,7 +150,7 @@ export class IntegrationRegistry {
   updateIntegration(id: string, updates: Partial<IntegrationConfig>): boolean {
     const config = this.integrations.get(id);
     if (!config) return false;
-    // Whitelist updatable fields — prevent overwriting secretName, baseUrl, builtin, endpoints
+    // Whitelist updatable fields — prevent overwriting credentials, baseUrl, builtin, endpoints
     const safeFields = ["enabled", "installed", "name", "description", "icon", "category"] as const;
     for (const field of safeFields) {
       if (field in updates) {
@@ -117,7 +173,7 @@ export class IntegrationRegistry {
     for (const i of installed) {
       ctx += `### ${i.icon} ${i.name} (${i.id})\n`;
       ctx += `Base URL: ${i.baseUrl}\n`;
-      ctx += `Auth: {{${i.secretName}}} as ${i.authType === "bearer_token" || i.authType === "bot_token" ? "Bearer token" : i.authType}\n`;
+      ctx += `Auth: ${i.credentials.map(c => `{{${c.name}}}`).join(", ")} as ${i.authType === "bearer_token" || i.authType === "bot_token" ? "Bearer token" : i.authType}\n`;
       if (i.headers && Object.keys(i.headers).length > 0) {
         ctx += `Extra headers: ${JSON.stringify(i.headers)}\n`;
       }
@@ -141,7 +197,7 @@ export class IntegrationRegistry {
       authInstructions: "Step-by-step instructions to get credentials",
       baseUrl: "https://api.example.com",
       docsUrl: "https://docs.example.com",
-      secretName: "SERVICE_API_KEY",
+      credentials: [{ name: "SERVICE_API_KEY", description: "What this value is and where to get it" }],
       scopes: ["optional", "oauth", "scopes"],
       endpoints: [
         { name: "Action Name", method: "GET", path: "/endpoint", description: "What it does", params: {} }

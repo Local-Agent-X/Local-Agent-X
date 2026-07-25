@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const twitterIntegration: IntegrationConfig = {
+export const twitterIntegration: IntegrationDeclaration = {
   id: "twitter",
   name: "X",
   icon: "𝕏",
@@ -9,7 +9,7 @@ export const twitterIntegration: IntegrationConfig = {
   authInstructions: "1. Go to developer.x.com\n2. Sign up for a developer account\n3. Create a Project and App\n4. Generate Bearer Token (for read-only) or OAuth 2.0 tokens (for posting)\n5. Copy your Bearer Token",
   baseUrl: "https://api.x.com/2",
   docsUrl: "https://developer.x.com/en/docs/x-api",
-  secretName: "TWITTER_BEARER_TOKEN",
+  credentials: [{ name: "TWITTER_BEARER_TOKEN" }],
   scopes: ["tweet.read", "tweet.write", "users.read"],
   endpoints: [
     { name: "Post", method: "POST", path: "/tweets", description: "Create a new post", params: { text: { type: "string", required: true, description: "Post text (280 char limit)" } } },

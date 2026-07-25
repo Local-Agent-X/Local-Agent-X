@@ -1,6 +1,6 @@
-import type { IntegrationConfig } from "../types.js";
+import type { IntegrationDeclaration } from "../types.js";
 
-export const facebookIntegration: IntegrationConfig = {
+export const facebookIntegration: IntegrationDeclaration = {
   id: "facebook",
   name: "Facebook",
   icon: "📘",
@@ -9,7 +9,7 @@ export const facebookIntegration: IntegrationConfig = {
   authInstructions: "1. Go to developers.facebook.com\n2. Create an App (Business type)\n3. Add Facebook Login product\n4. Go to Graph API Explorer\n5. Generate a User Access Token with pages_manage_posts, pages_read_engagement\n6. For long-lived tokens: exchange via /oauth/access_token",
   baseUrl: "https://graph.facebook.com/v21.0",
   docsUrl: "https://developers.facebook.com/docs/graph-api",
-  secretName: "FACEBOOK_ACCESS_TOKEN",
+  credentials: [{ name: "FACEBOOK_ACCESS_TOKEN" }],
   scopes: ["pages_manage_posts", "pages_read_engagement", "pages_read_user_content"],
   endpoints: [
     { name: "Get My Pages", method: "GET", path: "/me/accounts", description: "List Facebook pages you manage" },

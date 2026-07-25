@@ -296,6 +296,47 @@ describe("scanEvaluateScript — evaluate() blocklist (CSP owns egress; this own
 	])("STILL blocks dynamic-exec/worker: %s", (_label, script) => {
 		expect(scanEvaluateScript(script)).not.toBeNull();
 	});
+
+	// --- The concat false-positive fix (constant folding) ---------------------
+	// The old obfuscation guard flagged ANY `+` with a short lowercase literal in
+	// the middle, which blocked ordinary DOM string building mid-task. Folding
+	// replaced the guess with an actual reassembly, so these are now allowed.
+	it.each([
+		["px units", 'el.style.width = w + "px" + h'],
+		["a of b message", 'msg = a + "of" + b'],
+		["row label", 'label + "row" + i'],
+	])("does NOT block benign concatenation: %s", (_label, script) => {
+		expect(scanEvaluateScript(script)).toBeNull();
+	});
+
+	// ...while the bypasses the old pattern was aimed at are now caught by the
+	// REAL patterns, because folding reassembles the identifier first.
+	it("BLOCKS a bracket-access eval assembled from two literals", () => {
+		expect(scanEvaluateScript('x["ev" + "al"]("1+1")')).not.toBeNull();
+	});
+	it("BLOCKS localStorage assembled into a variable (the old pattern missed this entirely)", () => {
+		const src = scanEvaluateScript('const k = "loc" + "alStorage"; return window[k]');
+		expect(src).not.toBeNull();
+		expect(src).toMatch(/localStorage/);
+	});
+	it("BLOCKS a multi-step fold: \"e\" + \"v\" + \"a\" + \"l\" collapses across passes", () => {
+		expect(scanEvaluateScript('x["e" + "v" + "a" + "l"]("1+1")')).not.toBeNull();
+	});
+	it("BLOCKS an escape + concat combo (folding runs on the escape-normalized text)", () => {
+		expect(scanEvaluateScript('x["\\u0065v" + "al"]("1+1")')).not.toBeNull();
+	});
+	it("folds mixed quote styles", () => {
+		expect(scanEvaluateScript(`x['ev' + "al"]("1+1")`)).not.toBeNull();
+	});
+
+	// Folding is literal-to-literal only and capped, so a pathological chain
+	// terminates promptly instead of spinning or backtracking catastrophically.
+	it("returns promptly on a long alternating concatenation chain", () => {
+		const chain = Array.from({ length: 4000 }, () => '"ab"').join(" + ");
+		const started = Date.now();
+		expect(scanEvaluateScript(`const s = ${chain};`)).toBeNull();
+		expect(Date.now() - started).toBeLessThan(2000);
+	});
 });
 
 describe("evaluateBlockMessage — remediation names the right alternative for the class blocked", () => {

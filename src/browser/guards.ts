@@ -137,8 +137,9 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
  *   2. Dynamic code execution — eval / Function / string-timer / indirect-eval /
  *      bracket global access / dynamic import / Reflect.apply / new Proxy. These
  *      manufacture new code contexts the static scanner (and CSP posture) can't
- *      reason about; they stay blocked, guarded against escape-obfuscation by
- *      the \uXXXX/\xXX normalization below plus the string-concat pattern.
+ *      reason about; they stay blocked, guarded against obfuscation by the
+ *      \uXXXX/\xXX normalization AND the string-literal constant folding that
+ *      scanEvaluateScript applies below before matching.
  *   3. WebRTC — RTCPeerConnection. WebRTC data channels bypass the HTTP-stack
  *      request evaluator (raw UDP, not an onBeforeRequest hop), so they are the
  *      one egress-ish primitive that must stay in the regex (belt-and-suspenders
@@ -146,7 +147,9 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
  *   4. Worker / alternate code contexts and nav/origin manipulation.
  *
  * Obfuscation bypass is mitigated by normalizing `\uXXXX` and `\xXX` escapes
- * before matching. canonical-check: this is the ONE evaluate blocklist.
+ * and by constant-folding adjacent string literals before matching, so every
+ * pattern below is tested against the REASSEMBLED script as well as the raw
+ * one. canonical-check: this is the ONE evaluate blocklist.
  */
 export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   // (1) Read-into-model-context leaks — password field READS. A script can read
@@ -191,22 +194,83 @@ export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   // (4) Nav / origin manipulation.
   /\bwindow\.open\b/i,
   /\bdocument\.domain\b/i,
-  // Obfuscation guard: string-concatenation bypass of the kept eval/Function
-  // patterns (works with the \uXXXX/\xXX normalization above).
-  /\+\s*['"][a-z]{1,5}['"]\s*\+/i,
+  // NOTE — the old concat obfuscation guard (a pattern that flagged ANY `+`
+  // with a short all-lowercase string literal sitting between two other `+`
+  // operands) lived here and was deliberately REMOVED. That removal is a NET
+  // STRENGTHENING of this blocklist, not a loosening, and the reason belongs in
+  // the file rather than a commit message:
+  //   - It was a GUESS that concatenation MIGHT rebuild a blocked identifier,
+  //     so it blocked `w + "px" + h` and `count + "of" + total` — shapes that
+  //     appear in almost every legitimate DOM script — while still MISSING the
+  //     real bypasses it was aimed at: an identifier assembled into a variable
+  //     ("loc" + "alStorage" assigned to `k`, then `window[k]`) matched nothing
+  //     at all, and the bracket form was caught only incidentally by the
+  //     bracket-access rules further up.
+  //   - scanEvaluateScript now CONSTANT-FOLDS adjacent string literals and runs
+  //     this entire list against the reassembled text, so both of those hit
+  //     their real pattern (/\blocalStorage\b/, /\[\s*['"]eval['"]\s*\]/).
+  // Strictly more real bypasses caught, and zero benign scripts blocked.
 ];
+
+/** Two adjacent string literals joined by `+` — `"ev" + "al"`, `'loc' + "al"`.
+ *  Deliberately simple: a quote, a run of characters that are neither quote nor
+ *  backslash nor newline, the SAME quote, then `+` and a second literal of the
+ *  same shape. No nested quantifiers and no alternation over one span, so it
+ *  cannot backtrack catastrophically on a long concatenation chain, and the
+ *  excluded newline keeps every fold inside a single source line. */
+const STRING_CONCAT_PAIR = /(['"])([^'"\\\n]*)\1\s*\+\s*(['"])([^'"\\\n]*)\3/g;
+
+/** Hard cap on folding passes so a pathological script can't spin. Each pass
+ *  at least halves the literals in a chain, so this covers 1024-part chains. */
+const MAX_FOLD_PASSES = 10;
+
+/**
+ * Constant-fold adjacent string literals, repeatedly until the text stops
+ * changing (bounded by MAX_FOLD_PASSES). This is what replaced the old
+ * "concatenation looks suspicious" pattern: instead of GUESSING that a `+`
+ * might rebuild a blocked identifier, we actually reassemble it and hand the
+ * result to the real patterns.
+ *
+ * Literal-to-literal ONLY — template literals, variables and parenthesized
+ * expressions are left alone. Reassembling those needs a real parser, not a
+ * regex, and the request-layer gates remain the enforcement floor regardless.
+ */
+function foldStringConcats(text: string): string {
+  let folded = text;
+  for (let pass = 0; pass < MAX_FOLD_PASSES; pass++) {
+    const next = folded.replace(
+      STRING_CONCAT_PAIR,
+      (_match, quote: string, left: string, _rightQuote: string, right: string) =>
+        `${quote}${left}${right}${quote}`,
+    );
+    if (next === folded) break;
+    folded = next;
+  }
+  return folded;
+}
 
 /**
  * Check a user-supplied evaluate() script against the block list. Returns
  * the offending pattern's source if blocked, or null if safe.
+ *
+ * Every pattern is tested against THREE variants of the script:
+ *   1. the raw text exactly as supplied;
+ *   2. the escape-normalized text (`\uXXXX` / `\xXX` decoded), so an escaped
+ *      identifier cannot hide from a literal pattern;
+ *   3. the constant-folded text (adjacent string literals merged, applied to
+ *      the NORMALIZED text so an escape+concat combo collapses too), so an
+ *      identifier reassembled from pieces hits the pattern it was hiding from.
  */
 export function scanEvaluateScript(script: string): string | null {
   // Normalize common obfuscations before matching.
   const normalized = script
     .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+  const variants = [script, normalized, foldStringConcats(normalized)];
   for (const pat of BLOCKED_EVAL_PATTERNS) {
-    if (pat.test(script) || pat.test(normalized)) return pat.source;
+    for (const variant of variants) {
+      if (pat.test(variant)) return pat.source;
+    }
   }
   return null;
 }

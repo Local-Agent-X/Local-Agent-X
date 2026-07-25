@@ -19,11 +19,16 @@
  * src/browser/guards.ts BLOCKED_EVAL_PATTERNS, so `scanEvaluateScript` returns
  * null (not blocked) for it. Specifically it emits NO `new Image`, NO `.src =`,
  * NO `.action =`, NO `.submit(`, NO `createElement(`, NO `fetch(`, NO `eval(`,
- * NO `new Function`/`Function(` constructor, and — critically — NO lowercase
- * `function` keyword (the guard's `/\bFunction\s*\(/i` pattern is
- * case-INSENSITIVE, so the outer wrapper is an arrow IIFE `(() => { … })()`,
- * never `(function() { … })()`). It also avoids `window[`, `document.cookie`,
- * `localStorage`, and short-string concat. Text/selectors are embedded via
+ * NO `new Function`/`Function(` constructor. The outer wrapper is an arrow IIFE
+ * `(() => { … })()` rather than `(function() { … })()`, but that is now only a
+ * style choice: the guard's `Function` pattern is case-SENSITIVE on purpose
+ * (`/\bFunction\s*\(/` — a case-insensitive match also caught the benign
+ * lowercase `function` keyword and blocked every legit declaration/IIFE), so
+ * the lowercase keyword clears the scan too. It also avoids `window[`,
+ * `document.cookie`, and `localStorage`. Short-string concat needs no avoiding
+ * either: scanEvaluateScript constant-folds adjacent string literals before
+ * matching, which merely merges pieces into a LONGER literal — harmless unless
+ * that literal spells a blocked identifier. Text/selectors are embedded via
  * JSON.stringify. This robustness is intrinsic to the emitted tokens, not a
  * claim about the blocklist's contents.
  */

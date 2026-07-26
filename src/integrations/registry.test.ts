@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { IntegrationRegistry } from "./registry.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
-import type { SecretAvailabilityPort } from "../credentials/requirements.js";
+import { isSecretRequirement, type SecretAvailabilityPort } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
 
 let dir: string;
@@ -65,6 +65,121 @@ describe("integration credential declarations", () => {
     load();
     const github = BUILTIN_INTEGRATIONS.find((i) => i.id === "github")!;
     expect(github.credentials.map((c) => c.name)).toEqual(["GITHUB_TOKEN"]);
+  });
+});
+
+/**
+ * BUILTIN_INTEGRATIONS is module-level state shared by every registry in the
+ * process (the server holds one; every test here builds more), and a registry
+ * hands its configs straight out through get()/list(). If a config's credential
+ * OBJECTS are the builtin's own, a per-registry write goes through into the
+ * shared declaration and every other registry — every other user of the process
+ * — sees it.
+ *
+ * Two sites shared them, and both were harmless only while every builtin
+ * declared exactly ONE credential: withDerivedSecretName() passed the builtin's
+ * own array straight through, and credentialsFrom()'s legacy-secretName branch
+ * cloned the primary and spread `...rest` by reference. email declaring nine is
+ * what makes them live. Both cases below fail against either site left unfixed.
+ *
+ * Each case mutates a NON-primary entry, because the primary is the one entry
+ * the legacy branch already copied — asserting on it would pass against the bug.
+ */
+describe("credential objects are private to each registry", () => {
+  /** The builtin with more than one credential; a one-credential builtin has no non-primary to mutate. */
+  const multiCredentialBuiltin = () => {
+    const declaration = BUILTIN_INTEGRATIONS.find((i) => i.id === "email")!;
+    expect(declaration.credentials.length, "email must declare more than one credential").toBeGreaterThan(1);
+    return declaration;
+  };
+
+  /** Mutates through `first`, asserts `second` and the builtin are untouched, then restores. */
+  function expectIsolated(first: IntegrationRegistry, second: IntegrationRegistry) {
+    const declaration = multiCredentialBuiltin();
+    const shared = declaration.credentials[1];
+    const original = { ...shared };
+    try {
+      first.get("email")!.credentials[1].name = "LEAKED_THROUGH_THE_BUILTIN";
+
+      expect(second.get("email")!.credentials[1].name).toBe(original.name);
+      expect(declaration.credentials[1].name).toBe(original.name);
+    } finally {
+      // A failure here means the write DID land on the shared declaration; put
+      // it back so one red test cannot cascade into every later one.
+      Object.assign(shared, original);
+    }
+  }
+
+  it("does not share them between registries loaded from the builtins", () => {
+    expectIsolated(load(), load());
+  });
+
+  it("does not share them when a saved file renames the primary", () => {
+    // The legacy-secretName branch: it rebuilds the list around a renamed
+    // primary, and the entries after it are what leaked.
+    write([preListConfig("email", "MY_SMTP_PASS")]);
+
+    expectIsolated(load(), load());
+  });
+});
+
+/**
+ * email is the integration the credential LIST exists for. Its authInstructions
+ * have always asked the user for nine values while the declaration named one,
+ * so eight of them had no declared home: the install path could not store them,
+ * and the only working config route was the email_setup tool. Declaring them is
+ * what lets Settings act on them at all.
+ */
+describe("email's declared credential set", () => {
+  const email = () => BUILTIN_INTEGRATIONS.find((i) => i.id === "email")!;
+
+  it("declares every value its authInstructions ask for, SMTP_PASS first", () => {
+    expect(email().credentials.map((c) => c.name)).toEqual([
+      "SMTP_PASS", "IMAP_PASS",
+      "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
+      "IMAP_HOST", "IMAP_PORT", "IMAP_USER",
+    ]);
+  });
+
+  it("keeps SMTP_PASS as the primary the single-entry install path acts on", () => {
+    // Order is the whole contract: secretName is credentials[0], and
+    // uninstall / /api/integrations/test act on secretName alone. Reordering
+    // the list silently repoints them at a hostname.
+    expect(load().get("email")!.secretName).toBe("SMTP_PASS");
+  });
+
+  it("marks exactly the two passwords as vault-backed", () => {
+    const secret = email().credentials.filter(isSecretRequirement).map((c) => c.name);
+    expect(secret).toEqual(["SMTP_PASS", "IMAP_PASS"]);
+    // The other seven are non-secret config; encrypting a hostname at rest is
+    // both wrong and would make email permanently unadvertisable, since the
+    // vault-presence gate would never find them there.
+    const config = email().credentials.filter((c) => !isSecretRequirement(c)).map((c) => c.name);
+    expect(config).toEqual(["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM", "IMAP_HOST", "IMAP_PORT", "IMAP_USER"]);
+  });
+
+  it("describes every value, so the install modal can label its fields", () => {
+    for (const credential of email().credentials) {
+      expect(credential.description, credential.name).toBeTruthy();
+    }
+  });
+
+  it("still renames only the primary when a pre-list file overrides it", () => {
+    // The case the sweep below could not reach until email declared more than
+    // one credential: a pre-list file names ONE secret, so the override has to
+    // be a rename of the primary, never a truncation of the other eight.
+    write([preListConfig("email", "MY_SMTP_PASS")]);
+
+    const config = load().get("email")!;
+    expect(config.credentials.map((c) => c.name)).toEqual([
+      "MY_SMTP_PASS", "IMAP_PASS",
+      "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_FROM",
+      "IMAP_HOST", "IMAP_PORT", "IMAP_USER",
+    ]);
+    expect(config.secretName).toBe("MY_SMTP_PASS");
+    // The renamed primary keeps its metadata; only the vault entry moved.
+    expect(config.credentials[0].secret).toBeUndefined();
+    expect(config.credentials[2].secret).toBe(false);
   });
 });
 
@@ -344,15 +459,25 @@ describe("agent context endpoint feasibility", () => {
     expect(registry.getAgentContext()).toBe("");
   });
 
-  it("leaves email's smtp/imap pseudo-paths advertised — its transport is a separate concern", () => {
+  it("still advertises email once both its passwords are in the vault", () => {
     // email declares no authScope and an empty baseUrl. The gate must neither
-    // crash on that nor silently retire the integration.
+    // crash on that nor silently retire the integration. HOW it is rendered is
+    // the transport concern pinned in its own block below.
+    const registry = load(vault("SMTP_PASS", "IMAP_PASS"));
+    registry.markInstalled("email", true);
+
+    expect(registry.getAgentContext()).toContain("(email)");
+  });
+
+  it("drops email when only one of its two passwords is in the vault", () => {
+    // The consequence of declaring the real set: a send-only user with no
+    // IMAP_PASS loses the context block. Deliberate and NOT worked around here
+    // — missingSecretCredentials() is all-or-nothing by design, and relaxing it
+    // is a campaign-level decision, not something to special-case for email.
     const registry = load(vault("SMTP_PASS"));
     registry.markInstalled("email", true);
 
-    const ctx = registry.getAgentContext();
-    expect(ctx).toContain("(email)");
-    expect(ctx).toContain("- POST smtp — Send an email via SMTP");
+    expect(registry.getAgentContext()).toBe("");
   });
 
   it("drops email when the password lives under a vault name email.json redirects to", () => {
@@ -648,6 +773,75 @@ describe("agent context", () => {
     registry.markInstalled("github", true);
 
     expect(registry.getAgentContext()).toContain("Auth: {{GITHUB_TOKEN}} as Bearer token");
+  });
+});
+
+/**
+ * `transport` says how the integration's traffic is actually carried. The whole
+ * "Connected API Integrations" block is written for http_request — a base URL
+ * you join a path onto — and email fits none of it: no base URL, and
+ * "endpoints" that are smtp/imap pseudo-paths. Rendering it in that shape told
+ * the model to issue `http_request("" + "smtp")`, which can only fail.
+ *
+ * It is re-rendered rather than dropped because email genuinely works, through
+ * the email_* tools; and the pseudo-paths are withheld because naming them
+ * alongside an Endpoints heading is the invitation itself.
+ */
+describe("agent context transport", () => {
+  const EMAIL_CONTEXT =
+    "\n## Connected API Integrations\n" +
+    "These APIs are configured and ready to use via the http_request tool.\n" +
+    "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n" +
+    "### 📧 Email (SMTP/IMAP) (email)\n" +
+    "Reached with the email_send, email_read, email_search tools — not http_request.\n" +
+    "Auth: {{SMTP_PASS}}, {{IMAP_PASS}}, {{SMTP_HOST}}, {{SMTP_PORT}}, {{SMTP_USER}}, " +
+    "{{SMTP_FROM}}, {{IMAP_HOST}}, {{IMAP_PORT}}, {{IMAP_USER}} as api_key\n\n";
+
+  const emailContext = () => {
+    const registry = load(vault("SMTP_PASS", "IMAP_PASS"));
+    registry.markInstalled("email", true);
+    return registry.getAgentContext();
+  };
+
+  it("renders a smtp_imap integration as its tools, never as a Base URL", () => {
+    expect(emailContext()).toBe(EMAIL_CONTEXT);
+  });
+
+  it("names the tools that actually carry it", () => {
+    const ctx = emailContext();
+    for (const tool of ["email_send", "email_read", "email_search"]) expect(ctx).toContain(tool);
+  });
+
+  it("withholds the pseudo-paths http_request cannot reach", () => {
+    const ctx = emailContext();
+    expect(ctx).not.toContain("Base URL:");
+    expect(ctx).not.toContain("Endpoints:");
+    for (const line of ["POST smtp", "GET imap", "GET imap/search"]) {
+      expect(ctx, `"${line}" is not an http_request target`).not.toContain(line);
+    }
+  });
+
+  it("leaves an integration that declares no transport rendering exactly as before", () => {
+    // `transport` is absent on all ten other builtins, so adding the field must
+    // be a no-op for them — pinned byte-for-byte against the pre-transport
+    // output, which PRE_GATE_GITHUB_CONTEXT is.
+    const registry = load(vault("GITHUB_TOKEN"));
+    registry.markInstalled("github", true);
+
+    expect(registry.getAgentContext()).toBe(PRE_GATE_GITHUB_CONTEXT);
+    expect(BUILTIN_INTEGRATIONS.filter((i) => i.transport !== undefined).map((i) => i.id)).toEqual(["email"]);
+  });
+
+  it("renders an explicit http transport identically to an absent one", () => {
+    // "absent means http" has to be a real default, not a second code path.
+    const render = (transport: IntegrationDeclaration["transport"]) => {
+      const registry = load(vault("ACME_TOKEN"));
+      registry.addIntegration(custom({ transport }));
+      return registry.getAgentContext();
+    };
+
+    expect(render("http")).toBe(render(undefined));
+    expect(render(undefined)).toContain("Base URL: https://api.acme.test\n");
   });
 });
 

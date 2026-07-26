@@ -20,6 +20,37 @@ export interface IntegrationEndpoint {
 }
 
 /**
+ * How the integration's traffic is actually carried. DECLARED, never inferred
+ * from an empty baseUrl. Absent means `"http"` — reachable with the
+ * `http_request` tool by joining a path onto `baseUrl`, which is how every
+ * integration behaved before this field existed, so adding it narrows nothing
+ * until a declaration opts in. `"smtp_imap"` marks an integration `http_request`
+ * provably cannot carry: it has no HTTP base URL, and its "endpoints" are
+ * smtp/imap pseudo-paths that only the dedicated tools below can act on.
+ */
+export type IntegrationTransport = "http" | "smtp_imap";
+
+/**
+ * The tools that actually carry each non-HTTP transport. Declared rather than
+ * inferred so the agent context can name a real interface instead of a "Base
+ * URL:" line the integration cannot serve — an empty base URL plus a pseudo-path
+ * is an invitation to call http_request and get nothing.
+ */
+const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> = {
+  smtp_imap: ["email_send", "email_read", "email_search"],
+};
+
+/** The declared transport, defaulting to the HTTP shape every integration had. */
+export function transportOf(declaration: Pick<IntegrationDeclaration, "transport">): IntegrationTransport {
+  return declaration.transport ?? "http";
+}
+
+/** The tools a non-HTTP transport is reached through; empty for `"http"`. */
+export function transportTools(transport: IntegrationTransport): string[] {
+  return transport === "http" ? [] : TRANSPORT_TOOLS[transport];
+}
+
+/**
  * What an integration DECLARES. `credentials` is the full list of values the
  * integration needs — most services need one token, some (email) need several,
  * and the single-name field this replaced could only ever express the first.
@@ -35,6 +66,8 @@ export interface IntegrationDeclaration {
   authInstructions: string;
   baseUrl: string;
   docsUrl: string;
+  /** Absent means `"http"`. See IntegrationTransport. */
+  transport?: IntegrationTransport;
   credentials: CredentialRequirement[];
   scopes?: string[];
   endpoints: IntegrationEndpoint[];

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
 import { missingSecretCredentials } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
-import { canAuthTypeReach } from "./types.js";
+import { canAuthTypeReach, transportOf, transportTools } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
@@ -16,6 +16,28 @@ import { isLocalOnlyMode } from "../local-only-policy.js";
  */
 function primaryCredentialName(credentials: CredentialRequirement[]): string {
   return credentials[0]?.name ?? "";
+}
+
+/**
+ * A private copy of a credential list.
+ *
+ * BUILTIN_INTEGRATIONS is module-level state shared by every registry in the
+ * process, and a registry hands its configs straight out through get()/list().
+ * Without this, `registry.get("email").credentials[1].name = …` writes THROUGH
+ * into the builtin declaration and every other registry sees it — a per-user
+ * override leaking process-wide. CredentialRequirement is flat (name, service,
+ * description, secret, url are all primitives), so a per-entry spread is a full
+ * copy, not a shallow one.
+ *
+ * withDerivedSecretName() shared the builtin's array outright, so the leak was
+ * always live for the PRIMARY; credentialsFrom()'s legacy-secretName branch
+ * cloned the primary and spread `...rest` by reference, which was inert only
+ * while every builtin declared exactly one credential. email now declares nine.
+ * Fixed at both, because "the registry never hands out a reference into a
+ * builtin declaration" is the invariant, not either call site.
+ */
+function cloneCredentials(credentials: CredentialRequirement[]): CredentialRequirement[] {
+  return credentials.map((c) => ({ ...c }));
 }
 
 /**
@@ -35,6 +57,7 @@ function withDerivedSecretName(declaration: IntegrationDeclaration): Integration
   return {
     ...declaration,
     endpoints: Array.isArray(declaration.endpoints) ? declaration.endpoints : [],
+    credentials: cloneCredentials(declaration.credentials),
     secretName: primaryCredentialName(declaration.credentials),
   };
 }
@@ -63,11 +86,15 @@ function credentialsFrom(
   const raw: unknown = saved.credentials;
   if (Array.isArray(raw)) {
     const list = raw.filter(isCredentialRequirement);
-    if (list.length > 0 && list.length === raw.length) return list.map((c) => ({ ...c }));
+    if (list.length > 0 && list.length === raw.length) return cloneCredentials(list);
   }
   const legacy = saved.secretName;
   if (typeof legacy === "string" && legacy.length > 0) {
-    const [primary, ...rest] = current;
+    // Every entry is copied, not just the renamed primary. withDerivedSecretName()
+    // already handed this caller a private list, so this is belt-and-braces —
+    // but a function that rebuilds a list must not alias the one it was given,
+    // or the next caller that passes a shared array reintroduces the leak.
+    const [primary, ...rest] = cloneCredentials(current);
     return [primary ? { ...primary, name: legacy } : { name: legacy }, ...rest];
   }
   return undefined;
@@ -232,15 +259,28 @@ export class IntegrationRegistry {
     ctx += "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n";
 
     for (const { integration: i, endpoints } of installed) {
+      const transport = transportOf(i);
       ctx += `### ${i.icon} ${i.name} (${i.id})\n`;
-      ctx += `Base URL: ${i.baseUrl}\n`;
+      // A non-HTTP integration is NOT an http_request target: it has no base URL
+      // to join a path onto, and its declared "endpoints" are pseudo-paths
+      // (smtp, imap/search) no HTTP call can reach. Advertising it under an
+      // empty "Base URL:" invited exactly that call. It is still usable — just
+      // through its own tools — so it is re-rendered rather than dropped, and
+      // the pseudo-paths are withheld because naming them is the invitation.
+      if (transport === "http") {
+        ctx += `Base URL: ${i.baseUrl}\n`;
+      } else {
+        ctx += `Reached with the ${transportTools(transport).join(", ")} tools — not http_request.\n`;
+      }
       ctx += `Auth: ${i.credentials.map(c => `{{${c.name}}}`).join(", ")} as ${i.authType === "bearer_token" || i.authType === "bot_token" ? "Bearer token" : i.authType}\n`;
       if (i.headers && Object.keys(i.headers).length > 0) {
         ctx += `Extra headers: ${JSON.stringify(i.headers)}\n`;
       }
-      ctx += `Endpoints:\n`;
-      for (const ep of endpoints) {
-        ctx += `- ${ep.method} ${ep.path} — ${ep.description}\n`;
+      if (transport === "http") {
+        ctx += `Endpoints:\n`;
+        for (const ep of endpoints) {
+          ctx += `- ${ep.method} ${ep.path} — ${ep.description}\n`;
+        }
       }
       ctx += "\n";
     }

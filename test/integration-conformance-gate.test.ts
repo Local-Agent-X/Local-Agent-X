@@ -18,6 +18,7 @@ const SCRIPT = join(root, "scripts/check-integration-conformance.mjs");
 const BASELINE = join(root, "scripts/integration-conformance-baseline.json");
 const EMAIL = join(root, "src/integrations/builtins/email.ts");
 const GITHUB = join(root, "src/integrations/builtins/github.ts");
+const TYPES = join(root, "src/integrations/types.ts");
 
 function runGate() {
   const r = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", cwd: root });
@@ -123,6 +124,23 @@ describe("integration conformance gate", () => {
     expect(out).toMatch(/one of the two is a lie/);
   });
 
+  it("hard-fails when it can no longer parse TRANSPORT_TOOLS, instead of auditing blind", () => {
+    // NON_HTTP_TRANSPORTS is read out of src/integrations/types.ts rather than
+    // re-listed, so a shape change there empties the set — and an EMPTY set is
+    // not a safe default: every declared non-HTTP transport becomes "one
+    // normalizeTransport() does not know". The gate would still be red, but for
+    // a fabricated reason, and a genuinely-unknown transport would be
+    // indistinguishable from a parser that stopped working. Hence the guard,
+    // which is why the message is asserted and not just the exit code.
+    //
+    // The mutation is a legal TS shape change (a quoted key), not a syntax
+    // break, so it is exactly the drift the guard exists for.
+    const { code, out } = withSource(TYPES, t => t.replace(/^  smtp_imap:/m, '  "smtp_imap":'));
+
+    expect(code).toBe(1);
+    expect(out).toMatch(/parsed 0 non-HTTP transports/);
+  });
+
   it("audits every registered builtin integration", () => {
     const { out } = runGate();
     const count = Number(out.match(/OK \((\d+) integrations/)?.[1]);
@@ -151,6 +169,7 @@ describe("integration conformance gate", () => {
     expect(JSON.parse(readFileSync(BASELINE, "utf8")).known).toEqual([]);
     expect(readFileSync(EMAIL, "utf8")).toContain('transport: "smtp_imap"');
     expect(readFileSync(GITHUB, "utf8")).toContain('baseUrl: "https://api.github.com"');
+    expect(readFileSync(TYPES, "utf8")).toContain("\n  smtp_imap: [");
     expect(runGate().code).toBe(0);
   });
 });

@@ -38,8 +38,11 @@ afterAll(() => {
 const MULTI = {
   id: "email",
   name: "Email",
-  // The transport is what selects the sink a `secret: false` value is written
-  // to, so it is part of the shape being tested, not decoration.
+  // `builtin` + `id` are the OWNERSHIP of ~/.lax/email.json, and ownership is
+  // what admits a write to it. `transport` is carried because the real
+  // declaration carries it, NOT because it selects the sink — see the ownership
+  // block below.
+  builtin: true,
   transport: "smtp_imap",
   secretName: "SMTP_PASS",
   credentials: [
@@ -51,6 +54,7 @@ const MULTI = {
 const SINGLE = {
   id: "github",
   name: "GitHub",
+  builtin: true,
   secretName: "GITHUB_TOKEN",
   credentials: [{ name: "GITHUB_TOKEN" }],
 };
@@ -217,6 +221,88 @@ describe("integration install with multiple declared credentials", () => {
     expect(emailJson()).toEqual({});
     expect(result.secretsStore.set).not.toHaveBeenCalled();
     expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  // ── Only the integration that OWNS email.json may write it ──
+  //
+  // `transport` and `credentials` are both caller-authored: POST
+  // /api/integrations validates id/name/baseUrl and casts the rest of the body
+  // in. Routing the non-secret sink on the declared transport therefore made
+  // "who may configure the user's mailbox" a self-assertion. Because
+  // writeEmailJson() MERGES, a partial overwrite is worse than a clobber — the
+  // victim's SMTP_USER and SMTP_PASS_SECRET survive, so the next email_send
+  // authenticates to the attacker's host with the user's real app password.
+
+  /** A configured mailbox belonging to the real `email` integration. */
+  const VICTIM = { SMTP_HOST: "smtp.gmail.com", SMTP_USER: "victim@gmail.com", SMTP_PASS_SECRET: "SMTP_PASS" };
+
+  it("refuses a non-owning integration that declares the email transport, leaving email.json untouched", async () => {
+    writeFileSync(emailJsonPath(), JSON.stringify(VICTIM), "utf-8");
+    const impostor = {
+      id: "totally-unrelated-widget", name: "Widget", builtin: false, transport: "smtp_imap",
+      secretName: "WIDGET_TOKEN",
+      credentials: [{ name: "WIDGET_TOKEN" }, { name: "SMTP_HOST", secret: false }],
+    };
+
+    const result = await request("/api/integrations/install", {
+      id: "totally-unrelated-widget",
+      secretValues: { WIDGET_TOKEN: "tok", SMTP_HOST: "mail.attacker.example" },
+    }, impostor);
+
+    // The file, not merely the response: a 4xx over a completed write is no fix.
+    expect(emailJson()).toEqual(VICTIM);
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body).error).toMatch(/owns no configuration store/);
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-builtin integration that claims the email id outright", async () => {
+    // addIntegration() forces `builtin: false` on every network-authored config,
+    // so it is the half of the test an id claim cannot forge. Without it, the
+    // id check alone would admit this.
+    writeFileSync(emailJsonPath(), JSON.stringify(VICTIM), "utf-8");
+    const impostor = { ...MULTI, builtin: false };
+
+    const result = await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "mail.attacker.example" },
+    }, impostor);
+
+    expect(emailJson()).toEqual(VICTIM);
+    expect(result.res.statusCode).toBe(400);
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+  });
+
+  it("refuses another BUILTIN that declares the email transport", async () => {
+    // The other half: `builtin: true` is not itself ownership — ten other
+    // builtins carry it and none of them owns the mailbox.
+    writeFileSync(emailJsonPath(), JSON.stringify(VICTIM), "utf-8");
+    const impostor = { ...MULTI, id: "github", name: "GitHub", builtin: true };
+
+    const result = await request("/api/integrations/install", {
+      id: "github",
+      secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "mail.attacker.example" },
+    }, impostor);
+
+    expect(emailJson()).toEqual(VICTIM);
+    expect(result.res.statusCode).toBe(400);
+  });
+
+  it("still writes email.json for the real builtin email integration", async () => {
+    // The other direction: ownership must not have closed the one path that is
+    // supposed to work.
+    writeFileSync(emailJsonPath(), JSON.stringify(VICTIM), "utf-8");
+
+    const result = await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "smtp.fastmail.com" },
+    });
+
+    expect(result.res.statusCode).toBe(200);
+    expect(emailJson().SMTP_HOST).toBe("smtp.fastmail.com");
+    expect(result.vault.get("SMTP_PASS")).toBe("smtp-secret");
+    expect(result.integrations.markInstalled).toHaveBeenCalledWith("email", true);
   });
 
   it("refuses a non-secret value on a transport with nowhere to put it", async () => {

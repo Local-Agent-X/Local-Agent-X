@@ -5,7 +5,7 @@ import { IntegrationRegistry } from "../../integrations/index.js";
 import { normalizeTransport, type IntegrationTransport } from "../../integrations/types.js";
 import { BUILTIN_INTEGRATIONS } from "../../integrations/builtins/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
-import { getSmtpConfig, writeEmailCredentials } from "../../tools/email-config.js";
+import { getSmtpConfig, ownsEmailConfig, writeEmailCredentials } from "../../tools/email-config.js";
 import { isRequiredRequirement, isSecretRequirement, type CredentialRequirement } from "../../credentials/requirements.js";
 
 type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown };
@@ -171,6 +171,36 @@ const BUILTIN_PRIMARY_NAME = new Map(
 /**
  * What "test this integration" means for a transport HTTP cannot carry.
  *
+ * Switched on the transport rather than assuming the only one that exists
+ * today. The body below is SMTP-specific — it calls getSmtpConfig() and dials
+ * the mailbox — so a second non-HTTP transport falling through to it would have
+ * the Settings button report the email mailbox's health as that transport's.
+ * The `never` assignment after the switch makes adding one a COMPILE error
+ * instead, which is the only way this stays honest without a second list.
+ *
+ * Ownership, not the declared transport, decides who may run the SMTP test, for
+ * the reason ownsEmailConfig() gives: `transport` is caller-authored, and the
+ * mailbox this dials plus the account it names are the owning integration's, not
+ * the caller's.
+ */
+async function testNonHttpTransport(
+  config: { id?: unknown; builtin?: unknown },
+  transport: Exclude<IntegrationTransport, "http">,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  switch (transport) {
+    case "smtp_imap":
+      if (!ownsEmailConfig(config)) {
+        return { status: 400, body: { error: `Integration "${String(config.id)}" declares the "smtp_imap" transport but does not own the email configuration, so there is nothing here to test` } };
+      }
+      return { status: 200, body: await testSmtpMailbox(transport) };
+  }
+  const unreachable: never = transport;
+  throw new Error(`No connection test is defined for transport "${String(unreachable)}"`);
+}
+
+/**
+ * The SMTP handshake behind the email transport's "test".
+ *
  * The HTTP branch joins an endpoint path onto `baseUrl`; for email that built
  * `"" + "smtp"` and fired a request at a nonsense URL that could only ever
  * fail. This branch never builds a URL and never claims a connection it did not
@@ -184,7 +214,7 @@ const BUILTIN_PRIMARY_NAME = new Map(
  * declaration, so this adds no reach: it is the identical connection
  * `email_send` already makes with the identical credential.
  */
-async function testNonHttpTransport(
+async function testSmtpMailbox(
   transport: Exclude<IntegrationTransport, "http">,
 ): Promise<Record<string, unknown>> {
   const cfg = getSmtpConfig();
@@ -208,29 +238,35 @@ async function testNonHttpTransport(
 }
 
 /**
- * Where a `secret: false` install value is persisted, chosen by the DECLARED
- * transport rather than by integration id.
+ * Where a `secret: false` install value is persisted, chosen by which config
+ * store the integration OWNS.
  *
  * `secret: false` means "config, not credential": it must not be encrypted at
- * rest in the vault, so it needs a sink of its own. Which sink is a property of
- * how the integration is reached — an `smtp_imap` integration's config is read
- * by getSmtpConfig()/getImapConfig() out of ~/.lax/email.json, and
- * writeEmailJson() stays that file's only writer.
+ * rest in the vault, so it needs a sink of its own. ~/.lax/email.json is the
+ * only such sink, it belongs to the builtin `email` integration, and
+ * writeEmailJson() stays its only writer.
  *
- * An `http` integration has no config store at all, and no builtin declares a
- * non-secret credential for one. Dropping the value there is what this route
- * used to do for EVERY non-secret credential, and it is the silent success the
- * rest of this seam removes: it answers 200 and marks the integration CONNECTED
- * over a value it threw away. So it is refused instead.
+ * Routing on the DECLARED transport instead was the defect this replaces:
+ * `transport` is a field the caller supplies, so any installed integration could
+ * name `smtp_imap` and merge SMTP_HOST into the real mailbox's config — see
+ * ownsEmailConfig(), which is where that argument lives, so this route and the
+ * store cannot drift about who may write it.
+ *
+ * An integration that owns no config store has nowhere to put such a value, and
+ * no builtin declares one. Dropping it is what this route used to do for EVERY
+ * non-secret credential, and it is the silent success the rest of this seam
+ * removes: it answers 200 and marks the integration CONNECTED over a value it
+ * threw away. So it is refused instead — the same 400 a non-owner now gets, for
+ * the same reason, rather than a 200 over a discarded write.
  */
 function persistNonSecretValues(
-  transport: IntegrationTransport,
+  config: { id?: unknown; builtin?: unknown },
   values: Record<string, string>,
   vaultedSecretNames: string[],
 ): { error: string } | null {
   if (Object.keys(values).length === 0) return null;
-  if (transport === "smtp_imap") return writeEmailCredentials(values, vaultedSecretNames);
-  return { error: `Integration declares non-secret credential(s) ${Object.keys(values).join(", ")} but its "${transport}" transport has no configuration store to hold them` };
+  if (ownsEmailConfig(config)) return writeEmailCredentials(values, vaultedSecretNames);
+  return { error: `Integration "${String(config.id)}" declares non-secret credential(s) ${Object.keys(values).join(", ")} but owns no configuration store to hold them` };
 }
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -267,11 +303,7 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     }
     // Config first: it validates before it writes, so a rejected install leaves
     // the vault — the sensitive half — untouched.
-    const persisted = persistNonSecretValues(
-      normalizeTransport((config as { transport?: unknown }).transport),
-      nonSecret,
-      vaulted.map(v => v.name),
-    );
+    const persisted = persistNonSecretValues(config, nonSecret, vaulted.map(v => v.name));
     if (persisted) { json(400, { error: persisted.error }); return true; }
     for (const { name, value } of vaulted) {
       // `config.name` is the human-readable service label the Secrets UI shows;
@@ -334,7 +366,10 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     // indirection lets the password live under any vault name), so gating it on
     // `secretsStore.get(secretName)` would refuse to test a working mailbox.
     const transport = normalizeTransport((config as { transport?: unknown }).transport);
-    if (transport !== "http") { json(200, await testNonHttpTransport(transport)); return true; }
+    if (transport !== "http") {
+      const { status, body: result } = await testNonHttpTransport(config, transport);
+      json(status, result); return true;
+    }
     const token = ctx.secretsStore.get(config.secretName);
     if (!token) { json(400, { error: `No credentials found. Save your ${config.secretName} first.` }); return true; }
     try {

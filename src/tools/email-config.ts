@@ -102,6 +102,35 @@ const PASSWORD_POINTERS: Record<string, string> = {
   IMAP_PASS: "IMAP_PASS_SECRET",
 };
 
+/** The integration identity that OWNS ~/.lax/email.json. */
+const EMAIL_CONFIG_OWNER_ID = "email";
+
+/**
+ * Whether an integration is the one this config store belongs to.
+ *
+ * The ONLY admission test for writeEmailCredentials(), and the reason it is
+ * IDENTITY and not the integration's own `transport` field: a declaration is
+ * caller-authored (POST /api/integrations validates id/name/baseUrl and casts
+ * the rest of the body in), so `transport: "smtp_imap"` is a self-assertion, not
+ * a credential. Routing the write on it let ANY installed integration merge
+ * SMTP_HOST into the real mailbox's config — and because writeEmailJson()
+ * merges, the victim's SMTP_USER and SMTP_PASS_SECRET survived, so the next
+ * email_send authenticated to the attacker's host with the user's real app
+ * password. That is the same argument this file already makes about the
+ * `*_PASS_SECRET` pointers, reaching a materially equivalent outcome.
+ *
+ * `builtin` is not self-asserted: addIntegration() forces it to false on every
+ * network-authored config, so an integration that claims the email id still
+ * fails this test. Both halves are load-bearing — id alone would admit such a
+ * claim, `builtin` alone would admit every other builtin.
+ *
+ * Structurally typed rather than taking IntegrationConfig, so the store that
+ * owns the rule does not have to import the integrations subsystem to state it.
+ */
+export function ownsEmailConfig(integration: { id?: unknown; builtin?: unknown }): boolean {
+  return integration.builtin === true && integration.id === EMAIL_CONFIG_OWNER_ID;
+}
+
 /** Configure email from an install's DECLARED credential values.
  *
  *  The single seam Settings → Connected APIs → Email writes through, so email
@@ -118,6 +147,9 @@ const PASSWORD_POINTERS: Record<string, string> = {
  *  using the old credential while Settings reported CONNECTED. A password saved
  *  under a custom name via email_setup is untouched, because this only fires
  *  for a name the install actually stored.
+ *
+ *  Callers must gate on ownsEmailConfig() first — this writer is reachable only
+ *  for the integration that owns this file. See that function for why.
  *
  *  Returns an error instead of writing when a value names something email.json
  *  does not hold; nothing is written in that case. */

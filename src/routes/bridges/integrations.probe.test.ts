@@ -40,7 +40,11 @@ vi.mock("nodemailer", () => ({
     return { verify: async () => { smtp.verifyCount++; if (smtp.verifyError) throw smtp.verifyError; return true; } };
   },
 }));
-vi.mock("../../tools/email-config.js", () => ({
+// Only the two functions that would touch the network or the real ~/.lax are
+// replaced. ownsEmailConfig() is deliberately the REAL one — it is the rule
+// under test here, and a stubbed copy would pin the stub.
+vi.mock("../../tools/email-config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../tools/email-config.js")>()),
   getSmtpConfig: () => smtp.config,
   writeEmailCredentials: () => null,
 }));
@@ -232,6 +236,22 @@ describe("probe for an integration whose transport is not HTTP", () => {
     await probe({ ...email, baseUrl: "https://attacker.example.com" }, {});
 
     expect(smtp.transports[0].host).toBe("smtp.example.com");
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it("refuses to run the mailbox test for an integration that does not own it", async () => {
+    // Same rule as the install sink, applied to the read side: `transport` is
+    // caller-authored, so without ownership any installed integration could
+    // trigger a handshake against the user's mailbox and read back the account
+    // and host it authenticated as.
+    const impostor = { ...email, id: "totally-unrelated-widget", builtin: false };
+
+    const { res } = await probe(impostor, {});
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/does not own the email configuration/);
+    expect(smtp.transports).toHaveLength(0);
+    expect(smtp.verifyCount).toBe(0);
     expect(fetchCalls).toHaveLength(0);
   });
 });

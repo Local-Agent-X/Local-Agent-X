@@ -554,6 +554,54 @@ describe("a config that omits the endpoints field entirely", () => {
   });
 });
 
+/**
+ * The sibling case the ABSENT-field tests above cannot reach: `endpoints`
+ * PRESENT and truthy but not an array. Only `Array.isArray()` rejects that —
+ * `declaration.endpoints ?? []` and `|| []` both pass a corrupt value straight
+ * through to `.filter()` in getAgentContext(), which throws out of
+ * build-system-prompt.ts and kills every request, not just this integration.
+ * Nothing type-checks integrations.json on the way in, so a hand edit or a
+ * truncated/partial write is all it takes to produce one.
+ */
+describe("a config whose endpoints field is not an array", () => {
+  const corruptEndpoints = {
+    id: "acme", name: "Acme", icon: "🔌", description: "Acme API", authType: "api_key" as const,
+    authInstructions: "", baseUrl: "https://api.acme.test", docsUrl: "",
+    secretName: "ACME_TOKEN", headers: {}, enabled: true, installed: true, builtin: false,
+    endpoints: "corrupt",
+  };
+
+  it("normalises a truthy non-array to zero endpoints", () => {
+    write([corruptEndpoints]);
+
+    const registry = load(vault("ACME_TOKEN"));
+    expect(registry.get("acme")!.endpoints).toEqual([]);
+    expect(registry.list().every((i) => Array.isArray(i.endpoints))).toBe(true);
+  });
+
+  it("still renders the agent context rather than killing the whole request", () => {
+    write([corruptEndpoints]);
+
+    const ctx = load(vault("ACME_TOKEN")).getAgentContext();
+    expect(ctx).toContain("### 🔌 Acme (acme)");
+    expect(ctx).toContain("Base URL: https://api.acme.test");
+  });
+
+  it("normalises every other truthy non-array shape the same way", () => {
+    // A string is the shape that reads most like a valid field; a number, a
+    // boolean and an object are the rest of what JSON can put there. None of
+    // them has a .filter, so any one of them is enough to take the process
+    // down if the guard degrades to a nullish/falsy check.
+    for (const endpoints of ["corrupt", 7, true, { "GET /ping": "ping" }]) {
+      write([{ ...corruptEndpoints, endpoints }]);
+
+      const registry = load(vault("ACME_TOKEN"));
+      expect(registry.get("acme")!.endpoints, JSON.stringify(endpoints)).toEqual([]);
+      expect(registry.getAgentContext(), JSON.stringify(endpoints)).toContain("(acme)");
+    }
+  });
+});
+
 describe("agent context install/enable gate", () => {
   it("does not advertise an installed integration the user disabled", () => {
     const registry = load(FULL_VAULT);

@@ -223,12 +223,21 @@ async function showInstallModal(id) {
     const config = await apiJson('/api/integrations/' + id);
     const instructions = esc(config.authInstructions || '').replace(/\n/g, '<br>');
     // One field per DECLARED credential — most services need one, some (email)
-    // need several. A config saved before the list existed falls back to its
-    // derived primary; a config that genuinely declares NOTHING (a custom
+    // need several. A config that genuinely declares NOTHING (a custom
     // integration POSTed with only id/name/baseUrl derives `secretName: ""`)
     // gets no fields at all, because a field named "" collects into a
     // credential the server cannot accept and made such an integration
     // impossible to connect.
+    //
+    // The `secretName` fallback is DEFENSIVE, not a legacy-compatibility path:
+    // the registry converts a pre-list config into a credential list at load
+    // time (credentialsFrom() in src/integrations/registry.ts), and derives
+    // `secretName` from `credentials[0]` and nothing else — so for anything
+    // GET /api/integrations/:id can actually return, an empty list and an empty
+    // `secretName` are the same state and this arm is unreachable. It is kept
+    // because this modal renders whatever that endpoint hands it, and a
+    // hand-authored or future response carrying only `secretName` should render
+    // a usable field rather than an empty modal.
     const credentials = Array.isArray(config.credentials) && config.credentials.length > 0
       ? config.credentials
       : (config.secretName ? [{ name: config.secretName }] : []);

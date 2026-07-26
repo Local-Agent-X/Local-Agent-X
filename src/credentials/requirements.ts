@@ -15,7 +15,14 @@ export interface CredentialRequirement {
    * Whether this value belongs in the encrypted vault. Absent means true — a
    * requirement is a secret unless it says otherwise. `false` marks a
    * non-secret config value (e.g. SMTP_HOST) that must NOT be encrypted at
-   * rest. Declared here only; no consumer reads it yet.
+   * rest.
+   *
+   * Read through isSecretRequirement() below, whose consumers are
+   * missingSecretCredentials() — the shared gate behind BOTH the integrations
+   * agent context (src/integrations/registry.ts advertisable()) and the plugin
+   * secret lifecycle — and the install route
+   * (src/routes/bridges/integrations.ts), which skips the vault write for a
+   * non-secret requirement rather than encrypting it.
    */
   secret?: boolean;
   /** Where the user goes to obtain this credential. */

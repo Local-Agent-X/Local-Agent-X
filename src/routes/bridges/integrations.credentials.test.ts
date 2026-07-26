@@ -135,6 +135,37 @@ describe("integration install with multiple declared credentials", () => {
     expect(result.integrations.markInstalled).not.toHaveBeenCalled();
   });
 
+  // The same guard on the OTHER arm. `secretValues` is the shape the modal
+  // actually posts, so this is the arm a real caller reaches; a non-string here
+  // is truthy, so the empty check waves it through and a number/object lands in
+  // the encrypted vault under a declared name.
+  it("rejects a non-string value in the secretValues map instead of vaulting it", async () => {
+    const result = await request("/api/integrations/install", { id: "github", secretValues: { GITHUB_TOKEN: 12345 } }, SINGLE);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Credential GITHUB_TOKEN must be a string" });
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect([...result.vault]).toEqual([]);
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-string non-primary value and writes nothing for the valid ones alongside it", async () => {
+    // Rejection is whole-body: resolution completes before any write, so the
+    // good SMTP_PASS in the same request must not be stored either.
+    for (const value of [12345, true, { token: "x" }, ["token"]]) {
+      const result = await request("/api/integrations/install", {
+        id: "email",
+        secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: value },
+      });
+
+      expect(result.res.statusCode, JSON.stringify(value)).toBe(400);
+      expect(JSON.parse(result.res.body)).toEqual({ error: "Credential IMAP_PASS must be a string" });
+      expect(result.secretsStore.set).not.toHaveBeenCalled();
+      expect([...result.vault]).toEqual([]);
+      expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+    }
+  });
+
   it("rejects a null secretValue rather than marking the integration connected", async () => {
     const result = await request("/api/integrations/install", { id: "github", secretValue: null }, SINGLE);
 

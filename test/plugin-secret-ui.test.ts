@@ -68,6 +68,8 @@ describe("plugin secret settings UI", () => {
 
     expect(fields.map(field => field.dataset.pluginSecret)).toEqual(["FIRST_TOKEN", "SECOND_TOKEN", "PLUGIN_HOST"]);
     expect(fields.map(field => field.type)).toEqual(["password", "password", "text"]);
+    // The modal opens with the caret already in the first field.
+    expect(window.document.activeElement?.getAttribute("data-plugin-secret")).toBe("FIRST_TOKEN");
   });
 
   // `service` is the one field the shared-renderer extraction actually MOVED:
@@ -89,6 +91,36 @@ describe("plugin secret settings UI", () => {
       { name: "SECOND_TOKEN", value: "second-value", service: undefined },
     ]);
     expect(window.document.querySelector<HTMLInputElement>('[data-plugin-secret="SECOND_TOKEN"]')?.dataset.credentialService).toBeUndefined();
+  });
+
+  // A deliberate, disclosed behaviour change, and the ONLY thing on the plugin
+  // side that pins it. The shared collectCredentialValues trims and forwards the
+  // TRIMMED value; the pre-extraction savePluginSecrets validated a trimmed copy
+  // but POSTed `input.value` RAW, so `" padded "` used to reach the vault with
+  // its whitespace. A pasted token carrying a trailing newline is the common
+  // case, the integration install path already trimmed, and one collector
+  // cannot answer this two ways — so the trimming arm won. Remove the .trim()
+  // in the shared collector and this fails.
+  it("posts a plugin secret trimmed when the user pastes padded input", async () => {
+    const { window, calls, inputs } = await setup([{ ok: true }, { ok: true }, { ok: true }]);
+    inputs[0].value = "  first-value  ";
+    inputs[1].value = "second-value\n";
+
+    await window.eval("savePluginSecrets('secret-plugin')") as Promise<void>;
+
+    expect(calls.filter(call => call.path === "/api/secrets").map(call => call.body)).toEqual([
+      { name: "FIRST_TOKEN", value: "first-value", service: undefined },
+      { name: "SECOND_TOKEN", value: "second-value", service: undefined },
+    ]);
+    // Whitespace-only is an EMPTY credential, not a value: the modal stays open
+    // and nothing is posted at all.
+    const blank = await setup([{ ok: true }]);
+    blank.inputs[0].value = "   ";
+
+    await blank.window.eval("savePluginSecrets('secret-plugin')") as Promise<void>;
+
+    expect(blank.calls).toEqual([]);
+    expect(blank.window.document.getElementById("plugin-secret-modal")).not.toBeNull();
   });
 
   it("replaces an existing setup modal instead of duplicating its ID", async () => {

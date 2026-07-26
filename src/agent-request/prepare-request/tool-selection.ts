@@ -160,8 +160,14 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // strong used to ship every tool every turn "so the LLM cannot fail-discover
   // a tool that exists." The tools array is the one block Anthropic prompt-
   // caches (stream-api.ts), so shipping the filtered set instead of the whole
-  // catalogue shrinks the ~66s cold cache-write with it. loaded ∪ manifested =
-  // full catalog, so discoverability is preserved without the full schema cost.
+  // catalogue shrinks the ~66s cold cache-write with it. What holds is EVERY
+  // AVAILABLE TOOL IS REACHABLE — each is either loaded into the schema or named
+  // in the manifest — so discoverability is preserved without the full schema
+  // cost. Not the full CATALOG: a tool its available() predicate hides is
+  // deliberately in neither, which is the point of the gate. The converse does
+  // not hold either — `loaded` is re-derived below from the RAW catalog, so it
+  // can carry an unavailable tool into the schema (fail-open, see the block at
+  // the availability-gate note further down).
   const { classifyModel, shrinkToolsForTier } = await import("../../model-tiers.js");
   const tier = classifyModel(input.resolvedModel) as Tier;
 

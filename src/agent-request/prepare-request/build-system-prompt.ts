@@ -129,6 +129,15 @@ export async function buildSystemPromptWithTelemetry(
     if (input.loadedTools) {
       toolPromptSection += buildDeferredToolManifest(availableAgentTools, input.loadedTools);
     }
+    // A throw anywhere in this block is SILENT and costs discoverability: the
+    // manifest is what makes tool_search reachable for every unloaded tool, so
+    // swallowing here means the model is shipped a filtered schema with no index
+    // of what else exists — the exact invisibility the manifest was added to
+    // remove. Left best-effort deliberately (a prompt-assembly throw must not
+    // fail the turn), but it is not free, and no assertion downstream can tell
+    // the difference between "manifest correctly omitted a tool" and "manifest
+    // never emitted". test/integration-seam-contract.test.ts pins the positive
+    // side for that reason.
   } catch { /* best-effort */ }
 
   // Cold-start nudge — applies to BOTH providers, but disproportionately

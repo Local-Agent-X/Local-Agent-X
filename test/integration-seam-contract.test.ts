@@ -43,6 +43,7 @@ import type { ServerContext, Role } from "../src/server-context.js";
 import { setSecretsStoreSingleton } from "../src/secrets.js";
 import type { SecretsStore } from "../src/secrets.js";
 import { allTools } from "../src/tools/registry-build.js";
+import { filterAvailableTools } from "../src/tools/tool-search.js";
 import { filterToolsForMessage } from "../src/agent-request/tool-filter.js";
 import { buildSystemPrompt } from "../src/agent-request/prepare-request/build-system-prompt.js";
 import type { ToolDefinition } from "../src/types.js";
@@ -216,8 +217,14 @@ async function systemPrompt(reg: IntegrationRegistry, message: string, loaded: T
  *
  * `loaded` is the real main-chat resolver's output (filterToolsForMessage →
  * resolveToolsForRequest), and `manifested` is read back out of the assembled
- * prompt rather than recomputed, so the manifest assertions cannot pass against
- * a manifest that was never actually emitted.
+ * prompt rather than recomputed.
+ *
+ * Reading it back does NOT by itself make the manifest assertions meaningful:
+ * `manifested` is empty when no manifest was emitted, and an empty set satisfies
+ * every NEGATIVE assertion ("this gated tool is not named") vacuously. The
+ * positive half — that a manifest was emitted and names what it must — is pinned
+ * separately, first, in the block immediately below. Read that before trusting
+ * any `manifested.has(x) === false` further down.
  */
 async function observe(reg: IntegrationRegistry, message = "send an email to bob and check my inbox") {
   const loaded = filterToolsForMessage(allTools, message);
@@ -239,6 +246,76 @@ function runConformanceGate() {
   return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
+// ── STATE 0: the deferred manifest exists at all ────────────────────────────
+
+/**
+ * THE POSITIVE HALF OF THE MANIFEST CONTRACT — everything else in this file
+ * asserts only that a gated tool is ABSENT from the manifest, and absence is
+ * exactly what an unemitted manifest gives you.
+ *
+ * That is not hypothetical. buildSystemPrompt() builds the manifest inside a
+ * `try { ... } catch { }` marked best-effort, so any future throw in that block
+ * drops the manifest and degrades discoverability silently. Two one-line
+ * mutations confirmed the hole before this block existed — disabling the
+ * `if (input.loadedTools)` branch in build-system-prompt.ts, and emptying
+ * `toolPromptSection` outright — each left the whole file green.
+ *
+ * What is pinned here is property 2 of buildDeferredToolManifest's contract:
+ * EVERY AVAILABLE TOOL IS REACHABLE — each is either loaded into this turn's
+ * schema or named in the manifest. That property is the entire justification for
+ * the Anthropic-strong path shipping a filtered schema instead of the whole
+ * inventory (tool-selection.ts), so it is the one property this gate must be
+ * able to fail on.
+ *
+ * The expected set is computed from filterAvailableTools() — the production
+ * gate — and NOT from the prompt, so it cannot agree with a broken builder by
+ * construction.
+ */
+describe("seam contract — the deferred manifest is actually emitted", () => {
+  it("names every available tool this turn's schema did not load", async () => {
+    const seen = await observe(registry());
+
+    expect(
+      seen.manifested.size,
+      "MANIFEST seam: NO deferred manifest was emitted at all — every 'not named in the manifest' assertion in this file is passing vacuously",
+    ).toBeGreaterThan(0);
+
+    const deferred = filterAvailableTools(allTools)
+      .map((t) => t.name)
+      .filter((n) => !seen.loadedNames.has(n));
+    expect(
+      deferred.length,
+      "the fixture went degenerate: nothing was deferred this turn, so there is no manifest property left to prove",
+    ).toBeGreaterThan(10);
+
+    for (const name of deferred) {
+      expect(
+        seen.manifested.has(name),
+        `MANIFEST seam: ${name} passes the availability gate and did NOT reach this turn's schema, so unless the manifest names it the model cannot learn it exists — this is the reachability property the filtered schema rests on`,
+      ).toBe(true);
+    }
+  });
+
+  it("names specific core tools the filtered schema left out", async () => {
+    const seen = await observe(registry());
+
+    // Hard-coded rather than derived from the catalog, so this still fails if
+    // the manifest AND filterAvailableTools() go empty together — a derived
+    // expectation would then be empty too and the loop above would vacuously
+    // pass, which is the exact failure mode this block exists to close.
+    for (const name of ["read", "write", "bash", "glob", "grep"]) {
+      expect(
+        seen.loadedNames.has(name),
+        `fixture drift: ${name} is now loaded for this message, so it no longer witnesses the manifest — pick another deferred core tool`,
+      ).toBe(false);
+      expect(
+        seen.manifested.has(name),
+        `MANIFEST seam: ${name} — a core, always-available tool — is in neither the schema nor the deferred manifest, so the model has no way to discover it`,
+      ).toBe(true);
+    }
+  });
+});
+
 // ── STATE 1: fresh install, nothing configured ──────────────────────────────
 
 describe("seam contract — fresh install, nothing configured", () => {
@@ -248,6 +325,10 @@ describe("seam contract — fresh install, nothing configured", () => {
 
     expect(seen.agentContext, "REGISTRY→PROMPT seam: a fresh profile advertised an integration nobody installed").toBe("");
     expect(seen.prompt).not.toContain("Connected API Integrations");
+
+    // Guard, not decoration: the three manifest assertions below are negative,
+    // so they are satisfied by an empty manifest. See the STATE 0 block.
+    expect(seen.manifested.size, "MANIFEST seam: no manifest was emitted, so the hidden-tool assertions below prove nothing").toBeGreaterThan(0);
 
     for (const name of ["email_send", "email_read", "email_search"]) {
       expect(
@@ -347,6 +428,7 @@ describe("seam contract — send-only user (SMTP configured, no IMAP)", () => {
       seen.loadedNames.has("email_send"),
       "AVAILABILITY seam: email_send was hidden from a user whose SMTP works — gating send on IMAP is the classic way to break this state",
     ).toBe(true);
+    expect(seen.manifested.size, "MANIFEST seam: no manifest was emitted, so the hidden-tool assertions below prove nothing").toBeGreaterThan(0);
     for (const name of ["email_read", "email_search"]) {
       expect(seen.loadedNames.has(name), `AVAILABILITY seam: ${name} shipped without any IMAP configuration`).toBe(false);
       expect(seen.manifested.has(name), `MANIFEST seam: ${name} is unusable here but still named in the manifest`).toBe(false);
@@ -566,8 +648,10 @@ describe("seam contract — an impostor claiming the email transport", () => {
 
   it("cannot write email.json even while CLAIMING the email id — the builtin half", async () => {
     // addIntegration() forces builtin:false on every network-authored config, so
-    // claiming the owner's id is not enough. Pinning this separately matters:
-    // `id` alone would admit this, and `builtin` alone would admit slack.
+    // claiming the owner's id is not enough: this case is what makes the
+    // `builtin === true` half load-bearing — drop it and this install succeeds.
+    // The `id === "email"` half is proved by the sibling case below, which comes
+    // in builtin:true under a different id.
     const reg = registry();
     await install(reg, "email", { ...SMTP_SECRET, ...SMTP_CONFIG });
     reg.addIntegration(impostor("email"));
@@ -576,6 +660,59 @@ describe("seam contract — an impostor claiming the email transport", () => {
 
     expect(r.status, "OWNERSHIP seam: claiming the owner's id defeated the ownership test").toBe(400);
     expect(emailJson().SMTP_HOST).toBe(SMTP_CONFIG.SMTP_HOST);
+  });
+
+  /**
+   * THE OTHER HALF: builtin:true, but not the owner's id.
+   *
+   * Without this, the id half of ownsEmailConfig() is unproved — every other
+   * impostor case here comes through addIntegration(), which forces
+   * builtin:false, so narrowing the rule to `integration.builtin === true`
+   * alone left this file entirely green.
+   *
+   * The state is reached the way production reaches it: a hand-edited
+   * ~/.lax/integrations.json under an id no builtin claims takes registry
+   * load()'s else-branch (`{ ...s }`), which spreads the saved `builtin` through
+   * verbatim — the same door the accepted `secret: false` case below comes in
+   * by. It is not a fabricated object handed to the function under test; the
+   * install goes through the real route against the real registry.
+   *
+   * LATENT TODAY, and that is the point of pinning it: email is currently the
+   * only builtin declaring a `secret: false` credential, so no other builtin can
+   * reach persistNonSecretValues() at all. This case reaches it, and it goes
+   * live for real the day a second builtin gains a non-secret credential.
+   */
+  it("cannot write email.json as a NON-email builtin — the id half", async () => {
+    const reg0 = registry();
+    await install(reg0, "email", { ...SMTP_SECRET, ...SMTP_CONFIG });
+
+    // A saved entry under an id no builtin owns, asserting builtin:true and
+    // declaring the victim's config key as its own non-secret credential.
+    writeSaved([
+      ...JSON.parse(readFileSync(integrationsFile(), "utf-8")),
+      {
+        id: "notmail", name: "Not Mail", icon: "📮", description: "", authType: "api_key",
+        authInstructions: "", baseUrl: "https://mail.attacker.test", docsUrl: "",
+        endpoints: [], headers: {}, builtin: true, installed: false, enabled: true,
+        credentials: [{ name: "NOTMAIL_TOKEN" }, { name: "SMTP_HOST", secret: false }],
+      },
+    ]);
+
+    const reg = registry();
+    expect(
+      reg.get("notmail")!.builtin,
+      "fixture drift: the saved builtin:true no longer survives load(), so this case no longer distinguishes the two halves",
+    ).toBe(true);
+
+    const r = await install(reg, "notmail", { NOTMAIL_TOKEN: "x", SMTP_HOST: "smtp.attacker.test" });
+
+    expect(r.status, `OWNERSHIP seam: a builtin that is not the email integration was allowed into the email config store — ${JSON.stringify(r.json)}`).toBe(400);
+    expect(String(r.json.error)).toContain("owns no configuration store");
+    expect(
+      emailJson().SMTP_HOST,
+      "OWNERSHIP seam: a non-email builtin repointed the real mailbox's host — the id half of ownsEmailConfig() is what stops this",
+    ).toBe(SMTP_CONFIG.SMTP_HOST);
+    expect(vault.entries.has("NOTMAIL_TOKEN"), "OWNERSHIP seam: a rejected install must leave the vault untouched").toBe(false);
   });
 
   it("cannot run the SMTP mailbox test either — the same rule, the same place", async () => {

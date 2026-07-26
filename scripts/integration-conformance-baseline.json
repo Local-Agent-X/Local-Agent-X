@@ -7,13 +7,13 @@
     "",
     "2026-07-25: the five steer:* entries were removed when the model-locked routing clauses",
     "were deleted from the email and calendar tool descriptions. test/tool-description-portability.test.ts",
-    "is now the runtime mirror of that check."
+    "is now the runtime mirror of that check.",
+    "",
+    "2026-07-25: authtype:google removed — google was narrowed to the endpoints an api_key can",
+    "actually satisfy, so the finding no longer reproduces. The hardcoded YouTube probe that was",
+    "the tell is gone too, replaced by declaration-driven probe headers."
   ],
   "known": [
-    {
-      "id": "authtype:google",
-      "note": "Declares authType api_key but 5 of 6 endpoints are user-scoped (Gmail/Calendar/Drive) and require OAuth2 user context. Only /youtube/v3/search works with an API key — /api/integrations/test already hardcodes YouTube as the probe, which is the tell. Resolved 2026-07-25: no OAuth2 for now; narrow the integration to api-key-honest scope."
-    },
     {
       "id": "transport:email",
       "note": "Empty baseUrl with smtp/imap pseudo-paths. The email_* tools are the real runtime path; the endpoints are config-UI labels. Fix: declare the transport explicitly instead of leaving it shaped like a broken HTTP integration."

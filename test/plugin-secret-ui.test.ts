@@ -70,6 +70,27 @@ describe("plugin secret settings UI", () => {
     expect(fields.map(field => field.type)).toEqual(["password", "password", "text"]);
   });
 
+  // `service` is the one field the shared-renderer extraction actually MOVED:
+  // the attribute went from `data-plugin-service` (always emitted, empty when
+  // undeclared) to `data-credential-service` (emitted only when declared). The
+  // vault write must still carry the declared label through, and must still
+  // send nothing for a requirement that declares none.
+  it("carries a declared service label into the vault write and omits an undeclared one", async () => {
+    const labelled = {
+      ...plugin,
+      requiredSecrets: [{ name: "FIRST_TOKEN", service: "Stripe" }, { name: "SECOND_TOKEN" }],
+    };
+    const { window, calls } = await setup([{ ok: true }, { ok: true }, { ok: true }], labelled);
+
+    await window.eval("savePluginSecrets('secret-plugin')") as Promise<void>;
+
+    expect(calls.filter(call => call.path === "/api/secrets").map(call => call.body)).toEqual([
+      { name: "FIRST_TOKEN", value: "first-value", service: "Stripe" },
+      { name: "SECOND_TOKEN", value: "second-value", service: undefined },
+    ]);
+    expect(window.document.querySelector<HTMLInputElement>('[data-plugin-secret="SECOND_TOKEN"]')?.dataset.credentialService).toBeUndefined();
+  });
+
   it("replaces an existing setup modal instead of duplicating its ID", async () => {
     const { window } = await setup([]);
 

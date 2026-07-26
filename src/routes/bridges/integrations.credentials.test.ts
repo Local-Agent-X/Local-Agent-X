@@ -3,9 +3,9 @@ import { Readable } from "node:stream";
 
 import { handleIntegrationsRoutes } from "./integrations.js";
 
-// Shapes the registry produces: `secretName` is the DERIVED primary, and
-// `credentials` is the full declared list (one entry for most builtins, several
-// for a service like email).
+// Shapes the registry produces: `secretName` is the DERIVED primary (always
+// credentials[0].name), and `credentials` is the full declared list — one entry
+// for every builtin today, several for a service like email.
 const MULTI = {
   id: "email",
   name: "Email",
@@ -17,6 +17,14 @@ const SINGLE = {
   name: "GitHub",
   secretName: "GITHUB_TOKEN",
   credentials: [{ name: "GITHUB_TOKEN" }],
+};
+// What `POST /api/integrations {id,name,baseUrl}` yields: no credential list at
+// all, so the derived primary is the empty string.
+const NO_CREDENTIALS = {
+  id: "bare",
+  name: "Bare",
+  secretName: "",
+  credentials: [] as Array<{ name: string }>,
 };
 
 function makeReq(body?: unknown): Readable & { headers: Record<string, string> } {
@@ -37,27 +45,16 @@ function makeRes() {
   return res;
 }
 
-// A seeded vault entry is [name, value, owner] — `owner` is the `service`
-// metadata SecretsStore records at write time, which is how uninstall knows
-// which entries THIS integration's install actually wrote.
-type VaultSeed = Array<[string, string, string?]>;
-
 async function request(
   path: string,
   body: unknown,
   config: unknown = MULTI,
-  vaultSeed: VaultSeed = [],
+  vaultSeed: Array<[string, string]> = [],
 ) {
-  const vault = new Map<string, string>();
-  const owners = new Map<string, string | undefined>();
-  for (const [name, value, owner] of vaultSeed) { vault.set(name, value); owners.set(name, owner); }
+  const vault = new Map<string, string>(vaultSeed);
   const secretsStore = {
-    set: vi.fn((name: string, value: string, meta?: unknown) => {
-      vault.set(name, value);
-      owners.set(name, typeof meta === "string" ? meta : (meta as { service?: string } | undefined)?.service);
-    }),
-    delete: vi.fn((name: string) => { owners.delete(name); return vault.delete(name); }),
-    getMeta: vi.fn((name: string) => (vault.has(name) ? { name, service: owners.get(name) } : undefined)),
+    set: vi.fn((name: string, value: string) => { vault.set(name, value); }),
+    delete: vi.fn((name: string) => vault.delete(name)),
   };
   const integrations = {
     get: vi.fn(() => config),
@@ -73,7 +70,7 @@ async function request(
     { secretsStore, integrations } as unknown as Parameters<typeof handleIntegrationsRoutes>[4],
     "operator",
   );
-  return { res, vault, owners, secretsStore, integrations };
+  return { res, vault, secretsStore, integrations };
 }
 
 describe("integration install with multiple declared credentials", () => {
@@ -119,19 +116,14 @@ describe("integration install with multiple declared credentials", () => {
     expect(result.vault.get("SMTP_PASS")).toBe("smtp-secret");
   });
 
-  it("deletes every declared credential on uninstall, not just the primary", async () => {
-    const result = await request("/api/integrations/uninstall", { id: "email" }, MULTI, [
-      ["SMTP_PASS", "smtp-secret", "Email"],
-      ["IMAP_PASS", "imap-secret", "Email"],
-    ]);
+  it("accepts an omitted non-primary credential", async () => {
+    const result = await request("/api/integrations/install", { id: "email", secretValues: { SMTP_PASS: "smtp-secret" } });
 
     expect(result.res.statusCode).toBe(200);
-    expect([...result.vault]).toEqual([]);
-    expect(result.secretsStore.delete).toHaveBeenCalledWith("IMAP_PASS");
-    expect(result.integrations.markInstalled).toHaveBeenCalledWith("email", false);
+    expect([...result.vault]).toEqual([["SMTP_PASS", "smtp-secret"]]);
   });
 
-  // ── Silent-success and shape rejection ──
+  // ── An install that stores nothing never reports success ──
 
   it("rejects a non-string secretValue instead of silently succeeding", async () => {
     const result = await request("/api/integrations/install", { id: "github", secretValue: 12345 }, SINGLE);
@@ -147,6 +139,56 @@ describe("integration install with multiple declared credentials", () => {
     const result = await request("/api/integrations/install", { id: "github", secretValue: null }, SINGLE);
 
     expect(result.res.statusCode).toBe(400);
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty secretValue rather than marking the integration connected", async () => {
+    const result = await request("/api/integrations/install", { id: "github", secretValue: "" }, SINGLE);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Credential GITHUB_TOKEN must not be empty" });
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("rejects an install that supplies no credential key at all", async () => {
+    const result = await request("/api/integrations/install", { id: "github" }, SINGLE);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Credential GITHUB_TOKEN is required" });
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  // Replaces a test that asserted an empty map entry was SKIPPED and the
+  // install still returned 200 — that pinned the silent-success defect. An
+  // explicitly supplied blank is a user error, not an omission, and the modal
+  // already refuses to submit one.
+  it("rejects an empty value in the secretValues map instead of skipping it", async () => {
+    const primary = await request("/api/integrations/install", { id: "github", secretValues: { GITHUB_TOKEN: "" } }, SINGLE);
+
+    expect(primary.res.statusCode).toBe(400);
+    expect(JSON.parse(primary.res.body)).toEqual({ error: "Credential GITHUB_TOKEN must not be empty" });
+    expect(primary.secretsStore.set).not.toHaveBeenCalled();
+    expect(primary.integrations.markInstalled).not.toHaveBeenCalled();
+
+    const secondary = await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "" },
+    });
+
+    expect(secondary.res.statusCode).toBe(400);
+    expect(JSON.parse(secondary.res.body)).toEqual({ error: "Credential IMAP_PASS must not be empty" });
+    expect(secondary.secretsStore.set).not.toHaveBeenCalled();
+    expect(secondary.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("rejects an install that supplies only a non-primary credential", async () => {
+    const result = await request("/api/integrations/install", { id: "email", secretValues: { IMAP_PASS: "imap-secret" } });
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Credential SMTP_PASS is required" });
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
     expect(result.integrations.markInstalled).not.toHaveBeenCalled();
   });
 
@@ -170,17 +212,6 @@ describe("integration install with multiple declared credentials", () => {
     expect(result.integrations.markInstalled).not.toHaveBeenCalled();
   });
 
-  it("skips an empty value rather than writing an empty credential", async () => {
-    const result = await request("/api/integrations/install", {
-      id: "email",
-      secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "" },
-    });
-
-    expect(result.res.statusCode).toBe(200);
-    expect([...result.vault]).toEqual([["SMTP_PASS", "smtp-secret"]]);
-    expect(result.secretsStore.set).toHaveBeenCalledTimes(1);
-  });
-
   it("rejects a secretValues that is not an object", async () => {
     for (const secretValues of ["GITHUB_TOKEN", 7, ["GITHUB_TOKEN"], null]) {
       const result = await request("/api/integrations/install", { id: "github", secretValues }, SINGLE);
@@ -197,49 +228,92 @@ describe("integration install with multiple declared credentials", () => {
     expect(JSON.parse(result.res.body)).toEqual({ ok: true, id: "github", secretName: "GITHUB_TOKEN" });
   });
 
-  // ── Uninstall is bounded by what install wrote ──
+  // ── An integration that declares no credentials has nothing to store ──
 
-  it("deletes nothing when the declared credentials were not written by this install", async () => {
-    const EVIL = {
-      id: "evil",
-      name: "Evil",
-      secretName: "ANTHROPIC_API_KEY",
-      credentials: [{ name: "ANTHROPIC_API_KEY" }, { name: "OPENAI_API_KEY" }, { name: "GITHUB_TOKEN" }],
-    };
-    const result = await request("/api/integrations/uninstall", { id: "evil" }, EVIL, [
-      ["ANTHROPIC_API_KEY", "sk-ant", "Anthropic"],
-      ["OPENAI_API_KEY", "sk-oai", "OpenAI"],
-      ["GITHUB_TOKEN", "ghp", "GitHub"],
-    ]);
+  it("connects an integration that declares no credentials at all", async () => {
+    const result = await request("/api/integrations/install", { id: "bare" }, NO_CREDENTIALS);
 
     expect(result.res.statusCode).toBe(200);
-    expect([...result.vault.keys()]).toEqual(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN"]);
-    expect(result.secretsStore.delete).not.toHaveBeenCalled();
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).toHaveBeenCalledWith("bare", true);
   });
 
-  it("leaves a credential the user owns while deleting the one this install wrote", async () => {
+  it("connects a no-credential integration sent an empty secretValues map", async () => {
+    const result = await request("/api/integrations/install", { id: "bare", secretValues: {} }, NO_CREDENTIALS);
+
+    expect(result.res.statusCode).toBe(200);
+    expect(result.integrations.markInstalled).toHaveBeenCalledWith("bare", true);
+  });
+
+  it("refuses to store a value for a no-credential integration rather than writing an unnamed secret", async () => {
+    const result = await request("/api/integrations/install", { id: "bare", secretValue: "orphan" }, NO_CREDENTIALS);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Integration declares no credentials" });
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  // ── Uninstall deletes the primary credential and nothing else ──
+
+  it("deletes the primary credential on uninstall", async () => {
+    const result = await request("/api/integrations/uninstall", { id: "github" }, SINGLE, [["GITHUB_TOKEN", "ghp"]]);
+
+    expect(result.res.statusCode).toBe(200);
+    expect([...result.vault]).toEqual([]);
+    expect(result.secretsStore.delete).toHaveBeenCalledWith("GITHUB_TOKEN");
+    expect(result.integrations.markInstalled).toHaveBeenCalledWith("github", false);
+  });
+
+  // Known limitation, descoped to C7: no builtin declares a second credential
+  // today, so the primary IS the whole install. Asserted so the descope is
+  // visible rather than discovered.
+  it("leaves a declared non-primary credential alone on uninstall", async () => {
     const result = await request("/api/integrations/uninstall", { id: "email" }, MULTI, [
-      ["SMTP_PASS", "smtp-secret", "Email"],
-      ["IMAP_PASS", "imap-secret", undefined],
+      ["SMTP_PASS", "smtp-secret"],
+      ["IMAP_PASS", "imap-secret"],
     ]);
 
     expect([...result.vault.keys()]).toEqual(["IMAP_PASS"]);
-    expect(result.secretsStore.delete).toHaveBeenCalledTimes(1);
-    expect(result.secretsStore.delete).toHaveBeenCalledWith("SMTP_PASS");
+    expect(result.secretsStore.delete.mock.calls.flat()).toEqual(["SMTP_PASS"]);
   });
 
-  it("deletes exactly what a round-trip install recorded as its own", async () => {
-    const installed = await request("/api/integrations/install", {
-      id: "email",
-      secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "imap-secret" },
-    });
-    const seed: VaultSeed = [...installed.vault].map(([name, value]) => [name, value, installed.owners.get(name)]);
-    // SMTP_HOST is DECLARED but `secret: false`, so install never wrote it. An
-    // entry of that name the user put there themselves must survive uninstall.
-    seed.push(["SMTP_HOST", "smtp.example.com", undefined]);
-    const uninstalled = await request("/api/integrations/uninstall", { id: "email" }, MULTI, seed);
+  // A declaration is authored over the network (POST /api/integrations accepts
+  // any credential list), so uninstall must never widen past the primary: one
+  // request would otherwise empty the vault of every key it named.
+  it("cannot delete a credential it did not declare as primary", async () => {
+    const EVIL = {
+      id: "evil",
+      name: "Evil",
+      secretName: "EVIL_TOKEN",
+      credentials: [{ name: "EVIL_TOKEN" }, { name: "ANTHROPIC_API_KEY" }, { name: "GITHUB_TOKEN" }],
+    };
+    const result = await request("/api/integrations/uninstall", { id: "evil" }, EVIL, [
+      ["ANTHROPIC_API_KEY", "sk-ant"],
+      ["GITHUB_TOKEN", "ghp"],
+    ]);
 
-    expect([...uninstalled.vault.keys()]).toEqual(["SMTP_HOST"]);
-    expect(uninstalled.secretsStore.delete.mock.calls.flat()).toEqual(["SMTP_PASS", "IMAP_PASS"]);
+    expect(result.res.statusCode).toBe(200);
+    expect([...result.vault.keys()]).toEqual(["ANTHROPIC_API_KEY", "GITHUB_TOKEN"]);
+    expect(result.secretsStore.delete.mock.calls.flat()).toEqual(["EVIL_TOKEN"]);
+  });
+
+  it("deletes nothing when the integration declares no credentials", async () => {
+    const result = await request("/api/integrations/uninstall", { id: "bare" }, NO_CREDENTIALS, [["", "junk"]]);
+
+    expect(result.res.statusCode).toBe(200);
+    expect(result.secretsStore.delete).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).toHaveBeenCalledWith("bare", false);
+  });
+
+  it("rejects an unparseable uninstall body before touching the registry or the vault", async () => {
+    const result = await request("/api/integrations/uninstall", undefined, SINGLE, [["GITHUB_TOKEN", "ghp"]]);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Invalid JSON" });
+    expect(result.integrations.get).not.toHaveBeenCalled();
+    expect(result.secretsStore.delete).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+    expect([...result.vault.keys()]).toEqual(["GITHUB_TOKEN"]);
   });
 });

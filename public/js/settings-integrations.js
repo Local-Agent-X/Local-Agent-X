@@ -223,10 +223,15 @@ async function showInstallModal(id) {
     const config = await apiJson('/api/integrations/' + id);
     const instructions = esc(config.authInstructions || '').replace(/\n/g, '<br>');
     // One field per DECLARED credential — most services need one, some (email)
-    // need several. A config with no list falls back to its derived primary.
+    // need several. A config saved before the list existed falls back to its
+    // derived primary; a config that genuinely declares NOTHING (a custom
+    // integration POSTed with only id/name/baseUrl derives `secretName: ""`)
+    // gets no fields at all, because a field named "" collects into a
+    // credential the server cannot accept and made such an integration
+    // impossible to connect.
     const credentials = Array.isArray(config.credentials) && config.credentials.length > 0
       ? config.credentials
-      : [{ name: config.secretName }];
+      : (config.secretName ? [{ name: config.secretName }] : []);
     const fields = credentialFieldsHtml(credentials, {
       attribute: 'data-install-secret',
       singleLabel: 'API Key / Token',

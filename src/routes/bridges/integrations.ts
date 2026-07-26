@@ -1,4 +1,4 @@
-import type { RouteHandler, ServerContext } from "../../server-context.js";
+import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { IntegrationRegistry } from "../../integrations/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
@@ -17,8 +17,24 @@ type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown }
  * partial write behind. That check bounds a write to the DECLARED names only —
  * it is not a proof that this route cannot write an arbitrary secret, because
  * the declaration itself is authored over the network (POST /api/integrations
- * accepts any credential list). The bound that does hold is on uninstall; see
- * wroteCredential() below.
+ * accepts any credential list). It is the same capability, at the same
+ * privilege, that POST /api/secrets already exposes.
+ *
+ * There is no silent-success branch here. Every arm that cannot produce a
+ * stored credential returns an error, so the route never answers 200 over a
+ * vault it wrote nothing to:
+ *   - a supplied value that is not a string, or is the empty string, is an
+ *     error rather than a skip (the modal already refuses to submit a blank, so
+ *     nothing legitimate sends one);
+ *   - the PRIMARY credential must end up supplied whenever the integration
+ *     declares any, because the primary is what the single-name readers
+ *     (uninstall, /api/integrations/test, the tool auth path) act on;
+ *   - a DECLARED-but-omitted non-primary is still allowed, since C7 is where
+ *     email first brings a real multi-credential list and decides whether the
+ *     rest are mandatory;
+ *   - an integration that declares NO credentials has nothing to store, so it
+ *     installs cleanly on an empty body — but supplying a value for it is an
+ *     error, because there is no declared name to bind that value to.
  */
 function resolveInstallValues(
   credentials: CredentialRequirement[],
@@ -32,37 +48,20 @@ function resolveInstallValues(
     for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
       if (!declared.has(name)) return { error: `Integration does not declare credential ${name}` };
       if (typeof value !== "string") return { error: `Credential ${name} must be a string` };
-      if (value) supplied.set(name, value);
+      if (!value) return { error: `Credential ${name} must not be empty` };
+      supplied.set(name, value);
     }
   }
   if (body.secretValue !== undefined) {
     const primary = credentials[0];
     if (!primary) return { error: "Integration declares no credentials" };
-    // A non-string used to be skipped: the route wrote nothing, still marked the
-    // integration connected, and returned 200 — the user only discovered the
-    // empty vault at /api/integrations/test. A credential write has no
-    // silent-success branch, so this rejects with the wording the map path uses.
     if (typeof body.secretValue !== "string") return { error: `Credential ${primary.name} must be a string` };
-    if (body.secretValue && !supplied.has(primary.name)) supplied.set(primary.name, body.secretValue);
+    if (!body.secretValue) return { error: `Credential ${primary.name} must not be empty` };
+    if (!supplied.has(primary.name)) supplied.set(primary.name, body.secretValue);
   }
+  const primary = credentials[0];
+  if (primary && !supplied.has(primary.name)) return { error: `Credential ${primary.name} is required` };
   return { values: [...supplied].map(([name, value]) => ({ requirement: declared.get(name)!, value })) };
-}
-
-/**
- * Whether THIS integration's install is what put `name` in the vault.
- *
- * Install records the owner in the entry's `service` metadata (it has always
- * passed `config.name` there), and `SecretsStore.set` preserves that field
- * across later updates that omit it, so the record survives a rotation through
- * the secrets UI. Uninstall deletes only entries this says it owns.
- *
- * Re-deriving the delete set from the live declaration instead would let one
- * uninstall empty the vault: `POST /api/integrations` accepts any credential
- * list, so an integration could declare every key it wants gone and then have
- * them all deleted by an uninstall that never installed anything.
- */
-function wroteCredential(store: ServerContext["secretsStore"], name: string, owner: string): boolean {
-  return store.getMeta(name)?.service === owner;
 }
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -93,8 +92,8 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
       // seam yet, so such a value is collected by the modal and dropped here
       // rather than persisted somewhere it does not belong.
       if (!isSecretRequirement(requirement)) continue;
-      // `config.name` is also the ownership record uninstall reads back — see
-      // wroteCredential().
+      // `config.name` is the human-readable service label the Secrets UI shows;
+      // it is metadata, not an ownership record — nothing reads it back.
       ctx.secretsStore.set(requirement.name, value, config.name);
     }
     ctx.integrations.markInstalled(body.id, true);
@@ -105,18 +104,21 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
     const config = ctx.integrations.get(body.id);
     if (!config) { json(404, { error: "Integration not found" }); return true; }
-    // Every credential THIS integration's install wrote, not just the primary:
-    // install writes one vault entry per credential, so deleting `secretName`
-    // alone would orphan the rest of a multi-credential integration's secrets.
-    // Bounded by what was actually written rather than by what is declared —
-    // see wroteCredential(). A credential the user pointed this integration at
-    // but never installed through it (email's SMTP_PASS indirection) is left
-    // alone, which is the safe direction: an orphan is recoverable, a deleted
-    // secret is not.
-    for (const requirement of config.credentials) {
-      if (!wroteCredential(ctx.secretsStore, requirement.name, config.name)) continue;
-      ctx.secretsStore.delete(requirement.name);
-    }
+    // The PRIMARY credential only. Deleting the whole declared list was tried
+    // and withdrawn: bounding it to "what this install wrote" recorded the
+    // owner in the vault entry's free-text `service` label, which is forgeable
+    // by any caller of POST /api/secrets and which silently orphaned any secret
+    // the user had relabelled in the Secrets UI. Deleting the declared list
+    // UNBOUNDED is worse still, because POST /api/integrations accepts any
+    // credential list.
+    //
+    // All 11 builtins declare exactly one credential, so this is complete in
+    // production today and identical to the behaviour that shipped before this
+    // chunk. C7 is where email first gets a real multi-credential list, and so
+    // is where multi-credential cleanup becomes a real problem worth solving.
+    // `secretName` is derived from credentials[0] and is "" when an integration
+    // declares none — there is then nothing to delete.
+    if (config.secretName) ctx.secretsStore.delete(config.secretName);
     ctx.integrations.markInstalled(body.id, false);
     json(200, { ok: true, id: body.id }); return true;
   }

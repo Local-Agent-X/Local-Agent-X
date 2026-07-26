@@ -30,6 +30,18 @@ const LEGACY = {
   docsUrl: "",
   secretName: "LEGACY_API_KEY",
 };
+// What `POST /api/integrations {id,name,baseUrl}` yields: no credential list,
+// so the registry derives an empty `secretName`.
+const NO_CREDENTIALS = {
+  id: "bare",
+  name: "Bare",
+  icon: "🔌",
+  description: "Nothing to store",
+  authInstructions: "Nothing needed",
+  docsUrl: "",
+  secretName: "",
+  credentials: [],
+};
 const SINGLE = {
   id: "github",
   name: "GitHub",
@@ -134,6 +146,20 @@ describe("integration install modal", () => {
       path: "/api/integrations/install",
       body: { id: "legacy", secretValues: { LEGACY_API_KEY: "legacy-key" } },
     }]);
+  });
+
+  it("renders no field, and still connects, when the config declares no credentials", async () => {
+    const { window, calls, inputs } = await setup(NO_CREDENTIALS);
+
+    // A field named "" used to be rendered here from the `secretName` fallback,
+    // and the install route rejects a credential it does not declare — so this
+    // integration could never be connected from the UI at all.
+    expect(inputs).toEqual([]);
+
+    await window.eval("doInstallIntegration('bare')") as Promise<void>;
+
+    expect(calls).toEqual([{ path: "/api/integrations/install", body: { id: "bare", secretValues: {} } }]);
+    expect(window.document.getElementById("install-modal")).toBeNull();
   });
 
   it("trims a pasted value and refuses one that is only whitespace", async () => {

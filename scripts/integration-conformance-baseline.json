@@ -11,16 +11,22 @@
     "",
     "2026-07-25: authtype:google removed — google was narrowed to the endpoints an api_key can",
     "actually satisfy, so the finding no longer reproduces. The hardcoded YouTube probe that was",
-    "the tell is gone too, replaced by declaration-driven probe headers."
+    "the tell is gone too, replaced by declaration-driven probe headers.",
+    "",
+    "2026-07-26 (C7b): secret:email removed. The finding was a FALSE POSITIVE produced by a stale",
+    "checker: it measured the runtime's credentials against the PRIMARY one, asserting 'the install",
+    "path persists only the primary', which stopped being true at C5 — resolveInstallValues()",
+    "persists every DECLARED credential. CHECK 4 now measures against the declared list, so",
+    "'unstorable' means 'resolved or promised but never declared'. Not retired by special-casing",
+    "email: the rule changed for every integration, and email simply conforms to it.",
+    "",
+    "2026-07-26 (C7b): transport:email removed. Both halves are now fixed. C7a fixed the agent",
+    "prompt (getAgentContext() renders the email_* tools instead of an empty 'Base URL:'); C7b",
+    "fixed the route half (/api/integrations/test no longer joins the smtp/imap pseudo-paths onto",
+    "an empty baseUrl — it branches on the declared transport and verifies the real SMTP handshake",
+    "instead). CHECK 3 now knows the 'transport' field exists: a declared non-HTTP transport is not",
+    "a broken HTTP API, and is instead held to its own coherence (unknown transport, or a baseUrl",
+    "it contradicts)."
   ],
-  "known": [
-    {
-      "id": "transport:email",
-      "note": "HALF FIXED by C7a. email now declares transport 'smtp_imap' and getAgentContext() renders it as its email_* tools instead of an empty 'Base URL:' line, so the agent-prompt half of this finding no longer reproduces. What remains is the route half: /api/integrations/test still joins the smtp/imap pseudo-paths onto an empty baseUrl to build a nonsense probe URL. Fix (C7b): make the test route transport-aware. NOTE: this checker does not yet know the 'transport' field exists — its message still describes the agent-prompt half it no longer causes."
-    },
-    {
-      "id": "secret:email",
-      "note": "STALE — held only because the CHECKER is out of date, not because the defect reproduces. Its message asserts 'the install path persists only the primary', which stopped being true at C5: the route persists every declared credential, and C7a made email declare all nine (IMAP_* optional per E14). So IMAP_PASS IS now storable through the install path. The script even prints all nine while claiming only the primary is stored. Fix (C7b/C9): teach the checker that the install path persists the full declared list, then retire this entry."
-    }
-  ]
+  "known": []
 }

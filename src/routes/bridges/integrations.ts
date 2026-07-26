@@ -1,7 +1,11 @@
+import { createTransport } from "nodemailer";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { IntegrationRegistry } from "../../integrations/index.js";
+import { normalizeTransport, type IntegrationTransport } from "../../integrations/types.js";
+import { BUILTIN_INTEGRATIONS } from "../../integrations/builtins/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
+import { getSmtpConfig, ownsEmailConfig, writeEmailCredentials } from "../../tools/email-config.js";
 import { isRequiredRequirement, isSecretRequirement, type CredentialRequirement } from "../../credentials/requirements.js";
 
 type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown };
@@ -115,22 +119,154 @@ const PROBE_QUERY: Record<string, string> = {
  */
 function probeHeaders(
   declared: Record<string, string> | undefined,
-  secretName: string,
+  names: string[],
   token: string,
 ): Record<string, string> {
-  const placeholder = secretName ? `{{${secretName}}}` : "";
+  // Always `{{NAME}}`-wrapped, never a bare name: a bare empty name makes
+  // `value.includes("")` true for EVERY header and splices the token between
+  // every character of each one. Wrapping makes the no-credential case an inert
+  // "{{}}" that matches nothing, so the guard cannot be dropped by accident.
+  const placeholders = [...new Set(names.filter(Boolean))].map(n => `{{${n}}}`);
   const headers: Record<string, string> = {};
   let carriesCredential = false;
   for (const [key, value] of Object.entries(declared ?? {})) {
-    if (placeholder && typeof value === "string" && value.includes(placeholder)) {
-      headers[key] = value.split(placeholder).join(token);
-      carriesCredential = true;
-    } else {
-      headers[key] = value;
+    let resolved = value;
+    if (typeof resolved === "string") {
+      for (const placeholder of placeholders) {
+        if (!resolved.includes(placeholder)) continue;
+        // split/join, not assignment: a declared header may EMBED the
+        // placeholder in a scheme prefix ("Bearer {{X}}", "Key {{X}}"), and
+        // overwriting the whole value would drop the prefix the API requires.
+        resolved = resolved.split(placeholder).join(token);
+        carriesCredential = true;
+      }
     }
+    headers[key] = resolved;
   }
   if (!carriesCredential) headers["Authorization"] = `Bearer ${token}`;
   return headers;
+}
+
+/**
+ * The credential name a BUILTIN's declared headers were written against.
+ *
+ * `secretName` is user-authored state — a saved integrations.json may point the
+ * primary at any vault entry (savedPrimaryName() in registry.ts), and the
+ * registry renames the credential but NOT the shipped `headers` map, which
+ * still names the default. Matching only the renamed name therefore left
+ * google's `X-Goog-Api-Key: {{GOOGLE_API_KEY}}` unsubstituted AND appended a
+ * bearer token YouTube rejects, so a perfectly good renamed key reported
+ * "Connection failed".
+ *
+ * Keyed by builtin id, so this can only ever place the integration's OWN token
+ * into the integration's OWN shipped header. A custom integration cannot claim
+ * a builtin id (the registry seeds builtins first and merges by id), and even
+ * if it could, the value substituted is its own primary token — never another
+ * stored secret.
+ */
+const BUILTIN_PRIMARY_NAME = new Map(
+  BUILTIN_INTEGRATIONS.map(d => [d.id, d.credentials[0]?.name ?? ""]),
+);
+
+/**
+ * What "test this integration" means for a transport HTTP cannot carry.
+ *
+ * Switched on the transport rather than assuming the only one that exists
+ * today. The body below is SMTP-specific — it calls getSmtpConfig() and dials
+ * the mailbox — so a second non-HTTP transport falling through to it would have
+ * the Settings button report the email mailbox's health as that transport's.
+ * The `never` assignment after the switch makes adding one a COMPILE error
+ * instead, which is the only way this stays honest without a second list.
+ *
+ * Ownership, not the declared transport, decides who may run the SMTP test, for
+ * the reason ownsEmailConfig() gives: `transport` is caller-authored, and the
+ * mailbox this dials plus the account it names are the owning integration's, not
+ * the caller's.
+ */
+async function testNonHttpTransport(
+  config: { id?: unknown; builtin?: unknown },
+  transport: Exclude<IntegrationTransport, "http">,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  switch (transport) {
+    case "smtp_imap":
+      if (!ownsEmailConfig(config)) {
+        return { status: 400, body: { error: `Integration "${String(config.id)}" declares the "smtp_imap" transport but does not own the email configuration, so there is nothing here to test` } };
+      }
+      return { status: 200, body: await testSmtpMailbox(transport) };
+  }
+  const unreachable: never = transport;
+  throw new Error(`No connection test is defined for transport "${String(unreachable)}"`);
+}
+
+/**
+ * The SMTP handshake behind the email transport's "test".
+ *
+ * The HTTP branch joins an endpoint path onto `baseUrl`; for email that built
+ * `"" + "smtp"` and fired a request at a nonsense URL that could only ever
+ * fail. This branch never builds a URL and never claims a connection it did not
+ * make: a configuration that is incomplete is reported as incomplete WITHOUT a
+ * network call, and a complete one is verified for real — the same
+ * `transport.verify()` handshake `email_setup` runs, over the same
+ * getSmtpConfig() the email_* tools send with, so a green answer here means the
+ * mailbox actually accepted these credentials.
+ *
+ * The host dialled comes from ~/.lax/email.json, NOT from the integration
+ * declaration, so this adds no reach: it is the identical connection
+ * `email_send` already makes with the identical credential.
+ */
+async function testSmtpMailbox(
+  transport: Exclude<IntegrationTransport, "http">,
+): Promise<Record<string, unknown>> {
+  const cfg = getSmtpConfig();
+  if (typeof cfg === "string") return { ok: false, transport, error: cfg };
+  try {
+    await createTransport({
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.port === 465,
+      auth: { user: cfg.user, pass: cfg.pass },
+      // Matched to the HTTP probe's timeoutMs so neither branch can hang the
+      // Settings button longer than the other.
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 10000,
+    }).verify();
+    return { ok: true, transport, status: "SMTP", statusText: `authenticated as ${cfg.user} at ${cfg.host}:${cfg.port}` };
+  } catch (e) {
+    return { ok: false, transport, error: `SMTP ${cfg.host}:${cfg.port} — ${(e as Error).message}` };
+  }
+}
+
+/**
+ * Where a `secret: false` install value is persisted, chosen by which config
+ * store the integration OWNS.
+ *
+ * `secret: false` means "config, not credential": it must not be encrypted at
+ * rest in the vault, so it needs a sink of its own. ~/.lax/email.json is the
+ * only such sink, it belongs to the builtin `email` integration, and
+ * writeEmailJson() stays its only writer.
+ *
+ * Routing on the DECLARED transport instead was the defect this replaces:
+ * `transport` is a field the caller supplies, so any installed integration could
+ * name `smtp_imap` and merge SMTP_HOST into the real mailbox's config — see
+ * ownsEmailConfig(), which is where that argument lives, so this route and the
+ * store cannot drift about who may write it.
+ *
+ * An integration that owns no config store has nowhere to put such a value, and
+ * no builtin declares one. Dropping it is what this route used to do for EVERY
+ * non-secret credential, and it is the silent success the rest of this seam
+ * removes: it answers 200 and marks the integration CONNECTED over a value it
+ * threw away. So it is refused instead — the same 400 a non-owner now gets, for
+ * the same reason, rather than a 200 over a discarded write.
+ */
+function persistNonSecretValues(
+  config: { id?: unknown; builtin?: unknown },
+  values: Record<string, string>,
+  vaultedSecretNames: string[],
+): { error: string } | null {
+  if (Object.keys(values).length === 0) return null;
+  if (ownsEmailConfig(config)) return writeEmailCredentials(values, vaultedSecretNames);
+  return { error: `Integration "${String(config.id)}" declares non-secret credential(s) ${Object.keys(values).join(", ")} but owns no configuration store to hold them` };
 }
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -155,15 +291,24 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     if (!config) { json(404, { error: "Integration not found" }); return true; }
     const resolved = resolveInstallValues(config.credentials, body);
     if ("error" in resolved) { json(400, { error: resolved.error }); return true; }
+    // Split by DECLARED kind, then persist each half to the sink that kind
+    // belongs in. A `secret: false` requirement is config (SMTP_HOST) and must
+    // never reach the encrypted vault; a secret must never reach the plaintext
+    // config file. That split is the whole point of the flag.
+    const nonSecret: Record<string, string> = {};
+    const vaulted: Array<{ name: string; value: string }> = [];
     for (const { requirement, value } of resolved.values) {
-      // A `secret: false` requirement is non-secret config (e.g. SMTP_HOST) and
-      // must never reach the encrypted vault. There is no non-vault sink on this
-      // seam yet, so such a value is collected by the modal and dropped here
-      // rather than persisted somewhere it does not belong.
-      if (!isSecretRequirement(requirement)) continue;
+      if (isSecretRequirement(requirement)) vaulted.push({ name: requirement.name, value });
+      else nonSecret[requirement.name] = value;
+    }
+    // Config first: it validates before it writes, so a rejected install leaves
+    // the vault — the sensitive half — untouched.
+    const persisted = persistNonSecretValues(config, nonSecret, vaulted.map(v => v.name));
+    if (persisted) { json(400, { error: persisted.error }); return true; }
+    for (const { name, value } of vaulted) {
       // `config.name` is the human-readable service label the Secrets UI shows;
       // it is metadata, not an ownership record — nothing reads it back.
-      ctx.secretsStore.set(requirement.name, value, config.name);
+      ctx.secretsStore.set(name, value, config.name);
     }
     ctx.integrations.markInstalled(body.id, true);
     json(200, { ok: true, id: body.id, secretName: config.secretName }); return true;
@@ -216,6 +361,15 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     const body = await safeParseBody(req) as { id: string };
     const config = ctx.integrations.get(body.id);
     if (!config) { json(404, { error: "Integration not found" }); return true; }
+    // Before the vault lookup, not after: a non-HTTP transport resolves its own
+    // credential through its own config path (email's SMTP_PASS_SECRET
+    // indirection lets the password live under any vault name), so gating it on
+    // `secretsStore.get(secretName)` would refuse to test a working mailbox.
+    const transport = normalizeTransport((config as { transport?: unknown }).transport);
+    if (transport !== "http") {
+      const { status, body: result } = await testNonHttpTransport(config, transport);
+      json(status, result); return true;
+    }
     const token = ctx.secretsStore.get(config.secretName);
     if (!token) { json(400, { error: `No credentials found. Save your ${config.secretName} first.` }); return true; }
     try {
@@ -223,7 +377,11 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
       const path = testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "";
       const query = PROBE_QUERY[path];
       const testUrl = config.baseUrl + path + (query ? `?${query}` : "");
-      const headers = probeHeaders(config.headers, config.secretName, token);
+      const headers = probeHeaders(
+        config.headers,
+        [config.secretName, BUILTIN_PRIMARY_NAME.get(config.id) ?? ""],
+        token,
+      );
       // Route through the SSRF-pinned egress chokepoint (DNS-pin + private-IP
       // block + per-hop redirect re-validation) instead of a raw fetch — this
       // HTTP route was sending a stored credential to an attacker-influenced

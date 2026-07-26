@@ -19,6 +19,17 @@ const MULTI = {
     { name: "SMTP_HOST", secret: false },
   ],
 };
+// A config saved before the credential list existed: no `credentials` array at
+// all, only the single derived `secretName`.
+const LEGACY = {
+  id: "legacy",
+  name: "Legacy",
+  icon: "🗄",
+  description: "Saved before credential lists",
+  authInstructions: "1. Paste the key",
+  docsUrl: "",
+  secretName: "LEGACY_API_KEY",
+};
 const SINGLE = {
   id: "github",
   name: "GitHub",
@@ -107,5 +118,46 @@ describe("integration install modal", () => {
       path: "/api/integrations/install",
       body: { id: "github", secretValues: { GITHUB_TOKEN: "ghp-token" } },
     }]);
+  });
+
+  it("falls back to the derived secretName for a config that declares no credentials", async () => {
+    const { window, calls, inputs } = await setup(LEGACY);
+    const modal = window.document.getElementById("install-modal")!;
+
+    expect(inputs.map(input => input.dataset.installSecret)).toEqual(["LEGACY_API_KEY"]);
+    expect(modal.textContent).toContain("API Key / Token (LEGACY_API_KEY)");
+    inputs[0].value = "legacy-key";
+
+    await window.eval("doInstallIntegration('legacy')") as Promise<void>;
+
+    expect(calls).toEqual([{
+      path: "/api/integrations/install",
+      body: { id: "legacy", secretValues: { LEGACY_API_KEY: "legacy-key" } },
+    }]);
+  });
+
+  it("trims a pasted value and refuses one that is only whitespace", async () => {
+    const { window, calls, inputs, alerts } = await setup(SINGLE);
+    inputs[0].value = "   ";
+
+    await window.eval("doInstallIntegration('github')") as Promise<void>;
+    expect(calls).toEqual([]);
+    expect(alerts[0]).toContain("API key or token");
+
+    inputs[0].value = "  ghp-token\n";
+    await window.eval("doInstallIntegration('github')") as Promise<void>;
+
+    expect(calls).toEqual([{
+      path: "/api/integrations/install",
+      body: { id: "github", secretValues: { GITHUB_TOKEN: "ghp-token" } },
+    }]);
+  });
+
+  it("prompts with the paste hint for a single credential and the name for each of several", async () => {
+    const single = await setup(SINGLE);
+    const multi = await setup(MULTI);
+
+    expect(single.inputs[0].placeholder).toBe("Paste your key or token here");
+    expect(multi.inputs.map(input => input.placeholder)).toEqual(["Enter SMTP_PASS", "Enter IMAP_PASS", "Enter SMTP_HOST"]);
   });
 });

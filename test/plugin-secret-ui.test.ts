@@ -48,9 +48,26 @@ describe("plugin secret settings UI", () => {
     expect(html).toContain('id="plugin-bundles-list"');
     expect(script).toContain("status === 'needs_secrets'");
     expect(script).toContain("actions.configureSecrets");
-    expect(script).toContain('type="password"');
+    // Masking used to be asserted here as a source grep for `type="password"`.
+    // The field markup now comes from the shared credentialFieldsHtml renderer,
+    // which picks the type per requirement, so the literal no longer appears.
+    // "masks a plugin secret and leaves a non-secret requirement readable"
+    // below asserts the same property against the rendered DOM instead.
     expect(script).not.toContain("plugin.path");
     expect(script).not.toContain("console.log");
+  });
+
+  it("masks a plugin secret and leaves a non-secret requirement readable", async () => {
+    const mixed = {
+      ...plugin,
+      requiredSecrets: [{ name: "FIRST_TOKEN" }, { name: "SECOND_TOKEN" }, { name: "PLUGIN_HOST", secret: false }],
+      missingSecrets: ["FIRST_TOKEN", "SECOND_TOKEN", "PLUGIN_HOST"],
+    };
+    const { window } = await setup([], mixed);
+    const fields = [...window.document.querySelectorAll<HTMLInputElement>("[data-plugin-secret]")];
+
+    expect(fields.map(field => field.dataset.pluginSecret)).toEqual(["FIRST_TOKEN", "SECOND_TOKEN", "PLUGIN_HOST"]);
+    expect(fields.map(field => field.type)).toEqual(["password", "password", "text"]);
   });
 
   it("replaces an existing setup modal instead of duplicating its ID", async () => {

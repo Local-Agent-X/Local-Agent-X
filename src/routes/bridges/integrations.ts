@@ -1,4 +1,4 @@
-import type { RouteHandler } from "../../server-context.js";
+import type { RouteHandler, ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { IntegrationRegistry } from "../../integrations/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
@@ -13,9 +13,12 @@ type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown }
  * install keeps working unchanged.
  *
  * A name the integration does not declare is rejected outright, and resolution
- * completes before anything is written — this route is a network-reachable vault
- * write, and it must not become an arbitrary-secret-write primitive, nor leave a
- * partial write behind when it rejects.
+ * completes before anything is written, so a rejected install never leaves a
+ * partial write behind. That check bounds a write to the DECLARED names only —
+ * it is not a proof that this route cannot write an arbitrary secret, because
+ * the declaration itself is authored over the network (POST /api/integrations
+ * accepts any credential list). The bound that does hold is on uninstall; see
+ * wroteCredential() below.
  */
 function resolveInstallValues(
   credentials: CredentialRequirement[],
@@ -32,12 +35,34 @@ function resolveInstallValues(
       if (value) supplied.set(name, value);
     }
   }
-  if (typeof body.secretValue === "string" && body.secretValue) {
+  if (body.secretValue !== undefined) {
     const primary = credentials[0];
     if (!primary) return { error: "Integration declares no credentials" };
-    if (!supplied.has(primary.name)) supplied.set(primary.name, body.secretValue);
+    // A non-string used to be skipped: the route wrote nothing, still marked the
+    // integration connected, and returned 200 — the user only discovered the
+    // empty vault at /api/integrations/test. A credential write has no
+    // silent-success branch, so this rejects with the wording the map path uses.
+    if (typeof body.secretValue !== "string") return { error: `Credential ${primary.name} must be a string` };
+    if (body.secretValue && !supplied.has(primary.name)) supplied.set(primary.name, body.secretValue);
   }
   return { values: [...supplied].map(([name, value]) => ({ requirement: declared.get(name)!, value })) };
+}
+
+/**
+ * Whether THIS integration's install is what put `name` in the vault.
+ *
+ * Install records the owner in the entry's `service` metadata (it has always
+ * passed `config.name` there), and `SecretsStore.set` preserves that field
+ * across later updates that omit it, so the record survives a rotation through
+ * the secrets UI. Uninstall deletes only entries this says it owns.
+ *
+ * Re-deriving the delete set from the live declaration instead would let one
+ * uninstall empty the vault: `POST /api/integrations` accepts any credential
+ * list, so an integration could declare every key it wants gone and then have
+ * them all deleted by an uninstall that never installed anything.
+ */
+function wroteCredential(store: ServerContext["secretsStore"], name: string, owner: string): boolean {
+  return store.getMeta(name)?.service === owner;
 }
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -68,6 +93,8 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
       // seam yet, so such a value is collected by the modal and dropped here
       // rather than persisted somewhere it does not belong.
       if (!isSecretRequirement(requirement)) continue;
+      // `config.name` is also the ownership record uninstall reads back — see
+      // wroteCredential().
       ctx.secretsStore.set(requirement.name, value, config.name);
     }
     ctx.integrations.markInstalled(body.id, true);
@@ -78,10 +105,18 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
     const config = ctx.integrations.get(body.id);
     if (!config) { json(404, { error: "Integration not found" }); return true; }
-    // Every DECLARED credential, not just the primary: install writes one vault
-    // entry per credential, so deleting `secretName` alone would orphan the rest
-    // of a multi-credential integration's secrets.
-    for (const requirement of config.credentials) ctx.secretsStore.delete(requirement.name);
+    // Every credential THIS integration's install wrote, not just the primary:
+    // install writes one vault entry per credential, so deleting `secretName`
+    // alone would orphan the rest of a multi-credential integration's secrets.
+    // Bounded by what was actually written rather than by what is declared —
+    // see wroteCredential(). A credential the user pointed this integration at
+    // but never installed through it (email's SMTP_PASS indirection) is left
+    // alone, which is the safe direction: an orphan is recoverable, a deleted
+    // secret is not.
+    for (const requirement of config.credentials) {
+      if (!wroteCredential(ctx.secretsStore, requirement.name, config.name)) continue;
+      ctx.secretsStore.delete(requirement.name);
+    }
     ctx.integrations.markInstalled(body.id, false);
     json(200, { ok: true, id: body.id }); return true;
   }

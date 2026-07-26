@@ -4,6 +4,47 @@
 // uninstall / test / delete + a custom-integration adder. UI for any
 // service that exposes an OAuth or API-key shape under /api/integrations.
 
+// ── Shared credential-requirement fields ──
+//
+// A CredentialRequirement list renders to one field per requirement, and those
+// fields collect back into one submission. BOTH credential modals on this page
+// — plugin setup and integration install — go through these two functions.
+// They were copy-pasted before and the copies drifted: the plugin modal
+// hardcoded type="password", so a `secret: false` requirement (non-secret
+// config such as SMTP_HOST) rendered as a masked field there and a readable one
+// here. `secret: false` means non-secret, so the readable field is the correct
+// behaviour and it is now the only behaviour.
+//
+// `attribute` is the data-attribute each modal identifies its own fields by;
+// the rest of the markup is shared verbatim.
+
+function credentialFieldsHtml(requirements, options) {
+  const single = requirements.length === 1 && !!options.singleLabel;
+  return requirements.map(item => `
+          <div style="margin-bottom:12px">
+            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">${single ? esc(options.singleLabel) : esc(item.service || item.name)} (${esc(item.name)})</label>
+            ${item.description ? `<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px">${esc(item.description)}</div>` : ''}
+            <input type="${item.secret === false ? 'text' : 'password'}" ${options.attribute}="${esc(item.name)}"${item.service ? ` data-credential-service="${esc(item.service)}"` : ''} class="field-input" placeholder="${single ? esc(options.singlePlaceholder) : esc('Enter ' + item.name)}" style="${options.inputStyle || 'width:100%'}" autocomplete="off"/>
+          </div>`).join('');
+}
+
+/**
+ * Reads back the fields credentialFieldsHtml rendered. Returns one entry per
+ * field, or null when any field is empty — refusing to submit a blank
+ * credential is the shared rule; how each modal TELLS the user is not.
+ */
+function collectCredentialValues(root, attribute, onEmpty) {
+  const inputs = [...(root?.querySelectorAll('[' + attribute + ']') || [])];
+  const entries = [];
+  for (const input of inputs) {
+    const name = input.getAttribute(attribute);
+    const value = input.value?.trim();
+    if (!value) { onEmpty(name, inputs.length); return null; }
+    entries.push({ name, value, service: input.dataset.credentialService || undefined });
+  }
+  return entries;
+}
+
 // ── API Integrations ──
 
 let pluginBundles = [];
@@ -55,12 +96,10 @@ function openPluginSecrets(id) {
   const requirements = Array.isArray(plugin.requiredSecrets) ? plugin.requiredSecrets : [];
   const missing = new Set(Array.isArray(plugin.missingSecrets) ? plugin.missingSecrets : []);
   document.getElementById('plugin-secret-modal')?.remove();
-  const fields = requirements.filter(item => missing.has(item.name)).map(item => `
-    <div style="margin-bottom:12px">
-      <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">${esc(item.service || item.name)} (${esc(item.name)})</label>
-      ${item.description ? `<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px">${esc(item.description)}</div>` : ''}
-      <input type="password" data-plugin-secret="${esc(item.name)}" data-plugin-service="${esc(item.service || '')}" class="field-input" autocomplete="off" placeholder="Enter secret" style="width:100%"/>
-    </div>`).join('');
+  const fields = credentialFieldsHtml(
+    requirements.filter(item => missing.has(item.name)),
+    { attribute: 'data-plugin-secret' },
+  );
   document.body.insertAdjacentHTML('beforeend', `
     <div id="plugin-secret-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999" onclick="if(event.target===this)this.remove()">
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:500px;width:90%">
@@ -91,16 +130,16 @@ async function savePluginSecrets(id) {
   const plugin = pluginBundles.find(item => item.id === id && item.actions?.configureSecrets === true);
   if (!plugin) return;
   const modal = document.getElementById('plugin-secret-modal');
-  const inputs = [...(modal?.querySelectorAll('[data-plugin-secret]') || [])];
-  if (inputs.some(input => !input.value.trim())) { alert('Enter every required secret.'); return; }
+  const entries = collectCredentialValues(modal, 'data-plugin-secret', () => alert('Enter every required secret.'));
+  if (!entries) return;
   const saveButton = modal?.querySelector('[data-plugin-save]');
   if (saveButton) saveButton.disabled = true;
   try {
-    for (const input of inputs) {
+    for (const entry of entries) {
       const result = await apiPost('/api/secrets', {
-        name: input.dataset.pluginSecret,
-        value: input.value,
-        service: input.dataset.pluginService || undefined,
+        name: entry.name,
+        value: entry.value,
+        service: entry.service,
       });
       if (!pluginPostSucceeded(result)) { showPluginSecretError(modal); return; }
     }
@@ -183,6 +222,22 @@ async function showInstallModal(id) {
   try {
     const config = await apiJson('/api/integrations/' + id);
     const instructions = esc(config.authInstructions || '').replace(/\n/g, '<br>');
+    // One field per DECLARED credential — most services need one, some (email)
+    // need several. A config saved before the list existed falls back to its
+    // derived primary; a config that genuinely declares NOTHING (a custom
+    // integration POSTed with only id/name/baseUrl derives `secretName: ""`)
+    // gets no fields at all, because a field named "" collects into a
+    // credential the server cannot accept and made such an integration
+    // impossible to connect.
+    const credentials = Array.isArray(config.credentials) && config.credentials.length > 0
+      ? config.credentials
+      : (config.secretName ? [{ name: config.secretName }] : []);
+    const fields = credentialFieldsHtml(credentials, {
+      attribute: 'data-install-secret',
+      singleLabel: 'API Key / Token',
+      singlePlaceholder: 'Paste your key or token here',
+      inputStyle: 'width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-family:var(--mono);font-size:.8rem',
+    });
     const html = `
       <div id="install-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999" onclick="if(event.target===this)this.remove()">
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:500px;width:90%">
@@ -192,10 +247,7 @@ async function showInstallModal(id) {
             <div style="color:var(--accent);font-weight:600;margin-bottom:6px">How to get your credentials:</div>
             ${instructions}
           </div>
-          <div style="margin-bottom:12px">
-            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">API Key / Token (${esc(config.secretName)})</label>
-            <input type="password" id="install-secret-value" class="field-input" placeholder="Paste your key or token here" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-family:var(--mono);font-size:.8rem" autocomplete="off"/>
-          </div>
+          ${fields}
           ${config.docsUrl ? `<div style="margin-bottom:16px"><a href="${/^https?:\/\//i.test(config.docsUrl || '') ? esc(config.docsUrl) : '#'}" target="_blank" style="font-size:.72rem;color:var(--accent)">📄 Official API Docs →</a></div>` : ''}
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="action-btn secondary" onclick="document.getElementById('install-modal').remove()">Cancel</button>
@@ -205,18 +257,23 @@ async function showInstallModal(id) {
       </div>
     `;
     document.body.insertAdjacentHTML('beforeend', html);
-    document.getElementById('install-secret-value')?.focus();
+    document.querySelector('#install-modal [data-install-secret]')?.focus();
   } catch (e) {
     console.error('Failed to load integration:', e);
   }
 }
 
 async function doInstallIntegration(id) {
-  const input = document.getElementById('install-secret-value');
-  const value = input?.value?.trim();
-  if (!value) { alert('Please enter your API key or token.'); return; }
+  const entries = collectCredentialValues(
+    document.getElementById('install-modal'),
+    'data-install-secret',
+    (name, count) => alert(count === 1 ? 'Please enter your API key or token.' : 'Please enter a value for ' + name + '.'),
+  );
+  if (!entries) return;
+  const secretValues = {};
+  for (const entry of entries) secretValues[entry.name] = entry.value;
   try {
-    await apiPost('/api/integrations/install', { id, secretValue: value });
+    await apiPost('/api/integrations/install', { id, secretValues });
     document.getElementById('install-modal')?.remove();
     loadIntegrations();
   } catch (e) {

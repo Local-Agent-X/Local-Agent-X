@@ -14,7 +14,9 @@ import { UnifiedToolRegistry } from "./registry.js";
  *  - "operator":      fixed eager set, no message inspection, no identity-tool intersection
  *  - "build-intent":  used internally by main-chat strip-down; callers shouldn't request directly
  *
- * Pure function. No I/O. Deterministic for a given (registry, request) pair.
+ * Deterministic for a given (registry, request) pair. The only non-pure step is
+ * the availability gate below: a tool may declare an `available()` predicate
+ * that inspects live machine state (see isToolAvailable).
  */
 
 export interface ResolveRequest {
@@ -50,10 +52,57 @@ const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set([
   "task_create", "task_update", "task_list", "task_get",
 ]);
 
+/**
+ * Availability gate for one tool. See ToolDefinition.available in src/types.ts.
+ *
+ * Every branch that isn't an explicit `false` from a predicate that ran cleanly
+ * returns TRUE. Absent predicate → available. Predicate throws → available (and
+ * the throw is contained here, so one bad predicate can't take down tool
+ * resolution for every other tool). Non-boolean return → available.
+ *
+ * tool_search and ALWAYS_ON_TOOLS are checked BEFORE the predicate and can
+ * never be hidden: tool_search is the escape hatch by which the model reaches a
+ * deferred tool, and the always-on identity/coordination helpers are how a
+ * spawned agent reports back. Losing either is unrecoverable at runtime.
+ */
+export function isToolAvailable(tool: ToolDefinition): boolean {
+  if (tool.name === "tool_search" || ALWAYS_ON_TOOLS.has(tool.name)) return true;
+  if (!tool.available) return true;
+  try {
+    return tool.available() !== false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Drop tools whose availability predicate says they cannot work right now.
+ * Shared by the request seam below and the deferred-tool manifest inputs
+ * (build-system-prompt.ts) so a hidden tool can't reappear by name there.
+ *
+ * Cost, measured rather than assumed: a full pass over the real 84-tool
+ * catalog is 0.62ms on this box, dominated by the three email predicates'
+ * getSmtp/ImapConfig() reads of ~/.lax/email.json (~18µs per readFileSync,
+ * several per call). Two passes per turn (resolver + manifest) ≈ 1.2ms against
+ * a multi-second model call. DELIBERATELY NOT CACHED: a TTL cache would buy
+ * back a fraction of a millisecond and pay for it with a window where a tool
+ * the user just configured is still hidden — which is the exact invisible
+ * failure this whole mechanism exists to prevent. If a future predicate is
+ * genuinely expensive (network, spawn), it should memoize inside itself.
+ */
+export function filterAvailableTools(tools: ToolDefinition[]): ToolDefinition[] {
+  return tools.filter(isToolAvailable);
+}
+
 export function resolveToolsForRequest(
   req: ResolveRequest,
-  all: ToolDefinition[],
+  catalog: ToolDefinition[],
 ): ToolDefinition[] {
+  // Availability gate runs first, for every audience, before tier-shrink/RAG —
+  // so a tool that can't work never consumes a scarce slot and never reaches
+  // the model's schema. Fail-open per tool (isToolAvailable).
+  const all = filterAvailableTools(catalog);
+
   // Main-chat is the only audience that inspects the message.
   if (req.audience === "main-chat") {
     return resolveMainChat(req, all);

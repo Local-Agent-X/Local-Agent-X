@@ -63,9 +63,14 @@ const MANIFEST_MAX = 250;
  * NOT cache-anchored (only the tools array is — see stream-api.ts), so its
  * per-turn variance costs nothing on the cached tools block.
  *
- * Invariant: `loaded ∪ manifested = all` — every registered tool is either in
- * the schema or named here, so no tool is ever fully invisible. Pure; `loaded`
- * is the exact per-turn set, and the manifest is its complement against `all`.
+ * Invariant: `loaded ∪ manifested = available catalog` — every tool that can
+ * actually work on this machine is either in the schema or named here, so no
+ * usable tool is ever fully invisible. `all` must therefore be the AVAILABILITY-
+ * FILTERED catalog (filterAvailableTools in tool-search.ts), which is what the
+ * caller in build-system-prompt.ts passes: a tool withheld from the schema by
+ * its `available()` predicate must not reappear by name here, or the model is
+ * merely told to tool_search for a capability this machine doesn't have. Pure;
+ * `loaded` is the exact per-turn set, and the manifest is its complement.
  */
 export function buildDeferredToolManifest(
   all: ToolDefinition[],

@@ -106,15 +106,24 @@ export async function buildSystemPromptWithTelemetry(
   let toolPromptSection = "";
   try {
     const { buildToolPromptSection, buildDeferredToolManifest } = await import("../../tools/tool-prompt-builder.js");
-    toolPromptSection = buildToolPromptSection(input.allAgentTools);
+    const { filterAvailableTools } = await import("../../tools/tool-search.js");
+    // Availability gate — the other half of the seam in tool-search.ts. The
+    // per-request resolver already withheld unavailable tools from the schema;
+    // if the manifest were still built over the RAW catalog every one of them
+    // would reappear here by name and the model would be told to tool_search
+    // for a capability this machine doesn't have. The prompt nudges go through
+    // the same gate for the same reason.
+    const availableAgentTools = filterAvailableTools(input.allAgentTools);
+    toolPromptSection = buildToolPromptSection(availableAgentTools);
     // Deferred-tool manifest: name every tool NOT loaded into this turn's
     // schema so the model can reach it via tool_search instead of fail-
     // discovering or denying. This is what lets the Anthropic-strong path
     // (tool-selection.ts) ship a filtered set rather than the whole inventory —
     // the schema shrinks, the cold cache-write shrinks, and nothing goes
-    // invisible (loaded ∪ manifested = full catalog).
+    // invisible (loaded ∪ manifested = available catalog — every tool that can
+    // work here is either in the schema or named in the manifest).
     if (input.loadedTools) {
-      toolPromptSection += buildDeferredToolManifest(input.allAgentTools, input.loadedTools);
+      toolPromptSection += buildDeferredToolManifest(availableAgentTools, input.loadedTools);
     }
   } catch { /* best-effort */ }
 

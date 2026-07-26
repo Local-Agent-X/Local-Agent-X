@@ -9,6 +9,14 @@ import { EMAIL_SEND_WINDOW_MS, getSmtpConfig, resolvePath } from "./email-config
 export const emailSend: ToolDefinition = {
   name: "email_send",
   effect: { class: "non-idempotent" },
+  // Unusable without SMTP. getSmtpConfig() is the single existing notion of
+  // "configured" — it returns the config object, or a STRING error when any of
+  // SMTP_HOST/USER/PASS/FROM is missing — so this reuses that signal instead of
+  // inventing a second one. Only SMTP is consulted: after C7a the IMAP
+  // credentials are OPTIONAL, so a send-only user has a genuinely working
+  // email_send and it must not be hidden because they never set up reading.
+  // email_setup is deliberately NOT gated — it is how the user gets here.
+  available: () => typeof getSmtpConfig() !== "string",
   description: 'Send an email via the user\'s configured IMAP/SMTP mailbox (set up with email_setup). ' +
     'Example: to="alice@example.com", subject="Meeting Notes", body="Hi Alice,\\nAttached are the notes.\\nBest, Bob"',
   parameters: {

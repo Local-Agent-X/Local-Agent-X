@@ -39,6 +39,22 @@ export interface ToolDefinition {
   concurrencySafe?: boolean;
   /** Audiences that see this tool eagerly. Unset/empty = deferred (only via tool_search). */
   audiences?: Audience[];
+  /**
+   * Runtime availability gate. Returns false when this tool CANNOT work on this
+   * machine right now (e.g. email_send with no SMTP configured), so it is
+   * withheld from both the per-request tool set and the deferred-tool manifest
+   * rather than advertised as a capability that will only ever error.
+   *
+   * ABSENT MEANS AVAILABLE — always. So does a predicate that throws, and so
+   * does any non-`false` return. Hiding a tool that actually works is invisible
+   * to everyone (no error, no log — the agent just can't do something) and is
+   * strictly worse than advertising a tool that fails with a clear message, so
+   * every ambiguity resolves toward "available". Evaluated per request per tool
+   * by isToolAvailable() in src/tools/tool-search.ts; keep it cheap and
+   * side-effect free. Declare it on the tool, next to the tool — there is no
+   * central name→predicate table.
+   */
+  available?: () => boolean;
 }
 
 /**

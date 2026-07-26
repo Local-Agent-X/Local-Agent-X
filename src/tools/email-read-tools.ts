@@ -3,8 +3,16 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { getImapConfig } from "./email-config.js";
 import { fetchMessages } from "./email-imap.js";
 
+/** Both read tools need IMAP and nothing else. getImapConfig() returns a STRING
+ *  error when IMAP_HOST/USER/PASS aren't all present — that is the existing
+ *  notion of "configured", reused rather than duplicated. This is the honest
+ *  half of the send/read split: IMAP is optional (C7a), so a send-only mailbox
+ *  leaves these two genuinely unusable while email_send still works. */
+const imapConfigured = () => typeof getImapConfig() !== "string";
+
 export const emailRead: ToolDefinition = {
   name: "email_read",
+  available: imapConfigured,
   description: "Read emails from the user's configured IMAP mailbox (email_setup). Returns sender, subject, date, and body snippet for each message.",
   parameters: {
     type: "object",
@@ -51,6 +59,7 @@ export const emailRead: ToolDefinition = {
 
 export const emailSearch: ToolDefinition = {
   name: "email_search",
+  available: imapConfigured,
   description: "Search the user's configured IMAP mailbox by query (subject and sender fields).",
   parameters: {
     type: "object",

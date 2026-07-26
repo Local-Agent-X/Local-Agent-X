@@ -311,14 +311,17 @@ describe("fillRefInApp — exact-identity fallback when the coordinate path miss
 	const isStableFill = (s: string) => s.includes("not-found") && s.includes('id=\\"po-number\\"');
 
 	it("writes to the field by its stable id and says the element was not clickable", async () => {
+		const ctx = makeCtx(PO_REF);
+		const refreshed = { ...PO_REF, ids: { id: "po-number-new" } };
+		vi.spyOn(ctx.registry, "get").mockReturnValueOnce(PO_REF).mockReturnValue(refreshed);
 		vi.mocked(browserExec).mockImplementation(async (_v, s) => {
 			if (s.includes("ROLE_SEL")) return { found: false, occluded: ["exact:div#modal-backdrop"] };
-			if (isStableFill(s)) return { ok: true, key: 'id="po-number"' };
+			if (s.includes("not-found") && s.includes('id=\\"po-number-new\\"')) return { ok: true, key: 'id="po-number-new"' };
 			return undefined;
 		});
-		const res = await fillRefInApp(makeCtx(PO_REF), 1, "PO-4471");
+		const res = await fillRefInApp(ctx, 1, "PO-4471");
 		expect(res.ok).toBe(true);
-		expect(res.text).toContain('[1] fill via id="po-number"');
+		expect(res.text).toContain('[1] fill via id="po-number-new"');
 		expect(res.text).toContain("wrote to the field directly");
 		// No synthetic input: the point was refused, so nothing is clicked or typed.
 		expect(browserInput).not.toHaveBeenCalled();

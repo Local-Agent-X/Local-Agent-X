@@ -15,7 +15,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "Use this for sites that require JavaScript rendering, form filling, authentication flows, " +
   "scraping dynamic content, or any task that web_fetch/http_request cannot handle. " +
   "The browser session persists across calls — navigate once, then click/fill/extract as needed. " +
-  "IMPORTANT: When a fill or click fails, retry with a different selector or use evaluate to find the right one. " +
+  "IMPORTANT: When a fill or click fails, take a fresh snapshot and retry with its new ref. Use evaluate only to INSPECT page state; it cannot mutate controls. " +
   "Don't just tell the user you'll retry — actually call this tool again.\n\n" +
   "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are durable WITHIN the current page — [5] stays [5] across snapshots while that element is on the page. Ref ids are globally unique (a ref never means two different elements), but they only RESOLVE on the page that minted them: after a navigation to a new origin or a switch_tab, old refs are gone, so take a FRESH snapshot before using a ref. Repeat snapshots on the same page emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
   "Actions:\n" +
@@ -28,7 +28,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- select: Choose dropdown option by CSS selector + value.\n" +
   "- extract: Get visible text from the page or a specific element. On a large page, pass 'find' to get only the matching lines instead of the whole page.\n" +
   "- screenshot: Capture the current page — the image is returned INLINE, so you SEE the page in this one call (no view_image or screen_capture needed). A full-resolution PNG is also saved; use its path with view_image to re-view later or send_image to share it.\n" +
-  "- evaluate: Run JavaScript in the page.\n" +
+  "- evaluate: Run read-only JavaScript to inspect the page. It cannot click, type, focus, remove overlays, or mutate DOM/form state; use click/fill/select with fresh refs for actions.\n" +
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
   "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers. Form controls also show live state as {checked}/{unchecked}/{filled}/{disabled}, so re-observe after a click to confirm a checkbox toggled instead of reading the DOM by hand.\n" +
   "- scroll: Scroll the page. value='up'|'down'|'top'|'bottom' OR ref=N to scroll that element into view.\n" +
@@ -56,9 +56,8 @@ export const BROWSER_TOOL_DESCRIPTION =
   "'OBSTRUCTION DETECTED' with no accept/dismiss button. Do NOT hand the task back to " +
   "the user over this — clear it yourself, in order:\n" +
   "1. click_text on a visible 'Accept'/'Got it'/'Close'/'X' label if there is one.\n" +
-  "2. evaluate to remove or hide it: find the overlay node and `el.remove()` " +
-  "(or set `el.style.display='none'`), then snapshot again.\n" +
-  "3. If it sits over the control you want, scroll/click the underlying element by ref.\n" +
+  "2. Take a fresh full snapshot; the obstruction may be the active dialog itself, and its controls need current refs.\n" +
+  "3. If it sits over the control you want, use click_text or a current ref. Do not remove page DOM with evaluate.\n" +
   "Only ask the user to act when the blocker is something ONLY they can supply " +
   "(a password, a 2FA code, a CAPTCHA) — and only after you've actually tried the above. " +
   "While the browser is open and responding, keep driving; don't stop with a summary.";

@@ -11,6 +11,15 @@ import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../
 import { wrapExternalContent } from "../../sanitize.js";
 import { ok, err, appendPostActionSnapshot } from "./shared.js";
 
+const EVALUATE_MUTATION =
+  /\.(?:click|focus|blur|remove|dispatchEvent|setAttribute|removeAttribute|append|prepend|appendChild|removeChild|insertAdjacent\w*)\s*\(|\.set\??\.\s*call\s*\(|\.(?:value|checked|selected|innerHTML|outerHTML|textContent)\s*=|\.style(?:\.\w+|\[['"][^'"]+['"]\])?\s*=|\b(?:location|window\.location|document\.location)\s*=/;
+
+export function evaluateMutationReason(script: string): string | null {
+  return EVALUATE_MUTATION.test(script)
+    ? "evaluate is inspection-only and cannot click, type, focus, remove, or mutate page controls. Use snapshot/observe, then click/fill/select with a fresh ref."
+    : null;
+}
+
 export async function handleExtract(
   manager: BrowserBackend,
   args: Record<string, unknown>,
@@ -42,6 +51,8 @@ export async function handleEvaluate(
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   const script = String(args.script || "");
   if (!script) return err("'script' parameter is required for evaluate action.");
+  const mutationReason = evaluateMutationReason(script);
+  if (mutationReason) return err(mutationReason);
   const blockedPattern = scanEvaluateScript(script);
   if (blockedPattern) return err(evaluateBlockMessage(blockedPattern, script));
   return ok(await manager.evaluate(script));

@@ -58,7 +58,6 @@ Don't skip. Try the cheapest step first. Only escalate when the one below return
 
 - **No file over 400 LOC.** If it grows, split into focused modules.
 - **No god files.** One responsibility per module.
-- **Codex-assisted commits use the exact `Assisted-by: Codex` trailer.** Add it only when Codex materially contributed to the committed change. This is a traceable build-attribution marker, not a GitHub co-author identity.
 - **No AI-vendor or tool attribution in code comments.** Keep attribution in commit metadata and submission documentation.
 - **Read before edit.** Don't write changes to code you haven't opened.
 - **Prefer editing existing files over creating new ones.**

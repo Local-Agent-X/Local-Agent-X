@@ -327,8 +327,9 @@ export async function fillRefInApp(ctx: InAppActionContext, refId: number, value
 		// (covered, clipped, un-scrollable frame), and a ref with a stable
 		// identifier has no doubt about WHICH element to write to. Write to the
 		// node directly rather than failing a fill that is perfectly well-defined.
-		if (hasStableIds(ref.ids)) {
-			const res = asExecResult(await execChecked(ctx.viewId, stableFillScript(ref, value)));
+		const refreshedRef = ctx.registry.get(ref.id) ?? ctx.registry.recoverStaleRef(ref.id) ?? ref;
+		if (hasStableIds(refreshedRef.ids)) {
+			const res = asExecResult(await execChecked(ctx.viewId, stableFillScript(refreshedRef, value)));
 			if (res.ok) {
 				const key = (res as { key?: string }).key || "stable id";
 				return { ok: true, text: `[${ref.id}] fill via ${key}${note} — ${value.length} chars (element was not clickable; wrote to the field directly)` };

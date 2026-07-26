@@ -295,14 +295,12 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  are marked as takeover candidates. Indexes are as-of this listing —
 	 *  switchTab recomputes the same merge. */
 	async listTabs(): Promise<string> {
-		if (!this.isActive()) return listTabsOp([], null);
 		return formatTabsListing(this.tabs, (tab) => this.refreshState(tab));
 	}
 
 	/** Switch over the same combined ordering listTabs prints. A user view is
 	 *  ADOPTED (owned:false — driven, never closed) and becomes active. */
 	async switchTab(index: number): Promise<string> {
-		if (!this.isActive()) return listTabsOp([], null); // "No browser session active."
 		const result = await switchMergedTab(this.tabs, index, this.sessionId);
 		if (!result.ok) return result.message;
 		await this.refreshState(result.tab);

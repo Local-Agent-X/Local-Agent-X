@@ -679,6 +679,50 @@ describe("ElectronInAppBackend (A1)", () => {
 		expect(await backend.switchTab(3)).toContain("Invalid tab index 3");
 	});
 
+	it("listTabs can recover an existing user tab before this backend opens its own view", async () => {
+		const userUrl = "https://example.com/dashboard";
+		const userTitle = "Recovered page";
+		const userView = {
+			viewId: "view-user-recovery",
+			partition: "persist:lax-profile-work",
+			url: userUrl,
+			title: userTitle,
+			attached: true,
+			agentDriven: false,
+		};
+		vi.mocked(browserLifecycle).mockImplementation(async (op) => {
+			if (op === "list") return { views: [userView] };
+			if (op === "ping") return { ping: { ok: true, url: userUrl, title: userTitle } };
+			return {};
+		});
+
+		const tabs = await backend.listTabs();
+		expect(tabs).toBe(`1 tab(s) open:\n[0] ${userTitle} — ${userUrl} [user tab — switch_tab(0) takes control]`);
+		expect(await backend.switchTab(0)).toBe(`Switched to tab [0]: ${userTitle} — ${userUrl}`);
+		expect(backend.getCurrentUrl()).toBe(userUrl);
+		expect(vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create")).toHaveLength(0);
+	});
+
+	it("listTabs reclaims this session's surviving agent view without recreating it", async () => {
+		const existing = {
+			viewId: VIEW_ID,
+			partition: "persist:lax-profile-work",
+			url: PAGE_URL,
+			title: PAGE_TITLE,
+			attached: true,
+			agentDriven: true,
+		};
+		vi.mocked(browserLifecycle).mockImplementation(async (op) => {
+			if (op === "list") return { views: [existing] };
+			if (op === "ping") return { ping: { ok: true, url: PAGE_URL, title: PAGE_TITLE } };
+			return {};
+		});
+
+		expect(await backend.listTabs()).toContain(`[0] ${PAGE_TITLE} — ${PAGE_URL} ← active`);
+		expect(backend.isActive()).toBe(true);
+		expect(vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "create")).toHaveLength(0);
+	});
+
 	// ── Lifecycle ─────────
 
 	it("close tears down the view and resets state; a second close is a no-op", async () => {
@@ -810,6 +854,7 @@ describe("ElectronInAppBackend (A1)", () => {
 			const ops = backend.secretOps();
 			await ops.currentOrigin();
 			expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe(`${VIEW_ID}-t2`);
+			await backend.listTabs();
 			await backend.switchTab(0); // back to the first tab
 			await ops.currentOrigin(); // SAME ops object — must follow the switch
 			expect(vi.mocked(browserExec).mock.calls.at(-1)?.[0]).toBe(VIEW_ID);
@@ -874,6 +919,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		it("navigate-failure rollback restores the tab active BEFORE the call, not just the last tab", async () => {
 			await backend.navigate(PAGE_URL); // first tab
 			await backend.newTab(PAGE_URL); // -t2 becomes active
+			await backend.listTabs();
 			await backend.switchTab(0); // back to the FIRST tab (not the last)
 			vi.mocked(browserNavigate).mockRejectedValueOnce(new Error("bridge timeout"));
 			await expect(backend.newTab(PAGE_URL)).rejects.toThrow("bridge timeout");
@@ -929,6 +975,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		it("switchTab fires browserLifecycle('show', <newly active viewId>, { sessionId })", async () => {
 			await backend.navigate(PAGE_URL);
 			await backend.newTab(PAGE_URL); // -t2 active
+			await backend.listTabs();
 			vi.mocked(browserLifecycle).mockClear();
 			await backend.switchTab(0); // back to the first own tab
 			expect(browserLifecycle).toHaveBeenCalledWith("show", VIEW_ID, { sessionId: "sess-1" });
@@ -956,6 +1003,7 @@ describe("ElectronInAppBackend (A1)", () => {
 			});
 			// The new_tab and the switch still return their normal reports.
 			await expect(backend.newTab(PAGE_URL)).resolves.toContain("Opened new tab");
+			await backend.listTabs();
 			await expect(backend.switchTab(0)).resolves.toContain("Switched to tab [0]");
 		});
 

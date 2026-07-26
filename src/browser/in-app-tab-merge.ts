@@ -31,9 +31,6 @@ export type MergedTab =
  * `tabs` listing (until views change).
  */
 export async function mergeTabs(list: TabList): Promise<MergedTab[]> {
-	const merged: MergedTab[] = list
-		.all()
-		.map((tab) => ({ kind: "own", tab, url: tab.state.url, title: tab.state.title }));
 	let views: BrowserViewInfo[] = [];
 	try {
 		views = (await browserLifecycle("list", "*")).views ?? [];
@@ -41,6 +38,19 @@ export async function mergeTabs(list: TabList): Promise<MergedTab[]> {
 		// Advisory: the agent's own tabs must stay listable when the pool
 		// listing hiccups — degrade to own-tabs-only, loudly.
 		logger.warn(`[in-app-tabs] desktop view listing failed: ${(e as Error).message}`);
+	}
+	const liveById = new Map(views.map((view) => [view.viewId, view]));
+	const merged: MergedTab[] = [];
+	for (const [index, tab] of list.all().entries()) {
+		const live = liveById.get(tab.viewId);
+		if (live?.agentDriven === true) {
+			tab.created = true;
+			tab.closed = false;
+			tab.state.url = live.url;
+			tab.state.title = live.title;
+		}
+		if (index === 0 && (!tab.created || tab.closed)) continue;
+		merged.push({ kind: "own", tab, url: tab.state.url, title: tab.state.title });
 	}
 	for (const view of views) {
 		if (view.agentDriven !== false) continue; // other sessions' agent views: excluded
@@ -66,6 +76,10 @@ export async function formatTabsListing(
 		if (tab.created && !tab.closed) await refresh(tab);
 	}
 	const merged = await mergeTabs(list);
+	if (merged.length === 0) {
+		list.lastListing = null;
+		return "No browser session active.";
+	}
 	const rows = merged.map((entry, i) => {
 		const active = entry.kind === "own" && entry.tab === list.active ? " ← active" : "";
 		const label = tabLabel(entry.url, entry.title);
@@ -96,13 +110,10 @@ export function surfaceActiveTab(viewId: string, sessionId?: string): void {
  *  an own tab becomes active; a user view is ADOPTED (owned:false) and
  *  becomes active — the takeover seam.
  *
- *  Takeover is PINNED to the last listing: the pool can change between the
- *  `tabs` call and the switch (the human opens/closes tabs), and an index
- *  alone would then silently grab whatever slid into that slot. Adopting a
- *  user view therefore requires a prior listing whose viewId at this index
- *  still matches; a mismatch (or no listing at all) refuses and asks for a
- *  fresh `tabs`. Switches onto the agent's OWN tabs stay index-based — that
- *  list only changes by the agent's own actions. */
+ *  Switching is PINNED to the last listing: the pool can change between the
+ *  `tabs` call and the switch, and adopting/opening a view also changes the
+ *  merged ordering. The listed viewId must still match, and a successful
+ *  switch consumes the listing so a second stale index cannot be reused. */
 export async function switchMergedTab(list: TabList, index: number, sessionId?: string): Promise<MergedSwitchResult> {
 	const merged = await mergeTabs(list);
 	if (index < 0 || index >= merged.length) {
@@ -112,21 +123,21 @@ export async function switchMergedTab(list: TabList, index: number, sessionId?: 
 		};
 	}
 	const entry = merged[index];
-	if (entry.kind === "user") {
-		const pinned = list.lastListing?.[index];
-		if (pinned === undefined) {
-			return {
-				ok: false,
-				message: `Taking control of a user tab requires a current listing. Run 'tabs' first, then switch_tab(${index}).`,
-			};
-		}
-		if (pinned !== entry.view.viewId) {
-			return {
-				ok: false,
-				message: "The browser's tabs changed since the last 'tabs' listing — refusing to take over a tab that may not be the one you meant. Run 'tabs' again and retry.",
-			};
-		}
+	const pinnedViewId = list.lastListing?.[index];
+	const currentViewId = entry.kind === "own" ? entry.tab.viewId : entry.view.viewId;
+	if (pinnedViewId === undefined) {
+		return {
+			ok: false,
+			message: `Switching tabs requires a current listing. Run 'tabs' first, then switch_tab(${index}).`,
+		};
 	}
+	if (pinnedViewId !== currentViewId) {
+		return {
+			ok: false,
+			message: "The browser's tabs changed since the last 'tabs' listing. Run 'tabs' again and retry.",
+		};
+	}
+	list.lastListing = null;
 	if (entry.kind === "own") {
 		list.setActive(entry.tab);
 		surfaceActiveTab(entry.tab.viewId, sessionId); // the active tab moved — the visible pane follows it

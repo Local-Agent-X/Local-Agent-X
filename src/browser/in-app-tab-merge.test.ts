@@ -50,6 +50,22 @@ describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 		expect(merged[1]).toMatchObject({ kind: "user", url: "https://u.example/" });
 	});
 
+	it("does not list the dormant first-tab placeholder before its view exists", async () => {
+		list.active.created = false;
+		mockList([userView("view-user-1", "https://u.example/", "U")]);
+		const merged = await mergeTabs(list);
+		expect(merged).toHaveLength(1);
+		expect(merged[0]).toMatchObject({ kind: "user", view: { viewId: "view-user-1" } });
+	});
+
+	it("reclaims the dormant first tab when its exact agent-driven view survived", async () => {
+		list.active.created = false;
+		mockList([agentView("view-sess-9-work")]);
+		const merged = await mergeTabs(list);
+		expect(merged).toHaveLength(1);
+		expect(merged[0]).toMatchObject({ kind: "own", tab: { viewId: "view-sess-9-work", created: true, closed: false } });
+	});
+
 	it("excludes user views this backend already adopted (no duplicate rows)", async () => {
 		list.adopt(userView("view-user-1", "https://u.example/", "U"));
 		mockList([userView("view-user-1", "https://u.example/", "U")]);
@@ -87,6 +103,7 @@ describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 		const t2 = list.openOwned();
 		list.setActive(list.all()[0]);
 		mockList([]);
+		await formatTabsListing(list, async () => { /* refresh mocked out */ });
 		const res = await switchMergedTab(list, 1);
 		expect(res).toEqual({ ok: true, tab: t2 });
 		expect(list.active).toBe(t2);
@@ -138,12 +155,25 @@ describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 		expect(list.active.viewId).toBe("view-user-B");
 	});
 
-	it("own-tab switches stay index-based — no listing required", async () => {
+	it("REFUSES an own-tab switch without a current listing", async () => {
 		const t2 = list.openOwned();
 		list.setActive(list.all()[0]);
 		mockList([]);
 		const res = await switchMergedTab(list, 1);
-		expect(res).toEqual({ ok: true, tab: t2 });
+		expect(res.ok).toBe(false);
+		if (!res.ok) expect(res.message).toContain("requires a current listing");
+		expect(list.active).not.toBe(t2);
+	});
+
+	it("consumes the listing after a switch so a second stale index is refused", async () => {
+		list.openOwned();
+		list.setActive(list.all()[0]);
+		mockList([]);
+		await formatTabsListing(list, async () => { /* refresh mocked out */ });
+		expect((await switchMergedTab(list, 1)).ok).toBe(true);
+		const second = await switchMergedTab(list, 0);
+		expect(second.ok).toBe(false);
+		if (!second.ok) expect(second.message).toContain("requires a current listing");
 	});
 
 	it("rejects an out-of-range index with the canonical invalid-index message", async () => {

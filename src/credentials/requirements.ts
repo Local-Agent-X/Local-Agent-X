@@ -112,8 +112,26 @@ export function parseCredentialRequirements(value: unknown): CredentialRequireme
 /**
  * Names of the requirements the availability port cannot currently satisfy.
  * A pure presence check over exactly the list it is handed — it asks nothing
- * about whether a requirement BELONGS in the vault. Callers that need that
- * judgement want missingSecretCredentials() below.
+ * about whether a requirement BELONGS in the vault, or about whether its
+ * absence blocks anything.
+ *
+ * NO PRODUCTION CALLER, AND EXPORTED ANYWAY. Its only consumers are
+ * missingSecretCredentials() below and requirements.test.ts. Kept exported
+ * deliberately, for one reason: it is the CONTROL in that test file. Every case
+ * that proves the vault policy is doing work asserts the pair — the pure check
+ * reports SMTP_HOST/IMAP_PASS as absent, and missingSecretCredentials() reports
+ * them as not blocking. Without a reachable pure check those tests could only
+ * assert the policy's own answer, and a regression that quietly widened
+ * isSecretRequirement()/isRequiredRequirement() into no-ops would still pass
+ * them. Inlining it would trade a documented unused export for a weaker
+ * regression net over the exact rule that hid a working send-only mailbox.
+ *
+ * DO NOT USE THIS AS A GATE. "Is this value present?" is not "can this component
+ * run?", and answering the second with the first is the divergence this module
+ * exists to remove. Anything asking whether an integration or plugin has what it
+ * needs wants missingSecretCredentials() below — no exceptions, which is why
+ * there are no other callers and why a new one is a review flag rather than a
+ * convenience.
  */
 export function missingCredentials(
   requirements: CredentialRequirement[],

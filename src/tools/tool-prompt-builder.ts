@@ -63,14 +63,34 @@ const MANIFEST_MAX = 250;
  * NOT cache-anchored (only the tools array is — see stream-api.ts), so its
  * per-turn variance costs nothing on the cached tools block.
  *
- * Invariant: `loaded ∪ manifested = available catalog` — every tool that can
- * actually work on this machine is either in the schema or named here, so no
- * usable tool is ever fully invisible. `all` must therefore be the AVAILABILITY-
- * FILTERED catalog (filterAvailableTools in tool-search.ts), which is what the
- * caller in build-system-prompt.ts passes: a tool withheld from the schema by
- * its `available()` predicate must not reappear by name here, or the model is
- * merely told to tool_search for a capability this machine doesn't have. Pure;
- * `loaded` is the exact per-turn set, and the manifest is its complement.
+ * What this function guarantees, exactly: the manifest is `all − loaded`. So
+ * given an `all` that is the AVAILABILITY-FILTERED catalog (filterAvailableTools
+ * in tool-search.ts — which is what the caller in build-system-prompt.ts
+ * passes), two things hold:
+ *
+ *  1. NO UNAVAILABLE TOOL IS NAMED HERE. A tool withheld from the schema by its
+ *     `available()` predicate must not reappear by name in the manifest, or the
+ *     model is merely told to tool_search for a capability this machine doesn't
+ *     have. This is the property the gate exists for and it is airtight, because
+ *     the manifest is a SUBSET of `all`.
+ *  2. EVERY AVAILABLE TOOL IS REACHABLE — each one is either in `loaded` (its
+ *     schema shipped) or named here, so no usable tool is fully invisible.
+ *
+ * What is NOT guaranteed, and was previously claimed here as the invariant
+ * `loaded ∪ manifested = available catalog`: that the UNION contains only
+ * available tools. `loaded` is chosen upstream by selectTools()
+ * (src/agent-request/prepare-request/tool-selection.ts), which re-derives its
+ * result from the RAW `allAgentTools` after the gate has run — the RAG union,
+ * the provider tool cap, the tool_search re-add and the product-build route all
+ * select out of the unfiltered catalog. An unavailable tool can therefore land
+ * in `loaded` and ship its schema. That direction is fail-OPEN (a tool that
+ * cannot work is advertised and returns a clear error) and is identical to the
+ * behaviour on main, which is why it is documented rather than "fixed" here:
+ * narrowing at that seam would convert the riskiest tool-selection path in the
+ * request pipeline from fail-open to fail-closed. This function cannot repair it
+ * either — it only ever removes names, never adds them.
+ *
+ * Pure: `loaded` is the exact per-turn set and the manifest is its complement.
  */
 export function buildDeferredToolManifest(
   all: ToolDefinition[],

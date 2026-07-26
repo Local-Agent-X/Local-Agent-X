@@ -120,8 +120,12 @@ export async function buildSystemPromptWithTelemetry(
     // discovering or denying. This is what lets the Anthropic-strong path
     // (tool-selection.ts) ship a filtered set rather than the whole inventory —
     // the schema shrinks, the cold cache-write shrinks, and nothing goes
-    // invisible (loaded ∪ manifested = available catalog — every tool that can
-    // work here is either in the schema or named in the manifest).
+    // invisible: every tool that can work here is either in the schema or named
+    // in the manifest, and no tool the gate hid is ever named. The converse is
+    // NOT guaranteed — `input.loadedTools` is selected upstream out of the RAW
+    // catalog, so it can still carry an unavailable tool into the schema. That
+    // is fail-open and deliberate; see buildDeferredToolManifest's docstring for
+    // the full statement of what does and does not hold.
     if (input.loadedTools) {
       toolPromptSection += buildDeferredToolManifest(availableAgentTools, input.loadedTools);
     }

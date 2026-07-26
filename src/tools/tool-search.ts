@@ -17,6 +17,30 @@ import { UnifiedToolRegistry } from "./registry.js";
  * Deterministic for a given (registry, request) pair. The only non-pure step is
  * the availability gate below: a tool may declare an `available()` predicate
  * that inspects live machine state (see isToolAvailable).
+ *
+ * WHERE THE AVAILABILITY GATE DOES *NOT* RUN — read this before assuming it is
+ * universal. Three production paths reach the model without passing through
+ * resolveToolsForRequest()/filterAvailableTools(), all of them fail-OPEN and all
+ * of them unchanged from before the gate existed:
+ *
+ *  1. The bridge channels. selectTools() in
+ *     src/agent-request/prepare-request/tool-selection.ts takes
+ *     `if (isBridge) tools = input.bridgeTools` and never calls this resolver,
+ *     so a Telegram/WhatsApp turn ships its bridge tool set ungated.
+ *  2. Post-gate re-derivation on the chat path. That same function re-derives
+ *     its result from the RAW `allAgentTools` after the gate has run (the RAG
+ *     union, the provider tool cap, the tool_search re-add, the product-build
+ *     route), so an unavailable tool can be added back into the schema.
+ *  3. Keyword search. UnifiedToolRegistry.search() — the body of the
+ *     `tool_search` tool below — scores the whole store, so a hidden tool
+ *     remains findable by name. That one is the deliberate recovery path; see
+ *     the docstring on search() in src/tools/registry.ts.
+ *
+ * In every case the model gets a tool that cannot work and receives that tool's
+ * own explicit error, which is strictly better than the failure this mechanism
+ * exists to prevent (a tool that works being silently invisible). Narrowing any
+ * of them would turn a fail-open path fail-closed and is a separate decision,
+ * not a bug fix.
  */
 
 export interface ResolveRequest {
@@ -98,9 +122,11 @@ export function resolveToolsForRequest(
   req: ResolveRequest,
   catalog: ToolDefinition[],
 ): ToolDefinition[] {
-  // Availability gate runs first, for every audience, before tier-shrink/RAG —
-  // so a tool that can't work never consumes a scarce slot and never reaches
-  // the model's schema. Fail-open per tool (isToolAvailable).
+  // Availability gate runs first, for every audience — so a tool that can't
+  // work never consumes a scarce slot in what THIS function returns. Fail-open
+  // per tool (isToolAvailable). It is not a guarantee about the final schema:
+  // selectTools() re-derives from the raw catalog downstream of here. See the
+  // module docstring above for the three paths the gate does not cover.
   const all = filterAvailableTools(catalog);
 
   // Main-chat is the only audience that inspects the message.

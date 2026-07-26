@@ -2,7 +2,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { IntegrationRegistry } from "../../integrations/index.js";
 import { canonicalFetch } from "../../tools/web-egress.js";
-import { isSecretRequirement, type CredentialRequirement } from "../../credentials/requirements.js";
+import { isRequiredRequirement, isSecretRequirement, type CredentialRequirement } from "../../credentials/requirements.js";
 
 type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown };
 
@@ -28,10 +28,15 @@ type InstallBody = { id: string; secretValue?: unknown; secretValues?: unknown }
  *     nothing legitimate sends one);
  *   - the PRIMARY credential must end up supplied whenever the integration
  *     declares any, because the primary is what the single-name readers
- *     (uninstall, /api/integrations/test, the tool auth path) act on;
- *   - a DECLARED-but-omitted non-primary is still allowed, since C7 is where
- *     email first brings a real multi-credential list and decides whether the
- *     rest are mandatory;
+ *     (uninstall, /api/integrations/test, the tool auth path) act on — that is a
+ *     property of this seam, so a declaration cannot opt out of it;
+ *   - every OTHER credential must be supplied unless the declaration says the
+ *     integration runs without it (`required: false`). Answering 200 over a
+ *     declaration whose own terms are unmet is the same silent success the rules
+ *     above remove: it marks the integration CONNECTED on a configuration that
+ *     cannot work. The Settings modal enforces the identical rule client-side
+ *     (it blocks submit on a blank REQUIRED field and skips a blank optional
+ *     one), so the two ends of the install cannot drift;
  *   - an integration that declares NO credentials has nothing to store, so it
  *     installs cleanly on an empty body — but supplying a value for it is an
  *     error, because there is no declared name to bind that value to.
@@ -61,6 +66,8 @@ function resolveInstallValues(
   }
   const primary = credentials[0];
   if (primary && !supplied.has(primary.name)) return { error: `Credential ${primary.name} is required` };
+  const missing = credentials.find(c => isRequiredRequirement(c) && !supplied.has(c.name));
+  if (missing) return { error: `Credential ${missing.name} is required` };
   return { values: [...supplied].map(([name, value]) => ({ requirement: declared.get(name)!, value })) };
 }
 

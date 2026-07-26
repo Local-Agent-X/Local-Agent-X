@@ -25,6 +25,26 @@ export interface CredentialRequirement {
    * non-secret requirement rather than encrypting it.
    */
   secret?: boolean;
+  /**
+   * Whether the component is unusable without this value. Absent means true —
+   * same shape as `secret`, so declaring the field narrows nothing until a
+   * declaration opts out.
+   *
+   * `false` marks a value that unlocks PART of an integration: email's IMAP_*
+   * set is what reading mail needs, and a send-only user legitimately has none
+   * of it. Independent of `secret`: IMAP_PASS is a secret the user may not have,
+   * SMTP_HOST is a non-secret they must supply.
+   *
+   * Read through isRequiredRequirement() below. Its consumers are
+   * missingSecretCredentials() — the shared gate that must not hide a working
+   * send-only mailbox from the agent — the install route
+   * (src/routes/bridges/integrations.ts), which must not reject an install that
+   * omits it, and the Settings modal, which must not block submit on a blank
+   * one. NOT accepted by parseCredentialRequirements(): letting a plugin bundle
+   * declare a secret it can run without is a manifest-contract change, and is
+   * kept out for the same reason `secret` is.
+   */
+  required?: boolean;
   /** Where the user goes to obtain this credential. */
   url?: string;
 }
@@ -40,6 +60,14 @@ export interface SecretAvailabilityPort {
  */
 export function isSecretRequirement(requirement: CredentialRequirement): boolean {
   return requirement.secret !== false;
+}
+
+/**
+ * A requirement is required-by-default; only an explicit `required: false` says
+ * the component still works without it.
+ */
+export function isRequiredRequirement(requirement: CredentialRequirement): boolean {
+  return requirement.required !== false;
 }
 
 /**
@@ -97,21 +125,31 @@ export function missingCredentials(
 }
 
 /**
- * Names of the VAULT-BACKED requirements the availability port cannot satisfy.
+ * Names of the REQUIRED, VAULT-BACKED requirements the availability port cannot
+ * satisfy.
  *
  * This module is the ONE owner of the policy "which requirements count against
- * the vault", and this is the function that expresses it: `secret: false` marks
- * a non-secret config value (SMTP_HOST is the documented example) that must not
- * be encrypted at rest, so its absence from the vault is the normal state and
- * can never be grounds for blocking anything. Every gate that asks "does this
- * have what it needs to run?" — the integrations agent-context gate, the plugin
- * secret lifecycle — consumes THIS rather than re-deriving the filter locally,
- * because two subsystems answering that question two ways is exactly the
- * divergence this shared module exists to remove.
+ * the vault", and this is the function that expresses it. Two declarations opt a
+ * value out, for different reasons, and a value is counted only if BOTH say yes:
+ *  - `secret: false` marks a non-secret config value (SMTP_HOST is the
+ *    documented example) that must not be encrypted at rest, so its absence from
+ *    the vault is the normal state and can never block anything;
+ *  - `required: false` marks a secret the component runs without (email's
+ *    IMAP_PASS: a send-only user has no IMAP password and never will), so its
+ *    absence is a REDUCED capability, not a broken one. Counting it hid a
+ *    working mailbox from the agent entirely.
+ *
+ * Every gate that asks "does this have what it needs to run?" — the integrations
+ * agent-context gate, the plugin secret lifecycle — consumes THIS rather than
+ * re-deriving the filter locally, because two subsystems answering that question
+ * two ways is exactly the divergence this shared module exists to remove.
  */
 export function missingSecretCredentials(
   requirements: CredentialRequirement[],
   availability: SecretAvailabilityPort | undefined,
 ): string[] {
-  return missingCredentials(requirements.filter(isSecretRequirement), availability);
+  return missingCredentials(
+    requirements.filter((item) => isSecretRequirement(item) && isRequiredRequirement(item)),
+    availability,
+  );
 }

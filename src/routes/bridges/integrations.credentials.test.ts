@@ -6,11 +6,19 @@ import { handleIntegrationsRoutes } from "./integrations.js";
 // Shapes the registry produces: `secretName` is the DERIVED primary (always
 // credentials[0].name), and `credentials` is the full declared list — one entry
 // for every builtin today, several for a service like email.
+//
+// The shape mirrors email's real declaration, including its two independent
+// opt-outs: IMAP_PASS is a SECRET the integration runs without (a send-only
+// mailbox), SMTP_HOST is a REQUIRED value that is not a secret.
 const MULTI = {
   id: "email",
   name: "Email",
   secretName: "SMTP_PASS",
-  credentials: [{ name: "SMTP_PASS" }, { name: "IMAP_PASS" }, { name: "SMTP_HOST", secret: false }],
+  credentials: [
+    { name: "SMTP_PASS" },
+    { name: "IMAP_PASS", required: false },
+    { name: "SMTP_HOST", secret: false },
+  ],
 };
 const SINGLE = {
   id: "github",
@@ -77,7 +85,7 @@ describe("integration install with multiple declared credentials", () => {
   it("stores every supplied value under the credential it was declared as", async () => {
     const result = await request("/api/integrations/install", {
       id: "email",
-      secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "imap-secret" },
+      secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "imap-secret", SMTP_HOST: "smtp.example.com" },
     });
 
     expect(result.res.statusCode).toBe(200);
@@ -116,11 +124,64 @@ describe("integration install with multiple declared credentials", () => {
     expect(result.vault.get("SMTP_PASS")).toBe("smtp-secret");
   });
 
-  it("accepts an omitted non-primary credential", async () => {
-    const result = await request("/api/integrations/install", { id: "email", secretValues: { SMTP_PASS: "smtp-secret" } });
+  // ── Requiredness, honoured for the whole declared list ──
+  //
+  // Replaces "accepts an omitted non-primary credential", which returned 200 for
+  // ANY omission below the primary. That was C7's descope written down — "a
+  // DECLARED-but-omitted non-primary is still allowed, since C7 is where email
+  // first brings a real multi-credential list and decides whether the rest are
+  // mandatory" — and this chunk is C7 deciding. The declaration now says which
+  // values the integration cannot run without, so accepting an install that
+  // omits one is the same silent-success this route removed everywhere else: it
+  // answers 200 and marks the integration CONNECTED over a configuration that
+  // cannot work.
+
+  it("accepts an omitted OPTIONAL credential", async () => {
+    // The send-only email user: no IMAP password, and Set Up must still finish.
+    const result = await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "smtp.example.com" },
+    });
 
     expect(result.res.statusCode).toBe(200);
     expect([...result.vault]).toEqual([["SMTP_PASS", "smtp-secret"]]);
+    expect(result.integrations.markInstalled).toHaveBeenCalledWith("email", true);
+  });
+
+  it("rejects an omitted REQUIRED non-primary credential", async () => {
+    const result = await request("/api/integrations/install", { id: "email", secretValues: { SMTP_PASS: "smtp-secret" } });
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Credential SMTP_HOST is required" });
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect([...result.vault]).toEqual([]);
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("requires a non-secret credential exactly as it requires a secret one", async () => {
+    // `secret` and `required` are independent axes: a value can be required and
+    // never vaulted (SMTP_HOST). Deriving one from the other would let every
+    // config value go missing, or make every optional secret mandatory again.
+    const optionalNonSecret = {
+      ...MULTI,
+      credentials: [{ name: "SMTP_PASS" }, { name: "SMTP_HOST", secret: false, required: false }],
+    };
+    const result = await request("/api/integrations/install", { id: "email", secretValues: { SMTP_PASS: "smtp-secret" } }, optionalNonSecret);
+
+    expect(result.res.statusCode).toBe(200);
+    expect([...result.vault]).toEqual([["SMTP_PASS", "smtp-secret"]]);
+  });
+
+  it("still rejects an install that omits the primary even when the primary opted out", async () => {
+    // secretName is credentials[0] and uninstall / /api/integrations/test act on
+    // it alone, so the primary is required by the SHAPE of this seam, not by its
+    // declaration. A declaration that says otherwise does not get to break them.
+    const optionalPrimary = { ...MULTI, credentials: [{ name: "SMTP_PASS", required: false }, { name: "IMAP_PASS", required: false }] };
+    const result = await request("/api/integrations/install", { id: "email", secretValues: {} }, optionalPrimary);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Credential SMTP_PASS is required" });
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
   });
 
   // ── An install that stores nothing never reports success ──

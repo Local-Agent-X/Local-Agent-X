@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
 import { missingSecretCredentials } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
-import { canAuthTypeReach, transportOf, transportTools } from "./types.js";
+import { canAuthTypeReach, normalizeTransport, transportTools } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
@@ -26,37 +26,72 @@ function primaryCredentialName(credentials: CredentialRequirement[]): string {
  * Without this, `registry.get("email").credentials[1].name = …` writes THROUGH
  * into the builtin declaration and every other registry sees it — a per-user
  * override leaking process-wide. CredentialRequirement is flat (name, service,
- * description, secret, url are all primitives), so a per-entry spread is a full
- * copy, not a shallow one.
+ * description, secret, required, url are all primitives), so a per-entry spread
+ * is a full copy, not a shallow one.
  *
- * withDerivedSecretName() shared the builtin's array outright, so the leak was
- * always live for the PRIMARY; credentialsFrom()'s legacy-secretName branch
- * cloned the primary and spread `...rest` by reference, which was inert only
- * while every builtin declared exactly one credential. email now declares nine.
- * Fixed at both, because "the registry never hands out a reference into a
- * builtin declaration" is the invariant, not either call site.
+ * This buys de-aliasing for CREDENTIALS and nothing else. `endpoints` and
+ * `headers` are still handed out by reference from the builtin declaration —
+ * `registry.get("github").endpoints[0].path = "/PWNED"` does leak — and that is
+ * deliberately out of scope here rather than quietly claimed as fixed. The
+ * invariant this function establishes is narrow: the registry never hands out a
+ * reference into a builtin declaration's CREDENTIAL objects.
+ *
+ * withDerivedSecretName() shared the builtin's array outright, which was the
+ * live leak: it was inert only while every builtin declared exactly one
+ * credential, and email now declares nine. It is the funnel every config enters
+ * through, so one copy there covers get(), list() and both load() branches.
  */
 function cloneCredentials(credentials: CredentialRequirement[]): CredentialRequirement[] {
   return credentials.map((c) => ({ ...c }));
 }
 
 /**
- * A declaration as the registry stores it: `secretName` derived, and
- * `endpoints` guaranteed to BE an array.
+ * The declared list with its primary pointed at a different vault entry.
  *
- * `endpoints` is required by the type, but a persisted integrations.json is
- * plain JSON that nothing type-checks on the way in — a hand-edited file, or
- * one written before the field existed, can omit it entirely. Every config
- * enters the registry through this one funnel (both load() branches for custom
- * entries and addIntegration()), so normalising HERE is why no reader needs its
- * own guard. Reading it unguarded is not a cosmetic bug: `.endpoints.filter()`
- * in getAgentContext() threw `TypeError: Cannot read properties of undefined`
- * straight out of build-system-prompt.ts and killed the whole request.
+ * Renaming credentials[0] is the whole of what a saved config is allowed to say
+ * about a BUILTIN's credentials — see load() — and it is also how a pre-list
+ * `secretName` is honoured.
+ *
+ * The cloneCredentials() call here is redundant ON ITS OWN and is kept
+ * deliberately. Its only caller passes `existing.credentials`, which
+ * withDerivedSecretName() already privatised, so removing this clone alone is
+ * unobservable through get()/list() from any input — the tail objects would be
+ * shared between the array being replaced and the one replacing it, both owned
+ * by the same registry, and the suite stays green. Remove BOTH clones and
+ * "does not share them when a saved file renames the primary" goes red, which is
+ * exactly the property being defended: a function that rebuilds a list around
+ * one changed entry must not alias the list it was handed. Spreading `...rest`
+ * by reference from a list the caller did not own is the bug this chunk was
+ * blocked over.
+ */
+function withPrimaryRenamed(credentials: CredentialRequirement[], name: string): CredentialRequirement[] {
+  const [primary, ...rest] = cloneCredentials(credentials);
+  return [primary ? { ...primary, name } : { name }, ...rest];
+}
+
+/**
+ * A declaration as the registry stores it: `secretName` derived, `endpoints`
+ * guaranteed to BE an array, and `transport` guaranteed to be one this build
+ * knows.
+ *
+ * Both fields are required/typed, but a persisted integrations.json is plain
+ * JSON that nothing type-checks on the way in — a hand-edited file, or one
+ * written before a field existed, can carry anything — and POST
+ * /api/integrations casts an arbitrary body in after validating only
+ * id/name/baseUrl. Every config enters the registry through this one funnel
+ * (both load() branches for custom entries and addIntegration()), so normalising
+ * HERE is why no reader needs its own guard.
+ *
+ * Neither is cosmetic: `.endpoints.filter()` and an unindexable `transport` each
+ * threw `TypeError: Cannot read properties of undefined` out of
+ * getAgentContext() — whose only caller is build-system-prompt.ts — killing the
+ * whole request and every unrelated integration in the block with it.
  */
 function withDerivedSecretName(declaration: IntegrationDeclaration): IntegrationConfig {
   return {
     ...declaration,
     endpoints: Array.isArray(declaration.endpoints) ? declaration.endpoints : [],
+    transport: normalizeTransport(declaration.transport),
     credentials: cloneCredentials(declaration.credentials),
     secretName: primaryCredentialName(declaration.credentials),
   };
@@ -69,35 +104,50 @@ function isCredentialRequirement(value: unknown): value is CredentialRequirement
 }
 
 /**
- * Credentials declared by a persisted or user-supplied config, or undefined
- * when it declares none — which is how a saved builtin says "keep the defaults".
+ * The credential list a saved config declares, or undefined when it declares
+ * none OR the list is not WHOLLY well-formed.
  *
- * Configs written before the list existed carry a single `secretName`, and
- * setting it was a real feature: it points an integration at a different vault
- * entry than the builtin default. That override survives here as a rename of
- * the primary requirement, leaving the rest of the declared list untouched.
- * A partially malformed list is ignored rather than filtered, so a corrupt file
- * can never silently promote a different credential to primary.
+ * All-or-nothing on purpose: a partially malformed list is ignored rather than
+ * filtered, so a corrupt file can never silently promote a different credential
+ * to primary. Both readers below share this one rule — they differ in what they
+ * do with the answer, not in what they accept.
  */
-function credentialsFrom(
-  saved: Partial<IntegrationConfig>,
-  current: CredentialRequirement[],
-): CredentialRequirement[] | undefined {
+function savedCredentialList(saved: Partial<IntegrationConfig>): CredentialRequirement[] | undefined {
   const raw: unknown = saved.credentials;
-  if (Array.isArray(raw)) {
-    const list = raw.filter(isCredentialRequirement);
-    if (list.length > 0 && list.length === raw.length) return cloneCredentials(list);
-  }
+  if (!Array.isArray(raw)) return undefined;
+  const list = raw.filter(isCredentialRequirement);
+  return list.length > 0 && list.length === raw.length ? list : undefined;
+}
+
+/**
+ * The vault entry a saved config points its PRIMARY credential at, from either
+ * shape a file can carry it in, or undefined when it names none.
+ *
+ * This is the only thing a saved config gets to say about a BUILTIN's
+ * credentials — see load().
+ */
+function savedPrimaryName(saved: Partial<IntegrationConfig>): string | undefined {
+  const list = savedCredentialList(saved);
+  if (list) return list[0].name;
   const legacy = saved.secretName;
-  if (typeof legacy === "string" && legacy.length > 0) {
-    // Every entry is copied, not just the renamed primary. withDerivedSecretName()
-    // already handed this caller a private list, so this is belt-and-braces —
-    // but a function that rebuilds a list must not alias the one it was given,
-    // or the next caller that passes a shared array reintroduces the leak.
-    const [primary, ...rest] = cloneCredentials(current);
-    return [primary ? { ...primary, name: legacy } : { name: legacy }, ...rest];
-  }
-  return undefined;
+  return typeof legacy === "string" && legacy.length > 0 ? legacy : undefined;
+}
+
+/**
+ * The credential list a config with NO declaration behind it carries — a custom
+ * integration, whether persisted or arriving through addIntegration(). Undefined
+ * when it declares none.
+ *
+ * A config written before the list existed carries a single `secretName`
+ * instead, which becomes the one credential it declares.
+ *
+ * NOT used for a builtin, whose declaration is authoritative: see load().
+ */
+function credentialsFrom(saved: Partial<IntegrationConfig>): CredentialRequirement[] | undefined {
+  const list = savedCredentialList(saved);
+  if (list) return cloneCredentials(list);
+  const primary = savedPrimaryName(saved);
+  return primary ? [{ name: primary }] : undefined;
 }
 
 export class IntegrationRegistry {
@@ -132,13 +182,21 @@ export class IntegrationRegistry {
             // Preserve built-in endpoints/auth metadata; only adopt user's installed/enabled state
             existing.installed = s.installed;
             existing.enabled = s.enabled;
-            const overrides = credentialsFrom(s, existing.credentials);
-            if (overrides) {
-              existing.credentials = overrides;
-              existing.secretName = primaryCredentialName(overrides);
+            // Credentials are NOT user state, and treating them as such is why a
+            // declaration change never reached anyone: save() writes every
+            // integration on any markInstalled/setEnabled/addIntegration, so a
+            // user who ever connected ANYTHING has every other builtin frozen at
+            // whatever it declared that day, with no migration to unfreeze it.
+            // The builtin's declaration is authoritative; the one user-authored
+            // fact inside a saved list is which vault entry the primary points
+            // at, so that alone is re-applied.
+            const renamed = savedPrimaryName(s);
+            if (renamed) {
+              existing.credentials = withPrimaryRenamed(existing.credentials, renamed);
+              existing.secretName = primaryCredentialName(existing.credentials);
             }
           } else {
-            this.integrations.set(s.id, withDerivedSecretName({ ...s, credentials: credentialsFrom(s, []) ?? [] }));
+            this.integrations.set(s.id, withDerivedSecretName({ ...s, credentials: credentialsFrom(s) ?? [] }));
           }
         }
       } catch {}
@@ -189,7 +247,7 @@ export class IntegrationRegistry {
     // Accepts either shape: POST /api/integrations still sends a bare
     // secretName, and an agent authoring from getIntegrationSchema() sends a
     // credential list.
-    this.integrations.set(config.id, withDerivedSecretName({ ...config, credentials: credentialsFrom(config, []) ?? [] }));
+    this.integrations.set(config.id, withDerivedSecretName({ ...config, credentials: credentialsFrom(config) ?? [] }));
     this.save();
   }
 
@@ -251,36 +309,46 @@ export class IntegrationRegistry {
 
   getAgentContext(): string {
     if (isLocalOnlyMode()) return "";
-    const installed = this.advertisable();
+    const installed = this.advertisable()
+      .map(entry => ({ ...entry, transport: normalizeTransport(entry.integration.transport) }));
     if (installed.length === 0) return "";
 
     let ctx = "\n## Connected API Integrations\n";
-    ctx += "These APIs are configured and ready to use via the http_request tool.\n";
-    ctx += "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n";
+    // Both lines are instructions FOR http_request — where to send the call and
+    // where to put the credential — so they are emitted only when the block
+    // actually contains something http_request can call. An email-only block
+    // used to open by telling the model to use a tool none of its entries can
+    // be reached with. Byte-identical whenever any entry is http, which is every
+    // block the ten HTTP builtins appear in.
+    if (installed.some(({ transport }) => transport === "http")) {
+      ctx += "These APIs are configured and ready to use via the http_request tool.\n";
+      ctx += "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n";
+    }
+    ctx += "\n";
 
-    for (const { integration: i, endpoints } of installed) {
-      const transport = transportOf(i);
+    for (const { integration: i, endpoints, transport } of installed) {
       ctx += `### ${i.icon} ${i.name} (${i.id})\n`;
-      // A non-HTTP integration is NOT an http_request target: it has no base URL
-      // to join a path onto, and its declared "endpoints" are pseudo-paths
-      // (smtp, imap/search) no HTTP call can reach. Advertising it under an
-      // empty "Base URL:" invited exactly that call. It is still usable — just
-      // through its own tools — so it is re-rendered rather than dropped, and
-      // the pseudo-paths are withheld because naming them is the invitation.
-      if (transport === "http") {
-        ctx += `Base URL: ${i.baseUrl}\n`;
-      } else {
-        ctx += `Reached with the ${transportTools(transport).join(", ")} tools — not http_request.\n`;
+      if (transport !== "http") {
+        // A non-HTTP integration is NOT an http_request target: it has no base
+        // URL to join a path onto, and its declared "endpoints" are pseudo-paths
+        // (smtp, imap/search) no HTTP call can reach. Naming the tools that DO
+        // carry it is the entire honest payload — every other line here is HTTP
+        // vocabulary. `Auth:` in particular emitted {{SMTP_HOST}}…{{IMAP_USER}}
+        // as Authorization-header placeholders for a transport that has no
+        // headers, seven of which are not vault entries at all; the email_*
+        // tools resolve their own credentials, so there was nothing for the
+        // model to do with those names but misuse them.
+        ctx += `Reached with the ${transportTools(transport).join(", ")} tools — not http_request.\n\n`;
+        continue;
       }
+      ctx += `Base URL: ${i.baseUrl}\n`;
       ctx += `Auth: ${i.credentials.map(c => `{{${c.name}}}`).join(", ")} as ${i.authType === "bearer_token" || i.authType === "bot_token" ? "Bearer token" : i.authType}\n`;
       if (i.headers && Object.keys(i.headers).length > 0) {
         ctx += `Extra headers: ${JSON.stringify(i.headers)}\n`;
       }
-      if (transport === "http") {
-        ctx += `Endpoints:\n`;
-        for (const ep of endpoints) {
-          ctx += `- ${ep.method} ${ep.path} — ${ep.description}\n`;
-        }
+      ctx += `Endpoints:\n`;
+      for (const ep of endpoints) {
+        ctx += `- ${ep.method} ${ep.path} — ${ep.description}\n`;
       }
       ctx += "\n";
     }

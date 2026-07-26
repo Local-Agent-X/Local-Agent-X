@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isRequiredRequirement,
   isSecretRequirement,
   missingCredentials,
   missingSecretCredentials,
@@ -50,10 +51,13 @@ describe("credential requirement names", () => {
   });
 
   it("does not admit the declaration-only fields into the plugin bundle contract", () => {
-    // `secret` and `url` exist on the type for the integrations use case; the
-    // parser must stay exactly as strict as it was before the lift.
+    // `secret`, `url` and `required` exist on the type for the integrations use
+    // case; the parser must stay exactly as strict as it was before the lift.
+    // Admitting `required` would let a bundle declare a secret it can run
+    // without, which is a manifest-contract change and not this chunk's.
     expect(() => parseCredentialRequirements([{ name: "TOKEN", secret: false }])).toThrow("unknown field");
     expect(() => parseCredentialRequirements([{ name: "TOKEN", url: "https://example.com" }])).toThrow("unknown field");
+    expect(() => parseCredentialRequirements([{ name: "TOKEN", required: false }])).toThrow("unknown field");
   });
 });
 
@@ -65,6 +69,20 @@ describe("credential requirement fields", () => {
     expect(isSecretRequirement(bare)).toBe(true);
     expect(isSecretRequirement({ name: "TOKEN", secret: true })).toBe(true);
     expect(isSecretRequirement({ name: "SMTP_HOST", secret: false })).toBe(false);
+  });
+
+  it("treats a requirement as required unless it opts out", () => {
+    // Same shape as `secret`: absent means true, so declaring the field narrows
+    // nothing until a declaration opts in. The two are INDEPENDENT — email's
+    // IMAP_PASS is a secret the user may legitimately not have (send-only), and
+    // its SMTP_HOST is a non-secret the user must supply.
+    const bare: CredentialRequirement = { name: "TOKEN" };
+    expect(bare.required).toBeUndefined();
+    expect(isRequiredRequirement(bare)).toBe(true);
+    expect(isRequiredRequirement({ name: "TOKEN", required: true })).toBe(true);
+    expect(isRequiredRequirement({ name: "IMAP_PASS", required: false })).toBe(false);
+    expect(isSecretRequirement({ name: "IMAP_PASS", required: false })).toBe(true);
+    expect(isRequiredRequirement({ name: "SMTP_HOST", secret: false })).toBe(true);
   });
 
   it("carries an acquisition url when one is declared", () => {
@@ -129,6 +147,31 @@ describe("missing SECRET credential derivation", () => {
     expect(missingSecretCredentials(requirements, undefined)).toEqual(["ONE", "THREE"]);
     expect(missingSecretCredentials([], undefined)).toEqual([]);
     expect(missingSecretCredentials([{ name: "SMTP_HOST", secret: false }], undefined)).toEqual([]);
+  });
+
+  it("ignores a secret the integration can run without", () => {
+    // The send-only email user: SMTP_PASS is in the vault, IMAP_PASS is not and
+    // never will be. A gate that counts it advertises nothing at all for a
+    // perfectly working mailbox. `required: false` is what says the integration
+    // still works without it — the value is a SECRET (so the install path still
+    // encrypts it when supplied), it is simply not a precondition.
+    const optionalSecret: CredentialRequirement[] = [{ name: "SMTP_PASS" }, { name: "IMAP_PASS", required: false }];
+
+    expect(missingSecretCredentials(optionalSecret, port("SMTP_PASS"))).toEqual([]);
+    expect(missingSecretCredentials(optionalSecret, port())).toEqual(["SMTP_PASS"]);
+    // The pure presence check keeps reporting it: "is it there" and "does its
+    // absence block" are different questions, and only the second is relaxed.
+    expect(missingCredentials(optionalSecret, port("SMTP_PASS"))).toEqual(["IMAP_PASS"]);
+  });
+
+  it("still counts a required secret that also opted out of nothing else", () => {
+    // `required: true` written out must behave exactly like absent, or the
+    // default and the explicit value have quietly become two rules.
+    expect(missingSecretCredentials([{ name: "ONE", required: true }], port())).toEqual(["ONE"]);
+    expect(missingSecretCredentials([{ name: "ONE" }], port())).toEqual(["ONE"]);
+    // Optional AND non-secret is not a third state: it is ignored for both
+    // reasons, and neither reason is allowed to become the only one.
+    expect(missingSecretCredentials([{ name: "SMTP_HOST", secret: false, required: false }], port())).toEqual([]);
   });
 });
 

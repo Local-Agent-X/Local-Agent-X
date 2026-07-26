@@ -40,9 +40,29 @@ const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> =
   smtp_imap: ["email_send", "email_read", "email_search"],
 };
 
-/** The declared transport, defaulting to the HTTP shape every integration had. */
-export function transportOf(declaration: Pick<IntegrationDeclaration, "transport">): IntegrationTransport {
-  return declaration.transport ?? "http";
+/**
+ * The transport a config is stored and read under: the declared one when this
+ * build knows it, `"http"` otherwise.
+ *
+ * Takes `unknown` deliberately. `transport` is typed, but a persisted
+ * integrations.json is plain JSON nothing type-checks and POST /api/integrations
+ * casts an arbitrary body into addIntegration() after validating only
+ * id/name/baseUrl — so a value outside this union reaches the readers however
+ * carefully the type is written. Degrading it to the shape every integration had
+ * before the field existed is the same call the `endpoints` guard makes, for the
+ * same reason: unindexable input reaching TRANSPORT_TOOLS threw out of
+ * getAgentContext() and killed the whole request.
+ *
+ * TRANSPORT_TOOLS is the membership test rather than a second list of names, so
+ * a transport can never be "known" and yet have no tools. hasOwn, not `in`:
+ * `"toString" in TRANSPORT_TOOLS` is true and resolves to a function with no
+ * `.join`.
+ */
+export function normalizeTransport(transport: unknown): IntegrationTransport {
+  if (transport === "http") return "http";
+  return typeof transport === "string" && Object.hasOwn(TRANSPORT_TOOLS, transport)
+    ? (transport as IntegrationTransport)
+    : "http";
 }
 
 /** The tools a non-HTTP transport is reached through; empty for `"http"`. */

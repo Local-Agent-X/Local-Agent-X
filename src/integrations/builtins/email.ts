@@ -21,16 +21,24 @@ export const emailIntegration: IntegrationDeclaration = {
   // single-entry install/uninstall/test path still acts on it, so SMTP_PASS must
   // stay first. Only the two passwords belong in the encrypted vault; the rest
   // are non-secret config (`secret: false`) that must NOT be encrypted at rest.
+  //
+  // The IMAP half is `required: false` because authInstructions has always said
+  // so — "For reading emails, ALSO set:" — and it is the truth: sending needs
+  // the SMTP five, reading needs the IMAP four, and a send-only mailbox is a
+  // real, working configuration. Mandatory IMAP made Set Up uncompletable for
+  // that user (the modal refuses a blank field), and the junk IMAP_PASS they
+  // would have to invent to get past it lands in the vault, where it satisfies
+  // the agent-context gate with a credential guaranteed to fail at runtime.
   credentials: [
     { name: "SMTP_PASS", description: "SMTP password — for Gmail, the 16-character app password" },
-    { name: "IMAP_PASS", description: "IMAP password — for Gmail, the same app password" },
+    { name: "IMAP_PASS", required: false, description: "IMAP password — for Gmail, the same app password" },
     { name: "SMTP_HOST", secret: false, description: "Outgoing mail server, e.g. smtp.gmail.com" },
     { name: "SMTP_PORT", secret: false, description: "Outgoing mail port, e.g. 587" },
     { name: "SMTP_USER", secret: false, description: "Outgoing mail username — usually your full email address" },
     { name: "SMTP_FROM", secret: false, description: "Address outgoing mail is sent from" },
-    { name: "IMAP_HOST", secret: false, description: "Incoming mail server, e.g. imap.gmail.com" },
-    { name: "IMAP_PORT", secret: false, description: "Incoming mail port, e.g. 993" },
-    { name: "IMAP_USER", secret: false, description: "Incoming mail username — usually your full email address" },
+    { name: "IMAP_HOST", secret: false, required: false, description: "Incoming mail server, e.g. imap.gmail.com" },
+    { name: "IMAP_PORT", secret: false, required: false, description: "Incoming mail port, e.g. 993" },
+    { name: "IMAP_USER", secret: false, required: false, description: "Incoming mail username — usually your full email address" },
   ],
   endpoints: [
     { name: "Send Email", method: "POST", path: "smtp", description: "Send an email via SMTP" },

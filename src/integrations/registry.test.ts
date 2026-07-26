@@ -259,16 +259,38 @@ describe("agent context credential gate", () => {
 
   it("drops a multi-credential integration when only some of its credentials are present", () => {
     const registry = load(vault("ACME_TOKEN"));
-    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_HOST", secret: false }] }));
+    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_SIGNING_KEY" }] }));
 
     expect(registry.getAgentContext()).toBe("");
   });
 
   it("advertises a multi-credential integration once every credential is present", () => {
-    const registry = load(vault("ACME_TOKEN", "ACME_HOST"));
-    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_HOST", secret: false }] }));
+    const registry = load(vault("ACME_TOKEN", "ACME_SIGNING_KEY"));
+    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_SIGNING_KEY" }] }));
 
     expect(registry.getAgentContext()).toContain("(acme)");
+  });
+
+  it("does not count a non-secret config requirement against the vault", () => {
+    // `secret: false` means the value must NOT be encrypted at rest (SMTP_HOST
+    // is the documented example), so its ABSENCE from the vault is the normal
+    // state. Counting it would make any integration declaring a config value
+    // permanently unadvertisable unless the user stuffed a hostname into the
+    // vault. Only ACME_TOKEN is in this vault; ACME_HOST is deliberately not.
+    const registry = load(vault("ACME_TOKEN"));
+    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_HOST", secret: false }] }));
+
+    const ctx = registry.getAgentContext();
+    expect(ctx).toContain("(acme)");
+    // The gate ignores it; the RENDERING still teaches the model both names.
+    expect(ctx).toContain("Auth: {{ACME_TOKEN}}, {{ACME_HOST}} as api_key");
+  });
+
+  it("still drops the integration when the secret half of a mixed list is missing", () => {
+    const registry = load(vault("ACME_HOST"));
+    registry.addIntegration(custom({ credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_HOST", secret: false }] }));
+
+    expect(registry.getAgentContext()).toBe("");
   });
 
   it("still short-circuits to nothing in local-only mode", () => {
@@ -331,6 +353,115 @@ describe("agent context endpoint feasibility", () => {
     const ctx = registry.getAgentContext();
     expect(ctx).toContain("(email)");
     expect(ctx).toContain("- POST smtp — Send an email via SMTP");
+  });
+
+  it("drops email when the password lives under a vault name email.json redirects to", () => {
+    // KNOWN, ACCEPTED, AND NOT FIXED HERE. email declares SMTP_PASS, but
+    // src/tools/email-config.ts resolvePasswordSecretName() lets ~/.lax/email.json
+    // point SMTP_PASS_SECRET at any vault entry (a user who saved theirs as
+    // FASTMAIL), and env() also falls back to process.env.SMTP_PASS. Either user
+    // has a working mailbox and no SMTP_PASS in the vault, so this gate hides
+    // email from the agent context.
+    //
+    // Deliberately NOT special-cased here: importing email-config.ts would be a
+    // cross-concern import into C7's file. What such a user loses is a context
+    // block that is already nonsense — email's baseUrl is empty and its
+    // endpoints are smtp/imap pseudo-paths, which is the baselined
+    // `transport:email` finding. The real email path is the email_* tools
+    // (email-send-tool.ts / email-read-tools.ts), which resolve credentials
+    // through getSmtpConfig()/getImapConfig() and never read getAgentContext();
+    // its only consumer is build-system-prompt.ts. So nothing functional breaks.
+    // C7 is the fix: give email a truthful credential list and this follows.
+    const registry = load(vault("FASTMAIL"));
+    registry.markInstalled("email", true);
+
+    expect(registry.getAgentContext()).toBe("");
+  });
+});
+
+/**
+ * The body POST /api/integrations receives from the Settings "add custom
+ * integration" form, verbatim: public/js/settings-integrations.js
+ * addCustomIntegration() plus the defaults the route applies
+ * (src/routes/bridges/integrations.ts — builtin/installed/enabled, and
+ * `if (!body.endpoints) body.endpoints = []`). The form has NO endpoints input,
+ * so ZERO endpoints is the only shape the product's UI can produce. Tests that
+ * reach for `custom()` get an endpoint the real feature never has.
+ */
+function asTheFormPosts(overrides: Record<string, unknown> = {}): IntegrationDeclaration {
+  return {
+    id: "acme", name: "Acme", description: "Acme API", icon: "🔌",
+    authType: "bearer_token", authInstructions: "Add your API key for Acme",
+    baseUrl: "https://api.acme.test", docsUrl: "",
+    secretName: "ACME_API_KEY",
+    endpoints: [], headers: {},
+    builtin: false, installed: false, enabled: true,
+    ...overrides,
+  } as unknown as IntegrationDeclaration;
+}
+
+describe("agent context for a custom integration that declares no endpoints", () => {
+  it("advertises it — the heading is the payload http_request needs", () => {
+    // A user adds a custom API in Settings, saves the key, and sees it listed
+    // as installed. Dropping it for having no endpoints would delete the entire
+    // "add custom integration" feature from the agent's context, because the
+    // form cannot produce any other shape.
+    const registry = load(vault("ACME_API_KEY"));
+    registry.addIntegration(asTheFormPosts());
+    registry.markInstalled("acme", true);
+
+    expect(registry.getAgentContext()).toBe(
+      "\n## Connected API Integrations\n" +
+      "These APIs are configured and ready to use via the http_request tool.\n" +
+      "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n" +
+      "### 🔌 Acme (acme)\n" +
+      "Base URL: https://api.acme.test\n" +
+      "Auth: {{ACME_API_KEY}} as Bearer token\n" +
+      "Endpoints:\n\n",
+    );
+  });
+
+  it("carries its extra headers through", () => {
+    const registry = load(vault("ACME_API_KEY"));
+    registry.addIntegration(asTheFormPosts({ headers: { "X-Acme-Version": "2" } }));
+    registry.markInstalled("acme", true);
+
+    expect(registry.getAgentContext()).toContain('Extra headers: {"X-Acme-Version":"2"}\n');
+  });
+
+  it("still gates it on the vault holding its secret", () => {
+    const registry = load(vault("SOMETHING_ELSE"));
+    registry.addIntegration(asTheFormPosts());
+    registry.markInstalled("acme", true);
+
+    expect(registry.getAgentContext()).toBe("");
+  });
+});
+
+describe("agent context install/enable gate", () => {
+  it("does not advertise an installed integration the user disabled", () => {
+    const registry = load(FULL_VAULT);
+    registry.markInstalled("github", true);
+    registry.setEnabled("github", false);
+
+    expect(registry.getAgentContext()).toBe("");
+  });
+
+  it("does not advertise an enabled-by-default integration that was never installed", () => {
+    // Every builtin ships enabled:true, installed:false — so "enabled" alone
+    // must never be enough, or a fresh profile advertises the whole catalogue.
+    const registry = load(FULL_VAULT);
+
+    expect(registry.getAgentContext()).toBe("");
+  });
+
+  it("renders exactly the one installed integration even when the vault holds everything", () => {
+    // Byte-identity with a vault that can never mask an over-broad gate: if the
+    // install/enable filter widens, the other ten builtins show up here.
+    const registry = load(FULL_VAULT);
+    registry.markInstalled("github", true);
+
+    expect(registry.getAgentContext()).toBe(PRE_GATE_GITHUB_CONTEXT);
   });
 });
 

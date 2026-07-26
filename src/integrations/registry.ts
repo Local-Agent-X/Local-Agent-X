@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
-import { missingCredentials } from "../credentials/requirements.js";
+import { isSecretRequirement, missingCredentials } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
 import { canAuthTypeReach } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
@@ -175,11 +175,22 @@ export class IntegrationRegistry {
    * The installed+enabled integrations the model can HONESTLY be told about,
    * each paired with the endpoints its declared auth can actually reach.
    *
-   * Two dishonest advertisements are dropped here: an integration whose
+   * Two dishonest advertisements are dropped here: an integration whose secret
    * credentials are not in the vault (every call would 401), and an endpoint
-   * needing a user-context grant the declared auth type cannot produce. An
-   * integration left with no reachable endpoint is dropped entirely — a heading
-   * with an empty endpoint list teaches the model nothing.
+   * needing a user-context grant the declared auth type cannot produce.
+   *
+   * Only VAULT-BACKED requirements count against the credential gate.
+   * `secret: false` marks a non-secret config value (SMTP_HOST) that must not be
+   * encrypted at rest, so its absence from the vault is the normal state and can
+   * never be grounds for hiding the integration.
+   *
+   * Nothing-reachable drops an integration only when it actually DECLARED
+   * endpoints. Declaring none is not a degenerate case: it is the only shape the
+   * Settings "add custom integration" form can produce (it posts `endpoints:
+   * []`), and for those the heading IS the payload — base URL, auth secret,
+   * extra headers are exactly what http_request needs, with the endpoint list a
+   * convenience on top. Dropping them would delete custom integrations from the
+   * agent's context entirely.
    */
   private advertisable(): Array<{ integration: IntegrationConfig; endpoints: IntegrationEndpoint[] }> {
     return Array.from(this.integrations.values())
@@ -189,7 +200,8 @@ export class IntegrationRegistry {
         endpoints: integration.endpoints.filter(ep => canAuthTypeReach(integration.authType, ep)),
       }))
       .filter(({ integration, endpoints }) =>
-        endpoints.length > 0 && missingCredentials(integration.credentials, this.secrets).length === 0);
+        (integration.endpoints.length === 0 || endpoints.length > 0) &&
+        missingCredentials(integration.credentials.filter(isSecretRequirement), this.secrets).length === 0);
   }
 
   getAgentContext(): string {

@@ -16,6 +16,8 @@ import { join } from "node:path";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const SCRIPT = join(root, "scripts/check-integration-conformance.mjs");
 const BASELINE = join(root, "scripts/integration-conformance-baseline.json");
+const EMAIL = join(root, "src/integrations/builtins/email.ts");
+const GITHUB = join(root, "src/integrations/builtins/github.ts");
 
 function runGate() {
   const r = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", cwd: root });
@@ -35,13 +37,90 @@ function withBaseline(mutate: (b: { known: { id: string; note?: string }[] }) =>
   }
 }
 
+/**
+ * Run the gate against a temporarily mutated SOURCE file, always restoring it.
+ *
+ * The baseline is empty as of C7b, so a fresh finding can no longer be
+ * synthesised by deleting a baseline entry — it has to come from a declaration
+ * that actually violates a rule. That is the stronger test anyway: it exercises
+ * the checks, not just the ratchet bookkeeping.
+ */
+function withSource(file: string, mutate: (text: string) => string) {
+  const original = readFileSync(file, "utf8");
+  try {
+    const mutated = mutate(original);
+    if (mutated === original) throw new Error(`mutation for ${file} matched nothing — the test is not testing anything`);
+    writeFileSync(file, mutated, "utf8");
+    return runGate();
+  } finally {
+    writeFileSync(file, original, "utf8");
+  }
+}
+
 describe("integration conformance gate", () => {
-  it("passes on the current tree and reports the known backlog", () => {
+  it("passes on the current tree with an empty backlog", () => {
     const { code, out } = runGate();
     expect(code).toBe(0);
     expect(out).toMatch(/check-integration-conformance: OK/);
-    // The backlog must stay visible — a silent pass would hide the debt.
-    expect(out).toMatch(/KNOWN violation\(s\) held in the baseline/);
+    // The backlog is empty as of C7b — both remaining entries were earned out
+    // (secret:email was a stale-checker false positive, transport:email's route
+    // half was fixed). A non-empty backlog must still print itself.
+    expect(out).toMatch(/0 known violation\(s\) in baseline/);
+    expect(out).not.toMatch(/KNOWN violation\(s\) held in the baseline/);
+  });
+
+  // ── The two checks C7b repaired, pinned by what they no longer flag ──
+
+  it("does not flag a correctly-declared multi-credential integration", () => {
+    // email declares all nine values its runtime resolves and its instructions
+    // ask for. CHECK 4 used to measure them against the PRIMARY alone and call
+    // eight of them unstorable, which stopped being true when the install path
+    // began persisting the whole declared list.
+    const { out } = runGate();
+
+    expect(out).not.toMatch(/secret:email/);
+  });
+
+  it("still flags a credential the runtime resolves and the declaration omits", () => {
+    // The rule is "resolved but never DECLARED", not "not the primary" — so
+    // un-declaring one must bring the finding straight back.
+    const { code, out } = withSource(EMAIL, t => t.replace(/name: "IMAP_PASS",/, 'name: "IMAP_PASSPHRASE",'));
+
+    expect(code).toBe(1);
+    expect(out).toMatch(/secret:email/);
+    expect(out).toMatch(/IMAP_PASS/);
+  });
+
+  it("does not flag an integration that DECLARES a non-HTTP transport", () => {
+    // An empty baseUrl plus smtp/imap pseudo-paths is the CORRECT shape for an
+    // integration that says it is not an HTTP API.
+    const { out } = runGate();
+
+    expect(out).not.toMatch(/transport:email/);
+  });
+
+  it("flags the same declaration the moment it stops declaring its transport", () => {
+    const { code, out } = withSource(EMAIL, t => t.replace(/\n  transport: "smtp_imap",/, ""));
+
+    expect(code).toBe(1);
+    expect(out).toMatch(/transport:email/);
+    expect(out).toMatch(/baseUrl is empty/);
+  });
+
+  it("flags a transport the runtime does not know, which degrades to http", () => {
+    const { code, out } = withSource(EMAIL, t => t.replace('transport: "smtp_imap"', 'transport: "carrier_pigeon"'));
+
+    expect(code).toBe(1);
+    expect(out).toMatch(/transport:email/);
+    expect(out).toMatch(/normalizeTransport\(\) does not know/);
+  });
+
+  it("flags a non-HTTP transport that also declares a baseUrl", () => {
+    const { code, out } = withSource(EMAIL, t => t.replace('baseUrl: ""', 'baseUrl: "https://mail.example.com"'));
+
+    expect(code).toBe(1);
+    expect(out).toMatch(/transport:email/);
+    expect(out).toMatch(/one of the two is a lie/);
   });
 
   it("audits every registered builtin integration", () => {
@@ -53,10 +132,11 @@ describe("integration conformance gate", () => {
     expect(count).toBeGreaterThanOrEqual(11);
   });
 
-  it("fails when a known violation is no longer baselined (new violation)", () => {
-    const { code, out } = withBaseline((b) => { b.known = b.known.slice(1); });
+  it("fails on a violation that is not in the baseline (new violation)", () => {
+    const { code, out } = withSource(GITHUB, t => t.replace('baseUrl: "https://api.github.com"', 'baseUrl: ""'));
     expect(code).toBe(1);
     expect(out).toMatch(/new plug-and-play violation/);
+    expect(out).toMatch(/transport:github/);
   });
 
   it("fails on a stale baseline entry so the list can only shrink", () => {
@@ -67,9 +147,10 @@ describe("integration conformance gate", () => {
     expect(out).toMatch(/no longer reproduce/);
   });
 
-  it("restores the baseline after mutation", () => {
-    const parsed = JSON.parse(readFileSync(BASELINE, "utf8"));
-    expect(parsed.known.length).toBeGreaterThan(0);
+  it("restores the baseline and the sources after mutation", () => {
+    expect(JSON.parse(readFileSync(BASELINE, "utf8")).known).toEqual([]);
+    expect(readFileSync(EMAIL, "utf8")).toContain('transport: "smtp_imap"');
+    expect(readFileSync(GITHUB, "utf8")).toContain('baseUrl: "https://api.github.com"');
     expect(runGate().code).toBe(0);
   });
 });

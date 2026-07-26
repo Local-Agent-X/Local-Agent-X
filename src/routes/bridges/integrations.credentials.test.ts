@@ -1,7 +1,32 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import { Readable } from "node:stream";
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { handleIntegrationsRoutes } from "./integrations.js";
+
+// The non-secret half of an install is written for real, into a relocated data
+// dir. Mocking the writer would only prove the route called something; what has
+// to be true is that the VALUES land in ~/.lax/email.json — the file
+// getSmtpConfig() reads — and that the secrets do not.
+let dataDir: string;
+let priorDataDir: string | undefined;
+const emailJsonPath = () => join(dataDir, "email.json");
+const emailJson = (): Record<string, string> =>
+  existsSync(emailJsonPath()) ? JSON.parse(readFileSync(emailJsonPath(), "utf-8")) : {};
+
+beforeAll(() => {
+  priorDataDir = process.env.LAX_DATA_DIR;
+  dataDir = mkdtempSync(join(tmpdir(), "lax-integrations-"));
+  process.env.LAX_DATA_DIR = dataDir;
+});
+beforeEach(() => { rmSync(emailJsonPath(), { force: true }); });
+afterAll(() => {
+  if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = priorDataDir;
+  rmSync(dataDir, { recursive: true, force: true });
+});
 
 // Shapes the registry produces: `secretName` is the DERIVED primary (always
 // credentials[0].name), and `credentials` is the full declared list — one entry
@@ -13,6 +38,9 @@ import { handleIntegrationsRoutes } from "./integrations.js";
 const MULTI = {
   id: "email",
   name: "Email",
+  // The transport is what selects the sink a `secret: false` value is written
+  // to, so it is part of the shape being tested, not decoration.
+  transport: "smtp_imap",
   secretName: "SMTP_PASS",
   credentials: [
     { name: "SMTP_PASS" },
@@ -113,7 +141,15 @@ describe("integration install with multiple declared credentials", () => {
     expect(result.integrations.markInstalled).not.toHaveBeenCalled();
   });
 
-  it("never writes a non-secret requirement to the vault", async () => {
+  // ── The two halves go to two sinks, and never to each other's ──
+  //
+  // Replaces "never writes a non-secret requirement to the vault", which
+  // asserted only half of the split and passed while the other half was thrown
+  // away: the route dropped every `secret: false` value on the floor, so a user
+  // who typed SMTP_HOST into Settings had it evaporate and email_setup stayed
+  // the only path that actually configured email.
+
+  it("writes a non-secret value to email.json and never to the vault", async () => {
     const result = await request("/api/integrations/install", {
       id: "email",
       secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "smtp.example.com" },
@@ -121,7 +157,89 @@ describe("integration install with multiple declared credentials", () => {
 
     expect(result.res.statusCode).toBe(200);
     expect(result.vault.has("SMTP_HOST")).toBe(false);
+    expect(emailJson().SMTP_HOST).toBe("smtp.example.com");
+  });
+
+  it("writes a secret to the vault and never to email.json", async () => {
+    const result = await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "imap-secret", SMTP_HOST: "smtp.example.com" },
+    });
+
+    expect(result.res.statusCode).toBe(200);
     expect(result.vault.get("SMTP_PASS")).toBe("smtp-secret");
+    expect(JSON.stringify(emailJson())).not.toContain("smtp-secret");
+    expect(JSON.stringify(emailJson())).not.toContain("imap-secret");
+  });
+
+  it("points the password indirection at the entry this install actually vaulted", async () => {
+    // email-config resolves SMTP_PASS through email.json's SMTP_PASS_SECRET
+    // pointer. A user who once ran email_setup against a reused vault entry has
+    // that pointer set elsewhere; without repointing it, the password they just
+    // saved in Settings would be shadowed by the old one on every send while
+    // Settings reported CONNECTED.
+    writeFileSync(emailJsonPath(), JSON.stringify({ SMTP_PASS_SECRET: "FASTMAIL" }), "utf-8");
+
+    await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "smtp.example.com" },
+    });
+
+    expect(emailJson().SMTP_PASS_SECRET).toBe("SMTP_PASS");
+  });
+
+  it("leaves the indirection alone when this install vaulted no password", async () => {
+    // The pointer is derived from what was STORED, so an install that carries
+    // only config must not seize a password the agent configured elsewhere.
+    writeFileSync(emailJsonPath(), JSON.stringify({ SMTP_PASS_SECRET: "FASTMAIL" }), "utf-8");
+    const configOnly = { ...MULTI, credentials: [{ name: "SMTP_HOST", secret: false }] };
+
+    const result = await request("/api/integrations/install", { id: "email", secretValues: { SMTP_HOST: "smtp.example.com" } }, configOnly);
+
+    expect(result.res.statusCode).toBe(200);
+    expect(emailJson().SMTP_PASS_SECRET).toBe("FASTMAIL");
+  });
+
+  it("refuses a non-secret value that names a vault-entry pointer rather than a config field", async () => {
+    // `*_PASS_SECRET` names a VAULT ENTRY. A declaration is authored over the
+    // network, so accepting one as an install value would let a caller repoint
+    // the password lookup at any stored secret — email_send would then
+    // authenticate to a caller-chosen host with, say, ANTHROPIC_API_KEY.
+    const evil = { ...MULTI, credentials: [{ name: "SMTP_PASS" }, { name: "SMTP_PASS_SECRET", secret: false }] };
+
+    const result = await request("/api/integrations/install", {
+      id: "email",
+      secretValues: { SMTP_PASS: "smtp-secret", SMTP_PASS_SECRET: "ANTHROPIC_API_KEY" },
+    }, evil);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body)).toEqual({ error: "Email configuration has no field named SMTP_PASS_SECRET" });
+    expect(emailJson()).toEqual({});
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-secret value on a transport with nowhere to put it", async () => {
+    // An http integration has no config store. Dropping the value is what this
+    // route used to do everywhere: it answers 200 and marks the integration
+    // CONNECTED over a value it threw away.
+    const httpMulti = { ...MULTI, id: "acme", name: "Acme", transport: "http", secretName: "ACME_TOKEN", credentials: [{ name: "ACME_TOKEN" }, { name: "ACME_REGION", secret: false }] };
+
+    const result = await request("/api/integrations/install", {
+      id: "acme",
+      secretValues: { ACME_TOKEN: "tok", ACME_REGION: "eu" },
+    }, httpMulti);
+
+    expect(result.res.statusCode).toBe(400);
+    expect(JSON.parse(result.res.body).error).toMatch(/ACME_REGION/);
+    expect(result.secretsStore.set).not.toHaveBeenCalled();
+    expect(result.integrations.markInstalled).not.toHaveBeenCalled();
+  });
+
+  it("writes no config file at all for a single-secret http integration", async () => {
+    await request("/api/integrations/install", { id: "github", secretValue: "ghp-token" }, SINGLE);
+
+    expect(existsSync(emailJsonPath())).toBe(false);
   });
 
   // ── Requiredness, honoured for the whole declared list ──

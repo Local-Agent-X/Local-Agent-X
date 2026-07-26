@@ -21,9 +21,13 @@
  *   transport:<id>    the integration is shaped like an HTTP API (baseUrl +
  *                     endpoints consumed by http_request) but its endpoints
  *                     aren't HTTP paths, or it has no baseUrl to join them to.
+ *                     An integration that DECLARES a non-HTTP transport is
+ *                     exempt from that shape — it is not a broken HTTP API, it
+ *                     is correctly saying it is not an HTTP API at all — but is
+ *                     held to the coherence its own declaration implies.
  *   secret:<id>       the credentials the runtime resolves don't match the
- *                     single primary credential the install path stores — so
- *                     Settings reports CONNECTED while the capability stays dead.
+ *                     credentials the install path can store — so Settings
+ *                     reports CONNECTED while the capability stays dead.
  *   runtime:<id>      no runtime path at all: not reachable via http_request,
  *                     no dedicated tool family. Phantom capability.
  *
@@ -157,6 +161,23 @@ function credentialNames(text) {
   return [...block.matchAll(/\bname:\s*["']([^"']+)["']/g)].map((n) => n[1]);
 }
 
+/**
+ * The non-HTTP transports this build knows, read out of TRANSPORT_TOOLS in
+ * src/integrations/types.ts rather than re-listed here. A second list would
+ * drift, and the drift would be silent in exactly the direction that matters:
+ * a transport the code honours but this gate does not would be reported as a
+ * broken HTTP API forever (which is the bug this check just had).
+ */
+const TYPES_TEXT = readFileSync(join(root, "src/integrations/types.ts"), "utf8");
+const TRANSPORT_BLOCK = TYPES_TEXT.match(/TRANSPORT_TOOLS[^=]*=\s*\{([\s\S]*?)\n\};/);
+const NON_HTTP_TRANSPORTS = new Set(
+  [...(TRANSPORT_BLOCK?.[1] ?? "").matchAll(/^\s*(\w+)\s*:/gm)].map((m) => m[1]),
+);
+if (NON_HTTP_TRANSPORTS.size === 0) {
+  console.error("check-integration-conformance: FAIL — parsed 0 non-HTTP transports from src/integrations/types.ts (shape changed? update this script).");
+  process.exit(1);
+}
+
 const integrations = [];
 for (const name of readdirSync(BUILTINS_DIR)) {
   if (name === "index.ts" || !isSource(name)) continue;
@@ -171,6 +192,7 @@ for (const name of readdirSync(BUILTINS_DIR)) {
     id: field(text, "id"),
     authType: field(text, "authType"),
     baseUrl: field(text, "baseUrl") ?? "",
+    transport: field(text, "transport") ?? "http",
     credentials: credentialNames(text),
     authInstructions: field(text, "authInstructions") ?? "",
     endpoints,
@@ -222,6 +244,20 @@ for (const i of integrations) {
 // ------------------------------------------------- CHECK 3: transport coherence
 
 for (const i of integrations) {
+  // An integration that DECLARES a non-HTTP transport is not "shaped like a
+  // broken HTTP API" — it is saying, in the one place the runtime reads, that
+  // http_request is not its runtime path. The empty baseUrl and the pseudo-paths
+  // are then the CORRECT shape, not the defect: getAgentContext() renders it as
+  // its transport's tools and /api/integrations/test refuses to build an HTTP
+  // probe for it. What such a declaration still owes is coherence with itself.
+  if (i.transport !== "http") {
+    if (!NON_HTTP_TRANSPORTS.has(i.transport)) {
+      add(`transport:${i.id}`, i.file, `declares transport "${i.transport}", which normalizeTransport() does not know — it degrades to "http" at runtime, so the integration is advertised and probed as an HTTP API it is not`);
+    } else if (i.baseUrl) {
+      add(`transport:${i.id}`, i.file, `declares non-HTTP transport "${i.transport}" but also a baseUrl ("${i.baseUrl}") — one of the two is a lie about how this integration is reached`);
+    }
+    continue;
+  }
   const nonHttp = i.endpoints.filter((e) => !e.path.startsWith("/"));
   if (i.baseUrl && nonHttp.length > 0) {
     add(`transport:${i.id}`, i.file, `baseUrl declares an HTTP API but ${nonHttp.length} endpoint path(s) are not HTTP paths: ${nonHttp.map((e) => e.path).join(", ")}`);
@@ -237,10 +273,17 @@ for (const i of integrations) {
 
 // ------------------------------------------------ CHECK 4: credential drift
 
-// An integration may now DECLARE several credentials, but what the install path
-// can actually persist is still exactly one vault entry: the primary
-// requirement, surfaced as config.secretName (src/routes/bridges/integrations.ts).
-// So the primary is what the runtime and the instructions are measured against.
+// What the install path persists is the DECLARED LIST, not the primary alone:
+// resolveInstallValues() in src/routes/bridges/integrations.ts pairs every
+// supplied value with the credential it was declared under, vaults the secret
+// ones and routes the `secret: false` ones to the transport's config sink. The
+// Settings modal renders one field per declared credential to match.
+//
+// So the declaration is what the runtime and the instructions are measured
+// against, and "unstorable" means "resolved at runtime, or asked of the user,
+// but never DECLARED" — a value with no name the install path can bind it to.
+// Measuring against the primary alone was this check's own staleness: it made
+// every correctly-declared multi-credential integration look broken.
 const CRED_SUFFIX = /_(PASS|PASSWORD|TOKEN|KEY|SECRET)$/;
 const toolFamilyFiles = new Map(); // integration id -> source files of its tool family
 const toolNames = new Set();
@@ -255,8 +298,9 @@ for (const i of integrations) {
 }
 
 for (const i of integrations) {
-  const declared = i.credentials[0];
-  if (!declared) { add(`secret:${i.id}`, i.file, "no credentials declared — install path has nothing to store"); continue; }
+  const primary = i.credentials[0];
+  if (!primary) { add(`secret:${i.id}`, i.file, "no credentials declared — install path has nothing to store"); continue; }
+  const storable = new Set(i.credentials);
 
   // (a) Credentials the dedicated tool family actually resolves at runtime.
   const resolved = new Set();
@@ -266,24 +310,25 @@ for (const i of integrations) {
     for (const m of text.matchAll(/\bprocess\.env\.([A-Z][A-Z0-9_]*)/g)) resolved.add(m[1]);
     for (const m of text.matchAll(/\bkey\s*===\s*["']([A-Z][A-Z0-9_]*_(?:PASS|TOKEN|KEY|SECRET))["']/g)) resolved.add(m[1]);
   }
-  const unstorable = [...resolved].filter((n) => CRED_SUFFIX.test(n) && n !== declared);
+  const unstorable = [...resolved].filter((n) => CRED_SUFFIX.test(n) && !storable.has(n));
   if (unstorable.length > 0) {
     add(
       `secret:${i.id}`,
       i.file,
-      `runtime resolves credential(s) the install path never stores: ${unstorable.join(", ")} (integration declares credentials [${i.credentials.join(", ")}] and the install path persists only the primary, "${declared}")`,
+      `runtime resolves credential(s) the install path cannot store: ${unstorable.join(", ")} — undeclared, so /api/integrations/install has no name to bind a value to (integration declares [${i.credentials.join(", ")}], primary "${primary}")`,
     );
   }
 
-  // (b) authInstructions that promise more config than one secret field holds.
-  // The Settings modal renders exactly ONE input, labelled with the primary.
+  // (b) authInstructions that promise config no declared credential collects.
+  // The Settings modal renders one input per DECLARED credential, so a value
+  // the instructions name and the declaration omits has nowhere to be typed.
   const promised = [...new Set([...i.authInstructions.matchAll(/\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/g)].map((m) => m[1]))];
-  const extra = promised.filter((n) => n !== declared);
+  const extra = promised.filter((n) => !storable.has(n));
   if (extra.length > 0) {
     add(
       `secret:${i.id}`,
       i.file,
-      `authInstructions ask the user for ${promised.length} values (${promised.join(", ")}) but the install modal renders one field and /api/integrations/install persists only "${declared}" — the other ${extra.length} are silently dropped`,
+      `authInstructions ask the user for ${promised.length} values (${promised.join(", ")}) but ${extra.length} of them are not declared credentials (${extra.join(", ")}), so the install modal renders no field for them and they are silently dropped`,
     );
   }
 }

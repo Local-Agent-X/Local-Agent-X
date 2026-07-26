@@ -20,7 +20,7 @@
     },
     {
       "id": "secret:email",
-      "note": "authInstructions ask for 9 values; the install modal renders one field and the route persists only SMTP_PASS. IMAP_PASS is resolved at runtime but can never be stored this way. email_setup is the only working config path. Fix: make Settings drive email_setup, or give the integration a multi-field credential schema."
+      "note": "authInstructions ask for 9 values but the integration declares only SMTP_PASS, so IMAP_PASS is resolved at runtime and can never be stored through the install path. As of C5 the modal renders one field PER DECLARED CREDENTIAL and the route persists all of them, so the install path is no longer the constraint — the declaration is. email_setup remains the only working config path. Fix (C7): declare email's real credential set and make Settings drive email_setup."
     }
   ]
 }

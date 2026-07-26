@@ -22,16 +22,23 @@ function credentialFieldsHtml(requirements, options) {
   const single = requirements.length === 1 && !!options.singleLabel;
   return requirements.map(item => `
           <div style="margin-bottom:12px">
-            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">${single ? esc(options.singleLabel) : esc(item.service || item.name)} (${esc(item.name)})</label>
+            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">${single ? esc(options.singleLabel) : esc(item.service || item.name)} (${esc(item.name)})${item.required === false ? ' — optional' : ''}</label>
             ${item.description ? `<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px">${esc(item.description)}</div>` : ''}
-            <input type="${item.secret === false ? 'text' : 'password'}" ${options.attribute}="${esc(item.name)}"${item.service ? ` data-credential-service="${esc(item.service)}"` : ''} class="field-input" placeholder="${single ? esc(options.singlePlaceholder) : esc('Enter ' + item.name)}" style="${options.inputStyle || 'width:100%'}" autocomplete="off"/>
+            <input type="${item.secret === false ? 'text' : 'password'}" ${options.attribute}="${esc(item.name)}"${item.service ? ` data-credential-service="${esc(item.service)}"` : ''}${item.required === false ? ' data-credential-optional' : ''} class="field-input" placeholder="${single ? esc(options.singlePlaceholder) : esc('Enter ' + item.name)}" style="${options.inputStyle || 'width:100%'}" autocomplete="off"/>
           </div>`).join('');
 }
 
 /**
  * Reads back the fields credentialFieldsHtml rendered. Returns one entry per
- * field, or null when any field is empty — refusing to submit a blank
- * credential is the shared rule; how each modal TELLS the user is not.
+ * FILLED field, or null when a required field is empty — refusing to submit a
+ * blank credential is the shared rule; how each modal TELLS the user is not.
+ *
+ * A field the declaration marked `required: false` may be left blank, and is
+ * then OMITTED rather than submitted as "": the install route rejects an
+ * explicitly supplied blank, so sending one would only move the refusal to the
+ * server. Absent means required, so this changes nothing for a plugin bundle
+ * (whose manifest cannot declare `required` at all) or for any single-credential
+ * integration.
  */
 function collectCredentialValues(root, attribute, onEmpty) {
   const inputs = [...(root?.querySelectorAll('[' + attribute + ']') || [])];
@@ -39,7 +46,11 @@ function collectCredentialValues(root, attribute, onEmpty) {
   for (const input of inputs) {
     const name = input.getAttribute(attribute);
     const value = input.value?.trim();
-    if (!value) { onEmpty(name, inputs.length); return null; }
+    if (!value) {
+      if (input.hasAttribute('data-credential-optional')) continue;
+      onEmpty(name, inputs.length);
+      return null;
+    }
     entries.push({ name, value, service: input.dataset.credentialService || undefined });
   }
   return entries;

@@ -20,6 +20,57 @@ export interface IntegrationEndpoint {
 }
 
 /**
+ * How the integration's traffic is actually carried. DECLARED, never inferred
+ * from an empty baseUrl. Absent means `"http"` — reachable with the
+ * `http_request` tool by joining a path onto `baseUrl`, which is how every
+ * integration behaved before this field existed, so adding it narrows nothing
+ * until a declaration opts in. `"smtp_imap"` marks an integration `http_request`
+ * provably cannot carry: it has no HTTP base URL, and its "endpoints" are
+ * smtp/imap pseudo-paths that only the dedicated tools below can act on.
+ */
+export type IntegrationTransport = "http" | "smtp_imap";
+
+/**
+ * The tools that actually carry each non-HTTP transport. Declared rather than
+ * inferred so the agent context can name a real interface instead of a "Base
+ * URL:" line the integration cannot serve — an empty base URL plus a pseudo-path
+ * is an invitation to call http_request and get nothing.
+ */
+const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> = {
+  smtp_imap: ["email_send", "email_read", "email_search"],
+};
+
+/**
+ * The transport a config is stored and read under: the declared one when this
+ * build knows it, `"http"` otherwise.
+ *
+ * Takes `unknown` deliberately. `transport` is typed, but a persisted
+ * integrations.json is plain JSON nothing type-checks and POST /api/integrations
+ * casts an arbitrary body into addIntegration() after validating only
+ * id/name/baseUrl — so a value outside this union reaches the readers however
+ * carefully the type is written. Degrading it to the shape every integration had
+ * before the field existed is the same call the `endpoints` guard makes, for the
+ * same reason: unindexable input reaching TRANSPORT_TOOLS threw out of
+ * getAgentContext() and killed the whole request.
+ *
+ * TRANSPORT_TOOLS is the membership test rather than a second list of names, so
+ * a transport can never be "known" and yet have no tools. hasOwn, not `in`:
+ * `"toString" in TRANSPORT_TOOLS` is true and resolves to a function with no
+ * `.join`.
+ */
+export function normalizeTransport(transport: unknown): IntegrationTransport {
+  if (transport === "http") return "http";
+  return typeof transport === "string" && Object.hasOwn(TRANSPORT_TOOLS, transport)
+    ? (transport as IntegrationTransport)
+    : "http";
+}
+
+/** The tools a non-HTTP transport is reached through; empty for `"http"`. */
+export function transportTools(transport: IntegrationTransport): string[] {
+  return transport === "http" ? [] : TRANSPORT_TOOLS[transport];
+}
+
+/**
  * What an integration DECLARES. `credentials` is the full list of values the
  * integration needs — most services need one token, some (email) need several,
  * and the single-name field this replaced could only ever express the first.
@@ -35,6 +86,8 @@ export interface IntegrationDeclaration {
   authInstructions: string;
   baseUrl: string;
   docsUrl: string;
+  /** Absent means `"http"`. See IntegrationTransport. */
+  transport?: IntegrationTransport;
   credentials: CredentialRequirement[];
   scopes?: string[];
   endpoints: IntegrationEndpoint[];

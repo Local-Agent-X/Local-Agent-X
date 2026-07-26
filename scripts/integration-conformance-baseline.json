@@ -16,11 +16,11 @@
   "known": [
     {
       "id": "transport:email",
-      "note": "Empty baseUrl with smtp/imap pseudo-paths. The email_* tools are the real runtime path; the endpoints are config-UI labels. Fix: declare the transport explicitly instead of leaving it shaped like a broken HTTP integration."
+      "note": "HALF FIXED by C7a. email now declares transport 'smtp_imap' and getAgentContext() renders it as its email_* tools instead of an empty 'Base URL:' line, so the agent-prompt half of this finding no longer reproduces. What remains is the route half: /api/integrations/test still joins the smtp/imap pseudo-paths onto an empty baseUrl to build a nonsense probe URL. Fix (C7b): make the test route transport-aware. NOTE: this checker does not yet know the 'transport' field exists — its message still describes the agent-prompt half it no longer causes."
     },
     {
       "id": "secret:email",
-      "note": "authInstructions ask for 9 values but the integration declares only SMTP_PASS, so IMAP_PASS is resolved at runtime and can never be stored through the install path. As of C5 the modal renders one field PER DECLARED CREDENTIAL and the route persists all of them, so the install path is no longer the constraint — the declaration is. email_setup remains the only working config path. Fix (C7): declare email's real credential set and make Settings drive email_setup."
+      "note": "STALE — held only because the CHECKER is out of date, not because the defect reproduces. Its message asserts 'the install path persists only the primary', which stopped being true at C5: the route persists every declared credential, and C7a made email declare all nine (IMAP_* optional per E14). So IMAP_PASS IS now storable through the install path. The script even prints all nine while claiming only the primary is stored. Fix (C7b/C9): teach the checker that the install path persists the full declared list, then retire this entry."
     }
   ]
 }

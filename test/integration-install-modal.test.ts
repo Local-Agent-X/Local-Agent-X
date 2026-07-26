@@ -5,6 +5,9 @@ import { Window } from "happy-dom";
 
 const script = readFileSync(join(process.cwd(), "public", "js", "settings-integrations.js"), "utf-8");
 
+// Mirrors email's real declaration, including its two INDEPENDENT opt-outs:
+// IMAP_PASS is a secret the integration runs without (a send-only mailbox has no
+// IMAP password), SMTP_HOST is a required value that is not a secret.
 const MULTI = {
   id: "email",
   name: "Email",
@@ -15,7 +18,7 @@ const MULTI = {
   secretName: "SMTP_PASS",
   credentials: [
     { name: "SMTP_PASS", description: "App password for the outgoing server" },
-    { name: "IMAP_PASS" },
+    { name: "IMAP_PASS", required: false },
     { name: "SMTP_HOST", secret: false },
   ],
 };
@@ -106,15 +109,92 @@ describe("integration install modal", () => {
     expect(inputs.map(input => input.type)).toEqual(["password", "password", "text"]);
   });
 
-  it("refuses to submit while a declared field is empty", async () => {
+  it("refuses to submit while a REQUIRED field is empty", async () => {
     const { window, calls, inputs, alerts } = await setup(MULTI);
     inputs[0].value = "smtp-secret";
 
     await window.eval("doInstallIntegration('email')") as Promise<void>;
 
     expect(calls).toEqual([]);
-    expect(alerts[0]).toContain("IMAP_PASS");
+    // The blank IMAP_PASS above it is optional and skipped; SMTP_HOST is the
+    // first blank that actually blocks.
+    expect(alerts[0]).toContain("SMTP_HOST");
     expect(window.document.getElementById("install-modal")).not.toBeNull();
+  });
+
+  /**
+   * A declaration may say the integration runs without a value (email's IMAP
+   * half — its authInstructions have always said "For reading emails, ALSO
+   * set"). Refusing to submit until every field is filled made Set Up
+   * uncompletable for a send-only user, and the junk they had to invent to get
+   * past it went into the vault, where it satisfies the agent-context gate with
+   * a credential guaranteed to fail at runtime.
+   */
+  describe("optional credentials", () => {
+    it("submits with an optional field left blank, omitting it entirely", async () => {
+      const { window, calls, inputs } = await setup(MULTI);
+      inputs[0].value = "smtp-secret";
+      inputs[2].value = "smtp.example.com";
+
+      await window.eval("doInstallIntegration('email')") as Promise<void>;
+
+      // Omitted, NOT sent as "": the install route rejects an explicitly
+      // supplied blank, so submitting one would just move the refusal server-side.
+      expect(calls).toEqual([{
+        path: "/api/integrations/install",
+        body: { id: "email", secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "smtp.example.com" } },
+      }]);
+      expect(window.document.getElementById("install-modal")).toBeNull();
+    });
+
+    it("still sends an optional field the user did fill in", async () => {
+      const { window, calls, inputs } = await setup(MULTI);
+      inputs[0].value = "smtp-secret";
+      inputs[1].value = "imap-secret";
+      inputs[2].value = "smtp.example.com";
+
+      await window.eval("doInstallIntegration('email')") as Promise<void>;
+
+      expect(calls[0].body).toEqual({
+        id: "email",
+        secretValues: { SMTP_PASS: "smtp-secret", IMAP_PASS: "imap-secret", SMTP_HOST: "smtp.example.com" },
+      });
+    });
+
+    it("skips an optional field holding only whitespace", async () => {
+      const { window, calls, inputs } = await setup(MULTI);
+      inputs[0].value = "smtp-secret";
+      inputs[1].value = "   ";
+      inputs[2].value = "smtp.example.com";
+
+      await window.eval("doInstallIntegration('email')") as Promise<void>;
+
+      expect(calls[0].body).toEqual({
+        id: "email",
+        secretValues: { SMTP_PASS: "smtp-secret", SMTP_HOST: "smtp.example.com" },
+      });
+    });
+
+    it("tells the user which field may be left blank", async () => {
+      const { window } = await setup(MULTI);
+      const labels = [...window.document.querySelectorAll("#install-modal label")].map(l => l.textContent);
+
+      expect(labels).toEqual(["SMTP_PASS (SMTP_PASS)", "IMAP_PASS (IMAP_PASS) — optional", "SMTP_HOST (SMTP_HOST)"]);
+    });
+
+    it("keeps a requirement that declares no `required` mandatory and unlabelled", async () => {
+      // Absent means required, so nothing changes for the ten single-credential
+      // builtins — or for the plugin setup modal, which shares both functions
+      // and whose manifests cannot declare `required` at all
+      // (parseCredentialRequirements rejects it).
+      const { window, inputs } = await setup(SINGLE);
+      inputs[0].value = "";
+
+      await window.eval("doInstallIntegration('github')") as Promise<void>;
+
+      expect(window.document.querySelector("#install-modal label")!.textContent).not.toContain("optional");
+      expect(window.document.getElementById("install-modal")).not.toBeNull();
+    });
   });
 
   it("is unchanged for a single-credential integration", async () => {

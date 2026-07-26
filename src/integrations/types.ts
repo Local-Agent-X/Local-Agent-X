@@ -8,6 +8,15 @@ export interface IntegrationEndpoint {
   path: string;
   description: string;
   params?: Record<string, { type: string; required?: boolean; description: string }>;
+  /**
+   * Which auth context the endpoint needs. DECLARED, never inferred from the
+   * path. Absent means `"app"` — the endpoint is satisfied by whatever
+   * credential the integration declares, which is how every endpoint behaved
+   * before this field existed. `"user"` marks an endpoint that acts on a
+   * signed-in person's own data and therefore needs a user-context OAuth2
+   * grant: an app-level key provably cannot reach it.
+   */
+  authScope?: "app" | "user";
 }
 
 /**
@@ -45,4 +54,20 @@ export interface IntegrationDeclaration {
 export interface IntegrationConfig extends IntegrationDeclaration {
   /** Derived from `credentials[0].name`. Never hand-declared. */
   secretName: string;
+}
+
+/**
+ * Whether the auth an integration declares can actually reach an endpoint.
+ * Only `oauth2` carries a user-context grant, so it is the only auth type that
+ * satisfies an `authScope: "user"` endpoint — the single-value types
+ * (`api_key`, `bearer_token`, `bot_token`) are app credentials. An endpoint
+ * that declares no scope is reachable by every auth type, so adding the field
+ * to a declaration narrows nothing until that declaration opts in.
+ */
+export function canAuthTypeReach(
+  authType: IntegrationDeclaration["authType"],
+  endpoint: IntegrationEndpoint,
+): boolean {
+  if ((endpoint.authScope ?? "app") === "app") return true;
+  return authType === "oauth2";
 }

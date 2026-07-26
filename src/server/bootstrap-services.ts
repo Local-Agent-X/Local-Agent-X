@@ -327,7 +327,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
 
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
-  const integrations = new IntegrationRegistry(dataDir);
+  const integrations = new IntegrationRegistry(dataDir, secretsStore);
   _t();
 
   function loadSavedSettings() {

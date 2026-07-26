@@ -1,4 +1,4 @@
-import { missingCredentials, type SecretAvailabilityPort } from "../credentials/requirements.js";
+import { missingSecretCredentials, type SecretAvailabilityPort } from "../credentials/requirements.js";
 import type { PluginManifest, PluginSecretRequirement } from "./manifest.js";
 import type { TrustLevel } from "./publisher-trust.js";
 
@@ -30,11 +30,22 @@ export function requiredSecrets(manifest: PluginManifest): PluginSecretRequireme
   return manifest.contributions?.secrets ?? [];
 }
 
+/**
+ * Which of a plugin's declared secrets the vault cannot supply — the gate that
+ * decides whether the plugin may load at all. It asks the shared credentials
+ * module rather than deciding for itself which requirements are vault-backed,
+ * so the plugin gate and the integrations agent-context gate can never answer
+ * that question differently.
+ *
+ * A no-op for every plugin today: parseCredentialRequirements() accepts only
+ * name/service/description, so no manifest can declare `secret: false` yet. It
+ * is the seam that matters, not a behaviour change.
+ */
 export function missingSecrets(
   manifest: PluginManifest,
   availability: SecretAvailabilityPort | undefined,
 ): string[] {
-  return missingCredentials(requiredSecrets(manifest), availability);
+  return missingSecretCredentials(requiredSecrets(manifest), availability);
 }
 
 export class PluginSecretLifecycle {
@@ -50,7 +61,7 @@ export class PluginSecretLifecycle {
   }
 
   missing(requirements: PluginSecretRequirement[]): string[] {
-    return missingCredentials(requirements, this.availability);
+    return missingSecretCredentials(requirements, this.availability);
   }
 
   assertAvailable(manifest: PluginManifest, path: string, trustLevel: TrustLevel, manifestHash?: string): void {

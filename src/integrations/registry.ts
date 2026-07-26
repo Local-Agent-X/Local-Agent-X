@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { CredentialRequirement } from "../credentials/requirements.js";
-import type { IntegrationConfig, IntegrationDeclaration } from "./types.js";
+import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
+import { missingSecretCredentials } from "../credentials/requirements.js";
+import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
+import { canAuthTypeReach } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
@@ -16,8 +18,25 @@ function primaryCredentialName(credentials: CredentialRequirement[]): string {
   return credentials[0]?.name ?? "";
 }
 
+/**
+ * A declaration as the registry stores it: `secretName` derived, and
+ * `endpoints` guaranteed to BE an array.
+ *
+ * `endpoints` is required by the type, but a persisted integrations.json is
+ * plain JSON that nothing type-checks on the way in — a hand-edited file, or
+ * one written before the field existed, can omit it entirely. Every config
+ * enters the registry through this one funnel (both load() branches for custom
+ * entries and addIntegration()), so normalising HERE is why no reader needs its
+ * own guard. Reading it unguarded is not a cosmetic bug: `.endpoints.filter()`
+ * in getAgentContext() threw `TypeError: Cannot read properties of undefined`
+ * straight out of build-system-prompt.ts and killed the whole request.
+ */
 function withDerivedSecretName(declaration: IntegrationDeclaration): IntegrationConfig {
-  return { ...declaration, secretName: primaryCredentialName(declaration.credentials) };
+  return {
+    ...declaration,
+    endpoints: Array.isArray(declaration.endpoints) ? declaration.endpoints : [],
+    secretName: primaryCredentialName(declaration.credentials),
+  };
 }
 
 function isCredentialRequirement(value: unknown): value is CredentialRequirement {
@@ -58,7 +77,15 @@ export class IntegrationRegistry {
   private filePath: string;
   private integrations: Map<string, IntegrationConfig> = new Map();
 
-  constructor(dataDir: string) {
+  /**
+   * `secrets` is REQUIRED on purpose. getAgentContext() may only advertise an
+   * integration whose credentials the vault actually holds, and an optional
+   * port would let a mis-wired construction site silently fall back to
+   * "advertise everything" — the exact dishonest behaviour this gate exists to
+   * remove — while every unit test still passed. Required makes the wiring
+   * compiler-enforced.
+   */
+  constructor(dataDir: string, private secrets: SecretAvailabilityPort) {
     this.filePath = join(dataDir, "integrations.json");
     this.load();
   }
@@ -161,16 +188,50 @@ export class IntegrationRegistry {
     return true;
   }
 
+  /**
+   * The installed+enabled integrations the model can HONESTLY be told about,
+   * each paired with the endpoints its declared auth can actually reach.
+   *
+   * Two dishonest advertisements are dropped here: an integration whose secret
+   * credentials are not in the vault (every call would 401), and an endpoint
+   * needing a user-context grant the declared auth type cannot produce.
+   *
+   * Which credentials count against the vault is NOT decided here — it is
+   * missingSecretCredentials()' policy, shared with the plugin secret gate.
+   *
+   * Nothing-reachable drops an integration only when it actually DECLARED
+   * endpoints, because the two shapes make different claims rather than being
+   * degrees of one. Declaring ZERO endpoints promises nothing that cannot be
+   * delivered, and is a legitimate product shape: it is the only shape the
+   * Settings "add custom integration" form can produce (it posts `endpoints:
+   * []`), and what it does advertise — base URL, auth secret, extra headers —
+   * is exactly what http_request needs. Declaring endpoints and reaching NONE
+   * of them advertises capabilities the integration provably does not have, so
+   * it is dropped whole, deliberately, even though its heading would have been
+   * just as usable as the zero-endpoint one's.
+   */
+  private advertisable(): Array<{ integration: IntegrationConfig; endpoints: IntegrationEndpoint[] }> {
+    return Array.from(this.integrations.values())
+      .filter(i => i.installed && i.enabled)
+      .map(integration => ({
+        integration,
+        endpoints: integration.endpoints.filter(ep => canAuthTypeReach(integration.authType, ep)),
+      }))
+      .filter(({ integration, endpoints }) =>
+        (integration.endpoints.length === 0 || endpoints.length > 0) &&
+        missingSecretCredentials(integration.credentials, this.secrets).length === 0);
+  }
+
   getAgentContext(): string {
     if (isLocalOnlyMode()) return "";
-    const installed = Array.from(this.integrations.values()).filter(i => i.installed && i.enabled);
+    const installed = this.advertisable();
     if (installed.length === 0) return "";
 
     let ctx = "\n## Connected API Integrations\n";
     ctx += "These APIs are configured and ready to use via the http_request tool.\n";
     ctx += "Use the secret name as {{SECRET_NAME}} in Authorization headers.\n\n";
 
-    for (const i of installed) {
+    for (const { integration: i, endpoints } of installed) {
       ctx += `### ${i.icon} ${i.name} (${i.id})\n`;
       ctx += `Base URL: ${i.baseUrl}\n`;
       ctx += `Auth: ${i.credentials.map(c => `{{${c.name}}}`).join(", ")} as ${i.authType === "bearer_token" || i.authType === "bot_token" ? "Bearer token" : i.authType}\n`;
@@ -178,7 +239,7 @@ export class IntegrationRegistry {
         ctx += `Extra headers: ${JSON.stringify(i.headers)}\n`;
       }
       ctx += `Endpoints:\n`;
-      for (const ep of i.endpoints) {
+      for (const ep of endpoints) {
         ctx += `- ${ep.method} ${ep.path} — ${ep.description}\n`;
       }
       ctx += "\n";

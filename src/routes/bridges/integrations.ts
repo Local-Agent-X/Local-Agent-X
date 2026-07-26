@@ -64,6 +64,68 @@ function resolveInstallValues(
   return { values: [...supplied].map(([name, value]) => ({ requirement: declared.get(name)!, value })) };
 }
 
+/**
+ * The extra query a connection probe needs on top of the endpoint's path,
+ * keyed on the API being probed.
+ *
+ * This is the honest residue of the `config.id === "google"` special case, and
+ * it is deliberately NOT declaration-driven. YouTube Data v3 rejects every
+ * request that omits `part`, and `part` takes an enum of resource-part names —
+ * so filling the endpoint's declared required params with any generic probe
+ * value returns 400 for a PERFECTLY VALID key, and the Settings button (which
+ * renders `ok: false` as "Connection failed") would tell that user their key is
+ * broken. IntegrationEndpoint carries a param's type, requiredness and prose
+ * description but no VALUE that is valid for it, so there is nothing generic to
+ * key off. An `example`/`default` on the param declaration is what would retire
+ * this table; deleting it outright without one would just break the button.
+ *
+ * The credential's placement is a separate question and does NOT live here —
+ * see probeHeaders(), which answers it from the declaration.
+ */
+const PROBE_QUERY: Record<string, string> = {
+  "/youtube/v3/search": "part=snippet&q=test&maxResults=1",
+};
+
+/**
+ * The headers a connection probe sends, with the credential where the
+ * INTEGRATION says it goes rather than where this route guesses.
+ *
+ * An integration that names its primary credential inside a declared header —
+ * google's `X-Goog-Api-Key: {{GOOGLE_API_KEY}}` — gets the token substituted
+ * there. Everything that does not falls through to `Authorization: Bearer`,
+ * which is what all ten bearer/bot-token builtins want and is byte-identical to
+ * what they got before this existed (none of them declares a header naming its
+ * credential). That is what retired `if (config.id === "google")`: the route no
+ * longer knows any integration by name.
+ *
+ * Only the PRIMARY credential is substituted, and only into a header the
+ * integration itself declared. Reaching for the vault's own {{SECRET}} resolver
+ * would have been less code and strictly worse: POST /api/integrations accepts
+ * an attacker-authored baseUrl AND an attacker-authored header map, so generic
+ * resolution would turn the test button into a send-any-stored-secret-anywhere
+ * primitive. The single token this route already sent is still the only token
+ * it can send.
+ */
+function probeHeaders(
+  declared: Record<string, string> | undefined,
+  secretName: string,
+  token: string,
+): Record<string, string> {
+  const placeholder = secretName ? `{{${secretName}}}` : "";
+  const headers: Record<string, string> = {};
+  let carriesCredential = false;
+  for (const [key, value] of Object.entries(declared ?? {})) {
+    if (placeholder && typeof value === "string" && value.includes(placeholder)) {
+      headers[key] = value.split(placeholder).join(token);
+      carriesCredential = true;
+    } else {
+      headers[key] = value;
+    }
+  }
+  if (!carriesCredential) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -150,16 +212,11 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     const token = ctx.secretsStore.get(config.secretName);
     if (!token) { json(400, { error: `No credentials found. Save your ${config.secretName} first.` }); return true; }
     try {
-      let testUrl: string;
-      const headers: Record<string, string> = { ...config.headers };
-      if (config.id === "google" && config.authType === "api_key") {
-        testUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=test&maxResults=1`;
-        headers["X-Goog-Api-Key"] = token;
-      } else {
-        const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
-        testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
-        headers["Authorization"] = `Bearer ${token}`;
-      }
+      const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
+      const path = testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "";
+      const query = PROBE_QUERY[path];
+      const testUrl = config.baseUrl + path + (query ? `?${query}` : "");
+      const headers = probeHeaders(config.headers, config.secretName, token);
       // Route through the SSRF-pinned egress chokepoint (DNS-pin + private-IP
       // block + per-hop redirect re-validation) instead of a raw fetch — this
       // HTTP route was sending a stored credential to an attacker-influenced

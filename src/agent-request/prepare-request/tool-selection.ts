@@ -160,8 +160,14 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // strong used to ship every tool every turn "so the LLM cannot fail-discover
   // a tool that exists." The tools array is the one block Anthropic prompt-
   // caches (stream-api.ts), so shipping the filtered set instead of the whole
-  // catalogue shrinks the ~66s cold cache-write with it. loaded ∪ manifested =
-  // full catalog, so discoverability is preserved without the full schema cost.
+  // catalogue shrinks the ~66s cold cache-write with it. What holds is EVERY
+  // AVAILABLE TOOL IS REACHABLE — each is either loaded into the schema or named
+  // in the manifest — so discoverability is preserved without the full schema
+  // cost. Not the full CATALOG: a tool its available() predicate hides is
+  // deliberately in neither, which is the point of the gate. The converse does
+  // not hold either — `loaded` is re-derived below from the RAW catalog, so it
+  // can carry an unavailable tool into the schema (fail-open, see the block at
+  // the availability-gate note further down).
   const { classifyModel, shrinkToolsForTier } = await import("../../model-tiers.js");
   const tier = classifyModel(input.resolvedModel) as Tier;
 
@@ -176,6 +182,28 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   const strongSkipNarrowing =
     tier === "strong" &&
     (providerUndercallsTools(input.resolvedProvider) || isAnthropicProvider);
+  // THE PER-TOOL AVAILABILITY GATE DOES NOT RUN IN THIS FUNCTION. isToolAvailable()
+  // /filterAvailableTools() (src/tools/tool-search.ts) are applied by
+  // resolveToolsForRequest() and by the deferred-tool manifest in
+  // build-system-prompt.ts. Neither is on this path, and two things follow:
+  //
+  //  - the bridge branch immediately below hands `input.bridgeTools` straight to
+  //    the model, so a Telegram/WhatsApp turn is entirely ungated;
+  //  - every re-derivation below (the RAG union at `input.allAgentTools.filter(...)`,
+  //    the provider tool cap, the tool_search re-add, stripInlineBuildTools and
+  //    applyProductBuildToolRoute) selects out of the RAW `input.allAgentTools`,
+  //    so a tool the gate hid upstream can be put back into the schema. On "send
+  //    an email to bob" the RAG union does exactly that with `email_send`.
+  //
+  // Both directions ADD tools, never remove them, so both fail OPEN: the worst
+  // outcome is a tool that returns its own "not configured" error, which is the
+  // behaviour that shipped before the gate existed. That is materially better
+  // than the failure the gate exists to prevent — a WORKING tool going silently
+  // invisible — so this is documented rather than narrowed. Filtering here would
+  // convert the most heavily-branched selection path in the request pipeline
+  // from fail-open to fail-closed, and every one of those branches would need
+  // its own proof that it cannot drop a usable tool. If that is ever wanted, it
+  // is one deliberate change with its own test matrix, not a line added here.
   let tools: ToolDefinition[];
   if (isBridge) {
     tools = input.bridgeTools;

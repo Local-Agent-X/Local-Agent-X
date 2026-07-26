@@ -158,6 +158,19 @@ export class UnifiedToolRegistry {
    * match dominates so a query like "run_build_plan exact call"
    * doesn't get beaten by `memory_recall` (which contains "call" via
    * "recall"). Substring matches stack below the exact-hit floor.
+   *
+   * NOT AVAILABILITY-FILTERED, deliberately. Every other seam that hands tools
+   * to the model runs isToolAvailable()/filterAvailableTools() first
+   * (resolveToolsForRequest and the deferred manifest, both in
+   * src/tools/tool-search.ts), so a tool whose `available()` predicate says it
+   * cannot work right now is absent from the schema and unnamed in the manifest.
+   * This search is the RECOVERY path out of exactly that state: it is what the
+   * model calls when it believes a capability exists and cannot see it, and it
+   * is reachable only when the model asks by keyword. Filtering here would make
+   * a mis-firing predicate unrecoverable at runtime — the same argument that
+   * keeps tool_search itself unhideable in isToolAvailable(). So the gate is NOT
+   * universal: a hidden tool is still findable by keyword, and calling it
+   * returns that tool's own clear "not configured" error rather than silence.
    */
   search(query: string, maxResults = 5): ToolDefinition[] {
     const queryLower = query.toLowerCase().trim();

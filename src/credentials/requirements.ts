@@ -74,7 +74,12 @@ export function parseCredentialRequirements(value: unknown): CredentialRequireme
   });
 }
 
-/** Names of the requirements the availability port cannot currently satisfy. */
+/**
+ * Names of the requirements the availability port cannot currently satisfy.
+ * A pure presence check over exactly the list it is handed — it asks nothing
+ * about whether a requirement BELONGS in the vault. Callers that need that
+ * judgement want missingSecretCredentials() below.
+ */
 export function missingCredentials(
   requirements: CredentialRequirement[],
   availability: SecretAvailabilityPort | undefined,
@@ -82,4 +87,24 @@ export function missingCredentials(
   return requirements
     .filter((item) => !availability?.has(item.name))
     .map((item) => item.name);
+}
+
+/**
+ * Names of the VAULT-BACKED requirements the availability port cannot satisfy.
+ *
+ * This module is the ONE owner of the policy "which requirements count against
+ * the vault", and this is the function that expresses it: `secret: false` marks
+ * a non-secret config value (SMTP_HOST is the documented example) that must not
+ * be encrypted at rest, so its absence from the vault is the normal state and
+ * can never be grounds for blocking anything. Every gate that asks "does this
+ * have what it needs to run?" — the integrations agent-context gate, the plugin
+ * secret lifecycle — consumes THIS rather than re-deriving the filter locally,
+ * because two subsystems answering that question two ways is exactly the
+ * divergence this shared module exists to remove.
+ */
+export function missingSecretCredentials(
+  requirements: CredentialRequirement[],
+  availability: SecretAvailabilityPort | undefined,
+): string[] {
+  return missingCredentials(requirements.filter(isSecretRequirement), availability);
 }

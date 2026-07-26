@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CredentialRequirement, SecretAvailabilityPort } from "../credentials/requirements.js";
-import { isSecretRequirement, missingCredentials } from "../credentials/requirements.js";
+import { missingSecretCredentials } from "../credentials/requirements.js";
 import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
 import { canAuthTypeReach } from "./types.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
@@ -18,8 +18,25 @@ function primaryCredentialName(credentials: CredentialRequirement[]): string {
   return credentials[0]?.name ?? "";
 }
 
+/**
+ * A declaration as the registry stores it: `secretName` derived, and
+ * `endpoints` guaranteed to BE an array.
+ *
+ * `endpoints` is required by the type, but a persisted integrations.json is
+ * plain JSON that nothing type-checks on the way in — a hand-edited file, or
+ * one written before the field existed, can omit it entirely. Every config
+ * enters the registry through this one funnel (both load() branches for custom
+ * entries and addIntegration()), so normalising HERE is why no reader needs its
+ * own guard. Reading it unguarded is not a cosmetic bug: `.endpoints.filter()`
+ * in getAgentContext() threw `TypeError: Cannot read properties of undefined`
+ * straight out of build-system-prompt.ts and killed the whole request.
+ */
 function withDerivedSecretName(declaration: IntegrationDeclaration): IntegrationConfig {
-  return { ...declaration, secretName: primaryCredentialName(declaration.credentials) };
+  return {
+    ...declaration,
+    endpoints: Array.isArray(declaration.endpoints) ? declaration.endpoints : [],
+    secretName: primaryCredentialName(declaration.credentials),
+  };
 }
 
 function isCredentialRequirement(value: unknown): value is CredentialRequirement {
@@ -179,18 +196,19 @@ export class IntegrationRegistry {
    * credentials are not in the vault (every call would 401), and an endpoint
    * needing a user-context grant the declared auth type cannot produce.
    *
-   * Only VAULT-BACKED requirements count against the credential gate.
-   * `secret: false` marks a non-secret config value (SMTP_HOST) that must not be
-   * encrypted at rest, so its absence from the vault is the normal state and can
-   * never be grounds for hiding the integration.
+   * Which credentials count against the vault is NOT decided here — it is
+   * missingSecretCredentials()' policy, shared with the plugin secret gate.
    *
    * Nothing-reachable drops an integration only when it actually DECLARED
-   * endpoints. Declaring none is not a degenerate case: it is the only shape the
+   * endpoints, because the two shapes make different claims rather than being
+   * degrees of one. Declaring ZERO endpoints promises nothing that cannot be
+   * delivered, and is a legitimate product shape: it is the only shape the
    * Settings "add custom integration" form can produce (it posts `endpoints:
-   * []`), and for those the heading IS the payload — base URL, auth secret,
-   * extra headers are exactly what http_request needs, with the endpoint list a
-   * convenience on top. Dropping them would delete custom integrations from the
-   * agent's context entirely.
+   * []`), and what it does advertise — base URL, auth secret, extra headers —
+   * is exactly what http_request needs. Declaring endpoints and reaching NONE
+   * of them advertises capabilities the integration provably does not have, so
+   * it is dropped whole, deliberately, even though its heading would have been
+   * just as usable as the zero-endpoint one's.
    */
   private advertisable(): Array<{ integration: IntegrationConfig; endpoints: IntegrationEndpoint[] }> {
     return Array.from(this.integrations.values())
@@ -201,7 +219,7 @@ export class IntegrationRegistry {
       }))
       .filter(({ integration, endpoints }) =>
         (integration.endpoints.length === 0 || endpoints.length > 0) &&
-        missingCredentials(integration.credentials.filter(isSecretRequirement), this.secrets).length === 0);
+        missingSecretCredentials(integration.credentials, this.secrets).length === 0);
   }
 
   getAgentContext(): string {

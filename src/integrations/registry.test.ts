@@ -21,7 +21,7 @@ import { IntegrationRegistry } from "./registry.js";
 import { BUILTIN_INTEGRATIONS } from "./builtins/index.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { SecretAvailabilityPort } from "../credentials/requirements.js";
-import type { IntegrationConfig, IntegrationDeclaration } from "./types.js";
+import type { IntegrationConfig, IntegrationDeclaration, IntegrationEndpoint } from "./types.js";
 
 let dir: string;
 
@@ -380,6 +380,62 @@ describe("agent context endpoint feasibility", () => {
 });
 
 /**
+ * canAuthTypeReach() makes a claim about ALL FOUR auth types, not one: only
+ * oauth2 carries a user-context grant, so api_key, bearer_token AND bot_token
+ * are alike app credentials that provably cannot reach an `authScope: "user"`
+ * endpoint. Pinning a single app type would leave the other two free to drift —
+ * `authType !== "api_key"`, `=== "oauth2" || === "bot_token"` and
+ * `=== "oauth2" || === "bearer_token"` are all wrong and all passed the suite
+ * when only the api_key leg was covered.
+ *
+ * Latent today, since no builtin annotates authScope on a bearer_token or
+ * bot_token integration — but slack (bot_token) and twitter/facebook/ebay/
+ * spotify/instagram (bearer_token) are each ONE annotation away, and the field
+ * exists precisely so they can opt in.
+ *
+ * Each case declares an app-reachable endpoint alongside the user-scoped one so
+ * the integration is advertised either way: the assertion is about which
+ * ENDPOINTS survive, independent of the nothing-reachable drop rule, which the
+ * last case then pins separately.
+ */
+const AUTH_TYPES = ["api_key", "bearer_token", "bot_token", "oauth2"] as const;
+/** The one auth type that carries a user-context grant. */
+const USER_GRANT_AUTH_TYPE = "oauth2";
+
+const UNSCOPED_ENDPOINT: IntegrationEndpoint =
+  { name: "Ping", method: "GET", path: "/ping", description: "ping" };
+const APP_SCOPED_ENDPOINT: IntegrationEndpoint =
+  { name: "Stats", method: "GET", path: "/stats", description: "stats", authScope: "app" };
+const USER_SCOPED_ENDPOINT: IntegrationEndpoint =
+  { name: "Me", method: "GET", path: "/me", description: "my data", authScope: "user" };
+
+describe.each(AUTH_TYPES)("agent context endpoint feasibility for %s auth", (authType) => {
+  const carriesUserGrant = authType === USER_GRANT_AUTH_TYPE;
+
+  function contextFor(endpoints: IntegrationEndpoint[]): string {
+    const registry = load(vault("ACME_TOKEN"));
+    registry.addIntegration(custom({ authType, endpoints }));
+    return registry.getAgentContext();
+  }
+
+  it("reaches an endpoint that declares no scope and one that declares app scope", () => {
+    const ctx = contextFor([UNSCOPED_ENDPOINT, APP_SCOPED_ENDPOINT, USER_SCOPED_ENDPOINT]);
+    expect(ctx).toContain("- GET /ping — ping");
+    expect(ctx).toContain("- GET /stats — stats");
+  });
+
+  it(`${carriesUserGrant ? "reaches" : "cannot reach"} a user-scoped endpoint`, () => {
+    const ctx = contextFor([UNSCOPED_ENDPOINT, USER_SCOPED_ENDPOINT]);
+    expect(ctx).toContain("(acme)");
+    expect(ctx.includes("- GET /me — my data")).toBe(carriesUserGrant);
+  });
+
+  it(`${carriesUserGrant ? "advertises" : "drops"} an integration whose only endpoint is user-scoped`, () => {
+    expect(contextFor([USER_SCOPED_ENDPOINT]).includes("(acme)")).toBe(carriesUserGrant);
+  });
+});
+
+/**
  * The body POST /api/integrations receives from the Settings "add custom
  * integration" form, verbatim: public/js/settings-integrations.js
  * addCustomIntegration() plus the defaults the route applies
@@ -435,6 +491,66 @@ describe("agent context for a custom integration that declares no endpoints", ()
     registry.markInstalled("acme", true);
 
     expect(registry.getAgentContext()).toBe("");
+  });
+});
+
+/**
+ * `endpoints` is REQUIRED by IntegrationDeclaration, but the persisted
+ * integrations.json is plain JSON that nothing type-checks on the way in: a
+ * hand-edited file, or one written before the field existed, can simply not
+ * have it. Reading it unguarded threw
+ * `TypeError: Cannot read properties of undefined (reading 'filter')` out of
+ * getAgentContext() — whose only caller is build-system-prompt.ts:88 — so a
+ * single malformed saved entry killed EVERY request, not just that integration.
+ *
+ * The fix normalises at the one funnel every config enters through, so `list()`,
+ * `get()` and the routes reading them are covered by the same change rather
+ * than each read needing its own guard.
+ */
+describe("a config that omits the endpoints field entirely", () => {
+  const noEndpointsField = {
+    id: "acme", name: "Acme", icon: "🔌", description: "Acme API", authType: "api_key" as const,
+    authInstructions: "", baseUrl: "https://api.acme.test", docsUrl: "",
+    secretName: "ACME_TOKEN", headers: {}, enabled: true, installed: true, builtin: false,
+  };
+
+  it("loads from integrations.json as zero endpoints instead of throwing", () => {
+    write([noEndpointsField]);
+
+    const registry = load(vault("ACME_TOKEN"));
+    expect(registry.get("acme")!.endpoints).toEqual([]);
+    expect(registry.list().every((i) => Array.isArray(i.endpoints))).toBe(true);
+  });
+
+  it("still renders the agent context rather than killing the whole request", () => {
+    write([noEndpointsField]);
+
+    const ctx = load(vault("ACME_TOKEN")).getAgentContext();
+    expect(ctx).toContain("### 🔌 Acme (acme)");
+    expect(ctx).toContain("Base URL: https://api.acme.test");
+  });
+
+  it("normalises the same way when the config arrives through addIntegration", () => {
+    // The double cast is the POINT, not a shortcut: `endpoints` is required by
+    // IntegrationDeclaration, so this shape can only arrive from something the
+    // compiler never saw — parsed JSON, or a JS caller. Same reason
+    // asTheFormPosts() above casts.
+    const registry = load(vault("ACME_TOKEN"));
+    registry.addIntegration(
+      { ...noEndpointsField, credentials: [{ name: "ACME_TOKEN" }] } as unknown as IntegrationDeclaration,
+    );
+
+    expect(registry.get("acme")!.endpoints).toEqual([]);
+    expect(registry.getAgentContext()).toContain("(acme)");
+  });
+
+  it("survives a round trip through the file it writes", () => {
+    write([noEndpointsField]);
+    load(vault("ACME_TOKEN")).markInstalled("acme", true);
+
+    const saved = JSON.parse(readFileSync(savedFile(), "utf-8")) as IntegrationConfig[];
+    expect(saved.find((s) => s.id === "acme")!.endpoints).toEqual([]);
+    expect(load(vault("ACME_TOKEN")).getAgentContext()).toContain("(acme)");
   });
 });
 

@@ -53,6 +53,21 @@ const externalIngestSessions = new Set<string>();
  *  - email_read / email_search — third-party-authored sender/subject/body
  *    content over IMAP (email-read-tools.ts), returned with NO wrap; inbound
  *    email is a primary injection channel
+ *  - email_read_message — the LARGEST untrusted surface of any email tool: its
+ *    siblings return a snippet, this returns one message's whole body plus
+ *    attachment filenames, all authored by whoever sent the mail, all unwrapped.
+ *    Absent from this set, that body escapes the axis entirely and a turn that
+ *    read it could auto-promote an LLM paraphrase of injected instructions
+ *    straight into USER.md / the Facts DB — the exact D6 failure.
+ *  - email_folders — folder PATHS and names, which are strings chosen by the
+ *    IMAP server or by anyone who can create a folder in the mailbox (a shared
+ *    or delegated account, a hostile/compromised server). Small, but this
+ *    registry is TOOL-CLASS keyed (D8), not payload-volume keyed — `browser` is
+ *    enrolled for a bare navigate on the same reasoning — and every byte of the
+ *    result is off-box-authored text the model reads verbatim. The only cost of
+ *    membership is that the turn cannot AUTO-promote durable memory, which a
+ *    turn that just walked a third-party mailbox should not be doing; explicit
+ *    remember/memory_save stays allowed and provenance-marked.
  * Local file reads and sql over local DBs are deliberately NOT here (owned
  * sources — covered by the sensitive-read taint axis instead).
  */
@@ -67,6 +82,8 @@ const EXTERNAL_INGESTING_TOOLS: ReadonlySet<string> = new Set([
 	"youtube_analyze",
 	"email_read",
 	"email_search",
+	"email_read_message",
+	"email_folders",
 	"WebSearch",
 	"WebFetch",
 ]);

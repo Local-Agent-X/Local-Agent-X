@@ -15,9 +15,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emailSend } from "../src/tools/email-send-tool.js";
-import { emailRead, emailSearch } from "../src/tools/email-read-tools.js";
+import { emailRead, emailSearch, emailReadMessage } from "../src/tools/email-read-tools.js";
+import { emailFolders } from "../src/tools/email-folder-tools.js";
 import { emailDraft, emailSetup } from "../src/tools/email-compose-tools.js";
 import { isToolAvailable } from "../src/tools/tool-search.js";
+
+/** Every tool whose availability is IMAP, after C6 registered the last two. */
+const IMAP_TOOLS = [emailRead, emailSearch, emailReadMessage, emailFolders];
 
 const EMAIL_ENV = [
   "SMTP_HOST", "SMTP_USER", "SMTP_PASS", "SMTP_FROM", "SMTP_PORT",
@@ -58,30 +62,26 @@ function configureImap() {
 describe("email tool availability", () => {
   it("hides send and read tools when email is not configured at all", () => {
     expect(isToolAvailable(emailSend)).toBe(false);
-    expect(isToolAvailable(emailRead)).toBe(false);
-    expect(isToolAvailable(emailSearch)).toBe(false);
+    for (const t of IMAP_TOOLS) expect(isToolAvailable(t), t.name).toBe(false);
   });
 
   it("send-only setup keeps email_send and hides only the IMAP readers", () => {
     configureSmtp();
     expect(isToolAvailable(emailSend)).toBe(true);
-    expect(isToolAvailable(emailRead)).toBe(false);
-    expect(isToolAvailable(emailSearch)).toBe(false);
+    for (const t of IMAP_TOOLS) expect(isToolAvailable(t), t.name).toBe(false);
   });
 
   it("read-only setup keeps the readers and hides only email_send", () => {
     configureImap();
     expect(isToolAvailable(emailSend)).toBe(false);
-    expect(isToolAvailable(emailRead)).toBe(true);
-    expect(isToolAvailable(emailSearch)).toBe(true);
+    for (const t of IMAP_TOOLS) expect(isToolAvailable(t), t.name).toBe(true);
   });
 
-  it("fully configured keeps all three", () => {
+  it("fully configured keeps all of them", () => {
     configureSmtp();
     configureImap();
     expect(isToolAvailable(emailSend)).toBe(true);
-    expect(isToolAvailable(emailRead)).toBe(true);
-    expect(isToolAvailable(emailSearch)).toBe(true);
+    for (const t of IMAP_TOOLS) expect(isToolAvailable(t), t.name).toBe(true);
   });
 
   it("a partial SMTP setup is not treated as configured", () => {

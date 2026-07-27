@@ -205,9 +205,37 @@ describe("availability predicate — no accidental narrowing of the real catalog
   it("declares a predicate on exactly the email tools that need one", async () => {
     // The whole risk of this chunk is a tool going quiet. Pin the blast radius:
     // if a future change adds `available` anywhere else, this fails loudly.
+    //
+    // It fired as designed when C6 registered email_read_message and
+    // email_folders: both are pure-IMAP tools that C4/C5 correctly gave the
+    // predicate, but until they reached the barrel they were not in `allTools`,
+    // so the set was silent about them. That is exactly the event this pin
+    // exists to force a human to look at — a newly GATED tool appearing in the
+    // model's catalog — and the answer here is "yes, deliberately, both are
+    // unusable without IMAP". The pin is updated, not loosened: it is still an
+    // exact-set equality, so the next gated tool trips it too.
     const { allTools } = await import("../src/tools/registry-build.js");
     const declared = allTools.filter((t) => t.available).map((t) => t.name).sort();
-    expect(declared).toEqual(["email_read", "email_search", "email_send"]);
+    expect(declared).toEqual([
+      "email_folders", "email_read", "email_read_message", "email_search", "email_send",
+    ]);
+  });
+
+  it("would still fire for a gated tool that slipped into the catalog unnoticed", async () => {
+    // Proves the pin above is a live tripwire and not a list that happens to
+    // match. MUTATION: this is what an unreviewed `available:` on a new tool
+    // looks like — the assertion must reject it.
+    const { allTools } = await import("../src/tools/registry-build.js");
+    const smuggled = [
+      ...allTools,
+      { name: "sneaky_gated", description: "", parameters: { type: "object", properties: {}, required: [] },
+        available: () => false, execute: async () => ({ content: "" }) },
+    ];
+    const declared = smuggled.filter((t) => t.available).map((t) => t.name).sort();
+    expect(declared).not.toEqual([
+      "email_folders", "email_read", "email_read_message", "email_search", "email_send",
+    ]);
+    expect(declared).toContain("sneaky_gated");
   });
 
   it("changes nothing for any real tool whose predicate says available", async () => {

@@ -180,6 +180,32 @@ export function getSmtpConfig(): { host: string; port: number; user: string; pas
   return { host, port: Number(env("SMTP_PORT")) || 587, user, pass, from };
 }
 
+/**
+ * Is IMAP configured? THE single statement of that rule.
+ *
+ * Every IMAP tool needs it for its `available` predicate, and each of them had
+ * written the same one-liner because the chunks that built them were isolated
+ * from one another (campaign decision E2). Contract-identical copies, but the
+ * point of collapsing them is that they cannot DRIFT: the day "configured"
+ * grows a condition — an OAuth token, a reachability probe — a re-inlined copy
+ * silently keeps the old rule and hides or ships a tool against it.
+ *
+ * It lives HERE, next to getImapConfig(), rather than in any tool file: it is a
+ * property of the config store, not of any one tool, and putting it in one of
+ * the tool files would make the other tool files import a sibling for a rule
+ * neither of them owns. No new module — this one already exists for exactly
+ * this concern.
+ *
+ * A named function, not an inline arrow, so `tool.available` is REFERENTIALLY
+ * the same object across all consumers and a re-inlined copy is detectable.
+ * Deliberately NOT memoized: getImapConfig() re-reads ~/.lax/email.json on
+ * every call so a mailbox the user just configured is usable immediately (see
+ * tool-search.ts on why the availability pass is not cached).
+ */
+export function imapConfigured(): boolean {
+  return typeof getImapConfig() !== "string";
+}
+
 export function getImapConfig(): { host: string; port: number; user: string; pass: string } | string {
   const host = env("IMAP_HOST");
   const user = env("IMAP_USER");

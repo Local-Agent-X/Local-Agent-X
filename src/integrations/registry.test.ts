@@ -1023,7 +1023,7 @@ describe("agent context transport", () => {
   const EMAIL_CONTEXT =
     "\n## Connected API Integrations\n\n" +
     "### 📧 Email (SMTP/IMAP) (email)\n" +
-    "Reached with the email_send, email_read, email_search tools — not http_request.\n\n";
+    "Reached with the email_send, email_read, email_search, email_read_message, email_folders tools — not http_request.\n\n";
 
   const emailContext = () => {
     const registry = load(vault("SMTP_PASS", "IMAP_PASS"));
@@ -1068,7 +1068,7 @@ describe("agent context transport", () => {
     expect(registry.getAgentContext()).toBe(
       PRE_GATE_GITHUB_CONTEXT +
       "### 📧 Email (SMTP/IMAP) (email)\n" +
-      "Reached with the email_send, email_read, email_search tools — not http_request.\n\n",
+      "Reached with the email_send, email_read, email_search, email_read_message, email_folders tools — not http_request.\n\n",
     );
   });
 

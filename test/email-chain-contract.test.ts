@@ -4,21 +4,65 @@
  * Six chunks rebuilt this subsystem and each was verified alone. Per-chunk green
  * is necessary and not sufficient: the defects this campaign actually shipped
  * lived at the joins, and four of the six chunks were blocked and repaired. This
- * file is the only place the chain is driven END TO END, through PRODUCTION
- * entrypoints:
+ * file drives the chain through PRODUCTION entrypoints — tools are looked up in
+ * the registry the model is served from and invoked through their own
+ * `execute()`, so the argument layer (email-tool-args.ts), the config gate
+ * (email-config.ts), the query compiler (email-search-query.ts), the folder
+ * resolver (email-mutate-shared.ts) and the IMAP layer (email-imap.ts) all run
+ * for real. The only substitution is `imapflow` itself — replaced by a fake
+ * SERVER, not by a fake of anything this campaign wrote.
  *
+ * ── WHAT A GREEN RUN HERE DOES AND DOES NOT MEAN ────────────────────────────
+ *
+ * It is not "the email subsystem is correct". A gate that claims more than it
+ * drives is how the PREVIOUS campaign shipped a broken one, so the links are
+ * enumerated, and every link this file does NOT drive names the suite that owns
+ * it. If you are about to trust a green run, read this list first.
+ *
+ * DRIVEN HERE, end to end:
  *   builtin declaration → the real IntegrationRegistry → getAgentContext()
  *     → the unified tool registry (buildToolRegistry) → the availability gate
  *     → the deferred manifest, read back out of a real assembled system prompt
  *     → email_search / email_read / email_read_message → email_folders
  *     → email_delete / email_mark → the IMAP data layer
+ *   ...specifically: barrel registration and single-registration; the three
+ *   availability states on both the schema and manifest surfaces; the config
+ *   gate at execute(); the search date window and sender predicate as COMPILED
+ *   and as sent; the whole-mailbox refusal standing between a selector-less
+ *   `email_delete` and the mailbox; the argument layer's refusal of a
+ *   non-string date; `email_read`'s page size against a real mailbox;
+ *   folder-role resolution (\Trash by role, not by name); the explicit-folder
+ *   guard for every uid-taking mutating verb in the barrel; and the move
+ *   itself, checked against per-folder server state.
  *
- * NOTHING is hand-composed. Tools are looked up in the registry the model is
- * served from and invoked through their own `execute()`, so the argument layer
- * (email-tool-args.ts), the config gate (email-config.ts), the folder resolver
- * (email-mutate-shared.ts) and the IMAP layer (email-imap.ts) all run for real.
- * The only substitution is `imapflow` itself — replaced by a fake SERVER, not by
- * a fake of anything this campaign wrote.
+ * NOT DRIVEN HERE — owned by, and only by:
+ *   · egress / secret-exfil extraction for email_send (which arg fields are
+ *     scanned before bytes leave the box) — src/tool-execution/egress-gates.ts,
+ *     gated by src/tool-execution/capability-class-gates.test.ts, which fails
+ *     if `bcc` or `html` stops being extracted. DECIDED, not an oversight: that
+ *     gate is a property of the tool-execution pipeline over ALL egress tools,
+ *     not of this mail chain, and restating it here would fork the definition
+ *     of "which fields egress" into two places — the exact failure mode this
+ *     campaign spent four chunks on.
+ *   · the full date-parsing grammar (relative units, calendar clamping, the
+ *     1970 floor) — parseDateInput's cases in src/tools/email-read-tools.test.ts.
+ *     This file drives ONE case: that a refusal from that layer reaches the
+ *     composed path as a refusal instead of a silently dropped predicate.
+ *   · body decoding, MIME part selection, attachment metadata, truncation —
+ *     src/tools/email-read-tools.test.ts, plus email-body-render's cases in
+ *     src/tools/email-imap.test.ts.
+ *   · SMTP composition and sending — src/tools/email-send-tool.test.ts.
+ *     email_send appears here only as an AVAILABILITY subject; no mail is sent.
+ *   · connection handling, UIDPLUS confirmation, the no-permanent-removal
+ *     source assertion (E1) — src/tools/email-imap.test.ts.
+ *   · folder listing beyond \Trash resolution — src/tools/email-folder-tools.test.ts.
+ *   · install/credential ownership and the upgrade path —
+ *     test/integration-seam-contract.test.ts (see below).
+ *
+ * KNOWN GAP, stated rather than papered over: the agent-context half of the
+ * chain (getAgentContext) is exercised only as far as buildSystemPrompt()
+ * consumes it; there is no assertion here about how the integration's own
+ * context block renders.
  *
  * RELATIONSHIP TO test/integration-seam-contract.test.ts: that file is the
  * previous campaign's gate and owns the INSTALL half — which credential lands in
@@ -591,6 +635,139 @@ describe("email chain — the whole user journey, end to end", () => {
     expect(state.mailbox.receipts.every((m) => !m.seen), "MARK seam: another folder's mail was marked").toBe(true);
     expect(state.moves, "MARK seam: a mark moved mail").toEqual([]);
   });
+
+  /**
+   * THE UNFILTERED LIST, which is the other way into this chain: "what's in my
+   * inbox" reaches email_read, not email_search, and its page is the input to
+   * the same uids the mutating verbs take.
+   *
+   * The page size is the assertion. C1's headline defect was `fetchPage`
+   * building its sequence range as the string `"*"` — the LAST message in IMAP —
+   * so email_read returned exactly ONE message however large `limit` was, while
+   * still reporting the mailbox's true total. Every state above this line stays
+   * green with that bug restored, because none of them ever read a working
+   * mailbox through this tool.
+   */
+  it("returns a PAGE of the newest messages, not the single last one — email_read against a real mailbox", async () => {
+    const page = payloadOf(await call("email_read", { folder: "INBOX", limit: 3 }));
+    const messages = page.messages as Array<{ uid: number; subject: string }>;
+
+    expect(
+      messages.length,
+      "READ seam: email_read returned a different number of messages than `limit` allowed — a range anchored to \"*\" (the LAST message) returns exactly one here",
+    ).toBe(3);
+    expect(
+      page.total,
+      "READ seam: the page's `total` is not the mailbox's true size, so a caller cannot tell this page is partial",
+    ).toBe(4);
+    expect(page.truncated, "READ seam: 3 of 4 came back and the page did not say it was truncated").toBe(true);
+    expect(
+      messages.map((m) => m.uid),
+      "READ seam: the page is not the NEWEST `limit` messages — \"the 3 oldest\" and \"the 3 newest\" are different mail once a caller deletes them",
+    ).toEqual([1001, 1002, 1003]);
+    expect(state.moves, "READ seam: a read moved mail").toEqual([]);
+  });
+});
+
+// ── THE REFUSALS THAT STAND BETWEEN A MODEL'S SLIP AND THE MAILBOX ──────────
+
+/**
+ * Two layers upstream of the destructive verb whose ONLY job is to refuse, and
+ * whose failure mode in both cases is to WIDEN the set the verb then acts on.
+ * Neither is observable from a well-formed call, so a gate made only of
+ * well-formed calls cannot see either one disappear.
+ */
+describe("email chain — the widening refusals, through the composed path", () => {
+  beforeEach(() => { configureSmtp(); configureImap(); loadMailbox(); });
+
+  /**
+   * THE SINGLE GUARD BETWEEN THIS CAMPAIGN'S DESTRUCTIVE VERB AND A WHOLE
+   * MAILBOX. `email_delete` has no required parameter — `required: []`, because
+   * uids and filters are alternatives — so `email_delete({})` is a call the
+   * schema permits and a model emits ("delete my emails"). Nothing in
+   * email_delete itself refuses it: the empty criteria travel down to
+   * buildSearchQuery, which throws SearchCriteriaError BEFORE a connection is
+   * opened. Remove that throw and this call resolves Trash, matches the whole
+   * INBOX and moves it, returning `{confirmed: true, moved: 3}` with no error.
+   */
+  it("refuses a delete with NO selector at all, rather than matching the whole mailbox", async () => {
+    const result = await call("email_delete", {});
+
+    expect(
+      result.isError,
+      "C1/C3 seam: email_delete with no uids and no filters was ACCEPTED — the empty-criteria refusal is the only thing standing between this verb and the entire mailbox",
+    ).toBe(true);
+    expect(
+      String(result.content),
+      "C1/C3 seam: the refusal does not say the criteria were empty, so the model cannot tell what to fix",
+    ).toMatch(/entire mailbox/i);
+    // C3's other half: this used to be classified by /mailbox|folder|select/i
+    // over the message text, which this sentence matches, and came back as
+    // "you picked a \Noselect container, retry against another folder" — a
+    // false diagnosis whose suggested repair is wrong.
+    expect(
+      String(result.content),
+      "C3 seam: the empty-criteria refusal was rewritten into the \\Noselect-container diagnosis again — a wrong cause with a wrong repair",
+    ).not.toMatch(/containers that hold other folders/);
+
+    expect(state.moves, "C1 seam: a delete that was supposed to be refused moved mail").toEqual([]);
+    expect(state.calls, "C1 seam: the refusal ran a SEARCH — the compiler is supposed to throw before the query reaches the server").not.toContain("search");
+    expect(inFolder("INBOX"), "C1 seam: THE WHOLE INBOX was moved out by a call with no selector").toEqual([1000, 1001, 1002, 1003]);
+    expect(inFolder("[Gmail]/Bin"), "C1 seam: mail landed in Trash from a call with no selector").toEqual([]);
+  });
+
+  it("refuses a selector-less SEARCH from the same one definition", async () => {
+    // Same compiler, same throw, surfaced by the read tool instead — so the two
+    // verbs cannot drift into disagreeing about what "no filters" means.
+    const result = await call("email_search", { folder: "INBOX" });
+
+    expect(result.isError, "C1 seam: a search with no predicates was compiled instead of refused").toBe(true);
+    expect(String(result.content)).toMatch(/entire mailbox/i);
+    expect(state.searchQueries, "C1 seam: an unfiltered query reached the server").toEqual([]);
+  });
+
+  /**
+   * THE ARGUMENT LAYER'S REFUSAL, which only a MALFORMED argument can observe.
+   *
+   * `before: 1785000000000` — epoch milliseconds — is the exact value C2 exists
+   * to refuse. The old reader coerced any non-string to `""` and every caller
+   * skipped falsy values, so the date window vanished with no error and no note.
+   * That widens the match set, and this match set is what feeds the delete
+   * above. Every other argument in this file is well-formed, so with that
+   * silent drop restored the whole file stays green.
+   */
+  it("refuses a non-string date instead of silently dropping the window", async () => {
+    const result = await call("email_search", { from: "noreply@vendor.test", before: 1785000000000 });
+
+    expect(
+      result.isError,
+      "C2 seam: a numeric `before` was ACCEPTED — if it was dropped rather than refused, the date window silently vanished and the match set widened to every message from this sender",
+    ).toBe(true);
+    expect(
+      String(result.content),
+      "C2 seam: the refusal does not name the parameter and the form it wants, so the model cannot retry correctly",
+    ).toMatch(/`before` must be a string/);
+    expect(
+      state.searchQueries,
+      "C2 seam: the search was ISSUED — a query without the date bound the caller asked for is a wider set than was requested",
+    ).toEqual([]);
+    expect(state.calls, "C2 seam: an argument-layer refusal dialled the server").toEqual([]);
+  });
+
+  /**
+   * And the same refusal on the DESTRUCTIVE verb, which is where the widening
+   * actually costs something: a dropped `before` here is the difference between
+   * trashing last year's newsletters and trashing every newsletter.
+   */
+  it("refuses a non-string date on the delete path too, and moves nothing", async () => {
+    const result = await call("email_delete", { from: "noreply@vendor.test", before: 1785000000000 });
+
+    expect(result.isError, "C2 seam: email_delete accepted a date it could not read").toBe(true);
+    expect(String(result.content)).toMatch(/`before` must be a string/);
+    expect(state.moves, "C2 seam: a delete whose date window was unreadable moved mail anyway").toEqual([]);
+    expect(inFolder("INBOX")).toEqual([1000, 1001, 1002, 1003]);
+    expect(state.calls, "C2 seam: an argument-layer refusal dialled the server").toEqual([]);
+  });
 });
 
 // ── THE WRONG-TARGET GUARD, DRIVEN THROUGH THE REGISTRY ─────────────────────
@@ -619,11 +796,22 @@ describe("email chain — uids from folder A cannot act on folder B", () => {
 
   it("refuses a delete whose uids came from receipts and carry no folder", async () => {
     const uids = await receiptUids();
+    const callsBefore = state.calls.length;
 
     const result = await call("email_delete", { uids });
 
     expect(result.isError, "GUARD seam: a uid list with no folder was accepted and INBOX was assumed").toBe(true);
     expect(String(result.content)).toMatch(/`uids` needs `folder`/);
+    // The refusal is answerable from `args` alone, so it must land BEFORE the
+    // folder list and the Trash lookup — the same order email_mark uses. That
+    // is not decoration: while it ran after those, an account with no
+    // resolvable Trash failed this call with the TRASH sentence, so this case
+    // reddened without the provenance rule ever being reached and the evidence
+    // said nothing about the guard.
+    expect(
+      state.calls.slice(callsBefore),
+      "GUARD seam: a refusal decidable from the arguments alone opened a connection to inspect the target first",
+    ).toEqual([]);
     expect(state.moves, "GUARD seam: mail was moved by a call that was supposed to be refused").toEqual([]);
     expect(inFolder("INBOX"), "GUARD seam: INBOX's 1000/1001 — different mail from a different sender — were trashed").toEqual([1000, 1001, 1002, 1003]);
     expect(inFolder("receipts")).toEqual([1000, 1001]);
@@ -649,7 +837,10 @@ describe("email chain — uids from folder A cannot act on folder B", () => {
     const result = await call("email_delete", { uids, folder: "[Gmail]/All Mail" });
 
     expect(result.isError, "GUARD seam: uids absent from the named folder were moved anyway").toBe(true);
-    expect(String(result.content)).toContain("1000, 1001");
+    expect(
+      String(result.content),
+      "GUARD seam: the refusal does not NAME the uids that are not in that folder, so the caller cannot tell which folder it should have named — or it refused for some other reason entirely",
+    ).toContain("1000, 1001");
     expect(state.moves).toEqual([]);
     expect(inFolder("[Gmail]/All Mail")).toEqual([4000]);
   });

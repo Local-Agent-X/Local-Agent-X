@@ -125,6 +125,28 @@ export const emailDelete: ToolDefinition = {
       return fail(`\`uids\` lists ${uids.length} messages; this tool moves at most ${MAX_BATCH} per call. Split the list. Nothing was changed.`);
     }
 
+    // A uid without a folder is not a message. `folder` defaulting to INBOX
+    // meant a model that searched "receipts", got [1000, 1001] and called
+    // email_delete({uids}) moved INBOX's 1000 and 1001 — different mail, both
+    // folders numbering from 1000 because IMAP assigns uids per mailbox — and
+    // got "moved: 2" back. The existence check further down cannot catch that:
+    // the uids ARE present, they just mean something else. Nothing downstream
+    // can recover the provenance either, so the only place to fix it is here,
+    // by refusing to assume.
+    //
+    // ORDER: before `resolveFolder`, matching email_mark. Whether the CALLER
+    // named a folder is answerable from `args` alone, so this refusal costs no
+    // LIST and no SELECT — a call we are about to refuse should not first go
+    // and inspect the target. It also keeps the refusal LEGIBLE: running it
+    // after the Trash lookup meant an account whose Trash could not be resolved
+    // failed a folder-less uid delete with the TRASH sentence, so the
+    // provenance rule was never reached and a test pinning it went red for an
+    // unrelated reason.
+    if (uids.length > 0) {
+      const needsFolder = requireExplicitFolder(read);
+      if (needsFolder) return needsFolder;
+    }
+
     const resolved = await resolveFolder(cfg, requestedFolder);
     if ("content" in resolved) return resolved;
     const { folder, folders } = resolved;
@@ -144,18 +166,8 @@ export const emailDelete: ToolDefinition = {
     let targets = uids;
     let subjects: EmailHeader[] = [];
     if (targets.length > 0) {
-      // A uid without a folder is not a message. `folder` defaulting to INBOX
-      // meant a model that searched "receipts", got [1000, 1001] and called
-      // email_delete({uids}) moved INBOX's 1000 and 1001 — different mail, both
-      // folders numbering from 1000 because IMAP assigns uids per mailbox — and
-      // got "moved: 2" back. The existence check below cannot catch that: the
-      // uids ARE present, they just mean something else. Nothing downstream can
-      // recover the provenance either, so the only place to fix it is here, by
-      // refusing to assume. One extra argument on a destructive call, in
-      // exchange for a class of wrong-target delete that is otherwise
-      // unreachable to detect.
-      const needsFolder = requireExplicitFolder(read);
-      if (needsFolder) return needsFolder;
+      // `folder` was proved explicit above, before any round trip.
+      //
       // RECORDED RESIDUAL — the existence check and the move are two SELECTs on
       // two connections (fetchHeaders below, then moveMessages at the bottom),
       // so there is a window between them. DECIDED: recorded, not closed.
@@ -182,14 +194,12 @@ export const emailDelete: ToolDefinition = {
       // EXPECTED value to moveMessages, and refuse only when both ends report a
       // validity and they disagree — never when either is unknown.
       //
-      // IMAP uids are PER-MAILBOX. `folder` defaults to INBOX, so a model that
-      // searched "receipts", got [1000, 1001] and called email_delete without
-      // `folder` would otherwise move INBOX's 1000 and 1001 — different mail,
-      // reported as a successful delete of the messages it named. Resolving the
-      // set in the folder being moved FROM makes that unreachable: nothing moves
-      // unless every requested uid is there, and the ones that are not are
-      // named. It also catches the plain case of a uid that no longer exists,
-      // which used to come back as a non-error "the number moved is UNKNOWN".
+      // What the check below adds ON TOP of the explicit-folder rule: the uids
+      // are resolved IN the folder being moved FROM, so nothing moves unless
+      // every requested uid is actually there, and the ones that are not are
+      // named. That catches a uid naming a message in the wrong-but-named
+      // folder, and the plain case of a uid that no longer exists — which used
+      // to come back as a non-error "the number moved is UNKNOWN".
       try {
         subjects = await fetchHeaders(cfg, folder, targets);
       } catch (err) {

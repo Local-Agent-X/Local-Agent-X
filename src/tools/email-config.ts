@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
+import { getSecretsStoreSingleton } from "../secrets.js";
 
 // Send-once window for identical (to, cc, subject, body) payloads. The
 // in-process dedup phase already catches MCP-loop within-turn dupes at
@@ -23,7 +23,6 @@ export function resolvePath(p: string): string {
 function loadEmailJson(): Record<string, string> {
   try {
     const p = resolve(getLaxDir(), "email.json");
-    const { readFileSync } = require("node:fs") as typeof import("node:fs");
     return JSON.parse(readFileSync(p, "utf-8"));
   } catch { return {}; }
 }
@@ -32,10 +31,15 @@ export function vault(key: string): string | undefined {
   // Read from the encrypted secrets vault (AES-256-GCM, DPAPI-protected key).
   // Used for the SMTP/IMAP password so it never sits plaintext in email.json.
   // Non-secret config (host/user/from) stays in email.json.
-  try {
-    const { getSecretsStoreSingleton } = require("../secrets.js") as typeof import("../secrets.js");
-    return getSecretsStoreSingleton()?.get(key);
-  } catch { return undefined; }
+  //
+  // This MUST be a static ESM import of ../secrets.js. It used to be a
+  // createRequire() load, which silently broke every password lookup in the
+  // dev server: `_secretsStoreSingleton` is a module-level variable, and a
+  // createRequire() load is a SEPARATE module instance from the ESM graph, so
+  // bootstrap set the singleton on one instance while this read the other and
+  // got null forever. The symptom was email_setup reporting "Secret 'SMTP_PASS'
+  // is not in the vault" seconds after the secret was saved successfully.
+  return getSecretsStoreSingleton()?.get(key);
 }
 
 /** Resolve which secret name holds the SMTP password.
@@ -72,7 +76,6 @@ function env(key: string): string | undefined {
 /** Write non-secret SMTP config to ~/.lax/email.json. Password is NOT written
  *  here — it must be stored in the secrets vault as SMTP_PASS. */
 export function writeEmailJson(patch: Record<string, string>): void {
-  const { writeFileSync, readFileSync, existsSync, mkdirSync } = require("node:fs") as typeof import("node:fs");
   const dir = resolve(getLaxDir());
   mkdirSync(dir, { recursive: true });
   const p = resolve(dir, "email.json");

@@ -179,10 +179,10 @@ function populateConnectStep() {
       ${obApiKeyBlock('openai', 'OPENAI_API_KEY', 'sk-...', 'Get one at platform.openai.com/api-keys')}
     `;
   } else if (_onboardProvider === 'anthropic') {
-    desc.textContent = 'Sign in with your Claude subscription (via the Claude CLI), or paste an Anthropic API key.';
+    desc.textContent = 'Sign in with your Claude subscription, or paste an Anthropic API key.';
     container.innerHTML = `
       <button class="action-btn primary" onclick="onboardOAuth('anthropic')" style="padding:10px 32px;font-size:1rem">Sign In with Claude</button>
-      <span style="color:var(--muted);font-size:.75rem">Subscription auth runs through the Claude CLI (must be installed)</span>
+      <span style="color:var(--muted);font-size:.75rem">Max / Pro subscription — approve in the browser, nothing to install</span>
       ${obApiKeyBlock('anthropic', 'ANTHROPIC_API_KEY', 'sk-ant-...', 'Get one at console.anthropic.com')}
     `;
   } else if (_onboardProvider === 'xai') {

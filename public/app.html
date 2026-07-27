@@ -424,12 +424,12 @@
             <button class="action-btn" onclick="window.open('https://grok.com/?_s=usage','_blank')" title="Open SuperGrok subscription usage">View Usage ↗</button>
           </div>
           <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. LAX stores the OAuth tokens as an encrypted envelope at <code>~/.lax/xai-auth.json</code> and refreshes them automatically.</div>
-          <div id="xai-cli-status" class="status-badge warn" style="margin-top:10px"><span class="status-dot"></span> Checking Grok Build CLI...</div>
-          <div class="btn-row" style="margin-top:8px">
+          <div id="xai-cli-status" class="status-badge warn cli-connect-legacy" style="margin-top:10px"><span class="status-dot"></span> Checking Grok Build CLI...</div>
+          <div class="btn-row cli-connect-legacy" style="margin-top:8px">
             <button id="btn-install-grok-cli" class="action-btn" onclick="installGrokCli()" style="display:none">Install Grok Build CLI</button>
             <button id="btn-grok-cli-login" class="action-btn" onclick="doGrokCliLogin()">Sign in via Grok Build CLI</button>
           </div>
-          <div class="field-hint" style="margin-top:6px">The Grok Build CLI (<code>grok</code>) lets <code>self_edit</code> do code surgery on your SuperGrok / X Premium+ subscription. This separate sign-in uses the CLI-native store at <code>~/.grok/auth.json</code>, which LAX does not encrypt.</div>
+          <div class="field-hint cli-connect-legacy" style="margin-top:6px">The Grok Build CLI (<code>grok</code>) lets <code>self_edit</code> do code surgery on your SuperGrok / X Premium+ subscription. This separate sign-in uses the CLI-native store at <code>~/.grok/auth.json</code>, which LAX does not encrypt.</div>
           <div id="xai-open-fallback" style="display:none;margin-top:8px;font-size:.85rem"></div>
           <details style="margin-top:10px;font-size:.85rem">
             <summary style="cursor:pointer;color:var(--muted)">Browser couldn't reach the app? Paste the code from xAI</summary>
@@ -444,37 +444,37 @@
           <div class="section-title" data-local-only-auth-title>OpenAI Authentication</div>
           <div class="section-desc">Connect to OpenAI via OAuth to use GPT/Codex models. LAX stores this sign-in as an encrypted envelope at <code>~/.lax/auth.json</code>.</div>
           <div id="auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div id="codex-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Codex CLI...</div>
+          <div id="codex-cli-status" class="status-badge warn cli-connect-legacy" style="margin-top:6px"><span class="status-dot"></span> Checking Codex CLI...</div>
           <div class="btn-row" style="margin-top:10px">
             <button id="btn-login" class="action-btn primary" onclick="doLogin()">Sign In with OpenAI</button>
             <button id="btn-disconnect" class="action-btn danger" onclick="doDisconnect()" style="display:none">Disconnect</button>
-            <button id="btn-install-codex-cli" class="action-btn" onclick="installCodexCli()" style="display:none">Install Codex CLI</button>
-            <button id="btn-codex-cli-login" class="action-btn" onclick="doCodexCliLogin()" style="display:none">Sign in via Codex CLI</button>
+            <button id="btn-install-codex-cli" class="action-btn cli-connect-legacy" onclick="installCodexCli()" style="display:none">Install Codex CLI</button>
+            <button id="btn-codex-cli-login" class="action-btn cli-connect-legacy" onclick="doCodexCliLogin()" style="display:none">Sign in via Codex CLI</button>
             <button class="action-btn" onclick="window.open('https://chatgpt.com/codex/settings/usage','_blank')" title="Open ChatGPT/Codex usage dashboard">View Usage ↗</button>
           </div>
-          <div class="field-hint" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess. A separate <code>codex login</code> uses the CLI-native <code>~/.codex/auth.json</code>, which LAX does not encrypt. LAX never overwrites an existing CLI store by default. When none exists, an app build may create a temporary plaintext mirror from your encrypted LAX sign-in and remove it afterward.</div>
+          <div class="field-hint cli-connect-legacy" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess. A separate <code>codex login</code> uses the CLI-native <code>~/.codex/auth.json</code>, which LAX does not encrypt. LAX never overwrites an existing CLI store by default. When none exists, an app build may create a temporary plaintext mirror from your encrypted LAX sign-in and remove it afterward.</div>
         </div>
         <div class="section-card">
           <div class="section-title" data-local-only-auth-title>Anthropic Authentication</div>
-          <div class="section-desc">Connect to Claude (Sonnet, Opus, Haiku) via the Claude CLI subprocess. Two supported options: Claude CLI login (easiest) or setup-token from <code>claude setup-token</code>. Starting 2026-06-15 LAX usage draws from your subscription's <strong>Agent SDK credit pool</strong> (Max 20x = $200/mo), separate from interactive Claude.ai. Direct OAuth tokens are NOT permitted for third-party tools per Anthropic's TOS.</div>
+          <div class="section-desc">Connect to Claude (Sonnet, Opus, Haiku) with your Claude subscription. Sign-in happens in the browser — nothing is installed and no command line is involved. Starting 2026-06-15 LAX usage draws from your subscription's <strong>Agent SDK credit pool</strong> (Max 20x = $200/mo), separate from interactive Claude.ai.</div>
           <div id="anthropic-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div id="claude-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
+          <div id="claude-cli-status" class="status-badge warn cli-connect-legacy" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
           <div id="anthropic-already-connected" style="margin-top:8px;display:none">
-            <div class="field-hint" style="color:var(--accent)">✓ You're connected via the Claude CLI's own login session — no further action needed. Chat &amp; builds will work via subprocess.</div>
+            <div class="field-hint" style="color:var(--accent)">✓ You're connected with your Claude subscription — no further action needed.</div>
             <button class="action-btn" style="margin-top:6px;font-size:.7rem;padding:4px 10px" onclick="toggleAnthropicOptions()">Show connection options ▾</button>
           </div>
           <div id="anthropic-options" style="margin-top:10px">
             <div class="field-hint" style="margin-bottom:6px"><strong>Two ways to connect</strong> (only one needed):</div>
             <div class="field" style="margin-top:10px">
-              <label class="field-label">Option 1 — Claude CLI login (easiest)</label>
+              <label class="field-label">Option 1 — Claude subscription sign-in (easiest)</label>
               <div class="btn-row">
-                <button id="btn-anthropic-cli-login" class="action-btn primary" onclick="doClaudeCliLogin()">Sign in via Claude CLI</button>
-                <button id="btn-update-claude-cli" class="action-btn" onclick="updateClaudeCli()" title="Reinstall Claude CLI at the latest npm release">Update CLI</button>
+                <button id="btn-anthropic-cli-login" class="action-btn primary" onclick="doClaudeCliLogin()">Sign in with Claude subscription</button>
+                <button id="btn-update-claude-cli" class="action-btn cli-connect-legacy" onclick="updateClaudeCli()" title="Reinstall Claude CLI at the latest npm release">Update CLI</button>
                 <button id="btn-anthropic-cli-login-cancel" class="action-btn" onclick="cancelClaudeCliLogin()" style="display:none">Cancel</button>
                 <button class="action-btn" onclick="window.open('https://claude.ai/settings/usage','_blank')" title="Open Claude.ai usage dashboard">View Usage ↗</button>
               </div>
-              <div id="claude-cli-update-status" class="field-hint" style="margin-top:6px;display:none"></div>
-              <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to sign in. A browser tab opens to approve; you paste the code it shows back here. This writes the CLI-native <code>~/.claude/.credentials.json</code>, which LAX does not encrypt.</div>
+              <div id="claude-cli-update-status" class="field-hint cli-connect-legacy" style="margin-top:6px;display:none"></div>
+              <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to sign in. A browser tab opens to approve; you paste the code it shows back here. LAX stores the grant as an encrypted envelope at <code>~/.lax/anthropic-auth.json</code> and refreshes it automatically.</div>
             </div>
             <div class="field" style="margin-top:14px">
               <label class="field-label">Option 2 — Setup-token</label>
@@ -482,11 +482,11 @@
                 <input class="field-input" id="anthropic-setup-token" type="password" placeholder="Paste token from claude setup-token" autocomplete="off" style="flex:1"/>
                 <button id="btn-anthropic-save-token" class="action-btn primary" onclick="saveAnthropicSetupToken()">Save Token</button>
               </div>
-              <div class="field-hint">Run <code>claude setup-token</code> in terminal and paste it here. LAX stores it as an encrypted envelope at <code>~/.lax/anthropic-auth.json</code>; requests route through the CLI subprocess.</div>
+              <div class="field-hint">For users who already have a long-lived token from <code>claude setup-token</code>. LAX stores it as an encrypted envelope at <code>~/.lax/anthropic-auth.json</code>. Option 1 needs no terminal and is the recommended path.</div>
             </div>
             <div class="field" style="margin-top:14px">
               <div class="btn-row">
-                <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
+                <button id="btn-install-claude-cli" class="action-btn cli-connect-legacy" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
                 <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
               </div>
             </div>

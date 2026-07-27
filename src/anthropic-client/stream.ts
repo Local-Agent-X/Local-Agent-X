@@ -1,11 +1,30 @@
-import { usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
+import { usesAnthropicSubscriptionAuth, unwrapAnthropicSubscriptionToken } from "../anthropic-models.js";
 import { streamViaAPI } from "./stream-api.js";
 import { streamViaCliWithTools } from "./stream-cli.js";
-import { isDirectOAuthToken } from "./oauth-direct.js";
+import { isDirectOAuthToken, wrapDirectOAuthToken, resolveWrappedDirectToken } from "./oauth-direct.js";
+import { isAnthropicCliTransportEnabled, CLI_TRANSPORT_HIDDEN_REASON } from "./cli-transport.js";
 import { createLogger } from "../logger.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 const logger = createLogger("anthropic-client.stream");
+
+/**
+ * Convert a subscription-shaped credential into a token the direct-HTTP path
+ * can use, now that the CLI subprocess is hidden (see cli-transport.ts).
+ *
+ *   - `oauth:<bearer>` / raw `sk-ant-oat…` → wrap the bearer as-is.
+ *   - the `"cli"` sentinel carries no bearer, so re-resolve one from the auth
+ *     store (LAX's own refreshable grant, then the CLI credential file).
+ *
+ * Returns null when nothing usable exists — the caller surfaces an auth error
+ * rather than spawning a binary that may not be installed.
+ */
+async function toDirectToken(token: string): Promise<string | null> {
+  if (isDirectOAuthToken(token)) return token;
+  if (token === "cli") return resolveWrappedDirectToken();
+  const bearer = unwrapAnthropicSubscriptionToken(token).trim();
+  return bearer ? wrapDirectOAuthToken(bearer) : null;
+}
 
 /**
  * Stream a response from Anthropic.
@@ -15,17 +34,35 @@ const logger = createLogger("anthropic-client.stream");
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  // Anthropic banned third-party apps from using subscription auth via direct SDK
-  // (April 4, 2026). Under Max subscription, direct-SDK gets 429 on every request.
-  // ALL subscription-style auth (cli sentinel, oauth: prefix, sk-ant-oat tokens,
-  // claude setup-tokens) must go through the official CLI proxy — that's the only
-  // path Anthropic still allows for subscription credentials.
-  // Real pay-as-you-go API keys (sk-ant-api03-*) don't match usesAnthropicSubscriptionAuth
-  // and continue to use direct HTTP via streamViaAPI — those are fine.
-  // Chat opts into the direct-HTTP OAuth path (token wrapped `direct-oauth:`)
-  // to stream real thinking text. It's a subscription token, but it goes to
-  // streamViaAPI — which recognizes the wrapper and dons Claude Code's identity
-  // rather than using x-api-key. Builds/sub-agents never wrap, so they stay CLI.
+  // CLI transport is hidden. Any subscription-shaped credential that used to
+  // spawn `claude` is promoted to the direct-HTTP OAuth path FIRST, so the
+  // routing below only ever sees a token it can actually serve. This is the
+  // single chokepoint every Anthropic caller passes through — chat, dream,
+  // cron, workers, skill-review and the classifiers all land here.
+  if (
+    !isAnthropicCliTransportEnabled()
+    && !isDirectOAuthToken(options.token)
+    && usesAnthropicSubscriptionAuth(options.token)
+  ) {
+    const direct = await toDirectToken(options.token);
+    if (!direct) {
+      yield { type: "error", error: CLI_TRANSPORT_HIDDEN_REASON };
+      return;
+    }
+    logger.info("[anthropic] subscription credential → direct-HTTP path (CLI transport hidden)");
+    options = { ...options, token: direct };
+  }
+
+  // Anthropic banned third-party apps from using subscription auth via the
+  // vanilla SDK shape (April 4, 2026) — those requests 429. The SAME token IS
+  // accepted when the request wears Claude Code's identity, which is what the
+  // `direct-oauth:` wrapper selects in streamViaAPI. Since the promotion above
+  // wraps every subscription credential, that path now serves ALL of them, not
+  // just chat: dream, cron, workers and classifiers included.
+  // Real pay-as-you-go API keys (sk-ant-api03-*) don't match
+  // usesAnthropicSubscriptionAuth and continue to use plain x-api-key HTTP.
+  // The `else if` CLI branch below is reachable ONLY with the hidden transport
+  // re-enabled (LAX_ANTHROPIC_CLI_TRANSPORT=1); see cli-transport.ts.
   if (isDirectOAuthToken(options.token)) {
     // Direct-HTTP OAuth path (real thinking). If Anthropic rejects the request
     // for a BILLING/RATE reason before any output — most importantly the 400
@@ -37,7 +74,14 @@ export async function* streamAnthropicResponse(options: StreamOptions): AsyncGen
     // abort) surface as-is.
     let produced = false;
     for await (const ev of streamViaAPI(options)) {
-      if (ev.type === "error" && !produced && isPlanFallbackWorthy(ev.error)) {
+      // The CLI fallback is only available when the hidden transport is
+      // explicitly re-enabled. With it hidden, a billing/rate rejection must
+      // surface to the caller — silently spawning a binary that may not exist
+      // is what hung the background lane for 10 hours on 2026-07-26.
+      if (
+        ev.type === "error" && !produced && isPlanFallbackWorthy(ev.error)
+        && isAnthropicCliTransportEnabled()
+      ) {
         logger.warn(`[anthropic] direct-HTTP rejected (${(ev.error ?? "").slice(0, 300)}) — falling back to CLI proxy (plan-billed)`);
         yield* streamViaCliWithTools(options); // ignores the token; spawns `claude`
         return;

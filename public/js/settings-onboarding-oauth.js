@@ -76,10 +76,10 @@ function startOnboardAuthPoll(type) {
 async function onboardOAuth(type) {
   const status = document.getElementById('ob-connect-status');
   const endpoints = {
-    // Anthropic subscription auth is CLI-only — Anthropic doesn't accept
-    // subscription tokens outside the official claude CLI. The paste-the-code
-    // flow exchanges the code and writes ~/.claude/.credentials.json, which
-    // chat + build_app both read.
+    // Anthropic subscription sign-in. Route name is historical — this is a
+    // plain browser PKCE flow that spawns NOTHING; it exchanges the pasted
+    // code and saves a refreshable grant to ~/.lax/anthropic-auth.json, which
+    // every Anthropic caller then uses over direct HTTPS.
     anthropic: '/api/auth/anthropic/cli-login',
     xai: '/api/auth/xai/login',
   };

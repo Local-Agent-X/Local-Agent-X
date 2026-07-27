@@ -856,6 +856,21 @@ body.platform-win .settings-overlay{top:32px}
 .field-hint{font-size:.65rem;color:var(--muted);margin-top:4px}
 .field-row{display:flex;gap:12px}
 .field-row .field{flex:1}
+/* Legacy CLI sign-in surfaces (Claude / Codex / Grok "Sign in via … CLI",
+   install + update buttons, CLI status badges). Connecting through a CLI
+   subprocess is no longer supported — subscription auth goes over direct
+   HTTPS. The markup is KEPT so re-enabling is one rule away, and !important
+   is deliberate: the settings JS writes inline style.display on several of
+   these elements, and an inline style would otherwise win.
+
+   The three status BADGES are pinned by id as well as class: their status
+   handlers assign `el.className = 'status-badge ok'` wholesale, which strips
+   any class we put in the markup. The id can't be rewritten, so it is the
+   only anchor that survives a refresh. */
+.cli-connect-legacy,
+#claude-cli-status,
+#codex-cli-status,
+#xai-cli-status{display:none!important}
 .status-badge{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.72rem;padding:4px 10px;border-radius:6px;margin-bottom:12px}
 .status-badge.ok{background:color-mix(in srgb, var(--accent) 10%, transparent);color:var(--accent);border:1px solid var(--accent-dim)}
 .status-badge.warn{background:rgba(255,170,0,.1);color:var(--warn);border:1px solid rgba(255,170,0,.3)}

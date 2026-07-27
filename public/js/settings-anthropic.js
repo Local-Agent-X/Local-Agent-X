@@ -1,9 +1,15 @@
 // ── Settings: Anthropic Auth ──
 //
-// All Anthropic / Claude CLI auth flows: status check, OAuth login,
-// CLI install, token capture, disconnect. Lives separately from the
-// generic provider/key UI because Anthropic is OAuth-only (no plain
-// API key path here).
+// All Anthropic auth flows: status check, OAuth login, token capture,
+// disconnect. Lives separately from the generic provider/key UI because
+// Anthropic is OAuth-only (no plain API key path here).
+//
+// The CLI-install / CLI-status surfaces are still wired here but are hidden
+// in the UI via `.cli-connect-legacy` (see app.css) — connecting through a
+// `claude` subprocess is no longer supported. Sign-in is a plain browser
+// PKCE flow that spawns nothing; the grant goes to ~/.lax/anthropic-auth.json
+// and requests travel over direct HTTPS. Left intact rather than deleted so
+// re-enabling is one CSS rule + LAX_ANTHROPIC_CLI_TRANSPORT=1.
 
 // ── Anthropic Auth ──
 
@@ -27,13 +33,13 @@ async function checkAnthropicAuth() {
     if (hasValidAuth) {
       el.className = 'status-badge ok';
       const label =
-        d.method === 'token' ? 'Connected — setup-token · chat streams live Thinking, builds via CLI' :
-        usingCliSession ? 'Connected — Claude CLI session · builds via CLI, chat uses the API when a token is available' :
-        'Connected — Claude subscription · chat streams live Thinking, builds via CLI';
+        d.method === 'token' ? 'Connected — setup-token · direct HTTPS, plan-billed' :
+        usingCliSession ? 'Connected — Claude subscription · direct HTTPS, plan-billed' :
+        'Connected — Claude subscription · direct HTTPS, plan-billed';
       el.innerHTML = '<span class="status-dot"></span> ' + label;
-      // CLI-login button: when CLI session is the active auth, mark "Already Connected".
+      // Sign-in button: when a subscription grant is the active auth, mark "Already Connected".
       if (cliLoginBtn) {
-        cliLoginBtn.textContent = usingCliSession ? 'Already Connected' : 'Sign in via Claude CLI';
+        cliLoginBtn.textContent = usingCliSession ? 'Already Connected' : 'Sign in with Claude subscription';
         cliLoginBtn.disabled = usingCliSession;
       }
       // Disconnect always visible while connected. The handler routes to the
@@ -42,7 +48,7 @@ async function checkAnthropicAuth() {
     } else {
       el.className = 'status-badge err';
       el.innerHTML = '<span class="status-dot"></span> Not connected';
-      if (cliLoginBtn) { cliLoginBtn.textContent = 'Sign in via Claude CLI'; cliLoginBtn.disabled = false; }
+      if (cliLoginBtn) { cliLoginBtn.textContent = 'Sign in with Claude subscription'; cliLoginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = 'none';
     }
     // Claude CLI status

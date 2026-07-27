@@ -1,18 +1,22 @@
 import { lookupContextWindow } from "./model-windows.js";
 
 /**
- * The transport an Anthropic turn actually runs over.
+ * The BILLING LANE an Anthropic turn actually runs over.
  *
- *  - "cli": the Claude CLI/OAuth subprocess proxy — the only route Anthropic
- *    permits for subscription (Max/Pro) credentials. It serves a far smaller
- *    EFFECTIVE context window than the Messages API rates the model at:
- *    empirically ~200k even for models the API bills at 1M.
+ *  - "cli": the subscription (Max/Pro) lane. It serves a far smaller EFFECTIVE
+ *    context window than the Messages API rates the model at: empirically
+ *    ~200k even for models the API bills at 1M.
  *  - "api": direct HTTP pay-as-you-go (a real sk-ant-api03 key), which honors
  *    the model's nominal window.
  *
- * The split mirrors anthropic-client/stream.ts, where the resolved token's
- * shape (the "cli" sentinel / an `oauth:` bearer / an `sk-ant-oat` token vs a
- * real key) decides which stream path runs. See resolve-transport.ts.
+ * NAME IS HISTORICAL. "cli" dates from when subscription credentials could
+ * only reach Anthropic through the `claude` subprocess. They now go over
+ * direct HTTPS wearing Claude Code's identity (the CLI transport is hidden —
+ * see anthropic-client/cli-transport.ts), but the ceiling is a property of the
+ * SUBSCRIPTION, not of the subprocess, so the clamp still applies and this
+ * discriminator still has exactly two meaningful values. Do NOT "fix" this by
+ * routing subscription turns to "api": that lifts the clamp to 1M and
+ * reinstates the un-compactable session death documented below.
  */
 export type AnthropicTransport = "api" | "cli";
 

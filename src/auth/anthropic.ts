@@ -13,24 +13,25 @@ const logger = createLogger("auth-anthropic");
 /**
  * Anthropic auth — Claude subscription access.
  *
- * Two supported paths, both routed through the official Claude CLI subprocess
- * (the only third-party usage Anthropic's TOS permits):
- *   1. Claude CLI login — the in-app paste-the-code OAuth flow. We run the same
- *      PKCE authorize the `claude` CLI uses (client_id, scopes, code=true), the
- *      user authorizes in the browser, copies the code the page shows, and pastes
- *      it back. We exchange it and write the result into the CLI's own credential
- *      store (~/.claude/.credentials.json) so the chat/build subprocess — which
- *      authenticates ONLY from that file, never from a token we'd hold — uses it.
+ * Two supported paths. Both now reach Anthropic over direct HTTPS wearing
+ * Claude Code's identity (anthropic-client/oauth-direct.ts) — same credential,
+ * same plan billing, NO `claude` subprocess. The CLI transport is hidden behind
+ * anthropic-client/cli-transport.ts; nothing here should assume it exists.
+ *   1. Subscription sign-in — the in-app paste-the-code OAuth flow. We run the
+ *      same PKCE authorize the `claude` CLI uses (client_id, scopes, code=true),
+ *      the user authorizes in the browser, copies the code the page shows, and
+ *      pastes it back. No binary is involved at any point: the exchange is a
+ *      plain fetch and the grant lands in ~/.lax/anthropic-auth.json, which LAX
+ *      owns and can refresh.
  *   2. Setup-token (`claude setup-token`) — pasted in, saved here as a
  *      method:"token" bearer in ~/.lax/anthropic-auth.json.
  *
- * Why write the CLI's file instead of holding the token ourselves: Anthropic
- * blocks Pro/Max OAuth tokens used DIRECTLY by third-party apps (returns "Not
- * logged in" on inference). Routing through the official CLI subprocess is the
- * permitted path, and that subprocess reads only ~/.claude/.credentials.json.
- * The removed localhost-callback variant stored tokens in ~/.lax and used them
- * directly — which is exactly what Anthropic blocks. Legacy method:"oauth"
- * tokens already on disk are still loaded/refreshed for backward-compat.
+ * Why the grant lives in LAX's own store: it is a SEPARATE authorization from
+ * any standalone CLI login, so refreshing it can't rotate a real Claude Code
+ * install's refresh token out from under it. ~/.claude/.credentials.json is
+ * still READ (source 3 in getAnthropicDirectToken) for users who signed in
+ * before this change, and is only WRITTEN when the hidden CLI transport is
+ * explicitly re-enabled.
  */
 
 const AUTH_URL = "https://claude.ai/oauth/authorize";
@@ -124,21 +125,32 @@ export async function getAnthropicApiKey(): Promise<string> {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   if (process.env.ANTHROPIC_OAUTH_TOKEN) return `oauth:${process.env.ANTHROPIC_OAUTH_TOKEN.trim()}`;
 
-  // Saved subscription token → direct bearer auth.
-  // Saved legacy OAuth tokens → use the refresh-capable "cli" sentinel path.
+  // Saved setup-token → direct bearer auth.
   const tokens = loadAnthropicTokens();
   if (tokens?.method === "token") return `oauth:${tokens.accessToken}`;
-  if (tokens) return "cli";
 
-  // Check if Claude CLI is available (it has its own credentials)
-  try {
-    const { execSync } = await import("child_process");
-    const { npmAugmentedEnv } = await import("../anthropic-client/cli-path.js");
-    execSync("claude --version", { timeout: 3000, stdio: "pipe", env: npmAugmentedEnv() });
-    return "cli";
-  } catch {}
+  const { isAnthropicCliTransportEnabled } = await import("../anthropic-client/cli-transport.js");
+  if (isAnthropicCliTransportEnabled()) {
+    // Hidden legacy path, explicitly re-enabled: the subprocess authenticates
+    // from its own credential store, so the sentinel carries no bearer.
+    if (tokens) return "cli";
+    try {
+      const { execSync } = await import("child_process");
+      const { npmAugmentedEnv } = await import("../anthropic-client/cli-path.js");
+      execSync("claude --version", { timeout: 3000, stdio: "pipe", env: npmAugmentedEnv() });
+      return "cli";
+    } catch { /* binary absent → fall through to the direct path below */ }
+  }
 
-  throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → General.");
+  // Default path. Every remaining subscription source — a legacy refreshable
+  // `oauth` grant in LAX's store, or the CLI credential FILE (readable whether
+  // or not the binary is installed) — resolves through the one direct-token
+  // resolver. This used to return the "cli" sentinel, which routed into a
+  // `claude` subprocess and hung forever when the binary was missing.
+  const direct = await getAnthropicDirectToken();
+  if (direct) return `oauth:${direct}`;
+
+  throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → Account.");
 }
 
 /**
@@ -292,7 +304,7 @@ function getClaudeCredentialsPath(): string {
  */
 export async function completeAnthropicCliOAuth(rawCode: string): Promise<void> {
   const pending = pendingOAuth;
-  if (!pending) throw new Error("No sign-in in progress. Click “Sign in via Claude CLI” first.");
+  if (!pending) throw new Error("No sign-in in progress. Click “Sign in with Claude subscription” first.");
   if (Date.now() - pending.createdAt > 10 * 60 * 1000) {
     pendingOAuth = null;
     throw new Error("Sign-in expired (10 min). Start again.");
@@ -334,42 +346,43 @@ export async function completeAnthropicCliOAuth(rawCode: string): Promise<void> 
   };
   if (!data.access_token) throw new Error("Token exchange returned no access_token.");
 
-  // Write the CLI's credential file. The key shape (claudeAiOauth.accessToken)
-  // is the same one the app's status check already reads, and the chat/build
-  // subprocess authenticates from this file.
-  const credPath = getClaudeCredentialsPath();
-  const credPayload = {
-    claudeAiOauth: {
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token || "",
-      expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : 0,
-      scopes: (data.scope || SCOPES).split(/\s+/).filter(Boolean),
-      subscriptionType: "max",
-    },
-  };
-  mkdirSync(join(homedir(), ".claude"), { recursive: true });
-  writeSecretFileAtomic(credPath, JSON.stringify(credPayload, null, 2));
+  // LAX's OWN store is the primary destination: it is the only one we can
+  // REFRESH, and it doesn't touch a standalone Claude Code install's lineage.
+  // Save unconditionally — a grant with no refresh_token is still usable as a
+  // bearer until it expires, and dropping it here used to leave the user with
+  // no credential at all when Anthropic returned a refresh-less grant.
+  saveAnthropicTokens({
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    // Mirror refreshAnthropicTokens' 5-min buffer so we refresh just before
+    // the API would start rejecting the token.
+    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 - 5 * 60 * 1000 : undefined,
+    method: data.refresh_token ? "oauth" : "token",
+    provider: "anthropic",
+  });
 
-  // Also save the grant into LAX's OWN store so the direct-HTTP thinking path
-  // has a token it can REFRESH. getAnthropicDirectToken reads the CLI file only
-  // while unexpired and never refreshes it (that lineage may be shared with the
-  // standalone CLI on Linux/Windows); this paste-the-code grant is a SEPARATE
-  // authorization from the CLI's own login, so LAX refreshing it can't rotate
-  // the CLI out from under itself. Without this, direct thinking would work for
-  // ~1h then silently drop back to the CLI proxy until the user re-signed in.
-  if (data.refresh_token) {
-    saveAnthropicTokens({
-      accessToken: data.access_token,
-      refreshToken: data.refresh_token,
-      // Mirror refreshAnthropicTokens' 5-min buffer so we refresh just before
-      // the API would start rejecting the token.
-      expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 - 5 * 60 * 1000 : undefined,
-      method: "oauth",
-      provider: "anthropic",
-    });
+  // The CLI's own credential file is written ONLY when the hidden subprocess
+  // transport is re-enabled — that file is the sole thing the subprocess reads.
+  // With the CLI hidden this write is pure downside: it CLOBBERS the login of a
+  // standalone Claude Code install the user may rely on outside LAX.
+  const { isAnthropicCliTransportEnabled } = await import("../anthropic-client/cli-transport.js");
+  if (isAnthropicCliTransportEnabled()) {
+    const credPath = getClaudeCredentialsPath();
+    const credPayload = {
+      claudeAiOauth: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token || "",
+        expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : 0,
+        scopes: (data.scope || SCOPES).split(/\s+/).filter(Boolean),
+        subscriptionType: "max",
+      },
+    };
+    mkdirSync(join(homedir(), ".claude"), { recursive: true });
+    writeSecretFileAtomic(credPath, JSON.stringify(credPayload, null, 2));
   }
+
   pendingOAuth = null;
-  logger.info("[anthropic-auth] CLI credentials written via paste-the-code OAuth");
+  logger.info("[anthropic-auth] subscription grant saved via paste-the-code OAuth");
 }
 
 // ── Delete tokens (disconnect) ──

@@ -456,7 +456,13 @@ describe("scheduler execution-backend parity", () => {
 
   it.each([
     { label: "fresh-live", heartbeatAgeMs: 0, pid: process.pid, protected: true },
-    { label: "stale-live", heartbeatAgeMs: 30_001, pid: process.pid, protected: false },
+    // stale-live flipped to PROTECTED (2026-07-27): a stale heartbeat with a
+    // verifiably live pid is a STARVED owner, not a dead one — stealing it puts
+    // two processes on one op (the 2026-07-25 lease-death class). Takeover now
+    // requires evidence of death: a gone pid, or staleness past the ten-minute
+    // pid-reuse ceiling (next case).
+    { label: "stale-live", heartbeatAgeMs: 30_001, pid: process.pid, protected: true },
+    { label: "ceiling-stale-live", heartbeatAgeMs: 600_001, pid: process.pid, protected: false },
     { label: "fresh-dead", heartbeatAgeMs: 0, pid: 2_147_483_647, protected: false },
   ])("correlates $label process ownership with canonical recovery", async ({
     label,

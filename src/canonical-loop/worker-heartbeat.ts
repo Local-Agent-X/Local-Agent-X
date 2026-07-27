@@ -93,3 +93,19 @@ export function stopHeartbeat(workerId: string): void {
   if (t) clearInterval(t);
   HEARTBEATS.delete(workerId);
 }
+
+/**
+ * Does THIS process still have an armed heartbeat timer for the worker?
+ *
+ * This is direct evidence of life: the timer is armed between startHeartbeat
+ * and stopHeartbeat, and every death path clears it — worker exit and fatal
+ * both run stopHeartbeat, and the tick loop stops itself on a lost claim or
+ * exhausted transient budget. So an armed timer with an EXPIRED lease means
+ * the worker is starved (event-loop stall past the lease window), not dead.
+ * Recovery consults this before treating lease expiry as proof of death; the
+ * map cannot wedge a dead worker alive because it self-clears on every
+ * failure path, so no staleness ceiling is needed here.
+ */
+export function hasArmedHeartbeat(workerId: string): boolean {
+  return HEARTBEATS.has(workerId);
+}

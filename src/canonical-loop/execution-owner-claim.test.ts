@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   isLiveProcessExecutionClaim,
+  ownerEvidence,
   parseProcessExecutionClaim,
   processClaimMatches,
+  PROCESS_EXECUTION_CLAIM_FRESH_MS,
+  STALE_OWNER_DEAD_CEILING_MS,
   type ContainerExecutionClaim,
+  type ProcessExecutionClaim,
 } from "./process-execution-claim.js";
 
 const now = "2026-07-21T12:00:00.000Z";
@@ -49,6 +53,68 @@ describe("execution owner claim", () => {
     })).toBe(false);
   });
 });
+
+// ── ownerEvidence: liveness is evidence of existence, not recency of check-in ──
+//
+// The invariant this matrix pins (2026-07-25 lease-death class): a stale
+// heartbeat with a live pid is a STARVED owner, not a dead one. It must
+// resolve "unknown", and no takeover path may act on "unknown".
+describe("ownerEvidence tri-state", () => {
+  const staleBy = (ms: number) => () => Date.parse(now) + ms;
+  const stale = staleBy(PROCESS_EXECUTION_CLAIM_FRESH_MS + 1_000);
+
+  it("fresh heartbeat + live pid → alive", () => {
+    expect(ownerEvidence(processClaim(), { now: staleBy(1_000), isPidAlive: () => true }))
+      .toBe("alive");
+  });
+
+  it("stale heartbeat + live pid → unknown (the starved-worker shape — NEVER dead)", () => {
+    expect(ownerEvidence(processClaim(), { now: stale, isPidAlive: () => true }))
+      .toBe("unknown");
+  });
+
+  it("gone pid → dead regardless of heartbeat recency (existence is the proof)", () => {
+    expect(ownerEvidence(processClaim(), { now: staleBy(1_000), isPidAlive: () => false }))
+      .toBe("dead");
+    expect(ownerEvidence(processClaim(), { now: stale, isPidAlive: () => false }))
+      .toBe("dead");
+  });
+
+  it("stale past the ten-minute ceiling → dead even with a live pid (pid-reuse bound)", () => {
+    expect(ownerEvidence(processClaim(), {
+      now: staleBy(STALE_OWNER_DEAD_CEILING_MS + 1),
+      isPidAlive: () => true,
+    })).toBe("dead");
+  });
+
+  it("container: stale heartbeat + running container → unknown; not running → dead", () => {
+    expect(ownerEvidence(containerClaim(), { now: stale, isContainerAlive: () => true }))
+      .toBe("unknown");
+    expect(ownerEvidence(containerClaim(), { now: stale, isContainerAlive: () => false }))
+      .toBe("dead");
+  });
+
+  it("isLiveProcessExecutionClaim remains exactly evidence === alive", () => {
+    expect(isLiveProcessExecutionClaim(processClaim(), { now: staleBy(1_000), isPidAlive: () => true }))
+      .toBe(true);
+    expect(isLiveProcessExecutionClaim(processClaim(), { now: stale, isPidAlive: () => true }))
+      .toBe(false);
+  });
+});
+
+function processClaim(): ProcessExecutionClaim {
+  return {
+    schemaVersion: 1,
+    opId: "op-1",
+    backendId: "local-process",
+    targetId: "canonical-worker-process-v1",
+    placementRevision: 1,
+    token: "token-1",
+    pid: 17,
+    processStartedAt: now,
+    heartbeatAt: now,
+  };
+}
 
 function containerClaim(): ContainerExecutionClaim {
   return {

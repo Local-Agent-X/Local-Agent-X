@@ -58,6 +58,7 @@ import {
   type ProviderStateEnvelope,
 } from "../src/canonical-loop/index.js";
 import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import { startHeartbeat, stopHeartbeat } from "../src/canonical-loop/worker-heartbeat.js";
 import { isCircuitOpen, recordFailure, resetCircuit } from "../src/ops/heartbeat.js";
 import type { Op } from "../src/ops/types.js";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canonical-loop/adapter-contract.js";
@@ -344,6 +345,47 @@ describe("recoverStaleOp guard rails", () => {
     const r = recoverStaleOp(op.id);
     expect(r.ok).toBe(false);
     expect(r.kind).toBe("lease_fresh");
+  });
+
+  it("blocks takeover of a starved worker: expired lease + armed in-process heartbeat → lease_fresh", () => {
+    // The 2026-07-25 class: an event-loop stall past the lease window expired
+    // a HEALTHY worker's lease four times, and each sweep stole the op until
+    // recovery abandoned it. The invariant: an armed heartbeat timer in this
+    // process is direct evidence of life, and evidence outranks silence — the
+    // sweep must leave the op alone so the worker's own late tick can refresh.
+    const op = mkOp("guard-starved-worker");
+    canonicalLoopEntry(op);
+    const acquired = acquireLease(op.id, "w-starved");
+    expect(acquired.ok).toBe(true);
+    const claim = acquired.ok ? acquired.claim : { owner: "w-starved", generation: 1 };
+    const running = readOp(op.id)!;
+    running.canonical!.state = "running";
+    // Lease already expired — the starved window.
+    running.canonical!.leaseExpiresAt = new Date(Date.now() - 1).toISOString();
+    writeOp(running);
+    expect(isLeaseExpired(readOp(op.id))).toBe(true);
+
+    // Arm the worker's real heartbeat timer with a stubbed beat so the test
+    // controls the lease row (never fires within the test's lifetime).
+    startHeartbeat(op.id, "w-starved", claim, () => {}, () => ({ ok: true as const }));
+    try {
+      const blocked = recoverStaleOp(op.id);
+      expect(blocked).toEqual({ ok: false, kind: "lease_fresh" });
+      // No takeover artifacts: still running, lease untouched, no lease_lost.
+      expect(readOp(op.id)?.canonical?.state).toBe("running");
+      expect(readOp(op.id)?.canonical?.leaseOwner).toBe("w-starved");
+      expect(readCanonicalEvents(op.id).some(e => e.type === "lease_lost")).toBe(false);
+      // And no recovery attempt was billed to the healthy op.
+      expect(readOp(op.id)?.attemptCount ?? 0).toBe(0);
+    } finally {
+      stopHeartbeat("w-starved");
+    }
+
+    // Once the heartbeat is disarmed (every genuine death path does this),
+    // the same op becomes recoverable — the guard shields only live workers.
+    const recovered = recoverStaleOp(op.id);
+    expect(recovered.ok).toBe(true);
+    expect(recovered.kind).toBe("recovered");
   });
 
   it("ignores terminal ops (succeeded/failed/cancelled)", async () => {

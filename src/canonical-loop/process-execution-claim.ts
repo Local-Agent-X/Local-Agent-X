@@ -117,21 +117,56 @@ export function readProcessExecutionClaim(opId: string): ExecutionOwnerClaim | n
   return parseProcessExecutionClaim(JSON.parse(readFileSync(path, "utf8")));
 }
 
-export function isLiveProcessExecutionClaim(
+/**
+ * Tri-state owner evidence. The liveness question splits by what the caller
+ * wants to do, and the two takeover-adjacent answers must come from EVIDENCE,
+ * not from silence:
+ *
+ *   "alive"   — existence verified AND the heartbeat is fresh. Safe to
+ *               re-attach.
+ *   "dead"    — the pid/container is verifiably gone (existence is the proof;
+ *               recency is irrelevant), or the heartbeat is stale past the
+ *               ten-minute ceiling below. Safe to take over.
+ *   "unknown" — the owner still EXISTS but its heartbeat is stale: a starved
+ *               worker looks exactly like this. Neither re-attach nor takeover
+ *               may act on it — takeover would double-drive an op whose owner
+ *               is still executing (the 2026-07-25 lease-death class).
+ *
+ * The ceiling exists because pid reuse makes process existence unverifiable at
+ * long horizons: a recycled pid would otherwise hold an op in "unknown"
+ * forever. Ten minutes mirrors MAX_LEASE_DURATION_MS — the longest the lease
+ * system itself lets a silent owner run.
+ */
+export type OwnerEvidence = "alive" | "dead" | "unknown";
+export const STALE_OWNER_DEAD_CEILING_MS = 600_000;
+
+export function ownerEvidence(
   claim: ExecutionOwnerClaim,
   options: ProcessClaimLivenessOptions = {},
-): boolean {
+): OwnerEvidence {
   const now = options.now ?? Date.now;
   const age = now() - Date.parse(claim.heartbeatAt);
   const fresh = age >= -FUTURE_HEARTBEAT_SKEW_MS && age <= PROCESS_EXECUTION_CLAIM_FRESH_MS;
-  if (!fresh) return false;
+  let exists: boolean;
   if (claim.ownerKind === "container") {
     const inspection = options.isContainerAlive
       ? (options.isContainerAlive(claim) ? "live" : "dead")
       : options.inspectContainer?.(claim) ?? "unavailable";
-    return inspection === "live";
+    exists = inspection === "live";
+  } else {
+    exists = (options.isPidAlive ?? isPidAlive)(claim.pid);
   }
-  return (options.isPidAlive ?? isPidAlive)(claim.pid);
+  if (!exists) return "dead";
+  if (fresh) return "alive";
+  if (age > STALE_OWNER_DEAD_CEILING_MS) return "dead";
+  return "unknown";
+}
+
+export function isLiveProcessExecutionClaim(
+  claim: ExecutionOwnerClaim,
+  options: ProcessClaimLivenessOptions = {},
+): boolean {
+  return ownerEvidence(claim, options) === "alive";
 }
 
 export function checkProcessExecutionRecoveryOwnership(
@@ -141,7 +176,14 @@ export function checkProcessExecutionRecoveryOwnership(
 ): "live" | "clear" | "changed" {
   const claim = readProcessExecutionClaim(opId);
   if (!claim) return "clear";
-  if (isLiveProcessExecutionClaim(claim, options)) return "live";
+  const evidence = ownerEvidence(claim, options);
+  if (evidence === "alive") return "live";
+  // A stale-but-existing PROCESS owner is starved, not dead — its pid is
+  // verifiably alive and cannot be fenced, so a takeover here would leave two
+  // owners driving one op. Report "live" (leave alone; retry later). Containers
+  // deliberately fall through: their takeover path fences via stopContainer,
+  // which makes reclaiming a stale-but-running container safe.
+  if (evidence === "unknown" && claim.ownerKind !== "container") return "live";
   if (claim.ownerKind === "container") {
     const inspection = options.inspectContainer?.(claim) ?? "unavailable";
     if (inspection === "changed" || inspection === "unavailable") return "changed";

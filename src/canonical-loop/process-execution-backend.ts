@@ -16,7 +16,7 @@ import { notifyProcessRelayParent } from "./process-relay-parent-hook.js";
 import type { ProcessRelayNotice } from "./process-relay-contract.js";
 import {
   claimProcessExecution,
-  isLiveProcessExecutionClaim,
+  ownerEvidence,
   readProcessExecutionClaim,
   removeProcessExecutionClaim,
   type ProcessClaimIdentity,
@@ -146,7 +146,12 @@ export class ProcessExecutionBackend implements ExecutionBackend {
   private reclaimDeadClaim(opId: string): void {
     const existing = readProcessExecutionClaim(opId);
     if (!existing) return;
-    if (isLiveProcessExecutionClaim(existing, { now: this.now, isPidAlive: this.pidAlive })) {
+    // Reclaim requires EVIDENCE of death, not absence of a heartbeat: a claim
+    // whose pid is still alive with a stale heartbeat ("unknown") is a starved
+    // owner, and stealing its claim would put two processes on one op. Throw
+    // on both "alive" and "unknown" — the launch retries after the owner
+    // either recovers (refreshes) or verifiably dies.
+    if (ownerEvidence(existing, { now: this.now, isPidAlive: this.pidAlive }) !== "dead") {
       throw new Error("operation already has a live process owner");
     }
     if (!removeProcessExecutionClaim(existing)) {

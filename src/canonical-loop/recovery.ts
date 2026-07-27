@@ -32,7 +32,9 @@
  * under the cross-process op lock before emitting `lease_lost`.
  */
 import { readOp } from "../ops/op-store.js";
+import { createLogger } from "../logger.js";
 import { decideRecovery, isCircuitOpen, recordFailure } from "../ops/heartbeat.js";
+import { hasArmedHeartbeat } from "./worker-heartbeat.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { StrictOpPersistenceError } from "./op-persist.js";
@@ -50,6 +52,8 @@ import type { CanonicalLane } from "./types.js";
 import { reconcilePublishedTurnCommitsForRecovery } from "./checkpoint.js";
 import { checkProcessExecutionRecoveryOwnership } from "./process-execution-claim.js";
 import { routeContainerRecovery } from "./container-recovery-routing.js";
+
+const logger = createLogger("canonical-loop.recovery");
 export type RecoveryOutcomeKind =
   | "recovered"     // running → queued (or an already-queued op that crashed
                     //   before launch), op re-enqueued for a replacement worker.
@@ -97,6 +101,20 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
   //
   const observedClaim = leaseClaimFromOp(op);
   if (observedClaim && !isLeaseExpired(op)) {
+    return { ok: false, kind: "lease_fresh" };
+  }
+  // Lease expired, but the owner's heartbeat timer is still armed IN THIS
+  // process: the worker is alive and starved (event-loop stall past the lease
+  // window — observed live 2026-07-25, four takeovers of one healthy op), not
+  // dead. Expiry is only ABSENCE of a signal; an armed timer is direct
+  // evidence of life, and evidence outranks silence. Leave the op alone — the
+  // worker's own late tick refreshes the lease (heartbeatLease checks the
+  // claim, not expiry), and every genuine death path disarms the timer, so
+  // this cannot shield a dead worker.
+  if (observedClaim && hasArmedHeartbeat(observedClaim.owner)) {
+    logger.warn(
+      `[recovery] op ${opId} lease expired but worker ${observedClaim.owner} is alive in-process (starved, not dead) — takeover blocked`,
+    );
     return { ok: false, kind: "lease_fresh" };
   }
   if (checkProcessExecutionRecoveryOwnership(opId) === "live") return { ok: false, kind: "lease_fresh" };

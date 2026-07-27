@@ -330,7 +330,7 @@ describe("seam contract — fresh install, nothing configured", () => {
     // so they are satisfied by an empty manifest. See the STATE 0 block.
     expect(seen.manifested.size, "MANIFEST seam: no manifest was emitted, so the hidden-tool assertions below prove nothing").toBeGreaterThan(0);
 
-    for (const name of ["email_send", "email_read", "email_search", "email_read_message", "email_folders"]) {
+    for (const name of ["email_send", "email_read", "email_search", "email_read_message", "email_folders", "email_delete", "email_mark"]) {
       expect(
         seen.loadedNames.has(name),
         `AVAILABILITY seam: ${name} reached the turn's schema with no mailbox configured`,
@@ -412,7 +412,7 @@ describe("seam contract — send-only user (SMTP configured, no IMAP)", () => {
     expect(seen.agentContext, "GATE seam: a working send-only mailbox was hidden from the agent").toContain("(email)");
     expect(seen.agentContext, "TRANSPORT seam: email was rendered as an HTTP API it is not").not.toContain("Base URL:");
     expect(seen.agentContext, "TRANSPORT seam: the smtp/imap pseudo-paths were offered to http_request").not.toContain("Endpoints:");
-    expect(seen.agentContext).toContain("Reached with the email_send, email_read, email_search, email_read_message, email_folders tools — not http_request.");
+    expect(seen.agentContext).toContain("Reached with the email_send, email_read, email_search, email_read_message, email_folders, email_delete, email_mark tools — not http_request.");
     // The whole block is email, so the two http_request instructions in the
     // header must not be emitted at all.
     expect(seen.agentContext, "TRANSPORT seam: an all-smtp block opened by telling the model to use http_request").not.toContain("http_request tool");
@@ -429,7 +429,7 @@ describe("seam contract — send-only user (SMTP configured, no IMAP)", () => {
       "AVAILABILITY seam: email_send was hidden from a user whose SMTP works — gating send on IMAP is the classic way to break this state",
     ).toBe(true);
     expect(seen.manifested.size, "MANIFEST seam: no manifest was emitted, so the hidden-tool assertions below prove nothing").toBeGreaterThan(0);
-    for (const name of ["email_read", "email_search", "email_read_message", "email_folders"]) {
+    for (const name of ["email_read", "email_search", "email_read_message", "email_folders", "email_delete", "email_mark"]) {
       expect(seen.loadedNames.has(name), `AVAILABILITY seam: ${name} shipped without any IMAP configuration`).toBe(false);
       expect(seen.manifested.has(name), `MANIFEST seam: ${name} is unusable here but still named in the manifest`).toBe(false);
     }
@@ -490,7 +490,7 @@ describe("seam contract — fully configured", () => {
   it("makes every email tool reachable", async () => {
     const seen = await observe(await fullyConfigured());
 
-    for (const name of ["email_send", "email_read", "email_search", "email_read_message", "email_folders"]) {
+    for (const name of ["email_send", "email_read", "email_search", "email_read_message", "email_folders", "email_delete", "email_mark"]) {
       expect(seen.loadedNames.has(name), `AVAILABILITY seam: ${name} stayed hidden on a fully configured mailbox`).toBe(true);
     }
     expect(seen.agentContext).toContain("(email)");

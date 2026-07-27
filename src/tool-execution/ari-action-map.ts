@@ -35,6 +35,14 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   calendar_create_event: "post",
   email_read: "get", email_search: "get", email_draft: "post",
   email_read_message: "get", email_folders: "get",
+  // Both are WRITE verbs on purpose. The arikernel workspace-assistant preset
+  // allows a clean post/put/patch/delete (allow-http-write-clean, prio 100) and
+  // denies the same verbs under email/web taint (deny-tainted-http-write, prio
+  // 40, wins). So a turn that has already read third-party mail cannot then
+  // trash or re-flag it — which is exactly the shape of the injection ("delete
+  // all my email") these two verbs would otherwise carry out. Mapping either to
+  // "get" to dodge that would be lying to the kernel about what they do.
+  email_delete: "delete", email_mark: "post",
   email_send: "post", email_setup: "post", telegram_send: "post", whatsapp_send: "post",
   marketplace_search: "get", marketplace_list: "get", marketplace_install: "get",
   extract_site_assets: "get",

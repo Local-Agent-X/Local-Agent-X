@@ -28,6 +28,12 @@ export const READ_ONLY_TOOLS = new Set([
   // or EXPUNGEs. Omitting them would have plan mode — whose whole purpose is
   // research before changes — block the two email tools that only research.
   'email_read_message', 'email_folders',
+  // email_delete and email_mark are DELIBERATELY absent, and this comment is the
+  // registration: they are the only two email tools that change the mailbox. A
+  // delete is not read-only under any reading — it relocates the user's mail —
+  // and email_mark rewrites user-visible read/starred state. Plan mode's whole
+  // premise is that nothing it permits alters the world, so the `email_` prefix
+  // must never become a blanket rule here.
   'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search',
 ]);
 

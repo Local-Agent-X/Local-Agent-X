@@ -17,11 +17,14 @@ import { join } from "node:path";
 import { emailSend } from "../src/tools/email-send-tool.js";
 import { emailRead, emailSearch, emailReadMessage } from "../src/tools/email-read-tools.js";
 import { emailFolders } from "../src/tools/email-folder-tools.js";
+import { emailDelete, emailMark } from "../src/tools/email-mutate-tools.js";
 import { emailDraft, emailSetup } from "../src/tools/email-compose-tools.js";
 import { isToolAvailable } from "../src/tools/tool-search.js";
 
-/** Every tool whose availability is IMAP, after C6 registered the last two. */
-const IMAP_TOOLS = [emailRead, emailSearch, emailReadMessage, emailFolders];
+/** Every tool whose availability is IMAP, after C3 added the two mutating verbs.
+ *  email_delete matters most here: a tool that MOVES the user's mail must never
+ *  be offered to a machine with no mailbox to move it in. */
+const IMAP_TOOLS = [emailRead, emailSearch, emailReadMessage, emailFolders, emailDelete, emailMark];
 
 const EMAIL_ENV = [
   "SMTP_HOST", "SMTP_USER", "SMTP_PASS", "SMTP_FROM", "SMTP_PORT",

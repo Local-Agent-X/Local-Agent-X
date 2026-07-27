@@ -12,9 +12,11 @@ import type { ToolDefinition } from "../types.js";
 import { emailSend } from "./email-send-tool.js";
 import { emailRead, emailSearch, emailReadMessage } from "./email-read-tools.js";
 import { emailFolders } from "./email-folder-tools.js";
+import { emailDelete, emailMark } from "./email-mutate-tools.js";
 import { emailDraft, emailSetup } from "./email-compose-tools.js";
 
 export const emailTools: ToolDefinition[] = [
-  emailSend, emailRead, emailSearch, emailReadMessage, emailFolders, emailDraft, emailSetup,
+  emailSend, emailRead, emailSearch, emailReadMessage, emailFolders,
+  emailDelete, emailMark, emailDraft, emailSetup,
 ];
 export function createEmailTools(): ToolDefinition[] { return emailTools; }

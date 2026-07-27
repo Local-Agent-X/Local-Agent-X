@@ -56,14 +56,65 @@ function intArg(args: Record<string, unknown>, field: string, fallback: number):
 
 /** `"true"`/`"false"` spell themselves; every other value is refused. `"false"`
  *  in particular used to be truthy, so a model asking for ALL messages got only
- *  the unread ones. */
-function boolArg(args: Record<string, unknown>, field: string): boolean | ArgError {
+ *  the unread ones. Absent is reported as `undefined` rather than `false` so a
+ *  caller that needs the THREE-way answer — set it true / set it false / leave
+ *  it alone — can have it. `flag()` below collapses absent to false for the
+ *  search predicates, where "not asked for" and "false" genuinely coincide. */
+function boolArg(args: Record<string, unknown>, field: string): boolean | undefined | ArgError {
   const value = args[field];
-  if (value === undefined) return false;
+  if (value === undefined) return undefined;
   if (typeof value === "boolean") return value;
   const spelled = typeof value === "string" ? value.trim().toLowerCase() : "";
   if (spelled === "true" || spelled === "false") return spelled === "true";
   return { error: `\`${field}\` must be true or false, but got ${describeValue(value)}.` };
+}
+
+/** One UID, in any of the two forms a model actually emits: the number, or the
+ *  digits as a string. Everything else — a float, a negative, `"latest"`, an
+ *  object — is refused, because a UID is a server-assigned handle and there is
+ *  no such thing as a near-miss: uid 1001 is a different person's mail than
+ *  uid 1000, and the verbs reading this list MOVE the message. */
+function oneUid(raw: unknown, field: string): number | ArgError {
+  const n = typeof raw === "string" && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+  if (typeof n !== "number" || !Number.isInteger(n) || n <= 0) {
+    return { error: `\`${field}\` must contain positive whole-number message UIDs (as returned by email_read or email_search), but got ${describeValue(raw)}.` };
+  }
+  return n;
+}
+
+/**
+ * An explicit UID SET.
+ *
+ * Accepts an array, a bare number (one uid), or a comma/space separated string
+ * — the three shapes models emit for "these messages". Refuses everything else
+ * rather than coercing, and refuses a PRESENT-but-empty set outright: an empty
+ * uid list reaching a move is a caller that believes it selected something, and
+ * `moveMessages` would answer "moved 0" as if that were a successful no-op.
+ *
+ * Deduplicated and sorted so `requested` counts messages, not mentions — a
+ * repeated uid otherwise inflates the number reported back to the user.
+ */
+function uidsArg(args: Record<string, unknown>, field: string): number[] | ArgError {
+  const value = args[field];
+  if (value === undefined) return [];
+  let items: unknown[];
+  if (Array.isArray(value)) items = value;
+  else if (typeof value === "number") items = [value];
+  else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return { error: `\`${field}\` was present but empty. ${OMIT}` };
+    items = trimmed.split(/[\s,]+/);
+  } else {
+    return { error: `\`${field}\` must be a list of message UIDs, but got ${describeValue(value)}. ${OMIT}` };
+  }
+  if (items.length === 0) return { error: `\`${field}\` was present but empty. ${OMIT}` };
+  const out: number[] = [];
+  for (const item of items) {
+    const uid = oneUid(item, field);
+    if (isArgError(uid)) return uid;
+    out.push(uid);
+  }
+  return [...new Set(out)].sort((a, b) => a - b);
 }
 
 /**
@@ -82,7 +133,13 @@ export function argReader(args: Record<string, unknown>) {
   return {
     text: (field: string): string => keep(strArg(args, field), ""),
     count: (field: string, fallback: number): number => keep(intArg(args, field, fallback), fallback),
-    flag: (field: string): boolean => keep(boolArg(args, field), false),
+    flag: (field: string): boolean => keep(boolArg(args, field), undefined) ?? false,
+    /** The three-way form: `undefined` means "leave this alone", which is not
+     *  the same instruction as "set it to false". email_mark needs the
+     *  distinction — marking a message read must not also un-star it. */
+    triState: (field: string): boolean | undefined => keep(boolArg(args, field), undefined),
+    /** An explicit set of message UIDs. `[]` means none were given. */
+    uids: (field: string): number[] => keep(uidsArg(args, field), []),
     /** A date window, refusing the parse rather than searching a window nobody
      *  asked for. Absent stays absent. */
     date: (field: string): Date | undefined => {

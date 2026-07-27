@@ -66,8 +66,21 @@ export interface Sweep {
   /** Uids not yet acted on, in the order the server returned them. */
   remaining: number[];
   total: number;
+  /** Messages the SERVER ENUMERATED as moved. Only that — a page the server
+   *  accepted without a UIDPLUS map moved an unknown number, and counting the
+   *  requested count here would make this a number that over-reports itself the
+   *  first time anyone displays it. */
   moved: number;
   skipped: number;
+  /** Messages handed to the server that it did NOT confirm moving: a confirmed
+   *  shortfall (`moved < requested`) plus every page it never enumerated.
+   *
+   *  This is what makes the terminal claim honest. The sweep advances by the
+   *  whole PAGE whatever the server did — otherwise a page the server keeps
+   *  refusing loops forever — so reaching the end of `remaining` means "every
+   *  uid was attempted", NOT "every message was moved". Those are the same
+   *  sentence only when this counter is zero. */
+  unconfirmed: number;
   lastUsedAt: number;
 }
 
@@ -89,14 +102,28 @@ function evictOverCap(): void {
   for (const [token] of oldestFirst.slice(0, sweeps.size - MAX_SWEEPS)) sweeps.delete(token);
 }
 
-/** Start a sweep over an already-resolved match set and return its token. */
-export function openSweep(folder: string, uidValidity: string, uids: number[]): string {
+/**
+ * Start a sweep over an already-resolved match set and return its token, or
+ * null when the set cannot safely be held across calls.
+ *
+ * NO EPOCH, NO CURSOR. A cursor's whole content is raw uids carried from one
+ * call to the next, and UIDVALIDITY is the only evidence that those numbers
+ * still name the same mail when the next call arrives. A server that reports
+ * none can still be swept a batch at a time by the caller narrowing filters or
+ * raising `limit` — that path resolves and moves inside ONE connection, where
+ * the epoch adds nothing the presence check has not already established. What
+ * it cannot have is a token that would assert an unverifiable fact minutes
+ * later. Refused HERE, at the one place cursors are born, so no caller is ever
+ * handed a cursor that a continuation would have to reject.
+ */
+export function openSweep(folder: string, uidValidity: string, uids: number[]): string | null {
+  if (uidValidity === "") return null;
   const now = Date.now();
   dropExpired(now);
   const body = JSON.stringify({ f: folder, v: uidValidity, n: randomBytes(9).toString("base64url") });
   const token = `${TOKEN_PREFIX}${Buffer.from(body, "utf-8").toString("base64url")}`;
   sweeps.set(token, {
-    folder, uidValidity, remaining: [...uids], total: uids.length, moved: 0, skipped: 0, lastUsedAt: now,
+    folder, uidValidity, remaining: [...uids], total: uids.length, moved: 0, skipped: 0, unconfirmed: 0, lastUsedAt: now,
   });
   evictOverCap();
   return token;
@@ -136,25 +163,56 @@ export function closeSweep(token: string): void {
   sweeps.delete(token);
 }
 
+/** What a page did, in the terms the sweep accumulates. */
+export interface PageTally {
+  /** Messages the server ENUMERATED as moved. Never the requested count. */
+  moved: number;
+  /** Messages that were no longer in the folder — already deleted. */
+  skipped: number;
+  /** Messages handed to the server whose move it did not confirm. */
+  unconfirmed: number;
+}
+
+/** The sweep's state after a page was committed. Returned as a SNAPSHOT rather
+ *  than read back through `resumeSweep`, because the last page deletes the
+ *  entry — and the last page is exactly the one whose totals decide whether the
+ *  sweep may claim it finished the job. */
+export interface PageCommit {
+  /** True when uids remain to act on. */
+  more: boolean;
+  remaining: number;
+  total: number;
+  /** Running total of `PageTally.unconfirmed` over the whole sweep. Zero is the
+   *  ONLY state in which "every message has been dealt with" is a true sentence. */
+  unconfirmed: number;
+}
+
 /**
- * Advance past a page that was acted on. Returns true when there is more to do.
+ * Advance past a page that was acted on.
  *
- * Called ONLY after a page succeeded: a page that failed leaves `remaining`
+ * Called ONLY after a page succeeded: a page that FAILED leaves `remaining`
  * untouched, so the same cursor retries the same page rather than skipping mail
- * the caller asked to delete.
+ * the caller asked to delete. A page that succeeded advances by its whole size
+ * even when the server moved fewer than were asked — re-attempting mail a
+ * server has already declined would loop the sweep forever — which is why the
+ * shortfall has to be CARRIED instead of silently dropped.
  */
-export function commitPage(token: string, pageSize: number, moved: number, skipped: number): boolean {
+export function commitPage(token: string, pageSize: number, tally: PageTally): PageCommit | null {
   const sweep = sweeps.get(token);
-  if (!sweep) return false;
+  if (!sweep) return null;
   sweep.remaining = sweep.remaining.slice(pageSize);
-  sweep.moved += moved;
-  sweep.skipped += skipped;
+  sweep.moved += tally.moved;
+  sweep.skipped += tally.skipped;
+  sweep.unconfirmed += tally.unconfirmed;
   sweep.lastUsedAt = Date.now();
-  if (sweep.remaining.length === 0) {
-    sweeps.delete(token);
-    return false;
-  }
-  return true;
+  const commit: PageCommit = {
+    more: sweep.remaining.length > 0,
+    remaining: sweep.remaining.length,
+    total: sweep.total,
+    unconfirmed: sweep.unconfirmed,
+  };
+  if (!commit.more) sweeps.delete(token);
+  return commit;
 }
 
 /** The sentence a dead cursor gets. One definition, because "re-run the search"
@@ -183,6 +241,9 @@ export interface PageRequest {
   /** UIDVALIDITY these uids were resolved under, or "" when there is none to
    *  check against. */
   expectValidity: string;
+  /** True when these uids CROSSED A CALL BOUNDARY (the cursor path), so an
+   *  unreported epoch is not tolerable. See the rule at the check itself. */
+  requireValidity?: boolean;
 }
 
 export type PageOutcome =
@@ -227,11 +288,38 @@ export async function movePage(session: ImapSession, req: PageRequest): Promise<
   // rather than no mail. Deleting by coincidence after a renumbering is the
   // worst outcome available to this tool, so it fails loudly and fatally.
   //
+  // MISSING validity splits by HOW FAR the uids travelled, because that is what
+  // decides whether the epoch was carrying any weight:
+  //
+  //  · SINGLE-SHOT (uids the caller passed, or a filter set that fit in one
+  //    call) — FAIL OPEN, deliberately. The resolve and the move happen inside
+  //    ONE connection, moments apart, over uids this call just proved present.
+  //    The epoch adds nothing that presence has not already established, and
+  //    failing closed would refuse EVERY delete on a server that reports no
+  //    UIDVALIDITY at all. Pinned by test so a change to `uidValidityOf` cannot
+  //    widen it silently.
+  //  · CONTINUATION (`requireValidity`) — REFUSE. Here the uids crossed a call
+  //    boundary and up to fifteen minutes, and the epoch is the ONLY evidence
+  //    they still name the same mail; without it the tool would be asserting a
+  //    fact it cannot check, and a mailbox swapped underneath it would move
+  //    messages the sweep never resolved and report success. This costs such a
+  //    server nothing it had: `openSweep` refuses to mint a cursor without an
+  //    epoch in the first place, so the reachable case here is a server that
+  //    reported one at SEARCH time and stopped reporting it.
+  if (req.requireValidity && (req.expectValidity === "" || resolved.uidValidity === "")) {
+    return refuse(fail(
+      `"${req.folder}" is not reporting a UIDVALIDITY, so there is no way to prove the uids this sweep is holding still name `
+      + `the same messages they named when the search resolved them. IMAP uids are meaningful only within one validity epoch, `
+      + `and continuing without it would risk deleting DIFFERENT mail that happens to carry those numbers now. `
+      + `Nothing was deleted, and this cursor is discarded: re-run email_delete with the original search filters, narrowing them `
+      + `(or raising \`limit\`) so each call resolves and moves the messages within it.`,
+    ), true);
+  }
+
   // Refused only when BOTH ends report a validity and they disagree — never
-  // when either is unknown. That is the rule the previous chunk's recorded
-  // TOCTOU residual named as the correct one if it were ever taken, and it is
-  // taken here; a fail-CLOSED variant would refuse every delete on a server
-  // that reports no validity at all.
+  // when either is unknown ON THE SINGLE-SHOT PATH, per the split above. That
+  // is the rule the previous chunk's recorded TOCTOU residual named as the
+  // correct one if it were ever taken, and it is taken here.
   //
   // WHAT REMAINS: the resolve and the move are still two SELECTs, so a
   // renumbering could land between THEM. It cannot cause a wrong delete the way

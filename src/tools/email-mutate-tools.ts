@@ -275,14 +275,25 @@ export const emailDelete: ToolDefinition = {
         // is already resolved here, so it is handed back as a cursor instead:
         // the model stops choosing a number and just continues.
         if (found.uids.length > batch) {
+          // Null when the server reported no UIDVALIDITY: a cursor would be
+          // holding uids it could never prove still mean anything, so none is
+          // issued and the caller is left with the remedies that work inside
+          // one connection.
           const token = openSweep(folder, found.uidValidity, found.uids);
-          return fail(
+          const head =
             `Those filters match ${found.uids.length} messages, but this call may act on at most ${batch}. NOTHING was moved. `
-            + `Deleting the ${batch} that fit would silently leave ${found.uids.length - batch} behind while reporting success. `
-            + `TO DELETE ALL ${found.uids.length}: call email_delete with cursor="${token}" and NO other arguments, then keep calling it `
+            + `Deleting the ${batch} that fit would silently leave ${found.uids.length - batch} behind while reporting success. `;
+          const narrow = `narrow the filters (a tighter date window, a specific sender) or raise \`limit\` up to ${MAX_BATCH}, and repeat.`;
+          if (!token) {
+            return fail(
+              `${head}This server does not report a UIDVALIDITY for "${folder}", so there is no resumable sweep to offer — a cursor `
+              + `would be holding uids with no way to prove they still name the same messages on the next call. To delete them all: ${narrow}`,
+            );
+          }
+          return fail(
+            `${head}TO DELETE ALL ${found.uids.length}: call email_delete with cursor="${token}" and NO other arguments, then keep calling it `
             + `with the cursor it returns until it says the sweep is finished — that continues THIS match set without searching again, `
-            + `so there is no \`limit\` to guess. To act on FEWER instead: `
-            + `narrow the filters (a tighter date window, a specific sender) or raise \`limit\` up to ${MAX_BATCH}, and repeat.`,
+            + `so there is no \`limit\` to guess. To act on FEWER instead: ${narrow}`,
           );
         }
         targets = found.uids;
@@ -296,7 +307,7 @@ export const emailDelete: ToolDefinition = {
         onMissing = "refuse";
       }
 
-      const outcome = await movePage(session, { folder, destination: trash.path, targets, onMissing, expectValidity });
+      const outcome = await movePage(session, { folder, destination: trash.path, targets, onMissing, expectValidity, requireValidity: cursor !== "" });
       if (!outcome.ok) {
         // A page that failed leaves the sweep untouched, so the same cursor
         // retries the same page — EXCEPT when the failure means the stored uids
@@ -339,15 +350,29 @@ export const emailDelete: ToolDefinition = {
       if (cursor) {
         // The sweep advances by the whole PAGE, skipped messages included: they
         // have been accounted for and re-attempting them would loop forever.
-        const more = commitPage(cursor, targets.length, outcome.moved ?? outcome.requested, skipped);
-        const sweep = more ? resumeSweep(cursor) : null;
-        if (sweep) {
+        // But advancing is not the same as SUCCEEDING, and conflating the two is
+        // how a sweep comes to report FINISHED over mail it never moved. What
+        // the server enumerated is `moved`; everything else it was handed is
+        // carried as unconfirmed, and an unconfirmed page contributes NOTHING to
+        // `moved` — the requested count is a request, not a receipt.
+        const confirmedMoved = outcome.confirmed ? (outcome.moved ?? 0) : 0;
+        const unconfirmed = outcome.confirmed ? outcome.requested - confirmedMoved : outcome.requested;
+        const commit = commitPage(cursor, targets.length, { moved: confirmedMoved, skipped, unconfirmed });
+        if (commit?.more) {
           payload.cursor = cursor;
-          payload.remaining = sweep.remaining.length;
-          note += ` ${sweep.remaining.length} of this sweep's ${sweep.total} message(s) are still to go — call email_delete with cursor="${cursor}" and nothing else to continue.`;
+          payload.remaining = commit.remaining;
+          note += ` ${commit.remaining} of this sweep's ${commit.total} message(s) are still to go — call email_delete with cursor="${cursor}" and nothing else to continue.`;
         } else {
           payload.remaining = 0;
-          note += " This sweep is now FINISHED — every message the original search matched has been dealt with. Do not call the cursor again.";
+          // `commit` is null only if the entry vanished under us; fall back to
+          // THIS page's own shortfall rather than to a claim of completeness.
+          const residue = commit ? commit.unconfirmed : unconfirmed;
+          payload.unconfirmed = residue;
+          note += residue === 0
+            ? " This sweep is now FINISHED — every message the original search matched has been dealt with. Do not call the cursor again."
+            : ` This sweep reached the END OF ITS RESOLVED SET, but ${residue} message(s) were left UNCONFIRMED or NOT MOVED, so it is NOT finished`
+              + ` and must not be reported as such. Do not call this cursor again — it holds nothing more. Re-run email_delete with the original`
+              + ` search filters to see what is still in "${folder}", and delete what it finds.`;
         }
       }
 

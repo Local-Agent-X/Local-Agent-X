@@ -41,7 +41,9 @@ export interface EgressBlocker {
 // scan covers every channel (not just http body). Returns the scannable text +
 // any file paths the sink would attach. Keyed by tool name because each sink
 // carries its payload in differently-named args.
-function egressPayload(name: string, args: Record<string, unknown>): { text: string; attachmentPaths: string[] } {
+// Exported so a chunk that adds a payload-bearing parameter to an egress-capable
+// tool can pin, directly, that the new field reaches the scan (campaign E5).
+export function egressPayload(name: string, args: Record<string, unknown>): { text: string; attachmentPaths: string[] } {
   const parts: string[] = [];
   const attachmentPaths: string[] = [];
   const push = (v: unknown) => { if (v != null && v !== "") parts.push(String(v)); };
@@ -62,7 +64,11 @@ function egressPayload(name: string, args: Record<string, unknown>): { text: str
       }
       break;
     case "email_send":
-      push(args.to); push(args.cc); push(args.subject); push(args.body);
+      // EVERY field that leaves the box: recipients (bcc is still a real
+      // delivery address, merely hidden from the visible headers) and both body
+      // parts (a secret rendered only in the HTML alternative egresses exactly
+      // like one in the plain text).
+      push(args.to); push(args.cc); push(args.bcc); push(args.subject); push(args.body); push(args.html);
       if (args.attachments) {
         try {
           const paths = JSON.parse(String(args.attachments));

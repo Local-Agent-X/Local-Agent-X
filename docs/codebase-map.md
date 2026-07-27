@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 112 | 24 | XL |  |
 | `src/security/` | 79 | 32 | XL |  |
-| `src/tools/` | 60 | 149 | XL |  |
+| `src/tools/` | 60 | 150 | XL |  |
 | `src/providers/` | 57 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 206 | XL |  |
 | `src/memory/` | 43 | 121 | XL |  |
@@ -46,7 +46,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agents/` | 16 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 15 | 8 | L |  |
-| `src/anthropic-client/` | 14 | 20 | L |  |
+| `src/anthropic-client/` | 14 | 19 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |

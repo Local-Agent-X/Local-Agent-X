@@ -31,6 +31,20 @@ export interface WarmProcess {
   // to the active prompt's listener. When idle, frames are ignored
   // (shouldn't happen; CLI is silent between prompts).
   activeListener: ((frame: unknown) => void) | null;
+  /**
+   * Wakes the in-flight per-turn driver when this process dies.
+   *
+   * `activeListener` only ever fires on a stdout FRAME. A process that dies
+   * without emitting one — an instant spawn failure (`'claude' is not
+   * recognized`), a crash, or a kill — left the driver awaiting a frame that
+   * could never arrive, and the await had no other resolver. That hung the
+   * turn forever, which wedged the cap-1 background lane and stalled every
+   * queued op behind it (2026-07-26: six dreams failed by the next boot sweep
+   * having never run a turn). The 600s idle watchdog could not save it either:
+   * its abort path also only set `state = "dead"`, so the same await stayed
+   * pending. Death must be an EVENT, not a flag someone might poll.
+   */
+  deathListener: (() => void) | null;
   buffer: string;
   stderr: string;
   /** Path to a generated MCP config file, deleted on process exit. */

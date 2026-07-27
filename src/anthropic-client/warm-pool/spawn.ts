@@ -72,9 +72,19 @@ export function spawnWarmProcess(key: WarmPoolKey, callbacks: SpawnCallbacks): W
     lastUsedAt: Date.now(),
     spawnedAt: Date.now(),
     activeListener: null,
+    deathListener: null,
     buffer: "",
     stderr: "",
     mcpConfigPath,
+  };
+
+  /** Mark dead and WAKE the in-flight driver. Both exit paths must call this —
+   *  see the deathListener contract in types.ts. */
+  const die = (): void => {
+    wp.state = "dead";
+    const notify = wp.deathListener;
+    wp.deathListener = null; // one-shot; a later release() must not re-fire it
+    try { notify?.(); } catch { /* a throwing consumer must not break teardown */ }
   };
 
   proc.stderr?.on("data", (chunk: Buffer) => {
@@ -99,17 +109,23 @@ export function spawnWarmProcess(key: WarmPoolKey, callbacks: SpawnCallbacks): W
   });
 
   proc.on("exit", (code) => {
-    wp.state = "dead";
     if (wp.mcpConfigPath) {
       try { unlinkSync(wp.mcpConfigPath); } catch { /* already gone */ }
     }
     logger.info(`[warm-pool] process exited code=${code} key=${wp.key} age=${Math.round((Date.now() - wp.spawnedAt) / 1000)}s stderr_tail=${wp.stderr.slice(-200)}`);
+    die();
     callbacks.onExit(wp.key);
   });
 
+  // ENOENT (binary missing), EACCES, and other spawn-level failures land here
+  // and may fire WITHOUT a matching "exit". Previously this only set the flag:
+  // no driver wake, and no onExit either, so the corpse also stayed in the pool
+  // map until the next acquire tried to reuse it.
   proc.on("error", (e) => {
     logger.warn(`[warm-pool] spawn error key=${wp.key}: ${e.message}`);
-    wp.state = "dead";
+    if (!wp.stderr) wp.stderr = e.message;
+    die();
+    callbacks.onExit(wp.key);
   });
 
   logger.info(`[warm-pool] spawned new process key=${wp.key}`);

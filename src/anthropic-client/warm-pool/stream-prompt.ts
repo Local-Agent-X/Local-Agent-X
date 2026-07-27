@@ -24,6 +24,19 @@ export interface WarmPromptOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * One wake-up of the read loop. Exactly one of these is true:
+ *   - `frame`  — a stdout frame arrived (the normal case)
+ *   - `dead`   — the process died; re-check state instead of waiting for a
+ *                frame that will never come
+ *   - `done`   — end of stream
+ */
+interface WakeUp {
+  done: boolean;
+  frame?: unknown;
+  dead?: boolean;
+}
+
 export async function* streamViaWarmPool(
   key: WarmPoolKey,
   opts: WarmPromptOptions,
@@ -35,6 +48,19 @@ export async function* streamViaWarmPool(
   // finally to decide pool-vs-evict: releasing a still-generating process
   // (finished === false) hands its tail frames to the next acquirer.
   let finished = false;
+
+  // Frame queue + the single pending resolver for the read loop below. Hoisted
+  // above onAbort so the abort path can wake the loop too.
+  const queue: unknown[] = [];
+  let resolveNext: ((v: WakeUp) => void) | null = null;
+  /** Resolve a pending read with "the process is gone — go re-check state". */
+  const wakeDriver = (): void => {
+    if (!resolveNext) return;
+    const r = resolveNext;
+    resolveNext = null;
+    r({ done: false, dead: true });
+  };
+
   // Two abort modes, distinguished by the AbortSignal's `reason`:
   //   - reason matches /idle|stalled|stop/i → KILL the warm process. The
   //     model is wedged or the user pressed stop; we need to free the
@@ -51,6 +77,12 @@ export async function* streamViaWarmPool(
     if (/idle|stalled|stop/i.test(reasonText)) {
       killProcessTree(wp.proc, "SIGKILL"); // reap the claude → mcp-bridge subtree
       wp.state = "dead";
+      // Wake the driver ourselves. SIGKILL delivery is asynchronous, and on a
+      // process that is ALREADY dead no "exit" fires at all — so without this
+      // the abort would leave the loop below awaiting a frame forever, which
+      // is precisely how the 600s idle watchdog failed to rescue the wedged
+      // background lane on 2026-07-26.
+      wakeDriver();
     }
   };
   if (opts.signal) {
@@ -59,9 +91,6 @@ export async function* streamViaWarmPool(
   }
 
   try {
-    const queue: unknown[] = [];
-    let resolveNext: ((v: { done: boolean; frame?: unknown }) => void) | null = null;
-
     wp.activeListener = (frame: unknown) => {
       if (resolveNext) {
         const r = resolveNext;
@@ -71,6 +100,9 @@ export async function* streamViaWarmPool(
         queue.push(frame);
       }
     };
+    // The second resolver. Without one, the only way out of the await below
+    // was a stdout frame — so a dead process meant an eternal await.
+    wp.deathListener = wakeDriver;
 
     const userMsg = JSON.stringify({
       type: "user",
@@ -83,15 +115,20 @@ export async function* streamViaWarmPool(
     let stopReason: string | undefined;
 
     while (!finished) {
-      let next: { done: boolean; frame?: unknown };
+      let next: WakeUp;
       if (queue.length > 0) {
         next = { done: false, frame: queue.shift() };
       } else if (wp.state === "dead") {
-        yield { type: "error", error: `warm process died: ${wp.stderr.slice(-300)}` };
+        yield { type: "error", error: `warm process died: ${wp.stderr.slice(-300) || "no output"}` };
         return;
       } else {
-        next = await new Promise((r) => { resolveNext = r; });
+        next = await new Promise<WakeUp>((r) => { resolveNext = r; });
       }
+      // Woken by death rather than by a frame. Loop again rather than erroring
+      // here: any frames the process emitted before dying are still in `queue`
+      // and must be drained first — only once it is empty does the `dead`
+      // branch above turn this into the error event.
+      if (next.dead) continue;
       if (next.done) break;
 
       const events = processFrame(next.frame as Record<string, unknown>, {
@@ -117,6 +154,10 @@ export async function* streamViaWarmPool(
     }
   } finally {
     wp.activeListener = null;
+    // Drop the wake hook with the frame listener — this driver is done, and a
+    // later death on a pooled process must not resolve a stale closure.
+    wp.deathListener = null;
+    resolveNext = null;
     if (!released) {
       released = true;
       // If the consumer bailed before the turn's `result` frame arrived

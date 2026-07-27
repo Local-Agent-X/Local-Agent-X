@@ -1,7 +1,6 @@
-import { ImapFlow } from "imapflow";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getImapConfig } from "./email-config.js";
-import { fetchMessages } from "./email-imap.js";
+import { fetchMessages, searchMessages, type EmailPage } from "./email-imap.js";
 
 /** Both read tools need IMAP and nothing else. getImapConfig() returns a STRING
  *  error when IMAP_HOST/USER/PASS aren't all present — that is the existing
@@ -9,6 +8,17 @@ import { fetchMessages } from "./email-imap.js";
  *  half of the send/read split: IMAP is optional (C7a), so a send-only mailbox
  *  leaves these two genuinely unusable while email_send still works. */
 const imapConfigured = () => typeof getImapConfig() !== "string";
+
+/** Report the page as it came back, truncation included. `count` keeps its
+ *  previous meaning (messages actually returned); `total` is what the mailbox
+ *  matched, which the caller could not see before. */
+function pageResult(page: EmailPage, emptyMessage: string): ToolResult {
+  if (page.returned === 0) return { content: emptyMessage, metadata: { count: 0, total: page.total } };
+  return {
+    content: JSON.stringify(page, null, 2),
+    metadata: { count: page.returned, total: page.total, truncated: page.truncated },
+  };
+}
 
 export const emailRead: ToolDefinition = {
   name: "email_read",
@@ -29,28 +39,12 @@ export const emailRead: ToolDefinition = {
     const folder = String(args.folder || "INBOX");
     const limit = Number(args.limit) || 10;
     try {
-      if (args.unread_only) {
-        const client = new ImapFlow({ host: cfg.host, port: cfg.port, secure: true, auth: { user: cfg.user, pass: cfg.pass }, logger: false });
-        try {
-          await client.connect();
-          const lock = await client.getMailboxLock(folder);
-          try {
-            const raw = await client.search({ seen: false }, { uid: true });
-            const uids = Array.isArray(raw) ? raw : [];
-            if (!uids.length) return { content: "No unread messages found.", metadata: { count: 0 } };
-            await client.logout();
-            const msgs = await fetchMessages(cfg, folder, uids.slice(-limit), limit);
-            return { content: JSON.stringify(msgs, null, 2), metadata: { count: msgs.length } };
-          } finally {
-            lock.release();
-          }
-        } catch (inner) {
-          await client.logout().catch(() => {});
-          throw inner;
-        }
-      }
-      const msgs = await fetchMessages(cfg, folder, "*", limit);
-      return { content: JSON.stringify(msgs, null, 2), metadata: { count: msgs.length } };
+      const page = args.unread_only
+        ? await searchMessages(cfg, folder, { unreadOnly: true }, limit)
+        // null, not "*": in IMAP "*" is the LAST message, so this path used to
+        // return exactly one message however large `limit` was.
+        : await fetchMessages(cfg, folder, null, limit);
+      return pageResult(page, args.unread_only ? "No unread messages found." : "No messages found.");
     } catch (err) {
       return { content: `Failed to read emails: ${(err as Error).message}`, isError: true };
     }
@@ -77,27 +71,10 @@ export const emailSearch: ToolDefinition = {
     const limit = Number(args.limit) || 10;
     const query = String(args.query);
     try {
-      const client = new ImapFlow({ host: cfg.host, port: cfg.port, secure: true, auth: { user: cfg.user, pass: cfg.pass }, logger: false });
-      let uids: number[] = [];
-      try {
-        await client.connect();
-        const lock = await client.getMailboxLock(folder);
-        try {
-          const rawSubject = await client.search({ subject: query }, { uid: true });
-          const rawFrom = await client.search({ from: query }, { uid: true });
-          const subjectUids = Array.isArray(rawSubject) ? rawSubject : [];
-          const fromUids = Array.isArray(rawFrom) ? rawFrom : [];
-          const combined = new Set([...subjectUids, ...fromUids]);
-          uids = Array.from(combined);
-        } finally {
-          lock.release();
-        }
-      } finally {
-        await client.logout();
-      }
-      if (!uids.length) return { content: "No messages matched the search query.", metadata: { count: 0 } };
-      const msgs = await fetchMessages(cfg, folder, uids.slice(-limit), limit);
-      return { content: JSON.stringify(msgs, null, 2), metadata: { count: msgs.length } };
+      // Subject OR sender, as before — now one server-side OR in one
+      // connection instead of two searches unioned across two connections.
+      const page = await searchMessages(cfg, folder, { anyOf: [{ subject: query }, { from: query }] }, limit);
+      return pageResult(page, "No messages matched the search query.");
     } catch (err) {
       return { content: `Failed to search emails: ${(err as Error).message}`, isError: true };
     }

@@ -167,6 +167,7 @@ const state = h.state;
 
 const {
   fetchMessages, searchMessages, fetchBody, moveMessages, setFlags, listFolders, buildSearchQuery,
+  withSession,
 } = await import("./email-imap.js");
 type EmailSearchCriteria = import("./email-imap.js").EmailSearchCriteria;
 const { emailRead, emailSearch } = await import("./email-read-tools.js");
@@ -649,6 +650,70 @@ describe("connection lifecycle", () => {
     state.failConnect = true;
     await expect(fetchMessages(CFG, "INBOX", null, 10)).rejects.toThrow(/connect refused/);
     expect(state.calls).toEqual(["construct", "connect", "close"]);
+  });
+});
+
+/**
+ * A SESSION is the same lifecycle with more than one operation inside it. The
+ * per-operation exports above are this with exactly one call, so everything
+ * pinned there has to survive here — a leaked connection is worse than a slow
+ * one, and this is the shape that can leak.
+ */
+describe("withSession — several operations, one connection", () => {
+  it("connects once, locks per operation, and tears down once", async () => {
+    // MUTATION: open a connection per operation (the old shape) — three
+    // connects and three logouts appear.
+    state.messages = makeMessages(3);
+    state.folders = [{ path: "INBOX", name: "INBOX", subscribed: true }];
+    const seen = await withSession(CFG, async (session) => {
+      const folders = await session.listFolders();
+      const page = await session.fetchMessages("INBOX", null, 10);
+      const moved = await session.moveMessages("INBOX", [1000], "Trash");
+      return { folders: folders.length, returned: page.returned, moved: moved.moved };
+    });
+    expect(seen, "the session did not actually do the three operations").toEqual({ folders: 1, returned: 3, moved: 1 });
+    expect(state.calls).toEqual([
+      "construct", "connect", "list",
+      "lock:INBOX", "fetch", "release",
+      "lock:INBOX", "move", "release",
+      "logout", "close",
+    ]);
+  });
+
+  it("closes the connection when an operation inside the session throws", async () => {
+    state.messages = makeMessages(2);
+    state.failFetch = true;
+    await expect(withSession(CFG, async (session) => {
+      await session.fetchMessages("INBOX", null, 10);
+    })).rejects.toThrow(/fetch exploded/);
+    expect(state.calls.filter((c) => c === "close"), "a failed session leaked its connection").toHaveLength(1);
+    expect(state.calls.filter((c) => c === "release"), "the lock was not released on the error path").toHaveLength(1);
+  });
+
+  it("closes the socket exactly once when connecting fails, and does not retry", async () => {
+    // Two operations, one failed handshake: the rejected connection is
+    // remembered, so the second operation does not dial again and the teardown
+    // does not close a socket the failure path already closed.
+    state.failConnect = true;
+    await expect(withSession(CFG, async (session) => {
+      await session.listFolders().catch(() => {});
+      await session.listFolders();
+    })).rejects.toThrow(/connect refused/);
+    expect(state.calls).toEqual(["construct", "connect", "close"]);
+  });
+
+  it("opens NOTHING for a session whose operations all refuse from their arguments", async () => {
+    // The property `email_delete`'s cheap refusals rest on: a session that never
+    // needs the server never pays for one. MUTATION: connect eagerly in
+    // withSession — this becomes ["construct","connect","logout","close"].
+    const out = await withSession(CFG, async (session) => {
+      const moved = await session.moveMessages("INBOX", [], "Trash");
+      const headers = await session.fetchHeaders("INBOX", []);
+      const flagged = await session.setFlags("INBOX", [], ["\\Seen"], "add");
+      return { moved: moved.moved, headers: headers.length, updated: flagged.updated };
+    });
+    expect(out).toEqual({ moved: 0, headers: 0, updated: 0 });
+    expect(state.calls, "a session that needed no server still dialled one").toEqual([]);
   });
 });
 

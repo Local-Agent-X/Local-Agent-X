@@ -12,7 +12,8 @@ import type { ToolDefinition } from "../types.js";
 import { emailSend } from "./email-send-tool.js";
 import { emailRead, emailSearch, emailReadMessage } from "./email-read-tools.js";
 import { emailFolders } from "./email-folder-tools.js";
-import { emailDelete, emailMark } from "./email-mutate-tools.js";
+import { emailDelete } from "./email-mutate-tools.js";
+import { emailMark } from "./email-mark-tool.js";
 import { emailDraft, emailSetup } from "./email-compose-tools.js";
 
 export const emailTools: ToolDefinition[] = [

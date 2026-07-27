@@ -173,7 +173,11 @@ vi.mock("imapflow", () => ({ ImapFlow: h.FakeImapFlow }));
 
 const state = h.state;
 
-const { emailDelete, emailMark } = await import("./email-mutate-tools.js");
+const { emailDelete } = await import("./email-mutate-tools.js");
+// email_mark moved to its own module under the 400-LOC rule; it is still the
+// same verb and still shares its rules with email_delete through
+// email-mutate-shared.ts, so the two are still driven together here.
+const { emailMark } = await import("./email-mark-tool.js");
 
 const IMAP_ENV = ["IMAP_HOST", "IMAP_USER", "IMAP_PASS", "IMAP_PORT"];
 let saved: Record<string, string | undefined>;
@@ -437,30 +441,57 @@ describe("email_delete - never acting on more than it enumerated", () => {
   });
 
   it("names both remedies - narrowing the filters and raising the limit", async () => {
+    // 300 > DEFAULT_BATCH, so an unspecified `limit` still refuses rather than
+    // trashing the first page - the property this case is about, at either
+    // default. The literal ceiling is asserted, not the constant, so a wrong
+    // interpolation is still visible here.
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(300) };
     const { result } = await del({ from: "noreply@example.com" });
     expect(String(result.content)).toMatch(/narrow the filters/i);
-    expect(String(result.content)).toMatch(/raise `limit` up to 200/);
+    expect(String(result.content)).toMatch(/raise `limit` up to 1000/);
+  });
+
+  it("moves an ordinary sender clear-out in one call, where the old default refused", async () => {
+    // THE MEASURED CASE. 656 messages from one sender, `limit` unspecified: at
+    // DEFAULT_BATCH 50 this was a refusal that cost two handshakes and a turn.
+    // MUTATION: drop DEFAULT_BATCH back to 50 - this goes red with the
+    // truncation refusal.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(150) };
+    const { result, payload } = await del({ from: "noreply@example.com" });
+    expect(result.isError).toBeFalsy();
+    expect(payload.requested).toBe(150);
+    expect(inFolder("INBOX")).toEqual([]);
   });
 
   it("caps `limit` at the batch ceiling instead of honouring an unbounded one", async () => {
     // MUTATION: pass `limit` through unclamped. `limit: 100000` would then make
     // a single unreviewable call able to empty a whole mailbox.
     state.folders = GMAIL;
-    state.mailbox = { INBOX: messages(500) };
+    state.mailbox = { INBOX: messages(1500) };
     const { result } = await del({ from: "noreply@example.com", limit: 100000 });
     expect(result.isError).toBe(true);
-    expect(String(result.content)).toMatch(/at most 200/);
+    expect(String(result.content)).toMatch(/at most 1000/);
     expect(state.moves).toEqual([]);
   });
 
   it("refuses an explicit uid list longer than the ceiling", async () => {
     state.folders = GMAIL;
-    const { result } = await del({ uids: Array.from({ length: 201 }, (_, i) => 1000 + i) });
+    const { result } = await del({ uids: Array.from({ length: 1001 }, (_, i) => 1000 + i) });
     expect(result.isError).toBe(true);
-    expect(String(result.content)).toMatch(/at most 200 per call/);
+    expect(String(result.content)).toMatch(/at most 1000 per call/);
     expect(state.moves).toEqual([]);
+  });
+
+  it("publishes the real ceiling and default in the prose the model reads", async () => {
+    // Every description interpolates the constants, so raising them is supposed
+    // to carry into the schema for free. "Supposed to" is the part worth
+    // pinning: a hardcoded number here would be invisible until a model refused
+    // a call the tool would actually have accepted.
+    const props = emailDelete.parameters.properties as Record<string, { description: string }>;
+    expect(props.limit.description).toBe("Most messages this call may move (default 200, maximum 1000)");
+    expect(emailDelete.description).toContain("default 200, maximum 1000");
   });
 
   it("acts on exactly the enumerated set when it fits", async () => {
@@ -469,6 +500,97 @@ describe("email_delete - never acting on more than it enumerated", () => {
     const { payload } = await del({ from: "noreply@example.com", limit: 10 });
     expect(payload.uids).toEqual([1000, 1001, 1002, 1003, 1004]);
     expect(payload.requested).toBe(5);
+  });
+});
+
+/**
+ * THE MEASURED DEFECT. In production a delete took 5-47s because every call into
+ * the data layer opened its own connection, and `email_delete` makes three:
+ * listFolders to resolve Trash, then the search or the uid check, then the move.
+ * Against Gmail each connect/TLS/AUTH is 1-3s, so one delete paid three.
+ *
+ * These count HANDSHAKES from the fake's call log, which is the only thing that
+ * can tell "one connection, three commands" from "three connections". MUTATION:
+ * revert any of the three `session.*` calls in email_delete to the module-level
+ * function that takes `cfg` - the count goes back to 2 or 3.
+ */
+describe("email_delete - one connection per call", () => {
+  const handshakes = () => state.calls.filter((c) => c === "connect").length;
+
+  it("opens ONE connection for a filter-path delete, not three", async () => {
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3) };
+    await del({ from: "noreply@example.com" });
+    expect(handshakes(), "the folder list, the search and the move each dialled separately").toBe(1);
+    // …and the work still happened, so this is not passing by doing nothing.
+    expect(state.calls).toContain("list");
+    expect(state.calls).toContain("search");
+    expect(state.calls).toContain("move");
+  });
+
+  it("opens ONE connection for a uid-path delete, not three", async () => {
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3) };
+    await del({ folder: "INBOX", uids: [1000, 1001] });
+    expect(handshakes()).toBe(1);
+    expect(state.calls).toContain("move");
+  });
+
+  it("opens ONE connection for a truncation refusal, not two", async () => {
+    // The measured errors were this path: 21s and 47s to be told no, after the
+    // folder list and the search had each paid a handshake.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(4000) };
+    const { result } = await del({ from: "noreply@example.com", limit: 2 });
+    expect(result.isError).toBe(true);
+    expect(handshakes()).toBe(1);
+  });
+
+  it("opens NO connection for a refusal decidable from the arguments alone", async () => {
+    // The empty-criteria refusal used to fire inside searchMessages, i.e. after
+    // the folder list had already dialled. MUTATION: move the buildSearchQuery
+    // call back inside the session - `calls` becomes ["construct","connect",…].
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(50) };
+    const { result } = await del({});
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/entire mailbox/i);
+    expect(state.calls, "a refusal that needed no server went and asked one anyway").toEqual([]);
+  });
+
+  it("still logs out and closes exactly once, and releases every lock it took", async () => {
+    // The lifecycle a previous skeptic pinned, now over a session rather than a
+    // single operation: more locks, still one connection torn down once.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3) };
+    await del({ from: "noreply@example.com" });
+    expect(state.calls.filter((c) => c === "logout")).toHaveLength(1);
+    expect(state.calls.filter((c) => c === "close")).toHaveLength(1);
+    expect(state.calls.filter((c) => c.startsWith("lock:")).length).toBe(state.calls.filter((c) => c === "release").length);
+    // Every lock is released before the connection is torn down.
+    expect(state.calls.indexOf("logout")).toBeGreaterThan(state.calls.lastIndexOf("release"));
+  });
+
+  it("closes the connection when the move throws mid-session", async () => {
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(2) };
+    state.unselectable = ["INBOX"];
+    const { result } = await del({ folder: "INBOX", uids: [1000] });
+    expect(result.isError).toBe(true);
+    expect(state.calls.filter((c) => c === "close"), "a failed delete leaked its connection").toHaveLength(1);
+  });
+});
+
+describe("email_mark - one connection per call", () => {
+  it("opens ONE connection for the folder list and both flag ops", async () => {
+    // MUTATION: revert `session.setFlags` to the module-level setFlags - the
+    // folder list and each flag op dial separately, so this becomes 3.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(2) };
+    await emailMark.execute({ uids: [1000], read: true, starred: false, folder: "INBOX" });
+    expect(state.calls.filter((c) => c === "connect")).toHaveLength(1);
+    expect(state.calls.filter((c) => c.startsWith("flags:"))).toEqual(["flags:add", "flags:remove"]);
+    expect(state.calls.filter((c) => c === "logout")).toHaveLength(1);
   });
 });
 

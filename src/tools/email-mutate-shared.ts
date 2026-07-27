@@ -10,9 +10,8 @@
 import type { ToolResult } from "../types.js";
 import type { argReader } from "./email-tool-args.js";
 import {
-  listFolders,
   type EmailHeader,
-  type ImapCredentials,
+  type ImapSession,
   type MailboxFolder,
   type MailboxOpenError,
 } from "./email-imap.js";
@@ -20,15 +19,30 @@ import {
 /**
  * The most messages either verb will act on in ONE call.
  *
- * This is not a page size, it is a blast-radius ceiling. `searchMessages`
- * returns a PAGE, so the set the tools can enumerate is bounded anyway; the cap
- * makes the bound a stated rule rather than an accident of the default limit.
- * A caller wanting to clear 4,000 messages must narrow the window (by sender,
- * by month) and come back — every call is separately gated by the destructive
- * risk class, which is the point.
+ * This is not a page size, it is a blast-radius ceiling — and it is NOT a review
+ * gate. The original 200 was argued from "every call is separately gated by the
+ * destructive risk class", which only protects anyone if a human looks between
+ * batches; this user has said plainly that they do not and will not. What
+ * actually protects them is two things that hold identically at any ceiling:
+ * the truncation guard, which moves NOTHING and reports the true match total
+ * when the filter matches more than the call may act on, and decision E1, which
+ * makes a delete a move to Trash and therefore recoverable.
+ *
+ * So the ceiling is set by RESUMABILITY, not by gating. One IMAP command
+ * carrying 10,000 uids is a long-running operation, and a timeout at message
+ * 9,000 loses the whole call; at 1,000 a failure costs one batch. That is the
+ * only argument left for a number, so it is the number.
+ *
+ * `DEFAULT_BATCH` is what a call that said nothing about `limit` may move. It is
+ * deliberately BELOW the ceiling: 50 was small enough that an ordinary "clear
+ * this sender's mail" (656 messages, measured) refused, but making it equal to
+ * MAX_BATCH would delete the difference between a caller that chose a blast
+ * radius and one that did not think about it at all. 200 clears the ordinary
+ * case, and anything larger is one informed retry — the truncation refusal names
+ * the true total and the ceiling, and now costs one handshake rather than three.
  */
-export const MAX_BATCH = 200;
-export const DEFAULT_BATCH = 50;
+export const MAX_BATCH = 1000;
+export const DEFAULT_BATCH = 200;
 
 /** RFC 6154's role attribute for the trash folder. The ONLY way these tools are
  *  allowed to find it: names are localised ("Bin", "Papierkorb") and namespaced
@@ -37,7 +51,6 @@ export const DEFAULT_BATCH = 50;
 export const TRASH_ROLE = "\\Trash";
 
 export interface Resolved {
-  cfg: ImapCredentials;
   folders: MailboxFolder[];
   /** The server's own spelling of the requested source folder. */
   folder: string;
@@ -47,13 +60,15 @@ export function fail(content: string): ToolResult {
   return { content, isError: true };
 }
 
-/** Resolve credentials, the folder list, and the source folder's real path.
+/** Resolve the folder list and the source folder's real path, ON THE CALLER'S
+ *  SESSION — the LIST it needs is also where the \Trash role comes from, so both
+ *  verbs get it for one round trip on the connection they will move or flag on.
  *  Returns a ToolResult when it cannot — every failure here is a refusal to
  *  act, never a guess. */
-export async function resolveFolder(cfg: ImapCredentials, requested: string): Promise<Resolved | ToolResult> {
+export async function resolveFolder(session: ImapSession, requested: string): Promise<Resolved | ToolResult> {
   let folders: MailboxFolder[];
   try {
-    folders = await listFolders(cfg);
+    folders = await session.listFolders();
   } catch (err) {
     return fail(`Could not list the mailbox's folders, so the folder to act on could not be verified: ${(err as Error).message}`);
   }
@@ -66,7 +81,7 @@ export async function resolveFolder(cfg: ImapCredentials, requested: string): Pr
       + `Nothing was changed.`,
     );
   }
-  return { cfg, folders, folder: match.path };
+  return { folders, folder: match.path };
 }
 
 /** Turn a mailbox-open failure into a sentence that names the folder. A

@@ -36,87 +36,28 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { getImapConfig, imapConfigured } from "./email-config.js";
 import { argReader } from "./email-tool-args.js";
 import {
-  listFolders,
+  fetchHeaders,
+  MailboxOpenError,
   moveMessages,
   searchMessages,
   setFlags,
+  type EmailHeader,
   type EmailSearchCriteria,
-  type ImapCredentials,
-  type MailboxFolder,
 } from "./email-imap.js";
+import {
+  cappedBatch,
+  DEFAULT_BATCH,
+  fail,
+  MAX_BATCH,
+  named,
+  openFailure,
+  resolveFolder,
+  TRASH_ROLE,
+} from "./email-mutate-shared.js";
 
 /* `imapConfigured` is the shared export from the config store (C6), imported —
  * not re-inlined — so all six IMAP tools are gated by referentially the same
  * predicate and a copy cannot drift. */
-
-/**
- * The most messages either verb will act on in ONE call.
- *
- * This is not a page size, it is a blast-radius ceiling. `searchMessages`
- * returns a PAGE, so the set this tool can enumerate is bounded anyway; the cap
- * makes the bound a stated rule rather than an accident of the default limit.
- * A caller wanting to clear 4,000 messages must narrow the window (by sender,
- * by month) and come back — every call is separately gated by the destructive
- * risk class, which is the point.
- */
-const MAX_BATCH = 200;
-const DEFAULT_BATCH = 50;
-
-/** RFC 6154's role attribute for the trash folder. The ONLY way this file is
- *  allowed to find it: names are localised ("Bin", "Papierkorb") and namespaced
- *  ("[Gmail]/Trash", "INBOX.Trash"), so any name match is a provider-specific
- *  guess that fails silently on the providers it was not written for. */
-const TRASH_ROLE = "\\Trash";
-
-interface Resolved {
-  cfg: ImapCredentials;
-  folders: MailboxFolder[];
-  /** The server's own spelling of the requested source folder. */
-  folder: string;
-}
-
-function fail(content: string): ToolResult {
-  return { content, isError: true };
-}
-
-/** Resolve credentials, the folder list, and the source folder's real path.
- *  Returns a ToolResult when it cannot — every failure here is a refusal to
- *  act, never a guess. */
-async function resolve(cfg: ImapCredentials, requested: string): Promise<Resolved | ToolResult> {
-  let folders: MailboxFolder[];
-  try {
-    folders = await listFolders(cfg);
-  } catch (err) {
-    return fail(`Could not list the mailbox's folders, so the folder to act on could not be verified: ${(err as Error).message}`);
-  }
-  // Case-insensitive, because INBOX is case-insensitive by RFC and models
-  // routinely write "inbox". The SERVER's spelling is what gets used.
-  const match = folders.find((f) => f.path.toLowerCase() === requested.toLowerCase());
-  if (!match) {
-    return fail(
-      `This mailbox has no folder named "${requested}". Call email_folders and pass a \`path\` from it verbatim. `
-      + `Nothing was changed.`,
-    );
-  }
-  return { cfg, folders, folder: match.path };
-}
-
-/** Turn a mailbox-open failure into a sentence that names the folder. A
- *  `\Noselect` container (Gmail exposes "[Gmail]" as one) is a real folder in
- *  the LIST output that cannot be SELECTed, and `listFolders` drops `box.flags`
- *  so we cannot see the attribute to pre-empt it. */
-function openFailure(folder: string, err: unknown): ToolResult {
-  return fail(
-    `Could not open the folder "${folder}": ${(err as Error).message}. `
-    + `Some entries in a folder list are containers that hold other folders and cannot be opened directly — `
-    + `call email_folders and pick a folder that actually holds mail. Nothing was changed.`,
-  );
-}
-
-function cappedBatch(read: ReturnType<typeof argReader>): number {
-  const limit = read.count("limit", DEFAULT_BATCH);
-  return Math.min(limit, MAX_BATCH);
-}
 
 export const emailDelete: ToolDefinition = {
   name: "email_delete",
@@ -129,12 +70,14 @@ export const emailDelete: ToolDefinition = {
     + "takes (`query`, `from`, `subject`, `body`, `unread_only`, `before`, `since`). At least one selector is "
     + "required — it will not act on a whole mailbox. If the filters match more messages than one call may act on "
     + `(limit, default ${DEFAULT_BATCH}, maximum ${MAX_BATCH}) NOTHING is moved and the true match total is reported, so `
-    + "narrow the filters and repeat. Reports how many the server actually confirmed, which can be fewer than "
-    + "requested.",
+    + "narrow the filters and repeat. UIDs are numbered PER FOLDER, so `uids` REQUIRES `folder` set to the folder "
+    + "they came from — a uid list on its own is refused rather than assumed to be INBOX. Reports how many the "
+    + "server actually confirmed, which can be fewer than requested, and names the sender and subject of every "
+    + "message it moved.",
   parameters: {
     type: "object",
     properties: {
-      uids: { type: "array", items: { type: "number" }, description: "Exact message UIDs to delete, as returned by email_read / email_search. Cannot be combined with the search filters." },
+      uids: { type: "array", items: { type: "number" }, description: "Exact message UIDs to delete, as returned by email_read / email_search FROM THE SAME FOLDER as `folder`, which becomes required. Cannot be combined with the search filters." },
       query: { type: "string", description: "Free-text: matches subject OR sender" },
       from: { type: "string", description: "Sender address or name contains this" },
       subject: { type: "string", description: "Subject contains this" },
@@ -142,7 +85,7 @@ export const emailDelete: ToolDefinition = {
       unread_only: { type: "boolean", description: "Only unread messages" },
       before: { type: "string", description: "Only messages received before this, as a STRING: ISO date (2025-07-26) or a relative age (\"1 year\", \"30 days\")." },
       since: { type: "string", description: "Only messages received on or after this, as a STRING: ISO date or relative age." },
-      folder: { type: "string", description: "Folder to delete from (default: INBOX)" },
+      folder: { type: "string", description: "Folder the uids belong to, and the folder to delete from. REQUIRED whenever `uids` is given, because uids are numbered per folder and mean different messages in each; with search filters instead it defaults to INBOX." },
       limit: { type: "number", description: `Most messages this call may move (default ${DEFAULT_BATCH}, maximum ${MAX_BATCH})` },
     },
     required: [],
@@ -180,7 +123,7 @@ export const emailDelete: ToolDefinition = {
       return fail(`\`uids\` lists ${uids.length} messages; this tool moves at most ${MAX_BATCH} per call. Split the list. Nothing was changed.`);
     }
 
-    const resolved = await resolve(cfg, requestedFolder);
+    const resolved = await resolveFolder(cfg, requestedFolder);
     if ("content" in resolved) return resolved;
     const { folder, folders } = resolved;
 
@@ -197,6 +140,49 @@ export const emailDelete: ToolDefinition = {
     }
 
     let targets = uids;
+    let subjects: EmailHeader[] = [];
+    if (targets.length > 0) {
+      // A uid without a folder is not a message. `folder` defaulting to INBOX
+      // meant a model that searched "receipts", got [1000, 1001] and called
+      // email_delete({uids}) moved INBOX's 1000 and 1001 — different mail, both
+      // folders numbering from 1000 because IMAP assigns uids per mailbox — and
+      // got "moved: 2" back. The existence check below cannot catch that: the
+      // uids ARE present, they just mean something else. Nothing downstream can
+      // recover the provenance either, so the only place to fix it is here, by
+      // refusing to assume. One extra argument on a destructive call, in
+      // exchange for a class of wrong-target delete that is otherwise
+      // unreachable to detect.
+      if (!read.text("folder")) {
+        return fail(
+          "`uids` needs `folder`: IMAP uids are numbered per folder, so the same uid names a different message in "
+          + "each one and this tool will not assume INBOX. Pass `folder` set to the folder the uids came from "
+          + "(the `folder` you passed to email_search / email_read). Nothing was changed.",
+        );
+      }
+      // IMAP uids are PER-MAILBOX. `folder` defaults to INBOX, so a model that
+      // searched "receipts", got [1000, 1001] and called email_delete without
+      // `folder` would otherwise move INBOX's 1000 and 1001 — different mail,
+      // reported as a successful delete of the messages it named. Resolving the
+      // set in the folder being moved FROM makes that unreachable: nothing moves
+      // unless every requested uid is there, and the ones that are not are
+      // named. It also catches the plain case of a uid that no longer exists,
+      // which used to come back as a non-error "the number moved is UNKNOWN".
+      try {
+        subjects = await fetchHeaders(cfg, folder, targets);
+      } catch (err) {
+        if (err instanceof MailboxOpenError) return openFailure(err);
+        return fail(`Refusing to delete: could not verify the messages in "${folder}": ${(err as Error).message}`);
+      }
+      const present = new Set(subjects.map((h) => h.uid));
+      const missing = targets.filter((u) => !present.has(u));
+      if (missing.length > 0) {
+        return fail(
+          `Refusing to delete: ${missing.length} of the ${targets.length} uid(s) given are not in "${folder}" — ${missing.join(", ")}. `
+          + `IMAP uids are per-folder, so a uid from one folder names a DIFFERENT message (or none) in another. `
+          + `Pass \`folder\` naming the folder the uids came from, or re-run the search there to get its uids. Nothing was moved.`,
+        );
+      }
+    }
     if (targets.length === 0) {
       try {
         // Whole-mailbox criteria THROW inside searchMessages (C1) before a
@@ -214,8 +200,11 @@ export const emailDelete: ToolDefinition = {
           );
         }
         targets = page.messages.map((m) => m.uid);
+        // The search ran IN this folder, so its uids are this folder's by
+        // construction — no second round trip to prove it.
+        subjects = page.messages.map(({ uid, from, subject, date, messageId }) => ({ uid, from, subject, date, messageId }));
       } catch (err) {
-        if (/mailbox|folder|select/i.test((err as Error).message)) return openFailure(folder, err);
+        if (err instanceof MailboxOpenError) return openFailure(err);
         return fail(`Refusing to delete: ${(err as Error).message}`);
       }
     }
@@ -234,6 +223,9 @@ export const emailDelete: ToolDefinition = {
         confirmed: result.confirmed,
         moved: result.confirmed ? result.moved : null,
         uids: targets,
+        // Named, not just counted: a payload that says "moved 2" and nothing
+        // else cannot be checked against what the caller meant to delete.
+        messages: named(subjects),
       };
       if (result.requested > 0 && result.moved === 0) {
         return fail(`The server refused the move: 0 of ${result.requested} messages were moved from "${folder}" to "${result.destination}". Nothing was deleted.`);
@@ -246,7 +238,7 @@ export const emailDelete: ToolDefinition = {
         metadata: { requested: result.requested, moved: result.confirmed ? result.moved : null, confirmed: result.confirmed, destination: result.destination },
       };
     } catch (err) {
-      if (/mailbox|folder|select/i.test((err as Error).message)) return openFailure(folder, err);
+      if (err instanceof MailboxOpenError) return openFailure(err);
       return fail(`Failed to delete from "${folder}": ${(err as Error).message}`);
     }
   },
@@ -300,26 +292,52 @@ export const emailMark: ToolDefinition = {
       return fail("email_mark was given nothing to change. Set `read` and/or `starred` to true or false. Nothing was changed.");
     }
 
-    const resolved = await resolve(cfg, requestedFolder);
+    const resolved = await resolveFolder(cfg, requestedFolder);
     if ("content" in resolved) return resolved;
     const { folder } = resolved;
 
     try {
-      const applied: Array<{ action: string; flags: string[]; updated: number }> = [];
+      type Op = { action: string; flags: string[]; updated: number };
+      const applied: Op[] = [];
+      const refused: Op[] = [];
       // Two round trips at most, and only for the halves actually asked for —
       // marking a message read must not also clear its star.
-      if (add.length > 0) applied.push(await setFlags(cfg, folder, uids, add, "add"));
-      if (remove.length > 0) applied.push(await setFlags(cfg, folder, uids, remove, "remove"));
-      const refused = applied.filter((a) => a.updated === 0);
+      //
+      // SHORT-CIRCUITED, deliberately: a refusal here is almost always a
+      // mailbox-level condition (read-only SELECT, a server that will not take
+      // the keyword), so the second op would refuse too and issuing it can only
+      // widen the half-applied window. The two flags are independent, so the
+      // ORDER carries no meaning and is not worth choosing between; stopping at
+      // the first refusal is the part that removes a reachable partial state.
+      // It cannot remove all of them: add-succeeds-then-remove-refuses is still
+      // reachable, which is exactly why the reporting below has to be honest.
+      for (const [flags, action] of [[add, "add"], [remove, "remove"]] as const) {
+        if (flags.length === 0) continue;
+        const op = await setFlags(cfg, folder, uids, flags, action);
+        if (op.updated === 0) { refused.push(op); break; }
+        applied.push(op);
+      }
+      const describe = (ops: Op[]) => ops.map((a) => `${a.action} ${a.flags.join(" ")}`).join(" and ");
       if (refused.length > 0) {
-        return fail(`The server refused to change ${refused.map((a) => `${a.action} ${a.flags.join(" ")}`).join(" and ")} on ${uids.length} message(s) in "${folder}". Nothing was changed by those operations.`);
+        // Reporting "nothing was changed" while `\Seen` IS set on the server is
+        // the same class of lie as an over-reported delete, pointing the other
+        // way: the model tells the user the mark failed and the mailbox has
+        // moved underneath them. So the failure states what DID apply first.
+        const changed = applied.length > 0
+          ? `${describe(applied)} WAS applied to ${uids.length} message(s) in "${folder}" and has NOT been rolled back. `
+          : `Nothing was changed. `;
+        return fail(
+          `${changed}The server then refused to ${describe(refused)} on those message(s). `
+          + `The mailbox is now in the state described by "applied" only`
+          + `${applied.length > 0 ? ` — re-read the messages before reporting the result` : ""}.`,
+        );
       }
       return {
         content: JSON.stringify({ folder, uids, applied }, null, 2),
         metadata: { folder, count: uids.length, operations: applied.length },
       };
     } catch (err) {
-      if (/mailbox|folder|select/i.test((err as Error).message)) return openFailure(folder, err);
+      if (err instanceof MailboxOpenError) return openFailure(err);
       return fail(`Failed to mark messages in "${folder}": ${(err as Error).message}`);
     }
   },

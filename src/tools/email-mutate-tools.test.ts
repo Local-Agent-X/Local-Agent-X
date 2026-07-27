@@ -676,7 +676,7 @@ describe("email_mark", () => {
   it("adds \\Seen when asked to mark read", async () => {
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(2) };
-    const result = await emailMark.execute({ uids: [1000, 1001], read: true });
+    const result = await emailMark.execute({ uids: [1000, 1001], read: true, folder: "INBOX" });
     expect(result.isError).toBeFalsy();
     expect(state.flagOps).toEqual([{ folder: "INBOX", uids: [1000, 1001], flags: ["\\Seen"], action: "add" }]);
   });
@@ -684,7 +684,7 @@ describe("email_mark", () => {
   it("removes \\Seen when asked to mark unread", async () => {
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(1) };
-    await emailMark.execute({ uids: [1000], read: false });
+    await emailMark.execute({ uids: [1000], read: false, folder: "INBOX" });
     expect(state.flagOps).toEqual([{ folder: "INBOX", uids: [1000], flags: ["\\Seen"], action: "remove" }]);
   });
 
@@ -702,19 +702,19 @@ describe("email_mark", () => {
     // "false", so marking a message read would silently UNSTAR it.
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(1) };
-    await emailMark.execute({ uids: [1000], read: true, starred: false });
+    await emailMark.execute({ uids: [1000], read: true, starred: false, folder: "INBOX" });
     expect(state.flagOps).toEqual([
       { folder: "INBOX", uids: [1000], flags: ["\\Seen"], action: "add" },
       { folder: "INBOX", uids: [1000], flags: ["\\Flagged"], action: "remove" },
     ]);
     state.flagOps = [];
-    await emailMark.execute({ uids: [1000], read: true });
+    await emailMark.execute({ uids: [1000], read: true, folder: "INBOX" });
     expect(state.flagOps).toEqual([{ folder: "INBOX", uids: [1000], flags: ["\\Seen"], action: "add" }]);
   });
 
   it("refuses a call that would change nothing", async () => {
     state.folders = GMAIL;
-    const result = await emailMark.execute({ uids: [1000] });
+    const result = await emailMark.execute({ uids: [1000], folder: "INBOX" });
     expect(result.isError).toBe(true);
     expect(state.flagOps).toEqual([]);
   });
@@ -730,7 +730,7 @@ describe("email_mark", () => {
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(1) };
     state.flagsAccepted = false;
-    const result = await emailMark.execute({ uids: [1000], read: true });
+    const result = await emailMark.execute({ uids: [1000], read: true, folder: "INBOX" });
     expect(result.isError).toBe(true);
     expect(String(result.content)).toMatch(/refused/i);
     expect(String(result.content)).toMatch(/Nothing was changed/);
@@ -745,7 +745,7 @@ describe("email_mark", () => {
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(1) };
     state.refuseFlagActions = ["remove"];
-    const result = await emailMark.execute({ uids: [1000], read: true, starred: false });
+    const result = await emailMark.execute({ uids: [1000], read: true, starred: false, folder: "INBOX" });
     expect(state.mailbox.INBOX[0].seen).toBe(true);
     expect(result.isError).toBe(true);
     const text = String(result.content);
@@ -761,7 +761,7 @@ describe("email_mark", () => {
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(1) };
     state.refuseFlagActions = ["add"];
-    const result = await emailMark.execute({ uids: [1000], read: true, starred: false });
+    const result = await emailMark.execute({ uids: [1000], read: true, starred: false, folder: "INBOX" });
     expect(result.isError).toBe(true);
     expect(state.calls.filter((c) => c.startsWith("flags:"))).toEqual(["flags:add"]);
     expect(String(result.content)).toMatch(/Nothing was changed/);
@@ -770,8 +770,49 @@ describe("email_mark", () => {
   it("never moves anything", async () => {
     state.folders = GMAIL;
     state.mailbox = { INBOX: messages(1) };
-    await emailMark.execute({ uids: [1000], read: true, starred: true });
+    await emailMark.execute({ uids: [1000], read: true, starred: true, folder: "INBOX" });
     expect(state.moves).toEqual([]);
+  });
+
+  /* C7 PART 2 — the asymmetry C3's skeptic recorded, closed.
+   *
+   * email_mark was the last uid-taking mutating verb that silently defaulted
+   * `folder` to INBOX. Same shape as the delete bug: a model that searched
+   * `receipts`, got [1000, 1001] and called email_mark({uids, read:true}) marked
+   * INBOX's 1000 and 1001 — different mail — and got a success payload naming
+   * "INBOX", which reads as correct because INBOX is what it asked for. */
+  it("refuses a uid list with no folder rather than assuming INBOX", async () => {
+    // MUTATION: drop the requireExplicitFolder() call in emailMark.execute, or
+    // restore `|| "INBOX"` as the only folder source — the flag op reappears
+    // against INBOX's messages and `state.mailbox.INBOX[0].seen` flips.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(2, "bank@example.com"), receipts: messages(2, "shop@example.com") };
+    const result = await emailMark.execute({ uids: [1000, 1001], read: true });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/`uids` needs `folder`/);
+    expect(String(result.content)).toMatch(/will not assume INBOX/);
+    expect(state.flagOps, "a refused mark must not reach the server").toEqual([]);
+    expect(state.mailbox.INBOX.map((m) => m.seen)).toEqual([false, false]);
+    expect(state.mailbox.receipts.map((m) => m.seen)).toEqual([false, false]);
+  });
+
+  it("refuses before opening a connection, like every other pre-flight refusal", async () => {
+    // A refusal that has already SELECTed a mailbox has done work on a target it
+    // just said it would not act on.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(1) };
+    await emailMark.execute({ uids: [1000], read: true });
+    expect(state.calls, "the folder refusal opened an IMAP connection first").toEqual([]);
+  });
+
+  it("declares `folder` required in the schema the model actually reads", () => {
+    // The refusal and the schema have to agree: a required argument the schema
+    // calls optional produces a tool the model calls wrong on the first try
+    // every time, and learns nothing from because the description says otherwise.
+    const params = emailMark.parameters as { required: string[]; properties: Record<string, { description: string }> };
+    expect(params.required, "email_mark's schema still calls `folder` optional").toContain("folder");
+    expect(params.properties.folder.description).toMatch(/REQUIRED/);
+    expect(emailMark.description).toMatch(/PER FOLDER/);
   });
 });
 

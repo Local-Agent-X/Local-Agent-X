@@ -51,8 +51,10 @@ import {
   MAX_BATCH,
   named,
   openFailure,
+  requireExplicitFolder,
   resolveFolder,
   TRASH_ROLE,
+  UIDS_FOLDER_PARAM_DESCRIPTION,
 } from "./email-mutate-shared.js";
 
 /* `imapConfigured` is the shared export from the config store (C6), imported —
@@ -85,7 +87,7 @@ export const emailDelete: ToolDefinition = {
       unread_only: { type: "boolean", description: "Only unread messages" },
       before: { type: "string", description: "Only messages received before this, as a STRING: ISO date (2025-07-26) or a relative age (\"1 year\", \"30 days\")." },
       since: { type: "string", description: "Only messages received on or after this, as a STRING: ISO date or relative age." },
-      folder: { type: "string", description: "Folder the uids belong to, and the folder to delete from. REQUIRED whenever `uids` is given, because uids are numbered per folder and mean different messages in each; with search filters instead it defaults to INBOX." },
+      folder: { type: "string", description: `${UIDS_FOLDER_PARAM_DESCRIPTION} With search filters instead of \`uids\` it defaults to INBOX.` },
       limit: { type: "number", description: `Most messages this call may move (default ${DEFAULT_BATCH}, maximum ${MAX_BATCH})` },
     },
     required: [],
@@ -152,13 +154,34 @@ export const emailDelete: ToolDefinition = {
       // refusing to assume. One extra argument on a destructive call, in
       // exchange for a class of wrong-target delete that is otherwise
       // unreachable to detect.
-      if (!read.text("folder")) {
-        return fail(
-          "`uids` needs `folder`: IMAP uids are numbered per folder, so the same uid names a different message in "
-          + "each one and this tool will not assume INBOX. Pass `folder` set to the folder the uids came from "
-          + "(the `folder` you passed to email_search / email_read). Nothing was changed.",
-        );
-      }
+      const needsFolder = requireExplicitFolder(read);
+      if (needsFolder) return needsFolder;
+      // RECORDED RESIDUAL — the existence check and the move are two SELECTs on
+      // two connections (fetchHeaders below, then moveMessages at the bottom),
+      // so there is a window between them. DECIDED: recorded, not closed.
+      //
+      // Within one UIDVALIDITY the window is SAFE, and that is not a hope — IMAP
+      // forbids uid reuse inside a validity epoch (RFC 3501 §2.3.1.1), so the
+      // only thing that can happen to a uid in the gap is that it DISAPPEARS.
+      // A disappeared uid is not moved and `moved < requested` reports it, which
+      // is the honest outcome the confirmed/unconfirmed split already exists for.
+      //
+      // The unhandled case is a UIDVALIDITY change landing INSIDE the gap — the
+      // mailbox renumbered under us — after which the validated uids name
+      // different messages. Neither call reads UIDVALIDITY, so it would not be
+      // noticed. Closing it means threading the validity the first SELECT saw
+      // into the second and refusing on a mismatch, which changes the signature
+      // and return shape of both fetchHeaders() and moveMessages() — a data-layer
+      // edit, in the chunk whose job is to GATE the data layer rather than
+      // continue it — and adds a fail-CLOSED path (refuse when the server reports
+      // no validity, or reports it differently between two connections) to guard
+      // an event that requires a mailbox to be deleted and recreated in the
+      // milliseconds between two round trips. That trade is worse than the
+      // exposure at today's rate, so it is documented rather than done. If it is
+      // ever taken: return the validity alongside the headers, pass it as an
+      // EXPECTED value to moveMessages, and refuse only when both ends report a
+      // validity and they disagree — never when either is unknown.
+      //
       // IMAP uids are PER-MAILBOX. `folder` defaults to INBOX, so a model that
       // searched "receipts", got [1000, 1001] and called email_delete without
       // `folder` would otherwise move INBOX's 1000 and 1001 — different mail,
@@ -258,16 +281,18 @@ export const emailMark: ToolDefinition = {
     "Mark messages in the user's IMAP mailbox as read/unread and starred/unstarred. Takes the `uids` returned by "
     + "email_read, email_search or email_read_message. Set `read` to true to mark read or false to mark unread; set "
     + "`starred` to true or false for the star (\\\\Flagged). Omit either one to leave it untouched. Changes only "
-    + "these flags — it never moves, sends or deletes anything.",
+    + "these flags — it never moves, sends or deletes anything. UIDs are numbered PER FOLDER, so `folder` is "
+    + "REQUIRED and must be the folder the uids came from — a uid list on its own is refused rather than "
+    + "assumed to be INBOX.",
   parameters: {
     type: "object",
     properties: {
-      uids: { type: "array", items: { type: "number" }, description: "Message UIDs to mark, as returned by email_read / email_search" },
+      uids: { type: "array", items: { type: "number" }, description: "Message UIDs to mark, as returned by email_read / email_search FROM THE SAME FOLDER as `folder`" },
       read: { type: "boolean", description: "true = mark read, false = mark unread. Omit to leave unchanged." },
       starred: { type: "boolean", description: "true = star, false = unstar. Omit to leave unchanged." },
-      folder: { type: "string", description: "Folder the uids belong to (default: INBOX)" },
+      folder: { type: "string", description: UIDS_FOLDER_PARAM_DESCRIPTION },
     },
-    required: ["uids"],
+    required: ["uids", "folder"],
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const cfg = getImapConfig();
@@ -286,6 +311,14 @@ export const emailMark: ToolDefinition = {
     if (uids.length > MAX_BATCH) {
       return fail(`\`uids\` lists ${uids.length} messages; this tool marks at most ${MAX_BATCH} per call. Split the list. Nothing was changed.`);
     }
+    // The SAME rule email_delete enforces, from the same function. `uids` is
+    // mandatory here, so this makes `folder` mandatory too — the asymmetry that
+    // left email_mark as the one uid-taking mutating verb still guessing a
+    // folder. A wrong-target mark is recoverable where a wrong-target delete is
+    // not, which is why it did not block C3; it is still a mutation applied to
+    // messages the caller never named, reported as success.
+    const needsFolder = requireExplicitFolder(read);
+    if (needsFolder) return needsFolder;
     const add = Object.entries(wanted).filter(([, v]) => v === true).map(([k]) => FLAG_FOR[k as keyof typeof FLAG_FOR]);
     const remove = Object.entries(wanted).filter(([, v]) => v === false).map(([k]) => FLAG_FOR[k as keyof typeof FLAG_FOR]);
     if (add.length === 0 && remove.length === 0) {

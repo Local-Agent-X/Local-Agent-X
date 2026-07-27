@@ -95,6 +95,45 @@ export function named(headers: EmailHeader[]): Array<Record<string, unknown>> {
   return headers.map((h) => ({ uid: h.uid, from: h.from, subject: h.subject, date: h.date }));
 }
 
+/**
+ * THE FAMILY-WIDE RULE: a uid list without a folder is not a message set.
+ *
+ * IMAP numbers uids PER MAILBOX, so [1000, 1001] taken from `receipts` names
+ * different mail (or none) in INBOX. Defaulting `folder` to INBOX therefore does
+ * not "pick a sensible default" — it silently retargets the caller's request at
+ * a set it never saw, and the operation then reports success. No check
+ * downstream can catch it: the uids ARE present in INBOX, they just mean
+ * something else, and nothing carries the provenance of where they came from.
+ *
+ * C3 closed this for `email_delete`. `email_mark` kept the default because a
+ * wrong-target mark is recoverable, which is true and is also exactly the
+ * argument that erodes: the shape is identical, and the next uid-taking verb
+ * would copy whichever sibling it was read from. So the rule lives HERE, once,
+ * and every uid-taking mutating verb calls it — see the family-wide invariant in
+ * test/email-chain-contract.test.ts, which drives the barrel rather than a
+ * hand-written list so a NEW verb that forgets this goes red on the commit that
+ * adds it.
+ *
+ * Returns a refusal ToolResult when `folder` was not passed, or null to proceed.
+ * `read.text` (not the caller's already-defaulted value) is the input on
+ * purpose: the question is whether the CALLER named a folder, which a defaulted
+ * string can no longer answer.
+ */
+export function requireExplicitFolder(read: ReturnType<typeof argReader>): ToolResult | null {
+  if (read.text("folder")) return null;
+  return fail(
+    "`uids` needs `folder`: IMAP uids are numbered per folder, so the same uid names a different message in "
+    + "each one and this tool will not assume INBOX. Pass `folder` set to the folder the uids came from "
+    + "(the `folder` you passed to email_search / email_read). Nothing was changed.",
+  );
+}
+
+/** The `folder` parameter description both uid-taking verbs publish. One string,
+ *  so the schema the model reads cannot drift from the refusal it gets. */
+export const UIDS_FOLDER_PARAM_DESCRIPTION =
+  "Folder the uids belong to, and the folder to act on. REQUIRED whenever `uids` is given, because uids are "
+  + "numbered per folder and mean different messages in each.";
+
 export function cappedBatch(read: ReturnType<typeof argReader>): number {
   const limit = read.count("limit", DEFAULT_BATCH);
   return Math.min(limit, MAX_BATCH);

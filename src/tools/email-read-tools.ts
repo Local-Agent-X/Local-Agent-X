@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getImapConfig } from "./email-config.js";
+import { argReader } from "./email-tool-args.js";
 import {
   fetchBody,
   fetchMessages,
@@ -51,89 +52,6 @@ function pageResult(page: EmailPage): ToolResult {
   };
 }
 
-function str(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-const RELATIVE_UNIT_MS: Record<string, number> = {
-  day: 86_400_000,
-  week: 7 * 86_400_000,
-};
-
-/** `2026-01-31`, or a full ISO timestamp. */
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
-/** `1 year`, `12 months`, `30 days ago`, `last week`, `a year ago`. */
-const RELATIVE = /^(?:last\s+|past\s+)?(?:(\d{1,4})|an?)?\s*(day|week|month|year)s?(?:\s+ago)?$/i;
-
-/**
- * Go back whole calendar months, CLAMPING the day to the target month's length.
- *
- * `setUTCMonth(m - 1)` alone overflows: 31 March minus one month is "31
- * February", which JS rolls forward to 3 March — so "before 1 month" would have
- * selected mail from the two days before the call instead of everything older
- * than February. Years go through here as 12 months so 29 February behaves the
- * same way.
- */
-function stepBackMonths(from: Date, months: number): Date {
-  const day = from.getUTCDate();
-  const d = new Date(from.getTime());
-  d.setUTCDate(1);
-  d.setUTCMonth(d.getUTCMonth() - months);
-  const lastDayOfTarget = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-  d.setUTCDate(Math.min(day, lastDayOfTarget));
-  return d;
-}
-
-/**
- * Turn a model-authored date into a Date, or say why it can't.
- *
- * Deliberately narrow. `new Date(input)` accepts "Message 4" on some runtimes
- * and silently invents a window from "next tuesday"-shaped junk on others, and a
- * silently-wrong window here becomes a silently-wrong DELETE one chunk over
- * (C3 moves what this selects). So exactly two shapes are honoured — an ISO
- * calendar date/timestamp, and a relative "<n> <unit> [ago]" — and everything
- * else is REJECTED with the accepted forms named, so the model can retry with a
- * form we understand instead of acting on a guess.
- *
- * Months and years step the calendar field rather than multiplying an average
- * day count: "before 1 month" on 31 March must mean 28/29 February, not
- * "30 days back", or the window silently misses a month boundary.
- */
-export function parseDateInput(raw: string, now = new Date()): Date | { error: string } {
-  const input = raw.trim();
-  if (ISO_DATE.test(input)) {
-    const ms = Date.parse(input.length === 10 ? `${input}T00:00:00Z` : input);
-    if (Number.isFinite(ms)) return new Date(ms);
-  }
-  const rel = RELATIVE.exec(input);
-  if (rel) {
-    const amount = rel[1] ? Number(rel[1]) : 1;
-    const unit = rel[2].toLowerCase();
-    const ms = RELATIVE_UNIT_MS[unit];
-    if (ms !== undefined) return new Date(now.getTime() - amount * ms);
-    return stepBackMonths(now, unit === "year" ? amount * 12 : amount);
-  }
-  return {
-    error: `Could not understand the date "${raw}". Use an ISO date (2025-07-26), an ISO timestamp, `
-      + "or a relative age such as \"30 days\", \"6 months\", \"1 year ago\". "
-      + "Dates are not guessed at, because a wrong date window silently selects the wrong mail.",
-  };
-}
-
-/** Read `before`/`since` off the tool arguments into criteria. Returns the
- *  first parse error instead of running a search over a window nobody asked
- *  for. */
-function applyDateWindow(args: Record<string, unknown>, criteria: EmailSearchCriteria): string | null {
-  for (const field of ["before", "since"] as const) {
-    const raw = str(args[field]);
-    if (!raw) continue;
-    const parsed = parseDateInput(raw);
-    if (parsed instanceof Date) criteria[field] = parsed;
-    else return `${field}: ${parsed.error}`;
-  }
-  return null;
-}
-
 export const emailRead: ToolDefinition = {
   name: "email_read",
   available: imapConfigured,
@@ -150,10 +68,13 @@ export const emailRead: ToolDefinition = {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const cfg = getImapConfig();
     if (typeof cfg === "string") return { content: cfg, isError: true };
-    const folder = String(args.folder || "INBOX");
-    const limit = Number(args.limit) || 10;
+    const read = argReader(args);
+    const folder = read.text("folder") || "INBOX";
+    const limit = read.count("limit", 10);
+    const unreadOnly = read.flag("unread_only");
+    if (read.error) return { content: `Failed to read emails: ${read.error}`, isError: true };
     try {
-      const page = args.unread_only
+      const page = unreadOnly
         ? await searchMessages(cfg, folder, { unreadOnly: true }, limit)
         // null, not "*": in IMAP "*" is the LAST message, so this path used to
         // return exactly one message however large `limit` was.
@@ -177,8 +98,8 @@ export const emailSearch: ToolDefinition = {
       subject: { type: "string", description: "Subject contains this" },
       body: { type: "string", description: "Message body text contains this" },
       unread_only: { type: "boolean", description: "Only unread messages" },
-      before: { type: "string", description: "Only messages received before this: ISO date (2025-07-26) or a relative age (\"1 year\", \"30 days\")" },
-      since: { type: "string", description: "Only messages received on or after this: ISO date or relative age" },
+      before: { type: "string", description: "Only messages received before this, as a STRING: ISO date (2025-07-26) or a relative age (\"1 year\", \"30 days\"). A timestamp number is refused, not ignored." },
+      since: { type: "string", description: "Only messages received on or after this, as a STRING: ISO date or relative age. A timestamp number is refused, not ignored." },
       folder: { type: "string", description: "Mailbox folder (default: INBOX)" },
       limit: { type: "number", description: "Maximum results (default: 10)" },
     },
@@ -187,25 +108,29 @@ export const emailSearch: ToolDefinition = {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const cfg = getImapConfig();
     if (typeof cfg === "string") return { content: cfg, isError: true };
-    const folder = String(args.folder || "INBOX");
-    const limit = Number(args.limit) || 10;
+    const read = argReader(args);
+    const folder = read.text("folder") || "INBOX";
+    const limit = read.count("limit", 10);
 
     const criteria: EmailSearchCriteria = {};
-    const from = str(args.from);
-    const subject = str(args.subject);
-    const body = str(args.body);
-    const query = str(args.query);
+    const from = read.text("from");
+    const subject = read.text("subject");
+    const body = read.text("body");
+    const query = read.text("query");
+    const before = read.date("before");
+    const since = read.date("since");
     if (from) criteria.from = from;
     if (subject) criteria.subject = subject;
     if (body) criteria.body = body;
-    if (args.unread_only) criteria.unreadOnly = true;
+    if (before) criteria.before = before;
+    if (since) criteria.since = since;
+    if (read.flag("unread_only")) criteria.unreadOnly = true;
     // The free-text path every existing caller (and the model's habit) uses:
     // subject OR sender, as one server-side OR. It is an `anyOf` rather than a
     // `text` search so it keeps meaning exactly what it meant before, and it
     // ANDs with the explicit predicates instead of replacing them.
     if (query) criteria.anyOf = [{ subject: query }, { from: query }];
-    const dateError = applyDateWindow(args, criteria);
-    if (dateError) return { content: `Failed to search emails: ${dateError}`, isError: true };
+    if (read.error) return { content: `Failed to search emails: ${read.error}`, isError: true };
 
     try {
       // No predicates reaches searchMessages, which refuses whole-mailbox
@@ -248,12 +173,14 @@ export const emailReadMessage: ToolDefinition = {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const cfg = getImapConfig();
     if (typeof cfg === "string") return { content: cfg, isError: true };
-    const uid = Number(args.uid);
+    const read = argReader(args);
+    const uid = read.count("uid", 0);
     // UIDs are per-folder, so a uid without its folder is meaningless — but
     // INBOX is the folder every list defaults to, so defaulting matches where
     // the uid most likely came from.
-    const folder = String(args.folder || "INBOX");
-    if (!Number.isInteger(uid) || uid <= 0) {
+    const folder = read.text("folder") || "INBOX";
+    if (read.error) return { content: `Failed to read message: ${read.error}`, isError: true };
+    if (uid <= 0) {
       return {
         content: "email_read_message needs a numeric `uid` from email_read or email_search. "
           + "UIDs identify a message within one folder; list the folder first if you do not have one.",

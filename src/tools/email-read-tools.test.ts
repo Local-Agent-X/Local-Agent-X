@@ -50,8 +50,28 @@ const h = vi.hoisted(() => {
     return out;
   }
 
+  /**
+   * A predicate the server cannot use is a BUG in the caller, so the fake
+   * throws instead of ignoring it. The permissive version — "not a string means
+   * no filter" — reported a superset as a pass, which is precisely how a
+   * silently-dropped predicate reaches a move or a delete without any test in
+   * this file noticing. `undefined` alone means "not asked for".
+   */
   function has(hay: string, needle: unknown): boolean {
-    return typeof needle !== "string" || hay.toLowerCase().includes(needle.toLowerCase());
+    if (needle === undefined) return true;
+    if (typeof needle !== "string" || needle.trim() === "") {
+      throw new Error(`fake IMAP: unusable text predicate ${JSON.stringify(needle) ?? String(needle)}`);
+    }
+    return hay.toLowerCase().includes(needle.toLowerCase());
+  }
+
+  /** Same rule for the window: a non-Date bound would not filter at all. */
+  function bound(value: unknown): Date | undefined {
+    if (value === undefined) return undefined;
+    if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
+      throw new Error(`fake IMAP: unusable date bound ${String(value)}`);
+    }
+    return value;
   }
 
   function matches(m: FakeMsg, q: Record<string, unknown>): boolean {
@@ -61,8 +81,10 @@ const h = vi.hoisted(() => {
     if (!has(m.subject, q.subject)) return false;
     if (!has(m.body ?? m.source ?? "", q.body)) return false;
     if (q.seen === false && m.seen) return false;
-    if (q.before instanceof Date && !(m.date < q.before)) return false;
-    if (q.since instanceof Date && !(m.date >= q.since)) return false;
+    const before = bound(q.before);
+    const since = bound(q.since);
+    if (before && !(m.date < before)) return false;
+    if (since && !(m.date >= since)) return false;
     return true;
   }
 
@@ -109,7 +131,11 @@ const h = vi.hoisted(() => {
 vi.mock("imapflow", () => ({ ImapFlow: h.FakeImapFlow }));
 
 const state = h.state;
-const { emailRead, emailSearch, emailReadMessage, parseDateInput } = await import("./email-read-tools.js");
+const { emailRead, emailSearch, emailReadMessage } = await import("./email-read-tools.js");
+// The argument layer is a separate module, but it is only ever exercised THROUGH
+// the tools below — except for the date grammar, which has enough cases of its
+// own to be worth calling directly.
+const { parseDateInput } = await import("./email-tool-args.js");
 
 const CFG = { host: "imap.example.com", port: 993, user: "me@example.com", pass: "secret" };
 const DAY = 86_400_000;
@@ -185,6 +211,156 @@ describe("date input", () => {
       expect(parsed, `"${junk}" must not parse`).not.toBeInstanceOf(Date);
       expect((parsed as { error: string }).error).toMatch(/date/i);
     }
+  });
+
+  it("rejects a calendar day that does not exist instead of rolling it forward", () => {
+    // Date.parse range-checks the MONTH but not the DAY: it reads 2026-02-30 as
+    // 2026-03-02, a window two days wider than the one that was asked for.
+    for (const junk of ["2026-02-30", "2026-04-31", "2025-02-29", "2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00"]) {
+      const parsed = parseDateInput(junk, NOW);
+      expect(parsed, `"${junk}" must not parse`).not.toBeInstanceOf(Date);
+      expect((parsed as { error: string }).error).toMatch(/date/i);
+    }
+    // The real days either side of those still parse, including a leap 29th.
+    expect(parseDateInput("2026-02-28", NOW)).toEqual(new Date("2026-02-28T00:00:00Z"));
+    expect(parseDateInput("2024-02-29", NOW)).toEqual(new Date("2024-02-29T00:00:00Z"));
+    expect(parseDateInput("2026-02-30T06:00:00Z", NOW)).not.toBeInstanceOf(Date);
+  });
+
+  it("rejects relative junk it used to wave through", () => {
+    const junk = [
+      "aday",           // the unit needs a separator from the article
+      "last month ago", // prefix and suffix are two ways to say the same thing
+      "lastweek",
+      "week",           // no amount at all: "which week?" is a guess
+      "0 days",         // silently "before now" = the whole mailbox for a sender
+      "0000 years",
+      "9999 years",     // resolves to year -007973
+      "-3 days",
+      "1.5 days",
+    ];
+    for (const bad of junk) {
+      const parsed = parseDateInput(bad, NOW);
+      expect(parsed, `"${bad}" must not parse`).not.toBeInstanceOf(Date);
+      expect((parsed as { error: string }).error).toMatch(/date/i);
+    }
+    // …while the forms the description advertises keep working.
+    expect(parseDateInput("last 3 days", NOW)).toEqual(new Date(NOW.getTime() - 3 * DAY));
+    expect(parseDateInput("30 days ago", NOW)).toEqual(new Date(NOW.getTime() - 30 * DAY));
+    expect(parseDateInput("a month", NOW)).toEqual(new Date("2026-06-26T12:00:00Z"));
+  });
+
+  it("refuses a window that predates email itself rather than selecting everything", () => {
+    // `since: "0001-01-01"` and `since: "500 years"` are the whole mailbox with
+    // a date attached; both used to be accepted as real windows.
+    for (const bad of ["0001-01-01", "1969-12-31", "500 years"]) {
+      expect(parseDateInput(bad, NOW), `"${bad}" must not parse`).not.toBeInstanceOf(Date);
+    }
+    expect(parseDateInput("1970-01-01", NOW)).toEqual(new Date("1970-01-01T00:00:00Z"));
+  });
+});
+
+/**
+ * Campaign decision E4 at the tool boundary: a present-but-unusable argument is
+ * an error naming the parameter, never treated as absence. Every dropped
+ * predicate WIDENS the match set, and this match set is the input to a move and
+ * a delete one chunk over — a wrong guess at least shows up in the result, a
+ * drop leaves no signal at all.
+ */
+describe("unusable arguments are refused, never dropped", () => {
+  /** Two messages from one sender, 400 days and 5 days old. A dropped `before`
+   *  returns BOTH; the point of every case here is that neither comes back. */
+  function twoAges(): void {
+    state.messages = [
+      { uid: 1, subject: "Old receipt", from: { name: "No Reply", address: "noreply@shop.com" }, date: new Date(Date.now() - 400 * DAY), messageId: "<1>" },
+      { uid: 2, subject: "New receipt", from: { name: "No Reply", address: "noreply@shop.com" }, date: new Date(Date.now() - 5 * DAY), messageId: "<2>" },
+    ];
+    state.calls = [];
+  }
+
+  it("refuses a date sent as epoch milliseconds instead of searching without it", async () => {
+    twoAges();
+    const result = await emailSearch.execute({ from: "noreply@shop.com", before: Date.now() - 365 * DAY });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/`before`/);
+    expect(String(result.content)).toMatch(/string/i);
+    expect(state.calls).toEqual([]);
+  });
+
+  it("refuses a non-string predicate by name, for every predicate it accepts", async () => {
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ from: ["noreply@shop.com"] }, /`from`/],
+      [{ from: "noreply@shop.com", subject: 12 }, /`subject`/],
+      [{ from: "noreply@shop.com", body: {} }, /`body`/],
+      [{ from: "noreply@shop.com", query: null }, /`query`/],
+      [{ from: "noreply@shop.com", since: 1_700_000_000_000 }, /`since`/],
+      [{ from: "noreply@shop.com", folder: 3 }, /`folder`/],
+      [{ from: "noreply@shop.com", limit: "ten" }, /`limit`/],
+      [{ from: "noreply@shop.com", limit: 0 }, /`limit`/],
+      [{ from: "noreply@shop.com", unread_only: 1 }, /`unread_only`/],
+    ];
+    for (const [args, named] of cases) {
+      twoAges();
+      const result = await emailSearch.execute(args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(String(result.content), JSON.stringify(args)).toMatch(named);
+      expect(state.calls, JSON.stringify(args)).toEqual([]);
+    }
+  });
+
+  it("refuses a predicate that is present but empty rather than ignoring it", async () => {
+    for (const args of [{ from: "" }, { from: "noreply@shop.com", subject: "   " }]) {
+      twoAges();
+      const result = await emailSearch.execute(args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(state.calls).toEqual([]);
+    }
+  });
+
+  it("reads a spelled-out boolean as itself, not as truthiness", async () => {
+    // `unread_only: "false"` used to be truthy, so a model asking for ALL
+    // messages silently got only the unread ones. It spells a boolean
+    // unambiguously, so it is honoured rather than refused — and it means false.
+    state.messages = makeMessages(3).map((m, i) => ({ ...m, seen: i < 2 }));
+    expect(uidsOf(await emailSearch.execute({ query: "Message", unread_only: "false" }))).toEqual([1000, 1001, 1002]);
+    expect(uidsOf(await emailSearch.execute({ query: "Message", unread_only: "true" }))).toEqual([1002]);
+    // Anything that does not spell one is still an error, not a truthiness test.
+    const bad = await emailSearch.execute({ query: "Message", unread_only: "yes" });
+    expect(bad.isError).toBe(true);
+    expect(String(bad.content)).toMatch(/`unread_only`/);
+  });
+
+  it("applies the same rule to email_read", async () => {
+    for (const args of [{ folder: ["INBOX"] }, { limit: "ten" }, { limit: -1 }, { unread_only: "yes" }]) {
+      state.messages = makeMessages(3);
+      state.calls = [];
+      const result = await emailRead.execute(args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(state.calls, JSON.stringify(args)).toEqual([]);
+    }
+  });
+
+  it("applies the same rule to email_read_message", async () => {
+    for (const args of [{ uid: 77.5 }, { uid: [77] }, { uid: 77, folder: 2 }]) {
+      state.messages = makeMessages(3);
+      state.calls = [];
+      const result = await emailReadMessage.execute(args);
+      expect(result.isError, JSON.stringify(args)).toBe(true);
+      expect(state.calls, JSON.stringify(args)).toEqual([]);
+    }
+  });
+
+  it("still accepts a number written as digits, which is unambiguous", async () => {
+    state.messages = makeMessages(30);
+    expect(uidsOf(await emailRead.execute({ limit: "3" }))).toEqual([1027, 1028, 1029]);
+  });
+
+  it("the fake IMAP server rejects an unusable predicate rather than matching everything", async () => {
+    // ITEM 4: with a permissive double, a dropped predicate reads as a pass.
+    state.messages = makeMessages(3);
+    const client = new h.FakeImapFlow({});
+    await expect(client.search({ from: 5 } as unknown as Record<string, unknown>)).rejects.toThrow(/unusable/i);
+    await expect(client.search({ before: "1 year" } as unknown as Record<string, unknown>)).rejects.toThrow(/unusable/i);
   });
 });
 

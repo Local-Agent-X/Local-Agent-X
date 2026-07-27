@@ -25,6 +25,7 @@ import { allTools } from "../src/tools/registry-build.js";
 import { emailTools } from "../src/tools/email-tools.js";
 import { emailRead, emailSearch, emailReadMessage } from "../src/tools/email-read-tools.js";
 import { emailFolders } from "../src/tools/email-folder-tools.js";
+import { emailDelete, emailMark } from "../src/tools/email-mutate-tools.js";
 import { emailSend } from "../src/tools/email-send-tool.js";
 import { imapConfigured } from "../src/tools/email-config.js";
 import { isToolAvailable } from "../src/tools/tool-search.js";
@@ -42,9 +43,14 @@ import { hasCapability } from "../src/tool-registry.js";
 import { READ_ONLY_TOOLS, isReadOnlyCall } from "../src/tools/plan-tools.js";
 import { transportTools } from "../src/integrations/types.js";
 import { AUDIENCES_BY_TOOL } from "../src/tools/audience-map.js";
+import { isCommittingTool } from "../src/committing-tool-check.js";
+import { isMutationTool } from "../src/tool-mutation-check.js";
 
-/** The two tools this chunk exists to wire. */
+/** The two tools C6 exists to wire. */
 const NEW_TOOLS = ["email_read_message", "email_folders"] as const;
+/** C3's two MUTATING verbs. Registered by the same funnel, but almost every
+ *  answer is the opposite of the reads' — see the C3 blocks at the bottom. */
+const MUTATING_TOOLS = ["email_delete", "email_mark"] as const;
 /** Their already-wired read siblings — the shape everything below is matched against. */
 const READ_SIBLINGS = ["email_read", "email_search"] as const;
 
@@ -359,5 +365,153 @@ describe("C6 — availability across mailbox states (registration must not distu
     expect(imapConfigured()).toBe(false);
     expect(isToolAvailable(emailReadMessage)).toBe(false);
     expect(isToolAvailable(emailFolders)).toBe(false);
+  });
+});
+
+/* ── C3 — the two MUTATING verbs ──────────────────────────────────────────────
+ * Same funnel, opposite answers. Every block above asks "is this wired like its
+ * read siblings?"; these ask "is it wired like a MUTATION, and did anything
+ * accidentally inherit a read's classification?" A delete that slipped into
+ * plan mode's read-only set, or into `network-read`, is not a cosmetic mistake —
+ * it is the autonomy gating silently switched off on the one tool in this
+ * family that relocates the user's mail.
+ */
+
+describe("C3 — the barrel", () => {
+  it("exports both mutating tools exactly once through the real catalog", () => {
+    // MUTATION: drop either from `emailTools`, or list one twice.
+    const names = emailTools.map((t) => t.name);
+    for (const n of MUTATING_TOOLS) {
+      expect(names, `${n} is not in emailTools`).toContain(n);
+      expect(allTools.filter((t) => t.name === n).length, `${n} is not registered exactly once`).toBe(1);
+    }
+  });
+});
+
+describe("C3 — the tool-policy table (the risk class IS the autonomy gate)", () => {
+  it("classifies email_delete as `destructive`, the canonical class of delete_file / memory_forget", () => {
+    // MUTATION: give it `network-write` or `workspace-write`. The risk string is
+    // the ONLY thing autonomy/profiles.ts keys on: "destructive" resolves to
+    // deny / ask / allow-with-rollback per profile, every other class to allow.
+    // Downgrading it silently removes the confirmation from a mail delete.
+    expect(TOOL_POLICIES.email_delete.risk).toBe("destructive");
+    expect(TOOL_POLICIES.delete_file.risk).toBe("destructive");
+    expect(TOOL_POLICIES.email_delete.kernel).toBe("http");
+  });
+
+  it("classifies email_mark as a mutation but NOT destructive", () => {
+    // MUTATION: mark it destructive "to be safe". Over-classification is its own
+    // failure — a confirmation prompt on marking mail read trains the user to
+    // click through the prompt that also guards email_delete.
+    expect(TOOL_POLICIES.email_mark.risk).toBe("workspace-write");
+  });
+
+  it("gives each exactly ONE entry, in the one canonical fragment", () => {
+    // MUTATION: a second entry in another fragment. The fragments partition the
+    // keyspace; a duplicate key is last-wins and invisible in the merged object.
+    const FRAGMENTS: Array<[string, Record<string, unknown>]> = [
+      ["core", TOOL_POLICIES_CORE], ["network", TOOL_POLICIES_NETWORK], ["memory", TOOL_POLICIES_MEMORY],
+      ["orchestration", TOOL_POLICIES_ORCHESTRATION], ["apps", TOOL_POLICIES_APPS], ["globs", TOOL_POLICIES_GLOBS],
+    ];
+    for (const n of MUTATING_TOOLS) {
+      const holders = FRAGMENTS.filter(([, frag]) => Object.hasOwn(frag, n)).map(([name]) => name);
+      expect(holders, `${n} is declared in ${holders.length} fragments: ${holders.join(", ")}`).toEqual(["network"]);
+      expect(TOOL_POLICIES[n], `${n} did not survive the merge`).toBe(TOOL_POLICIES_NETWORK[n]);
+    }
+  });
+
+  it("declares no offBoxFetch and no path args — neither ships a local payload off-box", () => {
+    for (const n of MUTATING_TOOLS) {
+      expect(TOOL_POLICIES[n].offBoxFetch, n).toBeUndefined();
+      expect(TOOL_POLICIES[n].pathArgs, n).toBeUndefined();
+    }
+  });
+
+  it("is seen as a mutation by the loop-liveness and failover projections", () => {
+    // MUTATION: both projections DERIVE from the risk class, so this is a second
+    // reader proving the class above is doing its job. isCommittingTool false on
+    // email_delete would let auto-failover REPLAY a turn that already trashed
+    // mail — moving a second set of messages on the retry.
+    for (const n of MUTATING_TOOLS) {
+      expect(isCommittingTool(n), `${n} is not treated as committing — a failover would replay it`).toBe(true);
+      expect(isMutationTool(n), n).toBe(true);
+    }
+    // Contrast: the reads are not committing, so this is not vacuously true.
+    expect(isCommittingTool("email_read")).toBe(false);
+  });
+});
+
+describe("C3 — the ARI action map", () => {
+  it("maps them to HTTP WRITE verbs, so the tainted-write deny rule can see them", () => {
+    // MUTATION: map either to "get". The workspace-assistant preset denies
+    // post/put/patch/delete under EMAIL taint (deny-tainted-http-write, prio 40)
+    // — that rule is the thing standing between "a message says delete my mail"
+    // and the mail being deleted. A read verb makes the delete invisible to it.
+    expect(ARI_ACTION_MAP.email_delete).toBe("delete");
+    expect(ARI_ACTION_MAP.email_mark).toBe("post");
+  });
+});
+
+describe("C3 — plan mode must REFUSE both", () => {
+  it("keeps email_delete and email_mark OUT of the read-only set", () => {
+    // MUTATION: add either to READ_ONLY_TOOLS — the easy mistake, since the four
+    // tools next to them in the barrel all belong there. Plan mode's premise is
+    // that nothing it permits changes the world; a delete permitted under it
+    // moves the user's mail during what they were told was research.
+    for (const n of MUTATING_TOOLS) {
+      expect(READ_ONLY_TOOLS.has(n), `${n} is in plan mode's read-only set`).toBe(false);
+      expect(isReadOnlyCall(n, {}), n).toBe(false);
+    }
+    // Not vacuous: the reads next to them ARE allowed.
+    expect(isReadOnlyCall("email_folders", {})).toBe(true);
+  });
+});
+
+describe("C3 — the untrusted-content axis", () => {
+  it("enrolls both — every result echoes a server-authored folder path", () => {
+    // MUTATION: leave them out on the reasoning "they return no message content".
+    // That ties the axis to a payload decision inside a tool file instead of to
+    // the tool's CLASS, so adding a subject line to a delete confirmation later
+    // would silently escape it.
+    for (const n of MUTATING_TOOLS) expect(isExternalIngestingTool(n), n).toBe(true);
+  });
+});
+
+describe("C3 — capability classes", () => {
+  it("puts neither in sensitive-read, and neither in egress", () => {
+    // MUTATION: add either to SENSITIVE_READ_TOOLS. They return counts, uids and
+    // folder paths — no record content — so the class buys nothing and arms a
+    // whole-result redaction stub on an entropy false-positive in a folder name.
+    for (const n of MUTATING_TOOLS) {
+      expect(hasCapability(n, "sensitive-read"), n).toBe(false);
+      expect(hasCapability(n, "egress"), n).toBe(false);
+    }
+  });
+});
+
+describe("C3 — the smtp_imap transport's declared tools", () => {
+  it("names both, so the model knows email can be deleted and flagged at all", () => {
+    const tools = transportTools("smtp_imap");
+    for (const n of MUTATING_TOOLS) expect(tools, `${n} missing from the smtp_imap transport tools`).toContain(n);
+  });
+});
+
+describe("C3 — availability and retry semantics", () => {
+  it("gates both on the SAME shared imapConfigured, not a copy", () => {
+    // MUTATION: re-inline the predicate. Referential identity is the only check
+    // that catches a copy before it drifts.
+    expect(emailDelete.available).toBe(imapConfigured);
+    expect(emailMark.available).toBe(imapConfigured);
+  });
+
+  it("declares retry semantics that will not re-run a delete", () => {
+    // MUTATION: leave `effect` off email_delete, or call it idempotent. The retry
+    // layer re-runs idempotent calls; re-running a delete after a transport
+    // wobble moves a SECOND set of messages, because the search re-runs against a
+    // mailbox that has already changed.
+    expect(emailDelete.effect).toEqual({ class: "non-idempotent" });
+    expect(emailMark.effect).toEqual({ class: "idempotent-mutation" });
+    expect(emailDelete.readOnly).toBeUndefined();
+    expect(emailMark.readOnly).toBeUndefined();
   });
 });

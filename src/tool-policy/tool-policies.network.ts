@@ -54,6 +54,16 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   // risk class — neither writes, sends, or takes a path argument.
   email_read_message:          { kernel: "http", risk: "network-read" },
   email_folders:               { kernel: "http", risk: "network-read" },
+  // email_delete is the canonical destructive class (delete_file, memory_forget,
+  // process_kill) and that is what wires the autonomy gating: profiles.ts maps
+  // it to deny / ask / allow-with-rollback per profile. It can carry that class
+  // HONESTLY only because the operation is a move to Trash — reversible by
+  // construction — since rollback.ts has no mailbox-shaped undo to offer.
+  // email_mark changes IMAP flags: a real, user-visible mutation, but a
+  // recoverable one, so it sits with the other workspace writes rather than
+  // being dressed up as either a read or a destructive act.
+  email_delete:                { kernel: "http", risk: "destructive" },
+  email_mark:                  { kernel: "http", risk: "workspace-write" },
   email_draft:                 { kernel: "http", risk: "workspace-write" },
   email_setup:                 { kernel: "http", risk: "workspace-write" },
   email_send:                  { kernel: "http", risk: "external-comms" },

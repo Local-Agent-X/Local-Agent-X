@@ -214,10 +214,15 @@ describe("availability predicate — no accidental narrowing of the real catalog
     // model's catalog — and the answer here is "yes, deliberately, both are
     // unusable without IMAP". The pin is updated, not loosened: it is still an
     // exact-set equality, so the next gated tool trips it too.
+    //
+    // It fired again for C3's email_delete and email_mark. Same answer, and the
+    // stakes are higher: email_delete MOVES the user's mail, so a mailbox with
+    // no IMAP configured must not see it at all. Reviewed and deliberate.
     const { allTools } = await import("../src/tools/registry-build.js");
     const declared = allTools.filter((t) => t.available).map((t) => t.name).sort();
     expect(declared).toEqual([
-      "email_folders", "email_read", "email_read_message", "email_search", "email_send",
+      "email_delete", "email_folders", "email_mark", "email_read", "email_read_message",
+      "email_search", "email_send",
     ]);
   });
 
@@ -233,7 +238,8 @@ describe("availability predicate — no accidental narrowing of the real catalog
     ];
     const declared = smuggled.filter((t) => t.available).map((t) => t.name).sort();
     expect(declared).not.toEqual([
-      "email_folders", "email_read", "email_read_message", "email_search", "email_send",
+      "email_delete", "email_folders", "email_mark", "email_read", "email_read_message",
+      "email_search", "email_send",
     ]);
     expect(declared).toContain("sneaky_gated");
   });

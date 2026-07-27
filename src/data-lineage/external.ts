@@ -68,6 +68,18 @@ const externalIngestSessions = new Set<string>();
  *    membership is that the turn cannot AUTO-promote durable memory, which a
  *    turn that just walked a third-party mailbox should not be doing; explicit
  *    remember/memory_save stays allowed and provenance-marked.
+ *  - email_delete / email_mark — enrolled for the SAME reason as email_folders,
+ *    not a weaker one. Their results deliberately carry no message content
+ *    (counts, uids and folder paths only), but a folder path IS off-box-authored
+ *    text: email_delete echoes the Trash folder's server-chosen path back into
+ *    context on every call, and both echo the server's own spelling of the
+ *    source folder. Leaving them out would make the axis depend on a payload
+ *    decision inside a tool file rather than on the tool's class — precisely the
+ *    coupling D8 rejected — so a later change that added a subject line to a
+ *    delete confirmation would silently escape the axis. The cost is one
+ *    session's memory AUTO-promotion, and a turn that just deleted mail on a
+ *    third party's instruction is the last turn that should be writing durable
+ *    facts.
  * Local file reads and sql over local DBs are deliberately NOT here (owned
  * sources — covered by the sensitive-read taint axis instead).
  */
@@ -84,6 +96,8 @@ const EXTERNAL_INGESTING_TOOLS: ReadonlySet<string> = new Set([
 	"email_search",
 	"email_read_message",
 	"email_folders",
+	"email_delete",
+	"email_mark",
 	"WebSearch",
 	"WebFetch",
 ]);

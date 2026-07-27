@@ -13,7 +13,8 @@
  * back), and on Gmail a \Deleted flag plus expunge removes a LABEL rather than
  * trashing the mail, which is not what any caller means by "delete".
  */
-import { ImapFlow, type MailboxLockObject, type SearchObject } from "imapflow";
+import { ImapFlow, type MailboxLockObject } from "imapflow";
+import { buildSearchQuery, type EmailSearchCriteria } from "./email-search-query.js";
 import {
   BODY_BYTE_LIMIT,
   capBody,
@@ -28,6 +29,10 @@ import {
   type AttachmentInfo,
   type MimeNode,
 } from "./email-body-render.js";
+
+// The query compiler lives in its own leaf module (it needs no connection) but
+// is re-exported here so that email-imap.ts stays the ONE import site for IMAP.
+export { buildSearchQuery, SearchCriteriaError, type EmailSearchCriteria } from "./email-search-query.js";
 
 export interface ImapCredentials { host: string; port: number; user: string; pass: string }
 
@@ -87,31 +92,25 @@ export interface MailboxFolder {
   subscribed: boolean;
 }
 
-/**
- * Search predicates, mapped onto imapflow's criteria object rather than
- * hand-rolled IMAP search strings. Fields combine with AND; `anyOf` expresses
- * OR. "everything from noreply@x older than a year" is
- * `{ from: "noreply@x", before: <date> }`.
- */
-export interface EmailSearchCriteria {
-  from?: string;
-  subject?: string;
-  /** Matches the message body text. */
-  body?: string;
-  /** Matches anywhere in headers or body. */
-  text?: string;
-  unreadOnly?: boolean;
-  /** Received strictly before this date. */
-  before?: Date;
-  /** Received on or after this date. */
-  since?: Date;
-  /** At least one of these must match. Combines with the AND fields above. */
-  anyOf?: EmailSearchCriteria[];
-}
-
 export type FlagAction = "add" | "remove";
 
-const ANY_OF_MAX_DEPTH = 4;
+/**
+ * The mailbox named could not be SELECTed.
+ *
+ * A TYPE rather than a phrase, because callers have to tell this apart from
+ * every other failure and the only alternative was matching prose: the mutate
+ * tools classified with `/mailbox|folder|select/i`, which also matched
+ * `buildSearchQuery`'s "refusing to build a query that matches the entire
+ * mailbox" and rewrote a no-filters refusal into "you picked a container,
+ * retry against another folder" — advice that is wrong and that the model
+ * cannot act on. Anything thrown from the SELECT is this; nothing else is.
+ */
+export class MailboxOpenError extends Error {
+  constructor(public readonly folder: string, public readonly reason: Error) {
+    super(`Could not open the folder "${folder}": ${reason.message}`);
+    this.name = "MailboxOpenError";
+  }
+}
 
 function newClient(cfg: ImapCredentials): ImapFlow {
   return new ImapFlow({ host: cfg.host, port: cfg.port, secure: true, auth: { user: cfg.user, pass: cfg.pass }, logger: false });
@@ -147,12 +146,18 @@ async function withConnection<T>(cfg: ImapCredentials, fn: (client: ImapFlow) =>
 
 async function withMailbox<T>(cfg: ImapCredentials, folder: string, fn: (client: ImapFlow) => Promise<T>): Promise<T> {
   return withConnection(cfg, async (client) => {
-    let lock: MailboxLockObject | undefined;
+    let lock: MailboxLockObject;
     try {
       lock = await client.getMailboxLock(folder);
+    } catch (err) {
+      // Classified HERE, where the SELECT actually failed, so no caller has to
+      // guess from the wording of a driver message.
+      throw new MailboxOpenError(folder, err as Error);
+    }
+    try {
       return await fn(client);
     } finally {
-      lock?.release();
+      lock.release();
     }
   });
 }
@@ -240,44 +245,31 @@ export async function fetchMessages(
   return withMailbox(cfg, folder, (client) => fetchPage(client, uids, limit));
 }
 
+/** A message identified but not read: everything the envelope already carries,
+ *  and no body. What a caller needs to NAME a message it is about to act on. */
+export type EmailHeader = Omit<EmailSummary, "snippet">;
+
 /**
- * Compile criteria into an imapflow search object.
+ * Resolve an explicit UID set inside one folder: the header of every uid that
+ * is actually THERE, and nothing for the ones that are not.
  *
- * THROWS rather than widening. Criteria that reduce to nothing — `{}`,
- * `anyOf: []`, `anyOf: [{}]`, or nesting past `ANY_OF_MAX_DEPTH` — used to
- * become `{ all: true }`, and inside an `or` branch a single `all: true`
- * alternative makes the WHOLE disjunction match every message in the mailbox.
- * A caller that computes criteria from user input and gets none is not asking
- * for the whole mailbox; the verbs downstream of this are a move and a delete,
- * so the empty case has to fail where it happens rather than at the target.
- * "Everything recent" has an honest expression already: `fetchMessages` with a
- * null uid set.
+ * IMAP uids are per-mailbox. A uid that a caller obtained by searching
+ * `receipts` names a DIFFERENT message in INBOX, or no message at all, so any
+ * verb taking uids on trust against a folder argument acts on a set the caller
+ * never saw. This is the check that makes that impossible: envelope-only (no
+ * `source`, so it costs one small FETCH, not the mail itself), returning
+ * headers rather than a bare boolean so the caller can also say WHICH messages
+ * it touched.
  */
-export function buildSearchQuery(criteria: EmailSearchCriteria, depth = 0): SearchObject {
-  const query: SearchObject = {};
-  if (criteria.from) query.from = criteria.from;
-  if (criteria.subject) query.subject = criteria.subject;
-  if (criteria.body) query.body = criteria.body;
-  if (criteria.text) query.text = criteria.text;
-  if (criteria.unreadOnly) query.seen = false;
-  if (criteria.before) query.before = criteria.before;
-  if (criteria.since) query.since = criteria.since;
-  const alternatives = criteria.anyOf?.filter((c) => c && Object.keys(c).length > 0) ?? [];
-  if (alternatives.length > 0) {
-    if (depth >= ANY_OF_MAX_DEPTH) {
-      throw new Error(`Search criteria nest anyOf deeper than ${ANY_OF_MAX_DEPTH} levels; flatten them rather than searching a wider set than was asked for.`);
+export async function fetchHeaders(cfg: ImapCredentials, folder: string, uids: number[]): Promise<EmailHeader[]> {
+  if (uids.length === 0) return [];
+  return withMailbox(cfg, folder, async (client) => {
+    const found: EmailHeader[] = [];
+    for await (const msg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
+      found.push(toHeader(msg as unknown as FetchedMessage));
     }
-    // Always an `or`, even for one alternative: assigning the single
-    // alternative's keys onto `query` overwrote same-named AND siblings, so
-    // `{ from: alice, anyOf: [{ from: bob }] }` searched for bob alone. A
-    // one-element `or` is walked inline by imapflow's compiler, which is
-    // exactly the AND the documented contract promises.
-    query.or = alternatives.map((c) => buildSearchQuery(c, depth + 1));
-  }
-  if (Object.keys(query).length === 0) {
-    throw new Error("Empty search criteria: refusing to build a query that matches the entire mailbox. Pass at least one predicate, or use fetchMessages for the most recent messages.");
-  }
-  return query;
+    return found;
+  });
 }
 
 /** Search a folder and return the matching page — one connection for both the

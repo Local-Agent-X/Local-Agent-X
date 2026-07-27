@@ -44,7 +44,7 @@ const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> =
   // it just listed, nor email_folders to resolve a folder name it is guessing
   // at. Appended in registration order so the three original names keep their
   // position in the rendered sentence.
-  smtp_imap: ["email_send", "email_read", "email_search", "email_read_message", "email_folders"],
+  smtp_imap: ["email_send", "email_read", "email_search", "email_read_message", "email_folders", "email_delete", "email_mark"],
 };
 
 /**

@@ -62,10 +62,13 @@ not the careful driver.
 **Scope of the content sanitizer.** It wraps + flags *untrusted external* channels
 (web / http / browser / MCP / SQL). It does **not** boundary-wrap owned-source reads
 (your own files via `read`, `bash` output, memory) — those are treated as your data and
-get secret-redaction + taint tracking instead. Inbound **email** (`email_read`/
-`email_search`) is *untrusted external* content and a primary injection channel: it is
-secret-redacted and marks the session as externally-ingested (gating durable memory
-promotion), but is **not** boundary-wrapped.
+get secret-redaction + taint tracking instead. Inbound **email** (`email_read`,
+`email_search`, `email_read_message`, `email_folders`, `email_delete`, `email_mark` —
+every IMAP tool, because folder paths and envelopes are server-authored too) is
+*untrusted external* content and a primary injection channel: it is secret-redacted and
+marks the session as externally-ingested (gating durable memory promotion), but is
+**not** boundary-wrapped. The authoritative list is `EXTERNAL_INGESTING_TOOLS` in
+`src/data-lineage/external.ts`.
 
 **Known gaps (honest):**
 - `chunked-half` — a secret split below detection length can slip the scanners (same

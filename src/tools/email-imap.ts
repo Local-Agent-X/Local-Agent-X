@@ -260,6 +260,12 @@ export type EmailHeader = Omit<EmailSummary, "snippet">;
  * `source`, so it costs one small FETCH, not the mail itself), returning
  * headers rather than a bare boolean so the caller can also say WHICH messages
  * it touched.
+ *
+ * This resolves in its OWN connection and SELECT, so a caller using it as a
+ * pre-flight check for a later move is separated from that move by a window. See
+ * the recorded TOCTOU residual in email-mutate-tools.ts (the uid-resolution block
+ * of `email_delete`) for why that window is safe within a UIDVALIDITY, what the
+ * one unhandled case is, and exactly what closing it would take.
  */
 export async function fetchHeaders(cfg: ImapCredentials, folder: string, uids: number[]): Promise<EmailHeader[]> {
   if (uids.length === 0) return [];

@@ -12,12 +12,11 @@
  * function only issues LIST. No create, rename, subscribe, or delete lives here.
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { getImapConfig } from "./email-config.js";
+import { getImapConfig, imapConfigured } from "./email-config.js";
 import { listFolders, type MailboxFolder } from "./email-imap.js";
 
-/** Same notion of "configured" the read tools use: getImapConfig() returns a
- *  STRING when IMAP_HOST/USER/PASS aren't all present. Not a second rule. */
-const imapConfigured = (): boolean => typeof getImapConfig() !== "string";
+/* `imapConfigured` is the SAME function the read tools use, imported from the
+ * config store that owns it — literally, not just contract-identically. */
 
 /**
  * RFC 6154 roles in the order a caller is likely to want them. Ordering is the

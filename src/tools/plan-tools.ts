@@ -23,6 +23,11 @@ export const READ_ONLY_TOOLS = new Set([
   'read', 'grep', 'glob', 'web_search', 'web_fetch', 'view_image',
   'sql_query', 'sql_schema', 'sql_explain', 'clipboard_read',
   'calendar_list_events', 'calendar_check_availability', 'email_read', 'email_search',
+  // Read-only by construction, same as their two siblings above: email_read_message
+  // issues one IMAP FETCH, email_folders one LIST. Neither STOREs, APPENDs, MOVEs
+  // or EXPUNGEs. Omitting them would have plan mode — whose whole purpose is
+  // research before changes — block the two email tools that only research.
+  'email_read_message', 'email_folders',
   'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search',
 ]);
 

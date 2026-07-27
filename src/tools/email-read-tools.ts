@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { getImapConfig } from "./email-config.js";
+import { getImapConfig, imapConfigured } from "./email-config.js";
 import { argReader } from "./email-tool-args.js";
 import {
   fetchBody,
@@ -10,12 +10,11 @@ import {
   type EmailSearchCriteria,
 } from "./email-imap.js";
 
-/** Both read tools need IMAP and nothing else. getImapConfig() returns a STRING
- *  error when IMAP_HOST/USER/PASS aren't all present — that is the existing
- *  notion of "configured", reused rather than duplicated. This is the honest
- *  half of the send/read split: IMAP is optional (C7a), so a send-only mailbox
- *  leaves these two genuinely unusable while email_send still works. */
-const imapConfigured = () => typeof getImapConfig() !== "string";
+/* `imapConfigured` is imported, not re-declared: it is one rule owned by
+ * email-config.ts (where getImapConfig lives) and shared with email_folders.
+ * This is the honest half of the send/read split — IMAP is optional (C7a), so a
+ * send-only mailbox leaves these three genuinely unusable while email_send
+ * still works. */
 
 /**
  * Report the page as it came back, truncation included. `count` keeps its

@@ -115,6 +115,16 @@ const SENSITIVE_READ_TOOLS: ReadonlySet<string> = new Set([
   "read", "bash", "sql_query",                       // canonical (was run-sandboxed's list)
   "ari_file",                                         // kernel file read bridge
   "email_read", "memory_search", "grep", "glob",      // surface mailbox / memory / file content
+  // email_read_message surfaces one message's WHOLE body — strictly a larger
+  // mailbox-content surface than email_read's snippet, so the owned-source
+  // secret scan + redaction must cover it too. Otherwise an account credential
+  // sitting in a message body (a password-reset mail, a key a vendor emailed)
+  // reaches the model unredacted while the same string quoted in email_read's
+  // snippet is caught. email_folders is deliberately NOT here: folder paths and
+  // RFC 6154 role attributes are metadata, not record content, so membership
+  // would buy nothing and arm a whole-result redaction stub on any entropy
+  // false-positive in a folder name.
+  "email_read_message",
   "structural_search",                                 // grep's symbol-accurate sibling — same file-content surface
   "ari_retrieval", "ari_database", "ari_sqlite",      // kernel retrieval / db read bridges
 ]);

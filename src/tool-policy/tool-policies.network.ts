@@ -49,6 +49,11 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyEntry> = {
   // ── External services (Gmail / Calendar / Marketplace) ──
   email_read:                  { kernel: "http", risk: "network-read" },
   email_search:                { kernel: "http", risk: "network-read" },
+  // One message in full (IMAP FETCH) and the mailbox list (IMAP LIST). Both are
+  // reads over the same transport as email_read/email_search and carry the same
+  // risk class — neither writes, sends, or takes a path argument.
+  email_read_message:          { kernel: "http", risk: "network-read" },
+  email_folders:               { kernel: "http", risk: "network-read" },
   email_draft:                 { kernel: "http", risk: "workspace-write" },
   email_setup:                 { kernel: "http", risk: "workspace-write" },
   email_send:                  { kernel: "http", risk: "external-comms" },

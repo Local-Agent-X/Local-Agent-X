@@ -37,7 +37,14 @@ export type IntegrationTransport = "http" | "smtp_imap";
  * is an invitation to call http_request and get nothing.
  */
 const TRANSPORT_TOOLS: Record<Exclude<IntegrationTransport, "http">, string[]> = {
-  smtp_imap: ["email_send", "email_read", "email_search"],
+  // This list REPLACES the "Base URL:" line for a transport that has none, so
+  // it is the model's only statement of what email can be reached with. Naming
+  // some of the tools is worse than naming none: a model told the interface is
+  // {send, read, search} will not reach for email_read_message to open the mail
+  // it just listed, nor email_folders to resolve a folder name it is guessing
+  // at. Appended in registration order so the three original names keep their
+  // position in the rendered sentence.
+  smtp_imap: ["email_send", "email_read", "email_search", "email_read_message", "email_folders"],
 };
 
 /**

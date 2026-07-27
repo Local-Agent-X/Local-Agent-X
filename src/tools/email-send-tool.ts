@@ -14,19 +14,26 @@ import { htmlToText } from "./email-body-render.js";
  *  visible tell of a broken reply. */
 const REPLY_PREFIX_RE = /^\s*re\s*(\[\d+\])?\s*:/i;
 
+/** An RFC 5322 msg-id body: a non-empty left side, exactly one `@`, a non-empty
+ *  right side, and none of the characters that would either break the header
+ *  (whitespace/CR-LF, angle brackets) or turn one id into a LIST (`,`). */
+const MESSAGE_ID_RE = /^[^\s<>,@]+@[^\s<>,@]+$/;
+
 /**
  * Normalise an RFC 5322 msg-id to its `<...>` form, or null if it is not one.
  *
  * Rejecting is load-bearing twice over. A msg-id containing whitespace would be
  * a header-injection vector (CR/LF is whitespace), and a malformed
  * In-Reply-To/References does not thread AT ALL in most clients â€” worse than
- * sending none, because it looks like threading was attempted.
+ * sending none, because it looks like threading was attempted. Degenerate ids
+ * ("@", "a@", "a@b,c@d") are rejected for the same reason: they reach a header
+ * that clients then fail to match against the thread.
  */
 export function normalizeMessageId(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const inner = trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
-  if (!inner || /[\s<>]/.test(inner) || !inner.includes("@")) return null;
+  if (!MESSAGE_ID_RE.test(inner)) return null;
   return `<${inner}>`;
 }
 
@@ -115,30 +122,16 @@ export const emailSend: ToolDefinition = {
       };
     }
 
-    // Catastrophic-tier idempotency: a real recipient receiving the same
-    // email twice is real damage. Hash payload + recipients; refuse re-send
-    // within the window with an explicit "already sent" message so the
-    // model knows to surface it rather than retry. EVERY field that changes
-    // what lands in a mailbox is in here â€” bcc adds a recipient, html
-    // changes what is rendered, in_reply_to/references change which thread
-    // it lands in â€” because a field outside the fingerprint makes a
-    // genuinely different email look like a duplicate and get dropped.
-    // Encoded as JSON so the field boundaries survive concatenation;
-    // per-field trim preserves fingerprintOf's "edge whitespace doesn't
-    // count" behaviour.
-    const fp = fingerprintOf(
-      JSON.stringify(
-        [to, cc, bcc, subjectRaw, body, html, inReplyTo ?? "", referencesRaw, attachmentsRaw].map(s => s.trim()),
-      ),
-    );
-    const prior = recentlyDone("email_send", fp, EMAIL_SEND_WINDOW_MS);
-    if (prior) {
+    // `references` is only meaningful as an extension of the parent's chain, so
+    // without in_reply_to there is nothing to attach it to. Dropping it silently
+    // would leave the caller believing it deepened the threading.
+    if (referencesRaw && !inReplyTo) {
       return {
         content:
-          `Email to ${to} with subject "${subjectRaw}" was already sent ${describeAge(prior.ageMs)} ` +
-          `(prior result: ${prior.result}). Skipped this attempt to prevent a duplicate. ` +
-          `If you genuinely need to re-send, wait a few minutes or change the subject/body.`,
-        metadata: { skipped: "duplicate", priorResult: prior.result, ageMs: prior.ageMs },
+          "references was supplied without in_reply_to. The References chain is built from the parent " +
+          "message, so pass in_reply_to as well (the `messageId` of the message being replied to), or omit " +
+          "references. Nothing was sent.",
+        isError: true,
       };
     }
 
@@ -149,8 +142,44 @@ export const emailSend: ToolDefinition = {
     const subject = inReplyTo && !REPLY_PREFIX_RE.test(subjectRaw) ? `Re: ${subjectRaw}` : subjectRaw;
     // Never HTML-only: a text/plain alternative is table stakes, and some
     // recipients (plain-text clients, screen readers, digest gateways) see
-    // nothing at all without it.
-    const text = body || htmlToText(html);
+    // nothing at all without it. `.trim()` and not truthiness: a body of "   "
+    // is a blank text/plain part, which is the very thing this guards against.
+    const text = body.trim() ? body : htmlToText(html);
+    const references = inReplyTo ? buildReferences(referencesRaw, inReplyTo) : [];
+
+    // Catastrophic-tier idempotency: a real recipient receiving the same
+    // email twice is real damage. Hash payload + recipients; refuse re-send
+    // within the window with an explicit "already sent" message so the
+    // model knows to surface it rather than retry. EVERY field that changes
+    // what lands in a mailbox is in here â€” bcc adds a recipient, html
+    // changes what is rendered, in_reply_to/references change which thread
+    // it lands in â€” because a field outside the fingerprint makes a
+    // genuinely different email look like a duplicate and get dropped.
+    //
+    // The COMPOSED values are hashed, never the raw arguments: this tool
+    // normalises inputs (adds "Re: ", drops unparseable reference tokens), so
+    // two different inputs that compose the identical email must collide. Hash
+    // the raw input and the recipient gets the same message twice.
+    //
+    // Encoded as JSON so the field boundaries survive concatenation
+    // (fingerprintOf joins its parts with NO separator, so an unencoded list
+    // makes to="a",cc="b" collide with to="ab",cc=""); per-field trim preserves
+    // fingerprintOf's "edge whitespace doesn't count" behaviour.
+    const fp = fingerprintOf(
+      JSON.stringify(
+        [to, cc, bcc, subject, text, html, inReplyTo ?? "", references.join(" "), attachmentsRaw].map(s => s.trim()),
+      ),
+    );
+    const prior = recentlyDone("email_send", fp, EMAIL_SEND_WINDOW_MS);
+    if (prior) {
+      return {
+        content:
+          `Email to ${to} with subject "${subject}" was already sent ${describeAge(prior.ageMs)} ` +
+          `(prior result: ${prior.result}). Skipped this attempt to prevent a duplicate. ` +
+          `If you genuinely need to re-send, wait a few minutes or change the subject/body.`,
+        metadata: { skipped: "duplicate", priorResult: prior.result, ageMs: prior.ageMs },
+      };
+    }
 
     try {
       const transport = createTransport({ host: cfg.host, port: cfg.port, secure: cfg.port === 465, auth: { user: cfg.user, pass: cfg.pass } });
@@ -169,8 +198,7 @@ export const emailSend: ToolDefinition = {
         // Nodemailer emits these as real headers; hand-rolling MIME here
         // would be a second, worse mail composer.
         mailOpts.inReplyTo = inReplyTo;
-        const refs = buildReferences(referencesRaw, inReplyTo);
-        if (refs.length) mailOpts.references = refs;
+        if (references.length) mailOpts.references = references;
       }
       if (attachmentsRaw) {
         const paths: string[] = JSON.parse(attachmentsRaw);

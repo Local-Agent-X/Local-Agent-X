@@ -8,6 +8,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const smtp = vi.hoisted(() => ({
   sent: [] as Array<Record<string, unknown>>,
@@ -114,11 +117,24 @@ describe("reply threading", () => {
     expect(lastMail().subject).toBe("RE[2]: Notes");
   });
 
+  it("prefixes a reply whose subject merely CONTAINS 're:' mid-string", async () => {
+    // The prefix test is anchored at the start. An unanchored one would see the
+    // "re:" in "Notes re: budget" and silently drop the reply marker.
+    await send({ subject: "Notes re: budget", in_reply_to: PARENT });
+    expect(lastMail().subject).toBe("Re: Notes re: budget");
+  });
+
   it("leaves the subject alone when the message is not a reply", async () => {
     await send({ subject: "Notes" });
     expect(lastMail().subject).toBe("Notes");
     expect(lastMail().inReplyTo).toBeUndefined();
     expect(lastMail().references).toBeUndefined();
+  });
+
+  it("refuses `references` supplied without `in_reply_to` rather than discarding it", async () => {
+    const r = await send({ references: "<root-1@mail.example.com>" });
+    expect(r.isError).toBe(true);
+    expect(smtp.sent, "a send happened despite the unusable references argument").toHaveLength(0);
   });
 });
 
@@ -161,6 +177,18 @@ describe("HTML body", () => {
     expect(text).not.toContain("<p>");
     expect(text).toContain("Hi Alice");
     expect(text).toContain("https://x.test/p");
+  });
+
+  it("treats a whitespace-only body as NO plain text and derives one from the html", async () => {
+    // Truthiness vs trim: "   " is truthy, so a naive `body || htmlToText(html)`
+    // ships a blank text/plain part to every plain-text client.
+    await send({ body: "   ", html: "<p>Real content</p>" });
+    expect(String(lastMail().text).trim()).toBe("Real content");
+  });
+
+  it("omits html entirely when none was supplied", async () => {
+    await send({});
+    expect("html" in lastMail(), "an empty html part was emitted").toBe(false);
   });
 
   it("refuses a send with neither body nor html", async () => {
@@ -220,6 +248,55 @@ describe("the idempotency guard covers every new field", () => {
     expect(smtp.sent).toHaveLength(2);
   });
 
+  it("changing ONLY cc is a different message and is sent", async () => {
+    await send({ cc: "carol@example.com" });
+    const r = await send({ cc: "dave@example.com" });
+    expect(r.metadata?.skipped, "a different CC list was swallowed as a duplicate").toBeUndefined();
+    expect(smtp.sent).toHaveLength(2);
+  });
+
+  it("changing ONLY the attachment list is a different message and is sent", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-email-fp-"));
+    try {
+      const a = join(dir, "a.txt");
+      const b = join(dir, "b.txt");
+      writeFileSync(a, "A");
+      writeFileSync(b, "B");
+      await send({ attachments: JSON.stringify([a]) });
+      const r = await send({ attachments: JSON.stringify([b]) });
+      expect(r.metadata?.skipped, "a different attachment was swallowed as a duplicate").toBeUndefined();
+      expect(smtp.sent).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps field boundaries: moving characters from cc into to is NOT the same message", async () => {
+    // fingerprintOf concatenates its parts with no separator, so an unencoded
+    // field list collides: to="a",cc="b" hashes identically to to="ab",cc="".
+    await send({ to: "a@x.com", cc: "b@x.com" });
+    const r = await send({ to: "a@x.comb@x.com", cc: "" });
+    expect(r.metadata?.skipped, "a field-boundary collision swallowed a different message").toBeUndefined();
+    expect(smtp.sent).toHaveLength(2);
+  });
+
+  it("refuses a re-send whose subject differs only by the Re: prefix this tool adds", async () => {
+    // Both calls COMPOSE the subject "Re: Notes" and land in the same thread —
+    // the recipient gets the identical email twice unless the composed value is
+    // what gets hashed.
+    await send({ subject: "Notes", in_reply_to: PARENT });
+    const r = await send({ subject: "Re: Notes", in_reply_to: PARENT });
+    expect(r.metadata?.skipped, "the same composed email was sent twice").toBe("duplicate");
+    expect(smtp.sent).toHaveLength(1);
+  });
+
+  it("refuses a re-send whose references differ only in tokens buildReferences discards", async () => {
+    await send({ in_reply_to: PARENT, references: "<r@x.com>" });
+    const r = await send({ in_reply_to: PARENT, references: "<r@x.com> junk" });
+    expect(r.metadata?.skipped, "the same composed References was sent twice").toBe("duplicate");
+    expect(smtp.sent).toHaveLength(1);
+  });
+
   it("a failed send does not block the retry", async () => {
     smtp.sendError = new Error("connection reset");
     const first = await send({});
@@ -240,7 +317,8 @@ describe("Message-ID normalisation", () => {
     expect(normalizeMessageId(input)).toBe(expected);
   });
 
-  it.each(["", "   ", "no-at-sign", "a b@c.com", "<a@b.com", "a@b.com>\nBcc: x@y.com"])(
+  it.each(["", "   ", "no-at-sign", "a b@c.com", "<a@b.com", "a@b.com>\nBcc: x@y.com",
+    "@", "a@", "@b.com", "a@b.com,c@d.com", "a@b@c.com"])(
     "rejects %j",
     (input) => {
       expect(normalizeMessageId(input)).toBeNull();
@@ -251,6 +329,14 @@ describe("Message-ID normalisation", () => {
 describe("buildReferences", () => {
   it("drops unparseable ids from the supplied chain rather than emitting a malformed header", () => {
     expect(buildReferences("<a@b.com> garbage <c@d.com>", "<p@q.com>")).toEqual([
+      "<a@b.com>",
+      "<c@d.com>",
+      "<p@q.com>",
+    ]);
+  });
+
+  it("does not repeat an id the supplied chain lists twice", () => {
+    expect(buildReferences("<a@b.com> <a@b.com> <c@d.com>", "<p@q.com>")).toEqual([
       "<a@b.com>",
       "<c@d.com>",
       "<p@q.com>",

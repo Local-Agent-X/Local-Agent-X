@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 import { dataLineageGate, egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
+import { egressPayload } from "./egress-gates.js";
 import { hasCapability, WORKTREE_PATH_TOOLS, CAPABILITY_CLASS_MEMBERS, TOOLS, validateCapabilitySets } from "../tool-registry.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { getAllTools } from "../tools/registry-build.js";
@@ -304,6 +305,26 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
   it("blocks a hardcoded secret in an email_send body", () => {
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `here: ${SECRET}` }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("halt");
+  });
+
+  it("blocks a hardcoded secret in an email_send HTML body (E5)", () => {
+    // `html` is a payload-bearing parameter: a secret rendered only in the HTML
+    // part still leaves the box.
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: "see below", html: `<p>key: ${SECRET}</p>` }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
+  });
+
+  it("extracts EVERY payload-bearing email_send field, including html and bcc (E5)", () => {
+    // The extractor feeds all three egress layers (secret scan, taint floor,
+    // canary tripwire). A field missing here is invisible to all of them — a
+    // recipient smuggled into `bcc` would never be scanned or tainted.
+    const { text } = egressPayload("email_send", {
+      to: "a@b.com", cc: "c@b.com", bcc: "mallory@evil.com",
+      subject: "quarterly", body: "plain part", html: "<p>rich part</p>",
+    });
+    for (const fragment of ["a@b.com", "c@b.com", "mallory@evil.com", "quarterly", "plain part", "<p>rich part</p>"]) {
+      expect(text, `egressPayload dropped ${fragment}`).toContain(fragment);
+    }
   });
 
   it("lets a clean payload through, and passes {{SECRET_NAME}} placeholders", () => {

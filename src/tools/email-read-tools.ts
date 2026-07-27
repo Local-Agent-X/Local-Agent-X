@@ -9,11 +9,19 @@ import { fetchMessages, searchMessages, type EmailPage } from "./email-imap.js";
  *  leaves these two genuinely unusable while email_send still works. */
 const imapConfigured = () => typeof getImapConfig() !== "string";
 
-/** Report the page as it came back, truncation included. `count` keeps its
- *  previous meaning (messages actually returned); `total` is what the mailbox
- *  matched, which the caller could not see before. */
-function pageResult(page: EmailPage, emptyMessage: string): ToolResult {
-  if (page.returned === 0) return { content: emptyMessage, metadata: { count: 0, total: page.total } };
+/**
+ * Report the page as it came back, truncation included. `count` keeps its
+ * previous meaning (messages actually returned); `total` is what the mailbox
+ * matched, which the caller could not see before.
+ *
+ * `content` is ALWAYS the serialized EmailPage and the metadata key set is
+ * always the same three keys — including for an empty page. The empty case
+ * used to return a plain sentence with two metadata keys, so a caller doing
+ * `JSON.parse(result.content)` (the documented contract) threw on exactly the
+ * outcome it was least prepared for, and had to sniff which shape it got.
+ * `{"messages": [], "total": 0, ...}` reads perfectly well as "nothing here".
+ */
+function pageResult(page: EmailPage): ToolResult {
   return {
     content: JSON.stringify(page, null, 2),
     metadata: { count: page.returned, total: page.total, truncated: page.truncated },
@@ -44,7 +52,7 @@ export const emailRead: ToolDefinition = {
         // null, not "*": in IMAP "*" is the LAST message, so this path used to
         // return exactly one message however large `limit` was.
         : await fetchMessages(cfg, folder, null, limit);
-      return pageResult(page, args.unread_only ? "No unread messages found." : "No messages found.");
+      return pageResult(page);
     } catch (err) {
       return { content: `Failed to read emails: ${(err as Error).message}`, isError: true };
     }
@@ -74,7 +82,7 @@ export const emailSearch: ToolDefinition = {
       // Subject OR sender, as before — now one server-side OR in one
       // connection instead of two searches unioned across two connections.
       const page = await searchMessages(cfg, folder, { anyOf: [{ subject: query }, { from: query }] }, limit);
-      return pageResult(page, "No messages matched the search query.");
+      return pageResult(page);
     } catch (err) {
       return { content: `Failed to search emails: ${(err as Error).message}`, isError: true };
     }

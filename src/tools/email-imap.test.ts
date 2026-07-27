@@ -21,7 +21,7 @@ interface FakeMsg {
   seen?: boolean;
   source?: string;
   bodyStructure?: unknown;
-  parts?: Record<string, { text: string; charset?: string }>;
+  parts?: Record<string, { text?: string; charset?: string; chunks?: () => Iterable<Buffer> }>;
 }
 
 const h = vi.hoisted(() => {
@@ -36,6 +36,9 @@ const h = vi.hoisted(() => {
     folders: [] as { path: string; name: string; specialUse?: string; subscribed: boolean }[],
     failConnect: false,
     failFetch: false,
+    /** Override what messageMove returns: `false` (refused) or a partial
+     *  uidMap, as real servers do. Undefined = a healthy UIDPLUS server. */
+    moveResult: undefined as unknown,
     reset(): void {
       state.messages = [];
       state.calls = [];
@@ -47,6 +50,7 @@ const h = vi.hoisted(() => {
       state.folders = [];
       state.failConnect = false;
       state.failFetch = false;
+      state.moveResult = undefined;
     },
   };
 
@@ -57,17 +61,22 @@ const h = vi.hoisted(() => {
     return msgs.slice(Math.max(0, start - 1), end);
   }
 
-  function shape(m: FakeMsg): unknown {
-    return {
-      uid: m.uid,
-      envelope: { from: [m.from], subject: m.subject, date: m.date, messageId: m.messageId },
-      source: m.source === undefined ? undefined : Buffer.from(m.source, "utf-8"),
-      bodyStructure: m.bodyStructure,
-    };
+  /** Returns ONLY the fields the fetch query asked for, the way a real IMAP
+   *  server does. A fake that hands back `source` unconditionally hides every
+   *  bug of the form "derived a value from a field we never requested". */
+  function shape(m: FakeMsg, query?: Record<string, unknown>): unknown {
+    const want = (k: string): boolean => query === undefined || Boolean(query[k]);
+    const out: Record<string, unknown> = { uid: m.uid };
+    if (want("envelope")) out.envelope = { from: [m.from], subject: m.subject, date: m.date, messageId: m.messageId };
+    if (want("source") && m.source !== undefined) out.source = Buffer.from(m.source, "utf-8");
+    if (want("bodyStructure")) out.bodyStructure = m.bodyStructure;
+    return out;
   }
 
   function matches(m: FakeMsg, q: Record<string, unknown>): boolean {
-    if (Array.isArray(q.or)) return (q.or as Record<string, unknown>[]).some((sub) => matches(m, sub));
+    // `or` is ONE conjunct among the sibling keys, not a short-circuit for the
+    // whole object — RFC 3501 ANDs it with everything beside it.
+    if (Array.isArray(q.or) && !(q.or as Record<string, unknown>[]).some((sub) => matches(m, sub))) return false;
     if (q.all) return true;
     if (typeof q.from === "string" && !`${m.from.name} ${m.from.address}`.toLowerCase().includes(q.from.toLowerCase())) return false;
     if (typeof q.subject === "string" && !m.subject.toLowerCase().includes(q.subject.toLowerCase())) return false;
@@ -91,7 +100,7 @@ const h = vi.hoisted(() => {
     }
     async logout(): Promise<void> { state.calls.push("logout"); }
     close(): void { state.calls.push("close"); }
-    async *fetch(range: unknown, _query: unknown, options?: { uid?: boolean }): AsyncGenerator<unknown> {
+    async *fetch(range: unknown, query: Record<string, unknown>, options?: { uid?: boolean }): AsyncGenerator<unknown> {
       state.calls.push("fetch");
       state.lastFetchRange = range;
       state.lastFetchByUid = options?.uid;
@@ -99,13 +108,13 @@ const h = vi.hoisted(() => {
       const picked = options?.uid
         ? state.messages.filter((m) => (range as number[]).includes(m.uid))
         : seqSlice(state.messages, range as string);
-      for (const m of picked) yield shape(m);
+      for (const m of picked) yield shape(m, query);
     }
-    async fetchAll(range: unknown, _query: unknown, options?: { uid?: boolean }): Promise<unknown[]> {
+    async fetchAll(range: unknown, query: Record<string, unknown>, options?: { uid?: boolean }): Promise<unknown[]> {
       state.calls.push("fetchAll");
       const uid = Number(String(range));
       const found = options?.uid ? state.messages.filter((m) => m.uid === uid) : [];
-      return found.map(shape);
+      return found.map((m) => shape(m, query));
     }
     async search(query: Record<string, unknown>): Promise<number[]> {
       state.calls.push("search");
@@ -118,12 +127,20 @@ const h = vi.hoisted(() => {
       const msg = state.messages.find((m) => m.uid === Number(range));
       const chosen = msg?.parts?.[part];
       if (!chosen) throw new Error(`no part ${part}`);
-      return { meta: { charset: chosen.charset }, content: Readable.from([Buffer.from(chosen.text, "utf-8")]) };
+      // `chunks` streams raw bytes lazily, so a test can present a body larger
+      // than the wire cap without materialising it, and can present bytes that
+      // are not valid UTF-8.
+      const content = chosen.chunks
+        ? Readable.from(chosen.chunks())
+        : Readable.from([Buffer.from(chosen.text ?? "", "utf-8")]);
+      return { meta: { charset: chosen.charset }, content };
     }
-    async messageMove(uids: number[], destination: string): Promise<{ uidMap: Map<number, number> }> {
+    async messageMove(uids: number[], destination: string): Promise<unknown> {
       state.calls.push("move");
       state.moves.push({ uids, destination });
-      return { uidMap: new Map() };
+      if (state.moveResult !== undefined) return state.moveResult;
+      // UIDPLUS server: every requested uid lands, and says so.
+      return { uidMap: new Map(uids.map((u, i) => [u, 9000 + i])) };
     }
     async messageFlagsAdd(uids: number[], flags: string[]): Promise<boolean> {
       state.calls.push("flagsAdd");
@@ -149,10 +166,11 @@ vi.mock("imapflow", () => ({ ImapFlow: h.FakeImapFlow }));
 const state = h.state;
 
 const {
-  fetchMessages, searchMessages, fetchBody, moveMessages, setFlags, listFolders,
+  fetchMessages, searchMessages, fetchBody, moveMessages, setFlags, listFolders, buildSearchQuery,
 } = await import("./email-imap.js");
+type EmailSearchCriteria = import("./email-imap.js").EmailSearchCriteria;
 const { emailRead, emailSearch } = await import("./email-read-tools.js");
-const { BODY_CHAR_LIMIT } = await import("./email-body-render.js");
+const { BODY_CHAR_LIMIT, BODY_BYTE_LIMIT } = await import("./email-body-render.js");
 
 const CFG = { host: "imap.example.com", port: 993, user: "me@example.com", pass: "secret" };
 
@@ -231,6 +249,111 @@ describe("fetchMessages — explicit uid set", () => {
     expect(page.total).toBe(50);
     expect(page.truncated).toBe(true);
     expect(state.lastFetchByUid).toBe(true);
+  });
+
+  // "The 10 oldest" and "the 10 newest" are different mailboxes once the page
+  // feeds a move, and counts alone cannot tell them apart.
+  it("pages the NEWEST end of an over-long uid set", async () => {
+    state.messages = makeMessages(50);
+    const uids = state.messages.map((m) => m.uid);
+    const page = await fetchMessages(CFG, "INBOX", uids, 5);
+    expect(page.messages.map((m) => m.uid)).toEqual([1045, 1046, 1047, 1048, 1049]);
+    expect(state.lastFetchRange).toEqual([1045, 1046, 1047, 1048, 1049]);
+  });
+
+  it("pages the NEWEST end of an over-long search result", async () => {
+    state.messages = makeMessages(30);
+    const page = await searchMessages(CFG, "INBOX", { subject: "Message" }, 3);
+    expect(page.total).toBe(30);
+    expect(page.messages.map((m) => m.uid)).toEqual([1027, 1028, 1029]);
+  });
+
+  it("pages the NEWEST end of an over-long sequence range", async () => {
+    state.messages = makeMessages(30);
+    const page = await fetchMessages(CFG, "INBOX", null, 3);
+    expect(page.messages.map((m) => m.uid)).toEqual([1027, 1028, 1029]);
+    expect(state.lastFetchRange).toBe("28:30");
+  });
+});
+
+describe("empty pages are not shared", () => {
+  it("hands out a fresh page each time, so mutating one cannot poison the next", async () => {
+    const first = await fetchMessages(CFG, "INBOX", [], 10);
+    // The natural thing for a caller to do to a page: sort it, annotate it.
+    first.messages.push({ uid: 1, from: "x", subject: "phantom", date: "d", messageId: null, snippet: "" });
+    first.total = 999;
+
+    const second = await fetchMessages(CFG, "INBOX", [], 10);
+    expect(second).toEqual({ messages: [], total: 0, returned: 0, truncated: false });
+
+    state.messages = makeMessages(2).map((m) => ({ ...m, seen: true }));
+    const third = await searchMessages(CFG, "INBOX", { unreadOnly: true }, 10);
+    expect(third).toEqual({ messages: [], total: 0, returned: 0, truncated: false });
+
+    // …and a page that does have messages is unaffected either way.
+    const fourth = await fetchMessages(CFG, "INBOX", null, 10);
+    expect(fourth.returned).toBe(2);
+    expect(fourth.messages.map((m) => m.subject)).toEqual(["Message 1", "Message 2"]);
+  });
+});
+
+describe("buildSearchQuery refuses to widen", () => {
+  it("throws on empty criteria rather than matching the whole mailbox", () => {
+    expect(() => buildSearchQuery({})).toThrow(/entire mailbox/);
+  });
+
+  it("throws on an empty anyOf", () => {
+    expect(() => buildSearchQuery({ anyOf: [] })).toThrow(/entire mailbox/);
+    expect(() => buildSearchQuery({ anyOf: [{}] })).toThrow(/entire mailbox/);
+  });
+
+  it("throws past the anyOf nesting limit instead of dropping the branch", () => {
+    // A dropped branch leaves `{}` — and one match-everything alternative
+    // makes the WHOLE or match every message.
+    let nested: EmailSearchCriteria = { anyOf: [{ from: "a@x.com" }, { from: "b@x.com" }] };
+    for (let i = 0; i < 6; i++) nested = { anyOf: [nested, { from: `l${i}@x.com` }] };
+    expect(() => buildSearchQuery(nested)).toThrow(/anyOf deeper than/);
+  });
+
+  it("never emits all:true for any nesting depth it does accept", () => {
+    let nested: EmailSearchCriteria = { anyOf: [{ from: "a@x.com" }, { from: "b@x.com" }] };
+    for (let i = 0; i < 3; i++) nested = { anyOf: [nested, { from: `l${i}@x.com` }] };
+    expect(JSON.stringify(buildSearchQuery(nested))).not.toContain("all");
+  });
+
+  it("opens no connection when the criteria are empty", async () => {
+    await expect(searchMessages(CFG, "INBOX", {}, 10)).rejects.toThrow(/entire mailbox/);
+    expect(state.calls).toEqual([]);
+  });
+
+  it("does not report a total for a mailbox it refused to search", async () => {
+    state.messages = makeMessages(500);
+    await expect(searchMessages(CFG, "INBOX", {}, 10)).rejects.toThrow();
+    expect(state.calls).toEqual([]);
+  });
+});
+
+describe("anyOf combines with its AND siblings", () => {
+  it("keeps sibling fields when anyOf has exactly one alternative", () => {
+    const query = buildSearchQuery({ from: "alice@x.com", anyOf: [{ subject: "invoice" }] });
+    expect(query.from).toBe("alice@x.com");
+    expect(query.or).toEqual([{ subject: "invoice" }]);
+  });
+
+  it("does not let a one-element anyOf overwrite a same-named sibling", () => {
+    const query = buildSearchQuery({ from: "alice@x.com", anyOf: [{ from: "bob@x.com" }] });
+    expect(query.from).toBe("alice@x.com");
+    expect(query.or).toEqual([{ from: "bob@x.com" }]);
+  });
+
+  it("narrows, never widens, when a collapsed anyOf meets a date sibling", async () => {
+    const cutoff = new Date(Date.UTC(2026, 0, 6));
+    state.messages = makeMessages(10).map((m, i) => (
+      i % 2 === 0 ? { ...m, from: { name: "No Reply", address: "noreply@x.com" } } : m
+    ));
+    const page = await searchMessages(CFG, "INBOX", { before: cutoff, anyOf: [{ from: "noreply@x.com" }] }, 50);
+    // Before the cutoff AND from noreply — not everything before the cutoff.
+    expect(page.messages.map((m) => m.subject)).toEqual(["Message 1", "Message 3", "Message 5"]);
   });
 });
 
@@ -355,6 +478,48 @@ describe("fetchBody", () => {
     expect(body.truncated).toBe(true);
   });
 
+  it("stops pulling bytes off the wire at the cap instead of buffering the whole part", async () => {
+    // A 30MB part offered lazily. Without the byte cap every chunk is read
+    // into memory; with it, only enough to fill BODY_BYTE_LIMIT.
+    const CHUNK = 1_000_000;
+    let chunksServed = 0;
+    state.messages = makeMessages(1, {
+      bodyStructure: plainStructure,
+      parts: {
+        "1": {
+          charset: "utf-8",
+          chunks: function* () {
+            for (let i = 0; i < 30; i++) {
+              chunksServed++;
+              yield Buffer.alloc(CHUNK, "x");
+            }
+          },
+        },
+      },
+    });
+    const body = await fetchBody(CFG, "INBOX", 1000);
+    expect(body.truncated).toBe(true);
+    expect(body.body.length).toBe(BODY_CHAR_LIMIT);
+    expect(chunksServed).toBeLessThanOrEqual(Math.ceil(BODY_BYTE_LIMIT / CHUNK) + 1);
+    expect(chunksServed).toBeLessThan(30);
+  });
+
+  it("decodes a latin-1 part with its declared charset, not as utf-8", async () => {
+    state.messages = makeMessages(1, {
+      bodyStructure: { ...plainStructure, parameters: { charset: "iso-8859-1" } },
+      parts: {
+        "1": {
+          charset: "iso-8859-1",
+          // Raw latin-1 bytes: "Café münü" — 0xE9/0xFC are invalid UTF-8 alone.
+          chunks: () => [Buffer.from("Café münü", "latin1")],
+        },
+      },
+    });
+    const body = await fetchBody(CFG, "INBOX", 1000);
+    expect(body.body).toBe("Café münü");
+    expect(body.body).not.toContain("�");
+  });
+
   it("reports no text body rather than dumping a non-text part", async () => {
     state.messages = makeMessages(1, {
       bodyStructure: { type: "image/jpeg", part: "1", size: 900, disposition: "attachment", dispositionParameters: { filename: "photo.jpg" } },
@@ -364,6 +529,20 @@ describe("fetchBody", () => {
     expect(body.contentType).toBeNull();
     expect(body.body).toBe("");
     expect(body.attachments.map((a) => a.filename)).toEqual(["photo.jpg"]);
+  });
+
+  // The body result carries the text in full; a `snippet` field here could
+  // only be populated by fetching the whole raw message beside it, and used to
+  // be an always-empty string that the type claimed was a preview.
+  it("carries no snippet field to be empty", async () => {
+    state.messages = makeMessages(1, {
+      bodyStructure: plainStructure,
+      parts: { "1": { text: "the whole body" } },
+    });
+    const body = await fetchBody(CFG, "INBOX", 1000);
+    expect("snippet" in body).toBe(false);
+    expect(body.body).toBe("the whole body");
+    expect(body.subject).toBe("Message 1");
   });
 
   it("fails loudly for an unknown uid", async () => {
@@ -376,8 +555,31 @@ describe("move and flag primitives", () => {
   it("relocates a uid set to a named folder", async () => {
     state.messages = makeMessages(3);
     const result = await moveMessages(CFG, "INBOX", [1000, 1002], "[Gmail]/Trash");
-    expect(result).toEqual({ moved: 2, destination: "[Gmail]/Trash" });
+    expect(result).toEqual({ requested: 2, moved: 2, confirmed: true, destination: "[Gmail]/Trash" });
     expect(state.moves).toEqual([{ uids: [1000, 1002], destination: "[Gmail]/Trash" }]);
+  });
+
+  it("reports zero — not success — when the server refuses the move", async () => {
+    state.messages = makeMessages(3);
+    state.moveResult = false;
+    const result = await moveMessages(CFG, "INBOX", [1000, 1002], "[Gmail]/Trash");
+    expect(result).toMatchObject({ requested: 2, moved: 0, confirmed: true });
+  });
+
+  it("counts what the server confirmed, not what was asked, when they differ", async () => {
+    state.messages = makeMessages(3);
+    state.moveResult = { uidMap: new Map([[1000, 9000]]) };
+    const result = await moveMessages(CFG, "INBOX", [1000, 1001, 1002], "[Gmail]/Trash");
+    expect(result.requested).toBe(3);
+    expect(result.moved).toBe(1);
+    expect(result.confirmed).toBe(true);
+  });
+
+  it("says so when a server without UIDPLUS confirms nothing", async () => {
+    state.messages = makeMessages(3);
+    state.moveResult = { path: "INBOX", destination: "Trash" };
+    const result = await moveMessages(CFG, "INBOX", [1000, 1001], "Trash");
+    expect(result).toMatchObject({ requested: 2, moved: 2, confirmed: false });
   });
 
   it("does not open a connection for an empty move", async () => {
@@ -395,11 +597,25 @@ describe("move and flag primitives", () => {
     ]);
   });
 
+  // Asserting "the fake was never asked to expunge" against a fake that has no
+  // expunge method can never fail. The invariant is about the SOURCE, so the
+  // check reads the source: if anyone ever implements permanent deletion in
+  // this module family, this fails on the commit that does it.
   it("never expunges — deletion is a move (decision E1)", async () => {
-    state.messages = makeMessages(1);
-    await moveMessages(CFG, "INBOX", [1000], "Trash");
-    expect(state.calls).not.toContain("expunge");
-    expect(state.calls).not.toContain("messageDelete");
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const dir = new URL(".", import.meta.url);
+    const files = readdirSync(dir).filter((f) => /^email-.*\.ts$/.test(f) && !f.endsWith(".test.ts"));
+    expect(files.length).toBeGreaterThanOrEqual(3);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(new URL(file, dir), "utf-8")
+        // Prose may DISCUSS expunge — the module header explains why it is
+        // absent. Only code counts.
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^[ \t]*\/\/.*$/gm, "");
+      if (/\bexpunge\b|messageDelete|\\\\Deleted/i.test(source)) offenders.push(file);
+    }
+    expect(offenders).toEqual([]);
   });
 
   it("lists folders so callers stop guessing at trash paths", async () => {
@@ -477,11 +693,31 @@ describe("the read tools on top of the data layer", () => {
     expect(payload.messages.map((m: { subject: string }) => m.subject)).toEqual(["Message 4"]);
   });
 
-  it("email_read reports no unread messages without erroring", async () => {
+  // C2 is told "content is the serialized EmailPage". That has to hold on the
+  // empty path too, and the metadata key set must not vary with the outcome.
+  it("email_read returns a parseable empty page rather than a sentence", async () => {
     state.messages = makeMessages(2).map((m) => ({ ...m, seen: true }));
     const result = await emailRead.execute({ unread_only: true });
-    expect(result.content).toBe("No unread messages found.");
     expect(result.isError).toBeFalsy();
+    expect(JSON.parse(String(result.content))).toEqual({ messages: [], total: 0, returned: 0, truncated: false });
+  });
+
+  it("reports the same metadata keys whether or not anything matched", async () => {
+    state.messages = makeMessages(2).map((m) => ({ ...m, seen: true }));
+    const empty = await emailRead.execute({ unread_only: true });
+    state.reset();
+    state.messages = makeMessages(2);
+    const full = await emailRead.execute({ limit: 10 });
+    expect(Object.keys(empty.metadata ?? {}).sort()).toEqual(["count", "total", "truncated"]);
+    expect(Object.keys(full.metadata ?? {}).sort()).toEqual(Object.keys(empty.metadata ?? {}).sort());
+    expect(empty.metadata).toMatchObject({ count: 0, total: 0, truncated: false });
+  });
+
+  it("email_search refuses an empty query instead of returning the mailbox", async () => {
+    state.messages = makeMessages(500);
+    const result = await emailSearch.execute({ query: "" });
+    expect(result.isError).toBe(true);
+    expect(state.calls).toEqual([]);
   });
 
   it("email_search still matches subject OR sender", async () => {

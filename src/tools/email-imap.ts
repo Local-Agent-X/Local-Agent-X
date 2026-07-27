@@ -14,13 +14,16 @@
  * trashing the mail, which is not what any caller means by "delete".
  */
 import { ImapFlow, type MailboxLockObject, type SearchObject } from "imapflow";
-import type { Readable } from "node:stream";
 import {
   BODY_BYTE_LIMIT,
   capBody,
   collectAttachments,
+  decodeBuffer,
+  extractSnippet,
+  formatAddress,
   htmlToText,
   normalizePlainText,
+  readCapped,
   selectBodyPart,
   type AttachmentInfo,
   type MimeNode,
@@ -57,7 +60,15 @@ export interface EmailPage {
   truncated: boolean;
 }
 
-export interface EmailBody extends EmailSummary {
+/**
+ * One message with its text. Deliberately NOT `extends EmailSummary`: keeping
+ * `snippet` would mean fetching the whole raw message (`source: true`,
+ * uncapped) beside a body already downloaded and capped — megabytes for a
+ * 200-character preview of text the caller is holding. It was also a lie in
+ * practice: this fetch never requested `source`, so the field was `""` on
+ * every real result while the type promised a preview.
+ */
+export interface EmailBody extends Omit<EmailSummary, "snippet"> {
   /** Readable text: the text/plain part when present, else the HTML part
    *  rendered to text. Empty when the message has no textual part. */
   body: string;
@@ -146,23 +157,14 @@ async function withMailbox<T>(cfg: ImapCredentials, folder: string, fn: (client:
   });
 }
 
-function formatAddress(addr?: { name?: string; address?: string }): string {
-  if (!addr) return "unknown";
-  return `${addr.name || ""} <${addr.address || ""}>`.trim();
-}
+type FetchedMessage = {
+  uid: number;
+  envelope?: { from?: { name?: string; address?: string }[]; subject?: string; date?: Date; messageId?: string };
+  source?: Buffer;
+};
 
-/** A short preview for list views. The raw source after the header break is
- *  markup on HTML mail, so it is rendered before being cut — 200 characters of
- *  `<table style=...>` told the reader nothing. */
-function extractSnippet(raw: string): string {
-  const start = raw.indexOf("\r\n\r\n");
-  if (start < 0) return "";
-  const chunk = raw.slice(start + 4, start + 4000);
-  const text = /<[a-zA-Z][^>]*>/.test(chunk) ? htmlToText(chunk) : normalizePlainText(chunk);
-  return text.replace(/\s+/g, " ").trim().slice(0, 200);
-}
-
-function toSummary(msg: { uid: number; envelope?: { from?: { name?: string; address?: string }[]; subject?: string; date?: Date; messageId?: string }; source?: Buffer }): EmailSummary {
+/** Everything derivable from the envelope alone — no `source` fetch needed. */
+function toHeader(msg: FetchedMessage): Omit<EmailSummary, "snippet"> {
   const env = msg.envelope;
   return {
     uid: msg.uid,
@@ -170,11 +172,22 @@ function toSummary(msg: { uid: number; envelope?: { from?: { name?: string; addr
     subject: env?.subject || "(no subject)",
     date: env?.date ? new Date(env.date).toISOString() : "unknown",
     messageId: env?.messageId || null,
-    snippet: extractSnippet(msg.source?.toString("utf-8") || ""),
   };
 }
 
-const EMPTY_PAGE: EmailPage = { messages: [], total: 0, returned: 0, truncated: false };
+/** Header plus preview. Only call where the fetch asked for `source: true` —
+ *  otherwise the snippet is silently empty. */
+function toSummary(msg: FetchedMessage): EmailSummary {
+  return { ...toHeader(msg), snippet: extractSnippet(msg.source?.toString("utf-8") || "") };
+}
+
+/** A FRESH empty page every time. It was once a shared const returned by
+ *  reference, so a caller sorting or annotating `page.messages` in place — the
+ *  natural thing — poisoned every later empty result, including ones feeding a
+ *  move. */
+function emptyPage(): EmailPage {
+  return { messages: [], total: 0, returned: 0, truncated: false };
+}
 
 /**
  * Fetch a page inside an already-locked mailbox.
@@ -184,6 +197,10 @@ const EMPTY_PAGE: EmailPage = { messages: [], total: 0, returned: 0, truncated: 
  * which in IMAP means the LAST message — so `email_read` returned exactly one
  * message whatever `limit` said, and the `range || "1:*"` fallback never fired
  * because `"*"` is truthy.
+ *
+ * When the set is larger than `limit` the page is the NEWEST `limit` — the tail
+ * of the uid set and the tail of the sequence range. "The 10 oldest" and "the
+ * 10 newest" are different mailboxes once a caller moves them.
  */
 async function fetchPage(client: ImapFlow, uids: number[] | null, limit: number): Promise<EmailPage> {
   const size = Math.max(1, Math.floor(limit));
@@ -192,12 +209,12 @@ async function fetchPage(client: ImapFlow, uids: number[] | null, limit: number)
   let byUid: boolean;
   if (uids === null) {
     total = client.mailbox ? client.mailbox.exists : 0;
-    if (total === 0) return EMPTY_PAGE;
+    if (total === 0) return emptyPage();
     range = `${Math.max(1, total - size + 1)}:${total}`;
     byUid = false;
   } else {
     total = uids.length;
-    if (total === 0) return EMPTY_PAGE;
+    if (total === 0) return emptyPage();
     range = uids.slice(-size);
     byUid = true;
   }
@@ -223,6 +240,19 @@ export async function fetchMessages(
   return withMailbox(cfg, folder, (client) => fetchPage(client, uids, limit));
 }
 
+/**
+ * Compile criteria into an imapflow search object.
+ *
+ * THROWS rather than widening. Criteria that reduce to nothing — `{}`,
+ * `anyOf: []`, `anyOf: [{}]`, or nesting past `ANY_OF_MAX_DEPTH` — used to
+ * become `{ all: true }`, and inside an `or` branch a single `all: true`
+ * alternative makes the WHOLE disjunction match every message in the mailbox.
+ * A caller that computes criteria from user input and gets none is not asking
+ * for the whole mailbox; the verbs downstream of this are a move and a delete,
+ * so the empty case has to fail where it happens rather than at the target.
+ * "Everything recent" has an honest expression already: `fetchMessages` with a
+ * null uid set.
+ */
 export function buildSearchQuery(criteria: EmailSearchCriteria, depth = 0): SearchObject {
   const query: SearchObject = {};
   if (criteria.from) query.from = criteria.from;
@@ -233,54 +263,38 @@ export function buildSearchQuery(criteria: EmailSearchCriteria, depth = 0): Sear
   if (criteria.before) query.before = criteria.before;
   if (criteria.since) query.since = criteria.since;
   const alternatives = criteria.anyOf?.filter((c) => c && Object.keys(c).length > 0) ?? [];
-  if (alternatives.length === 1) Object.assign(query, buildSearchQuery(alternatives[0], depth + 1));
-  else if (alternatives.length > 1 && depth < ANY_OF_MAX_DEPTH) {
+  if (alternatives.length > 0) {
+    if (depth >= ANY_OF_MAX_DEPTH) {
+      throw new Error(`Search criteria nest anyOf deeper than ${ANY_OF_MAX_DEPTH} levels; flatten them rather than searching a wider set than was asked for.`);
+    }
+    // Always an `or`, even for one alternative: assigning the single
+    // alternative's keys onto `query` overwrote same-named AND siblings, so
+    // `{ from: alice, anyOf: [{ from: bob }] }` searched for bob alone. A
+    // one-element `or` is walked inline by imapflow's compiler, which is
+    // exactly the AND the documented contract promises.
     query.or = alternatives.map((c) => buildSearchQuery(c, depth + 1));
   }
-  if (Object.keys(query).length === 0) query.all = true;
+  if (Object.keys(query).length === 0) {
+    throw new Error("Empty search criteria: refusing to build a query that matches the entire mailbox. Pass at least one predicate, or use fetchMessages for the most recent messages.");
+  }
   return query;
 }
 
 /** Search a folder and return the matching page — one connection for both the
- *  search and the fetch, where the old tool opened two. */
+ *  search and the fetch, where the old tool opened two. The query is compiled
+ *  BEFORE connecting, so empty criteria cost no connection, the way an empty
+ *  move does. */
 export async function searchMessages(
   cfg: ImapCredentials,
   folder: string,
   criteria: EmailSearchCriteria,
   limit: number,
 ): Promise<EmailPage> {
+  const query = buildSearchQuery(criteria);
   return withMailbox(cfg, folder, async (client) => {
-    const found = await client.search(buildSearchQuery(criteria), { uid: true });
+    const found = await client.search(query, { uid: true });
     return fetchPage(client, Array.isArray(found) ? found : [], limit);
   });
-}
-
-/** Node understands a handful of charset names; map the ones mail actually
- *  uses onto them and fall back to UTF-8 rather than guessing. */
-function decodeBuffer(buf: Buffer, charset?: string): string {
-  const cs = (charset || "utf-8").toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (cs === "iso88591" || cs === "latin1" || cs === "windows1252" || cs === "cp1252") return buf.toString("latin1");
-  if (cs === "ascii" || cs === "usascii") return buf.toString("ascii");
-  if (cs === "utf16le" || cs === "ucs2") return buf.toString("utf16le");
-  return buf.toString("utf-8");
-}
-
-async function readCapped(stream: Readable, byteLimit: number): Promise<{ buf: Buffer; truncated: boolean }> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let truncated = false;
-  for await (const chunk of stream) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-    if (size + buf.length >= byteLimit) {
-      chunks.push(buf.subarray(0, byteLimit - size));
-      truncated = true;
-      break;
-    }
-    chunks.push(buf);
-    size += buf.length;
-  }
-  stream.destroy();
-  return { buf: Buffer.concat(chunks), truncated };
 }
 
 /** Read one message's full body as readable text. */
@@ -289,7 +303,9 @@ export async function fetchBody(cfg: ImapCredentials, folder: string, uid: numbe
     const [msg] = await client.fetchAll(String(uid), { uid: true, envelope: true, bodyStructure: true }, { uid: true });
     if (!msg) throw new Error(`Message uid ${uid} not found in ${folder}`);
     const structure = msg.bodyStructure as MimeNode | undefined;
-    const summary = toSummary(msg as unknown as Parameters<typeof toSummary>[0]);
+    // toHeader, not toSummary: this fetch asks for the envelope and structure,
+    // not `source`, so a snippet derived here would be "" on every real result.
+    const summary = toHeader(msg as unknown as FetchedMessage);
     const attachments = collectAttachments(structure);
     const selected = selectBodyPart(structure);
     if (!selected) return { ...summary, body: "", contentType: null, truncated: false, attachments };
@@ -308,6 +324,28 @@ export async function fetchBody(cfg: ImapCredentials, folder: string, uid: numbe
   });
 }
 
+/**
+ * The outcome of a move, with the count the SERVER confirmed separated from
+ * the count that was asked for.
+ *
+ * `moved` used to be `uids.length` on any non-false result — a 3-uid move the
+ * server only partly performed reported 3, and this is the delete mechanism
+ * (decision E1). Over-reporting a delete is the worst thing this layer could
+ * do, so `moved` is now the size of the UIDPLUS `uidMap` when the server sends
+ * one. Servers without UIDPLUS say nothing about which messages moved; there
+ * `moved` falls back to the requested count and `confirmed` is false, which is
+ * the honest statement "accepted, unenumerated" rather than a fake receipt.
+ */
+export interface MoveResult {
+  /** How many uids the caller asked to move. */
+  requested: number;
+  /** How many the server confirmed, or `requested` when `confirmed` is false. */
+  moved: number;
+  /** True when `moved` came from the server rather than from the request. */
+  confirmed: boolean;
+  destination: string;
+}
+
 /** Relocate a UID set to another folder. Per decision E1 this is also the
  *  delete mechanism: moving to the account's trash folder is reversible and
  *  means the same thing on every provider, which expunge does not. */
@@ -316,11 +354,17 @@ export async function moveMessages(
   folder: string,
   uids: number[],
   destination: string,
-): Promise<{ moved: number; destination: string }> {
-  if (uids.length === 0) return { moved: 0, destination };
+): Promise<MoveResult> {
+  if (uids.length === 0) return { requested: 0, moved: 0, confirmed: true, destination };
   return withMailbox(cfg, folder, async (client) => {
     const result = await client.messageMove(uids, destination, { uid: true });
-    return { moved: result === false ? 0 : uids.length, destination };
+    // A refusal is a confirmed zero, not an unknown.
+    if (!result) return { requested: uids.length, moved: 0, confirmed: true, destination };
+    const uidMap = (result as { uidMap?: Map<number, number> }).uidMap;
+    if (uidMap instanceof Map && uidMap.size > 0) {
+      return { requested: uids.length, moved: uidMap.size, confirmed: true, destination };
+    }
+    return { requested: uids.length, moved: uids.length, confirmed: false, destination };
   });
 }
 

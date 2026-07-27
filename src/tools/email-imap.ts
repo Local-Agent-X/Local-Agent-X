@@ -33,7 +33,13 @@ import type { AttachmentInfo } from "./email-body-render.js";
 export { buildSearchQuery, SearchCriteriaError, type EmailSearchCriteria } from "./email-search-query.js";
 // Likewise the session: `withSession` and the error the SELECT throws are part
 // of this seam, not a second one.
-export { withSession, MailboxOpenError, type ImapSession } from "./email-imap-session.js";
+export {
+  withSession,
+  MailboxOpenError,
+  type ImapSession,
+  type ResolvedUids,
+  type UidSearchResult,
+} from "./email-imap-session.js";
 // A caller that compiles a query up front (to refuse before connecting) needs
 // the compiled type, and must not reach into imapflow for it.
 export type { SearchObject } from "imapflow";
@@ -138,10 +144,15 @@ export type EmailHeader = Omit<EmailSummary, "snippet">;
  *
  * This is its own SELECT and its own FETCH, so a caller using it as a pre-flight
  * check for a later move is separated from that move by a window — narrower now
- * that `email_delete` runs both on one session, but still a window. See the
- * recorded TOCTOU residual in email-mutate-tools.ts (the uid-resolution block of
- * `email_delete`) for why it is safe within a UIDVALIDITY, what the one
- * unhandled case is, and exactly what closing it would take.
+ * that `email_delete` runs both on one session, but still a window. Within one
+ * UIDVALIDITY that window is SAFE and not merely lucky: IMAP forbids uid reuse
+ * inside a validity epoch (RFC 3501 §2.3.1.1), so the only thing that can happen
+ * to a uid in the gap is that it DISAPPEARS. The unhandled case — a UIDVALIDITY
+ * change landing inside the gap, after which the checked uids name different
+ * mail — was a recorded residual and is now CLOSED for `email_delete`, which
+ * uses `resolveUids` instead and threads the validity through
+ * email-delete-sweep.ts. This function reports no validity, so a caller that
+ * needs the guarantee must use `resolveUids`.
  */
 export async function fetchHeaders(cfg: ImapCredentials, folder: string, uids: number[]): Promise<EmailHeader[]> {
   return withSession(cfg, (session) => session.fetchHeaders(folder, uids));

@@ -43,7 +43,6 @@ import {
   buildSearchQuery,
   MailboxOpenError,
   withSession,
-  type EmailHeader,
   type EmailSearchCriteria,
   type SearchObject,
 } from "./email-imap.js";
@@ -59,6 +58,15 @@ import {
   TRASH_ROLE,
   UIDS_FOLDER_PARAM_DESCRIPTION,
 } from "./email-mutate-shared.js";
+import {
+  closeSweep,
+  commitPage,
+  movePage,
+  openSweep,
+  readToken,
+  resumeSweep,
+  STALE_CURSOR_MESSAGE,
+} from "./email-delete-sweep.js";
 
 /* `imapConfigured` is the shared export from the config store (C6), imported —
  * not re-inlined — so all six IMAP tools are gated by referentially the same
@@ -75,10 +83,13 @@ export const emailDelete: ToolDefinition = {
     + "takes (`query`, `from`, `subject`, `body`, `unread_only`, `before`, `since`). At least one selector is "
     + "required — it will not act on a whole mailbox. If the filters match more messages than one call may act on "
     + `(limit, default ${DEFAULT_BATCH}, maximum ${MAX_BATCH}) NOTHING is moved and the true match total is reported, so `
-    + "narrow the filters and repeat. UIDs are numbered PER FOLDER, so `uids` REQUIRES `folder` set to the folder "
+    + "narrow the filters and repeat — OR pass back the `cursor` it hands you, repeatedly, to sweep the whole match "
+    + "set a batch at a time without searching again. Do not try to guess a `limit` big enough; use the cursor. "
+    + "UIDs are numbered PER FOLDER, so `uids` REQUIRES `folder` set to the folder "
     + "they came from — a uid list on its own is refused rather than assumed to be INBOX. Reports how many the "
     + "server actually confirmed, which can be fewer than requested, and names the sender and subject of every "
-    + "message it moved.",
+    + "message it moved. Messages that are no longer in the folder are counted as `skipped` and are NOT a failure — "
+    + "they were already deleted, which is the outcome you asked for.",
   parameters: {
     type: "object",
     properties: {
@@ -92,6 +103,7 @@ export const emailDelete: ToolDefinition = {
       since: { type: "string", description: "Only messages received on or after this, as a STRING: ISO date or relative age." },
       folder: { type: "string", description: `${UIDS_FOLDER_PARAM_DESCRIPTION} With search filters instead of \`uids\` it defaults to INBOX.` },
       limit: { type: "number", description: `Most messages this call may move (default ${DEFAULT_BATCH}, maximum ${MAX_BATCH})` },
+      cursor: { type: "string", description: "Continue a sweep this tool already started: pass back the opaque cursor it returned, ALONE (no uids, no filters), and repeat until it reports the sweep is finished. Continuing costs no new search and needs no `limit` guess." },
     },
     required: [],
   },
@@ -99,9 +111,9 @@ export const emailDelete: ToolDefinition = {
     const cfg = getImapConfig();
     if (typeof cfg === "string") return fail(cfg);
     const read = argReader(args);
-    const requestedFolder = read.text("folder") || "INBOX";
     const batch = cappedBatch(read);
     const uids = read.uids("uids");
+    const cursor = read.text("cursor");
 
     const criteria: EmailSearchCriteria = {};
     const from = read.text("from");
@@ -118,6 +130,30 @@ export const emailDelete: ToolDefinition = {
     if (read.flag("unread_only")) criteria.unreadOnly = true;
     if (query) criteria.anyOf = [{ subject: query }, { from: query }];
     if (read.error) return fail(`Refusing to delete: ${read.error}`);
+
+    // A cursor is a THIRD selector, and the same rule applies to it: it names a
+    // match set this tool already resolved, so combining it with another
+    // selector asks for two different sets. It also carries its own folder —
+    // uids are per-mailbox, so a continuation aimed at a different folder is
+    // the wrong-target delete C3 closed, wearing a cursor.
+    let sweepFolder = "";
+    if (cursor) {
+      if (uids.length > 0 || Object.keys(criteria).length > 0) {
+        return fail("`cursor` continues a match set this tool already resolved — pass it on its own, with no `uids` and no search filters. Nothing was changed.");
+      }
+      const token = readToken(cursor);
+      if (!token) return fail(`That \`cursor\` is not one email_delete issued. ${STALE_CURSOR_MESSAGE}`);
+      const askedFolder = read.text("folder");
+      if (askedFolder && askedFolder.toLowerCase() !== token.folder.toLowerCase()) {
+        return fail(
+          `This cursor is a sweep of "${token.folder}", not of "${askedFolder}". IMAP uids are numbered per folder, so applying `
+          + `it to another folder would delete DIFFERENT messages that happen to share those numbers. Drop \`folder\` and pass `
+          + `the cursor alone, or re-search in "${askedFolder}". Nothing was changed.`,
+        );
+      }
+      sweepFolder = token.folder;
+    }
+    const requestedFolder = sweepFolder || read.text("folder") || "INBOX";
 
     // Two selectors are two different requests. Honouring one and dropping the
     // other would delete a set the caller never described.
@@ -158,7 +194,7 @@ export const emailDelete: ToolDefinition = {
     // decidable from `args` alone had already paid for one. Decidable here,
     // decided here: it now opens no connection.
     let compiled: SearchObject | null = null;
-    if (uids.length === 0) {
+    if (uids.length === 0 && !cursor) {
       try {
         compiled = buildSearchQuery(criteria);
       } catch (err) {
@@ -192,118 +228,134 @@ export const emailDelete: ToolDefinition = {
         return fail(`"${folder}" IS this account's Trash folder. These messages are already deleted; this tool does not remove mail from the server. Nothing was changed.`);
       }
 
-      let targets = uids;
-      let subjects: EmailHeader[] = [];
-      if (targets.length > 0) {
-        // `folder` was proved explicit above, before any round trip.
-        //
-        // RECORDED RESIDUAL — the existence check and the move are two SELECTs
-        // (fetchHeaders below, then the move at the bottom), so there is a
-        // window between them. One session narrowed it — they are no longer two
-        // connections — but it is still a window. DECIDED: recorded, not closed.
-        //
-        // Within one UIDVALIDITY the window is SAFE, and that is not a hope — IMAP
-        // forbids uid reuse inside a validity epoch (RFC 3501 §2.3.1.1), so the
-        // only thing that can happen to a uid in the gap is that it DISAPPEARS.
-        // A disappeared uid is not moved and `moved < requested` reports it, which
-        // is the honest outcome the confirmed/unconfirmed split already exists for.
-        //
-        // The unhandled case is a UIDVALIDITY change landing INSIDE the gap — the
-        // mailbox renumbered under us — after which the validated uids name
-        // different messages. Neither call reads UIDVALIDITY, so it would not be
-        // noticed. Closing it means threading the validity the first SELECT saw
-        // into the second and refusing on a mismatch, which changes the signature
-        // and return shape of both fetchHeaders() and moveMessages() — a data-layer
-        // edit, in the chunk whose job is to GATE the data layer rather than
-        // continue it — and adds a fail-CLOSED path (refuse when the server reports
-        // no validity, or reports it differently between two SELECTs) to guard
-        // an event that requires a mailbox to be deleted and recreated in the
-        // milliseconds between two round trips. That trade is worse than the
-        // exposure at today's rate, so it is documented rather than done. If it is
-        // ever taken: return the validity alongside the headers, pass it as an
-        // EXPECTED value to moveMessages, and refuse only when both ends report a
-        // validity and they disagree — never when either is unknown.
-        //
-        // What the check below adds ON TOP of the explicit-folder rule: the uids
-        // are resolved IN the folder being moved FROM, so nothing moves unless
-        // every requested uid is actually there, and the ones that are not are
-        // named. That catches a uid naming a message in the wrong-but-named
-        // folder, and the plain case of a uid that no longer exists — which used
-        // to come back as a non-error "the number moved is UNKNOWN".
+      // WHICH SET, and what a uid missing from it MEANS. The three selectors
+      // differ on exactly that second question, so they are decided together
+      // rather than left implicit at the point of the move.
+      //
+      //  · cursor  — uids THIS TOOL resolved, in THIS folder, minutes ago. One
+      //    that is gone was almost certainly deleted in the meantime, which is
+      //    the outcome the caller asked for: skipped, counted, not failed.
+      //  · filters — same provenance, one round trip ago: skipped too.
+      //  · uids    — the CALLER's, with no provenance at all. Absence is the
+      //    evidence that they came from another folder (C3), and no check
+      //    downstream can recover that, so it stays a refusal.
+      let targets: number[];
+      let onMissing: "refuse" | "skip" = "skip";
+      let expectValidity = "";
+      if (cursor) {
+        const sweep = resumeSweep(cursor);
+        // A cursor that is gone must never silently become a fresh sweep: the
+        // set it named is unknowable now, and acting on a re-derived one would
+        // act on mail the caller never saw.
+        if (!sweep) return fail(STALE_CURSOR_MESSAGE);
+        targets = sweep.remaining.slice(0, batch);
+        expectValidity = sweep.uidValidity;
+      } else if (compiled !== null) {
+        // `compiled` is non-null exactly on the filter path (built above when
+        // and only when there were neither uids nor a cursor), so this is the
+        // branch the other two are not — expressed as the thing that decides it.
+        let found;
         try {
-          subjects = await session.fetchHeaders(folder, targets);
-        } catch (err) {
-          if (err instanceof MailboxOpenError) return openFailure(err);
-          return fail(`Refusing to delete: could not verify the messages in "${folder}": ${(err as Error).message}`);
-        }
-        const present = new Set(subjects.map((h) => h.uid));
-        const missing = targets.filter((u) => !present.has(u));
-        if (missing.length > 0) {
-          return fail(
-            `Refusing to delete: ${missing.length} of the ${targets.length} uid(s) given are not in "${folder}" — ${missing.join(", ")}. `
-            + `IMAP uids are per-folder, so a uid from one folder names a DIFFERENT message (or none) in another. `
-            + `Pass \`folder\` naming the folder the uids came from, or re-run the search there to get its uids. Nothing was moved.`,
-          );
-        }
-      }
-      // `compiled` is non-null exactly on the filter path (built above when and
-      // only when no uids were given), so this is the branch the uid block is
-      // not — expressed as the thing that decides it.
-      if (compiled !== null) {
-        try {
-          const page = await session.search(folder, compiled, batch);
-          if (page.total === 0) {
-            return { content: JSON.stringify({ matched: 0, requested: 0, moved: 0, confirmed: true, destination: trash.path, note: "Nothing matched those filters. No messages were moved." }, null, 2), metadata: { matched: 0, moved: 0 } };
-          }
-          if (page.truncated) {
-            return fail(
-              `Those filters match ${page.total} messages, but this call may act on at most ${batch}. NOTHING was moved. `
-              + `Deleting the ${page.returned} that fit would silently leave ${page.total - page.returned} behind while reporting success — `
-              + `narrow the filters (a tighter date window, a specific sender) or raise \`limit\` up to ${MAX_BATCH}, and repeat.`,
-            );
-          }
-          targets = page.messages.map((m) => m.uid);
-          // The search ran IN this folder, so its uids are this folder's by
-          // construction — no second round trip to prove it.
-          subjects = page.messages.map(({ uid, from, subject, date, messageId }) => ({ uid, from, subject, date, messageId }));
+          found = await session.searchUids(folder, compiled);
         } catch (err) {
           if (err instanceof MailboxOpenError) return openFailure(err);
           return fail(`Refusing to delete: ${(err as Error).message}`);
         }
+        if (found.uids.length === 0) {
+          return { content: JSON.stringify({ matched: 0, requested: 0, moved: 0, skipped: 0, confirmed: true, destination: trash.path, note: "Nothing matched those filters. No messages were moved." }, null, 2), metadata: { matched: 0, moved: 0 } };
+        }
+        // THE TRUNCATION GUARD, unchanged in what it refuses: a filter broader
+        // than one call may act on moves NOTHING and reports the TRUE total.
+        // That guard is what caught a 966-message filter in production and it is
+        // still the only protection against a filter far broader than intended.
+        //
+        // What changes is the way OUT of it. The measured failure was the model
+        // guessing a bigger `limit` — 50, 200, 250, 500, never the 1000 ceiling
+        // — and paying a full Gmail SEARCH for each wrong guess. The match set
+        // is already resolved here, so it is handed back as a cursor instead:
+        // the model stops choosing a number and just continues.
+        if (found.uids.length > batch) {
+          const token = openSweep(folder, found.uidValidity, found.uids);
+          return fail(
+            `Those filters match ${found.uids.length} messages, but this call may act on at most ${batch}. NOTHING was moved. `
+            + `Deleting the ${batch} that fit would silently leave ${found.uids.length - batch} behind while reporting success. `
+            + `TO DELETE ALL ${found.uids.length}: call email_delete with cursor="${token}" and NO other arguments, then keep calling it `
+            + `with the cursor it returns until it says the sweep is finished — that continues THIS match set without searching again, `
+            + `so there is no \`limit\` to guess. To act on FEWER instead: `
+            + `narrow the filters (a tighter date window, a specific sender) or raise \`limit\` up to ${MAX_BATCH}, and repeat.`,
+          );
+        }
+        targets = found.uids;
+        // Free, and it closes half of the TOCTOU residual this file recorded:
+        // the validity the SEARCH saw is checked against the one the resolve
+        // sees, so a renumbering between them is refused rather than acted on.
+        expectValidity = found.uidValidity;
+      } else {
+        // `folder` was proved explicit above, before any round trip.
+        targets = uids;
+        onMissing = "refuse";
       }
 
-      try {
-        const result = await session.moveMessages(folder, targets, trash.path);
-        // `moved` is the count the SERVER enumerated when it sends a UIDPLUS map;
-        // when `confirmed` is false it is only the count we ASKED for. Reporting
-        // the second as if it were the first is how a delete over-reports itself,
-        // so the distinction is carried into the payload AND spelled out in prose
-        // the model will read.
-        const payload: Record<string, unknown> = {
-          source: folder,
-          destination: result.destination,
-          requested: result.requested,
-          confirmed: result.confirmed,
-          moved: result.confirmed ? result.moved : null,
-          uids: targets,
-          // Named, not just counted: a payload that says "moved 2" and nothing
-          // else cannot be checked against what the caller meant to delete.
-          messages: named(subjects),
-        };
-        if (result.requested > 0 && result.moved === 0) {
-          return fail(`The server refused the move: 0 of ${result.requested} messages were moved from "${folder}" to "${result.destination}". Nothing was deleted.`);
-        }
-        payload.note = result.confirmed
-          ? `Moved ${result.moved} of ${result.requested} message(s) from "${folder}" to "${result.destination}". They remain recoverable there.`
-          : `The server accepted a move of ${result.requested} message(s) from "${folder}" to "${result.destination}" but did NOT report which ones, so the number actually moved is UNKNOWN — do not report it as ${result.requested}. Re-run the same search to see what is left.`;
-        return {
-          content: JSON.stringify(payload, null, 2),
-          metadata: { requested: result.requested, moved: result.confirmed ? result.moved : null, confirmed: result.confirmed, destination: result.destination },
-        };
-      } catch (err) {
-        if (err instanceof MailboxOpenError) return openFailure(err);
-        return fail(`Failed to delete from "${folder}": ${(err as Error).message}`);
+      const outcome = await movePage(session, { folder, destination: trash.path, targets, onMissing, expectValidity });
+      if (!outcome.ok) {
+        // A page that failed leaves the sweep untouched, so the same cursor
+        // retries the same page — EXCEPT when the failure means the stored uids
+        // can never be right again (a UIDVALIDITY change), where keeping it
+        // would only invite the model to retry something that cannot work.
+        if (cursor && outcome.fatal) closeSweep(cursor);
+        return outcome.result;
       }
+
+      const skipped = outcome.skipped.length;
+      const payload: Record<string, unknown> = {
+        source: folder,
+        destination: trash.path,
+        requested: outcome.requested,
+        confirmed: outcome.confirmed,
+        // `moved` is the count the SERVER enumerated when it sends a UIDPLUS
+        // map; null means it did not enumerate. Reporting the requested count as
+        // if it were confirmed is how a delete over-reports itself.
+        moved: outcome.moved,
+        skipped,
+        uids: outcome.uids,
+        // Named, not just counted: a payload that says "moved 2" and nothing
+        // else cannot be checked against what the caller meant to delete.
+        messages: named(outcome.headers),
+      };
+      if (skipped > 0) payload.skipped_uids = outcome.skipped;
+
+      let note: string;
+      if (outcome.requested === 0) {
+        note = `Nothing was left to move: all ${skipped} message(s) in this batch are no longer in "${folder}", which for a delete means they had already been removed. That is the requested outcome, not a failure.`;
+      } else if (outcome.confirmed) {
+        note = `Moved ${outcome.moved} of ${outcome.requested} message(s) from "${folder}" to "${trash.path}". They remain recoverable there.`;
+      } else {
+        note = `The server accepted a move of ${outcome.requested} message(s) from "${folder}" to "${trash.path}" but did NOT report which ones, so the number actually moved is UNKNOWN — do not report it as ${outcome.requested}. Re-run the same search to see what is left.`;
+      }
+      if (skipped > 0 && outcome.requested > 0) {
+        note += ` ${skipped} further message(s) were skipped because they are no longer in "${folder}" — already deleted, not an error.`;
+      }
+
+      if (cursor) {
+        // The sweep advances by the whole PAGE, skipped messages included: they
+        // have been accounted for and re-attempting them would loop forever.
+        const more = commitPage(cursor, targets.length, outcome.moved ?? outcome.requested, skipped);
+        const sweep = more ? resumeSweep(cursor) : null;
+        if (sweep) {
+          payload.cursor = cursor;
+          payload.remaining = sweep.remaining.length;
+          note += ` ${sweep.remaining.length} of this sweep's ${sweep.total} message(s) are still to go — call email_delete with cursor="${cursor}" and nothing else to continue.`;
+        } else {
+          payload.remaining = 0;
+          note += " This sweep is now FINISHED — every message the original search matched has been dealt with. Do not call the cursor again.";
+        }
+      }
+
+      payload.note = note;
+      return {
+        content: JSON.stringify(payload, null, 2),
+        metadata: { requested: outcome.requested, moved: outcome.moved, skipped, confirmed: outcome.confirmed, destination: trash.path },
+      };
     });
   },
 };

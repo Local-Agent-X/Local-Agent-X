@@ -66,6 +66,15 @@ const h = vi.hoisted(() => {
     /** null = the whole requested set moves; N = only the first N of the uids
      *  that are actually present do, which is a genuine partial success. */
     movePartial: null as number | null,
+    /** The mailbox's UIDVALIDITY, which the old fake did not model at all — so
+     *  a cursor carrying one had nothing to compare against and the renumbering
+     *  refusal was untestable. A test flips this to renumber the mailbox
+     *  between two calls, which is the ONE condition under which a held uid
+     *  names DIFFERENT mail rather than none. */
+    uidValidity: 4242,
+    /** Uids another client removes from the selected folder the instant the
+     *  move command runs — the TOCTOU window, made observable. */
+    vanishBeforeMove: [] as number[],
     flagsAccepted: true,
     /** Refuse only these flag actions - how a half-applied mark is reached. */
     refuseFlagActions: [] as string[],
@@ -80,6 +89,8 @@ const h = vi.hoisted(() => {
       state.moveAccepted = true;
       state.moveEnumerated = true;
       state.movePartial = null;
+      state.uidValidity = 4242;
+      state.vanishBeforeMove = [];
       state.flagsAccepted = true;
       state.refuseFlagActions = [];
       state.calls = [];
@@ -90,7 +101,7 @@ const h = vi.hoisted(() => {
   };
 
   class FakeImapFlow {
-    mailbox: { exists: number } | undefined;
+    mailbox: { exists: number; uidValidity: bigint } | undefined;
     /** Which folder is SELECTed. Every uid-taking verb below is scoped to it,
      *  exactly as a real server scopes uids to the selected mailbox. */
     selected = "";
@@ -104,7 +115,9 @@ const h = vi.hoisted(() => {
       state.calls.push(`lock:${path}`);
       if (state.unselectable.includes(path)) throw new Error(`Mailbox ${path} does not exist or cannot be selected`);
       this.selected = path;
-      this.mailbox = { exists: this.here().length };
+      // A BigInt, the way imapflow reports it — so a helper that stringifies it
+      // is exercised against the real type rather than a convenient number.
+      this.mailbox = { exists: this.here().length, uidValidity: BigInt(state.uidValidity) };
       return { release: () => state.calls.push("release") };
     }
     async search(query: Query): Promise<number[]> {
@@ -135,6 +148,14 @@ const h = vi.hoisted(() => {
       }
     }
     async messageMove(uids: number[], destination: string): Promise<unknown> {
+      // ANOTHER CLIENT WON THE RACE: these uids left the folder between the
+      // resolve and the move. Modelled because the production failure lived in
+      // exactly that gap — the tool had proved the messages were there, and by
+      // the time the move ran they were in Trash already. Nothing else in this
+      // fake can express "present, then gone, then the command runs".
+      if (state.vanishBeforeMove.length > 0) {
+        state.mailbox[this.selected] = this.here().filter((m) => !state.vanishBeforeMove.includes(m.uid));
+      }
       state.calls.push("move");
       state.moves.push({ source: this.selected, uids, destination });
       if (!state.moveAccepted) return false;
@@ -174,6 +195,7 @@ vi.mock("imapflow", () => ({ ImapFlow: h.FakeImapFlow }));
 const state = h.state;
 
 const { emailDelete } = await import("./email-mutate-tools.js");
+const { _resetSweepsForTest } = await import("./email-delete-sweep.js");
 // email_mark moved to its own module under the 400-LOC rule; it is still the
 // same verb and still shares its rules with email_delete through
 // email-mutate-shared.ts, so the two are still driven together here.
@@ -217,7 +239,10 @@ function inFolder(path: string): number[] {
 
 beforeEach(() => {
   state.reset();
-  saved = Object.fromEntries([...IMAP_ENV, "LAX_DATA_DIR"].map((k) => [k, process.env[k]]));
+  // The sweep store outlives a single call by design; it must not outlive a
+  // single TEST, or one case's cursor is reachable from another.
+  _resetSweepsForTest();
+  saved =Object.fromEntries([...IMAP_ENV, "LAX_DATA_DIR"].map((k) => [k, process.env[k]]));
   dataDir = mkdtempSync(join(tmpdir(), "email-mutate-"));
   process.env.LAX_DATA_DIR = dataDir;
   process.env.IMAP_HOST = "imap.example.com";
@@ -960,5 +985,303 @@ describe("both tools are hidden and inert without IMAP", () => {
       expect(String(result.content)).toMatch(/not configured/i);
     }
     expect(state.calls).toEqual([]);
+  });
+});
+
+/**
+ * THE SECOND MEASURED DEFECT (n=46 against a real Gmail): connection reuse
+ * halved the latency of a delete and left the ~20% error rate exactly where it
+ * was. The cursor is the fix for the half of that caused by `limit` — the model
+ * passed 50, 200, 250 and 500 against match sets of 186, 227, 306, 439 and 966,
+ * never the 1000 ceiling, and every wrong guess bought a full Gmail SEARCH and
+ * a refusal.
+ *
+ * These count SEARCH commands off the fake, which is the only thing that can
+ * tell "one search, four batches" from "four searches".
+ */
+describe("email_delete - one SEARCH per sweep, however many batches it takes", () => {
+  const searches = () => state.calls.filter((c) => c === "search").length;
+
+  /** Pull the continuation token out of whatever the tool just said. It is
+   *  named in the PROSE on purpose: a cursor the model cannot see how to use is
+   *  a cursor it will not use, which is the failure being fixed. */
+  function tokenIn(text: string): string {
+    const found = /cursor="([^"]+)"/.exec(text);
+    expect(found, `no cursor was named in: ${text}`).toBeTruthy();
+    return String(found?.[1]);
+  }
+
+  it("names the exact next call instead of telling the model to pick a bigger number", async () => {
+    // MUTATION: drop the cursor from the truncation refusal - the model is back
+    // to guessing a `limit`, which is the measured failure. Both remedies are
+    // still offered, because narrowing the filters is the right answer when the
+    // match set is broader than intended (the 966-message case).
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(650) };
+    const { result } = await del({ from: "noreply@example.com", limit: 250 });
+    expect(result.isError).toBe(true);
+    const text = String(result.content);
+    expect(text).toContain("650");
+    expect(text).toMatch(/NOTHING was moved/);
+    expect(text).toMatch(/TO DELETE ALL 650/);
+    expect(text).toMatch(/cursor="edc1\./);
+    expect(text, "the model must still be told it can narrow instead").toMatch(/narrow the filters/i);
+    expect(state.moves, "a refusal that issues a cursor still moves nothing").toEqual([]);
+  });
+
+  it("sweeps 650 messages in three batches on ONE search", async () => {
+    // THE HEADLINE PROPERTY. MUTATION: re-run the search on each continuation
+    // (a stateless cursor that only encodes a position) - `searches()` becomes
+    // 4 and the whole point of the change is gone.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(650) };
+
+    const first = await del({ from: "noreply@example.com", limit: 250 });
+    let cursor = tokenIn(String(first.result.content));
+
+    const pages: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { result, payload } = await del({ cursor, limit: 250 });
+      expect(result.isError, `page ${i + 1} failed: ${String(result.content)}`).toBeFalsy();
+      pages.push(payload.moved);
+      if (payload.cursor) cursor = String(payload.cursor);
+      else expect(payload.remaining).toBe(0);
+    }
+
+    expect(pages, "the sweep did not page 250/250/150 through the match set").toEqual([250, 250, 150]);
+    expect(searches(), "the continuations re-ran the Gmail SEARCH").toBe(1);
+    expect(inFolder("INBOX")).toEqual([]);
+    expect(inFolder("[Gmail]/Bin")).toHaveLength(650);
+  });
+
+  it("costs one SEARCH per call when the model narrows filters instead - the baseline", async () => {
+    // The measurement the case above is compared against, taken from the tool
+    // rather than asserted from memory: the non-cursor path searches every
+    // call, so N batches driven by N filter calls cost N searches, plus one for
+    // each refusal that preceded them.
+    state.folders = GMAIL;
+    state.mailbox = {
+      INBOX: [
+        ...messages(2, "a@example.com", 1000),
+        ...messages(2, "b@example.com", 2000),
+        ...messages(2, "c@example.com", 3000),
+      ],
+    };
+    for (const sender of ["a@example.com", "b@example.com", "c@example.com"]) {
+      await del({ from: sender, limit: 250 });
+    }
+    expect(searches(), "three filter deletes are three searches - this is the cost the cursor removes").toBe(3);
+  });
+
+  it("tells the model when the sweep is finished, so it stops calling", async () => {
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3) };
+    const first = await del({ from: "noreply@example.com", limit: 2 });
+    const cursor = tokenIn(String(first.result.content));
+
+    const page1 = await del({ cursor, limit: 2 });
+    expect(page1.payload.remaining).toBe(1);
+    expect(String(page1.payload.note)).toMatch(/still to go/);
+
+    const page2 = await del({ cursor: page1.payload.cursor, limit: 2 });
+    expect(page2.payload.remaining).toBe(0);
+    expect(page2.payload.cursor).toBeUndefined();
+    expect(String(page2.payload.note)).toMatch(/FINISHED/);
+
+    // And a cursor that finished is gone, not quietly restartable.
+    const again = await del({ cursor, limit: 2 });
+    expect(again.result.isError).toBe(true);
+    expect(String(again.result.content)).toMatch(/no longer usable/);
+  });
+});
+
+/**
+ * BUG (b), OBSERVED FOUR TIMES IN PRODUCTION: `REFUSED MOVE: 0 of 130`, then
+ * `0 of 30`, `0 of 10`, `0 of 4` as the agent shrank the batch and retried.
+ * The agent had searched, started deleting, and by the tail of the list those
+ * messages were already in Trash. A message that is no longer in the folder is
+ * a delete that already happened - the outcome the caller asked for - and
+ * reporting it as a failure taught the agent to retry something that could
+ * never work.
+ */
+describe("email_delete - a message that is already gone is skipped, not failed", () => {
+  /** Open a sweep over `count` messages and return its cursor. */
+  async function sweep(count: number, limit: number): Promise<string> {
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(count) };
+    const { result } = await del({ from: "noreply@example.com", limit });
+    expect(result.isError).toBe(true);
+    return String(/cursor="([^"]+)"/.exec(String(result.content))?.[1]);
+  }
+
+  it("reports a page whose messages vanished mid-sweep as a success with a count", async () => {
+    // MUTATION: fail the call when part of the page resolves to nothing - the
+    // production error comes straight back, and so does the pointless retry.
+    const cursor = await sweep(400, 200);
+
+    const page1 = await del({ cursor, limit: 200 });
+    expect(page1.payload.moved).toBe(200);
+    expect(page1.payload.skipped).toBe(0);
+
+    // Another client (or an earlier call of ours) trashes half of what is left.
+    state.mailbox.INBOX = state.mailbox.INBOX.filter((m) => m.uid >= 1300);
+
+    const page2 = await del({ cursor: page1.payload.cursor, limit: 200 });
+    expect(page2.result.isError, `a partly-vanished page failed: ${String(page2.result.content)}`).toBeFalsy();
+    expect(page2.payload.moved).toBe(100);
+    expect(page2.payload.skipped).toBe(100);
+    expect(String(page2.payload.note)).toMatch(/already deleted, not an error/);
+  });
+
+  it("reports a page that vanished ENTIRELY as success, not as `0 of N`", async () => {
+    const cursor = await sweep(400, 200);
+    const page1 = await del({ cursor, limit: 200 });
+    expect(page1.payload.moved).toBe(200);
+    state.mailbox.INBOX = [];
+    const movesBefore = state.moves.length;
+
+    const page2 = await del({ cursor: page1.payload.cursor, limit: 200 });
+    expect(page2.result.isError).toBeFalsy();
+    expect(page2.payload.moved).toBe(0);
+    expect(page2.payload.skipped).toBe(200);
+    expect(String(page2.payload.note)).toMatch(/had already been removed/);
+    expect(state.moves.length, "a doomed move was issued for messages that are not there").toBe(movesBefore);
+    expect(page2.payload.remaining).toBe(0);
+  });
+
+  it("still fails when the server refuses messages that ARE still there", async () => {
+    // The other half of the rule: a refusal of present mail is a real failure
+    // and must not be laundered into "already deleted". MUTATION: treat every
+    // zero-move as skipped - this goes green while a genuine refusal is
+    // reported as a successful delete.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(2) };
+    state.moveAccepted = false;
+    const { result } = await del({ folder: "INBOX", uids: [1000, 1001] });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/0 of 2/);
+    expect(String(result.content)).toMatch(/still in "INBOX"/);
+    expect(inFolder("INBOX")).toEqual([1000, 1001]);
+  });
+
+  it("treats a move the server refused over mail that had ALREADY gone as skipped", async () => {
+    // The exact production shape: the tool proved the messages were there, and
+    // between that check and the move command another client removed them, so
+    // the server answered with a refusal over an empty set. MUTATION: drop the
+    // post-move re-resolve - this becomes `0 of 2` again.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(2) };
+    state.moveAccepted = false;
+    state.vanishBeforeMove = [1000, 1001];
+    const { result, payload } = await del({ folder: "INBOX", uids: [1000, 1001] });
+    expect(result.isError, `a race against an already-completed delete failed: ${String(result.content)}`).toBeFalsy();
+    expect(payload.moved).toBe(0);
+    expect(payload.skipped).toBe(2);
+  });
+
+  it("keeps refusing CALLER-supplied uids that are not in the folder", async () => {
+    // Skipping is right for uids this tool resolved in this folder; it is WRONG
+    // for uids a caller supplied, where absence is the evidence that they came
+    // from somewhere else (C3's wrong-target delete). MUTATION: apply the skip
+    // policy to the uid path - the refusal below turns into a cheerful
+    // "skipped: 1" and the provenance guard is gone.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3), receipts: messages(2, "shop@example.com") };
+    const { result } = await del({ folder: "receipts", uids: [1000, 5555] });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/not in "receipts"/);
+    expect(state.moves).toEqual([]);
+  });
+});
+
+/**
+ * A cursor holds RAW UIDS, and a uid means nothing outside the mailbox and the
+ * UIDVALIDITY epoch it was resolved in. Both are carried by the token, and both
+ * refuse rather than guess - deleting by coincidence after a renumbering is the
+ * worst outcome available to this tool.
+ */
+describe("email_delete - a cursor is bound to its folder and its UIDVALIDITY", () => {
+  async function sweepOf(folder: string, count: number): Promise<string> {
+    state.folders = GMAIL;
+    state.mailbox = { ...state.mailbox, [folder]: messages(count) };
+    const { result } = await del({ folder, from: "noreply@example.com", limit: 2 });
+    expect(result.isError).toBe(true);
+    return String(/cursor="([^"]+)"/.exec(String(result.content))?.[1]);
+  }
+
+  it("fails LOUDLY when the mailbox has been renumbered, and does not move a thing", async () => {
+    // MUTATION: drop the UIDVALIDITY carried in the token, or compare it only
+    // when convenient - the continuation then deletes whatever mail happens to
+    // carry those numbers now.
+    const cursor = await sweepOf("INBOX", 6);
+    state.uidValidity = 9999; // the mailbox was deleted and recreated
+    const { result } = await del({ cursor, limit: 2 });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/RENUMBERED/);
+    expect(String(result.content)).toMatch(/4242 . 9999/);
+    expect(String(result.content)).toMatch(/re-run email_delete/i);
+    expect(state.moves, "a renumbered mailbox was acted on anyway").toEqual([]);
+
+    // …and the cursor is DEAD, not merely refused once: its uids can never be
+    // right again, so retrying it must not look like a transient failure.
+    const retry = await del({ cursor, limit: 2 });
+    expect(String(retry.result.content)).toMatch(/no longer usable/);
+  });
+
+  it("refuses a continuation aimed at a different folder", async () => {
+    // Same class as the wrong-target delete C3 closed: INBOX and `receipts`
+    // both number their mail from 1000, so a cursor pointed at the wrong folder
+    // would move real mail and report success.
+    const cursor = await sweepOf("INBOX", 6);
+    state.mailbox.receipts = messages(6, "shop@example.com");
+    const { result } = await del({ cursor, folder: "receipts", limit: 2 });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/sweep of "INBOX", not of "receipts"/);
+    expect(state.moves).toEqual([]);
+    expect(inFolder("receipts")).toEqual([1000, 1001, 1002, 1003, 1004, 1005]);
+  });
+
+  it("refuses a cursor combined with any other selector", async () => {
+    const cursor = await sweepOf("INBOX", 6);
+    for (const extra of [{ uids: [1000] }, { from: "noreply@example.com" }]) {
+      const { result } = await del({ cursor, ...extra });
+      expect(result.isError).toBe(true);
+      expect(String(result.content)).toMatch(/pass it on its own/);
+    }
+    expect(state.moves).toEqual([]);
+  });
+
+  it("refuses a cursor it did not issue rather than searching from scratch", async () => {
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3) };
+    const { result } = await del({ cursor: "not-a-real-cursor" });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/not one email_delete issued/);
+    expect(state.calls, "a bogus cursor dialled the server").toEqual([]);
+  });
+
+  it("expires a cursor the store had to evict, rather than acting on part of a set", async () => {
+    // The store is bounded (read-state.ts's discipline: an explicit cap and LRU
+    // eviction). An evicted cursor MUST fail the same way an expired one does -
+    // a cursor that silently restarts is a delete of a set nobody saw.
+    // MUTATION: remove the cap - this goes green while the store grows without
+    // bound, one page of uids at a time.
+    state.folders = GMAIL;
+    state.mailbox = { INBOX: messages(3) };
+    const first = await del({ from: "noreply@example.com", limit: 1 });
+    const oldest = String(/cursor="([^"]+)"/.exec(String(first.result.content))?.[1]);
+    for (let i = 0; i < 16; i++) await del({ from: "noreply@example.com", limit: 1 });
+
+    const { result } = await del({ cursor: oldest, limit: 1 });
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/no longer usable/);
+    expect(state.moves, "an evicted cursor moved mail anyway").toEqual([]);
+  });
+
+  it("publishes the cursor in the schema the model reads", () => {
+    const props = emailDelete.parameters.properties as Record<string, { description: string }>;
+    expect(props.cursor.description).toMatch(/ALONE/);
+    expect(props.cursor.description).toMatch(/no new search/i);
+    expect(emailDelete.description).toMatch(/without searching again/);
   });
 });

@@ -127,6 +127,25 @@ function toSummary(msg: FetchedMessage): EmailSummary {
   return { ...toHeader(msg), snippet: extractSnippet(msg.source?.toString("utf-8") || "") };
 }
 
+/**
+ * The selected mailbox's UIDVALIDITY, as a string, or "" when the server did
+ * not report one.
+ *
+ * A string because it is only ever compared for equality and carried inside an
+ * opaque cursor token; imapflow types it as a BigInt, which neither JSON nor a
+ * `===` against a stored value survives. The `typeof` narrowing is not
+ * defensiveness for its own sake: a server (or a fake) that omits the field
+ * would otherwise stringify `undefined` into a value that compares EQUAL to
+ * itself, which would turn "no validity reported" into a false guarantee.
+ */
+function uidValidityOf(client: ImapFlow): string {
+  const box = client.mailbox;
+  if (!box) return "";
+  const raw: unknown = box.uidValidity;
+  if (typeof raw === "bigint" || typeof raw === "number") return String(raw);
+  return typeof raw === "string" ? raw : "";
+}
+
 /** A FRESH empty page every time. It was once a shared const returned by
  *  reference, so a caller sorting or annotating `page.messages` in place — the
  *  natural thing — poisoned every later empty result, including ones feeding a
@@ -172,6 +191,22 @@ async function fetchPage(client: ImapFlow, uids: number[] | null, limit: number)
   return { messages, total, returned: messages.length, truncated: total > messages.length };
 }
 
+/** A resolved match set: every uid the search matched, and the UIDVALIDITY the
+ *  mailbox reported while it was being resolved. The two travel together
+ *  because a uid outside its validity epoch names different mail. */
+export interface UidSearchResult {
+  uids: number[];
+  uidValidity: string;
+}
+
+/** The headers of the uids that are ACTUALLY in the folder, and the mailbox's
+ *  UIDVALIDITY at that moment. Uids absent from `headers` are not in the folder
+ *  — what that MEANS is the caller's decision, not this layer's. */
+export interface ResolvedUids {
+  headers: EmailHeader[];
+  uidValidity: string;
+}
+
 /**
  * Every operation the data layer offers, bound to ONE open connection.
  *
@@ -188,6 +223,13 @@ export interface ImapSession {
    *  refusal to cost no connection has to compile before the session opens one.
    *  `searchMessages` and `email_delete` both do exactly that. */
   search(folder: string, query: SearchObject, limit: number): Promise<EmailPage>;
+  /** SEARCH only: the WHOLE match set as uids, with no message fetch. What a
+   *  delete needs — it acts on uids and only ever needs the envelopes of the
+   *  page it is about to move, not the raw bytes of every match. */
+  searchUids(folder: string, query: SearchObject): Promise<UidSearchResult>;
+  /** Envelope-only FETCH of an explicit uid set, plus the mailbox's
+   *  UIDVALIDITY. `fetchHeaders` is this without the validity. */
+  resolveUids(folder: string, uids: number[]): Promise<ResolvedUids>;
   fetchBody(folder: string, uid: number): Promise<EmailBody>;
   moveMessages(folder: string, uids: number[], destination: string): Promise<MoveResult>;
   setFlags(folder: string, uids: number[], flags: string[], action: FlagAction): Promise<FlagResult>;
@@ -203,6 +245,19 @@ function sessionOn(open: OpenConnection): ImapSession {
   /** Run `fn` inside a SELECT of `folder` on this session's connection. */
   const inFolder = async <T>(folder: string, fn: (client: ImapFlow) => Promise<T>): Promise<T> =>
     onMailbox(await open(), folder, fn);
+
+  /** The ONE envelope resolve. `fetchHeaders` is this with the validity
+   *  dropped, so the two can never disagree about which uids are present. */
+  const resolveUids = (folder: string, uids: number[]): Promise<ResolvedUids> =>
+    inFolder(folder, async (client) => {
+      const headers: EmailHeader[] = [];
+      if (uids.length > 0) {
+        for await (const msg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
+          headers.push(toHeader(msg as unknown as FetchedMessage));
+        }
+      }
+      return { headers, uidValidity: uidValidityOf(client) };
+    });
 
   return {
     async listFolders(): Promise<MailboxFolder[]> {
@@ -223,20 +278,24 @@ function sessionOn(open: OpenConnection): ImapSession {
     },
 
     async fetchHeaders(folder: string, uids: number[]): Promise<EmailHeader[]> {
+      // Decided from the arguments, so an empty set still costs no handshake.
       if (uids.length === 0) return [];
-      return inFolder(folder, async (client) => {
-        const found: EmailHeader[] = [];
-        for await (const msg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
-          found.push(toHeader(msg as unknown as FetchedMessage));
-        }
-        return found;
-      });
+      return (await resolveUids(folder, uids)).headers;
     },
+
+    resolveUids,
 
     search(folder: string, query: SearchObject, limit: number): Promise<EmailPage> {
       return inFolder(folder, async (client) => {
         const found = await client.search(query, { uid: true });
         return fetchPage(client, Array.isArray(found) ? found : [], limit);
+      });
+    },
+
+    searchUids(folder: string, query: SearchObject): Promise<UidSearchResult> {
+      return inFolder(folder, async (client) => {
+        const found = await client.search(query, { uid: true });
+        return { uids: Array.isArray(found) ? found : [], uidValidity: uidValidityOf(client) };
       });
     },
 

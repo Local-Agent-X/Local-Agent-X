@@ -8,31 +8,35 @@
  * logged-out client. One connect, one lock, one release, one logout, on every
  * path including the error path, is expressible only if one module owns it.
  *
+ * Two shapes, ONE implementation. `withSession` runs any number of operations
+ * on one connection; the per-operation functions below are that same session
+ * with exactly one operation in it. A caller that needs several — `email_delete`
+ * needs the folder list, then a search or an existence check, then the move —
+ * takes a session and pays for one handshake instead of three.
+ *
+ * The socket itself lives one file over, in email-imap-session.ts: the 400-LOC
+ * rule forced a split and that is the seam it was already on. This module stays
+ * the ONE import site for callers — everything a tool needs is exported or
+ * re-exported here, and no tool file imports imapflow or the session module.
+ *
  * Deliberately absent: EXPUNGE / permanent deletion (campaign decision E1).
  * Moving to a trash folder is the delete mechanism — it has a rollback (move it
  * back), and on Gmail a \Deleted flag plus expunge removes a LABEL rather than
  * trashing the mail, which is not what any caller means by "delete".
  */
-import { ImapFlow, type MailboxLockObject } from "imapflow";
+import { withSession } from "./email-imap-session.js";
 import { buildSearchQuery, type EmailSearchCriteria } from "./email-search-query.js";
-import {
-  BODY_BYTE_LIMIT,
-  capBody,
-  collectAttachments,
-  decodeBuffer,
-  extractSnippet,
-  formatAddress,
-  htmlToText,
-  normalizePlainText,
-  readCapped,
-  selectBodyPart,
-  type AttachmentInfo,
-  type MimeNode,
-} from "./email-body-render.js";
+import type { AttachmentInfo } from "./email-body-render.js";
 
 // The query compiler lives in its own leaf module (it needs no connection) but
 // is re-exported here so that email-imap.ts stays the ONE import site for IMAP.
 export { buildSearchQuery, SearchCriteriaError, type EmailSearchCriteria } from "./email-search-query.js";
+// Likewise the session: `withSession` and the error the SELECT throws are part
+// of this seam, not a second one.
+export { withSession, MailboxOpenError, type ImapSession } from "./email-imap-session.js";
+// A caller that compiles a query up front (to refuse before connecting) needs
+// the compiled type, and must not reach into imapflow for it.
+export type { SearchObject } from "imapflow";
 
 export interface ImapCredentials { host: string; port: number; user: string; pass: string }
 
@@ -94,141 +98,12 @@ export interface MailboxFolder {
 
 export type FlagAction = "add" | "remove";
 
-/**
- * The mailbox named could not be SELECTed.
- *
- * A TYPE rather than a phrase, because callers have to tell this apart from
- * every other failure and the only alternative was matching prose: the mutate
- * tools classified with `/mailbox|folder|select/i`, which also matched
- * `buildSearchQuery`'s "refusing to build a query that matches the entire
- * mailbox" and rewrote a no-filters refusal into "you picked a container,
- * retry against another folder" — advice that is wrong and that the model
- * cannot act on. Anything thrown from the SELECT is this; nothing else is.
- */
-export class MailboxOpenError extends Error {
-  constructor(public readonly folder: string, public readonly reason: Error) {
-    super(`Could not open the folder "${folder}": ${reason.message}`);
-    this.name = "MailboxOpenError";
-  }
-}
-
-function newClient(cfg: ImapCredentials): ImapFlow {
-  return new ImapFlow({ host: cfg.host, port: cfg.port, secure: true, auth: { user: cfg.user, pass: cfg.pass }, logger: false });
-}
-
-/** Close a client exactly once, however the operation ended. `logout` is the
- *  polite path; `close` is unconditional so a half-dead socket still goes away
- *  instead of leaking a connection on the error path. */
-async function disconnect(client: ImapFlow): Promise<void> {
-  try {
-    await client.logout();
-  } catch {
-    // Connection already broken — nothing to say politely.
-  } finally {
-    client.close();
-  }
-}
-
-async function withConnection<T>(cfg: ImapCredentials, fn: (client: ImapFlow) => Promise<T>): Promise<T> {
-  const client = newClient(cfg);
-  try {
-    await client.connect();
-  } catch (err) {
-    client.close();
-    throw err;
-  }
-  try {
-    return await fn(client);
-  } finally {
-    await disconnect(client);
-  }
-}
-
-async function withMailbox<T>(cfg: ImapCredentials, folder: string, fn: (client: ImapFlow) => Promise<T>): Promise<T> {
-  return withConnection(cfg, async (client) => {
-    let lock: MailboxLockObject;
-    try {
-      lock = await client.getMailboxLock(folder);
-    } catch (err) {
-      // Classified HERE, where the SELECT actually failed, so no caller has to
-      // guess from the wording of a driver message.
-      throw new MailboxOpenError(folder, err as Error);
-    }
-    try {
-      return await fn(client);
-    } finally {
-      lock.release();
-    }
-  });
-}
-
-type FetchedMessage = {
-  uid: number;
-  envelope?: { from?: { name?: string; address?: string }[]; subject?: string; date?: Date; messageId?: string };
-  source?: Buffer;
-};
-
-/** Everything derivable from the envelope alone — no `source` fetch needed. */
-function toHeader(msg: FetchedMessage): Omit<EmailSummary, "snippet"> {
-  const env = msg.envelope;
-  return {
-    uid: msg.uid,
-    from: formatAddress(env?.from?.[0]),
-    subject: env?.subject || "(no subject)",
-    date: env?.date ? new Date(env.date).toISOString() : "unknown",
-    messageId: env?.messageId || null,
-  };
-}
-
-/** Header plus preview. Only call where the fetch asked for `source: true` —
- *  otherwise the snippet is silently empty. */
-function toSummary(msg: FetchedMessage): EmailSummary {
-  return { ...toHeader(msg), snippet: extractSnippet(msg.source?.toString("utf-8") || "") };
-}
-
-/** A FRESH empty page every time. It was once a shared const returned by
- *  reference, so a caller sorting or annotating `page.messages` in place — the
- *  natural thing — poisoned every later empty result, including ones feeding a
- *  move. */
-function emptyPage(): EmailPage {
-  return { messages: [], total: 0, returned: 0, truncated: false };
-}
-
-/**
- * Fetch a page inside an already-locked mailbox.
- *
- * `uids === null` means "the most recent `limit` messages", expressed as a
- * SEQUENCE range anchored to the mailbox size. It used to be the string `"*"`,
- * which in IMAP means the LAST message — so `email_read` returned exactly one
- * message whatever `limit` said, and the `range || "1:*"` fallback never fired
- * because `"*"` is truthy.
- *
- * When the set is larger than `limit` the page is the NEWEST `limit` — the tail
- * of the uid set and the tail of the sequence range. "The 10 oldest" and "the
- * 10 newest" are different mailboxes once a caller moves them.
- */
-async function fetchPage(client: ImapFlow, uids: number[] | null, limit: number): Promise<EmailPage> {
-  const size = Math.max(1, Math.floor(limit));
-  let total: number;
-  let range: string | number[];
-  let byUid: boolean;
-  if (uids === null) {
-    total = client.mailbox ? client.mailbox.exists : 0;
-    if (total === 0) return emptyPage();
-    range = `${Math.max(1, total - size + 1)}:${total}`;
-    byUid = false;
-  } else {
-    total = uids.length;
-    if (total === 0) return emptyPage();
-    range = uids.slice(-size);
-    byUid = true;
-  }
-  const messages: EmailSummary[] = [];
-  for await (const msg of client.fetch(range, { uid: true, envelope: true, source: true }, { uid: byUid })) {
-    if (messages.length >= size) break;
-    messages.push(toSummary(msg as unknown as Parameters<typeof toSummary>[0]));
-  }
-  return { messages, total, returned: messages.length, truncated: total > messages.length };
+/** What a flag change reports back: how many messages it was applied to, and
+ *  which change it was. `updated` is 0 when the server refused. */
+export interface FlagResult {
+  updated: number;
+  flags: string[];
+  action: FlagAction;
 }
 
 /**
@@ -242,7 +117,7 @@ export async function fetchMessages(
   uids: number[] | null,
   limit: number,
 ): Promise<EmailPage> {
-  return withMailbox(cfg, folder, (client) => fetchPage(client, uids, limit));
+  return withSession(cfg, (session) => session.fetchMessages(folder, uids, limit));
 }
 
 /** A message identified but not read: everything the envelope already carries,
@@ -261,21 +136,15 @@ export type EmailHeader = Omit<EmailSummary, "snippet">;
  * headers rather than a bare boolean so the caller can also say WHICH messages
  * it touched.
  *
- * This resolves in its OWN connection and SELECT, so a caller using it as a
- * pre-flight check for a later move is separated from that move by a window. See
- * the recorded TOCTOU residual in email-mutate-tools.ts (the uid-resolution block
- * of `email_delete`) for why that window is safe within a UIDVALIDITY, what the
- * one unhandled case is, and exactly what closing it would take.
+ * This is its own SELECT and its own FETCH, so a caller using it as a pre-flight
+ * check for a later move is separated from that move by a window — narrower now
+ * that `email_delete` runs both on one session, but still a window. See the
+ * recorded TOCTOU residual in email-mutate-tools.ts (the uid-resolution block of
+ * `email_delete`) for why it is safe within a UIDVALIDITY, what the one
+ * unhandled case is, and exactly what closing it would take.
  */
 export async function fetchHeaders(cfg: ImapCredentials, folder: string, uids: number[]): Promise<EmailHeader[]> {
-  if (uids.length === 0) return [];
-  return withMailbox(cfg, folder, async (client) => {
-    const found: EmailHeader[] = [];
-    for await (const msg of client.fetch(uids, { uid: true, envelope: true }, { uid: true })) {
-      found.push(toHeader(msg as unknown as FetchedMessage));
-    }
-    return found;
-  });
+  return withSession(cfg, (session) => session.fetchHeaders(folder, uids));
 }
 
 /** Search a folder and return the matching page — one connection for both the
@@ -289,37 +158,12 @@ export async function searchMessages(
   limit: number,
 ): Promise<EmailPage> {
   const query = buildSearchQuery(criteria);
-  return withMailbox(cfg, folder, async (client) => {
-    const found = await client.search(query, { uid: true });
-    return fetchPage(client, Array.isArray(found) ? found : [], limit);
-  });
+  return withSession(cfg, (session) => session.search(folder, query, limit));
 }
 
 /** Read one message's full body as readable text. */
 export async function fetchBody(cfg: ImapCredentials, folder: string, uid: number): Promise<EmailBody> {
-  return withMailbox(cfg, folder, async (client) => {
-    const [msg] = await client.fetchAll(String(uid), { uid: true, envelope: true, bodyStructure: true }, { uid: true });
-    if (!msg) throw new Error(`Message uid ${uid} not found in ${folder}`);
-    const structure = msg.bodyStructure as MimeNode | undefined;
-    // toHeader, not toSummary: this fetch asks for the envelope and structure,
-    // not `source`, so a snippet derived here would be "" on every real result.
-    const summary = toHeader(msg as unknown as FetchedMessage);
-    const attachments = collectAttachments(structure);
-    const selected = selectBodyPart(structure);
-    if (!selected) return { ...summary, body: "", contentType: null, truncated: false, attachments };
-    const download = await client.download(String(uid), selected.part, { uid: true });
-    const { buf, truncated: cutOnWire } = await readCapped(download.content, BODY_BYTE_LIMIT);
-    const decoded = decodeBuffer(buf, download.meta?.charset);
-    const rendered = selected.isHtml ? htmlToText(decoded) : normalizePlainText(decoded);
-    const capped = capBody(rendered);
-    return {
-      ...summary,
-      body: capped.text,
-      contentType: selected.isHtml ? "text/html" : "text/plain",
-      truncated: capped.truncated || cutOnWire,
-      attachments,
-    };
-  });
+  return withSession(cfg, (session) => session.fetchBody(folder, uid));
 }
 
 /**
@@ -353,17 +197,7 @@ export async function moveMessages(
   uids: number[],
   destination: string,
 ): Promise<MoveResult> {
-  if (uids.length === 0) return { requested: 0, moved: 0, confirmed: true, destination };
-  return withMailbox(cfg, folder, async (client) => {
-    const result = await client.messageMove(uids, destination, { uid: true });
-    // A refusal is a confirmed zero, not an unknown.
-    if (!result) return { requested: uids.length, moved: 0, confirmed: true, destination };
-    const uidMap = (result as { uidMap?: Map<number, number> }).uidMap;
-    if (uidMap instanceof Map && uidMap.size > 0) {
-      return { requested: uids.length, moved: uidMap.size, confirmed: true, destination };
-    }
-    return { requested: uids.length, moved: uids.length, confirmed: false, destination };
-  });
+  return withSession(cfg, (session) => session.moveMessages(folder, uids, destination));
 }
 
 /** Add or remove IMAP flags (`\Seen`, `\Flagged`, …) on a UID set. */
@@ -373,25 +207,11 @@ export async function setFlags(
   uids: number[],
   flags: string[],
   action: FlagAction,
-): Promise<{ updated: number; flags: string[]; action: FlagAction }> {
-  if (uids.length === 0 || flags.length === 0) return { updated: 0, flags, action };
-  return withMailbox(cfg, folder, async (client) => {
-    const ok = action === "add"
-      ? await client.messageFlagsAdd(uids, flags, { uid: true })
-      : await client.messageFlagsRemove(uids, flags, { uid: true });
-    return { updated: ok ? uids.length : 0, flags, action };
-  });
+): Promise<FlagResult> {
+  return withSession(cfg, (session) => session.setFlags(folder, uids, flags, action));
 }
 
 /** List the account's folders so callers stop guessing at `[Gmail]/Trash`. */
 export async function listFolders(cfg: ImapCredentials): Promise<MailboxFolder[]> {
-  return withConnection(cfg, async (client) => {
-    const boxes = await client.list();
-    return boxes.map((box) => ({
-      path: box.path,
-      name: box.name,
-      specialUse: box.specialUse || null,
-      subscribed: Boolean(box.subscribed),
-    }));
-  });
+  return withSession(cfg, (session) => session.listFolders());
 }

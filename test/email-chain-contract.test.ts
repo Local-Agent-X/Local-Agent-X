@@ -712,6 +712,15 @@ describe("email chain — the widening refusals, through the composed path", () 
 
     expect(state.moves, "C1 seam: a delete that was supposed to be refused moved mail").toEqual([]);
     expect(state.calls, "C1 seam: the refusal ran a SEARCH — the compiler is supposed to throw before the query reaches the server").not.toContain("search");
+    // STRENGTHENED, deliberately: the throw used to fire inside searchMessages,
+    // which is AFTER the folder list has already connected — so this refusal
+    // cost a handshake. The criteria are decidable from `args` alone, so the
+    // compile now happens before the session opens anything, and the same
+    // property the explicit-folder guard has (below) holds here too.
+    expect(
+      state.calls,
+      "PART 2 seam: a refusal decidable from the arguments alone opened a connection to inspect the target first",
+    ).toEqual([]);
     expect(inFolder("INBOX"), "C1 seam: THE WHOLE INBOX was moved out by a call with no selector").toEqual([1000, 1001, 1002, 1003]);
     expect(inFolder("[Gmail]/Bin"), "C1 seam: mail landed in Trash from a call with no selector").toEqual([]);
   });

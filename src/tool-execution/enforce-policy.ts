@@ -16,6 +16,7 @@ import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
 import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "./pre-dispatch.js";
+import { securityDenyRecovery } from "../tool-policy/packs/security-layer-pack.js";
 import { ToolBlocked } from "./errors.js";
 import { join, resolve, relative } from "node:path";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
@@ -42,7 +43,10 @@ import { learnedProtocolEnvelopeGate } from "./learned-protocol-envelope.js";
 // assertToolCallAllowed (it is inert in this path), so surfacing a threat block
 // the path won't actually enforce would be a phantom blocker. The data-lineage /
 // canary / egress-guard cohort is probed by egressAggregateGate itself.
-function probeUpstreamEgressBlockers(ctx: ToolCallContext): EgressBlocker[] {
+// Exported for the cross-seam drift test (security-block-message.test.ts):
+// this blocker's recovery must render from the SAME canonical builder the
+// security-layer pack uses.
+export function probeUpstreamEgressBlockers(ctx: ToolCallContext): EgressBlocker[] {
   const out: EgressBlocker[] = [];
   const sec = ctx.security?.evaluate({
     toolName: ctx.tc.name,
@@ -55,8 +59,7 @@ function probeUpstreamEgressBlockers(ctx: ToolCallContext): EgressBlocker[] {
       layer: "security",
       label: "security",
       reason: sec.reason,
-      recovery:
-        "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again.",
+      recovery: securityDenyRecovery(),
       userHint: sec.userHint ?? USER_HINTS.policy,
     });
   }

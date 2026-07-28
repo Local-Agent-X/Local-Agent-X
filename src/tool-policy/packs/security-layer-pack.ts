@@ -4,10 +4,26 @@
  */
 import type { SecurityLayer } from "../../security/index.js";
 import { CONTEXT_RESTRICTED_TOOLS, WORKTREE_REQUIRED_TOOLS } from "../../security/layer/index.js";
+import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
 const PACK_ID = "security-layer";
 const PACK_PRIORITY = 10;
+
+/** The security-block recovery line: boundary guidance PLUS the escalation
+ *  invariant. This is the ONE source of truth — both the pre-dispatch pack
+ *  (below) and the SC-10 egress probe (enforce-policy.ts
+ *  probeUpstreamEgressBlockers) render from here so the two paths can never
+ *  drift. The escalation sentence is load-bearing: a live agent that hit a
+ *  FALSE-POSITIVE block read "adjust the call" alone as license to work
+ *  around the block silently (hand-patching build artifacts) instead of
+ *  surfacing it to the user. */
+export function securityDenyRecovery(): string {
+  return (
+    "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again. " +
+    "If this block is stopping a legitimate task, do not look for a workaround — stop and tell the user exactly what was blocked and why you needed it, so they can adjust settings or approve another path."
+  );
+}
 
 function describeRules(): RulePackRule[] {
   const rules: RulePackRule[] = [];
@@ -54,9 +70,10 @@ export function makeSecurityLayerPack(security: SecurityLayer | undefined): Rule
         return {
           allowed: false,
           reason: d.reason,
-          recovery:
-            "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again.",
-          userHint: d.userHint,
+          recovery: securityDenyRecovery(),
+          // Same fallback the SC-10 probe uses — an undefined layer hint must
+          // not drop the user-facing line on this path either.
+          userHint: d.userHint ?? USER_HINTS.policy,
         };
       }
       return { allowed: true, reason: d.reason };

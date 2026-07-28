@@ -14,6 +14,7 @@ import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
 import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import { embeddingModelInstalled, decideEmbeddingModelAction } from "./embedding-model-match.js";
+import { startEventLoopSentinel } from "./event-loop-sentinel.js";
 import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
 import type { LAXConfig } from "../types.js";
 
@@ -206,6 +207,10 @@ export async function warmEmbeddingsWithRetry(
 }
 
 export async function bootstrapServices(config: LAXConfig): Promise<BootstrappedServices> {
+  // Process-wide event-loop stall detector. Armed FIRST so it also covers
+  // boot — the 90-110s freezes seen in production logged nothing at all,
+  // because a blocked loop cannot log. See event-loop-sentinel.ts.
+  startEventLoopSentinel();
   const _bsT = (name: string) => {
     const t = Date.now();
     return () => {

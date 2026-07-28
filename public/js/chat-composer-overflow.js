@@ -137,6 +137,10 @@ function syncComposerOverflow() {
       else home.appendChild(el);
     }
     wrap.classList.toggle('has-folded', plan.length > 0);
+    // .composer-pop is the shared popover box (app.css) — the model cascade and
+    // the voice popover carry it in the markup; this one only wears it while
+    // folded, since unfolded it's an inline segment of the bar, not a popover.
+    items.classList.toggle('composer-pop', plan.length > 0);
     if (!plan.length) closeComposerOverflow();
   } finally {
     _composerFoldBusy = false;
@@ -157,16 +161,11 @@ if (typeof document !== 'undefined') {
     } else {
       window.addEventListener('resize', syncComposerOverflow);
     }
-    // Outside click / Escape dismiss, matching the model + voice popovers.
-    document.addEventListener('click', function (e) {
-      var wrap = document.getElementById('composer-overflow');
-      if (wrap && wrap.classList.contains('open') && !wrap.contains(e.target)) {
-        closeComposerOverflow();
-      }
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeComposerOverflow();
-    });
+    // No dismiss listeners here on purpose: outside-click and Escape for EVERY
+    // composer popover live in chat-composer-menus.js, which calls
+    // closeComposerOverflow through _closeComposerOverflowIfPresent. A second
+    // pair of document listeners is how the three popovers would drift into
+    // three slightly different dismiss behaviours.
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _initComposerOverflow);

@@ -140,6 +140,24 @@ describe("composer fold", () => {
     expect(api.countById("project-quick-select")).toBe(1);
   });
 
+  it("wears the shared .composer-pop box only while folded", () => {
+    // The popover's surface/elevation/position come from .composer-pop — the
+    // same class the model cascade and voice popover carry — so restyling it
+    // moves all three together. Re-declaring that box here is what let this one
+    // drift. Unfolded it is an inline segment of the bar, not a popover, so the
+    // class must come off again.
+    const items = () => document.getElementById("composer-overflow-items")!;
+    api.setWidth(1200);
+    api.sync();
+    expect(items().classList.contains("composer-pop")).toBe(false);
+    api.setWidth(420);
+    api.sync();
+    expect(items().classList.contains("composer-pop")).toBe(true);
+    api.setWidth(1200);
+    api.sync();
+    expect(items().classList.contains("composer-pop")).toBe(false);
+  });
+
   it("leaves the row untouched when the pane is unmeasurable", () => {
     // Chat page hidden behind another page: every rect is 0. Folding the row
     // away behind a ⋯ nobody can see would be worse than doing nothing.

@@ -203,19 +203,12 @@ async function ideInitModelSelector() {
   const provSel = document.getElementById('ide-provider-select');
   const modelSel = document.getElementById('ide-model-select');
   if (!provSel || !modelSel) return;
-  // Reuse APPS_PROVIDERS / APPS_MODELS if the apps gallery already
-  // hydrated them; otherwise fetch the registry ourselves (cheap, cached
-  // by the server).
-  let providers = (typeof APPS_PROVIDERS !== 'undefined' && APPS_PROVIDERS.length) ? APPS_PROVIDERS : null;
-  let models = (typeof APPS_MODELS !== 'undefined' && Object.keys(APPS_MODELS).length) ? APPS_MODELS : null;
-  if (!providers || !models) {
-    try {
-      const reg = await apiFetch('/api/providers/registry').then(r => r.json());
-      providers = (reg.providers || []).map(p => ({ value: p.id, label: p.label }));
-      models = Object.fromEntries((reg.providers || []).map(p => [p.id, p.models]));
-      if (typeof APPS_PROVIDERS !== 'undefined') { APPS_PROVIDERS = providers; APPS_MODELS = models; }
-    } catch { providers = providers || []; models = models || {}; }
-  }
+  // provider-registry.js holds the one cached copy, so this no longer has to
+  // spelunk apps.js's globals (`typeof APPS_PROVIDERS !== 'undefined' && …`)
+  // to dodge a second fetch — two pages coupled through a variable name.
+  const reg = await laxProviderRegistry();
+  const providers = laxProviderOptions(reg);
+  const models = laxProviderModels(reg);
   window._ideModelsByProvider = models;
   provSel.innerHTML = providers.map(p => `<option value="${p.value}">${p.label}</option>`).join('');
   try {

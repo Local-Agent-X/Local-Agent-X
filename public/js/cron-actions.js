@@ -3,8 +3,9 @@
 // wired to the list-row buttons (Run, Stop, Toggle, Clear-error).
 // State + list rendering live in cron.js; detail panel in cron-detail.js.
 
-// Provider/model data for the mission model picker. Server is the single
-// source of truth (/api/providers/registry) — same feed the apps gallery uses.
+// Provider/model data for the mission model picker, via provider-registry.js —
+// the renderer's one reader of /api/providers/registry, so re-opening this
+// modal no longer refetches (it used to, on every open).
 let MISSION_PROVIDERS = [];
 let MISSION_MODELS = {};
 
@@ -13,9 +14,9 @@ async function initMissionModelSelector() {
   const modelSel = document.getElementById('new-cron-model');
   if (!provSel || !modelSel) return;
   try {
-    const reg = await apiFetch('/api/providers/registry').then(r => r.json());
-    MISSION_PROVIDERS = (reg.providers || []).map(p => ({ value: p.id, label: p.label }));
-    MISSION_MODELS = Object.fromEntries((reg.providers || []).map(p => [p.id, p.models]));
+    const reg = await laxProviderRegistry();
+    MISSION_PROVIDERS = laxProviderOptions(reg);
+    MISSION_MODELS = laxProviderModels(reg);
   } catch { /* leave whatever we had; the empty "default" option still works */ }
   // Leading blank = "use my chat default" — keeps the model optional.
   provSel.innerHTML = '<option value="">Default</option>' +

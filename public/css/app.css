@@ -514,7 +514,10 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .home-launcher .hl-ci{font-size:1.15rem;color:var(--accent)}
 .home-launcher .hl-ct{font-size:.95rem;font-weight:600;color:var(--text)}
 .home-launcher .hl-cs{font-size:.78rem;color:var(--muted);line-height:1.35}
-@media (max-width:560px){.home-launcher .hl-starters{grid-template-columns:1fr}}
+/* The one-column collapse for these cards is a `@container chat` step beside
+   #chat-main, not a @media query here: .home-launcher renders inside #messages,
+   so its width is the chat column's. Keyed to the window it stayed two-up in a
+   360px column whenever the right rail was dragged wide. */
 #empty h2{font-family:var(--mono);color:var(--accent);font-size:1.5rem;letter-spacing:3px;text-shadow:0 0 20px var(--accent-dim)}
 #empty p{font-size:.85rem;max-width:400px;text-align:center;line-height:1.6}
 /* Jump-to-bottom pill — floats centered just above the composer. Anchored to
@@ -596,11 +599,15 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 #composer-overflow-items{display:flex;align-items:center;gap:4px}
 #composer-overflow-btn{display:none}
 #composer-overflow.has-folded > #composer-overflow-btn{display:flex}
+/* Folded: the shared .composer-pop box supplies position, elevation, surface,
+   border, radius and shadow — chat-composer-overflow.js adds that class
+   alongside .has-folded, the same composition .link-menu uses. Restyling
+   .composer-pop must move all three composer popovers together, so only what
+   genuinely differs is declared here: right-anchoring, the column stack, and
+   the closed-by-default display. */
 #composer-overflow.has-folded > #composer-overflow-items{
-  display:none;position:absolute;right:0;bottom:calc(100% + 8px);z-index:600;
+  display:none;right:0;
   flex-direction:column;align-items:stretch;gap:6px;min-width:186px;padding:8px;
-  background:var(--surface);border:1px solid var(--border);border-radius:12px;
-  box-shadow:0 14px 44px rgba(0,0,0,.45);
 }
 #composer-overflow.has-folded.open > #composer-overflow-items{display:flex}
 /* Folded controls become full-width rows. An .input-btn is a 28px icon square
@@ -619,6 +626,12 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 }
 .model-chip{display:flex;align-items:center;gap:5px;max-width:340px;overflow:hidden;white-space:nowrap;background:transparent;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.62rem;padding:3px 9px;border-radius:5px;cursor:pointer;transition:all .15s;line-height:1.3}
 .model-chip:hover,.model-chip.open{border-color:var(--accent);color:var(--text)}
+/* Selected provider has no credential on this machine — it isn't in the picker
+   and turns against it will fail. Warn colour rather than a silent accent, and
+   .mc-warn stays visible at every container step (the narrow steps drop
+   .mc-provider, which would otherwise take the signal with it). */
+.model-chip.disconnected,.model-chip.disconnected:hover,.model-chip.disconnected.open{border-color:var(--warn,#fbbf24);color:var(--warn,#fbbf24)}
+.model-chip .mc-warn{flex-shrink:0}
 .model-chip .mc-model{overflow:hidden;text-overflow:ellipsis}
 .model-chip .mc-caret{color:var(--muted);font-size:.5rem}
 .composer-pop{position:absolute;bottom:calc(100% + 8px);z-index:600;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 44px rgba(0,0,0,.45);font-family:var(--mono);font-size:.7rem}
@@ -1296,6 +1309,7 @@ body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,bo
      3px letter-spacing on a single unbreakable line — so it, not any message,
      is what sets #messages' horizontal overflow at the bottom of the range. */
   #empty h2{font-size:1.15rem;letter-spacing:1px}
+  .home-launcher .hl-starters{grid-template-columns:1fr}
   #status-bar{padding:2px 4px 0;font-size:.58rem}
   #voice-pop{right:-8px;width:min(280px,92cqw)}
 }

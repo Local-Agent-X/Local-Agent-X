@@ -43,17 +43,19 @@ export async function loadTeam() {
   } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
 }
 
-// Provider registry cache — loaded on first hired-agent panel open. Keyed by
-// provider id, value is {label, models[], defaultModel}. Source: GET
-// /api/providers/registry (single source of truth in src/providers/registry.ts).
+// Provider registry for the per-agent model picker: [{id, label, models[],
+// defaultModel, transport}]. The fetch + cache live in provider-registry.js,
+// the renderer's one reader — a classic-script global, reachable from here the
+// same way API and AUTH_TOKEN already are.
+//
+// state.providerRegistry stays as this page's mirror, but an empty result is no
+// longer written to it: caching [] on a failed first open left the picker empty
+// for the rest of the session.
 export async function getProviderRegistry() {
   if (state.providerRegistry) return state.providerRegistry;
-  try {
-    const r = await fetch(`${API}/api/providers/registry`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    const data = await r.json();
-    state.providerRegistry = Array.isArray(data.providers) ? data.providers : [];
-  } catch { state.providerRegistry = []; }
-  return state.providerRegistry;
+  const providers = await laxProviderRegistry();
+  if (providers.length) state.providerRegistry = providers;
+  return providers;
 }
 
 // Render the per-agent model picker — two cascading <select>s. Hidden when

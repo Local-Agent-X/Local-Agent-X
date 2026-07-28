@@ -197,6 +197,30 @@ describe("composer overflow folding", () => {
     expect(moves).not.toContain("dictate-btn");
   });
 
+  it("keeps ONE dismiss path for every composer popover", () => {
+    // Three popovers now anchor to the composer (model cascade, voice, ⋯).
+    // Outside-click and Escape live once, in chat-composer-menus.js. A popover
+    // that registers its own document listeners is how the three drift into
+    // three slightly different dismiss behaviours.
+    expect(overflowJs).not.toMatch(/document\.addEventListener\(\s*['"](click|keydown)['"]/);
+    const dismiss = menusJs.match(/document\.addEventListener\(\s*'click'[\s\S]*?\n\}\);/)?.[0] ?? "";
+    expect(dismiss).toContain("closeModelMenu");
+    expect(dismiss).toContain("closeVoicePop");
+    expect(dismiss).toContain("_closeComposerOverflowIfPresent");
+    expect(menusJs).toMatch(/'Escape'[\s\S]{0,120}_closeComposerOverflowIfPresent/);
+    // And the popover box itself is the shared class, not a second copy of it.
+    expect(css).not.toMatch(/#composer-overflow-items\{[^}]*box-shadow/);
+    expect(overflowJs).toContain("classList.toggle('composer-pop'");
+  });
+
+  it("keys the home-launcher collapse to the chat column too", () => {
+    // .home-launcher renders inside #messages, so its width is the chat
+    // column's — the last window-scoped rule aimed at chat-pane content.
+    const step560 = css.slice(css.indexOf("@container chat (max-width: 560px)"));
+    expect(step560.slice(0, step560.indexOf("}\n"))).toContain(".home-launcher .hl-starters");
+    expect(css).not.toMatch(/@media \(max-width:560px\)\{\.home-launcher/);
+  });
+
   it("re-folds after every chips rebuild and dismisses against the other popovers", () => {
     // updateStatusBar rewrites #composer-chips wholesale, resurrecting the Plan
     // chip and project picker in the row.

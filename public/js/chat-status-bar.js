@@ -30,6 +30,11 @@ function laxGetSavedEffort() {
 let _providersCache = null;
 let _providersCacheTime = 0;
 
+// laxResolveActiveProvider / isProvidersComplete / loadProviderLabels /
+// laxProviderLabel live in the sibling chat-provider-identity.js — "which
+// provider is selected and is it connected" is its own concern, and splitting
+// it keeps this file under the 400-LOC source-hygiene ceiling.
+
 async function _primeLaxSettings() {
   try {
     const r = await apiFetch('/api/settings');
@@ -55,7 +60,9 @@ function initStatusBar() {
   // tier voices in the picker even when settings.json on disk says tier 2.
   // Settings page also writes lax_settings, but the chat page is the entry
   // point users hit first — we can't assume settings.js has run this session.
-  _primeLaxSettings().then(() => ensureProvidersLoaded());
+  // Labels first: the chip needs them to name a provider the picker dropped,
+  // and without them a disconnected selection renders as a bare id.
+  _primeLaxSettings().then(() => loadProviderLabels()).then(() => ensureProvidersLoaded());
   setInterval(updateStatusBar, 10000);
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
@@ -66,19 +73,6 @@ function initStatusBar() {
   // appear in the picker within ~10s, no server restart needed.
   refreshClonedVoices();
   setInterval(() => refreshClonedVoices(), 10000);
-}
-
-// A providers payload is "complete" once the active provider has a model
-// list. On a cold boot /api/providers returns instantly but with the Ollama
-// model cache still warming server-side, so the active provider's models come
-// back empty — the source of the empty picker boxes. Static-model providers
-// (xAI, Anthropic, etc.) are complete on the first hit since their models come
-// from the registry, not the warming cache.
-function isProvidersComplete(data) {
-  if (!data || !Array.isArray(data.providers) || data.providers.length === 0) return false;
-  if (!data.current || !data.current.provider) return false;
-  const active = data.providers.find(p => p.active) || data.providers[0];
-  return !!active && Array.isArray(active.models) && active.models.length > 0;
 }
 
 async function loadProviders() {
@@ -175,8 +169,7 @@ function updateStatusBar(force) {
   const data = _providersCache;
   const currentProvider = data?.current?.provider || '—';
   const currentModel = data?.current?.model || '—';
-  const providers = data?.providers || [];
-  const activeP = providers.find(p => p.active) || providers[0];
+  const activeP = laxResolveActiveProvider(data);
 
   // Active-model badge: warn when selection is weak.
   const tier = classifyModelTier(currentModel);
@@ -280,10 +273,21 @@ function updateStatusBar(force) {
 
   // One compact chip carries provider · model · thinking depth; clicking it
   // opens the cascading menu (providers → models → effort flyout).
-  const providerName = activeP ? activeP.name : currentProvider;
-  const modelChip = `<button id="model-chip" class="model-chip" onclick="toggleModelMenu(event)" aria-haspopup="true"
-    title="Provider &#183; model &#183; thinking depth — click to change. Hover a model in the menu to set thinking depth.">
-    <span class="mc-provider">${esc(providerName)}</span><span class="mc-caret mc-provider-sep">&#9654;</span><span class="mc-model">${esc(currentModel)}</span><span class="mc-caret mc-effort-sep">&#183;</span><span class="mc-effort">Think&nbsp;${esc(effortShort)}</span>
+  //
+  // A selected provider missing from the picker has no credential on this
+  // machine — turns against it will fail. Name it from the static registry and
+  // flag it, rather than borrowing a connected provider's label: that read as a
+  // confident, wrong answer and hid the real fault. The warning glyph sits
+  // OUTSIDE .mc-provider so the narrow-column steps, which drop the provider
+  // name, can never drop the warning with it.
+  const connected = !!activeP;
+  const providerName = connected ? activeP.name : laxProviderLabel(currentProvider);
+  const chipTitle = connected
+    ? 'Provider · model · thinking depth — click to change. Hover a model in the menu to set thinking depth.'
+    : `${providerName} is selected but has no credential on this machine, so it is not in the picker and turns against it will fail. Click to connect it or switch provider.`;
+  const modelChip = `<button id="model-chip" class="model-chip${connected ? '' : ' disconnected'}" onclick="toggleModelMenu(event)" aria-haspopup="true"
+    title="${esc(chipTitle)}">
+    ${connected ? '' : '<span class="mc-warn" aria-hidden="true">&#9888;</span>'}<span class="mc-provider">${esc(providerName)}</span><span class="mc-caret mc-provider-sep">&#9654;</span><span class="mc-model">${esc(currentModel)}</span><span class="mc-caret mc-effort-sep">&#183;</span><span class="mc-effort">Think&nbsp;${esc(effortShort)}</span>
   </button>`;
 
   if (chips) chips.innerHTML = `

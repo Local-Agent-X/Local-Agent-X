@@ -210,14 +210,22 @@ function _mmPositionFly(fly, anchorRow, left) {
   fly.style.top = `${Math.max(0, Math.min(top, menuRect.height - fly.offsetHeight))}px`;
 }
 
-// Outside click / Escape closes whichever popover is open. The chip and the
-// speaker button stop propagation themselves, so any click landing here that
-// isn't inside a popover means "dismiss".
+// Outside click / Escape closes whichever composer popover is open — ALL of
+// them: the model cascade, the voice popover, and the ⋯ overflow. This pair is
+// the one dismiss path for the composer; a popover that brings its own document
+// listeners is how the behaviours drift apart (one honours Escape, another
+// doesn't; two of the three close on outside click). The chip and the speaker
+// button stop propagation themselves, so any click landing here that isn't
+// inside a popover means "dismiss".
 document.addEventListener('click', (e) => {
   if (window._laxModelMenuOpen && !_mmEl()?.contains(e.target)) closeModelMenu();
   const pop = _vpEl();
   if (pop && pop.style.display !== 'none' && !pop.contains(e.target)) closeVoicePop();
+  const overflow = document.getElementById('composer-overflow');
+  if (overflow?.classList.contains('open') && !overflow.contains(e.target)) {
+    _closeComposerOverflowIfPresent();
+  }
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeModelMenu(); closeVoicePop(); }
+  if (e.key === 'Escape') { closeModelMenu(); closeVoicePop(); _closeComposerOverflowIfPresent(); }
 });

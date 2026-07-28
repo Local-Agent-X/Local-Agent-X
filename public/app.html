@@ -1571,7 +1571,13 @@
 <script src="/vendor/xterm/addon-fit.js?v=v1"></script>
 <script src="/js/terminal-panel.js?v=v1"></script>
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
-<script src="/js/chat-status-bar.js?v=v5"></script>
+<!-- The renderer's one reader of /api/providers/registry. Must precede every
+     consumer: chat-provider-identity, cron-actions, apps, apps-ide, and the
+     js/agents/ ES modules (which read it as a global, as they already do for
+     API / AUTH_TOKEN). -->
+<script src="/js/provider-registry.js?v=v1"></script>
+<script src="/js/chat-provider-identity.js?v=v1"></script>
+<script src="/js/chat-status-bar.js?v=v6"></script>
 <script src="/js/chat-composer-menus.js?v=v1"></script>
 <script src="/js/chat-composer-overflow.js?v=v1"></script>
 <script src="/js/chat-voice-modal-clone.js?v=v1"></script>

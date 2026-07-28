@@ -1,9 +1,11 @@
 // ── Apps Gallery ──
 // Enterprise app management UI with status indicators, permissions, and inline controls
 
-// Provider + model data is fetched from /api/providers/registry on init.
-// Server is the single source of truth (src/providers/registry.ts);
-// adding a provider there shows up here without a UI edit.
+// Provider + model data comes from provider-registry.js, the renderer's one
+// reader of /api/providers/registry. Server is the single source of truth
+// (src/providers/registry.ts); adding a provider there shows up here without a
+// UI edit. These two stay as this page's view of it — nothing outside apps.js
+// reads them (apps-ide.js used to, and no longer needs to).
 let APPS_PROVIDERS = [];
 let APPS_MODELS = {};
 
@@ -21,9 +23,9 @@ async function initAppsModelSelector() {
   if (!provSel || !modelSel) return;
 
   try {
-    const reg = await apiFetch('/api/providers/registry').then(r => r.json());
-    APPS_PROVIDERS = (reg.providers || []).map(p => ({ value: p.id, label: p.label }));
-    APPS_MODELS = Object.fromEntries((reg.providers || []).map(p => [p.id, p.models]));
+    const reg = await laxProviderRegistry();
+    APPS_PROVIDERS = laxProviderOptions(reg);
+    APPS_MODELS = laxProviderModels(reg);
   } catch { /* fall back to whatever stale data we have */ }
 
   // Populate providers

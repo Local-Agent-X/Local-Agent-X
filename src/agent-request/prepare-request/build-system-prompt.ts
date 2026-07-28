@@ -140,13 +140,15 @@ export async function buildSystemPromptWithTelemetry(
     // side for that reason.
   } catch { /* best-effort */ }
 
-  // Cold-start nudge — applies to BOTH providers, but disproportionately
-  // helps Codex which doesn't auto-call memory_search the way Anthropic does
-  // when the user kicks off a project that might have prior context. Scoped
-  // to ship/build/deploy class messages so we don't burn tokens nudging the
-  // agent on simple chats.
+  // Cold-start nudge — applies to BOTH providers. A cold-start message is
+  // usually also a task-start turn, which now auto-injects cross-session
+  // recall (src/memory/auto-search-context.ts), so the hint points at that
+  // block first. The two triggers are NOT the same predicate — these verbs can
+  // fire mid-session, where no injection happens — so the hint still names the
+  // tool for the case where the block is absent or empty. Scoped to
+  // ship/build/deploy class messages so we don't burn tokens on simple chats.
   if (COLD_START_VERBS.test(input.message)) {
-    toolPromptSection += harnessNotice("COLD-START HINT", "This message looks like the start of a project/deploy/build task. BEFORE writing code, run memory_search on the project name, domain, or business name in case there's prior context (URLs, prior decisions, brand assets, user preferences) from earlier sessions. Cold-starting without checking memory first is a real failure mode — the agent reinvents stuff that was already discussed and ships thinner output. 1-2 memory_search calls = cheap; missing context = expensive iteration.");
+    toolPromptSection += harnessNotice("COLD-START HINT", "This message looks like the start of a project/deploy/build task. Prior context (URLs, prior decisions, brand assets, user preferences) from earlier sessions is normally already in the RELEVANT MEMORIES block above — entries tagged PAST SESSION. Read it before writing code. If no such block arrived, or it's empty, or it says nothing about the project/domain/business name in this message, run memory_search or search_past_sessions on that name first. Cold-starting on a project that already has history is a real failure mode — the agent reinvents stuff that was already discussed and ships thinner output.");
   }
 
   // Drain pending background-op completions for this session so the agent

@@ -91,7 +91,12 @@ describe("Context Builder", () => {
     const output = await builder.build();
 
     const staticMarkers = ["personal AI companion", "powered by Codex", "Tool Guidance", "Connected: GitHub"];
-    const dynamicMarkers = ["MEMORY", "RELEVANT", "[Memory: focused]", "canary:abc123"];
+    // Markers must be strings that appear ONLY in their own section's fixture
+    // payload. Section *titles* are not safe anchors: static sections legitimately
+    // NAME the dynamic blocks (the recall reflex tells the model to read the
+    // "RELEVANT MEMORIES" block), so matching on "RELEVANT" found the static
+    // mention first and failed an invariant that was never violated.
+    const dynamicMarkers = ["User prefers concise.", "User works on Local Agent X", "[Memory: focused]", "canary:abc123"];
 
     const lastStatic = Math.max(...staticMarkers.map(m => output.indexOf(m)));
     const firstDynamic = Math.min(...dynamicMarkers.map(m => output.indexOf(m)));

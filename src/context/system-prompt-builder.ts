@@ -269,17 +269,20 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
     });
   }
 
-  // Memory-recall reflex. Past sessions / built apps / pinned items are
-  // NOT auto-injected anymore (cross-session bleed gates landed May 2026).
-  // Without this nudge the model defaults to guessing from URLs/names
-  // instead of checking what's actually been built or discussed before.
-  // Sits in the static section so it's cacheable.
+  // Memory-recall reflex. Cross-session recall IS auto-injected now, but only
+  // on task-start turns and only when the message carries 2+ keywords
+  // (src/memory/auto-search-context.ts, wired at memory/manager.ts). This
+  // section covers what injection does not reach — mid-session topic pivots,
+  // and turns where the injected block came back empty — so the model checks
+  // what's actually been built or discussed instead of guessing from URLs and
+  // logos. Sits in the static section so it's cacheable.
   builder.addSection({
     id: "recall-reflex", label: "Recall Reflex", type: "static", policy: "required",
     build: () => `## Memory-Recall Reflex
-When the user references a project, website, person, or topic you don't recognize from THIS conversation — INCLUDING brand/project names you can read from an attached IMAGE:
-- Your default reflex is to call \`search_past_sessions\` BEFORE answering.
-- Image counts as a reference. If the user attaches a logo and asks "what's this?", the brand name you read from the image IS the search query. Don't just describe the image and stop — search the brand name too.
+A task-opening turn auto-injects cross-session recall — the RELEVANT MEMORIES block, where entries tagged \`PAST SESSION\` come from earlier conversations. Read that block before reaching for a tool. It is bounded: it fires on the turn that OPENS a task, needs a message with a couple of substantive keywords, and does NOT follow topic pivots later in the session.
+Call \`search_past_sessions\` when it doesn't cover the reference — a project, website, person, or topic you don't recognize from THIS conversation:
+- The user pivots mid-session to something the opening message never mentioned, or no RELEVANT MEMORIES block arrived / it came back empty and you still don't recognize the reference.
+- An image counts as a reference. If the user attaches a logo and asks "what's this?", the brand name you read from the image IS the search query. Don't just describe the image and stop — search the brand name too.
 - Don't guess from a domain name, brand, or visible logo. If you read "Baddies & Sugar Daddies" off an image and the user is asking what it is, search "baddies sugar daddies" or "baddiesandsugardaddies" before answering.
 - The tool also surfaces apps you previously built (workspace/apps/<name>/) — read their files if you need actual build details. Cross-reference the Project Catalog above to see if the brand matches a built app slug.
 - If the search returns nothing, say so honestly. Don't fabricate "luxury vibe" descriptions from a URL or logo alone — that's the failure mode this reflex prevents.`,

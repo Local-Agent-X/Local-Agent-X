@@ -11,7 +11,11 @@
  * directly names a FactKind.
  */
 import { describe, it, expect } from "vitest";
-import { parseFactLine, displayContent, redactCredentials } from "./utils.js";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { atomicWriteFileSync as canonicalAtomicWriteFileSync } from "../util/json-store.js";
+import { atomicWriteFileSync, parseFactLine, displayContent, redactCredentials } from "./utils.js";
 
 describe("parseFactLine — schema-aligned prefix letters", () => {
   it("E maps to experience and parses confidence + entity", () => {
@@ -128,5 +132,42 @@ describe("redactCredentials — canonical catalog seam (memory ⇄ security)", (
 
     const basic = redactCredentials("Authorization: Basic dXNlcjpodW50ZXIyLXNlY3JldC1wdw==");
     expect(basic).not.toContain("dXNlcjpodW50ZXIyLXNlY3JldC1wdw==");
+  });
+});
+
+// Same class of bug as redactCredentials above: memory shipped its OWN
+// atomicWriteFileSync — the same tmp+rename idea as util/json-store.ts, minus
+// that copy's bounded EPERM/EBUSY retry for rename contention (the Windows
+// hazard). SessionStore, the hottest writer in the app, imported the fork.
+// Both cases FAIL on the fork: it takes two parameters, so the injected
+// operations are ignored and the first EPERM propagates.
+describe("atomicWriteFileSync — canonical seam (memory ⇄ util/json-store)", () => {
+  it("is the canonical function, not a memory-local copy", () => {
+    expect(atomicWriteFileSync).toBe(canonicalAtomicWriteFileSync);
+  });
+
+  it("retries a rename the destination refuses with EPERM", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-memory-atomic-"));
+    const target = join(dir, "sessions-metadata.json");
+    const waits: number[] = [];
+    let renames = 0;
+
+    try {
+      atomicWriteFileSync(target, '{"complete":true}', undefined, {
+        write: writeFileSync,
+        rename(source, destination) {
+          renames += 1;
+          if (renames < 3) throw Object.assign(new Error("destination busy"), { code: "EPERM" });
+          renameSync(source, destination);
+        },
+        unlink: rmSync,
+        wait(ms) { waits.push(ms); },
+      });
+
+      expect(readFileSync(target, "utf-8")).toBe('{"complete":true}');
+      expect({ renames, waits }).toEqual({ renames: 3, waits: [2, 4] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

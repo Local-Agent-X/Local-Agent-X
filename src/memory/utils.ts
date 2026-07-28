@@ -4,8 +4,8 @@
  * No side effects (beyond file I/O helpers). No dependencies on the DB or
  * class state. Safe to import from anywhere.
  */
-import { writeFileSync, readFileSync, renameSync, unlinkSync } from "node:fs";
-import { randomBytes, createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { containsNulByte } from "../binary-sniff.js";
 import { redact } from "../security/secrets/index.js";
 import type { FactKind, RetainedFact } from "./types.js";
@@ -13,16 +13,15 @@ import type { MemoryContentOrigin } from "./promotion-gate.js";
 
 // ── File I/O helpers ──
 
-export function atomicWriteFileSync(filePath: string, content: string): void {
-  const tmpPath = filePath + ".tmp." + randomBytes(4).toString("hex");
-  try {
-    writeFileSync(tmpPath, content, "utf-8");
-    renameSync(tmpPath, filePath);
-  } catch (e) {
-    try { unlinkSync(tmpPath); } catch {}
-    throw e;
-  }
-}
+/**
+ * The canonical atomic write, re-exported so memory-local importers keep
+ * working. This used to be a memory-local FORK of util/json-store.ts — same
+ * tmp+rename idea, but missing that copy's bounded EPERM/EBUSY retry for
+ * rename contention, which is the Windows hazard. SessionStore, the hottest
+ * writer in the app, was on the fork. There is now one implementation; add
+ * behaviour THERE, not here.
+ */
+export { atomicWriteFileSync } from "../util/json-store.js";
 
 /** Read a text file safely: strips BOM, normalizes CRLF, skips binary. */
 export function safeReadTextFile(filePath: string): string | null {

@@ -75,11 +75,15 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // a one-line stub instead of re-shipping the content. Partial/screened views
   // never dedup, an explicit offset/limit is the model's force-re-read lever,
   // and relative paths are exempt (their resolution can be work-root-dependent,
-  // so only the session-independent absolute form is safe to stub). Runs before
-  // execute and before accounting, like the freshness guard: a served stub is
-  // guidance, not a tool run.
+  // so only the session-independent absolute form is safe to stub). An
+  // include_imports read is NEVER served the stub: the seen-record and its
+  // hash cover only the MAIN file, so a stub would silently drop the requested
+  // import expansion (and depth-1 files can change while the main hash holds).
+  // Runs before execute and before accounting, like the freshness guard: a
+  // served stub is guidance, not a tool run.
   if (tc.name === "read" && typeof args.path === "string" && args.path &&
-      args.offset === undefined && args.limit === undefined && isAbsolute(args.path)) {
+      args.offset === undefined && args.limit === undefined && !args.include_imports &&
+      isAbsolute(args.path)) {
     let resolved: string | null = null;
     try { resolved = resolveAgentPath(args.path); } catch { /* let the tool handle it */ }
     if (resolved && unchangedSinceSeen(sessionId, resolved)) {

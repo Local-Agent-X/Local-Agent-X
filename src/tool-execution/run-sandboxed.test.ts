@@ -116,6 +116,34 @@ describe("read-dedup (run-sandboxed integration)", () => {
     expect(res.content).toContain("forced re-read");
   });
 
+  it("an include_imports read is never satisfied by the stub recorded for a plain read", async () => {
+    // Regression: the stub's hash covers only the MAIN file, and a plain-read
+    // seen-record holds no import expansion — serving it for an
+    // include_imports call silently dropped the requested imports.
+    const dir = mkdtempSync(join(tmpdir(), "lax-dedup-imports-"));
+    dirs.add(dir);
+    const main = join(dir, "main.ts");
+    writeFileSync(main, `import { helper } from "./helper.js";\nexport const x = helper();\n`, "utf-8");
+    writeFileSync(join(dir, "helper.ts"), `export function helper(): number {\n  return 7;\n}\n`, "utf-8");
+    const s = freshSession();
+    const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");
+    setSessionWorkRoot(s, dir); // imports are confined to the root containing the main file
+    try {
+      const first = await run(readTool, { path: main, _sessionId: s }, s);
+      expect(first.content).toContain("export const x");
+      // Baseline: the plain re-read IS stubbed…
+      const stub = await run(readTool, { path: main, _sessionId: s }, s);
+      expect(stub.metadata?.unchanged).toBe(true);
+      // …but the include_imports re-read must execute and return the expansion.
+      const expanded = await run(readTool, { path: main, include_imports: true, _sessionId: s }, s);
+      expect(expanded.metadata?.unchanged).toBeUndefined();
+      expect(String(expanded.content)).toContain("=== imports (depth 1) ===");
+      expect(String(expanded.content)).toContain("export function helper");
+    } finally {
+      clearSessionWorkRoot(s);
+    }
+  });
+
   it("a partial (range) read of a large file never stubs", async () => {
     // ≥1000 lines so offset/limit are honored (below that the read tool
     // force-reads the whole file and the view is full, not partial).

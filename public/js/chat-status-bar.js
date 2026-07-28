@@ -283,7 +283,7 @@ function updateStatusBar(force) {
   const providerName = activeP ? activeP.name : currentProvider;
   const modelChip = `<button id="model-chip" class="model-chip" onclick="toggleModelMenu(event)" aria-haspopup="true"
     title="Provider &#183; model &#183; thinking depth — click to change. Hover a model in the menu to set thinking depth.">
-    <span>${esc(providerName)}</span><span class="mc-caret">&#9654;</span><span class="mc-model">${esc(currentModel)}</span><span class="mc-caret">&#183;</span><span>Think&nbsp;${esc(effortShort)}</span>
+    <span class="mc-provider">${esc(providerName)}</span><span class="mc-caret mc-provider-sep">&#9654;</span><span class="mc-model">${esc(currentModel)}</span><span class="mc-caret mc-effort-sep">&#183;</span><span class="mc-effort">Think&nbsp;${esc(effortShort)}</span>
   </button>`;
 
   if (chips) chips.innerHTML = `
@@ -308,6 +308,11 @@ function updateStatusBar(force) {
       <input id="voice-speed-slider" type="range" min="0.7" max="1.5" step="0.05" value="${savedSpeed}" onchange="quickSwitchSpeed(this.value)" oninput="document.getElementById('voice-speed-label').textContent = parseFloat(this.value).toFixed(2)+'x'" title="Speech speed"/>
       <span id="voice-speed-label" class="status-item" style="font-family:var(--mono);min-width:42px">${savedSpeed.toFixed(2)}x</span></div>
   `;
+
+  // The chips innerHTML above rebuilds the Plan chip and project picker inside
+  // #composer-chips — undoing any fold chat-composer-overflow.js had applied.
+  // Re-fold immediately so a narrow chat column never flashes the full row.
+  try { if (typeof syncComposerOverflow === 'function') syncComposerOverflow(); } catch {}
 }
 
 

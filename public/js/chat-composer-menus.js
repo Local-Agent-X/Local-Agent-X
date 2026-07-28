@@ -36,12 +36,20 @@ function closeVoicePop() {
   if (pop) pop.style.display = 'none';
 }
 
+// The ⋯ overflow popover (chat-composer-overflow.js) anchors to the same corner
+// of the composer as these two, so opening either must dismiss it. Guarded
+// because that file loads after this one and may be absent in a trimmed shell.
+function _closeComposerOverflowIfPresent() {
+  try { if (typeof closeComposerOverflow === 'function') closeComposerOverflow(); } catch {}
+}
+
 function toggleModelMenu(ev) {
   if (ev) ev.stopPropagation();
   const menu = _mmEl();
   if (!menu) return;
   if (window._laxModelMenuOpen) { closeModelMenu(); return; }
   closeVoicePop();
+  _closeComposerOverflowIfPresent();
   window._laxModelMenuOpen = true;
   document.getElementById('model-chip')?.classList.add('open');
   _mmRender();
@@ -60,6 +68,7 @@ function toggleVoicePop(ev) {
   if (!pop) return;
   if (pop.style.display !== 'none') { closeVoicePop(); return; }
   closeModelMenu();
+  _closeComposerOverflowIfPresent();
   // Rebuild the popover body while it's still closed (updateStatusBar only
   // writes #voice-pop when hidden), so it opens with fresh voice/tier data.
   try { updateStatusBar(true); } catch {}

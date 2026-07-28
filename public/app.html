@@ -292,10 +292,27 @@
               <button id="plus-btn" class="input-btn" onclick="triggerUpload()" title="Attach files" aria-label="Attach files">+</button>
               <span id="composer-chips"></span>
               <span style="flex:1"></span>
-              <span id="stream-indicator" title="A turn is in flight. The send button will inject into the running turn." style="display:none;align-items:center;gap:6px;font-size:.65rem;font-family:var(--mono);padding:3px 10px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent);flex-shrink:0"><span class="chat-dot active-pulse" style="width:6px;height:6px;border-radius:50%"></span><span>STREAMING</span></span>
-              <button id="dictate-btn" class="input-btn" onclick="toggleDictate()" title="Dictate (speech to text only). Works in Chrome / Edge / Safari. On Chrome+Edge audio is processed by Google's cloud ASR; Safari uses Apple's on-device ASR. For all-local transcription, use Voice Mode instead." aria-label="Toggle dictation">&#128221;</button>
-              <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice mode (full hands-free conversation with agent)" aria-label="Toggle voice mode">&#127908;</button>
-              <button id="voice-cfg-btn" class="input-btn" onclick="toggleVoicePop(event)" title="Voice &amp; speech speed" aria-label="Voice settings" aria-haspopup="true">&#128266;</button>
+              <span id="stream-indicator" title="A turn is in flight. The send button will inject into the running turn." style="display:none;align-items:center;gap:6px;font-size:.65rem;font-family:var(--mono);padding:3px 10px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent);flex-shrink:0"><span class="chat-dot active-pulse" style="width:6px;height:6px;border-radius:50%"></span><span class="si-label">STREAMING</span></span>
+              <!-- Foldable voice cluster. At full width #composer-overflow-items
+                   is just an inline segment of the bar and the ⋯ button is
+                   hidden; once the CHAT COLUMN narrows (not the window — the
+                   right rail eats width just as often), app.css reshapes the
+                   same span into a popover behind ⋯. The buttons are never
+                   duplicated: #dictate-btn / #mic-btn carry live state classes
+                   and are looked up by id from chat-dictate.js and
+                   chat-voice-mic.js, so a second copy would desync.
+                   data-fold-label supplies the text they grow inside the
+                   popover, where a bare emoji says nothing.
+                   chat-composer-overflow.js owns the ⋯ state + the Plan/project
+                   moves that the next step down needs. -->
+              <span id="composer-overflow">
+                <button id="composer-overflow-btn" class="input-btn" onclick="toggleComposerOverflow(event)" title="More composer controls" aria-label="More composer controls" aria-haspopup="true" aria-expanded="false">&#8943;</button>
+                <span id="composer-overflow-items">
+                  <button id="dictate-btn" class="input-btn" data-fold-label="Dictate" onclick="toggleDictate()" title="Dictate (speech to text only). Works in Chrome / Edge / Safari. On Chrome+Edge audio is processed by Google's cloud ASR; Safari uses Apple's on-device ASR. For all-local transcription, use Voice Mode instead." aria-label="Toggle dictation">&#128221;</button>
+                  <button id="mic-btn" class="input-btn" data-fold-label="Voice mode" onclick="toggleMic()" title="Voice mode (full hands-free conversation with agent)" aria-label="Toggle voice mode">&#127908;</button>
+                  <button id="voice-cfg-btn" class="input-btn" data-fold-label="Voice &amp; speed" onclick="toggleVoicePop(event)" title="Voice &amp; speech speed" aria-label="Voice settings" aria-haspopup="true">&#128266;</button>
+                </span>
+              </span>
               <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
               <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
             </div>
@@ -1556,6 +1573,7 @@
 <script src="/js/chat-status-bar-indicators.js?v=v1"></script>
 <script src="/js/chat-status-bar.js?v=v5"></script>
 <script src="/js/chat-composer-menus.js?v=v1"></script>
+<script src="/js/chat-composer-overflow.js?v=v1"></script>
 <script src="/js/chat-voice-modal-clone.js?v=v1"></script>
 <script src="/js/chat-voice-modal-manage.js?v=v1"></script>
 <script src="/js/chat-voice-modals.js?v=v2"></script>

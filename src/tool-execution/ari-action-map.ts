@@ -50,6 +50,13 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   // shell — subprocess spawns + OS process queries
   process_start: "exec", process_status: "exec",
   process_kill: "exec", process_list: "exec",
+  // app_rebuild spawns the framework's production build (kernel class "shell").
+  // "exec" is the ONLY schema-valid shell action (SHELL_ACTIONS in
+  // packages/arikernel/core/src/types/actions.ts; toolCallRequestSchema.parse
+  // rejects anything else, which ariRequired mode turns into a hard block) —
+  // an http-style verb here would brick every call, the image_search failure
+  // shape all over again.
+  app_rebuild: "exec",
   // database — SQL (read-class today; tools self-restrict writes)
   sql_query: "query", sql_explain: "query", sql_schema: "query",
   // retrieval — vector/keyword session search

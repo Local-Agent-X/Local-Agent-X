@@ -11,6 +11,7 @@ import { webFetchTool } from "./web-tools.js";
 import { viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
 import { computerTool } from "./input-tools.js";
 import { buildAppTool } from "./build-app.js";
+import { appRebuildTool } from "./app-rebuild-tool.js";
 import { createPageTool } from "./create-page-tool.js";
 import { extractSiteAssetsTool } from "./asset-tools.js";
 import { youtubeAnalyzeTool } from "./youtube-tool.js";
@@ -54,7 +55,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   selfEditTool, recallTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
-  buildAppTool,
+  buildAppTool, appRebuildTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, ...previewTools,

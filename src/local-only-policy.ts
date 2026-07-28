@@ -64,7 +64,7 @@ export function localProviderDecision(
 
 const REMOTE_ONLY_TOOLS = new Set([
   "bash", "shell", "ari_shell", "process_start", "process_restart",
-  "app_serve_backend", "app_serve_frontend",
+  "app_serve_backend", "app_serve_frontend", "app_rebuild",
   "build_app",
   "web_search", "image_search", "extract_site_assets", "youtube_analyze",
   "generate_image", "edit_image", "generate_video", "email_send",

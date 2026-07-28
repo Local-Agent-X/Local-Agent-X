@@ -1,41 +1,32 @@
 /**
  * Grep Tool — content search via ripgrep (rg) with Node.js fallback.
  * The primary tool for navigating and searching code.
+ *
+ * The Node fallback engine and the shared result-shaping helpers live in
+ * grep-context.ts; the public seams are re-exported here so this file stays
+ * the one canonical import home for grep.
  */
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { resolveAgentPath, sessionIdOf, sessionWorkRootOf } from "../workspace/paths.js";
+import { ok, err } from "./result-helpers.js";
+import {
+  baseMeta,
+  contextLines,
+  fallbackSearch,
+  modeOf,
+  resultMeta,
+  searchRoot,
+  truncate,
+} from "./grep-context.js";
 
-type OutputMode = "content" | "files_with_matches" | "count";
-
-// Resolve the search root through the canonical agent-path resolver — the SAME
-// one read/glob and the security gate use — so a "~/..." or workspace-relative
-// root expands once, identically to how it's gated, instead of being joined
-// onto a raw cwd and failing until the model retries. Absent path → the
-// session's work root when one is registered (a chunk worker's bare grep must
-// search its project, not the server cwd), else cwd.
-export function searchRoot(args: Record<string, unknown>): string {
-  const sessionId = sessionIdOf(args);
-  return args.path != null && String(args.path) !== ""
-    ? resolveAgentPath(String(args.path), sessionId)
-    : sessionWorkRootOf(sessionId) ?? process.cwd();
-}
+export { searchRoot, parsePattern, fallbackSearch } from "./grep-context.js";
 
 const DEFAULT_HEAD_LIMIT = 250;
-
-function ok(content: string): ToolResult { return { content }; }
-function err(content: string): ToolResult { return { content, isError: true }; }
-
-function truncate(lines: string[], limit: number): string {
-  if (lines.length <= limit) return lines.join("\n");
-  return lines.slice(0, limit).join("\n") + `\n... (${lines.length - limit} more lines)`;
-}
 
 // ── ripgrep path ──
 
@@ -81,24 +72,41 @@ export function ripgrepBin(): string {
   return nodeModulesRg() ?? "rg";
 }
 
-function buildRgArgs(args: Record<string, unknown>): string[] {
-  const pattern = String(args.pattern);
-  const mode = (args.output_mode as OutputMode) || "files_with_matches";
-  const ctx = typeof args.context === "number" ? args.context : undefined;
+/** Filter flags shared by the search pass and the exact-count pass. */
+function baseRgArgs(args: Record<string, unknown>): string[] {
   const rg: string[] = ["--no-heading", "--color", "never"];
-
   if (args.case_insensitive) rg.push("-i");
   if (args.type) rg.push("--type", String(args.type));
   if (args.glob) rg.push("--glob", String(args.glob));
+  return rg;
+}
+
+function buildRgArgs(args: Record<string, unknown>): string[] {
+  const mode = modeOf(args);
+  const rg = baseRgArgs(args);
 
   if (mode === "files_with_matches") rg.push("-l");
   else if (mode === "count") rg.push("-c");
-  else if (mode === "content") { rg.push("-n"); if (ctx !== undefined) rg.push("-C", String(ctx)); }
+  else if (mode === "content") {
+    rg.push("-n");
+    const ctx = contextLines(args, mode);
+    // ctx 0 (explicit) omits -C entirely: plain `file:line:text`, no `--`
+    // separators — identical to the pre-default behavior.
+    if (ctx > 0) rg.push("-C", String(ctx));
+  }
 
   // `--` ends option parsing so a pattern (or path) that begins with a dash —
   // e.g. a CSS custom-property search like `--(color|brand)` — is never
   // mistaken for a flag.
-  rg.push("--", pattern, searchRoot(args));
+  rg.push("--", String(args.pattern), searchRoot(args));
+  return rg;
+}
+
+/** Same pattern/filters/root as the search pass, but `-c` (matched-line
+ *  counts per file). Feeds the exact match_count for context-mode results. */
+function buildRgCountArgs(args: Record<string, unknown>): string[] {
+  const rg = baseRgArgs(args);
+  rg.push("-c", "--", String(args.pattern), searchRoot(args));
   return rg;
 }
 
@@ -118,136 +126,108 @@ export type ExecFileLike = (
 const defaultExec: ExecFileLike = (file, args, options, callback) =>
   execFile(file, [...args], options, callback);
 
+/** One rg invocation through the injectable seam; never rejects — callers
+ *  discriminate on the returned error. */
+function execRgOnce(
+  exec: ExecFileLike,
+  rgArgs: string[],
+  signal?: AbortSignal,
+): Promise<{ error: ExecError | null; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = exec(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout, stderr) =>
+      resolve({ error, stdout, stderr }));
+    child.stdin?.end();
+  });
+}
+
+/**
+ * Exact matched-line count for context-mode results. The rendered stream mixes
+ * match lines (`path:N:text`) with context lines (`path-N-text`) whose TEXT
+ * can itself embed `:12:`-shaped locators (timestamps, stack traces, source
+ * refs), so no per-line parse of the rendered output is robust — ask rg itself
+ * with a second `-c` pass over the identical pattern/filters/root. Its `path:N`
+ * lines parse on the LAST colon, immune to Windows drive letters. Returns null
+ * (metadata omitted) on any anomaly — an honest gap beats an inflated count.
+ *
+ * ACCEPTED TRADE-OFF — do NOT "optimize" this second spawn away: it costs
+ * milliseconds against the multi-second inference round trips the turn-cost
+ * campaign attacks, and the count the model plans against must be correct.
+ */
+async function rgMatchCount(
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+  exec: ExecFileLike = defaultExec,
+): Promise<number | null> {
+  const { error, stdout } = await execRgOnce(exec, buildRgCountArgs(args), signal);
+  const out = (stdout || "").trim();
+  const code = error?.code;
+  // Exit 2 WITH output = counts for the readable subtree (mirrors the
+  // partial-results branch of the search pass); any other error is an anomaly.
+  if (!out || (error && code !== 1 && code !== 2)) return null;
+  let total = 0;
+  for (const line of out.split("\n")) {
+    const n = Number(line.slice(line.lastIndexOf(":") + 1));
+    if (!Number.isInteger(n) || n < 0) return null;
+    total += n;
+  }
+  return total;
+}
+
 /** Exported for tests — the tool routes searches through this. */
-export function runRg(
+export async function runRg(
   args: Record<string, unknown>,
   limit: number,
   signal?: AbortSignal,
   exec: ExecFileLike = defaultExec,
 ): Promise<ToolResult> {
-  const rgArgs = buildRgArgs(args);
-  return new Promise((resolve, reject) => {
-    const child = exec(ripgrepBin(), rgArgs, { maxBuffer: 10 * 1024 * 1024, signal }, (error, stdout, stderr) => {
-      if (signal?.aborted) return resolve(err("Aborted"));
-      // Error discrimination (rg's documented exit codes): 1 = no matches
-      // (not a failure); ENOENT = rg not installed (reject → Node fallback);
-      // maxBuffer overflow = usable-but-truncated output; anything else
-      // (exit 2 = bad regex / unreadable path, other errnos) is a real error —
-      // never round it down to "No matches found."
-      const code = error?.code;
-      const truncated = code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-      const out = (stdout || "").trim();
-      const snippet = (stderr || "").trim().split("\n")[0]?.slice(0, 300) ?? "";
-      if (error && code === "ENOENT") return reject(error);
-      // rg exits 2 whenever ANY error occurred during the search — even when
-      // it found and printed real matches (e.g. one unreadable subdirectory in
-      // an otherwise-searchable tree). Partial results are results: return
-      // them with a warning. Only exit 2 with EMPTY stdout is a hard failure.
-      const partial = code === 2 && out !== "";
-      if (error && code !== 1 && !truncated && !partial) {
-        return resolve(err(
-          `grep failed: ripgrep exited with ${String(code ?? error.message)}` +
-          (snippet ? ` — ${snippet}` : ""),
-        ));
-      }
-      // rg exits with code 1 when no matches — that's not an error
-      if (!out) return resolve(ok("No matches found."));
-      const body = truncate(out.split("\n"), limit);
-      const warning = truncated
-        ? "\nWARNING: output exceeded the buffer cap — this list is TRUNCATED; narrow the path or use a more specific pattern."
-        : partial
-          ? `\nWARNING: some paths could not be searched${snippet ? ` (${snippet})` : ""} — results may be incomplete.`
-          : "";
-      resolve(ok(body + warning));
-    });
-    child.stdin?.end();
-  });
-}
-
-// ── Node.js fallback ──
-
-async function* walkDir(dir: string, typeFilter?: string, globFilter?: string): AsyncGenerator<string> {
-  let entries;
-  try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === ".git") continue;
-      yield* walkDir(full, typeFilter, globFilter);
-    } else if (e.isFile()) {
-      if (typeFilter && extname(e.name).slice(1) !== typeFilter) continue;
-      if (globFilter) {
-        // Escape every regex metacharacter first (so `+`, `(`, `[`… in a glob
-        // are literal), THEN turn the surviving `*` into `.*`. The old version
-        // only escaped `.`, so other metachars leaked into the pattern.
-        const escaped = globFilter.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-        const re = new RegExp("^" + escaped + "$");
-        if (!re.test(e.name)) continue;
-      }
-      yield full;
-    }
-  }
-}
-
-// JS RegExp rejects ripgrep/PCRE-style inline flags like `(?i)` with "Invalid
-// group", so a case-insensitive search ripgrep accepts dies only when rg is
-// absent and this fallback runs. Lift a LEADING inline-flag group into real
-// RegExp flags (merging the case_insensitive option) so the two paths behave
-// alike. Exported for testing.
-export function parsePattern(raw: string, caseInsensitive: boolean): { source: string; flags: string } {
-  const flags = new Set<string>();
-  if (caseInsensitive) flags.add("i");
-  let source = raw;
-  const lead = /^\(\?([ims]+)\)/.exec(source);
-  if (lead) {
-    for (const f of lead[1]) flags.add(f);
-    source = source.slice(lead[0].length);
-  }
-  return { source, flags: [...flags].join("") };
-}
-
-async function fallbackSearch(args: Record<string, unknown>, limit: number): Promise<ToolResult> {
-  let pattern: RegExp;
-  try {
-    const { source, flags } = parsePattern(String(args.pattern), Boolean(args.case_insensitive));
-    pattern = new RegExp(source, flags);
-  } catch (e) {
+  const { error, stdout, stderr } = await execRgOnce(exec, buildRgArgs(args), signal);
+  if (signal?.aborted) return err("Aborted", baseMeta(args));
+  // Error discrimination (rg's documented exit codes): 1 = no matches
+  // (not a failure); ENOENT = rg not installed (reject → Node fallback);
+  // maxBuffer overflow = usable-but-truncated output; anything else
+  // (exit 2 = bad regex / unreadable path, other errnos) is a real error —
+  // never round it down to "No matches found."
+  const code = error?.code;
+  const truncated = code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  const out = (stdout || "").trim();
+  const snippet = (stderr || "").trim().split("\n")[0]?.slice(0, 300) ?? "";
+  if (error && code === "ENOENT") throw error;
+  // rg exits 2 whenever ANY error occurred during the search — even when
+  // it found and printed real matches (e.g. one unreadable subdirectory in
+  // an otherwise-searchable tree). Partial results are results: return
+  // them with a warning. Only exit 2 with EMPTY stdout is a hard failure.
+  const partial = code === 2 && out !== "";
+  if (error && code !== 1 && !truncated && !partial) {
     return err(
-      `Invalid regex pattern: ${(e as Error).message}. ` +
-      "Tip: use the case_insensitive option instead of an inline (?i) flag.",
+      `grep failed: ripgrep exited with ${String(code ?? error.message)}` +
+      (snippet ? ` — ${snippet}` : ""),
+      baseMeta(args),
     );
   }
-  const mode = (args.output_mode as OutputMode) || "files_with_matches";
-  const ctx = typeof args.context === "number" ? (args.context as number) : 0;
-  const root = searchRoot(args);
-  const lines: string[] = [];
-  const onProgress = args._onProgress as ((msg: string) => void) | undefined;
-
-  const rootStat = await stat(root).catch(() => null);
-  const files = rootStat?.isFile() ? [root] : walkDir(root, args.type as string, args.glob as string);
-
-  let scanned = 0;
-  for await (const file of files) {
-    if (lines.length >= limit) break;
-    scanned++;
-    if (onProgress && scanned % 50 === 0) onProgress(`Searched ${scanned} files, ${lines.length} results so far...`);
-    let content: string;
-    try { content = await readFile(file, "utf-8"); } catch { continue; }
-    const fileLines = content.split("\n");
-    const matches = fileLines.map((l, i) => pattern.test(l) ? i : -1).filter((i) => i >= 0);
-    if (matches.length === 0) continue;
-
-    if (mode === "files_with_matches") { lines.push(file); continue; }
-    if (mode === "count") { lines.push(`${file}:${matches.length}`); continue; }
-    for (const idx of matches) {
-      const start = Math.max(0, idx - ctx);
-      const end = Math.min(fileLines.length - 1, idx + ctx);
-      for (let i = start; i <= end; i++) lines.push(`${file}:${i + 1}:${fileLines[i]}`);
-      if (ctx > 0) lines.push("--");
-    }
-  }
-
-  return ok(lines.length === 0 ? "No matches found." : truncate(lines, limit));
+  // rg exits with code 1 when no matches — that's not an error. Kept
+  // LEGACY-shaped (no metadata) deliberately: with metadata the renderer
+  // prepends a status header, and two guards match the RENDERED content
+  // with start-anchored regexes — isEmptyGrepResult (agent-guards/
+  // cleanup-verify.ts) and EMPTY_RESULT_RE (errors/classifier.ts, feeds
+  // the dead-end detector). Verbatim keeps the sentinel parseable, and a
+  // headerless result already parses as status "ok", which is correct.
+  if (!out) return ok("No matches found.");
+  const allLines = out.split("\n");
+  const body = truncate(allLines, limit);
+  const warning = truncated
+    ? "\nWARNING: output exceeded the buffer cap — this list is TRUNCATED; narrow the path or use a more specific pattern."
+    : partial
+      ? `\nWARNING: some paths could not be searched${snippet ? ` (${snippet})` : ""} — results may be incomplete.`
+      : "";
+  const mode = modeOf(args);
+  // ctx 0 renders match lines only, so the rendered line count IS the exact
+  // match count; with context the exact count comes from the second -c pass.
+  const matchCount = mode !== "content" ? undefined
+    : contextLines(args, mode) === 0 ? allLines.length
+    : await rgMatchCount(args, signal, exec);
+  const meta = resultMeta(args, allLines, truncated || allLines.length > limit, matchCount);
+  if (partial) meta.partial = true;
+  return ok(body + warning, meta);
 }
 
 // ── Tool definition ──
@@ -256,7 +236,9 @@ export const grepTool: ToolDefinition = {
   name: "grep",
   description:
     "Search file contents using regex. Uses ripgrep when available, falls back to Node.js recursive search. " +
-    "Supports file type and glob filtering, context lines, and three output modes.",
+    "Supports file type and glob filtering, and three output modes. In content mode each hit includes " +
+    "4 surrounding lines of context by default (override with `context`; 0 = match lines only), so one " +
+    "call usually answers where AND what — follow-up reads of hit files are rarely needed.",
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -267,7 +249,7 @@ export const grepTool: ToolDefinition = {
       type:             { type: "string", description: "File type filter, e.g. 'ts', 'py', 'js'" },
       glob:             { type: "string", description: "Glob pattern to filter files, e.g. '*.tsx'" },
       output_mode:      { type: "string", enum: ["content", "files_with_matches", "count"], description: "Output mode (default: files_with_matches)" },
-      context:          { type: "number", description: "Lines of context around each match" },
+      context:          { type: "number", description: "Lines of context around each match (content mode defaults to 4; pass 0 for match lines only)" },
       head_limit:       { type: "number", description: "Max output lines (default 250)" },
       case_insensitive: { type: "boolean", description: "Case insensitive search" },
     },
@@ -293,5 +275,5 @@ export const grepToolEnhancements = {
 };
 
 export function prompt(): string {
-  return "ALWAYS use grep for content search. NEVER use bash grep/rg. Supports regex, file type filtering, multiple output modes.";
+  return "ALWAYS use grep for content search. NEVER use bash grep/rg. Supports regex, file type filtering, multiple output modes. content-mode hits include surrounding context lines — answer from them instead of reading each hit file.";
 }

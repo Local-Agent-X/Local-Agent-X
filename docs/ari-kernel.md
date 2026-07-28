@@ -8,7 +8,8 @@ It ships vendored in [`packages/arikernel/`](../packages/arikernel/) (core / run
 taint-tracker / policy-engine / audit-log / tool-executors) and is wired into the
 runtime by [`src/ari-kernel/`](../src/ari-kernel/). No tool execution path bypasses it
 — a new tool is default-deny until it has an explicit classification + allow rule
-([`src/tool-policy/tool-policies.data.ts`](../src/tool-policy/tool-policies.data.ts)).
+(one entry in the matching `src/tool-policy/tool-policies.<domain>.ts` fragment;
+[`tool-policies.data.ts`](../src/tool-policy/tool-policies.data.ts) is just the merge barrel).
 
 ## What it does
 

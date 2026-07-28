@@ -28,7 +28,13 @@ export interface GeminiNativeRequest {
   tools: TransportTool[];
   signal: AbortSignal;
   temperature?: number;
-  /** Maps the canonical reasoning_effort to Gemini's thinking budget. */
+  /**
+   * When true, the request carries generationConfig.thinkingConfig:
+   * {includeThoughts:true} so Gemini streams "thought" parts. Callers derive
+   * it from a model-name check (/gemini-(2.5|3)/ — chat-runner/register-adapter.ts,
+   * provider-adapter-factory.ts); it does NOT read the canonical
+   * reasoning_effort, and no thinking budget is set.
+   */
   thinking?: boolean;
   forcedToolChoice?: { type: "tool"; name: string };
 }

@@ -73,14 +73,21 @@ Don't skip. Try the cheapest step first. Only escalate when the one below return
 - **Runtime state changes must broadcast.** Any `/api/*` POST that mutates shared state (settings, provider, theme, session) must call `broadcastAll({ type: "settings_changed", ... })` so connected UI tabs reflect the change. Silent writes to `settings.json` are a bug — they desync the UI.
 - **Tool results route through `src/tool-execution/`.** Don't bypass it — Ari + policy + approval + RBAC all live there.
 - **External content flows through `sanitize.ts` wrappers.** Never paste raw web content into the model context without `wrapExternalContent()`.
-- **Agent-facing tools belong in the tool registry (`src/tools/` definitions, wired in `src/tools/registry-build.ts`).** Model can only see what's registered. Register → policy rule in `tool-policies.data.ts` → done.
+- **Agent-facing tools belong in the tool registry (`src/tools/` definitions, wired in `src/tools/registry-build.ts`).** Model can only see what's registered. Registering a new tool means touching every applicable site:
+  1. `allTools` in `src/tools/registry-build.ts` — the definition itself.
+  2. One policy entry in the matching `src/tool-policy/tool-policies.<domain>.ts` fragment (`core` = file/retrieval tools; also `network` / `memory` / `orchestration` / `apps` / `globs`). `tool-policies.data.ts` is the merge barrel — never edit it.
+  3. `AUDIENCES_BY_TOOL` in `src/tools/audience-map.ts` — absent means no audience is stamped and the resolver never surfaces the tool (invisible except by literal call).
+  4. `ARI_ACTION_MAP` in `src/tool-execution/ari-action-map.ts` — an unmapped non-shell tool falls through to action `"exec"`, which the kernel schema rejects → hard block under `ariRequired`.
+  5. Capability sets in `src/tool-registry.ts` (`SENSITIVE_READ_TOOLS`, `WORKTREE_PATH_TOOLS`, …) if the tool reads sensitive content or takes a `path` arg.
+  6. `SESSION_SCOPED_TOOLS` in `src/tool-execution/resolve-tool.ts` if the tool needs the trusted `_sessionId` stamped into its args.
+  7. Optional: `DEFAULT_TIMEOUTS` in `src/tool-execution/tool-timeout.ts` — otherwise the generic fallback timeout applies.
 
 ---
 
 ## Security posture
 
 - **Ari Kernel is in-process** (see `src/ari-kernel/`). Every tool call runs through it. Don't add tool execution paths that bypass.
-- **Default-deny policy** — new tools need an explicit allow entry in the unified policy table `src/tool-policy/tool-policies.data.ts` (colocated with the tool's kernel class, risk tier, and rate limit).
+- **Default-deny policy** — new tools need an explicit allow entry in the unified policy table: one entry in the matching `src/tool-policy/tool-policies.<domain>.ts` fragment (colocated with the tool's kernel class, risk tier, and rate limit). `tool-policies.data.ts` is the merge barrel over the fragments — never edit it.
 - **Secrets never in source, logs, or tool results.** Use `{{SECRET_NAME}}` placeholders; server resolves from `secretsStore`.
 - **No outbound network from tools without going through SSRF-guarded egress** (`http_request`, `web_fetch`).
 

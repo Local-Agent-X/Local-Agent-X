@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 64 top-level dirs · 64 live · 0 with no live importer · 1475 non-test source files · 0 god files (>400 LOC).
+**Totals:** 64 top-level dirs · 64 live · 0 with no live importer · 1476 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -60,7 +60,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 9 | 20 | L |  |
 | `src/server/` *(entrypoint)* | 9 | 42 | XL |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
-| `src/sync/` | 8 | 18 | L |  |
+| `src/sync/` | 8 | 19 | L |  |
 | `src/auto-build/` | 7 | 52 | XL |  |
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |

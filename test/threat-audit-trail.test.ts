@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CryptoAuditTrail, getSharedAuditTrail } from "../src/threat/audit-trail.js";
-import { _resetAuditKeyCacheForTests } from "../src/app-runtime/audit-signing.js";
+import { _resetAuditKeyCacheForTests, hasPersistedAuditKey } from "../src/app-runtime/audit-signing.js";
 
 let dataDir: string;
 let prevDataDir: string | undefined;
@@ -497,5 +497,302 @@ describe("CryptoAuditTrail.verify — fail CLOSED against filesystem-only forger
     const r = CryptoAuditTrail.verify(path);
     expect(r.valid).toBe(false);
     expect(r.anchorChecked).toBe(true);
+  });
+});
+
+describe("CryptoAuditTrail — held-handle append path", () => {
+  // record() used to re-open BOTH the daily file and the anchor file on every
+  // entry (plus stat the era marker). The open, not the write, is what costs —
+  // measured over 1500-record bursts on this box, reopen-per-append runs
+  // 1265-2101µs/record against 128-176µs through held handles (revalidation
+  // included) — so the write path now holds append handles across records. These
+  // tests pin the two things that must survive that change: the bytes on disk
+  // are unchanged, and every record is still DURABLE before record() returns.
+
+  function rows(path: string): Array<Record<string, unknown>> {
+    return readFileSync(path, "utf-8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>);
+  }
+  function anchorPathOf(mainPath: string): string {
+    return mainPath.replace(/\.jsonl$/, ".anchors.jsonl");
+  }
+
+  it("a burst through the held handle is byte-identical to the reopen-per-record path", () => {
+    // Differential oracle: a FRESH CryptoAuditTrail per record resumes the chain
+    // from disk and reopens the file for its single append — exactly the
+    // reopen-per-append behavior the held handle replaces. Same inputs, same
+    // frozen clock, so the chain heads and the on-disk bytes of both files must
+    // match exactly. Any divergence (a dropped record, a re-rooted chain, a
+    // buffered tail that never landed) fails here.
+    isolateKeyedEnv();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-07-28T12:00:00.000Z"));
+    const coldDir = mkdtempSync(join(tmpdir(), "lax-audit-cold-"));
+    try {
+      const inputs = Array.from({ length: 24 }, (_, i) => ({
+        sessionId: "s", event: "tool_executed", toolName: "bash",
+        decision: (i % 3 === 0 ? "block" : "allow") as "block" | "allow",
+        reason: `burst-${i}`, threatScore: i,
+      }));
+
+      const held = new CryptoAuditTrail(dataDir);
+      const heldHeads = inputs.map(e => held.record(e).hash);
+      const reopenHeads = inputs.map(e => new CryptoAuditTrail(coldDir).record(e).hash);
+      expect(heldHeads).toEqual(reopenHeads);
+
+      const heldMain = dailyAuditPath();
+      const reopenMain = join(coldDir, "audit", "2026-07-28.jsonl");
+      expect(readFileSync(heldMain, "utf-8")).toBe(readFileSync(reopenMain, "utf-8"));
+      expect(readFileSync(anchorPathOf(heldMain), "utf-8")).toBe(readFileSync(anchorPathOf(reopenMain), "utf-8"));
+      expect(CryptoAuditTrail.verify(heldMain).valid).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      rmSync(coldDir, { recursive: true, force: true });
+    }
+  });
+
+  it("a 200-record burst stays gapless, monotonic and anchor-aligned", () => {
+    const a = new CryptoAuditTrail(dataDir);
+    for (let i = 0; i < 200; i++) {
+      a.record({ sessionId: "s", event: "tick", decision: "allow", reason: `r${i}` });
+    }
+    const main = dailyAuditPath();
+    const entries = rows(main);
+    const anchors = rows(anchorPathOf(main));
+    expect(entries).toHaveLength(200);
+    expect(anchors).toHaveLength(200);
+    for (let i = 0; i < 200; i++) {
+      expect(entries[i].seq).toBe(i);
+      if (i > 0) expect(entries[i].prevHash).toBe(entries[i - 1].hash);
+      expect(anchors[i].seq).toBe(i);
+      expect(anchors[i].count).toBe(i + 1);
+      expect(anchors[i].chainHash).toBe(entries[i].hash);
+    }
+    const r = CryptoAuditTrail.verify(main);
+    expect(r.valid).toBe(true);
+    expect(r.total).toBe(200);
+    expect(r.anchorChecked).toBe(true);
+  });
+
+  it("each record is on disk in BOTH files before record() returns (no buffered tail)", () => {
+    // The invariant that rules a write buffer OUT of this subsystem. A deferred
+    // or batched flush drops the chain tail from the main file AND the anchor
+    // file together on a crash, and verifyAnchors reconciles those two only
+    // against each other — a consistently-shortened pair verifies as a clean
+    // chain, so the loss would be SILENT, which is the exact tail-truncation the
+    // anchor chain exists to catch. Reading in the same tick with no flush call
+    // is what keeps that hole shut.
+    const a = new CryptoAuditTrail(dataDir);
+    for (let i = 0; i < 5; i++) {
+      const written = a.record({ sessionId: "s", event: "tick", decision: "allow", reason: `r${i}` });
+      const main = dailyAuditPath();
+      const entries = rows(main);
+      expect(entries).toHaveLength(i + 1);
+      expect(entries[i].hash).toBe(written.hash);
+      expect(rows(anchorPathOf(main))).toHaveLength(i + 1);
+    }
+  });
+
+  it("the daily rollover repoints the held handle at the new day's file", () => {
+    // A handle held across midnight would keep appending day 2 into day 1's
+    // still-open file, silently splicing two chains into one log. The rollover
+    // must drop the handle so the next record reopens against the new date.
+    isolateKeyedEnv();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-07-28T23:59:59.000Z"));
+      const a = new CryptoAuditTrail(dataDir);
+      a.record({ sessionId: "s", event: "tick", decision: "allow", reason: "day-1" });
+      vi.setSystemTime(new Date("2026-07-29T00:00:01.000Z"));
+      a.record({ sessionId: "s", event: "tick", decision: "allow", reason: "day-2" });
+
+      const day1 = join(dataDir, "audit", "2026-07-28.jsonl");
+      const day2 = join(dataDir, "audit", "2026-07-29.jsonl");
+      const d1 = rows(day1);
+      const d2 = rows(day2);
+      expect(d1).toHaveLength(1);
+      expect(d1[0].reason).toBe("day-1");
+      expect(d2).toHaveLength(1);
+      expect(d2[0].reason).toBe("day-2");
+      // The new day restarts at genesis rather than chaining off day 1.
+      expect(d2[0].seq).toBe(0);
+      expect(d2[0].prevHash).toBe("GENESIS");
+      expect(rows(anchorPathOf(day2))).toHaveLength(1);
+      expect(CryptoAuditTrail.verify(day1).valid).toBe(true);
+      expect(CryptoAuditTrail.verify(day2).valid).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("CryptoAuditTrail — held handles must not outlive their files", () => {
+  // Both cases below share one root cause: the old open-per-record path was
+  // implicitly SELF-HEALING (it recreated a deleted file and re-sealed a deleted
+  // era marker on the very next append), and holding the append handle silently
+  // dropped that. Neither assertion here passes against the held-handle code
+  // without the revalidation tick — that is the whole point of writing them.
+
+  function anchorPathOf(mainPath: string): string {
+    return mainPath.replace(/\.jsonl$/, ".anchors.jsonl");
+  }
+
+  it("T1: deleting BOTH audit files mid-run is DETECTED, not silently swallowed", () => {
+    // The threat model is a filesystem-only attacker, and in a tamper-evident
+    // log the party most likely to delete the log is the attacker. Against a
+    // held handle with no revalidation, record() keeps writing into the ORPHANED
+    // inode: the path never reappears, every subsequent row is unrecoverable,
+    // and verify() short-circuits on the missing file to {valid:true, total:0} —
+    // a clean bill of health over an erased log.
+    isolateKeyedEnv();
+    const a = new CryptoAuditTrail(dataDir);
+    for (let i = 0; i < 3; i++) {
+      a.record({ sessionId: "s", event: "x", decision: "block", reason: `incriminating-${i}` });
+    }
+    const path = dailyAuditPath();
+    rmSync(path, { force: true });
+    rmSync(anchorPathOf(path), { force: true });
+
+    // Keep recording. The burst deliberately runs past the revalidation cap: the
+    // tick is "every N records OR M ms" and a synchronous burst trips only the
+    // record leg, so N records of loss IS the stated exposure window. Detection
+    // is bounded, not instant, and the test asserts the bound rather than
+    // pretending the window is zero.
+    for (let i = 0; i < 24; i++) {
+      a.record({ sessionId: "s", event: "x", decision: "block", reason: `after-delete-${i}` });
+    }
+
+    // THE security property, asserted first: pre-fix this returned exactly
+    // {valid:true, total:0} — a clean bill of health over an erased log.
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(r.brokenAt).toBe(0);
+    expect(r.total).toBeGreaterThan(0);
+
+    // The path is live again and the rows written after the tick are on disk —
+    // an attacker's erasure no longer runs to the end of the day.
+    expect(existsSync(path)).toBe(true);
+    const survivors = readFileSync(path, "utf-8").trim().split("\n").filter(Boolean);
+    expect(survivors.length).toBeGreaterThan(0);
+
+    // And the recreated file is itself EVIDENCE: seq/prevHash keep running in
+    // memory across the reopen, so row 0 of the new file carries a non-GENESIS
+    // prevHash — precisely the re-root verify() catches above.
+    const first = JSON.parse(survivors[0]) as { prevHash: string; seq: number };
+    expect(first.prevHash).not.toBe("GENESIS");
+    expect(first.seq).toBeGreaterThan(0);
+  });
+
+  it("T3: unlink-and-REPLACE (a valid prefix dropped back at the path) is DETECTED", () => {
+    // The competent version of T1, and the reason mere existence is not enough.
+    // The attacker reads the log, unlinks both files, and immediately drops a
+    // valid PREFIX of each back at the same paths. existsSync() is satisfied, so
+    // a presence-only revalidation keeps feeding the orphaned inode and the
+    // on-disk pair stays a short, self-consistent, perfectly verifiable chain —
+    // every row after the cut erased with no evidence at all. The old
+    // open-per-record path caught this for free: it reopened BY PATH, so the
+    // next append landed in the replacement and re-rooted it visibly.
+    isolateKeyedEnv();
+    const a = new CryptoAuditTrail(dataDir);
+    for (let i = 0; i < 12; i++) {
+      a.record({ sessionId: "s", event: "x", decision: "block", reason: `incriminating-${i}` });
+    }
+    const path = dailyAuditPath();
+    const anchorPath = anchorPathOf(path);
+    const keptMain = readFileSync(path, "utf-8").trim().split("\n").slice(0, 3);
+    const keptAnchor = readFileSync(anchorPath, "utf-8").trim().split("\n").slice(0, 3);
+
+    // Unlink, then recreate at the same path with the first 3 rows of each.
+    rmSync(path, { force: true });
+    rmSync(anchorPath, { force: true });
+    writeFileSync(path, keptMain.join("\n") + "\n");
+    writeFileSync(anchorPath, keptAnchor.join("\n") + "\n");
+    expect(existsSync(path)).toBe(true); // presence alone says "nothing happened"
+
+    for (let i = 0; i < 24; i++) {
+      a.record({ sessionId: "s", event: "x", decision: "block", reason: `after-swap-${i}` });
+    }
+
+    // Identity, not presence, is what catches it: once the handle is recognised
+    // as pointing at a dead inode the next append re-roots the replacement file.
+    const r = CryptoAuditTrail.verify(path);
+    expect(r.valid).toBe(false);
+    expect(readFileSync(path, "utf-8").trim().split("\n").length).toBeGreaterThan(3);
+  });
+
+  it("T2: deleting the SEED FILE and the era marker does not open a downgrade forgery", () => {
+    // The marker used to be re-sealed on EVERY record from the cached in-memory
+    // key. Latching it to once per daily file hands it to an attacker who
+    // deletes it AFTER the first record — a latch has already fired by then.
+    // That matters because hasPersistedAuditKey() reads the seed FILE from disk:
+    // delete audit-key.enc as well and key-presence goes false while the live
+    // writer keeps signing happily from its cache. Seed file gone + marker gone
+    // + every row rewritten as legacy = all three era signals down at once, and
+    // verify() accepts an unkeyed plain-SHA-256 forgery of the whole log.
+    process.env.LAX_DATA_DIR = dataDir;
+    delete process.env.LAX_AUDIT_KEY;
+    // A FILE-backed seed, not the env override: hasPersistedAuditKey() returns
+    // true unconditionally for LAX_AUDIT_KEY/_FILE, so only the on-disk seed can
+    // be made to disappear. Force the keychain file fallback so minting the
+    // sealed seed touches no OS keychain.
+    const prevNoKeychain = process.env.LAX_DISABLE_OS_KEYCHAIN;
+    process.env.LAX_DISABLE_OS_KEYCHAIN = "1";
+    _resetAuditKeyCacheForTests();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-07-28T12:00:00.000Z"));
+      const a = new CryptoAuditTrail(dataDir);
+      a.record({ sessionId: "s", event: "x", decision: "block", reason: "incriminating", threatScore: 99 });
+      const path = dailyAuditPath();
+      const markerPath = join(dataDir, "audit", ".hmac-v1.marker");
+      expect(existsSync(join(dataDir, "audit-key.enc"))).toBe(true);
+      expect(existsSync(markerPath)).toBe(true);
+
+      // Attacker removes the sealed seed and the era marker. The live process
+      // still holds the key in memory, so it keeps emitting valid hmac-v1 rows
+      // and never notices. Records arrive sparsely (400ms apart, a realistic
+      // tool-call cadence), which is the wall-clock leg of the tick.
+      rmSync(join(dataDir, "audit-key.enc"), { force: true });
+      rmSync(markerPath, { force: true });
+      for (let i = 0; i < 5; i++) {
+        vi.setSystemTime(new Date(Date.now() + 400));
+        a.record({ sessionId: "s", event: "x", decision: "block", reason: `after-${i}` });
+      }
+
+      // Now the forgery: rewrite the entire log as a self-consistent plain
+      // SHA-256 legacy chain (no key needed, no hashScheme tag) and drop the
+      // anchor. Nothing keyed survives on disk except the re-sealed marker.
+      rmSync(anchorPathOf(path), { force: true });
+      let prev = "GENESIS";
+      const forged: string[] = [];
+      for (let i = 0; i < 6; i++) {
+        const e: Record<string, unknown> = {
+          seq: i, timestamp: new Date().toISOString(), sessionId: "s",
+          event: "x", decision: "allow", reason: "innocuous", prevHash: prev,
+        };
+        e.hash = createHash("sha256").update(JSON.stringify({
+          seq: e.seq, timestamp: e.timestamp, sessionId: e.sessionId, event: e.event,
+          toolName: undefined, decision: e.decision, reason: e.reason, prevHash: e.prevHash,
+        })).digest("hex");
+        prev = e.hash as string;
+        forged.push(JSON.stringify(e));
+      }
+      writeFileSync(path, forged.join("\n") + "\n");
+
+      // THE security property, asserted first: pre-fix this returned
+      // {valid:true, total:6} — the forged log accepted as authentic.
+      const r = CryptoAuditTrail.verify(path);
+      expect(r.valid).toBe(false);
+      expect(r.brokenAt).toBe(0);
+
+      // Why it holds: key-presence is gone and every surviving row is legacy, so
+      // the RE-SEALED marker is the only signal still keeping the era open — it
+      // has to carry the rejection on its own.
+      expect(hasPersistedAuditKey()).toBe(false);
+      expect(existsSync(markerPath)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      if (prevNoKeychain === undefined) delete process.env.LAX_DISABLE_OS_KEYCHAIN;
+      else process.env.LAX_DISABLE_OS_KEYCHAIN = prevNoKeychain;
+    }
   });
 });

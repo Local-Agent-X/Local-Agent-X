@@ -172,10 +172,16 @@ export function writeEraMarker(markerPath: string): void {
  * one that's forged/corrupt — keeps the era active and the legacy fallback
  * off-limits: presence is the fail-closed signal, and a present-but-MAC-invalid
  * marker is itself tamper evidence (we validate the sealed MAC here, but a bad
- * MAC keeps the era ACTIVE — it does not re-open the legacy path). A *deleted*
- * marker no longer downgrades anything: key-presence (hasPersistedAuditKey) and
- * surviving hmac-v1 row tags drive the era decision in verify(), so this is now
- * just one of three independent era signals, not the load-bearing one.
+ * MAC keeps the era ACTIVE — it does not re-open the legacy path).
+ *
+ * A *deleted* marker is one of three independent era signals going down, not a
+ * harmless one: key-presence (hasPersistedAuditKey) reads the seed FILE, and row
+ * tags live in the log the attacker is rewriting, so an attacker who deletes the
+ * seed file, the marker and the anchor and then rewrites every row as plain
+ * SHA-256 takes all three down together. That is why the writer re-seals this
+ * marker on a bounded cadence from its cached in-memory key (audit-trail.ts
+ * revalidate()) — the marker is the one signal that can be restored after the
+ * seed file is gone.
  */
 export function eraMarkerPresent(markerPath: string): boolean {
   if (existsSync(markerPath) === false) return false;

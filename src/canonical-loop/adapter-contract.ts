@@ -55,6 +55,15 @@ export interface TurnInput {
   providerState?: ProviderStateEnvelope;
   tools: ToolDescriptor[];
   /**
+   * Present ("mechanical") when this step is a mechanical continuation:
+   * turn > 0 and the trailing tool_result batch is all-successful
+   * file-mechanics tools (see canonical-loop/step-effort.ts, which is the
+   * single classifier). Additive v1 metadata — ABSENT means standard, i.e.
+   * exactly today's behavior. Adapters MAY down-shift reasoning effort on
+   * it and must NEVER up-shift; adapters that ignore it are unchanged.
+   */
+  stepEffortHint?: "mechanical";
+  /**
    * True when `messages` is an ephemerally COMPACTED view of op_messages
    * (compact-history.ts swapped older turns for a summary). Additive v1
    * metadata: adapters ignore it; turn-loop copies it onto the committed

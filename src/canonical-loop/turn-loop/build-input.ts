@@ -11,6 +11,7 @@ import { lastTurnUsage } from "../op-usage.js";
 import { getToolsForOp, getOpBaselineTokens } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
 import { resolveOpModel } from "../op-model.js";
+import { classifyStepEffort } from "../step-effort.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
 import { getSessionBaselineTokens } from "../session-baseline.js";
@@ -101,6 +102,12 @@ export async function buildTurnInput(
     const digest = buildSituationalAwareness(op, turnIdx);
     if (digest) input.messages = prependDigestToLastUser(input.messages, digest);
   }
+
+  // Per-step effort hint: a mechanical continuation (trailing all-ok
+  // file-mechanics tool_result batch, turn > 0) lets adapters down-shift
+  // reasoning effort for this step. Absent = standard = today's behavior.
+  // Classifier + kill switch (LAX_STEP_EFFORT=off) live in step-effort.ts.
+  if (classifyStepEffort(input) === "mechanical") input.stepEffortHint = "mechanical";
 
   return input;
 }

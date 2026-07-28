@@ -133,3 +133,80 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     expect(text).toBe("ship it");
   });
 });
+
+describe("buildTurnInput — per-step effort hint", () => {
+  let dir: string;
+  let prevEnv: string | undefined;
+  let opId: string;
+  let seq = 0;
+
+  function makeOp(): Op {
+    return { id: opId, type: "chat_turn", task: "fix the bug", lane: "build" } as unknown as Op;
+  }
+
+  // Seed the rows a real continuation turn replays: user ask, assistant
+  // tool-calling row (content.toolCalls — the adapters' finalized shape),
+  // then the pending tool_result batch (dispatch-tools.ts commit shape).
+  function seedContinuation(toolName: string, status: string): void {
+    appendOpMessage({
+      messageId: "u-0", opId, turnIdx: 0, seqInTurn: 0,
+      role: "user", content: { text: "fix the bug" }, createdAt: "2026-07-27T10:00:00.000Z",
+    });
+    appendOpMessage({
+      messageId: "a-0", opId, turnIdx: 0, seqInTurn: 1,
+      role: "assistant",
+      content: { text: "", toolCalls: [{ id: "tc-1", name: toolName, arguments: "{}" }] },
+      createdAt: "2026-07-27T10:00:01.000Z",
+    });
+    appendOpMessage({
+      messageId: "tr-0", opId, turnIdx: 0, seqInTurn: 2,
+      role: "tool_result",
+      content: { toolCallId: "tc-1", result: "file contents", status },
+      createdAt: "2026-07-27T10:00:02.000Z",
+    });
+  }
+
+  beforeEach(() => {
+    prevEnv = process.env.LAX_DATA_DIR;
+    dir = mkdtempSync(join(tmpdir(), "lax-buildinput-se-"));
+    process.env.LAX_DATA_DIR = dir;
+    opId = `op_bi_se_test_${seq++}`;
+  });
+
+  afterEach(() => {
+    try { rmSync(opDir(opId), { recursive: true, force: true }); } catch { /* ignore */ }
+    if (prevEnv === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = prevEnv;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("sets stepEffortHint on a mechanical continuation (all-ok file-mechanics batch)", async () => {
+    seedContinuation("read", "ok");
+    const input = await buildTurnInput(makeOp(), 1, null);
+    expect(input.stepEffortHint).toBe("mechanical");
+  });
+
+  it("omits stepEffortHint when the trailing batch has a non-mechanical tool", async () => {
+    seedContinuation("bash", "ok");
+    const input = await buildTurnInput(makeOp(), 1, null);
+    expect(input.stepEffortHint).toBeUndefined();
+  });
+
+  it("omits stepEffortHint when the mechanical tool failed", async () => {
+    seedContinuation("read", "error");
+    const input = await buildTurnInput(makeOp(), 1, null);
+    expect(input.stepEffortHint).toBeUndefined();
+  });
+
+  it("a pending redirect suppresses the hint even over a mechanical batch — the re-plan step keeps full effort", async () => {
+    // Redirects reach the model OUTSIDE `messages` (adapters append the
+    // "[REDIRECT] …" user row at request build), so the trailing-batch rule
+    // alone would misclassify this step as mechanical.
+    seedContinuation("read", "ok");
+    const input = await buildTurnInput(makeOp(), 1, {
+      instructionId: "ri-1", text: "stop — do X instead", receivedAt: "2026-07-27T10:00:03.000Z",
+    });
+    expect(input.pendingRedirect?.text).toBe("stop — do X instead"); // redirect still flows to the adapter
+    expect(input.stepEffortHint).toBeUndefined();
+  });
+});

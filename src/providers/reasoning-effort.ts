@@ -23,6 +23,20 @@ export function normalizeReasoningEffort(v: unknown): ReasoningEffort {
     : DEFAULT_REASONING_EFFORT;
 }
 
+/**
+ * Clamp an effort to a ceiling, ordered per REASONING_EFFORTS. Pure min():
+ * never returns a value ABOVE the input effort — a session already below the
+ * ceiling passes through untouched. Used by per-step routing to compute
+ * min(sessionEffort, "low") for mechanical steps; "low" (not "minimal") is
+ * the routing floor because gpt-5.6 rejects minimal (effortForCodexModel,
+ * src/codex-client/request.ts).
+ */
+export function capEffort(effort: ReasoningEffort, ceiling: ReasoningEffort): ReasoningEffort {
+  return REASONING_EFFORTS.indexOf(effort) <= REASONING_EFFORTS.indexOf(ceiling)
+    ? effort
+    : ceiling;
+}
+
 /** Chat Completions accepts minimal|low|medium|high — clamp xhigh to high. */
 export function effortForChatCompletions(
   e: ReasoningEffort,

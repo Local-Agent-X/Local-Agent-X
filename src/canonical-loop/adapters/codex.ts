@@ -19,6 +19,7 @@ import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 import { classifyModelStop } from "./model-stop.js";
 import { withTransportRetry } from "./transport-retry.js";
+import { resolveStepReasoningEffort } from "../step-effort.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.codex");
@@ -117,7 +118,12 @@ export class CodexAdapter implements Adapter {
       maxTokens: this.opts.maxTokens,
       sessionId: this.opts.sessionId,
       previousResponseId: prevResponseId,
-      reasoningEffort: this.opts.reasoningEffort,
+      // Per-step routing: mechanical steps cap at "medium", NOT the default
+      // "low" ceiling — this endpoint measured ~40% EMPTY responses at "low"
+      // (codex-client/request.ts:72-73), and the empty-turn recovery would
+      // retry at the same capped effort then die as a false "session
+      // expired". Never up-shifts. See step-effort.ts.
+      reasoningEffort: resolveStepReasoningEffort(input.stepEffortHint, this.opts.reasoningEffort, "medium"),
       forcedToolChoice,
     };
 

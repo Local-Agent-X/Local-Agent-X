@@ -49,6 +49,7 @@ import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-on
 import { assessRequestFit, describeUnfittableRequest } from "../../context-manager/request-fit.js";
 import { resolveContextWindow } from "../../context-manager/model-windows.js";
 import { proseLooksLikeToolCall, annotatePersistentNarration } from "./tool-call-text-extractor.js";
+import { resolveStepReasoningEffort } from "../step-effort.js";
 import { classifyModelStop } from "./model-stop.js";
 
 export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
@@ -131,7 +132,7 @@ export class OpenAICompatAdapter implements Adapter {
       })) as ProviderRequest["tools"],
       temperature: this.opts.temperature ?? 0.7,
       maxTokens: this.opts.maxTokens,
-      reasoningEffort: this.opts.reasoningEffort,
+      reasoningEffort: resolveStepReasoningEffort(input.stepEffortHint, this.opts.reasoningEffort),
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
       ...(forcedInList && forced

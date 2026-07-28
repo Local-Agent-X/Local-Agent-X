@@ -48,7 +48,19 @@ export interface OneFactResult {
 }
 
 function formatBullet(content: string, kind: FactKind, confidence: number): string {
-  return `- ${KIND_PREFIX[kind]}(c=${confidence.toFixed(2)}) ${content.trim()}`;
+  // A fact is ONE line by invariant: retain() is a line-oriented bullet
+  // parser, so an interior newline in model-controlled content would smuggle
+  // extra "- X(c=...)" rows past the per-fact gate — forged kind/confidence
+  // rows the caller never reports. Collapse newline runs to a single space
+  // BEFORE the bullet is assembled.
+  return `- ${KIND_PREFIX[kind]}(c=${confidence.toFixed(2)}) ${content.trim().replace(/\s*[\r\n]+\s*/g, " ")}`;
+}
+
+// Backstop for the single-line invariant that survives future format drift:
+// if a bullet somehow still spans lines, refuse BEFORE retain() can parse
+// attacker-shaped extra rows out of it. Nothing is written on this path.
+function bulletSpansLines(bullet: string): boolean {
+  return bullet.includes("\n");
 }
 
 export function rememberFact(
@@ -63,6 +75,9 @@ export function rememberFact(
   const kind = opts?.kind ?? "observation";
   const confidence = opts?.confidence ?? 1.0;
   const bullet = formatBullet(trimmed, kind, confidence);
+  if (bulletSpansLines(bullet)) {
+    return { ok: false, error: "fact must be a single line (one fact per remember call)" };
+  }
   const facts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.promotion);
   if (facts.length === 0) {
     return { ok: false, error: "fact already exists or failed to insert" };
@@ -188,6 +203,9 @@ export function updateFact(
   const kind = opts?.kind ?? oldFact.kind;
   const confidence = opts?.confidence ?? oldFact.confidence;
   const bullet = formatBullet(trimmed, kind, confidence);
+  if (bulletSpansLines(bullet)) {
+    return { ok: false, error: "corrected fact must be a single line" };
+  }
   const newFacts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.promotion);
   if (newFacts.length === 0) {
     return { ok: false, error: "new content is duplicate of an existing fact" };

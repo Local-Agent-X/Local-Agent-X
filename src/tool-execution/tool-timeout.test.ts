@@ -74,6 +74,16 @@ describe("getToolTimeout exemptions", () => {
     expect(getToolTimeout("web_fetch")).toBe(60_000);
   });
 
+  it("caps the local memory lookup tools — a 71s memory_search stall must die at 30s, not 120s", async () => {
+    const { getToolTimeout } = await import("./tool-timeout.js");
+    // 30s, not 15s: the first search after a cold boot legitimately pays the
+    // ~16.5s embedder cold-load (boot pre-warm is fire-and-forget). The tools
+    // are read-only, so killing a real stall cannot strand a write.
+    for (const name of ["memory_search", "memory_recall", "search_past_sessions"]) {
+      expect(getToolTimeout(name)).toBe(30_000);
+    }
+  });
+
   it("falls back to a generous (not premature) timeout for unlisted tools", async () => {
     const { getToolTimeout, DEFAULT_FALLBACK } = await import("./tool-timeout.js");
     expect(DEFAULT_FALLBACK).toBe(120_000);

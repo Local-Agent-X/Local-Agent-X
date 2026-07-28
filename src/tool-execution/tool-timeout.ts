@@ -17,6 +17,16 @@ export const DEFAULT_TIMEOUTS: Record<string, number> = {
   write: 10_000,
   edit: 10_000,
   view_image: 10_000,
+  // Memory lookups are local (better-sqlite3 FTS + local embedder) and
+  // normally sub-second; a measured 71s memory_search stall was a hang that
+  // blocked the whole turn, not legitimate work. 30s (not 15s): the first
+  // search after a cold boot legitimately pays the ~16.5s embedder cold-load
+  // because the boot pre-warm is fire-and-forget, so 15s would predictably
+  // kill it. These tools are read-only — killing a real stall is always safe
+  // (no partial write to strand).
+  memory_search: 30_000,
+  memory_recall: 30_000,
+  search_past_sessions: 30_000,
 
   // ── Exempt long-runners (0 = unbounded) ──
   // self_edit drives a claude/codex subprocess; build_app / start_app_build /

@@ -1,13 +1,22 @@
 import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
+import { looksLikeMultiFactBlob, normalizeFactLine, splitMultiFactBlob } from "../fact-split.js";
+import { saveFactsBatch } from "./facts-batch.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
-import { promotionContextFromToolArgs, CLEAN_SELF_SOURCE_SUFFIX, TAINTED_SOURCE_SUFFIX } from "../promotion-gate.js";
+import {
+  joinFactsForPromotion,
+  promotionContextFromToolArgs,
+  splitBatchPromotionContext,
+  CLEAN_SELF_SOURCE_SUFFIX,
+  TAINTED_SOURCE_SUFFIX,
+} from "../promotion-gate.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
 
-// Agent-facing single-fact tools. Sit on top of the Facts DB primitives
-// (rememberFact / updateFact / forgetFact in index-facts-mutate.ts). Each
-// tool maps one user-visible verb to one DB action.
+// Agent-facing fact tools. Sit on top of the Facts DB primitives
+// (rememberFact / updateFact / forgetFact in index-facts-mutate.ts, plus
+// the bulk retain path via fact-split.ts for batched `remember` calls).
+// Each tool maps one user-visible verb to the canonical DB write path.
 
 const VALID_KINDS: FactKind[] = ["world", "experience", "opinion", "observation"];
 const VALID_PROVENANCE = ["user_statement", "tool_observation", "inference"] as const;
@@ -51,18 +60,6 @@ function authorizedSource(provenance: FactProvenance, promotion: MemoryPromotion
   return `agent-tool:${grant}-${provenance.replace("_", "-")}`;
 }
 
-// A single durable fact is one compact line. These tight signals reject a
-// multi-fact dump crammed into one `remember` call (one blob = one
-// un-queryable mega-fact). Tuned for near-zero false positives: a 1-2
-// sentence single-line fact under 400 chars always passes.
-function looksLikeMultiFactBlob(content: string): boolean {
-  if (content.includes("\n")) return true;
-  if (content.length > 400) return true;
-  const sentenceBoundaries = content.match(/[.!?](\s|$)/g);
-  if (sentenceBoundaries && sentenceBoundaries.length >= 4) return true;
-  return false;
-}
-
 function formatToolError(prefix: string, result: { error?: string; matches?: number; preview?: string[] }): string {
   let msg = `${prefix}: ${result.error ?? "unknown error"}`;
   if (result.preview && result.preview.length > 0) {
@@ -70,6 +67,7 @@ function formatToolError(prefix: string, result: { error?: string; matches?: num
   }
   return msg;
 }
+
 
 export function createFactsTools(memory: MemoryIndex) {
   return [
@@ -80,9 +78,11 @@ export function createFactsTools(memory: MemoryIndex) {
         "user preferences, environment quirks, project conventions, names, decisions, recurring workflows. " +
         "Facts are stored in the indexed Facts DB and injected into future sessions automatically. " +
         "\n\n" +
-        "Write ONE compact statement per call, phrased as a complete sentence (not a fragment): " +
+        "Write ONE compact statement per fact, phrased as a complete sentence (not a fragment): " +
         "'User prefers terse responses' not 'terse'. Phrase generally for transfer ('user prefers business-suite-level dashboards') " +
         "not verbatim ('user said use the facebook dashboard'). " +
+        "Multiple new facts → ONE call with `facts[]` (never one call per fact); " +
+        "each is stored as a separate fact, and kind/confidence/provenance apply to all of them. " +
         "\n\n" +
         "Optional `kind` (default 'observation'): 'world' for objective facts, 'experience' for things that happened, " +
         "'opinion' for preferences/judgments, 'observation' for general statements. " +
@@ -98,7 +98,12 @@ export function createFactsTools(memory: MemoryIndex) {
       parameters: {
         type: "object",
         properties: {
-          content: { type: "string", description: "The fact to remember, as one sentence" },
+          content: { type: "string", description: "The fact to remember, as one sentence (provide either this or facts, not both)" },
+          facts: {
+            type: "array",
+            items: { type: "string" },
+            description: "Batch save: several facts in ONE call, each item one compact sentence (same constraints as content)",
+          },
           kind: {
             type: "string",
             enum: VALID_KINDS,
@@ -114,11 +119,22 @@ export function createFactsTools(memory: MemoryIndex) {
             description: "Evidence origin. Defaults to inference, never to verified fact.",
           },
         },
-        required: ["content"],
+        // Exactly one of content/facts — enforced in execute (JSON Schema
+        // exactly-one-of is not expressible in this flat tool-schema shape).
+        required: [],
       },
       async execute(args: Record<string, unknown>) {
         const content = String(args.content || "").trim();
-        if (!content) return { content: "content is required", isError: true };
+        // Normalized exactly like joinFactsForPromotion normalizes each item,
+        // so the items here, the stamped string, the facts derived from it,
+        // and the rows that land are all the same N strings.
+        const factsArg = Array.isArray(args.facts)
+          ? (args.facts as unknown[]).map((f) => normalizeFactLine(f as string)).filter(Boolean)
+          : undefined;
+        if (content && factsArg?.length) {
+          return { content: "pass either content or facts[], not both", isError: true };
+        }
+        if (!content && !factsArg?.length) return { content: "content is required", isError: true };
 
         const kind = args.kind ? (String(args.kind) as FactKind) : undefined;
         if (kind && !VALID_KINDS.includes(kind)) {
@@ -131,23 +147,23 @@ export function createFactsTools(memory: MemoryIndex) {
         const provenance = parseProvenance(args.provenance);
         const confidence = groundedConfidence(provenance, requestedConfidence);
 
-        // One compact statement per call. A multi-fact blob becomes a single
-        // un-queryable mega-fact, so refuse it with a non-terminal retry hint
-        // (isError:false → guidance, not a terminal failure) instead of
-        // persisting the dump. Nothing is written in this branch.
-        if (looksLikeMultiFactBlob(content)) {
-          return {
-            content:
-              "This looks like multiple facts or a long dump. `remember` stores ONE compact statement per call — split it into separate `remember` calls, one fact each. " +
-              "The write was NOT applied. Don't claim 'saved!' — nothing persisted yet.",
-            isError: false,
-          };
-        }
+        // The exact string the dispatch approval phase stamped the promotion
+        // capability over (describeMemoryPromotionRequest reads args.content;
+        // a facts[] batch is normalized through the shared join helper).
+        const stampedContent = content || joinFactsForPromotion(args.facts as unknown[]);
+        // One round trip, zero retries: a batched call — facts[] or a
+        // multi-fact blob in content — is split in code and saved fact by
+        // fact. The old "split it and retry" hint cost a full inference
+        // round trip per fact. facts[] items are taken as declared (never
+        // sentence-split); only an undeclared blob is split further.
+        const atomicFacts =
+          factsArg ?? (looksLikeMultiFactBlob(content) ? splitMultiFactBlob(content) : [content]);
+        if (atomicFacts.length === 0) return { content: "content is required", isError: true };
 
         try {
           const target = "memory:retain";
           const promotion = promotionContextFromToolArgs(args, {
-            content,
+            content: stampedContent,
             source: "model-tool:remember",
             target,
             sessionId: String(args._sessionId || "default"),
@@ -161,32 +177,62 @@ export function createFactsTools(memory: MemoryIndex) {
           if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
             return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
           }
-          const gated = runMemoryGate({
-            content,
-            source: "tool",
-            target,
-            promotion,
-          });
-          const result = memory.rememberFact(gated, {
+          if (atomicFacts.length === 1) {
+            const gated = runMemoryGate({
+              content: atomicFacts[0],
+              source: "tool",
+              target,
+              promotion,
+            });
+            const result = memory.rememberFact(gated, {
+              kind,
+              confidence,
+              sourceFile: authorizedSource(provenance, promotion),
+              promotion,
+            });
+            if (!result.ok) {
+              return { content: formatToolError("remember failed", result), isError: true };
+            }
+            memory.markDirty();
+            const f = result.fact!;
+            if (result.indexFailed) {
+              return {
+                content:
+                  `Fact #${f.id} saved but keyword index failed (recall may not find it): ${result.indexError ?? "facts_fts insert error"}`,
+                isError: true,
+              };
+            }
+            return {
+              content: `Remembered [${f.kind}, c=${f.confidence}, provenance=${provenance}] #${f.id}: ${displayContent(f).slice(0, 80)}`,
+            };
+          }
+          // Batch: derive per-fact capabilities from the ONE stamped parent
+          // (consumed exactly once, same as the single path; the atomic facts
+          // are re-split from the STAMPED text, never taken from later args),
+          // then run each through the canonical single-fact sink. The report
+          // never claims more than landed — partial success lists each
+          // saved / blocked / skipped fact on its own line.
+          const derived = splitBatchPromotionContext(promotion, factsArg !== undefined);
+          const results = saveFactsBatch(memory, derived.facts, derived.contexts, {
             kind,
             confidence,
             sourceFile: authorizedSource(provenance, promotion),
-            promotion,
+            target,
           });
-          if (!result.ok) {
-            return { content: formatToolError("remember failed", result), isError: true };
-          }
-          memory.markDirty();
-          const f = result.fact!;
-          if (result.indexFailed) {
-            return {
-              content:
-                `Fact #${f.id} saved but keyword index failed (recall may not find it): ${result.indexError ?? "facts_fts insert error"}`,
-              isError: true,
-            };
-          }
+          const savedCount = results.filter((r) => r.status === "saved").length;
+          if (savedCount > 0) memory.markDirty();
+          const lines = results.map((r) =>
+            r.status === "saved"
+              ? `SAVED ${r.detail}`
+              : r.status === "blocked"
+                ? `BLOCKED (${r.detail}): ${r.fact.slice(0, 80)}`
+                : `NOT SAVED (${r.detail}): ${r.fact.slice(0, 80)}`,
+          );
           return {
-            content: `Remembered [${f.kind}, c=${f.confidence}, provenance=${provenance}] #${f.id}: ${displayContent(f).slice(0, 80)}`,
+            content:
+              `Remembered ${savedCount}/${results.length} facts [${kind ?? "observation"}, c=${confidence}, provenance=${provenance}]:\n` +
+              lines.join("\n"),
+            isError: savedCount === 0,
           };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {

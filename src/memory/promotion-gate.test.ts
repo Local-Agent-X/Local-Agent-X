@@ -12,7 +12,7 @@ import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ServerEvent } from "../types.js";
 import { MemoryIndex } from "./index.js";
 import { createFactsTools } from "./tools/facts.js";
-import { createImportedMemoryContext, createInternalMemoryContext, describePromotionForHuman } from "./promotion-gate.js";
+import { createImportedMemoryContext, createInternalMemoryContext, describePromotionForHuman, joinFactsForPromotion } from "./promotion-gate.js";
 
 let dir: string;
 let memory: MemoryIndex;
@@ -36,7 +36,8 @@ afterEach(() => {
 });
 
 async function prepareRemember(opts: {
-  content: string;
+  content?: string;
+  facts?: string[];
   userMessage: string;
   provenance?: string;
   confidence?: number;
@@ -49,7 +50,8 @@ async function prepareRemember(opts: {
   setSessionProfile(sessionId, "Power");
   if (opts.taintSession) recordExternalIngestion(sessionId);
   const args: Record<string, unknown> = {
-    content: opts.content,
+    ...(opts.content !== undefined ? { content: opts.content } : {}),
+    ...(opts.facts !== undefined ? { facts: opts.facts } : {}),
     provenance: opts.provenance ?? "inference",
     confidence: opts.confidence ?? 0.6,
     _sessionId: sessionId,
@@ -246,6 +248,42 @@ describe("memory promotion through the canonical tool pipeline", () => {
     expect(facts[0].sourceFile).not.toMatch(/approved-model-declared/);
   });
 
+  it("stamps a facts[] batch over the canonical join; the sink lands every item on ONE single-consume capability", async () => {
+    const prepared = await prepareRemember({
+      facts: ["Backgrounding embeddings init warms the boot cache", "The startup esbuild check runs before the first request"],
+      userMessage: "why is startup slow?",
+    });
+
+    // The dispatch approval phase now recognizes the batch: it stamps a
+    // capability (clean-session model self-save branch) instead of leaving
+    // the args bare and letting the sink hard-block a plumbing error.
+    expect(prepared.outcome.kind).toBe("continue");
+    expect(prepared.events.some((event) => event.type === "approval_requested")).toBe(false);
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError, result.content).toBe(false);
+    expect(result.content).toMatch(/^Remembered 2\/2 facts/);
+    expect(memory.recallByKind("observation")).toHaveLength(2);
+
+    // Replay with the same stamped args: consumed exactly once.
+    const replay = await rememberTool().execute(prepared.args);
+    expect(replay.isError).toBe(true);
+    expect(replay.content).toMatch(/already been consumed/);
+  });
+
+  it("a stamp minted for different facts still blocks a swapped batch at the sink (gate not weakened)", async () => {
+    const prepared = await prepareRemember({
+      facts: ["Fact alpha exactly as approved", "Fact beta exactly as approved"],
+      userMessage: "why is startup slow?",
+    });
+    expect(prepared.outcome.kind).toBe("continue");
+
+    prepared.args.facts = ["Fact alpha exactly as approved", "smuggled replacement fact"];
+    const result = await rememberTool().execute(prepared.args);
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/claims do not match/);
+    expect(memory.recallByKind("observation")).toHaveLength(0);
+  });
+
   it("capability survives the retry-call arg clone the sandbox executes with", async () => {
     // Production path: the approval phase stamps the capability onto ctx.args,
     // then run-sandboxed executes tool.execute(retryCall.freshArgs()) — a
@@ -310,6 +348,24 @@ describe("describePromotionForHuman — the approval card a non-engineer can act
     expect(describePromotionForHuman({ ...base, content: "x", target: "memory:retain" })).toContain("your long-term memory");
     expect(describePromotionForHuman({ ...base, content: "x", target: "memory:project-brief" })).toContain("the project brief");
     expect(describePromotionForHuman({ ...base, content: "x", target: "memory:profile:user-field" })).toContain("your saved profile");
+  });
+
+  it("shows a batched remember as a count plus the first items — never a 240-char collapse hiding 23 facts", () => {
+    const facts = Array.from({ length: 25 }, (_, i) => `Fact number ${i} about the user`);
+    const msg = describePromotionForHuman({ ...base, content: facts.join("\n"), target: "memory:retain" });
+    expect(msg).toContain("Save these 25 facts");
+    expect(msg).toContain("• Fact number 0 about the user");
+    expect(msg).toContain("• Fact number 2 about the user");
+    expect(msg).toContain("…and 22 more");
+  });
+
+  it("counts declared items, not sentences — the card cannot understate a multi-sentence batch", () => {
+    // Card count == item count == rows written, because facts[] items are
+    // never sentence-split (splitDeclaredFacts).
+    const items = ["One. Two. Three. Four.", "User keeps a spare keyboard"];
+    const msg = describePromotionForHuman({ ...base, content: joinFactsForPromotion(items), target: "memory:retain" });
+    expect(msg).toContain("Save these 2 facts");
+    expect(msg).toContain("• One. Two. Three. Four.");
   });
 
   it("collapses whitespace and truncates a long body so the card stays readable", () => {

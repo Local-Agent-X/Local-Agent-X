@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeFactLine, splitDeclaredFacts, splitMultiFactBlob } from "./fact-split.js";
 
 export type MemoryContentOrigin =
   | "user_statement" | "assistant" | "tool_observation"
@@ -137,6 +138,45 @@ export function assertMemoryPromotionCapability(
   if (consume) state.consumed = true;
 }
 
+/** Split a batched `remember` promotion into per-fact contexts.
+ *
+ *  The parent capability is verified and CONSUMED through the same
+ *  assertMemoryPromotionCapability the sinks use (one consumption per
+ *  remember call, like the single-fact path). The facts are then re-derived
+ *  from the STAMPED claims content by a canonical splitter — never taken
+ *  from the caller — so a child can only ever cover a trusted-code
+ *  transformation of what was stamped. Each child copies the parent's claims
+ *  with content = one fact, single-consume at the sink like any other.
+ *
+ *  `declaredAtomic` picks the splitter (see fact-split.ts for why the two
+ *  paths must differ). It rides the same args the capability was stamped
+ *  over, so a mismatched flag implies mismatched content — already blocked
+ *  by the hash check above. */
+export function splitBatchPromotionContext(
+  context: MemoryPromotionContext,
+  declaredAtomic: boolean,
+): { facts: string[]; contexts: MemoryPromotionContext[] } {
+  assertMemoryPromotionCapability(context.capability, {
+    content: context.evidenceContent ?? "",
+    target: context.target ?? "",
+    source: context.source ?? "unknown",
+    sessionId: context.sessionId ?? "default",
+    provenance: context.provenance ?? "unknown",
+    confidence: context.confidence ?? 0,
+    origin: context.origin,
+  }, true);
+  const claims = states.get(context.capability!)!.claims;
+  const facts = declaredAtomic ? splitDeclaredFacts(claims.content) : splitMultiFactBlob(claims.content);
+  return {
+    facts,
+    contexts: facts.map((fact) => ({
+      ...context,
+      evidenceContent: fact,
+      capability: mint({ ...claims, content: fact }),
+    })),
+  };
+}
+
 function factMetadata(args: Record<string, unknown>): { provenance: string; confidence: number } {
   // Normalize exactly like the fact-tool sinks (parseProvenance in
   // memory/tools/facts.ts): an off-enum provenance falls back to "inference".
@@ -152,6 +192,14 @@ function factMetadata(args: Record<string, unknown>): { provenance: string; conf
   };
 }
 
+/** Canonical normalization of a `remember` facts[] batch into the single
+ *  string the promotion capability is hashed over. The stamp (here, at the
+ *  dispatch approval phase) and the sink (memory/tools/facts.ts) both derive
+ *  it through THIS function, so hash and write can never diverge. */
+export function joinFactsForPromotion(facts: unknown[]): string {
+  return facts.map((fact) => normalizeFactLine(fact as string)).filter(Boolean).join("\n");
+}
+
 export function describeMemoryPromotionRequest(
   toolName: string,
   args: Record<string, unknown>,
@@ -159,7 +207,13 @@ export function describeMemoryPromotionRequest(
 ): MemoryPromotionRequest | null {
   let content = "";
   let target = "";
-  if (toolName === "remember") { content = String(args.content || "").trim(); target = "memory:retain"; }
+  if (toolName === "remember") {
+    // Batched saves arrive as facts[]; the capability covers the whole batch.
+    content = Array.isArray(args.facts) && args.facts.length > 0
+      ? joinFactsForPromotion(args.facts)
+      : String(args.content || "").trim();
+    target = "memory:retain";
+  }
   else if (toolName === "update_fact") { content = String(args.content || "").trim(); target = `memory:update:${String(args.query || "").trim()}`; }
   else if (toolName === "memory_save") { content = String(args.content || ""); target = "memory:daily-log"; }
   else if (toolName === "memory_set_user_field") { content = `${String(args.field || "").trim()}: ${String(args.value || "").trim()}`; target = "memory:profile:user-field"; }
@@ -188,6 +242,17 @@ function friendlyTarget(target: string): string {
  *  the old "Promote this exact model-originated content… Source=…; target=…"
  *  wording that read as jargon to everyone but its author. */
 export function describePromotionForHuman(promotion: MemoryPromotionClaims): string {
+  // Batched remember: one capability covers several facts (one per line).
+  // A human approving 25 facts must SEE that it's 25 facts — collapsing the
+  // batch into a 240-char excerpt would show two and hide the rest.
+  // Same line→fact reading the batch sink uses, so the count is what lands.
+  const lines = splitDeclaredFacts(promotion.content);
+  if (lines.length > 1) {
+    const shown = lines.slice(0, 3).map((line) => `• ${line.length > 120 ? line.slice(0, 120) + "…" : line}`);
+    const more = lines.length - shown.length;
+    return `Save these ${lines.length} facts to ${friendlyTarget(promotion.target)} so I can use them in future chats?\n\n` +
+      shown.join("\n") + (more > 0 ? `\n…and ${more} more` : "");
+  }
   const oneLine = promotion.content.trim().replace(/\s+/g, " ");
   const excerpt = oneLine.length > 240 ? oneLine.slice(0, 240) + "…" : oneLine;
   return `Save this to ${friendlyTarget(promotion.target)} so I can use it in future chats?\n\n“${excerpt}”`;

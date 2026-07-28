@@ -2,7 +2,8 @@ import { describe, it, expect, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectLockedBaselineMutation, evaluateShellCommandAndPaths } from "./shell-path-guard.js";
+import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
+import { detectLockedBaselineMutation } from "./shell-mutation-guard.js";
 
 // A workspace with two apps: `foo` was harness-scaffolded (has a manifest that
 // locks its baseline), `bare` was not (no manifest — must stay fully editable).

@@ -4,11 +4,13 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  detectLockedBaselineMutation,
-  detectProtectedEngineMutation,
   evaluateShellCommandAndPaths,
   evaluateShellPaths,
 } from "./shell-path-guard.js";
+import {
+  detectLockedBaselineMutation,
+  detectProtectedEngineMutation,
+} from "./shell-mutation-guard.js";
 import {
   execBasename, isShellReparseFlag, resolveRealArgv0, resolveRealArgv0Index, tokenizeCommand,
 } from "./shell-lex.js";

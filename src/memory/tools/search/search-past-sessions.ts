@@ -1,5 +1,34 @@
 import type { MemoryIndex } from "../../../memory/index.js";
+import type { MemorySearchResult } from "../../types.js";
 import { findMatchingApps } from "./app-matcher.js";
+
+export interface PastSessionsQueryOptions {
+  maxResults?: number;
+  since?: Date;
+  /** Current session — lets consumers mark which results are NOT prior-session. */
+  sessionId?: string;
+}
+
+/**
+ * The ONE cross-session query. Shared by the `search_past_sessions` tool and
+ * the task-start auto-inject path (auto-search-context.ts) — extend here, do
+ * not fork. crossSession: true is the deliberate opt-in; every consumer of
+ * this function is by definition asking for prior-session content and must
+ * present results as leads (stale-able background), never current state.
+ */
+export function searchPastSessions(
+  memory: MemoryIndex,
+  query: string,
+  opts: PastSessionsQueryOptions = {},
+): Promise<MemorySearchResult[]> {
+  return memory.search(query, {
+    maxResults: opts.maxResults ?? 5,
+    sources: ["session-summary", "session"],
+    since: opts.since,
+    sessionId: opts.sessionId,
+    crossSession: true,
+  });
+}
 
 export function searchPastSessionsTool(memory: MemoryIndex) {
   return {
@@ -29,13 +58,7 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
       const sessionId = args._sessionId ? String(args._sessionId) : undefined;
 
       const [sessionResults, appMatches] = await Promise.all([
-        memory.search(query, {
-          maxResults,
-          sources: ["session-summary", "session"],
-          since,
-          sessionId,
-          crossSession: true,
-        }),
+        searchPastSessions(memory, query, { maxResults, since, sessionId }),
         findMatchingApps(query),
       ]);
 

@@ -1,13 +1,17 @@
 import { existsSync } from "node:fs";
 import type { MemoryIndex } from "./index-core.js";
-import { relativeAge, memoryStaleCaveat } from "./relative-age.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
 import { readProjectBrief } from "./project-brief.js";
 import type { FactKind } from "./types.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
-import { extractKeywords, safeReadTextFile } from "./utils.js";
+import { safeReadTextFile } from "./utils.js";
 import { scanMentionedEntities, renderKnownEntitiesBody, findCutoffMisses } from "./entity-context.js";
 import { logMemoryRecall } from "./recall-telemetry.js";
+
+// autoSearchContext moved to its own module (task-start cross-session recall
+// lives there). Re-exported so existing importers of context.js keep working.
+export { autoSearchContext } from "./auto-search-context.js";
+export type { AutoSearchOptions } from "./auto-search-context.js";
 
 function sanitizeDailyLogForModeration(log: string): string {
   const lines = log.split(/\r?\n/);
@@ -313,82 +317,3 @@ export async function buildContextBlockParts(
   };
 }
 
-export async function autoSearchContext(
-  memory: MemoryIndex,
-  userMessage: string,
-  opts: { sessionId?: string } = {},
-): Promise<string> {
-  const keywords = extractKeywords(userMessage);
-  if (keywords.length < 2) return "";
-
-  const trimmed = userMessage.trim().toLowerCase();
-  const wordCount = trimmed.split(/\s+/).length;
-  const REFERENTIAL_RE = /^(do|yes|yeah|yep|ok|okay|sure|go|run|try|proceed|continue|next|back|stop|kill|that|this|it|them|all|both|either|neither|pick|choose|select|option|number|first|second|third|fourth|fifth|1st|2nd|3rd|the)\b/i;
-  const ANSWER_SHORT_RE = /^(y|n|yes|no|sure|ok|okay|nah|nope|meh|fine|good|bad|cool)$/i;
-  // Bare digits ("1", "2") are option-picks too — skip retrieval.
-  const BARE_NUMBER_RE = /^[0-9]{1,2}$/;
-  if (BARE_NUMBER_RE.test(trimmed)) return "";
-  if (wordCount <= 6 && (REFERENTIAL_RE.test(trimmed) || ANSWER_SHORT_RE.test(trimmed))) {
-    return "";
-  }
-
-  try {
-    // Auto-inject is same-session only. crossSession defaults to false in
-    // SearchOptions, so the index will filter out chunks tagged with a
-    // different session_id (profile-level chunks with no session_id still
-    // come through). The model must call `search_past_sessions` to opt
-    // into cross-session retrieval.
-    const candidates = await memory.search(userMessage, {
-      maxResults: 10,
-      minScore: 0.35,
-      sessionId: opts.sessionId,
-    });
-
-    if (candidates.length === 0) return "";
-
-    const { mmrRerank } = await import("./mmr.js");
-    const results = mmrRerank(candidates, 3, 0.7);
-
-    // Age is expressed RELATIVE to now (e.g. "47 days ago"), not as a raw
-    // stamp — models reason about staleness far better from relative age.
-    // The clock is the chunk's DB `updated_at` (when THIS snippet's content
-    // last changed), NOT the source file's mtime: nightly consolidation
-    // appends bump a whole entity page's mtime while its old facts stay old,
-    // and virtual paths (session-live/…, import/…) have no file to stat.
-    // indexChunksIdempotent only re-stamps changed chunks, so unchanged
-    // content keeps its original clock. Snippets older than ~1 day also get
-    // a caveat that any file/line citations inside may have drifted. `now`
-    // is captured once so every entry is scored against a single clock.
-    const now = Date.now();
-    const relevant = results
-      .map((r) => {
-        const provenance = r.provenance;
-        const ageStr = r.updatedAt !== undefined
-          ? `, ${relativeAge(r.updatedAt, now)}`
-          : (r.metadata?.date ? `, ${r.metadata.date}` : "");
-        const caveat = r.updatedAt !== undefined ? memoryStaleCaveat(r.updatedAt, now) : "";
-        const topic = r.metadata?.topic ? `, topic: ${r.metadata.topic}` : "";
-        const entities = r.entities?.length ? `, about: ${r.entities.join(",")}` : "";
-        const score = `, relevance ${r.score.toFixed(2)}`;
-        const provenanceFields = provenance
-          ? `, source_type: ${provenance.source_type}, trust: ${provenance.trust_status}, taint: ${provenance.taint_status}, label: ${provenance.label}` +
-            (provenance.session_id ? `, session: ${provenance.session_id}` : "") +
-            (provenance.date ? `, date: ${provenance.date}` : "")
-          : "";
-        return `[${r.source}${provenanceFields}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}`;
-      })
-      .join("\n\n");
-
-    return (
-      "\n\n<<<RETRIEVED_MEMORY_CONTENT — same session + profile only>>>\n" +
-      "--- RELEVANT MEMORIES ---\n" +
-      relevant +
-      "\n--- END RELEVANT MEMORIES ---\n" +
-      "Reading guidance: these snippets are from this session or your stable\n" +
-      "user profile. To pull from past sessions, call `search_past_sessions`.\n" +
-      "<<<END_RETRIEVED_MEMORY_CONTENT>>>"
-    );
-  } catch {
-    return "";
-  }
-}

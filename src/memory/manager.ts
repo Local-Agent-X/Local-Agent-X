@@ -13,7 +13,8 @@
 import type { MemoryIndex } from "./index-core.js";
 import type { FactKind, MemorySearchResult, RetainedFact } from "./types.js";
 import type { SearchOptions } from "./index-search.js";
-import { buildContextBlock, autoSearchContext } from "./context.js";
+import { buildContextBlock } from "./context.js";
+import { autoSearchContext } from "./auto-search-context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
 import { appendToDailyLogSafely } from "./write-safely.js";
@@ -138,6 +139,13 @@ export class MemoryManager {
     // cross-conversation bleed.
     out.smartContext = "";
     const lastAssistant = input.sessionMessages.filter((m) => m.role === "assistant").pop()?.content;
+    // Task-start proxy: no assistant reply in the transcript yet — this is
+    // the session's opening user turn. Conservative by design (a mid-session
+    // pivot won't trigger; the model still has `search_past_sessions` for
+    // that), and it's the only signal available at this call site without
+    // widening TurnContextInput. Opts autoSearchContext into the bounded,
+    // caveated cross-session recall addition (see auto-search-context.ts).
+    const taskStart = lastAssistant === undefined;
     const [contextBlock, relevantMemories, knownProjectsNudge, orch] = await Promise.all([
       buildContextBlock(this.index, {
         userMessage: input.userMessage,
@@ -148,7 +156,7 @@ export class MemoryManager {
         logger.warn("buildContextBlock failed:", (e as Error).message);
         return "";
       }),
-      autoSearchContext(this.index, input.userMessage, { sessionId: input.sessionId }).catch((e) => {
+      autoSearchContext(this.index, input.userMessage, { sessionId: input.sessionId, taskStart }).catch((e) => {
         logger.warn("autoSearchContext failed:", (e as Error).message);
         return "";
       }),

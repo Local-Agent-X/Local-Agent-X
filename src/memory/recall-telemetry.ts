@@ -38,6 +38,18 @@ export interface MemoryRecallEvent {
   scannedEntities: number;
   /** Slugs matching the message but beyond the scan cutoff (recognition misses). */
   cutoffMisses?: string[];
+  /**
+   * Which recall path emitted the event. Absent = the per-turn entity scan
+   * in buildContextBlock (the original emitter). "auto-search" = the
+   * task-start cross-session pass in auto-search-context.ts, where
+   * bytesInjected is the rendered RELEVANT MEMORIES block and the entity
+   * fields are zero.
+   */
+  phase?: "auto-search";
+  /** Candidates the task-start cross-session query returned (pre-MMR). */
+  crossSessionCandidates?: number;
+  /** Cross-session candidates that survived MMR into the injected block. */
+  crossSessionInjected?: number;
 }
 
 /**

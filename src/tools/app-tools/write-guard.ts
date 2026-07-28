@@ -19,6 +19,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { SCAFFOLD_MANIFEST_REL } from "../framework-scaffold.js";
+import { readRunTargetManifest } from "../app-run-target.js";
 
 export interface WriteGuardResult {
   allow: boolean;
@@ -26,6 +27,10 @@ export interface WriteGuardResult {
   /** Full agent-facing rejection message. When set, the tool surfaces it
    *  verbatim instead of the generic CDN-oriented writeGuardRejectionMessage. */
   message?: string;
+  /** Non-blocking nudge delivered alongside a SUCCESSFUL write (allow: true).
+   *  Used when the write is permitted but almost certainly a mistake — e.g.
+   *  hand-editing a built artifact the next build will overwrite. */
+  warn?: string;
 }
 
 const BLOCKED_CDNS = [
@@ -91,6 +96,33 @@ export function isLockedBaselinePath(filePath: string): boolean {
   return ownedBaselineRejection(filePath) !== null;
 }
 
+/** Warn text (never a block) when the target is a built artifact of a
+ *  static-build app: the next build regenerates it, so a hand-edit silently
+ *  vanishes. Scoped to apps carrying a run-target manifest (mode
+ *  static-build) — unmarked apps are untouched — and conservative: any doubt
+ *  (absent/corrupt manifest, ambiguous layout) means no warn. Rule:
+ *    - distDir a real subdirectory ("dist") → artifact iff rel is under
+ *      `${distDir}/`.
+ *    - distDir "." (app serves from its root: index.static.html + assets/) →
+ *      artifact iff rel is under assets/ AND a sibling src/ dir exists —
+ *      evidence there IS source to edit instead; without src/, the assets
+ *      may BE the hand-authored source. */
+function builtArtifactWarning(filePath: string): string | null {
+  const parts = appRootAndRel(filePath);
+  if (!parts) return null;
+  const manifest = readRunTargetManifest(parts.root);
+  if (!manifest) return null; // absent or corrupt manifest → fail-open, no warn
+  const dist = manifest.distDir.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const isArtifact = dist === "" || dist === "."
+    ? parts.rel.startsWith("assets/") && existsSync(`${parts.root}/src`)
+    : parts.rel.startsWith(`${dist}/`);
+  if (!isArtifact) return null;
+  return (
+    "This file is a build artifact — your change will be overwritten by the next build. " +
+    "Edit the app's source and run app_rebuild instead."
+  );
+}
+
 export function checkAppWrite(filePath: string, content: string): WriteGuardResult {
   if (!isUnderAppsDir(filePath)) return { allow: true };
 
@@ -115,7 +147,7 @@ export function checkAppWrite(filePath: string, content: string): WriteGuardResu
     }
   }
 
-  return { allow: true };
+  return { allow: true, warn: builtArtifactWarning(filePath) ?? undefined };
 }
 
 /** Convenience: render the rejection-message line the tools emit on block. */

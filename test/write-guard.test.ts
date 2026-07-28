@@ -170,6 +170,93 @@ describe("write-guard — harness-owned baseline lock (manifest-driven)", () => 
   });
 });
 
+describe("write-guard — built-artifact warn (run-target manifest-driven, never blocks)", () => {
+  // Warn keys off .lax/run-target.json (mode: static-build) — the same marker
+  // the request handler serves dist/ from. No manifest (or a corrupt one) means
+  // no warn: fail-open, unmarked apps untouched. The warn NEVER weakens a
+  // block — a baseline-locked path still rejects.
+  let root: string;
+  const rel = "workspace/apps";
+  const JS = "console.log('built');".repeat(20);
+
+  function appFile(app: string, rest: string): string {
+    return join(root, rel, app, rest);
+  }
+  function runTarget(app: string, distDir: string): void {
+    const dir = join(root, rel, app, ".lax");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run-target.json"), JSON.stringify({ mode: "static-build", distDir, framework: "vite" }));
+  }
+
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), "wg-runtarget-")); });
+  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+
+  it("WARNS (allow: true) on a write under distDir when the manifest says static-build", () => {
+    runTarget("shopper", "dist");
+    const r = checkAppWrite(appFile("shopper", "dist/assets/index-abc123.js"), JS);
+    expect(r.allow).toBe(true);
+    expect(r.warn).toMatch(/build artifact/i);
+    expect(r.warn).toMatch(/app_rebuild/);
+  });
+
+  it("no warn on the same path when NO run-target manifest exists", () => {
+    mkdirSync(join(root, rel, "shopper"), { recursive: true });
+    const r = checkAppWrite(appFile("shopper", "dist/assets/index-abc123.js"), JS);
+    expect(r.allow).toBe(true);
+    expect(r.warn).toBeUndefined();
+  });
+
+  it("no warn (and still allow) on a corrupt run-target manifest — fail-open", () => {
+    const dir = join(root, rel, "shopper", ".lax");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run-target.json"), "{ not json");
+    const r = checkAppWrite(appFile("shopper", "dist/assets/index-abc123.js"), JS);
+    expect(r.allow).toBe(true);
+    expect(r.warn).toBeUndefined();
+  });
+
+  it("no warn on source files outside distDir in a static-build app", () => {
+    runTarget("shopper", "dist");
+    const r = checkAppWrite(appFile("shopper", "src/App.tsx"), "export default function App(){return null}");
+    expect(r.allow).toBe(true);
+    expect(r.warn).toBeUndefined();
+  });
+
+  it("root-serving app (distDir '.'): warns on assets/ only when a sibling src/ exists", () => {
+    runTarget("rooty", ".");
+    mkdirSync(join(root, rel, "rooty", "src"), { recursive: true });
+    const r = checkAppWrite(appFile("rooty", "assets/index-abc123.js"), JS);
+    expect(r.allow).toBe(true);
+    expect(r.warn).toMatch(/build artifact/i);
+    // src/ itself is never artifact territory, even with distDir "."
+    const src = checkAppWrite(appFile("rooty", "src/main.tsx"), JS);
+    expect(src.warn).toBeUndefined();
+  });
+
+  it("root-serving app WITHOUT a src/ dir: no warn (assets may BE the source)", () => {
+    runTarget("rooty", ".");
+    const r = checkAppWrite(appFile("rooty", "assets/index-abc123.js"), JS);
+    expect(r.allow).toBe(true);
+    expect(r.warn).toBeUndefined();
+  });
+
+  it("warn never weakens the baseline lock: a locked path under distDir still BLOCKS", () => {
+    runTarget("shopper", "dist");
+    const lax = join(root, rel, "shopper", ".lax");
+    mkdirSync(lax, { recursive: true });
+    writeFileSync(join(lax, "scaffold.json"), JSON.stringify({ framework: "vite", ownedPaths: ["dist/vendor.js"] }));
+    const r = checkAppWrite(appFile("shopper", "dist/vendor.js"), JS);
+    expect(r.allow).toBe(false);
+    expect(r.warn).toBeUndefined();
+  });
+
+  it("non-apps-dir paths never warn", () => {
+    const r = checkAppWrite("/abs/src/foo.ts", JS);
+    expect(r.allow).toBe(true);
+    expect(r.warn).toBeUndefined();
+  });
+});
+
 describe("write-guard — rejection message format", () => {
   it("includes the reason and points at AGENTS.md / inline-or-self-host", () => {
     const msg = writeGuardRejectionMessage("references blocked CDN host 'unpkg.com'");

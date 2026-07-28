@@ -111,7 +111,7 @@ function commitEdit(filePath: string, updated: string, verb: string, allowSyntax
   const syntaxNote = verdict.reject
     ? `Wrote WITH syntax errors (user-authorized override):\n${verdict.issue}`
     : verdict.issue;
-  const note = [syntaxNote, portability].filter(Boolean).join("\n\n");
+  const note = [syntaxNote, portability, guard.warn].filter(Boolean).join("\n\n");
   return ok(
     `${verb} ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
     note ? { recovery: note } : undefined,

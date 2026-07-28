@@ -98,7 +98,15 @@ export type ServerEvent =
   | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }
   | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
-  | { type: "approval_resolved"; approvalId: string; toolName: string; approved: boolean }
+  // `reason` (optional, additive) says WHY an approved:false settle happened —
+  // "declined" = the user clicked Deny; "timeout" = nobody answered;
+  // "superseded" = the user replied in chat instead of clicking, so the card
+  // was dismissed and NOTHING ran (the UI must not render it as a Deny).
+  // Mirrors ApprovalDenyReason in approval-manager.ts — that union is the
+  // source of truth; inlined here (not imported) to keep this contract file
+  // dependency-free. Omitted/undefined on approved:true and on events from
+  // older emitters — consumers must fall back to their pre-reason behavior.
+  | { type: "approval_resolved"; approvalId: string; toolName: string; approved: boolean; reason?: "declined" | "timeout" | "superseded" }
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
   | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }
   // `parentOpId` (optional) carries spawn lineage: the id of the op whose agent

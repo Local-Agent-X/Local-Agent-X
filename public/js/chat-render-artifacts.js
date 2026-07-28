@@ -340,6 +340,13 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         if (ap.status === 'timeout') {
           card.classList.add('timeout');
           if (statusEl) statusEl.textContent = 'Timed out — denied.';
+        } else if (ap.status === 'superseded') {
+          // The user's chat reply dismissed the card (server-side
+          // denyPendingForSession) — this is NOT a Deny and nothing ran.
+          // Rendering it as "Denied" cost a live session ~10 minutes of
+          // "why won't the secret modal open".
+          card.classList.add('superseded');
+          if (statusEl) statusEl.textContent = 'Dismissed by your reply — nothing ran. Ask again (or re-send the request) to proceed.';
         } else {
           card.classList.add(ap.status === 'approved' ? 'approved' : 'denied');
           if (statusEl) statusEl.textContent = ap.status === 'approved' ? 'Approved' : 'Denied';

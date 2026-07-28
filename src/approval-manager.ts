@@ -289,7 +289,9 @@ class ApprovalManager {
       this.suppressed.delete(exactKey(p.sessionId, p.toolName, p.args));
       this.recordDurableResolve(p, id, false, "superseded");
       try {
-        p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved: false });
+        // reason:"superseded" — the UI renders this as "dismissed by your
+        // reply", NOT as a Deny; the user never said no to this call.
+        p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved: false, reason: "superseded" });
       } catch { /* a dead emitter must not block the resolution */ }
       p.resolve({ approved: false, reason: "superseded" });
       denied++;
@@ -324,7 +326,9 @@ class ApprovalManager {
     // only ever knew pending/timeout, so any re-render during the turn
     // resurrected an already-clicked card as a fresh actionable prompt.
     try {
-      p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved });
+      // Carry WHY on approved:false so the UI can distinguish a real Deny
+      // click from a superseded/timeout settle; omitted on approve.
+      p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved, ...(approved ? {} : { reason: "declined" as const }) });
     } catch { /* a dead emitter must not block the resolution */ }
 
     // A Deny click is the ONE path that means "the user said no to this call".

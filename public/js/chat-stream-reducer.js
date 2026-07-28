@@ -187,7 +187,13 @@
         if (event.approvalId) {
           const ap = e.approvals.find(a => a.id === event.approvalId);
           if (ap) {
-            ap.status = event.approved ? 'approved' : 'denied';
+            // reason 'superseded' = the user's chat reply dismissed the card
+            // (server denyPendingForSession) — nothing ran and nobody clicked
+            // Deny, so it renders as its own state instead of a false
+            // "Denied". Absent/unknown reason keeps the old mapping (events
+            // queued/replayed from an older server carry no reason).
+            ap.status = event.approved ? 'approved'
+              : (event.reason === 'superseded' ? 'superseded' : 'denied');
             ap.resolvedAt = now;
             // Durable-resolve reply: the decision was recorded on the op's
             // durable column (server restarted since the ask) and applies

@@ -566,7 +566,11 @@ describe("ApprovalManager — denyPendingForSession (user answered in words, not
 
     expect(mgr.denyPendingForSession(mine)).toBe(1);
     await expect(p1).resolves.toBe(false);
-    expect(c1.events.some((e) => e.type === "approval_resolved" && e.approved === false)).toBe(true);
+    // The wire event must say WHY: "superseded", not a fake Deny — the UI
+    // renders this state as "dismissed by your reply", never "Denied".
+    expect(c1.events.some((e) =>
+      e.type === "approval_resolved" && e.approved === false && e.reason === "superseded",
+    )).toBe(true);
 
     // The other session's card is untouched and still resolvable.
     expect(mgr.resolveApproval(c2.lastApprovalId!, true)).toBe(true);
@@ -596,6 +600,47 @@ describe("ApprovalManager — denyPendingForSession (user answered in words, not
 
   it("returns 0 when nothing is pending", () => {
     expect(getApprovalManager().denyPendingForSession(sid("deny-none"))).toBe(0);
+  });
+});
+
+describe("approval_resolved wire event — reason is honest", () => {
+  it("a real Deny click emits approved:false with reason:'declined'", async () => {
+    const mgr = getApprovalManager();
+    const sessionId = sid("wire-declined");
+
+    const { emit, cap } = captureEmit();
+    const p = mgr.requestApproval({
+      toolName: "bash", toolCallId: "tc-1", sessionId, context: "",
+      args: { command: "git push origin main" }, emit,
+    });
+    expect(mgr.resolveApproval(cap.lastApprovalId!, false)).toBe(true);
+    await expect(p).resolves.toBe(false);
+
+    const resolved = cap.events.filter((e) => e.type === "approval_resolved");
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toMatchObject({ approved: false, reason: "declined" });
+
+    mgr.clearSession(sessionId);
+  });
+
+  it("an Approve click emits approved:true with NO reason", async () => {
+    const mgr = getApprovalManager();
+    const sessionId = sid("wire-approved");
+
+    const { emit, cap } = captureEmit();
+    const p = mgr.requestApproval({
+      toolName: "bash", toolCallId: "tc-1", sessionId, context: "",
+      args: { command: "git status" }, emit,
+    });
+    expect(mgr.resolveApproval(cap.lastApprovalId!, true)).toBe(true);
+    await expect(p).resolves.toBe(true);
+
+    const resolved = cap.events.filter((e) => e.type === "approval_resolved");
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toMatchObject({ approved: true });
+    expect((resolved[0] as { reason?: string }).reason).toBeUndefined();
+
+    mgr.clearSession(sessionId);
   });
 });
 

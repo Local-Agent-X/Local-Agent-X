@@ -149,6 +149,18 @@ function isPositionalWrapperArg(t: string): boolean {
 // the sandbox/proxy, not shell parsing; this closes the realistic keyword/
 // wrapper forms, not the ungameable general case.
 export function resolveRealArgv0(tokens: string[]): string | null {
+  const i = resolveRealArgv0Index(tokens);
+  return i === null ? null : execBasename(tokens[i]);
+}
+
+// Sibling of resolveRealArgv0 that returns WHERE the real command word sits
+// instead of just its basename — same walk, same wrapper knowledge, so the two
+// can never disagree. A consumer that must inspect the COMMAND'S OWN flags needs
+// the position, because a whole-segment flag scan cannot tell a wrapper's flag
+// from the command's: `ionice -c 2 bash -c "…"` carries two `-c` and only the
+// second (after the resolved index) introduces a re-parsed shell body. Returns
+// null when the segment is only keywords/wrappers.
+export function resolveRealArgv0Index(tokens: string[]): number | null {
   let i = 0;
   while (i < tokens.length) {
     const base = execBasename(tokens[i]);
@@ -174,7 +186,39 @@ export function resolveRealArgv0(tokens: string[]): string | null {
       }
       continue;
     }
-    return base;
+    return i;
   }
   return null;
+}
+
+// argv[0] basename → the flags whose VALUE the shell RE-PARSES as a command
+// (`bash -c "…"`, `cmd /c "…"`, `powershell -Command "…"`). tokenizeCommand hands
+// that body back as ONE quoted token, so every consumer that inspects tokens for
+// verbs or paths is BLIND inside it and must re-lex the body itself. Lives here
+// with the rest of the argv[0] knowledge because reading it correctly requires
+// resolveRealArgv0Index — see isShellReparseFlag.
+// Windows shells: the flag is spelled exactly, and they do NOT cluster options.
+export const SHELL_REPARSE_FLAGS: Record<string, Set<string>> = {
+  cmd: new Set(["/c", "/k"]),
+  powershell: new Set(["-command", "-c"]), pwsh: new Set(["-command", "-c"]),
+};
+
+// POSIX shells CLUSTER short options, and they read the next word as the command
+// string whenever `c` appears anywhere in the cluster — `-lc`, `-ic`, `-cx`,
+// `-exc` all behave exactly like `-c`. An exact `-c` lookup missed every one of
+// them, which left `bash -lc "cat /etc/shadow"` unseen (2026-07-27). The `c` is
+// matched case-sensitively: `-C` is noclobber, a different flag, and `--norc` is
+// not a cluster at all (the second `-` stops the match).
+const POSIX_REPARSE_SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
+const POSIX_CLUSTERED_COMMAND_FLAG = /^-[a-zA-Z]*c[a-zA-Z]*$/;
+
+// Does `token` introduce a re-parsed command body for the shell `verb`? Flags
+// compare LOWERCASED (`-Command` / `/C` are case-insensitive on Windows). Callers
+// MUST resolve `verb` with resolveRealArgv0Index (so a wrapper — `env bash -c
+// "…"`, `timeout 5 sh -c "…"` — does not shift the shell out of argv[0] and hide
+// the body) and MUST only test tokens at positions AFTER that index (so a
+// wrapper's own `-c` — `ionice -c 2 bash -c "…"` — is never mistaken for one).
+export function isShellReparseFlag(verb: string, token: string): boolean {
+  if (POSIX_REPARSE_SHELLS.has(verb)) return POSIX_CLUSTERED_COMMAND_FLAG.test(token);
+  return SHELL_REPARSE_FLAGS[verb]?.has(token.toLowerCase()) === true;
 }

@@ -1,6 +1,9 @@
 import type { ServerEvent } from "../types.js";
 import { readOp } from "../ops/op-store.js";
-import { sendProcessRelayDelivery } from "../chat-ws/process-relay-delivery.js";
+import {
+  GLOBAL_EVENT_TYPES,
+  sendProcessRelayDelivery,
+} from "../chat-ws/process-relay-delivery.js";
 import {
   acknowledgeProcessRelayBrowserDelivery,
   readProcessRelayGenerations,
@@ -20,10 +23,6 @@ import type {
 import { setProcessRelayParentHandler } from "./process-relay-parent-hook.js";
 import { listProcessRelayOperationIds } from "./process-relay-discovery.js";
 import { notifySessionEventObservers } from "../chat-ws/session-event-observers.js";
-
-const GLOBAL_EVENT_TYPES = new Set([
-  "bg_op_queued", "bg_op_started", "bg_op_progress", "bg_op_completed", "bg_op_nudge",
-]);
 
 setProcessRelayParentHandler(reconcilePendingProcessRelay);
 

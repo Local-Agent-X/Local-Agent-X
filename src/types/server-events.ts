@@ -44,6 +44,16 @@ export type ActionPreview =
   | { kind: "network"; method: string; url: string; bodyPreview: string; bodyTruncated: boolean; domain: string }
   | { kind: "money"; amount: number; currency: string; recipient: string; source: string; formatted: string };
 
+/**
+ * Op attribution on live envelopes. The variants below that a client must be
+ * able to tie back to a specific op carry an OPTIONAL `opId`. A client holding
+ * more than one in-flight op (the main chat turn plus background workers) can
+ * then route a delta, a tool lifecycle event, or a terminal frame to the op
+ * that produced it instead of inferring it from arrival order. Optional and
+ * additive everywhere it appears: emitters that predate op attribution stay
+ * valid, and consumers must fall back to their single-op behavior when it is
+ * absent.
+ */
 export type ServerEvent =
   /** `boundary` (optional, replay-only) marks that a tool ran immediately
    *  before this delta. Live turns never carry it — the client marks the
@@ -52,12 +62,12 @@ export type ServerEvent =
    *  with the buffered tool events following AFTER the text) the stamp is
    *  the only way the client's block timeline can rebuild where the text
    *  was split. Additive: clients/bridges that don't know it ignore it. */
-  | { type: "stream"; delta: string; boundary?: true }
+  | { type: "stream"; delta: string; boundary?: true; opId?: string }
   /** Adapter-initiated stream replacement (tool-call-from-text extraction
    *  in openai-compat). Client swaps the bubble's text with `text` instead
    *  of appending. `delta` is omitted on this variant. Replay also uses it
    *  with text:"" as the wipe frame before re-sending the run deltas. */
-  | { type: "stream"; replace: true; text: string }
+  | { type: "stream"; replace: true; text: string; opId?: string }
   /** Model-native chain-of-thought, normalized across providers (Grok/Cerebras/
    *  DeepSeek `reasoning`, Anthropic thinking blocks). Streamed live to a
    *  collapsible "Thinking" affordance rendered at its position in the turn's
@@ -65,19 +75,19 @@ export type ServerEvent =
    *  the reasoning stays out of chat history. Silent for models that don't
    *  emit reasoning; the tool-lifecycle events carry visibility for those.
    *  Clients that don't handle it ignore it. `boundary` as on stream deltas. */
-  | { type: "reasoning"; delta: string; boundary?: true }
+  | { type: "reasoning"; delta: string; boundary?: true; opId?: string }
   /** Wipe/replace frame for the reasoning lane (replay.ts) — same
    *  duplication class as the stream lane's `replace`: replaying raw deltas
    *  onto a client that already holds the Thinking text double-counts it,
    *  so replay wipes the lane first (text:"") and re-sends the accumulated
    *  runs as ordered deltas. `delta` is omitted here. */
-  | { type: "reasoning"; replace: true; text: string }
-  | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
-  | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
+  | { type: "reasoning"; replace: true; text: string; opId?: string }
+  | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean; opId?: string }
+  | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string; opId?: string }
   /** `metadata` is the tool result's envelope metadata (layer/recovery/userHint,
    *  …) so the UI can key affordances off the blocking layer — e.g. the
    *  declassify-and-retry action on a data-lineage/tainted-shell block. */
-  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown> }
+  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown>; opId?: string }
   // Internal onEvent-channel signal: the running per-op token total, relayed
   // from a canonical turn_committed's usage by the agent-runner so a caller's
   // onEvent closure (e.g. the agent-run driver in handler-events.ts) can key it
@@ -85,15 +95,15 @@ export type ServerEvent =
   // as a "usage" type — the driver converts it to the existing agent-update
   // broadcast. Additive/optional; consumers that don't handle it ignore it.
   | { type: "usage"; totalTokens: number }
-  | { type: "done"; usage: AgentTurn["usage"] }
+  | { type: "done"; usage: AgentTurn["usage"]; opId?: string }
   // Out-of-band notice that the turn stopped early (middleware abort,
   // wall-clock ceiling, stale evidence, loop detection, etc.). The UI
   // renders this as a small inline note BELOW the message, NOT as
   // appended message body — keeps technical jargon out of chat content
   // and out of persisted message history. `reason` is the user-friendly
   // one-liner; `debug` is the original technical text for diagnostics.
-  | { type: "stopped"; reason: string; debug?: string; firedBy?: string }
-  | { type: "error"; message: string }
+  | { type: "stopped"; reason: string; debug?: string; firedBy?: string; opId?: string }
+  | { type: "error"; message: string; opId?: string }
   | { type: "secret_request"; name: string; service?: string; reason: string }
   | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }
   | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview }
@@ -149,7 +159,31 @@ export type ServerEvent =
   // missed canonical events via `reconnectOp(opId, sinceSeq)`. Stop button →
   // `{type:"stop", sessionId}` → terminateChat aborts the turn signal →
   // opCancel.
-  | { type: "chat_op_started"; opId: string }
+  //
+  // `supersedes` (optional, additive) is the opId this op REPLACED via turn
+  // takeover — the user sent again while a turn was still live, so the new
+  // turn took the session over and the named op is no longer running. The UI
+  // retires the superseded op's affordances (stop button, live styling)
+  // instead of leaving two turns on screen. Absent on an ordinary start and
+  // on emitters that predate takeover.
+  | { type: "chat_op_started"; opId: string; supersedes?: string }
+  // Pre-model prepare phase progress: the window between accepting the turn
+  // and the first model token (context assembly, memory retrieval, tool
+  // schema build) where the UI would otherwise show a silent spinner. `step`
+  // is the human-readable stage name; `elapsedMs` (optional) is time since
+  // the prepare phase began, for clients that flag a slow step.
+  | { type: "prepare_progress"; step: string; elapsedMs?: number }
+  // Session-scoped notice that THIS turn is running on `provider`/`model`.
+  // `rerouted` is true when the turn did not land on the provider the session
+  // asked for — `requestedProvider` names what was asked for and `reason`
+  // carries the one-liner why it moved (rate limit, missing credential,
+  // capability gate).
+  //
+  // Explicitly NOT a `settings_changed` event: it describes ONE turn's
+  // execution, never a persisted user preference. Consumers must render it as
+  // a transient per-turn notice and must NEVER write it back into session
+  // settings or into the provider picker's stored value.
+  | { type: "turn_provider"; provider: string; model: string; rerouted: boolean; requestedProvider?: string; reason?: string }
   // Mid-turn user inject lifecycle. Emitted when a user sends while a turn
   // is already in flight: `inject_queued` confirms the message landed in the
   // server's inject queue (paired with the client-generated injectId echoed
@@ -173,7 +207,7 @@ export type ServerEvent =
   // agent panel as a chip while the model never sees the id (and therefore
   // can't parrot it back as a fake delegation message — see
   // test/op-submit-async-self-block.test.ts).
-  | { type: "tool_chip"; toolCallId?: string; chip: ToolChip }
+  | { type: "tool_chip"; toolCallId?: string; chip: ToolChip; opId?: string }
   // Activity-clock keepalive emitted by the chat-ws manager while a turn is
   // live (2026-07-13 audit I3). A single long tool call (build, npm install)
   // can go >60s without events, tripping the client's stuck-stream watchdog
@@ -181,4 +215,11 @@ export type ServerEvent =
   // never routed through onEvent — broadcast-only. Ignored by every client
   // handler except chat-stream-store.js applyEvent's default case, which
   // bumps lastActivityMs for any unrecognized type.
-  | { type: "op_heartbeat" };
+  //
+  // Every field is OPTIONAL — the bare `{ type: "op_heartbeat" }` beat stays
+  // valid, so existing emitters need no change. When an emitter does know the
+  // live turn's shape it attaches it: `opId` attributes the beat to an op,
+  // and `phase`/`iteration`/`activeTool` let a client say WHAT the turn has
+  // been busy with across a long silent stretch instead of a bare
+  // "still working".
+  | { type: "op_heartbeat"; opId?: string; phase?: string; iteration?: number; activeTool?: string };

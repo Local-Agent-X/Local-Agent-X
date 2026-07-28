@@ -1,7 +1,17 @@
 import type { ProcessRelayBrowserDelivery } from "../canonical-loop/public/process-relay.js";
 import { clients } from "./state.js";
 
-const GLOBAL_EVENT_TYPES = new Set([
+// The ONE set that decides relay audience: ServerEvent discriminators every
+// connected client sees, not just the op's session. Both halves of the relay
+// read it from here — this module splits a "mixed" delivery on it, and
+// process-relay-browser.ts classifies each delivery's scope on it. It lives on
+// this side because that module already imports sendProcessRelayDelivery from
+// here, so owning it there would close an import cycle.
+//
+// Not to be confused with SESSION_EVENT_TYPES (process-relay-contract.ts):
+// that set is "carriable over the relay at all" and every ServerEvent must be
+// in it; this one is "who gets to see it".
+export const GLOBAL_EVENT_TYPES = new Set([
   "bg_op_queued", "bg_op_started", "bg_op_progress", "bg_op_completed", "bg_op_nudge",
 ]);
 

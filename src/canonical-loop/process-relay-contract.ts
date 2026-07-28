@@ -78,7 +78,13 @@ export interface ProcessRelayBrowserAck {
   deliveryId: string;
 }
 
-const SESSION_EVENT_TYPES = new Set<string>([
+// Session-scoped ServerEvent discriminators the relay is allowed to carry.
+// Hand-maintained mirror of the ServerEvent union in ../types/server-events.ts
+// — that file is the SOURCE OF TRUTH; a new session-scoped variant must be
+// added there first and then listed here, or the relay silently rejects it as
+// "unsupported". Exported so src/types/server-events.test.ts can fail the
+// build when the two drift apart.
+export const SESSION_EVENT_TYPES = new Set<string>([
   "stream", "reasoning", "tool_start", "tool_progress", "tool_end", "usage",
   "done", "stopped", "error", "secret_request", "secrets_request",
   "approval_requested", "approval_timeout", "approval_resolved", "context_status",
@@ -86,6 +92,7 @@ const SESSION_EVENT_TYPES = new Set<string>([
   "bg_op_progress", "bg_op_completed", "bg_op_nudge", "av_blocked_warning",
   "worker_stream", "worker_done", "chat_op_started", "inject_queued",
   "inject_consumed", "plan_mode_changed", "tool_chip", "op_heartbeat",
+  "turn_provider", "prepare_progress",
 ]);
 const CANONICAL_EVENT_TYPES = new Set<string>([
   "state_changed", "turn_started", "turn_committed", "iteration_checkpoint",

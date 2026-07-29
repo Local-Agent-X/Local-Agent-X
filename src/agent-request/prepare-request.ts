@@ -361,6 +361,10 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     maxIterations: resolved.maxIterations,
     reasoningEffort: resolved.reasoningEffort,
     authSource: resolved.authSource,
+    // Carried verbatim: `provider`/`model` above already describe the FALLBACK,
+    // so without this the caller has no way to tell a rerouted turn from one
+    // that ran on exactly what was asked for.
+    providerSwitch: resolved.providerSwitch,
     toolChoice,
     promptTelemetry,
     renderedPromptSections,

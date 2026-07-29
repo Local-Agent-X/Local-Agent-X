@@ -12,8 +12,31 @@ import {
 } from "./prepare-and-route.js";
 import { installEventWiring } from "./event-wiring.js";
 import { runCanonicalChat } from "./canonical-run.js";
+import { PROVIDERS } from "../../../providers/registry.js";
+import { PROVIDER_IDS, type ProviderId } from "../../../providers/provider-ids.js";
+import type { ChannelKind } from "../../../agent-request/types.js";
 
 const logger = createLogger("routes.chat.run-turn");
+
+/** Display name for a provider id in user-facing turn errors. The registry is
+ *  the single source of truth for provider metadata, so the name in the error
+ *  is the name the Settings picker shows — no second copy to drift, and no raw
+ *  ids ("gemini isn't authenticated") reaching a chat bubble. `prepared.provider`
+ *  is a plain string on the wire, so an unrecognized id degrades to itself. */
+const providerLabel = (id: string): string =>
+  ((PROVIDER_IDS as readonly string[]).includes(id) ? PROVIDERS[id as ProviderId].label : id);
+
+/** Where to go to fix a credential, phrased for where the user actually is.
+ *  The web chat IS the app, so Settings → Providers is one click away; this
+ *  same turn path serves the Telegram/WhatsApp bridges
+ *  (src/server/inbound-channel-runner.ts), whose users are on a phone and
+ *  cannot reach that screen from the message they're reading. The POLICY is
+ *  identical on every channel — an answer from a model the user didn't pick is
+ *  no better over Telegram — only the remedy differs. */
+const reconnectHint = (channel: ChannelKind, label: string): string =>
+  (channel === "web"
+    ? `Reconnect ${label} in Settings → Providers, then resend.`
+    : `Reconnect ${label} on the computer running Local Agent X (Settings → Providers), then resend.`);
 
 /**
  * Execute a single chat turn. Transport-agnostic core. Three callers:
@@ -124,6 +147,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     }
     doneEmitted = true;
   };
+  // Push one event on whatever transport is live — the same dual-channel rule
+  // emitTurnError follows, for everything emitted BEFORE installEventWiring
+  // gives WS clients their per-turn onEvent channel. chatWs.emit →
+  // broadcastToSession reaches the session room regardless of active-chat
+  // state; without it a WS client sees nothing at all this early in the turn.
+  const emitLive = (event: ServerEvent) => {
+    emitSse(event);
+    if (!sseSink) ctx.chatWs.emit(sessionId, event);
+  };
   // One RetryContext per chat turn. Today only L1 (tool-executor's withRetry
   // for transient-network tools) reads it; the correlationId stitches its
   // log lines for this turn. See src/retry-context.ts for history.
@@ -141,26 +173,75 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
     await emitContextStatus(prepared, ctx, sessionId, emitSse);
 
-    if (!prepared.apiKey) {
-      const label = prepared.provider === "xai" ? "Grok (xAI)" : prepared.provider;
-      emitTurnError(`${label} isn't authenticated — the sign-in has expired or been revoked. Reconnect it in Settings → Providers, then resend.`);
+    // A reroute off an EXPLICITLY selected provider is a lie the client cannot
+    // detect on its own: the fallback chain hands back a WORKING key for a
+    // DIFFERENT provider, so the isn't-authenticated gate below — which reads
+    // the POST-reroute provider — passes, and the turn runs on a model the
+    // composer never showed (the live incident: chip on grok-4.5, turn on
+    // claude-opus-5). On this interactive path that fails the turn instead:
+    // the user picked the provider, so a dead credential is theirs to fix, not
+    // ours to paper over. This is only safe because the resolver no longer
+    // reports a switch on the sync `hasCredential()` probe's word alone — it
+    // re-asks resolveCredential about the requested provider first, so a
+    // `credential-unavailable` switch means genuinely unusable, not merely
+    // undetectable (see agent-request/resolve-provider.ts). Background/internal
+    // callers (cron, workers, classifiers) never come through here and keep
+    // rerouting with the resolver's warn line; the messaging bridges DO come
+    // through here and get the same policy with a remedy they can reach
+    // (reconnectHint). A `local-only` switch is NOT a failure — the user
+    // configured strict local mode, so its reroute is the requested behavior
+    // and only needs announcing (below).
+    const providerSwitch = prepared.providerSwitch;
+    if (providerSwitch?.reason === "credential-unavailable") {
+      const requested = providerLabel(providerSwitch.from);
+      emitTurnError(
+        `${requested} isn't authenticated — the sign-in has expired or been revoked. ` +
+        `This turn was NOT rerouted to ${providerLabel(providerSwitch.to)}. ` +
+        `${reconnectHint(channel, requested)} (Or pick another provider.)`,
+      );
       return;
     }
+
+    if (!prepared.apiKey) {
+      const active = providerLabel(prepared.provider);
+      emitTurnError(`${active} isn't authenticated — the sign-in has expired or been revoked. ${reconnectHint(channel, active)}`);
+      return;
+    }
+
+    // Tell the client which provider+model this turn is ACTUALLY running on.
+    // Announced at each point where the turn is COMMITTED to a model turn on
+    // exactly these values — never earlier. A worker-redirect forwards the
+    // message into an ALREADY RUNNING background op and runs no model turn of
+    // its own, and a turn the lock REFUSES runs nothing either; announcing
+    // before those checks describes a turn that never happens. Worst case is
+    // the exact bug class this event exists to kill: turn A is streaming on
+    // grok, the user switches to Anthropic and sends B, the lock refuses B —
+    // and B's announcement repaints the chip to Anthropic while A is still
+    // streaming on grok. Deliberately NOT settings_changed: that writes
+    // localStorage in every tab and would persist a transient reroute as if the
+    // user had chosen it. This describes one turn's execution, never a
+    // preference.
+    const announceProvider = () => emitLive({
+      type: "turn_provider",
+      provider: prepared.provider,
+      model: prepared.model,
+      rerouted: !!providerSwitch,
+      requestedProvider: providerSwitch?.from,
+      // Derived from the discriminator, not assumed: `credential-unavailable`
+      // already failed the turn above, so local-only is the only reason that
+      // reaches this line today.
+      reason: providerSwitch?.reason === "local-only" ? "strict local-only mode" : undefined,
+    });
 
     const { routeMessage } = await import("../../../routing/index.js");
     message = await applyDiscussPrefix(message);
 
-    // The redirect's ack + done must reach the client on whatever transport
-    // is live — same dual-channel rule as emitTurnError above. WS clients
-    // have no per-turn onEvent yet (startChat hasn't run), so route through
-    // chatWs.emit → broadcastToSession; without it the browser's optimistic
-    // turn spins forever (no opId → invisible to the stuck-stream watchdog).
-    const emitRedirectAck = (event: ServerEvent) => {
-      emitSse(event);
-      if (!sseSink) ctx.chatWs.emit(sessionId, event);
-    };
+    // The redirect's ack + done must reach the client on whatever transport is
+    // live (emitLive) — WS clients have no per-turn onEvent yet (startChat
+    // hasn't run), and without the broadcast the browser's optimistic turn
+    // spins forever (no opId → invisible to the stuck-stream watchdog).
     if (await tryWorkerRedirect({
-      sessionId, message, recentSessionMessages: session.messages, emit: emitRedirectAck,
+      sessionId, message, recentSessionMessages: session.messages, emit: emitLive,
       ingressKey: args.ingressKey,
     })) {
       doneEmitted = true;
@@ -169,6 +250,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
     const routeDecision = await routeMessage(prepared.provider, message, channel);
     if (routeDecision.destination === "delegate") {
+      // The ack turn really does run on prepared.provider/model
+      // (delegation-handoff.ts → runAgentViaCanonical with prepared's key,
+      // provider and model), so this turn is committed and announces. It
+      // returns before the turn lock, which is why the announcement can't
+      // simply live after the lock for every path.
+      announceProvider();
       const handoff = await runDelegationHandoff({
         message, sessionId, prepared, ctx, session, requestRole, sseSink, ingressKey: args.ingressKey,
       });
@@ -205,6 +292,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       return;
     }
     lockHeld = true;
+    // Committed: the lock is ours and the model turn below is going to run.
+    announceProvider();
     if (decision.reason === "aborted-non-committing") {
       logger.info(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
       // The prior turn just salvaged its committed work into session.messages

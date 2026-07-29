@@ -9,6 +9,7 @@ import type { PromptTelemetry } from "../prompt-telemetry.js";
 import type { RenderedPromptSection } from "../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { TargetPin } from "../ops/types.js";
+import type { ProviderSwitch } from "./resolve-provider.js";
 
 export type ChannelKind = "web" | "telegram" | "whatsapp" | "cron" | "agent";
 
@@ -96,6 +97,13 @@ export interface PreparedAgentRequest {
    *  subscription, others = real per-token API key. Threaded to the op routing
    *  so the USD spend cap only bills real-money usage. */
   authSource?: CredentialSource;
+  /** Set only when resolution could NOT honor the provider the caller/settings
+   *  asked for and fell back to another one (see {@link ProviderSwitch}). The
+   *  fields above describe the provider the turn WILL run on, so this is the
+   *  only evidence the caller has that it isn't the one the user picked — the
+   *  interactive chat path fails the turn on it rather than run on a model the
+   *  composer never showed (routes/chat/run-chat-turn/orchestrator.ts). */
+  providerSwitch?: ProviderSwitch;
   /** Force a single tool for this turn — see intent-classifier.ts. */
   toolChoice?: ForcedToolChoice;
   /** Content-free prompt sizing persisted with the canonical operation. */

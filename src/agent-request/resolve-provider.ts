@@ -6,7 +6,7 @@ import { rerouteToCredentialedProvider } from "../providers/credential-reroute.j
 import { loadSettings, getSetting } from "../settings.js";
 import { normalizeReasoningEffort, type ReasoningEffort } from "../providers/reasoning-effort.js";
 import { resolveCredential } from "../auth/resolve.js";
-import type { CredentialSource } from "../auth/auth-provider.js";
+import type { CredentialResolution, CredentialSource } from "../auth/auth-provider.js";
 import { createLogger } from "../logger.js";
 import { isLocalOnlyMode, localProviderDecision } from "../local-only-policy.js";
 
@@ -16,10 +16,17 @@ const isProviderId = (s: string): s is ProviderId =>
   (PROVIDER_IDS as readonly string[]).includes(s);
 
 /** Emitted when a forced credential fallback abandoned the provider the
- *  caller/settings actually asked for — a silent downgrade (e.g. a momentary
- *  `hasCredential()` miss reroutes a Fable-5 chat onto Grok's default model).
- *  Surfaced on the resolve result so the caller can signal the user rather
- *  than continue the turn on the wrong model with no indication. */
+ *  caller/settings actually asked for — a silent downgrade (e.g. a dead xAI
+ *  sign-in reroutes a Grok chat onto Claude's default model). Surfaced on the
+ *  resolve result so the caller can signal the user rather than continue the
+ *  turn on the wrong model with no indication.
+ *
+ *  `credential-unavailable` is a claim about the CREDENTIAL, not about the
+ *  cheap `hasCredential()` probe: it is raised only after resolveCredential
+ *  itself came back empty for the requested provider, so a caller may safely
+ *  treat it as "this provider genuinely cannot run the turn" and fail rather
+ *  than reroute. Anything the probe merely failed to SEE (env-only keys — see
+ *  auth-provider.ts) is honored instead of reported here. */
 export interface ProviderSwitch {
   from: ProviderId;
   to: ProviderId;
@@ -110,20 +117,50 @@ export async function resolveProvider(
   const reroute = isLocalOnlyMode(config)
     ? { provider: provider as ProviderId, rerouted: false }
     : rerouteToCredentialedProvider(provider, hasCredsFor, { allowCodexFallback: !config.openaiApiKey });
-  const forcedFallback = reroute.rerouted;
+
+  // The chain above runs entirely on `hasCredential()` — the cheap SYNC probe,
+  // which is DELIBERATELY narrower than the async `resolve()` that actually
+  // runs the turn. auth-provider.ts says it verbatim: "`resolve()` falls back
+  // to process.env; `hasCredential()` never does", and anthropic's probe never
+  // reads the secrets store at all. So a provider configured by env var alone —
+  // the headless/CI shape — reads UNAVAILABLE here and AVAILABLE thirty lines
+  // below, and the chain abandons a provider that works. That is not a
+  // "momentary" miss; for those installs it is permanent and by design, which
+  // makes the switch we'd report a lie, and callers that act on it (the
+  // interactive chat path FAILS the turn on it) punish a healthy configuration.
+  // So don't take the probe's word: ask the authority whether the provider that
+  // was actually REQUESTED can produce a credential. If it can, the request is
+  // honorable and the reroute was an artifact of the probe's blind spots.
+  // Bounded on purpose — this only runs when we were about to leave the
+  // requested provider, so the happy path pays nothing, and the resolution is
+  // reused as the turn's credential below rather than resolved twice.
+  let rescued: { provider: ProviderId; credential: CredentialResolution } | null = null;
+  if (!isLocalOnlyMode(config) && requestedProvider && reroute.provider !== requestedProvider) {
+    const found = await resolveCredential(requestedProvider, { configOpenAIKey: config.openaiApiKey });
+    if (found?.credential) rescued = { provider: requestedProvider, credential: found };
+  }
+  const forcedFallback = reroute.rerouted && !rescued;
   if (forcedFallback) providerWasOverridden = true;
-  provider = reroute.provider;
+  // A rescue that lands on something other than the saved provider is an
+  // honored caller override arriving late (the override branch above skipped it
+  // because the probe couldn't see its credential) — same reasoning as there:
+  // `saved.model` belongs to the provider we just left and can't run here.
+  if (rescued && rescued.provider !== savedProvider) providerWasOverridden = true;
+  provider = rescued ? rescued.provider : reroute.provider;
   // If we fell through to a different provider OR the caller-override forced
   // a switch, the saved model almost certainly belongs to the old provider.
   // Blank it so the downstream default picker picks something valid.
   if (providerWasOverridden) saved.model = "";
 
   // A forced fallback that abandoned a provider the caller/settings actually
-  // asked for is a SILENT DOWNGRADE: a momentary `hasCredential()` miss can
-  // reroute e.g. a Fable-5 chat onto Grok's default model with no signal, and
-  // any modelOverride chosen for the old provider would otherwise be run
-  // verbatim on the new one. Surface a switch event, warn to the log, and drop
-  // the now-orphaned modelOverride so the new provider's default picker runs.
+  // asked for is a SILENT DOWNGRADE: it reroutes e.g. a Fable-5 chat onto
+  // Grok's default model with no signal, and any modelOverride chosen for the
+  // old provider would otherwise be run verbatim on the new one. Surface a
+  // switch event, warn to the log, and drop the now-orphaned modelOverride so
+  // the new provider's default picker runs. Because of the rescue above, this
+  // fires only when the requested provider's credential could not be resolved
+  // AT ALL — it is a genuine outage for that provider, not a probe artifact,
+  // which is what makes it safe for the chat path to fail the turn on.
   let providerSwitch: ProviderSwitch | undefined;
   let effectiveModelOverride = modelOverride;
   if (forcedFallback && requestedProvider && requestedProvider !== provider) {
@@ -145,7 +182,10 @@ export async function resolveProvider(
   let customBaseURL: string | undefined;
 
   const meta = PROVIDERS[provider];
-  const r = await resolveCredential(provider, { configOpenAIKey: config.openaiApiKey });
+  // Reuse the rescue's resolution — it is for this exact provider, resolved
+  // with these exact opts moments ago; resolving again would just repeat the
+  // work (and, for anthropic/codex, a token refresh).
+  const r = rescued?.credential ?? await resolveCredential(provider, { configOpenAIKey: config.openaiApiKey });
   apiKey = r?.credential ?? "";
   const authSource = r?.source;
 

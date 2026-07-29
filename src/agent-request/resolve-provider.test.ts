@@ -14,8 +14,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 
-// Mutable set of providers whose creds are "present" for a given test.
+// Mutable set of providers the SYNC `hasCredential()` probe reports present —
+// the cheap auto-detect signal that drives the fallback chain.
 const credsPresent = new Set<string>();
+// Providers the ASYNC `resolveCredential()` can actually produce a key for, and
+// that the sync probe CANNOT see. The two are modelled separately because they
+// really do disagree in production and it is deliberate: src/auth/auth-provider.ts
+// states it verbatim — "`resolve()` falls back to process.env; `hasCredential()`
+// never does" — so a provider configured by env var alone reads UNAVAILABLE to
+// the probe and AVAILABLE to the resolve that runs the turn. A mock that let
+// them agree could not express the bug that asymmetry causes.
+const credsResolvable = new Set<string>();
 // Mutable saved-settings map returned by loadSettings().
 let savedSettings: Record<string, unknown> = {};
 let localModels: Array<{ name: string }> = [];
@@ -26,10 +35,10 @@ vi.mock("../settings.js", () => ({
 }));
 
 vi.mock("../auth/resolve.js", () => ({
-  resolveCredential: async (provider: string) => ({
-    credential: `key-${provider}`,
-    source: "secrets-store" as const,
-  }),
+  resolveCredential: async (provider: string) =>
+    (credsPresent.has(provider) || credsResolvable.has(provider)
+      ? { credential: `key-${provider}`, source: "secrets-store" as const }
+      : null),
 }));
 
 vi.mock("../ollama-cloud.js", () => ({
@@ -62,7 +71,35 @@ vi.mock("../providers/registry.js", () => {
   };
 });
 
+// Pipeline steps prepareAgentRequest runs that the delivery test below has no
+// use for (tool selection, memory/context, the curate nudge, the system-prompt
+// build). Stubbed so the provider-switch journey can be exercised through the
+// real prepare pipeline without standing up a memory manager.
+vi.mock("./prepare-request/build-context.js", () => ({
+  buildContext: async () => ({
+    contextBlock: "", relevantMemories: [], smartContext: "", memoryContext: "",
+    protocolNotice: "", notifications: [], knownProjectsFound: false,
+  }),
+  isTrivialToolRequest: () => false,
+}));
+
+vi.mock("./prepare-request/tool-selection.js", () => ({
+  selectTools: async () => ({
+    tools: [], tier: "strong", intentVerdict: null,
+    forceBuildIntent: false, productBuildTurn: null, isBridge: false,
+  }),
+}));
+
+vi.mock("./prepare-request/curate-nudge.js", () => ({
+  detectAndBoostCurate: async () => "",
+}));
+
+vi.mock("./prepare-request/build-system-prompt.js", () => ({
+  buildSystemPromptWithTelemetry: async () => ({ prompt: "SYSTEM", renderedSections: [] }),
+}));
+
 const { resolveProvider } = await import("./resolve-provider.js");
+const { prepareAgentRequest } = await import("./prepare-request.js");
 
 const CONFIG = {
   openaiApiKey: "",
@@ -76,6 +113,7 @@ const SECRETS = { get: () => undefined } as unknown as SecretsStore;
 describe("resolveProvider — provider-switch surfacing (PR-12)", () => {
   beforeEach(() => {
     credsPresent.clear();
+    credsResolvable.clear();
     savedSettings = {};
     localModels = [];
   });
@@ -134,6 +172,129 @@ describe("resolveProvider — provider-switch surfacing (PR-12)", () => {
     expect(res.providerSwitch).toBeUndefined();
     expect(res.model).toBe("claude-sonnet-4-6");
   });
+
+  /**
+   * The asymmetry the switch used to mistake for a dead credential (C2.1
+   * skeptic finding 1). `hasCredential()` is a cheap SYNC probe that never
+   * reads process.env (and anthropic's never reads the secrets store at all),
+   * while the `resolve()` that actually runs the turn reads both. So an
+   * env-configured install — the headless/CI shape — looks unavailable to the
+   * chain and perfectly fine to the request. Rerouting there abandons a
+   * provider that WORKS, and any caller that acts on the resulting switch (the
+   * interactive chat path fails the turn on it) punishes a healthy config.
+   */
+  it("keeps the requested provider when only the async resolver can see its credential", async () => {
+    savedSettings = { provider: "gemini" };  // what the user picked
+    credsPresent.add("xai");                 // the fallback chain's first choice
+    credsResolvable.add("gemini");           // GEMINI_API_KEY in env only
+
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+
+    expect(res.provider).toBe("gemini");
+    expect(res.providerSwitch).toBeUndefined();
+    // ...and the turn runs on the credential the resolver actually found.
+    expect(res.apiKey).toBe("key-gemini");
+    expect(res.model).toBe("gemini-2.5-pro");
+  });
+
+  it("still reports the switch when the requested provider resolves to nothing", async () => {
+    // Same shape, credential genuinely absent from BOTH sources: this one is a
+    // real downgrade and must stay visible to the caller.
+    savedSettings = { provider: "gemini" };
+    credsPresent.add("xai");
+
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp");
+
+    expect(res.provider).toBe("xai");
+    expect(res.providerSwitch).toEqual({
+      from: "gemini",
+      to: "xai",
+      reason: "credential-unavailable",
+    });
+  });
+});
+
+/**
+ * C2.1 — the delivery half of the same object. The tests above prove the
+ * switch is RETURNED by the resolver; they passed the whole time the live bug
+ * was running turns on the wrong model, because `providerSwitch` was not a
+ * field on PreparedAgentRequest — so the chat path structurally could not see
+ * it (a dead xAI credential ran on Anthropic while the composer still showed
+ * grok-4.5). This pins the pass-through: whatever the resolver decided about
+ * the requested provider reaches the caller that has to act on it.
+ */
+describe("prepareAgentRequest — providerSwitch delivery (C2.1)", () => {
+  const INPUT = {
+    channel: "web" as const,
+    message: "hello",
+    sessionMessages: [],
+    sessionId: "sess-c21-delivery",
+    config: CONFIG,
+    dataDir: "/tmp",
+    memoryIndex: {} as never,
+    memoryManager: {} as never,
+    integrations: {} as never,
+    secretsStore: SECRETS,
+    allAgentTools: [],
+    bridgeTools: [],
+  };
+
+  beforeEach(() => {
+    credsPresent.clear();
+    credsResolvable.clear();
+    savedSettings = {};
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("hands the caller the switch when the selected provider's credential is dead", async () => {
+    savedSettings = { provider: "xai" }; // what the composer is showing
+    credsPresent.add("anthropic");       // ...the only credential that works
+
+    const prepared = await prepareAgentRequest(INPUT);
+
+    expect(prepared.provider).toBe("anthropic");
+    expect(prepared.providerSwitch).toEqual({
+      from: "xai",
+      to: "anthropic",
+      reason: "credential-unavailable",
+    });
+  });
+
+  // NEGATIVE CONTROL — no teeth on its own, and that is the point. It asserts
+  // the pre-change value (`undefined` was what every caller saw before the
+  // field existed), so it passes against both builds; deleting the pass-through
+  // in prepare-request.ts would leave it green. It is meaningful only PAIRED
+  // with the positive sibling above, which does fail without the field: the two
+  // together say "the switch arrives exactly when there is one, and never
+  // otherwise". Do not read a pass here as evidence of the delivery working.
+  it("leaves it undefined when the turn runs on the provider that was asked for", async () => {
+    savedSettings = { provider: "xai" };
+    credsPresent.add("xai");
+
+    const prepared = await prepareAgentRequest(INPUT);
+
+    expect(prepared.provider).toBe("xai");
+    expect(prepared.providerSwitch).toBeUndefined();
+  });
+
+  /**
+   * Finding 1's exact repro carried to the seam the chat path reads. Settings
+   * name a provider whose key lives only in the process env: the sync probe
+   * misses it, the async resolve finds it. The prepared request must describe a
+   * turn on the provider the user picked with NO switch attached — a switch
+   * here is what fails an otherwise-healthy turn downstream.
+   */
+  it("delivers no switch for an env-only credential the sync probe cannot see", async () => {
+    savedSettings = { provider: "gemini" };
+    credsPresent.add("xai");
+    credsResolvable.add("gemini");
+
+    const prepared = await prepareAgentRequest(INPUT);
+
+    expect(prepared.provider).toBe("gemini");
+    expect(prepared.apiKey).toBe("key-gemini");
+    expect(prepared.providerSwitch).toBeUndefined();
+  });
 });
 
 describe("resolveProvider — strict local model validation", () => {
@@ -160,6 +321,7 @@ describe("resolveProvider — strict local model validation", () => {
 describe("resolveProvider — reasoningEffort from settings", () => {
   beforeEach(() => {
     credsPresent.clear();
+    credsResolvable.clear();
     savedSettings = {};
     credsPresent.add("xai");
   });
@@ -193,6 +355,7 @@ describe("resolveProvider — maxIterations floor (120)", () => {
   // test should scream.
   beforeEach(() => {
     credsPresent.clear();
+    credsResolvable.clear();
     savedSettings = {};
     credsPresent.add("xai");
   });

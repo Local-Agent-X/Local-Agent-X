@@ -41,8 +41,16 @@ export {
   commitInWorktree,
   isolateNodeModules,
   revertBranchTo,
+  // The non-blocking runners production actually uses. They were unreachable
+  // until this barrel re-exported them: every caller imports through here, so
+  // an async variant missing from this list is dead code and the event loop
+  // still parks for the whole build.
+  runRepoBuildAsync,
+  runDesktopTscBuildAsync,
+  runCommandInWorktreeAsync,
+  // Blocking twins, each with exactly one caller whose async conversion ripples
+  // outside this change's footprint — see their @deprecated notes.
   runRepoBuild,
-  runDesktopTscBuild,
   runCommandInWorktree,
   changedFilesTouchDeps,
   securitySensitiveChangedFiles,

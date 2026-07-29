@@ -21,7 +21,7 @@
 
 import { rmSync } from "node:fs";
 import { type ChildProcess } from "node:child_process";
-import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuild, getMergeDeltaFiles, getMergeDeltaDiff, securitySensitiveChangedFiles } from "../agency/worktree.js";
+import { createNamedWorktree, mergeWorktree, getMergeBaseInfo, getBranchHead, revertBranchTo, runRepoBuildAsync, getMergeDeltaFiles, getMergeDeltaDiff, securitySensitiveChangedFiles } from "../agency/worktree.js";
 import { releaseWorktreeSlot } from "../agency/worktree-core.js";
 import { recordMerge } from "./rollback.js";
 import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, type GateResult } from "./sandbox-gates.js";
@@ -111,7 +111,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // BEFORE the subprocess runs. The worktree junctions the parent's real
     // node_modules, so a subprocess that disobeys the no-install instruction
     // corrupts the parent through the junction before the deps gate can react.
-    const repoRoot = getMergeBaseInfo(name)?.repoRoot ?? null;
+    const repoRoot = (await getMergeBaseInfo(name))?.repoRoot ?? null;
     const depsFingerprintBefore = repoRoot ? fingerprintParentDeps(repoRoot) : null;
 
     // Run claude -p inside the worktree. Redact any secret-shaped material
@@ -193,7 +193,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
 
     // Capture the pre-merge base SHA BEFORE mergeWorktree deletes the registry
     // entry, so a post-merge re-gate failure can revert the base branch.
-    const mergeInfo = getMergeBaseInfo(name);
+    const mergeInfo = await getMergeBaseInfo(name);
 
     // Security diff-scope gate (#10): the subprocess runs with
     // bypassPermissions and can rewrite the security / tool-policy / auth layer,
@@ -203,7 +203,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // preserved on disk, main untouched. Measured against the MERGE DELTA
     // (committed + uncommitted), not the working tree, so a surgeon can't hide
     // the change in a commit and slip a trivial uncommitted crumb past the gate.
-    const securityTouched = securitySensitiveChangedFiles(getMergeDeltaFiles(name));
+    const securityTouched = securitySensitiveChangedFiles(await getMergeDeltaFiles(name));
     if (securityTouched.length > 0) {
       logger.warn(`[self-edit.sandbox] security-sensitive paths touched — holding merge for human review: ${securityTouched.join(", ")}`);
       const base = mergeInfo?.baseBranch ?? "main";
@@ -257,7 +257,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // the background model is down.
     progress("Refutation gate: scrutinizing the merge diff…");
     const refute = await refuteSelfEditMerge({
-      diff: getMergeDeltaDiff(name),
+      diff: await getMergeDeltaDiff(name),
       requestedTask: opts.task,
       signal,
     });
@@ -296,7 +296,7 @@ export async function runSelfEditInSandbox(opts: SandboxOpts): Promise<SandboxRe
     // gate ever saw. Rebuild the merged main tree; auto-revert if it fails.
     if (mergeInfo) {
       progress("Re-gate: rebuilding merged main…");
-      const rebuilt = runRepoBuild(mergeInfo.repoRoot, 5 * 60_000);
+      const rebuilt = await runRepoBuildAsync(mergeInfo.repoRoot, 5 * 60_000);
       if (!rebuilt.ok) {
         revertBranchTo(mergeInfo.repoRoot, mergeInfo.baseBranch, mergeInfo.sha);
         return failResult(

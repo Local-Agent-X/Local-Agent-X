@@ -19,16 +19,24 @@ export function killProcessTree(
   signal: NodeJS.Signals = "SIGTERM",
 ): void {
   if (!proc) return;
-  try { proc.kill(signal); } catch { /* ignore */ }
   if (process.platform === "win32" && proc.pid) {
+    // TREE FIRST, wrapper second. `taskkill /T` walks the LIVE parent→child
+    // links; killing the cmd.exe wrapper before running it left taskkill
+    // resolving a dead pid, finding nothing, and orphaning every grandchild —
+    // npm → tsc / vite / a dev server surviving the "kill" and holding cores
+    // and file handles for its full natural lifetime. Ordering is the fix.
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       require("node:child_process").execSync(
         `taskkill /PID ${proc.pid} /F /T`,
-        { stdio: "ignore", windowsHide: true },
+        { stdio: "ignore", windowsHide: true, timeout: 5000 },
       );
     } catch { /* ignore */ }
   }
+  // Still signal the wrapper: on POSIX this IS the kill, and on Windows it
+  // covers a taskkill that couldn't run. Throws ESRCH once the tree kill
+  // already reaped it — expected, and swallowed.
+  try { proc.kill(signal); } catch { /* ignore */ }
 }
 
 /**

@@ -117,7 +117,7 @@ describe("self_edit merge-gate scoping (R6-B1/B2)", () => {
     execFileSync("git", args, { cwd, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
   };
 
-  it("measures committed history (not just the working tree) and exfil-catches a committed secret behind an uncommitted crumb", () => {
+  it("measures committed history (not just the working tree) and exfil-catches a committed secret behind an uncommitted crumb", async () => {
     const repo = mkdtempSync(join(tmpdir(), "lax-mgate-"));
     const name = "mgate-test";
     try {
@@ -143,7 +143,7 @@ describe("self_edit merge-gate scoping (R6-B1/B2)", () => {
       const entry: WorktreeEntry = { path: repo, branch: "feature", baseBranch: "main", repoRoot: repo, mergedSuccessfully: false };
       activeWorktrees.set(name, entry);
 
-      const delta = getMergeDeltaFiles(name);
+      const delta = await getMergeDeltaFiles(name);
       expect(delta).toContain("src/auth/evil.ts"); // committed change is in scope
       expect(delta).toContain("README.md");        // uncommitted crumb too
 

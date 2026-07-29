@@ -25,11 +25,11 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs
 import { join } from "node:path";
 import {
   createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
-  getBranchHead, runRepoBuild, runDesktopTscBuild,
+  getBranchHead, runRepoBuildAsync, runDesktopTscBuildAsync,
 } from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
-import { gateDeps, gateBuild, gateBuildAt, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
+import { gateDeps, gateBuild, gateBuildAtAsync, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restoreUpdateLanding, type PreparedUpdateLanding } from "./update-git-rollback.js";
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
@@ -210,7 +210,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     }
     const gates: UpdateGates = { deps, build, bind: bindOutcome.result, smoke };
 
-    const mergeInfo = getMergeBaseInfo(name);
+    const mergeInfo = await getMergeBaseInfo(name);
     if (mergeInfo) {
       prepared = prepareUpdateLanding(wt.path, mergeInfo);
     }
@@ -239,7 +239,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       }
     }
     if (mergeInfo) {
-      const rebuilt = runRepoBuild(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
+      const rebuilt = await runRepoBuildAsync(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
       if (!rebuilt.ok) {
         restoreUpdateLanding(mergeInfo);
         if (!deps.skipped) { try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ } }
@@ -258,7 +258,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       // a failure leaves the prior dist intact (--noEmitOnError), next-boot
       // reconcile rebuilds it, and the recorded marker makes that boot loud.
       if (sh(`git diff --name-only ${mergeInfo.sha} ${postSha} -- desktop/src`, repoRoot)) {
-        const dt = runDesktopTscBuild(repoRoot, BUILD_TIMEOUT_MS);
+        const dt = await runDesktopTscBuildAsync(repoRoot, BUILD_TIMEOUT_MS);
         recordDesktopPrebuildOutcome(dt.ok, dt.detail);
       }
     }
@@ -366,7 +366,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
       }
     }
 
-    const build = gateBuildAt(extractDir);
+    const build = await gateBuildAtAsync(extractDir);
     if (!build.ok) {
       return { ok: false, depsChanged, detail: `build gate failed: ${build.detail.slice(0, 600)}`, gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
     }

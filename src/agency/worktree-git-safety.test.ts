@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { git, WORKTREE_BASE } from "./worktree-core.js";
+import { git, gitAsync, GIT_OUTPUT_CAP, WORKTREE_BASE } from "./worktree-core.js";
 import { bootSweepSafeForRepo, reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
 import { composeGitArgs, GIT_SAFETY_ARGS, gitSafeCmd } from "../git-safety.js";
 
@@ -54,7 +54,11 @@ function norm(p: string): string {
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Retry: the overflow test SIGKILLs a git child mid-stream, and Windows can
+  // hold its handle on the repo dir for a beat after the process is gone.
+  for (const root of roots.splice(0)) {
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
 });
 
 // ── Layer 3: every git invocation carries -c gc.auto=0 ───────────────────────
@@ -72,6 +76,82 @@ describe("git safety flags", () => {
     // the invocation — the belt-and-suspenders that stops auto-gc pruning a
     // shared object store. Fails before the fix (git ran without the flag).
     expect(git(["config", "--get", "gc.auto"], repo)).toBe("0");
+  });
+});
+
+// ── gitAsync: the non-blocking twin must be indistinguishable from git() ─────
+describe("gitAsync", () => {
+  it("returns the same value as git(), with the same safety flags", async () => {
+    const repo = initRepo();
+    expect(await gitAsync(["config", "--get", "gc.auto"], repo)).toBe("0");
+    expect(await gitAsync(["rev-parse", "HEAD"], repo)).toBe(git(["rev-parse", "HEAD"], repo));
+    expect(await gitAsync("rev-parse HEAD", repo)).toBe(git("rev-parse HEAD", repo));
+  });
+
+  it("runs against the passed cwd, not process.cwd()", async () => {
+    const repo = initRepo();
+    expect(norm(await gitAsync(["rev-parse", "--show-toplevel"], repo))).toBe(norm(repo));
+  });
+
+  it("decodes multi-byte output that straddles a pipe-chunk boundary", async () => {
+    const repo = initRepo();
+    // A 3-byte character repeated: a 64 KiB pipe read ends at byte 65536, and
+    // 65536 % 3 === 1, so the FIRST chunk boundary lands mid-character. Decoding
+    // each Buffer independently (`stdout += chunk`) turns that character into
+    // U+FFFD and every byte offset after it shifts — silent corruption of data
+    // getMergeDeltaDiff/getMergeDeltaFiles then PARSE. git() decodes the whole
+    // buffer at once and is correct; the async twin must match it exactly.
+    const text = "漢".repeat(200_000); // ~600 KB, well under git()'s 1 MiB maxBuffer
+    writeFileSync(join(repo, "wide.txt"), text);
+    run(repo, ["add", "wide.txt"]);
+    run(repo, ["commit", "-q", "-m", "wide"]);
+
+    const viaAsync = await gitAsync(["show", "HEAD:wide.txt"], repo);
+    expect(viaAsync).not.toContain("�");
+    expect(viaAsync.length).toBe(text.length);
+    expect(viaAsync).toBe(git(["show", "HEAD:wide.txt"], repo));
+  }, 60_000);
+
+  it("rejects instead of buffering without bound when output blows the cap", async () => {
+    const repo = initRepo();
+    // Sync git() is capped by execFileSync's 1 MiB maxBuffer — it throws
+    // ENOBUFS rather than growing forever. The async twin must stay bounded
+    // too: getMergeDeltaDiff can ask for a multi-MB diff, and an unbounded
+    // accumulator is a memory risk on exactly that call. Over the cap must be
+    // an ERROR, never a silent truncation, because callers parse this output.
+    writeFileSync(join(repo, "huge.bin"), "a".repeat(GIT_OUTPUT_CAP + 1024 * 1024));
+    run(repo, ["add", "huge.bin"]);
+    run(repo, ["commit", "-q", "-m", "huge"]);
+    await expect(gitAsync(["show", "HEAD:huge.bin"], repo)).rejects.toThrow(/exceeded .* cap/);
+  }, 120_000);
+
+  it("rejects with the same `git <cmd> failed: <stderr>` shape as git()", async () => {
+    const repo = initRepo();
+    const bad = ["rev-parse", "--verify", "no-such-ref"];
+    let syncMessage = "";
+    try { git(bad, repo); } catch (e) { syncMessage = (e as Error).message; }
+    expect(syncMessage).toMatch(/^git rev-parse --verify no-such-ref failed: /);
+    await expect(gitAsync(bad, repo)).rejects.toThrow(/^git rev-parse --verify no-such-ref failed: /);
+  });
+
+  it("lets the loop breathe across back-to-back calls; git() does not", async () => {
+    const repo = initRepo();
+    // The shape every worktree op has: several git invocations in a row with
+    // nothing between them. Synchronously that is dead air for their sum.
+    const ticksDuring = async (run: () => unknown): Promise<number> => {
+      let ticks = 0;
+      const timer = setInterval(() => { ticks++; }, 5);
+      try { await run(); } finally { clearInterval(timer); }
+      return ticks;
+    };
+    const asyncTicks = await ticksDuring(async () => {
+      for (let i = 0; i < 6; i++) await gitAsync(["rev-parse", "HEAD"], repo);
+    });
+    const syncTicks = await ticksDuring(() => {
+      for (let i = 0; i < 6; i++) git(["rev-parse", "HEAD"], repo);
+    });
+    expect(asyncTicks).toBeGreaterThan(0);
+    expect(syncTicks).toBe(0);
   });
 });
 

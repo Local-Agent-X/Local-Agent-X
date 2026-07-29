@@ -4,12 +4,13 @@
  * classification, reset/commit/isolate, merge-base capture, and build runners.
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { join } from "node:path";
 
-import { activeWorktrees, git, logger } from "./worktree-core.js";
+import { activeWorktrees, git, gitAsync, logger } from "./worktree-core.js";
 import { unlinkSharedJunctions } from "./worktree-junctions.js";
 import { loadProtectedFiles } from "../config-loader.js";
+import { killProcessTree } from "../process-tree-kill.js";
 
 /**
  * True when `file` (a repo-relative path) is covered by a protected-files.json
@@ -95,14 +96,19 @@ export function isolateNodeModules(name: string): { ok: boolean; detail: string 
   return { ok: true, detail: "junction dropped; ready for isolated install" };
 }
 
-/** List of files changed (added/modified/deleted) in the worktree's uncommitted state. */
-export function getWorktreeChangedFiles(name: string): string[] {
-  const status = getWorktreeStatus(name);
+/** `git status --porcelain` text → changed-file list. The ONE parse, shared by
+ *  the sync and async readers so they can't disagree about what changed. */
+function parsePorcelain(status: string): string[] {
   if (!status) return [];
   return status.split("\n")
     .filter(Boolean)
     .map(line => line.slice(3).trim()) // strip 2-char status + space
     .filter(Boolean);
+}
+
+/** List of files changed (added/modified/deleted) in the worktree's uncommitted state. */
+export function getWorktreeChangedFiles(name: string): string[] {
+  return parsePorcelain(getWorktreeStatus(name));
 }
 
 /**
@@ -117,22 +123,22 @@ export function getWorktreeChangedFiles(name: string): string[] {
  * Measuring `baseSha...branchHead` (committed delta) ∪ uncommitted closes that
  * gap: nothing reaches the base branch without a gate having seen it.
  */
-export function getMergeDeltaFiles(name: string): string[] {
+export async function getMergeDeltaFiles(name: string): Promise<string[]> {
   const wt = activeWorktrees.get(name);
   if (!wt) throw new Error(`No worktree found for ${name}`);
   const files = new Set<string>();
   // Committed delta: base branch tip → this worktree's branch head. The
   // three-dot range diffs against the merge base, so commits that landed on
   // the base since worktree creation don't show up as spurious changes.
-  const base = git(["rev-parse", wt.baseBranch], wt.repoRoot);
-  const head = git(["rev-parse", "HEAD"], wt.path);
+  const base = await gitAsync(["rev-parse", wt.baseBranch], wt.repoRoot);
+  const head = await gitAsync(["rev-parse", "HEAD"], wt.path);
   if (base !== head) {
-    for (const f of git(["diff", "--name-only", `${base}...${head}`], wt.path).split("\n")) {
+    for (const f of (await gitAsync(["diff", "--name-only", `${base}...${head}`], wt.path)).split("\n")) {
       if (f.trim()) files.add(f.trim());
     }
   }
   // Uncommitted changes the merge step will `git add -A` and commit.
-  for (const f of getWorktreeChangedFiles(name)) files.add(f);
+  for (const f of parsePorcelain(await gitAsync(["status", "--porcelain"], wt.path))) files.add(f);
   return [...files];
 }
 
@@ -147,21 +153,21 @@ export function getMergeDeltaFiles(name: string): string[] {
  * couldn't be read).
  */
 const MERGE_DELTA_DIFF_CAP = 8000;
-export function getMergeDeltaDiff(name: string): string {
+export async function getMergeDeltaDiff(name: string): Promise<string> {
   try {
     const wt = activeWorktrees.get(name);
     if (!wt) return "";
     let diff = "";
     // Committed delta: merge base → branch head (three-dot, mirrors the file list).
-    const base = git(["rev-parse", wt.baseBranch], wt.repoRoot);
-    const head = git(["rev-parse", "HEAD"], wt.path);
+    const base = await gitAsync(["rev-parse", wt.baseBranch], wt.repoRoot);
+    const head = await gitAsync(["rev-parse", "HEAD"], wt.path);
     if (base !== head) {
-      diff += git(["diff", `${base}...${head}`], wt.path);
+      diff += await gitAsync(["diff", `${base}...${head}`], wt.path);
     }
     // Uncommitted changes the merge step will `git add -A` and commit. Include
     // untracked files (--no-index would need pairing); `git diff HEAD` plus
     // `git diff` covers staged+unstaged against HEAD.
-    const uncommitted = git(["diff", "HEAD"], wt.path);
+    const uncommitted = await gitAsync(["diff", "HEAD"], wt.path);
     if (uncommitted.trim()) {
       diff += (diff ? "\n" : "") + uncommitted;
     }
@@ -220,15 +226,15 @@ interface BuildResult {
  * RIGHT NOW (pre-merge). The caller stashes this so a post-merge re-gate failure
  * can hard-reset the base branch back to where it was before the merge.
  */
-export function getMergeBaseInfo(
+export async function getMergeBaseInfo(
   name: string,
-): { repoRoot: string; baseBranch: string; sha: string } | null {
+): Promise<{ repoRoot: string; baseBranch: string; sha: string } | null> {
   const wt = activeWorktrees.get(name);
   if (!wt) return null;
   return {
     repoRoot: wt.repoRoot,
     baseBranch: wt.baseBranch,
-    sha: git(["rev-parse", wt.baseBranch], wt.repoRoot),
+    sha: await gitAsync(["rev-parse", wt.baseBranch], wt.repoRoot),
   };
 }
 
@@ -252,25 +258,111 @@ export function revertBranchTo(
   }
 }
 
+/** Output retained per stream, matching the execSync twins' maxBuffer. */
+const RUNNER_OUTPUT_CAP = 10 * 1024 * 1024;
+
+/**
+ * Spawn `command` through a shell and AWAIT its exit.
+ *
+ * The execSync twins park the whole event loop for the child's entire lifetime,
+ * and these ceilings are minutes — so one repo build stopped the server
+ * answering anything at all until it finished. Everything else matches execSync:
+ * shell invocation, hidden window, the same per-stream output cap, and a kill at
+ * `timeoutMs` through the shared tree-killer, which on Windows taskkills the
+ * subtree BEFORE the cmd.exe wrapper so npm's grandchildren (tsc, vite, a dev
+ * server) die with it instead of outliving the timeout. A non-zero exit, a spawn
+ * error and a timeout all land as `ok: false` with the reason in `stderr`.
+ */
+function runProcess(
+  command: string,
+  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+): Promise<BuildResult> {
+  const start = Date.now();
+  return new Promise(resolveRun => {
+    const child = spawn(command, {
+      cwd: opts.cwd,
+      shell: true,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(opts.env ? { env: opts.env } : {}),
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+    const finish = (ok: boolean, note: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolveRun({ ok, durationMs: Date.now() - start, stdout, stderr: stderr + note });
+    };
+    const timer = setTimeout(() => { timedOut = true; killProcessTree(child, "SIGKILL"); }, opts.timeoutMs);
+    // setEncoding decodes across chunk boundaries; appending Buffers decodes
+    // each 64 KiB read on its own and mangles any multi-byte character split
+    // between two of them. Unlike gitAsync (whose output is parsed, so an
+    // overflow must throw) a bounded TAIL is right here: this is build log
+    // prose for a human, and the failure is always at the end of it.
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (c: string) => { stdout = (stdout + c).slice(-RUNNER_OUTPUT_CAP); });
+    child.stderr?.on("data", (c: string) => { stderr = (stderr + c).slice(-RUNNER_OUTPUT_CAP); });
+    child.once("error", (e: Error) => finish(false, e.message));
+    child.once("exit", code => finish(
+      code === 0 && !timedOut,
+      timedOut ? `command timed out after ${opts.timeoutMs}ms` : "",
+    ));
+  });
+}
+
+/** Blocking twin of {@link runProcess}, shared by the two sync exports that
+ *  still have a caller, so the two paths can't drift on cwd/ceiling/env/cap.
+ *  When both of those callers can await, this and its wrappers go together. */
+function runProcessSync(
+  command: string,
+  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+): BuildResult {
+  const start = Date.now();
+  try {
+    const stdout = execSync(command, {
+      cwd: opts.cwd,
+      encoding: "utf-8",
+      timeout: opts.timeoutMs,
+      windowsHide: true,
+      maxBuffer: RUNNER_OUTPUT_CAP,
+      ...(opts.env ? { env: opts.env } : {}),
+    });
+    return { ok: true, durationMs: Date.now() - start, stdout, stderr: "" };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message: string };
+    // execSync's `message` is "Command failed: …" plus whatever stderr it
+    // caught — the right fallback ONLY when nothing usable came back, since
+    // preferring it over real stdout would bury the actual build failure.
+    const stdout = err.stdout || "";
+    return { ok: false, durationMs: Date.now() - start, stdout, stderr: err.stderr || (stdout ? "" : err.message) };
+  }
+}
+
 /**
  * Run `npm run build` in the repo root (NOT a worktree). Used to re-validate the
  * merged main tree after a self_edit merge, since the merge can combine the
  * worktree branch with main commits no gate ever saw.
  */
+export async function runRepoBuildAsync(repoRoot: string, timeoutMs: number): Promise<{ ok: boolean; detail: string }> {
+  const r = await runProcess("npm run build", { cwd: repoRoot, timeoutMs });
+  return { ok: r.ok, detail: r.ok ? "build passed" : (r.stderr || r.stdout || "build failed (no output)").slice(-1500) };
+}
+
+/**
+ * @deprecated Blocking twin of {@link runRepoBuildAsync}. ONE caller left:
+ * `revertPendingMergeIfCrashed` in src/self-edit/rollback.ts, which is
+ * synchronous and is called synchronously from src/index.ts's boot path —
+ * making it async ripples into index.ts, outside this change's footprint.
+ * Delete this the moment that ripple is authorized; every other caller
+ * (self-edit sandbox, update-pipeline) already awaits the async form.
+ */
 export function runRepoBuild(repoRoot: string, timeoutMs: number): { ok: boolean; detail: string } {
-  try {
-    execSync("npm run build", {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      timeout: timeoutMs,
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return { ok: true, detail: "build passed" };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message: string };
-    return { ok: false, detail: (err.stderr || err.stdout || err.message).slice(-1500) };
-  }
+  const r = runProcessSync("npm run build", { cwd: repoRoot, timeoutMs });
+  return { ok: r.ok, detail: r.ok ? "build passed" : (r.stderr || r.stdout || "build failed (no output)").slice(-1500) };
 }
 
 /**
@@ -282,44 +374,27 @@ export function runRepoBuild(repoRoot: string, timeoutMs: number): { ok: boolean
  * half-written one, so a failure here degrades to reconcile's next-boot rebuild
  * instead of bricking the loaded main process.
  */
-export function runDesktopTscBuild(repoRoot: string, timeoutMs: number): { ok: boolean; detail: string } {
-  try {
-    execSync("npx tsc --noEmitOnError", {
-      cwd: join(repoRoot, "desktop"),
-      encoding: "utf-8",
-      timeout: timeoutMs,
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return { ok: true, detail: "desktop tsc passed" };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message: string };
-    return { ok: false, detail: (err.stderr || err.stdout || err.message).slice(-1500) };
-  }
+export async function runDesktopTscBuildAsync(repoRoot: string, timeoutMs: number): Promise<{ ok: boolean; detail: string }> {
+  const r = await runProcess("npx tsc --noEmitOnError", { cwd: join(repoRoot, "desktop"), timeoutMs });
+  return { ok: r.ok, detail: r.ok ? "desktop tsc passed" : (r.stderr || r.stdout || "desktop tsc failed (no output)").slice(-1500) };
 }
 
 /** Run a build/test command inside the worktree. */
+export async function runCommandInWorktreeAsync(name: string, opts: BuildOptions): Promise<BuildResult> {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  return runProcess(opts.command, { cwd: wt.path, timeoutMs: opts.timeoutMs, env: opts.env });
+}
+
+/**
+ * @deprecated Blocking twin of {@link runCommandInWorktreeAsync}. ONE caller
+ * left: `validateRound` in src/autopilot/validate.ts, which is synchronous and
+ * is called synchronously from src/autopilot/loop.ts — making it async ripples
+ * into loop.ts, outside this change's footprint. Delete this the moment that
+ * ripple is authorized; it holds the loop for the whole build/test ceiling.
+ */
 export function runCommandInWorktree(name: string, opts: BuildOptions): BuildResult {
   const wt = activeWorktrees.get(name);
   if (!wt) throw new Error(`No worktree found for ${name}`);
-  const start = Date.now();
-  try {
-    const stdout = execSync(opts.command, {
-      cwd: wt.path,
-      encoding: "utf-8",
-      timeout: opts.timeoutMs,
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024,
-      ...(opts.env ? { env: opts.env } : {}),
-    });
-    return { ok: true, durationMs: Date.now() - start, stdout, stderr: "" };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message: string; code?: number };
-    return {
-      ok: false,
-      durationMs: Date.now() - start,
-      stdout: err.stdout || "",
-      stderr: err.stderr || err.message || "",
-    };
-  }
+  return runProcessSync(opts.command, { cwd: wt.path, timeoutMs: opts.timeoutMs, env: opts.env });
 }

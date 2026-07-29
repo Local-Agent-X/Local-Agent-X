@@ -6,7 +6,7 @@
  * All exports here are called only from sandbox.ts.
  */
 
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -53,9 +53,17 @@ export const SKIPPED_GATE: GateResult = { ok: false, skipped: true, durationMs: 
 // (isolateNodeModules) and run a real `npm ci` in an isolated dir. A failing
 // install blocks the merge.
 
-async function runGateCommand(name: string, args: string[], signal?: AbortSignal, env = process.env): Promise<{ ok: boolean; durationMs: number; stdout: string; stderr: string }> {
+interface GateRun { ok: boolean; durationMs: number; stdout: string; stderr: string }
+
+async function runGateCommand(name: string, args: string[], signal?: AbortSignal, env = process.env): Promise<GateRun> {
   const cwd = getWorktreePath(name);
   if (!cwd) return { ok: false, durationMs: 0, stdout: "", stderr: "worktree path not found" };
+  return runGateCommandAt(cwd, args, signal, env);
+}
+
+/** The ONE npm-gate runner. Registered worktrees resolve their path first
+ *  (runGateCommand); candidate trees that aren't registered pass `cwd` here. */
+function runGateCommandAt(cwd: string, args: string[], signal?: AbortSignal, env = process.env): Promise<GateRun> {
   const start = Date.now();
   return new Promise((resolveRun) => {
     const child = spawn("npm", args, { cwd, env, windowsHide: true, shell: process.platform === "win32", stdio: ["ignore", "pipe", "pipe"] });
@@ -85,7 +93,7 @@ export async function gateDeps(name: string, signal?: AbortSignal): Promise<Gate
   // committed package.json change must still trigger the isolated install,
   // or a self_edit could commit a malicious dependency that the working-tree
   // check never sees but the merge ships to main.
-  const changed = getMergeDeltaFiles(name);
+  const changed = await getMergeDeltaFiles(name);
   if (!changedFilesTouchDeps(changed)) {
     return { ok: true, skipped: true, durationMs: 0, detail: "no dependency changes" };
   }
@@ -104,11 +112,8 @@ export async function gateDeps(name: string, signal?: AbortSignal): Promise<Gate
 
 // ── Gate 1: build ──────────────────────────────────────────────────────────
 
-export async function gateBuild(name: string, signal?: AbortSignal): Promise<GateResult> {
-  // Scrubbed env: `npm run build` runs the worktree's build scripts (authored
-  // by the untrusted self_edit child). It needs no credentials — strip them so
-  // a malicious build script can't read+exfil the server's secrets.
-  const r = await runGateCommand(name, ["run", "build"], signal, buildSelfEditChildEnv());
+/** Shared verdict shaping so the worktree and path forms can't drift apart. */
+function buildVerdict(r: GateRun): GateResult {
   return {
     ok: r.ok,
     skipped: false,
@@ -117,22 +122,21 @@ export async function gateBuild(name: string, signal?: AbortSignal): Promise<Gat
   };
 }
 
+export async function gateBuild(name: string, signal?: AbortSignal): Promise<GateResult> {
+  // Scrubbed env: `npm run build` runs the worktree's build scripts (authored
+  // by the untrusted self_edit child). It needs no credentials — strip them so
+  // a malicious build script can't read+exfil the server's secrets.
+  return buildVerdict(await runGateCommand(name, ["run", "build"], signal, buildSelfEditChildEnv()));
+}
+
 /**
  * Path-based build gate for candidate trees that aren't registered worktrees —
- * the update pipeline's extracted-tarball dir. Same command, same scrubbed env.
+ * the update pipeline's extracted-tarball dir. Same command, same scrubbed env,
+ * and now the same runner and the same verdict as {@link gateBuild}: one build
+ * gate, not two implementations that can drift.
  */
-export function gateBuildAt(dir: string): GateResult {
-  const start = Date.now();
-  try {
-    execSync("npm run build", {
-      cwd: dir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS,
-      windowsHide: true, maxBuffer: 10 * 1024 * 1024, env: buildSelfEditChildEnv(),
-    });
-    return { ok: true, skipped: false, durationMs: Date.now() - start, detail: "build passed" };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message: string };
-    return { ok: false, skipped: false, durationMs: Date.now() - start, detail: (err.stderr || err.stdout || err.message).slice(-1500) };
-  }
+export async function gateBuildAtAsync(dir: string, signal?: AbortSignal): Promise<GateResult> {
+  return buildVerdict(await runGateCommandAt(dir, ["run", "build"], signal, buildSelfEditChildEnv()));
 }
 
 // The provider loop reads this one canonical credential path when the probe

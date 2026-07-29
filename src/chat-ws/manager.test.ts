@@ -24,6 +24,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { buildManager } from "./manager.js";
+import { heartbeatEvent } from "./heartbeat.js";
 import { activeChats, clients, recordInjectRun, terminateChat } from "./state.js";
 import { replayBufferedEvents } from "./replay.js";
 
@@ -482,6 +483,192 @@ describe("op_heartbeat keepalive (2026-07-13 audit I3)", () => {
     // The entry itself is still leaked (done never landed) — the cap only
     // silences the keepalive so the client watchdog can recover the session.
     expect(activeChats.get("s-hb-leak")!.done).toBe(false);
+  });
+
+  it("(f) a beat during a running tool names the op AND the tool, past a finished sibling", () => {
+    // The payload half (C4.1). A payload-free beat only says "something is
+    // alive": the client's reducer default case bumps lastActivityMs and
+    // deliberately not lastContentMs, so 20s of silence carried zero
+    // information about WHAT the turn was doing. The beat now reports the
+    // running tool, derived from the buffered events the entry already holds.
+    //
+    // Teeth on the derivation itself: tool batches run CONCURRENTLY
+    // (chat-tool-dispatcher.dispatchBatch), so the NEWEST tool_* event is not
+    // the answer — a quick sibling's tool_end lands while the long call the
+    // beat exists to describe is still running.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-hb-tool");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-tool"]));
+
+    const opStarted: ServerEvent = { type: "chat_op_started", opId: "op-hb" };
+    const longStart: ServerEvent = { type: "tool_start", toolName: "bash", toolCallId: "c1", args: {} };
+    const quickStart: ServerEvent = { type: "tool_start", toolName: "read_file", toolCallId: "c2", args: {} };
+    const quickEnd: ServerEvent = { type: "tool_end", toolName: "read_file", toolCallId: "c2", result: "ok", allowed: true };
+    const longEnd: ServerEvent = { type: "tool_end", toolName: "bash", toolCallId: "c1", result: "built", allowed: true };
+
+    onEvent(opStarted);
+    onEvent(longStart);
+    onEvent(quickStart);
+    onEvent(quickEnd);
+
+    vi.advanceTimersByTime(20_000);
+    const beats = heartbeatFrames(frames());
+    expect(beats).toHaveLength(1);
+    expect(beats[0].event).toEqual({
+      type: "op_heartbeat", opId: "op-hb", phase: "tool", activeTool: "bash",
+    });
+
+    // Once the long call closes there is no tool to name — and the manager
+    // must not keep reporting a stale one, nor resurrect the pre-tool lane
+    // (a tool landed since the last text, so the tail run is history).
+    onEvent(longEnd);
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({ type: "op_heartbeat", opId: "op-hb" });
+  });
+
+  it("(g) between tools, the beat reports the lane the turn is writing", () => {
+    // The other half of "what is it doing": with no tool in flight the beat
+    // names the lane of the run the turn last appended to, so a long silent
+    // stretch mid-answer reads as text vs thinking instead of just alive.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-hb-lane");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-lane"]));
+
+    const opStarted: ServerEvent = { type: "chat_op_started", opId: "op-lane" };
+    onEvent(opStarted);
+    onEvent(delta("writing the answer"));
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({
+      type: "op_heartbeat", opId: "op-lane", phase: "stream",
+    });
+
+    onEvent({ type: "reasoning", delta: "wait, check the docs" } as ServerEvent);
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({
+      type: "op_heartbeat", opId: "op-lane", phase: "reasoning",
+    });
+  });
+
+  it("(h) a beat with nothing to report still fires, and fires BARE", () => {
+    // Regression guard on the keepalive's original job. A channel outside a
+    // canonical turn (the delegation ack emits no chat_op_started) knows no
+    // op, no lane and no tool — it must still beat, or the client's 60s
+    // stuck-stream watchdog fires reconnect_op against a healthy turn. And
+    // the frame must stay bare: undefined fields never reach the wire, so the
+    // reducer's default-case path (chat-stream-reducer.js) sees exactly the
+    // payload-free event it has always handled.
+    const m = buildManager();
+    m.startChat("s-hb-bare");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-bare"]));
+
+    vi.advanceTimersByTime(20_000);
+    const beats = heartbeatFrames(frames());
+    expect(beats).toHaveLength(1);
+    expect(beats[0].event).toEqual({ type: "op_heartbeat" });
+    // Teeth the wire frame alone cannot give this (skeptic finding 3):
+    // JSON.stringify erases `undefined` keys, so a regression that assigned
+    // phase/activeTool unconditionally would still serialize bare and this
+    // test would still pass. Assert the OBJECT the manager builds.
+    expect(Object.keys(heartbeatEvent(activeChats.get("s-hb-bare")!))).toEqual(["type"]);
+  });
+
+  it("(j) a long tool call's own tool_progress flood cannot evict its tool_start", () => {
+    // Skeptic repro (2026-07-28), the keepalive's OWN headline case.
+    // shell-tool.ts throttles progress to one per PROGRESS_INTERVAL_MS=500ms,
+    // so ~4.2 minutes into a single bash/build_app the 500/400 buffer trim
+    // evicted the call's own tool_start: the beat silently degraded to a bare
+    // frame for the rest of the build — "working" right up until it read as
+    // nothing — and the replay lost the tool card with it (a tool_progress
+    // with no tool_start renders nothing client-side). A progress line is a
+    // SNAPSHOT, not history, so only the latest per call is buffered.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-hb-flood");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-flood"]));
+
+    onEvent({ type: "chat_op_started", opId: "op-flood" } as ServerEvent);
+    onEvent({ type: "tool_start", toolName: "bash", toolCallId: "c1", args: {} } as ServerEvent);
+    for (let i = 0; i < 600; i++) {
+      onEvent({ type: "tool_progress", toolName: "bash", toolCallId: "c1", message: `line ${i}` } as ServerEvent);
+    }
+
+    const chat = activeChats.get("s-hb-flood")!;
+    expect(chat.events.map(e => e.type)).toEqual(["chat_op_started", "tool_start", "tool_progress"]);
+    expect(chat.events.at(-1)).toMatchObject({ message: "line 599" });
+
+    // Deep into the build the beat still names what the turn is inside.
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({
+      type: "op_heartbeat", opId: "op-flood", phase: "tool", activeTool: "bash",
+    });
+
+    // Same eviction cost a reconnecting client the tool card entirely.
+    const late = makeWs();
+    replayBufferedEvents(late.ws, "s-hb-flood");
+    expect(late.frames().map(f => (f.event as { type: string }).type))
+      .toEqual(["chat_op_started", "tool_start", "tool_progress"]);
+  });
+
+  it("(k) concurrent calls each keep their OWN latest progress, in their own slot", () => {
+    // Coalescing is per CALL, not per tool name: two live cards must not
+    // overwrite each other's progress, and the id-less emitters
+    // (build-app-spawn.ts, static-build-run.ts) fall back to the tool name.
+    // Slot order is preserved so the replayed timeline still reads
+    // start → progress in the order the calls actually began.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-hb-multi");
+
+    onEvent({ type: "tool_start", toolName: "bash", toolCallId: "c1", args: {} } as ServerEvent);
+    onEvent({ type: "tool_start", toolName: "build_app", args: {} } as ServerEvent);
+    onEvent({ type: "tool_progress", toolName: "bash", toolCallId: "c1", message: "b1" } as ServerEvent);
+    onEvent({ type: "tool_progress", toolName: "build_app", message: "s1" } as ServerEvent);
+    onEvent({ type: "tool_progress", toolName: "bash", toolCallId: "c1", message: "b2" } as ServerEvent);
+    onEvent({ type: "tool_progress", toolName: "build_app", message: "s2" } as ServerEvent);
+
+    const chat = activeChats.get("s-hb-multi")!;
+    expect(chat.events.map(e => e.type))
+      .toEqual(["tool_start", "tool_start", "tool_progress", "tool_progress"]);
+    expect(chat.events[2]).toMatchObject({ toolCallId: "c1", message: "b2" });
+    expect(chat.events[3]).toMatchObject({ toolName: "build_app", message: "s2" });
+  });
+
+  it("(l) a tool_start whose tool_end never arrives stops being reported once text resumes", () => {
+    // Skeptic repro (2026-07-28). A tool_end can be lost outright:
+    // audit-tool-call.ts emits it only AFTER evaluateThreat / applyBudget /
+    // firePostHook (USER-configured) / recordUsage, and a throw in any of
+    // those skips the emit while chat-tool-dispatcher's catch hands the model
+    // an error result and the turn CONTINUES. Reading the buffer alone, every
+    // later beat kept naming that dead tool for the rest of the turn — while
+    // the turn was streaming its answer AND while it was reasoning.
+    const m = buildManager();
+    const { onEvent } = m.startChat("s-hb-orphan");
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-hb-orphan"]));
+
+    onEvent({ type: "chat_op_started", opId: "op-orphan" } as ServerEvent);
+    onEvent({ type: "tool_start", toolName: "bash", toolCallId: "c1", args: {} } as ServerEvent);
+
+    // Nothing has happened since the start — naming it is honest.
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({
+      type: "op_heartbeat", opId: "op-orphan", phase: "tool", activeTool: "bash",
+    });
+
+    // The turn writes again: proof the tool phase is over, tool_end or not.
+    onEvent(delta("here is the answer"));
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({
+      type: "op_heartbeat", opId: "op-orphan", phase: "stream",
+    });
+
+    onEvent({ type: "reasoning", delta: "double-checking" } as ServerEvent);
+    vi.advanceTimersByTime(20_000);
+    expect(heartbeatFrames(frames()).at(-1)!.event).toEqual({
+      type: "op_heartbeat", opId: "op-orphan", phase: "reasoning",
+    });
   });
 
   it("(d) heartbeats never land in chat.events (no replay noise)", () => {

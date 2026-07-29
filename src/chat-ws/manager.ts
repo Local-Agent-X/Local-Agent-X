@@ -5,6 +5,7 @@
 
 import type { ServerEvent } from "../types.js";
 import { createLogger } from "../logger.js";
+import { startHeartbeat } from "./heartbeat.js";
 import {
   activeChats,
   type ActiveChat,
@@ -18,24 +19,6 @@ import {
 } from "./state.js";
 
 const logger = createLogger("chat-ws");
-
-// Keepalive cadence for live turns. The client's stuck-stream watchdog
-// (public/js/chat-ws.js) fires reconnect_op after 60s without events, so a
-// single long tool call (a build, npm install) used to trigger needless full
-// replays. 20s keeps the client's activity clock fresh with 3x margin under
-// that 60s threshold.
-const HEARTBEAT_INTERVAL_MS = 20_000;
-
-// Belt-and-suspenders lifetime bound on the keepalive (2026-07-13 audit,
-// skeptic finding): if an ActiveChat entry leaks — an error path where `done`
-// never lands (the known one: emitTurnError bypassing onEvent; its root fix
-// lives in run-chat-turn's error path) — an immortal heartbeat would keep the
-// client's activity clock fresh forever and defeat the watchdog's
-// reconnect_op recovery of that session's phantom stream. 4h is generously
-// above any plausible turn, including multi-hour agentic builds, so healthy
-// turns never hit it; any leaked entry stops masking itself within one
-// interval past the cap.
-const HEARTBEAT_MAX_LIFETIME_MS = 4 * 60 * 60 * 1000;
 
 // Delta-coalescing window (2026-07-13 audit I2). Every stream/reasoning
 // delta used to broadcast immediately: one JSON.stringify + N ws.sends PER
@@ -66,6 +49,34 @@ function stampOpId(event: ServerEvent, opId: string | undefined): ServerEvent {
     default:
       return event;
   }
+}
+
+/** Fold a `tool_progress` into the buffered line it supersedes; false when
+ *  there is none and the caller should buffer it normally.
+ *
+ *  A progress line is a SNAPSHOT of one call, not history — the client keys
+ *  progressByTool by tool name, last write wins (chat-stream-reducer.js) — so
+ *  earlier lines for the same call are dead weight. Buffering them all was the
+ *  third flood of the class the stream/reasoning folds fixed, and the worst:
+ *  it evicted its OWN anchor. shell-tool.ts throttles progress to one per
+ *  500ms, so one long bash/build_app blew the 500/400 trim ~4.2min in and took
+ *  its tool_start with it — the replay then delivered progress for a card that
+ *  never opened, and the heartbeat lost the name of the very tool it exists to
+ *  report (skeptic finding, 2026-07-28). Overwriting in place keeps each live
+ *  card's slot, so replayed order is unchanged; key is toolCallId when the
+ *  emitter set one, tool name otherwise (build-app-spawn.ts emits none). */
+function supersedeToolProgress(events: ServerEvent[], event: ServerEvent): boolean {
+  if (event.type !== "tool_progress") return false;
+  const key = event.toolCallId ?? event.toolName;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const prior = events[i];
+    // Nothing before this call's own start can be its progress — bounds the scan.
+    if (prior.type === "tool_start" && (prior.toolCallId ?? prior.toolName) === key) return false;
+    if (prior.type !== "tool_progress" || (prior.toolCallId ?? prior.toolName) !== key) continue;
+    events[i] = event;
+    return true;
+  }
+  return false;
 }
 
 export interface ChatWsManager {
@@ -128,25 +139,10 @@ export function buildManager(): ChatWsManager {
       broadcastActiveChats();
 
       // Heartbeat: keep the client's per-op activity clock fresh through
-      // long silent tool calls. Broadcast-only — never pushed into
-      // chat.events (replay noise) and never routed through onEvent. The
-      // identity check makes the interval self-cleaning across every exit
-      // path: natural done, terminateChat (state.ts marks done), and
-      // overwrite by a successor startChat — no cross-module wiring needed.
-      // The lifetime cap backstops entry-leak paths where done never lands.
-      const heartbeat = setInterval(() => {
-        if (
-          chat.done ||
-          activeChats.get(sessionId) !== chat ||
-          Date.now() - chat.startedAt > HEARTBEAT_MAX_LIFETIME_MS
-        ) {
-          clearInterval(heartbeat);
-          return;
-        }
-        broadcastToSession(sessionId, { type: "op_heartbeat", opId: chat.opId });
-      }, HEARTBEAT_INTERVAL_MS);
-      // Never hold the process open for a keepalive.
-      heartbeat.unref?.();
+      // long silent tool calls, and tell it what the turn is busy with. Owned
+      // by heartbeat.ts — cadence, lifetime cap, the self-cleaning identity
+      // check, and the payload it derives from this entry all live there.
+      const heartbeat = startHeartbeat(chat);
 
       // ── Delta coalescing (2026-07-13 audit I2) ─────────────────────────
       // Scheme: a single ordered queue of {lane, text} runs shared by both
@@ -264,12 +260,14 @@ export function buildManager(): ChatWsManager {
               // block timeline splits where the tool actually ran.
               chat.runBoundary = true;
             }
-            chat.events.push(event);
-            // Backstop only, now that stream deltas never land here — the
-            // non-stream event list stays small, and trimming it can no
-            // longer truncate the replayed text.
-            if (chat.events.length > 500) {
-              chat.events = chat.events.slice(-400);
+            if (!supersedeToolProgress(chat.events, event)) {
+              chat.events.push(event);
+              // Backstop only, now that stream deltas never land here — the
+              // non-stream event list stays small, and trimming it can no
+              // longer truncate the replayed text.
+              if (chat.events.length > 500) {
+                chat.events = chat.events.slice(-400);
+              }
             }
           }
 

@@ -246,6 +246,44 @@ function previewImage(index, ctxKey) {
 // Voice + clone modals moved to /js/chat-voice-modals.js
 
 
+// ── The STREAMING chip ──
+// The chip used to paint ONE boolean — "a turn exists" — so it read
+// identically whether 34 tools were running or the server's event loop had
+// been dead for two minutes. It now paints the live-turn signal
+// (streamActivitySignal, thinking-phrases.js: flowing / working / silent),
+// the same derivation the rotating thinking phrase gates itself on, so the
+// two moving affordances can never tell the user different stories.
+
+// The chip cannot wait for a store mutation to demote itself: the failure it
+// exists to expose — the turn wedging or the server going away mid-turn —
+// produces no further mutations, so a purely mutation-driven chip freezes on
+// its last claim forever. This tick is the only clock in the path, and it
+// does nothing at all unless the chat on screen is streaming.
+const SIGNAL_TICK_MS = 3000;
+
+// Paint the chip from the signal — and only when it actually changed, since
+// this runs on every store mutation and a streaming turn mutates per token.
+// dataset.signal is both the memo and the state hook.
+function _paintStreamSignal(ind, sig) {
+  const labelEl = ind.querySelector('.si-label');
+  if (ind.dataset.signal === sig.state && (!labelEl || labelEl.textContent === sig.label)) return;
+  ind.dataset.signal = sig.state;
+  if (labelEl) labelEl.textContent = sig.label;
+  const silent = sig.state === 'silent';
+  // The pulsing dot is the chip's only moving part; when the stream has
+  // stopped moving, so must it. Inline animation only — clearing the value
+  // hands the dot straight back to .chat-dot.active-pulse in app.css.
+  const dot = ind.querySelector('.chat-dot');
+  if (dot) dot.style.animation = silent ? 'none' : '';
+  ind.style.color = silent ? 'var(--muted)' : 'var(--accent)';
+  ind.style.borderColor = silent ? 'var(--border)' : 'var(--accent-dim)';
+  ind.title = silent
+    ? 'No output and no heartbeat from the running turn — it may be wedged. Send still injects into it.'
+    : (sig.activity
+      ? 'Running ' + sig.activity + ' — nothing on screen yet. The send button will inject into the running turn.'
+      : 'A turn is in flight. The send button will inject into the running turn.');
+}
+
 // Single source of truth for "is a turn in flight for the chat I'm looking at"
 // → drives the toolbar STREAMING indicator + the send-btn inject-mode style.
 // Subscribed to ChatStreamStore so every store mutation re-evaluates the
@@ -256,7 +294,12 @@ function updateStreamUI() {
     const active = (typeof window !== 'undefined' && window.activeChat) ? window.activeChat : null;
     const isStreamingHere = !!(active && typeof window.isStreaming === 'function' && window.isStreaming(active.id));
     const ind = document.getElementById('stream-indicator');
-    if (ind) ind.style.display = isStreamingHere ? 'inline-flex' : 'none';
+    if (ind) {
+      ind.style.display = isStreamingHere ? 'inline-flex' : 'none';
+      // A hidden chip has nothing to say; deriving the signal is only worth it
+      // while a turn is actually in flight in this view.
+      if (isStreamingHere) _paintStreamSignal(ind, window.streamActivitySignal(active.id));
+    }
     const sendBtn = document.getElementById('send-btn');
     if (sendBtn) {
       sendBtn.classList.toggle('inject-mode', isStreamingHere);
@@ -288,6 +331,13 @@ function updateStreamUI() {
 }
 window.updateStreamUI = updateStreamUI;
 try { ChatStreamStore.subscribeAll(function() { updateStreamUI(); }); } catch {}
+// See SIGNAL_TICK_MS: a wedged turn stops mutating the store, so the demotion
+// to 'silent' needs a clock of its own. No-op unless a turn is live on screen.
+setInterval(function() {
+  try {
+    if (window.activeChat && ChatStreamStore.isStreaming(window.activeChat.id)) updateStreamUI();
+  } catch {}
+}, SIGNAL_TICK_MS);
 // (extracted to /js/chat-ws.js or /js/chat-helpers.js)
 
 

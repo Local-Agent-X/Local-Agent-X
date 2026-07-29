@@ -14,15 +14,22 @@
  * own search path. Legacy chunks with source='mind' may still exist from
  * pre-migration; the 'mind' value remains in the CanonicalSource union so
  * those rows stay readable, but no new chunks are written.
+ *
+ * Every file read here is ASYNC on purpose. These indexers are driven both
+ * from write-through paths and from the corpus-wide backfill walk
+ * (universal-index-backfill.ts, which also yields between files); a
+ * synchronous read on either path blocks the whole server's event loop.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
 import type { MemoryIndex } from "../memory/index.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
 import { withChunkProvenance } from "./search-helpers.js";
 import { chunkText, chunkConversationPairs, extractSessionPairs } from "./chunking.js";
+import { runBackfill, type BackfillReport, type IndexResult } from "./universal-index-backfill.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.universal-index");
@@ -34,27 +41,17 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-function safeRead(path: string): string | null {
-  try { return readFileSync(path, "utf-8"); } catch { return null; }
+async function safeRead(path: string): Promise<string | null> {
+  try { return await readFile(path, "utf-8"); } catch { return null; }
 }
 
 function slugifyEntity(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-export interface IndexResult {
-  added: number;
-  removed: number;
-  unchanged: number;
-}
-
-export interface BackfillReport {
-  bySource: Partial<Record<CanonicalSource, { filesScanned: number; chunksAdded: number; chunksUnchanged: number }>>;
-  totalFilesScanned: number;
-  totalChunksAdded: number;
-  totalChunksUnchanged: number;
-  durationMs: number;
-}
+// Both shapes now live with the walk that produces them; re-exported here so
+// existing importers of this module keep working.
+export type { IndexResult, BackfillReport } from "./universal-index-backfill.js";
 
 // ── Heading-aware section chunker ────────────────────────────────────────
 //
@@ -146,7 +143,7 @@ export class UniversalIndex {
 
   async indexEntityPage(slug: string): Promise<IndexResult> {
     const path = join(this.entitiesDir, `${slug}.md`);
-    const raw = safeRead(path);
+    const raw = await safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
     const metadata: ChunkMetadata = withChunkProvenance("entity", { source_type: "entity-page" });
     const chunks = chunkBySections(raw, path, "entity", metadata);
@@ -157,7 +154,7 @@ export class UniversalIndex {
     const d = date || new Date();
     const dateStr = d.toISOString().split("T")[0];
     const path = join(this.memoryDir, `${dateStr}.md`);
-    const raw = safeRead(path);
+    const raw = await safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
     const metadata: ChunkMetadata = withChunkProvenance("daily-log", { source_type: "memory-file", date: dateStr });
     const chunks = chunkBySections(raw, path, "daily-log", metadata);
@@ -166,7 +163,7 @@ export class UniversalIndex {
 
   async indexSessionSummary(sessionId: string): Promise<IndexResult> {
     const path = join(this.summariesDir, `${sessionId}.md`);
-    const raw = safeRead(path);
+    const raw = await safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
     const metadata: ChunkMetadata = withChunkProvenance("session-summary", {
       source_type: "memory-file", session_id: sessionId,
@@ -185,7 +182,7 @@ export class UniversalIndex {
     // the file but doesn't expose meta — re-scan just for the timestamp.
     let sessionDate: string | undefined;
     try {
-      for (const line of readFileSync(path, "utf-8").split("\n")) {
+      for (const line of (await safeRead(path))?.split("\n") ?? []) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         const row = JSON.parse(trimmed);
@@ -207,7 +204,7 @@ export class UniversalIndex {
 
   async indexPersonalityFile(filename: string): Promise<IndexResult> {
     const path = join(this.memoryDir, filename);
-    const raw = safeRead(path);
+    const raw = await safeRead(path);
     if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
     const metadata: ChunkMetadata = withChunkProvenance("personality", { source_type: "memory-file" });
     const chunks = chunkBySections(raw, path, "personality", metadata);
@@ -216,91 +213,31 @@ export class UniversalIndex {
 
   // ── Backfill ───────────────────────────────────────────────────────────
 
+  // The corpus-wide walk itself lives in universal-index-backfill.ts, which
+  // paces it so it can never monopolise the event loop; this method owns only
+  // what needs the db handle. See that module's header for why the walk is
+  // paced in-process rather than moved to a worker.
   async backfillAll(opts?: { force?: boolean }): Promise<BackfillReport> {
-    const t0 = Date.now();
-    const report: BackfillReport = {
-      bySource: {},
-      totalFilesScanned: 0,
-      totalChunksAdded: 0,
-      totalChunksUnchanged: 0,
-      durationMs: 0,
-    };
-
-    const accum = (src: CanonicalSource, res: IndexResult) => {
-      const slot = report.bySource[src] || { filesScanned: 0, chunksAdded: 0, chunksUnchanged: 0 };
-      slot.filesScanned += 1;
-      slot.chunksAdded += res.added;
-      slot.chunksUnchanged += res.unchanged;
-      report.bySource[src] = slot;
-      report.totalFilesScanned += 1;
-      report.totalChunksAdded += res.added;
-      report.totalChunksUnchanged += res.unchanged;
-    };
-
-    const force = !!opts?.force;
-    if (force) {
-      // Force mode: clear path-level idempotency by wiping each file's chunks.
-      // The per-file indexers below will then re-insert from scratch.
-      // (Cheap on the embedding side because embedding_cache hits by content_hash.)
-      try {
-        this.memory["db"].exec(`DELETE FROM chunks WHERE source IN ('entity','daily-log','mind','session-summary','session','personality')`);
-      } catch (e) { logger.warn("[universal-index] force-clear failed:", (e as Error).message); }
-    }
-
-    // Entity pages
-    if (existsSync(this.entitiesDir)) {
-      const files = readdirSync(this.entitiesDir).filter(f => f.endsWith(".md"));
-      for (const f of files) {
-        const slug = basename(f, ".md");
-        try { accum("entity", await this.indexEntityPage(slug)); }
-        catch (e) { logger.warn(`[universal-index] entity ${slug}:`, (e as Error).message); }
-      }
-    }
-
-    // Memory root files: daily logs and personality files.
-    if (existsSync(this.memoryDir)) {
-      const files = readdirSync(this.memoryDir, { withFileTypes: true })
-        .filter(e => e.isFile() && e.name.endsWith(".md"))
-        .map(e => e.name);
-
-      for (const name of files) {
-        try {
-          if (/^\d{4}-\d{2}-\d{2}\.md$/.test(name)) {
-            const dateStr = name.replace(".md", "");
-            accum("daily-log", await this.indexDailyLog(new Date(dateStr)));
-          } else {
-            accum("personality", await this.indexPersonalityFile(name));
-          }
-        } catch (e) {
-          logger.warn(`[universal-index] ${name}:`, (e as Error).message);
-        }
-      }
-    }
-
-    // Session summaries
-    if (existsSync(this.summariesDir)) {
-      const files = readdirSync(this.summariesDir).filter(f => f.endsWith(".md"));
-      for (const f of files) {
-        const sessionId = basename(f, ".md");
-        try { accum("session-summary", await this.indexSessionSummary(sessionId)); }
-        catch (e) { logger.warn(`[universal-index] summary ${sessionId}:`, (e as Error).message); }
-      }
-    }
-
-    // Raw session transcripts — the retroactive fix for pre-pipeline sessions.
-    // Walks ~/.lax/sessions/*.jsonl and reindexes every transcript via the
-    // idempotent path. Hash-deduped, so already-indexed sessions cost ~nothing.
-    if (existsSync(this.sessionsDir)) {
-      const files = readdirSync(this.sessionsDir).filter(f => f.endsWith(".jsonl"));
-      for (const f of files) {
-        const sessionId = basename(f, ".jsonl");
-        try { accum("session", await this.indexSessionTranscript(sessionId)); }
-        catch (e) { logger.warn(`[universal-index] session ${sessionId}:`, (e as Error).message); }
-      }
-    }
-
-    report.durationMs = Date.now() - t0;
-    return report;
+    return runBackfill(
+      {
+        entities: this.entitiesDir,
+        memory: this.memoryDir,
+        summaries: this.summariesDir,
+        sessions: this.sessionsDir,
+      },
+      this,
+      {
+        force: opts?.force,
+        // Force mode: clear path-level idempotency by wiping each file's
+        // chunks. The per-file indexers then re-insert from scratch. (Cheap
+        // on the embedding side because embedding_cache hits by content_hash.)
+        forceClear: () => {
+          try {
+            this.memory["db"].exec(`DELETE FROM chunks WHERE source IN ('entity','daily-log','mind','session-summary','session','personality')`);
+          } catch (e) { logger.warn("[universal-index] force-clear failed:", (e as Error).message); }
+        },
+      },
+    );
   }
 
   async reindexStore(source: CanonicalSource): Promise<number> {

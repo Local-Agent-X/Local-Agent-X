@@ -17,6 +17,7 @@ import { makeRunMemBg } from "./memory-bg.js";
 import { makeRunMemoryHygiene } from "./memory-hygiene.js";
 import { registerDreamRunnerForServer } from "./dream-check.js";
 import { registerSkillReviewRunner, runSkillReviewPass } from "./skill-review.js";
+import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
 import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../../local-only-policy.js";
 
 const logger = createLogger("server.background-jobs");
@@ -132,6 +133,18 @@ export function isForegroundBusy(
   return now - mostRecent < thresholdMs;
 }
 
+/** The backfill scheduling gate lives in its own module (it has its own test
+ *  file), but this file stays its public address — every existing importer,
+ *  and backfill-gate.test.ts, resolves it through here. */
+export {
+  decideBackfill,
+  attemptBackfill,
+  BACKFILL_RETRY_MS,
+  BACKFILL_BOOT_SETTLE_MS,
+  type BackfillSkipReason,
+  type BackfillDecision,
+} from "./backfill-gate.js";
+
 export function startBackgroundJobs(deps: {
   config: LAXConfig;
   dataDir: string;
@@ -154,6 +167,10 @@ export function startBackgroundJobs(deps: {
     cronService, integrations, agentSync, allAgentTools, bridgeTools,
     getOrCreateSession, saveSession,
   } = deps;
+
+  // Server start. Background jobs are wired as part of boot, so this is the
+  // honest "the app just came up" marker the backfill gate keys on.
+  const serverStartedAt = Date.now();
 
   const cronReportsDir = join(dataDir, "cron", "reports");
   if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });
@@ -276,19 +293,28 @@ export function startBackgroundJobs(deps: {
     },
   });
 
+  // Backfill scans every file and re-embeds — see decideBackfill in
+  // ./backfill-gate.ts for the two contention preconditions, and why embedder
+  // availability is deliberately not one of them.
+  // The walk itself is what keeps the loop turning during a run; these gates
+  // only decide when to start one.
   const runBackfill = async () => {
-    // Backfill scans every file and re-embeds via Ollama — defer past any live
-    // turn so it doesn't fight the foreground for embedding CPU.
-    if (isForegroundBusy(sessionStore)) { setTimeout(runBackfill, 30_000); return; }
     try {
-      const { getUniversalIndex } = await import("../../memory/universal-index.js");
-      const ui = getUniversalIndex();
-      if (!ui) return;
-      const report = await ui.backfillAll();
-      logger.info(`[memory-backfill] +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files (${report.durationMs}ms)`);
+      await attemptBackfill({
+        foregroundBusy: () => isForegroundBusy(sessionStore),
+        serverStarting: () => Date.now() - serverStartedAt < BACKFILL_BOOT_SETTLE_MS,
+        retry: (ms) => { const t = setTimeout(runBackfill, ms); t.unref?.(); },
+        scan: async () => {
+          const { getUniversalIndex } = await import("../../memory/universal-index.js");
+          const ui = getUniversalIndex();
+          if (!ui) return;
+          const report = await ui.backfillAll();
+          logger.info(`[memory-backfill] +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files (${report.durationMs}ms)`);
+        },
+      });
     } catch (e) { logger.warn("[memory-backfill] failed:", (e as Error).message); }
   };
-  setTimeout(runBackfill, 15_000);
+  { const t = setTimeout(runBackfill, 15_000); t.unref?.(); }
   const syncCfg = agentSync.getConfig();
   if (!isLocalOnlyMode() && syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) logger.info(`[sync] Startup pull: ${r.message}`); }).catch(() => {});
   if (!isLocalOnlyMode()) agentSync.startHeartbeat();

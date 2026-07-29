@@ -23,6 +23,55 @@ import {
 // "./shell-policy.js"); the implementation now lives in shell-detectors.ts.
 export { detectObfuscation };
 
+/** First BLOCKED_COMMANDS match in `text`, or null. Returns the MATCHED TEXT so
+ *  the deny can name the offending binary instead of a bare "dangerous pattern". */
+function firstBlockedCommand(text: string): string | null {
+  for (const pattern of BLOCKED_COMMANDS) {
+    const m = pattern.exec(text);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+// The denylist deny, told so the model can act on it. Both arms (pipe segment /
+// full command) previously returned a bare "matches dangerous pattern" naming
+// neither the binary nor a replacement — so the guidance that already exists in
+// shell-rules.ts ("the agent should use http_request") never reached the model,
+// which retried the same denied `curl` 16 times in three days (measured
+// 2026-07-27..29, the single largest shell-deny class on this box after the MSYS
+// path bug). Every one of those was curl against 127.0.0.1 — its own server, its
+// own dev servers — so the recovery names the loopback case explicitly.
+//
+// This changes only the REPORTED text; WHAT is blocked is untouched. curl to
+// loopback stays denied on purpose: several of those calls reached external APIs
+// THROUGH this app's own connector proxy (/api/connectors/clover/…, /vercel/…),
+// i.e. loopback curl is a live path to arbitrary hosts that skips the egress
+// gate, DNS pinning and the audit log.
+//
+// The actionable sentence lives in `reason`, not only `recovery`, because the
+// pre-dispatch pack currently drops SecurityDecision.recovery (security-layer-pack)
+// — text placed solely in recovery would be dead on that path. `recovery` is set
+// too, so it becomes the richer message once that seam carries it.
+function deniedCommandBlock(matched: string, scope: "pipe segment" | "command"): SecurityDecision {
+  // The first word of the match is the offending binary for every rule in the
+  // list (`curl …|` → "curl", `dd …of=` → "dd", `sudo …` → "sudo").
+  const bin = matched.trim().split(/\s+/)[0] || matched.trim();
+  return {
+    allowed: false,
+    reason:
+      `Blocked: this ${scope} uses "${bin}", which is on the shell denylist. ` +
+      `If you need HTTP, use the \`http_request\` tool — it is SSRF-checked, DNS-pinned and audited, and it ` +
+      `CAN reach this app's own server and any registered dev server. Shell network clients stay refused even ` +
+      `for 127.0.0.1/localhost, because this app's own API can proxy on to arbitrary external hosts. ` +
+      `Retrying the same command will be denied again.`,
+    userHint: USER_HINTS.commandShell,
+    recovery:
+      `Replace "${bin}". For HTTP (including localhost and this app's own API) use \`http_request\`. For a ` +
+      `system-administration command (sudo, mkfs, dd, reg, wmic, schtasks) there is no shell path — tell the ` +
+      `user what needs doing and why. For reading files use \`read\`; for search use \`grep\`.`,
+  };
+}
+
 // `inlineEval`/`workspace` gate the R4-11/R4-13 inline-eval interpreter-escape
 // refusal: it fires when the policy is "refuse" and needs the workspace tree to
 // decide the rename-escape (part b). Both are optional so the redundant
@@ -295,29 +344,18 @@ export function evaluateShellCommand(
     }
   }
 
-  // Check every segment of a piped command against blocked patterns
+  // Check every segment of a piped command against blocked patterns, then the
+  // full command (which catches patterns that span pipes). ONE reporter for both
+  // arms so the two can't drift — they previously returned near-identical bare
+  // strings and were edited independently.
   const segments = command.split("|").map((s) => s.trim());
   for (const segment of segments) {
-    for (const pattern of BLOCKED_COMMANDS) {
-      if (pattern.test(segment)) {
-        return {
-          allowed: false,
-          reason: `Blocked: pipe segment matches dangerous pattern.`,
-          userHint: USER_HINTS.commandShell,
-        };
-      }
-    }
+    const hit = firstBlockedCommand(segment);
+    if (hit) return deniedCommandBlock(hit, "pipe segment");
   }
-
-  // Also check the full command (catches patterns that span pipes)
   for (const pattern of BLOCKED_COMMANDS) {
-    if (pattern.test(command)) {
-      return {
-        allowed: false,
-        reason: `Blocked: command matches dangerous pattern.`,
-        userHint: USER_HINTS.commandShell,
-      };
-    }
+    const m = pattern.exec(command);
+    if (m) return deniedCommandBlock(m[0], "command");
   }
 
   return { allowed: true, reason: "Shell command allowed" };

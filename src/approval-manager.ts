@@ -246,6 +246,14 @@ class ApprovalManager {
         context: opts.context,
         argsPreview,
         preview: opts.preview,
+        // The absolute instant this ask auto-denies — the SAME arithmetic the
+        // timer above is armed on, carried window included. Without it a
+        // renderer has to date the ask from its own first paint, which is not
+        // arrival (a non-viewed session is never painted, and the live repaint
+        // sits inside a requestAnimationFrame the browser pauses while the
+        // window is hidden), and the clock then overstates the window by
+        // however long that paint was deferred.
+        expiresAt: requestedAt + APPROVAL_TIMEOUT_MS,
       });
 
       // Durable shadow for op-scoped asks: pendingApproval signal column +

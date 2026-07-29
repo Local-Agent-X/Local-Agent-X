@@ -183,11 +183,19 @@ function ensureActivityGroup(container) {
   group.style.cssText = 'border:1px solid var(--border,#333);border-radius:6px;margin:.4rem 0;overflow:hidden;background:var(--surface-2,rgba(0,0,0,0.15))';
   group.innerHTML =
     `<div class="activity-group-header" style="cursor:pointer;padding:.4rem .6rem;display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:var(--muted);user-select:none" onclick="this.parentElement.classList.toggle('open');this.querySelector('.activity-chevron').textContent=this.parentElement.classList.contains('open')?'\\u25BC':'\\u25B6'">` +
-      `<span style="opacity:.8">⚙</span>` +
+      `<span class="activity-tick" style="opacity:.8;display:inline-block">⚙</span>` +
       `<span class="activity-label" style="flex:1">Agent activity</span>` +
       `<span class="activity-count" style="font-variant-numeric:tabular-nums">0</span>` +
       `<span class="activity-chevron">▶</span>` +
     `</div>` +
+    // Status line OUTSIDE the collapsible body, so it survives both a collapsed
+    // group and the body's 320px fold. This module owns the MARKUP only; each
+    // half is written by the module that owns its data — the latest action and
+    // the .activity-tick state by _updateActivityOutcome (chat-render-artifacts.js,
+    // the only pass that has the tool END events), the "landed below the fold"
+    // badge by chat-render-open-state.js (the only module that knows where the
+    // reader is parked). A card append knows neither, so it writes neither.
+    `<div class="activity-latest" style="display:flex;align-items:center;gap:.4rem;padding:0 .6rem .4rem 1.55rem;font-size:.7rem;color:var(--muted)"><span class="activity-latest-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span><span class="activity-unseen" style="display:none;padding:0 .35rem;border:1px solid var(--border,#333);border-radius:999px;cursor:pointer;white-space:nowrap"></span></div>` +
     `<div class="activity-group-body" style="max-height:320px;overflow-y:auto;padding:0 .4rem .4rem"></div>`;
   const styleId = '_activityGroupCSS';
   if (!document.getElementById(styleId)) {

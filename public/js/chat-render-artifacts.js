@@ -5,7 +5,8 @@
 // path and the finalized-assistant branch reuse:
 //   - _buildLiveAssistantInto      — build the in-flight assistant bubble from
 //                                    ChatStreamStore state into a parent node
-//   - _updateActivityOutcome       — roll tool failures onto the collapsed
+//   - _updateActivityOutcome       — roll tool status (failures, latest action,
+//                                    in-flight tick) onto the always-visible
 //                                    "Agent activity" header
 //   - _renderAssistantToolArtifacts — cards, chips, progress, approvals, stop
 //                                    notice (used by live synth + finalized branch)
@@ -14,9 +15,9 @@
 //
 // External deps (resolved at call time, runtime-only):
 //   - md, esc, mdPreviewMode                   (shared.js / chat.js)
-//   - appendToolCardGrouped, appendToolChip,
-//     updateToolProgress, makeApprovalCard,
-//     attachMediaPreview                       (chat-tool-cards.js)
+//   - appendToolCardGrouped, appendToolChip, toolSummary,
+//     updateToolProgress, attachMediaPreview   (chat-tool-cards.js)
+//   - renderApproval                           (chat-render-approvals.js)
 
 // Build the in-flight assistant bubble from ChatStreamStore state into `parent`.
 // `parent` is either the live #messages container (renderMessages full-render)
@@ -179,11 +180,11 @@ function _buildLiveAssistantInto(parent, store) {
   return div;
 }
 
-// Roll tool failures up onto the collapsed "Agent activity" header so the
-// user can tell work failed WITHOUT expanding the group — the whole point of
-// the outcome indicator. Recomputed on every render from the end events, so
-// it stays correct as the turn streams in and after a reload.
-function _updateActivityOutcome(bodyEl, toolEvents) {
+// Roll tool status up onto the collapsed "Agent activity" header so the user
+// can tell what happened WITHOUT expanding the group — the whole point of the
+// outcome indicator. Recomputed on every render from the event list, so it
+// stays correct as the turn streams in and after a reload.
+function _updateActivityOutcome(bodyEl, toolEvents, stopNote) {
   const group = bodyEl.querySelector('.activity-group');
   if (!group) return;
   const ends = toolEvents.filter(t => t.type === 'end');
@@ -205,6 +206,43 @@ function _updateActivityOutcome(bodyEl, toolEvents) {
     const lastFailed = !!last && (last.status === 'error' || last.status === 'timeout');
     countEl.style.color = lastFailed ? 'var(--danger, #e5484d)'
       : (failed > 0 ? 'var(--accent, #4cc38a)' : '');
+  }
+  // A stopped turn is over even though its last tool call never reported an
+  // end — the user pulled the plug mid-bash. Without that, the one case where
+  // starts outnumber ends forever would spin the tick forever.
+  _updateActivityLatest(group, toolEvents, ends, !stopNote);
+}
+
+// The header's always-visible status line: what the agent is doing right now,
+// or the last thing it did once the turn is over. The group body is a fixed
+// 320px scroller and consecutive same-tool calls edit "×3"→"×4" IN PLACE on a
+// card that is already out of view, so on a long loop this line — and the gear
+// beside it — are the only things a parked or collapsed reader sees move.
+// It belongs HERE and not on the card-append path for the same reason the
+// failure roll-up does: only this pass, after the whole list has replayed,
+// knows whether the newest call has ENDED. A gear spun from the append path
+// froze mid-notch on every finished and every reloaded turn, which read as
+// work still in flight. Every value is a pure function of the replayed events,
+// so the per-WS-event bubble rebuild repaints them identically.
+function _updateActivityLatest(group, toolEvents, ends, live) {
+  const starts = toolEvents.filter(t => t.type === 'start');
+  const newest = starts[starts.length - 1];
+  if (!newest) return;
+  const running = live && starts.length > ends.length;
+  const line = group.querySelector('.activity-latest-text');
+  if (line) {
+    // Trailing same-name run = the ×N the deduped card below the fold is
+    // editing, so the header names the same thing the card does.
+    let repeat = 0;
+    for (let i = starts.length - 1; i >= 0 && starts[i].name === newest.name; i--) repeat++;
+    line.textContent = toolSummary(newest.name, newest.args || '') + (repeat > 1 ? ' ×' + repeat : '');
+  }
+  const tick = group.querySelector('.activity-tick');
+  if (tick) {
+    // An identical repeated call produces identical summary text, so the notch
+    // is the only thing that MOVES between two frames of the same loop.
+    tick.textContent = running ? '⚙' : '✓';
+    tick.style.transform = running ? `rotate(${(starts.length * 30) % 360}deg)` : '';
   }
 }
 
@@ -307,7 +345,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
           attachMediaPreview(card, te.name, rawResult);
         }
       }
-      _updateActivityOutcome(bodyEl, toolEvents);
+      _updateActivityOutcome(bodyEl, toolEvents, data.stopNote);
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The
@@ -330,31 +368,14 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
     }
   }
   // Approvals and the stop note hang off bodyEl directly (NOT inside the
-  // activity group) — they need to render outside the collapsible block.
+  // activity group) — they need to render outside the collapsible block. The
+  // shape of each one (live actionable card with its countdown vs compact
+  // settled record with no buttons at all) is owned by
+  // chat-render-approvals.js.
   const approvals = data.approvals || [];
   for (const ap of approvals) {
-    try {
-      const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview);
-      if (ap.status && ap.status !== 'pending') {
-        const statusEl = card.querySelector('.approval-status');
-        if (ap.status === 'timeout') {
-          card.classList.add('timeout');
-          if (statusEl) statusEl.textContent = 'Timed out — denied.';
-        } else if (ap.status === 'superseded') {
-          // The user's chat reply dismissed the card (server-side
-          // denyPendingForSession) — this is NOT a Deny and nothing ran.
-          // Rendering it as "Denied" cost a live session ~10 minutes of
-          // "why won't the secret modal open".
-          card.classList.add('superseded');
-          if (statusEl) statusEl.textContent = 'Dismissed by your reply — nothing ran. Ask again (or re-send the request) to proceed.';
-        } else {
-          card.classList.add(ap.status === 'approved' ? 'approved' : 'denied');
-          if (statusEl) statusEl.textContent = ap.status === 'approved' ? 'Approved' : 'Denied';
-        }
-        card.querySelectorAll('button').forEach(b => b.disabled = true);
-      }
-      bodyEl.appendChild(card);
-    } catch (approvalRenderErr) { console.error('[chat] approval card render error:', approvalRenderErr); }
+    try { bodyEl.appendChild(renderApproval(ap)); }
+    catch (approvalRenderErr) { console.error('[chat] approval card render error:', approvalRenderErr); }
   }
   const stopNote = data.stopNote;
   if (stopNote) {

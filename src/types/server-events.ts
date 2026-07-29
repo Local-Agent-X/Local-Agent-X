@@ -106,7 +106,21 @@ export type ServerEvent =
   | { type: "error"; message: string; opId?: string }
   | { type: "secret_request"; name: string; service?: string; reason: string }
   | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }
-  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview }
+  // `expiresAt` (optional, additive) is the ABSOLUTE epoch-ms instant this ask
+  // auto-DENIES at — requestedAt + APPROVAL_TIMEOUT_MS, the same value the
+  // manager arms its timeout on, so a rendered clock and the actual denial
+  // cannot disagree. Sent because a client CANNOT date the ask from its own
+  // first paint: an ask for a session the user isn't viewing is never painted,
+  // and the live-bubble repaint runs inside requestAnimationFrame, which the
+  // browser pauses while the window is hidden/minimized/occluded — a
+  // paint-dated clock then overstates the window by however long the frame was
+  // deferred, up to the whole budget (measured: a card reading "4:00 left" at
+  // the instant the server auto-denied). Deliberately NOT "now + the budget":
+  // a crash-recovered re-ask inherits its ORIGINAL window (approval-manager
+  // reconcileRecoveredAsk), and this carries that earlier deadline unchanged.
+  // Omitted by emitters that don't know it — consumers must treat absence as
+  // "no deadline known" and show no countdown rather than inventing one.
+  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview; expiresAt?: number }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
   // `reason` (optional, additive) says WHY an approved:false settle happened —
   // "declined" = the user clicked Deny; "timeout" = nobody answered;

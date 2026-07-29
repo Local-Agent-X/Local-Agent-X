@@ -1608,7 +1608,10 @@
      rediscoverPendingApprovals / handleDurableApprovalReply. -->
 <script src="/js/chat-approval-rediscovery.js?v=v1"></script>
 <script src="/js/chat-ws.js?v=v4"></script>
-<script src="/js/chat-render-artifacts.js?v=v3"></script>
+<!-- chat-render-artifacts.js split: the approval live/settled shape decision
+     (chat-render-approvals.js) is its own module for the 400-LOC gate. -->
+<script src="/js/chat-render-approvals.js?v=v1"></script>
+<script src="/js/chat-render-artifacts.js?v=v4"></script>
 <script src="/js/thinking-phrases.js?v=v1"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>

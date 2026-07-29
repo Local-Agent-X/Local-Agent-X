@@ -409,6 +409,35 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .approval-actions button:disabled{opacity:.5;cursor:default}
 .approval-always{display:flex;align-items:center;gap:5px;font-size:.75rem;color:var(--muted);cursor:pointer}
 .approval-status{margin-top:8px;font-size:.75rem;color:var(--muted);font-style:italic}
+/* A LIVE ask blocks the whole turn on the reader, and the card lands at the
+   bottom of the bubble under the activity box where it can paint off-screen —
+   so this one state gets a standing glow + slow pulse instead of the same faint
+   wash every settled card used to share. .arriving is the short attention flash
+   announceApproval adds when the ask first scrolls into view. */
+.approval-card.live{border-width:2px;animation:approval-live-pulse 2.2s ease-in-out infinite}
+.approval-card.arriving{animation:approval-arrive .55s ease-out 3,approval-live-pulse 2.2s ease-in-out infinite}
+@keyframes approval-live-pulse{0%,100%{box-shadow:0 0 0 1px var(--warn),0 0 14px color-mix(in srgb, var(--warn) 35%, transparent)}50%{box-shadow:0 0 0 1px var(--warn),0 0 28px color-mix(in srgb, var(--warn) 65%, transparent)}}
+@keyframes approval-arrive{0%,100%{transform:scale(1)}35%{transform:scale(1.015)}}
+/* The 5-minute server budget (APPROVAL_TIMEOUT_MS) ends in a DENIAL, not a
+   shrug — the countdown is the only warning the user gets, so it stays legible
+   and goes danger-colored for the last minute. */
+.approval-countdown{margin-top:8px;font-family:var(--mono);font-size:.75rem;font-weight:600;color:var(--warn)}
+.approval-countdown.urgent{color:var(--danger)}
+/* A SETTLED ask is a one-line audit record, never an action: there is no
+   <button> in this DOM at all. Disabling the buttons was not enough — at
+   opacity .5 they still read as clickable, which is what left users clicking a
+   dead card waiting for their command to run. */
+.approval-record{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;margin:6px 0;padding:5px 10px;border-radius:6px;border:1px solid var(--border);border-left:3px solid var(--muted);background:var(--panel);color:var(--muted);font-size:.75rem;line-height:1.5}
+.approval-record.approved{border-left-color:var(--ok)}
+.approval-record.denied,.approval-record.timeout{border-left-color:var(--danger)}
+.approval-record.superseded{border-left-color:var(--warn)}
+.approval-record-icon{font-weight:700}
+.approval-record.approved .approval-record-icon{color:var(--ok)}
+.approval-record.denied .approval-record-icon,.approval-record.timeout .approval-record-icon{color:var(--danger)}
+.approval-record-tool{font-family:var(--mono);color:var(--text)}
+.approval-record-context{font-family:var(--mono);max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75}
+.approval-record-time{margin-left:auto;white-space:nowrap;opacity:.7}
+@media (prefers-reduced-motion:reduce){.approval-card.live,.approval-card.arriving{animation:none;box-shadow:0 0 0 2px var(--warn)}}
 .tool-header{padding:8px 12px;background:var(--panel);display:flex;align-items:center;gap:8px;cursor:pointer;font-family:var(--mono)}
 .tool-header .indicator{width:8px;height:8px;border-radius:50%}
 .tool-header .indicator.allowed{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}

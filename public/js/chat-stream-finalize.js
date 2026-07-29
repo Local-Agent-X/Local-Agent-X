@@ -50,7 +50,13 @@
     if (e.reasoning) msg._reasoning = e.reasoning;
     if (e.chips.length) msg._chips = [...e.chips];
     if (Object.keys(e.progressByTool).length) msg._progressByTool = { ...e.progressByTool };
-    if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a }));
+    // Approvals ride along as AUDIT RECORDS, not live asks: the turn is over,
+    // so nothing on this row can still be answered — not even one whose status
+    // is still 'pending' because the stream ended around an unanswered ask.
+    // The `historical` stamp is what tells chat-render-approvals.js to collapse
+    // them to a one-line record; without it a dead card re-painted its full
+    // action box, green Approve button and all, on every reload forever.
+    if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a, historical: true }));
     if (e.stopNote) msg._stopNote = { ...e.stopNote };
     const raw = typeof e.liveAnchorIndex === 'number' ? e.liveAnchorIndex : chat.messages.length;
     let idx = Math.max(0, Math.min(raw, chat.messages.length));

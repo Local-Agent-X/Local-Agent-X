@@ -55,6 +55,13 @@ function dispatchChatWsEvent(msg, checked) {
       try { if (typeof updateStatusBar === 'function') updateStatusBar(true); } catch {}
       return true;
     }
+    // A frame from a turn that was already taken over (its op was named in a
+    // later chat_op_started's `supersedes`). Drop it ahead of the store, the
+    // live-bubble swap and feedTTS — the dead op's provider stream keeps
+    // flushing for a beat and none of that output belongs to the turn now on
+    // screen. Handled, not failed: the durable relay's ACK is correct to fire.
+    if (ChatStreamStore.isSupersededFrame(msg.sessionId, msg.event)) return true;
+
     // Bump per-op activity from the envelope's _opId so the watchdog stays
     // honest for any event carrying canonical tags — not just the ones
     // applyEvent mutates state for. Activity is the point; there's no seq

@@ -92,6 +92,7 @@ describe("chat process relay delivery", () => {
       var ChatStreamStore = {
         consumeInject: function() { throw new Error('store failed'); },
         bumpActivity: function() {},
+        isSupersededFrame: function() { return false; },
       };
       ${source}
       ${handlerSource}
@@ -118,6 +119,7 @@ describe("chat process relay delivery", () => {
       var ChatStreamStore = {
         consumeInject: function() { return false; },
         bumpActivity: function() {},
+        isSupersededFrame: function() { return false; },
       };
       ${source}
       ${handlerSource}

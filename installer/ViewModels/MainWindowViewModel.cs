@@ -305,13 +305,15 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     // Open a fresh timestamped log file in a stable, discoverable location
-    // (%LOCALAPPDATA%\Local Agent X\installer-logs on Windows). AutoFlush so
-    // the file is complete-to-the-last-line whenever the user opens it.
+    // (%LOCALAPPDATA%\Local Agent X Installer\logs on Windows). Deliberately
+    // OUTSIDE the install target dir — see InstallLocation.GetInstallerLogDir.
+    // AutoFlush so the file is complete-to-the-last-line whenever the user
+    // opens it.
     private void OpenLogFile()
     {
         try
         {
-            var dir = Path.Combine(InstallLocation.GetSourceDir(), "installer-logs");
+            var dir = InstallLocation.GetInstallerLogDir();
             Directory.CreateDirectory(dir);
             _logFilePath = Path.Combine(dir, $"install-{DateTime.Now:yyyyMMdd-HHmmss}.log");
             _logWriter?.Dispose();

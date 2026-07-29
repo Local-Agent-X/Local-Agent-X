@@ -126,8 +126,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Self-edit
   self_edit: ["main-chat", "build-intent"],
 
-  // Asking the user. EAGER, and deliberately not routable any other way: a
-  // question arrives at the moment the model hits a fork, and a tool it must
+  // Asking the user
+  // EAGER, and deliberately not routable any other way: a question
+  // arrives at the moment the model hits a fork, and a tool it must
   // first tool_search for will not be reached then — it guesses instead, which
   // is the exact failure ask_user exists to remove. There is no keyword that
   // predicts a fork, so the keyword router (tool-filter.ts) cannot stand in for

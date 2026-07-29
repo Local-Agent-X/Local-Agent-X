@@ -81,6 +81,10 @@ demand via tool search and aren't all listed here.)
 
 - `self_edit` — Modify Agent X's own source via a coding agent. Requires the developer_mode setting; with it off, customization goes through connector manifests, workspace apps, and settings. _e.g._ "fix a bug in your own code"
 
+### Asking the user
+
+- `ask_user` — Pause and ask you a clarifying question when your request hits an unstated decision, instead of guessing.
+
 ### Planning & tasks
 
 - `enter_plan_mode` — Enter plan mode (propose before acting). _e.g._ "let's plan this first"
@@ -139,4 +143,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_62 capabilities · 46 with a description · 16 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._
+_63 capabilities · 47 with a description · 16 awaiting a blurb (add to scripts/gen-agent-capabilities.ts)._

@@ -32,6 +32,7 @@ import type { LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
+import { createOverlapGuard } from "../scheduler.js";
 import {
   SKILL_REVIEW_SYSTEM_PROMPT,
   SKILL_REVIEW_TOOL_NAMES,
@@ -150,10 +151,14 @@ export interface SkillReviewDeps {
 }
 
 let deps: SkillReviewDeps | null = null;
-/** Re-entrancy guard. JobScheduler is a bare setInterval with no such guard of
- *  its own, so a pass that outlives its 5-minute interval would re-fire and
- *  stack — "3 reviews per tick" is a batch size, not a concurrency bound. */
-let passInFlight = false;
+/** Re-entrancy guard for this exported entry point — "3 reviews per tick" is a
+ *  batch size, not a concurrency bound. The latch itself is JobScheduler's
+ *  (src/server/scheduler.ts), the same primitive it applies to every job
+ *  registered on the default "skip" overlap policy, skill-review among them;
+ *  this file no longer keeps a flag of its own. Pinned by
+ *  src/server/scheduler.test.ts ("consults the guard createOverlapGuard
+ *  minted, not a private flag") so a private boolean can't creep back. */
+const passGuard = createOverlapGuard();
 
 /** Capture the heavy server deps so the scheduler can drive a pass without
  *  holding them. Mirrors registerDreamRunnerForServer. */
@@ -177,20 +182,20 @@ export interface SkillReviewPassResult {
  */
 export async function runSkillReviewPass(): Promise<SkillReviewPassResult> {
   if (!deps) return { reviewed: 0, failed: 0, skipped: true, reason: "no-runner" };
-  if (passInFlight) return { reviewed: 0, failed: 0, skipped: true, reason: "in-flight" };
-  if (pending.size === 0) return { reviewed: 0, failed: 0, skipped: false, reason: "empty" };
+  if (!passGuard.tryEnter()) return { reviewed: 0, failed: 0, skipped: true, reason: "in-flight" };
 
-  const batch: SkillReviewRequest[] = [];
-  for (const [key, request] of pending) {
-    if (batch.length >= MAX_REVIEWS_PER_PASS) break;
-    pending.delete(key);
-    batch.push(request);
-  }
-
-  passInFlight = true;
   let reviewed = 0;
   let failed = 0;
   try {
+    if (pending.size === 0) return { reviewed: 0, failed: 0, skipped: false, reason: "empty" };
+
+    const batch: SkillReviewRequest[] = [];
+    for (const [key, request] of pending) {
+      if (batch.length >= MAX_REVIEWS_PER_PASS) break;
+      pending.delete(key);
+      batch.push(request);
+    }
+
     for (const request of batch) {
       try {
         await runSingleReview(request, deps);
@@ -204,7 +209,7 @@ export async function runSkillReviewPass(): Promise<SkillReviewPassResult> {
       }
     }
   } finally {
-    passInFlight = false;
+    passGuard.release();
   }
   return { reviewed, failed, skipped: false };
 }
@@ -319,7 +324,7 @@ export function buildReviewTools(
 export function _resetSkillReviewQueue(): void {
   pending.clear();
   deps = null;
-  passInFlight = false;
+  passGuard.release();
 }
 
 /** Test/debug: what is currently queued. */

@@ -8,7 +8,7 @@ import type { ToolPolicy } from "../../tool-policy/index.js";
 import type { CronService } from "../../cron/cron-service.js";
 import type { IntegrationRegistry } from "../../integrations/index.js";
 import type { AgentSync } from "../../sync/index.js";
-import { JobScheduler } from "../scheduler.js";
+import { JobScheduler, type OverlapPolicy } from "../scheduler.js";
 import { createLogger } from "../../logger.js";
 import { registerCronRunner } from "./cron-runner.js";
 import { registerWorkerRunnerForServer } from "./worker-runner.js";
@@ -23,6 +23,88 @@ const logger = createLogger("server.background-jobs");
 
 export interface BackgroundJobsHandle {
   scheduler: JobScheduler;
+}
+
+/** Every job registered below. Adding one here is what forces its overlap
+ *  policy to be declared in JOB_OVERLAP. */
+export type RegisteredJobName =
+  | "memory-bg"
+  | "memory-hygiene"
+  | "idle-workers-cleanup"
+  | "memory-write-canary"
+  | "dream-check"
+  | "skill-review"
+  | "protocol-curator";
+
+/**
+ * Overlap policy for every registered job, in one place. Not documentation —
+ * each scheduler.register() call below spreads its policy out of this map (see
+ * withOverlapPolicy), so the map IS the policy and cannot drift from it. Read
+ * OverlapPolicy in ../scheduler.ts for what the two values mean.
+ *
+ * The distinction that matters: "skip" is right when the next tick is
+ * EQUIVALENT to the one in flight; "self-guarded" is right when the repeated
+ * tick IS the job's recovery mechanism. Six of these reconcile single-writer
+ * state — one does not.
+ *
+ *   memory-bg (skip)
+ *     MemoryOrchestrator.runBackground + algorithmic consolidate/reflect +
+ *     bitemporal purge + session summarization + atlas warm — all single-writer
+ *     on the same SQLite rows. Two passes race each other; a dropped tick costs
+ *     nothing because the next 6h tick redoes exactly the same reconciliation.
+ *
+ *   memory-hygiene (skip)
+ *     Embedding-cache LRU prune, PRAGMA optimize, a WAL TRUNCATE checkpoint
+ *     under a deliberately lowered busy_timeout, and >90d session archival (a
+ *     file move plus a memory.db repoint). A second concurrent pass is exactly
+ *     what the lowered busy_timeout exists to avoid.
+ *
+ *   idle-workers-cleanup (skip)
+ *     An idempotent sweep by idle age. A dropped tick costs at most 10 more
+ *     minutes of a worker lingering.
+ *
+ *   memory-write-canary (skip)
+ *     It PUBLISHES a health signal (two local writes + broadcastAll);
+ *     overlapping canaries corrupt the very signal they report. Bounded by
+ *     tool-timeout.ts anyway, so it always settles and can never wedge its slot.
+ *
+ *   dream-check (SELF-GUARDED)
+ *     Its lock is the `dreaming` flag in dream-state.json, and shouldDream()
+ *     force-releases one stuck past 30 minutes. That recovery is inside the
+ *     runner, so it only runs when a later tick actually calls triggerDream() —
+ *     and the dream's canonical run carries no timeout (a middleware suspend
+ *     parks the op in a non-terminal `paused`). A scheduler latch over a hung
+ *     dream would make the recovery unreachable and kill consolidation until
+ *     the process restarts. The un-gated tick is cheap: while a dream is
+ *     legitimately running, shouldDream() reads one small JSON and returns
+ *     false, so nothing overlaps but a file read.
+ *
+ *   skill-review (skip)
+ *     The QUEUE is the durable state and survives a dropped tick — no review is
+ *     lost, only deferred by one 5-minute poll. Its own timeout + abort race
+ *     guarantees a pass always settles, and its exported entry point claims
+ *     this same latch primitive so the two call sites cannot drift.
+ *
+ *   protocol-curator (skip)
+ *     runCurator() performs archive/purge lifecycle transitions that two
+ *     concurrent passes would race. shouldCurate() gates work to ~daily but is
+ *     a CADENCE gate, not a lock: it grants no exclusion and has no recovery
+ *     deadline, so it cannot stand in for the latch the way dream's lock can.
+ */
+export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
+  "memory-bg": "skip",
+  "memory-hygiene": "skip",
+  "idle-workers-cleanup": "skip",
+  "memory-write-canary": "skip",
+  "dream-check": "self-guarded",
+  "skill-review": "skip",
+  "protocol-curator": "skip",
+};
+
+/** Name + declared policy in one spread, so a registration can never carry a
+ *  name whose policy was decided somewhere else. */
+function withOverlapPolicy(name: RegisteredJobName): { name: RegisteredJobName; overlap: OverlapPolicy } {
+  return { name, overlap: JOB_OVERLAP[name] };
 }
 
 /** Idle threshold (ms) below which the LLM-heavy background lane is suppressed. */
@@ -110,13 +192,13 @@ export function startBackgroundJobs(deps: {
 
   const scheduler = new JobScheduler();
   scheduler.register({
-    name: "memory-bg",
+    ...withOverlapPolicy("memory-bg"),
     intervalMs: 6 * 60 * 60 * 1000,
     startupDelayMs: 30_000,
     run: makeRunMemBg({ dataDir, sessionStore, memoryIndex }),
   });
   scheduler.register({
-    name: "memory-hygiene",
+    ...withOverlapPolicy("memory-hygiene"),
     // Daily upkeep nothing else owns: embedding-cache LRU prune, WAL
     // truncation, PRAGMA optimize, and >90d session archival (move-only).
     intervalMs: 24 * 60 * 60 * 1000,
@@ -125,7 +207,7 @@ export function startBackgroundJobs(deps: {
     run: makeRunMemoryHygiene({ dataDir, sessionStore, memoryIndex }),
   });
   scheduler.register({
-    name: "idle-workers-cleanup",
+    ...withOverlapPolicy("idle-workers-cleanup"),
     intervalMs: 10 * 60 * 1000,
     run: async () => {
       try {
@@ -137,7 +219,7 @@ export function startBackgroundJobs(deps: {
   });
 
   scheduler.register({
-    name: "memory-write-canary",
+    ...withOverlapPolicy("memory-write-canary"),
     // Cheap (two local DB writes, no LLM) — run soon after boot so a broken
     // OTA update surfaces within minutes, then keep a steady heartbeat.
     intervalMs: 30 * 60 * 1000,
@@ -150,18 +232,21 @@ export function startBackgroundJobs(deps: {
   });
 
   scheduler.register({
-    name: "dream-check",
+    ...withOverlapPolicy("dream-check"),
     intervalMs: 2 * 60 * 60 * 1000,
     startupDelayMs: 5 * 60 * 1000,
     shouldRun: foregroundIdle,
     run: async () => {
       const { triggerDream } = await import("../../memory/dream.js");
-      await triggerDream({ force: false }); // shouldDream() gates inside the runner
+      // shouldDream() gates inside the runner — and force-releases a `dreaming`
+      // flag stuck past 30min, which is why this job is registered
+      // self-guarded: the recovery only happens if the tick reaches here.
+      await triggerDream({ force: false });
     },
   });
 
   scheduler.register({
-    name: "skill-review",
+    ...withOverlapPolicy("skill-review"),
     // Poll often enough that a procedure is captured while the session is
     // still the user's current one; the queue is empty on most ticks, and
     // foregroundIdle keeps it off the provider key during a live turn.
@@ -177,7 +262,7 @@ export function startBackgroundJobs(deps: {
   });
 
   scheduler.register({
-    name: "protocol-curator",
+    ...withOverlapPolicy("protocol-curator"),
     intervalMs: 6 * 60 * 60 * 1000, // poll every 6h; shouldCurate() gates actual work to ~daily
     startupDelayMs: 10 * 60 * 1000,
     shouldRun: foregroundIdle,

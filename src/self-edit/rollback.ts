@@ -14,7 +14,7 @@ import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, write
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { revertBranchTo, runRepoBuild } from "../agency/worktree.js";
+import { revertBranchTo, runRepoBuildAsync } from "../agency/worktree.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("self-edit.rollback");
@@ -183,7 +183,7 @@ export function confirmMergeBoot(): void {
  * still take the process down before the guard executes — the re-gate build is
  * the first line of defense for that; this handles bind/startup-time crashes.
  */
-export function revertPendingMergeIfCrashed(): { reverted: boolean; detail: string } | null {
+export async function revertPendingMergeIfCrashed(): Promise<{ reverted: boolean; detail: string } | null> {
   try {
     const rec = readLastMerge();
     if (!rec || !rec.bootPending) return null;
@@ -222,7 +222,7 @@ export function revertPendingMergeIfCrashed(): { reverted: boolean; detail: stri
       // so a source-only revert would leave it running the bad build.
       let detail = revert.ok ? `reverted ${rec.baseBranch} to ${rec.preSha.slice(0, 8)}` : `revert FAILED: ${revert.detail}`;
       if (revert.ok) {
-        const rebuilt = runRepoBuild(rec.repoRoot, 5 * 60_000);
+        const rebuilt = await runRepoBuildAsync(rec.repoRoot, 5 * 60_000);
         detail += rebuilt.ok ? "; rebuilt" : `; rebuild FAILED: ${rebuilt.detail.slice(0, 200)}`;
       }
       rec.bootPending = false;

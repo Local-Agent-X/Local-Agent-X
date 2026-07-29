@@ -163,7 +163,7 @@ if (!localModelQualificationBoot) {
   // Crashed-merge guard FIRST: if a prior boot loaded a self_edit merge and
   // never bound, the merged code crashes on startup — auto-revert + rebuild so
   // this/next boot runs the last good code instead of bricking on every restart.
-  const recovered = revertPendingMergeIfCrashed();
+  const recovered = await revertPendingMergeIfCrashed();
   if (recovered) logger.warn(`[boot] crashed self_edit merge auto-revert: ${recovered.detail}`);
   surfaceUnacknowledgedMerge();
   } catch { /* best-effort */ }

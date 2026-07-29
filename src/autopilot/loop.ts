@@ -213,7 +213,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
       if (agentResult.autopilotDone) {
         logger.info(`[autopilot.loop] op ${op.id} agent self-terminated: ${agentResult.doneReason}`);
         // Validate + commit any final changes from this round before stopping
-        const validation = validateRound(config.worktreeName, config);
+        const validation = await validateRound(config.worktreeName, config);
         const partitioned = partitionByScope(validation.filesChanged, config.scope);
         let commitSha: string | null = null;
         if (validation.outcome === "passed") {
@@ -241,7 +241,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
       }
 
       // Validate
-      const validation = validateRound(config.worktreeName, config);
+      const validation = await validateRound(config.worktreeName, config);
       const partitioned = partitionByScope(validation.filesChanged, config.scope);
       const agentSummary = extractAgentSummary(agentResult.output);
 

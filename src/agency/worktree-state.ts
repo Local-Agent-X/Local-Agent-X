@@ -4,7 +4,7 @@
  * classification, reset/commit/isolate, merge-base capture, and build runners.
  */
 
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 import { activeWorktrees, git, gitAsync, logger } from "./worktree-core.js";
@@ -82,7 +82,7 @@ export function securitySensitiveChangedFiles(files: string[]): string[] {
  * can replace it. Used by the deps gate when a self_edit changes dependencies:
  * installing through the junction would write into the parent repo's real
  * node_modules. Removing the junction first makes the subsequent `npm ci`
- * (run by the gate via runCommandInWorktree) populate a real isolated dir.
+ * (run by the gate via runCommandInWorktreeAsync) populate a real isolated dir.
  *
  * Does NOT run npm — the install lives next to the other gates.
  */
@@ -258,20 +258,22 @@ export function revertBranchTo(
   }
 }
 
-/** Output retained per stream, matching the execSync twins' maxBuffer. */
+/** Output retained per stream, inherited from the maxBuffer of the execSync
+ *  twins this runner replaced. */
 const RUNNER_OUTPUT_CAP = 10 * 1024 * 1024;
 
 /**
  * Spawn `command` through a shell and AWAIT its exit.
  *
- * The execSync twins park the whole event loop for the child's entire lifetime,
- * and these ceilings are minutes — so one repo build stopped the server
- * answering anything at all until it finished. Everything else matches execSync:
- * shell invocation, hidden window, the same per-stream output cap, and a kill at
- * `timeoutMs` through the shared tree-killer, which on Windows taskkills the
- * subtree BEFORE the cmd.exe wrapper so npm's grandchildren (tsc, vite, a dev
- * server) die with it instead of outliving the timeout. A non-zero exit, a spawn
- * error and a timeout all land as `ok: false` with the reason in `stderr`.
+ * The execSync twins parked the whole event loop for the child's entire
+ * lifetime, and these ceilings are minutes — so one repo build stopped the
+ * server answering anything at all until it finished. Everything else matches
+ * execSync: shell invocation, hidden window, the same per-stream output cap, and
+ * a kill at `timeoutMs` through the shared tree-killer, which on Windows
+ * taskkills the subtree BEFORE the cmd.exe wrapper so npm's grandchildren (tsc,
+ * vite, a dev server) die with it instead of outliving the timeout. A non-zero
+ * exit, a spawn error and a timeout all land as `ok: false` with the reason in
+ * `stderr`.
  */
 function runProcess(
   command: string,
@@ -314,34 +316,6 @@ function runProcess(
   });
 }
 
-/** Blocking twin of {@link runProcess}, shared by the two sync exports that
- *  still have a caller, so the two paths can't drift on cwd/ceiling/env/cap.
- *  When both of those callers can await, this and its wrappers go together. */
-function runProcessSync(
-  command: string,
-  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
-): BuildResult {
-  const start = Date.now();
-  try {
-    const stdout = execSync(command, {
-      cwd: opts.cwd,
-      encoding: "utf-8",
-      timeout: opts.timeoutMs,
-      windowsHide: true,
-      maxBuffer: RUNNER_OUTPUT_CAP,
-      ...(opts.env ? { env: opts.env } : {}),
-    });
-    return { ok: true, durationMs: Date.now() - start, stdout, stderr: "" };
-  } catch (e) {
-    const err = e as { stdout?: string; stderr?: string; message: string };
-    // execSync's `message` is "Command failed: …" plus whatever stderr it
-    // caught — the right fallback ONLY when nothing usable came back, since
-    // preferring it over real stdout would bury the actual build failure.
-    const stdout = err.stdout || "";
-    return { ok: false, durationMs: Date.now() - start, stdout, stderr: err.stderr || (stdout ? "" : err.message) };
-  }
-}
-
 /**
  * Run `npm run build` in the repo root (NOT a worktree). Used to re-validate the
  * merged main tree after a self_edit merge, since the merge can combine the
@@ -349,19 +323,6 @@ function runProcessSync(
  */
 export async function runRepoBuildAsync(repoRoot: string, timeoutMs: number): Promise<{ ok: boolean; detail: string }> {
   const r = await runProcess("npm run build", { cwd: repoRoot, timeoutMs });
-  return { ok: r.ok, detail: r.ok ? "build passed" : (r.stderr || r.stdout || "build failed (no output)").slice(-1500) };
-}
-
-/**
- * @deprecated Blocking twin of {@link runRepoBuildAsync}. ONE caller left:
- * `revertPendingMergeIfCrashed` in src/self-edit/rollback.ts, which is
- * synchronous and is called synchronously from src/index.ts's boot path —
- * making it async ripples into index.ts, outside this change's footprint.
- * Delete this the moment that ripple is authorized; every other caller
- * (self-edit sandbox, update-pipeline) already awaits the async form.
- */
-export function runRepoBuild(repoRoot: string, timeoutMs: number): { ok: boolean; detail: string } {
-  const r = runProcessSync("npm run build", { cwd: repoRoot, timeoutMs });
   return { ok: r.ok, detail: r.ok ? "build passed" : (r.stderr || r.stdout || "build failed (no output)").slice(-1500) };
 }
 
@@ -384,17 +345,4 @@ export async function runCommandInWorktreeAsync(name: string, opts: BuildOptions
   const wt = activeWorktrees.get(name);
   if (!wt) throw new Error(`No worktree found for ${name}`);
   return runProcess(opts.command, { cwd: wt.path, timeoutMs: opts.timeoutMs, env: opts.env });
-}
-
-/**
- * @deprecated Blocking twin of {@link runCommandInWorktreeAsync}. ONE caller
- * left: `validateRound` in src/autopilot/validate.ts, which is synchronous and
- * is called synchronously from src/autopilot/loop.ts — making it async ripples
- * into loop.ts, outside this change's footprint. Delete this the moment that
- * ripple is authorized; it holds the loop for the whole build/test ceiling.
- */
-export function runCommandInWorktree(name: string, opts: BuildOptions): BuildResult {
-  const wt = activeWorktrees.get(name);
-  if (!wt) throw new Error(`No worktree found for ${name}`);
-  return runProcessSync(opts.command, { cwd: wt.path, timeoutMs: opts.timeoutMs, env: opts.env });
 }

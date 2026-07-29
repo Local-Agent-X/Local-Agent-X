@@ -123,14 +123,14 @@ describe("self-edit-rollback", () => {
 
     // First boot after the merge: don't revert (it hasn't tried to bind yet) —
     // just record the attempt.
-    expect(revertPendingMergeIfCrashed()).toBeNull();
+    expect(await revertPendingMergeIfCrashed()).toBeNull();
     expect(readLastMerge()!.bootAttempts).toBe(1);
     expect(readLastMerge()!.bootPending).toBe(true);
 
     // Second boot still finds it pending → prior attempt never bound → revert.
     // (repoRoot "/repo" doesn't exist, so the git revert fails fast — we assert
     // the guard fired and cleared pending, not the git outcome.)
-    const result = revertPendingMergeIfCrashed();
+    const result = await revertPendingMergeIfCrashed();
     expect(result).not.toBeNull();
     expect(readLastMerge()!.bootPending).toBe(false);
   });
@@ -158,7 +158,7 @@ describe("self-edit-rollback", () => {
     recordMerge({ preSha, postSha, baseBranch: "main", repoRoot: repo, files: 1, ts: sample.ts });
 
     // First boot: records the attempt, no revert.
-    expect(revertPendingMergeIfCrashed()).toBeNull();
+    expect(await revertPendingMergeIfCrashed()).toBeNull();
     expect(readLastMerge()!.bootAttempts).toBe(1);
 
     // Operator now has an UNCOMMITTED edit to a tracked file — a `git reset --hard`
@@ -166,7 +166,7 @@ describe("self-edit-rollback", () => {
     // failed to bind because of a port conflict, not the merge).
     writeFileSync(keep, "operator's unsaved work\n");
 
-    const result = revertPendingMergeIfCrashed();
+    const result = await revertPendingMergeIfCrashed();
     expect(result).not.toBeNull();
     expect(result!.reverted).toBe(false);
     expect(result!.detail).toMatch(/dirty/i);
@@ -185,6 +185,6 @@ describe("self-edit-rollback", () => {
       await import("../src/self-edit/rollback.js");
     recordMerge(sample);
     confirmMergeBoot();
-    expect(revertPendingMergeIfCrashed()).toBeNull();
+    expect(await revertPendingMergeIfCrashed()).toBeNull();
   });
 });

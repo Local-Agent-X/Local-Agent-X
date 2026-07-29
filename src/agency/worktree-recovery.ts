@@ -9,7 +9,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { atomicWriteFileSync } from "../util/json-store.js";
 import {
-  activeWorktrees, git, logger, MAX_PENDING_RECOVERED_WORKTREES,
+  activeWorktrees, git, gitAsync, logger, MAX_PENDING_RECOVERED_WORKTREES,
   pendingRecoveredWorktrees, type WorktreeEntry, WORKTREE_BASE, worktreeSlotAvailable,
 } from "./worktree-core.js";
 import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
@@ -60,6 +60,19 @@ function canonical(path: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value;
 }
 
+/**
+ * The one git call on this path that is still SYNCHRONOUS, deliberately.
+ *
+ * It backs worktreeOwnershipRecordPath, so every ownership read and write runs
+ * through it — readRecord, writeRecord, ownsWorktree, acquireClaimLock. Making
+ * it async turns all of those async, and create/merge/cleanup in
+ * worktree-lifecycle plus its six calling modules with them. Bigger than that
+ * cost: it would insert yield points INSIDE the check-then-act window below.
+ * classifyDirectory's quarantine-cap and duplicate-identity guards hold against
+ * concurrent reconciles of DIFFERENT bases only because nothing between those
+ * guards and `pendingRecoveredWorktrees.set` can suspend. Converting it belongs
+ * to a chunk that owns that seam and re-establishes the exclusion another way.
+ */
 function commonGitDir(cwd: string): string {
   return resolve(cwd, git(["rev-parse", "--git-common-dir"], cwd));
 }
@@ -255,8 +268,8 @@ function acquireClaimLock(
   return null;
 }
 
-function branchIsMerged(record: OwnershipRecord): boolean {
-  try { git(["merge-base", "--is-ancestor", record.branch, record.baseBranch], record.repoRoot); return true; }
+async function branchIsMerged(record: OwnershipRecord): Promise<boolean> {
+  try { await gitAsync(["merge-base", "--is-ancestor", record.branch, record.baseBranch], record.repoRoot); return true; }
   catch { return false; }
 }
 
@@ -264,23 +277,23 @@ function safeDirectChild(path: string, base: string): boolean {
   return dirname(canonical(path)) === canonical(base) && basename(path).length > 0;
 }
 
-function disposeRegistered(record: OwnershipRecord, base: string): boolean {
+async function disposeRegistered(record: OwnershipRecord, base: string): Promise<boolean> {
   if (!safeDirectChild(record.path, base)) return false;
   if (unlinkAllShallowReparsePoints(record.path).length) return false;
   try {
     forgetWorktreeOwnership(ownershipEntry(record, false));
-    git(["worktree", "remove", record.path, "--force"], record.repoRoot);
-    try { git(["branch", "-d", record.branch], record.repoRoot); } catch { /* absent */ }
+    await gitAsync(["worktree", "remove", record.path, "--force"], record.repoRoot);
+    try { await gitAsync(["branch", "-d", record.branch], record.repoRoot); } catch { /* absent */ }
     return true;
   } catch { return false; }
 }
 
-function classifyDirectory(
+async function classifyDirectory(
   name: string, wtPath: string, base: string, probe: IncarnationProbe,
   hooks?: RecoveryTestHooks,
-): WorktreeRecoveryResult {
+): Promise<WorktreeRecoveryResult> {
   let worktrees: GitWorktree[];
-  try { worktrees = parseWorktreeList(git(["worktree", "list", "--porcelain", "-z"], wtPath)); }
+  try { worktrees = parseWorktreeList(await gitAsync(["worktree", "list", "--porcelain", "-z"], wtPath)); }
   catch { return { name, path: wtPath, disposition: "ambiguous", reason: "not a verifiable git worktree" }; }
   const actual = worktrees.find(w => canonical(w.path) === canonical(wtPath));
   const record = readRecord(wtPath);
@@ -291,10 +304,10 @@ function classifyDirectory(
     return { name, path: wtPath, disposition: "live", reason: `owned by live process ${record.ownerIncarnation}` };
   }
   let dirty: string;
-  try { dirty = git(["status", "--porcelain"], wtPath); }
+  try { dirty = await gitAsync(["status", "--porcelain"], wtPath); }
   catch { return { name, path: wtPath, disposition: "ambiguous", reason: "git status unavailable" }; }
-  if (!dirty && branchIsMerged(record)) {
-    return disposeRegistered(record, base)
+  if (!dirty && await branchIsMerged(record)) {
+    return await disposeRegistered(record, base)
       ? { name, path: wtPath, disposition: "disposable", reason: "clean branch already integrated" }
       : { name, path: wtPath, disposition: "ambiguous", reason: "safe disposal failed" };
   }
@@ -362,7 +375,12 @@ export async function reconcileWorktreeBase(
     const wtPath = join(base, name);
     try { if (!lstatSync(wtPath).isDirectory() || !safeDirectChild(wtPath, base)) continue; }
     catch { continue; }
-    results.push(classifyDirectory(name, wtPath, base, probe, hooks));
+    // Serial on purpose, even though each classification now awaits: the
+    // quarantine-cap and duplicate-identity checks inside classifyDirectory
+    // read pendingRecoveredWorktrees, which the PREVIOUS directory's adoption
+    // just wrote. Running them concurrently would let two directories both see
+    // room under MAX_PENDING_RECOVERED_WORKTREES and both take the last slot.
+    results.push(await classifyDirectory(name, wtPath, base, probe, hooks));
   }
   if (canonical(base) === canonical(WORKTREE_BASE)) {
     reapAppOwnWorktrees();

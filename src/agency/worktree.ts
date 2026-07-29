@@ -48,10 +48,6 @@ export {
   runRepoBuildAsync,
   runDesktopTscBuildAsync,
   runCommandInWorktreeAsync,
-  // Blocking twins, each with exactly one caller whose async conversion ripples
-  // outside this change's footprint — see their @deprecated notes.
-  runRepoBuild,
-  runCommandInWorktree,
   changedFilesTouchDeps,
   securitySensitiveChangedFiles,
 } from "./worktree-state.js";

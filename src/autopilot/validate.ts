@@ -17,7 +17,7 @@ import {
   getWorktreeStatus,
   getWorktreeChangedFiles,
   resetWorktree,
-  runCommandInWorktree,
+  runCommandInWorktreeAsync,
 } from "../agency/worktree.js";
 import { execSync } from "node:child_process";
 import type { AutopilotConfig, RoundOutcome } from "./types.js";
@@ -63,10 +63,10 @@ function getPrevLoc(worktreePath: string, relPath: string): number {
   }
 }
 
-export function validateRound(
+export async function validateRound(
   worktreeName: string,
   config: AutopilotConfig,
-): ValidationResult {
+): Promise<ValidationResult> {
   // Gate 1: any changes at all?
   const status = getWorktreeStatus(worktreeName);
   if (!status) {
@@ -78,7 +78,7 @@ export function validateRound(
   // Gate 2: build
   if (config.buildCommand) {
     logger.info(`[autopilot.validate] running build: ${config.buildCommand} (timeout ${config.buildTimeoutMs}ms)`);
-    const buildResult = runCommandInWorktree(worktreeName, {
+    const buildResult = await runCommandInWorktreeAsync(worktreeName, {
       command: config.buildCommand,
       timeoutMs: config.buildTimeoutMs,
     });
@@ -121,7 +121,7 @@ export function validateRound(
   // Gate 4: tests (opt-in)
   if (config.withTests && config.testCommand) {
     logger.info(`[autopilot.validate] running tests: ${config.testCommand}`);
-    const testResult = runCommandInWorktree(worktreeName, {
+    const testResult = await runCommandInWorktreeAsync(worktreeName, {
       command: config.testCommand,
       timeoutMs: config.testTimeoutMs,
     });

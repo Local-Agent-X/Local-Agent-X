@@ -7,6 +7,7 @@
  * the timeout ceiling) and the property the conversion exists for: timers keep
  * firing while the child runs.
  */
+import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { activeWorktrees } from "./worktree-core.js";
 import {
-  runCommandInWorktree,
   runCommandInWorktreeAsync,
   runDesktopTscBuildAsync,
   runRepoBuildAsync,
@@ -123,12 +123,15 @@ describe("runCommandInWorktreeAsync", () => {
 
 // ── The reason the conversion exists ─────────────────────────────────────────
 describe("event-loop occupancy", () => {
-  it("the async runner lets timers fire while the child runs; the sync twin does not", async () => {
-    const { name } = registerWorktree();
+  it("the async runner lets timers fire while the child runs; a blocking one does not", async () => {
+    const { name, dir } = registerWorktree();
     const command = `node -e "setTimeout(function () {}, 1000)"`;
 
     const asyncTicks = await ticksDuring(() => runCommandInWorktreeAsync(name, { command, timeoutMs: 30_000 }));
-    const syncTicks = await ticksDuring(() => runCommandInWorktree(name, { command, timeoutMs: 30_000 }));
+    // The control is the execSync call the deleted sync twin made, verbatim.
+    // The contrast IS the property under test, and the twin itself is gone now
+    // that both of its callers await — so the control lives here instead.
+    const syncTicks = await ticksDuring(() => execSync(command, { cwd: dir, timeout: 30_000, windowsHide: true }));
 
     // ~1s of child life at a 20ms interval. execSync scores 0 — every timer,
     // socket and in-flight request waited for the child. Revert the async
@@ -235,16 +238,23 @@ describe("async runners are reachable from production", () => {
   it("drops the blocking twins that no longer have a caller", async () => {
     const barrel = await import("./worktree.js");
     const state = await import("./worktree-state.js");
-    expect("runDesktopTscBuild" in state).toBe(false);
-    expect("runDesktopTscBuild" in barrel).toBe(false);
+    // A twin left exported after its last caller migrated is an invitation for
+    // the NEXT caller to reintroduce the block, so absence is the assertion.
+    for (const twin of ["runDesktopTscBuild", "runRepoBuild", "runCommandInWorktree"]) {
+      expect(twin in state, `${twin} in worktree-state`).toBe(false);
+      expect(twin in barrel, `${twin} in worktree barrel`).toBe(false);
+    }
   });
 
-  it("no self-edit / update caller still parks the loop on a build", () => {
+  it("no self-edit / update / autopilot caller still parks the loop on a build", () => {
     const src = fileURLToPath(new URL("../", import.meta.url));
-    for (const rel of ["update-pipeline.ts", "self-edit/sandbox.ts"]) {
+    for (const rel of [
+      "update-pipeline.ts", "self-edit/sandbox.ts", "self-edit/rollback.ts", "autopilot/validate.ts",
+    ]) {
       const text = readFileSync(join(src, rel), "utf-8");
       expect(text, rel).not.toMatch(/\brunRepoBuild\(/);
       expect(text, rel).not.toMatch(/\brunDesktopTscBuild\(/);
+      expect(text, rel).not.toMatch(/\brunCommandInWorktree\(/);
     }
   });
 });

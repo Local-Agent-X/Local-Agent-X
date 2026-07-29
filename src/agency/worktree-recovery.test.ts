@@ -182,21 +182,42 @@ describe("durable worktree recovery", () => {
     expect(run(f.repo, ["ls-tree", "--name-only", "main"])).not.toContain("committed.txt");
   });
 
+  it("keeps the event loop free while it classifies, instead of parking it", async () => {
+    const f = fixture("non-blocking");
+    writeFileSync(join(f.path, "work.txt"), "pending\n");
+
+    let ticks = 0;
+    const timer = setInterval(() => { ticks++; }, 10);
+    try { await reconcileWorktreeBase(f.base, () => false); }
+    finally { clearInterval(timer); }
+
+    // Classification used to run entirely on execFileSync, so this `async`
+    // function never actually yielded — a Promise.all over several bases
+    // serialized into one long block and nothing else on the loop ran for its
+    // whole duration. On the all-sync form this scores exactly 0.
+    expect(ticks).toBeGreaterThan(3);
+  });
+
   it("does not count quarantined recoveries against the active cap", async () => {
-    const many = Array.from({ length: MAX_CONCURRENT_WORKTREES + 1 }, (_, i) => fixture(`queued-${i}`));
-    for (const f of many) writeFileSync(join(f.path, "work.txt"), "pending\n");
+    // The invariant is the CAP, not volume: quarantine is sized at
+    // MAX_PENDING_RECOVERED_WORKTREES (4x the active cap) exactly so recovered
+    // work can outnumber the slots that run it, so seeding a full cap's worth of
+    // quarantine puts the reconcile below on the case that breaks the moment
+    // quarantine is charged against the cap. Building MAX+1 REAL repos to reach
+    // that same state cost 91 serial git spawns and died on the 15s budget.
+    const f = fixture("over-cap");
+    writeFileSync(join(f.path, "work.txt"), "pending\n");
+    for (let i = 0; i < MAX_CONCURRENT_WORKTREES; i++) pendingRecoveredWorktrees.set(`quarantined-${i}`, f.entry);
 
-    const results = (await Promise.all(many.map(f => reconcileWorktreeBase(f.base, () => false)))).flat();
+    const result = await reconcileWorktreeBase(f.base, () => false);
 
-    expect(results).toHaveLength(MAX_CONCURRENT_WORKTREES + 1);
+    expect(result).toEqual([expect.objectContaining({ disposition: "recoverable" })]);
     expect(activeWorktrees.size).toBe(0);
     expect(pendingRecoveredWorktrees.size).toBe(MAX_CONCURRENT_WORKTREES + 1);
-
-    for (let i = 0; i < MAX_CONCURRENT_WORKTREES; i++) {
-      activeWorktrees.set(`active-${i}`, many[0].entry);
-    }
-    expect(createNamedWorktree(many[0].name, many[0].branch, many[0].repo, many[0].name)).toBeNull();
-    expect(pendingRecoveredWorktrees.has(many[0].name)).toBe(true);
+    // Nor may a recovery jump the cap — and a refused resume must not drop it.
+    for (let i = 0; i < MAX_CONCURRENT_WORKTREES; i++) activeWorktrees.set(`active-${i}`, f.entry);
+    expect(createNamedWorktree(f.name, f.branch, f.repo, f.name)).toBeNull();
+    expect(pendingRecoveredWorktrees.has(f.name)).toBe(true);
   });
 
   it("preserves recoverable work when the bounded quarantine is full", async () => {

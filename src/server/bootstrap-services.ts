@@ -13,6 +13,7 @@ import { CronService } from "../cron/cron-service.js";
 import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
 import { fetchLocalOllamaTags } from "../ollama-cloud.js";
+import { askReachableFairly } from "../embedding-providers/ollama.js";
 import { embeddingModelInstalled, decideEmbeddingModelAction } from "./embedding-model-match.js";
 import { startEventLoopSentinel } from "./event-loop-sentinel.js";
 import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
@@ -58,6 +59,9 @@ export async function initOrRefreshEmbeddingProvider(deps: {
   dataDir: string;
   secretsStore: SecretsStore;
   memoryIndex: MemoryIndex;
+  /** Monotonic clock, injected in tests. Used only to tell a truthful "Ollama
+   *  is unreachable" from one decided while the event loop was blocked. */
+  now?: () => number;
 }): Promise<{ providerName: string; model: string; degraded: boolean }> {
   const { config, dataDir, secretsStore, memoryIndex } = deps;
   try {
@@ -78,7 +82,13 @@ export async function initOrRefreshEmbeddingProvider(deps: {
       const fallbackModel = "nomic-embed-text";
       try {
         const ollamaUrl = (settings.ollamaUrl || "http://127.0.0.1:11434").replace(/\/$/, "");
-        const tags = await fetchLocalOllamaTags(ollamaUrl);
+        // Boot is exactly when this loop is busiest, and the tags probe's own
+        // 1.5s connect timer fires the instant a blocked loop resumes — which
+        // is how a live Ollama (PID listening since the day before, /api/tags
+        // 200) got logged as unreachable and left memory on keyword search.
+        // askReachableFairly re-asks a "no" the clock says was never a fair
+        // hearing; a real "no" still lands on the first ask.
+        const tags = await askReachableFairly(() => fetchLocalOllamaTags(ollamaUrl), deps.now);
         let decision = decideEmbeddingModelAction(targetModel, tags);
         if (decision.action === "refuse") {
           // Invariant: never use or auto-pull a non-embedding model, no

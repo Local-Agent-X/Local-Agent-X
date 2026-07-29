@@ -31,11 +31,18 @@ Thumbs.db
 
 # Workspace — personal files, agent-built apps, generated content
 # These sync via the brain/memory repo, not the code repo.
-# Bare `workspace` (no slash) on purpose: on machines where the lifecycle
-# links the workspace to an external dir via a real symlink, git sees a
-# FILE named workspace — `workspace/*` didn't match it, and the untracked
-# link made `git status` permanently dirty (blocking in-app updates).
-workspace
+# ROOT-ANCHORED (`/workspace`, not bare `workspace`) and no trailing slash.
+# No trailing slash on purpose: on machines where the lifecycle links the
+# workspace to an external dir via a real symlink, git sees a FILE named
+# workspace — `workspace/*` didn't match it, and the untracked link made
+# `git status` permanently dirty (blocking in-app updates). Leading slash also
+# on purpose: a BARE `workspace` matches EVERY path component with that name at
+# any depth, so it silently shadowed `src/workspace/` — the resolver + lifecycle
+# source dir. Its four files predate the rule so they stayed tracked, but a NEW
+# file added there was invisible to `git add` (hit live 2026-07-29: the MSYS
+# path fix warned "paths are ignored" on a core source file). Anchoring keeps the
+# symlink-file behaviour for the real workspace and stops the collateral match.
+/workspace
 index.html
 desktop/release/
 

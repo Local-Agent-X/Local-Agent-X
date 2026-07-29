@@ -34,7 +34,13 @@ export const READ_ONLY_TOOLS = new Set([
   // and email_mark rewrites user-visible read/starred state. Plan mode's whole
   // premise is that nothing it permits alters the world, so the `email_` prefix
   // must never become a blanket rule here.
-  'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search',
+  // ask_user changes nothing — it delivers a question and ends the turn on it.
+  // Plan mode is the mode whose entire purpose is research before changes, so
+  // it is exactly when a clarifying question is most useful; blocking it here
+  // would return a `blocked` result, which does NOT terminate the turn
+  // (decide-outcome requires resultStatus "ok"), so the model would ask and then
+  // carry on guessing — the failure ask_user exists to remove.
+  'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search', 'ask_user',
 ]);
 
 /** Read-only ACTIONS of the collapsed one-tool-many-actions office families —

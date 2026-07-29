@@ -151,6 +151,7 @@ export const toolPrompts: Record<string, () => string> = {
   pdf: () => "action:'create' content uses # for headings, \\n\\n for paragraph breaks.",
   sql_query: () => "Read-only by default. Run sql_schema first to see available tables.",
   enter_plan_mode: () => "Enter plan mode to research before making changes. Only read tools available.",
+  ask_user: () => "Calling ask_user ENDS your turn with that question as your answer — the reply comes back as the user's next message. Reserve it for a fork where guessing wastes real work or is irreversible (prod vs sandbox, which account, an unrecoverable delete). Never for confirmations you can infer, permission for work already assigned, or progress reports.",
   task_create: () => "Use for multi-step work. Tasks persist across messages.",
 };
 

@@ -103,6 +103,14 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   list_monitors:   { kernel: "internal", risk: "safe", rules: [{ id: "allow-list-monitors", decision: "allow", reason: "Enumerate available display monitors", priority: 50 }] },
   enter_plan_mode: { kernel: "internal", risk: "safe", rules: [{ id: "allow-enter-plan", decision: "allow", reason: "Enter read-only plan mode", priority: 50 }] },
   exit_plan_mode:  { kernel: "internal", risk: "safe", rules: [{ id: "allow-exit-plan", decision: "allow", reason: "Exit plan mode", priority: 50 }] },
+  // Pure interaction: no I/O sink at all — the question lands in the user's own
+  // transcript, so there is nothing for the kernel to taint-check (internal) and
+  // nothing to lose if it fires unapproved (safe). Same shape as its
+  // enter/exit_plan_mode neighbours above; the turn-ending behavior lives in
+  // canonical-loop/turn-loop/decide-outcome.ts, not in a risk tier. No glob
+  // covers the name, so this explicit allow rule is what keeps it off
+  // default-deny (tool-policy-default.test.ts orphan + registry-coverage checks).
+  ask_user:        { kernel: "internal", risk: "safe", rules: [{ id: "allow-ask-user", decision: "allow", reason: "Ask the user a question and end the turn on it (no I/O sink)", priority: 50 }] },
 
   // ── Structured workspace documents ──
   // kernel:"internal" = no kernel-side taint/grant pipeline; file-access-mode

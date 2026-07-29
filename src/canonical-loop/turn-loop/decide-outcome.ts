@@ -28,6 +28,7 @@ import {
   shouldNudgeForFailures,
 } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
+import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-terminal.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { COMPLETION_GATES } from "./decide-outcome-gates.js";
@@ -176,6 +177,11 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // call (no narration) has nothing to terminate ON, and a prompt-inject CLI
   // turn that emits a JSON-only tool call ends with end_turn but empty text —
   // this guard keeps that case on the wrap-up path so its result feeds back.
+  // The ONE exception is the ask_user terminator below, which is deliberately
+  // NOT part of this condition: there the question itself is the thing the turn
+  // terminates on, so a model that emitted only the tool call still has an
+  // answer to end with. The bypass lives in its own branch and must never be
+  // lifted into this shared condition.
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
   const hasSilentBrowser = allSilent && toolCalls.some(call => call.tool === "browser");
   const noTools = toolCalls.length === 0;
@@ -213,6 +219,29 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     !middlewareSuspended &&
     (modelSignaledDone || silentTerminates || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
+  ) {
+    terminalReason = "done";
+  }
+
+  // ASK-USER TERMINATOR. Every heuristic above asks "did the model FINISH?" —
+  // none of them can see "the model is BLOCKED on the user". An ask_user call is
+  // not silent, is not tool-less, commits no mutation, and the provider reports
+  // tool_use, so the turn drove on and the agent answered its own question by
+  // guessing (the live "production Clover token, or sandbox first?" run). This
+  // is the one terminator keyed on a tool having SUCCEEDED rather than on the
+  // model having stopped, and the one that skips the non-empty-assistant-text
+  // gate — see the comment block above.
+  //
+  // Ordered AFTER the block above and guarded on terminalReason===null so it can
+  // only ever turn a would-be CONTINUE into a done: an adapter error, a
+  // middleware abort ("error") and a middleware suspend (null, the op is parked)
+  // all win over a question, exactly as they win over every other terminator.
+  const askedQuestions = collectAskedQuestions(toolCalls, toolSummary);
+  if (
+    askedQuestions.length > 0 &&
+    terminalReason === null &&
+    !middlewareAborted &&
+    !middlewareSuspended
   ) {
     terminalReason = "done";
   }
@@ -272,8 +301,23 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // entry condition, nudge, and cap. Build-verify is the only gate that also
   // holds a green confirmation (surfaced by the epilogue when the op truly
   // ends this turn).
+  //
+  // A turn that ends on a QUESTION is the one terminal the chain must not touch.
+  // Every gate answers "did the model finish the work?", and re-opening drives
+  // one more turn to finish it — but the missing input is the user's answer,
+  // which does not exist yet, so the extra turn can only produce the guess this
+  // whole mechanism exists to prevent. Their nudges would land on turn+1 (the
+  // turn that carries the user's reply) as stale instructions, and build-verify
+  // would spawn a real build to check work the agent explicitly paused. Skipping
+  // is also what keeps the pre-commit inject gate above sufficient: the gates are
+  // the only awaits between it and the return, so with none of them running no
+  // late inject can slip in unseen (that is exactly the window lateInjectGate
+  // covers). The one thing given up is frameworkServeGate's side effect — an
+  // app_build op that ends on a question registers no dev server — which is
+  // correct: it is paused mid-build, not finished.
+  const endsOnQuestion = askedQuestions.length > 0 && terminalReason === "done";
   let buildVerifyConfirmation = "";
-  for (const gate of COMPLETION_GATES) {
+  for (const gate of endsOnQuestion ? [] : COMPLETION_GATES) {
     if (terminalReason !== "done") break;
     const out = await gate.evaluate({ op, turnIdx, toolCalls });
     if (out.buildVerifyConfirmation !== undefined) buildVerifyConfirmation = out.buildVerifyConfirmation;
@@ -299,6 +343,15 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     );
     // Durable aggregate (~/.lax/p1-metrics.json) — the log clears on restart.
     recordP1Outcome(outcome, promisedFollowup);
+  }
+
+  // Make the question the visible answer. Runs only once the terminal has
+  // SETTLED (past the continuation guard and the gate chain), so a turn that got
+  // re-opened — a queued nudge, a mid-turn user inject — never shows the user a
+  // question the agent is about to talk past. Before the epilogue, so its
+  // loud-partial / ground-truth notes still get the last word.
+  if (endsOnQuestion) {
+    appendQuestionAsAnswer(op.id, turnIdx, assistantText, askedQuestions, allMessages);
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

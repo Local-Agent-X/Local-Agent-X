@@ -126,6 +126,18 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // Self-edit
   self_edit: ["main-chat", "build-intent"],
 
+  // Asking the user. EAGER, and deliberately not routable any other way: a
+  // question arrives at the moment the model hits a fork, and a tool it must
+  // first tool_search for will not be reached then — it guesses instead, which
+  // is the exact failure ask_user exists to remove. There is no keyword that
+  // predicts a fork, so the keyword router (tool-filter.ts) cannot stand in for
+  // the eager slot the way it does for the 2026-07-13 demotions. build-intent is
+  // included for the same reason: "build me X" is the message MOST likely to
+  // hide an unstated decision, and the strip-down would otherwise drop it.
+  // NOT operator/spawned-agent: those lanes run unattended, and a question there
+  // ends the op with nobody reading it.
+  ask_user: ["main-chat", "build-intent"],
+
   // Planning & tasks
   enter_plan_mode: ["main-chat"],
   exit_plan_mode:  ["main-chat"],

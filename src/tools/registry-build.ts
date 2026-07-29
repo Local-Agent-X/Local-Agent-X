@@ -37,6 +37,7 @@ import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
+import { askUserTool } from "./ask-user-tool.js";
 import { selfEditTool } from "./self-edit-tool.js";
 import { runBuildPlanTool } from "../auto-build/tool.js";
 import { startAppBuildTool, finalizeAppBuildTool } from "../auto-build/app-build-tool.js";
@@ -52,7 +53,7 @@ const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, bashTool, webFetchTool,
   globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
-  selfEditTool, recallTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
+  selfEditTool, recallTool, askUserTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   buildAppTool, appRebuildTool,

@@ -867,3 +867,292 @@ describe("completion-gate table — single ordering source", () => {
     expect(COMPLETION_GATES.map((g) => g.name)).toEqual([...COMPLETION_GATE_ORDER]);
   });
 });
+
+// â”€â”€ ask_user â€” the one terminator keyed on "the model is BLOCKED", not
+//    "the model FINISHED" (turn-loop/ask-user-terminal.ts). â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+//
+// The live failure: the agent asked "production Clover token, or sandbox
+// first?" and kept going. Every heuristic above answers "did the model
+// finish?", so an ask_user call â€” not silent, tools present, no mutation,
+// provider reports tool_use â€” matched none of them and the turn drove on.
+describe("decideTurnOutcome â€” ask_user ends the turn ON the question", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const QUESTION = "Production Clover token, or sandbox first?";
+  const askCall: ToolCall = { toolCallId: "ask1", tool: "ask_user", args: { question: QUESTION } };
+  const askResult = (status = "ok"): CommitTurnMessage => ({
+    messageId: "tr-ask1",
+    role: "tool",
+    content: { toolCallId: "ask1", text: `[${status}]\nQuestion delivered â€” your turn ends here.` },
+  } as unknown as CommitTurnMessage);
+  const askSummary = (resultStatus = "ok") =>
+    [{ tool: "ask_user", toolCallId: "ask1", resultStatus }] as unknown as ToolCallSummary[];
+
+  const NARRATION = "I can wire this either way.";
+  const asked = (over: Partial<DecideOutcomeInput> = {}) =>
+    input({
+      toolCalls: [askCall],
+      toolMessages: [askResult()],
+      toolSummary: askSummary(),
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: NARRATION } }],
+      assistantText: NARRATION,
+      // The live shape: the provider reported tool_use, so the model is
+      // explicitly asking for another turn. That is exactly what must NOT win.
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+      ...over,
+    });
+
+  const streamed = () =>
+    (publishStreamChunk as unknown as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c) => c[1] as { delta?: string; text?: string; replace?: boolean },
+    );
+  const assistantTexts = (r: { allMessages: CommitTurnMessage[] }) =>
+    r.allMessages.filter((m) => m.role === "assistant").map((m) => (m.content as { text?: string })?.text ?? "");
+
+  it("terminates the turn even though the provider said tool_use", async () => {
+    const r = await decideTurnOutcome(asked());
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("makes the question the LAST thing committed, and keeps the narration", async () => {
+    const r = await decideTurnOutcome(asked());
+    const texts = assistantTexts(r);
+    expect(texts).toContain(NARRATION);
+    expect(texts[texts.length - 1]).toBe(QUESTION);
+  });
+
+  it("publishes the question as a forwardable `delta` so the live bubble shows it", async () => {
+    await decideTurnOutcome(asked());
+    const chunk = streamed().find((c) => (c.delta ?? c.text)?.includes(QUESTION));
+    expect(chunk).toBeDefined();
+    expect(chunk!.delta).toContain(QUESTION);
+    expect(chunk!.text).toBeUndefined();
+  });
+
+  it("BYPASSES the non-empty-assistant-text gate: a tool-call-only turn still ends on the question", async () => {
+    // The whole point of the exception. Every other terminator is AND-gated on
+    // assistantText.trim().length > 0 â€” a model that emits ONLY the ask_user
+    // call would otherwise be pushed onto the wrap-up path and answer itself.
+    const r = await decideTurnOutcome(asked({ finalized: [], assistantText: "" }));
+    expect(r.terminalReason).toBe("done");
+    expect(assistantTexts(r)).toEqual([QUESTION]);
+    expect(streamed().find((c) => c.delta === QUESTION)).toBeDefined();
+  });
+
+  it("does not double a question the model already wrote out verbatim", async () => {
+    const narrated = `Before I wire it: ${QUESTION}`;
+    const r = await decideTurnOutcome(asked({
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: narrated } }],
+      assistantText: narrated,
+    }));
+    expect(r.terminalReason).toBe("done");
+    expect(assistantTexts(r)).toEqual([narrated]);
+    expect(streamed().some((c) => c.delta === QUESTION)).toBe(false);
+  });
+
+  it("collects BOTH questions when the model asked two in one batch", async () => {
+    const second = "Which of the two Stripe accounts should it charge?";
+    const r = await decideTurnOutcome(asked({
+      toolCalls: [askCall, { toolCallId: "ask2", tool: "ask_user", args: { question: second } }],
+      toolMessages: [
+        askResult(),
+        { messageId: "tr-ask2", role: "tool", content: { toolCallId: "ask2", text: "[ok]\ndelivered" } } as unknown as CommitTurnMessage,
+      ],
+      toolSummary: [
+        { tool: "ask_user", toolCallId: "ask1", resultStatus: "ok" },
+        { tool: "ask_user", toolCallId: "ask2", resultStatus: "ok" },
+      ] as unknown as ToolCallSummary[],
+    }));
+    expect(r.terminalReason).toBe("done");
+    expect(assistantTexts(r)[1]).toBe(`${QUESTION}\n\n${second}`);
+  });
+});
+
+describe("decideTurnOutcome â€” an ask_user that did NOT reach the user never terminates", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const QUESTION = "Production Clover token, or sandbox first?";
+  const askCall: ToolCall = { toolCallId: "ask1", tool: "ask_user", args: { question: QUESTION } };
+  const refused = (resultStatus: string, header: string) =>
+    input({
+      toolCalls: [askCall],
+      toolMessages: [{ messageId: "tr-ask1", role: "tool", content: { toolCallId: "ask1", text: `[${header}]\nnope` } } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "ask_user", toolCallId: "ask1", resultStatus }] as unknown as ToolCallSummary[],
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "Let me check with you." } }],
+      assistantText: "Let me check with you.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    });
+  const noQuestionPublished = () =>
+    (publishStreamChunk as unknown as ReturnType<typeof vi.fn>).mock.calls.every(
+      (c) => !((c[1] as { delta?: string }).delta ?? "").includes(QUESTION),
+    );
+
+  it("a policy/plan-mode BLOCK leaves the turn open (the user saw nothing)", async () => {
+    const r = await decideTurnOutcome(refused("blocked", "blocked"));
+    expect(r.terminalReason).toBeNull();
+    expect(noQuestionPublished()).toBe(true);
+  });
+
+  it("an ERRORED call (blank question) leaves the turn open", async () => {
+    const r = await decideTurnOutcome(refused("error", "error"));
+    expect(r.terminalReason).toBeNull();
+    expect(noQuestionPublished()).toBe(true);
+  });
+
+  it("a call that never dispatched (cancel / skipToolDispatch) leaves the turn open", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [askCall],
+      toolMessages: [],
+      toolSummary: [],
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "Let me check with you." } }],
+      assistantText: "Let me check with you.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    }));
+    expect(r.terminalReason).toBeNull();
+    expect(noQuestionPublished()).toBe(true);
+  });
+
+  it("an ok call with a blank question arg is not a question", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [{ toolCallId: "ask1", tool: "ask_user", args: { question: "   " } }],
+      toolMessages: [{ messageId: "tr-ask1", role: "tool", content: { toolCallId: "ask1", text: "[ok]\ndelivered" } } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "ask_user", toolCallId: "ask1", resultStatus: "ok" }] as unknown as ToolCallSummary[],
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "Let me check with you." } }],
+      assistantText: "Let me check with you.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    }));
+    expect(r.terminalReason).toBeNull();
+  });
+});
+
+describe("decideTurnOutcome â€” a question never overrides a stronger verdict", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const QUESTION = "Production Clover token, or sandbox first?";
+  const askCall: ToolCall = { toolCallId: "ask1", tool: "ask_user", args: { question: QUESTION } };
+  const asked = (over: Partial<DecideOutcomeInput> = {}) =>
+    input({
+      toolCalls: [askCall],
+      toolMessages: [{ messageId: "tr-ask1", role: "tool", content: { toolCallId: "ask1", text: "[ok]\ndelivered" } } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "ask_user", toolCallId: "ask1", resultStatus: "ok" }] as unknown as ToolCallSummary[],
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "I can wire this either way." } }],
+      assistantText: "I can wire this either way.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+      ...over,
+    });
+  const questionPublished = () =>
+    (publishStreamChunk as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+      (c) => ((c[1] as { delta?: string }).delta ?? "").includes(QUESTION),
+    );
+
+  it("a middleware ABORT still forces error", async () => {
+    const r = await decideTurnOutcome(asked({
+      middlewareDirective: { kind: "abort", reason: "budget", firedBy: "test", message: "stop" } as DecideOutcomeInput["middlewareDirective"],
+    }));
+    expect(r.terminalReason).toBe("error");
+    expect(questionPublished()).toBe(false);
+  });
+
+  it("a middleware SUSPEND still parks the op", async () => {
+    const r = await decideTurnOutcome(asked({
+      middlewareDirective: { kind: "suspend", reason: "blocked", firedBy: "test", message: "waiting" } as DecideOutcomeInput["middlewareDirective"],
+    }));
+    expect(r.terminalReason).toBeNull();
+    expect(questionPublished()).toBe(false);
+  });
+
+  it("a real adapter error still wins", async () => {
+    const r = await decideTurnOutcome(asked({
+      adapterTerminalReason: "error",
+      adapterError: { code: "boom", message: "provider failed" },
+    }));
+    expect(r.terminalReason).toBe("error");
+    expect(questionPublished()).toBe(false);
+  });
+
+  it("a mid-turn user inject still re-opens the turn, and the question is withheld", async () => {
+    // The continuation guard is load-bearing: committing "done" while the
+    // worker is going to spin another turn is the illegal succeededâ†’succeeded
+    // transition. A question does not get to skip it â€” and because the turn
+    // did not end, the user must not be shown a question the agent is about to
+    // talk past.
+    const { opConsumesInjects, hasInjects } = await import("../../agent-loop/inject-queue.js");
+    const { getSessionForOp } = await import("../../ops/session-bridge.js");
+    // mockReturnValue + restore, not mockReturnValueOnce: a queued "once" that
+    // the code under test never consumes leaks into the NEXT test's pre-commit
+    // inject guard and silently re-opens an unrelated turn.
+    const consumes = opConsumesInjects as unknown as ReturnType<typeof vi.fn>;
+    const session = getSessionForOp as unknown as ReturnType<typeof vi.fn>;
+    const injects = hasInjects as unknown as ReturnType<typeof vi.fn>;
+    consumes.mockReturnValue(true);
+    session.mockReturnValue("sess-1");
+    injects.mockReturnValue(true);
+    try {
+      const r = await decideTurnOutcome(asked());
+      expect(r.terminalReason).toBeNull();
+      expect(questionPublished()).toBe(false);
+    } finally {
+      consumes.mockReturnValue(false);
+      session.mockReturnValue(undefined);
+      injects.mockReturnValue(false);
+    }
+  });
+});
+
+describe("decideTurnOutcome â€” completion gates vs a question (and the control)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const QUESTION = "Production Clover token, or sandbox first?";
+  const asked = () =>
+    input({
+      toolCalls: [{ toolCallId: "ask1", tool: "ask_user", args: { question: QUESTION } }],
+      toolMessages: [{ messageId: "tr-ask1", role: "tool", content: { toolCallId: "ask1", text: "[ok]\ndelivered" } } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "ask_user", toolCallId: "ask1", resultStatus: "ok" }] as unknown as ToolCallSummary[],
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: "I can wire this either way." } }],
+      assistantText: "I can wire this either way.",
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    });
+
+  it("no gate may re-open a turn that ended on a question", async () => {
+    // Re-opening drives one more turn to "finish the work" â€” but the missing
+    // input is the user's ANSWER, which does not exist yet, so that turn can
+    // only produce the guess this mechanism exists to prevent. The gate must
+    // not even RUN: its nudge would land on the turn carrying the user's reply.
+    const { earnedDoneNudge } = await import("../middlewares/open-steps.js");
+    const { appendNudgeAsUserMessage } = await import("./nudges.js");
+    const gate = earnedDoneNudge as unknown as ReturnType<typeof vi.fn>;
+    gate.mockReturnValue("Finish the open steps or justify stopping.");
+    try {
+      const r = await decideTurnOutcome(asked());
+      expect(r.terminalReason).toBe("done");
+      expect(gate).not.toHaveBeenCalled();
+      expect(appendNudgeAsUserMessage).not.toHaveBeenCalled();
+    } finally {
+      gate.mockReturnValue(null);
+    }
+  });
+
+  it("CONTROL: the SAME gate still re-opens a turn that did not end on a question", async () => {
+    // Calibration for the assertion above â€” it is only meaningful if the gate
+    // chain still runs for everyone else. Skipping the chain unconditionally
+    // (the obvious wrong implementation) passes the test above and fails this.
+    const { earnedDoneNudge } = await import("../middlewares/open-steps.js");
+    const { appendNudgeAsUserMessage } = await import("./nudges.js");
+    const gate = earnedDoneNudge as unknown as ReturnType<typeof vi.fn>;
+    gate.mockReturnValue("Finish the open steps or justify stopping.");
+    try {
+      const r = await decideTurnOutcome(input({ modelSignaledDone: true }));
+      expect(r.terminalReason).toBeNull();
+      expect(gate).toHaveBeenCalled();
+      expect(appendNudgeAsUserMessage).toHaveBeenCalled();
+    } finally {
+      gate.mockReturnValue(null);
+    }
+  });
+});

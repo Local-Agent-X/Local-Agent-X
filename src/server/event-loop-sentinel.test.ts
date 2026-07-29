@@ -5,25 +5,40 @@
 // snapshot and profiler are all injected, so nothing here sleeps, spins a real
 // timer, touches the filesystem, or opens an inspector session.
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createEventLoopSentinel,
   collectStallSnapshot,
   pruneOldStallProfiles,
   type StallSnapshot,
 } from "./event-loop-sentinel.js";
+import {
+  BEAT_INDEX,
+  createStallWatch,
+  createWorkerStallObserver,
+  type SentinelWorkerData,
+  type SentinelWorkerHandle,
+} from "./event-loop-sentinel-worker.js";
 
 const INTERVAL = 500;
 const WARN = 5_000;
 const PROFILE = 30_000;
 const COOLDOWN = 600_000;
+/** Worker-side cadence: how often the off-thread observer looks at the beat. */
+const CHECK = 1_000;
+const REPEAT_CAP = 60_000;
 
 function harness(overrides: Parameters<typeof createEventLoopSentinel>[0] = {}) {
   let clock = 1_000_000;
   const log = { warn: vi.fn(), error: vi.fn() };
+  // Stand-in for the worker-backed observer: these cases are about the
+  // main-thread half, and no test should spawn a thread to prove them.
+  const observer = { beat: vi.fn(), start: vi.fn(), stop: vi.fn() };
   const captureProfile = vi.fn((lagMs: number) => `profile-${lagMs}.cpuprofile`);
   const collectSnapshot = vi.fn((lagMs: number): StallSnapshot => ({
     lagMs,
@@ -42,11 +57,12 @@ function harness(overrides: Parameters<typeof createEventLoopSentinel>[0] = {}) 
     profileCooldownMs: COOLDOWN,
     collectSnapshot,
     captureProfile,
+    observer,
     ...overrides,
   });
   /** Let `ms` of wall-clock pass, then take one sample. */
   const advanceAndTick = (ms: number) => { clock += ms; sentinel.tick(); };
-  return { log, captureProfile, collectSnapshot, sentinel, advanceAndTick };
+  return { log, captureProfile, collectSnapshot, observer, sentinel, advanceAndTick };
 }
 
 describe("event-loop sentinel — healthy loop is silent and free", () => {
@@ -293,4 +309,513 @@ describe("stall profiles — retention", () => {
     const missing = join(tmpdir(), "lax-loop-sentinel-does-not-exist-9d3f");
     expect(() => pruneOldStallProfiles(missing, 3)).not.toThrow();
   });
+});
+
+// ─────────────────────── the off-thread half ────────────────────────────────
+// The regression these cover: reporting a stall by noticing your own sample was
+// late only works if the loop COMES BACK. On 2026-07-28 the loop wedged at
+// 15:29:21 and the process was killed still wedged — zero sentinel lines, no
+// profile, for the one stall the user actually felt. The worker half must
+// report a stall IN PROGRESS, which is something the main thread can never do.
+
+/** Drives createStallWatch with an injected clock and a hand-cranked beat, so
+ *  "the main thread is wedged" is expressed as "no beat" and nothing sleeps. */
+function watchHarness(opts: { warnMs?: number; repeatCapMs?: number } = {}) {
+  let clock = 10_000;
+  let beat = 7; // arbitrary start — only CHANGES mean anything
+  const lines: string[] = [];
+  const watch = createStallWatch({
+    now: () => clock,
+    readBeat: () => beat,
+    warnMs: opts.warnMs ?? WARN,
+    repeatCapMs: opts.repeatCapMs ?? REPEAT_CAP,
+    emit: (line) => lines.push(line),
+  });
+  /** The main thread beat, then the worker looked. */
+  const alive = (ms = CHECK) => { clock += ms; beat += 2; watch.check(); };
+  /** The main thread is WEDGED — no beat — and the worker looked anyway. */
+  const wedged = (ms = CHECK) => { clock += ms; watch.check(); };
+  const reported = () => lines
+    .filter((l) => l.includes("STILL BLOCKED"))
+    .map((l) => Number(/at least (\d+)ms/.exec(l)?.[1] ?? -1));
+  return { lines, alive, wedged, reported };
+}
+
+describe("stall watch — reports a stall that is still happening", () => {
+  it("says nothing while the beats keep arriving", () => {
+    const { lines, alive } = watchHarness();
+    for (let i = 0; i < 30; i++) alive();
+    expect(lines).toEqual([]);
+  });
+
+  it("stays quiet under the threshold", () => {
+    const { lines, wedged } = watchHarness();
+    for (let i = 0; i < 4; i++) wedged(); // 4s wedged, warn is 5s
+    expect(lines).toEqual([]);
+  });
+
+  // THE POINT OF THE WHOLE FILE: the main loop never resumes, and the stall is
+  // reported anyway. Nothing in the on-resume path can produce this line.
+  it("reports the block WITHOUT the main thread ever coming back", () => {
+    const { lines, wedged, reported } = watchHarness();
+    for (let i = 0; i < 6; i++) wedged(); // wedged forever; no beat, no resume
+    expect(reported()).toEqual([5_000]);
+    expect(lines[0]).toContain("STILL BLOCKED");
+    expect(lines.join("\n")).not.toContain("beat again"); // it never came back
+  });
+
+  it("is honest that it cannot see what the main thread was holding", () => {
+    const { lines, wedged } = watchHarness();
+    for (let i = 0; i < 6; i++) wedged();
+    expect(lines[0]).toContain("handles, requests and active turns are unreadable");
+    expect(lines[0]).toContain("at least"); // never inflates the elapsed time
+  });
+
+  it("keeps reporting while the stall grows, on a backed-off cadence", () => {
+    const { lines, wedged, reported } = watchHarness();
+    for (let i = 0; i < 300; i++) wedged(); // five minutes wedged, 300 looks
+    const seen = reported();
+    expect(seen.length).toBeGreaterThanOrEqual(6); // it reports repeatedly…
+    expect(lines.length).toBeLessThan(15);         // …but does not spam 300 lines
+    expect([...seen].sort((a, b) => a - b)).toEqual(seen); // the number climbs
+    expect(Math.max(...seen)).toBeGreaterThanOrEqual(200_000);
+  });
+
+  it("brackets the stall when the loop returns, then re-arms for the next one", () => {
+    const { lines, alive, wedged } = watchHarness();
+    for (let i = 0; i < 10; i++) wedged();
+    alive(); // the loop finally comes back
+    expect(lines.at(-1)).toContain("beat again after roughly 11000ms");
+    const closed = lines.length;
+    for (let i = 0; i < 6; i++) wedged(); // a SECOND, independent stall
+    expect(lines.length).toBeGreaterThan(closed);
+    expect(lines.at(-1)).toContain("in-progress report 1"); // counter re-armed
+    expect(lines.at(-1)).toContain("at least 5000ms");      // not cumulative
+  });
+});
+
+/** Records what the observer does to its worker without spawning a thread. */
+function stubWorker() {
+  const listeners = new Map<string, (arg: never) => void>();
+  const counts = { unref: 0, terminate: 0 };
+  /** Call ORDER, not just counts: unref() before an on("message") is undone by
+   *  node and pins the process open, and a count cannot see that. */
+  const calls: string[] = [];
+  const handle: SentinelWorkerHandle = {
+    unref() { counts.unref += 1; calls.push("unref"); },
+    terminate() { counts.terminate += 1; calls.push("terminate"); return 0; },
+    on(event: string, listener: (arg: never) => void) {
+      listeners.set(event, listener);
+      calls.push(`on:${event}`);
+      return handle;
+    },
+  };
+  const fire = (event: string, arg: unknown): void => {
+    const listener = listeners.get(event) as ((a: unknown) => void) | undefined;
+    expect(listener, `no ${event} listener registered`).toBeTruthy();
+    listener?.(arg);
+  };
+  return { handle, counts, calls, fire };
+}
+
+function observerHarness(overrides: Partial<Parameters<typeof createWorkerStallObserver>[0]> = {}) {
+  const spawns: SentinelWorkerData[] = [];
+  const issues: string[] = [];
+  const worker = stubWorker();
+  const observer = createWorkerStallObserver({
+    logPath: join(tmpdir(), "unused-by-this-test.log"),
+    warnMs: WARN,
+    checkIntervalMs: CHECK,
+    repeatCapMs: REPEAT_CAP,
+    onIssue: (message) => issues.push(message),
+    spawn: (data) => { spawns.push(data); return worker.handle; },
+    ...overrides,
+  });
+  return { observer, spawns, issues, worker };
+}
+
+describe("worker stall observer — the main-thread half", () => {
+  it("hands the worker a shared beat cell that beat() bumps", () => {
+    const { observer, spawns } = observerHarness();
+    observer.start();
+    const beats = new Int32Array(spawns[0].beats);
+    const before = Atomics.load(beats, BEAT_INDEX);
+    observer.beat();
+    observer.beat();
+    // The worker reads this cell on ITS loop — no message, no allocation, and
+    // nothing for a blocked main thread to deliver.
+    expect(Atomics.load(beats, BEAT_INDEX)).toBe(before + 2);
+  });
+
+  it("beats safely before the worker exists", () => {
+    const { observer, spawns } = observerHarness();
+    expect(() => observer.beat()).not.toThrow();
+    expect(spawns).toEqual([]);
+  });
+
+  it("spawns one worker however many times start is called, and unrefs it", () => {
+    const { observer, spawns, worker } = observerHarness();
+    observer.start();
+    observer.start();
+    observer.start();
+    expect(spawns).toHaveLength(1);
+    // Unref'd, or a diagnostic would keep a finished process alive.
+    expect(worker.counts.unref).toBe(1);
+    observer.stop();
+    expect(worker.counts.terminate).toBe(1);
+  });
+
+  // The count above is NOT enough on its own: node re-ref()s a Worker's public
+  // MessagePort whenever a "message" listener is added, so an unref() that runs
+  // before the listeners is undone and the process is pinned open forever while
+  // the count still reads 1. The real proof is the child-process test at the
+  // bottom of this file; this is the cheap guard that catches a reorder in
+  // milliseconds instead of 45 seconds.
+  it("unrefs the worker only after every listener is attached", () => {
+    const { observer, worker } = observerHarness();
+    observer.start();
+    expect(worker.calls).toContain("on:message");
+    expect(worker.calls.at(-1)).toBe("unref");
+  });
+
+  it("announces a dead observer instead of pretending it is still watching", () => {
+    const { observer, issues, worker } = observerHarness();
+    observer.start();
+    worker.fire("exit", 7);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("exited (code 7)");
+    expect(issues[0]).toContain("ONLY once the loop resumes");
+  });
+
+  it("says nothing when the worker exits because we stopped it", () => {
+    const { observer, issues, worker } = observerHarness();
+    observer.start();
+    observer.stop();
+    worker.fire("exit", 0);
+    expect(issues).toEqual([]);
+  });
+
+  // terminate() resolves ASYNCHRONOUSLY: the first worker's "exit" lands after
+  // a stop/start cycle has already installed its successor. An observer that
+  // treats any exit as its own would then drop the live worker on the floor and
+  // announce that the in-progress half is dead while it is happily watching —
+  // and the next start() would spawn a duplicate thread writing duplicate stall
+  // lines. Only the handle that is currently live may speak for the observer.
+  it("ignores a replaced worker's late exit instead of clobbering the live one", () => {
+    const spawned: Array<ReturnType<typeof stubWorker>> = [];
+    const issues: string[] = [];
+    const observer = createWorkerStallObserver({
+      logPath: join(tmpdir(), "unused-by-this-test.log"),
+      warnMs: WARN,
+      onIssue: (message) => issues.push(message),
+      spawn: () => { const w = stubWorker(); spawned.push(w); return w.handle; },
+    });
+    observer.start();
+    observer.stop();
+    observer.start(); // the second worker is the live observer from here on
+    spawned[0].fire("exit", 0); // …and only now does the first one's exit arrive
+
+    expect(issues).toEqual([]); // nothing is wrong: the observer is watching
+    observer.start(); // already running — must not spawn a third thread
+    expect(spawned).toHaveLength(2);
+    observer.stop();
+    expect(spawned[1].counts.terminate).toBe(1); // the LIVE worker was stopped
+  });
+
+  it("reports the live worker's own exit even after an earlier restart", () => {
+    const spawned: Array<ReturnType<typeof stubWorker>> = [];
+    const issues: string[] = [];
+    const observer = createWorkerStallObserver({
+      logPath: join(tmpdir(), "unused-by-this-test.log"),
+      warnMs: WARN,
+      onIssue: (message) => issues.push(message),
+      spawn: () => { const w = stubWorker(); spawned.push(w); return w.handle; },
+    });
+    observer.start();
+    observer.stop();
+    observer.start();
+    spawned[1].fire("exit", 9); // the CURRENT worker died on its own
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("exited (code 9)");
+    // …and the observer is free to be started again afterwards.
+    observer.start();
+    expect(spawned).toHaveLength(3);
+    observer.stop();
+  });
+
+  it("surfaces a worker that cannot write its log, and a spawn that fails", () => {
+    const { observer, issues, worker } = observerHarness();
+    observer.start();
+    worker.fire("message", { kind: "log-failed", message: "EACCES" });
+    worker.fire("error", new Error("boom"));
+    expect(issues[0]).toContain("cannot write");
+    expect(issues[0]).toContain("EACCES");
+    expect(issues[1]).toContain("boom");
+
+    const failing = observerHarness({ spawn: () => { throw new Error("no threads"); } });
+    failing.observer.start();
+    expect(failing.issues[0]).toContain("no threads");
+    // A failed spawn must not leave a half-started observer that never retries
+    // silently: start() can be called again.
+    expect(() => failing.observer.beat()).not.toThrow();
+  });
+});
+
+describe("event-loop sentinel — main thread drives the off-thread observer", () => {
+  it("publishes a beat on every sample, healthy or stalled", () => {
+    const { observer, advanceAndTick } = harness();
+    advanceAndTick(INTERVAL);
+    advanceAndTick(INTERVAL);
+    advanceAndTick(90_000); // a stall is still a sample: it must beat too
+    expect(observer.beat).toHaveBeenCalledTimes(3);
+  });
+
+  it("starts and stops the observer with the sentinel", () => {
+    const { observer, sentinel } = harness();
+    sentinel.start();
+    sentinel.start();
+    expect(observer.start).toHaveBeenCalledTimes(1);
+    sentinel.stop();
+    expect(observer.stop).toHaveBeenCalledTimes(1);
+  });
+
+  // The two halves are complementary, not redundant: only the main thread can
+  // read handles/requests/turns, and it can only do it on the way out.
+  it("still takes the on-resume snapshot when the loop does come back", () => {
+    const { log, collectSnapshot, advanceAndTick } = harness();
+    advanceAndTick(90_000 + INTERVAL);
+    expect(collectSnapshot).toHaveBeenCalledWith(90_000);
+    expect(String(log.error.mock.calls[0][0])).toContain('"handles":{"Socket":2}');
+  });
+});
+
+describe("event-loop sentinel — a stall that NEVER ends is reported anyway", () => {
+  // Real beat cell, real beat(), real watch — only the thread is faked. The
+  // main thread wedges and never returns, so its own half stays silent by
+  // construction; the log still gets the stall.
+  it("the worker reports it in progress while the main thread stays wedged", () => {
+    const { observer, spawns, issues } = observerHarness();
+    observer.start();
+    const data = spawns[0];
+    const beats = new Int32Array(data.beats);
+
+    let mainClock = 1_000_000;
+    let workerClock = 1_000_000; // separate clock: the threads share no timeOrigin
+    const log = { warn: vi.fn(), error: vi.fn() };
+    const lines: string[] = [];
+    const sentinel = createEventLoopSentinel({
+      now: () => mainClock,
+      logger: log,
+      intervalMs: INTERVAL,
+      warnMs: WARN,
+      profileEnabled: false,
+      observer,
+    });
+    const watch = createStallWatch({
+      now: () => workerClock,
+      readBeat: () => Atomics.load(beats, BEAT_INDEX),
+      warnMs: data.warnMs,
+      repeatCapMs: data.repeatCapMs,
+      emit: (line) => lines.push(line),
+    });
+
+    // Healthy: samples land on time and the worker sees the beats.
+    for (let i = 0; i < 10; i++) {
+      mainClock += INTERVAL;
+      sentinel.tick();
+      workerClock += INTERVAL;
+      watch.check();
+    }
+    expect(lines).toEqual([]);
+
+    // 15:29:21 — the loop wedges and tick() is NEVER called again. No resume,
+    // no on-resume snapshot, no profile: the user force-quits instead.
+    for (let i = 0; i < 60; i++) {
+      workerClock += CHECK;
+      watch.check();
+    }
+
+    expect(log.error).not.toHaveBeenCalled(); // the main half has nothing to say
+    const reported = lines.map((l) => Number(/at least (\d+)ms/.exec(l)?.[1] ?? -1));
+    expect(reported.length).toBeGreaterThanOrEqual(3);
+    expect(lines.every((l) => l.includes("STILL BLOCKED"))).toBe(true);
+    expect(reported[0]).toBe(5_000);
+    expect(reported.at(-1)).toBeGreaterThanOrEqual(35_000); // and it keeps growing
+    expect(issues).toEqual([]);
+  });
+});
+
+/** Lines the worker wrote, newest last. */
+function readStallLines(path: string): string[] {
+  try {
+    return readFileSync(path, "utf8").split("\n").filter((l) => l.includes("[loop-sentinel:worker]"));
+  } catch {
+    return []; // not created yet
+  }
+}
+
+function stampOf(line: string): number {
+  return Date.parse(line.slice(1, line.indexOf("]")));
+}
+
+async function waitForStallLines(path: string, atLeast: number, timeoutMs: number): Promise<string[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const lines = readStallLines(path);
+    if (lines.length >= atLeast) return lines;
+    if (Date.now() > deadline) throw new Error(`only ${lines.length} worker lines after ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+describe("event-loop sentinel — a REAL worker logging a REAL wedge", () => {
+  // Everything above drives the logic with injected clocks. This one proves the
+  // thing those cannot: that a genuinely blocked main thread does not stop the
+  // worker from writing to the log. Real time is unavoidable here — a fake
+  // clock cannot express "this thread is not running".
+  it("appends in-progress lines while the main thread is busy-blocked", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-loop-sentinel-live-"));
+    const logPath = join(dir, "server.log");
+    const issues: string[] = [];
+    // Compressed thresholds: this stall starts at worker boot (nothing ever
+    // beats) and the whole test must fit in a second.
+    const observer = createWorkerStallObserver({
+      logPath,
+      warnMs: 120,
+      checkIntervalMs: 25,
+      repeatCapMs: 200,
+      onIssue: (message) => issues.push(message),
+    });
+    observer.start();
+    try {
+      // The worker boots and reports while the loop is free — no resume needed.
+      const booted = await waitForStallLines(logPath, 1, 20_000);
+      expect(booted[0]).toContain("STILL BLOCKED");
+
+      const blockStart = Date.now();
+      while (Date.now() - blockStart < 900) { /* wedge the main thread */ }
+      const blockEnd = Date.now();
+
+      const during = readStallLines(logPath).filter((l) => {
+        const at = stampOf(l);
+        return at >= blockStart && at <= blockEnd;
+      });
+      expect(during.length).toBeGreaterThanOrEqual(2);
+      for (const line of during) {
+        expect(line).toContain("STILL BLOCKED");
+        expect(line).toContain("ERROR [loop-sentinel:worker]"); // server.log shape
+      }
+      // The elapsed number grows across the block, i.e. these are reports of one
+      // stall in progress — not one line replayed on resume.
+      const grew = during.map((l) => Number(/at least (\d+)ms/.exec(l)?.[1] ?? -1));
+      expect(grew.at(-1)).toBeGreaterThan(grew[0]);
+      expect(issues).toEqual([]);
+    } finally {
+      observer.stop();
+      await new Promise((resolve) => setTimeout(resolve, 100)); // let it die before rm
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 30_000);
+});
+
+/**
+ * The child: start the observer, wait until the worker is demonstrably watching,
+ * wedge the main thread, publish the wedge window, then RETURN — no
+ * process.exit(), no observer.stop(). Whether it dies is entirely up to whether
+ * the observer still holds a ref.
+ */
+const WEDGE_THEN_EXIT_CHILD = `
+import { readFileSync, writeFileSync } from "node:fs";
+
+const [moduleUrl, logPath, windowPath] = process.argv.slice(2);
+const { createWorkerStallObserver } = await import(moduleUrl);
+
+const issues = [];
+const observer = createWorkerStallObserver({
+  logPath,
+  warnMs: 120,
+  checkIntervalMs: 25,
+  repeatCapMs: 200,
+  onIssue: (m) => issues.push(m),
+});
+observer.start();
+
+// Nothing ever beats here, so the worker reports as soon as it is up. Waiting
+// for that first line is what guarantees the wedge below lands inside its watch
+// rather than during its boot.
+const deadline = Date.now() + 20000;
+for (;;) {
+  let seen = 0;
+  try {
+    seen = readFileSync(logPath, "utf8").split("\\n").filter((l) => l.includes("[loop-sentinel:worker]")).length;
+  } catch { /* the worker has not written yet */ }
+  if (seen >= 1) break;
+  if (Date.now() > deadline) {
+    writeFileSync(windowPath, JSON.stringify({ error: "the worker never reported" }));
+    process.exit(3);
+  }
+  await new Promise((r) => setTimeout(r, 25));
+}
+
+const blockStart = Date.now();
+while (Date.now() - blockStart < 900) { /* wedge the main thread */ }
+const blockEnd = Date.now();
+writeFileSync(windowPath, JSON.stringify({ blockStart, blockEnd, issues }));
+`;
+
+describe("event-loop sentinel — the observer must never keep the process alive", () => {
+  // THE case a stub cannot reach. `expect(counts.unref).toBe(1)` passes on a
+  // handle that is pinned open, because node re-ref()s a Worker's public
+  // MessagePort when a "message" listener is attached — so unref()ing before
+  // that listener silently undoes itself and the process can never exit again.
+  // Observed for real: this child hung past 25s before the ordering fix and
+  // exits in ~2.5s after it. Only a real process can tell those apart, so this
+  // spawns one, wedges its main thread, and demands that it die by itself.
+  it("lets a process whose main thread was wedged exit on its own, worker and all", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-loop-sentinel-exit-"));
+    const logPath = join(dir, "server.log");
+    const windowPath = join(dir, "window.json");
+    const childPath = join(dir, "wedge-then-exit.mjs");
+    writeFileSync(childPath, WEDGE_THEN_EXIT_CHILD);
+    // Same tsx/dist split the observer's own spawn uses (see spawnSentinelWorker).
+    const isTsRuntime = import.meta.url.endsWith(".ts");
+    const moduleUrl = new URL(
+      isTsRuntime ? "./event-loop-sentinel-worker.ts" : "./event-loop-sentinel-worker.js",
+      import.meta.url,
+    ).href;
+    const child = spawn(
+      process.execPath,
+      [...(isTsRuntime ? ["--import", "tsx"] : []), childPath, moduleUrl, logPath, windowPath],
+      // cwd so `--import tsx` resolves; fileURLToPath, never url.pathname — this
+      // repo lives under a path with a space in it.
+      { cwd: fileURLToPath(new URL("../..", import.meta.url)), stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    let hung = false;
+    const killer = setTimeout(() => { hung = true; child.kill(); }, 45_000);
+    const code = await new Promise<number | null>((resolve) => child.on("exit", (c) => resolve(c)));
+    clearTimeout(killer);
+
+    try {
+      expect(hung, `the child never exited — the observer is holding the process open. stderr: ${stderr}`).toBe(false);
+      expect(code, `child failed: ${stderr}`).toBe(0);
+
+      // …and it exited because the worker was unref'd, NOT because the observer
+      // was neutered: it has to have reported the wedge while it was happening.
+      const window = JSON.parse(readFileSync(windowPath, "utf8")) as {
+        blockStart: number; blockEnd: number; issues: string[]; error?: string;
+      };
+      expect(window.error).toBeUndefined();
+      const during = readStallLines(logPath).filter((l) => {
+        const at = stampOf(l);
+        return at >= window.blockStart && at <= window.blockEnd;
+      });
+      expect(during.length).toBeGreaterThanOrEqual(2);
+      expect(during.every((l) => l.includes("STILL BLOCKED"))).toBe(true);
+      expect(window.issues).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  }, 90_000);
 });

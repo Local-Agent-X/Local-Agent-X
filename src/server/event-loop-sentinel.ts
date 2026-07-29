@@ -20,12 +20,23 @@
  * process open, and does no async work on the sampling path.
  *
  * Cost when healthy: one performance.now(), two subtractions, one comparison,
- * one assignment. No allocation, no fs, no logging.
+ * one assignment, one atomic add. No allocation, no fs, no logging.
+ *
+ * THIS FILE IS ONLY HALF THE INSTRUMENT. Everything below measures a stall from
+ * the main thread, which means it can only report one ONCE THE LOOP COMES BACK
+ * — a block that never ends produced no report at all, which is precisely the
+ * case where the user force-quits. The other half lives in
+ * event-loop-sentinel-worker.ts: a worker_thread with its own event loop that
+ * watches the liveness beat `tick()` publishes and logs the stall IN PROGRESS.
+ * Keep both — the worker sees that the loop is wedged right now but cannot read
+ * handles, requests or turns; the snapshot below can, and it is what named the
+ * ChildProcess behind the 435s stall.
  *
  * Overrides:
  *   LAX_LOOP_SENTINEL_WARN_MS      threshold 1, default 5000
  *   LAX_LOOP_SENTINEL_PROFILE_MS   threshold 2, default 30000
  *   LAX_LOOP_SENTINEL_PROFILE=0    disable CPU-profile capture entirely
+ *   LAX_LOOP_SENTINEL_WORKER=0     disable the off-thread in-progress observer
  * On by default. That is the point.
  */
 import { mkdirSync, readdirSync, unlinkSync, writeFile } from "node:fs";
@@ -35,6 +46,7 @@ import { Session } from "node:inspector";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getTurnRegistry } from "../session/turn-lock.js";
 import { createLogger, type Logger } from "../logger.js";
+import { createWorkerStallObserver, type StallObserver } from "./event-loop-sentinel-worker.js";
 
 const logger = createLogger("server.loop-sentinel");
 
@@ -92,6 +104,10 @@ export interface EventLoopSentinelDeps {
   collectSnapshot?: (lagMs: number) => StallSnapshot;
   /** Kicks off an async capture and synchronously returns its target path. */
   captureProfile?: (lagMs: number) => string;
+  /** The off-thread in-progress observer. Defaults to the worker-backed one
+   *  (event-loop-sentinel-worker.ts); pass null to run on-resume reporting
+   *  alone, or a stand-in in tests so no thread is spawned. */
+  observer?: StallObserver | null;
 }
 
 export interface EventLoopSentinel {
@@ -244,12 +260,29 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
   const profileCooldownMs = deps.profileCooldownMs ?? PROFILE_COOLDOWN_MS;
   const snapshotOf = deps.collectSnapshot ?? collectStallSnapshot;
   const capture = deps.captureProfile ?? ((lagMs: number) => captureStallProfile(lagMs, log));
+  // The worker cannot import getLaxDir (see its header), so the path is
+  // resolved here and handed over at spawn. Same warn threshold as this half:
+  // one definition of "this loop is stalled", reported from both sides.
+  const observer =
+    deps.observer !== undefined
+      ? deps.observer
+      : process.env.LAX_LOOP_SENTINEL_WORKER === "0"
+        ? null
+        : createWorkerStallObserver({
+            logPath: join(getLaxDir(), "logs", "server.log"),
+            warnMs,
+            onIssue: (message) => log.warn(`[loop-sentinel] ${message}`),
+          });
 
   let lastTickAt = now();
   let lastProfileAt = Number.NEGATIVE_INFINITY;
   let timer: NodeJS.Timeout | null = null;
 
   function tick(): void {
+    // Beat FIRST: this sample landing at all is the proof of life the
+    // off-thread observer watches for, and it must be published before any
+    // work here can throw.
+    observer?.beat();
     const at = now();
     const lagMs = at - lastTickAt - intervalMs;
     lastTickAt = at;
@@ -280,11 +313,16 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
       lastTickAt = now();
       timer = setInterval(tick, intervalMs);
       timer.unref();
+      observer?.start();
     },
     stop(): void {
       if (!timer) return;
       clearInterval(timer);
       timer = null;
+      // Same synchronous step as clearInterval, so the worker can never see
+      // the gap between "beats stopped" and "observer terminated" and mistake
+      // a clean shutdown for a stall.
+      observer?.stop();
     },
   };
 }

@@ -2,6 +2,11 @@
 // to keep inline; splitting per-handler would scatter the routing
 // without making any single branch easier to follow.
 //
+// ONE exception, taken deliberately: `inject` lives in ./inject-router.ts.
+// It outgrew "small enough" — a three-signal liveness decision plus a
+// deferred promote-on-release pass that outlives the frame that armed it —
+// and its own explanation was the longest thing in this file.
+//
 // Subscribe / unsubscribe mutate the per-connection subscription set;
 // stop / reconnect_op / etc. operate on session-level state.
 
@@ -16,16 +21,9 @@ import {
 } from "./state.js";
 import { replayBufferedEvents } from "./replay.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
-// Static imports for the inject hot path. Previously these were `await
-// import(...)` inside the handler, but every `await` yields the event loop
-// and the worker's continuation guard (worker.ts:178) could run in between —
-// observing an empty queue, exiting op1, and then the resumed handler would
-// route the inject through getChatHandler() as a fresh op2, racing op1's
-// persistTurnState and writing the inject to session.messages BEFORE the
-// original question. Keeping the inject path fully synchronous closes the
-// race: enqueue happens in one event-loop turn, the guard sees it.
-import { listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
-import { pushInject } from "../agent-loop/inject-queue.js";
+// Static import, like everything the inject path touches: that path is
+// synchronous by contract (see inject-router.ts's import note).
+import { handleInject } from "./inject-router.js";
 import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
@@ -139,50 +137,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
     }
 
     if (type === "inject" && sessionId && typeof msg.message === "string" && msg.message.trim()) {
-      try {
-        const text = msg.message.trim();
-        const clientInjectId = typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined;
-        // Route as fresh turn ONLY when nothing is live AND no chat handler is
-        // mid-prep for this session. The pending check closes a start-of-turn
-        // race: client sends `chat` then types fast → inject arrives during
-        // runChatTurn's ~30-200ms prep before the canonical op exists →
-        // listOpsForSession returns [] even though the original turn is about
-        // to start. Without `hasChatHandlerPending` the inject takes the
-        // fresh-turn branch, broadcasts inject_consumed (dropping the queued
-        // styling instantly on the client), spawns a parallel chat handler
-        // that races the original for the session lock, and the inject text
-        // gets lost. With the check we push to the queue; drainInjectsIntoTurn
-        // at the top of driveTurn picks it up on the first iteration.
-        const liveOps = listOpsForSession(sessionId);
-        const hasPending = hasChatHandlerPending(sessionId);
-        if (liveOps.length === 0 && !hasPending) {
-          const handler = getChatHandler();
-          if (handler) {
-            logger.info(`[ws-chat] inject routed to new turn sess=${sessionId} len=${text.length} (no live ops, no pending handler)`);
-            // Mirror the queue-drain path: tell the client this inject is
-            // no longer "queued" so the local echo bubble drops its pending
-            // styling. The new turn's response will arrive via the normal
-            // stream path.
-            if (clientInjectId) broadcastToSession(sessionId, { type: "inject_consumed", injectId: clientInjectId });
-            handler(sessionId, text, []);
-            return;
-          }
-          logger.warn(`[ws-chat] inject dropped sess=${sessionId} — no live ops and no chat handler`);
-          return;
-        }
-        // A mid-turn user message while approval cards are pending = the user
-        // answered in words, not clicks. Deny the cards FIRST (no suppression;
-        // model may re-raise after reading) — this also unblocks a tool call
-        // parked on the card, so the inject below actually gets drained
-        // instead of sitting behind an indefinite approval wait.
-        const denied = getApprovalManager().denyPendingForSession(sessionId);
-        if (denied > 0) logger.info(`[ws-chat] user message denied ${denied} pending approval(s) sess=${sessionId}`);
-        const injectId = pushInject(sessionId, text, clientInjectId);
-        logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length} pending=${hasPending}`);
-        broadcastToSession(sessionId, { type: "inject_queued", injectId });
-      } catch (e) {
-        logger.warn(`[ws-chat] inject failed: ${(e as Error).message}`);
-      }
+      handleInject(
+        sessionId,
+        msg.message.trim(),
+        typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined,
+      );
       return;
     }
 

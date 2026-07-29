@@ -12,9 +12,14 @@
  *        sweep — otherwise a stopped-then-abandoned session leaks its buffer
  *        and a later reload replays a phantom streaming bubble.
  *  CT-7  a valid-JSON non-object frame (`null`) must not crash the router.
+ *  C3.1  an inject that lands in a turn's salvage window must QUEUE, not be
+ *        promoted to a takeover turn that kills the turn still on screen —
+ *        and must still be ACKED and eventually ANSWERED: a fresh-turn route
+ *        acks with inject_consumed (the client's only un-dim signal), and a
+ *        queue nobody drained is promoted when the lock releases.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { attachMessageRouter } from "./message-router.js";
@@ -23,9 +28,13 @@ import {
   clients,
   terminateChat,
   broadcastActiveChats,
+  setChatHandler,
+  type ChatHandler,
 } from "./state.js";
 import { replayBufferedEvents } from "./replay.js";
-import { markChatHandlerPending, clearChatHandlerPending } from "../ops/session-bridge.js";
+import { markChatHandlerPending, clearChatHandlerPending, listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
+import { getTurnRegistry, releaseTurn } from "../session/turn-lock.js";
+import { drainInjects, hasInjects, _resetInjectQueues } from "../agent-loop/inject-queue.js";
 
 function makeRouter() {
   const sent: string[] = [];
@@ -259,5 +268,126 @@ describe("CT-4 — stop during the prep window", () => {
     const abort = registerChat(sessionId);
     expect(abort.signal.aborted).toBe(false);
     expect(activeChats.get(sessionId)!.done).toBe(false);
+  });
+});
+
+describe("C3.1 — inject routing consults the turn lock", () => {
+  const sessionId = "sess-c31";
+  const registry = getTurnRegistry();
+  const started: Array<{ sessionId: string; message: string }> = [];
+  // setChatHandler takes a ChatHandler, not null, so the teardown restores an
+  // inert one rather than the module's initial null. Nothing else in this file
+  // dispatches `chat`/`inject`, so an inert handler is invisible to them.
+  const inertHandler: ChatHandler = () => {};
+
+  beforeEach(() => {
+    started.length = 0;
+    setChatHandler((sid, message) => { started.push({ sessionId: sid, message }); });
+  });
+
+  afterEach(() => {
+    // Queues first: releaseTurn fires the promote-on-release hook, and an
+    // empty queue makes that deferred pass a guaranteed no-op so it can't
+    // start a turn into the next test.
+    _resetInjectQueues();
+    releaseTurn(sessionId);
+    setChatHandler(inertHandler);
+  });
+
+  /** A router whose socket is also a subscriber, so broadcastToSession lands. */
+  function subscribedRouter() {
+    const r = makeRouter();
+    clients.set(r.ws, new Set([sessionId]));
+    return r;
+  }
+
+  /** Let one macrotask run — the promote-on-release pass defers by exactly
+   *  that much so a replacement turn's acquire (a microtask off the released
+   *  turn's completion promise) gets to land first. */
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+
+  it("queues an inject that lands in the salvage window instead of starting a second turn", async () => {
+    // The salvage window: the op already hit terminal so releaseOpFromSession
+    // emptied sessionOps, and this turn was never marked pending (only
+    // lifecycle.ts's WS path marks it — HTTP/SSE, voice and cron turns never
+    // do). Both ops-layer signals therefore read idle while the turn lock is
+    // still held by the handler working through its persist and the browser is
+    // still streaming the answer.
+    expect(listOpsForSession(sessionId)).toEqual([]);
+    expect(hasChatHandlerPending(sessionId)).toBe(false);
+    expect(registry.acquireTurn(sessionId, new AbortController(), "salvaging")).toBe(true);
+
+    const r = subscribedRouter();
+    await r.dispatch({ type: "inject", sessionId, message: "make it blue", injectId: "inj-c31" });
+
+    // Pre-fix: the fresh-turn branch fired, so a second chat turn started —
+    // and its tryAcquireOrReplace aborted the turn still painting on screen,
+    // leaving the dead turn's partial next to the new turn's re-answer.
+    expect(started).toEqual([]);
+    expect(drainInjects(sessionId).map(i => i.text)).toEqual(["make it blue"]);
+
+    const events = r.frames().filter(f => f.type === "event").map(f => f.event);
+    // Pre-fix the client was told the running turn had absorbed the inject —
+    // the exact opposite of what happened to that turn.
+    expect(events.some(e => e.type === "inject_consumed")).toBe(false);
+    expect(events).toContainEqual({ type: "inject_queued", injectId: "inj-c31" });
+  });
+
+  it("still opens a fresh turn when the lock is free too — and ACKS it so the echo un-dims", async () => {
+    // Genuinely idle session: no ops, no pending handler, no turn lock. The
+    // message BECOMES the turn — but it arrived on the inject lane, so the
+    // client's local echo carries _queueState:'queued' (chat-send.js) and
+    // inject_consumed is the ONLY event that clears it (chat-ws-handler.js
+    // handleInjectConsumed — inject_queued is informational and clears
+    // nothing). Ack-less, splitQueuedInjects re-emits that echo BELOW the
+    // answer as a dimmed, forever-pulsing "still waiting" row for a message
+    // that was answered, and app-sync skips hydrate for the active chat so a
+    // reload doesn't clear it either.
+    const r = subscribedRouter();
+    await r.dispatch({ type: "inject", sessionId, message: "start fresh", injectId: "inj-c31b" });
+
+    expect(started).toEqual([{ sessionId, message: "start fresh" }]);
+    expect(drainInjects(sessionId)).toEqual([]);
+    const events = r.frames().filter(f => f.type === "event").map(f => f.event);
+    expect(events).toContainEqual({ type: "inject_consumed", injectId: "inj-c31b" });
+  });
+
+  it("promotes an inject the ended turn never drained, once the lock releases", async () => {
+    // A queued inject has exactly ONE drainer: drainInjectsIntoTurn at the
+    // top of a turn iteration. One that lands after the turn's last drain
+    // gate has nobody left to read it, so queuing alone left it sitting until
+    // the user's NEXT message — indistinguishable from a dropped message.
+    expect(registry.acquireTurn(sessionId, new AbortController(), "salvaging")).toBe(true);
+    const r = subscribedRouter();
+    await r.dispatch({ type: "inject", sessionId, message: "and make it blue", injectId: "inj-c31c" });
+    expect(started).toEqual([]);
+    expect(hasInjects(sessionId)).toBe(true);
+
+    releaseTurn(sessionId);
+    await tick();
+
+    expect(started).toEqual([{ sessionId, message: "and make it blue" }]);
+    expect(hasInjects(sessionId)).toBe(false);
+    const events = r.frames().filter(f => f.type === "event").map(f => f.event);
+    expect(events).toContainEqual({ type: "inject_consumed", injectId: "inj-c31c" });
+  });
+
+  it("stands down when a replacement turn took the lock — that turn drains it", async () => {
+    expect(registry.acquireTurn(sessionId, new AbortController(), "first")).toBe(true);
+    const r = subscribedRouter();
+    await r.dispatch({ type: "inject", sessionId, message: "wait for me", injectId: "inj-c31d" });
+
+    // tryAcquireOrReplace's shape: the prior turn releases and the waiter —
+    // resumed on a microtask off that turn's completion promise, so ahead of
+    // the deferred promote — acquires the slot.
+    releaseTurn(sessionId);
+    expect(registry.acquireTurn(sessionId, new AbortController(), "replacement")).toBe(true);
+    await tick();
+
+    // Promoting here would run a SECOND turn alongside the replacement — the
+    // takeover this branch exists to prevent. Leave it queued; the
+    // replacement's first-iteration drainInjectsIntoTurn takes it.
+    expect(started).toEqual([]);
+    expect(drainInjects(sessionId).map(i => i.text)).toEqual(["wait for me"]);
   });
 });

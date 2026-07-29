@@ -105,6 +105,16 @@ class TurnRegistry {
     }
   }
 
+  /** Is a turn holding this session's slot? The registry is the AUTHORITY on
+   *  that question: the slot is claimed before the canonical op exists and
+   *  released in the chat orchestrator's finally, so it spans both windows the
+   *  ops-layer signals (sessionOps / pendingChatHandlers) leave open. Separate
+   *  from getActiveTurn because callers on a hot path want the bit, not a
+   *  snapshot allocation. */
+  hasActiveTurn(sessionId: string): boolean {
+    return this.turns.has(sessionId);
+  }
+
   /** Read the active turn snapshot for a session, or null. */
   getActiveTurn(sessionId: string): ActiveTurnSnapshot | null {
     const t = this.turns.get(sessionId);
@@ -196,6 +206,12 @@ export function acquireTurn(sessionId: string, abortController: AbortController,
 
 export function getActiveTurn(sessionId: string): ActiveTurnSnapshot | null {
   return registry.getActiveTurn(sessionId);
+}
+
+/** See TurnRegistry.hasActiveTurn. Stays true through a turn's salvage window
+ *  (aborted / op already terminal, handler not yet through its finally). */
+export function hasActiveTurn(sessionId: string): boolean {
+  return registry.hasActiveTurn(sessionId);
 }
 
 export function markIteration(sessionId: string | undefined, toolNames: string[]): void {

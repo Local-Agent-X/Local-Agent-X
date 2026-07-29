@@ -24,6 +24,7 @@ import {
   getTurnRegistry,
   releaseTurn,
   getActiveTurn,
+  hasActiveTurn,
   isCurrentTurnWriter,
 } from "../src/session/turn-lock.js";
 import { persistTurnState } from "../src/routes/chat/run-chat-turn/canonical-run.js";
@@ -210,6 +211,32 @@ describe("write-generation guard — force-released turn becomes a stale writer"
     });
     expect((staleSession as unknown as { messages: unknown[] }).messages.length).toBeGreaterThan(0);
     expect(saveSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+// C3.1: chat-ws/message-router.ts routes injects on this bit, because the
+// ops-layer signals it used to trust (sessionOps, pendingChatHandlers) both go
+// idle while a turn is still live. So the registry's answer must stay TRUE for
+// exactly as long as that turn can still be aborted or replaced — the whole
+// salvage window included.
+describe("hasActiveTurn — the busy bit the inject router routes on", () => {
+  it("is false when idle, true from acquire through the salvage window, false after release", () => {
+    expect(hasActiveTurn(SESSION)).toBe(false);
+
+    const ac = new AbortController();
+    expect(registry.acquireTurn(SESSION, ac, "live")).toBe(true);
+    expect(hasActiveTurn(SESSION)).toBe(true);
+
+    // Salvage: aborted (or its op already terminal) but the handler is still
+    // persisting. abortTurn deliberately keeps the entry so the next turn can
+    // await the commit — and an inject landing here must queue rather than
+    // start the takeover turn that would kill this one.
+    expect(registry.abortTurn(SESSION)).toBe(true);
+    expect(hasActiveTurn(SESSION)).toBe(true);
+    expect(getActiveTurn(SESSION)).not.toBeNull();
+
+    releaseTurn(SESSION);
+    expect(hasActiveTurn(SESSION)).toBe(false);
   });
 });
 

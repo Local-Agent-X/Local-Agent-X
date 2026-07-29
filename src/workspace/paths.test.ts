@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import type { LAXConfig } from "../types.js";
 import { setRuntimeConfig, uploadsDir } from "../config.js";
-import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep } from "./paths.js";
+import { resolveAgentPath, projectRoot, setSessionWorkRoot, clearSessionWorkRoot, sessionIdOf, realpathDeep, mapMsysDrivePath, resolveAgentPathFrom } from "./paths.js";
 import { isSensitivePath } from "../data-lineage/index.js";
 import { CAN_CREATE_WINDOWS_JUNCTION } from "../symlink-capabilities.test-helper.js";
 
@@ -160,5 +160,67 @@ describe("work-root canonicalization through junctions", () => {
       try { rmSync(realProj, { recursive: true, force: true }); } catch { /* ignore */ }
       try { rmSync(linkBase, { recursive: true, force: true }); } catch { /* ignore */ }
     }
+  });
+});
+
+// Regression (2026-07-29 false-positive audit): on win32 the agent shell resolves
+// to Git Bash, so the model writes "/c/Users/..." — but node:path read the drive
+// letter as a DIRECTORY ("C:\c\Users\..."), landing outside the workspace, and
+// every file gate denied it. Largest single block class measured on that box. The
+// load-bearing property is EQUIVALENCE, not permission: "/c/X" must resolve to
+// exactly what "C:\X" resolves to, so it can never reach anything the Win32
+// spelling could not already reach.
+describe("MSYS/Git-Bash drive paths (win32 spelling equivalence)", () => {
+  const onWin = process.platform === "win32";
+
+  it.skipIf(!onWin)("translates a drive path to its Win32 spelling", () => {
+    expect(mapMsysDrivePath("/c/Users/me/x")).toBe(resolve("C:\\", "Users/me/x"));
+    expect(mapMsysDrivePath("/d/data/f.txt")).toBe(resolve("D:\\", "data/f.txt"));
+  });
+
+  it.skipIf(!onWin)("uppercases the drive and handles the bare drive root", () => {
+    expect(mapMsysDrivePath("/c")).toBe(resolve("C:\\"));
+    expect(mapMsysDrivePath("/c/")).toBe(resolve("C:\\"));
+    expect(mapMsysDrivePath("/C/Users/me")).toBe(mapMsysDrivePath("/c/Users/me"));
+  });
+
+  it.skipIf(!onWin)("resolves a spaced in-workspace path the same as its Win32 spelling", () => {
+    // The exact shape from the audit: a workspace whose path contains spaces.
+    const ws = resolve("C:\Users\me\Documents\Local Agent X\workspace");
+    const viaMsys = resolveAgentPathFrom(ws, "/c/Users/me/Documents/Local Agent X/workspace/apps/foo/package.json");
+    const viaWin32 = resolveAgentPathFrom(ws, "C:/Users/me/Documents/Local Agent X/workspace/apps/foo/package.json");
+    expect(viaMsys).toBe(viaWin32);
+  });
+
+  it.skipIf(!onWin)("grants no new reach: an OUTSIDE target resolves to the same place either spelling", () => {
+    const ws = resolve("C:\Users\me\Documents\Local Agent X\workspace");
+    // If these two agree, the gate's verdict on "/c/..." is by construction the
+    // verdict it already gave "C:\..." — no spelling-specific authority.
+    expect(resolveAgentPathFrom(ws, "/c/Users/me/.ssh/id_rsa"))
+      .toBe(resolveAgentPathFrom(ws, "C:/Users/me/.ssh/id_rsa"));
+    expect(resolveAgentPathFrom(ws, "/c/Windows/System32/config/SAM"))
+      .toBe(resolveAgentPathFrom(ws, "C:/Windows/System32/config/SAM"));
+  });
+
+  it.skipIf(!onWin)("leaves non-drive absolute forms alone", () => {
+    // Multi-char first segment is an MSYS VIRTUAL path (/tmp, /usr), not a drive
+    // mapping — translating it would invent a bogus target. UNC has an empty
+    // first segment. Neither may match.
+    expect(mapMsysDrivePath("/tmp/f")).toBeNull();
+    expect(mapMsysDrivePath("/usr/bin/node")).toBeNull();
+    expect(mapMsysDrivePath("//server/share/x")).toBeNull();
+    expect(mapMsysDrivePath("relative/path")).toBeNull();
+  });
+
+  it.skipIf(!onWin)("does not hijack an /uploads attachment ref", () => {
+    // UPLOADS_REF is matched first and its segment is multi-char anyway; pin both.
+    expect(mapMsysDrivePath("/uploads/a.csv")).toBeNull();
+    expect(resolveAgentPathFrom(resolve("/ws"), "/uploads/a.csv")).toBe(join(uploadsDir(), "a.csv"));
+  });
+
+  it.skipIf(onWin)("is inert on POSIX, where /c/Users is a real directory", () => {
+    expect(mapMsysDrivePath("/c/Users/me/x")).toBeNull();
+    const ws = resolve("/home/me/ws");
+    expect(resolveAgentPathFrom(ws, "/c/Users/me/x")).toBe(resolve("/c/Users/me/x"));
   });
 });

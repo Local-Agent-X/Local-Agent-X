@@ -79,6 +79,43 @@ export function mapUploadsRef(p: string): string | null {
   return m ? join(uploadsDir(), basename(m[1])) : null;
 }
 
+// An MSYS/Git-Bash drive path — "/c/Users/me/x" — is how an absolute Windows
+// path is spelled in the shell this box actually spawns (shell-tool resolves Git
+// Bash first on win32). node:path reads that leading drive letter as a DIRECTORY
+// name — win32.resolve("/c/Users/me/x") is "C:\c\Users\me\x", anchored on the
+// CWD's drive — so the path resolved to a bogus location OUTSIDE the workspace
+// and every gate denied it. Net effect: the agent was locked out of its own
+// workspace for using its own shell's native spelling. Measured 2026-07-29 as the
+// largest single block class on this machine (~53 shell-boundary denials plus the
+// bulk of the read-tool denials), e.g. `ls -la "/c/Users/me/Documents/Local Agent
+// X/workspace/apps/foo"` blocked while the byte-identical "C:/Users/..." spelling
+// of the same directory was allowed.
+//
+// Matched BEFORE isAbsolute for the same reason as UPLOADS_REF: a leading "/"
+// reads as absolute on Windows. win32-ONLY — on POSIX "/c/Users" is a legitimate
+// real directory and must never be rewritten. A single-letter first segment is
+// unambiguous on Windows (no such root directory exists); "//server/share" has an
+// empty first segment and "/tmp" a multi-char one, so neither matches.
+//
+// This grants NO new authority: it makes two spellings of the SAME target resolve
+// identically, so a path reachable via "/c/..." is exactly one already reachable
+// by typing "C:\...". Containment, sensitive-pattern and mode checks all still run
+// on the translated path — "/c/Users/me/.ssh/id_rsa" stays blocked, as it was.
+const MSYS_DRIVE_PATH = /^[/\\]([a-zA-Z])(?:[/\\](.*))?$/;
+
+/**
+ * Translate an MSYS/Git-Bash drive path ("/c/Users/me/x") to its Win32 spelling,
+ * or null when `p` isn't one — or when we aren't on Windows, where such a path is
+ * a real POSIX directory. Exported as the SINGLE source of truth so the file tool
+ * and the SecurityLayer gate agree on the target (same contract as mapUploadsRef).
+ */
+export function mapMsysDrivePath(p: string): string | null {
+  if (process.platform !== "win32") return null;
+  const m = MSYS_DRIVE_PATH.exec(p);
+  if (!m) return null;
+  return resolve(`${m[1].toUpperCase()}:\\`, m[2] ?? "");
+}
+
 // ── Canonical resolver for AGENT-SUPPLIED file paths ──
 //
 // Every agent file tool (read / write / edit / delete) and the SecurityLayer
@@ -113,6 +150,8 @@ export function mapUploadsRef(p: string): string | null {
 export function resolveAgentPathFrom(workspace: string, p: string, sessionId?: string): string {
   const upload = mapUploadsRef(p);
   if (upload) return upload;
+  const msysDrive = mapMsysDrivePath(p);
+  if (msysDrive) return msysDrive;
   // A leading "~" is the user's home, the same as every other path consumer
   // (sql-tools, email-config, http-egress-guard, shell-path-guard). Without
   // this a model passing "~/.zshrc" had it treated as workspace-RELATIVE and

@@ -19,6 +19,42 @@
 // Must load before chat-stream-store.js (app.html order).
 
 (function() {
+  // ── Who settled an approval card, and can an expiry still correct it ──
+  //
+  // Three writers settle one card: the OPTIMISTIC local flip at click time
+  // (chat-stream-store-approvals.js resolveApprovalLocal, called by
+  // chat-ws.js the instant the frame is handed to the socket), the SERVER's
+  // approval_resolved, and an EXPIRY (the server's approval_timeout, or the
+  // client's own fuse in chat-approval-rediscovery.js covering a broadcast a
+  // starved event loop swallowed).
+  //
+  // `status` cannot rank them, because the optimistic flip writes the same
+  // 'approved'/'denied' a confirmed decision does while carrying none of its
+  // authority: a click landing in the last instant of the window — or after
+  // one of this server's 90-110s stalls — reaches an ask the server ALREADY
+  // auto-denied, so the tool never ran and the response is rejected by a
+  // reply no client code consumes. Gating the timeout on `status ===
+  // 'pending'` would freeze that lie on screen (and chat-stream-finalize.js
+  // stamps it onto the finalized row).
+  //
+  // What ranks them is WHO wrote the settle:
+  //   settledBy 'server'   — the server's own approval_resolved (below);
+  //   delivery  'recorded' — the durable-resolve reply the server sent back
+  //                          (resolveApprovalRecorded), equally authoritative;
+  //   settledBy 'timeout'  — an expiry already settled it, so a second expiry
+  //                          has nothing to add.
+  // Anything else — still pending, or only optimistically flipped — is not
+  // settled as far as an expiry is concerned, and an expiry MAY correct it.
+  // The reverse never holds: a real approval_resolved overwrites an expiry in
+  // either order, because the server is the only authority on what actually
+  // ran.
+  function beatsExpiry(ap) {
+    return !!ap.settledBy || ap.delivery === 'recorded';
+  }
+  // Shared with the client-side fuse (chat-approval-rediscovery.js) so the
+  // arm/disarm rule and the reducer's write rule can never drift apart.
+  window._chatApprovalBeatsExpiry = beatsExpiry;
+
   window._chatStreamReduce = function(e, event, now, helpers) {
     const B = window._ChatBlocks;
     switch (event.type) {
@@ -208,14 +244,29 @@
             expiresAt: typeof event.expiresAt === 'number' ? event.expiresAt : null,
             status: 'pending',
             resolvedAt: null,
+            // Stamped by whoever settles the card definitively — see
+            // beatsExpiry above. Null through the optimistic click flip,
+            // which is a request, not yet an outcome.
+            settledBy: null,
           });
         }
         e.lastActivityMs = now;
         break;
       case 'approval_timeout': {
+        // Two independent sources drive this case — the server's broadcast
+        // and the client's own fuse (chat-approval-rediscovery.js), which
+        // exists because a starved event loop can swallow the broadcast
+        // entirely. Either one may correct a card nothing definitive has
+        // settled, INCLUDING one the click merely flipped optimistically;
+        // neither may overwrite a real decision. See beatsExpiry above for
+        // why `status` alone can't draw that line.
         if (event.approvalId) {
           const ap = e.approvals.find(a => a.id === event.approvalId);
-          if (ap) { ap.status = 'timeout'; ap.resolvedAt = now; }
+          if (ap && !beatsExpiry(ap)) {
+            ap.status = 'timeout';
+            ap.resolvedAt = now;
+            ap.settledBy = 'timeout';
+          }
         }
         e.lastActivityMs = now;
         break;
@@ -235,6 +286,12 @@
             ap.status = event.approved ? 'approved'
               : (event.reason === 'superseded' ? 'superseded' : 'denied');
             ap.resolvedAt = now;
+            // The server spoke: this outcome is what actually happened, so it
+            // lands unconditionally — over a pending card, over the click's
+            // own optimistic guess, and over an expiry that got there first
+            // (the client's fuse can fire during a stall while this event is
+            // still queued behind it). From here no expiry may touch it.
+            ap.settledBy = 'server';
             // Durable-resolve reply: the decision was recorded on the op's
             // durable column (server restarted since the ask) and applies
             // when the agent resumes — render distinctly from a live settle.

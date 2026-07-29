@@ -1,5 +1,3 @@
-import { promises as dns } from "node:dns";
-import { isIP } from "node:net";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { SecurityDecision } from "../../types.js";
@@ -9,27 +7,24 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import { createLogger } from "../../logger.js";
 import {
   LOCAL_SERVICE_RECOVERY,
+  canonicalizeHost,
   isPrivateIPv4,
   isPrivateIPv6,
+  isLoopbackHost,
+  LOOPBACK_HOSTNAMES,
   BLOCKED_HOSTNAMES,
 } from "./ip-classification.js";
-import { ollamaLoopbackPort, localRuntimeLoopbackPorts, manualRuntimeHostPorts } from "./security-config.js";
+// The DNS-pin chokepoint lives in its own module (LOC gate); re-exported here so
+// every existing `from "./network-policy.js"` import site keeps working.
+import { resolveAndPinHost } from "./network-dns.js";
+export { resolveAndPinHost } from "./network-dns.js";
+import { ollamaLoopbackPort, localRuntimeLoopbackPorts, manualRuntimeHostPorts, devServerLoopbackPorts } from "./security-config.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
 const logger = createLogger("security.network-policy");
 
 export type EgressMode = "permissive" | "strict";
-
-/**
- * Canonicalize a URL host for policy comparison: lowercase, remove IPv6 URL
- * brackets, and strip one trailing DNS dot. WHATWG `new URL()` preserves both
- * bracketed IPv6 hostnames and trailing dots, while policy tables use bare
- * address/hostname forms.
- */
-function canonicalizeHost(host: string): string {
-  return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
-}
 
 /**
  * Match a hostname against the egress list (exact host or *.domain.com wildcard).
@@ -86,7 +81,7 @@ export function evaluateWebFetch(
 
   // Allow requests to the agent's own server BEFORE any other checks.
   // The agent needs to call its own API for settings, theme, orgs, etc.
-  if (host === "127.0.0.1" || host === "localhost" || host === "::1") {
+  if (isLoopbackHost(host)) {
     const port = String(selfPort || "7007");
     if (parsed.port === port || (!parsed.port && port === "80")) {
       return { allowed: true, reason: "Self-call to own server" };
@@ -94,12 +89,23 @@ export function evaluateWebFetch(
   }
 
   // Allow health-checks to operator-trusted local services (e.g. a bridge or
-  // dev server the agent itself started). Literal loopback only — hostnames are
-  // never resolved here, preserving DNS-rebinding protection.
-  if (host === "127.0.0.1" || host === "localhost" || host === "::1") {
+  // dev server the agent itself started). Loopback destinations only — a literal
+  // 127.0.0.1/::1 or one of its fixed alias names (isLoopbackHost); no hostname
+  // is ever RESOLVED here, so DNS-rebinding protection is untouched.
+  if (isLoopbackHost(host)) {
     if (parsed.port && localServicePorts.has(parsed.port)) {
       return { allowed: true, reason: "Allowed local service" };
     }
+  }
+
+  // Loopback reached by ALIAS NAME falls out here, and must be denied exactly as
+  // its literal form is by the isPrivateIPv4/6 checks below — the two allows
+  // above are the whole loopback grant. Without this explicit deny, taking
+  // "localhost" out of BLOCKED_HOSTNAMES (see LOOPBACK_HOSTNAMES) would make
+  // EVERY loopback port reachable by name, since a name is neither a dotted-quad
+  // nor an encoded IP and would sail through to the permissive egress default.
+  if (LOOPBACK_HOSTNAMES.has(host)) {
+    return { allowed: false, reason: `Blocked: ${host}${parsed.port ? ":" + parsed.port : ""} is a loopback port that is neither this agent's own server nor a registered local service`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
   }
 
   // Check blocked hostnames
@@ -240,6 +246,7 @@ export function loadEgressConfig(): EgressConfig {
   const ollama = ollamaLoopbackPort();
   if (ollama) localServicePorts.add(ollama);
   for (const p of localRuntimeLoopbackPorts()) localServicePorts.add(p);
+  for (const p of devServerLoopbackPorts()) localServicePorts.add(p);
 
   return { allowlist, configured, mode, localServicePorts, manualHostPorts: manualRuntimeHostPorts() };
 }
@@ -269,97 +276,6 @@ export function evaluateEgressForUrl(url: string, selfPort = "7007"): SecurityDe
   );
 }
 
-/** Resolve a hostname to a single validated public IP for connection pinning.
- *  - Literal IPv4/IPv6 (host is already an IP): validated synchronously here —
- *    a private/reserved/metadata literal is BLOCKED (ok: false), a public literal
- *    returns { ok: true, pin: null } (nothing to resolve). This guard runs on
- *    EVERY redirect hop, so a 302 to e.g. 169.254.169.254 can't slip through
- *    (evaluateWebFetch only validates the original pre-redirect URL).
- *  - Hostname: resolves A + AAAA; if ANY resolved address is private/reserved,
- *    blocks (DNS-rebinding protection); otherwise returns the first valid
- *    address as the pin (prefer IPv4 if present, else IPv6).
- *  - DNS failure: fail-closed (ok: false). */
-export async function resolveAndPinHost(host: string): Promise<
-  | { ok: true; pin: { address: string; family: 4 | 6 } | null }
-  | { ok: false; reason: string }
-> {
-  // Canonicalize once at ingest (lowercase + strip a single trailing dot) so a
-  // trailing-dot hostname resolves/blocks identically to its dotless form.
-  host = canonicalizeHost(host);
-
-  // Literal IP — nothing to resolve, but it MUST still be checked for
-  // private/reserved/metadata ranges before we allow the connection. Treat a
-  // host containing ":" as an IPv6 literal, matching the existing
-  // validateUrlWithDns guard.
-  const ipVersion = isIP(host);
-
-  // IPv4 literal (dotted-quad).
-  if (ipVersion === 4 || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
-    if (isPrivateIPv4(host)) {
-      return {
-        ok: false,
-        reason: `Blocked: literal private/reserved IP ${host} (SSRF protection)`,
-      };
-    }
-    return { ok: true, pin: null };
-  }
-
-  // IPv6 literal (may arrive bracketed as [::1]). Mirror the bracket-strip +
-  // v4-mapped handling used by evaluateWebFetch above.
-  if (ipVersion === 6 || host.includes(":")) {
-    const cleanHost = host.replace(/^\[/, "").replace(/\]$/, "");
-    if (isPrivateIPv6(cleanHost)) {
-      return {
-        ok: false,
-        reason: `Blocked: literal private/reserved IP ${host} (SSRF protection)`,
-      };
-    }
-    return { ok: true, pin: null };
-  }
-
-  let addresses: string[];
-  let addresses6: string[];
-  try {
-    addresses = await dns.resolve4(host).catch(() => []);
-    addresses6 = await dns.resolve6(host).catch(() => []);
-  } catch {
-    addresses = [];
-    addresses6 = [];
-  }
-
-  // Host doesn't resolve at all → fail-closed.
-  if (addresses.length === 0 && addresses6.length === 0) {
-    logger.warn(`[security] DNS resolution failed for ${host}: no A/AAAA records`);
-    return {
-      ok: false,
-      reason: `Blocked: DNS resolution failed for ${host} (fail-closed SSRF protection)`,
-    };
-  }
-
-  for (const ip of addresses) {
-    if (isPrivateIPv4(ip)) {
-      return {
-        ok: false,
-        reason: `Blocked: ${host} resolves to private IP ${ip} (DNS rebinding protection)`,
-      };
-    }
-  }
-
-  for (const ip of addresses6) {
-    if (isPrivateIPv6(ip)) {
-      return {
-        ok: false,
-        reason: `Blocked: ${host} resolves to private IPv6 ${ip} (DNS rebinding protection)`,
-      };
-    }
-  }
-
-  // Pin the first validated address — prefer IPv4 if present, else IPv6.
-  if (addresses.length) {
-    return { ok: true, pin: { address: addresses[0], family: 4 } };
-  }
-  return { ok: true, pin: { address: addresses6[0], family: 6 } };
-}
 
 /**
  * Async SSRF check with DNS pinning.
@@ -386,6 +302,15 @@ export async function validateUrlWithDns(
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) {
     return syncResult;
   }
+
+  // Loopback ALIAS names are fully decided by the sync pass: it allowed this
+  // exact host:port only as the agent's own server or a registered local
+  // service, and denied every other loopback port. Resolving them here would
+  // fail-closed on the loopback answer they exist to name and re-break the
+  // false positive one layer down. Not a rebinding hole — rebinding is an
+  // ATTACKER-controlled name resolving somewhere private, and those names are
+  // not on this fixed list, so they still resolve and still get rejected.
+  if (LOOPBACK_HOSTNAMES.has(host)) return syncResult;
 
   // DNS pinning: resolve the hostname and validate the actual IP. One source of
   // truth for the resolve + private-IP check lives in resolveAndPinHost.

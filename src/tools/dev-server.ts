@@ -24,9 +24,7 @@
  * Records live under ~/.lax/dev-servers/<appId>.json — server-side only, never
  * under workspace/apps/<id>/ where the static route would serve them to apps.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { existsSync, rmSync } from "node:fs";
 import { workspacePath } from "../config.js";
 import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
 import { stripRedundantInstall, frontendEnv } from "./dev-server-command.js";
@@ -53,29 +51,26 @@ import {
   setDevServerWake,
 } from "./dev-server-access.js";
 
-/**
- * What the dev server IS, which decides how it's surfaced:
- *   - "backend"  — a real API server; the frontend reaches it through the
- *     /api/connectors/dev-<appId> proxy (works over loopback AND the broker).
- *   - "frontend" — a build-step dev server (Vite/Next/SPA); LAX reverse-proxies
- *     /apps/<appId>/ straight to it so the app URL serves the live dev server
- *     with HMR (desktop). No connector — it's not an API.
- */
-export type DevServerKind = "backend" | "frontend";
-
-export interface DevServerRecord {
-  appId: string;
-  command: string;
-  cwd: string;
-  port: number;
-  /** Connector slug the frontend calls (always `dev-<appId>`). Backend only. */
-  connector: string;
-  /** Last process-session id. Ephemeral — null/stale after a server restart,
-   *  which is fine: ensureDevServerRunning restarts on the next app open. */
-  sessionId?: string;
-  /** Defaults to "backend" for records written before the frontend kind. */
-  kind?: DevServerKind;
-}
+// The record store (~/.lax/dev-servers/<appId>.json) lives in the dependency-free
+// dev-server-records.ts leaf so the security layer can derive the dev-server
+// loopback ports without an import cycle through process-session → security.
+// Re-exported here: importers keep their existing import site.
+import {
+  devConnectorName,
+  devServerRecordPath,
+  readDevServerRecord,
+  writeDevServerRecord as writeRecord,
+  listDevServerRecords,
+  type DevServerKind,
+  type DevServerRecord,
+} from "./dev-server-records.js";
+export {
+  devConnectorName,
+  readDevServerRecord,
+  listDevServerRecords,
+  devServerLoopbackPorts,
+} from "./dev-server-records.js";
+export type { DevServerKind, DevServerRecord } from "./dev-server-records.js";
 
 // Child env for dev-server spawns (LAX_DEV_PORT + the direct-origin connector
 // proxy env + the macOS title guard) lives in dev-server-command.ts.
@@ -132,45 +127,6 @@ const DEV_SERVER_BIND_GRACE_MS = 30_000;
 export const DEV_SERVER_IDLE_MS = 15 * 60_000;
 /** How often the sweeper checks for idle backends. */
 const DEV_SERVER_SWEEP_MS = 2 * 60_000;
-
-export function devConnectorName(appId: string): string {
-  return `dev-${appId}`;
-}
-
-function recordsDir(): string {
-  return join(getLaxDir(), "dev-servers");
-}
-
-function recordPath(appId: string): string {
-  return join(recordsDir(), `${appId}.json`);
-}
-
-export function readDevServerRecord(appId: string): DevServerRecord | null {
-  try {
-    const o = JSON.parse(readFileSync(recordPath(appId), "utf8")) as Partial<DevServerRecord>;
-    if (o && typeof o.command === "string" && typeof o.port === "number") {
-      return { appId, command: o.command, cwd: o.cwd ?? "", port: o.port, connector: o.connector ?? devConnectorName(appId), sessionId: o.sessionId, kind: o.kind === "frontend" ? "frontend" : "backend" };
-    }
-  } catch { /* no record */ }
-  return null;
-}
-
-function writeRecord(rec: DevServerRecord): void {
-  mkdirSync(recordsDir(), { recursive: true });
-  writeFileSync(recordPath(rec.appId), JSON.stringify(rec, null, 2) + "\n");
-}
-
-/** Every persisted dev-server record. Lets a caller allocating a new dev port
- *  avoid the ports idle-but-registered servers will reclaim on their next
- *  lazy start — a live-port probe alone can't see those. */
-export function listDevServerRecords(): DevServerRecord[] {
-  let files: string[];
-  try { files = readdirSync(recordsDir()); } catch { return []; }
-  return files
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => readDevServerRecord(f.slice(0, -".json".length)))
-    .filter((r): r is DevServerRecord => r !== null);
-}
 
 /** The dev connector points at the app's own localhost backend; the allow-list
  *  is broad on purpose — it's the user's own API, gated only to that one port. */
@@ -320,7 +276,7 @@ export function stopDevServer(appId: string, d: DevServerDeps = {}, opts: { forg
   if (opts.forget) {
     forgetDevServerAccess(appId);
     deleteConnectorManifest(rec?.connector ?? devConnectorName(appId));
-    if (existsSync(recordPath(appId))) { try { rmSync(recordPath(appId), { force: true }); } catch { /* gone */ } }
+    if (existsSync(devServerRecordPath(appId))) { try { rmSync(devServerRecordPath(appId), { force: true }); } catch { /* gone */ } }
   }
 }
 

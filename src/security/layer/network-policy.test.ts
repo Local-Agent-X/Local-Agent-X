@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { promises as dns } from "node:dns";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveAndPinHost, validateUrlWithDns, evaluateWebFetch, evaluateEgressForUrl } from "./network-policy.js";
 import {
   BLOCKED_HOSTNAMES,
+  LOOPBACK_HOSTNAMES,
+  isLoopbackHost,
   SPECIAL_USE_IPV4_RANGES,
   SPECIAL_USE_IPV6_RANGES,
   isPrivateIPv4,
@@ -340,5 +342,224 @@ describe("egress fold contract — settings.localRuntimes ⇒ evaluateEgressForU
       ],
     }));
     expect(evaluateEgressForUrl("http://192.168.1.50:11434/").allowed).toBe(false);
+  });
+});
+
+// ── C4: loopback by NAME is the same policy as loopback by literal ─────────
+// The false positive: "localhost" (+ its three alias names) sat in
+// BLOCKED_HOSTNAMES as a hard "SSRF protection" deny, so http://localhost:5173/
+// was refused outright while http://127.0.0.1:5173/ got the port-checked
+// treatment — the agent could never fetch the dev server it had just started,
+// and its own /apps/<id>/ self-call 302'd to localhost:<devPort> and died on the
+// name. These pin BOTH directions: the alias is allowed exactly where the
+// literal is, and DENIED exactly where the literal is.
+describe("evaluateWebFetch — loopback alias names track the literal (C4)", () => {
+  const ALIASES = [...LOOPBACK_HOSTNAMES];
+
+  it("isLoopbackHost covers the literals and every alias, and nothing else", () => {
+    for (const h of ["127.0.0.1", "::1", ...ALIASES]) expect(isLoopbackHost(h)).toBe(true);
+    // Near-misses that must NOT inherit the loopback grant.
+    for (const h of ["127.0.0.2", "localhost.evil.com", "notlocalhost", "10.0.0.1", "example.com"]) {
+      expect(isLoopbackHost(h)).toBe(false);
+    }
+  });
+
+  it("no loopback alias is on the hard blocklist any more", () => {
+    for (const h of ALIASES) expect(BLOCKED_HOSTNAMES.has(h)).toBe(false);
+  });
+
+  // THE REGRESSION: the app-build verify loop. A registered dev-server port is
+  // reachable by name, not just by literal.
+  it.each([...LOOPBACK_HOSTNAMES])("allows %s:<registered local service port>", (h) => {
+    const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:5173/index.html`, "permissive", new Set(["5173"]));
+    expect(d.allowed).toBe(true);
+    expect(d.reason).toBe("Allowed local service");
+  });
+
+  it.each([...LOOPBACK_HOSTNAMES])("allows %s:<selfPort> as a self-call to the agent's own server", (h) => {
+    const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:7007/apps/truckfinder/`, "permissive");
+    expect(d.allowed).toBe(true);
+    expect(d.reason).toBe("Self-call to own server");
+  });
+
+  it("allows a NON-default selfPort by name (LAX_PORT override)", () => {
+    expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "8123", "http://localhost:8123/api/settings", "permissive").allowed).toBe(true);
+    // ...and that override does not silently open the old default.
+    expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "8123", "http://localhost:7007/api/settings", "permissive").allowed).toBe(false);
+  });
+
+  // NOT-TOO-BROAD: removing the blocklist entry must not open every loopback
+  // port. An unregistered port is still denied — on the PORT, not the name.
+  it.each([...LOOPBACK_HOSTNAMES])("still BLOCKS %s on an unregistered loopback port", (h) => {
+    const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:9999/health`, "permissive", new Set(["5173"]));
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/neither this agent's own server nor a registered local service/);
+    expect(d.recovery).toMatch(/localServicePorts/);
+  });
+
+  it("still BLOCKS a loopback alias with NO port (implicit :80 is not a registered service)", () => {
+    for (const h of ALIASES) {
+      expect(webFetch(`http://${h}/`).allowed).toBe(false);
+    }
+  });
+
+  it("blocks the trailing-dot and mixed-case forms identically (no canonicalization escape)", () => {
+    for (const url of ["http://localhost./health", "http://LOCALHOST:9999/health", "http://LocalHost./"]) {
+      expect(webFetch(url).allowed).toBe(false);
+    }
+    // ...and the allow side canonicalizes too, so the fix isn't case-fragile.
+    expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://LocalHost.:5173/", "permissive", new Set(["5173"])).allowed).toBe(true);
+  });
+
+  // A name that merely CONTAINS a loopback alias is a different host and must
+  // take the ordinary public-host path, never the loopback grant.
+  it("does not extend the grant to lookalike hostnames", () => {
+    const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://localhost.attacker.example:5173/", "permissive", new Set(["5173"]));
+    expect(d.reason).not.toMatch(/local service|Self-call/);
+  });
+
+  // ATTACK PRESERVED #1 — cloud-metadata exfil. This is why the blocklist
+  // exists; removing the loopback aliases must not touch it.
+  it.each([
+    "metadata.google.internal",
+    "metadata.internal",
+    "metadata",
+    "instance-data",
+    "kubernetes.default.svc",
+    "kubernetes.default",
+  ])("still blocks cloud-metadata / in-cluster host %s", (h) => {
+    expect(webFetch(`http://${h}/computeMetadata/v1/`).allowed).toBe(false);
+    expect(webFetch(`http://${h}./computeMetadata/v1/`).allowed).toBe(false);
+    // Even if the operator "registered" its port as a local service.
+    expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", `http://${h}:80/`, "permissive", new Set(["80"])).allowed).toBe(false);
+  });
+
+  it("still blocks the metadata IP and encoded-IP loopback smuggling", () => {
+    for (const url of [
+      "http://169.254.169.254/latest/meta-data/",
+      "http://0x7f000001/",          // hex integer → 127.0.0.1
+      "http://2130706433/",          // decimal → 127.0.0.1
+      "http://0177.0.0.1/",          // octal → 127.0.0.1
+      "http://0x7f.0.0.1/",          // hex dotted → 127.0.0.1
+    ]) {
+      expect(webFetch(url).allowed).toBe(false);
+    }
+  });
+
+  // ATTACK PRESERVED #2 — DNS rebinding to an internal service. An
+  // ATTACKER-controlled name that resolves to loopback/private is still
+  // rejected; only the fixed alias list skips resolution.
+  it("still blocks DNS rebinding of an attacker host onto a REGISTERED local port", async () => {
+    vi.spyOn(dns, "resolve4").mockResolvedValue(["127.0.0.1"]);
+    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    try {
+      const d = await validateUrlWithDns(
+        EMPTY_ALLOWLIST, false, "7007", "http://rebind.attacker.example:5173/", "permissive", new Set(["5173"]),
+      );
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/DNS rebinding protection/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("still blocks DNS rebinding onto a private LAN address", async () => {
+    vi.spyOn(dns, "resolve4").mockResolvedValue(["10.1.2.3"]);
+    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    try {
+      const d = await validateUrlWithDns(EMPTY_ALLOWLIST, false, "7007", "http://rebind.attacker.example/", "permissive");
+      expect(d.allowed).toBe(false);
+      expect(d.reason).toMatch(/DNS rebinding protection/);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  // The DNS pass must not undo the sync ALLOW for an alias (that would re-break
+  // the false positive one layer down) — nor invent one for a denied port.
+  it("validateUrlWithDns keeps the alias verdict without resolving it", async () => {
+    const spy4 = vi.spyOn(dns, "resolve4");
+    try {
+      expect((await validateUrlWithDns(EMPTY_ALLOWLIST, false, "7007", "http://localhost:5173/", "permissive", new Set(["5173"]))).allowed).toBe(true);
+      expect((await validateUrlWithDns(EMPTY_ALLOWLIST, false, "7007", "http://localhost:9999/", "permissive", new Set(["5173"]))).allowed).toBe(false);
+      expect(spy4).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  // resolveAndPinHost is a separate chokepoint with no port context; it must keep
+  // fail-closing on loopback so nothing depends on it for the carve-out.
+  it("resolveAndPinHost still refuses a loopback resolve (unchanged boundary)", async () => {
+    vi.spyOn(dns, "resolve4").mockResolvedValue(["127.0.0.1"]);
+    vi.spyOn(dns, "resolve6").mockResolvedValue([]);
+    try {
+      expect((await resolveAndPinHost("localhost")).ok).toBe(false);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+// The root cause behind the 127.0.0.1:<devPort> half of C4: app_serve_frontend /
+// app_serve_backend persisted a dev-server record but nothing ever told the
+// egress gate its port, so the agent was blocked from the server it just
+// started. Exercises the REAL disk seam (~/.lax/dev-servers/<id>.json →
+// devServerLoopbackPorts → loadEgressConfig → evaluateWebFetch).
+describe("egress fold contract — a registered dev server ⇒ evaluateEgressForUrl (C4)", () => {
+  let dir: string;
+  let prev: string | undefined;
+  beforeEach(() => {
+    prev = process.env.LAX_DATA_DIR;
+    dir = mkdtempSync(join(tmpdir(), "lax-c4-"));
+    process.env.LAX_DATA_DIR = dir;
+    mkdirSync(join(dir, "dev-servers"), { recursive: true });
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const record = (appId: string, port: number) =>
+    writeFileSync(join(dir, "dev-servers", `${appId}.json`), JSON.stringify({
+      appId, command: "npx next dev --port " + port, cwd: "/tmp/x", port, connector: `dev-${appId}`, kind: "frontend",
+    }));
+
+  it("a registered dev-server port becomes reachable by literal AND by name; unregistering re-blocks", () => {
+    // Before registration: blocked both ways (this is the logged failure).
+    expect(evaluateEgressForUrl("http://127.0.0.1:3011/apps/truckfinder/").allowed).toBe(false);
+    expect(evaluateEgressForUrl("http://localhost:3011/apps/truckfinder/").allowed).toBe(false);
+
+    record("truckfinder", 3011);
+
+    for (const url of ["http://127.0.0.1:3011/apps/truckfinder/", "http://localhost:3011/apps/truckfinder/", "http://[::1]:3011/"]) {
+      const d = evaluateEgressForUrl(url);
+      expect(d.allowed).toBe(true);
+      expect(d.reason).toBe("Allowed local service");
+    }
+
+    // ONE port, not a range: a neighbouring loopback port stays blocked.
+    expect(evaluateEgressForUrl("http://localhost:3012/").allowed).toBe(false);
+    // Ports only — never a host. A LAN box on the same port is still blocked.
+    expect(evaluateEgressForUrl("http://192.168.1.50:3011/").allowed).toBe(false);
+
+    // Stopping the app removes the record → immediate re-block (read per call).
+    rmSync(join(dir, "dev-servers", "truckfinder.json"));
+    expect(evaluateEgressForUrl("http://localhost:3011/apps/truckfinder/").allowed).toBe(false);
+  });
+
+  it("a malformed or out-of-range record admits nothing", () => {
+    writeFileSync(join(dir, "dev-servers", "bad.json"), "{not json");
+    writeFileSync(join(dir, "dev-servers", "noport.json"), JSON.stringify({ appId: "noport", command: "x" }));
+    writeFileSync(join(dir, "dev-servers", "huge.json"), JSON.stringify({ appId: "huge", command: "x", port: 99999 }));
+    expect(evaluateEgressForUrl("http://localhost:99999/").allowed).toBe(false);
+    expect(evaluateEgressForUrl("http://localhost/").allowed).toBe(false);
+  });
+
+  it("a dev-server record never admits a cloud-metadata target", () => {
+    record("evil", 80);
+    expect(evaluateEgressForUrl("http://169.254.169.254:80/latest/meta-data/").allowed).toBe(false);
+    expect(evaluateEgressForUrl("http://metadata.google.internal:80/").allowed).toBe(false);
   });
 });

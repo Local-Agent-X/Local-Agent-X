@@ -20,7 +20,7 @@ import { kernelClassForTool } from "../../ari-kernel/tool-class-map.js";
 import { TOOL_PATH_ARGS, type KernelClass, type PathArgSpec } from "../../tool-registry.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
-import { loadEgressMode, loadEgressAllowlist, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
+import { loadEgressMode, loadEgressAllowlist, loadLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts, devServerLoopbackPorts } from "./security-config.js";
 import { fingerprintSecurityPolicy, parseJsonPathArray, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 
@@ -160,6 +160,20 @@ export class SecurityLayer {
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
   }
 
+  /** The constructor-cached ports UNION the dev-server ports read fresh from
+   *  disk. Fresh matters: localServicePorts loads once, so a dev server the agent
+   *  starts DURING a session (app_serve_frontend → ~/.lax/dev-servers/<id>.json)
+   *  was invisible here for the rest of the process — it served an app and was
+   *  then blocked from fetching it, same turn. Same read-per-decision rule the
+   *  manualRuntimeHostPorts() call sites follow. Deliberately NOT in
+   *  runtimePolicyFingerprint: that seals the OPERATOR's policy surface, and a
+   *  container must not fail closed because a dev server came up on one side. */
+  private effectiveLocalServicePorts(): ReadonlySet<string> {
+    const ports = new Set(this.localServicePorts);
+    for (const p of devServerLoopbackPorts()) ports.add(p);
+    return ports;
+  }
+
   runtimeIdentity(sessionId?: string): SecurityRuntimeIdentity {
     return snapshotSecurityRuntime(this.workspace, this.fileAccessMode, this.inlineEvalPolicy, this.sessionAllowedPaths, sessionId); }
 
@@ -260,7 +274,7 @@ export class SecurityLayer {
         String(SecurityLayer._selfPort || "7007"),
         String(args.url || ""),
         this.egressMode,
-        this.localServicePorts,
+        this.effectiveLocalServicePorts(),
         manualRuntimeHostPorts(),
       );
     } else {
@@ -333,7 +347,7 @@ export class SecurityLayer {
       egressAllowlistConfigured: this.egressAllowlistConfigured,
       selfPort: String(SecurityLayer._selfPort || "7007"),
       egressMode: this.egressMode,
-      localServicePorts: this.localServicePorts,
+      localServicePorts: this.effectiveLocalServicePorts(),
       manualHostPorts: manualRuntimeHostPorts(),
     });
   }
@@ -355,7 +369,7 @@ export class SecurityLayer {
       egressAllowlistConfigured: this.egressAllowlistConfigured,
       egressMode: this.egressMode,
       selfPort: String(SecurityLayer._selfPort || "7007"),
-      localServicePorts: this.localServicePorts,
+      localServicePorts: this.effectiveLocalServicePorts(),
       manualHostPorts: manualRuntimeHostPorts(),
       workspace: this.workspace,
       fileAccessMode: this.fileAccessMode,
@@ -376,7 +390,7 @@ export class SecurityLayer {
       String(SecurityLayer._selfPort || "7007"),
       url,
       this.egressMode,
-      this.localServicePorts,
+      this.effectiveLocalServicePorts(),
       manualRuntimeHostPorts(),
     );
   }

@@ -8,6 +8,17 @@ export const LOCAL_SERVICE_RECOVERY =
   '"localServicePorts" in ~/.lax/security.json to allow loopback health-checks. ' +
   "Otherwise verify the service via process_status/process_list or the filesystem instead of HTTP.";
 
+/**
+ * Canonicalize a URL host for policy comparison: lowercase, remove IPv6 URL
+ * brackets, and strip one trailing DNS dot. WHATWG `new URL()` preserves both
+ * bracketed IPv6 hostnames and trailing dots, while policy tables use bare
+ * address/hostname forms. Lives here (not in a policy module) because BOTH the
+ * sync policy pass and the DNS-pin pass must canonicalize identically.
+ */
+export function canonicalizeHost(host: string): string {
+  return host.toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
+}
+
 // ── SSRF: IP address validation helpers ──
 
 /** Strictly parse a decimal IPv4 address — rejects octal (0177) and hex (0x7f) formats */
@@ -168,12 +179,55 @@ export function isPrivateIPv6(ip: string): boolean {
   return (value >> 125n) !== 0b001n;
 }
 
-/** Blocked hostnames (loopback aliases, cloud metadata) */
-export const BLOCKED_HOSTNAMES = new Set([
+/**
+ * Loopback hostname aliases — pure synonyms of 127.0.0.1 / ::1.
+ *
+ * FALSE POSITIVE FIXED (C4): these four used to sit in BLOCKED_HOSTNAMES, a hard
+ * "SSRF protection" deny, so `http://localhost:5173/` was refused OUTRIGHT while
+ * the byte-identical `http://127.0.0.1:5173/` went through the port-checked
+ * loopback path. The agent therefore could not fetch a page from the dev server
+ * it had just started — and worse, its own `127.0.0.1:<selfPort>/apps/<id>/`
+ * self-call was ALLOWED but 302'd to `http://localhost:<devPort>/…` (the
+ * /apps reverse-proxy redirect), and the redirect re-check killed it on the
+ * NAME. That is the app-build verify loop, broken by a synonym.
+ *
+ * A synonym of a literal must not be a different policy: network-policy routes
+ * every member of this set through the SAME self-port + localServicePorts gate
+ * as the literal, and then DENIES what those two allows didn't cover. So an
+ * unregistered loopback port is still blocked — the deny is on the port now,
+ * not on the name.
+ *
+ * ATTACK PRESERVED: none of these is an SSRF target. The real targets — cloud
+ * metadata and the in-cluster K8s API — stay in BLOCKED_HOSTNAMES below, and
+ * DNS rebinding (an ATTACKER-controlled name that RESOLVES to loopback/private)
+ * is unaffected: resolveAndPinHost still resolves and rejects those, and it
+ * never has to resolve a name on this list.
+ */
+export const LOOPBACK_HOSTNAMES = new Set([
   "localhost",
   "localhost.localdomain",
   "ip6-localhost",
   "ip6-loopback",
+]);
+
+/**
+ * True for a loopback destination, whether written as a literal address or as
+ * one of its alias names. The single predicate consulted by BOTH loopback
+ * carve-outs (self-port, localServicePorts) and the loopback deny that follows
+ * them, so the name form and the literal form can never drift apart again.
+ *
+ * Deliberately narrow on the literal side (127.0.0.1 / ::1, not all of
+ * 127.0.0.0/8): widening it would hand the self-port allow to 127.0.0.2:<port>,
+ * which is not our server. The rest of 127/8 stays under isPrivateIPv4.
+ */
+export function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || LOOPBACK_HOSTNAMES.has(host);
+}
+
+/** Blocked hostnames: cloud-metadata and in-cluster-API endpoints — the actual
+ *  SSRF targets this list exists for. Loopback aliases are NOT here; see
+ *  LOOPBACK_HOSTNAMES above for why. */
+export const BLOCKED_HOSTNAMES = new Set([
   "metadata.google.internal",
   "metadata.internal",
   "metadata",

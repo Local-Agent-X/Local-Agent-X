@@ -3,6 +3,9 @@ import { readFileSync, existsSync } from "node:fs";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { getLocalRuntimes } from "../../local-runtimes/cache.js";
 import { manualAllowlist } from "../../local-runtimes/endpoints.js";
+// The dev-server record store, via its dependency-free leaf — importing
+// tools/dev-server.js here would cycle (process-session → security/layer/index).
+import { devServerLoopbackPorts } from "../../tools/dev-server-records.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { EgressMode } from "./network-policy.js";
 
@@ -186,6 +189,10 @@ export function localRuntimeLoopbackPorts(): Set<string> {
  * route to the agent role, this carve-out becomes an agent-controlled allowlist —
  * update both sites together.
  */
+/** Re-exported so network-policy's standalone loadEgressConfig folds in the SAME
+ *  derivation loadLocalServicePorts uses — one source, both readers. */
+export { devServerLoopbackPorts } from "../../tools/dev-server-records.js";
+
 export function manualRuntimeHostPorts(): Set<string> {
   try {
     const sPath = join(getLaxDir(), "settings.json");
@@ -216,6 +223,10 @@ export function loadLocalServicePorts(): Set<string> {
   const ollama = ollamaLoopbackPort();
   if (ollama) ports.add(ollama);
   for (const p of localRuntimeLoopbackPorts()) ports.add(p);
+  // Dev servers THIS harness started (app_serve_frontend/app_serve_backend
+  // persisted a record). Closes the registration gap that made the agent unable
+  // to fetch the page of the app it had just served — see devServerLoopbackPorts.
+  for (const p of devServerLoopbackPorts()) ports.add(p);
   if (ports.size > 0) {
     logger.info(`[security] Local service ports loaded: ${ports.size} ports`);
   }

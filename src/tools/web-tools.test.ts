@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { Agent, fetch as undiciFetch } from "undici";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -119,6 +119,28 @@ describe("createPinningDispatcher", () => {
     }
   });
 
+  // C4: a loopback ALIAS name is pinned straight to the literal loopback address
+  // instead of resolved. Resolving would fail-closed on the loopback answer the
+  // name exists to give — re-breaking `http://localhost:<devPort>/` one layer
+  // below the policy gate that just allowed it. Authorization for these names
+  // happens in assertLiteralIpEgressAllowed (which sees the PORT), not here.
+  it("pins a loopback alias name to the literal loopback address (no resolve)", async () => {
+    const d = createPinningDispatcher();
+    try {
+      await undiciFetch("http://localhost:1/", {
+        dispatcher: d,
+        signal: AbortSignal.timeout(2_000),
+      });
+      throw new Error("expected the connection to be refused");
+    } catch (e) {
+      // Connection-level refusal (nothing listens on :1) — NOT a policy block,
+      // which is what a resolve-then-classify path would have produced.
+      expect(String((e as Error).message ?? e)).not.toMatch(/Blocked:/);
+    } finally {
+      await d.close();
+    }
+  });
+
   it("blocks a host that fails to resolve / resolves private (fail-closed)", async () => {
     const d = createPinningDispatcher();
     try {
@@ -224,6 +246,75 @@ describe("cross-host redirect egress re-check", () => {
     expect(res.isError).toBeFalsy();
     expect(seen).toContain("https://host-b.example/final");
     expect(res.content).toContain("PAGE FROM B");
+  });
+
+  // ── C4: the app-build verify loop, end to end ────────────────────────────
+  // The agent serves an app (record on disk at ~/.lax/dev-servers/<id>.json),
+  // fetches its own server, and gets 302'd to the dev server on a LOOPBACK
+  // ALIAS. Every hop of that had to stop being a hard deny while an
+  // UNregistered loopback port stayed denied. These drive the real tool, so the
+  // sync gate, the per-hop re-check and the connect-time pin all participate.
+  function registerDevServer(appId: string, port: number) {
+    mkdirSync(join(laxDir, "dev-servers"), { recursive: true });
+    writeFileSync(join(laxDir, "dev-servers", `${appId}.json`), JSON.stringify({
+      appId, command: `vite --port ${port}`, cwd: laxDir, port, connector: `dev-${appId}`, kind: "frontend",
+    }), "utf-8");
+  }
+
+  it("follows the own-server → localhost:<registered devPort> redirect (web_fetch)", async () => {
+    registerDevServer("truckfinder", 3011);
+    const selfPort = getRuntimeConfig().port;
+    const dev = "http://localhost:3011/apps/truckfinder/";
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      if (url.startsWith(`http://127.0.0.1:${selfPort}`)) {
+        return fakeResponse({ status: 302, headers: { location: dev } });
+      }
+      return fakeResponse({ status: 200, body: "<h1>TruckFinder</h1>" });
+    };
+
+    const res = await webFetchTool.execute({ url: `http://127.0.0.1:${selfPort}/apps/truckfinder/` });
+
+    expect(res.isError).toBeFalsy();
+    expect(seen).toContain(dev);
+    expect(res.content).toContain("TruckFinder");
+  });
+
+  it("fetches a registered dev server directly by name, and still blocks an UNregistered loopback port", async () => {
+    registerDevServer("merchhelm", 3001);
+    const seen: string[] = [];
+    undiciMock.handler = (url) => { seen.push(url); return fakeResponse({ status: 200, body: "MERCHHELM" }); };
+
+    const ok = await webFetchTool.execute({ url: "http://localhost:3001/apps/merchhelm/index.html" });
+    expect(ok.isError).toBeFalsy();
+    expect(ok.content).toContain("MERCHHELM");
+
+    // Not registered → denied, and never dialed.
+    seen.length = 0;
+    const denied = await webFetchTool.execute({ url: "http://localhost:5432/" });
+    expect(denied.isError).toBe(true);
+    expect(denied.content).toMatch(/neither this agent's own server nor a registered local service/);
+    expect(seen).toEqual([]);
+  });
+
+  // ATTACK PRESERVED: a public host must not be able to 302 into a loopback
+  // service the operator never registered.
+  it("blocks a 302 from a public host to an unregistered loopback alias port", async () => {
+    const seen: string[] = [];
+    undiciMock.handler = (url) => {
+      seen.push(url);
+      if (url.startsWith("https://public-a.example")) {
+        return fakeResponse({ status: 302, headers: { location: "http://localhost:5432/dump" } });
+      }
+      return fakeResponse({ status: 200, body: "INTERNAL DB DUMP" });
+    };
+
+    const res = await webFetchTool.execute({ url: "https://public-a.example/page" });
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/neither this agent's own server nor a registered local service/);
+    expect(seen).toEqual(["https://public-a.example/page"]);
+    expect(res.content).not.toContain("INTERNAL DB DUMP");
   });
 
   // Round-3 C3-23: the pinning dispatcher validates SSRF inside connect.lookup,

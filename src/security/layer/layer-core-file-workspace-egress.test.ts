@@ -315,6 +315,32 @@ describe("egress mode semantics", () => {
     expect(d.reason).toMatch(/private\/reserved/i);
   });
 
+  // C4 root cause: localServicePorts is loaded ONCE in the constructor, so a dev
+  // server the agent starts DURING a session (app_serve_frontend writes
+  // ~/.lax/dev-servers/<id>.json) was invisible to this gate for the rest of the
+  // process — served the app, then blocked from fetching it, same turn. The gate
+  // now unions in the dev-server ports read fresh per decision.
+  it("SecurityLayer: a dev server registered AFTER construction is reachable without a restart", () => {
+    const sec = new SecurityLayer(WORKSPACE, "common");
+    const fetchApp = () => sec.evaluate({ toolName: "http_request", args: { url: "http://localhost:4173/apps/notes/" }, sessionId: "t" });
+    expect(fetchApp().allowed).toBe(false);
+
+    const recPath = join(suiteLaxDir, "dev-servers", "notes.json");
+    mkdirSync(join(suiteLaxDir, "dev-servers"), { recursive: true });
+    writeFileSync(recPath, JSON.stringify({ appId: "notes", command: "vite preview", cwd: WORKSPACE, port: 4173, connector: "dev-notes", kind: "frontend" }), "utf-8");
+    try {
+      const allowed = fetchApp();
+      expect(allowed.allowed).toBe(true);
+      expect(allowed.reason).toBe("Allowed local service");
+      // Still one port only — a sibling loopback port stays blocked.
+      expect(sec.evaluate({ toolName: "http_request", args: { url: "http://localhost:4174/" }, sessionId: "t" }).allowed).toBe(false);
+    } finally {
+      rmSync(recPath, { force: true });
+    }
+    // ...and stopping the app re-blocks it immediately, same session.
+    expect(fetchApp().allowed).toBe(false);
+  });
+
   it("SecurityLayer: localServicePorts from security.json gates loopback health-checks", () => {
     withLaxDir(
       (dir) => {

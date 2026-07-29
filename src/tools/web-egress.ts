@@ -2,6 +2,7 @@ import { Agent, fetch as undiciFetch } from "undici";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
+import { isLoopbackHost, LOOPBACK_HOSTNAMES } from "../security/layer/ip-classification.js";
 
 /** Browser-like identity for agent web fetches. Many commerce/price sites
  *  (PriceCharting, TCGplayer, eBay) reject a non-browser User-Agent with an
@@ -31,6 +32,17 @@ export class EgressRedirectBlocked extends Error {
  *  assertLiteralIpEgressAllowed on EVERY hop (see below). */
 export function assertRedirectEgressAllowed(fromUrl: string, toUrl: string): void {
   if (new URL(fromUrl).host === new URL(toUrl).host) return;
+  // Loopback targets are decided by assertLiteralIpEgressAllowed, which every
+  // caller runs on this SAME hop — and which looks up the real runtime port.
+  // This function can't (it's sync, config.js is an async import), so it would
+  // evaluate a self-call against the hardcoded 7007 default and deny the agent
+  // its own server on any non-default LAX_PORT. That default was the exact line
+  // that killed `127.0.0.1:7007/apps/<id>/` → `localhost:<devPort>/…`: the
+  // /apps reverse-proxy 302 is cross-host, so it landed here first. Deferring
+  // instead of guessing removes the mismatch; the loopback grant is unchanged.
+  try {
+    if (isLoopbackHost(new URL(toUrl).hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase())) return;
+  } catch { /* unparseable → fall through to the policy check, which fails closed */ }
   const decision = evaluateEgressForUrl(toUrl);
   if (!decision.allowed) {
     throw new EgressRedirectBlocked(toUrl, decision.reason);
@@ -63,7 +75,13 @@ export async function assertLiteralIpEgressAllowed(url: string): Promise<void> {
   } catch {
     throw new EgressRedirectBlocked(url, "Blocked: invalid URL (SSRF protection)");
   }
-  if (!isLiteralIpHost(host)) return; // hostname → covered by the pinning dispatcher
+  // Loopback ALIAS names are checked here too, not left to the dispatcher: the
+  // dispatcher's lookup short-circuits them (see createPinningDispatcher), so
+  // this synchronous port-checked policy pass is their ONLY gate. Without it,
+  // taking "localhost" off the hard blocklist would leave every loopback port
+  // reachable by name through canonicalFetch — the sync gate is what keeps the
+  // grant limited to the agent's own server + registered local services.
+  if (!isLiteralIpHost(host) && !isLoopbackHost(host)) return; // hostname → covered by the pinning dispatcher
   // Use the real runtime port so a legitimate loopback self-call (which targets
   // 127.0.0.1:<configured-port>) is still recognised as a self-call and allowed;
   // fall back to evaluateEgressForUrl's 7007 default if config isn't loaded.
@@ -130,6 +148,20 @@ export function createPinningDispatcher(): Agent {
   return new Agent({
     connect: {
       lookup: (hostname: string, _opts: unknown, cb: PinLookupCallback) => {
+        // A loopback alias name is PINNED to the literal loopback address rather
+        // than resolved. Resolving would fail-closed on the loopback answer the
+        // name exists to give (re-breaking the localhost:<devPort> fetch one
+        // layer below the policy gate that just allowed it), and pinning to the
+        // literal is strictly STRONGER than resolving: a poisoned hosts entry
+        // cannot redirect these names off-box. Authorization already happened —
+        // assertLiteralIpEgressAllowed runs the port-checked policy on these
+        // names on the initial URL and every redirect hop.
+        const bare = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+        if (LOOPBACK_HOSTNAMES.has(bare)) {
+          const v6 = bare.startsWith("ip6-");
+          cb(null, [{ address: v6 ? "::1" : "127.0.0.1", family: v6 ? 6 : 4 }]);
+          return;
+        }
         resolveAndPinHost(hostname).then((r) => {
           if (!r.ok) { cb(new Error(r.reason), []); return; }
           if (r.pin === null) {

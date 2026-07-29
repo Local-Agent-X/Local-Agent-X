@@ -28,6 +28,7 @@ import {
 } from "./turn-commit-validation.js";
 export { isTurnCommitEnvelope } from "./turn-commit-validation.js";
 import { readOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { ensureDurableDirectory, fsyncDirectory } from "../persistence/durable-directory.js";
 
@@ -85,23 +86,99 @@ export function _setTurnCommitWriteHookForTests(
   writeHook = hook;
 }
 
+/** Whole-file parses this module performs. Counted so the read-cost contract
+ * is testable: it regressed silently into a quadratic stall once already. */
+export type TurnReadPoint = "artifact" | "op" | "seeds";
+
+let readHook: ((point: TurnReadPoint) => void) | null = null;
+
+export function _setTurnReadHookForTests(hook: ((point: TurnReadPoint) => void) | null): void {
+  readHook = hook;
+}
+
+/**
+ * Memo for ONE synchronous read sequence.
+ *
+ * Reading turn N validates it against operation.json and the legacy message
+ * seeds, then walks every prior turn for message collisions — and each of
+ * those prior reads re-parsed BOTH whole files again. Rebuilding an op's
+ * history (store.readOpMessages) calls that once per turn, so the cost was
+ * quadratic in turns and every unit of it was a synchronous whole-file parse:
+ * a 59-turn op did ~1.8k artifact reads and ~3.5k parses of two 22KB files.
+ *
+ * Observed live 2026-07-29: that wedged the main thread for 380s at a stretch,
+ * so /api/health could not answer and the desktop shell sat on "Still
+ * starting…" while the server was in fact up and listening.
+ *
+ * Both inputs are loop-invariant — operation.json and op-messages.jsonl cannot
+ * change during one synchronous sequence — so memoizing them is behaviour-
+ * preserving and makes a history rebuild linear in turns with a single parse
+ * of each whole file.
+ *
+ * A cache must NOT outlive one synchronous read sequence: it would pin a stale
+ * op record across a concurrent write. Callers that span an await boundary
+ * must build a fresh one.
+ */
+export interface TurnReadCache {
+  /** `undefined` = not yet read; `null` = read and absent. */
+  op?: Op | null;
+  seeds?: LegacyMessageSeedRead;
+  base: Map<number, TurnCommitEnvelope | OpTurnRow | null>;
+}
+
+/** Seed with whatever the caller has already parsed, so it is not parsed twice. */
+export function createTurnReadCache(
+  init: { seeds?: LegacyMessageSeedRead; op?: Op | null } = {},
+): TurnReadCache {
+  const cache: TurnReadCache = { base: new Map() };
+  if (init.seeds) cache.seeds = init.seeds;
+  if (init.op !== undefined) cache.op = init.op;
+  return cache;
+}
+
+function cachedOp(opId: string, cache: TurnReadCache): Op | null {
+  if (cache.op === undefined) {
+    readHook?.("op");
+    cache.op = readOp(opId);
+  }
+  return cache.op;
+}
+
+function cachedSeeds(opId: string, cache: TurnReadCache): LegacyMessageSeedRead {
+  return (cache.seeds ??= readLegacyMessageSeeds(opId));
+}
+
 export function readTurnArtifact(
   opId: string,
   turnIdx: number,
+  cache: TurnReadCache = createTurnReadCache(),
 ): TurnCommitEnvelope | OpTurnRow | null {
-  const artifact = readBaseArtifact(opId, turnIdx);
+  const artifact = readBaseArtifact(opId, turnIdx, cache);
   if (!artifact || !("turn" in artifact)) return artifact;
-  return hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx))
+  return hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx, cache))
     ? null : artifact;
 }
 
 function readBaseArtifact(
   opId: string,
   turnIdx: number,
+  cache: TurnReadCache,
 ): TurnCommitEnvelope | OpTurnRow | null {
-  const artifact = readStructurallyAuthorizedArtifact(opId, turnIdx);
+  const hit = cache.base.get(turnIdx);
+  if (hit !== undefined) return hit;
+  const artifact = computeBaseArtifact(opId, turnIdx, cache);
+  cache.base.set(turnIdx, artifact);
+  return artifact;
+}
+
+function computeBaseArtifact(
+  opId: string,
+  turnIdx: number,
+  cache: TurnReadCache,
+): TurnCommitEnvelope | OpTurnRow | null {
+  const artifact = readStructurallyAuthorizedArtifact(opId, turnIdx, cache);
   if (!artifact || !("turn" in artifact)) return artifact;
-  const seeds = readLegacyMessageSeeds(opId);
+  const seeds = cachedSeeds(opId, cache);
   return seeds.issues.length || hasMessageCollision(artifact.messages, seeds.rows)
     ? null : artifact;
 }
@@ -109,13 +186,15 @@ function readBaseArtifact(
 function readStructurallyAuthorizedArtifact(
   opId: string,
   turnIdx: number,
+  cache: TurnReadCache,
 ): TurnCommitEnvelope | OpTurnRow | null {
   const path = opTurnPath(opId, turnIdx);
   if (!existsSync(path)) return null;
   try {
+    readHook?.("artifact");
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
     if (isTurnCommitEnvelope(parsed)) {
-      const op = readOp(opId);
+      const op = cachedOp(opId, cache);
       if (!op || op.id !== opId) return null;
       if (parsed.turn.opId !== opId || parsed.turn.turnIdx !== turnIdx) return null;
       if (!projectionMatchesOp(parsed.projection, op)) return null;
@@ -128,7 +207,11 @@ function readStructurallyAuthorizedArtifact(
   }
 }
 
-function priorCommittedMessages(opId: string, beforeTurnIdx: number): OpMessageRow[] {
+function priorCommittedMessages(
+  opId: string,
+  beforeTurnIdx: number,
+  cache: TurnReadCache,
+): OpMessageRow[] {
   const dir = opTurnsDir(opId);
   if (!existsSync(dir)) return [];
   const messages: OpMessageRow[] = [];
@@ -138,7 +221,7 @@ function priorCommittedMessages(opId: string, beforeTurnIdx: number): OpMessageR
     .filter((turnIdx) => turnIdx < beforeTurnIdx)
     .sort((a, b) => a - b);
   for (const turnIdx of indexes) {
-    const artifact = readBaseArtifact(opId, turnIdx);
+    const artifact = readBaseArtifact(opId, turnIdx, cache);
     if (!artifact || !("turn" in artifact)) continue;
     if (hasMessageCollision(artifact.messages, messages)) continue;
     messages.push(...artifact.messages);
@@ -211,12 +294,13 @@ export function scavengeTurnCommitStages(opId: string): number {
 export function quarantineInvalidTurnArtifact(opId: string, turnIdx: number): boolean {
   const target = opTurnPath(opId, turnIdx);
   if (!existsSync(target)) return false;
-  const artifact = readStructurallyAuthorizedArtifact(opId, turnIdx);
+  const cache = createTurnReadCache();
+  const artifact = readStructurallyAuthorizedArtifact(opId, turnIdx, cache);
   if (artifact && "turn" in artifact) {
-    const seeds = readLegacyMessageSeeds(opId);
+    const seeds = cachedSeeds(opId, cache);
     if (seeds.issues.length) throw new LegacyMessageSeedIntegrityError(opId, seeds.issues);
     if (!hasMessageCollision(artifact.messages, seeds.rows)
-      && !hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx))) return false;
+      && !hasMessageCollision(artifact.messages, priorCommittedMessages(opId, turnIdx, cache))) return false;
   } else if (artifact) {
     return false;
   }
@@ -233,6 +317,7 @@ export function committedMessagesFromArtifact(
 export function readLegacyMessageSeeds(opId: string): LegacyMessageSeedRead {
   const path = opMessagesPath(opId);
   if (!existsSync(path)) return { rows: [], issues: [] };
+  readHook?.("seeds");
   const rows: OpMessageRow[] = [];
   const issues: LegacyMessageSeedIssue[] = [];
   const ids = new Set<string>();
@@ -270,9 +355,13 @@ function assertTurnCommitPublicationValid(envelope: TurnCommitEnvelope): void {
   const op = readOp(envelope.turn.opId);
   const seeds = readLegacyMessageSeeds(envelope.turn.opId);
   if (seeds.issues.length) throw new LegacyMessageSeedIntegrityError(envelope.turn.opId, seeds.issues);
+  // Hand both to the prior-turn walk: this runs on EVERY commit, so without
+  // it each turn re-parsed the op record and the seeds once per prior turn.
+  const cache = createTurnReadCache({ seeds, op });
   if (!op || !projectionMatchesOp(envelope.projection, op)
     || hasMessageCollision(envelope.messages, seeds.rows)
-    || hasMessageCollision(envelope.messages, priorCommittedMessages(envelope.turn.opId, envelope.turn.turnIdx))) {
+    || hasMessageCollision(envelope.messages,
+      priorCommittedMessages(envelope.turn.opId, envelope.turn.turnIdx, cache))) {
     throw new Error(`turn commit message collision or invalid authority for ${envelope.turn.opId}#${envelope.turn.turnIdx}`);
   }
 }

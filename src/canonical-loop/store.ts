@@ -39,9 +39,11 @@ import type {
 } from "./types.js";
 import {
   committedMessagesFromArtifact,
+  createTurnReadCache,
   LegacyMessageSeedIntegrityError,
   readLegacyMessageSeeds,
   readTurnArtifact,
+  type TurnReadCache,
 } from "./turn-commit-store.js";
 import { appendKnownGoodJsonl, readDurableJsonl, updateDurableJsonl } from "../persistence/durable-jsonl.js";
 import { ensureDurableDirectory } from "../persistence/durable-directory.js";
@@ -267,8 +269,12 @@ export function readOpTurns(opId: string): OpTurnRow[] {
     }
     idxs.sort((a, b) => a - b);
     const rows: OpTurnRow[] = [];
+    // One cache for the whole walk: each turn artifact is validated against
+    // operation.json and the message seeds, and without sharing, every turn
+    // re-parsed both whole files and re-read all prior turns.
+    const cache = createTurnReadCache();
     for (const i of idxs) {
-      const r = readOpTurn(opId, i);
+      const r = readOpTurn(opId, i, cache);
       if (r) rows.push(r);
     }
     return rows;
@@ -278,8 +284,8 @@ export function readOpTurns(opId: string): OpTurnRow[] {
   }
 }
 
-export function readOpTurn(opId: string, turnIdx: number): OpTurnRow | null {
-  const artifact = readTurnArtifact(opId, turnIdx);
+export function readOpTurn(opId: string, turnIdx: number, cache?: TurnReadCache): OpTurnRow | null {
+  const artifact = readTurnArtifact(opId, turnIdx, cache ?? createTurnReadCache());
   if (!artifact) return null;
   return "turn" in artifact ? artifact.turn : artifact;
 }
@@ -371,10 +377,14 @@ export function readOpMessages(opId: string): OpMessageRow[] {
   try {
     const dir = opTurnsDir(opId);
     if (existsSync(dir)) {
+      // Hand the seeds we already parsed to a cache shared by every turn read
+      // below. Without it this loop was quadratic in turns AND re-parsed
+      // operation.json plus these same seeds once per prior turn per turn.
+      const cache = createTurnReadCache({ seeds });
       for (const name of readdirSync(dir)) {
         const match = /^(\d+)\.json$/.exec(name);
         if (!match) continue;
-        const artifact = readTurnArtifact(opId, Number(match[1]));
+        const artifact = readTurnArtifact(opId, Number(match[1]), cache);
         for (const row of committedMessagesFromArtifact(artifact)) add(row);
       }
     }

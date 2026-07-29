@@ -66,6 +66,14 @@ export interface ActiveChat {
    *  EITHER lane starts a new run (stamped boundary:true) instead of
    *  merging into the tail. */
   runBoundary: boolean;
+  /** Canonical op this turn's channel is streaming, learned from the turn's
+   *  own `chat_op_started` (manager.onEvent). Two readers: the channel stamps
+   *  it onto every live envelope so a client can tell a dead turn's frames
+   *  from its replacement's, and a successor startChat reads it off the entry
+   *  it overwrites to name the op that takeover superseded. Undefined until
+   *  the turn announces an op — channels outside a canonical chat turn (the
+   *  delegation ack) never emit chat_op_started, so theirs stays unset. */
+  opId?: string;
   abortController: AbortController;
   startedAt: number;
   done: boolean;

@@ -22,18 +22,54 @@
   window._chatStreamReduce = function(e, event, now, helpers) {
     const B = window._ChatBlocks;
     switch (event.type) {
-      case 'chat_op_started':
+      case 'chat_op_started': {
         if (event.opId && e.doneOpIds.has(event.opId)) {
           // Stale start for an op we've already ended. Don't overwrite the
           // current opId with the dead one and don't re-light streaming.
           e.lastActivityMs = now;
           break;
         }
+        // Turn takeover: `supersedes` names the op THIS one replaced (the
+        // user sent again while that turn was still live). Retire it so the
+        // store drops its still-arriving frames (chat-stream-store.js
+        // isSupersededFrame) — the dead provider stream keeps flushing for a
+        // beat. `takeover` is the narrow case where the retired op is the one
+        // this entry was rendering, so its leftovers have to be wiped too or
+        // the replacement's deltas append onto them.
+        //
+        // TWO identities count as "was rendering it". e.opId covers a tab
+        // that only watched. pendingSupersedeOpId covers the tab that CAUSED
+        // the takeover: chat-send.js runs startTurn at send time, before the
+        // server has even taken the lock from the dead op, and startTurn must
+        // clear opId (the replacement's id doesn't exist yet) — so it parks
+        // the outgoing op there for exactly this match. Without it the wipe
+        // never fired for the sending tab, the one tab that spends the whole
+        // lock-abort window streaming the dead op's output into the new
+        // turn's bubble. Consumed on match: it names one specific takeover.
+        //
+        // An entry holding some OTHER op is left alone: durable-approval
+        // rediscovery (chat-approval-rediscovery.js) replays a
+        // chat_op_started for an unrelated pending op and must not erase the
+        // live turn. That holds for the PARKED id too, hence the e.opId guard
+        // below: a reconnect inside the (up to 5s) lock window can interpose
+        // rediscovery's chat_op_started{op-X} + approval_requested between the
+        // park and the takeover, and honoring the park then would wipe the
+        // just-hydrated card of an op the takeover never touched. The park is
+        // only good while this entry is still the one startTurn left behind —
+        // opId null, or back to the superseded op because a subscribe replay
+        // re-announced it (that entry IS the one the park was for).
+        const parkedMatch = event.supersedes === e.pendingSupersedeOpId
+          && (!e.opId || e.opId === event.supersedes);
+        const takeover = !!event.supersedes
+          && (event.supersedes === e.opId || parkedMatch);
+        if (takeover) e.pendingSupersedeOpId = null;
+        if (event.supersedes) helpers.rememberSupersededOp(e, event.supersedes);
         if (event.opId) e.opId = event.opId;
-        if (e.status === 'done') {
+        if (e.status === 'done' || takeover) {
           // A NEW op starting on a finished entry (the doneOpIds guard above
-          // already rejected stale replays). Adopted turns never ran
-          // startTurn, so scratch left behind after the last promote — a late
+          // already rejected stale replays), or on the turn it just took
+          // over. Adopted turns never ran startTurn, and a taken-over turn
+          // never reaches one, so scratch left behind — a late
           // '\n\nError: …' appended AFTER promote cleared content — would
           // become the head of this turn and get persisted. Mirror startTurn's
           // scratch resets; leave liveAnchorIndex/doneOpIds alone (adoption
@@ -61,6 +97,7 @@
         if (e.status === 'idle' || e.status === 'done') e.status = 'streaming';
         e.lastActivityMs = now;
         break;
+      }
       case 'stream':
         if (event.replace === true) {
           e.content = event.text || '';
@@ -161,9 +198,12 @@
             toolName: event.toolName,
             context: event.context,
             argsPreview: event.argsPreview,
-            // Durable-sourced asks (chat-ws.js rediscovery) carry the op id +
-            // expiry so the answer can route via the durable-resolve path and
-            // the card can expire client-side; live asks omit both → null.
+            // Durable-sourced asks (chat-ws.js rediscovery) carry the op id so
+            // the answer can route via the durable-resolve path; live asks omit
+            // it → null. Both now carry expiresAt (approval-manager emits the
+            // absolute auto-deny deadline on the live event too), which is what
+            // the countdown renders from — never from first paint, since a
+            // hidden window pauses rAF and a non-viewed session never paints.
             opId: event.opId || null,
             expiresAt: typeof event.expiresAt === 'number' ? event.expiresAt : null,
             status: 'pending',

@@ -52,6 +52,22 @@ interface PendingDeltaRun {
   text: string;
 }
 
+// Attach the owning op to one live envelope, without mutating the caller's
+// event. Only the variants that DECLARE `opId` (types/server-events.ts) are
+// stamped — the rest have no such field on the wire contract. An event that
+// already names its op keeps it: the emitter knew better than the channel.
+function stampOpId(event: ServerEvent, opId: string | undefined): ServerEvent {
+  if (!opId) return event;
+  switch (event.type) {
+    case "stream": case "reasoning": case "tool_start": case "tool_progress":
+    case "tool_end": case "tool_chip": case "done": case "stopped":
+    case "error": case "op_heartbeat":
+      return event.opId ? event : { ...event, opId };
+    default:
+      return event;
+  }
+}
+
 export interface ChatWsManager {
   startChat(sessionId: string): { abort: AbortController; onEvent: (event: ServerEvent) => void };
   getAbortSignal(sessionId: string): AbortSignal | undefined;
@@ -79,9 +95,17 @@ export function buildManager(): ChatWsManager {
       // regresses that path. So overwrite as before, but log it; the
       // identity-guarded sweeps below and in state.ts keep the old timers
       // from reaping the new entry.
+      let supersededOpId: string | undefined;
       const existing = activeChats.get(sessionId);
       if (existing && !existing.done) {
         logger.warn(`startChat: overwriting live activeChats entry for session ${sessionId}`);
+        // The overwrite IS a turn takeover: the user sent again mid-turn, the
+        // lock aborted the previous turn and granted this one. Carry the op it
+        // replaced so this channel names it on its own chat_op_started — the
+        // client then retires the dead turn instead of rendering its trailing
+        // output alongside this one's. Undefined when that entry never
+        // announced an op (delegation ack) — nothing to retire.
+        supersededOpId = existing.opId;
       }
 
       const abortController = new AbortController();
@@ -95,6 +119,7 @@ export function buildManager(): ChatWsManager {
         toolsSinceText: false,
         runs: [],
         runBoundary: false,
+        opId: undefined,
         abortController,
         startedAt: Date.now(),
         done: false,
@@ -118,7 +143,7 @@ export function buildManager(): ChatWsManager {
           clearInterval(heartbeat);
           return;
         }
-        broadcastToSession(sessionId, { type: "op_heartbeat" });
+        broadcastToSession(sessionId, { type: "op_heartbeat", opId: chat.opId });
       }, HEARTBEAT_INTERVAL_MS);
       // Never hold the process open for a keepalive.
       heartbeat.unref?.();
@@ -149,8 +174,8 @@ export function buildManager(): ChatWsManager {
           // The narrow per-lane construction (vs. `type: run.lane`) keeps the
           // discriminated ServerEvent union checkable without a cast.
           const frame: ServerEvent = run.lane === "stream"
-            ? { type: "stream", delta: run.text }
-            : { type: "reasoning", delta: run.text };
+            ? { type: "stream", delta: run.text, opId: chat.opId }
+            : { type: "reasoning", delta: run.text, opId: chat.opId };
           broadcastToSession(sessionId, frame);
         }
       };
@@ -165,6 +190,20 @@ export function buildManager(): ChatWsManager {
           // leak into the next turn on the same session and overwrite
           // the new response.
           if (chat.done) return;
+
+          // Learn this channel's op from the turn's own chat_op_started
+          // (canonical-loop/chat-runner.ts pushes it first). Everything the
+          // channel emits after this is stamped with it, so a client holding
+          // a dead turn AND its replacement can tell whose frame is whose.
+          // A takeover names the op it replaced on this same frame, once —
+          // and on the buffered copy too, so a reconnect replays the takeover.
+          if (event.type === "chat_op_started") {
+            chat.opId = event.opId;
+            if (supersededOpId && supersededOpId !== event.opId) {
+              event = { ...event, supersedes: supersededOpId };
+            }
+            supersededOpId = undefined;
+          }
 
           // Delta-shaped stream/reasoning events are the coalescing hot path
           // (audit I2): accumulate synchronously (below, as always), but
@@ -276,7 +315,7 @@ export function buildManager(): ChatWsManager {
           // Non-delta: pending deltas precede this event chronologically —
           // flush them first so the client sees the original order.
           flushPendingDeltas();
-          broadcastToSession(sessionId, event);
+          broadcastToSession(sessionId, stampOpId(event, chat.opId));
 
           // Mark done only on real completion — non-terminal errors
           // should not end the chat.

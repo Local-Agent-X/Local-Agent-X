@@ -80,6 +80,24 @@
       // turn — see the self_edit stop-button regression where the chat
       // showed streaming for minutes after a successful stop.
       doneOpIds: new Set(),
+      // Ops this session has RETIRED — a turn takeover named them via
+      // chat_op_started.supersedes. A dead op's provider stream keeps
+      // flushing for a beat after the replacement turn starts; those frames
+      // carry the dead op's id and get dropped (isSupersededFrame) instead
+      // of rendering into the replacement's bubble. Kept across turns, like
+      // doneOpIds — a late frame can arrive after the next startTurn.
+      supersededOpIds: new Set(),
+      // The op this entry was rendering when the LOCAL user sent again —
+      // parked by startTurn, which has to clear opId (the replacement's id
+      // doesn't exist yet) but is the only moment this client knows which op
+      // a takeover is about to replace. chat_op_started matches `supersedes`
+      // against it as well as against opId, so the wipe fires on the tab that
+      // CAUSED the takeover and not just on passive observers — but only while
+      // opId is still the null startTurn left (or back to the parked op
+      // itself); see the parked-id guard in chat-stream-reducer.js, which
+      // keeps an interposed op's scratch out of it. Null until a send
+      // interrupts a live op.
+      pendingSupersedeOpId: null,
       lastActivityMs: 0,
       // Timestamp of the last event that produced VISIBLE progress — stream
       // text, reasoning, tool cards/chips/progress. Deliberately NOT bumped
@@ -110,19 +128,21 @@
   // A long-lived tab otherwise accumulates one entry per session ever
   // touched and one doneOpId per turn ever finished — both unbounded.
   //
-  // Invariant: doneOpIds.size <= DONE_OP_CAP per entry. The set only exists
-  // to reject STALE replays of recently-finished ops (see the doneOpIds
-  // comment in blank()); a replay 200 ops later is not a plausible race, so
-  // evicting the oldest is safe. Set iteration order is insertion order —
-  // the first key is the oldest add.
+  // Invariant: doneOpIds.size / supersededOpIds.size <= DONE_OP_CAP per
+  // entry. Both sets only exist to reject frames from recently-ended ops
+  // (see the doneOpIds / supersededOpIds comments in blank()); a straggler
+  // 200 ops later is not a plausible race, so evicting the oldest is safe.
+  // Set iteration order is insertion order — the first key is the oldest add.
   const DONE_OP_CAP = 200;
-  function rememberDoneOp(e, opId) {
+  function rememberOp(set, opId) {
     if (!opId) return;
-    e.doneOpIds.add(opId);
-    while (e.doneOpIds.size > DONE_OP_CAP) {
-      e.doneOpIds.delete(e.doneOpIds.keys().next().value);
+    set.add(opId);
+    while (set.size > DONE_OP_CAP) {
+      set.delete(set.keys().next().value);
     }
   }
+  function rememberDoneOp(e, opId) { rememberOp(e.doneOpIds, opId); }
+  function rememberSupersededOp(e, opId) { rememberOp(e.supersededOpIds, opId); }
 
   // Invariant: an entry is only pruned when NOTHING can still need it —
   // turn finished (status 'done'), no sidebar marker, no per-session
@@ -172,6 +192,14 @@
     e.progressByTool = {};
     e.approvals = [];
     e.stopNote = null;
+    // Park the outgoing op before dropping it: the server takes the turn lock
+    // away from that op and announces the replacement with
+    // `supersedes: <this id>` some time later (up to tryAcquireOrReplace's
+    // safety net when the old turn wedges), and everything it flushes in
+    // between lands in the scratch below. Only overwrite when there IS a live
+    // op — a second send in the same window must not erase the id the
+    // takeover will name.
+    if (e.opId) e.pendingSupersedeOpId = e.opId;
     e.opId = null;
     e.lastActivityMs = Date.now();
     e.lastContentMs = Date.now();
@@ -182,14 +210,51 @@
     return e;
   }
 
+  // Content-bearing frame types the server stamps with their owning op
+  // (src/chat-ws/manager.ts stampOpId). Terminal/lifecycle frames are
+  // deliberately absent: a retired op's done/error/stopped must still land so
+  // the turn's bookkeeping closes out instead of hanging on 'streaming'.
+  const OP_SCOPED_TYPES = new Set([
+    'stream', 'reasoning', 'tool_start', 'tool_end', 'tool_progress', 'tool_chip',
+  ]);
+
+  // True when this frame belongs to a turn that was already taken over — a
+  // dead op still flushing buffered output at the replacement's bubble. A
+  // frame with NO opId is from an emitter that predates op attribution
+  // (manager.emit outside a live turn, replay's synthesized run deltas), so
+  // the un-stamped path keeps exactly its pre-attribution behavior.
+  // Also read by the WS dispatcher (chat-ws-handler.js) so a dropped frame
+  // costs no bubble repaint and no TTS either.
+  function isSupersededFrame(sessionId, event) {
+    if (!event || !event.opId || !OP_SCOPED_TYPES.has(event.type)) return false;
+    const e = entries.get(sessionId);
+    if (!e || !e.supersededOpIds.has(event.opId)) return false;
+    // Pairing invariant: a tool_end whose tool_start is ALREADY on screen
+    // still lands. Dropping one half of a pair is worse than rendering a dead
+    // op's card — chat-render-artifacts.js pairs starts to ends, so an
+    // unpaired start renders as a never-completing card, and the WS path
+    // never runs endTurn's '(interrupted)' synthesis, so
+    // promoteLiveToMessages persists it stuck forever. The takeover wipe
+    // normally clears the start first (then the end closes nothing and is
+    // correctly dropped); this covers the entries the wipe can't fire for,
+    // e.g. one rendering a different op when the takeover was announced.
+    if (event.type === 'tool_end' && event.toolCallId
+        && e.toolEvents.some(t => t.type === 'start' && t.toolCallId === event.toolCallId)) {
+      return false;
+    }
+    return true;
+  }
+
   // Mutate entry from a raw WS event (the switch lives in
   // chat-stream-reducer.js) and notify subscribers. Events not in the
   // switch still fire notify so per-turn UI handlers see them (modals,
   // approval cards, voice visuals, etc.) without needing their own listener.
   function applyEvent(sessionId, event) {
     if (!sessionId || !event) return;
+    // Dead turn's output — never mutate state for it, never notify.
+    if (isSupersededFrame(sessionId, event)) return;
     const e = ensure(sessionId);
-    window._chatStreamReduce(e, event, Date.now(), { rememberDoneOp });
+    window._chatStreamReduce(e, event, Date.now(), { rememberDoneOp, rememberSupersededOp });
     notify(sessionId, event);
   }
 
@@ -306,7 +371,7 @@
 
   window.ChatStreamStore = {
     get, ensure,
-    startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity,
+    startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity, isSupersededFrame,
     addInject, consumeInject,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,

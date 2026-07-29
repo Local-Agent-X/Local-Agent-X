@@ -724,3 +724,88 @@ describe("failChatIfCurrent identity guard (2026-07-13 audit, skeptic round 2)",
   });
 });
 
+describe("op attribution on live envelopes", () => {
+  // Every live envelope used to be `{type:"event", sessionId, event}` with no
+  // op on it, so a client holding a taken-over turn AND its replacement could
+  // not tell whose frame it was reading — the dead turn's trailing deltas
+  // rendered into the replacement's bubble. The per-turn channel learns its op
+  // from its own chat_op_started and stamps it on everything it broadcasts;
+  // the takeover also names the op it replaced, once, on that same frame.
+  const eventFrames = (frames: Frame[]) => frames.filter(f => f.type === "event");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    return () => vi.useRealTimers();
+  });
+
+  it("stamps the owning op on live frames and names the op a takeover replaced", () => {
+    const m = buildManager();
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-takeover"]));
+
+    // Turn A announces its op, streams, and runs a tool.
+    const a = m.startChat("s-takeover");
+    a.onEvent({ type: "chat_op_started", opId: "op-A" } as ServerEvent);
+    a.onEvent(delta("dead draft"));
+    a.onEvent(toolStart); // non-delta → flushes the pending delta first
+
+    // The user sends again: the replacement turn overwrites the live entry.
+    const b = m.startChat("s-takeover");
+    b.onEvent({ type: "chat_op_started", opId: "op-B" } as ServerEvent);
+    b.onEvent(delta("live answer"));
+    vi.advanceTimersByTime(30);
+
+    // A's provider stream flushes one more delta after the takeover. The
+    // manager keeps broadcasting it (overwriting the map entry never marks it
+    // done) — it's the opId that lets the client retire it.
+    a.onEvent(delta(" trailing"));
+    vi.advanceTimersByTime(30);
+
+    const evs = eventFrames(frames());
+    expect(evs.filter(f => f.event?.type === "chat_op_started").map(f => f.event)).toEqual([
+      { type: "chat_op_started", opId: "op-A" },
+      { type: "chat_op_started", opId: "op-B", supersedes: "op-A" },
+    ]);
+    expect(evs.filter(f => f.event?.type === "stream").map(f => f.event)).toEqual([
+      { type: "stream", delta: "dead draft", opId: "op-A" },
+      { type: "stream", delta: "live answer", opId: "op-B" },
+      { type: "stream", delta: " trailing", opId: "op-A" },
+    ]);
+    expect(evs.find(f => f.event?.type === "tool_start")!.event).toMatchObject({ opId: "op-A" });
+    // Stamping is non-mutating — the caller's event object is untouched.
+    expect(toolStart).not.toHaveProperty("opId");
+  });
+
+  it("the takeover replay carries `supersedes` too (it's buffered, not just sent)", () => {
+    const m = buildManager();
+    m.startChat("s-takeover-replay")
+      .onEvent({ type: "chat_op_started", opId: "op-1" } as ServerEvent);
+    m.startChat("s-takeover-replay")
+      .onEvent({ type: "chat_op_started", opId: "op-2" } as ServerEvent);
+
+    const { ws, frames } = makeWs();
+    replayBufferedEvents(ws, "s-takeover-replay");
+    // The successor entry owns the buffer, so the replay announces op-2 and
+    // the takeover it performed — a reconnecting client retires op-1 too.
+    expect(frames().map(f => f.event)).toEqual([
+      { type: "chat_op_started", opId: "op-2", supersedes: "op-1" },
+    ]);
+  });
+
+  it("leaves an envelope with no known op un-stamped", () => {
+    const m = buildManager();
+    const { ws, frames } = makeWs();
+    clients.set(ws, new Set(["s-unstamped"]));
+
+    // Fired outside any live turn (context_status during prepare).
+    m.emit("s-unstamped", { type: "op_heartbeat" });
+    // A channel whose turn never announces an op: the delegation ack runs
+    // runAgentViaCanonical, which emits no chat_op_started.
+    m.startChat("s-unstamped").onEvent(toolStart);
+
+    const evs = eventFrames(frames());
+    expect(evs).toHaveLength(2);
+    for (const f of evs) expect(f.event).not.toHaveProperty("opId");
+  });
+});
+

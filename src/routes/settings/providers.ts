@@ -57,11 +57,16 @@ function certificationResponse(runtime: LocalRuntimeInfo, modelId: string, resul
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
+  // "Is this provider usable?" asked with the SAME probe the turn asks
+  // (PROVIDERS[p].auth.hasCredential — see agent-request/resolve-provider.ts).
+  // This endpoint feeds the composer's provider chip, so the hand-rolled
+  // credential chain that used to live here let the UI confidently name a
+  // provider the turn would refuse to run. One probe, one answer.
+  const hasCreds = (id: ProviderId): boolean =>
+    PROVIDERS[id].auth.hasCredential({ secretsStore: ctx.secretsStore, configOpenAIKey: ctx.config.openaiApiKey });
+
   // Providers
   if (method === "GET" && url.pathname === "/api/providers") {
-    const { loadTokens } = await import("../../auth/index.js");
-    const { loadAnthropicTokens, isAnthropicCliAuthenticated } = await import("../../auth/anthropic.js");
-    const { loadXaiTokens } = await import("../../auth/xai.js");
     const providers: Array<{
       id: string; name: string; models: string[]; active: boolean;
       runtimes?: Array<{
@@ -71,16 +76,15 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       }>;
     }> = [];
     const localOnly = isLocalOnlyMode();
-    const hasOpenAIOAuth = !localOnly && !!loadTokens();
-    // Count BOTH our setup-token store (~/.lax) and the CLI's own credential
-    // file (~/.claude) — the paste-the-code sign-in writes the latter, and the
-    // chat subprocess authenticates from it. Without the CLI check a CLI-signed
-    // user is "Connected" in Settings but missing from this picker.
-    const hasAnthropicOAuth = !localOnly && (!!loadAnthropicTokens() || isAnthropicCliAuthenticated());
-    const hasXaiOAuth = !localOnly && !!loadXaiTokens();
-    const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY") || hasXaiOAuth;
-    const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
-    const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
+    const hasOpenAIOAuth = !localOnly && hasCreds("codex");
+    // The anthropic adapter counts BOTH our setup-token store (~/.lax) and the
+    // CLI's own credential file (~/.claude) — the paste-the-code sign-in writes
+    // the latter, and the chat subprocess authenticates from it. Without the CLI
+    // check a CLI-signed user is "Connected" in Settings but missing here.
+    const hasAnthropicOAuth = !localOnly && hasCreds("anthropic");
+    const hasXaiKey = hasCreds("xai");
+    const hasCerebrasKey = hasCreds("cerebras");
+    const hasOpenAIKey = hasCreds("openai");
     // Resolve current provider/model the same way the request path does
     // (see src/agent-request/resolve-provider.ts). The previous default
     // hardcoded "xai"/"grok-4" here regardless of which creds were
@@ -122,8 +126,8 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       const reg = PROVIDERS[currentProvider as ProviderId];
       if (reg?.defaultModel) currentModel = reg.defaultModel;
     }
-    const hasGeminiKey = ctx.secretsStore.has("GEMINI_API_KEY");
-    const hasCustomKey = ctx.secretsStore.has("CUSTOM_API_KEY");
+    const hasGeminiKey = hasCreds("gemini");
+    const hasCustomKey = hasCreds("custom");
     // Provider list, labels, and model arrays derived from PROVIDERS so
     // adding a provider only requires editing registry.ts.
     const pushFromRegistry = (id: ProviderId) =>
@@ -140,6 +144,9 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // re-swept every 60s) — never a live probe on this path. The
     // `runtimes` sibling carries per-runtime detail for the settings UI;
     // the flat `models` array keeps the existing renderer working as-is.
+    // Deliberate divergence from `hasCreds`: the local adapter is a keyless
+    // sentinel (always credentialed), so discovery — not the probe — gates this
+    // entry. Stricter than the probe, never looser.
     const localRuntimes = getLocalRuntimes();
     if (localRuntimesStale()) void refreshLocalRuntimes().catch(() => {});
     if (localRuntimes && localRuntimes.length > 0) {
@@ -169,16 +176,16 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // by name in the dropdown. When the API key isn't set yet, we still
     // surface the provider with an empty model list so the picker shows
     // the option (and the connect-key field appears, same UX as xAI/
-    // Gemini before keys are added).
+    // Gemini before keys are added). Deliberate divergence from `hasCreds`:
+    // listed keyless with no models — a connect affordance, not a runnable pick.
     if (!localOnly) {
-      const hasCloudKey = ctx.secretsStore.has("OLLAMA_CLOUD_API_KEY");
       // Read cloud models from cache — NEVER an inline ollama.com round-trip
       // here. That internet call (only present when a cloud key is set) was
       // the machine-specific 5s stall on the provider-list path. If a key is
       // set but the cache is cold, kick a background refresh and return what
       // we have; bootstrap-services warms it at startup.
       let cloudModels: string[] = [];
-      if (hasCloudKey) {
+      if (hasCreds("ollama-cloud")) {
         cloudModels = getCachedCloudModels();
         if (cloudModels.length === 0) {
           void refreshCloudOllama(ctx.secretsStore, getRuntimeConfig().ollamaCloudUrl).catch(() => {});
@@ -210,15 +217,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // Alias: if the user (or agent) asks for "openai" but only OAuth-based
     // Codex is configured, route to codex. Avoids saving a broken
     // provider=openai/model=gpt-5.4 config that dies on every turn.
-    if (provider === "openai") {
-      const hasOpenAIKey = !!(ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY"));
-      if (!hasOpenAIKey) {
-        try {
-          const { loadTokens } = await import("../../auth/index.js");
-          if (loadTokens()) { provider = "codex"; model = model || "gpt-5.4"; }
-        } catch {}
-      }
-    }
+    if (provider === "openai" && !hasCreds("openai") && hasCreds("codex")) { provider = "codex"; model = model || "gpt-5.4"; }
 
     const settings = { ...loadSettings() };
     // If no model specified, auto-pick the first model for the new provider —

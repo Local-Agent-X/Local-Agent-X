@@ -100,7 +100,9 @@ vi.mock("../src/auth/xai.js", () => ({ loadXaiTokens: () => null }));
 
 function makeCtx(): ServerContext {
   return {
-    secretsStore: { has: () => false },
+    // Empty vault. Both accessors: the route asks the canonical credential
+    // probe (PROVIDERS[id].auth.hasCredential), which reads `get`.
+    secretsStore: { has: () => false, get: () => undefined },
     config: {},
     broadcastAll,
   } as unknown as ServerContext;

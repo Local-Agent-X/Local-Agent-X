@@ -113,16 +113,15 @@ beforeEach(() => {
 });
 
 describe("attribution + quarantine registry (browser-partition)", () => {
-  // Cross-seam guard: the pure UA scrub is unit-tested in
-  // desktop/src/browser-partition-net.test.ts, but only this suite proves
-  // hardenSession actually APPLIES it to the partition. Without it the views
-  // advertise Electron and human-verification challenges never pass.
-  it("hardening strips the Electron/app product tokens from the partition's browsing UA", () => {
+  // REGRESSION GUARD (2026-07-29). A UA scrub that stripped the Electron/app
+  // tokens shipped here and BROKE Cloudflare login: the scrubbed UA claims plain
+  // "Chrome/<ver>" while Sec-CH-UA still reports bare Chromium, and Cloudflare
+  // cross-checks them — the mismatch fails verification ("There was a problem
+  // with verification"), where the honest Electron UA passes. Proven by bisect:
+  // UA-scrub-alone fails, full hardening + default UA passes. Leave the UA alone.
+  it("hardening does NOT override the partition's browsing user agent", () => {
     getHardenedPartitionSession(PART);
-    expect(h.fakeSession.uaSet.length).toBeGreaterThan(0);
-    const ua = h.fakeSession.uaSet[h.fakeSession.uaSet.length - 1];
-    expect(ua).not.toMatch(/Electron|local-agent-x/i);
-    expect(ua).toContain("Chrome/134.0.0.0");
+    expect(h.fakeSession.uaSet).toEqual([]);
   });
 
   it("attributes a download to the pool view whose webContents triggered it, at DOWNLOAD time", () => {

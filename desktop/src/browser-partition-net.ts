@@ -37,26 +37,6 @@ export function buildHardeningCspHeaders(
 	return headers;
 }
 
-// ── Browsing user agent (per-partition) ─────────
-// Electron's default UA carries `<appName>/<ver>` and `Electron/<ver>` product
-// tokens, which Cloudflare Turnstile (and peers) score as automation — the
-// challenge re-issues forever and the user can never pass it. Keep only the
-// standard Chrome UA products so the views present as the real Chromium they
-// run; the version stays the engine's own (never a hardcoded literal, which
-// would drift into a UA-vs-engine mismatch — itself a bot signal). Parenthesized
-// platform segments contain no `/`, so the product-token regex never touches them.
-// Scoped to the persist:lax-profile-* sessions ONLY — the main app window must
-// keep the Electron token because the renderer detects the desktop runtime via
-// /electron/i on navigator.userAgent (public/js/shared.js, voice tiers).
-const UA_ALLOWED_PRODUCTS = new Set(["Mozilla", "AppleWebKit", "Chrome", "Safari", "Version", "Mobile"]);
-
-export function cleanBrowsingUserAgent(defaultUa: string): string {
-	return defaultUa
-		.replace(/(\S+)\/\S+/g, (token, name: string) => (UA_ALLOWED_PRODUCTS.has(name) ? token : ""))
-		.replace(/ {2,}/g, " ")
-		.trim();
-}
-
 // ── Outbound body extraction (for the server-side taint scan) ─────────
 // Only in-memory `bytes` segments are readable here — file/blob upload segments
 // carry no bytes in the webRequest details (residual: a form file-upload of a

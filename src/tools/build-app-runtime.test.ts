@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   getToolDispatcher,
   getToolsForOp,
@@ -25,7 +25,7 @@ const descriptor: AppBuildRuntimeDescriptor = {
   strategy: "in-canonical-sub-agent",
   provider: "test-provider",
   appName: "resumable-app",
-  appDir: "C:\\workspace\\apps\\resumable-app",
+  appDir: resolve("workspace", "apps", "resumable-app"),
   appUrl: "/apps/resumable-app/",
   prompt: "Build it",
   brief: "Build it",

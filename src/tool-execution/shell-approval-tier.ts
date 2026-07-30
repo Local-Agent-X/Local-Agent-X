@@ -28,7 +28,7 @@
 // isn't a pure read/build/test all fall through to the prompt.
 
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import {
   execBasename,
   resolveRealArgv0,
@@ -211,8 +211,8 @@ function hasOutOfScopeAbsPath(tokens: string[], argv0: string): boolean {
     if (!isAbsolute(t)) continue;
     if (BENIGN_ABS_PATHS.has(t.toLowerCase())) continue;
     // Under the user's home → in scope. Anything else absolute → out of scope.
-    const norm = t.replace(/\/+$/, "");
-    if (norm === home || norm.startsWith(home + "/")) continue;
+    const rel = relative(home, t);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) continue;
     return true;
   }
   return false;

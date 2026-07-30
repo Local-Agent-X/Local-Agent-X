@@ -41,7 +41,9 @@ describe("qualification benchmark pack catalog", () => {
     for (const pack of qualificationBenchmarkCatalog.packs) {
       expect(pack.scenarios.map((scenario) => scenario.testPath)).toEqual(testPaths(scripts[pack.gate.script]));
       expect(qualificationSourceCommand(pack)).toBe(scripts[pack.gate.script]);
-      expect(pack.scenarios.every((scenario) => scenario.version === 1)).toBe(true);
+      expect(pack.scenarios.every((scenario) =>
+        Number.isInteger(scenario.version) && scenario.version >= 1 && scenario.version <= pack.version,
+      )).toBe(true);
     }
   });
 

@@ -62,8 +62,8 @@ function installerAssertionNames(): Map<string, string[]> {
   const pack = qualificationBenchmarkCatalog.packs.find((item) => item.id === "installer")!;
   const output = join(mkdtempSync(join(tmpdir(), "lax-release-list-")), "tests.json");
   roots.push(dirname(output));
-  const npmCli = resolve(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
-  execFileSync(process.execPath, [npmCli, "exec", "vitest", "list", ...pack.scenarios.map((scenario) => scenario.testPath), "--", `--json=${output}`]);
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  execFileSync(npm, ["exec", "vitest", "list", ...pack.scenarios.map((scenario) => scenario.testPath), "--", `--json=${output}`]);
   installerAssertions = new Map(pack.scenarios.map((scenario) => [scenario.testPath, []]));
   for (const item of JSON.parse(readFileSync(output, "utf8"))) {
     const path = relative(resolve("."), item.file).replaceAll("\\", "/");

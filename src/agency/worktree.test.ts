@@ -10,34 +10,14 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { resolve, join, relative } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { activeWorktrees, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
 import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
 import { getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
-
-// Simulate the executor's worktree path rewriting logic (extracted for testability)
-function rewritePathForWorktree(
-  toolName: string,
-  rawPath: string | undefined,
-  wtPath: string
-): string | undefined {
-  if (!rawPath && ["glob", "grep"].includes(toolName)) return wtPath;
-  if (!rawPath) return rawPath;
-
-  const isAbsolute = rawPath.startsWith("/") || rawPath.includes(":");
-  if (isAbsolute) {
-    if (["glob", "grep"].includes(toolName)) {
-      const resolved = resolve(rawPath);
-      if (relative(wtPath, resolved).startsWith("..")) return wtPath;
-      return rawPath; // within worktree already
-    }
-    return rawPath; // read/write/edit — absolute paths go through security
-  }
-  return join(wtPath, rawPath); // relative → prepend worktree
-}
+import { rewritePathForWorktree } from "../tool-execution/worktree-paths.js";
 
 const WT = join(tmpdir(), "lax-worktrees", "test-agent");
 

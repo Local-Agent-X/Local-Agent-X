@@ -4,9 +4,9 @@ import {
   SESSION_EVENT_TYPES,
   validateRelayPayload,
   type ProcessRelayRecord,
-} from "../canonical-loop/process-relay-contract.js";
-import { buildBrowserDelivery } from "../canonical-loop/process-relay-browser.js";
-import type { ProcessRelayGenerationState } from "../canonical-loop/process-relay-journal.js";
+  buildBrowserDelivery,
+  type ProcessRelayGenerationState,
+} from "../canonical-loop/public/process-relay.js";
 import { GLOBAL_EVENT_TYPES } from "../chat-ws/process-relay-delivery.js";
 import { wireBridgeBroadcasters } from "../chat-ws/bridge-wiring.js";
 import { clients } from "../chat-ws/state.js";

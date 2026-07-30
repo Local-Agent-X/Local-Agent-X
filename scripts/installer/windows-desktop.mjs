@@ -1,7 +1,5 @@
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { acquireDesktopPackage } from "./desktop-package.mjs";
+import { findWindowsDesktop, windowsDesktopCandidates } from "./windows-desktop-location.mjs";
 
 export async function installWindowsDesktop(context) {
   const { reporter, processes, env = process.env } = context;
@@ -35,11 +33,15 @@ export async function installWindowsDesktop(context) {
   } finally {
     acquired.cleanup();
   }
-  const appPath = join(
-    env.LOCALAPPDATA || join(context.homeDirectory || homedir(), "AppData", "Local"),
-    "Programs", "Local Agent X", "LocalAgentX.exe",
-  );
-  if (!existsSync(appPath)) reporter.fail(`The desktop installer completed but ${appPath} is missing.`);
+  const locationOptions = { env, homeDirectory: context.homeDirectory };
+  const appPath = findWindowsDesktop(locationOptions);
+  if (!appPath) {
+    reporter.fail(
+      `The desktop installer completed but LocalAgentX.exe is missing from: ${
+        windowsDesktopCandidates(locationOptions).join(" or ")
+      }. Check Windows Security → Protection history in case antivirus quarantined it.`,
+    );
+  }
   reporter.ok("Signed Local Agent X desktop app installed");
   return { appInstalled: true, appBuildPath: appPath };
 }

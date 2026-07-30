@@ -137,12 +137,24 @@ describe("AriKernel pre-dispatch gate (F3 closure)", () => {
 // enableBrowser and proceed — that now only works in a live, user-driven chat.
 describe("protected security settings gate", () => {
   it("allows a security-setting change in an interactive (local) session", async () => {
+    const sessionId = "security-setting-local";
     await expect(
       assertToolCallAllowed(
         { id: "p1", name: "setting", args: { field: "enableBrowser", value: true } },
-        { sessionId: "s", callContext: "local" },
+        {
+          sessionId,
+          callContext: "local",
+          approval: {
+            onEvent: (event) => {
+              if (event.type === "approval_requested") {
+                approvalModule.getApprovalManager().resolveApproval(event.approvalId, true, false);
+              }
+            },
+          },
+        },
       ),
     ).resolves.toBeUndefined();
+    approvalModule.getApprovalManager().clearSession(sessionId);
   });
 
   it("denies a security-setting change in an autonomous (cron) run", async () => {
@@ -199,6 +211,6 @@ describe("protected security settings gate", () => {
     await expect(assertToolCallAllowed(
       { id: "strict-off-no-ui", name: "setting", args: { field: "localOnlyMode", value: false } },
       { sessionId: "strict-disable-no-ui", callContext: "local" },
-    )).rejects.toThrow(/requires explicit user approval/);
+    )).rejects.toThrow(/user-owned security setting|explicit user approval/);
   });
 });

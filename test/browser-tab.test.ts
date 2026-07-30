@@ -116,6 +116,9 @@ vi.mock("../desktop/src/browser-partition", () => ({
   setDownloadDoneListener: () => {},
   listQuarantinedDownloads: () => [],
 }));
+vi.mock("../desktop/src/embedded-chrome-identity", () => ({
+  prepareEmbeddedChromeIdentityForNavigation: () => Promise.resolve(),
+}));
 vi.mock("../desktop/src/browser-view-popups", () => ({
   managePopups: () => ({ closeAll: () => {} }),
 }));

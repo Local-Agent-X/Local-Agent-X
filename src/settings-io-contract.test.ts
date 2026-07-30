@@ -31,6 +31,9 @@ const ALLOWLIST: Record<string, string> = {
   // throwaway sandbox dataDir that's deleted in the caller's finally — must NOT
   // touch the real cache/file.
   "src/self-edit/sandbox-gates.ts": "ephemeral self-edit probe seed, not the real settings",
+  // Reads the live settings only through loadSettings(); the raw write targets
+  // an isolated container projection, never the canonical user settings file.
+  "src/canonical-loop/container-runtime-projection.ts": "writes a canonical settings snapshot into container state",
 };
 
 describe("settings.json I/O class lock", () => {

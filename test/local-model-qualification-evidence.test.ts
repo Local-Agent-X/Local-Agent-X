@@ -53,6 +53,17 @@ describe("local qualification workspace-read evidence", () => {
     expect(evidence.readNonceSeen).toBe(true);
   });
 
+  it("accepts the current turn-provider announcement before the chat operation", () => {
+    const events = readEvents();
+    events.splice(1, 0, {
+      type: "turn_provider",
+      provider: "local",
+      model: "qualification-fake:1b",
+      rerouted: false,
+    });
+    expect(chatEvidence(events).readNonceSeen).toBe(true);
+  });
+
   it("accepts one exact response split across streaming deltas", () => {
     const events = readEvents({ assistant: "" });
     events.splice(-2, 1,
@@ -242,6 +253,14 @@ describe("local qualification workspace-read evidence", () => {
       expect(evidence.readNonceSeen).toBe(false);
     },
   );
+
+  it.each([
+    { type: "prepare_progress", step: "context" },
+    { type: "turn_provider", provider: "local", model: "qualification-fake:1b", rerouted: false },
+  ])("accepts current product event type $type as valid SSE", async (event) => {
+    const evidence = chatEvidence(await readSse(new Response(`data: ${JSON.stringify(event)}\n\n`)));
+    expect(evidence.errorEvents).toBe(0);
+  });
 
   const invalidFrames = [
     { type: "op_heartbeat", opId: "op-read-1" },

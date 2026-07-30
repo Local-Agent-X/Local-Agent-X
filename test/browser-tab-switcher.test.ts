@@ -159,7 +159,7 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		await g.laxBrowserTab.refreshSwitcher();
 		const agentPill = slot().querySelector('button[data-view-id="view-s1-work"]') as HTMLButtonElement;
 		expect(agentPill).toBeTruthy();
-		agentPill.click();
+		agentPill.dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true }));
 		expect(bridge.switchView).toHaveBeenCalledWith("view-s1-work");
 	});
 

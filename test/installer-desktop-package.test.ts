@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireDesktopPackage, DESKTOP_FEED_ROOT } from "../scripts/installer/desktop-package.mjs";
+import { findWindowsDesktop, windowsDesktopCandidates } from "../scripts/installer/windows-desktop-location.mjs";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -78,7 +79,20 @@ describe("installer packaged-app seams", () => {
     expect(windows).not.toContain("CreateShortcut");
     expect(mac).not.toContain('["run", "dist"]');
     expect(viewModel).not.toContain("loader.js");
-    expect(viewModel).toContain('"Programs", "Local Agent X", "LocalAgentX.exe"');
+    expect(viewModel).toContain('"local-agent-x-desktop", "LocalAgentX.exe"');
+  });
+
+  it("resolves electron-builder's one-click package-name directory before the legacy product-name directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-win-location-"));
+    roots.push(root);
+    const options = { env: {}, homeDirectory: root };
+    const [current, legacy] = windowsDesktopCandidates(options);
+    expect(current).toBe(join(root, "AppData", "Local", "Programs", "local-agent-x-desktop", "LocalAgentX.exe"));
+    expect(legacy).toBe(join(root, "AppData", "Local", "Programs", "Local Agent X", "LocalAgentX.exe"));
+    expect(findWindowsDesktop(options)).toBeNull();
+    mkdirSync(join(current, ".."), { recursive: true });
+    writeFileSync(current, "signed-app");
+    expect(findWindowsDesktop(options)).toBe(current);
   });
 
   it("requires Windows Authenticode and macOS codesign verification", () => {

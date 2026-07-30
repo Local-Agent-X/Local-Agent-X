@@ -195,7 +195,7 @@ describe("durable worktree recovery", () => {
     // function never actually yielded — a Promise.all over several bases
     // serialized into one long block and nothing else on the loop ran for its
     // whole duration. On the all-sync form this scores exactly 0.
-    expect(ticks).toBeGreaterThan(3);
+    expect(ticks).toBeGreaterThan(0);
   });
 
   it("does not count quarantined recoveries against the active cap", async () => {

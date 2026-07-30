@@ -23,7 +23,7 @@ import { opDir } from "../ops/event-log.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { getLocalRuntimeById } from "../local-runtimes/index.js";
 import { verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
-import { settingsPath } from "../settings.js";
+import { loadSettings } from "../settings.js";
 import {
   DockerCliExecutionRuntime,
   type DockerContainerSpec,
@@ -93,7 +93,7 @@ export async function createContainerRuntimeProjection(
     mkdirSync(state, { mode: 0o700 });
     mkdirSync(secrets, { mode: 0o700 });
     writeJson(join(state, "config.json"), projectedConfig());
-    copyOptionalJson(settingsPath(), join(state, "settings.json"));
+    writeJson(join(state, "settings.json"), loadSettings());
     copyOptionalJson(join(getLaxDir(), "tool-policy.json"), join(state, "tool-policy.json"));
 
     const credential = await resolveCredential(descriptor.credentialProvider, {

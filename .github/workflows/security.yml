@@ -91,6 +91,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate test manifest
+        run: npm run test:prepare
+
       # BLOCKING on Windows — LAX is Windows-primary, so a Windows-only
       # regression must fail the gate, not merge green. The suite already
       # self-skips its POSIX-only CASES at runtime via it.skipIf(process.platform

@@ -24,6 +24,7 @@ import { unifiedRegistry } from "../../src/tools/registry.js";
 import { writeTool } from "../../src/tools/file-tools.js";
 import type { ToolDefinition } from "../../src/types.js";
 import { setRuntimeConfig } from "../../src/config.js";
+import { configSchema } from "../../src/config-schema.js";
 import { startAriKernel } from "../../src/ari-kernel/index.js";
 import { getOrInitSecretsStore } from "../../src/secrets.js";
 
@@ -94,8 +95,17 @@ function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
   return sealDelegatedRuntime(opId, descriptor);
 }
 
+function installFixtureRuntimeConfig(): void {
+  setRuntimeConfig(configSchema.parse({
+    workspace: process.cwd(),
+    authToken: "restart-test-token",
+    ollamaUrl: baseURL.replace(/\/v1$/, ""),
+    ollamaCloudUrl: baseURL.replace(/\/v1$/, ""),
+  }));
+}
+
 function persistInterruptedOperation(): never {
-  setRuntimeConfig({ workspace: process.cwd(), authToken: "restart-test-token", ollamaUrl: baseURL.replace(/\/v1$/, ""), ollamaCloudUrl: baseURL.replace(/\/v1$/, "") } as never);
+  installFixtureRuntimeConfig();
   if (mutation === "secrets-runtime") {
     getOrInitSecretsStore(process.env.LAX_DATA_DIR!).set("CUSTOM_API_KEY", "restart-store-secret");
     writeFileSync(join(process.env.LAX_DATA_DIR!, "settings.json"), JSON.stringify({ customBaseUrl: baseURL }));
@@ -242,7 +252,7 @@ async function closeProvider(server: Server): Promise<void> {
 }
 
 async function resumeThroughBootstrap(): Promise<never> {
-  setRuntimeConfig({ workspace: process.cwd(), authToken: "restart-test-token", ollamaUrl: baseURL.replace(/\/v1$/, ""), ollamaCloudUrl: baseURL.replace(/\/v1$/, "") } as never);
+  installFixtureRuntimeConfig();
   applyMutation();
   if (mutation === "settings-changed" || mutation === "settings-changed-cloud") {
     writeFileSync(join(process.env.LAX_DATA_DIR!, "settings.json"), JSON.stringify({ provider: "anthropic", model: "mutated-settings-model" }));

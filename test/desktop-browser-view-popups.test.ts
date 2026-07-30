@@ -66,12 +66,9 @@ function fakeWindow(): FakeWindow {
 	};
 }
 
-function deps(): PopupDeps & { hardened: WebContents[] } {
-	const hardened: WebContents[] = [];
+function deps(): PopupDeps {
 	return {
-		hardened,
 		webPreferences: () => ({ partition: "persist:lax-profile-test", sandbox: true }),
-		harden: (wc) => { hardened.push(wc); },
 	};
 }
 
@@ -87,14 +84,13 @@ describe("managePopups", () => {
 		});
 	});
 
-	it("hardens every created child and tracks it", () => {
+	it("tracks every created child", () => {
 		const view = fakeContents();
 		const d = deps();
 		const tracker = managePopups(view.wc, d);
 		const child = fakeWindow();
 		view.open();
 		view.createWindow(child);
-		expect(d.hardened).toContain(child.wc.wc);
 		expect(tracker.count()).toBe(1);
 	});
 
@@ -109,7 +105,7 @@ describe("managePopups", () => {
 		const grandchild = fakeWindow();
 		expect(child.wc.open().action).toBe("allow");
 		child.wc.createWindow(grandchild);
-		expect(d.hardened).toContain(grandchild.wc.wc);
+		expect(grandchild.wc.open().action).toBe("allow");
 		expect(tracker.count()).toBe(2);
 	});
 

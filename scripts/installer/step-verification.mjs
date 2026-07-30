@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { EMBED_MODEL, NODE_MAJOR_MIN } from "./contract.mjs";
 import { resolvePosixShell } from "./windows-tools.mjs";
+import { findWindowsDesktop } from "./windows-desktop-location.mjs";
 
 const present = (value) => value ? "present" : "absent";
 
@@ -50,8 +51,10 @@ function verifyDesktop(context) {
     if (!processes.has("codesign")) return "present";
     return present(processes.spawnSync("codesign", ["--verify", "--deep", "--strict", apps[0]], { stdio: "ignore" }).status === 0);
   }
-  const localAppData = env.LOCALAPPDATA || join(context.homeDirectory || homedir(), "AppData", "Local");
-  return present(existsSync(join(localAppData, "Programs", "Local Agent X", "LocalAgentX.exe")));
+  return present(Boolean(findWindowsDesktop({
+    env,
+    homeDirectory: context.homeDirectory || homedir(),
+  })));
 }
 
 export function verifyInstallStep(id, context, evidence = {}) {

@@ -217,7 +217,8 @@ describe("composer overflow folding", () => {
     // .home-launcher renders inside #messages, so its width is the chat
     // column's — the last window-scoped rule aimed at chat-pane content.
     const step560 = css.slice(css.indexOf("@container chat (max-width: 560px)"));
-    expect(step560.slice(0, step560.indexOf("}\n"))).toContain(".home-launcher .hl-starters");
+    expect(step560.slice(0, step560.indexOf("@container chat (max-width: 460px)")))
+      .toContain(".home-launcher .hl-starters");
     expect(css).not.toMatch(/@media \(max-width:560px\)\{\.home-launcher/);
   });
 

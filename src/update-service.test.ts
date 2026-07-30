@@ -48,7 +48,11 @@ describe("native runtime update check", () => {
     expect(result.requiredElectronVersion).toBe("43.2.0");
     expect(result.requiredChromiumVersion).toBe("150.0.0.0");
     expect(result.nativeUpdateRequired).toBe(true);
-    expect(result.nativeInstallerUrl).toMatch(/releases\/download\/rolling\/Install\.Local\.Agent\.X\./);
+    if (process.platform === "darwin" || process.platform === "win32") {
+      expect(result.nativeInstallerUrl).toMatch(/releases\/download\/rolling\/Install\.Local\.Agent\.X\./);
+    } else {
+      expect(result.nativeInstallerUrl).toBeUndefined();
+    }
     expect(typeof result.updateAvailable).toBe("boolean");
   });
 

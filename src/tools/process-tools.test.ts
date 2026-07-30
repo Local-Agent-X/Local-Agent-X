@@ -16,7 +16,10 @@ import {
 import type { ToolResult } from "../types.js";
 
 // A node one-liner that stays alive until killed.
-const FOREVER = `"${process.execPath}" -e "setInterval(()=>{},1000)"`;
+const nodeExecutable = process.platform === "win32"
+  ? process.execPath.replace(/\\/g, "/")
+  : process.execPath;
+const FOREVER = `"${nodeExecutable}" -e "setInterval(()=>{},1000)"`;
 
 // Track every session we start so afterEach can reap leaks even on failure.
 const spawned = new Set<string>();

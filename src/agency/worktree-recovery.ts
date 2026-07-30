@@ -15,6 +15,7 @@ import {
 import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
 import { reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
 import { currentProcessIncarnation, processIncarnationIsLive } from "./worktree-process.js";
+import { isSelfEditLockHeldByLiveProcess } from "../self-edit/global-lock.js";
 
 interface OwnershipRecord {
   version: 2;
@@ -392,5 +393,6 @@ export async function reconcileWorktreeBase(
 }
 
 export async function sweepOrphanWorktreeJunctions(): Promise<void> {
+  if (await isSelfEditLockHeldByLiveProcess()) return;
   await reconcileWorktreeBase();
 }

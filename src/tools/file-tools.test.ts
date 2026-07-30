@@ -12,7 +12,10 @@ import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js"
 import { writeTool, editTool, editLinesTool, multiEditTool } from "./file-tools.js";
 import { processStartTool, processKillTool, processStatusTool } from "./process-tools.js";
 
-const FOREVER = `"${process.execPath}" -e "setInterval(()=>{},1000)"`;
+const nodeExecutable = process.platform === "win32"
+  ? process.execPath.replace(/\\/g, "/")
+  : process.execPath;
+const FOREVER = `"${nodeExecutable}" -e "setInterval(()=>{},1000)"`;
 const spawned = new Set<string>();
 const dirs = new Set<string>();
 

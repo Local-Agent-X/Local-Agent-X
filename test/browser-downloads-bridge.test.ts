@@ -59,6 +59,9 @@ vi.mock("../desktop/src/browser-views", () => ({
   // in browser-download-routing.test.ts (viewTrust) — a no-op here.
   clearAdoptedViews: () => {},
 }));
+vi.mock("../desktop/src/embedded-chrome-identity", () => ({
+  registerEmbeddedChromeIdentitySession: () => {},
+}));
 
 import {
   getHardenedPartitionSession,

@@ -155,6 +155,27 @@ jobs:
             exit 1
           }
 
+      - name: Smoke-test the signed Windows desktop installer
+        shell: pwsh
+        run: |
+          $package = "desktop/release/Local-Agent-X-Desktop-$((Get-Content desktop/package.json | ConvertFrom-Json).version)-win-x64.exe"
+          $installed = Join-Path $env:LOCALAPPDATA "Programs\local-agent-x-desktop\LocalAgentX.exe"
+          $process = Start-Process -FilePath $package -ArgumentList "/S" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            Write-Error "Signed desktop installer smoke test failed with exit $($process.ExitCode)."
+            exit 1
+          }
+          if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+            Write-Error "Signed desktop installer exited successfully but did not create $installed."
+            Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA "Programs") -Recurse -Filter "LocalAgentX.exe" -ErrorAction SilentlyContinue
+            exit 1
+          }
+          $sig = Get-AuthenticodeSignature -LiteralPath $installed
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -cne $env:WIN_SIGN_EXPECTED_SUBJECT) {
+            Write-Error "Installed desktop executable failed signature verification."
+            exit 1
+          }
+
       - name: Stage bundled Electron runtime
         # Download the pinned Electron archive into installer/electron-bundle/ so
         # the publish below embeds it (Installer.csproj). The installed app then

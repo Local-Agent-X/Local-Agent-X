@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("electron", () => ({
+  app: { isPackaged: false },
   ipcMain: {
     handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
       h.handlers.set(channel, fn);
@@ -41,6 +42,7 @@ vi.mock("../desktop/src/browser-views", () => ({
   getBrowserView: (viewId: string) => (h.viewsById.has(viewId) ? h.viewsById.get(viewId) : h.fakeView),
   getAttachedViewId: () => null,
   setPoolChangedListener: (fn: (() => void) | null) => { h.poolListener = fn; },
+  setAgentViewEvictedNotifier: () => {},
   listBrowserViews: () => h.poolList,
   hideBrowserView: () => {},
   setBrowserChatOverlay: () => {},

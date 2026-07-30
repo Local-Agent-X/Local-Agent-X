@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 64 top-level dirs · 64 live · 0 with no live importer · 1484 non-test source files · 0 god files (>400 LOC).
+**Totals:** 64 top-level dirs · 64 live · 0 with no live importer · 1485 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -51,13 +51,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
-| `src/tool-execution/` | 11 | 37 | XL |  |
+| `src/tool-execution/` | 11 | 38 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
+| `src/self-edit/` | 10 | 20 | L |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
-| `src/self-edit/` | 9 | 20 | L |  |
 | `src/server/` *(entrypoint)* | 9 | 45 | XL |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/sync/` | 8 | 19 | L |  |

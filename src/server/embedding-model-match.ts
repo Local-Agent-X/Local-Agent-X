@@ -8,7 +8,7 @@
  * model installed as `:335m` never matched a bare target name and got re-pulled
  * (~670MB) on every boot.
  */
-import { isEmbeddingModel } from "../canonical-loop/model-capabilities.js";
+import { isEmbeddingModel } from "../canonical-loop/index.js";
 
 /**
  * Does `targetModel` match any of `installedNames`?

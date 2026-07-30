@@ -23,7 +23,7 @@ describe("shared mutation-lock async caller contract", () => {
   });
 
   it("awaits the kernel-backed boot-sweep observation", () => {
-    expect(source("src/agency/worktree-junctions.ts")).toMatch(/await isSelfEditLockHeldByLiveProcess/);
+    expect(source("src/agency/worktree-recovery.ts")).toMatch(/await isSelfEditLockHeldByLiveProcess/);
   });
 
   it("routes installer state mutations through the identity-bound data root", () => {

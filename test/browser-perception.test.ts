@@ -38,6 +38,9 @@ vi.mock("../desktop/src/browser-partition", () => ({
   listQuarantinedDownloads: () => [],
 }));
 vi.mock("../desktop/src/browser-ipc", () => ({ autoSurfaceAgentView: () => {} }));
+vi.mock("../desktop/src/embedded-chrome-identity", () => ({
+  prepareEmbeddedChromeIdentityForNavigation: () => Promise.resolve(),
+}));
 vi.mock("../desktop/src/in-app-browser", () => ({
   isUserActive: () => false,
   markAgentInput: () => {},

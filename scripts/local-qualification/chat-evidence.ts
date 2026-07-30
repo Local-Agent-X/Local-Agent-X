@@ -15,6 +15,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "context_status", "visual", "bg_op_queued", "bg_op_queue_reordered", "bg_op_started", "bg_op_progress",
   "bg_op_completed", "bg_op_nudge", "av_blocked_warning", "worker_stream", "worker_done", "chat_op_started",
   "inject_queued", "inject_consumed", "plan_mode_changed", "tool_chip", "op_heartbeat",
+  "prepare_progress", "turn_provider",
 ]);
 const INVALID_SSE_MESSAGE = "qualification received invalid SSE data";
 
@@ -44,9 +45,11 @@ export function chatEvidence(events: Array<Record<string, unknown>>): ChatResult
     && isToolStart(starts[0])
     && isToolEnd(ends[0], String(starts[0].toolCallId), exactReadResult);
   const prelude = events.slice(0, startIndex);
-  const validPrelude = prelude.length === 2
-    && isContextStatus(prelude[0])
-    && isChatOperationStarted(prelude[1])
+  const validPrelude = isContextStatus(prelude[0])
+    && (
+      (prelude.length === 2 && isChatOperationStarted(prelude[1]))
+      || (prelude.length === 3 && isTurnProvider(prelude[1]) && isChatOperationStarted(prelude[2]))
+    )
     && !containsNonce(events.slice(0, endIndex));
   const continuation = events.slice(endIndex + 1, doneIndex);
   const validContinuation = continuation.length > 0
@@ -86,6 +89,14 @@ function isChatOperationStarted(event: Record<string, unknown>): boolean {
   return hasExactOwnKeys(event, ["type", "opId"])
     && event.type === "chat_op_started"
     && isNonemptyString(event.opId);
+}
+
+function isTurnProvider(event: Record<string, unknown>): boolean {
+  return hasExactOwnKeys(event, ["type", "provider", "model", "rerouted"])
+    && event.type === "turn_provider"
+    && isNonemptyString(event.provider)
+    && isNonemptyString(event.model)
+    && typeof event.rerouted === "boolean";
 }
 
 function isToolStart(event: Record<string, unknown>): boolean {

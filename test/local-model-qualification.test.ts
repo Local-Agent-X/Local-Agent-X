@@ -333,7 +333,7 @@ describe("local model qualification workflow", () => {
       expect(scorecard.model.tag).toBe(service.model);
       expect(scorecard.cleanup.ok).toBe(true);
       expect(driver.workspaceEvents.map((event) => event.type), JSON.stringify(driver.workspaceEvents)).toEqual([
-        "context_status", "chat_op_started", "tool_start", "tool_end", "stream", "done",
+        "context_status", "turn_provider", "chat_op_started", "tool_start", "tool_end", "stream", "done",
       ]);
       expect(existsSync(ownedRoot)).toBe(false);
       expect(service.counts.forbidden).toBe(0);

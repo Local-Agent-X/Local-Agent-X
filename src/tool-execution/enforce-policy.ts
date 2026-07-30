@@ -18,10 +18,10 @@ import { logRetry } from "../retry-telemetry.js";
 import { assertToolCallAllowed } from "./pre-dispatch.js";
 import { securityDenyRecovery } from "../tool-policy/packs/security-layer-pack.js";
 import { ToolBlocked } from "./errors.js";
-import { join, resolve, relative } from "node:path";
 import type { Phase, PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE, BLOCK } from "./context.js";
 import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
+import { rewritePathForWorktree } from "./worktree-paths.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
 // Tool lookup + arg validation live in arg-validation.ts (LOC ceiling);
@@ -174,22 +174,12 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
     const { getWorktreePath } = await import("../agency/worktree.js");
     const wtPath = getWorktreePath(agentId);
     if (!wtPath) return;
-    if (WORKTREE_PATH_TOOLS.has(tc.name) && args.path) {
-      const rawPath = String(args.path);
-      const isAbsolute = rawPath.startsWith("/") || rawPath.includes(":");
-      if (isAbsolute) {
-        if (["glob", "grep", "structural_search"].includes(tc.name)) {
-          const resolved = resolve(rawPath);
-          if (relative(wtPath, resolved).startsWith("..")) {
-            args.path = wtPath;
-          }
-        }
-      } else {
-        args.path = join(wtPath, rawPath);
-      }
-    }
-    if (["glob", "grep", "structural_search"].includes(tc.name) && !args.path) {
-      args.path = wtPath;
+    if (WORKTREE_PATH_TOOLS.has(tc.name)) {
+      args.path = rewritePathForWorktree(
+        tc.name,
+        args.path === undefined ? undefined : String(args.path),
+        wtPath,
+      );
     }
     if (tc.name === "bash") args._cwd = wtPath;
   } catch { /* worktree module not available */ }

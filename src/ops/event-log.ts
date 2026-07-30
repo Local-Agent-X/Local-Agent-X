@@ -35,6 +35,9 @@ const OPS_ROOT = resolve(OPS_BASE);
  * the root before touching disk.
  */
 export function opDir(opId: string): string {
+  if (opId.includes("\\")) {
+    throw new Error(`[event-log] op id escapes operations root: ${JSON.stringify(opId)}`);
+  }
   const dir = join(OPS_BASE, opId);
   const resolved = resolve(dir);
   if (resolved !== OPS_ROOT && !resolved.startsWith(OPS_ROOT + sep)) {

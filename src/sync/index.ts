@@ -176,6 +176,7 @@ export class AgentSync {
         logger.warn("[sync] aborted a stranded rebase left by a killed git process");
       } catch {
         for (const d of rebaseDirs) rmSync(d, { recursive: true, force: true });
+        rmSync(lock, { force: true });
         logger.warn("[sync] removed corrupt stranded rebase state (.git/rebase-*)");
       }
     }

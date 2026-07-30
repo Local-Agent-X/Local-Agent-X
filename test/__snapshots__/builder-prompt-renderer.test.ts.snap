@@ -21,7 +21,7 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/todo-app/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/todo-app/index.html
@@ -33,6 +33,16 @@ Typography: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif. Scale: h1
 Radius: 8px controls / 12px cards. Shadow: 0 1px 2px rgba(0,0,0,.06), 0 6px 16px rgba(0,0,0,.05). Spacing: 4px base (4/8/12/16/24/32/48).
 Attitude: Clean, contemporary, content-first — polish through restraint, one clear center of gravity per view.
 Layout & hierarchy: Header → primary content → supporting sections → footer. Card/list groupings with generous gutters; one clear primary action per view.
+
+CRAFT — what a polished, designed result concretely means (apply to every build):
+• DEPTH: build a layered surface hierarchy with the archetype's shadow/border tokens — page background sits under cards, cards under any popover/menu. Flat, borderless blocks on a same-color background read as unfinished; separate surfaces with a subtle shadow OR a 1px border, not both heavy.
+• TYPE LADDER: use the archetype's type scale to make hierarchy obvious at a glance — ONE dominant page title, clearly smaller/lighter section headings, and body/label tiers that differ visibly in BOTH size and weight. If headings and body look nearly the same size, the hierarchy has failed.
+• SPACING RHYTHM: commit to one spacing scale (the archetype's base) and use it everywhere — generous, even padding inside cards and around sections; related items grouped tighter than unrelated ones. Cramped or arbitrary, inconsistent gaps are the fastest tell of an unpolished UI.
+• ALIGNMENT: align everything to a shared grid and shared edges — labels, values, controls, and card contents line up column-to-column. Ragged, off-by-a-few-pixels alignment looks broken even when nothing is.
+• STATES (do not ship only the happy path): design the EMPTY state as a real, intentional view (one short line + the primary action, never a blank void); show a LOADING state (skeletons or a spinner, never a frozen blank); handle ERRORS inline with a plain human message; and give every interactive element distinct HOVER, ACTIVE, FOCUS, and DISABLED styling. A UI that only looks right when it is full of data is not finished.
+• FOCAL POINT: give each view one clear center of gravity — the primary action or the key figure is visually dominant (size, weight, or color), and secondary things recede. Avoid a flat field where every element competes for attention.
+• COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
+• CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
@@ -79,11 +89,21 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/trading-bot/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/trading-bot/index.html
 - Do NOT ask questions — just build it based on the instructions
+
+CRAFT — what a polished, designed result concretely means (apply to every build):
+• DEPTH: build a layered surface hierarchy with the archetype's shadow/border tokens — page background sits under cards, cards under any popover/menu. Flat, borderless blocks on a same-color background read as unfinished; separate surfaces with a subtle shadow OR a 1px border, not both heavy.
+• TYPE LADDER: use the archetype's type scale to make hierarchy obvious at a glance — ONE dominant page title, clearly smaller/lighter section headings, and body/label tiers that differ visibly in BOTH size and weight. If headings and body look nearly the same size, the hierarchy has failed.
+• SPACING RHYTHM: commit to one spacing scale (the archetype's base) and use it everywhere — generous, even padding inside cards and around sections; related items grouped tighter than unrelated ones. Cramped or arbitrary, inconsistent gaps are the fastest tell of an unpolished UI.
+• ALIGNMENT: align everything to a shared grid and shared edges — labels, values, controls, and card contents line up column-to-column. Ragged, off-by-a-few-pixels alignment looks broken even when nothing is.
+• STATES (do not ship only the happy path): design the EMPTY state as a real, intentional view (one short line + the primary action, never a blank void); show a LOADING state (skeletons or a spinner, never a frozen blank); handle ERRORS inline with a plain human message; and give every interactive element distinct HOVER, ACTIVE, FOCUS, and DISABLED styling. A UI that only looks right when it is full of data is not finished.
+• FOCAL POINT: give each view one clear center of gravity — the primary action or the key figure is visually dominant (size, weight, or color), and secondary things recede. Avoid a flat field where every element competes for attention.
+• COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
+• CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
@@ -127,7 +147,7 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/initech/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/initech/index.html
@@ -139,6 +159,16 @@ Typography: 'Sora', 'Inter', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72p
 Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px rgba(124,58,237,.3). Spacing: 4px base; generous 80–96px section padding.
 Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
 Layout & hierarchy: Hero (headline + sub + primary CTA) → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
+
+CRAFT — what a polished, designed result concretely means (apply to every build):
+• DEPTH: build a layered surface hierarchy with the archetype's shadow/border tokens — page background sits under cards, cards under any popover/menu. Flat, borderless blocks on a same-color background read as unfinished; separate surfaces with a subtle shadow OR a 1px border, not both heavy.
+• TYPE LADDER: use the archetype's type scale to make hierarchy obvious at a glance — ONE dominant page title, clearly smaller/lighter section headings, and body/label tiers that differ visibly in BOTH size and weight. If headings and body look nearly the same size, the hierarchy has failed.
+• SPACING RHYTHM: commit to one spacing scale (the archetype's base) and use it everywhere — generous, even padding inside cards and around sections; related items grouped tighter than unrelated ones. Cramped or arbitrary, inconsistent gaps are the fastest tell of an unpolished UI.
+• ALIGNMENT: align everything to a shared grid and shared edges — labels, values, controls, and card contents line up column-to-column. Ragged, off-by-a-few-pixels alignment looks broken even when nothing is.
+• STATES (do not ship only the happy path): design the EMPTY state as a real, intentional view (one short line + the primary action, never a blank void); show a LOADING state (skeletons or a spinner, never a frozen blank); handle ERRORS inline with a plain human message; and give every interactive element distinct HOVER, ACTIVE, FOCUS, and DISABLED styling. A UI that only looks right when it is full of data is not finished.
+• FOCAL POINT: give each view one clear center of gravity — the primary action or the key figure is visually dominant (size, weight, or color), and secondary things recede. Avoid a flat field where every element competes for attention.
+• COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
+• CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).
@@ -187,7 +217,7 @@ RULES:
 - Create PROJECT.md with app description and status
 - Pick ONE emoji that best represents this app and write JUST that emoji (nothing else) to a file named .icon in /abs/workspace/apps/biz/ — it becomes the app's launcher icon on the phone home screen. Avoid generic glyphs (📦/📁/📄)
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
+- Make it look designed, not just functional — follow the DESIGN SYSTEM and CRAFT rules below exactly
 - Building something that isn't a web page — a Rust/Go/C/C++/native program, a CLI, anything needing a real compiler or runtime? Actually build and RUN it with its real toolchain via bash (e.g. \`cargo run\`, \`go run .\`, \`cc main.c && ./a.out\`), and make index.html show the REAL output it produced — embed the generated image/file, or the captured real stdout. Do NOT reimplement the program in browser JavaScript and present that as its result.
 - Never claim a preview "matches", is "identical to", or is "the same as" a program's real output unless you actually ran that program and are showing its real output. If you genuinely can't run the toolchain in this sandbox, say so plainly and show only what you verified — an honest "couldn't compile/run it here" beats a fabricated match.
 - The app will be served at http://127.0.0.1:7007/apps/biz/index.html
@@ -199,6 +229,16 @@ Typography: 'Sora', 'Inter', system-ui, sans-serif. Scale: h1 clamp(40px,6vw,72p
 Radius: 10px cards / 999px pill CTAs. Shadow: CTA 0 8px 24px rgba(124,58,237,.3). Spacing: 4px base; generous 80–96px section padding.
 Attitude: Persuasive and momentum-building — one clear narrative that guides the eye straight to a single conversion goal.
 Layout & hierarchy: Hero (headline + sub + primary CTA) → proof/benefits → features → testimonial/logos → repeated CTA. One dominant action throughout.
+
+CRAFT — what a polished, designed result concretely means (apply to every build):
+• DEPTH: build a layered surface hierarchy with the archetype's shadow/border tokens — page background sits under cards, cards under any popover/menu. Flat, borderless blocks on a same-color background read as unfinished; separate surfaces with a subtle shadow OR a 1px border, not both heavy.
+• TYPE LADDER: use the archetype's type scale to make hierarchy obvious at a glance — ONE dominant page title, clearly smaller/lighter section headings, and body/label tiers that differ visibly in BOTH size and weight. If headings and body look nearly the same size, the hierarchy has failed.
+• SPACING RHYTHM: commit to one spacing scale (the archetype's base) and use it everywhere — generous, even padding inside cards and around sections; related items grouped tighter than unrelated ones. Cramped or arbitrary, inconsistent gaps are the fastest tell of an unpolished UI.
+• ALIGNMENT: align everything to a shared grid and shared edges — labels, values, controls, and card contents line up column-to-column. Ragged, off-by-a-few-pixels alignment looks broken even when nothing is.
+• STATES (do not ship only the happy path): design the EMPTY state as a real, intentional view (one short line + the primary action, never a blank void); show a LOADING state (skeletons or a spinner, never a frozen blank); handle ERRORS inline with a plain human message; and give every interactive element distinct HOVER, ACTIVE, FOCUS, and DISABLED styling. A UI that only looks right when it is full of data is not finished.
+• FOCAL POINT: give each view one clear center of gravity — the primary action or the key figure is visually dominant (size, weight, or color), and secondary things recede. Avoid a flat field where every element competes for attention.
+• COHESION: one radius, one border treatment, one icon set, one control style across the whole app — buttons, inputs, and cards share a single visual language. Mismatched components read as assembled, not designed.
+• CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.
 
 UNIVERSAL DESIGN RULES — apply to every build:
 • ICONS: use crisp inline SVG icons from one consistent stroke/line set; never use emoji as UI icons. Give each icon an accessible label (aria-label or adjacent text).

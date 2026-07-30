@@ -170,13 +170,21 @@ public partial class MainWindowViewModel : ObservableObject
         {
             if (OperatingSystem.IsWindows())
             {
-                var app = Path.Combine(
+                var programs = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Programs", "Local Agent X", "LocalAgentX.exe");
-                if (!File.Exists(app))
+                    "Programs");
+                var app = new[]
+                {
+                    Path.Combine(programs, "local-agent-x-desktop", "LocalAgentX.exe"),
+                    Path.Combine(programs, "Local Agent X", "LocalAgentX.exe"),
+                }
+                    .Where(File.Exists)
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .FirstOrDefault();
+                if (app is null)
                 {
                     Screen = "error";
-                    ErrorMessage = "The packaged Local Agent X app is missing. Re-run the installer.";
+                    ErrorMessage = "The packaged Local Agent X app is missing. Check Windows Security → Protection history, then re-run the installer.";
                     return;
                 }
                 Process.Start(new ProcessStartInfo

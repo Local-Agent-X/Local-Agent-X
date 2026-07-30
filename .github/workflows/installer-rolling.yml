@@ -52,6 +52,8 @@ on:
       - "scripts/fetch-electron-bundle.mjs"
       - "desktop/package.json"
       - "desktop/package-lock.json"
+      - "desktop/src/**"
+      - "desktop/build/**"
       - ".github/workflows/installer-rolling.yml"
   workflow_dispatch:
 
@@ -66,6 +68,12 @@ jobs:
       AZURE_SIGN_TENANT_ID: ${{ secrets.AZURE_SIGN_TENANT_ID }}
       AZURE_SIGN_CLIENT_ID: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
       AZURE_SIGN_CLIENT_SECRET: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}
+      # electron-builder's Azure Trusted Signing provider consumes the standard
+      # Azure Identity names. Keep the repository's existing secret contract and
+      # map it here so signing happens before latest.yml hashes are generated.
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGN_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGN_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}
       AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
       AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
       AZURE_SIGN_CERT_PROFILE: ${{ secrets.AZURE_SIGN_CERT_PROFILE }}
@@ -102,6 +110,49 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Build signed Windows desktop package and update metadata
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run build
+          npx electron-builder --win nsis --x64 --publish never `
+            --config.win.azureSignOptions.endpoint="$env:AZURE_SIGN_ENDPOINT" `
+            --config.win.azureSignOptions.certificateProfileName="$env:AZURE_SIGN_CERT_PROFILE" `
+            --config.win.azureSignOptions.codeSigningAccountName="$env:AZURE_SIGN_ACCOUNT" `
+            --config.win.azureSignOptions.FileDigest=SHA256 `
+            --config.win.azureSignOptions.TimestampRfc3161=http://timestamp.acs.microsoft.com `
+            --config.win.azureSignOptions.TimestampDigest=SHA256 `
+            --config.win.publisherName="$env:WIN_SIGN_EXPECTED_SUBJECT"
+
+      - name: Verify signed Windows desktop package before publishing metadata
+        shell: pwsh
+        run: |
+          $expectedPackage = "desktop/release/Local-Agent-X-Desktop-$((Get-Content desktop/package.json | ConvertFrom-Json).version)-win-x64.exe"
+          $expectedBlockmap = "$expectedPackage.blockmap"
+          $installedExecutable = "desktop/release/win-unpacked/Local Agent X.exe"
+          $metadata = "desktop/release/latest.yml"
+          foreach ($path in @($expectedPackage, $expectedBlockmap, $installedExecutable, $metadata)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              Write-Error "Missing required Windows desktop update asset: $path"
+              exit 1
+            }
+          }
+          foreach ($path in @($installedExecutable, $expectedPackage)) {
+            $sig = Get-AuthenticodeSignature -LiteralPath $path
+            if ($sig.Status -ne 'Valid') { Write-Error "Desktop signature not Valid for ${path}: $($sig.Status) - $($sig.StatusMessage)"; exit 1 }
+            if ($null -eq $sig.TimeStamperCertificate) { Write-Error "Desktop signature has no trusted timestamp for ${path} - refusing to ship."; exit 1 }
+            if ($sig.SignerCertificate.Subject -cne $env:WIN_SIGN_EXPECTED_SUBJECT) {
+              Write-Error "Desktop signing identity drift for ${path}: subject [$($sig.SignerCertificate.Subject)] does not exactly match expected [$env:WIN_SIGN_EXPECTED_SUBJECT]"
+              exit 1
+            }
+          }
+          $yaml = Get-Content -LiteralPath $metadata -Raw
+          if (-not $yaml.Contains((Split-Path -Leaf $expectedPackage))) {
+            Write-Error "latest.yml does not name the exact signed desktop package."
+            exit 1
+          }
 
       - name: Stage bundled Electron runtime
         # Download the pinned Electron archive into installer/electron-bundle/ so
@@ -165,7 +216,11 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows-installer-rolling
-          path: "Install Local Agent X Windows Installer.exe"
+          path: |
+            Install Local Agent X Windows Installer.exe
+            desktop/release/Local-Agent-X-Desktop-*-win-x64.exe
+            desktop/release/Local-Agent-X-Desktop-*-win-x64.exe.blockmap
+            desktop/release/latest.yml
           if-no-files-found: error
 
   build-macos-rolling:
@@ -176,8 +231,29 @@ jobs:
     env:
       DMG_PATH: installer/dist-mac/Install Local Agent X Mac Installer.dmg
       APP_PATH: installer/dist-mac/Install Local Agent X Mac Installer.app
+      MAC_EXPECTED_TEAM_ID: ${{ vars.MAC_EXPECTED_TEAM_ID }}
     steps:
       - uses: actions/checkout@v6
+
+      - name: Require macOS release signing configuration
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_API_KEY_P8: ${{ secrets.MACOS_API_KEY_P8 }}
+          MACOS_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}
+          MACOS_API_ISSUER_ID: ${{ secrets.MACOS_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PWD MACOS_KEYCHAIN_PWD \
+            MACOS_SIGN_IDENTITY MACOS_API_KEY_P8 MACOS_API_KEY_ID \
+            MACOS_API_ISSUER_ID MAC_EXPECTED_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::macOS release signing configuration is incomplete: $name"
+              exit 1
+            fi
+          done
 
       - name: Set up .NET 8
         uses: actions/setup-dotnet@v5
@@ -211,6 +287,58 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Build signed and notarized macOS desktop packages and update metadata
+        working-directory: desktop
+        env:
+          CSC_NAME: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_API_KEY_P8: ${{ secrets.MACOS_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.MACOS_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          API_KEY_PATH="${RUNNER_TEMP}/AuthKey-electron-builder.p8"
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$API_KEY_PATH"
+          trap 'rm -f "$API_KEY_PATH"' EXIT
+          export APPLE_API_KEY="$API_KEY_PATH"
+          npm ci
+          npm run build
+          npx electron-builder --mac dmg zip --arm64 --publish never
+
+      - name: Verify signed and notarized macOS desktop package before publishing metadata
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          ZIP="desktop/release/Local-Agent-X-Desktop-${VERSION}-mac-arm64.zip"
+          DMG="desktop/release/Local-Agent-X-Desktop-${VERSION}-mac-arm64.dmg"
+          METADATA="desktop/release/latest-mac.yml"
+          for path in "$ZIP" "$ZIP.blockmap" "$DMG" "$METADATA"; do
+            if [ ! -f "$path" ]; then
+              echo "::error::Missing required macOS desktop update asset: $path"
+              exit 1
+            fi
+          done
+          APPS=()
+          while IFS= read -r -d '' app; do
+            APPS+=("$app")
+          done < <(find desktop/release -maxdepth 3 -type d -name 'Local Agent X.app' -print0)
+          if [ "${#APPS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one packaged Local Agent X.app, found ${#APPS[@]}"
+            exit 1
+          fi
+          APP="${APPS[0]}"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          GOT=$(codesign -dvv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+          if [ "$GOT" != "$MAC_EXPECTED_TEAM_ID" ]; then
+            echo "::error::Desktop signing identity drift: TeamIdentifier=$GOT, expected $MAC_EXPECTED_TEAM_ID"
+            exit 1
+          fi
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=2 "$APP"
+          if ! grep -Fq "$(basename "$ZIP")" "$METADATA"; then
+            echo "::error::latest-mac.yml does not name the exact signed desktop ZIP."
+            exit 1
+          fi
 
       - name: Stage bundled Electron runtime
         # Same as the Windows job: embed the pinned Electron archive so the
@@ -360,7 +488,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: macos-installer-rolling
-          path: "installer/dist-mac/Install Local Agent X Mac Installer.dmg"
+          path: |
+            installer/dist-mac/Install Local Agent X Mac Installer.dmg
+            desktop/release/Local-Agent-X-Desktop-*-mac-arm64.zip
+            desktop/release/Local-Agent-X-Desktop-*-mac-arm64.zip.blockmap
+            desktop/release/Local-Agent-X-Desktop-*-mac-arm64.dmg
+            desktop/release/latest-mac.yml
           if-no-files-found: error
 
   publish-rolling:
@@ -416,6 +549,30 @@ jobs:
           await writeFile("runtime-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
           NODE
           cat runtime-manifest.json
+
+      - name: Publish signed native desktop update feed
+        # One release mutation after both platform jobs succeed keeps metadata
+        # and the signed packages it hashes in lockstep at a stable feed URL.
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          tag_name: desktop-stable
+          name: Local Agent X — Desktop Stable Update Feed
+          body: >
+            Signed native desktop packages and updater metadata for installed
+            Local Agent X apps. This fixed release is maintained automatically;
+            use the rolling installer release for first-time installation.
+          prerelease: false
+          make_latest: false
+          generate_release_notes: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/windows-installer-rolling/desktop/release/Local-Agent-X-Desktop-*-win-x64.exe
+            dist/windows-installer-rolling/desktop/release/Local-Agent-X-Desktop-*-win-x64.exe.blockmap
+            dist/windows-installer-rolling/desktop/release/latest.yml
+            dist/macos-installer-rolling/desktop/release/Local-Agent-X-Desktop-*-mac-arm64.zip
+            dist/macos-installer-rolling/desktop/release/Local-Agent-X-Desktop-*-mac-arm64.zip.blockmap
+            dist/macos-installer-rolling/desktop/release/Local-Agent-X-Desktop-*-mac-arm64.dmg
+            dist/macos-installer-rolling/desktop/release/latest-mac.yml
 
       - name: Publish/refresh the `rolling` pre-release
         # Re-uses the fixed `rolling` tag and replaces the assets in place, so the

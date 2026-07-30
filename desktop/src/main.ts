@@ -42,6 +42,7 @@ import {
   showSplashRecovery,
   setupSplashRecoveryIntercept,
 } from "./splash-recovery";
+import { initializeNativeUpdater } from "./native-updater";
 
 // Chromium flags (secure-origin, media, DNS-exfil hardening, in-app CDP
 // endpoint) MUST be applied before app.ready — see chromium-flags.ts.
@@ -120,6 +121,7 @@ app.on("ready", async () => {
   // also kicks off the /api/health poll-and-navigate which waits patiently
   // until startServer() (below) makes the server respond.
   createWindow();
+  initializeNativeUpdater();
   setupSplashRecoveryIntercept();
 
   // Self-recovery watchdog. pollAndNavigate now waits indefinitely for the

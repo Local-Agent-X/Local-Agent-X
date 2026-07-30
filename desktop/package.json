@@ -29,6 +29,15 @@
     "appId": "com.localagentx.desktop",
     "productName": "Local Agent X",
     "npmRebuild": false,
+    "artifactName": "Local-Agent-X-Desktop-${version}-${os}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/Local-Agent-X/Local-Agent-X/releases/download/desktop-stable",
+        "channel": "latest",
+        "useMultipleRangeRequest": false
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -134,6 +143,7 @@
     }
   },
   "dependencies": {
+    "electron-updater": "6.6.2",
     "node-pty": "^1.1.0",
     "tldts": "^7.4.9"
   }

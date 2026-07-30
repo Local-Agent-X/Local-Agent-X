@@ -4,40 +4,7 @@ async function settingsCheckUpdate() {
   if (!status) return;
   status.style.color = 'var(--muted)';
   status.textContent = 'Checking...';
-  try {
-    const res = await apiFetch('/api/updates/check');
-    const data = await res.json();
-    const nativeWarning = data.nativeRuntimeCheckError
-      ? ` Browser engine update check warning: ${esc(data.nativeRuntimeCheckError)}`
-      : '';
-    // Surface check failures instead of claiming the app is up to date.
-    if (data.nativeUpdateRequired && data.nativeInstallerUrl) {
-      window._laxSettingsNativeInstallerUrl = data.nativeInstallerUrl;
-      status.style.color = 'var(--accent)';
-      const electronVersions = data.installedElectronVersion && data.requiredElectronVersion
-        ? ` Electron ${esc(data.installedElectronVersion)} → ${esc(data.requiredElectronVersion)}.`
-        : '';
-      const chromiumVersions = data.installedChromiumVersion && data.requiredChromiumVersion
-        ? ` Chromium ${esc(data.installedChromiumVersion)} → ${esc(data.requiredChromiumVersion)}.`
-        : '';
-      status.innerHTML = `<strong>Browser engine app update required.</strong>${electronVersions}${chromiumVersions} Your projects, settings, and conversations will be preserved. <button onclick="settingsOpenNativeInstaller()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Download Update</button>${nativeWarning}`;
-    } else if (data.error) {
-      status.style.color = 'var(--error, red)';
-      status.innerHTML = `Could not check for updates: ${esc(data.error)}${nativeWarning}`;
-      return;
-    } else if (data.updateAvailable) {
-      status.style.color = 'var(--accent)';
-      const summary = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}`;
-      status.innerHTML = `${summary} <button onclick="settingsApplyUpdate()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Update Now</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank" style="color:var(--muted);margin-left:8px;font-size:.8em">View on GitHub</a>${nativeWarning}`;
-    } else {
-      status.style.color = 'var(--accent)';
-      const runtimeVersions = [
-        data.installedElectronVersion ? `Electron ${esc(data.installedElectronVersion)}` : '',
-        data.installedChromiumVersion ? `Chromium ${esc(data.installedChromiumVersion)}` : ''
-      ].filter(Boolean);
-      status.innerHTML = `You are up to date! (v${esc(data.localVersion || '0.1.0')})${runtimeVersions.length ? ` — ${runtimeVersions.join(', ')}` : ''}${nativeWarning}`;
-    }
-  } catch (e) {
+  try { await laxCheckUpdates(true); } catch (e) {
     status.style.color = 'var(--error, red)';
     status.textContent = 'Could not check for updates.';
   }

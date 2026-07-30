@@ -48,11 +48,9 @@ export function persistInstallOutcome(context, desktop) {
   }
   if (desktop.appInstalled && platform === "darwin") {
     reporter.log("  Launch:      open Launchpad, click \"Local Agent X\"");
-    reporter.log("  First time:  right-click the icon → Open → Open (one-time Gatekeeper prompt)");
     reporter.log("  Close-X:     keeps server running in the menu bar; use the tray menu to Quit");
   } else if (desktop.appInstalled && platform === "win32") {
     reporter.log("  Launch:      double-click \"Local Agent X\" on your Desktop or Start Menu");
-    reporter.log("  First time:  Windows may show SmartScreen — click \"More info\" → \"Run anyway\"");
   } else if (platform === "darwin" && desktop.appBuildPath) {
     reporter.log(`  App built at: ${desktop.appBuildPath} (drag to /Applications manually)`);
   }

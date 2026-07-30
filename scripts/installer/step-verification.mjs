@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EMBED_MODEL, NODE_MAJOR_MIN } from "./contract.mjs";
@@ -42,15 +42,16 @@ function verifyDesktop(context) {
   const { env = process.env, platform, processes } = context;
   if (env.LAX_SKIP_APP || platform === "linux") return "present";
   if (platform === "darwin") {
-    return present(existsSync("/Applications/Local Agent X.app")
-      || existsSync(join(context.homeDirectory || homedir(), "Applications", "Local Agent X.app")));
+    const apps = [
+      "/Applications/Local Agent X.app",
+      join(context.homeDirectory || homedir(), "Applications", "Local Agent X.app"),
+    ].filter(existsSync).sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs);
+    if (apps.length === 0) return "absent";
+    if (!processes.has("codesign")) return "present";
+    return present(processes.spawnSync("codesign", ["--verify", "--deep", "--strict", apps[0]], { stdio: "ignore" }).status === 0);
   }
-  const electron = join(process.cwd(), "desktop", "node_modules", "electron", "dist", "electron.exe");
-  const entry = join(process.cwd(), "desktop", "dist", "loader.js");
-  if (!existsSync(electron) || !existsSync(entry)) return "absent";
-  const script = "$d=[Environment]::GetFolderPath('Desktop'); $s=Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'; $dirs=@($d,$s)|Where-Object { Test-Path $_ }; if ($dirs.Count -gt 0 -and @($dirs|Where-Object { -not (Test-Path (Join-Path $_ 'Local Agent X.lnk')) }).Count -eq 0) { exit 0 }; exit 2";
-  const result = processes.spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: "ignore" });
-  return result.status === 0 ? "present" : result.status === 2 ? "absent" : "ambiguous";
+  const localAppData = env.LOCALAPPDATA || join(context.homeDirectory || homedir(), "AppData", "Local");
+  return present(existsSync(join(localAppData, "Programs", "Local Agent X", "Local Agent X.exe")));
 }
 
 export function verifyInstallStep(id, context, evidence = {}) {

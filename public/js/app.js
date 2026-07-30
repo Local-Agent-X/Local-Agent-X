@@ -1,15 +1,6 @@
-// ── App Shell: Routing, dynamic pins, update banner, boot ──
-// State + persistence: app-state.js
-// Server sync + hydrate: app-sync.js
-// Sidebar mutations: app-sidebar-actions.js
-// Sidebar rendering: app-sidebar-render.js
-// This file owns the route system, the sidebar's dynamic "pins" (agent-
-// controllable iframe tabs), the update-banner, and the boot sequence.
-
-// ── Routing ──
+// App shell: routing, dynamic pins, update banner, and boot.
 const ROUTES = ['chat', 'missions', 'apps', 'agents'];
 var _sidebarPins = []; // Dynamic pinned pages (var for cross-script WebSocket access)
-
 function navigate(route) {
   const isPin = route.startsWith('pin:');
   if (!isPin && !ROUTES.includes(route)) route = 'chat';
@@ -171,42 +162,166 @@ setInterval(() => {
 }, 30000);
 
 // ── Update checker (runs on startup) ──
-(async function checkForUpdates() {
-  // Don't annoy users — only check once per session, and respect dismissal
-  if (sessionStorage.getItem('lax_update_dismissed')) return;
-  try {
-    const res = await apiFetch('/api/updates/check');
-    const data = await res.json();
-    if (data.nativeUpdateRequired && data.nativeInstallerUrl) {
-      const banner = document.getElementById('update-banner');
-      if (!banner) return;
+var _laxNativeUpdaterState = null;
+var _laxServerUpdate = null;
+var _laxNativeInstallPending = false;
+function nativeUpdaterBridge() {
+  const bridge = window.desktop && window.desktop.nativeUpdater;
+  return bridge && typeof bridge.getState === 'function' && typeof bridge.check === 'function'
+    && typeof bridge.install === 'function' && typeof bridge.onState === 'function' ? bridge : null;
+}
+
+function nativeUpdateActive(state) {
+  return !!state && ['available', 'downloading', 'ready', 'error'].includes(state.phase);
+}
+function updateProgress(state) {
+  const percent = Number(state && state.percent);
+  return Number.isFinite(percent) ? ` (${Math.max(0, Math.min(100, percent)).toFixed(0)}%)` : '';
+}
+
+function nativeUpdateMarkup(state, buttonClass, fallbackHandler) {
+  const version = state && state.availableVersion ? ` v${esc(state.availableVersion)}` : '';
+  const reassurance = ' Your projects, settings, and conversations will be preserved.';
+  if (state.phase === 'ready') {
+    return `<strong>Update${version} is ready.</strong>${reassurance} <button class="${buttonClass}" onclick="nativeUpdaterInstall()"${_laxNativeInstallPending ? ' disabled' : ''}>${_laxNativeInstallPending ? 'Restarting…' : 'Restart to Update'}</button>`;
+  }
+  if (state.phase === 'error') {
+    const message = state.error ? `: ${esc(state.error)}` : '.';
+    const fallback = _laxServerUpdate && _laxServerUpdate.nativeUpdateRequired && _laxServerUpdate.nativeInstallerUrl
+      ? ` <button class="${buttonClass}" onclick="${fallbackHandler}()">Download Installer</button>` : '';
+    return `<strong>Update failed${message}</strong> <button class="${buttonClass}" onclick="nativeUpdaterRetry()">Retry</button>${fallback}`;
+  }
+  const activity = state.phase === 'available' ? 'is available and will download in the background' : `is downloading in the background${updateProgress(state)}`;
+  return `<strong>Update${version} ${activity}.</strong> You can keep working.${reassurance}`;
+}
+
+function renderUpdateBanner() {
+  const banner = document.getElementById('update-banner');
+  if (!banner || sessionStorage.getItem('lax_update_dismissed')) return;
+  const state = _laxNativeUpdaterState;
+  const data = _laxServerUpdate;
+  let content = '';
+  if (nativeUpdateActive(state)) {
+    content = nativeUpdateMarkup(state, 'update-btn', 'bannerOpenNativeInstaller');
+  } else if (data && data.nativeUpdateRequired && data.nativeInstallerUrl) {
+    window._laxNativeInstallerUrl = data.nativeInstallerUrl;
+    const electron = data.installedElectronVersion && data.requiredElectronVersion
+      ? ` Electron ${esc(data.installedElectronVersion)} → ${esc(data.requiredElectronVersion)}.` : '';
+    const chromium = data.installedChromiumVersion && data.requiredChromiumVersion
+      ? ` Chromium ${esc(data.installedChromiumVersion)} → ${esc(data.requiredChromiumVersion)}.` : '';
+    content = `<strong>Browser engine app update required.</strong>${electron}${chromium} Your projects, settings, and conversations will be preserved. <button class="update-btn" onclick="bannerOpenNativeInstaller()">Download Update</button>`;
+  } else if (data && data.updateAvailable) {
+    content = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''} <button class="update-btn" onclick="bannerApplyUpdate()">Update Now</button> <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')" style="opacity:.75">View on GitHub</button>`;
+  }
+  if (!content) return;
+  banner.style.display = '';
+  banner.className = 'visible';
+  banner.innerHTML = `<span class="update-msg">${content}</span><button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+}
+
+function renderSettingsUpdate(data) {
+  if (data) _laxServerUpdate = data;
+  const status = document.getElementById('settings-update-status');
+  if (!status) return;
+  const state = _laxNativeUpdaterState;
+  const server = _laxServerUpdate;
+  if (nativeUpdateActive(state)) {
+    status.style.color = state.phase === 'error' ? 'var(--error, red)' : 'var(--accent)';
+    status.innerHTML = nativeUpdateMarkup(state, 'action-btn primary', 'settingsOpenNativeInstaller');
+  } else if (state && state.phase === 'checking') {
+    status.style.color = 'var(--muted)';
+    status.textContent = 'Checking for updates…';
+  } else if (server && server.nativeUpdateRequired && server.nativeInstallerUrl) {
+    window._laxSettingsNativeInstallerUrl = server.nativeInstallerUrl;
+    status.style.color = 'var(--accent)';
+    const electron = server.installedElectronVersion && server.requiredElectronVersion
+      ? ` Electron ${esc(server.installedElectronVersion)} → ${esc(server.requiredElectronVersion)}.` : '';
+    const chromium = server.installedChromiumVersion && server.requiredChromiumVersion
+      ? ` Chromium ${esc(server.installedChromiumVersion)} → ${esc(server.requiredChromiumVersion)}.` : '';
+    status.innerHTML = `<strong>Browser engine app update required.</strong>${electron}${chromium} Your projects, settings, and conversations will be preserved. <button class="action-btn primary" onclick="settingsOpenNativeInstaller()">Download Update</button>`;
+  } else if (server && server.error) {
+    status.style.color = 'var(--error, red)';
+    status.textContent = 'Could not check for updates: ' + String(server.error);
+  } else if (server && server.updateAvailable) {
+    status.style.color = 'var(--accent)';
+    const summary = `Update available: v${esc(server.remoteVersion)}${server.remoteCommit ? ' (' + esc(server.remoteCommit) + ')' : ''}${server.releaseNotes ? ' — ' + esc(server.releaseNotes) : ''}`;
+    status.innerHTML = `${summary} <button class="action-btn primary" onclick="settingsApplyUpdate()">Update Now</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank">View on GitHub</a>`;
+  } else if (server) {
+    status.style.color = 'var(--accent)';
+    const runtimes = [server.installedElectronVersion ? `Electron ${server.installedElectronVersion}` : '', server.installedChromiumVersion ? `Chromium ${server.installedChromiumVersion}` : ''].filter(Boolean);
+    const warning = server.nativeRuntimeCheckError ? ` Browser engine update check warning: ${server.nativeRuntimeCheckError}` : '';
+    status.textContent = `You are up to date! (v${server.localVersion || (state && state.currentVersion) || '0.1.0'})${runtimes.length ? ` — ${runtimes.join(', ')}` : ''}${warning}`;
+  }
+}
+
+async function laxCheckUpdates(manual) {
+  const bridge = nativeUpdaterBridge();
+  const tasks = [apiFetch('/api/updates/check').then(r => r.json()).then(data => {
+    _laxServerUpdate = data;
+    if (data.nativeInstallerUrl) {
       window._laxNativeInstallerUrl = data.nativeInstallerUrl;
-      const electronVersions = data.installedElectronVersion && data.requiredElectronVersion
-        ? ` Electron ${esc(data.installedElectronVersion)} → ${esc(data.requiredElectronVersion)}.`
-        : '';
-      const chromiumVersions = data.installedChromiumVersion && data.requiredChromiumVersion
-        ? ` Chromium ${esc(data.installedChromiumVersion)} → ${esc(data.requiredChromiumVersion)}.`
-        : '';
-      banner.style.display = '';
-      banner.className = 'visible';
-      banner.innerHTML = `
-        <span class="update-msg"><strong>Browser engine app update required.</strong>${electronVersions}${chromiumVersions} Your projects, settings, and conversations will be preserved.</span>
-        <button class="update-btn" onclick="bannerOpenNativeInstaller()">Download Update</button>
-        <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
-      `;
-    } else if (data.updateAvailable) {
-      const banner = document.getElementById('update-banner');
-      if (!banner) return;
-      banner.style.display = '';
-      banner.className = 'visible';
-      banner.innerHTML = `
-        <span class="update-msg">Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}</span>
-        <button class="update-btn" onclick="bannerApplyUpdate()">Update Now</button>
-        <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')" style="opacity:.75">View on GitHub</button>
-        <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
-      `;
+      window._laxSettingsNativeInstallerUrl = data.nativeInstallerUrl;
     }
-  } catch {}
+  })];
+  if (manual && bridge) tasks.push(bridge.check().then(state => { if (state) _laxNativeUpdaterState = state; }));
+  const results = await Promise.allSettled(tasks);
+  if (manual && results.every(result => result.status === 'rejected')) {
+    const status = document.getElementById('settings-update-status');
+    if (status) { status.style.color = 'var(--error, red)'; status.textContent = 'Could not check for updates.'; }
+    return;
+  }
+  renderUpdateBanner();
+  renderSettingsUpdate();
+}
+
+async function nativeUpdaterRetry() {
+  const bridge = nativeUpdaterBridge();
+  if (!bridge) return;
+  try { _laxNativeUpdaterState = await bridge.check(); } catch (e) {
+    _laxNativeUpdaterState = { phase: 'error', error: e && e.message ? e.message : String(e) };
+  }
+  renderUpdateBanner();
+  renderSettingsUpdate();
+}
+
+async function nativeUpdaterInstall() {
+  const bridge = nativeUpdaterBridge();
+  if (!bridge || _laxNativeInstallPending) return;
+  _laxNativeInstallPending = true;
+  renderUpdateBanner();
+  renderSettingsUpdate();
+  try {
+    const accepted = await bridge.install();
+    if (!accepted) throw new Error('The update could not be started.');
+  } catch (e) {
+    _laxNativeUpdaterState = { ...(_laxNativeUpdaterState || {}), phase: 'error', error: e && e.message ? e.message : String(e) };
+    _laxNativeInstallPending = false;
+    renderUpdateBanner();
+    renderSettingsUpdate();
+  }
+}
+
+(function initializeUpdateUI() {
+  const bridge = nativeUpdaterBridge();
+  if (bridge && !window._laxNativeUpdaterSubscribed) {
+    window._laxNativeUpdaterSubscribed = true;
+    bridge.onState(state => {
+      if (!state) return;
+      _laxNativeUpdaterState = state;
+      renderUpdateBanner();
+      renderSettingsUpdate();
+    });
+    bridge.getState().then(state => {
+      if (state) _laxNativeUpdaterState = state;
+      renderUpdateBanner();
+      renderSettingsUpdate();
+    }, error => {
+      _laxNativeUpdaterState = { phase: 'error', error: error && error.message ? error.message : String(error) };
+      renderUpdateBanner();
+      renderSettingsUpdate();
+    });
+  }
+  if (!sessionStorage.getItem('lax_update_dismissed')) void laxCheckUpdates(false);
 })();
 
 function bannerOpenNativeInstaller() {
@@ -224,8 +339,6 @@ function bannerOpenNativeInstaller() {
   }
 }
 
-// ── Subsystem health banner (fed by system_health WS broadcasts from the
-//    server's runtime canaries, e.g. the memory-write self-test) ──
 window.showHealthBanner = function (message) {
   const banner = document.getElementById('health-banner');
   if (!banner) return;

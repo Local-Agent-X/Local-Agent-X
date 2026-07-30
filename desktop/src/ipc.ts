@@ -27,10 +27,12 @@ import {
 } from "./native-speech";
 import { setupBrowserIPC } from "./browser-ipc";
 import { setupTerminalIPC } from "./terminal-pty";
+import { setupNativeUpdaterIPC } from "./native-updater";
 
 export function setupIPC(): void {
   setupBrowserIPC();
   setupTerminalIPC();
+  setupNativeUpdaterIPC();
   ipcMain.handle("get-server-status", async () => {
     return {
       running: await isServerRunning(),

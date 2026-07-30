@@ -210,3 +210,153 @@ it("retains unsigned local desktop packaging as the development path", () => {
   expect(desktopPackage.scripts.pack).toContain("electron-builder --dir");
   expect(desktopPackage.scripts.dist).toContain("electron-builder");
 });
+
+describe("native desktop auto-update package contract", () => {
+  const desktopPackage = JSON.parse(readFileSync(resolve("desktop/package.json"), "utf8")) as {
+    version: string;
+    dependencies: Record<string, string>;
+    build: {
+      artifactName: string;
+      publish: Array<{
+        provider: string;
+        url: string;
+        channel: string;
+        useMultipleRangeRequest: boolean;
+      }>;
+      win: { target: string; sign: boolean };
+      nsis: { oneClick: boolean; allowToChangeInstallationDirectory: boolean };
+      mac: {
+        target: string[];
+        hardenedRuntime: boolean;
+        entitlements: string;
+        entitlementsInherit: string;
+        notarize: { teamId: string };
+      };
+      dmg: { writeUpdateInfo: boolean };
+    };
+  };
+  const desktopLock = JSON.parse(readFileSync(resolve("desktop/package-lock.json"), "utf8")) as {
+    packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+  };
+
+  it("uses one pinned updater runtime and stable generic GitHub feed", () => {
+    const updaterVersion = desktopPackage.dependencies["electron-updater"];
+
+    expect(updaterVersion).toBe("6.6.2");
+    expect(desktopLock.packages[""].dependencies?.["electron-updater"]).toBe(updaterVersion);
+    expect(desktopLock.packages["node_modules/electron-updater"].version).toBe(updaterVersion);
+    expect(desktopPackage.build.publish).toEqual([{
+      provider: "generic",
+      url: "https://github.com/Local-Agent-X/Local-Agent-X/releases/download/desktop-stable",
+      channel: "latest",
+      useMultipleRangeRequest: false,
+    }]);
+    expect(desktopPackage.version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("emits deterministic native assets without colliding with migration installers", () => {
+    expect(desktopPackage.build.artifactName)
+      .toBe("Local-Agent-X-Desktop-${version}-${os}-${arch}.${ext}");
+    expect(desktopPackage.build.artifactName).not.toContain("Installer");
+    expect(desktopPackage.build.win.target).toBe("nsis");
+    expect(desktopPackage.build.mac.target).toEqual(["dmg", "zip"]);
+  });
+
+  it("keeps updater-compatible targets and the existing signing safeguards", () => {
+    expect(desktopPackage.build.nsis).toEqual({
+      oneClick: true,
+      allowToChangeInstallationDirectory: false,
+    });
+    expect(desktopPackage.build.mac.hardenedRuntime).toBe(true);
+    expect(desktopPackage.build.mac.entitlements).toBe("build/entitlements.mac.plist");
+    expect(desktopPackage.build.mac.entitlementsInherit).toBe("build/entitlements.mac.plist");
+    expect(desktopPackage.build.mac.notarize.teamId).toBe("CHV92LAWAZ");
+    expect(desktopPackage.build.dmg.writeUpdateInfo).toBe(false);
+    expect(desktopPackage.build.win.sign).toBe(false);
+  });
+});
+
+describe("signed native desktop rolling release contract", () => {
+  const workflow = rollingInstallerWorkflow();
+  const windows = windowsJob(".github/workflows/installer-rolling.yml");
+  const macStart = workflow.indexOf("  build-macos-rolling:");
+  const publishStart = workflow.indexOf("  publish-rolling:");
+  const mac = workflow.slice(macStart, publishStart);
+  const publish = workflow.slice(publishStart);
+
+  it("rebuilds both native platforms whenever shipped desktop code changes", () => {
+    const trigger = workflow.slice(workflow.indexOf("on:"), workflow.indexOf("\npermissions:"));
+
+    expect(trigger).toContain('- "desktop/src/**"');
+    expect(trigger).toContain('- "desktop/build/**"');
+    expect(windows).toContain("electron-builder --win nsis --x64 --publish never");
+    expect(mac).toContain("electron-builder --mac dmg zip --arm64 --publish never");
+  });
+
+  it("has electron-builder sign Windows bytes before it creates publishable metadata", () => {
+    const build = windows.indexOf("electron-builder --win nsis --x64 --publish never");
+    const verify = windows.indexOf("Verify signed Windows desktop package before publishing metadata");
+    const upload = windows.indexOf("uses: actions/upload-artifact@");
+
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(verify).toBeGreaterThan(build);
+    expect(upload).toBeGreaterThan(verify);
+    expect(windows).toContain("AZURE_TENANT_ID: ${{ secrets.AZURE_SIGN_TENANT_ID }}");
+    expect(windows).toContain("AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGN_CLIENT_ID }}");
+    expect(windows).toContain("AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGN_CLIENT_SECRET }}");
+    expect(windows).toContain("--config.win.azureSignOptions.endpoint=");
+    expect(windows).toContain("--config.win.azureSignOptions.certificateProfileName=");
+    expect(windows).toContain("--config.win.azureSignOptions.codeSigningAccountName=");
+    expect(windows).toContain('desktop/release/win-unpacked/Local Agent X.exe');
+    expect(windows).toContain('foreach ($path in @($installedExecutable, $expectedPackage))');
+    expect(windows).toContain("$sig.Status -ne 'Valid'");
+    expect(windows).toContain("$null -eq $sig.TimeStamperCertificate");
+    expect(windows).toContain("$sig.SignerCertificate.Subject -cne $env:WIN_SIGN_EXPECTED_SUBJECT");
+    expect(windows).not.toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+  });
+
+  it("fails closed unless the macOS app is Developer ID signed and notarized", () => {
+    const build = mac.indexOf("electron-builder --mac dmg zip --arm64 --publish never");
+    const verify = mac.indexOf("Verify signed and notarized macOS desktop package before publishing metadata");
+    const upload = mac.indexOf("uses: actions/upload-artifact@");
+
+    expect(mac).toContain("- name: Require macOS release signing configuration");
+    expect(mac).toContain("MAC_EXPECTED_TEAM_ID");
+    expect(mac).toContain("CSC_NAME: ${{ secrets.MACOS_SIGN_IDENTITY }}");
+    expect(mac).toContain('export APPLE_API_KEY="$API_KEY_PATH"');
+    expect(mac).toContain("APPLE_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}");
+    expect(mac).toContain("APPLE_API_ISSUER: ${{ secrets.MACOS_API_ISSUER_ID }}");
+    expect(verify).toBeGreaterThan(build);
+    expect(upload).toBeGreaterThan(verify);
+    expect(mac).toContain("codesign --verify --deep --strict");
+    expect(mac).toContain('if [ "$GOT" != "$MAC_EXPECTED_TEAM_ID" ]');
+    expect(mac).toContain('xcrun stapler validate "$APP"');
+    expect(mac).toContain('spctl --assess --type execute --verbose=2 "$APP"');
+    expect(mac).not.toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+  });
+
+  it("publishes one fixed update feed only after both signed platform jobs succeed", () => {
+    const stable = publish.indexOf("- name: Publish signed native desktop update feed");
+    const rolling = publish.indexOf("- name: Publish/refresh the `rolling` pre-release");
+
+    expect(publish).toContain("needs: [build-windows-rolling, build-macos-rolling]");
+    expect(stable).toBeGreaterThanOrEqual(0);
+    expect(rolling).toBeGreaterThan(stable);
+    expect(publish).toContain("tag_name: desktop-stable");
+    expect(publish).toContain("make_latest: false");
+    for (const asset of [
+      "Local-Agent-X-Desktop-*-win-x64.exe",
+      "Local-Agent-X-Desktop-*-win-x64.exe.blockmap",
+      "latest.yml",
+      "Local-Agent-X-Desktop-*-mac-arm64.zip",
+      "Local-Agent-X-Desktop-*-mac-arm64.zip.blockmap",
+      "Local-Agent-X-Desktop-*-mac-arm64.dmg",
+      "latest-mac.yml",
+    ]) {
+      expect(publish).toContain(asset);
+    }
+    expect(publish).toContain("tag_name: rolling");
+    expect(publish).toContain("Install Local Agent X Windows Installer.exe");
+    expect(publish).toContain("Install Local Agent X Mac Installer.dmg");
+  });
+});

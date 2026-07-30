@@ -3,7 +3,7 @@ import { installWindowsDesktop } from "./windows-desktop.mjs";
 
 export async function runDesktopStep(context) {
   const { reporter, platform = process.platform } = context;
-  const detail = platform === "darwin" ? "Electron .app build (~3–5 min)" : platform === "win32" ? "Electron desktop bundle build" : null;
+  const detail = ["darwin", "win32"].includes(platform) ? "Signed desktop app download and install" : null;
   if (!reporter.step("desktop", detail)) {
     return reporter.resumedStepResult("desktop") || { appInstalled: false, appBuildPath: null };
   }

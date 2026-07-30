@@ -170,42 +170,43 @@ public partial class MainWindowViewModel : ObservableObject
         {
             if (OperatingSystem.IsWindows())
             {
-                // Launch electron.exe directly with dist/loader.js — the SAME
-                // entry install-common.mjs writes into the shortcut .lnk (loader
-                // calls app.setName before Electron resolves userData; launching
-                // main.js directly would land data under %APPDATA%\electron\).
-                // We don't depend on the shortcut existing yet — it's created
-                // late in the install. WorkingDirectory matches the .lnk so
-                // relative paths inside the Electron main process resolve.
-                var electron = Path.Combine(_repoRoot, "desktop", "node_modules", "electron", "dist", "electron.exe");
-                var loaderJs = Path.Combine(_repoRoot, "desktop", "dist", "loader.js");
-                if (!File.Exists(electron) || !File.Exists(loaderJs))
+                var app = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Programs", "Local Agent X", "Local Agent X.exe");
+                if (!File.Exists(app))
                 {
-                    // Artifacts missing means the install didn't actually finish a
-                    // launchable app. Surface it instead of silently exiting —
-                    // otherwise the button looks dead and the user has no clue why.
                     Screen = "error";
-                    ErrorMessage = "The app isn't launchable — the Electron runtime didn't finish installing. Re-run the installer (a network proxy or antivirus may have blocked the download).";
+                    ErrorMessage = "The packaged Local Agent X app is missing. Re-run the installer.";
                     return;
                 }
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = electron,
-                    WorkingDirectory = Path.Combine(_repoRoot, "desktop"),
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    ArgumentList = { loaderJs },
+                    FileName = app,
+                    WorkingDirectory = Path.GetDirectoryName(app),
+                    UseShellExecute = true,
                 });
             }
             else if (OperatingSystem.IsMacOS())
             {
                 // The install copies the built .app to /Applications. `open`
                 // launches it the same way Launchpad / Spotlight does.
-                var dst = "/Applications/Local Agent X.app";
-                if (Directory.Exists(dst))
+                var dst = new[]
                 {
-                    Process.Start(new ProcessStartInfo { FileName = "open", ArgumentList = { dst }, UseShellExecute = false });
+                    "/Applications/Local Agent X.app",
+                    Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Applications", "Local Agent X.app"),
                 }
+                    .Where(Directory.Exists)
+                    .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                    .FirstOrDefault();
+                if (dst is null)
+                {
+                    Screen = "error";
+                    ErrorMessage = "The packaged Local Agent X app is missing. Re-run the installer.";
+                    return;
+                }
+                Process.Start(new ProcessStartInfo { FileName = "open", ArgumentList = { dst }, UseShellExecute = false });
             }
         }
         catch (Exception ex)

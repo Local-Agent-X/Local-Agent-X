@@ -89,6 +89,14 @@ contextBridge.exposeInMainWorld("desktop", {
   contentZoom: (dir: "in" | "out" | "reset") => ipcRenderer.invoke("content-zoom", dir),
   quit: () => ipcRenderer.invoke("quit-app"),
   relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
+  nativeUpdater: {
+    getState: () => ipcRenderer.invoke("native-updater-get-state"),
+    check: () => ipcRenderer.invoke("native-updater-check"),
+    install: () => ipcRenderer.invoke("native-updater-install"),
+    onState: (cb: (state: unknown) => void) => {
+      ipcRenderer.on("native-updater-state", (_event, state) => cb(state));
+    },
+  },
 
   // In-window titlebar (Windows/Linux). The bar is HTML so it can't use
   // Electron menu roles directly — these route Edit actions and About

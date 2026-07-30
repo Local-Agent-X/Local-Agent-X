@@ -314,9 +314,7 @@ async function startServerInner(handlers?: ServerEventHandlers): Promise<void> {
   });
 }
 
-// Stop + wait + reload config + start + wait-for-ready. Single source of
-// truth for "restart the server" so the menu (File → Restart Server) and
-// the IPC handler (renderer button) can't drift.
+// Canonical stop + reload + start + ready sequence for menu and IPC callers.
 //
 // History: the menu used to call stopServer() + startServer() inline
 // without setRestarting / config reload / waitForServer / URL reload.

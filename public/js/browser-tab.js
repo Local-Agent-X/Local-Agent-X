@@ -1,19 +1,5 @@
-// Browser tab in the right sidebar. The actual page is NOT rendered here —
-// it's a native WebContentsView overlay drawn by Electron main on top of
-// this window. This module only:
-//   1. reserves space (#browser-view-anchor) and reports its rect to main
-//      via window.desktop.browser.setBounds,
-//   2. decides visibility (tab shown + panel not collapsed + document
-//      visible + anchor not occluded by a DOM overlay → show, else hide)
-//      via setVisible,
-//   3. drives navigation (address bar + back/fwd/reload) and mirrors
-//      main's nav-state pushes back into the UI.
-// In a plain browser (no window.desktop.browser) the pane shows a
-// desktop-only placeholder and everything else no-ops.
-//
-// chat-artifacts.js calls window.laxBrowserTab.onTabShown()/onTabHidden()
-// from switchSidePanelTab.
-
+// Browser sidebar controller. Electron renders the native WebContentsView;
+// this module owns its bounds, visibility, navigation UI, and tab switching.
 (function () {
 	var bridge = (window.desktop && window.desktop.browser) || null;
 	var tabShown = false;
@@ -25,9 +11,7 @@
 	// new/closed views (e.g. an agent spinning up a per-profile view) only while
 	// the tab is actually shown — no background polling.
 	var selectedViewId = null;
-	// While a user-requested switch is crossing IPC, listViews may still report
-	// the OLD attached view. Do not let the polling/reconciliation path undo the
-	// optimistic selection before main finishes retargeting the native view.
+	// Keep polling from undoing an optimistic selection while switch IPC settles.
 	var pendingSwitchId = null;
 	var switchGeneration = 0;
 	var switcherTimer = null;

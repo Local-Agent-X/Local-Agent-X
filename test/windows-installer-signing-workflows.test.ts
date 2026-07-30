@@ -54,11 +54,10 @@ describe("rolling installer freshness contract", () => {
     const release = publishJob.indexOf("uses: softprops/action-gh-release@");
 
     expect(download).toBeGreaterThanOrEqual(0);
-    expect(checkout).toBeGreaterThan(download);
-    expect(generate).toBeGreaterThan(checkout);
+    expect(download).toBeGreaterThan(checkout);
+    expect(generate).toBeGreaterThan(download);
     expect(release).toBeGreaterThan(generate);
     expect(publishJob).toContain("ref: ${{ github.sha }}");
-    expect(publishJob).toContain("clean: false");
     expect(publishJob).toContain('lock.packages?.["node_modules/electron"]?.version');
     expect(publishJob).toContain("https://releases.electronjs.org/releases.json");
     expect(publishJob).toContain("if (!response.ok)");

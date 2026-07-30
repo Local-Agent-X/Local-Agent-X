@@ -1,5 +1,4 @@
 // ── Settings Panel ──
-
 async function settingsCheckUpdate() {
   const status = document.getElementById('settings-update-status');
   if (!status) return;
@@ -11,9 +10,7 @@ async function settingsCheckUpdate() {
     const nativeWarning = data.nativeRuntimeCheckError
       ? ` Browser engine update check warning: ${esc(data.nativeRuntimeCheckError)}`
       : '';
-    // Surface check failures explicitly — without this, a 404/offline/auth
-    // failure rendered as a confident "up to date" message and the user
-    // would never know an update was actually waiting.
+    // Surface check failures instead of claiming the app is up to date.
     if (data.nativeUpdateRequired && data.nativeInstallerUrl) {
       window._laxSettingsNativeInstallerUrl = data.nativeInstallerUrl;
       status.style.color = 'var(--accent)';
@@ -60,10 +57,8 @@ function settingsOpenNativeInstaller() {
   }
 }
 
-// Pull the latest source from GitHub, then prompt a full quit + relaunch.
-// We deliberately do NOT just restart the server child here: the desktop
-// wrapper's reconcile step (root/desktop `npm install` + desktop `npm run
-// build`) only runs at Electron boot. A server-only restart would silently
+// Pull source, then fully relaunch: desktop dependency reconciliation only
+// runs at Electron boot. A server-only restart would silently
 // leave the user on stale deps when a pull bumps package-lock.json, or on
 // a stale desktop wrapper when desktop/src changes. A full relaunch makes
 // reconcile catch everything; server code under src/ runs via tsx and

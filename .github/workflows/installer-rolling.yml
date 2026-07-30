@@ -368,16 +368,15 @@ jobs:
     needs: [build-windows-rolling, build-macos-rolling]
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
-        with:
-          path: dist
-
       - name: Check out the workflow source revision
         uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
-          clean: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
 
       - name: List downloaded artifacts
         run: find dist -type f | sort

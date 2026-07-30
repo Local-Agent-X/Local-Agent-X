@@ -63,7 +63,10 @@ export function wireNavPushes(viewId: string, wc: WebContents): void {
 	if (navWired.has(wc)) return;
 	navWired.add(wc);
 	const push = () => pushNavState(viewId, wc);
-	wc.on("did-navigate", push);
+	wc.on("did-navigate", (_event, url, httpResponseCode, httpStatusText) => {
+		console.log(`[browser.navstate] did-navigate view=${viewId} status=${httpResponseCode} ${httpStatusText} url=${url}`);
+		push();
+	});
 	wc.on("did-navigate-in-page", push);
 	wc.on("page-title-updated", push);
 	// A fresh load attempt clears any recorded failure BEFORE the push, so the
@@ -75,6 +78,7 @@ export function wireNavPushes(viewId: string, wc: WebContents): void {
 	// -3 = ERR_ABORTED (redirects, rapid re-navigation) is normal browsing.
 	wc.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
 		if (!isMainFrame || errorCode === -3) return;
+		console.error(`[browser.navstate] did-fail-load view=${viewId} code=${errorCode} error=${errorDescription} url=${validatedURL}`);
 		loadErrors.set(wc, { code: errorCode, description: errorDescription, url: validatedURL });
 		push();
 	});

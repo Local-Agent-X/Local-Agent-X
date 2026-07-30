@@ -35,7 +35,7 @@ import {
 import { autoSurfaceAgentView } from "./browser-ipc";
 import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
 import { wireDownloadBridge } from "./browser-downloads-bridge";
-import { ensureEmbeddedChromeIdentity } from "./embedded-chrome-identity";
+import { prepareEmbeddedChromeIdentityForNavigation } from "./embedded-chrome-identity";
 import { getHardenedPartitionSession, setEgressEvaluator, SHARED_BROWSER_PARTITION } from "./browser-partition";
 import { askServerEgress, resetEgressPipe, setEgressPipeEndpoint, settleEgressAsk } from "./server-bridge-egress";
 import {
@@ -345,7 +345,7 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 // timer (the 2026-07-20 Thrive hang class).
 async function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>> {
 	const wc = requireWebContents(msg.viewId);
-	await ensureEmbeddedChromeIdentity(wc);
+	await prepareEmbeddedChromeIdentityForNavigation(wc);
 	return settleNavigation(wc, msg.url, {
 		timeoutMs: msg.timeoutMs ?? NAVIGATE_DEFAULT_TIMEOUT_MS,
 		// agent nav, even on adopted views — not user activity
@@ -382,4 +382,3 @@ async function clearPartition(partition: string): Promise<Record<string, unknown
 	await getHardenedPartitionSession(partition).clearStorageData();
 	return {};
 }
-

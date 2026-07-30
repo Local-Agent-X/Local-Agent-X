@@ -23,6 +23,7 @@ const readyByContents = new WeakMap<WebContents, Promise<void>>();
 const lifecycleWired = new WeakSet<WebContents>();
 const identitySessions = new Set<Session>();
 let registrarInstalled = false;
+const NAVIGATION_IDENTITY_DEADLINE_MS = 1_500;
 
 function windowsPlatformVersion(osRelease: string): string {
 	const build = Number(osRelease.split(".")[2] ?? 0);
@@ -118,6 +119,36 @@ export function ensureEmbeddedChromeIdentity(contents: WebContents): Promise<voi
 		if (readyByContents.get(contents) === ready) readyByContents.delete(contents);
 	});
 	return ready;
+}
+
+/**
+ * Apply the browser identity without allowing Chromium's DevTools bridge to
+ * hold navigation hostage. The override improves site compatibility, but it
+ * is not a prerequisite for loading a page. In particular, sendCommand can
+ * remain pending when Chromium's debugger target is being recreated.
+ */
+export async function prepareEmbeddedChromeIdentityForNavigation(
+	contents: WebContents,
+	timeoutMs = NAVIGATION_IDENTITY_DEADLINE_MS,
+): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const outcome = await Promise.race([
+		ensureEmbeddedChromeIdentity(contents).then(
+			() => "ready" as const,
+			(error: unknown) => {
+				console.warn("[browser-identity] continuing navigation without identity override:", error);
+				return "failed" as const;
+			},
+		),
+		new Promise<"timeout">((resolve) => {
+			timer = setTimeout(() => resolve("timeout"), timeoutMs);
+			timer.unref?.();
+		}),
+	]);
+	if (timer) clearTimeout(timer);
+	if (outcome === "timeout") {
+		console.warn(`[browser-identity] identity override exceeded ${timeoutMs}ms; continuing navigation`);
+	}
 }
 
 export function registerEmbeddedChromeIdentitySession(app: App, browserSession: Session): void {

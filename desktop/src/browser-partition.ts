@@ -189,20 +189,61 @@ export function getHardenedPartitionSession(partition: string): Session {
 	return sess;
 }
 
-// Clipboard writes are harmless and need no modal. Every other site permission
-// requires an explicit human decision in a native dialog.
+// Clipboard writes are harmless and need no modal. Passive/noisy capabilities
+// are denied without interrupting the user; meaningful access (camera,
+// microphone, location, etc.) still requires an explicit human decision.
 const SILENT_SAFE_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
+const SILENT_DENIED_PERMISSIONS = new Set([
+	"sensors",
+	"notifications",
+	"idle-detection",
+	"idleDetection",
+	"midi",
+	"midiSysex",
+]);
+
+function permissionOrigin(url: string): string {
+	try { return new URL(url).origin; } catch { return "unknown-origin"; }
+}
 
 function hardenSession(sess: Session, partition: string): void {
+	// Browser-like lifetime: remember decisions for this partition until the app
+	// exits. Coalesce simultaneous requests so one page cannot queue several
+	// identical native dialogs before the first answer settles.
+	const permissionDecisions = new Map<string, boolean>();
+	const pendingPermissionCallbacks = new Map<string, Array<(granted: boolean) => void>>();
+
+	sess.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+		if (SILENT_SAFE_PERMISSIONS.has(permission)) return true;
+		if (SILENT_DENIED_PERMISSIONS.has(permission)) return false;
+		const origin = permissionOrigin(details.requestingUrl || requestingOrigin);
+		return permissionDecisions.get(`${origin}|${permission}`) === true;
+	});
+
 	sess.setPermissionRequestHandler(
-		(wc: WebContents | null, permission: string, callback: (granted: boolean) => void) => {
+		(wc: WebContents | null, permission: string, callback: (granted: boolean) => void, details) => {
 			if (SILENT_SAFE_PERMISSIONS.has(permission)) {
 				callback(true);
 				return;
 			}
-			const requestingUrl = wc && !wc.isDestroyed() ? wc.getURL() : "";
-			let origin = "this page";
-			try { origin = new URL(requestingUrl).origin; } catch { /* keep neutral label */ }
+			if (SILENT_DENIED_PERMISSIONS.has(permission)) {
+				callback(false);
+				return;
+			}
+			const requestingUrl = details.requestingUrl || (wc && !wc.isDestroyed() ? wc.getURL() : "");
+			const origin = permissionOrigin(requestingUrl);
+			const key = `${origin}|${permission}`;
+			const remembered = permissionDecisions.get(key);
+			if (remembered !== undefined) {
+				callback(remembered);
+				return;
+			}
+			const pending = pendingPermissionCallbacks.get(key);
+			if (pending) {
+				pending.push(callback);
+				return;
+			}
+			pendingPermissionCallbacks.set(key, [callback]);
 			void dialog.showMessageBox({
 				type: "question",
 				title: "Website permission",
@@ -213,9 +254,14 @@ function hardenSession(sess: Session, partition: string): void {
 				cancelId: 0,
 				noLink: true,
 			}).then(
-				(result) => callback(result.response === 1),
-				() => callback(false),
-			);
+				(result) => result.response === 1,
+				() => false,
+			).then((granted) => {
+				permissionDecisions.set(key, granted);
+				const callbacks = pendingPermissionCallbacks.get(key) ?? [];
+				pendingPermissionCallbacks.delete(key);
+				for (const settle of callbacks) settle(granted);
+			});
 		},
 	);
 

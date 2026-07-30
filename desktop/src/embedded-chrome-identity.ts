@@ -23,6 +23,10 @@ const readyByContents = new WeakMap<WebContents, Promise<void>>();
 const lifecycleWired = new WeakSet<WebContents>();
 const identitySessions = new Set<Session>();
 let registrarInstalled = false;
+// Disabled by default while compatibility is validated against sites whose
+// bot protection rejects a CDP-overridden identity. Electron's native
+// Chromium identity is preferable to a partially spoofed Chrome fingerprint.
+let identityOverrideEnabled = false;
 const NAVIGATION_IDENTITY_DEADLINE_MS = 1_500;
 
 function windowsPlatformVersion(osRelease: string): string {
@@ -93,6 +97,7 @@ export function buildEmbeddedChromeIdentity(
 }
 
 export function ensureEmbeddedChromeIdentity(contents: WebContents): Promise<void> {
+	if (!identityOverrideEnabled) return Promise.resolve();
 	if (!lifecycleWired.has(contents)) {
 		lifecycleWired.add(contents);
 		contents.once("destroyed", () => readyByContents.delete(contents));
@@ -119,6 +124,11 @@ export function ensureEmbeddedChromeIdentity(contents: WebContents): Promise<voi
 		if (readyByContents.get(contents) === ready) readyByContents.delete(contents);
 	});
 	return ready;
+}
+
+/** Test seam for exercising the override without enabling it in production. */
+export function _setEmbeddedChromeIdentityOverrideForTest(enabled: boolean): void {
+	identityOverrideEnabled = enabled;
 }
 
 /**
@@ -152,6 +162,12 @@ export async function prepareEmbeddedChromeIdentityForNavigation(
 }
 
 export function registerEmbeddedChromeIdentitySession(app: App, browserSession: Session): void {
+	const identity = buildEmbeddedChromeIdentity(process.versions.chrome);
+	// A session-level UA removes Electron's product token for compatibility
+	// without forging high-entropy client hints through DevTools. The latter
+	// creates a mixed fingerprint that some Akamai properties reject, while the
+	// native Electron UA causes Cloudflare challenge loops.
+	browserSession.setUserAgent(identity.userAgent, identity.acceptLanguage);
 	identitySessions.add(browserSession);
 	if (registrarInstalled) return;
 	registrarInstalled = true;

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+	_setEmbeddedChromeIdentityOverrideForTest,
 	buildEmbeddedChromeIdentity,
 	ensureEmbeddedChromeIdentity,
 	prepareEmbeddedChromeIdentityForNavigation,
@@ -10,12 +11,14 @@ import {
 describe("embedded Chrome identity", () => {
 	const originalChrome = Object.getOwnPropertyDescriptor(process.versions, "chrome");
 	beforeAll(() => {
+		_setEmbeddedChromeIdentityOverrideForTest(true);
 		Object.defineProperty(process.versions, "chrome", {
 			value: "150.0.7339.2",
 			configurable: true,
 		});
 	});
 	afterAll(() => {
+		_setEmbeddedChromeIdentityOverrideForTest(false);
 		if (originalChrome) Object.defineProperty(process.versions, "chrome", originalChrome);
 		else delete (process.versions as { chrome?: string }).chrome;
 	});
@@ -90,7 +93,7 @@ describe("embedded Chrome identity", () => {
 	it("applies identity at creation to every web contents on the browser partition", async () => {
 		let created: ((_event: unknown, contents: unknown) => void) | undefined;
 		const app = { on: vi.fn((_name, listener) => { created = listener; }) };
-		const browserSession = {};
+		const browserSession = { setUserAgent: vi.fn() };
 		registerEmbeddedChromeIdentitySession(app as never, browserSession as never);
 		const sendCommand = vi.fn().mockResolvedValue({});
 		const attach = vi.fn();
@@ -109,6 +112,10 @@ describe("embedded Chrome identity", () => {
 		};
 		created?.({}, contents);
 		await vi.waitFor(() => expect(sendCommand).toHaveBeenCalledOnce());
+		expect(browserSession.setUserAgent).toHaveBeenCalledWith(
+			expect.stringContaining("Chrome/150.0.7339.2"),
+			"en-US,en;q=0.9",
+		);
 		expect(app.on).toHaveBeenCalledWith("web-contents-created", expect.any(Function));
 	});
 });

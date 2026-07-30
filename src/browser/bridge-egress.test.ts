@@ -36,6 +36,35 @@ describe("browser egress deny reason correlation", () => {
 		expect(recentEgressDeny("http://localhost:3000/", "view-a-work")?.reason).toBe("policy deny");
 	});
 
+	// A page's WebSocket must be judged by its HOST, not refused on protocol.
+	// The tool policy is http(s)-only (no tool speaks ws) and page egress reuses
+	// it, which silently killed every live-update/chat socket on the real web.
+	it("asks the URL policy about a ws/wss hop as http/https, keeping the original URL as the deny key", () => {
+		vi.mocked(evaluateEgressForUrl).mockReturnValue({ allowed: true, reason: "allowed" });
+		answerEgressAsk({ id: 20, url: "wss://live.example/socket?x=1", viewId: "view-a-work" });
+		answerEgressAsk({ id: 21, url: "ws://insecure.example/s", viewId: "view-a-work" });
+		expect(vi.mocked(evaluateEgressForUrl).mock.calls.map((c) => c[0])).toEqual([
+			"https://live.example/socket?x=1",
+			"http://insecure.example/s",
+		]);
+		expect(sent).toEqual([
+			{ type: "lax:browser-egress-ask-result", id: 20, allowed: true },
+			{ type: "lax:browser-egress-ask-result", id: 21, allowed: true },
+		]);
+	});
+
+	it("still denies a ws hop the HOST policy rejects, reported under the ws URL the page used", () => {
+		vi.mocked(evaluateEgressForUrl).mockReturnValue({ allowed: false, reason: "host not on the allowlist" });
+		answerEgressAsk({ id: 22, url: "wss://blocked.example/socket", viewId: "view-a-work" });
+		expect(recentEgressDeny("wss://blocked.example/socket", "view-a-work")?.reason).toBe("host not on the allowlist");
+	});
+
+	it("passes the ws handshake URL (not the rewritten one) to the taint scan", () => {
+		vi.mocked(evaluateEgressForUrl).mockReturnValue({ allowed: true, reason: "allowed" });
+		answerEgressAsk({ id: 23, url: "wss://sink.example/?leak=abc", viewId: "view-alpha-work" });
+		expect(vi.mocked(scanPageEgress).mock.calls[0]?.[1]?.url).toBe("wss://sink.example/?leak=abc");
+	});
+
 	it("keeps distinct policy reasons for the same URL in concurrent views", () => {
 		vi.mocked(evaluateEgressForUrl)
 			.mockReturnValueOnce({ allowed: false, reason: "reason A" })

@@ -43,6 +43,12 @@
  *     data the agent never touched is outside this model (that was the blanket
  *     CSP's job, which is irreconcilable with multi-CDN rendering).
  *   - Header-only and DNS-label side channels are not covered here.
+ *   - WebSocket FRAMES are not covered. A ws/wss hop is judged by host policy
+ *     (network-policy.ts pageEgressPolicyUrl) and its handshake URL is scanned
+ *     like any other, but bytes sent after the upgrade never reach webRequest,
+ *     so they cannot be fingerprint-matched. Same shape as the header/DNS gap:
+ *     visible channels are scanned, invisible ones are a known limit — not a
+ *     reason to refuse every socket the live web opens.
  *   - Pure and side-effect-free: reads the session taint/canary registries,
  *     mutates nothing. The enforcing caller records the canary audit exactly
  *     once (mirrors tool-execution/egress-gates.ts probe/enforce split).

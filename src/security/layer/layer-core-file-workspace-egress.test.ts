@@ -8,7 +8,7 @@ import { CAN_CREATE_DIRECTORY_LINK } from "../../symlink-capabilities.test-helpe
 import { mapUploadsRef } from "../../workspace/paths.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { SecurityLayer } from "./layer-core.js";
-import { evaluateWebFetch } from "./network-policy.js";
+import { evaluateWebFetch, pageEgressPolicyUrl } from "./network-policy.js";
 
 const DIRECTORY_LINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 
@@ -270,6 +270,21 @@ describe("egress mode semantics", () => {
   it("evaluateWebFetch direct call: permissive default → public host allowed", () => {
     const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com");
     expect(d.allowed).toBe(true);
+  });
+
+  it("pageEgressPolicyUrl maps ws/wss onto the protocol this policy speaks, leaving others alone", () => {
+    expect(pageEgressPolicyUrl("wss://live.example/s?x=1")).toBe("https://live.example/s?x=1");
+    expect(pageEgressPolicyUrl("ws://live.example:8080/s")).toBe("http://live.example:8080/s");
+    expect(pageEgressPolicyUrl("https://live.example/s")).toBe("https://live.example/s");
+    // Not a scheme prefix — must not be rewritten (substring-match trap).
+    expect(pageEgressPolicyUrl("https://ws.example/wss:/x")).toBe("https://ws.example/wss:/x");
+  });
+
+  it("a wss host reaches the SAME host verdict its https twin gets", () => {
+    const asWs = evaluateWebFetch(new Set(), false, "7007", pageEgressPolicyUrl("wss://example.com/socket"));
+    const asHttps = evaluateWebFetch(new Set(), false, "7007", "https://example.com/socket");
+    expect(asWs.allowed).toBe(asHttps.allowed);
+    expect(asWs.allowed).toBe(true);
   });
 
   it("evaluateWebFetch strict + missing → deny with setup hint", () => {

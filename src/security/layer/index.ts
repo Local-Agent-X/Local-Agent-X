@@ -17,6 +17,7 @@ export {
 	resolveAndPinHost,
 	matchEgressList,
 	evaluateWebFetch,
+	pageEgressPolicyUrl,
 } from "./network-policy.js";
 export {
 	loadDataEgressGuard,

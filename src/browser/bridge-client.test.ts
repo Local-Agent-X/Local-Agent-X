@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const evaluateEgressForUrl = vi.fn<(url: string, selfPort?: string) => { allowed: boolean; reason: string }>();
 
-vi.mock("../security/layer/index.js", () => ({
+// Spread the REAL module so pure helpers (pageEgressPolicyUrl, …) stay live and
+// a new one can't silently turn every ask into a deny; only the policy call is
+// swapped for the test double.
+vi.mock("../security/layer/index.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../security/layer/index.js")>()),
 	evaluateEgressForUrl: (url: string, selfPort?: string) => evaluateEgressForUrl(url, selfPort),
 }));
 vi.mock("../config.js", () => ({

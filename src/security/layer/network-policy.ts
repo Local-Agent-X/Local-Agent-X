@@ -41,6 +41,28 @@ export function matchEgressList(host: string, list: ReadonlySet<string>): boolea
   return false;
 }
 
+/**
+ * Map a BROWSER PAGE's request URL onto the protocol this policy speaks, so the
+ * host/allowlist/mode rules decide it.
+ *
+ * evaluateWebFetch is http(s)-only because no agent TOOL speaks anything else —
+ * correct for the tool path. Browser page egress reuses that same evaluator, so
+ * pages inherited the restriction and every WebSocket a real site opens was
+ * refused on protocol alone (2,473 denies vs 16 http on one dev box), breaking
+ * live updates, chat widgets and streaming. A ws/wss hop is an ordinary request
+ * to an ordinary host: normalize the scheme and let the SAME host policy rule on
+ * it rather than forking a second protocol rule that would drift.
+ *
+ * The handshake URL still goes through the page-egress taint scan; only the
+ * post-handshake FRAMES are invisible to it (documented residual in
+ * page-egress-taint.ts, alongside the header-only and DNS-label channels).
+ */
+export function pageEgressPolicyUrl(url: string): string {
+  if (url.startsWith("wss:")) return `https:${url.slice(4)}`;
+  if (url.startsWith("ws:")) return `http:${url.slice(3)}`;
+  return url;
+}
+
 export function evaluateWebFetch(
   egressAllowlist: ReadonlySet<string>,
   egressAllowlistConfigured: boolean,

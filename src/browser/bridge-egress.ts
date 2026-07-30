@@ -12,7 +12,7 @@
  */
 
 import { createLogger } from "../logger.js";
-import { evaluateEgressForUrl } from "../security/layer/index.js";
+import { evaluateEgressForUrl, pageEgressPolicyUrl } from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
 import { recordCanaryExfilAudit } from "../threat/canaries.js";
 import { scanPageEgress, type PageEgressRequest, type PageEgressVerdict } from "./page-egress-taint.js";
@@ -155,7 +155,10 @@ export interface EgressAskOutcome {
  */
 export function decideEgressAsk(ask: EgressAskMessage, deps: EgressAskDeps): EgressAskOutcome {
 	try {
-		const decision = deps.evaluateUrl(ask.url);
+		// ws/wss carry the page's own scheme; the URL policy speaks http(s). Ask it
+		// about the normalized URL so a WebSocket is judged by its HOST like every
+		// other hop. The ORIGINAL url stays the key for deny-cache/audit/scan.
+		const decision = deps.evaluateUrl(pageEgressPolicyUrl(ask.url));
 		// A silent deny here renders in the browser as ERR_BLOCKED_BY_CLIENT with
 		// ZERO server-side trace — undiagnosable (2026-07-20). Name the reason.
 		if (decision.allowed !== true) {

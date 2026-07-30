@@ -115,6 +115,7 @@ jobs:
         shell: pwsh
         working-directory: desktop
         run: |
+          npm --prefix .. ci
           npm ci
           npm run build
           npx electron-builder --win nsis --x64 --publish never `
@@ -301,6 +302,7 @@ jobs:
           echo "$APPLE_API_KEY_P8" | base64 --decode > "$API_KEY_PATH"
           trap 'rm -f "$API_KEY_PATH"' EXIT
           export APPLE_API_KEY="$API_KEY_PATH"
+          npm --prefix .. ci
           npm ci
           npm run build
           npx electron-builder --mac dmg zip --arm64 --publish never

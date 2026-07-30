@@ -289,6 +289,8 @@ describe("signed native desktop rolling release contract", () => {
 
     expect(trigger).toContain('- "desktop/src/**"');
     expect(trigger).toContain('- "desktop/build/**"');
+    expect(windows).toContain("npm --prefix .. ci");
+    expect(mac).toContain("npm --prefix .. ci");
     expect(windows).toContain("electron-builder --win nsis --x64 --publish never");
     expect(mac).toContain("electron-builder --mac dmg zip --arm64 --publish never");
   });

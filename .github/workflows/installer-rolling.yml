@@ -132,7 +132,7 @@ jobs:
         run: |
           $expectedPackage = "desktop/release/Local-Agent-X-Desktop-$((Get-Content desktop/package.json | ConvertFrom-Json).version)-win-x64.exe"
           $expectedBlockmap = "$expectedPackage.blockmap"
-          $installedExecutable = "desktop/release/win-unpacked/Local Agent X.exe"
+          $installedExecutable = "desktop/release/win-unpacked/LocalAgentX.exe"
           $metadata = "desktop/release/latest.yml"
           foreach ($path in @($expectedPackage, $expectedBlockmap, $installedExecutable, $metadata)) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -292,7 +292,7 @@ jobs:
       - name: Build signed and notarized macOS desktop packages and update metadata
         working-directory: desktop
         env:
-          CSC_NAME: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           APPLE_API_KEY_P8: ${{ secrets.MACOS_API_KEY_P8 }}
           APPLE_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.MACOS_API_ISSUER_ID }}
@@ -302,6 +302,7 @@ jobs:
           echo "$APPLE_API_KEY_P8" | base64 --decode > "$API_KEY_PATH"
           trap 'rm -f "$API_KEY_PATH"' EXIT
           export APPLE_API_KEY="$API_KEY_PATH"
+          export CSC_NAME="${MACOS_SIGN_IDENTITY#Developer ID Application: }"
           npm --prefix .. ci
           npm ci
           npm run build

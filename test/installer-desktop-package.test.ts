@@ -78,7 +78,7 @@ describe("installer packaged-app seams", () => {
     expect(windows).not.toContain("CreateShortcut");
     expect(mac).not.toContain('["run", "dist"]');
     expect(viewModel).not.toContain("loader.js");
-    expect(viewModel).toContain('"Programs", "Local Agent X", "Local Agent X.exe"');
+    expect(viewModel).toContain('"Programs", "Local Agent X", "LocalAgentX.exe"');
   });
 
   it("requires Windows Authenticode and macOS codesign verification", () => {

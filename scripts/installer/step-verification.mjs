@@ -51,7 +51,7 @@ function verifyDesktop(context) {
     return present(processes.spawnSync("codesign", ["--verify", "--deep", "--strict", apps[0]], { stdio: "ignore" }).status === 0);
   }
   const localAppData = env.LOCALAPPDATA || join(context.homeDirectory || homedir(), "AppData", "Local");
-  return present(existsSync(join(localAppData, "Programs", "Local Agent X", "Local Agent X.exe")));
+  return present(existsSync(join(localAppData, "Programs", "Local Agent X", "LocalAgentX.exe")));
 }
 
 export function verifyInstallStep(id, context, evidence = {}) {

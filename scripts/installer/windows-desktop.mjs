@@ -37,7 +37,7 @@ export async function installWindowsDesktop(context) {
   }
   const appPath = join(
     env.LOCALAPPDATA || join(context.homeDirectory || homedir(), "AppData", "Local"),
-    "Programs", "Local Agent X", "Local Agent X.exe",
+    "Programs", "Local Agent X", "LocalAgentX.exe",
   );
   if (!existsSync(appPath)) reporter.fail(`The desktop installer completed but ${appPath} is missing.`);
   reporter.ok("Signed Local Agent X desktop app installed");

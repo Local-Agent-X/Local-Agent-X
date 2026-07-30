@@ -223,7 +223,7 @@ describe("native desktop auto-update package contract", () => {
         channel: string;
         useMultipleRangeRequest: boolean;
       }>;
-      win: { target: string; sign: boolean };
+      win: { target: string; executableName: string; sign: boolean };
       nsis: { oneClick: boolean; allowToChangeInstallationDirectory: boolean };
       mac: {
         target: string[];
@@ -259,6 +259,7 @@ describe("native desktop auto-update package contract", () => {
       .toBe("Local-Agent-X-Desktop-${version}-${os}-${arch}.${ext}");
     expect(desktopPackage.build.artifactName).not.toContain("Installer");
     expect(desktopPackage.build.win.target).toBe("nsis");
+    expect(desktopPackage.build.win.executableName).toBe("LocalAgentX");
     expect(desktopPackage.build.mac.target).toEqual(["dmg", "zip"]);
   });
 
@@ -309,7 +310,7 @@ describe("signed native desktop rolling release contract", () => {
     expect(windows).toContain("--config.win.azureSignOptions.endpoint=");
     expect(windows).toContain("--config.win.azureSignOptions.certificateProfileName=");
     expect(windows).toContain("--config.win.azureSignOptions.codeSigningAccountName=");
-    expect(windows).toContain('desktop/release/win-unpacked/Local Agent X.exe');
+    expect(windows).toContain('desktop/release/win-unpacked/LocalAgentX.exe');
     expect(windows).toContain('foreach ($path in @($installedExecutable, $expectedPackage))');
     expect(windows).toContain("$sig.Status -ne 'Valid'");
     expect(windows).toContain("$null -eq $sig.TimeStamperCertificate");
@@ -324,7 +325,8 @@ describe("signed native desktop rolling release contract", () => {
 
     expect(mac).toContain("- name: Require macOS release signing configuration");
     expect(mac).toContain("MAC_EXPECTED_TEAM_ID");
-    expect(mac).toContain("CSC_NAME: ${{ secrets.MACOS_SIGN_IDENTITY }}");
+    expect(mac).toContain("MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}");
+    expect(mac).toContain('export CSC_NAME="${MACOS_SIGN_IDENTITY#Developer ID Application: }"');
     expect(mac).toContain('export APPLE_API_KEY="$API_KEY_PATH"');
     expect(mac).toContain("APPLE_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}");
     expect(mac).toContain("APPLE_API_ISSUER: ${{ secrets.MACOS_API_ISSUER_ID }}");

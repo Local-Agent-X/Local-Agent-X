@@ -172,7 +172,7 @@ public partial class MainWindowViewModel : ObservableObject
             {
                 var app = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Programs", "Local Agent X", "Local Agent X.exe");
+                    "Programs", "Local Agent X", "LocalAgentX.exe");
                 if (!File.Exists(app))
                 {
                     Screen = "error";

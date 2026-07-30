@@ -36,10 +36,64 @@ export function luhnValid(candidate: string): boolean {
   return sum % 10 === 0;
 }
 
+// ── Is a key-value credential ASSIGNMENT carrying a live secret? ──
+//
+// `token: <value>` is evidence only when <value> is a real secret. In app source
+// the identical shape is overwhelmingly a DECLARATION: an env reference
+// (`token: process.env.CLOVER_TOKEN`), a schema (`password: z.string().min(8)`),
+// a placeholder (`apiKey: "YOUR_API_KEY_HERE"`), or a literal `undefined`.
+//
+// Measured 2026-07-29: 8 of 12 realistic source lines tripped the unguarded
+// pattern, and each hit scores credential_in_output (30) — on its own enough to
+// restrict the SESSION's entire external access (13 such blocks in three days,
+// while the agent was building an app around a Clover connector whose source is
+// naturally thick with these).
+//
+// Deliberately scoped to the SCORING classifier. The REDACTION catalog
+// (security/secrets/credential-patterns.ts) keeps the unguarded shape on purpose:
+// masking a placeholder costs nothing, whereas missing a real secret there is a
+// leak. Here the asymmetry is reversed — a false positive costs the session its
+// network — so the guard belongs on this side of the seam and NOT on that one.
+const CREDENTIAL_VALUE_NOT_LIVE: RegExp[] = [
+  /^\$/,                                        // $VAR
+  /^%[\w.]+%$/,                                 // %VAR%
+  /\$\{/,                                       // ${...} interpolation
+  /process\.env\./i,                            // node env reference
+  /os\.environ/i,                               // python env reference
+  /^["']?<[^>]*>["']?,?$/,                      // <your-key>
+  /^["']?(?:undefined|null|true|false|none|nil|empty)["']?,?$/i,
+  /\[redacted\]|\*{3,}|x{8,}/i,                 // already masked
+  // Placeholder words must ANCHOR at the value start (after an optional quote),
+  // never match mid-value: an unanchored /your/ excused the real-shaped
+  // `token: "sk_live_yourcompany_9f8e7d6c5b4a"`, turning a false-positive fix
+  // into a miss. A placeholder announces itself at the front
+  // ("YOUR_API_KEY_HERE", "REPLACE_ME_...", "changeme-...").
+  /^["']?(?:your|replace[_-]?me|change[_-]?me|placeholder|example|dummy|todo|fixme|insert[_-])/i,
+  // A CALL expression — `z.string().min(8)`, `getToken()`. Anchored on an
+  // identifier immediately before `(` so a real secret that merely CONTAINS a
+  // paren (`Tr0ub4dor&3(x)`) is not excused.
+  /[A-Za-z_$][\w.$]*\(/,
+];
+
+/**
+ * True when a Key-Value credential match's VALUE could be a live secret, as
+ * opposed to a reference, schema, placeholder or already-masked value. Used as
+ * the `validate` hook on the key-value pattern below (same mechanism Luhn uses
+ * for card numbers: narrow with a regex, confirm with a predicate).
+ */
+export function isLiveCredentialAssignment(match: string): boolean {
+  const sep = match.search(/[:=]/);
+  const value = (sep === -1 ? match : match.slice(sep + 1)).trim();
+  if (!value) return false;
+  return !CREDENTIAL_VALUE_NOT_LIVE.some((p) => p.test(value));
+}
+
 const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confidence: number; validate?: (match: string) => boolean }> = [
   // Credentials
   { label: "credentials", pattern: /\b(sk-|ghp_|github_pat_|xox[bpas]-|glpat-|AKIA|Bearer\s+[A-Za-z0-9])/i, confidence: 0.95 },
-  { label: "credentials", pattern: /(?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?[^\s"',]{8,}/i, confidence: 0.85 },
+  // `g` flag is required: validated entries are scanned via matchAll, so one
+  // placeholder can't mask a real assignment later in the same content.
+  { label: "credentials", pattern: /(?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?[^\s"',]{8,}/gi, confidence: 0.85, validate: isLiveCredentialAssignment },
   { label: "credentials", pattern: /\b(AIza[0-9A-Za-z_-]{35})\b/, confidence: 0.95 },  // Google API key
   { label: "credentials", pattern: /\b(ya29\.[0-9A-Za-z_-]+)\b/, confidence: 0.9 },     // Google OAuth token
   { label: "credentials", pattern: /\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/, confidence: 0.85 },  // JWT

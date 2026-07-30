@@ -70,3 +70,71 @@ describe("classifyData — financial label requires a Luhn-valid PAN", () => {
     expect(classifyData(text).labels).toContain("financial");
   });
 });
+
+// Regression (2026-07-29 false-positive audit): the key-value credential pattern
+// fired on any `token: <8+ chars>`, so ORDINARY APP SOURCE was classified as a
+// credential leak — and each hit scores credential_in_output (30), on its own
+// enough to restrict the whole session's external calls. 13 such blocks in three
+// days while the agent built an app around a Clover connector. Measured: 8 of 12
+// realistic source lines tripped it.
+describe("key-value credential assignments — declaration vs live secret", () => {
+  const flagged = (t: string) => {
+    const l = classifyData(t).labels;
+    return l.includes("credentials") || l.includes("secrets");
+  };
+
+  // Each of these is a DECLARATION, not a secret. Every one was a live block.
+  it.each([
+    ["env reference", `token: process.env.CLOVER_TOKEN`],
+    ["env reference (assignment form)", `const apiKey = process.env.VITE_CLOVER_API_KEY;`],
+    ["python env reference", `password = os.environ["DB_PASSWORD"]`],
+    ["zod schema", `password: z.string().min(8).max(72)`],
+    ["call expression", `token: getAccessToken()`],
+    ["upper placeholder", `apiKey: "YOUR_API_KEY_HERE"`],
+    ["replace-me placeholder", `client_secret: "REPLACE_ME_BEFORE_DEPLOY"`],
+    ["angle placeholder", `api_key: "<your-key>"`],
+    ["doc-comment placeholder", `# password: changeme-please-set-this`],
+    ["undefined literal", `secret: undefined,`],
+    ["already masked", `"password": "[REDACTED]"`],
+    ["shell var", `token: $CLOVER_TOKEN`],
+    ["windows var", `token: %CLOVER_TOKEN%`],
+  ])("does NOT classify a %s as a credential", (_what, text) => {
+    expect(flagged(text)).toBe(false);
+  });
+
+  // The other half of the contract: real secrets must still be caught. If this
+  // block ever goes green-by-suppression the guard has eaten the detector.
+  it.each([
+    ["stripe-style key", `api_key: "sk_live_51H8xQ2eZvKYlo2C9abcdefgh"`],
+    ["github PAT", `token: "ghp_16C7e42F292c6912E7710c838347Ae178B4a"`],
+    ["plain password", `password: "hunter2hunter2hunter2"`],
+    ["password containing parens", `password: "Tr0ub4dor&3(x)"`],
+    // Guard regression: an UNANCHORED /your/ excused this real-shaped token
+    // because the value contains "yourcompany". Placeholder words must anchor to
+    // the value start, so this stays caught.
+    ["real token whose value contains 'your'", `token: "sk_live_yourcompany_9f8e7d6c5b4a"`],
+  ])("STILL classifies a %s", (_what, text) => {
+    expect(flagged(text)).toBe(true);
+  });
+
+  // matchAll + the `g` flag: a placeholder earlier in the content must not mask a
+  // real assignment later in it. Without `g` on a validated pattern, the first
+  // non-live match would end the scan.
+  it("a placeholder does not mask a real credential later in the same content", () => {
+    const content = [
+      `// apiKey: "YOUR_API_KEY_HERE"`,
+      `const cfg = { token: process.env.TOKEN };`,
+      `password: "hunter2hunter2hunter2"`,
+    ].join("\n");
+    expect(flagged(content)).toBe(true);
+  });
+
+  it("scopes the guard to scoring: the REDACTION catalog still masks placeholders", async () => {
+    // The asymmetry is deliberate. Masking a placeholder costs nothing; missing a
+    // real secret in redaction is a leak. So credential-patterns.ts stays
+    // unguarded and must keep redacting a declaration the scorer now ignores.
+    const { redact } = await import("../security/secrets/credential-patterns.js");
+    expect(flagged(`apiKey: "YOUR_API_KEY_HERE"`)).toBe(false);
+    expect(redact(`apiKey: "YOUR_API_KEY_HERE"`)).toContain("REDACTED");
+  });
+});

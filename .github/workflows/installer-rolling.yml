@@ -603,5 +603,5 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/windows-installer-rolling/Install Local Agent X Windows Installer.exe
-            dist/macos-installer-rolling/Install Local Agent X Mac Installer.dmg
+            dist/macos-installer-rolling/installer/dist-mac/Install Local Agent X Mac Installer.dmg
             runtime-manifest.json

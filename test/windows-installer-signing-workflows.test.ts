@@ -361,6 +361,8 @@ describe("signed native desktop rolling release contract", () => {
     }
     expect(publish).toContain("tag_name: rolling");
     expect(publish).toContain("Install Local Agent X Windows Installer.exe");
-    expect(publish).toContain("Install Local Agent X Mac Installer.dmg");
+    expect(publish).toContain(
+      "dist/macos-installer-rolling/installer/dist-mac/Install Local Agent X Mac Installer.dmg",
+    );
   });
 });

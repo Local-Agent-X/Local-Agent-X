@@ -21,6 +21,19 @@
  *                      (developer_mode, toolApproval, enableShell, localOnlyMode…)
  *   config.json      — the runtime mirror of those same settings
  *   tool-policy.json — the tool capability rule table
+ *   security.json    — egressMode + the egress allowlist + localServicePorts +
+ *                      inlineEvalPolicy. Every field here is a leash: flipping
+ *                      egressMode to "permissive" opens outbound to any host,
+ *                      adding a localServicePorts entry opens a loopback port,
+ *                      and inlineEvalPolicy:"allow" switches OFF the inline-eval
+ *                      interpreter-escape refusal. Added 2026-07-29 — it was the
+ *                      one file of this kind missing from the set, and its
+ *                      absence was load-bearing in the wrong direction: the
+ *                      argument that a forged ~/.lax/dev-servers record grants
+ *                      no new authority rests on security.json being writable,
+ *                      i.e. on this very gap. Nothing in src/ writes it (every
+ *                      reference is a readFileSync), so blocking writes costs
+ *                      no legitimate path; users edit it by hand.
  *
  * Every INTENDED mutation path is gated: the `setting` tool requires explicit
  * user approval (tool-execution/protected-setting-gate.ts), POST /api/settings
@@ -62,7 +75,9 @@ export function isAppAtRestSecretUnderLax(p: string): boolean {
   return underLaxDir(segs);
 }
 
-const LAX_CONTROL_FILE_BASENAMES = new Set(["settings.json", "config.json", "tool-policy.json"]);
+const LAX_CONTROL_FILE_BASENAMES = new Set([
+  "settings.json", "config.json", "tool-policy.json", "security.json",
+]);
 
 /**
  * True when `p` is one of the app's capability-control files inside a `.lax`

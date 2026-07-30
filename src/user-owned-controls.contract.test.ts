@@ -214,6 +214,21 @@ describe("no user-owned control is left without a seam", () => {
     expect(laxControlFileBasenames()).toContain("settings.json");
   });
 
+  // security.json was missing from seam 4 until 2026-07-29 while holding
+  // egressMode, the egress allowlist, localServicePorts and inlineEvalPolicy —
+  // i.e. an agent in unrestricted file mode could open outbound egress to any
+  // host, whitelist a loopback port, or switch OFF the inline-eval refusal, with
+  // one raw file write that walks past the `setting` approval gate, the operator
+  // token on POST /api/settings, and the RBAC deny on /api/security all at once.
+  // The gap was also cited (correctly) as the reason a forged dev-server record
+  // "grants no new authority" — so closing it removes that excuse too.
+  it("security.json is covered — it carries egressMode, the allowlist and inlineEvalPolicy", () => {
+    expect(laxControlFileBasenames()).toContain("security.json");
+    expect(isLaxControlFile("/home/u/.lax/security.json")).toBe(true);
+    // Still scoped to OUR data dir: a user's own project security.json is theirs.
+    expect(isLaxControlFile("/home/u/projects/app/security.json")).toBe(false);
+  });
+
   it("every protected setting is enforced by the gate, not by prompt text", () => {
     // A field marked protected in the schema but not recognised by the gate is
     // exactly the developer_mode bug, re-introduced.

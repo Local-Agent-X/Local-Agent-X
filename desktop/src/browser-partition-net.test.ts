@@ -10,6 +10,7 @@ import {
 	extractUploadBody,
 	cacheGet,
 	cacheSet,
+	cleanBrowsingUserAgent,
 	clearDecisionCache,
 } from "./browser-partition-net";
 
@@ -36,6 +37,36 @@ describe("buildHardeningCspHeaders", () => {
 
 	it("the hardening CSP is the exact 3-directive literal (mirror of csp-policy.ts)", () => {
 		expect(AGENT_HARDENING_CSP).toBe("object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+	});
+});
+
+describe("cleanBrowsingUserAgent", () => {
+	const winUa =
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) local-agent-x/0.9.3 Chrome/134.0.6998.44 Electron/35.7.5 Safari/537.36";
+	const macUa =
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) LocalAgentX/1.0.0 Chrome/134.0.6998.44 Electron/35.7.5 Safari/537.36";
+
+	it("strips the Electron and app product tokens (the Turnstile bot signals)", () => {
+		const out = cleanBrowsingUserAgent(winUa);
+		expect(out).toBe(
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.44 Safari/537.36",
+		);
+	});
+
+	it("keeps the ENGINE's real Chrome version — never a hardcoded literal", () => {
+		expect(cleanBrowsingUserAgent(winUa)).toContain("Chrome/134.0.6998.44");
+	});
+
+	it("preserves the platform segment on macOS and strips a spaceless app name", () => {
+		const out = cleanBrowsingUserAgent(macUa);
+		expect(out).toContain("(Macintosh; Intel Mac OS X 10_15_7)");
+		expect(out).not.toMatch(/LocalAgentX|Electron/);
+	});
+
+	it("is a no-op on an already-clean Chrome UA", () => {
+		const clean =
+			"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+		expect(cleanBrowsingUserAgent(clean)).toBe(clean);
 	});
 });
 

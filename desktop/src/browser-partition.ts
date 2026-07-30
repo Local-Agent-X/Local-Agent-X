@@ -26,6 +26,7 @@ import {
 	buildHardeningCspHeaders,
 	cacheGet,
 	cacheSet,
+	cleanBrowsingUserAgent,
 	clearDecisionCache,
 	extractUploadBody,
 } from "./browser-partition-net";
@@ -204,6 +205,7 @@ const VIEW_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
 const SW_RESOURCE_TYPES: ReadonlySet<string> = new Set(["serviceWorker"]);
 
 function hardenSession(sess: Session, partition: string): void {
+	sess.setUserAgent(cleanBrowsingUserAgent(sess.getUserAgent())); // pre-webContents, so views/popups inherit — why: see helper doc
 	sess.setPermissionRequestHandler(
 		(_wc: WebContents | null, permission: string, callback: (granted: boolean) => void) => {
 			callback(VIEW_ALLOWED_PERMISSIONS.has(permission));

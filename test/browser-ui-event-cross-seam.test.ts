@@ -66,7 +66,6 @@ describe("one ui:browser stream → digest AND history, one privacy law, one tog
     expect(rows[0].url).toBe("https://news.ycombinator.com/item");
     expect(rows[0].title).toBe("Interesting Story");
     // Unregistered session resolves to the default profile.
-    expect(rows[0].profileId).toBe("default");
   });
 
   it("credential-shaped urls and titles survive into NEITHER surface", async () => {

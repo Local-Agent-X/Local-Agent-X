@@ -61,7 +61,7 @@ describe("browser egress deny reason correlation", () => {
 
 	it("passes the ws handshake URL (not the rewritten one) to the taint scan", () => {
 		vi.mocked(evaluateEgressForUrl).mockReturnValue({ allowed: true, reason: "allowed" });
-		answerEgressAsk({ id: 23, url: "wss://sink.example/?leak=abc", viewId: "view-alpha-work" });
+		answerEgressAsk({ id: 23, url: "wss://sink.example/?leak=abc", viewId: "view-alpha-shared" });
 		expect(vi.mocked(scanPageEgress).mock.calls[0]?.[1]?.url).toBe("wss://sink.example/?leak=abc");
 	});
 
@@ -80,10 +80,10 @@ describe("browser egress deny reason correlation", () => {
 		vi.mocked(scanPageEgress).mockImplementation((sessionId) => ({
 			allowed: false, layer: "data-lineage", canary: false, reason: `taint ${sessionId}`,
 		}));
-		answerEgressAsk({ id: 4, url: "https://sink.example/", viewId: "view-alpha-work" });
-		answerEgressAsk({ id: 5, url: "https://sink.example/", viewId: "view-beta-work" });
-		expect(recentEgressDeny("https://sink.example/", "view-alpha-work")?.reason).toBe("taint alpha");
-		expect(recentEgressDeny("https://sink.example/", "view-beta-work")?.reason).toBe("taint beta");
+		answerEgressAsk({ id: 4, url: "https://sink.example/", viewId: "view-alpha-shared" });
+		answerEgressAsk({ id: 5, url: "https://sink.example/", viewId: "view-beta-shared" });
+		expect(recentEgressDeny("https://sink.example/", "view-alpha-shared")?.reason).toBe("taint alpha");
+		expect(recentEgressDeny("https://sink.example/", "view-beta-shared")?.reason).toBe("taint beta");
 	});
 
 	it("consumes a matching deny once while normalizing query and trailing slash", () => {

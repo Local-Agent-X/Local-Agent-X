@@ -16,7 +16,7 @@ import {
 
 const token = "a".repeat(64);
 const SESSION = "s1";
-const VIEW = `view-${SESSION}-default`; // owned by SESSION (viewBelongsToSession)
+const VIEW = `view-${SESSION}-shared`; // owned by SESSION (viewBelongsToSession)
 const handles: BrowserRelayServerHandle[] = [];
 const original = {
 	flag: process.env[CONTAINER_BROWSER_RELAY_FLAG],
@@ -86,14 +86,14 @@ describe("container browser relay", () => {
 		activate(socketPath);
 		// A well-formed, correctly-authenticated request for a view owned by a
 		// DIFFERENT session. Before the ownership check this was accepted.
-		const foreignView = "view-s2-default";
+		const foreignView = "view-s2-shared";
 		const message = { type: "lax:browser-capture", viewId: foreignView };
 		await expect(relayBrowserRequest({ op: "capture", viewId: foreignView, message, timeoutMs: 5_000 }))
 			.rejects.toThrow("not owned by this session");
 		expect(request).not.toHaveBeenCalled();
 	});
 
-	it("accepts a same-session view whose profile id itself contains hyphens", async () => {
+	it("authorizes chat-owned views separately from the exact acting session", async () => {
 		// Custom profiles are minted `prof-<b36>-<hex>` (two hyphens); the tab
 		// variant appends `-tN`. The lossy sessionIdFromViewId parser split these
 		// wrong and rejected the session's OWN legitimate ops — would-fail-before.
@@ -103,10 +103,11 @@ describe("container browser relay", () => {
 			socketPath,
 			token,
 			ownerSessionId: SESSION,
+			browserOwnerSessionId: "chat-root",
 			handler: { request, abort: vi.fn() },
 		}));
 		activate(socketPath);
-		for (const viewId of [`view-${SESSION}-prof-lz9k2p-4f2a1c`, `view-${SESSION}-prof-lz9k2p-4f2a1c-t3`]) {
+		for (const viewId of ["view-chat-root-shared", "view-chat-root-shared-t3"]) {
 			request.mockClear();
 			const message = { type: "lax:browser-capture", viewId };
 			await expect(relayBrowserRequest({ op: "capture", viewId, message, timeoutMs: 5_000 }))
@@ -127,7 +128,7 @@ describe("container browser relay", () => {
 			handler: { request, abort: vi.fn() },
 		}));
 		activate(socketPath);
-		const foreignView = "view-s12-default";
+		const foreignView = "view-s12-shared";
 		const message = { type: "lax:browser-capture", viewId: foreignView };
 		await expect(relayBrowserRequest({ op: "capture", viewId: foreignView, message, timeoutMs: 5_000 }))
 			.rejects.toThrow("not owned by this session");
@@ -139,11 +140,11 @@ describe("container browser relay", () => {
 		// viewId. Before the fix a container received every session's url/title;
 		// the "*" sentinel the list caller sends was also rejected outright.
 		const socketPath = endpoint("list-filter");
-		const own = `view-${SESSION}-default`;
+		const own = `view-${SESSION}-shared`;
 		const request = vi.fn(async () => ({
 			views: [
 				{ viewId: own, partition: "p", url: "https://own.example", title: "Own", attached: true, agentDriven: true },
-				{ viewId: "view-s2-default", partition: "p", url: "https://secret.example", title: "Secret", attached: true, agentDriven: true },
+				{ viewId: "view-s2-shared", partition: "p", url: "https://secret.example", title: "Secret", attached: true, agentDriven: true },
 				{ viewId: "foreground", partition: "p", url: "https://user.example", title: "User", attached: true, agentDriven: false },
 			],
 		}));
@@ -205,7 +206,7 @@ describe("container browser relay", () => {
 			handler: { request: vi.fn(), abort },
 		}));
 		activate(socketPath);
-		await expect(relayBrowserAbort("view-s2-default")).rejects.toThrow("not owned by this session");
+		await expect(relayBrowserAbort("view-s2-shared")).rejects.toThrow("not owned by this session");
 		expect(abort).not.toHaveBeenCalled();
 	});
 
@@ -242,7 +243,7 @@ describe("container browser relay", () => {
 		const second = await startBrowserContainerRelay({ socketPath, token, ownerSessionId: SESSION, handler });
 		handles.push(second);
 		activate(socketPath);
-		const restartedView = `view-${SESSION}-restart`;
+		const restartedView = `view-${SESSION}-shared`;
 		await relayBrowserAbort(restartedView);
 		expect(handler.abort).toHaveBeenCalledWith(restartedView);
 	});

@@ -16,6 +16,7 @@ import {
   getAuditHmacKey,
 } from "../app-runtime/audit-signing.js";
 import { resolveCredential } from "../auth/resolve.js";
+import { resolveBrowserSessionId } from "../browser/session-owner-registry.js";
 import { getRuntimeConfig, workspaceRoot } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "../ops/event-log.js";
@@ -171,17 +172,15 @@ async function materializeProjection(
   const workspace = realpathSync(workspaceRoot());
   const operation = opDir(op.id);
   const projectionManifest = readManifest(root);
-  // Bind the relay to the container's OWN execution session — the same id the
-  // in-container worker names its browser views after (view-<sessionId>-…). The
-  // relay refuses ops targeting an unrelated session's views (see
-  // viewBelongsToSession for the exact — descendant-inclusive — boundary). Fail
-  // closed if the op carries no session: an unattributed container drives none.
+  // Keep the exact execution session for relay authentication and lineage;
+  // view authorization is separately bound to its canonical root chat.
   const ownerSessionId = op.canonical?.sessionId;
   if (!ownerSessionId) {
     throw new Error("container projection is missing its owning session");
   }
   const browserRelay = await openProjectionBrowserRelay(root,
-    projectionManifest.mounts.browserRelayToken, ownerSessionId);
+    projectionManifest.mounts.browserRelayToken, ownerSessionId,
+    resolveBrowserSessionId(ownerSessionId));
   return {
     durableId: projectionId,
     buildSpec({ image, placement }): DockerContainerSpec {

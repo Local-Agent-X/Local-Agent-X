@@ -5,9 +5,8 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
 import { closeCdpTab, openCdpTab, type CdpTabHost } from "./manager-tabs.js";
-import { ACTION_TIMEOUT, type BrowserEngine } from "./launcher.js";
+import { ACTION_TIMEOUT, SHARED_BROWSER_USER_DATA_DIR, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
-import { profileUserDataDir } from "./profile-store.js";
 import {
   formatRecentDownloads,
   getDownloadApprovalBinding,
@@ -50,11 +49,8 @@ export class BrowserManager implements BrowserBackend {
   constructor(
     private readonly sessionId: string = "default",
     private readonly mode: BrowserMode = "isolated",
-    // Profile binding (see backend.ts). CDP maps it to a userDataDir later.
-    private readonly profileId: string = "default",
   ) {}
 
-  getProfileId(): string { return this.profileId; }
   /** Called when the idle timer fires after this session is torn down. */
   setIdleHandler(fn: () => void): void { this.onIdle = fn; }
   /** Supplies tabs owned by other sessions so we never adopt one of theirs. */
@@ -129,7 +125,7 @@ export class BrowserManager implements BrowserBackend {
       this.currentEngine,
       this.mode,
       this.sessionId,
-      profileUserDataDir(this.profileId),
+      SHARED_BROWSER_USER_DATA_DIR,
     );
     // Install the context-level SSRF/scheme request guard so EVERY navigation
     // this context makes (click/act/fill-induced, redirect hop, JS-redirect) is

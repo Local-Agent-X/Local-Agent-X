@@ -51,12 +51,12 @@ afterEach(async () => { await closeSharedBrowser(); });
 
 describe("runtime — profile userDataDir reaches launchViaCDP", () => {
 	it("passes the session's profile dir as options.userDataDir", async () => {
-		await acquireSessionContext("chromium", "isolated", "sess", "/lax/browser-profiles/work");
+		await acquireSessionContext("chromium", "isolated", "sess", "/lax/browser-data/shared");
 		expect(mocks.launchViaCDP).toHaveBeenCalledTimes(1);
 		expect(mocks.launchViaCDP).toHaveBeenCalledWith(
 			expect.anything(),
 			"http://127.0.0.1:41999",
-			{ userDataDir: "/lax/browser-profiles/work" },
+			{ userDataDir: "/lax/browser-data/shared" },
 		);
 	});
 
@@ -71,7 +71,7 @@ describe("runtime — profile userDataDir reaches launchViaCDP", () => {
 
 	it("first-launcher-wins: a second session reuses the shared browser and does NOT relaunch", async () => {
 		await acquireSessionContext("chromium", "isolated", "first", "/lax/chrome-profile");
-		await acquireSessionContext("chromium", "isolated", "second", "/lax/browser-profiles/work");
+		await acquireSessionContext("chromium", "isolated", "second", "/lax/browser-data/shared");
 		// One shared Chrome, one launch — the second dir is ignored by design.
 		expect(mocks.launchViaCDP).toHaveBeenCalledTimes(1);
 		expect(mocks.launchViaCDP).toHaveBeenCalledWith(

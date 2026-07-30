@@ -1,48 +1,71 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
-  registerSessionOwner,
-  getSessionOwner,
-  clearSessionOwner,
-  resolveSessionBrowserProfileId,
   _resetSessionOwnerRegistry,
-  DEFAULT_BROWSER_PROFILE_ID,
+  aggregateBrowserSessionLineage,
+  clearSessionOwner,
+  DEFAULT_BROWSER_SESSION_ID,
+  getSessionOwner,
+  registerChildSessionOwner,
+  registerSessionOwner,
+  resolveBrowserSessionId,
 } from "./session-owner-registry.js";
+import { checkEgressTaint, clearSessionTaint, recordSensitiveRead } from "../data-lineage/index.js";
+import { clearSessionCanaries, getSessionCanaries, registerSessionCanaries } from "../threat/canaries.js";
+import {
+  CONTAINER_BROWSER_ACTING_SESSION,
+  CONTAINER_BROWSER_OWNER_SESSION,
+  CONTAINER_BROWSER_RELAY_FLAG,
+} from "./container-bridge-transport.js";
 
-beforeEach(() => _resetSessionOwnerRegistry());
+beforeEach(() => {
+  _resetSessionOwnerRegistry();
+  for (const id of ["chat-root", "agent-parent", "agent-child"]) {
+    clearSessionTaint(id);
+    clearSessionCanaries(id);
+  }
+});
 
-describe("session→owner registry", () => {
-  it("resolves an unregistered session to the default profile", () => {
-    expect(resolveSessionBrowserProfileId("never-seen")).toBe(DEFAULT_BROWSER_PROFILE_ID);
-    expect(getSessionOwner("never-seen")).toBeUndefined();
+describe("session owner registry", () => {
+  it("records, merges, normalizes, and clears owners", () => {
+    registerSessionOwner("", { agentId: "tpl-x" });
+    expect(getSessionOwner(DEFAULT_BROWSER_SESSION_ID)).toEqual({
+      agentId: "tpl-x",
+      browserSessionId: DEFAULT_BROWSER_SESSION_ID,
+    });
+    registerSessionOwner("", { browserSessionId: "chat-root" });
+    expect(resolveBrowserSessionId("")).toBe("chat-root");
+    clearSessionOwner("");
+    expect(getSessionOwner(DEFAULT_BROWSER_SESSION_ID)).toBeUndefined();
   });
 
-  it("records and reads back an owner", () => {
-    registerSessionOwner("agent-42", { agentId: "tpl-x", browserProfileId: "prof-nutrishop" });
-    expect(getSessionOwner("agent-42")).toEqual({ agentId: "tpl-x", browserProfileId: "prof-nutrishop" });
-    expect(resolveSessionBrowserProfileId("agent-42")).toBe("prof-nutrishop");
+  it("flattens nested agents onto the root chat while unrelated roots stay isolated", () => {
+    registerChildSessionOwner("agent-parent", "chat-root", { agentId: "parent" });
+    registerChildSessionOwner("agent-child", "agent-parent", { agentId: "child" });
+    expect(resolveBrowserSessionId("agent-parent")).toBe("chat-root");
+    expect(resolveBrowserSessionId("agent-child")).toBe("chat-root");
+    expect(resolveBrowserSessionId("cron-nightly")).toBe("cron-nightly");
   });
 
-  it("falls back to default when an owner has an agent but no profile", () => {
-    registerSessionOwner("agent-7", { agentId: "tpl-y" });
-    expect(resolveSessionBrowserProfileId("agent-7")).toBe(DEFAULT_BROWSER_PROFILE_ID);
+  it("uses the host-projected root inside a single-session container", () => {
+    process.env[CONTAINER_BROWSER_RELAY_FLAG] = "1";
+    process.env[CONTAINER_BROWSER_ACTING_SESSION] = "agent-child";
+    process.env[CONTAINER_BROWSER_OWNER_SESSION] = "chat-root";
+    try {
+      expect(resolveBrowserSessionId("agent-child")).toBe("chat-root");
+      expect(resolveBrowserSessionId("other-session")).toBe("other-session");
+    } finally {
+      delete process.env[CONTAINER_BROWSER_RELAY_FLAG];
+      delete process.env[CONTAINER_BROWSER_ACTING_SESSION];
+      delete process.env[CONTAINER_BROWSER_OWNER_SESSION];
+    }
   });
 
-  it("merges partial updates without clobbering earlier fields", () => {
-    registerSessionOwner("s1", { agentId: "tpl-z" });
-    registerSessionOwner("s1", { browserProfileId: "prof-a" });
-    expect(getSessionOwner("s1")).toEqual({ agentId: "tpl-z", browserProfileId: "prof-a" });
-  });
-
-  it("clears an owner so a reused session id can't inherit a stale profile", () => {
-    registerSessionOwner("cron-1", { browserProfileId: "prof-b" });
-    clearSessionOwner("cron-1");
-    expect(getSessionOwner("cron-1")).toBeUndefined();
-    expect(resolveSessionBrowserProfileId("cron-1")).toBe(DEFAULT_BROWSER_PROFILE_ID);
-  });
-
-  it("normalizes an empty session id to the default key", () => {
-    registerSessionOwner("", { browserProfileId: "prof-c" });
-    expect(resolveSessionBrowserProfileId("")).toBe("prof-c");
-    expect(getSessionOwner(DEFAULT_BROWSER_PROFILE_ID)).toEqual({ agentId: undefined, browserProfileId: "prof-c" });
+  it("merges child taint and canaries into the chat browser bucket", () => {
+    registerChildSessionOwner("agent-child", "chat-root");
+    recordSensitiveRead("agent-child", "secret", "vault/item");
+    registerSessionCanaries("agent-child", ["CANARY-child-ALPHA"]);
+    expect(aggregateBrowserSessionLineage("agent-child")).toBe("chat-root");
+    expect(checkEgressTaint("chat-root").blocked).toBe(true);
+    expect(getSessionCanaries("chat-root")).toContain("CANARY-child-ALPHA");
   });
 });

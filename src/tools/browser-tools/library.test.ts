@@ -28,8 +28,8 @@ beforeEach(() => {
 describe("history action", () => {
   it("lists newest-first across ALL profiles, honoring find + limit", () => {
     const store = BrowserHistoryStore.getInstance();
-    store.recordVisit("default", "https://news.example.com/story", "Launch Day");
-    store.recordVisit("work", "https://vendor.example.com/pricing", "Pricing");
+    store.recordVisit("https://news.example.com/story", "Launch Day");
+    store.recordVisit("https://vendor.example.com/pricing", "Pricing");
 
     const all = handleHistory({});
     expect(all.isError).toBeFalsy();
@@ -52,7 +52,7 @@ describe("history action", () => {
 
   it("says so when history is empty or nothing matches", () => {
     expect(handleHistory({}).content).toContain("empty");
-    BrowserHistoryStore.getInstance().recordVisit("default", "https://example.com/a", "");
+    BrowserHistoryStore.getInstance().recordVisit("https://example.com/a", "");
     expect(handleHistory({ find: "zzz-no-match" }).content).toContain('No history entries match "zzz-no-match"');
   });
 });
@@ -65,7 +65,6 @@ describe("bookmark_add action", () => {
     expect(bm.url).toBe("https://example.com/current");
     expect(bm.title).toBe("Current Page");
     expect(bm.addedBy).toBe("agent");
-    expect(bm.profileId).toBe("work");
   });
 
   it("explicit url/title win over the active page", async () => {

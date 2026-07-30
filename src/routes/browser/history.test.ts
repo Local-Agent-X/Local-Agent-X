@@ -36,8 +36,8 @@ beforeEach(() => {
 describe("handleBrowserHistoryRoutes", () => {
   it("GET /api/browser/history → 200 newest-first, honoring q/profile/limit", async () => {
     const store = BrowserHistoryStore.getInstance();
-    store.recordVisit("default", "https://example.com/a", "Alpha");
-    store.recordVisit("work", "https://example.com/b", "Beta");
+    store.recordVisit("https://example.com/a", "Alpha");
+    store.recordVisit("https://example.com/b", "Beta");
 
     let r = mkRes();
     expect(await handleBrowserHistoryRoutes("GET", u("/api/browser/history"), req, r.res, ctx, role)).toBe(true);
@@ -45,16 +45,12 @@ describe("handleBrowserHistoryRoutes", () => {
     expect((r.body() as HistoryEntry[]).map((e) => e.title)).toEqual(["Beta", "Alpha"]);
 
     r = mkRes();
-    await handleBrowserHistoryRoutes("GET", u("/api/browser/history?profile=work"), req, r.res, ctx, role);
-    expect((r.body() as HistoryEntry[]).map((e) => e.title)).toEqual(["Beta"]);
-
-    r = mkRes();
     await handleBrowserHistoryRoutes("GET", u("/api/browser/history?q=alpha&limit=1"), req, r.res, ctx, role);
     expect((r.body() as HistoryEntry[]).map((e) => e.title)).toEqual(["Alpha"]);
   });
 
   it("DELETE /api/browser/history/:id removes one entry (404 for unknown)", async () => {
-    const e = BrowserHistoryStore.getInstance().recordVisit("default", "https://example.com/x", "")!;
+    const e = BrowserHistoryStore.getInstance().recordVisit("https://example.com/x", "")!;
     let r = mkRes();
     expect(await handleBrowserHistoryRoutes("DELETE", u(`/api/browser/history/${e.id}`), req, r.res, ctx, role)).toBe(true);
     expect(r.status()).toBe(200);
@@ -67,8 +63,8 @@ describe("handleBrowserHistoryRoutes", () => {
 
   it("DELETE /api/browser/history clears everything and reports the count", async () => {
     const store = BrowserHistoryStore.getInstance();
-    store.recordVisit("default", "https://example.com/1", "");
-    store.recordVisit("work", "https://example.com/2", "");
+    store.recordVisit("https://example.com/1", "");
+    store.recordVisit("https://example.com/2", "");
     const r = mkRes();
     expect(await handleBrowserHistoryRoutes("DELETE", u("/api/browser/history"), req, r.res, ctx, role)).toBe(true);
     expect(r.body()).toEqual({ ok: true, cleared: 2 });

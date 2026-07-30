@@ -1,7 +1,7 @@
 /**
  * Shared browser history — one JSON store of visited pages, keyed by browser
  * profile, readable by both the user (Library panel) and agents (`browser`
- * tool `history` action). Mirrors BrowserProfileStore in structure: JSON
+ * tool `history` action). JSON
  * singleton under getLaxDir(), load-with-catch, writeFileSync persist.
  *
  * PRIVACY LAW — every url is passed through redactTarget (the ui-event-store
@@ -26,11 +26,10 @@ import { containsSensitiveText, redactTarget } from "../orchestrator/ui-event-st
 const HISTORY_FILE = join(getLaxDir(), "browser-history.json");
 
 /** Per-profile entry cap — oldest entries beyond this are evicted. */
-export const HISTORY_CAP_PER_PROFILE = 500;
+export const HISTORY_CAP = 500;
 
 export interface HistoryEntry {
   id: string;
-  profileId: string;
   /** Redacted url: host+path only (no query/fragment/userinfo). */
   url: string;
   title: string;
@@ -92,7 +91,7 @@ export class BrowserHistoryStore {
 
   /** Profiles whose most recent recordVisit was DROPPED by redaction — their
    *  follow-up "title" event must not stamp the previous, unrelated row. */
-  private readonly titleSuppressed = new Set<string>();
+  private titleSuppressed = false;
 
   /**
    * Record a visit. The url is redacted first (see PRIVACY LAW above); a
@@ -100,20 +99,19 @@ export class BrowserHistoryStore {
    * the profile's most recent entry collapses into it (ts refreshed, title
    * updated when provided) instead of minting a duplicate row.
    */
-  recordVisit(profileId: string, url: string, title = ""): HistoryEntry | null {
-    const pid = profileId || "default";
+  recordVisit(url: string, title = ""): HistoryEntry | null {
     const clean = sanitizeHistoryUrl(url);
     if (clean === null) {
       // The visit was credential-shaped: suppress its follow-up title too,
       // or it would stamp the previous, unrelated row (misattribution).
-      this.titleSuppressed.add(pid);
+      this.titleSuppressed = true;
       return null;
     }
-    this.titleSuppressed.delete(pid);
+    this.titleSuppressed = false;
     const cleanTitle = sanitizeHistoryTitle(title);
     const now = Date.now();
 
-    const latest = this.latestFor(pid);
+    const latest = this.entries[this.entries.length - 1];
     if (latest && latest.url === clean) {
       latest.ts = now;
       if (cleanTitle !== "") latest.title = cleanTitle;
@@ -123,13 +121,12 @@ export class BrowserHistoryStore {
 
     const entry: HistoryEntry = {
       id: "hist-" + now.toString(36) + "-" + randomBytes(3).toString("hex"),
-      profileId: pid,
       url: clean,
       title: cleanTitle,
       ts: now,
     };
     this.entries.push(entry);
-    this.evictOldest(pid);
+    this.evictOldest();
     this.persist();
     return entry;
   }
@@ -139,44 +136,29 @@ export class BrowserHistoryStore {
    *  when the title is credential-shaped (same law as urls), or when the
    *  profile's last visit was dropped by redaction — that title belongs to
    *  the dropped page, not to whatever row happens to be latest. */
-  touchTitle(profileId: string, title: string): void {
-    const pid = profileId || "default";
-    if (this.titleSuppressed.has(pid)) return;
-    const latest = this.latestFor(pid);
+  touchTitle(title: string): void {
+    if (this.titleSuppressed) return;
+    const latest = this.entries[this.entries.length - 1];
     const clean = sanitizeHistoryTitle(title);
     if (!latest || clean === "") return;
     latest.title = clean;
     this.persist();
   }
 
-  private latestFor(profileId: string): HistoryEntry | undefined {
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      if (this.entries[i].profileId === profileId) return this.entries[i];
+  private evictOldest(): void {
+    if (this.entries.length > HISTORY_CAP) {
+      this.entries.splice(0, this.entries.length - HISTORY_CAP);
     }
-    return undefined;
-  }
-
-  private evictOldest(profileId: string): void {
-    let count = 0;
-    for (const e of this.entries) if (e.profileId === profileId) count++;
-    if (count <= HISTORY_CAP_PER_PROFILE) return;
-    let toDrop = count - HISTORY_CAP_PER_PROFILE;
-    // Entries are append-ordered, so the first matches are the oldest.
-    this.entries = this.entries.filter((e) => {
-      if (toDrop > 0 && e.profileId === profileId) { toDrop--; return false; }
-      return true;
-    });
   }
 
   /** Newest-first, optional profile filter + case-insensitive substring match
    *  on url and title. */
-  query(opts: { profileId?: string; q?: string; limit?: number } = {}): HistoryEntry[] {
+  query(opts: { q?: string; limit?: number } = {}): HistoryEntry[] {
     const limit = Number.isFinite(opts.limit) && (opts.limit as number) > 0 ? (opts.limit as number) : 50;
     const needle = (opts.q ?? "").trim().toLowerCase();
     const out: HistoryEntry[] = [];
     for (let i = this.entries.length - 1; i >= 0 && out.length < limit; i--) {
       const e = this.entries[i];
-      if (opts.profileId && e.profileId !== opts.profileId) continue;
       if (needle && !e.url.toLowerCase().includes(needle) && !e.title.toLowerCase().includes(needle)) continue;
       out.push(e);
     }
@@ -193,9 +175,9 @@ export class BrowserHistoryStore {
   }
 
   /** Clear all history (or one profile's). Returns the number removed. */
-  clear(profileId?: string): number {
+  clear(): number {
     const before = this.entries.length;
-    this.entries = profileId ? this.entries.filter((e) => e.profileId !== profileId) : [];
+    this.entries = [];
     const removed = before - this.entries.length;
     if (removed > 0) this.persist();
     return removed;

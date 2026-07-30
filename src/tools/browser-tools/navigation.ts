@@ -14,6 +14,7 @@ import { safeBrowserPageLabel, sensitivePageStub } from "../../browser/guards.js
 import { resolveNewTabUrls } from "../../security/layer/browser-egress-eval.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { BROWSER_TOOL_NAME } from "./description.js";
+import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
 
 // Navigations were invisible in the logs — only browser *spawns* logged, never
 // where the agent went. That made route-arounds (X login wall -> navigate to a
@@ -158,10 +159,16 @@ export async function handleSnapshot(
     // advances exactly as on a normal observe, so later snapshots keep
     // diffing correctly.
     const obs = await manager.observe();
+    if (requiresHumanVerification(obs)) {
+      return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
+    }
     const forced: BrowserObservation = { ...obs, isInitial: true, full: obs.currentRefs, added: [], removed: [], changed: [] };
     raw = ObservationRegistry.format(forced);
   } else {
     raw = await manager.snapshot();
+  }
+  if (snapshotShowsHumanVerification(raw)) {
+    return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
   }
   const prefix = computeAuthWallPrefix(raw);
   return ok(wrapExternalContent(prefix + raw, "browser.snapshot"));

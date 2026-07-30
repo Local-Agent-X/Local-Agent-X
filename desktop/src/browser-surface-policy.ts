@@ -47,7 +47,7 @@ export function decideAgentSurface(ctx: SurfaceContext): boolean {
 }
 
 /** Is `currentViewId` an in-app agent view OWNED BY `sessionId`? Agent view ids
- *  are minted `view-<sessionId>-<profileId>[-tN]` (instance.ts:166), so a strict
+ *  are minted `view-<sessionId>-main[-tN]`, so a strict
  *  `view-<sessionId>-` prefix identifies exactly this session's own tabs and
  *  excludes foreground / profile-* / user-N and every OTHER session's views. The
  *  trailing hyphen stops a shorter sessionId from prefixing a longer one

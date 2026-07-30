@@ -44,7 +44,7 @@ describe("handleBrowserBookmarkRoutes", () => {
     const r = mkRes();
     const handled = await handleBrowserBookmarkRoutes(
       "POST", u("/api/browser/bookmarks"),
-      mkReq({ url: "https://example.com/docs", title: "Docs", tags: ["ref"], profileId: "work" }),
+      mkReq({ url: "https://example.com/docs", title: "Docs", tags: ["ref"] }),
       r.res, ctx, role,
     );
     expect(handled).toBe(true);
@@ -52,7 +52,6 @@ describe("handleBrowserBookmarkRoutes", () => {
     const bm = r.body() as BrowserBookmark;
     expect(bm.addedBy).toBe("user");
     expect(bm.title).toBe("Docs");
-    expect(bm.profileId).toBe("work");
     expect(BrowserBookmarkStore.getInstance().get(bm.id)).not.toBeNull();
   });
 

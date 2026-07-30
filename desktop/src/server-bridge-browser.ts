@@ -35,7 +35,8 @@ import {
 import { autoSurfaceAgentView } from "./browser-ipc";
 import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
 import { wireDownloadBridge } from "./browser-downloads-bridge";
-import { getHardenedPartitionSession, setEgressEvaluator } from "./browser-partition";
+import { ensureEmbeddedChromeIdentity } from "./embedded-chrome-identity";
+import { getHardenedPartitionSession, setEgressEvaluator, SHARED_BROWSER_PARTITION } from "./browser-partition";
 import { askServerEgress, resetEgressPipe, setEgressPipeEndpoint, settleEgressAsk } from "./server-bridge-egress";
 import {
 	attachViewPerception,
@@ -293,10 +294,10 @@ function requireWebContents(viewId: string): WebContents {
 function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 	switch (msg.op) {
 		case "create": {
-			if (!msg.partition) throw new Error("create requires a partition");
-			// Bridge-created views are always agent-driving (per-(session,profile));
+			// Bridge-created views are always agent-driving and use the same
+			// persistent identity as user-owned views.
 			// the renderer's own foreground view is created via browser-ipc.ts.
-			return { view: createBrowserView(msg.viewId, { partition: msg.partition, bounds: msg.bounds, agentDriven: true }) };
+			return { view: createBrowserView(msg.viewId, { partition: SHARED_BROWSER_PARTITION, bounds: msg.bounds, agentDriven: true }) };
 		}
 		case "show":
 			// Route through browser-ipc's surfacing path (currentViewId + nav
@@ -342,8 +343,9 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
 // settles immediately; a heavy CSR SPA that never quiesces settles shortly
 // after dom-ready instead of outrunning the deadline + the server's wedge
 // timer (the 2026-07-20 Thrive hang class).
-function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>> {
+async function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unknown>> {
 	const wc = requireWebContents(msg.viewId);
+	await ensureEmbeddedChromeIdentity(wc);
 	return settleNavigation(wc, msg.url, {
 		timeoutMs: msg.timeoutMs ?? NAVIGATE_DEFAULT_TIMEOUT_MS,
 		// agent nav, even on adopted views — not user activity

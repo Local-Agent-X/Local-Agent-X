@@ -171,7 +171,7 @@ contextBridge.exposeInMainWorld("desktop", {
     // agent-driven per-(session,profile) views) and flip which one the anchor
     // drives/shows. switchView returns the switched-to view's nav-state.
     listViews: (): Promise<Array<{
-      viewId: string; url: string; title: string; profileId?: string; attached: boolean; agentDriven: boolean;
+      viewId: string; url: string; title: string; attached: boolean; agentDriven: boolean;
     }>> => ipcRenderer.invoke("browser-list-views"),
     switchView: (viewId: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
@@ -181,13 +181,6 @@ contextBridge.exposeInMainWorld("desktop", {
     // refused main-side (they're the agent's) — resolves false for those and
     // for unknown ids; true when the view was closed.
     closeView: (viewId: string): Promise<boolean> => ipcRenderer.invoke("browser-close-view", viewId),
-    // Profile manager "Log in once": open (or reuse) a FOREGROUND view on the
-    // given profile's partition and navigate it, so the user can sign in by hand
-    // — the partition persists the login. url omitted → about:blank.
-    openProfileView: (profileId: string, url?: string): Promise<{
-      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
-      loadError: { code: number; description: string; url: string } | null;
-    } | null> => ipcRenderer.invoke("browser-open-profile-view", profileId, url),
     // New user tab: mint a fresh renderer-owned view on the currently selected
     // view's partition and drive it from the anchor. url omitted → about:blank.
     // Returns the new view's nav-state.

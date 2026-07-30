@@ -11,12 +11,10 @@
  *     redaction — this producer only supplies plain-label actions and parses
  *     the owning session out of the viewId.
  *
- * Session scoping: agent views are named `view-<sessionId>-<profileId>[-tN]`.
- * Session and profile ids may themselves contain hyphens, so the parse strips
- * the `view-` prefix and any `-tN` tab suffix, then drops the LAST hyphen
- * segment as the profileId (accepted simplification — a profileId containing
- * a hyphen would leave its head glued to the sessionId). User views
- * (foreground / user-N / profile-*) carry no session → global scope.
+ * Session scoping: chat-owned views are named
+ * `view-<browserSessionId>-shared[-tN]`. The fixed suffix makes ownership
+ * exact even when chat ids contain hyphens. User views (foreground / user-N /
+ * profile-*) carry no session and remain global.
  */
 
 import { EventBus } from "../event-bus.js";
@@ -45,37 +43,26 @@ export interface BridgeNetworkEntry {
 export function sessionIdFromViewId(viewId: unknown): string | undefined {
 	if (typeof viewId !== "string" || !viewId.startsWith("view-")) return undefined;
 	const rest = viewId.slice("view-".length).replace(/-t\d+$/, "");
-	const cut = rest.lastIndexOf("-");
-	if (cut <= 0) return undefined; // no profile segment → not the agent shape
-	return rest.slice(0, cut);
+	if (!rest.endsWith("-shared")) return undefined;
+	const sessionId = rest.slice(0, -"-shared".length);
+	return sessionId || undefined;
 }
 
 /**
  * Authorization-grade ownership: does `viewId` name a view OWNED by `sessionId`?
  *
- * Unlike sessionIdFromViewId (a best-effort attribution parser that drops the
- * LAST hyphen segment and so mis-splits any profileId containing a hyphen, e.g.
- * the `prof-<b36>-<hex>` custom-profile shape), this RECONSTRUCTS the mint
- * instead of parsing the ambiguous session/profile boundary. inAppViewId names
- * every agent view `view-<sessionId>-<profileId>` with an optional `-tN` tab
- * suffix, so a view is owned iff its id begins with the exact
- * `view-<sessionId>-` prefix AND carries at least one character after it (a
- * non-empty profile/tab segment). The trailing hyphen in the prefix keeps
- * sibling ids apart — `view-s1-…` never matches a session named `s12`.
- *
- * Known boundary: because the profileId itself may contain hyphens, this cannot
- * distinguish session `s` (profile `a-b`) from a DESCENDANT session `s-a`
- * (profile `b`) — the spawned-branch id shape `<parent>-b<i>` (dream-check.ts).
- * It therefore confines a caller to its own session PLUS that session's own
- * hyphen-nested descendants, and rejects every unrelated session (agent/uuid
- * ids never prefix-nest). Closing the descendant residual needs the profileId
- * threaded to the caller for an exact match, which the container projection
- * does not carry today.
+ * The fixed `-shared` suffix lets this reconstruct the complete mint. Exact
+ * equality owns the first tab; `-tN` owns numbered tabs. A nested child id is
+ * not admitted by prefix, so relay authorization cannot cross chat boundaries.
  */
 export function viewBelongsToSession(viewId: unknown, sessionId: string): boolean {
 	if (typeof viewId !== "string" || !sessionId) return false;
-	const prefix = `view-${sessionId}-`;
-	return viewId.startsWith(prefix) && viewId.length > prefix.length;
+	const base = `view-${sessionId}-shared`;
+	return viewId === base || new RegExp(`^${escapeRegExp(base)}-t\\d+$`).test(viewId);
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ── Adopted-view session registry ─────────

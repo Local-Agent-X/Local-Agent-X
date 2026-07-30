@@ -15,7 +15,6 @@ import { join } from "node:path";
 import {
   browserProxyConfig,
   launchViaCDP,
-  SERVICE_WORKER_POLICY,
   STEALTH_ARGS,
   USER_AGENTS,
   type BrowserEngine,
@@ -86,7 +85,7 @@ async function launch(engine: BrowserEngine, userDataDir?: string): Promise<Brow
   const pw = await import("playwright");
   try {
     if (engine === "chromium") {
-      // userDataDir carries the launching session's browser-profile dir. The
+      // userDataDir carries the shared persistent browser identity. The
       // launcher keeps its own legacy default when this is undefined, so a
       // direct/legacy call is unchanged.
       const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url, { userDataDir });
@@ -141,7 +140,6 @@ const CONTEXT_OPTS = (engine: BrowserEngine) => {
     viewport: { width: 1280, height: 800 },
     locale: "en-US",
     timezoneId: "America/Chicago",
-    serviceWorkers: SERVICE_WORKER_POLICY,
     acceptDownloads: true,
     proxy: browserProxyConfig(proxyServer),
   };

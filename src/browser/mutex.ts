@@ -20,6 +20,7 @@
  */
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
+import { aggregateBrowserSessionLineage } from "./session-owner-registry.js";
 const log = createLogger("browser.mutex");
 
 // Minimum spacing between consecutive actions in the same session. This is
@@ -49,6 +50,7 @@ export function withBrowserLock<T>(
   fn: () => Promise<T>,
   onQueued?: () => void
 ): Promise<T> {
+  sessionId = aggregateBrowserSessionLineage(sessionId);
   const shared = isAdvancedSharedMode();
   // A session is "queued" only when it must wait behind a DIFFERENT session on
   // the same lock — which can only happen on the shared global chain. Under

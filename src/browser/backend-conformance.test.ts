@@ -27,8 +27,7 @@ import type { BrowserBackend } from "./backend.js";
 // build; list a name the interface doesn't have and tsc fails too. So the
 // runtime probe below can trust this array as the contract's shape.
 const BACKEND_METHODS = [
-	// Identity / state
-	"getProfileId",
+	// State
 	"getCurrentUrl",
 	"isActive",
 	// Navigation / observation
@@ -89,11 +88,11 @@ const BACKENDS: Array<{ name: string; proto: object }> = [
 ];
 
 describe("BrowserBackend conformance — both backends implement the full contract", () => {
-	it("enumerates all 31 contract methods", () => {
+	it("enumerates all 30 contract methods", () => {
 		// A guard on the guard: if the contract grew and BACKEND_METHODS wasn't
 		// updated, the compile-time lock above already fails — but pin the count
 		// so a reviewer sees the expected surface size at a glance.
-		expect(BACKEND_METHODS.length).toBe(31);
+		expect(BACKEND_METHODS.length).toBe(30);
 		expect(new Set(BACKEND_METHODS).size).toBe(BACKEND_METHODS.length); // no dupes
 	});
 

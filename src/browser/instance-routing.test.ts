@@ -13,7 +13,6 @@ import type { LAXConfig } from "./../types/lax-config.js";
 const state = vi.hoisted(() => ({
 	browserMode: "isolated" as string,
 	bridge: false,
-	profiles: new Map<string, string>(),
 }));
 
 vi.mock("../config.js", async (importOriginal) => {
@@ -28,15 +27,6 @@ vi.mock("../config.js", async (importOriginal) => {
 vi.mock("../desktop-bridge.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../desktop-bridge.js")>();
 	return { ...original, desktopBridgeAvailable: () => state.bridge };
-});
-
-vi.mock("./session-owner-registry.js", async (importOriginal) => {
-	const original = await importOriginal<typeof import("./session-owner-registry.js")>();
-	return {
-		...original,
-		resolveSessionBrowserProfileId: (sessionId: string) =>
-			state.profiles.get(sessionId) ?? "default",
-	};
 });
 
 // Capture what the routing seam says. createLogger is mocked wholesale, so
@@ -83,6 +73,7 @@ import {
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
+import { _resetSessionOwnerRegistry, registerChildSessionOwner } from "./session-owner-registry.js";
 
 function setInApp(bridge = true): void {
 	state.browserMode = "in-app";
@@ -92,7 +83,7 @@ function setInApp(bridge = true): void {
 beforeEach(() => {
 	state.browserMode = "isolated";
 	state.bridge = false;
-	state.profiles.clear();
+	_resetSessionOwnerRegistry();
 	logs.debug.length = 0;
 	logs.info.length = 0;
 	logs.warn.length = 0;
@@ -117,6 +108,15 @@ describe("getBrowserManager routing", () => {
 		expect(getBrowserManager("chat-1")).not.toBe(getBrowserManager("chat-2"));
 	});
 
+	it("shares one backend across nested agents in a chat without crossing chats", () => {
+		setInApp();
+		registerChildSessionOwner("agent-parent", "chat-1");
+		registerChildSessionOwner("agent-child", "agent-parent");
+		expect(getBrowserManager("agent-parent")).toBe(getBrowserManager("chat-1"));
+		expect(getBrowserManager("agent-child")).toBe(getBrowserManager("chat-1"));
+		expect(getBrowserManager("agent-child")).not.toBe(getBrowserManager("chat-2"));
+	});
+
 	it("falls back to the CDP BrowserManager when the bridge is absent", () => {
 		setInApp(false);
 		expect(getBrowserManager("chat-1")).toBeInstanceOf(BrowserManager);
@@ -134,12 +134,6 @@ describe("getBrowserManager routing", () => {
 		expect(getBrowserManager("chat-1")).toBeInstanceOf(BrowserManager);
 	});
 
-	it("binds the in-app backend to the session's registered profile", () => {
-		setInApp();
-		state.profiles.set("agent-run", "work-profile");
-		const backend = getBrowserManager("agent-run");
-		expect(backend.getProfileId()).toBe("work-profile");
-	});
 });
 
 // The explicit fallback matrix (F1): resolveBrowserBackendKind() is "in-app"
@@ -171,26 +165,23 @@ describe("resolveBrowserBackendKind — fallback matrix", () => {
 		expect(resolveBrowserBackendKind()).toBe("cdp");
 	});
 
-	it("each cdp-fallback cell routes getBrowserManager to a profile-bound BrowserManager", () => {
-		state.profiles.set("agent-run", "work-profile");
+	it("each cdp-fallback cell routes getBrowserManager to a BrowserManager", () => {
 		// non-in-app mode
 		state.browserMode = "isolated";
 		state.bridge = true;
 		const m1 = getBrowserManager("agent-run");
 		expect(m1).toBeInstanceOf(BrowserManager);
-		expect(m1.getProfileId()).toBe("work-profile");
 	});
 });
 
 describe("inAppViewId determinism", () => {
-	it("is deterministic per (session, profile)", () => {
-		expect(inAppViewId("chat-1", "default")).toBe("view-chat-1-default");
-		expect(inAppViewId("chat-1", "default")).toBe(inAppViewId("chat-1", "default"));
+	it("is deterministic per chat browser session", () => {
+		expect(inAppViewId("chat-1")).toBe("view-chat-1-shared");
+		expect(inAppViewId("chat-1")).toBe(inAppViewId("chat-1"));
 	});
 
-	it("differs across profiles and across sessions", () => {
-		expect(inAppViewId("chat-1", "p1")).not.toBe(inAppViewId("chat-1", "p2"));
-		expect(inAppViewId("chat-1", "p1")).not.toBe(inAppViewId("chat-2", "p1"));
+	it("differs across chat sessions", () => {
+		expect(inAppViewId("chat-1")).not.toBe(inAppViewId("chat-2"));
 	});
 });
 

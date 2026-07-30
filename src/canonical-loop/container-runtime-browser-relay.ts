@@ -9,11 +9,16 @@ import {
   type BrowserRelayServerHandle,
 } from "../browser/container-bridge-relay.js";
 import {
+  CONTAINER_BROWSER_ACTING_SESSION,
+  CONTAINER_BROWSER_OWNER_SESSION,
+} from "../browser/container-bridge-transport.js";
+import {
   browserAbortDesktop,
   requestDesktopBrowserBridge,
 } from "../browser/bridge-client.js";
 import { setForwardedSessionTaint } from "../data-lineage/index.js";
 import { registerSessionCanaries } from "../threat/canaries.js";
+import { aggregateBrowserSessionLineage } from "../browser/session-owner-registry.js";
 
 export const BROWSER_RELAY_TOKEN_FILE = "secrets/browser-relay-token";
 const CONTAINER_RELAY_SOCKET = "/var/lib/lax/browser-relay.sock";
@@ -33,6 +38,7 @@ export async function openProjectionBrowserRelay(
   root: string,
   identity: { device: string; inode: string },
   ownerSessionId: string,
+  browserOwnerSessionId: string = ownerSessionId,
 ): Promise<ProjectionBrowserRelay> {
   if (!ownerSessionId) {
     throw new Error("container browser relay requires an owning session");
@@ -54,14 +60,21 @@ export async function openProjectionBrowserRelay(
     socketPath: join(root, "state", "browser-relay.sock"),
     token,
     ownerSessionId,
+    browserOwnerSessionId,
     handler: { request: requestDesktopBrowserBridge, abort: browserAbortDesktop },
     // Land the container's forwarded taint/canaries in the canonical host
     // registries (keyed by the owner-confined session), so the host page-egress
     // scan sees what the container read. The relay enforces the session binding
     // before these run.
     lineage: {
-      applyTaint: (sessionId, entries) => setForwardedSessionTaint(sessionId, entries),
-      applyCanaries: (sessionId, canaries) => registerSessionCanaries(sessionId, canaries),
+      applyTaint: (sessionId, entries) => {
+        setForwardedSessionTaint(sessionId, entries);
+        aggregateBrowserSessionLineage(sessionId);
+      },
+      applyCanaries: (sessionId, canaries) => {
+        registerSessionCanaries(sessionId, canaries);
+        aggregateBrowserSessionLineage(sessionId);
+      },
     },
   });
   return {
@@ -69,6 +82,8 @@ export async function openProjectionBrowserRelay(
       [CONTAINER_BROWSER_RELAY_FLAG]: "1",
       [CONTAINER_BROWSER_RELAY_SOCKET]: CONTAINER_RELAY_SOCKET,
       [CONTAINER_BROWSER_RELAY_TOKEN]: token,
+      [CONTAINER_BROWSER_ACTING_SESSION]: ownerSessionId,
+      [CONTAINER_BROWSER_OWNER_SESSION]: browserOwnerSessionId,
     },
     close: () => handle.close(),
   };

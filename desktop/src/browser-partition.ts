@@ -1,12 +1,11 @@
 /**
  * Local Agent X — Browser partition hardening
  *
- * Every in-app browser view lives on a per-profile session partition
- * (`persist:lax-profile-<id>`) — NEVER the app default session, which
+ * Every in-app browser view lives on the shared persistent browser partition,
+ * never the app default session, which
  * carries AUTH_TOKEN. The defaultSession handlers in
  * session-permissions.ts do not apply to partitions, so this module
- * replicates the security stack per partition: deny-by-default
- * permissions, download quarantine, service-worker blocking, and
+ * applies explicit human permission decisions, download quarantine, and
  * per-hop fail-closed egress with a pluggable evaluator (the real
  * policy lives server-side and is wired via setEgressEvaluator by a
  * later chunk — no policy logic is duplicated here).
@@ -15,22 +14,17 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { app, session, type DownloadItem, type Session, type WebContents, type WebPreferences } from "electron";
+import { app, dialog, session, type DownloadItem, type Session, type WebContents, type WebPreferences } from "electron";
 
 import { LAX_DIR, getLAXConfig } from "./config";
 import { contentTypeFromHeaders, noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { shouldAllowLocalLoopback, type ViewTrust } from "./browser-loopback-policy";
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
-import {
-	buildHardeningCspHeaders,
-	cacheGet,
-	cacheSet,
-	clearDecisionCache,
-	extractUploadBody,
-} from "./browser-partition-net";
-
+import { cacheGet, cacheSet, clearDecisionCache, extractUploadBody } from "./browser-partition-net";
+import { registerEmbeddedChromeIdentitySession } from "./embedded-chrome-identity";
 const PARTITION_PREFIX = "persist:lax-profile-";
+export const SHARED_BROWSER_PARTITION = "persist:lax-profile-default";
 
 // ── App-wide network hardening (must run before app.ready) ─────────
 // Electron only offers APP-WIDE switches for QUIC and DNS-over-HTTPS —
@@ -178,7 +172,7 @@ export function setDownloadDoneListener(fn: ((entry: QuarantinedDownload) => voi
 const hardenedPartitions = new Set<string>();
 
 /**
- * Resolve a browser-profile partition to its Session, applying the
+ * Resolve the shared browser partition to its Session, applying the
  * full hardening stack exactly once per partition. Refuses anything
  * outside the profile namespace — `session.fromPartition("")` would
  * hand back the app default session (AUTH_TOKEN holder).
@@ -190,29 +184,39 @@ export function getHardenedPartitionSession(partition: string): Session {
 	const sess = session.fromPartition(partition);
 	if (hardenedPartitions.has(partition)) return sess;
 	hardenedPartitions.add(partition);
+	registerEmbeddedChromeIdentitySession(app, sess);
 	hardenSession(sess, partition);
 	return sess;
 }
 
-// Web content gets nothing by default. clipboard-sanitized-write is
-// the one concession (lets pages service a user-initiated copy).
-const VIEW_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
-
-// Chromium reports service-worker script fetches with this resourceType
-// at runtime; Electron's TS union omits it, so membership goes through a
-// Set<string> rather than a (type-error) literal comparison.
-const SW_RESOURCE_TYPES: ReadonlySet<string> = new Set(["serviceWorker"]);
+// Clipboard writes are harmless and need no modal. Every other site permission
+// requires an explicit human decision in a native dialog.
+const SILENT_SAFE_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
 
 function hardenSession(sess: Session, partition: string): void {
-	// NEVER setUserAgent here: claiming plain Chrome while Sec-CH-UA still says
-	// Chromium fails Cloudflare verification (guard: browser-downloads-bridge.test.ts).
 	sess.setPermissionRequestHandler(
-		(_wc: WebContents | null, permission: string, callback: (granted: boolean) => void) => {
-			callback(VIEW_ALLOWED_PERMISSIONS.has(permission));
+		(wc: WebContents | null, permission: string, callback: (granted: boolean) => void) => {
+			if (SILENT_SAFE_PERMISSIONS.has(permission)) {
+				callback(true);
+				return;
+			}
+			const requestingUrl = wc && !wc.isDestroyed() ? wc.getURL() : "";
+			let origin = "this page";
+			try { origin = new URL(requestingUrl).origin; } catch { /* keep neutral label */ }
+			void dialog.showMessageBox({
+				type: "question",
+				title: "Website permission",
+				message: `${origin} wants permission to use ${permission}.`,
+				detail: "Allow only if you expect this request. The agent cannot approve it for you.",
+				buttons: ["Block", "Allow"],
+				defaultId: 0,
+				cancelId: 0,
+				noLink: true,
+			}).then(
+				(result) => callback(result.response === 1),
+				() => callback(false),
+			);
 		},
-	);
-	sess.setPermissionCheckHandler(
-		(_wc: WebContents | null, permission: string) => VIEW_ALLOWED_PERMISSIONS.has(permission),
 	);
 
 	// Agent downloads land ONLY in quarantine, nothing auto-opens; the server
@@ -278,22 +282,18 @@ function hardenSession(sess: Session, partition: string): void {
 	});
 
 	// Single onBeforeRequest handler per session (Electron replaces, not
-	// stacks): service-worker script fetches are cancelled outright, and
-	// every other request — including each redirect hop, which re-enters
+	// stacks): every request, including service workers and each redirect hop,
+	// re-enters
 	// here with the new URL — must pass the egress evaluator. The perception
 	// in-flight counter rides the SAME single handler (composed here, never a
 	// second registration): every start is balanced by exactly one
-	// onCompleted/onErrorOccurred below — cancelled requests (SW block,
-	// egress deny) also settle through onErrorOccurred.
+	// onCompleted/onErrorOccurred below; denied requests also settle through
+	// onErrorOccurred.
 	sess.webRequest.onBeforeRequest((details, callback) => {
 		// details.id is stable across a redirect chain's hops — the perception
 		// side keys in-flight on an unsettled-id SET, so per-hop re-entry here
 		// (load-bearing for egress) can't drift the count.
 		noteRequestStart(partition, details.id);
-		if (SW_RESOURCE_TYPES.has(details.resourceType)) {
-			callback({ cancel: true });
-			return;
-		}
 		// Local loopback carve-out (browser-loopback-policy.ts): a user's own tab
 		// may reach literal-loopback services (their ComfyUI, their dev server) the
 		// way Chrome allows — top-level navs + loopback-initiated subresources — and
@@ -353,25 +353,6 @@ function hardenSession(sess: Session, partition: string): void {
 		noteRequestFailed(partition, { id: details.id, url: details.url, method: details.method, error: details.error, resourceType: details.resourceType });
 	});
 
-	// Hardening-only CSP on the TOP-LEVEL document. A same-site *fetch-scoping* CSP
-	// (script/style/img/connect pinned to the page's own domain) was tried and
-	// reverted — it broke every multi-CDN site (x.com's JS lives on abs.twimg.com,
-	// google's on gstatic.com), stopping the SPA from booting. What IS safe to
-	// stamp is the zero-rendering-cost hardening trio (object-src/base-uri/
-	// frame-ancestors), which never gates where a page loads its own subresources
-	// from. APPEND (never replace) so Chromium enforces the intersection — it can
-	// only tighten. MAIN-FRAME only: on a sub-frame, frame-ancestors 'none' makes
-	// Chromium refuse legit embeds (Stripe/OAuth/maps). Cross-origin EXFIL is
-	// governed separately by the taint-aware payload scan in the egress evaluator
-	// above (server-side page-egress-taint.ts), which allows CDN/API reads while
-	// blocking a cross-domain hop that actually carries tainted bytes.
-	sess.webRequest.onHeadersReceived((details, callback) => {
-		if (details.resourceType !== "mainFrame") {
-			callback({});
-			return;
-		}
-		callback({ responseHeaders: buildHardeningCspHeaders(details.responseHeaders as Record<string, string[]> | undefined) });
-	});
 }
 
 // ── Per-view helpers (called by browser-views.ts) ─────────
@@ -391,10 +372,4 @@ export function viewWebPreferences(partition: string): WebPreferences {
 		sandbox: true,
 		backgroundThrottling: false,
 	};
-}
-
-export function hardenWebContents(wc: WebContents): void {
-	// Keep WebRTC from carrying raw UDP around the egress evaluator
-	// (which only sees HTTP-stack requests).
-	wc.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
 }

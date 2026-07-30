@@ -4,7 +4,7 @@ import type { BrowserBackend } from "./backend.js";
 import type { BrowserMode } from "../types.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
-import { resolveSessionBrowserProfileId } from "./session-owner-registry.js";
+import { resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
 import { desktopBridgeAvailable } from "../desktop-bridge.js";
 import { getRuntimeConfig } from "../config.js";
@@ -160,10 +160,9 @@ function reportBrowserRoute(sessionId: string, route: BrowserRoute): void {
 	}
 }
 
-/** Deterministic view id — one embedded view per (session, profile), so a
- *  re-created backend for the same pair adopts the same desktop view. */
-export function inAppViewId(sessionId: string, profileId: string): string {
-	return `view-${sessionId}-${profileId}`;
+/** Deterministic first-tab id for one chat-owned embedded browser session. */
+export function inAppViewId(sessionId: string): string {
+	return `view-${sessionId}-shared`;
 }
 
 /** Does this session currently own a live in-app browser backend? Read by the
@@ -171,7 +170,7 @@ export function inAppViewId(sessionId: string, profileId: string): string {
  *  ping — same reasoning as getBrowserManager: a dead view fails loudly at
  *  first use, so this seam never guesses ahead of time. */
 export function hasInAppBackend(sessionId: string = "default"): boolean {
-	return inAppBackends.has(sessionId || "default");
+	return inAppBackends.has(resolveBrowserSessionId(sessionId || "default"));
 }
 
 function peerPagesExcept(self: BrowserManager): Page[] {
@@ -185,11 +184,10 @@ function peerPagesExcept(self: BrowserManager): Page[] {
 function ensureCdpManager(key: string): BrowserManager {
 	let manager = cdpManagers.get(key);
 	if (!manager) {
-		// Resolve the session's browser profile (3-rung winner, pre-computed at
+		// Resolve the chat-scoped browser session and
 		// run-prep) and bind the manager to it. CDP behavior is unchanged — the
-		// profile is carried for the in-app backend + CDP userDataDir twin later.
-		const profileId = resolveSessionBrowserProfileId(key);
-		manager = new BrowserManager(key, getRuntimeConfig().browserMode, profileId);
+		// use the shared persistent identity.
+		manager = new BrowserManager(key, getRuntimeConfig().browserMode);
 		manager.setPeerPages(() => peerPagesExcept(manager!));
 		manager.setIdleHandler(() => {
 			if (cdpManagers.get(key) === manager) cdpManagers.delete(key);
@@ -203,9 +201,8 @@ function ensureCdpManager(key: string): BrowserManager {
 function ensureInAppBackend(key: string): ElectronInAppBackend {
 	let entry = inAppBackends.get(key);
 	if (!entry) {
-		const profileId = resolveSessionBrowserProfileId(key);
-		const viewId = inAppViewId(key, profileId);
-		entry = { backend: new ElectronInAppBackend(key, profileId, viewId), viewId };
+		const viewId = inAppViewId(key);
+		entry = { backend: new ElectronInAppBackend(key, viewId), viewId };
 		// No idle handler for in-app backends (unlike the CDP path): views are
 		// cheap, pool-owned on the desktop side, and hold no Chrome process of
 		// their own — there is no shared browser to tear down when idle. They
@@ -219,10 +216,10 @@ function ensureInAppBackend(key: string): ElectronInAppBackend {
 // in-app view when the mode + environment select it, and to the CDP
 // BrowserManager otherwise. Callers depend on the interface, not the class.
 export function getBrowserManager(sessionId: string = "default"): BrowserBackend {
-	const key = sessionId || "default";
-	// The CDP manager it returns is bound to the session's profile id, whose
+	const key = resolveBrowserSessionId(sessionId || "default");
+	// The CDP manager is bound to the chat-scoped browser session, while its
 	// userDataDir is threaded into launchViaCDP at first getPage() — so every
-	// arm of this matrix carries the right profile identity.
+	// arms share the same persistent login identity.
 	const route = resolveBrowserRoute();
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key);
@@ -238,7 +235,7 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
  * page handle differed, which is what SecretBrowserOps abstracts.
  */
 export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowserOps {
-	const key = sessionId || "default";
+	const key = resolveBrowserSessionId(sessionId || "default");
 	const route = resolveBrowserRoute();
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key).secretOps();
@@ -254,7 +251,7 @@ export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowse
  * its view.
  */
 export function getCdpBrowserManager(sessionId: string = "default"): BrowserManager {
-	const key = sessionId || "default";
+	const key = resolveBrowserSessionId(sessionId || "default");
 	if (inAppBackends.has(key) || inAppBackendAvailable()) {
 		throw new CdpOnlyOperationError(key);
 	}
@@ -262,7 +259,7 @@ export function getCdpBrowserManager(sessionId: string = "default"): BrowserMana
 }
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
-	const key = sessionId || "default";
+	const key = resolveBrowserSessionId(sessionId || "default");
 	routeReported.delete(key);
 	// A session can (rarely) have entries of both kinds — e.g. the mode flipped
 	// mid-session. Close whichever exist.
@@ -310,7 +307,7 @@ export type WedgeRecoveryOutcome =
  * teardown on a wedged connection — that can hang too.
  */
 export async function resetWedgedBrowser(sessionId: string = "default"): Promise<WedgeRecoveryOutcome> {
-	const key = sessionId || "default";
+	const key = resolveBrowserSessionId(sessionId || "default");
 	const inApp = inAppBackends.get(key);
 	if (inApp) {
 		if (await inApp.backend.recoverFromWedge()) {

@@ -19,7 +19,7 @@ const STRIP_SRC = readFileSync(join(here, "../public/js/browser-tab-strip.js"), 
 const TAB_SRC = readFileSync(join(here, "../public/js/browser-tab.js"), "utf8");
 
 interface ViewInfo {
-	viewId: string; url: string; title: string; profileId?: string; attached: boolean; agentDriven: boolean;
+	viewId: string; url: string; title: string; attached: boolean; agentDriven: boolean;
 }
 
 interface NavState {
@@ -95,10 +95,10 @@ function activePill() { return slot().querySelector("button.active") as HTMLButt
 function urlInput() { return document.getElementById("browser-url-input") as HTMLInputElement; }
 
 function fgView(over: Partial<ViewInfo> = {}): ViewInfo {
-	return { viewId: "foreground", url: "https://user/", title: "User", profileId: "default", attached: true, agentDriven: false, ...over };
+	return { viewId: "foreground", url: "https://user/", title: "User", attached: true, agentDriven: false, ...over };
 }
 function agentView(over: Partial<ViewInfo> = {}): ViewInfo {
-	return { viewId: "view-s1-work", url: "https://job/", title: "Job", profileId: "work", attached: false, agentDriven: true, ...over };
+	return { viewId: "view-s1-work", url: "https://job/", title: "Job", attached: false, agentDriven: true, ...over };
 }
 
 describe("browser-tab tab strip (M1 + chunk D)", () => {
@@ -138,19 +138,17 @@ describe("browser-tab tab strip (M1 + chunk D)", () => {
 		expect(activePill()?.getAttribute("data-view-id")).toBe("foreground");
 	});
 
-	it("labels fall back title → URL host → profileId → 'tab'", async () => {
+	it("labels fall back from title to URL host to 'tab'", async () => {
 		g.desktop = { browser: makeBridge([
 			fgView({ viewId: "v-title", title: "Docs", url: "https://d.example/x" }),
 			fgView({ viewId: "v-host", title: "", url: "https://host.example/p", attached: false }),
-			fgView({ viewId: "v-profile", title: "", url: "", profileId: "work", attached: false }),
-			fgView({ viewId: "v-bare", title: "", url: "", profileId: undefined, attached: false }),
+			fgView({ viewId: "v-bare", title: "", url: "", attached: false }),
 		]) };
 		loadTab();
 		await g.laxBrowserTab.refreshSwitcher();
 		const byId = new Map(pills().map((p) => [p.getAttribute("data-view-id"), p.textContent]));
 		expect(byId.get("v-title")).toBe("Docs");
 		expect(byId.get("v-host")).toBe("host.example");
-		expect(byId.get("v-profile")).toBe("work");
 		expect(byId.get("v-bare")).toBe("tab");
 	});
 

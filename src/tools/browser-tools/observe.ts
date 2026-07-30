@@ -8,12 +8,16 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
 import { ok } from "./shared.js";
 import { sensitivePageStub } from "../../browser/guards.js";
+import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification } from "../../browser/human-verification.js";
 
 export async function handleObserve(manager: BrowserBackend): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return { content: sensitive, status: "blocked", isError: true, metadata: { browserStatus: "sensitive-content-withheld" } };
   // Structured view grouped by role, viewport-first, diff-aware
   const obs = await manager.observe();
+  if (requiresHumanVerification(obs)) {
+    return { content: HUMAN_VERIFICATION_MESSAGE, status: "blocked", isError: true, metadata: { browserStatus: "human-verification-required" } };
+  }
   const extractFailure = obs.degraded?.find((d) => d.op === "elements");
   if (extractFailure) {
     // Element extraction failed — an empty grouped listing here would be

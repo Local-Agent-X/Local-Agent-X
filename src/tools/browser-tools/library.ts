@@ -29,8 +29,7 @@ function when(ts: number): string {
 
 function historyLine(e: HistoryEntry): string {
   const title = e.title ? `${e.title} — ` : "";
-  const profile = e.profileId !== "default" ? ` (profile ${e.profileId})` : "";
-  return `- [${when(e.ts)}] ${title}${e.url}${profile}`;
+  return `- [${when(e.ts)}] ${title}${e.url}`;
 }
 
 function bookmarkLine(b: BrowserBookmark): string {
@@ -82,7 +81,6 @@ export async function handleBookmarkAdd(
   const bookmark = BrowserBookmarkStore.getInstance().add({
     url,
     title,
-    profileId: manager.getProfileId(),
     addedBy: "agent",
   });
   // title/url are page-controlled — same external-content posture as the

@@ -20,10 +20,9 @@ export const handleBrowserHistoryRoutes: RouteHandler = async (method, url, req,
 
   if (method === "GET" && url.pathname === "/api/browser/history") {
     const q = url.searchParams.get("q") ?? undefined;
-    const profileId = url.searchParams.get("profile") ?? undefined;
     const rawLimit = Number(url.searchParams.get("limit"));
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, MAX_HISTORY_LIMIT) : 50;
-    json(200, store.query({ q, profileId, limit }));
+    json(200, store.query({ q, limit }));
     return true;
   }
 

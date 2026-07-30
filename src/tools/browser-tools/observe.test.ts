@@ -73,4 +73,23 @@ describe("handleObserve — degraded element extraction", () => {
     expect(res.content).not.toContain("OBSERVATION DEGRADED");
     expect(res.content).toContain('[1] button "Submit"');
   });
+
+  it("pauses on a Turnstile frame instead of returning challenge controls", async () => {
+    const obs = makeObs({
+      title: "Just a moment...",
+      currentRefs: [{ ...SUBMIT, name: "Verify you are human" }],
+      crossOriginIframes: [{
+        src: "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/if/ov2",
+        origin: "https://challenges.cloudflare.com",
+        rect: { x: 10, y: 10, width: 300, height: 70 },
+        crossOrigin: true,
+      }],
+    });
+    const res = await handleObserve(fakeManager(obs));
+
+    expect(res.status).toBe("blocked");
+    expect(res.metadata?.browserStatus).toBe("human-verification-required");
+    expect(res.content).toMatch(/user must complete it in the visible browser/i);
+    expect(res.content).not.toContain("[1]");
+  });
 });

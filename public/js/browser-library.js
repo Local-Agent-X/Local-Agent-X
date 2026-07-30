@@ -1,7 +1,7 @@
 // Browser library — bookmarks + history overlay behind the "Library" button in
 // the right-panel Browser tab (public/app.html #browser-library-panel). Plain
 // DOM panel over the native WebContentsView, same occlusion contract as
-// browser-profiles.js: opening toggles display and pokes laxBrowserTab.sync().
+// opening toggles display and pokes laxBrowserTab.sync().
 //
 // Backed by the shared stores over HTTP (src/routes/browser/):
 //   GET    /api/browser/bookmarks           — list (?q=)
@@ -21,7 +21,7 @@
 
 	function panel() { return document.getElementById('browser-library-panel'); }
 
-	// Canonical authed fetch (shared-api.js) — same shim as browser-profiles.js.
+	// Canonical authed fetch (shared-api.js).
 	function api(path, opts) {
 		if (typeof apiFetch === 'function') return apiFetch(path, opts);
 		var base = (typeof API === 'string') ? API : '';
@@ -259,9 +259,6 @@
 		isOpen = true;
 		p.style.display = 'block';
 		// Close the profiles panel if it's up — one overlay at a time.
-		if (window.laxBrowserProfiles && window.laxBrowserProfiles.isOpen && window.laxBrowserProfiles.isOpen()) {
-			window.laxBrowserProfiles.close();
-		}
 		if (window.laxBrowserTab && window.laxBrowserTab.sync) window.laxBrowserTab.sync();
 		refresh();
 	}

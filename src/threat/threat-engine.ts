@@ -23,7 +23,7 @@
  * orchestrator) and re-exports the public types.
  */
 
-import { registrableDomain } from "../browser/csp-policy.js";
+import { registrableDomain } from "../browser/registrable-domain.js";
 import {
   canaryPromptBlock, checkCanaries, generateCanaries, registerSessionCanaries,
   remintSessionCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,

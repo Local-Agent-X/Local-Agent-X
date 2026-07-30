@@ -115,7 +115,7 @@ describe("ElectronInAppBackend (A1)", () => {
 		vi.mocked(browserExec).mockImplementation(async (_viewId, script) => routeExec(script));
 		vi.mocked(browserCapture).mockResolvedValue(TINY_PNG_B64);
 
-		backend = new ElectronInAppBackend("sess-1", "work", VIEW_ID);
+		backend = new ElectronInAppBackend("sess-1", VIEW_ID);
 	});
 
 	afterEach(() => {
@@ -133,9 +133,7 @@ describe("ElectronInAppBackend (A1)", () => {
 	it("navigate creates the view on the profile partition and returns the CDP-shaped string", async () => {
 		const out = await backend.navigate(PAGE_URL);
 		expect(out).toBe(`Navigated to: ${PAGE_URL}\nStatus: unknown\nTitle: ${PAGE_TITLE}`);
-		expect(browserLifecycle).toHaveBeenCalledWith("create", VIEW_ID, {
-			partition: "persist:lax-profile-work",
-		});
+		expect(browserLifecycle).toHaveBeenCalledWith("create", VIEW_ID);
 		expect(browserNavigate).toHaveBeenCalledWith(VIEW_ID, PAGE_URL, "sess-1");
 		expect(backend.getCurrentUrl()).toBe(PAGE_URL);
 		expect(backend.isActive()).toBe(true);
@@ -208,18 +206,14 @@ describe("ElectronInAppBackend (A1)", () => {
 	it("newTab as the FIRST action materializes the first view (no current tab to keep)", async () => {
 		const out = await backend.newTab(PAGE_URL);
 		expect(out).toBe(`Opened new tab (1 tabs total)\nURL: ${PAGE_URL}\nStatus: unknown\nTitle: ${PAGE_TITLE}`);
-		expect(browserLifecycle).toHaveBeenCalledWith("create", VIEW_ID, {
-			partition: "persist:lax-profile-work",
-		});
+		expect(browserLifecycle).toHaveBeenCalledWith("create", VIEW_ID);
 	});
 
 	it("newTab opens a REAL second view (-t2), makes it active, and reports the tab count", async () => {
 		await backend.navigate(PAGE_URL);
 		const out = await backend.newTab(PAGE_URL);
 		expect(out).toBe(`Opened new tab (2 tabs total)\nURL: ${PAGE_URL}\nStatus: unknown\nTitle: ${PAGE_TITLE}`);
-		expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t2`, {
-			partition: "persist:lax-profile-work",
-		});
+		expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t2`);
 		expect(browserNavigate).toHaveBeenLastCalledWith(`${VIEW_ID}-t2`, PAGE_URL, "sess-1");
 		// Active tab followed: subsequent ops target the NEW view.
 		await backend.screenshot();
@@ -896,7 +890,7 @@ describe("ElectronInAppBackend (A1)", () => {
 			expect(tabs).toContain("1 tab(s) open:");
 			expect(tabs).not.toContain("-t2");
 			await backend.newTab(PAGE_URL);
-			expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t3`, expect.anything());
+			expect(browserLifecycle).toHaveBeenCalledWith("create", `${VIEW_ID}-t3`);
 		});
 
 		it("a navigate failure on a minted tab rolls it back: view closed, no ghost row, previous tab active, error propagates", async () => {

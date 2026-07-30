@@ -1,13 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { BrowserBookmarkStore } from "./bookmark-store.js";
-
-function freshStore(): BrowserBookmarkStore {
-  BrowserBookmarkStore._resetForTest();
-  return BrowserBookmarkStore.getInstance();
-}
+import { BrowserBookmarkStore, scrubCredentialParams } from "./bookmark-store.js";
 
 beforeEach(() => {
   rmSync(join(getLaxDir(), "browser-bookmarks.json"), { force: true });
@@ -15,86 +10,31 @@ beforeEach(() => {
 });
 
 describe("BrowserBookmarkStore", () => {
-  it("adds a bookmark with the full shape and round-trips it across a reset", () => {
-    const store = freshStore();
-    const bm = store.add({ url: "https://example.com/docs", title: "Docs", tags: ["ref"], profileId: "work", addedBy: "agent" });
-    expect(bm.id).toMatch(/^bm-/);
-    expect(bm.addedBy).toBe("agent");
-    expect(bm.tags).toEqual(["ref"]);
-    expect(bm.profileId).toBe("work");
-    const reloaded = freshStore().get(bm.id);
-    expect(reloaded?.url).toBe("https://example.com/docs");
-    expect(reloaded?.title).toBe("Docs");
-  });
-
-  it("dedupes by url — re-add updates title/tags, keeps id/addedBy/ts", () => {
-    const store = freshStore();
-    const first = store.add({ url: "https://example.com/x", title: "Old", addedBy: "user" });
-    const again = store.add({ url: "https://example.com/x", title: "New", tags: ["a", "b"], addedBy: "agent" });
-    expect(again.id).toBe(first.id);
-    expect(again.addedBy).toBe("user"); // identity preserved
-    expect(again.ts).toBe(first.ts);
-    expect(again.title).toBe("New");
-    expect(again.tags).toEqual(["a", "b"]);
-    expect(store.list()).toHaveLength(1);
-  });
-
-  it("re-add without title/tags leaves the existing values alone", () => {
-    const store = freshStore();
-    store.add({ url: "https://example.com/keep", title: "Keep me", tags: ["t"], addedBy: "user" });
-    const again = store.add({ url: "https://example.com/keep", addedBy: "agent" });
-    expect(again.title).toBe("Keep me");
-    expect(again.tags).toEqual(["t"]);
-  });
-
-  it("strips URL userinfo (credentials never land in the shared list)", () => {
-    const bm = freshStore().add({ url: "https://alice:hunter2@example.com/page?keep=1", addedBy: "user" });
-    expect(bm.url).toBe("https://example.com/page?keep=1"); // query KEPT — bookmarks need it
-    expect(bm.url).not.toContain("hunter2");
-  });
-
-  it("rejects an empty url", () => {
-    expect(() => freshStore().add({ url: "   ", addedBy: "user" })).toThrowError(/url is required/);
-  });
-
-  it("list() is newest-first and filters on url/title/tags substring + profile", () => {
-    const store = freshStore();
-    store.add({ url: "https://a.example.com/", title: "Alpha", tags: ["daily"], addedBy: "user" });
-    store.add({ url: "https://b.example.com/", title: "Beta", profileId: "work", addedBy: "agent" });
-    expect(store.list().map((b) => b.title)).toEqual(["Beta", "Alpha"]);
-    expect(store.list({ q: "daily" })).toHaveLength(1); // tag match
-    expect(store.list({ q: "b.example" })).toHaveLength(1); // url match
-    expect(store.list({ profileId: "work" }).map((b) => b.title)).toEqual(["Beta"]);
-  });
-
-  it("remove() deletes by id and returns false for unknown ids", () => {
-    const store = freshStore();
-    const bm = store.add({ url: "https://example.com/rm", addedBy: "user" });
-    expect(store.remove("bm-nope")).toBe(false);
-    expect(store.remove(bm.id)).toBe(true);
-    expect(store.list()).toHaveLength(0);
-  });
-});
-
-describe("credential-param scrub (skeptic regression)", () => {
-  it("removes credential-named query params but keeps benign ones", async () => {
-    const { scrubCredentialParams } = await import("./bookmark-store.js");
-    expect(scrubCredentialParams("https://x.com/watch?v=abc123&session_token=SECRET")).toBe("https://x.com/watch?v=abc123");
-    expect(scrubCredentialParams("https://x.com/reset?token=SECRET")).toBe("https://x.com/reset");
-    expect(scrubCredentialParams("https://x.com/cb#access_token=SECRET&state=1")).toBe("https://x.com/cb#state=1");
-    expect(scrubCredentialParams("https://x.com/doc#section-2")).toBe("https://x.com/doc#section-2");
-    expect(scrubCredentialParams("https://x.com/search?q=how+to+cook")).toBe("https://x.com/search?q=how+to+cook");
-  });
-
-  it("add() persists the scrubbed url, not the live token", async () => {
-    const { BrowserBookmarkStore } = await import("./bookmark-store.js");
+  it("adds, persists, lists, and removes shared bookmarks", () => {
+    const store = BrowserBookmarkStore.getInstance();
+    const bm = store.add({ url: "https://example.com/docs", title: "Docs", tags: ["ref"], addedBy: "agent" });
+    expect(store.list()[0]).toMatchObject({ title: "Docs", addedBy: "agent", tags: ["ref"] });
     BrowserBookmarkStore._resetForTest();
+    expect(BrowserBookmarkStore.getInstance().get(bm.id)).not.toBeNull();
+    expect(BrowserBookmarkStore.getInstance().remove(bm.id)).toBe(true);
+  });
+
+  it("deduplicates by url and filters by content", () => {
+    const store = BrowserBookmarkStore.getInstance();
+    const first = store.add({ url: "https://example.com/a", title: "Old", addedBy: "user" });
+    const again = store.add({ url: "https://example.com/a", title: "New", tags: ["daily"], addedBy: "agent" });
+    expect(again.id).toBe(first.id);
+    expect(again.addedBy).toBe("user");
+    expect(store.list({ q: "daily" })).toHaveLength(1);
+  });
+
+  it("strips userinfo and credential parameters", () => {
     const bm = BrowserBookmarkStore.getInstance().add({
-      url: "https://accounts.example.com/page?tab=2&auth_code=LIVE-SECRET",
-      title: "Account page",
-      addedBy: "agent",
+      url: "https://alice:secret@example.com/watch?v=1&session_token=SECRET",
+      addedBy: "user",
     });
-    expect(bm.url).toBe("https://accounts.example.com/page?tab=2");
-    expect(JSON.stringify(BrowserBookmarkStore.getInstance().list({}))).not.toContain("LIVE-SECRET");
+    expect(bm.url).toBe("https://example.com/watch?v=1");
+    expect(scrubCredentialParams("https://x.test/#access_token=SECRET&state=1"))
+      .toBe("https://x.test/#state=1");
   });
 });

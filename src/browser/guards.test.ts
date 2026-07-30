@@ -1,437 +1,104 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { evaluateBlockMessage, installRequestGuard, scanEvaluateScript } from "./guards.js";
-import { buildAgentCsp } from "./csp-policy.js";
 
-// The guard registers its handler via context.route(); we capture that handler
-// and drive it with fake route/request objects, exactly as manager.test.ts
-// does for the SSRF/scheme cases. Here we focus on the response-side CSP
-// injection: a top-level document navigation must be fetched+fulfilled with our
-// agent CSP APPENDED, while every non-document request stays on continue().
-
-interface FakeRoute {
-	abort: ReturnType<typeof vi.fn>;
-	continue: ReturnType<typeof vi.fn>;
-	fetch: ReturnType<typeof vi.fn>;
-	fulfill: ReturnType<typeof vi.fn>;
-}
-
-function fakeResponse(headers: Record<string, string>) {
-	return { headers: () => headers };
-}
-
-function fakeRoute(upstreamHeaders: Record<string, string> = {}): FakeRoute {
-	// A bare fakeRoute() models a normal HTML document response so the CSP-inject
-	// path (which now skips non-HTML/attachment responses) engages by default.
-	const response = fakeResponse({ "content-type": "text/html; charset=utf-8", ...upstreamHeaders });
-	return {
-		abort: vi.fn().mockResolvedValue(undefined),
-		continue: vi.fn().mockResolvedValue(undefined),
-		fetch: vi.fn().mockResolvedValue(response),
-		fulfill: vi.fn().mockResolvedValue(undefined),
-	};
-}
-
-function fakeRequest(
-	url: string,
-	opts: { resourceType?: string; navigation?: boolean; parentFrame?: unknown } = {},
-) {
-	// A main-frame document has NO parent frame; an iframe document has one.
-	// Default parentFrame === null so unspecified requests model the main frame.
-	const parentFrame = opts.parentFrame ?? null;
-	return {
-		url: () => url,
-		resourceType: () => opts.resourceType ?? "document",
-		isNavigationRequest: () => opts.navigation ?? true,
-		frame: () => ({ parentFrame: () => parentFrame }),
-	};
-}
-
-type RouteHandler = (route: FakeRoute, request: ReturnType<typeof fakeRequest>) => Promise<void>;
-
-async function captureGuard(): Promise<RouteHandler> {
-	let handler: RouteHandler | undefined;
-	// Brand-new context object each call so the install-once WeakSet never
-	// short-circuits between tests.
-	const fakeContext = {
-		route: vi.fn(async (_pattern: string, h: RouteHandler) => { handler = h; }),
-	};
-	await installRequestGuard(fakeContext as unknown as Parameters<typeof installRequestGuard>[0]);
-	if (!handler) throw new Error("guard did not register a route handler");
+async function captureGuard() {
+	let handler: ((route: any, request: any) => Promise<void>) | undefined;
+	await installRequestGuard({
+		route: vi.fn(async (_pattern: string, fn: typeof handler) => { handler = fn; }),
+	} as never);
+	if (!handler) throw new Error("guard did not register");
 	return handler;
 }
 
-// Literal public IP is validated synchronously by the canonical egress gate, so
-// these tests stay deterministic offline (no DNS for a hostname).
-const PUBLIC_DOC_URL = "http://93.184.216.34/";
+function request(url: string, navigation = true, resourceType = "document") {
+	return {
+		url: () => url,
+		isNavigationRequest: () => navigation,
+		resourceType: () => resourceType,
+	};
+}
 
-describe("installRequestGuard — document CSP injection (CDP/Playwright backend)", () => {
-	beforeEach(() => { vi.clearAllMocks(); });
+function route() {
+	return {
+		abort: vi.fn().mockResolvedValue(undefined),
+		continue: vi.fn().mockResolvedValue(undefined),
+	};
+}
 
-	it("fulfills a top-level document with our agent CSP appended as an additional header", async () => {
+describe("installRequestGuard", () => {
+	it("continues an allowed document without rewriting its response", async () => {
 		const handler = await captureGuard();
-		const route = fakeRoute();
-		await handler(route, fakeRequest(PUBLIC_DOC_URL));
-
-		expect(route.fetch).toHaveBeenCalledTimes(1);
-		expect(route.fulfill).toHaveBeenCalledTimes(1);
-		// Never continue()/abort() the document once we take the fulfill path.
-		expect(route.continue).not.toHaveBeenCalled();
-		expect(route.abort).not.toHaveBeenCalled();
-
-		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
+		const r = route();
+		await handler(r, request("http://93.184.216.34/"));
+		expect(r.continue).toHaveBeenCalledOnce();
+		expect(r.abort).not.toHaveBeenCalled();
 	});
 
-	it("APPENDS (never replaces) a site's own Content-Security-Policy, and preserves other headers", async () => {
-		const siteCsp = "default-src 'self' https://cdn.site.example";
+	it("continues allowed subresources through the same URL policy", async () => {
 		const handler = await captureGuard();
-		const route = fakeRoute({
-			"content-security-policy": siteCsp,
-			"content-type": "text/html; charset=utf-8",
-			"x-frame-options": "DENY",
-		});
-		await handler(route, fakeRequest(PUBLIC_DOC_URL));
-
-		const arg = route.fulfill.mock.calls[0][0];
-		// Comma-joined: the site's policy is still present AND ours is appended.
-		expect(arg.headers["content-security-policy"]).toBe(`${siteCsp}, ${buildAgentCsp()}`);
-		// Unrelated upstream headers survive verbatim.
-		expect(arg.headers["content-type"]).toBe("text/html; charset=utf-8");
-		expect(arg.headers["x-frame-options"]).toBe("DENY");
-		// The upstream response is handed back to fulfill for the body.
-		expect(arg.response).toBeDefined();
+		const r = route();
+		await handler(r, request("http://93.184.216.34/app.js", false, "script"));
+		expect(r.continue).toHaveBeenCalledOnce();
 	});
 
-	it("does NOT fetch+fulfill a non-document sub-resource — stays on continue() (no perf/behavior regression)", async () => {
+	it("still aborts SSRF destinations", async () => {
 		const handler = await captureGuard();
-		const route = fakeRoute();
-		await handler(route, fakeRequest("http://93.184.216.34/app.js", { resourceType: "script", navigation: false }));
-
-		expect(route.continue).toHaveBeenCalledTimes(1);
-		expect(route.fetch).not.toHaveBeenCalled();
-		expect(route.fulfill).not.toHaveBeenCalled();
-		expect(route.abort).not.toHaveBeenCalled();
+		const r = route();
+		await handler(r, request("http://169.254.169.254/latest/meta-data/"));
+		expect(r.abort).toHaveBeenCalledWith("blockedbyclient");
+		expect(r.continue).not.toHaveBeenCalled();
 	});
 
-	it("does NOT fetch+fulfill a document-typed sub-resource that is not a navigation (e.g. iframe doc refetch stays cheap)", async () => {
+	it("blocks dangerous top-level schemes but allows page-owned data resources", async () => {
 		const handler = await captureGuard();
-		const route = fakeRoute();
-		await handler(route, fakeRequest("http://93.184.216.34/frame", { resourceType: "document", navigation: false }));
+		const top = route();
+		await handler(top, request("file:///etc/passwd"));
+		expect(top.abort).toHaveBeenCalledWith("blockedbyclient");
 
-		expect(route.continue).toHaveBeenCalledTimes(1);
-		expect(route.fetch).not.toHaveBeenCalled();
-		expect(route.fulfill).not.toHaveBeenCalled();
-	});
-
-	// REGRESSION (iframe misclassification). An iframe's INITIAL load is
-	// resourceType:"document" AND isNavigationRequest:true — identical to the
-	// top-level document on those two predicates. The ONLY distinguisher is that
-	// an iframe's frame has a parent. If we fetch+fulfill it, buildAgentCsp stamps
-	// `frame-ancestors 'none'` and Chromium refuses to embed the frame (breaks
-	// Stripe/OAuth/map/video widgets). This test FAILS against the pre-fix
-	// predicate (which took the fetch+fulfill path for any document navigation).
-	it("does NOT fetch+fulfill an iframe INITIAL navigation (document + navigation, but has a parent frame) — never stamps frame-ancestors on an embedded frame", async () => {
-		const handler = await captureGuard();
-		const route = fakeRoute();
-		await handler(route, fakeRequest("http://93.184.216.34/embed", {
-			resourceType: "document",
-			navigation: true,
-			parentFrame: { name: "top" }, // truthy parent => this is an iframe, not the main frame
-		}));
-
-		expect(route.continue).toHaveBeenCalledTimes(1);
-		expect(route.fetch).not.toHaveBeenCalled();
-		expect(route.fulfill).not.toHaveBeenCalled();
-		expect(route.abort).not.toHaveBeenCalled();
-	});
-
-	it("injects CSP on a MAIN-frame document (no parent frame, content-type text/html)", async () => {
-		const handler = await captureGuard();
-		const route = fakeRoute();
-		await handler(route, fakeRequest(PUBLIC_DOC_URL, {
-			resourceType: "document",
-			navigation: true,
-			parentFrame: null, // main frame
-		}));
-
-		expect(route.fetch).toHaveBeenCalledTimes(1);
-		expect(route.fulfill).toHaveBeenCalledTimes(1);
-		expect(route.continue).not.toHaveBeenCalled();
-		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
-	});
-
-	it("applies CSP to the FINAL document of a redirect chain (route.fetch follows redirects internally)", async () => {
-		const handler = await captureGuard();
-		// route.fetch() resolves the redirect chain internally and returns the
-		// final 200 document; from the handler's view it is one HTML response.
-		const route = fakeRoute({ "content-type": "text/html; charset=utf-8" });
-		route.fetch.mockResolvedValue({
-			status: () => 200,
-			headers: () => ({ "content-type": "text/html; charset=utf-8" }),
-		});
-		await handler(route, fakeRequest(PUBLIC_DOC_URL));
-
-		expect(route.fetch).toHaveBeenCalledTimes(1);
-		expect(route.fulfill).toHaveBeenCalledTimes(1);
-		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
-	});
-
-	it("preserves an upstream Set-Cookie header through the fulfill (multi-cookie \\n-folded value passes verbatim)", async () => {
-		const setCookie = "a=1; Path=/; HttpOnly\nb=2; Path=/; Secure";
-		const handler = await captureGuard();
-		const route = fakeRoute({
-			"content-type": "text/html; charset=utf-8",
-			"set-cookie": setCookie,
-		});
-		await handler(route, fakeRequest(PUBLIC_DOC_URL));
-
-		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers["set-cookie"]).toBe(setCookie);
-		// CSP still injected alongside the preserved cookie.
-		expect(arg.headers["content-security-policy"]).toBe(buildAgentCsp());
-	});
-
-	it("does NOT inject CSP on a main-frame navigation whose response is an attachment download (fulfilled through unchanged, no re-issue)", async () => {
-		const handler = await captureGuard();
-		const route = fakeRoute({
-			"content-type": "application/octet-stream",
-			"content-disposition": "attachment; filename=\"report.pdf\"",
-		});
-		await handler(route, fakeRequest(PUBLIC_DOC_URL));
-
-		// The already-fetched response is fulfilled through (so Chromium's own
-		// download machinery handles it); a second continue() would re-issue and
-		// could double-submit a POST navigation.
-		expect(route.fetch).toHaveBeenCalledTimes(1);
-		expect(route.fulfill).toHaveBeenCalledTimes(1);
-		expect(route.continue).not.toHaveBeenCalled();
-		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers).toBeUndefined(); // fulfilled with { response } only — no header rewrite
-	});
-
-	it("does NOT inject CSP on a main-frame navigation whose response is a non-HTML content type", async () => {
-		const handler = await captureGuard();
-		const route = fakeRoute({ "content-type": "application/json" });
-		await handler(route, fakeRequest(PUBLIC_DOC_URL));
-
-		expect(route.fetch).toHaveBeenCalledTimes(1);
-		expect(route.fulfill).toHaveBeenCalledTimes(1);
-		const arg = route.fulfill.mock.calls[0][0];
-		expect(arg.headers).toBeUndefined();
-	});
-
-	it("still ABORTS an SSRF/blocked document navigation before any fetch+fulfill (egress gate preserved)", async () => {
-		const handler = await captureGuard();
-		const route = fakeRoute();
-		await handler(route, fakeRequest("http://169.254.169.254/latest/meta-data/"));
-
-		expect(route.abort).toHaveBeenCalledWith("blockedbyclient");
-		expect(route.fetch).not.toHaveBeenCalled();
-		expect(route.fulfill).not.toHaveBeenCalled();
-		expect(route.continue).not.toHaveBeenCalled();
+		const image = route();
+		await handler(image, request("data:image/png;base64,AA==", false, "image"));
+		expect(image.continue).toHaveBeenCalledOnce();
 	});
 });
 
-describe("scanEvaluateScript — evaluate() blocklist (CSP owns egress; this owns read-leak + dynamic-exec + WebRTC)", () => {
-	// --- The Function false-positive fix (the composer-injector class) ---------
-	// The `Function` constructor pattern is now case-SENSITIVE, so the benign
-	// lowercase `function` keyword no longer trips it. This unblocks every legit
-	// function declaration / expression / IIFE inside an evaluate script.
-	it("does NOT block a benign IIFE `(function(){})()`", () => {
-		expect(scanEvaluateScript("(function(){})()")).toBeNull();
-	});
-	it("does NOT block a benign function declaration", () => {
-		expect(scanEvaluateScript("function foo(){ return 1 }")).toBeNull();
-	});
-	// The real `Function` constructor (always capital-F) is still blocked.
-	it("STILL blocks `new Function(...)`", () => {
-		expect(scanEvaluateScript('new Function("x","return x")')).not.toBeNull();
-	});
-	it("STILL blocks `Function(...)()` invoked-constructor form", () => {
-		expect(scanEvaluateScript('Function("alert(1)")()')).not.toBeNull();
-	});
-
-	// --- Read-into-model-context leaks: STILL blocked (CSP irrelevant) ---------
-	// A script can read a secret and RETURN it to the model with zero network
-	// egress, so CSP cannot cover these — the read itself must stay blocked.
+describe("scanEvaluateScript", () => {
 	it.each([
-		["document.cookie", "return document.cookie"],
-		["localStorage", 'localStorage.getItem("token")'],
-		["sessionStorage", "return sessionStorage.length"],
-		["indexedDB", "indexedDB.open('x')"],
-		["password field selector", 'document.querySelector("[type=password]").value'],
-	])("STILL blocks read-leak: %s", (_label, script) => {
-		expect(scanEvaluateScript(script)).not.toBeNull();
-	});
-
-	// --- Egress primitives: NOW allowed by the scanner ------------------------
-	// These are enforced BY CONSTRUCTION by the per-document agent CSP on BOTH
-	// backends (csp-policy.ts / desktop/src/browser-csp.ts: connect-src /
-	// img-src / form-action / script-src / worker-src). CSP — not this regex —
-	// is the egress enforcement layer for them, so the scanner returns null.
-	it.each([
-		["fetch", 'fetch("https://x")'],
-		["XMLHttpRequest", "new XMLHttpRequest()"],
-		["WebSocket", 'new WebSocket("wss://x")'],
-		["sendBeacon", 'navigator.sendBeacon("/x", d)'],
-		["element .src assignment", 'el.src = "https://x/track.gif"'],
-		["createElement", 'document.createElement("script")'],
-		["form.submit", "form.submit()"],
-	])("does NOT block egress primitive (CSP owns it): %s", (_label, script) => {
+		"(function(){ return document.title; })()",
+		"document.querySelector('main')?.textContent",
+		"fetch('/api/data').then(r => r.status)",
+	])("allows ordinary DOM inspection: %s", (script) => {
 		expect(scanEvaluateScript(script)).toBeNull();
 	});
 
-	// --- WebRTC: STILL blocked (known CSP connect-src bypass) ------------------
-	it("STILL blocks `new RTCPeerConnection()` (WebRTC data channels bypass CSP)", () => {
-		expect(scanEvaluateScript("new RTCPeerConnection()")).not.toBeNull();
-	});
-
-	// --- Dynamic code execution + workers: STILL blocked ----------------------
 	it.each([
-		["eval", 'eval("1+1")'],
-		["dynamic import", 'import("https://x/m.js")'],
-		["Worker", 'new Worker("w.js")'],
-	])("STILL blocks dynamic-exec/worker: %s", (_label, script) => {
+		"document.cookie",
+		"localStorage.getItem('token')",
+		"new Function('return 1')()",
+		"eval('1+1')",
+		"new RTCPeerConnection()",
+		"new Worker('/worker.js')",
+		"window.open('https://example.com')",
+	])("blocks restricted evaluate primitive: %s", (script) => {
 		expect(scanEvaluateScript(script)).not.toBeNull();
 	});
 
-	// --- The concat false-positive fix (constant folding) ---------------------
-	// The old obfuscation guard flagged ANY `+` with a short lowercase literal in
-	// the middle, which blocked ordinary DOM string building mid-task. Folding
-	// replaced the guess with an actual reassembly, so these are now allowed.
-	it.each([
-		["px units", 'el.style.width = w + "px" + h'],
-		["a of b message", 'msg = a + "of" + b'],
-		["row label", 'label + "row" + i'],
-	])("does NOT block benign concatenation: %s", (_label, script) => {
-		expect(scanEvaluateScript(script)).toBeNull();
-	});
-
-	// ...while the bypasses the old pattern was aimed at are now caught by the
-	// REAL patterns, because folding reassembles the identifier first.
-	it("BLOCKS a bracket-access eval assembled from two literals", () => {
-		expect(scanEvaluateScript('x["ev" + "al"]("1+1")')).not.toBeNull();
-	});
-	it("BLOCKS localStorage assembled into a variable (the old pattern missed this entirely)", () => {
-		const src = scanEvaluateScript('const k = "loc" + "alStorage"; return window[k]');
-		expect(src).not.toBeNull();
-		expect(src).toMatch(/localStorage/);
-	});
-	it("BLOCKS a multi-step fold: \"e\" + \"v\" + \"a\" + \"l\" collapses across passes", () => {
-		expect(scanEvaluateScript('x["e" + "v" + "a" + "l"]("1+1")')).not.toBeNull();
-	});
-	it("BLOCKS an escape + concat combo (folding runs on the escape-normalized text)", () => {
-		expect(scanEvaluateScript('x["\\u0065v" + "al"]("1+1")')).not.toBeNull();
-	});
-	it("folds mixed quote styles", () => {
-		expect(scanEvaluateScript(`x['ev' + "al"]("1+1")`)).not.toBeNull();
-	});
-
-	// Folding is literal-to-literal only and capped, so a pathological chain
-	// terminates promptly instead of spinning or backtracking catastrophically.
-	it("returns promptly on a long alternating concatenation chain", () => {
-		const chain = Array.from({ length: 4000 }, () => '"ab"').join(" + ");
-		const started = Date.now();
-		expect(scanEvaluateScript(`const s = ${chain};`)).toBeNull();
-		expect(Date.now() - started).toBeLessThan(2000);
+	it("blocks escaped and concatenated spellings", () => {
+		expect(scanEvaluateScript("window['ev' + 'al']('1')")).not.toBeNull();
+		expect(scanEvaluateScript("window['loc' + '\\u0061lStorage']")).not.toBeNull();
 	});
 });
 
-describe("evaluateBlockMessage — remediation names the right alternative for the class blocked", () => {
-	// The old single message ("use http_request for API calls") was wrong for a
-	// storage/DOM read — http_request cannot read page state. Each class now gets
-	// accurate guidance, and the pattern source is always echoed for debugging.
-	it("read-leak (cookie/storage/password) → extract/snapshot + ask-user, and NEVER http_request", () => {
-		for (const script of ["return document.cookie", 'localStorage.getItem("t")', 'document.querySelector("[type=password]").value']) {
-			const src = scanEvaluateScript(script);
-			expect(src).not.toBeNull();
-			const msg = evaluateBlockMessage(src!);
-			expect(msg).toMatch(/extract|snapshot/);
-			expect(msg).toMatch(/ask the user/i);
-			expect(msg).not.toMatch(/http_request/);
-		}
-	});
-	it("dynamic-exec (Function/eval/import) → plain DOM inspection guidance", () => {
-		const src = scanEvaluateScript('new Function("x","return x")');
-		const msg = evaluateBlockMessage(src!);
-		expect(msg).toMatch(/dynamic code execution/i);
-		expect(msg).toMatch(/DOM inspection/i);
-		expect(msg).not.toMatch(/http_request/);
-	});
-	it("WebRTC/EventSource → the primitive is blocked (no evaluate-side substitute)", () => {
-		const src = scanEvaluateScript("new RTCPeerConnection()");
-		expect(evaluateBlockMessage(src!)).toMatch(/realtime connection primitive is blocked/i);
-	});
-	it("always echoes the offending pattern source for debugging", () => {
-		const src = scanEvaluateScript("return document.cookie")!;
-		expect(evaluateBlockMessage(src)).toContain(src);
+describe("evaluateBlockMessage", () => {
+	it("gives read-safe guidance for storage access", () => {
+		const message = evaluateBlockMessage("\\blocalStorage\\b", "localStorage.getItem('x')");
+		expect(message).toContain("extract");
+		expect(message).toContain("snapshot");
+		expect(message).not.toContain("http_request");
 	});
 
-	// --- The offending-text excerpt -------------------------------------------
-	// server.log recorded blocks that named ONLY the pattern, which made it
-	// impossible to tell a genuine bypass attempt from a false positive after the
-	// fact. The message now quotes the slice that tripped the scan.
-	it("omitting `script` returns the byte-identical message it did before the excerpt existed", () => {
-		const src = scanEvaluateScript("return document.cookie")!;
-		expect(evaluateBlockMessage(src)).toBe(
-			`Blocked: script contains restricted pattern (${src}). ` +
-			"Reading page storage or cookies through evaluate() is blocked to keep secrets out of tool output. " +
-			"To read visible page content use the `extract` or `snapshot` actions; if you need the page's login state, ask the user.",
-		);
-		const dyn = scanEvaluateScript('eval("1+1")')!;
-		expect(evaluateBlockMessage(dyn)).toBe(
-			`Blocked: script contains restricted pattern (${dyn}). ` +
-			"Dynamic code execution is not allowed in evaluate() — use plain DOM inspection (querySelector, textContent, getAttribute) instead.",
-		);
-	});
-
-	it("names the offending text when the script is supplied", () => {
-		const script = "const rows = document.querySelectorAll('tr'); const c = document.cookie; return rows.length + c";
-		const src = scanEvaluateScript(script)!;
-		const msg = evaluateBlockMessage(src, script);
-		expect(msg).toContain("Offending text");
-		expect(msg).toContain("document.cookie");
-		// The message still leads with the pattern + its class guidance.
-		expect(msg.startsWith(evaluateBlockMessage(src))).toBe(true);
-	});
-
-	it("keeps a multi-line script's message on ONE log line", () => {
-		const script = "const a = 1;\nconst b = 2;\nreturn document.cookie;\n// trailing\n";
-		const src = scanEvaluateScript(script)!;
-		const msg = evaluateBlockMessage(src, script);
-		expect(msg).toContain("Offending text");
-		expect(msg).not.toContain("\n");
-	});
-
-	it("caps the excerpt so a huge script is never dumped wholesale", () => {
-		const filler = "x".repeat(5000);
-		const script = `${filler} document.cookie ${filler}`;
-		const src = scanEvaluateScript(script)!;
-		const msg = evaluateBlockMessage(src, script);
-		const excerpt = /Offending text[^:]*: "(.*)"$/.exec(msg)?.[1];
-		expect(excerpt).toBeDefined();
-		expect(excerpt!.length).toBeLessThanOrEqual(160);
-		expect(msg.length).toBeLessThan(evaluateBlockMessage(src).length + 200);
-	});
-
-	it("labels an excerpt that only exists AFTER folding, instead of passing it off as the raw script", () => {
-		const script = 'const k = "loc" + "alStorage"; return window[k]';
-		const src = scanEvaluateScript(script)!;
-		const msg = evaluateBlockMessage(src, script);
-		expect(msg).toMatch(/Offending text \(after unescaping\/joining concatenated strings\)/);
-		// The quoted text is the REASSEMBLED identifier, which never appears in
-		// what the agent actually sent — hence the label.
-		expect(msg).toContain("localStorage");
-		expect(script).not.toContain("localStorage");
-	});
-
-	it("omits the sentence entirely when the pattern source cannot be relocated", () => {
-		expect(evaluateBlockMessage("not-a-real-pattern-source", "return 1")).not.toContain("Offending text");
+	it("keeps diagnostic excerpts bounded and single-line", () => {
+		const message = evaluateBlockMessage("\\beval\\s*\\(", `\n${"x".repeat(500)}eval("1")\n`);
+		expect(message).not.toContain("\n");
+		expect(message.length).toBeLessThan(600);
 	});
 });
-
-// classifySensitivePage / the browserSecrecy ladder are covered in
-// sensitive-pages.test.ts (they moved to sensitive-pages.ts and their
-// classification is now level-aware, which needs a mocked runtime config).

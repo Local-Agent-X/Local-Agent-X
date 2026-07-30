@@ -30,7 +30,6 @@
 import { EventBus } from "../event-bus.js";
 import { createLogger } from "../logger.js";
 import { BrowserHistoryStore } from "./history-store.js";
-import { resolveSessionBrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./session-owner-registry.js";
 import { uiEventBusEnabled } from "../orchestrator/ui-event-store.js";
 
 const logger = createLogger("browser-history-recorder");
@@ -40,12 +39,6 @@ let busWired = false;
 // must never throw into the bus handler; EventBus isolates listeners, but a
 // history hiccup is not worth even an error line per navigation).
 let warnedWriteFailure = false;
-
-function profileIdFor(sessionId: unknown): string {
-  return typeof sessionId === "string" && sessionId.trim() !== ""
-    ? resolveSessionBrowserProfileId(sessionId)
-    : DEFAULT_BROWSER_PROFILE_ID;
-}
 
 function warnOnce(e: unknown): void {
   if (warnedWriteFailure) return;
@@ -65,9 +58,9 @@ const busHandler = (data: unknown): void => {
     if (e.action === "navigate") {
       // The store's privacy law redacts/drops the url — the recorder never
       // pre-filters beyond shape checks.
-      store.recordVisit(profileIdFor(e.sessionId), e.target);
+      store.recordVisit(e.target);
     } else if (e.action === "title") {
-      store.touchTitle(profileIdFor(e.sessionId), e.target);
+      store.touchTitle(e.target);
     }
   } catch (err) {
     warnOnce(err);
@@ -96,9 +89,9 @@ export function _rewireHistoryRecorderForTest(): void {
  * in-app-backend.navigate, owned by a concurrent chunk — this export is the
  * named follow-up seam. Same warn-once, never-throw posture as the bus path.
  */
-export function recordAgentVisit(profileId: string, url: string, title = ""): void {
+export function recordAgentVisit(url: string, title = ""): void {
   try {
-    BrowserHistoryStore.getInstance().recordVisit(profileId || DEFAULT_BROWSER_PROFILE_ID, url, title);
+    BrowserHistoryStore.getInstance().recordVisit(url, title);
   } catch (err) {
     warnOnce(err);
   }

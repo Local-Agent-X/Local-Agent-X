@@ -177,14 +177,11 @@ export function requestDesktopBrowserBridge(request: BrowserRelayRequest): Promi
 export async function browserLifecycle(
 	op: BrowserLifecycleOp,
 	viewId: string,
-	opts?: { partition?: string; bounds?: BridgeRect; sessionId?: string },
+	opts?: { bounds?: BridgeRect; sessionId?: string },
 ): Promise<BrowserLifecycleResult> {
-	if (op === "create" && !opts?.partition) {
-		throw new BridgeOpError(`lifecycle:${op}`, viewId, "create requires a partition");
-	}
 	// sessionId rides the "show" op so the desktop anchors the surface to THIS
 	// session (browser-surface-policy per-session anchor); ignored by other ops.
-	const reply = await request(`lifecycle:${op}`, viewId, { type: "lax:browser-lifecycle", op, viewId, partition: opts?.partition, bounds: opts?.bounds, sessionId: opts?.sessionId }, LIFECYCLE_TIMEOUT_MS);
+	const reply = await request(`lifecycle:${op}`, viewId, { type: "lax:browser-lifecycle", op, viewId, bounds: opts?.bounds, sessionId: opts?.sessionId }, LIFECYCLE_TIMEOUT_MS);
 	return { view: reply.view, views: reply.views, ping: reply.ping };
 }
 

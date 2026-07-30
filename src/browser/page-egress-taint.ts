@@ -57,7 +57,7 @@
 import { findTaintInPayload } from "../data-lineage/index.js";
 import type { TaintSource } from "../data-lineage/index.js";
 import { checkCanariesInPayload } from "../threat/canaries.js";
-import { registrableDomain } from "./csp-policy.js";
+import { registrableDomain } from "./registrable-domain.js";
 
 export interface PageEgressRequest {
 	/** The outbound request URL (query/path may carry GET-beacon exfil). */

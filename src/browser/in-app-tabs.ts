@@ -19,7 +19,6 @@ import type { Page } from "playwright";
 import { ObservationRegistry } from "./observation.js";
 import { asObservePage, BridgeObservePage, type BridgePageState } from "./in-app-observe.js";
 import { browserAbort, browserLifecycle, browserNavigate, type BridgePingResult, type BrowserNavigateResult, type BrowserViewInfo } from "./bridge-client.js";
-import { profilePartition } from "./profile-store.js";
 import { redirectMessage, safeHost } from "./redirect.js";
 import { sensitivePageStub } from "./guards.js";
 import { unregisterAdoptedViews } from "./bridge-perception.js";
@@ -147,12 +146,10 @@ export class TabList {
 /** Lazily create a tab's view on the profile's partition. Adopts a view that
  *  already exists (a prior backend instance for the same (session, profile)
  *  created it) instead of failing. */
-export async function ensureTabView(tab: InAppTab, profileId: string): Promise<void> {
+export async function ensureTabView(tab: InAppTab): Promise<void> {
 	if (tab.created && !tab.closed) return;
 	try {
-		await browserLifecycle("create", tab.viewId, {
-			partition: profilePartition(profileId),
-		});
+		await browserLifecycle("create", tab.viewId);
 	} catch (e) {
 		if (!(e instanceof Error) || !e.message.includes("already exists")) throw e;
 	}

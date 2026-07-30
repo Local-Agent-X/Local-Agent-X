@@ -9,7 +9,7 @@ import { BrowserBookmarkStore } from "../../browser/bookmark-store.js";
  * bookmark_add action (addedBy:"agent") against the SAME store.
  *
  *   GET    /api/browser/bookmarks          — ?q=&profile= (newest first)
- *   POST   /api/browser/bookmarks          — { url, title?, tags?, profileId? }
+ *   POST   /api/browser/bookmarks          — { url, title?, tags? }
  *   DELETE /api/browser/bookmarks/:id      — remove one bookmark
  */
 export const handleBrowserBookmarkRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {
@@ -18,8 +18,7 @@ export const handleBrowserBookmarkRoutes: RouteHandler = async (method, url, req
 
   if (method === "GET" && url.pathname === "/api/browser/bookmarks") {
     const q = url.searchParams.get("q") ?? undefined;
-    const profileId = url.searchParams.get("profile") ?? undefined;
-    json(200, store.list({ q, profileId }));
+    json(200, store.list({ q }));
     return true;
   }
 
@@ -35,7 +34,6 @@ export const handleBrowserBookmarkRoutes: RouteHandler = async (method, url, req
         url: bookmarkUrl,
         title: typeof raw?.title === "string" ? raw.title : undefined,
         tags: raw?.tags as string[] | undefined,
-        profileId: typeof raw?.profileId === "string" && raw.profileId.trim() !== "" ? raw.profileId : undefined,
         addedBy: "user",
       }));
     } catch (e) {

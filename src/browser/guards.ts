@@ -6,7 +6,6 @@
 import type { BrowserContext } from "playwright";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
 import { getRuntimeConfig } from "../config.js";
-import { isTopLevelDocument, fulfillWithAgentCsp } from "./csp-inject.js";
 
 /** Schemes that must never be reached via a top-level document navigation —
  *  click-induced, redirect, or JS. Sub-resources (a page's own data: image,
@@ -90,13 +89,6 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
         await route.abort("blockedbyclient");
         return;
       }
-      // Only the top-level document response carries an enforceable document
-      // CSP, so only that one request pays the fetch+fulfill round-trip; every
-      // sub-resource keeps the cheap continue() path untouched.
-      if (isTopLevelDocument(request)) {
-        await fulfillWithAgentCsp(route);
-        return;
-      }
       await route.continue();
     } catch {
       if (request.isNavigationRequest()) { await route.abort("blockedbyclient"); return; }
@@ -126,8 +118,8 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
  * scripts) and a false sense that the regex was doing the work — an evaluate
  * script's fetch rides the SAME session network stack as the page, so the
  * request-layer gate already covers it. Those egress patterns stay RETIRED.
- * (An earlier same-site CSP was tried for this and reverted — it broke every
- * multi-CDN site; see src/browser/csp-policy.ts for why.)
+ * A same-site CSP was retired because it broke multi-CDN sites; the request
+ * evaluator is the compatibility-preserving enforcement seam.
  *
  * What remains here is exactly what the request-layer gate does NOT cover:
  *   1. Read-into-model-context leaks — a script can read a secret (cookie,
@@ -136,14 +128,14 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
  *      that channel, so these reads must still be blocked.
  *   2. Dynamic code execution — eval / Function / string-timer / indirect-eval /
  *      bracket global access / dynamic import / Reflect.apply / new Proxy. These
- *      manufacture new code contexts the static scanner (and CSP posture) can't
+ *      manufacture new code contexts the static scanner can't
  *      reason about; they stay blocked, guarded against obfuscation by the
  *      \uXXXX/\xXX normalization AND the string-literal constant folding that
  *      scanEvaluateScript applies below before matching.
  *   3. WebRTC — RTCPeerConnection. WebRTC data channels bypass the HTTP-stack
  *      request evaluator (raw UDP, not an onBeforeRequest hop), so they are the
- *      one egress-ish primitive that must stay in the regex (belt-and-suspenders
- *      with the partition's disable_non_proxied_udp). EventSource kept conservatively.
+ *      one egress-ish primitive that must stay in the regex. EventSource is
+ *      kept conservatively.
  *   4. Worker / alternate code contexts and nav/origin manipulation.
  *
  * Obfuscation bypass is mitigated by normalizing `\uXXXX` and `\xXX` escapes
@@ -154,12 +146,12 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
 export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   // (1) Read-into-model-context leaks — password field READS. A script can read
   // the value and return it as the evaluate result with no network egress, so
-  // CSP cannot help here; the read itself must be blocked.
+  // The request gate cannot help here; the read itself must be blocked.
   /\[\s*type\s*=\s*['"]?password['"]?\s*\]/i,
   /input\[\s*type\s*=\s*['"]?password['"]?/i,
   /\btype\s*===?\s*['"]password['"]/i,
   // (1) Read-into-model-context leaks — credential / storage READS. Same reason:
-  // read a secret, RETURN it to the model — no network hop for CSP to catch.
+  // read a secret, RETURN it to the model — no network hop for the gate to catch.
   /\bdocument\.cookie\b/i,
   /\blocalStorage\b/i,
   /\bsessionStorage\b/i,
@@ -182,8 +174,8 @@ export const BLOCKED_EVAL_PATTERNS: readonly RegExp[] = [
   /\bReflect\s*\.\s*apply\b/i,
   /\bnew\s+Proxy\b/i,
   /\bimport\s*\(/i,
-  // (3) WebRTC — CRITICAL keep. Data channels are a known CSP connect-src
-  // bypass, so this is the one egress-ish primitive the regex must still own.
+  // (3) WebRTC — CRITICAL keep. Data channels bypass the HTTP request gate,
+  // so this is the one egress-ish primitive the regex must still own.
   // EventSource kept conservatively alongside it.
   /\bnew\s+EventSource\b/i,
   /\bRTCPeerConnection\b/i,

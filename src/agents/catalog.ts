@@ -52,7 +52,6 @@ function templateToDefinition(t: AgentTemplate): AgentDefinition {
     description: t.description,
     icon: t.icon,
     defaultModel: t.defaultModel,
-    defaultBrowserProfileId: t.defaultBrowserProfileId,
   };
 }
 

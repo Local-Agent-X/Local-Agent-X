@@ -30,7 +30,6 @@ export interface CronJob {
    *  this profile's saved logins (partition / userDataDir) instead of the
    *  "default" profile — so a repeat-task cron agent operates already signed
    *  in. Empty/undefined = the "default" profile. */
-  browserProfileId?: string;
   /** Per-job autonomy profile. Overrides the global profile for this job's
    *  unattended run only (see setSessionProfile). Undefined = inherit the
    *  global profile — under which ask-tier actions block unattended. */

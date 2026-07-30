@@ -23,9 +23,9 @@ import { generateCanaries, registerSessionCanaries, clearSessionCanaries } from 
 import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../local-runtimes/cache.js";
 
 const TAINT_SESSION = "wrk-taint-sess";
-const TAINT_VIEW = `view-${TAINT_SESSION}-default`;
+const TAINT_VIEW = `view-${TAINT_SESSION}-shared`;
 const CANARY_SESSION = "wrk-canary-sess";
-const CANARY_VIEW = `view-${CANARY_SESSION}-default`;
+const CANARY_VIEW = `view-${CANARY_SESSION}-shared`;
 // >= fingerprint shingle width so the recorded read produces overlap evidence.
 const SECRET = "wrk_secret_access_key_0f9e8d7c6b5a4321ffeeddccbbaa";
 

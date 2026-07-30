@@ -18,8 +18,7 @@ export {
   registerSessionOwner,
   getSessionOwner,
   clearSessionOwner,
-  resolveSessionBrowserProfileId,
-  DEFAULT_BROWSER_PROFILE_ID,
+  DEFAULT_BROWSER_SESSION_ID,
 } from "./session-owner-registry.js";
 export type { SessionOwner } from "./session-owner-registry.js";
 export { BrowserWedgeError } from "./observation.js";

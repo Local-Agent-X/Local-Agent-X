@@ -54,6 +54,8 @@ describe.skipIf(!enabled)("production container runtime projection", () => {
     expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY_SOCKET)
       .toBe("/var/lib/lax/browser-relay.sock");
     expect(spec.environment.LAX_CONTAINER_BROWSER_RELAY_TOKEN).toMatch(/^[a-f0-9]{64}$/);
+    expect(spec.environment.LAX_CONTAINER_BROWSER_ACTING_SESSION).toBe("session-projection");
+    expect(spec.environment.LAX_CONTAINER_BROWSER_OWNER_SESSION).toBe("session-projection");
     const credential = spec.mounts.find(mount => mount.target.endsWith("runtime-credential.json"))!;
     expect(readFileSync(credential.source, "utf8")).toContain("scoped-openai-key");
     projection.writeBootstrap({ op, token: "token", placement: placement(), container: container() });

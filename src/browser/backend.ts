@@ -43,9 +43,6 @@ export interface ScrollOptions {
 
 export interface BrowserBackend {
   // ── Identity / state ──
-  /** The browser profile this backend is bound to (partition / userDataDir
-   *  key). "default" when unassigned. */
-  getProfileId(): string;
   getCurrentUrl(): string;
   isActive(): boolean;
 

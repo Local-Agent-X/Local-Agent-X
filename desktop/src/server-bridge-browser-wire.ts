@@ -43,7 +43,6 @@ export interface BrowserLifecycleRequest {
 	id: number;
 	op: BrowserLifecycleOp;
 	viewId: string;
-	partition?: string;
 	bounds?: Rectangle;
 	/** The agent session driving the surface (op "show") — attributes the anchor
 	 *  follow so browser-ipc records a per-session anchor (never a cross-session steal). */

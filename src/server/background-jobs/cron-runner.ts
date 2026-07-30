@@ -119,9 +119,6 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     // block unattended under the global profile. Cleared in finally so the
     // override never outlives the run.
     if (jobMeta?.profile) setSessionProfile(sessionId, jobMeta.profile);
-    // Rung-3 (per-job) browser profile: bind this scheduled session so its
-    // browser tool calls drive the job's assigned logins. Cleared in finally.
-    if (jobMeta?.browserProfileId) registerSessionOwner(sessionId, { browserProfileId: jobMeta.browserProfileId });
     let result;
     try {
       result = await runAgentViaCanonical(wrappedPrompt, [], {

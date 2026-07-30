@@ -55,7 +55,7 @@ beforeEach(() => {
 describe("browser library panel", () => {
   it("open() shows the panel, pokes the occlusion probe, and renders both sections", async () => {
     apiState.bookmarks = [{ id: "bm-1", url: "https://ex.com/docs", title: "Docs", addedBy: "agent", ts: Date.now() }];
-    apiState.history = [{ id: "hist-1", url: "https://ex.com/story", title: "Story", profileId: "default", ts: Date.now() }];
+    apiState.history = [{ id: "hist-1", url: "https://ex.com/story", title: "Story", ts: Date.now() }];
     window.laxBrowserLibrary.open();
     await flush();
     const panel = document.getElementById("browser-library-panel")!;

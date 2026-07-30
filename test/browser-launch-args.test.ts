@@ -62,13 +62,10 @@ describe("browser launch args — single --disable-features flag", () => {
     expect(featureFlags[0]).toContain("DownloadBubble");
   });
 
-  it("blocks Service Workers in persistent contexts", () => {
-    expect(buildPersistentContextOptions("C:\\downloads", "http://127.0.0.1:43123")).toEqual(
-      expect.objectContaining({
-        serviceWorkers: "block",
-        proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
-      }),
-    );
+  it("allows normal Service Worker behavior in persistent contexts", () => {
+    const options = buildPersistentContextOptions("C:\\downloads", "http://127.0.0.1:43123");
+    expect(options).not.toHaveProperty("serviceWorkers");
+    expect(options.proxy).toEqual({ server: "http://127.0.0.1:43123", bypass: "<-loopback>" });
   });
 
   it("forces dedicated Chrome through the proxy without implicit loopback bypass", () => {

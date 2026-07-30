@@ -534,16 +534,17 @@ describe("installRequestGuard — context-level SSRF/scheme guard", () => {
     expect(route.abort).not.toHaveBeenCalled();
   });
 
-  it("allows a navigation to a public host — fulfilled with CSP, never aborted (literal public IP, no DNS)", async () => {
+  it("continues a navigation to a public host without rewriting its response (literal public IP, no DNS)", async () => {
     // Literal public IP is validated synchronously by the canonical gate, so
-    // this stays deterministic offline (no live DNS for a hostname). A public
-    // top-level document takes the fetch+fulfill CSP-injection path rather than
-    // continue(); the point of this case is that it is ALLOWED (not aborted).
+    // this stays deterministic offline (no live DNS for a hostname). Allowed
+    // requests continue through the browser without response rewriting.
     const handler = await captureGuard();
     const route = fakeRoute();
     await handler(route, fakeRequest("http://93.184.216.34/"));
-    expect(route.fulfill).toHaveBeenCalled();
+    expect(route.continue).toHaveBeenCalledOnce();
     expect(route.abort).not.toHaveBeenCalled();
+    expect(route.fetch).not.toHaveBeenCalled();
+    expect(route.fulfill).not.toHaveBeenCalled();
   });
 });
 

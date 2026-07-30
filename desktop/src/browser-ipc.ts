@@ -9,7 +9,7 @@
  *
  * Multi-view: the renderer's anchor drives ONE "current" view at a time
  * (currentViewId), but the pool may hold many — the renderer's own lazily
- * created foreground view PLUS the agent-driving per-(session,profile) views
+ * created foreground view PLUS the agent-driving per-chat views
  * created over the server bridge (server-bridge-browser.ts). browser-list-views
  * enumerates all of them and browser-switch-view flips which one is attached +
  * driven from the anchor; showBrowserView keeps the others live-but-detached
@@ -20,6 +20,7 @@
 
 import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContentsView } from "electron";
 
+import { ensureEmbeddedChromeIdentity } from "./embedded-chrome-identity";
 import { getMainWindow } from "./window";
 import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
 import { setupBrowserDownloadsIPC } from "./browser-downloads-ipc";
@@ -49,16 +50,14 @@ import {
 } from "./browser-ipc-navstate";
 import { emitAgentViewClosed } from "./browser-perception";
 import { decideAgentSurface, isSessionAgentView } from "./browser-surface-policy";
+import { SHARED_BROWSER_PARTITION } from "./browser-partition";
 
 const FOREGROUND_ID = "foreground";
-const FOREGROUND_PARTITION = "persist:lax-profile-default";
-const PARTITION_PREFIX = "persist:lax-profile-";
 
 interface BrowserViewListEntry {
 	viewId: string;
 	url: string;
 	title: string;
-	profileId?: string;
 	attached: boolean;
 	agentDriven: boolean;
 }
@@ -100,16 +99,11 @@ export function scaleRectToDip(rect: Rectangle, zoomFactor: number): Rectangle {
 	};
 }
 
-/** `persist:lax-profile-work` → `work`; anything else → undefined. */
-function profileIdFromPartition(partition: string): string | undefined {
-	return partition.startsWith(PARTITION_PREFIX) ? partition.slice(PARTITION_PREFIX.length) : undefined;
-}
-
 /** Lazily create the renderer's foreground view on first use and wire it. */
 function ensureForegroundView(): WebContentsView {
 	let view = getBrowserView(FOREGROUND_ID);
 	if (!view) {
-		createBrowserView(FOREGROUND_ID, { partition: FOREGROUND_PARTITION, agentDriven: false });
+		createBrowserView(FOREGROUND_ID, { partition: SHARED_BROWSER_PARTITION, agentDriven: false });
 		view = getBrowserView(FOREGROUND_ID)!;
 	}
 	wireNavPushes(FOREGROUND_ID, view.webContents);
@@ -177,7 +171,7 @@ function applyAgentSurface(viewId: string): void {
  */
 export function autoSurfaceAgentView(viewId: string, sessionId?: string): void {
 	const surface = decideAgentSurface({
-		isForegroundFamily: currentViewId === FOREGROUND_ID || currentViewId.startsWith("profile-"),
+		isForegroundFamily: currentViewId === FOREGROUND_ID || currentViewId.startsWith("user-"),
 		isBlank: currentViewIsBlank(),
 		currentIsSessionAgentView: isSessionAgentView(currentViewId, sessionId),
 	});
@@ -249,6 +243,7 @@ export function setupBrowserIPC(): void {
 		// loadURL rejects on ERR_ABORTED (redirects, rapid re-navigation) — that's
 		// normal browsing, not an error to surface. Nav-state events carry the real
 		// outcome either way.
+		await ensureEmbeddedChromeIdentity(view.webContents);
 		await view.webContents.loadURL(url).catch(() => {});
 	});
 
@@ -290,7 +285,6 @@ export function setupBrowserIPC(): void {
 			viewId: v.viewId,
 			url: v.url,
 			title: v.title,
-			profileId: profileIdFromPartition(v.partition),
 			attached: v.attached,
 			agentDriven: v.agentDriven,
 		}));
@@ -344,46 +338,14 @@ export function setupBrowserIPC(): void {
 		return true;
 	});
 
-	// Profile manager "Log in once": open (or reuse) a foreground view on a
-	// specific profile's partition and drive it from the anchor so the user can
-	// sign in by hand. The default profile shares the FOREGROUND view (same
-	// partition); every other profile gets its own renderer-owned foreground view
-	// keyed `profile-<id>` (agentDriven:false — it is the user's, not an agent's).
-	// The partition persists whatever login the user completes.
-	ipcMain.handle("browser-open-profile-view", async (event: IpcMainInvokeEvent, profileId: string, url?: string): Promise<BrowserNavState | null> => {
-		if (!isTrustedBrowserSender(event.sender)) return null;
-		if (typeof profileId !== "string" || !profileId) return null;
-		const viewId = profileId === "default" ? FOREGROUND_ID : `profile-${profileId}`;
-		const partition = PARTITION_PREFIX + profileId;
-		let view = getBrowserView(viewId);
-		if (!view) {
-			createBrowserView(viewId, { partition, agentDriven: false });
-			view = getBrowserView(viewId)!;
-		}
-		wireNavPushes(viewId, view.webContents);
-		currentViewId = viewId;
-		showBrowserView(viewId);
-		// Snap to the last anchor geometry (a just-created view carries the pool's
-		// default 800×600 box until now).
-		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
-		const target = (typeof url === "string" && url.trim()) || "about:blank";
-		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
-		const state = readNavState(viewId, view.webContents);
-		pushNavState(viewId, view.webContents);
-		return state;
-	});
-
 	// New user tab: mint a fresh renderer-owned view (agentDriven:false) on the
-	// CURRENTLY selected view's partition, so "open a tab" stays inside the
-	// profile the user is looking at. Attach only if something is already
+	// shared browser identity. Attach only if something is already
 	// attached — on a non-browser tab the retarget alone is enough (the next
 	// set-visible shows it).
 	ipcMain.handle("browser-new-tab", async (event: IpcMainInvokeEvent, url?: string): Promise<BrowserNavState | null> => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
 		const viewId = `user-${++userTabSeq}`;
-		const partition =
-			listBrowserViews().find((v) => v.viewId === currentViewId)?.partition ?? FOREGROUND_PARTITION;
-		createBrowserView(viewId, { partition, agentDriven: false });
+		createBrowserView(viewId, { partition: SHARED_BROWSER_PARTITION, agentDriven: false });
 		const view = getBrowserView(viewId)!;
 		wireNavPushes(viewId, view.webContents);
 		currentViewId = viewId;
@@ -392,6 +354,7 @@ export function setupBrowserIPC(): void {
 			showBrowserView(viewId);
 		}
 		const target = (typeof url === "string" && url.trim()) || "about:blank";
+		await ensureEmbeddedChromeIdentity(view.webContents);
 		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
 		const state = readNavState(viewId, view.webContents);
 		pushNavState(viewId, view.webContents);

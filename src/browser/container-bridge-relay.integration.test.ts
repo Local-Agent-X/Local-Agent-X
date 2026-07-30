@@ -25,7 +25,7 @@ const originalEnv = {
 };
 const send = vi.fn<(message: unknown) => boolean>();
 const SESSION = "sess";
-const VIEW = `view-${SESSION}-main`; // owned by SESSION per sessionIdFromViewId
+const VIEW = `view-${SESSION}-shared`; // owned by SESSION per sessionIdFromViewId
 let relay: BrowserRelayServerHandle;
 
 function endpoint(): string {

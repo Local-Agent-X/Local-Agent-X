@@ -4,7 +4,7 @@
 //   render(views, opts)  — one pill per pool view in
 //     #browser-view-switcher-slot, ALWAYS (even with a single view), plus a
 //     "+" new-tab button at the end. Pill label: page title, else URL host,
-//     else profileId, else "tab"; app-mark icon on agent-driven views; the active
+//     else "tab"; app-mark icon on agent-driven views; the active
 //     pill is the SELECTED (attached) view.
 //   reconcileSelection(views, selectedViewId) — main may retarget the shown
 //     view itself (auto-surface of an agent view). If listViews() reports an
@@ -78,7 +78,7 @@
 	}
 
 	function stripLabel(v) {
-		return (v.title && String(v.title).trim()) || hostOf(v.url) || v.profileId || 'tab';
+		return (v.title && String(v.title).trim()) || hostOf(v.url) || 'tab';
 	}
 
 	// Per-view loading state (viewId → true), fed by browser-tab.js from tagged

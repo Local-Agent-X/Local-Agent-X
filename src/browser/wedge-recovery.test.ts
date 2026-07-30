@@ -39,14 +39,14 @@ vi.mock("../desktop-bridge.js", async (importOriginal) => {
 
 vi.mock("./session-owner-registry.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("./session-owner-registry.js")>();
-	return { ...original, resolveSessionBrowserProfileId: () => "p1" };
+	return original;
 });
 
 import { closeAllBrowsers, getBrowserManager, resetWedgedBrowser } from "./instance.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 
 const SESSION = "sess";
-const VIEW_ID = "view-sess-p1";
+const VIEW_ID = "view-sess-shared";
 const URL_1 = "https://one.example.com/page";
 const URL_2 = "https://two.example.net/other";
 

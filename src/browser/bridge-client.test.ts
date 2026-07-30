@@ -94,17 +94,20 @@ describe("browser bridge client — happy paths", () => {
 	});
 
 	it("lifecycle create sends the partition and resolves the view info", async () => {
-		const p = browserLifecycle("create", "v1", { partition: "persist:lax-profile-abc", bounds: { x: 0, y: 0, width: 800, height: 600 } });
+		const p = browserLifecycle("create", "v1", { bounds: { x: 0, y: 0, width: 800, height: 600 } });
 		const msg = lastSent();
-		expect(msg).toMatchObject({ type: "lax:browser-lifecycle", op: "create", viewId: "v1", partition: "persist:lax-profile-abc" });
-		const view = { viewId: "v1", partition: "persist:lax-profile-abc", url: "", title: "", attached: false };
+		expect(msg).toMatchObject({ type: "lax:browser-lifecycle", op: "create", viewId: "v1" });
+		expect(msg).not.toHaveProperty("partition");
+		const view = { viewId: "v1", partition: "persist:lax-profile-default", url: "", title: "", attached: false };
 		receive({ type: "lax:browser-lifecycle-result", id: msg.id, ok: true, view });
 		await expect(p).resolves.toEqual({ view, views: undefined, ping: undefined });
 	});
 
 	it("lifecycle create without a partition rejects before sending", async () => {
-		await expect(browserLifecycle("create", "v1")).rejects.toBeInstanceOf(BridgeOpError);
-		expect(sent().filter((m) => m.type === "lax:browser-lifecycle")).toHaveLength(0);
+		const p = browserLifecycle("create", "v1");
+		const msg = lastSent();
+		receive({ type: "lax:browser-lifecycle-result", id: msg.id, ok: true });
+		await expect(p).resolves.toEqual({ view: undefined, views: undefined, ping: undefined });
 	});
 
 	it("navigate carries the desktop deadline and resolves url + title", async () => {
@@ -306,7 +309,7 @@ describe("browser bridge client — reverse egress-ask channel", () => {
 
 describe("browser bridge client — taint-aware page-egress scan", () => {
 	const SID = "peg-bridge-sess";
-	const VIEW = `view-${SID}-default`; // sessionIdFromViewId(VIEW) === SID
+	const VIEW = `view-${SID}-shared`; // sessionIdFromViewId(VIEW) === SID
 	// >= SHINGLE_WIDTH so it fingerprints; distinctive so overlap is unambiguous.
 	const SECRET = "aws_secret_access_key_9f8e7d6c5b4a3210ffeeddccbbaa";
 
@@ -355,7 +358,7 @@ describe("browser bridge client — inbound UI events (desktop co-drive activity
 		initBrowserBridgeClient();
 		const received: Array<Record<string, unknown>> = [];
 		EventBus.on("ui:browser", (data) => { received.push(data as Record<string, unknown>); });
-		receive({ type: "lax:browser-ui-event", surface: "browser", action: "navigate", target: "https://x.example/a", viewId: "view-sess-4-work-t2", ts: 777 });
+		receive({ type: "lax:browser-ui-event", surface: "browser", action: "navigate", target: "https://x.example/a", viewId: "view-sess-4-shared-t2", ts: 777 });
 		receive({ type: "lax:browser-ui-event", action: "tab-open", viewId: "foreground", ts: 778 });
 		expect(received).toEqual([
 			{ surface: "browser", action: "navigate", target: "https://x.example/a", sessionId: "sess-4", ts: 777 },

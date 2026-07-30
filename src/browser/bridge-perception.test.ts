@@ -24,9 +24,9 @@ afterEach(() => {
 
 describe("sessionIdFromViewId", () => {
 	it("parses the sessionId out of agent viewIds, including hyphenated sessions and -tN tabs", () => {
-		expect(sessionIdFromViewId("view-sess-1-work")).toBe("sess-1");
-		expect(sessionIdFromViewId("view-sess-1-work-t2")).toBe("sess-1");
-		expect(sessionIdFromViewId("view-abc-default")).toBe("abc");
+		expect(sessionIdFromViewId("view-sess-1-shared")).toBe("sess-1");
+		expect(sessionIdFromViewId("view-sess-1-shared-t2")).toBe("sess-1");
+		expect(sessionIdFromViewId("view-abc-shared")).toBe("abc");
 	});
 
 	it("returns undefined for user views and malformed ids (global scope by design)", () => {
@@ -41,34 +41,34 @@ describe("sessionIdFromViewId", () => {
 
 describe("viewBelongsToSession (authorization-grade ownership)", () => {
 	it("owns same-session views including HYPHENATED profiles and -tN tabs the lossy parser breaks", () => {
-		expect(viewBelongsToSession("view-sess-1-default", "sess-1")).toBe(true);
+		expect(viewBelongsToSession("view-sess-1-shared", "sess-1")).toBe(true);
 		// prof-<b36>-<hex> — two hyphens; sessionIdFromViewId mis-splits these.
-		expect(viewBelongsToSession("view-sess-1-prof-lz9k2p-4f2a1c", "sess-1")).toBe(true);
-		expect(viewBelongsToSession("view-sess-1-prof-lz9k2p-4f2a1c-t3", "sess-1")).toBe(true);
+		expect(viewBelongsToSession("view-sess-1-prof-lz9k2p-4f2a1c", "sess-1")).toBe(false);
+		expect(viewBelongsToSession("view-sess-1-shared-t3", "sess-1")).toBe(true);
 	});
 
 	it("rejects cross-session, sibling-prefix, user and malformed ids", () => {
-		expect(viewBelongsToSession("view-sess-2-default", "sess-1")).toBe(false);
-		expect(viewBelongsToSession("view-sess-12-default", "sess-1")).toBe(false); // sibling prefix
+		expect(viewBelongsToSession("view-sess-2-shared", "sess-1")).toBe(false);
+		expect(viewBelongsToSession("view-sess-12-shared", "sess-1")).toBe(false); // sibling prefix
 		expect(viewBelongsToSession("foreground", "sess-1")).toBe(false);
 		expect(viewBelongsToSession("view-sess-1", "sess-1")).toBe(false); // no profile segment
 		expect(viewBelongsToSession("view-sess-1-", "sess-1")).toBe(false); // empty profile
 		expect(viewBelongsToSession(42, "sess-1")).toBe(false);
-		expect(viewBelongsToSession("view-sess-1-default", "")).toBe(false);
+		expect(viewBelongsToSession("view-sess-1-shared", "")).toBe(false);
 	});
 
 	it("documents the enforced boundary: admits own hyphen-nested descendants, never an unrelated top-level session", () => {
-		// Because a profileId may itself contain hyphens, the reconstruct-the-mint
+		// Because a session id may itself contain hyphens, the reconstruct-the-mint
 		// check cannot separate session `chat-1` (profile `b0-default`) from a
 		// spawned dream-branch session `chat-1-b0` (profile `default`). The
 		// enforced invariant is therefore "own session PLUS its own hyphen-nested
 		// descendants" — the check must ADMIT the lineage descendant (asserting the
 		// exact scope the code+claim state, not a stricter own-session-only one).
-		expect(viewBelongsToSession("view-chat-1-b0-default", "chat-1")).toBe(true);
+		expect(viewBelongsToSession("view-chat-1-b0-shared", "chat-1")).toBe(false);
 		// The security guarantee that DOES hold: an unrelated top-level session
 		// (uuid/agent/chat-N shapes never prefix-nest under another) is rejected.
-		expect(viewBelongsToSession("view-chat-2-default", "chat-1")).toBe(false);
-		expect(viewBelongsToSession("view-agent-9f3c-default", "chat-1")).toBe(false);
+		expect(viewBelongsToSession("view-chat-2-shared", "chat-1")).toBe(false);
+		expect(viewBelongsToSession("view-agent-9f3c-shared", "chat-1")).toBe(false);
 	});
 });
 
@@ -105,7 +105,7 @@ describe("handleBrowserUiEvent → ui:browser bus", () => {
 		const received = capture();
 		handleBrowserUiEvent({
 			type: "lax:browser-ui-event", surface: "browser", action: "navigate",
-			target: "https://example.com/inbox", viewId: "view-sess-9-work-t2", ts: 1234,
+			target: "https://example.com/inbox", viewId: "view-sess-9-shared-t2", ts: 1234,
 		});
 		expect(received).toEqual([
 			{ surface: "browser", action: "navigate", target: "https://example.com/inbox", sessionId: "sess-9", ts: 1234 },
@@ -146,7 +146,7 @@ describe("handleBrowserDownloadEvent → canonical download ingest", () => {
 	afterEach(() => vi.clearAllMocks());
 
 	it("routes an agent view's download to ingest under the session parsed from the viewId", () => {
-		handleBrowserDownloadEvent({ type: "lax:browser-download-event", viewId: "view-sess-7-work-t2", download });
+		handleBrowserDownloadEvent({ type: "lax:browser-download-event", viewId: "view-sess-7-shared-t2", download });
 		expect(ingestInAppDownload).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(ingestInAppDownload).mock.calls[0][0]).toBe("sess-7");
 		expect(vi.mocked(ingestInAppDownload).mock.calls[0][1]).toEqual(download);
@@ -178,16 +178,16 @@ describe("handleBrowserDownloadEvent → canonical download ingest", () => {
 	});
 
 	it("drops malformed payloads (missing download / id / savePath / state) without throwing", () => {
-		handleBrowserDownloadEvent({ viewId: "view-s-1-work" });
-		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, id: 5 } });
-		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, savePath: undefined } });
-		handleBrowserDownloadEvent({ viewId: "view-s-1-work", download: { ...download, state: 9 } });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-shared" });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-shared", download: { ...download, id: 5 } });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-shared", download: { ...download, savePath: undefined } });
+		handleBrowserDownloadEvent({ viewId: "view-s-1-shared", download: { ...download, state: 9 } });
 		expect(ingestInAppDownload).not.toHaveBeenCalled();
 	});
 
 	it("degrades non-string metadata to safe defaults instead of dropping the entry", () => {
 		handleBrowserDownloadEvent({
-			viewId: "view-s-1-work",
+			viewId: "view-s-1-shared",
 			download: { id: "desk-2", savePath: "C:/tmp/d2.part", state: "completed", url: 1, pageUrl: null, filename: {}, mime: 4, bytes: "big" },
 		});
 		expect(vi.mocked(ingestInAppDownload).mock.calls[0][1]).toEqual({

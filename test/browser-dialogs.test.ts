@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("../desktop/src/browser-views", () => ({
+  clearAdoptedViews: () => {},
   createBrowserView: () => ({}),
   closeBrowserView: () => {},
   getBrowserView: (viewId: string) => h.viewsById.get(viewId),

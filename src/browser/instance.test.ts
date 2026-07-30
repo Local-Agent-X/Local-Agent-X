@@ -113,7 +113,6 @@ describe("per-session BrowserContext allocation", () => {
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(2);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        serviceWorkers: "block",
         proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
       }),
     );
@@ -131,7 +130,6 @@ describe("per-session BrowserContext allocation", () => {
     expect(mocks.browser.newContext).toHaveBeenCalledTimes(1);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        serviceWorkers: "block",
         proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
       }),
     );
@@ -146,7 +144,6 @@ describe("per-session BrowserContext allocation", () => {
     expect(shared).not.toBe(defaultContext);
     expect(mocks.browser.newContext).toHaveBeenCalledWith(
       expect.objectContaining({
-        serviceWorkers: "block",
         proxy: { server: "http://127.0.0.1:43123", bypass: "<-loopback>" },
       }),
     );

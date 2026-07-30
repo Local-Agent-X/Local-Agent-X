@@ -1,7 +1,7 @@
 // F1: a CDP BrowserManager launches its shared Chrome under the session's
 // PROFILE userDataDir — not the shared chrome-profile — so the CDP twin of a
 // profile holds its own logins. Here we prove the first hop: getPage() passes
-// profileUserDataDir(profileId) as the 4th arg to acquireSessionContext. We stop
+// shared userDataDir as the 4th arg to acquireSessionContext. We stop
 // the flow with a sentinel throw right after that call so no real Chrome or
 // context machinery runs.
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -17,41 +17,41 @@ vi.mock("./runtime.js", async (importOriginal) => {
 });
 
 import { BrowserManager } from "./manager.js";
-import { profileUserDataDir, DEFAULT_PROFILE_ID } from "./profile-store.js";
+import { SHARED_BROWSER_USER_DATA_DIR } from "./launcher.js";
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("BrowserManager.getPage — profile userDataDir threading", () => {
-	it("launches a non-default profile under its own browser-profiles/<id> dir", async () => {
-		const mgr = new BrowserManager("agent-run", "isolated", "work");
+	it("launches an agent session under the shared browser identity", async () => {
+		const mgr = new BrowserManager("agent-run", "isolated");
 		await expect(mgr.getPage()).rejects.toThrow("STOP-AFTER-ACQUIRE");
 		expect(runtimeMock.acquireSessionContext).toHaveBeenCalledWith(
 			"chromium",
 			"isolated",
 			"agent-run",
-			profileUserDataDir("work"),
+			SHARED_BROWSER_USER_DATA_DIR,
 		);
 	});
 
 	it("launches the default profile under the legacy shared dir (alias)", async () => {
-		const mgr = new BrowserManager("chat-1"); // profileId defaults to "default"
+		const mgr = new BrowserManager("chat-1");
 		await expect(mgr.getPage()).rejects.toThrow("STOP-AFTER-ACQUIRE");
 		expect(runtimeMock.acquireSessionContext).toHaveBeenCalledWith(
 			"chromium",
 			"isolated",
 			"chat-1",
-			profileUserDataDir(DEFAULT_PROFILE_ID),
+			SHARED_BROWSER_USER_DATA_DIR,
 		);
 	});
 
-	it("carries the profile dir on the continuity mode too", async () => {
-		const mgr = new BrowserManager("cron-nightly", "continuity", "work");
+	it("carries the shared identity into continuity mode", async () => {
+		const mgr = new BrowserManager("cron-nightly", "continuity");
 		await expect(mgr.getPage()).rejects.toThrow("STOP-AFTER-ACQUIRE");
 		expect(runtimeMock.acquireSessionContext).toHaveBeenCalledWith(
 			"chromium",
 			"continuity",
 			"cron-nightly",
-			profileUserDataDir("work"),
+			SHARED_BROWSER_USER_DATA_DIR,
 		);
 	});
 });

@@ -97,7 +97,7 @@ function respond(msg: Record<string, unknown>): void {
 			if (op === "create") {
 				pool.set(viewId, { url: "", title: "", elements: [], created: true });
 				emit({ type: "lax:browser-lifecycle-result", ok: true,
-					view: { viewId, partition: msg.partition, url: "", title: "", attached: false, agentDriven: true } });
+					view: { viewId, partition: "persist:lax-profile-default", url: "", title: "", attached: false, agentDriven: true } });
 			} else if (op === "ping") {
 				const v = pool.get(viewId);
 				emit({ type: "lax:browser-lifecycle-result", ok: true, ping: { ok: true, url: v?.url ?? "", title: v?.title ?? "" } });
@@ -173,7 +173,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		userViewIds.clear();
 		sent.length = 0;
 		inputEvents.length = 0;
-		backend = new ElectronInAppBackend("contract-sess", "work", VIEW_ID);
+		backend = new ElectronInAppBackend("contract-sess", VIEW_ID);
 	});
 
 	afterEach(() => {
@@ -199,7 +199,7 @@ describe("in-app cross-seam contract — tool → backend → real bridge → fa
 		const create = sent.find((m) => m.type === "lax:browser-lifecycle" && m.op === "create");
 		expect(create).toBeDefined();
 		expect(create!.viewId).toBe(VIEW_ID);
-		expect(create!.partition).toBe("persist:lax-profile-work");
+		expect(create).not.toHaveProperty("partition");
 		expect(pool.get(VIEW_ID)?.created).toBe(true);
 		expect(backend.getCurrentUrl()).toBe(PAGE_URL);
 	});

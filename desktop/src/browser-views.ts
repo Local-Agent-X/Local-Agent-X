@@ -15,7 +15,7 @@ import { getMainWindow } from "./window";
 // 400-LOC ceiling); its lifetime is driven from here because the pool owns
 // which view is attached.
 import { applyChatOverlay, attachChatOverlay, detachChatOverlay, type BrowserChatOverlayState } from "./browser-chat-overlay";
-import { getHardenedPartitionSession, hardenWebContents, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
+import { getHardenedPartitionSession, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
 import { viewTrust } from "./browser-download-routing";
 import { managePopups, type PopupTracker } from "./browser-view-popups";
 import { armCoDrive } from "./in-app-browser";
@@ -179,7 +179,6 @@ export function createBrowserView(
 	// first request already runs under the egress/permission stack.
 	getHardenedPartitionSession(opts.partition);
 	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
-	hardenWebContents(view.webContents);
 	armCoDrive(viewId, view.webContents);
 	// Stamp a per-view marker on the top frame so the CDP driver (electron-cdp.ts)
 	// can map this viewId back to its Playwright Page via window.name. Fire-and-forget.
@@ -191,7 +190,6 @@ export function createBrowserView(
 	// ride the partition and cover them already.
 	const popups = managePopups(view.webContents, {
 		webPreferences: () => viewWebPreferences(opts.partition),
-		harden: hardenWebContents,
 	});
 	const entry: PoolEntry = {
 		view,

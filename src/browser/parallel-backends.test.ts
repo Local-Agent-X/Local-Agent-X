@@ -141,8 +141,8 @@ describe("parallel ElectronInAppBackend instances (M1)", () => {
 		process.env.LAX_DATA_DIR = laxDir;
 		sent.length = 0;
 		autoRespond = true;
-		backendA = new ElectronInAppBackend("sessA", "p1", VIEW_A);
-		backendB = new ElectronInAppBackend("sessB", "p2", VIEW_B);
+		backendA = new ElectronInAppBackend("sessA", VIEW_A);
+		backendB = new ElectronInAppBackend("sessB", VIEW_B);
 	});
 
 	afterEach(() => {
@@ -157,8 +157,8 @@ describe("parallel ElectronInAppBackend instances (M1)", () => {
 		await backendB.navigate(URL_B);
 		const creates = sent.filter((m) => m.type === "lax:browser-lifecycle" && m.op === "create");
 		expect(creates.map((m) => m.viewId).sort()).toEqual([VIEW_A, VIEW_B]);
-		expect(creates.find((m) => m.viewId === VIEW_A)!.partition).toBe("persist:lax-profile-p1");
-		expect(creates.find((m) => m.viewId === VIEW_B)!.partition).toBe("persist:lax-profile-p2");
+		expect(creates.find((m) => m.viewId === VIEW_A)).not.toHaveProperty("partition");
+		expect(creates.find((m) => m.viewId === VIEW_B)).not.toHaveProperty("partition");
 	});
 
 	it("registries are independent: a ref minted only in A is unknown to B", async () => {

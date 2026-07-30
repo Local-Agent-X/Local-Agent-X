@@ -84,13 +84,12 @@ import { createInAppSecretOps, type SecretBrowserOps } from "./secret-ops.js";
 
 export class ElectronInAppBackend implements BrowserBackend {
 	/** All per-view state lives in the tabs; the first tab keeps the legacy
-	 *  `view-<sessionId>-<profileId>` id so prior sessions' views get adopted
+	 *  `view-<sessionId>-main` id so prior sessions' views get adopted
 	 *  by ensureView's "already exists" path. */
 	private readonly tabs: TabList;
 
 	constructor(
 		private readonly sessionId: string,
-		private readonly profileId: string,
 		viewId: string,
 	) {
 		this.tabs = new TabList(viewId);
@@ -114,10 +113,6 @@ export class ElectronInAppBackend implements BrowserBackend {
 	}
 	// ── Identity / state ──
 
-	getProfileId(): string {
-		return this.profileId;
-	}
-
 	getCurrentUrl(): string {
 		return this.state.url;
 	}
@@ -129,7 +124,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 	// ── View lifecycle plumbing (per-tab implementations in in-app-tabs.ts) ──
 
 	private ensureView(tab: InAppTab = this.activeTab): Promise<void> {
-		return ensureTabView(tab, this.profileId);
+		return ensureTabView(tab);
 	}
 
 	private refreshState(tab: InAppTab = this.activeTab): Promise<void> {

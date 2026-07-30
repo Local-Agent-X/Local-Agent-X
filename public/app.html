@@ -372,15 +372,13 @@
           <button id="browser-zoom-out" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('out')" title="Zoom page out">&#8722;</button>
           <button id="browser-zoom-reset" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('reset')" title="Reset page zoom">100%</button>
           <button id="browser-zoom-in" class="artifact-filter" onclick="window.laxBrowserFind&&laxBrowserFind.zoomStep('in')" title="Zoom page in">+</button>
-          <button id="browser-profiles-btn" class="artifact-filter" onclick="window.laxBrowserProfiles&&laxBrowserProfiles.toggle()" title="Browser profiles &amp; saved logins">Profiles</button>
           <button id="browser-library-btn" class="artifact-filter" onclick="window.laxBrowserLibrary&&laxBrowserLibrary.toggle()" title="Bookmarks &amp; history">Library</button>
           <button id="browser-downloads-btn" class="artifact-filter" onclick="window.laxBrowserDownloads&&laxBrowserDownloads.toggle()" title="Downloads">&#8595;</button>
         </div>
         <div id="browser-view-anchor" style="flex:1;min-height:0"></div>
         <!-- Profile manager overlay. Positioned over the whole pane so the native
              WebContentsView (browser-tab.js occlusion probe) hides while it's
-             open; closing it reveals the view again. Populated by browser-profiles.js. -->
-        <div id="browser-profiles-panel" style="display:none;position:absolute;inset:0;z-index:5;background:var(--bg);overflow:auto"></div>
+             open; closing it reveals the view again. -->
         <!-- Library (bookmarks + history) overlay — same occlusion contract as the
              profiles panel above. Populated by browser-library.js. -->
         <div id="browser-library-panel" style="display:none;position:absolute;inset:0;z-index:5;background:var(--bg);overflow:auto"></div>
@@ -1220,7 +1218,6 @@
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-family:var(--mono);font-size:.75rem">
           <span style="color:var(--muted)">Browser profile:</span>
-          <select id="cron-detail-profile" class="status-select" onchange="setMissionProfile(this.value)" title="Browser profile this mission drives" style="font-family:var(--mono);font-size:.75rem;flex:1;max-width:360px"></select>
         </div>
         <div id="cron-detail-result" style="margin-bottom:12px;font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:60px;overflow-y:auto"></div>
         <div id="cron-live-status" style="display:none;margin-bottom:12px;padding:10px;background:var(--bg);border:1px solid var(--accent);border-radius:6px">
@@ -1564,7 +1561,6 @@
 <script src="/js/browser-tab.js?v=v3"></script>
 <script src="/js/browser-session-bind.js?v=v1"></script>
 <script src="/js/chat-link-open.js?v=v1"></script>
-<script src="/js/browser-profiles.js?v=v1"></script>
 <script src="/js/browser-library.js?v=v1"></script>
 <script src="/js/browser-downloads-panel.js?v=v1"></script>
 <script src="/vendor/xterm/xterm.js?v=v1"></script>

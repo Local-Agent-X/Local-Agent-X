@@ -7,6 +7,7 @@ import type { BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { createLogger } from "../../logger.js";
 import { sensitivePageStub } from "../../browser/guards.js";
+import { HUMAN_VERIFICATION_MESSAGE, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
 
 const log = createLogger("browser.wall");
 
@@ -40,6 +41,7 @@ export async function appendPostActionSnapshot(
   if (stub) return stub;
   try {
     const raw = await manager.snapshot();
+    if (snapshotShowsHumanVerification(raw)) return `${base}\n\n${HUMAN_VERIFICATION_MESSAGE}`;
     const prefix = computeAuthWallPrefix(raw);
     return `${base}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + raw, "browser.snapshot")}`;
   } catch {

@@ -80,14 +80,11 @@ export async function relayBrowserAbort(viewId: string): Promise<void> {
 export async function startBrowserContainerRelay(options: {
 	socketPath: string;
 	token: string;
-	/** The session that owns this relay. Every relayed op may only target a
-	 *  view named for this session (view-<ownerSessionId>-<profile>); a viewId
-	 *  belonging to an unrelated session (or none) is refused — see
-	 *  viewBelongsToSession for the exact boundary, which admits this session's
-	 *  own hyphen-nested descendants but never an unrelated top-level session.
-	 *  The token proves only container membership, so this is what keeps one
-	 *  container off another session's browser views. */
+	/** Exact acting session. HMAC membership and forwarded lineage stay bound
+	 *  to this identity even when browser views belong to its root chat. */
 	ownerSessionId: string;
+	/** Canonical chat/root session whose browser views this relay may drive. */
+	browserOwnerSessionId?: string;
 	handler: BrowserRelayHandler;
 	/** Optional sink for forwarded data-lineage state (container taint/canaries).
 	 *  Absent → lineage frames are still authenticated + session-checked but
@@ -96,13 +93,15 @@ export async function startBrowserContainerRelay(options: {
 }): Promise<BrowserRelayServerHandle> {
 	validateEndpoint(options.socketPath, options.token);
 	assertOwnerSessionId(options.ownerSessionId);
+	const browserOwnerSessionId = options.browserOwnerSessionId ?? options.ownerSessionId;
+	assertOwnerSessionId(browserOwnerSessionId);
 	await activeServers.get(options.socketPath)?.close();
 	removeStaleSocket(options.socketPath);
 	const sockets = new Set<Socket>();
 	const server = createServer(socket => {
 		sockets.add(socket);
 		socket.once("close", () => sockets.delete(socket));
-		handleSocket(socket, options.token, options.ownerSessionId, options.handler, options.lineage);
+		handleSocket(socket, options.token, options.ownerSessionId, browserOwnerSessionId, options.handler, options.lineage);
 	});
 	await listen(server, options.socketPath);
 	if (process.platform !== "win32") chmodSync(options.socketPath, 0o600);
@@ -128,6 +127,7 @@ function handleSocket(
 	socket: Socket,
 	token: string,
 	ownerSessionId: string,
+	browserOwnerSessionId: string,
 	handler: BrowserRelayHandler,
 	lineage: BrowserRelayLineageSink | undefined,
 ): void {
@@ -145,7 +145,7 @@ function handleSocket(
 		if (newline < 0) return;
 		if (body.slice(newline + 1).trim() !== "") { socket.destroy(); return; }
 		handled = true;
-		void serveFrame(socket, body.slice(0, newline), token, ownerSessionId, handler, lineage);
+		void serveFrame(socket, body.slice(0, newline), token, ownerSessionId, browserOwnerSessionId, handler, lineage);
 	});
 }
 
@@ -154,6 +154,7 @@ async function serveFrame(
 	body: string,
 	token: string,
 	ownerSessionId: string,
+	browserOwnerSessionId: string,
 	handler: BrowserRelayHandler,
 	lineage: BrowserRelayLineageSink | undefined,
 ): Promise<void> {
@@ -169,7 +170,7 @@ async function serveFrame(
 	try {
 		const payload = frame.payload as RelayPayload;
 		if (payload.kind === "abort") {
-			assertOwnedView(payload.viewId as string, ownerSessionId);
+			assertOwnedView(payload.viewId as string, browserOwnerSessionId);
 			await handler.abort(payload.viewId as string);
 			response = { ok: true };
 		} else if (payload.kind === "taint" || payload.kind === "canaries") {
@@ -179,7 +180,7 @@ async function serveFrame(
 			response = { ok: true };
 		} else {
 			const request = payload.request as BrowserRelayRequest;
-			response = { ok: true, result: await authorizeAndRun(request, ownerSessionId, handler) };
+			response = { ok: true, result: await authorizeAndRun(request, browserOwnerSessionId, handler) };
 		}
 	} catch (error) {
 		response = { ok: false, error: serializeError(error) };

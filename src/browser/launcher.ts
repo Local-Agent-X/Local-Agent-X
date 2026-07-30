@@ -13,11 +13,11 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { getRuntimeConfig } from "../config.js";
 import { killProcessTree } from "../process-tree-kill.js";
 import { resetBrowserNativeDownloadDir } from "./download-paths.js";
-
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.launcher");
 const browserDownloadSessions = new WeakMap<Browser, CDPSession>();
 
+export const SHARED_BROWSER_USER_DATA_DIR = join(getLaxDir(), "chrome-profile");
 // Kept under the browser tool's wedge deadline (toolMs−1s ≈ 29s in
 // tool-timeout.ts + wedge-deadline.ts): navigate = goto(NAV_TIMEOUT) + the 5s
 // load-wait + 1s settle, so a goto allowed 30s could push the whole action past
@@ -27,7 +27,6 @@ const browserDownloadSessions = new WeakMap<Browser, CDPSession>();
 export const NAV_TIMEOUT = 20_000;
 export const ACTION_TIMEOUT = 10_000;
 export const MAX_TEXT_LENGTH = 8_000;
-export const SERVICE_WORKER_POLICY = "block" as const;
 
 function browserHeadless(): boolean {
   return process.env.LAX_BROWSER_HEADLESS === "1";
@@ -204,7 +203,6 @@ export function buildPersistentContextOptions(
     viewport: { width: 1280, height: 800 },
     acceptDownloads: true,
     downloadsPath,
-    serviceWorkers: SERVICE_WORKER_POLICY,
     proxy: browserProxyConfig(proxyServer),
   };
 }

@@ -105,6 +105,7 @@ vi.mock("../desktop/src/browser-views", () => ({
 }));
 // server-bridge-browser + the REAL browser-views pull these in; keep them inert.
 vi.mock("../desktop/src/browser-partition", () => ({
+  SHARED_BROWSER_PARTITION: "persist:lax-profile-default",
   getHardenedPartitionSession: () => ({ clearStorageData: async () => {} }),
   hardenWebContents: () => {},
   viewWebPreferences: () => ({}),
@@ -807,7 +808,7 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     expect(agentSurfacedCalls(trustedWC.send)).toEqual([]);
   });
 
-  it("browser-new-tab mints user-N on the current view's partition and returns nav state", async () => {
+  it("browser-new-tab mints user-N on the shared browser identity", async () => {
     h.attachedId = "foreground";
     h.poolList = [{ viewId: "foreground", partition: "persist:lax-profile-work" }];
     const state = await h.handlers.get("browser-new-tab")!({ sender: trustedWC }, undefined) as {
@@ -815,7 +816,7 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     };
     const [mintedId, opts] = h.createCalls.at(-1)! as [string, { partition: string; agentDriven: boolean }];
     expect(mintedId).toMatch(/^user-\d+$/);
-    expect(opts).toEqual({ partition: "persist:lax-profile-work", agentDriven: false });
+    expect(opts).toEqual({ partition: "persist:lax-profile-default", agentDriven: false });
     expect(state.viewId).toBe(mintedId);
     expect(state.url).toBe("about:blank");
     expect(currentNavViewId()).toBe(mintedId);
@@ -1021,6 +1022,21 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
       }),
     );
     expect(dbg.attach).not.toHaveBeenCalled();
+  });
+
+  it("lifecycle create always uses the shared persistent browser identity", async () => {
+    await handleBrowserBridgeMessage(
+      proc as never,
+      { type: "lax:browser-lifecycle", id: 2, op: "create", viewId: "view-chat-1-shared" },
+    );
+    await flush();
+    expect(h.createCalls).toContainEqual([
+      "view-chat-1-shared",
+      { partition: "persist:lax-profile-default", bounds: undefined, agentDriven: true },
+    ]);
+    expect(proc.send).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "lax:browser-lifecycle-result", id: 2, ok: true }),
+    );
   });
 
   it("lifecycle close REFUSES non-agentDriven views (ok:false reply, view untouched)", async () => {

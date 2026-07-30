@@ -3,7 +3,7 @@
  * routes) and agents (`browser` tool `bookmark_add` / `bookmarks` actions).
  * "Post it to the usual place" works because there IS one usual place.
  *
- * Mirrors BrowserProfileStore in structure: JSON singleton under getLaxDir(),
+ * JSON singleton under getLaxDir(),
  * load-with-catch, writeFileSync persist. Deduped by url — re-adding an
  * existing url updates its title/tags instead of minting a second row.
  *
@@ -27,7 +27,6 @@ export interface BrowserBookmark {
   id: string;
   url: string;
   title: string;
-  profileId?: string;
   tags?: string[];
   addedBy: "user" | "agent";
   ts: number;
@@ -96,7 +95,7 @@ export class BrowserBookmarkStore {
    * Add a bookmark. Deduped by url: re-adding an existing url updates its
    * title/tags (record identity — id, addedBy, ts — is preserved).
    */
-  add(input: { url: string; title?: string; profileId?: string; tags?: string[]; addedBy: "user" | "agent" }): BrowserBookmark {
+  add(input: { url: string; title?: string; tags?: string[]; addedBy: "user" | "agent" }): BrowserBookmark {
     const url = scrubCredentialParams(stripUserinfo(String(input.url ?? "").trim()));
     if (!url) throw new Error("Bookmark url is required");
     const title = (input.title ?? "").trim();
@@ -119,7 +118,6 @@ export class BrowserBookmarkStore {
       addedBy: input.addedBy,
       ts: Date.now(),
     };
-    if (input.profileId) bookmark.profileId = input.profileId;
     if (tags !== undefined && tags.length > 0) bookmark.tags = tags;
     this.bookmarks.push(bookmark);
     this.persist();
@@ -128,14 +126,13 @@ export class BrowserBookmarkStore {
 
   /** Newest-first, optional case-insensitive substring match on url, title,
    *  and tags, optional profile filter. */
-  list(filter: { q?: string; profileId?: string } = {}): BrowserBookmark[] {
+  list(filter: { q?: string } = {}): BrowserBookmark[] {
     const needle = (filter.q ?? "").trim().toLowerCase();
     // ts-desc with insertion-order tiebreak — two adds in the same millisecond
     // must still list newest (later-inserted) first.
     return this.bookmarks
       .map((b, idx) => ({ b, idx }))
       .filter(({ b }) => {
-        if (filter.profileId && b.profileId !== filter.profileId) return false;
         if (!needle) return true;
         const hay = `${b.url} ${b.title} ${(b.tags ?? []).join(" ")}`.toLowerCase();
         return hay.includes(needle);

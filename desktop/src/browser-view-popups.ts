@@ -6,8 +6,8 @@
  * existed for two real reasons — popup children inherit the partition but not
  * the per-webContents hardening, and they'd live outside the pool as
  * unmanaged OS windows. This module keeps both invariants while letting the
- * popup open: every child window gets the view's webPreferences and WebRTC
- * hardening, the same window-open discipline recursively, and its lifetime is
+ * popup open: every child window gets the view's webPreferences, the same
+ * window-open discipline recursively, and its lifetime is
  * tracked so closing the view closes its popups. Session-level guards
  * (egress, permissions, download quarantine) are carried by the partition and
  * apply to children automatically.
@@ -21,8 +21,6 @@ export const MAX_POPUPS_PER_VIEW = 5;
 export interface PopupDeps {
 	/** webPreferences for a child window — the view's own, same partition. */
 	webPreferences: () => WebPreferences;
-	/** Per-webContents hardening (WebRTC policy) the partition can't carry. */
-	harden: (wc: WebContents) => void;
 }
 
 export interface PopupTracker {
@@ -52,7 +50,6 @@ export function managePopups(wc: WebContents, deps: PopupDeps): PopupTracker {
 		});
 		contents.on("did-create-window", (child) => {
 			popups.add(child);
-			deps.harden(child.webContents);
 			adopt(child.webContents);
 			child.once("closed", () => popups.delete(child));
 		});

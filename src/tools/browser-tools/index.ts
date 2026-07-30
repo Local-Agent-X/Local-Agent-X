@@ -57,6 +57,7 @@ import { createLogger } from "../../logger.js";
 import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
 import { getApprovalManager } from "../../approval-manager.js";
 import { blocked, declined } from "../result-helpers.js";
+import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification } from "../../browser/human-verification.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
@@ -78,6 +79,16 @@ const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close_tab",
 // re-perceive recovery move with the stall error is the opposite of helpful.
 const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "act"]);
 const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks"]);
+// Page-script evaluation is nominally inspection-only, but executing arbitrary
+// page JavaScript can still invoke getters or site-defined functions with side
+// effects. Dialog responses can likewise advance a challenge. Keep escape and
+// observation actions available while the user completes verification.
+const HUMAN_VERIFICATION_BLOCKED_ACTIONS = new Set([
+  ...TRACKED_ACTIONS,
+  "evaluate",
+  "dialog_accept",
+  "dialog_dismiss",
+]);
 
 /** Wedge outcome → what the agent is told. Honest about what survived: an
  *  in-place recovery keeps the tab and page; a recreated view reloads its last
@@ -244,6 +255,15 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           // and the open-warning runs as ONE unit so an approved read grant
           // can scope to exactly this call's async context.
           const runGated = async (): Promise<ToolResult> => {
+          if (HUMAN_VERIFICATION_BLOCKED_ACTIONS.has(action)) {
+            const observation = await manager.observe();
+            if (requiresHumanVerification(observation)) {
+              return blocked(HUMAN_VERIFICATION_MESSAGE, {
+                layer: "browser-human-verification",
+                browserStatus: "human-verification-required",
+              });
+            }
+          }
           const dispatch = (async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);

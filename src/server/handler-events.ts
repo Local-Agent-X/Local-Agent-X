@@ -18,7 +18,7 @@ import type { ToolPolicy } from "../tool-policy/index.js";
 import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js";
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
-import { registerSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
+import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
 import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
 import { requiredPromptPlan } from "../context/system-prompt-builder.js";
 const logger = createLogger("server.handler-events");
@@ -88,10 +88,9 @@ export function registerHandlerEvents(deps: {
     const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools, modelOverride } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
     const runSessionId = req.sessionId ?? `agent-${agentId}`;
-    // Bind this run's session to its agent + resolved browser profile (3-rung
-    // winner, computed in invoke.ts). The browser tool keys getBrowserManager on
-    // this same runSessionId, so an assigned agent drives its profile's logins.
-    registerSessionOwner(runSessionId, { agentId: templateId ?? agentId, browserProfileId: req.browserProfileId });
+    registerChildSessionOwner(runSessionId, parentSessionId, {
+      agentId: templateId ?? agentId,
+    });
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
     const projectStore = ProjectStore.getInstance();

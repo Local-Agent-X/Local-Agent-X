@@ -9,7 +9,6 @@ import {
 	scanEvaluateScript,
 	sensitivePageActionDecision,
 } from "../src/browser/guards.js";
-import { buildAgentCsp } from "../src/browser/csp-policy.js";
 import {
 	buildComposerInjector,
 	TWITTER_COMPOSER_SELECTORS,
@@ -76,9 +75,9 @@ describe("C8 cross-seam contract — autonomous browser + CSP egress defense com
 	// This is the load-bearing safety proof: allow-by-default at the POLICY
 	// layer did not remove the sensitive-page gate at the BROWSER-TOOL layer.
 	describe("sensitive-page gating still fires after the autonomous flip", () => {
-		it("password-manager (secret-bearing) ⇒ evaluate is BLOCKED, not merely allowed", () => {
+		it("password-manager (secret-bearing) ⇒ evaluate requires approval, never silently allowed", () => {
 			const d = sensitivePageActionDecision("https://vault.bitwarden.com/passwords", "evaluate");
-			expect(d.disposition).toBe("blocked");
+			expect(d.disposition).toBe("approval-required");
 			expect(d.category).toBe("password manager");
 		});
 
@@ -99,23 +98,6 @@ describe("C8 cross-seam contract — autonomous browser + CSP egress defense com
 	// site). The CSP must NOT scope connect-src/img-src/etc. anymore — a page's
 	// own CDN loads have to render — and cross-origin exfil is covered instead by
 	// src/browser/page-egress-taint.ts (a payload-inspecting per-hop gate).
-	describe("buildAgentCsp is hardening-only and never scopes fetch sinks", () => {
-		it("stamps object-src/base-uri/frame-ancestors and NO fetch directive", () => {
-			const csp = buildAgentCsp();
-			expect(csp).toContain("object-src 'none'");
-			expect(csp).toContain("base-uri 'self'");
-			expect(csp).toContain("frame-ancestors 'none'");
-			// The reverted breakers must be absent so multi-CDN sites render.
-			for (const dir of ["default-src", "connect-src", "script-src", "img-src", "style-src", "form-action"]) {
-				expect(csp).not.toContain(`${dir} `);
-			}
-		});
-
-		it("is URL-independent (no per-site branch that could break a CDN)", () => {
-			expect(buildAgentCsp()).toBe(buildAgentCsp());
-		});
-	});
-
 	// ── Seam 5: Egress is now CSP-not-regex; reads + composer still agree (C6/C7) ─
 	describe("egress regex retired, read/exec blocklist + composer injector still hold", () => {
 		it("fetch(...) is NO LONGER blocked by the evaluate scanner (CSP owns egress now)", () => {

@@ -50,6 +50,8 @@ on:
       - "scripts/installer/**"
       - "scripts/build-mac-installer.sh"
       - "scripts/fetch-electron-bundle.mjs"
+      - "desktop/package.json"
+      - "desktop/package-lock.json"
       - ".github/workflows/installer-rolling.yml"
   workflow_dispatch:
 
@@ -371,8 +373,50 @@ jobs:
         with:
           path: dist
 
+      - name: Check out the workflow source revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          clean: false
+
       - name: List downloaded artifacts
         run: find dist -type f | sort
+
+      - name: Generate native runtime manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+
+          const versionPattern = /^\d+(?:\.\d+)+$/;
+          const lock = JSON.parse(await readFile("desktop/package-lock.json", "utf8"));
+          const electronVersion = lock.packages?.["node_modules/electron"]?.version;
+          if (typeof electronVersion !== "string" || !versionPattern.test(electronVersion)) {
+            throw new Error("desktop/package-lock.json does not contain a valid exact node_modules/electron version");
+          }
+
+          const metadataUrl = "https://releases.electronjs.org/releases.json";
+          const response = await fetch(metadataUrl, {
+            headers: { "User-Agent": "LocalAgentX-runtime-manifest/1.0" },
+          });
+          if (!response.ok) {
+            throw new Error(`Electron releases metadata returned HTTP ${response.status}`);
+          }
+          const releases = await response.json();
+          if (!Array.isArray(releases)) {
+            throw new Error("Electron releases metadata is malformed");
+          }
+          const release = releases.find((entry) => entry?.version === electronVersion);
+          const chromiumVersion = release?.chrome;
+          if (typeof chromiumVersion !== "string" || !versionPattern.test(chromiumVersion)) {
+            throw new Error(`No valid Chromium version in official metadata for Electron ${electronVersion}`);
+          }
+
+          const manifest = { schemaVersion: 1, electronVersion, chromiumVersion };
+          await writeFile("runtime-manifest.json", `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+          NODE
+          cat runtime-manifest.json
 
       - name: Publish/refresh the `rolling` pre-release
         # Re-uses the fixed `rolling` tag and replaces the assets in place, so the
@@ -401,3 +445,4 @@ jobs:
           files: |
             dist/windows-installer-rolling/Install Local Agent X Windows Installer.exe
             dist/macos-installer-rolling/Install Local Agent X Mac Installer.dmg
+            runtime-manifest.json

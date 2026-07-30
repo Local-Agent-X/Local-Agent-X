@@ -24,6 +24,13 @@ export interface UpdateCheckResult {
   rolling?: boolean;
   cached?: boolean;
   error?: string;
+  installedElectronVersion?: string;
+  installedChromiumVersion?: string;
+  requiredElectronVersion?: string;
+  requiredChromiumVersion?: string;
+  nativeUpdateRequired?: boolean;
+  nativeInstallerUrl?: string;
+  nativeRuntimeCheckError?: string;
 }
 
 export interface ApplyUpdateResult {
@@ -37,6 +44,91 @@ export interface ApplyUpdateResult {
 
 let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
 export function bustUpdateCache(): void { _updateCache = null; }
+
+const ROLLING_RUNTIME_MANIFEST_URL =
+  "https://github.com/Local-Agent-X/Local-Agent-X/releases/download/rolling/runtime-manifest.json";
+
+interface RollingRuntimeManifest {
+  schemaVersion: 1;
+  electronVersion: string;
+  chromiumVersion: string;
+}
+
+function isDottedNumericVersion(value: unknown): value is string {
+  return typeof value === "string" && /^\d+(?:\.\d+)*$/.test(value);
+}
+
+export function compareDottedVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index++) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+function parseRuntimeManifest(value: unknown): RollingRuntimeManifest {
+  if (!value || typeof value !== "object") throw new Error("runtime manifest is not an object");
+  const candidate = value as Record<string, unknown>;
+  if (
+    candidate.schemaVersion !== 1 ||
+    !isDottedNumericVersion(candidate.electronVersion) ||
+    !isDottedNumericVersion(candidate.chromiumVersion)
+  ) {
+    throw new Error("runtime manifest has an invalid shape");
+  }
+  return {
+    schemaVersion: 1,
+    electronVersion: candidate.electronVersion,
+    chromiumVersion: candidate.chromiumVersion,
+  };
+}
+
+function stableInstallerUrl(platform: NodeJS.Platform): string | undefined {
+  const releaseRoot = "https://github.com/Local-Agent-X/Local-Agent-X/releases/download/rolling/";
+  if (platform === "darwin") return `${releaseRoot}Install.Local.Agent.X.Mac.Installer.dmg`;
+  if (platform === "win32") return `${releaseRoot}Install.Local.Agent.X.Windows.Installer.exe`;
+  return undefined;
+}
+
+async function withNativeRuntimeCheck(result: UpdateCheckResult): Promise<UpdateCheckResult> {
+  const installedElectronVersion = process.env.LAX_DESKTOP_ELECTRON_VERSION;
+  const installedChromiumVersion = process.env.LAX_DESKTOP_CHROMIUM_VERSION;
+  // The normal browser/server-only install has no native shell to upgrade.
+  if (!installedElectronVersion) return result;
+
+  const installed = {
+    installedElectronVersion,
+    ...(installedChromiumVersion ? { installedChromiumVersion } : {}),
+  };
+  try {
+    if (!isDottedNumericVersion(installedElectronVersion)) {
+      throw new Error("installed Electron version is invalid");
+    }
+    const response = await fetch(ROLLING_RUNTIME_MANIFEST_URL, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`runtime manifest request failed (${response.status})`);
+    const manifest = parseRuntimeManifest(await response.json());
+    return {
+      ...result,
+      ...installed,
+      requiredElectronVersion: manifest.electronVersion,
+      requiredChromiumVersion: manifest.chromiumVersion,
+      nativeUpdateRequired: compareDottedVersions(installedElectronVersion, manifest.electronVersion) < 0,
+      ...(stableInstallerUrl(process.platform) ? { nativeInstallerUrl: stableInstallerUrl(process.platform) } : {}),
+    };
+  } catch (error) {
+    return {
+      ...result,
+      ...installed,
+      nativeRuntimeCheckError: safeErrorMessage(error),
+    };
+  }
+}
 
 export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
   if (isLocalOnlyMode()) {
@@ -59,7 +151,7 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
         const ota = new OTAManager();
         const installed = await ota.readInstalledCommit();
         const { commit, subject } = await ota.checkMainCommit();
-        return {
+        return await withNativeRuntimeCheck({
           localVersion,
           localCommit: installed ? installed.slice(0, 7) : "",
           remoteVersion: localVersion,
@@ -67,9 +159,9 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
           updateAvailable: installed ? installed !== commit : true,
           releaseNotes: subject,
           rolling: true,
-        };
+        });
       } catch (e) {
-        return { localVersion, localCommit: "", remoteVersion: localVersion, remoteCommit: "", updateAvailable: false, releaseNotes: "", error: safeErrorMessage(e) };
+        return await withNativeRuntimeCheck({ localVersion, localCommit: "", remoteVersion: localVersion, remoteCommit: "", updateAvailable: false, releaseNotes: "", error: safeErrorMessage(e) });
       }
     }
 
@@ -97,7 +189,8 @@ export async function checkForUpdate(force = false): Promise<UpdateCheckResult> 
       checkError = (stderr || err.message).trim().split("\n")[0] || "git fetch failed";
     }
 
-    const result: UpdateCheckResult = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes, ...(checkError ? { error: checkError } : {}) };
+    const sourceResult: UpdateCheckResult = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes, ...(checkError ? { error: checkError } : {}) };
+    const result = await withNativeRuntimeCheck(sourceResult);
     if (!checkError) _updateCache = { data: result, time: now };
     return result;
   } catch (e) {

@@ -177,7 +177,24 @@ setInterval(() => {
   try {
     const res = await apiFetch('/api/updates/check');
     const data = await res.json();
-    if (data.updateAvailable) {
+    if (data.nativeUpdateRequired && data.nativeInstallerUrl) {
+      const banner = document.getElementById('update-banner');
+      if (!banner) return;
+      window._laxNativeInstallerUrl = data.nativeInstallerUrl;
+      const electronVersions = data.installedElectronVersion && data.requiredElectronVersion
+        ? ` Electron ${esc(data.installedElectronVersion)} → ${esc(data.requiredElectronVersion)}.`
+        : '';
+      const chromiumVersions = data.installedChromiumVersion && data.requiredChromiumVersion
+        ? ` Chromium ${esc(data.installedChromiumVersion)} → ${esc(data.requiredChromiumVersion)}.`
+        : '';
+      banner.style.display = '';
+      banner.className = 'visible';
+      banner.innerHTML = `
+        <span class="update-msg"><strong>Browser engine app update required.</strong>${electronVersions}${chromiumVersions} Your projects, settings, and conversations will be preserved.</span>
+        <button class="update-btn" onclick="bannerOpenNativeInstaller()">Download Update</button>
+        <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
+      `;
+    } else if (data.updateAvailable) {
       const banner = document.getElementById('update-banner');
       if (!banner) return;
       banner.style.display = '';
@@ -191,6 +208,21 @@ setInterval(() => {
     }
   } catch {}
 })();
+
+function bannerOpenNativeInstaller() {
+  const rawUrl = window._laxNativeInstallerUrl;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Unsupported installer URL');
+    window.open(url.href, '_blank', 'noopener');
+  } catch (e) {
+    const banner = document.getElementById('update-banner');
+    if (banner) {
+      const message = e && e.message ? e.message : String(e);
+      banner.innerHTML = `<span class="update-msg" style="color:var(--error,#f88)">Could not open the installer: ${esc(message)}</span> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+    }
+  }
+}
 
 // ── Subsystem health banner (fed by system_health WS broadcasts from the
 //    server's runtime canaries, e.g. the memory-write self-test) ──

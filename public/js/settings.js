@@ -8,25 +8,55 @@ async function settingsCheckUpdate() {
   try {
     const res = await apiFetch('/api/updates/check');
     const data = await res.json();
+    const nativeWarning = data.nativeRuntimeCheckError
+      ? ` Browser engine update check warning: ${esc(data.nativeRuntimeCheckError)}`
+      : '';
     // Surface check failures explicitly — without this, a 404/offline/auth
     // failure rendered as a confident "up to date" message and the user
     // would never know an update was actually waiting.
-    if (data.error) {
+    if (data.nativeUpdateRequired && data.nativeInstallerUrl) {
+      window._laxSettingsNativeInstallerUrl = data.nativeInstallerUrl;
+      status.style.color = 'var(--accent)';
+      const electronVersions = data.installedElectronVersion && data.requiredElectronVersion
+        ? ` Electron ${esc(data.installedElectronVersion)} → ${esc(data.requiredElectronVersion)}.`
+        : '';
+      const chromiumVersions = data.installedChromiumVersion && data.requiredChromiumVersion
+        ? ` Chromium ${esc(data.installedChromiumVersion)} → ${esc(data.requiredChromiumVersion)}.`
+        : '';
+      status.innerHTML = `<strong>Browser engine app update required.</strong>${electronVersions}${chromiumVersions} Your projects, settings, and conversations will be preserved. <button onclick="settingsOpenNativeInstaller()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Download Update</button>${nativeWarning}`;
+    } else if (data.error) {
       status.style.color = 'var(--error, red)';
-      status.textContent = 'Could not check for updates: ' + data.error;
+      status.innerHTML = `Could not check for updates: ${esc(data.error)}${nativeWarning}`;
       return;
-    }
-    if (data.updateAvailable) {
+    } else if (data.updateAvailable) {
       status.style.color = 'var(--accent)';
       const summary = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}`;
-      status.innerHTML = `${summary} <button onclick="settingsApplyUpdate()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Update Now</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank" style="color:var(--muted);margin-left:8px;font-size:.8em">View on GitHub</a>`;
+      status.innerHTML = `${summary} <button onclick="settingsApplyUpdate()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Update Now</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank" style="color:var(--muted);margin-left:8px;font-size:.8em">View on GitHub</a>${nativeWarning}`;
     } else {
       status.style.color = 'var(--accent)';
-      status.textContent = 'You are up to date! (v' + (data.localVersion || '0.1.0') + ')';
+      const runtimeVersions = [
+        data.installedElectronVersion ? `Electron ${esc(data.installedElectronVersion)}` : '',
+        data.installedChromiumVersion ? `Chromium ${esc(data.installedChromiumVersion)}` : ''
+      ].filter(Boolean);
+      status.innerHTML = `You are up to date! (v${esc(data.localVersion || '0.1.0')})${runtimeVersions.length ? ` — ${runtimeVersions.join(', ')}` : ''}${nativeWarning}`;
     }
   } catch (e) {
     status.style.color = 'var(--error, red)';
     status.textContent = 'Could not check for updates.';
+  }
+}
+
+function settingsOpenNativeInstaller() {
+  const status = document.getElementById('settings-update-status');
+  const rawUrl = window._laxSettingsNativeInstallerUrl;
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('Unsupported installer URL');
+    window.open(url.href, '_blank', 'noopener');
+  } catch (e) {
+    if (!status) return;
+    status.style.color = 'var(--error, red)';
+    status.textContent = 'Could not open the installer: ' + (e && e.message ? e.message : String(e));
   }
 }
 

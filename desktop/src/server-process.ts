@@ -184,6 +184,8 @@ async function startServerInner(handlers?: ServerEventHandlers): Promise<void> {
       PATH: augmentedPath,
       LAX_PARENT_PID: String(process.pid),
       LAX_DESKTOP_BRIDGE: "1",
+      LAX_DESKTOP_ELECTRON_VERSION: process.versions.electron || "",
+      LAX_DESKTOP_CHROMIUM_VERSION: process.versions.chrome || "",
       // OS Documents path. May be OneDrive-redirected on Windows (Known Folder
       // Move); the server sanitizes that to the real on-disk ~/Documents — a
       // high-write agent workspace must not live under OneDrive. See config.ts.

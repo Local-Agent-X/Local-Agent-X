@@ -36,11 +36,41 @@ describe("rolling installer freshness contract", () => {
       "scripts/installer/**",
       "scripts/build-mac-installer.sh",
       "scripts/fetch-electron-bundle.mjs",
+      "desktop/package.json",
+      "desktop/package-lock.json",
       ".github/workflows/installer-rolling.yml",
     ]) {
       expect(trigger).toContain(`- "${path}"`);
     }
     expect(trigger).toContain("workflow_dispatch:");
+  });
+
+  it("publishes a fail-closed manifest for the exact bundled Electron runtime", () => {
+    const workflow = rollingInstallerWorkflow();
+    const publishJob = workflow.slice(workflow.indexOf("  publish-rolling:"));
+    const download = publishJob.indexOf("uses: actions/download-artifact@");
+    const checkout = publishJob.indexOf("uses: actions/checkout@");
+    const generate = publishJob.indexOf("- name: Generate native runtime manifest");
+    const release = publishJob.indexOf("uses: softprops/action-gh-release@");
+
+    expect(download).toBeGreaterThanOrEqual(0);
+    expect(checkout).toBeGreaterThan(download);
+    expect(generate).toBeGreaterThan(checkout);
+    expect(release).toBeGreaterThan(generate);
+    expect(publishJob).toContain("ref: ${{ github.sha }}");
+    expect(publishJob).toContain("clean: false");
+    expect(publishJob).toContain('lock.packages?.["node_modules/electron"]?.version');
+    expect(publishJob).toContain("https://releases.electronjs.org/releases.json");
+    expect(publishJob).toContain("if (!response.ok)");
+    expect(publishJob).toContain("if (!Array.isArray(releases))");
+    expect(publishJob).toContain("entry?.version === electronVersion");
+    expect(publishJob).toContain("release?.chrome");
+    expect(publishJob).toContain("const versionPattern = /^\\d+(?:\\.\\d+)+$/");
+    expect(publishJob).toContain(
+      "const manifest = { schemaVersion: 1, electronVersion, chromiumVersion }",
+    );
+    expect(publishJob).toContain('writeFile("runtime-manifest.json"');
+    expect(publishJob).toMatch(/files:\s+\|[\s\S]*^\s+runtime-manifest\.json$/m);
   });
 
   it("keeps the Ollama selection wired through the GUI and install script", () => {

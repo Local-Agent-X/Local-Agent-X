@@ -2,6 +2,8 @@
 // DATA CLASSIFICATION — Tag tool results with sensitivity labels
 // ═══════════════════════════════════════════════════════════════════
 
+import { CREDENTIAL_KEY_NAMES } from "../security/secrets/credential-patterns.js";
+
 export type DataLabel =
   | "credentials"     // API keys, tokens, passwords
   | "pii"            // Names, emails, phone numbers, addresses
@@ -91,9 +93,13 @@ export function isLiveCredentialAssignment(match: string): boolean {
 const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confidence: number; validate?: (match: string) => boolean }> = [
   // Credentials
   { label: "credentials", pattern: /\b(sk-|ghp_|github_pat_|xox[bpas]-|glpat-|AKIA|Bearer\s+[A-Za-z0-9])/i, confidence: 0.95 },
+  // Key list comes from the credential catalog (CREDENTIAL_KEY_NAMES), NOT a local
+  // copy. The local copy had drifted: it omitted authorization / access_key /
+  // private_key, so a raw `AWS_SECRET_ACCESS_KEY=…` was redacted out of the model's
+  // view but never SCORED — hidden, yet never raising the alarm scoring exists for.
   // `g` flag is required: validated entries are scanned via matchAll, so one
   // placeholder can't mask a real assignment later in the same content.
-  { label: "credentials", pattern: /(?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?[^\s"',]{8,}/gi, confidence: 0.85, validate: isLiveCredentialAssignment },
+  { label: "credentials", pattern: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?[^\\s"',]{8,}`, "gi"), confidence: 0.85, validate: isLiveCredentialAssignment },
   { label: "credentials", pattern: /\b(AIza[0-9A-Za-z_-]{35})\b/, confidence: 0.95 },  // Google API key
   { label: "credentials", pattern: /\b(ya29\.[0-9A-Za-z_-]+)\b/, confidence: 0.9 },     // Google OAuth token
   { label: "credentials", pattern: /\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/, confidence: 0.85 },  // JWT

@@ -34,6 +34,24 @@ export interface CredentialPattern {
 }
 
 /**
+ * The credential KEY NAMES that make `<key>: <value>` a credential assignment.
+ *
+ * Exported as ONE list because two copies of this rule drifted: the redaction
+ * catalog below listed authorization / access_key / private_key and the
+ * threat-SCORING classifier (threat/classification.ts) did not. So a raw
+ * `AWS_SECRET_ACCESS_KEY=…` was hidden from the model by redaction but never
+ * scored — masked, yet never raising the alarm the scoring exists for. Both sides
+ * now build their pattern from this string.
+ *
+ * Only the KEY list is shared. The two sides deliberately keep different minimum
+ * VALUE lengths (redaction 12, scoring 8) and only scoring applies a
+ * live-vs-declaration guard: over-masking is free, over-alarming costs the
+ * session its network. See threat/classification.ts for that asymmetry.
+ */
+export const CREDENTIAL_KEY_NAMES =
+  "api[_-]?key|token|secret|password|authorization|access_key|private_key";
+
+/**
  * The structured catalog — union of every credential shape recognized
  * across the codebase. Source of truth for both the inline-value redactor
  * (CREDENTIAL_KEY_PATTERNS, below) and the position-aware scanner.
@@ -104,7 +122,9 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // punctuation (no quotes/slashes/@) — a bare `//a:b@c` or a schema.org JSON-LD
   // blob (`//schema.org","@type":…@…`) is not a credential.
   { type: "generic", name: "Password in URL", regex: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/"']+:[^\s@/"']+@[^\s/"']+/gi },
-  { type: "generic", name: "Key-Value Secret", regex: /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi },
+  // Key list from CREDENTIAL_KEY_NAMES so this and the threat-scoring classifier
+  // can never recognise different keys again (see that constant's doc comment).
+  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?([^\\s"',]{12,})`, "gi") },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];
 

@@ -138,3 +138,45 @@ describe("key-value credential assignments — declaration vs live secret", () =
     expect(redact(`apiKey: "YOUR_API_KEY_HERE"`)).toContain("REDACTED");
   });
 });
+
+// Regression (2026-07-29): two copies of "what key names make this a credential
+// assignment" had drifted. The REDACTION catalog listed authorization /
+// access_key / private_key; the SCORING classifier here did not. Net effect: a raw
+// `AWS_SECRET_ACCESS_KEY=…` was masked out of the model's view but never scored —
+// hidden, yet never raising the alarm the scoring exists for. Both now build their
+// pattern from CREDENTIAL_KEY_NAMES.
+describe("credential key names are ONE list, shared with the redaction catalog", () => {
+  const flagged = (t: string) => classifyData(t).labels.includes("credentials");
+
+  it.each([
+    ["access_key (the key that was missing — real AWS secret shape)", `AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENGbPxRfiCYzzzzzzzz`],
+    ["authorization", `authorization=abcdef0123456789abcdef`],
+    ["private_key", `private_key=MIIEvQIBADANBgkqhkiG9w0BAQEFAASC`],
+  ])("now SCORES a live %s assignment", (_what, text) => {
+    expect(flagged(text)).toBe(true);
+  });
+
+  it("scoring and redaction recognise the SAME key names", async () => {
+    const { CREDENTIAL_KEY_NAMES, CREDENTIAL_PATTERNS } = await import("../security/secrets/credential-patterns.js");
+    // The redaction catalog's key-value entry must be built from the shared list —
+    // if someone re-inlines a literal alternation there, this fails.
+    const kv = CREDENTIAL_PATTERNS.find((p) => p.name === "Key-Value Secret");
+    expect(kv, "the Key-Value Secret entry should still exist").toBeDefined();
+    expect(kv!.regex.source).toContain(CREDENTIAL_KEY_NAMES);
+
+    // ...and every key in the shared list must actually score here, with a live
+    // value. A key present in the list but unrecognised by scoring is the exact
+    // drift this test exists to catch.
+    for (const key of CREDENTIAL_KEY_NAMES.split("|")) {
+      const literal = key.replace(/\[_-\]\?/g, "_");   // api[_-]?key -> api_key
+      expect(flagged(`${literal}=wJalrXUtnFEMIK7MDENGbPxRfiCY`), `${literal} should score`).toBe(true);
+    }
+  });
+
+  it("the guard still applies to the newly-shared keys (declarations stay clean)", () => {
+    // Widening the key list must not re-open the false positive it sits beside.
+    expect(flagged(`authorization: process.env.AUTH_HEADER`)).toBe(false);
+    expect(flagged(`access_key: "YOUR_ACCESS_KEY_HERE"`)).toBe(false);
+    expect(flagged(`private_key: undefined,`)).toBe(false);
+  });
+});

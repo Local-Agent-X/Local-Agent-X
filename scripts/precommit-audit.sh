@@ -83,14 +83,16 @@ resolve_import() {
   # $1 = importer file path, $2 = relative import (e.g., "./asset-tools.js")
   local importer_dir base resolved
   importer_dir=$(dirname "$1")
-  # Strip .js extension; we'll try .ts / .tsx / index.ts / index.tsx
+  # Strip source/runtime extensions; we'll try the tracked module variants.
   base="${2%.js}"
+  base="${base%.mjs}"
+  base="${base%.cjs}"
   base="${base%.tsx}"
   base="${base%.ts}"
   # Normalize the path (importer_dir + base)
   resolved=$(realpath -m --relative-to=. "$importer_dir/$base" 2>/dev/null || echo "")
   [[ -z "$resolved" ]] && return 1
-  for ext in ".ts" ".tsx" "/index.ts" "/index.tsx" ".js" ".jsx"; do
+  for ext in ".ts" ".tsx" "/index.ts" "/index.tsx" ".js" ".jsx" ".mjs" ".cjs"; do
     case "$indexed_set" in
       *" ${resolved}${ext} "*) return 0 ;;
     esac

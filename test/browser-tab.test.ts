@@ -45,6 +45,9 @@ vi.mock("electron", () => {
       },
     },
     // Used only by the REAL browser-views module (vi.importActual below).
+    // setBounds/setVisible record their last value so tests can assert the
+    // never-paint-before-geometry invariant (zero-area + hidden until the
+    // renderer reports a measured anchor rect).
     WebContentsView: class {
       webContents = {
         id: ++wcIdSeq,
@@ -58,7 +61,10 @@ vi.mock("electron", () => {
         setWindowOpenHandler: () => {},
         on: () => {},
       };
-      setBounds() {}
+      lastBounds: unknown;
+      visible: boolean | undefined;
+      setBounds(b: unknown) { this.lastBounds = b; }
+      setVisible(v: boolean) { this.visible = v; }
       setBackgroundColor() {}
       setBorderRadius() {}
     },
@@ -765,7 +771,9 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     autoSurfaceAgentView("agent-7");
     expect(currentNavViewId()).toBe("agent-7");
     expect(h.showCalls).toBe(0);
-    expect(h.setBoundsCalls).toEqual([]);
+    // Geometry IS pre-negotiated even without an attach — bounds must be on
+    // the view before the renderer's later set-visible attaches it.
+    expect(h.setBoundsCalls).toEqual([["agent-7", { x: 10, y: 20, width: 300, height: 400 }]]);
     // Still surfaced: the push is what flips the renderer to the Browser tab,
     // whose onTabShown → set-visible is what actually attaches the view.
     expect(agentSurfacedCalls(trustedWC.send)).toEqual([{ viewId: "agent-7" }]);
@@ -929,7 +937,7 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
     (autoSurfaceAgentView as unknown as Mock).mockClear();
   });
 
-  async function driveNavigate(viewId: string) {
+  async function driveNavigate(viewId: string, sessionId?: string) {
     const listeners = new Map<string, (...a: unknown[]) => void>();
     const wc = makeWc("");
     (wc as { on: unknown }).on = (ev: string, fn: (...a: unknown[]) => void) => { listeners.set(ev, fn); };
@@ -937,7 +945,7 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
     h.viewsById.set(viewId, { webContents: wc });
     await handleBrowserBridgeMessage(
       proc as never,
-      { type: "lax:browser-navigate", id: 7, viewId, url: "https://agent.example/" },
+      { type: "lax:browser-navigate", id: 7, viewId, url: "https://agent.example/", sessionId },
     );
     // Real Electron ordering: loadURL fires did-start-loading before any
     // finish event — navigate-settle gates success on it (stale-event guard).
@@ -948,11 +956,13 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
 
   it("a successful navigate on an agentDriven view calls autoSurfaceAgentView", async () => {
     h.poolList = [{ viewId: "agent-1", agentDriven: true }];
-    await driveNavigate("agent-1");
+    await driveNavigate("agent-1", "sess-42");
     expect(proc.send).toHaveBeenCalledWith(
       expect.objectContaining({ type: "lax:browser-navigate-result", id: 7, ok: true }),
     );
-    expect(autoSurfaceAgentView).toHaveBeenCalledWith("agent-1");
+    // sessionId rides along — it seeds the per-session anchor so a later
+    // new_tab/switch_tab surface follows the SAME session only.
+    expect(autoSurfaceAgentView).toHaveBeenCalledWith("agent-1", "sess-42");
   });
 
   it("a successful navigate on a NON-agent view never auto-surfaces", async () => {
@@ -1050,6 +1060,25 @@ describe("browser-views pool seams (real module)", () => {
       webContents: { send: () => {} },
       contentView: { addChildView: () => {}, removeChildView: () => {} },
     } as never;
+  });
+
+  it("never paints before geometry: un-negotiated show is zero-area + hidden, first bounds report reveals", () => {
+    // The regression this pins: DEFAULT_BOUNDS (800x600 @ 0,0) is a guess that
+    // is correct nowhere — painting it flashed the view in the window corner.
+    realViews.createBrowserView("nv-1", { partition: "persist:lax-profile-default" });
+    try {
+      const view = realViews.getBrowserView("nv-1") as unknown as { lastBounds: unknown; visible: boolean | undefined };
+      realViews.showBrowserView("nv-1");
+      expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+      expect(view.visible).toBe(false);
+      // The renderer reporting its measured anchor rect IS the negotiation.
+      const rect = { x: 40, y: 50, width: 600, height: 480 };
+      realViews.setBrowserViewBounds("nv-1", rect);
+      expect(view.lastBounds).toEqual(rect);
+      expect(view.visible).toBe(true);
+    } finally {
+      realViews.closeBrowserView("nv-1");
+    }
   });
 
   it("fires the pool-change listener on create/show-flip/close and tracks the attached id", () => {

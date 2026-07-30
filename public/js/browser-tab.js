@@ -25,6 +25,11 @@
 	// new/closed views (e.g. an agent spinning up a per-profile view) only while
 	// the tab is actually shown — no background polling.
 	var selectedViewId = null;
+	// While a user-requested switch is crossing IPC, listViews may still report
+	// the OLD attached view. Do not let the polling/reconciliation path undo the
+	// optimistic selection before main finishes retargeting the native view.
+	var pendingSwitchId = null;
+	var switchGeneration = 0;
 	var switcherTimer = null;
 	var SWITCHER_POLL_MS = 2000;
 	// Last main-frame load failure of the SELECTED view (from nav-state), or
@@ -128,7 +133,7 @@
 			// (attached flipped under us), re-adopt it and refill the nav UI
 			// from its pool entry — otherwise the address bar + active pill
 			// keep naming the OLD view while back/fwd/reload drive the new one.
-			var adopted = strip.reconcileSelection(views, selectedViewId);
+			var adopted = pendingSwitchId ? null : strip.reconcileSelection(views, selectedViewId);
 			if (adopted) {
 				var changed = adopted.viewId !== selectedViewId;
 				var readopt = selectedViewId != null && changed;
@@ -177,14 +182,32 @@
 
 	function switchTo(viewId) {
 		if (!bridge || !bridge.switchView) return;
+		var generation = ++switchGeneration;
+		pendingSwitchId = viewId;
 		selectedViewId = viewId; // optimistic — pill highlights immediately
+		refreshSwitcher();
 		Promise.resolve(bridge.switchView(viewId)).then(function (state) {
+			if (generation !== switchGeneration) return;
+			pendingSwitchId = null;
 			// Notify AFTER the switch settles: the find/zoom module reapplies the
 			// stored zoom via the command surface, which acts on main's (now
 			// switched) current view.
-			if (state) { updateNavUI(state); noteViewSelected(viewId); }
+			if (state) {
+				updateNavUI(state);
+				noteViewSelected(viewId);
+			} else {
+				// The target vanished while switching. Drop the optimistic
+				// selection and let the pool re-adopt the actual attached view.
+				selectedViewId = null;
+			}
 			refreshSwitcher();
-		}).catch(swallow);
+		}).catch(function (error) {
+			if (generation !== switchGeneration) return;
+			pendingSwitchId = null;
+			selectedViewId = null;
+			console.error('[browser-tab] failed to switch view', viewId, error);
+			refreshSwitcher();
+		});
 	}
 
 	// "+" button: mint a fresh user tab, adopt it, and mirror its nav state.

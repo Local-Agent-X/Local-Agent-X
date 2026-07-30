@@ -159,7 +159,12 @@
 				name.className = 'browser-tab-label';
 				name.textContent = stripLabel(v);
 				pill.appendChild(name);
-				pill.addEventListener('click', function () {
+				// Select on primary pointer-down. These pills are draggable, and
+				// Chromium suppresses the eventual click when the pointer moves
+				// even slightly; browser tabs should still switch on press.
+				pill.addEventListener('pointerdown', function (e) {
+					if (e.button !== 0) return;
+					if (e.target && e.target.closest && e.target.closest('.browser-tab-close')) return;
 					if (opts.onSelect) opts.onSelect(v.viewId);
 				});
 				pill.draggable = true;

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	buildEmbeddedChromeIdentity,
 	ensureEmbeddedChromeIdentity,
+	prepareEmbeddedChromeIdentityForNavigation,
 	registerEmbeddedChromeIdentitySession,
 } from "./embedded-chrome-identity";
 
@@ -66,6 +67,24 @@ describe("embedded Chrome identity", () => {
 		expect(params.userAgent).toContain("Chrome/150.0.7339.2");
 		expect(params.userAgent).not.toContain("Electron");
 		expect(params.userAgentMetadata.fullVersion).toBe("150.0.7339.2");
+	});
+
+	it("does not let a stalled identity command block navigation", async () => {
+		const once = vi.fn();
+		const contents = {
+			isDestroyed: () => false,
+			once,
+			on: once,
+			debugger: {
+				isAttached: () => true,
+				attach: vi.fn(),
+				sendCommand: vi.fn(() => new Promise(() => {})),
+				on: once,
+			},
+		};
+		const startedAt = Date.now();
+		await prepareEmbeddedChromeIdentityForNavigation(contents as never, 10);
+		expect(Date.now() - startedAt).toBeLessThan(500);
 	});
 
 	it("applies identity at creation to every web contents on the browser partition", async () => {

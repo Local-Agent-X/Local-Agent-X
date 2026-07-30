@@ -20,7 +20,7 @@
 
 import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContentsView } from "electron";
 
-import { ensureEmbeddedChromeIdentity } from "./embedded-chrome-identity";
+import { prepareEmbeddedChromeIdentityForNavigation } from "./embedded-chrome-identity";
 import { getMainWindow } from "./window";
 import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
 import { setupBrowserDownloadsIPC } from "./browser-downloads-ipc";
@@ -238,13 +238,22 @@ export function setupBrowserIPC(): void {
 	});
 
 	ipcMain.handle("browser-navigate", async (event: IpcMainInvokeEvent, url: string) => {
-		if (!isTrustedBrowserSender(event.sender)) return;
-		const { view } = ensureCurrentView();
+		if (!isTrustedBrowserSender(event.sender)) {
+			console.warn(`[browser.ipc] rejected manual navigate from untrusted sender: ${url}`);
+			return;
+		}
+		const { viewId, view } = ensureCurrentView();
+		console.log(`[browser.ipc] manual navigate view=${viewId} url=${url}`);
 		// loadURL rejects on ERR_ABORTED (redirects, rapid re-navigation) — that's
 		// normal browsing, not an error to surface. Nav-state events carry the real
 		// outcome either way.
-		await ensureEmbeddedChromeIdentity(view.webContents);
-		await view.webContents.loadURL(url).catch(() => {});
+		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
+		await view.webContents.loadURL(url).catch((error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			if (!message.includes("ERR_ABORTED")) {
+				console.error(`[browser.ipc] manual navigate rejected view=${viewId} url=${url}: ${message}`);
+			}
+		});
 	});
 
 	ipcMain.handle("browser-go-back", (event: IpcMainInvokeEvent) => {
@@ -354,7 +363,7 @@ export function setupBrowserIPC(): void {
 			showBrowserView(viewId);
 		}
 		const target = (typeof url === "string" && url.trim()) || "about:blank";
-		await ensureEmbeddedChromeIdentity(view.webContents);
+		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
 		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
 		const state = readNavState(viewId, view.webContents);
 		pushNavState(viewId, view.webContents);

@@ -77,6 +77,19 @@ export interface LAXConfig {
    *  advanced-shared explicitly shares one live context across sessions. */
   browserMode: BrowserMode;
 
+  /** Opt-in native (CDP) driving of the IN-APP browser. DEFAULT OFF, and the
+   *  default is load-bearing: enabling it makes the desktop shell open a
+   *  loopback remote-debugging port at launch, and Chromium then marks EVERY
+   *  page in the app automation-controlled (navigator.webdriver === true) for
+   *  the whole session. Human-verification challenges (Cloudflare Turnstile and
+   *  peers) read that bit and re-issue forever, so the user can never pass one —
+   *  verified by controlled experiment: the port switch alone flips webdriver
+   *  true, and CDP's Emulation.setAutomationOverride cannot clear it. With it
+   *  off, the agent drives the in-app browser through the legacy bridge instead
+   *  (lower fidelity: no CDP response-body capture). Read pre-ready from
+   *  ~/.lax/config.json, so a change needs a full app relaunch. */
+  browserNativeDriving?: boolean;
+
   // ── Externalized limits & timeouts ──
   browserCdpPort: number;
   browserIdleTimeoutMs: number;

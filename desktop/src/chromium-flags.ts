@@ -14,20 +14,25 @@ import { join } from "node:path";
 import { initBrowserNetworkHardening } from "./browser-partition";
 import { enableLoopbackCdpEndpoint } from "./cdp-endpoint";
 
-/** Our server origin, read early from ~/.lax/config.json so the secure-origin
- *  flag can name it before app.ready. Defaults to 7007 if unreadable. */
-function earlyServerPort(): number {
+/** The pre-ready slice of ~/.lax/config.json. Read once, before app.ready,
+ *  because Chromium parses its command line only at startup. Falls back to
+ *  safe defaults when the file is missing or malformed. */
+function earlyConfig(): { port: number; nativeDriving: boolean } {
   try {
     const c = join(homedir(), ".lax", "config.json");
-    if (existsSync(c)) return JSON.parse(readFileSync(c, "utf-8")).port || 7007;
-  } catch { /* fall through to default */ }
-  return 7007;
+    if (existsSync(c)) {
+      const cfg = JSON.parse(readFileSync(c, "utf-8"));
+      return { port: cfg.port || 7007, nativeDriving: cfg.browserNativeDriving === true };
+    }
+  } catch { /* fall through to defaults */ }
+  return { port: 7007, nativeDriving: false };
 }
 
 /** Apply all pre-ready Chromium flags + browser network hardening. */
 export function applyChromiumLaunchFlags(): void {
+  const cfg = earlyConfig();
   // Only mark our own server origin as secure — not every loopback port.
-  app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", `http://127.0.0.1:${earlyServerPort()}`);
+  app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", `http://127.0.0.1:${cfg.port}`);
   app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
   app.commandLine.appendSwitch("enable-media-stream");
   // Consolidated --disable-features. Chromium honors only the LAST
@@ -56,5 +61,9 @@ export function applyChromiumLaunchFlags(): void {
   app.commandLine.appendSwitch("dns-prefetch-disable");
   // permission-request handler in app.ready controls media grants explicitly.
   initBrowserNetworkHardening(); // QUIC/DoH off (app-wide, pre-ready) for browser-view partitions
-  enableLoopbackCdpEndpoint(); // loopback DevTools port for the in-app browser driver
+  // OPT-IN ONLY (config.browserNativeDriving). The switch is not free: Chromium
+  // marks every page in the app automation-controlled for the whole session, so
+  // human-verification challenges become unpassable. Off → the agent drives via
+  // the legacy bridge. See the field doc in src/types/lax-config.ts.
+  if (cfg.nativeDriving) enableLoopbackCdpEndpoint();
 }

@@ -29,12 +29,19 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 let chosenPort: number | null = null;
+// Whether the switches were actually appended this launch. The endpoint is
+// opt-in (config.browserNativeDriving — see chromium-flags.ts), so this is
+// false on a normal launch, and resolve MUST NOT read a DevToolsActivePort file
+// left behind by an earlier enabled run: that port is dead, and handing it to
+// the server child would point the driver at nothing.
+let endpointEnabled = false;
 
 /**
  * Append the loopback CDP switches. MUST run before app.ready. Synchronous and
  * infallible — the actual port is chosen by Chromium and resolved later.
  */
 export function enableLoopbackCdpEndpoint(): void {
+  endpointEnabled = true;
   app.commandLine.appendSwitch("remote-debugging-port", "0");
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
@@ -61,6 +68,10 @@ export async function resolveLoopbackCdpPort(opts?: {
   timeoutMs?: number;
   pollMs?: number;
 }): Promise<number | null> {
+  if (!endpointEnabled) {
+    chosenPort = null;
+    return null;
+  }
   const userDataDir = opts?.userDataDir ?? app.getPath("userData");
   const timeoutMs = opts?.timeoutMs ?? 3000;
   const pollMs = opts?.pollMs ?? 50;
@@ -87,4 +98,11 @@ export async function resolveLoopbackCdpPort(opts?: {
 /** The resolved CDP port, or null if not enabled / not yet resolved. */
 export function getLoopbackCdpPort(): number | null {
   return chosenPort;
+}
+
+/** Test seam: simulate the opt-in having been applied (or not) at launch,
+ *  without an Electron app.commandLine. */
+export function _setEndpointEnabledForTest(enabled: boolean): void {
+  endpointEnabled = enabled;
+  chosenPort = null;
 }

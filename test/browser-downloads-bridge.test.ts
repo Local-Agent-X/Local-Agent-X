@@ -17,6 +17,14 @@ const h = vi.hoisted(() => {
     tmp: `${tmpRoot}/lax-dlbridge-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     listeners,
     fakeSession: {
+      // Real Electron sessions carry these; hardenSession cleans the browsing UA
+      // (Electron/app product tokens make challenge pages unpassable). Capture
+      // the value so the assertion below can pin it.
+      uaSet: [] as string[],
+      getUserAgent(): string {
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) local-agent-x/0.5.3 Chrome/134.0.0.0 Electron/35.7.5 Safari/537.36";
+      },
+      setUserAgent(ua: string): void { this.uaSet.push(ua); },
       setPermissionRequestHandler: () => {},
       setPermissionCheckHandler: () => {},
       on: (event: string, fn: (...args: unknown[]) => void) => { listeners.set(event, fn); },
@@ -105,6 +113,18 @@ beforeEach(() => {
 });
 
 describe("attribution + quarantine registry (browser-partition)", () => {
+  // Cross-seam guard: the pure UA scrub is unit-tested in
+  // desktop/src/browser-partition-net.test.ts, but only this suite proves
+  // hardenSession actually APPLIES it to the partition. Without it the views
+  // advertise Electron and human-verification challenges never pass.
+  it("hardening strips the Electron/app product tokens from the partition's browsing UA", () => {
+    getHardenedPartitionSession(PART);
+    expect(h.fakeSession.uaSet.length).toBeGreaterThan(0);
+    const ua = h.fakeSession.uaSet[h.fakeSession.uaSet.length - 1];
+    expect(ua).not.toMatch(/Electron|local-agent-x/i);
+    expect(ua).toContain("Chrome/134.0.0.0");
+  });
+
   it("attributes a download to the pool view whose webContents triggered it, at DOWNLOAD time", () => {
     h.poolList = [{ viewId: "view-s-1-work", partition: PART }];
     h.viewsById.set("view-s-1-work", { webContents: fakeWc(42) });

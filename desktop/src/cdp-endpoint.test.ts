@@ -7,11 +7,12 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   parseDevToolsActivePort,
   resolveLoopbackCdpPort,
   getLoopbackCdpPort,
+  _setEndpointEnabledForTest,
 } from "./cdp-endpoint";
 
 describe("parseDevToolsActivePort", () => {
@@ -37,7 +38,11 @@ describe("resolveLoopbackCdpPort", () => {
     dirs.push(d);
     return d;
   };
+  // The endpoint is opt-in per launch (config.browserNativeDriving); these
+  // cases describe the enabled launch unless they say otherwise.
+  beforeEach(() => _setEndpointEnabledForTest(true));
   afterEach(() => {
+    _setEndpointEnabledForTest(false);
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
@@ -60,6 +65,15 @@ describe("resolveLoopbackCdpPort", () => {
     const dir = freshDir();
     const port = await resolveLoopbackCdpPort({ userDataDir: dir, timeoutMs: 120, pollMs: 20 });
     expect(port).toBeNull();
+    expect(getLoopbackCdpPort()).toBeNull();
+  });
+
+  it("returns null without reading a STALE port file when the endpoint was not enabled this launch", async () => {
+    const dir = freshDir();
+    // A previous enabled launch left this behind; that port is dead now.
+    writeFileSync(join(dir, "DevToolsActivePort"), "49123\n/devtools/browser/x");
+    _setEndpointEnabledForTest(false);
+    expect(await resolveLoopbackCdpPort({ userDataDir: dir, timeoutMs: 500 })).toBeNull();
     expect(getLoopbackCdpPort()).toBeNull();
   });
 });

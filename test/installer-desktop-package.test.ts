@@ -109,4 +109,9 @@ describe("installer packaged-app seams", () => {
     expect(mac.match(/\["-dr", "com\.apple\.provenance",/g)).toHaveLength(2);
     expect(mac).not.toContain('xattr", ["-cr"');
   });
+
+  it("does not ship restricted macOS entitlements without a provisioning profile", () => {
+    const entitlements = readFileSync(join(process.cwd(), "desktop/build/entitlements.mac.plist"), "utf8");
+    expect(entitlements).not.toContain("com.apple.developer.speech-recognition");
+  });
 });

@@ -359,6 +359,18 @@ jobs:
           fi
           xcrun stapler validate "$APP"
           spctl --assess --type execute --verbose=2 "$APP"
+          SMOKE_LOG="${RUNNER_TEMP}/local-agent-x-desktop-smoke.log"
+          "$APP/Contents/MacOS/Local Agent X" >"$SMOKE_LOG" 2>&1 &
+          APP_PID=$!
+          sleep 5
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            cat "$SMOKE_LOG"
+            wait "$APP_PID" || true
+            echo "::error::Signed macOS desktop app exited during launch smoke test."
+            exit 1
+          fi
+          kill "$APP_PID"
+          wait "$APP_PID" || true
           if ! grep -Fq "$(basename "$ZIP")" "$METADATA"; then
             echo "::error::latest-mac.yml does not name the exact signed desktop ZIP."
             exit 1

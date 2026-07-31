@@ -119,3 +119,41 @@ describe("embedded Chrome identity", () => {
 		expect(app.on).toHaveBeenCalledWith("web-contents-created", expect.any(Function));
 	});
 });
+
+// REGRESSION GUARD (2026-07-30). The session UA was applied here
+// UNCONDITIONALLY while identityOverrideEnabled gated only the client-hint
+// half. That is the worst combination: the UA claims plain Chrome while
+// Sec-CH-UA still reports bare Chromium, Cloudflare cross-checks the two, and
+// the in-app browser loops on the challenge forever. Measured by bisect: the
+// native Electron UA passes; a UA override alone is refused. Disabled must mean
+// the identity is untouched — every part of it.
+describe("embedded Chrome identity — disabled (the production default)", () => {
+	it("does not touch the session user agent and installs no hook", () => {
+		_setEmbeddedChromeIdentityOverrideForTest(false);
+		const browserSession = { setUserAgent: vi.fn() } as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[1];
+		const app = { on: vi.fn() } as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[0];
+
+		registerEmbeddedChromeIdentitySession(app, browserSession);
+
+		expect(browserSession.setUserAgent).not.toHaveBeenCalled();
+		expect(app.on).not.toHaveBeenCalled();
+	});
+
+	it("leaves a web contents alone when one is created", async () => {
+		_setEmbeddedChromeIdentityOverrideForTest(false);
+		const attach = vi.fn();
+		const sendCommand = vi.fn();
+		const contents = {
+			isDestroyed: () => false,
+			once: vi.fn(),
+			on: vi.fn(),
+			debugger: { isAttached: () => false, attach, sendCommand, on: vi.fn() },
+		} as unknown as Parameters<typeof ensureEmbeddedChromeIdentity>[0];
+
+		await ensureEmbeddedChromeIdentity(contents);
+
+		// No debugger attach either — an attached debugger is a signal of its own.
+		expect(attach).not.toHaveBeenCalled();
+		expect(sendCommand).not.toHaveBeenCalled();
+	});
+});

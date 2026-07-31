@@ -162,11 +162,16 @@ export async function prepareEmbeddedChromeIdentityForNavigation(
 }
 
 export function registerEmbeddedChromeIdentitySession(app: App, browserSession: Session): void {
+	// ONE switch for the WHOLE identity. The session UA used to be applied here
+	// unconditionally while identityOverrideEnabled gated only the client-hint
+	// half — which is the worst of both: the UA claims plain Chrome while
+	// Sec-CH-UA still reports bare Chromium, and Cloudflare cross-checks them.
+	// Measured 2026-07-30 by bisect: native Electron UA PASSES the Cloudflare
+	// challenge and login; UA-override-alone is REFUSED ("There was a problem
+	// with verification"), with or without matching client hints. So disabled
+	// means disabled — no UA touch, no hints, native Electron identity.
+	if (!identityOverrideEnabled) return;
 	const identity = buildEmbeddedChromeIdentity(process.versions.chrome);
-	// A session-level UA removes Electron's product token for compatibility
-	// without forging high-entropy client hints through DevTools. The latter
-	// creates a mixed fingerprint that some Akamai properties reject, while the
-	// native Electron UA causes Cloudflare challenge loops.
 	browserSession.setUserAgent(identity.userAgent, identity.acceptLanguage);
 	identitySessions.add(browserSession);
 	if (registrarInstalled) return;

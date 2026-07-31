@@ -6,7 +6,7 @@ import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
 import { closeCdpTab, openCdpTab, type CdpTabHost } from "./manager-tabs.js";
 import { ACTION_TIMEOUT, SHARED_BROWSER_USER_DATA_DIR, type BrowserEngine } from "./launcher.js";
-import { acquireSessionContext, releaseSessionContext } from "./runtime.js";
+import { acquireSessionContext, forceKillSharedBrowser, releaseSessionContext } from "./runtime.js";
 import {
   formatRecentDownloads,
   getDownloadApprovalBinding,
@@ -27,6 +27,23 @@ import { isBlankish } from "./blankish.js";
 import type { BrowserMode } from "../types.js";
 import { waitForContinuityCacheRestore } from "./continuity-cache.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
+
+export interface BrowserContextRuntime {
+  acquire(
+    engine: BrowserEngine,
+    mode: BrowserMode,
+    ownerId: string,
+    userDataDir?: string,
+  ): Promise<BrowserContext>;
+  release(context: BrowserContext, mode: BrowserMode): Promise<void>;
+  reset(): void | Promise<void>;
+}
+
+const sharedBrowserRuntime: BrowserContextRuntime = {
+  acquire: acquireSessionContext,
+  release: releaseSessionContext,
+  reset: forceKillSharedBrowser,
+};
 
 /**
  * Per-session browser surface. Each session owns its own tabs + observation
@@ -49,6 +66,7 @@ export class BrowserManager implements BrowserBackend {
   constructor(
     private readonly sessionId: string = "default",
     private readonly mode: BrowserMode = "isolated",
+    private readonly runtime: BrowserContextRuntime = sharedBrowserRuntime,
   ) {}
 
   /** Called when the idle timer fires after this session is torn down. */
@@ -121,7 +139,7 @@ export class BrowserManager implements BrowserBackend {
     // sessions are byte-for-byte unchanged. (Shared-Chrome caveat: one Chrome
     // process = one userDataDir, so the FIRST session to launch the shared
     // browser fixes it for concurrent CDP sessions — see runtime.getSharedBrowser.)
-    this.context = await acquireSessionContext(
+    this.context = await this.runtime.acquire(
       this.currentEngine,
       this.mode,
       this.sessionId,
@@ -357,7 +375,7 @@ export class BrowserManager implements BrowserBackend {
     // Cache Storage can only be read through a live page. Continuity must
     // serialize and close the context before its owned tabs are torn down.
     if (this.context && this.mode === "continuity") {
-      await releaseSessionContext(this.context, this.mode);
+      await this.runtime.release(this.context, this.mode);
       this.context = null;
       this.page = null;
       this.owned = [];
@@ -369,7 +387,7 @@ export class BrowserManager implements BrowserBackend {
       try { if (!p.isClosed()) await p.close(); } catch { /* already closed */ }
     }
     this.owned = [];
-    if (this.context) await releaseSessionContext(this.context, this.mode);
+    if (this.context) await this.runtime.release(this.context, this.mode);
     this.context = null;
     this.page = null;
   }
@@ -377,4 +395,6 @@ export class BrowserManager implements BrowserBackend {
   isActive(): boolean {
     return this.page !== null && !this.page.isClosed();
   }
+
+  async resetRuntime(): Promise<void> { await this.runtime.reset(); }
 }

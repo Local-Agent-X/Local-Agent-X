@@ -14,6 +14,9 @@ describe("browserMode settings contract", () => {
     expect(BROADCAST_KEYS.has("browserMode")).toBe(true);
     expect(PROTECTED_SETTINGS.has("browserMode")).toBe(true);
     expect(publicSchema().some((entry) => entry.field === "browserPerSessionContext")).toBe(false);
+    expect(field?.description).toContain("dedicated installed Chrome per chat on Windows");
+    expect(field?.description).toContain("embedded co-drivable WebContentsView on non-Windows desktop");
+    expect(field?.description).toContain("falls back to isolated CDP when there is no desktop window/bridge");
   });
 
   it("is discoverable with enum values through the setting tool", async () => {

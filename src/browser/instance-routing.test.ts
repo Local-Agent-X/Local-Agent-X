@@ -70,6 +70,7 @@ import {
 	resolveBrowserRoute,
 	getSecretBrowserOps,
 	CdpOnlyOperationError,
+	_setBrowserRoutePlatformForTest,
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
@@ -81,6 +82,7 @@ function setInApp(bridge = true): void {
 }
 
 beforeEach(() => {
+	_setBrowserRoutePlatformForTest("darwin");
 	state.browserMode = "isolated";
 	state.bridge = false;
 	_resetSessionOwnerRegistry();
@@ -91,11 +93,19 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+	_setBrowserRoutePlatformForTest(null);
 	delete process.env.LAX_BROWSER_HEADLESS;
 	await closeAllBrowsers();
 });
 
 describe("getBrowserManager routing", () => {
+	it("routes Windows in-app sessions to dedicated Chrome", () => {
+		setInApp();
+		_setBrowserRoutePlatformForTest("win32");
+		expect(getBrowserManager("chat-1")).toBeInstanceOf(BrowserManager);
+		expect(resolveBrowserRoute().reason).toBe("windows-chat-chrome");
+	});
+
 	it("routes to ElectronInAppBackend when mode=in-app and the bridge is up", () => {
 		setInApp();
 		const backend = getBrowserManager("chat-1");
@@ -113,6 +123,15 @@ describe("getBrowserManager routing", () => {
 		registerChildSessionOwner("agent-parent", "chat-1");
 		registerChildSessionOwner("agent-child", "agent-parent");
 		expect(getBrowserManager("agent-parent")).toBe(getBrowserManager("chat-1"));
+		expect(getBrowserManager("agent-child")).toBe(getBrowserManager("chat-1"));
+		expect(getBrowserManager("agent-child")).not.toBe(getBrowserManager("chat-2"));
+	});
+
+	it("shares one dedicated Windows Chrome runtime across nested agents only within their chat", () => {
+		setInApp();
+		_setBrowserRoutePlatformForTest("win32");
+		registerChildSessionOwner("agent-parent", "chat-1");
+		registerChildSessionOwner("agent-child", "agent-parent");
 		expect(getBrowserManager("agent-child")).toBe(getBrowserManager("chat-1"));
 		expect(getBrowserManager("agent-child")).not.toBe(getBrowserManager("chat-2"));
 	});
@@ -143,6 +162,13 @@ describe("getBrowserManager routing", () => {
 // runtime-profile-dir / manager-profile-dir tests), so every fallback path
 // carries the right profile identity.
 describe("resolveBrowserBackendKind — fallback matrix", () => {
+	it("uses CDP on Windows while preserving embedded behavior elsewhere", () => {
+		setInApp();
+		expect(resolveBrowserRoute("win32")).toEqual({ kind: "cdp", reason: "windows-chat-chrome" });
+		expect(resolveBrowserRoute("darwin")).toEqual({ kind: "in-app", reason: "in-app" });
+		expect(resolveBrowserRoute("linux")).toEqual({ kind: "in-app", reason: "in-app" });
+	});
+
 	it("in-app when mode=in-app + windowed + bridge up", () => {
 		setInApp();
 		expect(resolveBrowserBackendKind()).toBe("in-app");
@@ -359,6 +385,15 @@ describe("closeBrowser / closeAllBrowsers", () => {
 });
 
 describe("resetWedgedBrowser", () => {
+	it("resets only the Windows chat runtime without force-killing shared Chrome", async () => {
+		setInApp();
+		_setBrowserRoutePlatformForTest("win32");
+		const first = getBrowserManager("chat-1");
+		await expect(resetWedgedBrowser("chat-1")).resolves.toBe("cdp-reset");
+		expect(getBrowserManager("chat-1")).not.toBe(first);
+		expect(runtimeMocks.forceKillSharedBrowser).not.toHaveBeenCalled();
+	});
+
 	it("KEEPS a wedged in-app backend (recoverable) and never force-kills shared Chrome", async () => {
 		setInApp();
 		const first = getBrowserManager("chat-1");

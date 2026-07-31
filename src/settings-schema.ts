@@ -155,7 +155,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     runtime: true,
     broadcast: true,
     protected: true,
-    description: "Browser identity mode. in-app=embedded, co-drivable WebContentsView browser (default; falls back to isolated CDP when there is no desktop window/bridge); isolated=ephemeral identity per session; continuity=persistent dedicated agent identity with one live session owner; advanced-shared=one live context shared across sessions",
+    description: "Browser identity mode. in-app=dedicated installed Chrome per chat on Windows for website compatibility, or the embedded co-drivable WebContentsView on non-Windows desktop (including macOS); falls back to isolated CDP when there is no desktop window/bridge. isolated=ephemeral identity per session; continuity=persistent dedicated agent identity with one live session owner; advanced-shared=one live context shared across sessions",
   },
   {
     field: "enableComputerControl",

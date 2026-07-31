@@ -10,6 +10,7 @@ import { desktopBridgeAvailable } from "../desktop-bridge.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 import { createCdpSecretOps, type SecretBrowserOps } from "./secret-ops.js";
+import { WindowsChatChromeRuntime } from "./windows-chat-chrome-runtime.js";
 
 const logger = createLogger("browser.route");
 
@@ -74,12 +75,20 @@ export type BrowserRouteReason =
 	| "mode-not-in-app"
 	/** LAX_BROWSER_HEADLESS=1 — CI/soak, no desktop window to mount a view in. */
 	| "headless"
+	/** Windows uses installed Chrome because Electron is rejected by common human checks. */
+	| "windows-chat-chrome"
 	/** Wanted in-app but the desktop app/bridge isn't there. The surprising arm. */
 	| "no-desktop-bridge";
 
 export interface BrowserRoute {
 	kind: BrowserBackendKind;
 	reason: BrowserRouteReason;
+}
+
+let routePlatformOverride: NodeJS.Platform | null = null;
+
+export function _setBrowserRoutePlatformForTest(platform: NodeJS.Platform | null): void {
+	routePlatformOverride = platform;
 }
 
 /**
@@ -99,12 +108,15 @@ export interface BrowserRoute {
  * typed errors), so the tool layer surfaces a dead bridge at first use instead
  * of this seam guessing ahead of time.
  */
-export function resolveBrowserRoute(): BrowserRoute {
+export function resolveBrowserRoute(platform: NodeJS.Platform = routePlatformOverride ?? process.platform): BrowserRoute {
 	if (!wantsInAppBackend(getRuntimeConfig().browserMode)) {
 		return { kind: "cdp", reason: "mode-not-in-app" };
 	}
 	if (process.env.LAX_BROWSER_HEADLESS === "1") {
 		return { kind: "cdp", reason: "headless" };
+	}
+	if (platform === "win32") {
+		return { kind: "cdp", reason: "windows-chat-chrome" };
 	}
 	if (!desktopBridgeAvailable()) {
 		return { kind: "cdp", reason: "no-desktop-bridge" };
@@ -151,6 +163,9 @@ function reportBrowserRoute(sessionId: string, route: BrowserRoute): void {
 				`[browser-route] external Chrome ${who} — LAX_BROWSER_HEADLESS=1, no desktop window to mount a view in.`,
 			);
 			return;
+		case "windows-chat-chrome":
+			logger.info(`[browser-route] dedicated chat-scoped Chrome ${who} — Windows in-app compatibility route.`);
+			return;
 		case "no-desktop-bridge":
 			logger.warn(
 				`[browser-route] external Chrome ${who} — browserMode="in-app" wants the embedded browser, ` +
@@ -181,13 +196,14 @@ function peerPagesExcept(self: BrowserManager): Page[] {
 	return pages;
 }
 
-function ensureCdpManager(key: string): BrowserManager {
+function ensureCdpManager(key: string, dedicatedWindowsChrome = false): BrowserManager {
 	let manager = cdpManagers.get(key);
 	if (!manager) {
 		// Resolve the chat-scoped browser session and
 		// run-prep) and bind the manager to it. CDP behavior is unchanged — the
 		// use the shared persistent identity.
-		manager = new BrowserManager(key, getRuntimeConfig().browserMode);
+		const runtime = dedicatedWindowsChrome ? new WindowsChatChromeRuntime(key) : undefined;
+		manager = new BrowserManager(key, getRuntimeConfig().browserMode, runtime);
 		manager.setPeerPages(() => peerPagesExcept(manager!));
 		manager.setIdleHandler(() => {
 			if (cdpManagers.get(key) === manager) cdpManagers.delete(key);
@@ -223,7 +239,7 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
 	const route = resolveBrowserRoute();
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key);
-	return ensureCdpManager(key);
+	return ensureCdpManager(key, route.reason === "windows-chat-chrome");
 }
 
 /**
@@ -239,7 +255,7 @@ export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowse
 	const route = resolveBrowserRoute();
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key).secretOps();
-	const manager = ensureCdpManager(key);
+	const manager = ensureCdpManager(key, route.reason === "windows-chat-chrome");
 	return createCdpSecretOps(() => manager.getPage());
 }
 
@@ -255,7 +271,7 @@ export function getCdpBrowserManager(sessionId: string = "default"): BrowserMana
 	if (inAppBackends.has(key) || inAppBackendAvailable()) {
 		throw new CdpOnlyOperationError(key);
 	}
-	return ensureCdpManager(key);
+	return ensureCdpManager(key, resolveBrowserRoute().reason === "windows-chat-chrome");
 }
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
@@ -318,8 +334,10 @@ export async function resetWedgedBrowser(sessionId: string = "default"): Promise
 		return "view-recreated";
 	}
 	routeReported.delete(key);
+	const manager = cdpManagers.get(key);
 	cdpManagers.delete(key);
-	forceKillSharedBrowser();
+	if (manager) await manager.resetRuntime();
+	else forceKillSharedBrowser();
 	return "cdp-reset";
 }
 

@@ -1,5 +1,5 @@
 const BROWSER_MODE_STATUS = {
-  'in-app': 'Active: the agent drives the embedded in-app browser you can watch and co-drive. Falls back to an isolated browser when no app window is available.',
+  'in-app': 'Active: on Windows, each chat uses its own dedicated installed Chrome session for website compatibility. On macOS and other desktop platforms, the agent drives the embedded browser you can watch and co-drive. Falls back to an isolated browser when no desktop app bridge is available.',
   isolated: 'Active: each session gets a separate ephemeral identity. Sign-ins are discarded when that session closes.',
   continuity: 'Active: sign-ins persist in one dedicated agent identity. Only one session owns its live context at a time.',
   'advanced-shared': 'Active: all sessions share the same live browser context.',

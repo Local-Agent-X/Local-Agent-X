@@ -21,9 +21,13 @@ beforeEach(() => {
 });
 
 describe("browser identity mode Security UI", () => {
-  it("describes in-app mode as the embedded co-drivable browser", () => {
+  it("describes the platform-specific in-app routes", () => {
     window.renderBrowserMode("in-app");
-    expect(document.getElementById("browser-mode-status")?.textContent).toContain("embedded in-app browser");
+    const status = document.getElementById("browser-mode-status")?.textContent;
+    expect(status).toContain("on Windows, each chat uses its own dedicated installed Chrome session");
+    expect(status).toContain("On macOS and other desktop platforms");
+    expect(status).toContain("embedded browser you can watch and co-drive");
+    expect(status).toContain("when no desktop app bridge is available");
     expect(document.getElementById("browser-mode-warning")?.style.display).toBe("none");
   });
 
@@ -32,7 +36,7 @@ describe("browser identity mode Security UI", () => {
     expect(document.getElementById("cfg-browser-mode") as HTMLSelectElement | null)
       .toBeTruthy();
     expect((document.getElementById("cfg-browser-mode") as HTMLSelectElement).value).toBe("in-app");
-    expect(document.getElementById("browser-mode-status")?.textContent).toContain("embedded in-app browser");
+    expect(document.getElementById("browser-mode-status")?.textContent).toContain("on Windows, each chat uses its own dedicated installed Chrome session");
   });
 
   it("describes isolated mode as ephemeral per session", () => {

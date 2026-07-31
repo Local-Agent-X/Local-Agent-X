@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +24,16 @@ function fixture() {
   writeFileSync(join(installRoot, "dist", "index.js"), "verified-old");
   writeFileSync(join(installRoot, "workspace", "user.txt"), "keep-me");
   return { base, installRoot, dataDirectory };
+}
+
+/** Recreate a directory with identical contents but a NEW inode/birthtime —
+ *  what a reinstall does to the install root. */
+function replaceDirectoryIdentity(directory: string): void {
+  const previous = `${directory}.prev`;
+  renameSync(directory, previous);
+  mkdirSync(directory, { recursive: true });
+  cpSync(previous, directory, { recursive: true });
+  rmSync(previous, { recursive: true, force: true });
 }
 
 describe("installer artifact rollback", () => {
@@ -106,6 +116,54 @@ describe("installer artifact rollback", () => {
     expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
     expect(readFileSync(join(f.installRoot, "dist", "index.js"), "utf-8")).toBe("verified-old");
     writeFileSync(path, JSON.stringify({ version: 1, status: "active", identity: { root: "C:\\other" }, artifacts: [] }));
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+  });
+
+  // A REINSTALL legitimately replaces the install directory, which changes its
+  // inode/birthtime and so invalidates the provenance recorded by the previous
+  // install's journal. Before this, that permanently blocked every future
+  // install with an unactionable error (hit for real 2026-07-30).
+  it("archives a SPENT journal whose install directory was legitimately replaced, instead of blocking forever", () => {
+    const f = fixture();
+    const transaction = createInstallRollback(f);
+    transaction.begin();
+    mkdirSync(join(f.installRoot, "dist"), { recursive: true });
+    writeFileSync(join(f.installRoot, "dist", "index.js"), "broken-new");
+    expect(transaction.rollback("required build failed")).toMatchObject({ restored: true });
+    replaceDirectoryIdentity(f.installRoot); // what a reinstall does
+
+    const journalPath = join(f.dataDirectory, "install-rollback", "transaction.json");
+    expect(existsSync(journalPath)).toBe(true);
+    expect(createInstallRollback(f).reconcile()).toMatchObject({ restored: false, resumed: false, outcome: "none" });
+    // Moved aside, not deleted — the record survives for diagnosis.
+    expect(existsSync(journalPath)).toBe(false);
+    const archived = readdirSync(join(f.dataDirectory, "install-rollback"))
+      .filter((name) => name.startsWith("transaction.superseded-"));
+    expect(archived).toHaveLength(1);
+    // The user's files are untouched by the archiving.
+    expect(readFileSync(join(f.installRoot, "workspace", "user.txt"), "utf-8")).toBe("keep-me");
+  });
+
+  it("still fails closed when an IN-FLIGHT journal's install directory was replaced (backups are the only copy)", () => {
+    const f = fixture();
+    createInstallRollback(f).begin(); // status is mid-transaction, backups on disk
+    replaceDirectoryIdentity(f.installRoot);
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
+    // The error now names the file, so the block is actionable.
+    expect(() => createInstallRollback(f).reconcile()).toThrow(/transaction\.json/);
+    expect(existsSync(join(f.dataDirectory, "install-rollback", "transaction.json"))).toBe(true);
+  });
+
+  it("a terminal journal STILL blocks while real backup bytes survive", () => {
+    const f = fixture();
+    createInstallRollback(f).begin();
+    const journalPath = join(f.dataDirectory, "install-rollback", "transaction.json");
+    const journal = JSON.parse(readFileSync(journalPath, "utf-8"));
+    journal.status = "restored"; // terminal…
+    writeFileSync(journalPath, JSON.stringify(journal));
+    replaceDirectoryIdentity(f.installRoot);
+    // …but begin() backed dist/index.js up, so there is still something to protect.
+    expect(existsSync(join(f.dataDirectory, "install-rollback", "artifacts", "dist", "index.js"))).toBe(true);
     expect(() => createInstallRollback(f).reconcile()).toThrow(/ambiguous provenance/);
   });
 

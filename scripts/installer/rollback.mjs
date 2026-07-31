@@ -220,13 +220,60 @@ export function createInstallRollback(context) {
     }
   };
 
+  // Statuses whose transaction is over: nothing is mid-flight, so the journal
+  // is only a record. (active / backing-up / rolling-back are NOT here.)
+  const TERMINAL_STATUSES = new Set(["restored", "verified"]);
+
+  // "Holding a backup" means holding BYTES. A completed restore moves the files
+  // back and can leave empty directory shells behind; counting those as backups
+  // would keep the install bricked for exactly the users this unblocks.
+  const survivingBackups = () => {
+    try {
+      if (!existsSync(backupRoot)) return false;
+      return readdirSync(backupRoot, { recursive: true, withFileTypes: true }).some((entry) => entry.isFile());
+    } catch { return true; } // unreadable → assume backups exist and stay strict
+  };
+
+  /** True when the journal has nothing left to protect: its transaction reached
+   *  a terminal status AND no backup artifacts survive on disk. */
+  const spentJournal = (value) =>
+    Boolean(value) && TERMINAL_STATUSES.has(value.status) && !survivingBackups();
+
+  /** Move a spent journal aside instead of deleting it — the next install
+   *  proceeds, and the record survives for diagnosis. */
+  const archiveSpentJournal = () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const relativeTarget = join("install-rollback", `transaction.superseded-${stamp}.json`);
+    assertPath(dataDirectory, relativeTarget);
+    renamePath(journalPath, resolve(dataDirectory, relativeTarget));
+  };
+
   const load = () => {
     assertBases();
     directoryIdentity(root);
     if (existsSync(dataDirectory)) directoryIdentity(dataDirectory);
     if (!existsSync(journalPath)) return null;
     const value = readJson(journalPath);
-    if (!validJournal(value, root, dataDirectory, backupRoot)) throw new Error("Installer rollback journal has ambiguous provenance; refusing to mutate installation artifacts.");
+    if (!validJournal(value, root, dataDirectory, backupRoot)) {
+      // A SPENT journal is not ambiguity, it is litter. Terminal status means
+      // its transaction already finished (verified) or already rolled back
+      // (restored), and an empty/absent artifacts tree means it is holding no
+      // backup that could still be restored — so there is nothing left for it
+      // to protect. It goes stale the moment a REINSTALL legitimately replaces
+      // the install directory: the recorded inode/birthtime stop matching, the
+      // provenance check fails, and every future install is blocked forever
+      // with no way out. Archive it and carry on.
+      // Fail-closed still governs the case that matters: an IN-FLIGHT journal
+      // (active / backing-up / rolling-back) whose provenance no longer matches
+      // may be the only record of where the prior install's files went.
+      if (spentJournal(value)) {
+        archiveSpentJournal();
+        return null;
+      }
+      throw new Error(
+        `Installer rollback journal has ambiguous provenance; refusing to mutate installation artifacts. Journal: ${journalPath}`,
+      );
+    }
     if (readJson(join(root, "package.json"))?.version !== value.identity.version) {
       throw new Error("Installer rollback journal package identity does not match this installation.");
     }

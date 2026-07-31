@@ -369,7 +369,14 @@ jobs:
             echo "::error::Signed macOS desktop app exited during launch smoke test."
             exit 1
           fi
-          kill "$APP_PID"
+          kill "$APP_PID" 2>/dev/null || true
+          for _ in 1 2 3 4 5; do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if kill -0 "$APP_PID" 2>/dev/null; then
+            kill -KILL "$APP_PID"
+          fi
           wait "$APP_PID" || true
           if ! grep -Fq "$(basename "$ZIP")" "$METADATA"; then
             echo "::error::latest-mac.yml does not name the exact signed desktop ZIP."

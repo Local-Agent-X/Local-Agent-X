@@ -103,4 +103,10 @@ describe("installer packaged-app seams", () => {
     expect(mac).toContain('"--verify", "--deep", "--strict"');
     expect(mac).not.toContain("codesign --sign");
   });
+
+  it("clears only macOS provenance before verifying extracted and installed apps", () => {
+    const mac = readFileSync(join(process.cwd(), "scripts/installer/mac-desktop.mjs"), "utf8");
+    expect(mac.match(/\["-dr", "com\.apple\.provenance",/g)).toHaveLength(2);
+    expect(mac).not.toContain('xattr", ["-cr"');
+  });
 });

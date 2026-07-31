@@ -34,6 +34,11 @@ export async function installMacDesktop({
     reporter.fail(`Expected exactly one Local Agent X.app in the desktop package; found ${apps.length}.`);
   }
   const appBuildPath = apps[0];
+  // macOS 26 can attach com.apple.provenance to every file while expanding or
+  // copying a downloaded app. codesign then treats the otherwise byte-identical
+  // bundle as modified. Remove only that generated marker; keep quarantine and
+  // every other Gatekeeper attribute intact, then verify the signed bundle.
+  processes.run("xattr", ["-dr", "com.apple.provenance", appBuildPath], { stdio: "ignore" });
   if (processes.has("codesign")
     && processes.run("codesign", ["--verify", "--deep", "--strict", appBuildPath]).status !== 0) {
     reporter.fail("The downloaded Local Agent X.app has an invalid code signature.");
@@ -50,6 +55,7 @@ export async function installMacDesktop({
         reporter.warn(`Could not install the packaged app to ${target}.`);
         return false;
       }
+      processes.run("xattr", ["-dr", "com.apple.provenance", target], { stdio: "ignore" });
       if (processes.has("codesign")
         && processes.run("codesign", ["--verify", "--deep", "--strict", target]).status !== 0) {
         rmSync(target, { recursive: true, force: true });

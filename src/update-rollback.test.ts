@@ -1,5 +1,5 @@
 import {
-  existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -114,6 +114,38 @@ describe("update rollback transaction", () => {
     expect(readFileSync(join(f.install, "src", "app.ts"), "utf-8")).toBe("old");
   });
 
+  it("abandons an interrupted read-only backup without overwriting later install changes", async () => {
+    const f = fixture();
+    const target = "b".repeat(40);
+    const tx = new UpdateRollbackTransaction(f.state, (point) => {
+      if (point.startsWith("after-backup-entry:")) throw new Error("kill");
+    });
+    await expect(tx.begin(f.install, "a".repeat(40), target, [join("src", "app.ts")])).rejects.toThrow("kill");
+    writeFileSync(join(f.install, "src", "app.ts"), "changed-after-backup-stopped");
+
+    await expect(new UpdateRollbackTransaction(f.state).restore(f.install, target, "interrupted backup"))
+      .resolves.toMatchObject({ status: "restored" });
+    expect(readFileSync(join(f.install, "src", "app.ts"), "utf-8")).toBe("changed-after-backup-stopped");
+  });
+
+  it("publishes only phase boundaries regardless of backup file count", async () => {
+    const f = fixture();
+    const paths: string[] = [];
+    for (let index = 0; index < 32; index++) {
+      const path = join("src", `file-${index}.ts`);
+      writeFileSync(join(f.install, path), String(index));
+      paths.push(path);
+    }
+    let anchorPublications = 0;
+    const tx = new UpdateRollbackTransaction(f.state, (point) => {
+      if (point === "after-anchor-publication") anchorPublications++;
+    });
+
+    await tx.begin(f.install, "a".repeat(40), "b".repeat(40), paths);
+    expect(anchorPublications).toBe(2);
+    expect((await tx.read(f.install))?.backupComplete).toHaveLength(paths.length);
+  });
+
   it("refuses a valid journal copied into an attacker-controlled state root", async () => {
     const f = fixture();
     const original = new UpdateRollbackTransaction(f.state);
@@ -184,7 +216,62 @@ describe("update rollback transaction", () => {
     expect(readFileSync(join(f.install, "src", "app.ts"), "utf-8")).toBe("replacement");
   });
 
-  it("resumes a restore interrupted between entry publications", async () => {
+  it("archives an old transaction after a later completed reinstall replaces its install root", async () => {
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    const previous = "a".repeat(40);
+    const target = "b".repeat(40);
+    await tx.begin(f.install, previous, target, [join("src", "app.ts")]);
+    const journal = JSON.parse(readFileSync(tx.journalPath, "utf-8")) as { id: string; startedAt: string };
+    const displaced = join(f.root, "displaced-install");
+    renameSync(f.install, displaced);
+    mkdirSync(join(f.install, "src"), { recursive: true });
+    writeFileSync(join(f.install, "src", "app.ts"), "reinstalled");
+    writeFileSync(join(f.state, "installed-source.json"), JSON.stringify({
+      commit: target, updatedAt: new Date(Math.max(Date.parse(journal.startedAt), lstatSync(f.install).birthtimeMs) + 1_000).toISOString(),
+    }));
+
+    await expect(tx.archiveSupersededByCompletedInstall(f.install)).resolves.toBe(true);
+    expect(existsSync(tx.directory)).toBe(false);
+    expect(existsSync(join(f.state, `update-rollback.superseded-${journal.id}`, "transaction.json"))).toBe(true);
+    await expect(tx.read(f.install)).resolves.toBeNull();
+    expect(readFileSync(join(f.install, "src", "app.ts"), "utf-8")).toBe("reinstalled");
+  });
+
+  it("keeps refusing a replaced install when no later completed-install receipt exists", async () => {
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    const target = "b".repeat(40);
+    await tx.begin(f.install, "a".repeat(40), target, [join("src", "app.ts")]);
+    const displaced = join(f.root, "displaced-install");
+    renameSync(f.install, displaced);
+    mkdirSync(join(f.install, "src"), { recursive: true });
+    writeFileSync(join(f.install, "src", "app.ts"), "replacement");
+
+    await expect(tx.archiveSupersededByCompletedInstall(f.install)).resolves.toBe(false);
+    await expect(tx.read(f.install)).rejects.toThrow(/ambiguous provenance/);
+    expect(existsSync(tx.directory)).toBe(true);
+  });
+
+  it("does not trust a receipt that predates the replacement install root", async () => {
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    const target = "b".repeat(40);
+    await tx.begin(f.install, "a".repeat(40), target, [join("src", "app.ts")]);
+    const journal = JSON.parse(readFileSync(tx.journalPath, "utf-8")) as { startedAt: string };
+    writeFileSync(join(f.state, "installed-source.json"), JSON.stringify({
+      commit: target, updatedAt: new Date(Date.parse(journal.startedAt) + 1).toISOString(),
+    }));
+    const displaced = join(f.root, "displaced-install");
+    renameSync(f.install, displaced);
+    mkdirSync(join(f.install, "src"), { recursive: true });
+    writeFileSync(join(f.install, "src", "app.ts"), "replacement");
+
+    await expect(tx.archiveSupersededByCompletedInstall(f.install)).resolves.toBe(false);
+    await expect(tx.read(f.install)).rejects.toThrow(/ambiguous provenance/);
+  });
+
+  it("safely replays a restore interrupted between file operations", async () => {
     const f = fixture();
     const target = "b".repeat(40);
     const added = join("src", "new.ts");
@@ -195,7 +282,7 @@ describe("update rollback transaction", () => {
     writeFileSync(join(f.install, "src", "app.ts"), "new");
     writeFileSync(join(f.install, added), "added");
     await expect(first.restore(f.install, target, "failed")).rejects.toThrow("kill");
-    expect((await new UpdateRollbackTransaction(f.state).read())?.restoreComplete).toHaveLength(1);
+    expect((await new UpdateRollbackTransaction(f.state).read())?.status).toBe("active");
 
     const resumed = new UpdateRollbackTransaction(f.state);
     await expect(resumed.restore(f.install, target, "retry")).resolves.toMatchObject({ status: "restored" });

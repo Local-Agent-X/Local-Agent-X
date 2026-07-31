@@ -277,6 +277,7 @@ export class OTAManager {
   }
 
   async recoverPendingUpdate(installDir: string): Promise<void> {
+    await this.rollback.archiveSupersededByCompletedInstall(installDir);
     let pending = await this.rollback.read(installDir);
     if (!pending) return;
     if (pending.status === "verified") { await this.rollback.clearVerified(); return; }

@@ -16,6 +16,7 @@ import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { isLocalModelQualificationBoot } from "../qualification-boot.js";
+import { OTAManager } from "../ota-update.js";
 
 const bootLogger = createLogger("server.index");
 
@@ -45,6 +46,13 @@ export async function startServer(config: LAXConfig) {
     if (dt > 50) bootLogger.info(`[boot-phase] ${name} ${dt}ms`);
     return out;
   };
+
+  await phase("recoverPendingUpdate", async () => {
+    try { await new OTAManager().recoverPendingUpdate(process.cwd()); }
+    catch (error) {
+      bootLogger.warn(`[update-recovery] automatic recovery deferred: ${(error as Error).message}`);
+    }
+  });
 
   const services = await phase("bootstrapServices", () => bootstrapServices(config));
   const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations } = services;

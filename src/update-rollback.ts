@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants, existsSync } from "node:fs";
-import { lstat, mkdir, open, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   createJournal, directoryIdentity, durableJson, hash, parseJson, safePathChain, safeRelative, sameIdentity, samePath,
@@ -59,6 +59,54 @@ export class UpdateRollbackTransaction {
     return anchor.journal;
   }
 
+  async archiveSupersededByCompletedInstall(expectedInstallRoot: string): Promise<boolean> {
+    const root = resolve(expectedInstallRoot);
+    let journalValue: unknown;
+    try {
+      this.assertRawPath(this.stateRoot, join("update-rollback", "transaction.json"), "journal");
+      journalValue = parseJson(this.journalPath);
+    } catch { return false; }
+    if (!validJournal(journalValue) || !samePath(journalValue.installRoot, root)
+      || !samePath(journalValue.stateRoot, this.stateRoot)) return false;
+
+    let currentInstall;
+    let currentState;
+    try {
+      currentInstall = directoryIdentity(root);
+      currentState = directoryIdentity(this.stateRoot);
+    } catch { return false; }
+    if (!sameIdentity(journalValue.stateBase, currentState)
+      || sameIdentity(journalValue.installBase, currentInstall)
+      || currentInstall.birthtimeMs <= journalValue.installBase.birthtimeMs) return false;
+
+    const anchorPath = join(root, UPDATE_ROLLBACK_ANCHOR);
+    try { await lstat(anchorPath); return false; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false; }
+
+    const receiptPath = join(this.stateRoot, "installed-source.json");
+    let receipt: unknown;
+    try {
+      this.assertRawPath(this.stateRoot, "installed-source.json", "receipt");
+      receipt = parseJson(receiptPath);
+    } catch { return false; }
+    const installed = receipt as { commit?: unknown; updatedAt?: unknown } | null;
+    if (!installed || typeof installed.commit !== "string" || !/^[0-9a-f]{40}$/.test(installed.commit)
+      || typeof installed.updatedAt !== "string") return false;
+    const startedAt = Date.parse(journalValue.startedAt);
+    const updatedAt = Date.parse(installed.updatedAt);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(updatedAt) || updatedAt <= startedAt
+      || updatedAt < currentInstall.birthtimeMs) return false;
+
+    const archive = join(this.stateRoot, `update-rollback.superseded-${journalValue.id}`);
+    if (existsSync(archive)) return false;
+    this.assertRawPath(this.stateRoot, "update-rollback", "journal");
+    this.assertRawPath(this.stateRoot, `update-rollback.superseded-${journalValue.id}`, "archive");
+    const currentJournal = parseJson(this.journalPath);
+    if (!validJournal(currentJournal) || hash(currentJournal) !== hash(journalValue)) return false;
+    await rename(this.directory, archive);
+    return true;
+  }
+
   async begin(installRoot: string, previousVersion: string, targetVersion: string, paths: string[]): Promise<void> {
     const root = resolve(installRoot);
     const installBase = directoryIdentity(root);
@@ -88,6 +136,7 @@ export class UpdateRollbackTransaction {
     await mkdir(this.backupRoot, { recursive: true });
     await this.persist(journal, null);
     this.fault("after-backup-journal");
+    const backupComplete: string[] = [];
     for (const entry of entries) {
       if (!entry.existed) continue;
       this.assertBound(journal);
@@ -96,10 +145,10 @@ export class UpdateRollbackTransaction {
       this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       await this.copyNoFollow(join(root, entry.path), join(this.backupRoot, entry.path), entry.sha256!, journal, entry);
-      journal = await this.checkpointEntry(journal, "backupComplete", entry.path);
+      backupComplete.push(entry.path);
       this.fault(`after-backup-entry:${entry.path}`);
     }
-    await this.transition(journal, { ...journal, status: "active" });
+    await this.transition(journal, { ...journal, status: "active", backupComplete });
     this.fault("after-backup");
   }
 
@@ -120,15 +169,6 @@ export class UpdateRollbackTransaction {
     if (!samePath(installRoot, journal.installRoot)) throw new Error("Rollback install identity does not match this installation.");
     if (journal.status === "restored") { await this.publishReport(journal); return journal; }
     if (journal.status === "backing-up") {
-      for (const entry of journal.entries) {
-        this.assertBound(journal);
-        this.assertEntryPaths(journal, entry);
-        const target = join(journal.installRoot, entry.path);
-        if (entry.existed) {
-          try { if (await digest(target) !== entry.sha256) throw new Error(); }
-          catch { throw new Error(`Interrupted backup left ambiguous source state: ${entry.path}`); }
-        } else if (existsSync(target)) throw new Error(`Interrupted backup created unexpected artifact: ${entry.path}`);
-      }
       return this.finishRestore(journal, reason);
     }
     this.fault("before-restore");
@@ -138,6 +178,7 @@ export class UpdateRollbackTransaction {
       this.assertEntryPaths(journal, entry);
       if (await digest(join(this.backupRoot, entry.path)) !== entry.sha256) throw new Error(`Rollback backup failed integrity verification: ${entry.path}`);
     }
+    const restoreComplete = [...(journal.restoreComplete ?? [])];
     for (const entry of [...journal.entries].reverse()) {
       this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
@@ -155,10 +196,10 @@ export class UpdateRollbackTransaction {
         this.assertEntryPaths(journal, entry);
         await rm(target, { force: true });
       }
-      journal = await this.checkpointEntry(journal, "restoreComplete", entry.path);
+      if (!restoreComplete.includes(entry.path)) restoreComplete.push(entry.path);
       this.fault(`after-restore-entry:${entry.path}`);
     }
-    return this.finishRestore(journal, reason);
+    return this.finishRestore(journal, reason, restoreComplete);
   }
 
   async clearRestored(): Promise<void> { await this.clear("restored"); }
@@ -231,15 +272,6 @@ export class UpdateRollbackTransaction {
     await this.persist(next, previous);
   }
 
-  private async checkpointEntry(
-    journal: UpdateRollbackJournal, field: "backupComplete" | "restoreComplete", path: string,
-  ): Promise<UpdateRollbackJournal> {
-    if ((journal[field] ?? []).includes(path)) return journal;
-    const next = { ...journal, [field]: [...(journal[field] ?? []), path] };
-    await this.transition(journal, next);
-    return next;
-  }
-
   private async entryMatchesRestoredState(target: string, entry: UpdateRollbackEntry): Promise<boolean> {
     if (!entry.existed) return !existsSync(target);
     try { return await digest(target) === entry.sha256; } catch { return false; }
@@ -259,9 +291,11 @@ export class UpdateRollbackTransaction {
     if (await digest(destination) !== expectedHash) throw new Error("Rollback publication failed integrity verification.");
   }
 
-  private async finishRestore(journal: UpdateRollbackJournal, reason: string): Promise<UpdateRollbackJournal> {
+  private async finishRestore(
+    journal: UpdateRollbackJournal, reason: string, restoreComplete = journal.restoreComplete,
+  ): Promise<UpdateRollbackJournal> {
     const restored: UpdateRollbackJournal = {
-      ...journal, status: "restored", restoredAt: new Date().toISOString(), reason,
+      ...journal, status: "restored", restoreComplete, restoredAt: new Date().toISOString(), reason,
     };
     await this.transition(journal, restored);
     await this.publishReport(restored);

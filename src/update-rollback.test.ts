@@ -169,6 +169,12 @@ describe("update rollback transaction", () => {
 
     expect(fullValidations).toBeLessThanOrEqual(5);
     expect((await tx.read(f.install))?.backupComplete).toHaveLength(paths.length);
+
+    await tx.markApplied("b".repeat(40));
+    for (const path of paths) writeFileSync(join(f.install, path), "updated");
+    fullValidations = 0;
+    await tx.restore(f.install, "b".repeat(40), "test rollback");
+    expect(fullValidations).toBeLessThanOrEqual(5);
   });
 
   it("refuses a valid journal copied into an attacker-controlled state root", async () => {

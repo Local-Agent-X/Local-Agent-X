@@ -190,11 +190,9 @@ export class UpdateRollbackTransaction {
         const backup = join(this.backupRoot, entry.path);
         if (await digest(backup) !== entry.sha256) throw new Error(`Rollback backup failed integrity verification: ${entry.path}`);
         await mkdir(dirname(target), { recursive: true });
-        this.assertBound(journal);
         this.assertEntryPaths(journal, entry);
         await this.copyNoFollow(backup, target, entry.sha256!, journal, entry);
       } else {
-        this.assertBound(journal);
         this.assertEntryPaths(journal, entry);
         await rm(target, { force: true });
       }

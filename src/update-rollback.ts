@@ -136,13 +136,16 @@ export class UpdateRollbackTransaction {
     await mkdir(this.backupRoot, { recursive: true });
     await this.persist(journal, null);
     this.fault("after-backup-journal");
+    // The journal is immutable for this phase. Validate its complete binding
+    // once, then keep the per-entry path and digest checks below. Revalidating
+    // every journal entry for every copied file makes large source updates
+    // quadratic (12k files meant hours of CPU with no visible progress).
+    this.assertBound(journal);
     const backupComplete: string[] = [];
     for (const entry of entries) {
       if (!entry.existed) continue;
-      this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       await mkdir(dirname(join(this.backupRoot, entry.path)), { recursive: true });
-      this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       await this.copyNoFollow(join(root, entry.path), join(this.backupRoot, entry.path), entry.sha256!, journal, entry);
       backupComplete.push(entry.path);
@@ -172,15 +175,14 @@ export class UpdateRollbackTransaction {
       return this.finishRestore(journal, reason);
     }
     this.fault("before-restore");
+    this.assertBound(journal);
     for (const entry of journal.entries) {
       if (!entry.existed) continue;
-      this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       if (await digest(join(this.backupRoot, entry.path)) !== entry.sha256) throw new Error(`Rollback backup failed integrity verification: ${entry.path}`);
     }
     const restoreComplete = [...(journal.restoreComplete ?? [])];
     for (const entry of [...journal.entries].reverse()) {
-      this.assertBound(journal);
       this.assertEntryPaths(journal, entry);
       const target = join(journal.installRoot, entry.path);
       if ((journal.restoreComplete ?? []).includes(entry.path) && await this.entryMatchesRestoredState(target, entry)) continue;
@@ -282,11 +284,9 @@ export class UpdateRollbackTransaction {
   ): Promise<void> {
     const bytes = await readFile(source);
     if (createHash("sha256").update(bytes).digest("hex") !== expectedHash) throw new Error("Rollback source changed during publication.");
-    this.assertBound(journal);
     this.assertEntryPaths(journal, entry);
     const handle = await open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o600);
     try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
-    this.assertBound(journal);
     this.assertEntryPaths(journal, entry);
     if (await digest(destination) !== expectedHash) throw new Error("Rollback publication failed integrity verification.");
   }

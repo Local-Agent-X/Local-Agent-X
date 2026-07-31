@@ -1,5 +1,5 @@
 import {
-  existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ const roots: string[] = [];
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })));
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "lax-update-rollback-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-update-rollback-")));
   roots.push(root);
   const install = join(root, "install");
   const state = join(root, "state");
@@ -143,6 +143,31 @@ describe("update rollback transaction", () => {
 
     await tx.begin(f.install, "a".repeat(40), "b".repeat(40), paths);
     expect(anchorPublications).toBe(2);
+    expect((await tx.read(f.install))?.backupComplete).toHaveLength(paths.length);
+  });
+
+  it("validates a large backup journal at phase boundaries, not once per file", async () => {
+    const f = fixture();
+    const paths: string[] = [];
+    for (let index = 0; index < 128; index++) {
+      const path = join("src", `bulk-${index}.ts`);
+      writeFileSync(join(f.install, path), String(index));
+      paths.push(path);
+    }
+    const tx = new UpdateRollbackTransaction(f.state);
+    const instrumented = tx as unknown as {
+      assertBound: (journal: unknown) => void;
+    };
+    const original = instrumented.assertBound.bind(tx);
+    let fullValidations = 0;
+    instrumented.assertBound = (journal) => {
+      fullValidations++;
+      original(journal);
+    };
+
+    await tx.begin(f.install, "a".repeat(40), "b".repeat(40), paths);
+
+    expect(fullValidations).toBeLessThanOrEqual(5);
     expect((await tx.read(f.install))?.backupComplete).toHaveLength(paths.length);
   });
 

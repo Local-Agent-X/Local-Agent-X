@@ -111,6 +111,14 @@ export function staleDistDecision(opts: {
   return `${base} — the app is likely running an older desktop build`;
 }
 
+export function desktopRebuildRequired(opts: {
+  srcChanged: boolean;
+  depsWereMissing: boolean;
+  distFresh: boolean;
+}): boolean {
+  return !opts.distFresh && (opts.srcChanged || opts.depsWereMissing);
+}
+
 // sha256 of an empty buffer — sha256SrcTree returns this when the walk
 // finds zero .ts files (typically: projectRoot points at a directory that
 // doesn't contain desktop/src). Hardcoded so the comparison is obvious at

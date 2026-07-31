@@ -22,6 +22,7 @@ import {
   depsInstalled,
   foreignPmCorruption,
   staleDistDecision,
+  desktopRebuildRequired,
   readDesktopPrebuildMarker,
   clearDesktopPrebuildMarker,
   DESKTOP_PREBUILD_MARKER_PATH as MARKER_PATH_DESKTOP_SIDE,
@@ -147,6 +148,20 @@ describe("staleDistDecision — stale dist must be loud unless a rebuild will fi
       distFresh: false, rebuildPlanned: false, depsWereMissing: true, prebuildFailDetail: null,
     });
     expect(reason).toMatch(/dependencies were incomplete/);
+  });
+});
+
+describe("desktopRebuildRequired — dependency repair must not leave stale output", () => {
+  it("rebuilds stale dist after repairing missing desktop dependencies", () => {
+    expect(desktopRebuildRequired({ srcChanged: false, depsWereMissing: true, distFresh: false })).toBe(true);
+  });
+
+  it("rebuilds stale dist after a source change", () => {
+    expect(desktopRebuildRequired({ srcChanged: true, depsWereMissing: false, distFresh: false })).toBe(true);
+  });
+
+  it("does not rebuild current dist", () => {
+    expect(desktopRebuildRequired({ srcChanged: true, depsWereMissing: true, distFresh: true })).toBe(false);
   });
 });
 

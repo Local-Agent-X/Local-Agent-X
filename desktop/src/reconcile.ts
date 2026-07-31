@@ -21,7 +21,7 @@ import { existsSync, readFileSync, readdirSync, statSync, cpSync, rmSync } from 
 import { join, relative } from "path";
 import { Script } from "vm";
 import { serverDistIsFresh, desktopDistIsFresh, desktopDistMtimeFresh } from "./dist-freshness";
-import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState, depsInstalled, foreignPmCorruption, staleDistDecision, readDesktopPrebuildMarker, clearDesktopPrebuildMarker } from "./reconcile-hash";
+import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState, depsInstalled, foreignPmCorruption, staleDistDecision, desktopRebuildRequired, readDesktopPrebuildMarker, clearDesktopPrebuildMarker } from "./reconcile-hash";
 import { surfaceForeignPmRewrite } from "./reconcile-surface";
 
 // GUI-launched apps inherit a PATH that can't see the node/npm we provision
@@ -165,6 +165,34 @@ function firstUnparseableJs(distDir: string): { file: string; error: string } | 
   return null;
 }
 
+async function rebuildDesktopDist(projectRoot: string, onStatus?: (text: string) => void): Promise<void> {
+  onStatus?.("Building app updates…");
+  const distDir = join(projectRoot, "desktop", "dist");
+  const backupDir = `${distDir}.prev`;
+  const haveBackup = existsSync(distDir);
+  if (haveBackup) {
+    rmSync(backupDir, { recursive: true, force: true });
+    cpSync(distDir, backupDir, { recursive: true });
+  }
+  try {
+    await runStep("npm", ["run", "build"], join(projectRoot, "desktop"), 300_000);
+    const bad = firstUnparseableJs(distDir);
+    if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
+  } catch (e) {
+    if (haveBackup) {
+      rmSync(distDir, { recursive: true, force: true });
+      cpSync(backupDir, distDir, { recursive: true });
+    }
+    rmSync(backupDir, { recursive: true, force: true });
+    throw new Error(
+      `Desktop build failed: ${(e as Error).message}. ` +
+      `Reverted dist/ to the previous build so the app isn't bricked — the splash and Repair stay usable. ` +
+      `Fix the source (or update again) and relaunch.`,
+    );
+  }
+  rmSync(backupDir, { recursive: true, force: true });
+}
+
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
   const { projectRoot, onStatus } = opts;
   const ranSteps: string[] = [];
@@ -245,6 +273,12 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       onStatus?.("Restoring desktop components…");
       await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
     }
+    const needsDesktopBuild = desktopRebuildRequired({
+      srcChanged: false,
+      depsWereMissing: desktopDepsMissing,
+      distFresh: desktopDistFresh,
+    });
+    if (needsDesktopBuild) await rebuildDesktopDist(projectRoot, onStatus);
     saveState({
       version: 2,
       rootLock: currentRootLock,
@@ -257,12 +291,12 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     });
     const healed = rootDepsMissing || desktopDepsMissing;
     return {
-      needsRelaunch: false,
-      ranSteps: [healed ? "first-launch heal (deps were missing)" : "first-launch (recorded baseline)"],
+      needsRelaunch: needsDesktopBuild,
+      ranSteps: [healed ? "first-launch heal (deps were missing)" : "first-launch (recorded baseline)", ...(needsDesktopBuild ? ["desktop tsc build"] : [])],
       warnings: [],
       // First launch never rebuilds desktop AND just baselined the src hash, so
       // no later boot will either — a stale dist must be loud NOW or never.
-      staleDesktopDist: decideStale(false),
+      staleDesktopDist: decideStale(needsDesktopBuild),
     };
   }
 
@@ -337,38 +371,13 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // Same freshness short-circuit the server build uses above: a gated update
   // pre-builds desktop/dist (update-pipeline.ts), so the post-update boot loads
   // a current main process — skip the redundant tsc AND the relaunch it forces.
-  const needsDesktopBuild = srcChanged && !desktopDistFresh;
+  const needsDesktopBuild = desktopRebuildRequired({
+    srcChanged,
+    depsWereMissing: desktopDepsMissing,
+    distFresh: desktopDistFresh,
+  });
   if (needsDesktopBuild) {
-    onStatus?.("Building app updates…");
-    const distDir = join(projectRoot, "desktop", "dist");
-    const backupDir = `${distDir}.prev`;
-    const haveBackup = existsSync(distDir);
-    if (haveBackup) {
-      rmSync(backupDir, { recursive: true, force: true });
-      cpSync(distDir, backupDir, { recursive: true });
-    }
-    // tsc emits output even when it errors (noEmitOnError is off), so a
-    // failed build leaves a half-written / unparseable dist on disk. Treat
-    // BOTH a non-zero build exit AND unparseable emitted JS as failure, and
-    // in either case roll dist/ back to the last good build rather than
-    // relaunch into it. This is the path that bricked the app.
-    try {
-      await runStep("npm", ["run", "build"], join(projectRoot, "desktop"), 300_000);
-      const bad = firstUnparseableJs(distDir);
-      if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
-    } catch (e) {
-      if (haveBackup) {
-        rmSync(distDir, { recursive: true, force: true });
-        cpSync(backupDir, distDir, { recursive: true });
-      }
-      rmSync(backupDir, { recursive: true, force: true });
-      throw new Error(
-        `Desktop build failed: ${(e as Error).message}. ` +
-        `Reverted dist/ to the previous build so the app isn't bricked — the splash and Repair stay usable. ` +
-        `Fix the source (or update again) and relaunch.`,
-      );
-    }
-    rmSync(backupDir, { recursive: true, force: true });
+    await rebuildDesktopDist(projectRoot, onStatus);
     ranSteps.push("desktop tsc build");
   }
   // Rebuild landed or dist was already current → any pending pre-build marker is resolved.

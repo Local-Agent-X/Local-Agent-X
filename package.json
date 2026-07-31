@@ -1,6 +1,6 @@
 {
   "name": "local-agent-x",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "Self-hosted personal AI agent with voice conversation, scheduled missions, and a runtime security kernel",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Peter Manrique",

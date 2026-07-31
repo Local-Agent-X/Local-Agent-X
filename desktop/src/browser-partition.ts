@@ -14,7 +14,7 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { app, dialog, session, type DownloadItem, type Session, type WebContents, type WebPreferences } from "electron";
+import { app, session, type DownloadItem, type Session, type WebContents, type WebPreferences } from "electron";
 
 import { LAX_DIR, getLAXConfig } from "./config";
 import { contentTypeFromHeaders, noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
@@ -22,6 +22,7 @@ import { shouldAllowLocalLoopback, type ViewTrust } from "./browser-loopback-pol
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
 import { cacheGet, cacheSet, clearDecisionCache, extractUploadBody } from "./browser-partition-net";
+import { installPermissionHandlers } from "./browser-partition-permissions";
 import { registerEmbeddedChromeIdentitySession } from "./embedded-chrome-identity";
 const PARTITION_PREFIX = "persist:lax-profile-";
 export const SHARED_BROWSER_PARTITION = "persist:lax-profile-default";
@@ -189,81 +190,10 @@ export function getHardenedPartitionSession(partition: string): Session {
 	return sess;
 }
 
-// Clipboard writes are harmless and need no modal. Passive/noisy capabilities
-// are denied without interrupting the user; meaningful access (camera,
-// microphone, location, etc.) still requires an explicit human decision.
-const SILENT_SAFE_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
-const SILENT_DENIED_PERMISSIONS = new Set([
-	"sensors",
-	"notifications",
-	"idle-detection",
-	"idleDetection",
-	"midi",
-	"midiSysex",
-]);
-
-function permissionOrigin(url: string): string {
-	try { return new URL(url).origin; } catch { return "unknown-origin"; }
-}
-
 function hardenSession(sess: Session, partition: string): void {
-	// Browser-like lifetime: remember decisions for this partition until the app
-	// exits. Coalesce simultaneous requests so one page cannot queue several
-	// identical native dialogs before the first answer settles.
-	const permissionDecisions = new Map<string, boolean>();
-	const pendingPermissionCallbacks = new Map<string, Array<(granted: boolean) => void>>();
-
-	sess.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
-		if (SILENT_SAFE_PERMISSIONS.has(permission)) return true;
-		if (SILENT_DENIED_PERMISSIONS.has(permission)) return false;
-		const origin = permissionOrigin(details.requestingUrl || requestingOrigin);
-		return permissionDecisions.get(`${origin}|${permission}`) === true;
-	});
-
-	sess.setPermissionRequestHandler(
-		(wc: WebContents | null, permission: string, callback: (granted: boolean) => void, details) => {
-			if (SILENT_SAFE_PERMISSIONS.has(permission)) {
-				callback(true);
-				return;
-			}
-			if (SILENT_DENIED_PERMISSIONS.has(permission)) {
-				callback(false);
-				return;
-			}
-			const requestingUrl = details.requestingUrl || (wc && !wc.isDestroyed() ? wc.getURL() : "");
-			const origin = permissionOrigin(requestingUrl);
-			const key = `${origin}|${permission}`;
-			const remembered = permissionDecisions.get(key);
-			if (remembered !== undefined) {
-				callback(remembered);
-				return;
-			}
-			const pending = pendingPermissionCallbacks.get(key);
-			if (pending) {
-				pending.push(callback);
-				return;
-			}
-			pendingPermissionCallbacks.set(key, [callback]);
-			void dialog.showMessageBox({
-				type: "question",
-				title: "Website permission",
-				message: `${origin} wants permission to use ${permission}.`,
-				detail: "Allow only if you expect this request. The agent cannot approve it for you.",
-				buttons: ["Block", "Allow"],
-				defaultId: 0,
-				cancelId: 0,
-				noLink: true,
-			}).then(
-				(result) => result.response === 1,
-				() => false,
-			).then((granted) => {
-				permissionDecisions.set(key, granted);
-				const callbacks = pendingPermissionCallbacks.get(key) ?? [];
-				pendingPermissionCallbacks.delete(key);
-				for (const settle of callbacks) settle(granted);
-			});
-		},
-	);
+	// Human-consent layer (browser-partition-permissions.ts): silent-safe /
+	// silent-denied sets, the native prompt, and per-partition decision memory.
+	installPermissionHandlers(sess);
 
 	// Agent downloads land ONLY in quarantine, nothing auto-opens; the server
 	// owns release/approval via the done-listener seam

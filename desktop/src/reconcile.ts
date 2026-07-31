@@ -16,21 +16,14 @@
 // to start the server — running with mismatched code is the failure
 // we're trying to prevent.
 
-import { ChildProcess, execSync, spawn } from "child_process";
-import { existsSync, readFileSync, readdirSync, statSync, cpSync, rmSync } from "fs";
+import { existsSync, cpSync, rmSync } from "fs";
 import { join, relative } from "path";
-import { Script } from "vm";
 import { serverDistIsFresh, desktopDistIsFresh, desktopDistMtimeFresh } from "./dist-freshness";
 import { EMPTY_SHA256, sha256File, srcTreeHashCached, loadState, saveState, depsInstalled, foreignPmCorruption, staleDistDecision, desktopRebuildRequired, readDesktopPrebuildMarker, clearDesktopPrebuildMarker } from "./reconcile-hash";
+import { firstUnparseableJs, rebuildDesktopDist, runStep } from "./reconcile-build";
 import { surfaceForeignPmRewrite } from "./reconcile-surface";
 
-// GUI-launched apps inherit a PATH that can't see the node/npm we provision
-// (minimal launchd PATH on macOS; stale pre-install env on Windows). Without
-// the augment, our runStep() invocations of `npm` ENOENT — the splash hangs
-// with "Update failed — spawn npm ENOENT" and the user is stuck. The one
-// shared builder (server-process.ts) also discovers the Windows portable
-// node dir, whose npm.cmd is the only npm on a portable-only box.
-import { buildAugmentedPath } from "./server-process";
+export { killReconcileStepsSync } from "./reconcile-build";
 
 export interface ReconcileResult {
   /** Whether desktop/src was rebuilt. When true, caller MUST app.relaunch()
@@ -54,143 +47,6 @@ export interface ReconcileOpts {
   /** Called with short status strings ("Updating components…",
    *  "Building app…") so the caller can update the splash. */
   onStatus?: (text: string) => void;
-}
-
-// In-flight reconcile children. Quitting mid-"Building server updates…"
-// used to orphan the npm/tsc tree: it kept writing dist/ after the app
-// died, so the next launch could spawn the server against a half-rebuilt
-// dist (the 2026-06-09 stale-import crash rode in on exactly this race).
-// main.ts calls killReconcileStepsSync() on every quit path.
-const liveSteps = new Set<ChildProcess>();
-
-/** Synchronous, unconditional kill of any in-flight reconcile step.
- *  Must be sync: Electron does not await async listeners on will-quit.
- *  Safe interruption: reconcile-state is only saved after a step
- *  succeeds, so the next launch detects the unfinished work and retries;
- *  a half-written dist/ is caught by server-process distIsFresh (falls
- *  back to tsx) and reconcile's own backup/restore. */
-export function killReconcileStepsSync(): void {
-  for (const proc of liveSteps) {
-    if (!proc.pid) continue;
-    if (process.platform === "win32") {
-      try { execSync(`taskkill /PID ${proc.pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
-    } else {
-      // Negative pid kills the whole process group (npm + the tsc/node it
-      // spawned) — runStep spawns detached on POSIX so the group is ours.
-      try { process.kill(-proc.pid, "SIGKILL"); } catch {}
-    }
-  }
-  liveSteps.clear();
-}
-
-function runStep(cmd: string, args: string[], cwd: string, timeoutMs?: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(cmd, args, {
-      cwd,
-      shell: process.platform === "win32",
-      // POSIX: own process group, so killReconcileStepsSync can tree-kill
-      // via kill(-pid). Windows tree-kills with taskkill /T instead.
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PATH: buildAugmentedPath() },
-    });
-    liveSteps.add(proc);
-    let stderrTail = "";
-
-    // Hard timeout. proc.on("exit") only fires on a REAL exit; a deadlocked
-    // child (esbuild service stall, a fork-bombed tsx helper) never fires it,
-    // so without this the `await runStep(...)` never settles, runReconcile
-    // never returns, startServer is never reached, and the splash sits on
-    // "Building server updates…" forever — the exact wedge. On timeout we
-    // tree-kill (same mechanism as killReconcileStepsSync) and reject so the
-    // caller's existing degrade-to-tsx fallback runs.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = undefined; } };
-    if (timeoutMs && timeoutMs > 0) {
-      timer = setTimeout(() => {
-        timer = undefined;
-        if (proc.pid) {
-          if (process.platform === "win32") {
-            try { execSync(`taskkill /PID ${proc.pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
-          } else {
-            try { process.kill(-proc.pid, "SIGKILL"); } catch {}
-          }
-        }
-        liveSteps.delete(proc);
-        reject(new Error(`${cmd} ${args.join(" ")} (cwd=${cwd}) timed out after ${timeoutMs}ms — killed.`));
-      }, timeoutMs);
-    }
-
-    proc.stdout?.on("data", (b: Buffer) => process.stdout.write(b));
-    proc.stderr?.on("data", (b: Buffer) => {
-      stderrTail += b.toString();
-      if (stderrTail.length > 4000) stderrTail = stderrTail.slice(-4000);
-      process.stderr.write(b);
-    });
-    proc.on("error", (err) => {
-      clearTimer();
-      liveSteps.delete(proc);
-      reject(err);
-    });
-    proc.on("exit", (code) => {
-      clearTimer();
-      liveSteps.delete(proc);
-      if (code === 0) resolve();
-      else reject(new Error(`${cmd} ${args.join(" ")} (cwd=${cwd}) exited ${code}. Last stderr:\n${stderrTail.slice(-1500)}`));
-    });
-  });
-}
-
-// First emitted .js file that V8 can't even parse, or null if all parse.
-// A zero exit from `tsc` does NOT guarantee loadable output: a regex literal
-// containing a raw U+2028/U+2029 (JS line terminator) compiles "fine" but
-// throws "Invalid regular expression: missing /" the instant Node parses it,
-// which bricked the main process before any window or the splash existed.
-// new Script() runs the same V8 parser eagerly without executing the module.
-function firstUnparseableJs(distDir: string): { file: string; error: string } | null {
-  const files: string[] = [];
-  const walk = (p: string): void => {
-    for (const name of readdirSync(p)) {
-      const full = join(p, name);
-      const st = statSync(full);
-      if (st.isDirectory()) walk(full);
-      else if (name.endsWith(".js")) files.push(full);
-    }
-  };
-  if (existsSync(distDir)) walk(distDir);
-  for (const f of files) {
-    try { new Script(readFileSync(f, "utf-8"), { filename: f }); }
-    catch (e) { return { file: f, error: (e as Error).message }; }
-  }
-  return null;
-}
-
-async function rebuildDesktopDist(projectRoot: string, onStatus?: (text: string) => void): Promise<void> {
-  onStatus?.("Building app updates…");
-  const distDir = join(projectRoot, "desktop", "dist");
-  const backupDir = `${distDir}.prev`;
-  const haveBackup = existsSync(distDir);
-  if (haveBackup) {
-    rmSync(backupDir, { recursive: true, force: true });
-    cpSync(distDir, backupDir, { recursive: true });
-  }
-  try {
-    await runStep("npm", ["run", "build"], join(projectRoot, "desktop"), 300_000);
-    const bad = firstUnparseableJs(distDir);
-    if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
-  } catch (e) {
-    if (haveBackup) {
-      rmSync(distDir, { recursive: true, force: true });
-      cpSync(backupDir, distDir, { recursive: true });
-    }
-    rmSync(backupDir, { recursive: true, force: true });
-    throw new Error(
-      `Desktop build failed: ${(e as Error).message}. ` +
-      `Reverted dist/ to the previous build so the app isn't bricked — the splash and Repair stay usable. ` +
-      `Fix the source (or update again) and relaunch.`,
-    );
-  }
-  rmSync(backupDir, { recursive: true, force: true });
 }
 
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {

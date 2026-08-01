@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OTAManager, assertSha256 } from "./ota-update.js";
 import { resolveTarBinaries } from "./ota-extract.js";
+import { dependencyFileDiffers } from "./update-extracted-validation.js";
 import { createHash } from "node:crypto";
 import { CAN_CREATE_FILE_SYMLINK } from "./symlink-capabilities.test-helper.js";
 
@@ -58,6 +59,32 @@ describe("assertSha256 — rolling-channel bytes-level verify (round-8)", () => 
   it("throws on a malformed/empty published checksum (fails closed)", () => {
     expect(() => assertSha256(bytes, "not-a-hash")).toThrow(/malformed/);
     expect(() => assertSha256(bytes, "")).toThrow(/malformed/);
+  });
+});
+
+describe("dependencyFileDiffers — packaging metadata is not a dependency change", () => {
+  it("ignores only the app version fields rewritten by packaged installs", () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-deps-diff-"));
+    const installed = join(root, "installed.json");
+    const candidate = join(root, "candidate.json");
+    writeFileSync(installed, JSON.stringify({ version: "0.5.10", packages: { "": { version: "0.5.10", dependencies: { electron: "43.2.0" } }, "node_modules/electron": { version: "43.2.0" } } }));
+    writeFileSync(candidate, JSON.stringify({ version: "0.5.3", packages: { "": { version: "0.5.3", dependencies: { electron: "43.2.0" } }, "node_modules/electron": { version: "43.2.0" } } }));
+
+    expect(dependencyFileDiffers(candidate, installed)).toBe(false);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("still detects a real dependency version change", () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-deps-diff-"));
+    const installed = join(root, "installed.json");
+    const candidate = join(root, "candidate.json");
+    writeFileSync(installed, JSON.stringify({ version: "0.5.10", packages: { "": { version: "0.5.10" }, "node_modules/electron": { version: "43.2.0" } } }));
+    writeFileSync(candidate, JSON.stringify({ version: "0.5.11", packages: { "": { version: "0.5.11" }, "node_modules/electron": { version: "44.0.0" } } }));
+
+    expect(dependencyFileDiffers(candidate, installed)).toBe(true);
+
+    rmSync(root, { recursive: true, force: true });
   });
 });
 

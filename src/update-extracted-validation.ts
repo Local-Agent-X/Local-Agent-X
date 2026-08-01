@@ -36,10 +36,20 @@ export async function rmUpdatePathRetry(path: string, label: string): Promise<vo
   }
 }
 
-function fileDiffers(a: string, b: string): boolean {
-  const ra = existsSync(a) ? readFileSync(a, "utf-8") : "";
-  const rb = existsSync(b) ? readFileSync(b, "utf-8") : "";
-  return ra !== rb;
+function dependencyFileContents(path: string): string {
+  const raw = existsSync(path) ? readFileSync(path, "utf-8") : "";
+  try {
+    const manifest = JSON.parse(raw) as { version?: string; packages?: Record<string, { version?: string }> };
+    delete manifest.version;
+    if (manifest.packages?.[""]) delete manifest.packages[""].version;
+    return JSON.stringify(manifest);
+  } catch {
+    return raw;
+  }
+}
+
+export function dependencyFileDiffers(a: string, b: string): boolean {
+  return dependencyFileContents(a) !== dependencyFileContents(b);
 }
 
 /**
@@ -51,11 +61,11 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
   let probeProc: ChildProcess | null = null;
   let probeDataDir: string | null = null;
   const depsChanged =
-    fileDiffers(join(extractDir, "package.json"), join(installDir, "package.json")) ||
-    fileDiffers(join(extractDir, "package-lock.json"), join(installDir, "package-lock.json"));
+    dependencyFileDiffers(join(extractDir, "package.json"), join(installDir, "package.json")) ||
+    dependencyFileDiffers(join(extractDir, "package-lock.json"), join(installDir, "package-lock.json"));
   const desktopDepsChanged =
-    fileDiffers(join(extractDir, "desktop", "package.json"), join(installDir, "desktop", "package.json")) ||
-    fileDiffers(join(extractDir, "desktop", "package-lock.json"), join(installDir, "desktop", "package-lock.json"));
+    dependencyFileDiffers(join(extractDir, "desktop", "package.json"), join(installDir, "desktop", "package.json")) ||
+    dependencyFileDiffers(join(extractDir, "desktop", "package-lock.json"), join(installDir, "desktop", "package-lock.json"));
 
   try {
     let deps: GateResult;

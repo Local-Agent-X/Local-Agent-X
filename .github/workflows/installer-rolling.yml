@@ -49,6 +49,7 @@ on:
       - "scripts/install-common.mjs"
       - "scripts/installer/**"
       - "scripts/build-mac-installer.sh"
+      - "scripts/package-signed-mac-update.mjs"
       - "scripts/fetch-electron-bundle.mjs"
       - "desktop/package.json"
       - "desktop/package-lock.json"
@@ -328,6 +329,26 @@ jobs:
           npm ci
           npm run build
           npx electron-builder --mac dmg zip --arm64 --publish never
+
+      - name: Repack macOS update ZIP after signing is finalized
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./desktop/package.json').version")
+          APPS=()
+          while IFS= read -r -d '' app; do
+            APPS+=("$app")
+          done < <(find desktop/release -maxdepth 3 -type d -name 'Local Agent X.app' -print0)
+          if [ "${#APPS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one finalized Local Agent X.app, found ${#APPS[@]}"
+            exit 1
+          fi
+          node scripts/package-signed-mac-update.mjs \
+            --app="${APPS[0]}" \
+            --zip="desktop/release/Local-Agent-X-Desktop-${VERSION}-mac-arm64.zip" \
+            --blockmap="desktop/release/Local-Agent-X-Desktop-${VERSION}-mac-arm64.zip.blockmap" \
+            --metadata="desktop/release/latest-mac.yml" \
+            --app-builder="desktop/node_modules/app-builder-bin/mac/app-builder_arm64" \
+            --version="$VERSION"
 
       - name: Verify signed and notarized macOS desktop package before publishing metadata
         run: |

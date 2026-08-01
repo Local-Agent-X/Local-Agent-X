@@ -35,6 +35,7 @@ describe("rolling installer freshness contract", () => {
       "scripts/install-common.mjs",
       "scripts/installer/**",
       "scripts/build-mac-installer.sh",
+      "scripts/package-signed-mac-update.mjs",
       "scripts/fetch-electron-bundle.mjs",
       "desktop/package.json",
       "desktop/package-lock.json",
@@ -320,6 +321,7 @@ describe("signed native desktop rolling release contract", () => {
 
   it("fails closed unless the macOS app is Developer ID signed and notarized", () => {
     const build = mac.indexOf("electron-builder --mac dmg zip --arm64 --publish never");
+    const repack = mac.indexOf("Repack macOS update ZIP after signing is finalized");
     const verify = mac.indexOf("Verify signed and notarized macOS desktop package before publishing metadata");
     const upload = mac.indexOf("uses: actions/upload-artifact@");
 
@@ -330,13 +332,32 @@ describe("signed native desktop rolling release contract", () => {
     expect(mac).toContain('export APPLE_API_KEY="$API_KEY_PATH"');
     expect(mac).toContain("APPLE_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}");
     expect(mac).toContain("APPLE_API_ISSUER: ${{ secrets.MACOS_API_ISSUER_ID }}");
+    expect(repack).toBeGreaterThan(build);
+    expect(verify).toBeGreaterThan(repack);
     expect(verify).toBeGreaterThan(build);
     expect(upload).toBeGreaterThan(verify);
     expect(mac).toContain("codesign --verify --deep --strict");
     expect(mac).toContain('if [ "$GOT" != "$MAC_EXPECTED_TEAM_ID" ]');
     expect(mac).toContain('xcrun stapler validate "$APP"');
     expect(mac).toContain('spctl --assess --type execute --verbose=2 "$APP"');
+    expect(mac).toContain("scripts/package-signed-mac-update.mjs");
     expect(mac).not.toContain("CSC_IDENTITY_AUTO_DISCOVERY=false");
+  });
+
+  it("rebuilds the macOS update archive only from the finalized app and verifies the extracted ZIP", () => {
+    const script = readFileSync(resolve("scripts/package-signed-mac-update.mjs"), "utf8");
+    const verifyFinalApp = script.indexOf('run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath])');
+    const createZip = script.indexOf('run("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, zipPath])');
+    const extractZip = script.indexOf('run("ditto", ["-x", "-k", zipPath, verifyRoot])');
+    const verifyExtractedApp = script.indexOf('run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", extractedApp])');
+    const writeMetadata = script.indexOf("writeFileSync(metadataPath");
+
+    expect(verifyFinalApp).toBeGreaterThanOrEqual(0);
+    expect(createZip).toBeGreaterThan(verifyFinalApp);
+    expect(extractZip).toBeGreaterThan(createZip);
+    expect(verifyExtractedApp).toBeGreaterThan(extractZip);
+    expect(writeMetadata).toBeGreaterThan(verifyExtractedApp);
+    expect(script).toContain('run(appBuilderPath, ["blockmap"');
   });
 
   it("publishes one fixed update feed only after both signed platform jobs succeed", () => {

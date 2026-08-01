@@ -35,13 +35,25 @@ export class UpdateRollbackTransaction {
     const installRoot = expectedInstallRoot ? resolve(expectedInstallRoot) : claimedRoot;
     if (!installRoot) {
       if (!journalPresent) return null;
-      throw this.ambiguous();
+      // Present but structurally-invalid journal with no resolvable install root
+      // (e.g. a pre-schema journal whose version was never bumped when
+      // installBase/stateBase/manifestCommitment were added) and no anchor to
+      // check against — an orphaned/legacy artifact, not a provenance conflict.
+      // Discard it so updates can proceed instead of wedging forever.
+      return await this.discardOrphanedJournal("invalid journal, no install root");
     }
     const anchorPath = join(installRoot, UPDATE_ROLLBACK_ANCHOR);
     let anchor: unknown;
     try { anchor = parseJson(anchorPath); }
     catch (error) {
-      if (!journalPresent && !existsSync(anchorPath)) return null;
+      if (!existsSync(anchorPath)) {
+        if (!journalPresent) return null;
+        // A present journal that does not structurally validate, with no anchor to
+        // witness a real transaction, is an orphaned/legacy artifact — discard it
+        // rather than hard-error. A VALID journal with a missing anchor is genuinely
+        // ambiguous and still refuses below.
+        if (!validJournal(raw)) return await this.discardOrphanedJournal("invalid journal, no anchor");
+      }
       throw this.ambiguous(error);
     }
     if (!validAnchor(anchor)) throw this.ambiguous();
@@ -330,5 +342,26 @@ export class UpdateRollbackTransaction {
 
   private ambiguous(cause?: unknown): Error {
     return new Error("Update rollback journal has ambiguous provenance; refusing to mutate the installation.", { cause });
+  }
+
+  /**
+   * Discard an orphaned/legacy rollback transaction that cannot be structurally
+   * validated and has no anchor witnessing a real, in-flight update. Such a
+   * journal carries no trustworthy entries to act on, so there is nothing to
+   * preserve — and refusing it (the previous behavior) permanently wedges every
+   * future update on the box. Removing it is strictly safer: only the
+   * state-root-scoped rollback directory is touched, path-guarded so a crafted
+   * journal can never redirect the delete. If the cleanup itself fails, fall back
+   * to the conservative refusal rather than claim a clean state.
+   */
+  private async discardOrphanedJournal(reason: string): Promise<null> {
+    try {
+      this.assertRawPath(this.stateRoot, "update-rollback", "cleanup");
+      await rm(this.directory, { recursive: true, force: true });
+    } catch (error) {
+      throw this.ambiguous(error);
+    }
+    console.warn(`[update-rollback] discarded orphaned rollback journal (${reason}); a fresh update can now proceed`);
+    return null;
   }
 }

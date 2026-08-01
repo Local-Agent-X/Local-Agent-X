@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { UpdateRollbackTransaction } from "./update-rollback.js";
+import { UPDATE_ROLLBACK_ANCHOR } from "./update-rollback-state.js";
 import { CAN_CREATE_DIRECTORY_LINK } from "./symlink-capabilities.test-helper.js";
 
 const roots: string[] = [];
@@ -36,6 +37,41 @@ describe("update rollback transaction", () => {
     });
   });
 
+  it("discards an orphaned legacy journal instead of wedging every future update", async () => {
+    // The 2026-07 defect: installBase/stateBase/stateRoot/manifestCommitment were
+    // added to the journal schema WITHOUT bumping UPDATE_ROLLBACK_VERSION, so a
+    // pre-schema journal still claims version 1, parses as JSON, but fails
+    // validJournal — and read() used to throw "ambiguous provenance", which
+    // begin() hits first, wedging updates forever. This is that exact shape.
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    mkdirSync(join(f.state, "update-rollback"), { recursive: true });
+    writeFileSync(join(f.state, "update-rollback", "transaction.json"), JSON.stringify({
+      version: 1, id: "legacy", status: "active", installRoot: f.install,
+      previousVersion: "a".repeat(40), targetVersion: "b".repeat(40),
+      entries: [], startedAt: new Date("2026-07-20T00:00:00Z").toISOString(),
+    }));
+    // No anchor exists → the journal is orphaned. read() must self-heal (discard +
+    // report no pending transaction), never throw, on BOTH call shapes.
+    await expect(tx.read(f.install)).resolves.toBeNull();
+    expect(existsSync(join(f.state, "update-rollback"))).toBe(false);
+    await expect(tx.read()).resolves.toBeNull();
+    // And a fresh transaction can now open on the same box.
+    await tx.begin(f.install, "a".repeat(40), "b".repeat(40), [join("src", "app.ts")]);
+    expect(existsSync(join(f.state, "update-rollback", "transaction.json"))).toBe(true);
+  });
+
+  it("still refuses a VALID journal whose anchor is missing (genuinely ambiguous)", async () => {
+    // The discard path must NOT swallow a real transaction: a structurally valid
+    // journal with no anchor witness is genuinely ambiguous and must still refuse.
+    const f = fixture();
+    const tx = new UpdateRollbackTransaction(f.state);
+    await tx.begin(f.install, "a".repeat(40), "b".repeat(40), [join("src", "app.ts")]);
+    rmSync(join(f.install, UPDATE_ROLLBACK_ANCHOR), { force: true });
+    await expect(tx.read(f.install)).rejects.toThrow(/ambiguous provenance/);
+    expect(existsSync(join(f.state, "update-rollback", "transaction.json"))).toBe(true);
+  });
+
   it("refuses target selection drift without changing files", async () => {
     const f = fixture();
     const tx = new UpdateRollbackTransaction(f.state);
@@ -56,13 +92,21 @@ describe("update rollback transaction", () => {
     expect(readFileSync(join(f.install, path), "utf-8")).toBe("new");
   });
 
-  it("fails closed on corrupt journal provenance", async () => {
+  it("discards a corrupt ORPHANED journal without ever acting on its entries", async () => {
+    // A corrupt/legacy journal (fails validJournal) with NO anchor is orphaned:
+    // there is no real transaction to preserve, so read() discards it and reports
+    // no pending work rather than wedging every future update. It must NEVER act
+    // on the journal's entries — the `..\escape` traversal below is the teeth: it
+    // must never be followed. (Discard only ever removes the guarded state-root
+    // rollback dir; the entries are not read at all.)
     const f = fixture();
     const tx = new UpdateRollbackTransaction(f.state);
     mkdirSync(tx.directory, { recursive: true });
     writeFileSync(tx.journalPath, JSON.stringify({ version: 1, status: "active", installRoot: f.install,
       previousVersion: "a", targetVersion: "b", entries: [{ path: "..\\escape", existed: false, sha256: null }] }));
-    await expect(tx.read()).rejects.toThrow(/ambiguous provenance/);
+    await expect(tx.read()).resolves.toBeNull();
+    expect(existsSync(tx.directory)).toBe(false);
+    expect(existsSync(join(f.root, "escape"))).toBe(false); // traversal never followed
   });
 
   it("preserves a verified update across cleanup interruption", async () => {

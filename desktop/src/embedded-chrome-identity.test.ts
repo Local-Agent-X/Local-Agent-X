@@ -6,6 +6,7 @@ import {
 	ensureEmbeddedChromeIdentity,
 	prepareEmbeddedChromeIdentityForNavigation,
 	registerEmbeddedChromeIdentitySession,
+	stableNativeBrowserUserAgent,
 } from "./embedded-chrome-identity";
 
 describe("embedded Chrome identity", () => {
@@ -125,18 +126,35 @@ describe("embedded Chrome identity", () => {
 // half. That is the worst combination: the UA claims plain Chrome while
 // Sec-CH-UA still reports bare Chromium, Cloudflare cross-checks the two, and
 // the in-app browser loops on the challenge forever. Measured by bisect: the
-// native Electron UA passes; a UA override alone is refused. Disabled must mean
-// the identity is untouched — every part of it.
+// native Chromium/Electron identity passes; a Chrome-only UA override is
+// refused. Production only removes Electron's release-specific app token; it
+// never claims Google Chrome or attaches the debugger to rewrite client hints.
 describe("embedded Chrome identity — disabled (the production default)", () => {
-	it("does not touch the session user agent and installs no hook", () => {
+	it("removes only the release-specific app token and installs no debugger hook", () => {
 		_setEmbeddedChromeIdentityOverrideForTest(false);
-		const browserSession = { setUserAgent: vi.fn() } as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[1];
+		const browserSession = {
+			getUserAgent: vi.fn(() => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) LocalAgentX/0.5.10 Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36"),
+			setUserAgent: vi.fn(),
+		} as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[1];
 		const app = { on: vi.fn() } as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[0];
 
 		registerEmbeddedChromeIdentitySession(app, browserSession);
 
-		expect(browserSession.setUserAgent).not.toHaveBeenCalled();
+		expect(browserSession.setUserAgent).toHaveBeenCalledWith(
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36",
+		);
 		expect(app.on).not.toHaveBeenCalled();
+	});
+
+	it("leaves an already-stable native Chromium/Electron UA unchanged", () => {
+		const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36";
+		expect(stableNativeBrowserUserAgent(ua)).toBe(ua);
+	});
+
+	it("does not strip unrelated version tokens outside Electron's app-token position", () => {
+		const ua = "Mozilla/5.0 Version/18.0 AppleWebKit/537.36 (KHTML, like Gecko) LocalAgentX/0.5.10 Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36";
+		expect(stableNativeBrowserUserAgent(ua)).toContain("Version/18.0");
+		expect(stableNativeBrowserUserAgent(ua)).not.toContain("LocalAgentX/0.5.10");
 	});
 
 	it("leaves a web contents alone when one is created", async () => {

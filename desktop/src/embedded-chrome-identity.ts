@@ -29,6 +29,20 @@ let registrarInstalled = false;
 let identityOverrideEnabled = false;
 const NAVIGATION_IDENTITY_DEADLINE_MS = 1_500;
 
+/**
+ * Electron inserts the packaged application's product token immediately before
+ * Chrome's token in its otherwise-native user agent. That makes the same
+ * Chromium runtime present a different browser identity after every app rename
+ * or version bump. Cloudflare binds its clearance to that exact identity: a
+ * fresh Electron 43.2 session with `LocalAgentX/0.5.10` loops, while the same
+ * runtime with the app token removed clears verification. Preserve Chromium's
+ * real Chrome/Electron tokens and client hints; remove only the app-specific
+ * token so browser identity stays stable across Local Agent X releases.
+ */
+export function stableNativeBrowserUserAgent(userAgent: string): string {
+	return userAgent.replace(/\s+[A-Za-z][A-Za-z0-9._-]*\/[^\s]+(?=\s+Chrome\/)/, "");
+}
+
 function windowsPlatformVersion(osRelease: string): string {
 	const build = Number(osRelease.split(".")[2] ?? 0);
 	if (build >= 26100) return "19.0.0";
@@ -169,8 +183,15 @@ export function registerEmbeddedChromeIdentitySession(app: App, browserSession: 
 	// Measured 2026-07-30 by bisect: native Electron UA PASSES the Cloudflare
 	// challenge and login; UA-override-alone is REFUSED ("There was a problem
 	// with verification"), with or without matching client hints. So disabled
-	// means disabled — no UA touch, no hints, native Electron identity.
-	if (!identityOverrideEnabled) return;
+	// means disabled — no Chrome impersonation and no client-hint override. The
+	// one normalization below removes only Electron's release-specific app token;
+	// the real Chrome/Electron versions and native client hints stay untouched.
+	if (!identityOverrideEnabled) {
+		const nativeUserAgent = browserSession.getUserAgent();
+		const stableUserAgent = stableNativeBrowserUserAgent(nativeUserAgent);
+		if (stableUserAgent !== nativeUserAgent) browserSession.setUserAgent(stableUserAgent);
+		return;
+	}
 	const identity = buildEmbeddedChromeIdentity(process.versions.chrome);
 	browserSession.setUserAgent(identity.userAgent, identity.acceptLanguage);
 	identitySessions.add(browserSession);

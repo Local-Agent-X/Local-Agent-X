@@ -19,6 +19,7 @@ import { app } from "electron";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { healWedgedRollbackJournal } from "./rollback-journal-heal.js";
 
 // Pin the userData folder name BEFORE Electron resolves app.getPath('userData').
 // Without this, Electron falls back to package.json's `name` field — which
@@ -33,6 +34,19 @@ import { homedir } from "os";
 // session, etc.). The loader runs ahead of any of that, so this is the
 // right place — earlier than even main.ts.
 app.setName("Local Agent X");
+
+// Self-heal a wedged/legacy update-rollback journal before delegating to the
+// (possibly stale) on-disk payload. The loader is the one component the native
+// installer refreshes and it runs first, so this is the only place that can
+// un-stick a box whose OTA is wedged by a pre-schema journal — the payload fix
+// can't deliver itself through the wedged OTA. Never throws; no-op when clean.
+try {
+  if (healWedgedRollbackJournal(join(homedir(), ".lax"))) {
+    console.warn("[loader] discarded a wedged/legacy update-rollback journal; OTA updates can now proceed");
+  }
+} catch (e) {
+  console.error(`[loader] rollback self-heal skipped: ${(e as Error).message}`);
+}
 
 function resolveDiskMain(): string | null {
   // config.json's projectRoot is the source-of-truth for where the user's

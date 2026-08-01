@@ -50,6 +50,12 @@ jobs:
         with:
           node-version: '22'
 
+      # Desktop's tsconfig intentionally type-checks its colocated tests. Those
+      # tests import Vitest from the root development tree, so both dependency
+      # scopes must exist for this to match local/updater compilation.
+      - name: Install root build dependencies
+        run: npm ci --ignore-scripts
+
       - name: Compile desktop payload
         working-directory: desktop
         run: |

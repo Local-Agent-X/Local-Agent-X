@@ -85,9 +85,11 @@ describe("rolling-source publish ⟷ verify contract", () => {
 
   it("the publisher compiles desktop before requiring it in the update asset", () => {
     const workflow = readFileSync(resolve(".github/workflows/rolling-source.yml"), "utf-8");
+    const installRoot = workflow.indexOf("Install root build dependencies");
     const compile = workflow.indexOf("npx tsc --noEmitOnError");
     const packageAsset = workflow.indexOf("--require-desktop-dist");
-    expect(compile).toBeGreaterThan(-1);
+    expect(installRoot).toBeGreaterThan(-1);
+    expect(compile).toBeGreaterThan(installRoot);
     expect(packageAsset).toBeGreaterThan(compile);
   });
 });

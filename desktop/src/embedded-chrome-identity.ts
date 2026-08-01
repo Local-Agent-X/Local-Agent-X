@@ -27,6 +27,9 @@ let registrarInstalled = false;
 // bot protection rejects a CDP-overridden identity. Electron's native
 // Chromium identity is preferable to a partially spoofed Chrome fingerprint.
 let identityOverrideEnabled = false;
+// app.userAgentFallback is stabilized exactly once (it is process-global). See
+// the call site in registerEmbeddedChromeIdentitySession for why.
+let appFallbackStabilized = false;
 const NAVIGATION_IDENTITY_DEADLINE_MS = 1_500;
 
 /**
@@ -140,9 +143,12 @@ export function ensureEmbeddedChromeIdentity(contents: WebContents): Promise<voi
 	return ready;
 }
 
-/** Test seam for exercising the override without enabling it in production. */
+/** Test seam for exercising the override without enabling it in production.
+ *  Also clears the once-only app.userAgentFallback guard so each test that
+ *  toggles the override starts from a clean identity state. */
 export function _setEmbeddedChromeIdentityOverrideForTest(enabled: boolean): void {
 	identityOverrideEnabled = enabled;
+	appFallbackStabilized = false;
 }
 
 /**
@@ -190,6 +196,23 @@ export function registerEmbeddedChromeIdentitySession(app: App, browserSession: 
 		const nativeUserAgent = browserSession.getUserAgent();
 		const stableUserAgent = stableNativeBrowserUserAgent(nativeUserAgent);
 		if (stableUserAgent !== nativeUserAgent) browserSession.setUserAgent(stableUserAgent);
+		// session.setUserAgent covers document navigations, but a whole class of
+		// requests falls back to app.userAgentFallback instead — favicons,
+		// service-worker fetches, and subresource/beacon requests the challenge
+		// widget issues. Those kept Electron's native `<App>/<ver>` app token while
+		// the main frame reported plain Chrome, so within ONE session Cloudflare saw
+		// the identity flip mid-challenge (Chrome/… → LocalAgentX/…), revoked the
+		// clearance it had just issued, and looped the human-verification forever
+		// (measured 2026-08-01: 10 dashboard asset requests leaked the app token on a
+		// session whose main frame did not). Strip the SAME app token app-wide so
+		// every request class presents one identity. The strip keeps the Electron/…
+		// token, so the renderer's /Electron/i runtime detection is unaffected — the
+		// exact reason 197d1837 avoided app.userAgentFallback no longer applies.
+		if (!appFallbackStabilized && typeof app.userAgentFallback === "string" && app.userAgentFallback) {
+			appFallbackStabilized = true;
+			const stableFallback = stableNativeBrowserUserAgent(app.userAgentFallback);
+			if (stableFallback !== app.userAgentFallback) app.userAgentFallback = stableFallback;
+		}
 		return;
 	}
 	const identity = buildEmbeddedChromeIdentity(process.versions.chrome);

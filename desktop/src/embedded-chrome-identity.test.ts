@@ -136,13 +136,25 @@ describe("embedded Chrome identity — disabled (the production default)", () =>
 			getUserAgent: vi.fn(() => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) LocalAgentX/0.5.10 Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36"),
 			setUserAgent: vi.fn(),
 		} as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[1];
-		const app = { on: vi.fn() } as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[0];
+		const app = {
+			on: vi.fn(),
+			userAgentFallback:
+				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) LocalAgentX/0.5.10 Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36",
+		} as unknown as Parameters<typeof registerEmbeddedChromeIdentitySession>[0];
 
 		registerEmbeddedChromeIdentitySession(app, browserSession);
 
 		expect(browserSession.setUserAgent).toHaveBeenCalledWith(
 			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36",
 		);
+		// The app-wide fallback that favicons / service-worker / challenge-widget
+		// requests use must be stripped to the SAME identity — otherwise those
+		// requests leak the app token and Cloudflare loops (2026-08-01). The
+		// Electron/ token stays so /Electron/i runtime detection is unaffected.
+		expect(app.userAgentFallback).toBe(
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.7339.2 Electron/43.2.0 Safari/537.36",
+		);
+		expect(app.userAgentFallback).not.toContain("LocalAgentX");
 		expect(app.on).not.toHaveBeenCalled();
 	});
 

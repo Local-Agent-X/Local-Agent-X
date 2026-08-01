@@ -105,7 +105,7 @@ vi.mock("../desktop/src/browser-views", () => ({
 }));
 // server-bridge-browser + the REAL browser-views pull these in; keep them inert.
 vi.mock("../desktop/src/browser-partition", () => ({
-  SHARED_BROWSER_PARTITION: "persist:lax-profile-default",
+  SHARED_BROWSER_PARTITION: "persist:lax-profile-v2",
   getHardenedPartitionSession: () => ({ clearStorageData: async () => {} }),
   hardenWebContents: () => {},
   viewWebPreferences: () => ({}),
@@ -819,7 +819,7 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     };
     const [mintedId, opts] = h.createCalls.at(-1)! as [string, { partition: string; agentDriven: boolean }];
     expect(mintedId).toMatch(/^user-\d+$/);
-    expect(opts).toEqual({ partition: "persist:lax-profile-default", agentDriven: false });
+    expect(opts).toEqual({ partition: "persist:lax-profile-v2", agentDriven: false });
     expect(state.viewId).toBe(mintedId);
     expect(state.url).toBe("about:blank");
     expect(currentNavViewId()).toBe(mintedId);
@@ -834,7 +834,7 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
       viewId: string; url: string;
     };
     const [, opts] = h.createCalls.at(-1)! as [string, { partition: string }];
-    expect(opts.partition).toBe("persist:lax-profile-default");
+    expect(opts.partition).toBe("persist:lax-profile-v2");
     expect(state.url).toBe("https://example.com/");
     expect(h.showCalls).toBe(0);
   });
@@ -1035,7 +1035,7 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
     await flush();
     expect(h.createCalls).toContainEqual([
       "view-chat-1-shared",
-      { partition: "persist:lax-profile-default", bounds: undefined, agentDriven: true },
+      { partition: "persist:lax-profile-v2", bounds: undefined, agentDriven: true },
     ]);
     expect(proc.send).toHaveBeenCalledWith(
       expect.objectContaining({ type: "lax:browser-lifecycle-result", id: 2, ok: true }),

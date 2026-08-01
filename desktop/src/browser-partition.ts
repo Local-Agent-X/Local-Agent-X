@@ -25,7 +25,11 @@ import { cacheGet, cacheSet, clearDecisionCache, extractUploadBody } from "./bro
 import { installPermissionHandlers } from "./browser-partition-permissions";
 import { registerEmbeddedChromeIdentitySession } from "./embedded-chrome-identity";
 const PARTITION_PREFIX = "persist:lax-profile-";
-export const SHARED_BROWSER_PARTITION = "persist:lax-profile-default";
+// Deliberately versioned. The original default profile was created while the
+// embedded browser identity changed across releases, leaving Chromium challenge
+// state that survives normal cookie/cache clearing. Bump this only for an
+// intentional, one-time browser-profile migration.
+export const SHARED_BROWSER_PARTITION = "persist:lax-profile-v2";
 
 // ── App-wide network hardening (must run before app.ready) ─────────
 // Electron only offers APP-WIDE switches for QUIC and DNS-over-HTTPS —

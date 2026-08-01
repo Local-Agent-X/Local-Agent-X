@@ -106,6 +106,19 @@ describe("unlinkSharedJunctions — drops the link without traversing into the i
     rmSync(sandbox, { recursive: true, force: true });
     expect(existsSync(marker)).toBe(true);
   });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("also drops the desktop dependency link used by rolling desktop builds", () => {
+    const desktopInstallNm = join(root, "install", "desktop", "node_modules");
+    const desktopMarker = join(desktopInstallNm, "electron", "package.json");
+    mkdirSync(join(desktopInstallNm, "electron"), { recursive: true });
+    writeFileSync(desktopMarker, "{}");
+    mkdirSync(join(sandbox, "desktop"), { recursive: true });
+    symlinkSync(desktopInstallNm, join(sandbox, "desktop", "node_modules"), DIRECTORY_LINK_TYPE);
+
+    expect(unlinkSharedJunctions(sandbox)).toEqual([]);
+    expect(existsSync(join(sandbox, "desktop", "node_modules"))).toBe(false);
+    expect(existsSync(desktopMarker)).toBe(true);
+  });
 });
 
 describe("isDeferrableFileLock — defer vs revert decision", () => {

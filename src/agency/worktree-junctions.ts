@@ -97,11 +97,12 @@ export function escapesSandbox(nmPath: string, sandboxRoot: string): boolean {
   return target !== root && !target.startsWith(root + sep);
 }
 
-/** The shallow node_modules locations a worktree junction can live at: the
- *  worktree root and one level under packages/. Junctions are always created
- *  shallow, so this is the full set without walking the tree. */
+/** The shallow node_modules locations a worktree/update junction can live at:
+ *  the root, desktop/, and one level under packages/. Junctions are always
+ *  created at these known locations, so this is the full set without walking
+ *  the tree. */
 function shallowNodeModules(wtPath: string): string[] {
-  const out = [join(wtPath, "node_modules")];
+  const out = [join(wtPath, "node_modules"), join(wtPath, "desktop", "node_modules")];
   const pkgsDir = join(wtPath, "packages");
   if (existsSync(pkgsDir)) {
     for (const pkg of readdirSync(pkgsDir)) out.push(join(pkgsDir, pkg, "node_modules"));
@@ -122,9 +123,9 @@ export function unlinkSharedJunctions(wtPath: string): string[] {
 
 /**
  * Find every junction/symlink at the shallow locations where a worktree
- * junction could live: the worktree's direct children and one level under
- * packages/. Junctions are always created shallow (node_modules, packages/<pkg>/
- * node_modules, and any future one like dist), so this catches them all without
+ * junction could live: the worktree's direct children, desktop/, and one level
+ * under packages/. Junctions are always created shallow (node_modules,
+ * desktop/node_modules, packages/<pkg>/node_modules, and any future one like dist), so this catches them all without
  * walking the entire source tree. Used by the boot sweep so a raw recursive
  * delete can never traverse a reparse point this helper missed.
  */
@@ -139,6 +140,7 @@ function scanReparsePoints(wtPath: string): string[] {
     }
   };
   scanDir(wtPath);
+  scanDir(join(wtPath, "desktop"));
   const pkgsDir = join(wtPath, "packages");
   if (existsSync(pkgsDir)) {
     try { for (const pkg of readdirSync(pkgsDir)) scanDir(join(pkgsDir, pkg)); } catch { /* skip */ }

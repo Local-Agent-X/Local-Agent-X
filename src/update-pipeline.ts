@@ -21,15 +21,13 @@
  */
 
 import { execSync, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
   getBranchHead, runRepoBuildAsync, runDesktopTscBuildAsync,
 } from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
-import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
-import { gateDeps, gateBuild, gateBuildAtAsync, gateBind, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
+import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restoreUpdateLanding, type PreparedUpdateLanding } from "./update-git-rollback.js";
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
@@ -37,31 +35,16 @@ import { getSetting } from "./settings.js";
 import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
 import { gitSafeCmd } from "./git-safety.js";
 import { createLogger } from "./logger.js";
+import { rmUpdatePathRetry, validateExtractedUpdate } from "./update-extracted-validation.js";
+
+export { validateExtractedUpdate } from "./update-extracted-validation.js";
+export type { ExtractValidation } from "./update-extracted-validation.js";
 
 const logger = createLogger("update-pipeline");
 const GIT_TIMEOUT_MS = 60_000;
 const UPDATE_BUSY =
   "Another update or self_edit is currently running on this machine. " +
   "Updates are applied one at a time — wait for it to finish, then try again.";
-
-/**
- * Best-effort recursive delete with backoff. On Windows a just-killed probe's
- * file handles linger for a second or two, so an immediate rm throws EBUSY —
- * and a cleanup failure must never decide the update's outcome. Retries, then
- * logs and gives up; leftover dirs under the updates dir are inert.
- */
-async function rmRetry(path: string, label: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try { rmSync(path, { recursive: true, force: true }); return; }
-    catch (e) {
-      if (attempt >= 5) {
-        logger.warn(`[update] could not remove ${label} at ${path}: ${(e as Error).message}`);
-        return;
-      }
-      await new Promise(resolve => setTimeout(resolve, 600));
-    }
-  }
-}
 
 export interface UpdateGates { deps: GateResult; build: GateResult; bind: GateResult; smoke: GateResult }
 
@@ -274,7 +257,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     return { ok: false, fromCommit: "", toCommit: "", detail: `Update pipeline crashed: ${(e as Error).message}` };
   } finally {
     await killProbe(probeProc);
-    if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
+    if (probeDataDir) await rmUpdatePathRetry(probeDataDir, "probe data dir");
     await releaseGlobalSelfEditLock(lock.nonce);
   }
 }
@@ -295,12 +278,18 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
       return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Already up to date." };
     }
     const tarPath = await ota.downloadMainTarball(commit);
+    let desktopDepsChanged = false;
     const { depsChanged } = await ota.applyUpdate(
       tarPath, installDir, installed || "rolling", commit,
-      (extractDir) => validateExtractedUpdate(extractDir, installDir, authToken),
+      async (extractDir) => {
+        const verdict = await validateExtractedUpdate(extractDir, installDir, authToken);
+        desktopDepsChanged = verdict.desktopDepsChanged;
+        return verdict;
+      },
     );
     try {
       if (depsChanged) syncLiveDeps(installDir);
+      if (desktopDepsChanged) syncLiveDeps(join(installDir, "desktop"));
       await ota.writeInstalledCommit(commit);
       await ota.confirmUpdate(commit);
     } catch (error) {
@@ -313,88 +302,5 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     return { ok: false, fromCommit: "", toCommit: "", detail: (e as Error).message };
   } finally {
     await releaseGlobalSelfEditLock(lock.nonce);
-  }
-}
-
-// ── Tarball (OTA) validation ───────────────────────────────────────────────
-
-export interface ExtractValidation { ok: boolean; detail: string; depsChanged: boolean; gates: UpdateGates }
-
-function fileDiffers(a: string, b: string): boolean {
-  const ra = existsSync(a) ? readFileSync(a, "utf-8") : "";
-  const rb = existsSync(b) ? readFileSync(b, "utf-8") : "";
-  return ra !== rb;
-}
-
-/**
- * Gate an extracted update tree before OTAManager copies it over the install.
- * Deps come from the live install via junction when manifests are unchanged,
- * or a real isolated `npm ci` when they changed. node_modules (junction or
- * real) is ALWAYS removed before returning so the subsequent overlap-backup +
- * copy never walks dependency trees.
- */
-export async function validateExtractedUpdate(extractDir: string, installDir: string, authToken: string): Promise<ExtractValidation> {
-  let probeProc: ChildProcess | null = null;
-  let probeDataDir: string | null = null;
-  const depsChanged =
-    fileDiffers(join(extractDir, "package.json"), join(installDir, "package.json")) ||
-    fileDiffers(join(extractDir, "package-lock.json"), join(installDir, "package-lock.json"));
-
-  try {
-    let deps: GateResult;
-    if (depsChanged) {
-      const start = Date.now();
-      try {
-        execSync("npm ci", { cwd: extractDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
-        deps = { ok: true, skipped: false, durationMs: Date.now() - start, detail: "isolated npm ci passed" };
-      } catch (e) {
-        const err = e as { stdout?: string; stderr?: string; message: string };
-        const detail = (err.stderr || err.stdout || err.message).slice(-1500);
-        return { ok: false, depsChanged, detail: `deps gate failed: ${detail.slice(0, 600)}`, gates: { deps: { ok: false, skipped: false, durationMs: Date.now() - start, detail }, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
-      }
-    } else {
-      deps = { ok: true, skipped: true, durationMs: 0, detail: "no dependency changes" };
-      linkDirectoryInto(join(installDir, "node_modules"), join(extractDir, "node_modules"));
-      const pkgsDir = join(installDir, "packages");
-      if (existsSync(pkgsDir)) {
-        for (const pkg of readdirSync(pkgsDir)) {
-          const srcNm = join(pkgsDir, pkg, "node_modules");
-          if (statSync(join(pkgsDir, pkg)).isDirectory() && existsSync(srcNm)) {
-            linkDirectoryInto(srcNm, join(extractDir, "packages", pkg, "node_modules"));
-          }
-        }
-      }
-    }
-
-    const build = await gateBuildAtAsync(extractDir);
-    if (!build.ok) {
-      return { ok: false, depsChanged, detail: `build gate failed: ${build.detail.slice(0, 600)}`, gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
-    }
-    const port = await pickProbePort();
-    const bindOutcome = await gateBindAt(extractDir, port, authToken);
-    probeProc = bindOutcome.proc;
-    probeDataDir = bindOutcome.dataDir;
-    if (!bindOutcome.result.ok) {
-      return { ok: false, depsChanged, detail: `bind gate failed: ${bindOutcome.result.detail.slice(0, 600)}`, gates: { deps, build, bind: bindOutcome.result, smoke: SKIPPED_GATE } };
-    }
-    const smoke = await gateSmoke(port, authToken);
-    if (!smoke.ok) {
-      return { ok: false, depsChanged, detail: `smoke gate failed: ${smoke.detail.slice(0, 600)}`, gates: { deps, build, bind: bindOutcome.result, smoke } };
-    }
-    return { ok: true, depsChanged, detail: "all gates passed", gates: { deps, build, bind: bindOutcome.result, smoke } };
-  } finally {
-    await killProbe(probeProc);
-    if (probeDataDir) await rmRetry(probeDataDir, "probe data dir");
-    // Junction must go BEFORE any caller rm/copy walks extractDir — a walked
-    // junction reaches the live install's real node_modules. A real isolated
-    // install is removed too: the install dir gets its deps via `npm ci`
-    // post-copy, not via a multi-gigabyte file copy.
-    const stuck = unlinkSharedJunctions(extractDir);
-    if (stuck.length === 0) {
-      const nm = join(extractDir, "node_modules");
-      if (existsSync(nm)) await rmRetry(nm, "extracted node_modules");
-    } else {
-      logger.error(`[update] junction(s) still live in extract dir — leaving node_modules untouched: ${stuck.join(", ")}`);
-    }
   }
 }

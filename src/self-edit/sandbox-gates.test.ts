@@ -88,10 +88,14 @@ describe("gateBuildAt retirement", () => {
 
   it("the update pipeline awaits the async gate instead", () => {
     const pipeline = readFileSync(fileURLToPath(new URL("../update-pipeline.ts", import.meta.url)), "utf-8");
+    const extractedValidation = readFileSync(fileURLToPath(new URL("../update-extracted-validation.ts", import.meta.url)), "utf-8");
     // `gateBuildAt(` would park the loop for up to BUILD_TIMEOUT_MS (5 min) on
     // the tarball path — the exact freeze this conversion exists to remove.
     expect(pipeline).not.toMatch(/\bgateBuildAt\(/);
-    expect(pipeline).toMatch(/await gateBuildAtAsync\(/);
+    expect(extractedValidation).toMatch(/await gateBuildAtAsync\(/);
+    // Rolling assets carry tracked source, not desktop/dist. The candidate
+    // must compile desktop/src before the updater is allowed to copy it live.
+    expect(extractedValidation).toMatch(/await runDesktopTscBuildAsync\(extractDir,/);
   });
 });
 

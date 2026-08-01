@@ -32,7 +32,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/auth/` | 29 | 10 | L |  |
 | `src/browser/` | 28 | 76 | XL |  |
 | `src/tool-policy/` | 28 | 20 | L |  |
-| `src/agency/` | 26 | 19 | L |  |
+| `src/agency/` | 27 | 19 | L |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
@@ -51,10 +51,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/voice/` | 12 | 65 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
+| `src/self-edit/` | 11 | 20 | L |  |
 | `src/tool-execution/` | 11 | 38 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/self-edit/` | 10 | 20 | L |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
@@ -185,6 +185,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/tools.ts` | S |
 | `src/tts-stream.ts` | S |
 | `src/types.ts` | M |
+| `src/update-extracted-validation.ts` | S |
 | `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
 | `src/update-rollback-state.ts` | S |

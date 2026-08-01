@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { buildRollingSource } from "../scripts/build-rolling-source.mjs";
 // The REAL verifier the in-app updater runs. Importing it (not a copy) is the
@@ -19,7 +19,10 @@ let built: ReturnType<typeof buildRollingSource>;
 
 beforeAll(() => {
   outDir = mkdtempSync(join(tmpdir(), "rolling-source-"));
-  built = buildRollingSource(sha, outDir);
+  const desktopDist = join(outDir, "desktop-dist");
+  mkdirSync(desktopDist, { recursive: true });
+  writeFileSync(join(desktopDist, "main.js"), "// compiled desktop fixture\n");
+  built = buildRollingSource(sha, outDir, { desktopDistDir: desktopDist, requireDesktopDist: true });
 });
 
 afterAll(() => {
@@ -63,11 +66,28 @@ describe("rolling-source publish ⟷ verify contract", () => {
     // package.json must land at the extract root (proves the single-prefix shape).
     const pkg = JSON.parse(readFileSync(join(extractDir, "package.json"), "utf-8"));
     expect(pkg.name).toBeTruthy();
+    expect(readFileSync(join(extractDir, "desktop", "dist", "main.js"), "utf-8"))
+      .toBe("// compiled desktop fixture\n");
     // node_modules must NOT ride along (git archive ships tracked source only).
     expect(() => readFileSync(join(extractDir, "node_modules", ".bin", "tsc"))).toThrow();
   });
 
   it("refuses a short / malformed sha (won't publish an asset the app can't address)", () => {
     expect(() => buildRollingSource(sha.slice(0, 12), outDir)).toThrow(/40-char commit sha/);
+  });
+
+  it("refuses publication when the required desktop build is absent", () => {
+    expect(() => buildRollingSource(sha, outDir, {
+      desktopDistDir: join(outDir, "missing-desktop-dist"),
+      requireDesktopDist: true,
+    })).toThrow(/required desktop build is missing/);
+  });
+
+  it("the publisher compiles desktop before requiring it in the update asset", () => {
+    const workflow = readFileSync(resolve(".github/workflows/rolling-source.yml"), "utf-8");
+    const compile = workflow.indexOf("npx tsc --noEmitOnError");
+    const packageAsset = workflow.indexOf("--require-desktop-dist");
+    expect(compile).toBeGreaterThan(-1);
+    expect(packageAsset).toBeGreaterThan(compile);
   });
 });

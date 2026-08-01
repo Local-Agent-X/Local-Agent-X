@@ -1,7 +1,9 @@
 name: Rolling Source Asset (verified OTA payload)
 
-# Publishes the per-commit, checksum-verified source asset the in-app updater
-# PREFERS over GitHub's on-demand archive/<sha>.tar.gz.
+# Publishes the per-commit, checksum-verified update asset the in-app updater
+# PREFERS over GitHub's on-demand archive/<sha>.tar.gz. The asset contains the
+# tracked source plus CI-compiled desktop/dist so installed clients receive
+# Electron changes in the same update as the source that depends on them.
 #
 # Why this exists (closes TODO(rolling-checksum)): the rolling OTA channel
 # resolves `main` → an immutable commit sha, then tries
@@ -48,8 +50,14 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Compile desktop payload
+        working-directory: desktop
+        run: |
+          npm ci --ignore-scripts
+          npx tsc --noEmitOnError
+
       - name: Build verified source asset for this commit
-        run: node scripts/build-rolling-source.mjs "${{ github.sha }}" rolling-dist
+        run: node scripts/build-rolling-source.mjs "${{ github.sha }}" rolling-dist --require-desktop-dist
 
       - name: Publish the asset + sidecar to the `rolling` release
         env:

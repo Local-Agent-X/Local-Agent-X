@@ -18,17 +18,20 @@
 //   • the tarball MUST extract cleanly with `tar xzf … --strip-components=1`
 //     (exactly one top-level prefix dir), matching applyUpdate's extract.
 //
-// Zero dependencies (node builtins + git only) so the workflow can run it on a
-// bare checkout without `npm ci`.
+// This archive script itself uses only Node builtins + git. The publishing
+// workflow compiles desktop/dist first, then this script overlays that output
+// onto the tracked source archive so old updater builds can bootstrap the fix.
 //
-// Usage: node scripts/build-rolling-source.mjs [<sha>] [<outDir>]
+// Usage: node scripts/build-rolling-source.mjs [<sha>] [<outDir>] [--require-desktop-dist]
 //   defaults: sha = `git rev-parse HEAD`, outDir = ./rolling-dist
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 import { buildSourceArchive } from "./build-source-archive.mjs";
 
@@ -36,7 +39,7 @@ import { buildSourceArchive } from "./build-source-archive.mjs";
  * Generate the verified source asset + sidecar for a resolved commit.
  * Returns the on-disk paths and the hash so callers can log/upload them.
  */
-export function buildRollingSource(sha, outDir) {
+export function buildRollingSource(sha, outDir, opts = {}) {
   if (!/^[0-9a-f]{40}$/.test(sha)) {
     throw new Error(`build-rolling-source: expected a full 40-char commit sha, got: ${JSON.stringify(sha)}`);
   }
@@ -45,9 +48,32 @@ export function buildRollingSource(sha, outDir) {
   const assetName = `lax-source-${sha}.tar.gz`;
   const assetPath = join(outDir, assetName);
 
-  // The shared source-archive seam emits only tracked files at <sha> (no
-  // node_modules / dist) beneath the one prefix applyUpdate strips on extract.
-  buildSourceArchive(sha, assetPath, `lax-source-${sha}`);
+  const prefix = `lax-source-${sha}`;
+  const desktopDistDir = resolve(opts.desktopDistDir || "desktop/dist");
+  const hasDesktopBuild = existsSync(join(desktopDistDir, "main.js"));
+  if (opts.requireDesktopDist && !hasDesktopBuild) {
+    throw new Error(`build-rolling-source: required desktop build is missing: ${join(desktopDistDir, "main.js")}`);
+  }
+
+  if (!hasDesktopBuild) {
+    buildSourceArchive(sha, assetPath, prefix);
+  } else {
+    // Existing installed updaters validate/build server source but cannot yet
+    // compile Electron source. Overlay the CI-built desktop output into the
+    // immutable tracked archive so this updater repair can bootstrap itself.
+    const stageDir = mkdtempSync(join(tmpdir(), "lax-rolling-source-"));
+    try {
+      const tarPath = join(stageDir, "payload.tar");
+      execFileSync("git", ["archive", "--format=tar", `--prefix=${prefix}/`, "-o", tarPath, sha]);
+      const stagedDesktop = join(stageDir, prefix, "desktop", "dist");
+      mkdirSync(join(stageDir, prefix, "desktop"), { recursive: true });
+      cpSync(desktopDistDir, stagedDesktop, { recursive: true });
+      execFileSync("tar", ["-rf", tarPath, "-C", stageDir, `${prefix}/desktop/dist`]);
+      writeFileSync(assetPath, gzipSync(readFileSync(tarPath)));
+    } finally {
+      rmSync(stageDir, { recursive: true, force: true });
+    }
+  }
 
   const buf = readFileSync(assetPath);
   const hash = createHash("sha256").update(buf).digest("hex");
@@ -65,7 +91,7 @@ const invokedDirectly =
 if (invokedDirectly) {
   const sha = (process.argv[2] || execFileSync("git", ["rev-parse", "HEAD"]).toString().trim());
   const outDir = resolve(process.argv[3] || "rolling-dist");
-  const r = buildRollingSource(sha, outDir);
+  const r = buildRollingSource(sha, outDir, { requireDesktopDist: process.argv.includes("--require-desktop-dist") });
   console.log(`[rolling-source] ${r.assetName} — ${(r.bytes / 1048576).toFixed(1)} MB, sha256=${r.hash}`);
   console.log(`[rolling-source] asset:   ${r.assetPath}`);
   console.log(`[rolling-source] sidecar: ${r.sidecarPath}`);

@@ -26,10 +26,11 @@
 // never call a stale dist fresh. So the worst case it can introduce is one
 // slower boot, never running stale code.
 //
-// OTA caveat the mtime sweep still relies on: copying a pre-built dist over an
-// install (copyFile stamps copy-time, and `dist` sorts before `src`) leaves src
-// newer than dist and fools the mtime check. The updater touches dist/index.js
-// after the copy so a validated, freshly-built dist still reads as fresh.
+// OTA caveat the mtime sweep still relies on: copying pre-built dist trees over
+// an install (copyFile stamps copy-time, and `dist` sorts before `src`) leaves
+// source newer than output and fools the mtime check. The updater refreshes
+// both dist/index.js and desktop/dist/main.js after the copy so validated,
+// freshly-built outputs still read as fresh.
 
 import { existsSync, readFileSync } from "fs";
 import { readdir, stat } from "fs/promises";

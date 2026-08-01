@@ -230,22 +230,26 @@ export class OTAManager {
       throw new Error(`Update rolled back after mutation failed: ${(error as Error).message}`);
     }
 
-    // Preserve the build-freshness signal. The extract carries a validated,
-    // freshly-built dist/, but copyFile stamps copy-time mtimes and `dist`
-    // sorts before `src`, so post-copy src/ ends up newer than dist/ —
-    // fooling serverDistIsFresh into "stale" and triggering a redundant
-    // rebuild on the next boot (the post-update "Building server updates…"
-    // loop). Touch dist/index.js after the copy so the shipped build reads
-    // as current for this src. Best-effort: a touch failure only costs the
-    // one redundant rebuild, never correctness.
-    try {
-      const distIndex = join(installDir, "dist", "index.js");
-      if (existsSync(distIndex)) {
-        const now = new Date();
-        await utimes(distIndex, now, now);
+    // Preserve both build-freshness signals. The extract carries validated,
+    // freshly-built server AND desktop dist trees, but copyFile stamps
+    // copy-time mtimes and `dist` sorts before `src`. Post-copy source files
+    // therefore look newer unless both runtime entrypoints are refreshed.
+    // Missing the desktop entrypoint caused every successful native update to
+    // reopen with a false "Desktop app build is out of date" warning.
+    // Best-effort: a touch failure only costs one redundant rebuild/warning;
+    // it never changes which code was validated or copied.
+    const builtEntrypoints = [
+      join(installDir, "dist", "index.js"),
+      join(installDir, "desktop", "dist", "main.js"),
+    ];
+    const now = new Date();
+    for (const entrypoint of builtEntrypoints) {
+      if (!existsSync(entrypoint)) continue;
+      try {
+        await utimes(entrypoint, now, now);
+      } catch (e) {
+        logger.warn(`[ota] could not refresh ${entrypoint} mtime: ${(e as Error).message}`);
       }
-    } catch (e) {
-      logger.warn(`[ota] could not refresh dist mtime: ${(e as Error).message}`);
     }
 
     // record in history

@@ -8,7 +8,7 @@
  * are integration-level and exercised live, not here.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,6 +168,36 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     expect(await m.getHistory()).toMatchObject([{ transactionId: expect.any(String), status: "rolled-back" }]);
     expect(existsSync(join(installDir, ".lax-update-rollback.json"))).toBe(false);
 
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("refreshes server and desktop build mtimes after copying validated OTA output", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lax-ota-fresh-dist-"));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(installDir, { recursive: true });
+    for (const path of [
+      join(pkgDir, "dist"),
+      join(pkgDir, "src"),
+      join(pkgDir, "desktop", "dist"),
+      join(pkgDir, "desktop", "src"),
+    ]) mkdirSync(path, { recursive: true });
+    writeFileSync(join(pkgDir, "dist", "index.js"), "server build");
+    writeFileSync(join(pkgDir, "src", "index.ts"), "server source");
+    writeFileSync(join(pkgDir, "desktop", "dist", "main.js"), "desktop build");
+    writeFileSync(join(pkgDir, "desktop", "src", "main.ts"), "desktop source");
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
+
+    const manager = new OTAManager("o", "r", join(root, "lax"));
+    await manager.applyUpdate(
+      join(root, "rel.tar.gz"), installDir, "v0",
+      "deadbeefcafebabe0000000000000000feedface",
+    );
+
+    expect(statSync(join(installDir, "dist", "index.js")).mtimeMs)
+      .toBeGreaterThanOrEqual(statSync(join(installDir, "src", "index.ts")).mtimeMs);
+    expect(statSync(join(installDir, "desktop", "dist", "main.js")).mtimeMs)
+      .toBeGreaterThanOrEqual(statSync(join(installDir, "desktop", "src", "main.ts")).mtimeMs);
     rmSync(root, { recursive: true, force: true });
   });
 

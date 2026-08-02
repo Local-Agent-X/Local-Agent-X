@@ -8,7 +8,7 @@
  * are integration-level and exercised live, not here.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync, statSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,7 +64,7 @@ describe("assertSha256 — rolling-channel bytes-level verify (round-8)", () => 
 
 describe("dependencyFileDiffers — packaging metadata is not a dependency change", () => {
   it("ignores only the app version fields rewritten by packaged installs", () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-deps-diff-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-deps-diff-")));
     const installed = join(root, "installed.json");
     const candidate = join(root, "candidate.json");
     writeFileSync(installed, JSON.stringify({ version: "0.5.10", packages: { "": { version: "0.5.10", dependencies: { electron: "43.2.0" } }, "node_modules/electron": { version: "43.2.0" } } }));
@@ -76,7 +76,7 @@ describe("dependencyFileDiffers — packaging metadata is not a dependency chang
   });
 
   it("still detects a real dependency version change", () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-deps-diff-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-deps-diff-")));
     const installed = join(root, "installed.json");
     const candidate = join(root, "candidate.json");
     writeFileSync(installed, JSON.stringify({ version: "0.5.10", packages: { "": { version: "0.5.10" }, "node_modules/electron": { version: "43.2.0" } } }));
@@ -92,7 +92,7 @@ let laxDir: string;
 let ota: OTAManager;
 
 beforeEach(() => {
-  laxDir = mkdtempSync(join(tmpdir(), "lax-ota-"));
+  laxDir = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-")));
   ota = new OTAManager("Local-Agent-X", "Local-Agent-X", laxDir);
 });
 
@@ -126,7 +126,7 @@ describe("OTAManager — installed commit marker", () => {
 
 describe("OTAManager — applyUpdate is userData-safe", () => {
   it("removes a published commit marker when first-install verification rolls back", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-ota-first-rollback-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-first-rollback-")));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(join(installDir, "src"), { recursive: true });
@@ -148,7 +148,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
   });
 
   it("applies the update, backs up only overlapping source, and preserves install-only files", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-ota-apply-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-apply-")));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(join(installDir, "src"), { recursive: true });
@@ -199,7 +199,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
   });
 
   it("refreshes server and desktop build mtimes after copying validated OTA output", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-ota-fresh-dist-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-fresh-dist-")));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(installDir, { recursive: true });
@@ -229,7 +229,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
   });
 
   it.skipIf(!CAN_CREATE_FILE_SYMLINK)("ignores broken install-only symlinks during apply", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-ota-symlink-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-symlink-")));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(join(installDir, "src"), { recursive: true });
@@ -255,7 +255,7 @@ describe("OTAManager — applyUpdate is userData-safe", () => {
     // stuck-junction case) must not overwrite the install's deps — those
     // include native .node modules the running process holds loaded, which
     // Windows refuses to replace in place.
-    const root = mkdtempSync(join(tmpdir(), "lax-ota-nm-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-nm-")));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(join(installDir, "node_modules", "dep"), { recursive: true });
@@ -289,7 +289,7 @@ describe("OTAManager — rolling-channel integrity gate (R4-06)", () => {
   // to the immutable per-commit archive rather than the mutable branch ref.
 
   it("applyUpdate REFUSES to extract bytes not bound to a resolved commit", async () => {
-    const root = mkdtempSync(join(tmpdir(), "lax-ota-gate-"));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-gate-")));
     const installDir = join(root, "install");
     const pkgDir = join(root, "pkg");
     mkdirSync(join(installDir, "src"), { recursive: true });

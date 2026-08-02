@@ -640,33 +640,6 @@ jobs:
           NODE
           cat runtime-manifest.json
 
-      - name: Staged rollout (opt-in via ROLLOUT_PERCENTAGE)
-        # Blast-radius limiter. An auto-updater can't downgrade, so the defense
-        # against a bug that slips past the test gate is to reach only a fraction
-        # of the fleet first, verify, then widen — leaving time to fix-forward
-        # before everyone is hit. electron-updater honors a top-level
-        # `stagingPercentage` in latest.yml (deterministic per-machine GUID), so
-        # setting the repo VARIABLE ROLLOUT_PERCENTAGE to 1..99 stages this
-        # release; unset or 100 publishes to the whole fleet as before (this step
-        # is a no-op then, so default behavior is unchanged).
-        shell: bash
-        env:
-          ROLLOUT_PERCENTAGE: ${{ vars.ROLLOUT_PERCENTAGE }}
-        run: |
-          set -euo pipefail
-          pct="${ROLLOUT_PERCENTAGE:-100}"
-          if [[ "$pct" =~ ^[0-9]+$ ]] && [ "$pct" -ge 1 ] && [ "$pct" -lt 100 ]; then
-            for f in dist/windows-installer-rolling/desktop/release/latest.yml \
-                     dist/macos-installer-rolling/desktop/release/latest-mac.yml; do
-              if [ -f "$f" ] && ! grep -q '^stagingPercentage:' "$f"; then
-                printf 'stagingPercentage: %s\n' "$pct" >> "$f"
-                echo "staged rollout: $f -> ${pct}%"
-              fi
-            done
-          else
-            echo "Full rollout (ROLLOUT_PERCENTAGE unset or 100)."
-          fi
-
       - name: Publish signed native desktop update feed
         # One release mutation after both platform jobs succeed keeps metadata
         # and the signed packages it hashes in lockstep at a stable feed URL.

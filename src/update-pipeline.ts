@@ -33,6 +33,8 @@ import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restor
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
 import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
+import { getLaxDir } from "./lax-data-dir.js";
+import { recordUpdateFailure, recordUpdateSuccess, repairStuckUpdateState, markRepairAttempted, REPAIR_THRESHOLD } from "./update-recovery.js";
 import { gitSafeCmd } from "./git-safety.js";
 import { createLogger } from "./logger.js";
 import { rmUpdatePathRetry, validateExtractedUpdate } from "./update-extracted-validation.js";
@@ -275,6 +277,7 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     const installed = (await ota.readInstalledCommit()) || "";
     const { commit } = await ota.checkMainCommit();
     if (installed && installed === commit) {
+      recordUpdateSuccess(getLaxDir());
       return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Already up to date." };
     }
     const tarPath = await ota.downloadMainTarball(commit);
@@ -297,9 +300,25 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
       throw new Error(`Update rolled back after post-copy verification failed: ${(error as Error).message}`);
     }
     logger.info(`[update] rolling applied ${installed.slice(0, 7) || "(fresh)"} → ${commit.slice(0, 7)}`);
+    recordUpdateSuccess(getLaxDir());
     return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Updated from main (validated) — relaunch to finish." };
   } catch (e) {
-    return { ok: false, fromCommit: "", toCommit: "", detail: (e as Error).message };
+    // Local-only self-repair: notice a failing-update streak and, past the
+    // threshold, clear the transient state a stuck update leaves behind (rollback
+    // journal + half-downloaded payload) so the NEXT attempt starts clean. No
+    // auto-retry — a genuinely broken release still can't spin.
+    const laxDir = getLaxDir();
+    let detail = (e as Error).message;
+    const health = recordUpdateFailure(laxDir, detail);
+    if (health.consecutiveFailures >= REPAIR_THRESHOLD && !health.repairAttempted) {
+      const cleared = repairStuckUpdateState(laxDir);
+      markRepairAttempted(laxDir);
+      if (cleared.length) {
+        logger.warn(`[update] ${health.consecutiveFailures} consecutive update failures — cleared stale state (${cleared.join(", ")}); retry should start clean`);
+        detail += ` — Update has failed ${health.consecutiveFailures} times; Local Agent X cleared stale update state (${cleared.join(", ")}). Try updating again.`;
+      }
+    }
+    return { ok: false, fromCommit: "", toCommit: "", detail };
   } finally {
     await releaseGlobalSelfEditLock(lock.nonce);
   }

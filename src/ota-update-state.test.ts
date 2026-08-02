@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  markHistoryRolledBack, readUpdateHistory, upsertAppliedHistory, writeInstalledCommit,
+  markHistoryRolledBack, readInstalledCommit, readUpdateHistory, upsertAppliedHistory, writeInstalledCommit,
 } from "./ota-update-state.js";
 
 const roots: string[] = [];
@@ -14,6 +14,34 @@ function path(name: string): string {
   roots.push(root);
   return join(root, name);
 }
+
+// Invariant: state that exists only to inform the updater must never be able to
+// BRICK it. A corrupt/garbage/missing file reads as "absent" (null / []), never
+// throws — otherwise a single bad write halts all future updates. This is the
+// same failure class as the 2026-07 rollback-journal wedge, locked in here for
+// the other update-path readers so a refactor can't silently reintroduce it.
+describe("OTA state readers tolerate corruption (never brick the updater)", () => {
+  for (const bad of ["{ not json", "null", "42", "\"a string\"", "{}", "[1,2,3]", ""]) {
+    it(`readInstalledCommit → null on ${JSON.stringify(bad)}`, async () => {
+      const p = path("installed-source.json");
+      writeFileSync(p, bad);
+      await expect(readInstalledCommit(p)).resolves.toBeNull();
+    });
+  }
+  it("readInstalledCommit → null when the file is missing", async () => {
+    await expect(readInstalledCommit(path("nope.json"))).resolves.toBeNull();
+  });
+  for (const bad of ["{ not json", "null", "42", "{\"not\":\"array\"}", ""]) {
+    it(`readUpdateHistory → [] on ${JSON.stringify(bad)}`, async () => {
+      const p = path("history.json");
+      writeFileSync(p, bad);
+      await expect(readUpdateHistory(p)).resolves.toEqual([]);
+    });
+  }
+  it("readUpdateHistory → [] when the file is missing", async () => {
+    await expect(readUpdateHistory(path("nope.json"))).resolves.toEqual([]);
+  });
+});
 
 describe("OTA publication state", () => {
   it("upserts an applied transaction without duplicating history on recovery", async () => {

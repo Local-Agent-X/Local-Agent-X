@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { UpdateRollbackTransaction } from "./update-rollback.js";
-import { UPDATE_ROLLBACK_ANCHOR } from "./update-rollback-state.js";
+import { UPDATE_ROLLBACK_ANCHOR, UPDATE_ROLLBACK_VERSION, createJournal, validJournal } from "./update-rollback-state.js";
 import { CAN_CREATE_DIRECTORY_LINK } from "./symlink-capabilities.test-helper.js";
 
 const roots: string[] = [];
@@ -394,5 +394,52 @@ describe("update rollback transaction", () => {
 
     await new UpdateRollbackTransaction(f.state).restore(f.install, target, "retry");
     expect(readFileSync(join(f.install, path), "utf-8")).toBe("old");
+  });
+});
+
+describe("rollback journal schema-version guard", () => {
+  const identity = (p: string) => ({ path: p, real: p, dev: 1, ino: 2, birthtimeMs: 3 });
+  const canonical = () => createJournal(
+    "/i", "/s", "a".repeat(40), "b".repeat(40),
+    [{ path: "x", existed: true, sha256: null }], identity("/i"), identity("/s"),
+  );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // THE CONTRACT. These two constants pin the PERSISTED journal schema to its
+  // version. If you change the journal's shape (add/remove/rename a field in
+  // createJournal or the fields validJournal enforces), this test fails ON
+  // PURPOSE. When it does, you MUST — together:
+  //   1. bump UPDATE_ROLLBACK_VERSION, and
+  //   2. give read() a migration or discard path for the OLD shape,
+  // then update these constants. That is exactly the step that was skipped in
+  // 2026-07 — installBase/stateBase/manifestCommitment were added while the
+  // version stayed 1, so a new-shape journal was indistinguishable from an old
+  // one, failed validation, and read() hard-errored → every Windows box wedged.
+  // Do NOT "just make the test green" by editing the list without doing 1 and 2.
+  // ─────────────────────────────────────────────────────────────────────────
+  const PINNED_VERSION = 1;
+  const PINNED_KEYS = [
+    "backupComplete", "entries", "id", "installBase", "installRoot", "manifestCommitment",
+    "previousVersion", "restoreComplete", "startedAt", "stateBase", "stateRoot", "status",
+    "targetVersion", "version",
+  ];
+
+  it("persisted shape matches the pinned schema — BUMP THE VERSION if this fails", () => {
+    expect(UPDATE_ROLLBACK_VERSION).toBe(PINNED_VERSION);
+    expect(Object.keys(canonical()).sort()).toEqual([...PINNED_KEYS].sort());
+  });
+
+  it("the validator is coupled to the schema and rejects the legacy shape without throwing", () => {
+    expect(validJournal(canonical())).toBe(true);
+    // The exact pre-schema shape that wedged the fleet: version 1, no
+    // installBase/stateBase/manifestCommitment. Must be REJECTED, not accepted,
+    // and validJournal must never throw on unrecognized input.
+    const legacy = {
+      version: 1, id: "legacy", status: "active", installRoot: "/i",
+      previousVersion: "a".repeat(40), targetVersion: "b".repeat(40), entries: [], startedAt: "t",
+    };
+    expect(validJournal(legacy)).toBe(false);
+    expect(validJournal(null)).toBe(false);
+    expect(validJournal({ version: 999 })).toBe(false); // a future version must not throw either
   });
 });

@@ -188,6 +188,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-extracted-validation.ts` | S |
 | `src/update-git-rollback.ts` | S |
 | `src/update-pipeline.ts` | M |
+| `src/update-recovery.ts` | S |
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | S |

@@ -114,6 +114,7 @@ function switchTab(id) {
   const pill = (event?.target?.classList?.contains('tab-pill') ? event.target : null)
     || document.querySelector('.tab-pill[data-tab="' + id + '"]');
   if (pill) pill.classList.add('active');
+  if (id === 'hq' && typeof hqLoad === 'function') hqLoad();
   if (id === 'ai' && typeof loadLocalRuntimesEditor === 'function') loadLocalRuntimesEditor();
   if (id === 'image' && typeof refreshVoiceSetup === 'function') refreshVoiceSetup();
   if (id === 'image' && typeof loadUploadsStats === 'function') loadUploadsStats();

@@ -416,6 +416,7 @@
         <button id="tab-pill-mobile" class="tab-pill" data-tab="mobile" onclick="switchTab('mobile')" style="display:none">Mobile</button>
         <button class="tab-pill" data-tab="integrations" onclick="switchTab('integrations')">Tools &amp; Integrations</button>
         <button class="tab-pill" data-tab="sync" onclick="switchTab('sync')">Sync</button>
+        <button class="tab-pill" data-tab="hq" onclick="switchTab('hq')">HQ</button>
       </nav>
       <div class="settings-main">
         <div class="settings-main-header">
@@ -512,11 +513,40 @@
           <div class="section-desc">Local server configuration. Changes require restart.</div>
           <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007" onchange="onPortFieldChange()"/></div><div class="field"><label class="field-label">Workspace</label><div style="display:flex;gap:6px;align-items:center"><input class="field-input" id="cfg-workspace" value="./workspace" style="flex:1;min-width:0"/><button type="button" class="action-btn" id="cfg-workspace-browse" onclick="pickWorkspaceFolder()" title="Choose a workspace folder">Browse…</button></div></div></div>
         </div>
+      </div>
+      <!-- HQ — app identity, updates, decommission -->
+      <div id="stab-hq" class="tab-pane">
+        <div class="section-card" style="text-align:center">
+          <div class="section-title" style="font-size:1.05rem">Local Agent X</div>
+          <div id="hq-version" style="font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-top:4px">Version …</div>
+          <div id="hq-commit" style="font-family:var(--mono);font-size:.68rem;color:var(--muted);margin-top:2px"></div>
+        </div>
         <div class="section-card">
           <div class="section-title" data-local-only-update-title>Updates</div>
-          <div class="section-desc">Check for new versions of Local Agent X.</div>
+          <div class="section-desc">Local Agent X checks for updates automatically in the background and lets you know when one is ready.</div>
           <div id="settings-update-status" style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Not checked yet.</div>
-          <button class="action-btn primary" onclick="settingsCheckUpdate()">Check for Updates</button>
+          <div class="btn-row">
+            <button class="action-btn primary" onclick="settingsCheckUpdate()">Check for Updates</button>
+            <button class="action-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X/commits/main','_blank')" title="Open the commit log on GitHub">Release Notes ↗</button>
+          </div>
+        </div>
+        <div class="section-card" style="border-color:var(--error,#b33)">
+          <div class="section-title" style="color:var(--error,#d66)">⚠ Decommission</div>
+          <div class="section-desc">Retire this agent from the field. Choose how much to remove — the app closes to finish the job, and you can reinstall any time to come back. Ollama and downloaded models are never touched.</div>
+          <div class="field" style="margin-top:10px">
+            <button class="action-btn" onclick="hqDecommissionPreview()">Preview — show what would be removed</button>
+            <div class="field-hint">Dry run. Prints the removal plan, changes nothing.</div>
+          </div>
+          <pre id="hq-decommission-preview" style="display:none;font-size:.68rem;max-height:220px;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;white-space:pre-wrap"></pre>
+          <div class="field" style="margin-top:12px">
+            <button class="action-btn danger" onclick="hqDecommission(false)">Decommission — keep my data</button>
+            <div class="field-hint">Removes the app. Your chats, memory, and saved keys stay in <code>~/.lax</code> so a reinstall picks up where you left off.</div>
+          </div>
+          <div class="field" style="margin-top:10px">
+            <button class="action-btn danger" onclick="hqDecommission(true)">Decommission everything</button>
+            <div class="field-hint">Removes the app <strong>and permanently deletes all data</strong> — chats, memory, scheduled jobs, saved API keys, logs.</div>
+          </div>
+          <div id="hq-decommission-status" style="display:none;font-size:.8rem;margin-top:10px"></div>
         </div>
       </div>
       <!-- AI & Models -->
@@ -1655,6 +1685,7 @@
 <script src="/js/settings-import-export.js?v=v1"></script>
 <script src="/js/settings-uploads.js?v=v1"></script>
 <script src="/js/settings-voice-engines.js?v=v1"></script>
+<script src="/js/settings-hq.js?v=v1"></script>
 <script src="/js/settings.js?v=vc3"></script>
 <script src="/js/voice-picker-catalog.js?v=v3"></script>
 <!-- voice-picker split: core defines the `let` cache vars + _esc that

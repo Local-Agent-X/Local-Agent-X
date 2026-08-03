@@ -1,5 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { handleSystemRoutes } from "./system.js";
+import { handleDecommissionRoutes } from "./decommission.js";
 import { handleDiagnosticsRoutes } from "./diagnostics.js";
 import { handlePluginsRoutes } from "./plugins.js";
 import { handlePreferencesRoutes } from "./preferences.js";
@@ -9,6 +10,7 @@ import { handleMoodRoutes } from "./mood.js";
 
 const handlers: RouteHandler[] = [
   handleSystemRoutes,
+  handleDecommissionRoutes,
   handleDiagnosticsRoutes,
   handlePluginsRoutes,
   handlePreferencesRoutes,

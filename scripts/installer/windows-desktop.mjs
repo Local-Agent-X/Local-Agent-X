@@ -1,5 +1,6 @@
 import { acquireDesktopPackage } from "./desktop-package.mjs";
 import { findWindowsDesktop, windowsDesktopCandidates } from "./windows-desktop-location.mjs";
+import { assertUninstallRegistration } from "./uninstall-registration.mjs";
 
 export async function installWindowsDesktop(context) {
   const { reporter, processes, env = process.env } = context;
@@ -43,5 +44,19 @@ export async function installWindowsDesktop(context) {
     );
   }
   reporter.ok("Signed Local Agent X desktop app installed");
+
+  // The signed installer owns its own Add/Remove entry, but it only knows its
+  // own Programs directory — the source tree, Electron user data and shortcuts
+  // are ours. Stage the uninstaller outside the updatable tree (its NSIS
+  // customUnInstall hook calls it) and retire any legacy HKCU row left by an
+  // older script install, so a machine that has seen both shows exactly one.
+  const registration = assertUninstallRegistration({
+    sourceRoot: process.cwd(),
+    env,
+    spawnSync: processes.spawnSync,
+    log: (message) => reporter.warn(message),
+  });
+  if (registration.staged) reporter.ok("Uninstaller staged - Settings -> Installed apps -> Local Agent X");
+
   return { appInstalled: true, appBuildPath: appPath };
 }

@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, stat
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { acquireDesktopPackage } from "./desktop-package.mjs";
-import { UNINSTALL_COMMAND } from "./uninstall-templates.mjs";
+import { assertUninstallRegistration, stableUninstallerPath } from "./uninstall-registration.mjs";
 
 export async function installMacDesktop({
   reporter,
@@ -85,14 +85,20 @@ export async function installMacDesktop({
   }
   if (appInstalled && !existsSync(join(process.cwd(), ".git"))) {
     try {
-      const escape = (value) => value.replace(/'/g, "'\\''");
-      const commandPath = join(dirname(destination), "Uninstall Local Agent X.command");
-      writeFileSync(commandPath, UNINSTALL_COMMAND
-        .replace(/__SOURCE_DIR__/g, escape(process.cwd()))
-        .replace(/__APP_DEST__/g, escape(destination))
-        .replace(/__SELF__/g, escape(commandPath)));
-      chmodSync(commandPath, 0o755);
-      reporter.ok(`Uninstaller added — ${dirname(destination)} → "Uninstall Local Agent X"`);
+      // Stage the canonical uninstaller outside the updatable tree, then drop a
+      // double-clickable shim beside the .app that just calls it. The shim is a
+      // launcher, never a copy of the logic — one script does the removing, so
+      // the two cannot drift the way the old inlined template did, and the same
+      // script works standalone when an install is too broken to run.
+      assertUninstallRegistration({ sourceRoot: process.cwd(), env, log: (m) => reporter.warn(m) });
+      const staged = stableUninstallerPath();
+      if (existsSync(staged)) {
+        const escape = (value) => value.replace(/'/g, "'\\''");
+        const commandPath = join(dirname(destination), "Uninstall Local Agent X.command");
+        writeFileSync(commandPath, `#!/bin/bash\nexec bash '${escape(staged)}'\n`);
+        chmodSync(commandPath, 0o755);
+        reporter.ok(`Uninstaller added — ${dirname(destination)} → "Uninstall Local Agent X"`);
+      }
     } catch (error) { reporter.warn(`Uninstaller not added: ${error.message}`); }
   }
   return { appInstalled, appBuildPath: destination };

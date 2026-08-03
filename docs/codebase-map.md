@@ -191,6 +191,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-recovery.ts` | S |
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
-| `src/update-service.ts` | S |
+| `src/update-service.ts` | M |
 | `src/worker-session.ts` | S |
 

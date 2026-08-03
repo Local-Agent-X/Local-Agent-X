@@ -10,6 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { safeErrorMessage } from "./server-utils.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 import { gitSafeCmd } from "./git-safety.js";
@@ -220,9 +221,34 @@ export async function applyUpdateNow(): Promise<ApplyUpdateResult> {
   if (!isGitCheckout) {
     const { applyRollingUpdate } = await import("./update-pipeline.js");
     const r = await applyRollingUpdate(repoRoot, authToken);
+    if (r.ok) await reassertUninstallRegistration(repoRoot);
     return { ok: r.ok, held: r.held, fromCommit: r.fromCommit, toCommit: r.toCommit, detail: r.detail, rolling: true };
   }
   const { applyGitUpdate } = await import("./update-pipeline.js");
   const r = await applyGitUpdate(repoRoot, authToken);
+  if (r.ok) await reassertUninstallRegistration(repoRoot);
   return { ok: r.ok, held: r.held, fromCommit: r.fromCommit, toCommit: r.toCommit, detail: r.detail };
+}
+
+/**
+ * A rolling update replaces the install tree wholesale. Anything generated at
+ * install time and left inside that tree does not survive — which is exactly
+ * how the Add/Remove Programs entry used to break: its uninstaller script was
+ * deleted by an update, leaving a Settings row that ran a missing file and so
+ * did nothing at all, with no error the user could see. The version it
+ * advertised went stale the same way.
+ *
+ * Re-asserting after every successful apply keeps the entry truthful and
+ * re-stages the uninstaller, which lives outside the tree (in ~/.lax/uninstall)
+ * so a future update cannot orphan it again.
+ *
+ * Deliberately swallows everything: a cosmetic Settings row must never be able
+ * to fail an update that otherwise succeeded.
+ */
+async function reassertUninstallRegistration(repoRoot: string): Promise<void> {
+  try {
+    const modPath = join(repoRoot, "scripts", "installer", "uninstall-registration.mjs");
+    const mod = await import(pathToFileURL(modPath).href);
+    mod.assertUninstallRegistration({ sourceRoot: repoRoot });
+  } catch { /* non-fatal by design — see above */ }
 }

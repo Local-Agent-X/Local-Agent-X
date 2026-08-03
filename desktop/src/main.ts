@@ -34,6 +34,7 @@ import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
 import { runReconcile, killReconcileStepsSync } from "./reconcile";
 import { surfaceStaleDesktopDist } from "./reconcile-surface";
+import { healUninstallRegistration } from "./uninstall-heal";
 import { shutdownNativeSpeech } from "./native-speech";
 import { setupSessionPermissions } from "./session-permissions";
 import {
@@ -172,6 +173,11 @@ app.on("ready", async () => {
     showSplashRecovery("Internal error", "PROJECT_ROOT setter did not propagate. Click Repair to clear state and relaunch.");
     return;
   }
+
+  // Keep the "Uninstall" entry in Windows Settings honest, and keep a working
+  // uninstaller staged outside the tree updates replace. Cheap, detached, and
+  // self-correcting — see uninstall-heal.ts for why it runs every boot.
+  healUninstallRegistration(liveProjectRoot);
 
   // Reconcile npm + desktop build BEFORE starting the server. Closes the
   // "I pulled new code but the app silently runs old/broken bits" failure

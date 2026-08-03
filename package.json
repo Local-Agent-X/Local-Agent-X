@@ -14,6 +14,7 @@
     "dev:nowatch": "node --max-old-space-size=4096 --import=tsx src/index.ts",
     "dev:supervised": "node scripts/supervisor.mjs",
     "start": "node --max-old-space-size=4096 dist/index.js",
+    "uninstall": "node scripts/uninstall/cli.mjs",
     "build:ari": "node scripts/build-ari.js",
     "check:no-require": "node scripts/check-no-require.mjs",
     "check:source-hygiene": "node scripts/check-source-hygiene.mjs",

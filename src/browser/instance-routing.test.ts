@@ -99,11 +99,14 @@ afterEach(async () => {
 });
 
 describe("getBrowserManager routing", () => {
-	it("routes Windows in-app sessions to dedicated Chrome", () => {
+	it("routes Windows in-app sessions to the embedded browser, like macOS", () => {
+		// The old dedicated-Chrome workaround existed only because the UA-fallback
+		// drift made Cloudflare reject the embedded browser; that's fixed, so Windows
+		// now takes the same in-app route as every other desktop platform.
 		setInApp();
 		_setBrowserRoutePlatformForTest("win32");
-		expect(getBrowserManager("chat-1")).toBeInstanceOf(BrowserManager);
-		expect(resolveBrowserRoute().reason).toBe("windows-chat-chrome");
+		expect(getBrowserManager("chat-1")).toBeInstanceOf(ElectronInAppBackend);
+		expect(resolveBrowserRoute().reason).toBe("in-app");
 	});
 
 	it("routes to ElectronInAppBackend when mode=in-app and the bridge is up", () => {
@@ -127,7 +130,7 @@ describe("getBrowserManager routing", () => {
 		expect(getBrowserManager("agent-child")).not.toBe(getBrowserManager("chat-2"));
 	});
 
-	it("shares one dedicated Windows Chrome runtime across nested agents only within their chat", () => {
+	it("shares one in-app backend across nested agents on Windows too, only within their chat", () => {
 		setInApp();
 		_setBrowserRoutePlatformForTest("win32");
 		registerChildSessionOwner("agent-parent", "chat-1");
@@ -162,9 +165,9 @@ describe("getBrowserManager routing", () => {
 // runtime-profile-dir / manager-profile-dir tests), so every fallback path
 // carries the right profile identity.
 describe("resolveBrowserBackendKind — fallback matrix", () => {
-	it("uses CDP on Windows while preserving embedded behavior elsewhere", () => {
+	it("uses the embedded in-app browser on every desktop platform, Windows included", () => {
 		setInApp();
-		expect(resolveBrowserRoute("win32")).toEqual({ kind: "cdp", reason: "windows-chat-chrome" });
+		expect(resolveBrowserRoute("win32")).toEqual({ kind: "in-app", reason: "in-app" });
 		expect(resolveBrowserRoute("darwin")).toEqual({ kind: "in-app", reason: "in-app" });
 		expect(resolveBrowserRoute("linux")).toEqual({ kind: "in-app", reason: "in-app" });
 	});
@@ -385,14 +388,9 @@ describe("closeBrowser / closeAllBrowsers", () => {
 });
 
 describe("resetWedgedBrowser", () => {
-	it("resets only the Windows chat runtime without force-killing shared Chrome", async () => {
-		setInApp();
-		_setBrowserRoutePlatformForTest("win32");
-		const first = getBrowserManager("chat-1");
-		await expect(resetWedgedBrowser("chat-1")).resolves.toBe("cdp-reset");
-		expect(getBrowserManager("chat-1")).not.toBe(first);
-		expect(runtimeMocks.forceKillSharedBrowser).not.toHaveBeenCalled();
-	});
+	// (Windows no longer has a dedicated-Chrome reset path — it takes the in-app
+	// route like every desktop platform, so its wedge recovery is covered by the
+	// in-app cases below.)
 
 	it("KEEPS a wedged in-app backend (recoverable) and never force-kills shared Chrome", async () => {
 		setInApp();

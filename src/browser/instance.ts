@@ -115,9 +115,11 @@ export function resolveBrowserRoute(platform: NodeJS.Platform = routePlatformOve
 	if (process.env.LAX_BROWSER_HEADLESS === "1") {
 		return { kind: "cdp", reason: "headless" };
 	}
-	if (platform === "win32") {
-		return { kind: "cdp", reason: "windows-chat-chrome" };
-	}
+	// Windows once forced external Chrome here because "Electron is rejected by
+	// common human checks" — but that rejection was the app.userAgentFallback UA
+	// drift (a spoofed <App>/<ver> token contradicting the page identity), fixed in
+	// embedded-chrome-identity. A UA-consistent embedded browser clears Cloudflare
+	// on every platform, so Windows now takes the SAME in-app route as macOS/Linux.
 	if (!desktopBridgeAvailable()) {
 		return { kind: "cdp", reason: "no-desktop-bridge" };
 	}

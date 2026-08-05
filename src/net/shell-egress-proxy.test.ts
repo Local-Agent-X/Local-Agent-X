@@ -24,16 +24,28 @@ vi.mock("../local-only-policy.js", async (importOriginal) => ({
     registerTeardown(name, teardown),
 }));
 
-// Pass-through by default; lets one test force a start failure.
+// Pass-through by default; lets one test force a start failure, and the race
+// tests hold starts pending until released (resolved with a REAL proxy, or
+// rejected late) so close()/ensure() interleavings can be constructed exactly.
 const failNextStart = { value: false };
+const manualStarts: { release: (ok: boolean) => void }[] = [];
+const manualMode = { value: false };
 vi.mock("./egress-proxy-core.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./egress-proxy-core.js")>();
   return {
     ...actual,
-    startEgressProxy: (options: Parameters<typeof actual.startEgressProxy>[0]) =>
-      failNextStart.value
-        ? Promise.reject(new Error("start failed (test)"))
-        : actual.startEgressProxy(options),
+    startEgressProxy: (options: Parameters<typeof actual.startEgressProxy>[0]) => {
+      if (failNextStart.value) return Promise.reject(new Error("start failed (test)"));
+      if (!manualMode.value) return actual.startEgressProxy(options);
+      return new Promise<Awaited<ReturnType<typeof actual.startEgressProxy>>>((resolve, reject) => {
+        manualStarts.push({
+          release: (ok) => {
+            if (ok) actual.startEgressProxy(options).then(resolve, reject);
+            else reject(new Error("late start failure (test)"));
+          },
+        });
+      });
+    },
   };
 });
 
@@ -75,6 +87,8 @@ beforeEach(() => {
   resolve6.mockResolvedValue([]);
   auditRecord.mockReset();
   failNextStart.value = false;
+  manualMode.value = false;
+  manualStarts.length = 0;
 });
 
 afterEach(async () => {
@@ -144,5 +158,45 @@ describe("currentShellEgressProxyUrl (live mirror)", () => {
     failNextStart.value = false;
     const proxy = await ensureShellEgressProxy();
     expect(currentShellEgressProxyUrl()).toBe(proxy.url);
+  });
+});
+
+describe("singleton race guards", () => {
+  it("a close() racing a pending start never leaves the dead URL in the mirror", async () => {
+    manualMode.value = true;
+    const startA = ensureShellEgressProxy();
+    const closing = closeShellEgressProxy();
+
+    manualStarts[0].release(true);
+    await startA;
+    await closing;
+    // A resolved after close() had already dropped it: the .then guard must
+    // refuse the mirror write, and close() must have shut A's listener down.
+    expect(currentShellEgressProxyUrl()).toBeNull();
+
+    manualMode.value = false;
+    const proxyB = await ensureShellEgressProxy();
+    expect(currentShellEgressProxyUrl()).toBe(proxyB.url);
+  });
+
+  it("a LATE-rejecting superseded start does not clobber the live successor (catch guard)", async () => {
+    manualMode.value = true;
+    const startA = ensureShellEgressProxy();
+    startA.catch(() => { /* asserted via closing below */ });
+    const closing = closeShellEgressProxy();
+    closing.catch(() => { /* close() surfaces A's failure; tolerated */ });
+
+    const startB = ensureShellEgressProxy();
+    manualStarts[1].release(true);
+    const proxyB = await startB;
+    expect(currentShellEgressProxyUrl()).toBe(proxyB.url);
+
+    manualStarts[0].release(false);
+    await expect(closing).rejects.toThrow("late start failure (test)");
+    // Old code nulled sharedProxy + mirror unconditionally here, orphaning B
+    // and forcing a spurious third start. The guard must keep B live.
+    expect(currentShellEgressProxyUrl()).toBe(proxyB.url);
+    expect(await ensureShellEgressProxy()).toBe(proxyB);
+    expect(manualStarts).toHaveLength(2);
   });
 });

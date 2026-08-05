@@ -55,8 +55,13 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
       if (sharedProxy === starting) liveProxyUrl = proxy.url;
       return proxy;
     }).catch((error) => {
-      sharedProxy = null;
-      liveProxyUrl = null;
+      // Same currency guard as the .then: if a close()+re-ensure raced this
+      // failed start, a newer singleton (and its mirror) is live — clobbering
+      // it here would orphan that listener and force a spurious third start.
+      if (sharedProxy === starting) {
+        sharedProxy = null;
+        liveProxyUrl = null;
+      }
       throw error;
     });
     sharedProxy = starting;

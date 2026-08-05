@@ -12,7 +12,10 @@
  * overlay of buildSanitizedEnv, the sanctioned seam that sets keys verbatim.
  */
 import { getSandboxMode } from "../sandbox/index.js";
-import { ensureShellEgressProxy } from "../net/shell-egress-proxy.js";
+import {
+  currentShellEgressProxyUrl,
+  ensureShellEgressProxy,
+} from "../net/shell-egress-proxy.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.shell-proxy-env");
@@ -30,15 +33,17 @@ function proxyEnvFor(url: string): Record<string, string> {
     ALL_PROXY: url,
     http_proxy: url,
     https_proxy: url,
+    all_proxy: url,
     NO_PROXY: NO_PROXY_HOSTS,
     no_proxy: NO_PROXY_HOSTS,
   };
 }
 
-// Last successful guarded proxy env, for the synchronous spawn path below.
-// The proxy is a process-wide singleton with a stable URL, so caching the
-// derived env is safe once it has started.
-let cachedGuardedEnv: Record<string, string> | null = null;
+// No env is stored here — deliberately. The proxy singleton's live URL mirror
+// (currentShellEgressProxyUrl) is the ONE source of truth, cleared the moment
+// the listener dies (local-only teardown, failed start). A cached env here
+// once outlived a teardown and pointed every subsequent spawn at a dead —
+// and, worse, OS-recyclable — port. Derive fresh on every call.
 
 /**
  * Env overlay routing a guarded shell's traffic through the egress proxy.
@@ -54,8 +59,7 @@ export async function shellProxyEnv(): Promise<Record<string, string>> {
   if (getSandboxMode() !== "guarded") return {};
   try {
     const proxy = await ensureShellEgressProxy();
-    cachedGuardedEnv = proxyEnvFor(proxy.url);
-    return cachedGuardedEnv;
+    return proxyEnvFor(proxy.url);
   } catch (e) {
     logger.warn(
       `shell egress proxy failed to start; guarded shells run without a sanctioned egress route: ${(e as Error).message}`,
@@ -66,15 +70,17 @@ export async function shellProxyEnv(): Promise<Record<string, string>> {
 
 /**
  * Synchronous variant for spawn paths that cannot await (startSession is sync
- * — its injected seam in dev-server.ts types it sync). Returns the cached
- * guarded env when the proxy is already up; on a cold miss it warms the proxy
- * in the background and returns {} — that one spawn runs without the sanctioned
- * route, which fails closed at the cage (see shellProxyEnv), and every
- * subsequent spawn gets the env.
+ * — its injected seam in dev-server.ts types it sync). Reads the singleton's
+ * live URL mirror: proxy up → env derived fresh from the live URL; proxy down
+ * (never started, or torn down by local-only mode) → warms the proxy in the
+ * background and returns {} — that one spawn runs without the sanctioned
+ * route, which fails closed at the cage (see shellProxyEnv), and spawns after
+ * the warm settles get the env for whichever port the restart bound.
  */
 export function shellProxyEnvSync(): Record<string, string> {
   if (getSandboxMode() !== "guarded") return {};
-  if (cachedGuardedEnv) return cachedGuardedEnv;
-  void shellProxyEnv();
+  const url = currentShellEgressProxyUrl();
+  if (url) return proxyEnvFor(url);
+  void shellProxyEnv(); // never rejects — see its failure branch
   return {};
 }

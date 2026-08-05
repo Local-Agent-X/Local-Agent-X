@@ -26,9 +26,21 @@ function recordPolicyDeny(info: { target: string; reason: string }): void {
 let sharedProxy: Promise<ShellEgressProxy> | null = null;
 let teardownRegistered = false;
 
+// Synchronous mirror of the live proxy's URL. This is the ONE source of truth
+// for "is there a sanctioned egress route right now" that sync callers (the
+// spawn paths in shell-proxy-env.ts) may read — non-null exactly while the
+// singleton is up. Set on successful start, cleared on close AND failed start,
+// so nothing downstream can hold a URL that outlives the listener.
+let liveProxyUrl: string | null = null;
+
+/** URL of the live shell egress proxy, or null when no proxy is running. */
+export function currentShellEgressProxyUrl(): string | null {
+  return liveProxyUrl;
+}
+
 export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
   if (!sharedProxy) {
-    sharedProxy = startEgressProxy({
+    const starting: Promise<ShellEgressProxy> = startEgressProxy({
       selfPort,
       viaTag: "1.1 lax-shell-egress",
       onPolicyDeny: recordPolicyDeny,
@@ -37,11 +49,17 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
         teardownRegistered = true;
         registerLocalOnlyTeardown("shell-egress-proxy", closeShellEgressProxy);
       }
+      // Mirror only while this start is still the live singleton: a close()
+      // that raced the startup (local-only toggled mid-warm) must not leave
+      // a dead port's URL behind.
+      if (sharedProxy === starting) liveProxyUrl = proxy.url;
       return proxy;
     }).catch((error) => {
       sharedProxy = null;
+      liveProxyUrl = null;
       throw error;
     });
+    sharedProxy = starting;
   }
   return sharedProxy;
 }
@@ -49,5 +67,6 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
 export async function closeShellEgressProxy(): Promise<void> {
   const active = sharedProxy;
   sharedProxy = null;
+  liveProxyUrl = null;
   if (active) await (await active).close();
 }

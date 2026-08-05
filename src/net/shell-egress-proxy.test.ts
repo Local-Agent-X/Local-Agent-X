@@ -24,8 +24,22 @@ vi.mock("../local-only-policy.js", async (importOriginal) => ({
     registerTeardown(name, teardown),
 }));
 
+// Pass-through by default; lets one test force a start failure.
+const failNextStart = { value: false };
+vi.mock("./egress-proxy-core.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./egress-proxy-core.js")>();
+  return {
+    ...actual,
+    startEgressProxy: (options: Parameters<typeof actual.startEgressProxy>[0]) =>
+      failNextStart.value
+        ? Promise.reject(new Error("start failed (test)"))
+        : actual.startEgressProxy(options),
+  };
+});
+
 import {
   closeShellEgressProxy,
+  currentShellEgressProxyUrl,
   ensureShellEgressProxy,
   type ShellEgressProxy,
 } from "./shell-egress-proxy.js";
@@ -60,6 +74,7 @@ beforeEach(() => {
   resolve4.mockResolvedValue([]);
   resolve6.mockResolvedValue([]);
   auditRecord.mockReset();
+  failNextStart.value = false;
 });
 
 afterEach(async () => {
@@ -107,5 +122,27 @@ describe("shell egress proxy", () => {
 
     expect(registerTeardown).toHaveBeenCalledTimes(1);
     expect(registerTeardown).toHaveBeenCalledWith("shell-egress-proxy", closeShellEgressProxy);
+  });
+});
+
+describe("currentShellEgressProxyUrl (live mirror)", () => {
+  it("is null before start, the live URL after ensure, and null again after close", async () => {
+    expect(currentShellEgressProxyUrl()).toBeNull();
+
+    const proxy = await ensureShellEgressProxy();
+    expect(currentShellEgressProxyUrl()).toBe(proxy.url);
+
+    await closeShellEgressProxy();
+    expect(currentShellEgressProxyUrl()).toBeNull();
+  });
+
+  it("stays null through a failed start, then mirrors the next successful one", async () => {
+    failNextStart.value = true;
+    await expect(ensureShellEgressProxy()).rejects.toThrow("start failed (test)");
+    expect(currentShellEgressProxyUrl()).toBeNull();
+
+    failNextStart.value = false;
+    const proxy = await ensureShellEgressProxy();
+    expect(currentShellEgressProxyUrl()).toBe(proxy.url);
   });
 });

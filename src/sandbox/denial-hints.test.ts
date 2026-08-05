@@ -14,10 +14,37 @@ import { networkDenialHint, sandboxDenialHint } from "./index.js";
 
 const BASH_DEV_TCP_EPERM =
   "/bin/bash: connect: Operation not permitted\n/bin/bash: /dev/tcp/192.0.2.1/80: Operation not permitted\n";
+// ≤3.12 traceback format: connect frame immediately followed by the exception.
 const PYTHON_CONNECT_EPERM =
   'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n' +
   '  File ".../socket.py", line 831, in create_connection\n    sock.connect(sa)\n' +
   "PermissionError: [Errno 1] Operation not permitted\n";
+// 3.13+ fine-grained-traceback format: marker line between frame and exception.
+// Live capture: python 3.14.6 under the guarded seatbelt cage (wrapForSeatbelt),
+// `python3 -c 'import socket; socket.create_connection(("192.0.2.1", 80), timeout=5)'`.
+const PYTHON314_CONNECT_EPERM =
+  'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n' +
+  '    import socket; socket.create_connection(("192.0.2.1", 80), timeout=5)\n' +
+  "                   ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n" +
+  '  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socket.py", line 874, in create_connection\n' +
+  "    raise exceptions[0]\n" +
+  '  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socket.py", line 859, in create_connection\n' +
+  "    sock.connect(sa)\n    ~~~~~~~~~~~~^^^^\n" +
+  "PermissionError: [Errno 1] Operation not permitted\n";
+// Live capture: node v22.23.1 net.connect under the guarded cage.
+const NODE_CONNECT_EPERM =
+  "Error: connect EPERM 192.0.2.1:80 - Local (0.0.0.0:0)\n" +
+  "    at internalConnect (node:net:1111:16)\n" +
+  "    at defaultTriggerAsyncIdScope (node:internal/async_hooks:472:18)\n" +
+  "    at node:net:1357:9\n" +
+  "    at process.processTicksAndRejections (node:internal/process/task_queues:84:11) {\n" +
+  "  errno: -1,\n  code: 'EPERM',\n  syscall: 'connect',\n  address: '192.0.2.1',\n  port: 80\n}\n";
+// Live capture: ruby 4.0.5 TCPSocket.new under the guarded cage.
+const RUBY_CONNECT_EPERM =
+  "-e:1:in 'TCPSocket#initialize': Operation not permitted - connect(2) for \"192.0.2.1\" port 80 (Errno::EPERM)\n" +
+  "\tfrom -e:1:in 'IO.new'\n\tfrom -e:1:in '<main>'\n";
+// Live capture: ssh under the guarded cage (scp/sftp shell out to ssh too).
+const SSH_CONNECT_EPERM = "ssh: connect to host 192.0.2.1 port 22: Operation not permitted\n";
 const BASH_DEV_TCP_REFUSED =
   "/bin/bash: connect: Connection refused\n/bin/bash: /dev/tcp/127.0.0.1/1: Connection refused\n";
 const CURL_COULDNT_CONNECT =
@@ -41,6 +68,22 @@ describe("networkDenialHint — fire cases", () => {
 
   it("guarded on darwin: python socket EPERM (connect frame + next-line PermissionError) fires too", () => {
     expect(networkDenialHint("guarded", PYTHON_CONNECT_EPERM, "darwin")).toContain('mode "guarded"');
+  });
+
+  it("python 3.13+ traceback with ~~~^^^ marker line between connect frame and PermissionError fires", () => {
+    expect(networkDenialHint("guarded", PYTHON314_CONNECT_EPERM, "darwin")).toContain('mode "guarded"');
+  });
+
+  it("node libuv 'connect EPERM <addr>' fires", () => {
+    expect(networkDenialHint("guarded", NODE_CONNECT_EPERM, "darwin")).toContain('mode "guarded"');
+  });
+
+  it("ruby/C strerror-first 'Operation not permitted - connect(2)' fires", () => {
+    expect(networkDenialHint("guarded", RUBY_CONNECT_EPERM, "darwin")).toContain('mode "guarded"');
+  });
+
+  it("ssh 'connect to host <h> port <n>: Operation not permitted' fires", () => {
+    expect(networkDenialHint("guarded", SSH_CONNECT_EPERM, "darwin")).toContain('mode "guarded"');
   });
 
   it("strict seatbelt: says ALL network including loopback is denied, and claims no proxy route", () => {
@@ -90,9 +133,63 @@ describe("networkDenialHint — null cases (never lie)", () => {
     expect(networkDenialHint("seatbelt", CURL_COULDNT_CONNECT, "darwin")).toBeNull();
   });
 
+  it("bwrap unreachable anchor needs the connect syscall word, not 'Connection …' prose", () => {
+    expect(networkDenialHint("bwrap", "Connection to db failed: Network is unreachable\n", "linux")).toBeNull();
+  });
+
   it("'Network is unreachable' outside bwrap is a real routing problem, not the cage", () => {
     expect(networkDenialHint("guarded", BWRAP_NETNS_UNREACH, "darwin")).toBeNull();
     expect(networkDenialHint("seatbelt", BWRAP_NETNS_UNREACH, "darwin")).toBeNull();
+  });
+
+  // Skeptic regression (Aug 2026): the old anchor's `connect(?:ion)?\b` matched
+  // at the `.` in `connect.sh`, so a FILE-layer EPERM on a connect-named file
+  // fabricated a network-cage message. All rm/chmod/touch lines below are real
+  // captured output (uchg-flagged files); they must never fire the network hint.
+  it("rm on a uchg connect.sh (absolute and relative) is a FILE denial — never the network cage", () => {
+    const abs = "rm: /Users/dad/Projects/lie/connect.sh: Operation not permitted\n";
+    expect(networkDenialHint("guarded", abs, "darwin")).toBeNull();
+    expect(networkDenialHint("seatbelt", abs, "darwin")).toBeNull();
+    expect(networkDenialHint("guarded", "rm: connect.sh: Operation not permitted\n", "darwin")).toBeNull();
+  });
+
+  it("a file named exactly 'connect' still cannot forge the shell's `sh: connect:` format", () => {
+    expect(networkDenialHint("guarded", "rm: connect: Operation not permitted\n", "darwin")).toBeNull();
+    expect(networkDenialHint("seatbelt", "rm: /tmp/lie/connect: Operation not permitted\n", "darwin")).toBeNull();
+  });
+
+  it("connection-named files (connection.log, connection-helper.sh) stay null", () => {
+    expect(networkDenialHint("guarded", "rm: connection.log: Operation not permitted\n", "darwin")).toBeNull();
+    expect(
+      networkDenialHint(
+        "guarded",
+        "chmod: Unable to change file mode on connection-helper.sh: Operation not permitted\n",
+        "darwin",
+      ),
+    ).toBeNull();
+    expect(networkDenialHint("guarded", "touch: connect.sh: Operation not permitted\n", "darwin")).toBeNull();
+  });
+
+  it("TCC-style prose ('Connection to backup volume failed: Operation not permitted') stays null", () => {
+    const prose = "Connection to backup volume failed: Operation not permitted\n";
+    expect(networkDenialHint("guarded", prose, "darwin")).toBeNull();
+    expect(networkDenialHint("seatbelt", prose, "darwin")).toBeNull();
+    expect(networkDenialHint("bwrap", prose, "linux")).toBeNull();
+  });
+
+  it("python FILE PermissionError (Errno 1, connect-named file, no .connect( frame) stays null", () => {
+    // Live capture: python 3.14.6, open("connect.sh", "w") on a uchg-flagged file.
+    const pyFile =
+      "Traceback (most recent call last):\n" +
+      '  File "<string>", line 1, in <module>\n' +
+      '    open("connect.sh", "w")\n' +
+      "    ~~~~^^^^^^^^^^^^^^^^^^^\n" +
+      "PermissionError: [Errno 1] Operation not permitted: 'connect.sh'\n";
+    expect(networkDenialHint("guarded", pyFile, "darwin")).toBeNull();
+  });
+
+  it("node anchor is case-sensitive: lowercase 'connect eperm' prose stays null", () => {
+    expect(networkDenialHint("guarded", "could not connect eperm happened\n", "darwin")).toBeNull();
   });
 
   it("a file-only EPERM fires the FILE hint, not the network one", () => {

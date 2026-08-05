@@ -36,23 +36,58 @@ export function sandboxDenialHint(mode: SandboxMode, output: string): string | n
   return `[sandbox: blocked by the bash kernel cage (mode "${mode}") — it denies credential paths like ~/${hit} at the OS level, so this is the sandbox, not a real file error. If the user needs this command, they can turn the bash sandbox Off in Settings → Security; offer that rather than disabling it yourself.]`;
 }
 
-// Connect-context EPERM anchors, live-verified against the macOS cage (same
-// outputs the seatbelt.test.ts live blocks assert on): bash `/dev/tcp/x/80`
-// prints "connect: Operation not permitted"; python's socket module prints
-// "sock.connect(sa)" then "PermissionError: [Errno 1] Operation not permitted"
-// on the next line. Deliberately NOT an anchor: curl — curl 8.x prints the
-// identical "curl: (7) … Couldn't connect to server" for a cage EPERM and for
-// a genuinely refused live port (verified side by side), so curl output cannot
-// be truthfully attributed to the cage. Likewise plain "Connection refused" is
-// a live-but-refusing listener (dead proxy port, down dev server) and must
-// never be blamed on the sandbox.
-const CONNECT_EPERM_RE = /connect(?:ion)?\b[^\n]{0,80}operation not permitted/i;
-const PY_CONNECT_EPERM_RE = /\.connect\([^\n]*\)\s*\n[^\n]*operation not permitted/i;
+// Connect-context EPERM anchors. Every anchor is live-verified against the
+// macOS cage (raw captures in denial-hints.test.ts fixtures) AND shaped so no
+// FILE-layer EPERM can match it: an earlier loose form
+// (`connect(?:ion)?\b[^\n]{0,80}operation not permitted`) word-boundary-matched
+// the `.` in `connect.sh`, so `rm: connect.sh: Operation not permitted` (uchg
+// flag / root-owned file / TCC prose) fabricated a network-cage message for a
+// file denial — a lie under the Jul 23 invariant. Each anchor now requires the
+// emitting program's own syscall-error format, which a filename cannot forge:
+//  - shell /dev/tcp: bash prints `<argv0>: connect: Operation not permitted`
+//    (live: "/bin/bash: connect: Operation not permitted"). Anchored on the
+//    sh-family argv0 prefix + optional bash `line N:` marker; `rm: connect:`,
+//    `touch: connect.sh:` and `chmod: … on connection-helper.sh:` all fail the
+//    `sh: connect: ` sequence. The old `(?:ion)?` variant is DROPPED: no tool
+//    surveyed under the live cage (bash, zsh, ssh, nc, git, python, node, ruby)
+//    emits "connection: Operation not permitted" — only prose does (e.g. TCC's
+//    "Connection to backup volume failed: Operation not permitted"), which is
+//    exactly the false positive. zsh has no /dev/tcp emulation (live: "no such
+//    file or directory"), but the prefix is kept for sh-in-zsh-clothing setups.
+//  - ssh (and scp/sftp, which shell out to it): `ssh: connect to host <h> port
+//    <n>: Operation not permitted` (live capture) — full fixed phrase + port.
+//  - node/libuv: `connect EPERM <addr>` (live: "Error: connect EPERM
+//    192.0.2.1:80 - Local (0.0.0.0:0)") — case-SENSITIVE errno signature.
+//  - ruby/C strerror-first: `Operation not permitted - connect(2)` (live ruby
+//    TCPSocket capture) — reversed word order, unforgeable by `rm: <path>:`.
+// Deliberately NOT anchors: curl — curl 8.x prints the identical "curl: (7) …
+// Couldn't connect to server" for a cage EPERM and for a genuinely refused
+// live port (verified side by side), so curl output cannot be truthfully
+// attributed to the cage. Plain "Connection refused" is a live-but-refusing
+// listener and must never be blamed on the sandbox. git:// is a known gap: git
+// splits "unable to connect to <host>:" and "errno=Operation not permitted"
+// across lines and was never matched by the old anchor either.
+const SHELL_CONNECT_EPERM_RE = /\b(?:ba|z|da)?sh: (?:line \d+: )?connect: operation not permitted/i;
+const SSH_CONNECT_EPERM_RE = /\bssh: connect to host [^\n]{1,256} port \d+: operation not permitted/i;
+const NODE_CONNECT_EPERM_RE = /\bconnect EPERM\b/; // case-sensitive: libuv errno token
+const C_CONNECT_EPERM_RE = /operation not permitted - connect\(2\)/i;
+// python: `sock.connect(sa)` traceback frame, then `PermissionError: [Errno 1]
+// Operation not permitted`. Python 3.13+ inserts fine-grained-traceback marker
+// lines (`    ~~~~~~~~~~~~^^^^`) between the frame and the exception (live
+// 3.14.6 capture in the test fixtures), so up to two marker-only lines are
+// tolerated; the ≤3.12 adjacent-line form still matches with zero. Errno 1 is
+// required: a file-layer python EPERM has no `.connect(` frame line at all.
+const PY_CONNECT_EPERM_RE =
+  /\.connect\([^\n]*\n(?:[ \t~^]+\n){0,2}[^\n]*permissionerror: \[errno 1\] operation not permitted/i;
 // bwrap's --unshare-net surfaces as no-route, not EPERM: strict bwrap puts the
 // shell in an isolated network namespace, so connect() reports unreachable —
 // under that mode the missing route IS the cage. Gated to bwrap only; in every
-// other mode "Network is unreachable" is a real host networking problem.
-const CONNECT_UNREACH_RE = /connect(?:ion)?\b[^\n]{0,80}network is unreachable/i;
+// other mode "Network is unreachable" is a real host networking problem. No
+// filename hole here (file ops cannot produce ENETUNREACH), but the trailing
+// `\b` (was `connect(?:ion)?`) drops prose like "Connection to db failed:
+// Network is unreachable" while keeping bash's `connect: Network is
+// unreachable` and ssh's `connect to host … : Network is unreachable`.
+const CONNECT_UNREACH_RE = /\bconnect\b[^\n]{0,80}network is unreachable/i;
 
 /**
  * When a caged command's NETWORK attempt was denied by the kernel cage, return
@@ -77,7 +112,12 @@ export function networkDenialHint(
 ): string | null {
   if (mode !== "guarded" && mode !== "seatbelt" && mode !== "bwrap") return null;
   if (mode === "guarded" && platform !== "darwin") return null;
-  const epermHit = CONNECT_EPERM_RE.test(output) || PY_CONNECT_EPERM_RE.test(output);
+  const epermHit =
+    SHELL_CONNECT_EPERM_RE.test(output) ||
+    SSH_CONNECT_EPERM_RE.test(output) ||
+    NODE_CONNECT_EPERM_RE.test(output) ||
+    C_CONNECT_EPERM_RE.test(output) ||
+    PY_CONNECT_EPERM_RE.test(output);
   const unreachHit = mode === "bwrap" && CONNECT_UNREACH_RE.test(output);
   if (!epermHit && !unreachHit) return null;
   if (mode === "guarded") {

@@ -21,10 +21,13 @@
 // (whole-server). See ari-redteam-round5.md.
 //
 // The "guarded" scope is the DEFAULT posture: items 2 and 3 (credential +
-// persistence denies) WITHOUT item 1 (network) and exempting ~/.config — so the
-// kernel backstops the command parser's $VAR/$(...) blind spot on credentials
-// while npm/git/curl keep working. The "shell" scope is the strict opt-in that
-// adds the network deny and denies ~/.config too.
+// persistence denies) plus a LOOPBACK-CONFINED version of item 1 — network is
+// denied except loopback and unix-domain sockets, so a guarded shell can talk
+// to anything ON the machine (dev servers, Ollama, the self server, a local
+// egress proxy) and nothing OFF it — and it exempts ~/.config so the kernel
+// backstops the command parser's $VAR/$(...) blind spot on credentials while
+// local dev tools keep working. The "shell" scope is the strict opt-in with a
+// blanket network deny (no loopback either) that denies ~/.config too.
 //
 // Subpaths MUST be realpath'd: the kernel matches the canonical path, so a deny
 // of "/tmp/x" never fires (it resolves to /private/tmp/x), and a deny of the
@@ -79,11 +82,14 @@ const ABSOLUTE_PERSISTENCE_DIRS = ["/Library/LaunchAgents", "/Library/LaunchDaem
  * relative entries.
  *
  * "shell" scope (phase A) confines agent shell children: network denied, all
- * sensitive home dirs denied. "server" scope (phase B) confines the whole Node
- * server: network stays allowed (the server's API egress goes through the
- * in-process canonicalFetch chokepoint, which governs destinations — SBPL can
- * only filter by IP, not hostname) and the dirs the server itself owns
- * (~/.lax, ~/.codex) are exempted. Persistence write-denies apply to both.
+ * sensitive home dirs denied. "guarded" scope (the default) confines the
+ * network to the machine itself — deny by default with loopback and
+ * unix-socket carve-outs (invariant documented at the rules below). "server"
+ * scope (phase B) confines the whole Node server: network stays allowed (the
+ * server's API egress goes through the in-process canonicalFetch chokepoint,
+ * which governs destinations — SBPL can only filter by IP, not hostname) and
+ * the dirs the server itself owns (~/.lax, ~/.codex) are exempted.
+ * Persistence write-denies apply to all scopes.
  */
 export function generateSeatbeltProfile(home: string = homedir(), scope: SandboxScope = "shell"): string {
   const realHome = canonical(home);
@@ -105,7 +111,31 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
   const lines = [
     "(version 1)",
     "(allow default)",
+    // Strict "shell" scope: blanket network deny — no loopback, no unix
+    // sockets, nothing. The opt-in dark cage; do not soften it.
     ...(scope === "shell" ? ["(deny network*)"] : []),
+    // Guarded (default) network invariant: the shell may talk to anything ON
+    // this machine and nothing OFF it. Deny all network, then carve back:
+    //  - outbound to loopback only (SBPL "localhost" matches 127.0.0.1 AND
+    //    ::1) — dev servers, Ollama, the self server, and the future egress
+    //    proxy all live on loopback;
+    //  - bind + inbound on any local address, so dev servers can listen;
+    //  - unix-domain sockets, which are on-machine IPC by definition
+    //    (docker.sock, ssh-agent, postgres, mDNSResponder's socket). DNS
+    //    stays available in guarded — resolution rides the system resolver
+    //    daemon, not this process's own remote sockets — and the residual
+    //    DNS-exfil channel is an accepted trade for the friendly default
+    //    (decision D8).
+    // "server" scope gets no network rules at all: its egress is governed
+    // in-process by the canonicalFetch chokepoint (see docstring above).
+    ...(scope === "guarded" ? [
+      "(deny network*)",
+      `(allow network-outbound (remote ip "localhost:*"))`,
+      `(allow network-bind (local ip "*:*"))`,
+      `(allow network-inbound (local ip "*:*"))`,
+      "(allow network* (remote unix-socket))",
+      "(allow network* (local unix-socket))",
+    ] : []),
     // Crown jewels: deny every file op (read, write, exec, …) on the sensitive
     // home dirs. file* is the umbrella operation.
     `(deny file* ${sensitiveSubpaths.map((p) => `(subpath ${sb(p)})`).join(" ")})`,

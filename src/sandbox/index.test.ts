@@ -150,16 +150,22 @@ describe("guarded sandbox mode (default)", () => {
     expect(getSandboxMode()).toBe(isGuardedUsable() ? "guarded" : "host");
   });
 
-  it.skipIf(!isGuardedUsable())("guarded wrap applies the cage but keeps network (no network deny)", () => {
+  it.skipIf(!isGuardedUsable())("guarded wrap applies the cage with the platform's network posture", () => {
     process.env.LAX_SANDBOX = "guarded";
     const { cmd, args } = wrapSpawnForSandbox("/bin/bash", ["-c", "echo hi"]);
     // The cage is applied — not a bare passthrough...
     expect(cmd).not.toBe("/bin/bash");
     expect(args.slice(-3)).toEqual(["/bin/bash", "-c", "echo hi"]);
-    // ...but network is NOT denied (the guarded difference vs strict seatbelt/bwrap).
     const blob = [cmd, ...args].join(" ");
-    expect(blob).not.toContain("(deny network*)"); // seatbelt
-    expect(blob).not.toContain("--unshare-net"); // bwrap
+    if (process.platform === "darwin") {
+      // ...macOS guarded is loopback-confined: network denied by default with
+      // the loopback carve-back (anything ON the machine, nothing OFF it).
+      expect(blob).toContain("(deny network*)");
+      expect(blob).toContain(`(allow network-outbound (remote ip "localhost:*"))`);
+    } else {
+      // ...Linux guarded stays network-open (no netns unshare) this campaign.
+      expect(blob).not.toContain("--unshare-net"); // bwrap
+    }
   });
 
   it.skipIf(isGuardedUsable())("guarded wrap is a passthrough where no kernel backend exists", () => {

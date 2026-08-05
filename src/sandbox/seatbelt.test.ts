@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,8 +18,11 @@ const sb = (p: string) => p.replace(/\\/g, "\\\\");
 describe("seatbelt profile generation", () => {
   const home = "/Users/test-home";
 
-  it("denies all outbound network", () => {
-    expect(generateSeatbeltProfile(home)).toContain("(deny network*)");
+  it("strict shell scope denies ALL network with no carve-outs", () => {
+    const profile = generateSeatbeltProfile(home);
+    expect(profile).toContain("(deny network*)");
+    // Blanket deny: strict must have no loopback/unix-socket allows.
+    expect(profile).not.toContain("(allow network");
   });
 
   it("derives sensitive-dir denies from the shared validate.ts list (no drift)", () => {
@@ -43,9 +48,10 @@ describe("seatbelt profile generation", () => {
     expect(generateSeatbeltProfile(home)).toContain("(allow default)");
   });
 
-  it("server scope allows network and exempts the server-owned dirs", () => {
+  it("server scope has no network rules at all and exempts the server-owned dirs", () => {
     const profile = generateSeatbeltProfile(home, "server");
-    expect(profile).not.toContain("(deny network*)");
+    // Server egress is governed in-process by canonicalFetch, not SBPL.
+    expect(profile).not.toContain("network");
     for (const dir of HOME_RELATIVE_DENY_DIRS) {
       const entry = `(subpath "${sb(join(home, dir))}")`;
       if (SERVER_SCOPE_EXEMPT_DIRS.has(dir)) {
@@ -61,9 +67,15 @@ describe("seatbelt profile generation", () => {
     expect(profile).toContain(`(subpath "${sb(join(home, "Library/LaunchAgents"))}")`);
   });
 
-  it("guarded scope (default) keeps network and exempts ~/.config but still denies the crown jewels", () => {
+  it("guarded scope (default) confines network to loopback and exempts ~/.config but still denies the crown jewels", () => {
     const profile = generateSeatbeltProfile(home, "guarded");
-    expect(profile).not.toContain("(deny network*)"); // npm/git/curl keep working
+    // Network invariant: anything ON the machine, nothing OFF it.
+    expect(profile).toContain("(deny network*)");
+    expect(profile).toContain(`(allow network-outbound (remote ip "localhost:*"))`);
+    expect(profile).toContain(`(allow network-bind (local ip "*:*"))`);
+    expect(profile).toContain(`(allow network-inbound (local ip "*:*"))`);
+    expect(profile).toContain("(allow network* (remote unix-socket))");
+    expect(profile).toContain("(allow network* (local unix-socket))");
     for (const dir of HOME_RELATIVE_DENY_DIRS) {
       const entry = `(subpath "${sb(join(home, dir))}")`;
       if (GUARDED_SCOPE_EXEMPT_DIRS.has(dir)) {
@@ -101,6 +113,18 @@ describe("wrapForSeatbelt", () => {
       .toThrow(/Required sandbox executable is unavailable/);
   });
 });
+
+// Ephemeral UNCONFINED loopback HTTP listener for the live network probes:
+// the caged process connects to it (or must fail to). Port 0 = OS-assigned.
+async function withLoopbackListener(fn: (port: number) => void | Promise<void>): Promise<void> {
+  const srv = createServer((_req, res) => { res.end("LOOPBACK-OK"); });
+  await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  try {
+    await fn((srv.address() as AddressInfo).port);
+  } finally {
+    await new Promise<void>((resolve) => srv.close(() => resolve()));
+  }
+}
 
 // The profile is only meaningful if the kernel actually enforces it. Drive
 // sandbox-exec for real against a synthetic home so we assert behavior, not
@@ -150,6 +174,17 @@ describe.skipIf(!onDarwin)("seatbelt enforcement (live sandbox-exec)", () => {
       const r = runConfined(dir, "exec 3<>/dev/tcp/1.1.1.1/80 && echo CONNECTED || echo BLOCKED");
       expect(r.out).toContain("BLOCKED");
       expect(r.out).not.toContain("CONNECTED");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("strict scope blocks even loopback (blanket deny — regression pin vs guarded)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-home-"));
+    try {
+      await withLoopbackListener(async (port) => {
+        const r = runConfined(dir, `exec 3<>/dev/tcp/127.0.0.1/${port} && echo CONNECTED || echo BLOCKED`);
+        expect(r.out).toContain("BLOCKED");
+        expect(r.out).not.toContain("CONNECTED");
+      });
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
@@ -209,10 +244,12 @@ describe.skipIf(!onDarwin)("seatbelt server-scope enforcement (live sandbox-exec
   });
 });
 
-// Guarded scope is the DEFAULT shell cage. Prove the two properties that make it
+// Guarded scope is the DEFAULT shell cage. Prove the properties that make it
 // the right default: the credential crown jewels are kernel-unreadable (so a
-// $VAR/$(...) read the parser missed still can't reach ~/.ssh), but ~/.config —
-// where gh/git/etc. keep their config — stays readable so dev tools don't break.
+// $VAR/$(...) read the parser missed still can't reach ~/.ssh), ~/.config —
+// where gh/git/etc. keep their config — stays readable so dev tools don't
+// break, and the network invariant holds: anything ON the machine (loopback
+// outbound, bind/listen, localhost-by-name), nothing OFF it (TEST-NET-1).
 describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exec)", () => {
   function runGuarded(home: string, command: string): { status: number | null; out: string } {
     const { cmd, args } = wrapForSeatbelt("/bin/bash", ["-c", command], home, "guarded");
@@ -244,5 +281,75 @@ describe.skipIf(!onDarwin)("seatbelt guarded-scope enforcement (live sandbox-exe
       const r = runGuarded(dir, `cat "${join(dir, ".config", "gh", "hosts.yml")}"`);
       expect(r.out).toContain("GH-CONFIG");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("blocks outbound TCP off-machine (TEST-NET-1 — RFC 5737, no real traffic leaves)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      // Denied at the syscall → fails instantly with EPERM, no timeout wait.
+      const r = runGuarded(dir, "exec 3<>/dev/tcp/192.0.2.1/80 && echo NET-OK || echo NET-BLOCKED");
+      expect(r.out).toContain("NET-BLOCKED");
+      expect(r.out).not.toContain("NET-OK");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // Async runner for probes that talk BACK to a listener inside this vitest
+  // process: execFileSync would block the event loop and deadlock the server
+  // (curl waits for a response the server can never send), so these must not
+  // be synchronous.
+  function runGuardedAsync(home: string, command: string): Promise<{ out: string }> {
+    const { cmd, args } = wrapForSeatbelt("/bin/bash", ["-c", command], home, "guarded");
+    return new Promise((resolve) => {
+      execFile(cmd, args, { encoding: "utf-8", timeout: 10_000 }, (_err, stdout, stderr) => {
+        resolve({ out: stdout + stderr });
+      });
+    });
+  }
+
+  it("ALLOWS outbound TCP to a loopback listener", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      await withLoopbackListener(async (port) => {
+        const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://127.0.0.1:${port}/`);
+        expect(r.out).toContain("LOOPBACK-OK");
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("ALLOWS connecting to localhost by NAME (resolver path survives the network deny)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      await withLoopbackListener(async (port) => {
+        // By NAME, not IP: proves getaddrinfo still works inside the cage
+        // (resolution rides the system resolver daemon — decision D8).
+        const r = await runGuardedAsync(dir, `/usr/bin/curl -sS --max-time 3 http://localhost:${port}/`);
+        expect(r.out).toContain("LOOPBACK-OK");
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("ALLOWS binding + listening on a loopback port (dev servers must serve)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    try {
+      const script = 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log("BIND-OK "+s.address().port);s.close()})';
+      const r = runGuarded(dir, `"${process.execPath}" -e '${script}'`);
+      expect(r.out).toContain("BIND-OK");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("ALLOWS unix-domain sockets (on-machine IPC: docker.sock, ssh-agent, postgres)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-sb-grd-"));
+    // Bind + connect a UDS entirely inside the cage; short path (tmpdir) to
+    // stay under the sun_path length limit.
+    const sockDir = mkdtempSync(join(tmpdir(), "lax-sb-uds-"));
+    try {
+      const sock = join(sockDir, "s");
+      const script = `const n=require("net");const s=n.createServer(c=>{c.end("UDS-OK")});s.listen(${JSON.stringify(sock)},()=>{const c=n.connect(${JSON.stringify(sock)});c.on("data",d=>{console.log(d.toString());s.close()})})`;
+      const r = runGuarded(dir, `"${process.execPath}" -e '${script}'`);
+      expect(r.out).toContain("UDS-OK");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(sockDir, { recursive: true, force: true });
+    }
   });
 });

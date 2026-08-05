@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1489 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1490 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,7 +20,7 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 113 | 24 | XL |  |
 | `src/security/` | 81 | 34 | XL |  |
-| `src/tools/` | 61 | 162 | XL |  |
+| `src/tools/` | 61 | 163 | XL |  |
 | `src/providers/` | 58 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 208 | XL |  |
 | `src/memory/` | 43 | 125 | XL |  |
@@ -45,7 +45,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-guards/` | 16 | 14 | L |  |
 | `src/agents/` | 16 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
-| `src/sandbox/` | 15 | 8 | L |  |
+| `src/sandbox/` | 16 | 8 | L |  |
 | `src/anthropic-client/` | 14 | 20 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/voice/` | 12 | 65 | XL |  |
@@ -79,10 +79,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
+| `src/net/` | 2 | 2 | M |  |
 | `src/types/` | 2 | 2 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
 | `src/llm-dispatch/` | 1 | 2 | M |  |
-| `src/net/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
 

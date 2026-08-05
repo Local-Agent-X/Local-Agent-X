@@ -15,6 +15,8 @@ export interface ProxyDialTarget {
 
 type DialTarget = (target: ProxyDialTarget) => Promise<Duplex>;
 
+type PolicyDenyListener = (info: { target: string; reason: string }) => void;
+
 export interface EgressProxyOptions {
   port?: number;
   dial?: DialTarget;
@@ -22,6 +24,8 @@ export interface EgressProxyOptions {
   selfPort: () => string;
   /** Via-header product token appended to forwarded HTTP requests. */
   viaTag: string;
+  /** Observes policy denials (403 class) only — never network errors (502s). */
+  onPolicyDeny?: PolicyDenyListener;
 }
 
 export interface EgressProxy {
@@ -35,14 +39,30 @@ function cleanHostname(hostname: string): string {
   return hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
 }
 
-async function resolveDialTarget(url: URL, selfPort: () => string): Promise<ProxyDialTarget> {
+function policyDeny(
+  reason: string,
+  target: string,
+  onPolicyDeny: PolicyDenyListener | undefined,
+): ProxyPolicyError {
+  // INVARIANT: a throwing deny observer must never break the proxy's own 403 response.
+  try {
+    onPolicyDeny?.({ target, reason });
+  } catch { /* observer failure is the observer's problem; the denial still ships */ }
+  return new ProxyPolicyError(reason);
+}
+
+async function resolveDialTarget(
+  url: URL,
+  selfPort: () => string,
+  onPolicyDeny: PolicyDenyListener | undefined,
+): Promise<ProxyDialTarget> {
   const decision = evaluateEgressForUrl(url.href, selfPort());
-  if (!decision.allowed) throw new ProxyPolicyError(decision.reason);
+  if (!decision.allowed) throw policyDeny(decision.reason, url.href, onPolicyDeny);
 
   const hostname = cleanHostname(url.hostname);
   const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new ProxyPolicyError("Blocked: invalid target port");
+    throw policyDeny("Blocked: invalid target port", url.href, onPolicyDeny);
   }
 
   // Canonical policy has already restricted these loopback names/addresses to
@@ -56,8 +76,10 @@ async function resolveDialTarget(url: URL, selfPort: () => string): Promise<Prox
   }
 
   const resolved = await resolveAndPinHost(hostname);
-  if (!resolved.ok) throw new ProxyPolicyError(resolved.reason);
-  if (!resolved.pin) throw new ProxyPolicyError("Blocked: target did not produce a dial address");
+  if (!resolved.ok) throw policyDeny(resolved.reason, url.href, onPolicyDeny);
+  if (!resolved.pin) {
+    throw policyDeny("Blocked: target did not produce a dial address", url.href, onPolicyDeny);
+  }
   return { ...resolved.pin, hostname, port };
 }
 
@@ -161,9 +183,10 @@ async function forwardHttp(
   dial: DialTarget,
   selfPort: () => string,
   viaTag: string,
+  onPolicyDeny: PolicyDenyListener | undefined,
 ): Promise<void> {
   const url = parseHttpTarget(request);
-  const target = await resolveDialTarget(url, selfPort);
+  const target = await resolveDialTarget(url, selfPort, onPolicyDeny);
   const socket = await dial(target);
   // The client can disappear while DNS pinning / dialing is awaiting. In that
   // window no request listener owns the new socket yet, so close it here.
@@ -216,9 +239,10 @@ async function openTunnel(
   head: Buffer,
   dial: DialTarget,
   selfPort: () => string,
+  onPolicyDeny: PolicyDenyListener | undefined,
 ): Promise<void> {
   const url = parseConnectTarget(request.url);
-  const target = await resolveDialTarget(url, selfPort);
+  const target = await resolveDialTarget(url, selfPort, onPolicyDeny);
   const upstream = await dial(target);
   // The client may have died during the two awaits above (Chrome SIGKILLed
   // by a mid-session browserMode flip) — don't tunnel into a dead socket.
@@ -235,10 +259,10 @@ async function openTunnel(
 }
 
 export async function startEgressProxy(options: EgressProxyOptions): Promise<EgressProxy> {
-  const { selfPort, viaTag } = options;
+  const { selfPort, viaTag, onPolicyDeny } = options;
   const dial = options.dial ?? dialPinnedTarget;
   const server = createServer((request, response) => {
-    void forwardHttp(request, response, dial, selfPort, viaTag)
+    void forwardHttp(request, response, dial, selfPort, viaTag, onPolicyDeny)
       .catch((error) => writeHttpError(response, error));
   });
   const clientSockets = new Set<Duplex>();
@@ -255,7 +279,7 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
     socket.on("error", () => socket.destroy());
   });
   server.on("connect", (request, socket, head) => {
-    void openTunnel(request, socket, head, dial, selfPort).catch((error) => writeSocketError(socket, error));
+    void openTunnel(request, socket, head, dial, selfPort, onPolicyDeny).catch((error) => writeSocketError(socket, error));
   });
 
   await new Promise<void>((resolve, reject) => {

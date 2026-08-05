@@ -135,4 +135,24 @@ describe("egress proxy core", () => {
       port: 7311,
     });
   });
+
+  it("fires onPolicyDeny for policy denials but not for allowed dials", async () => {
+    resolve4.mockResolvedValue(["93.184.216.34"]);
+    const denials: { target: string; reason: string }[] = [];
+    const dial = vi.fn(async (_target: ProxyDialTarget) => new RecordingHttpSocket());
+    const proxy = await startCore({
+      dial,
+      selfPort: () => "7007",
+      viaTag: "1.1 test-egress",
+      onPolicyDeny: (info) => denials.push(info),
+    });
+
+    const allowed = await requestThroughProxy(proxy, "http://public.example/path");
+    expect(allowed.status).toBe(200);
+    expect(denials).toEqual([]);
+
+    const denied = await requestThroughProxy(proxy, "http://169.254.169.254/latest");
+    expect(denied.status).toBe(403);
+    expect(denials).toEqual([{ target: "http://169.254.169.254/latest", reason: denied.body }]);
+  });
 });

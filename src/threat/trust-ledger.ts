@@ -22,8 +22,11 @@
  * Re-prompting on every restart of the same flow is exactly the friction
  * we're trying to remove.
  *
- * Decay: none for now. Revisit if we want a 90-day TTL later.
- * Adding now would be premature complexity.
+ * Decay: grants expire TRUST_TTL_MS (30 days) after the most recent
+ * approval. Expiry is measured from lastApprovedAt — a fresh /approve
+ * refreshes it, but use of the pattern does not, so trust always decays
+ * unless the human re-affirms. Derived at read time from the existing
+ * timestamps; the on-disk schema is unchanged.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -58,6 +61,13 @@ interface LedgerFile {
   patterns: LearnedPattern[];
 }
 
+/** Grants expire this long after the most recent approval. */
+export const TRUST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function isExpired(p: LearnedPattern): boolean {
+  return Date.now() - p.lastApprovedAt > TRUST_TTL_MS;
+}
+
 let cache: Map<string, LearnedPattern> | null = null;
 
 function load(): Map<string, LearnedPattern> {
@@ -69,7 +79,9 @@ function load(): Map<string, LearnedPattern> {
     const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as LedgerFile;
     if (parsed.version === 1 && Array.isArray(parsed.patterns)) {
-      for (const p of parsed.patterns) cache.set(p.fingerprint, p);
+      // Expired grants are dropped here, so the next save() also prunes
+      // them from disk.
+      for (const p of parsed.patterns) if (!isExpired(p)) cache.set(p.fingerprint, p);
     }
   } catch (e) {
     logger.warn(`[trust-ledger] load failed (treating as empty): ${(e as Error).message}`);
@@ -140,14 +152,17 @@ function recordApprovalInternal(fingerprint: string, reason: string, key?: strin
   logger.info(`[trust-ledger] recorded approval for ${fingerprint} (total approvals: ${map.get(fingerprint)!.approvals})`);
 }
 
-/** True when a pattern has at least one prior approval. */
+/** True when a pattern has an unexpired prior approval. The expiry check
+ *  here (not just in load()) covers entries that age out while the cache
+ *  stays warm across long server uptimes. */
 export function isLearned(fingerprint: string): boolean {
-  return load().has(fingerprint);
+  const p = load().get(fingerprint);
+  return p !== undefined && !isExpired(p);
 }
 
-/** Read-only view of all learned patterns for UI display. */
+/** Read-only view of all unexpired learned patterns for UI display. */
 export function listLearned(): LearnedPattern[] {
-  return [...load().values()].sort((a, b) => b.lastApprovedAt - a.lastApprovedAt);
+  return [...load().values()].filter((p) => !isExpired(p)).sort((a, b) => b.lastApprovedAt - a.lastApprovedAt);
 }
 
 /** Forget a learned pattern. Returns true if the pattern was present. */

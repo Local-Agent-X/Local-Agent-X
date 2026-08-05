@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
@@ -289,11 +289,14 @@ export const bashTool: ToolDefinition = {
       // bare "Operation not permitted" reads as a mystery — name the sandbox + the
       // off switch so the agent reports it right instead of flailing.
       const cageNotice = sandboxDenialHint(sandboxMode, out);
+      // Same seam for NETWORK denials: the cage's connect-EPERM otherwise reads
+      // as "host is down" and the agent reports a lie. File hint first, then net.
+      const netNotice = networkDenialHint(sandboxMode, out);
       // A PowerShell cmdlet fired into POSIX bash surfaces only as "command not
       // found" (exit 127) — name the mistake so the agent switches tools instead
       // of re-emitting the same cmdlet (it did this 3× in one session).
       const cmdletNotice = powershellCmdletHint(stderr);
-      const notices = [cmdletNotice, cageNotice].filter(Boolean).join("\n");
+      const notices = [cmdletNotice, cageNotice, netNotice].filter(Boolean).join("\n");
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,

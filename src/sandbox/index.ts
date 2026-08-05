@@ -8,13 +8,17 @@ import { createLogger } from "../logger.js";
 import { getRuntimeConfig, saveConfig } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { SandboxConfig, SandboxMode } from "./types.js";
-import { validateSandboxConfig, HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { validateSandboxConfig } from "./validate.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
 const logger = createLogger("sandbox");
 
 export type { SandboxMode } from "./types.js";
 export { validateSandboxConfig } from "./validate.js";
+// Denial→truthful-notice mapping lives in denial-hints.ts (split when the
+// network hint pushed this file past the 400-LOC bar); re-exported so callers
+// keep importing from the sandbox facade.
+export { sandboxDenialHint, networkDenialHint } from "./denial-hints.js";
 
 // Memoized: whether seatbelt is usable on THIS host (macOS + sandbox-exec
 // present + our generated profile actually loads). Deterministic per process,
@@ -300,27 +304,6 @@ export function wrapSpawnForSandbox(shell: string, shellArgs: string[]): { cmd: 
     return { cmd: shell, args: shellArgs };
   }
   return { cmd: shell, args: shellArgs };
-}
-
-/**
- * When a bash command fails because the active kernel cage denied a credential
- * dir, return a one-line notice mapping the raw "Operation not permitted" to the
- * sandbox + its off switch; null otherwise. Now that "guarded" is the DEFAULT,
- * real users hit this (e.g. `aws s3 ls` → ~/.aws denied) and the bare EPERM reads
- * as a mystery failure. Gated on BOTH a permission-denial phrase AND a reference
- * to a path the active mode actually denies (guarded exempts ~/.config), so an
- * ordinary permission error is never mislabeled as the sandbox. The notice goes
- * only in the agent-facing content; meta.stderr stays the raw output. Mirrors the
- * docker-mode notice in shell-tool.ts.
- */
-export function sandboxDenialHint(mode: SandboxMode, output: string): string | null {
-  if (mode !== "guarded" && mode !== "seatbelt" && mode !== "bwrap") return null;
-  if (!/operation not permitted|permission denied/i.test(output)) return null;
-  const exempt = mode === "guarded" ? GUARDED_SCOPE_EXEMPT_DIRS : new Set<string>();
-  const hit = HOME_RELATIVE_DENY_DIRS.find((d) => !exempt.has(d) && output.includes(`/${d}`))
-    ?? HOME_RELATIVE_DENY_FILES.find((f) => output.includes(`/${f}`));
-  if (!hit) return null;
-  return `[sandbox: blocked by the bash kernel cage (mode "${mode}") — it denies credential paths like ~/${hit} at the OS level, so this is the sandbox, not a real file error. If the user needs this command, they can turn the bash sandbox Off in Settings → Security; offer that rather than disabling it yourself.]`;
 }
 
 /** Set sandbox mode at runtime (from settings API). Persists to ~/.lax/config.json. */

@@ -18,6 +18,7 @@ import { resolveWindowsShell } from "./shell-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand } from "../security/layer/index.js";
 import { getSandboxMode, getSandboxStatus, wrapSpawnForSandbox } from "../sandbox/index.js";
+import { shellProxyEnvSync } from "./shell-proxy-env.js";
 import { projectRoot } from "../workspace/paths.js";
 
 import { createLogger } from "../logger.js";
@@ -161,7 +162,12 @@ export function startSession(
     // (e.g. a node server holding a port). On Windows taskkill /T handles the
     // tree, and detached would risk a stray console. Pipes are unaffected.
     child = spawn(spawned.cmd, spawned.args, {
-      env: sanitizeEnv(env),
+      // Proxy env is the BASE and caller-provided env overrides it: the cage
+      // is the wall, the proxy env is only a default route — a caller that
+      // explicitly sets HTTP_PROXY etc. wins. Sync accessor because
+      // startSession is sync (DevServerDeps.start types it sync); a cold-start
+      // miss fails closed at the cage, see shell-proxy-env.ts.
+      env: sanitizeEnv({ ...shellProxyEnvSync(), ...env }),
       cwd: effectiveCwd,
       windowsHide: true,
       detached: !isWin,

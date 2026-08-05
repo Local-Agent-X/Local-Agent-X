@@ -4,6 +4,7 @@ import { getSandboxMode, execInSandbox, wrapSpawnForSandbox, sandboxDenialHint }
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill, buildSanitizedEnv } from "./shell-env.js";
+import { shellProxyEnv } from "./shell-proxy-env.js";
 import { killProcessGroup } from "../process-tree-kill.js";
 import { projectRoot } from "../workspace/paths.js";
 
@@ -47,7 +48,9 @@ export const bashTool: ToolDefinition = {
     // shared evaluateShellCommand gate (security/shell-policy.ts), which the
     // SecurityLayer runs against every bash call pre-dispatch — so it covers
     // process_start/process_restart too, not just bash. Single source there.
-    const sanitizedEnv = buildSanitizedEnv();
+    // Guarded sandbox gets the egress-proxy env (the sanctioned route);
+    // every other mode gets {} — see shell-proxy-env.ts for the rationale.
+    const sanitizedEnv = buildSanitizedEnv(await shellProxyEnv());
 
     const isWin = process.platform === "win32";
     // Resolve the Windows shell ONCE so translation and spawn agree on it. A

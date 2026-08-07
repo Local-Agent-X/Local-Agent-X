@@ -52,9 +52,16 @@ export const webFetchTool: ToolDefinition = {
     },
     required: ["url"],
   },
-  async execute(args) {
+  async execute(args, signal?: AbortSignal) {
     const url = String(args.url);
     const startMs = Date.now();
+
+    // Combine the turn's cancellation signal (from tool-runner, so a user STOP
+    // aborts the in-flight fetch) with a fresh per-hop wall-clock ceiling.
+    // AbortSignal.any fires on whichever trips first — including an already-
+    // aborted incoming signal, which aborts immediately.
+    const hopSignal = () =>
+      signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
 
     const dispatcher = createPinningDispatcher();
     try {
@@ -68,7 +75,7 @@ export const webFetchTool: ToolDefinition = {
         await assertLiteralIpEgressAllowed(currentUrl);
         let r = await undiciFetch(currentUrl, {
           headers: { ...FETCH_HEADERS, ...selfAuth },
-          signal: AbortSignal.timeout(30_000),
+          signal: hopSignal(),
           redirect: "manual",
           dispatcher,
         });
@@ -86,7 +93,7 @@ export const webFetchTool: ToolDefinition = {
           currentUrl = location;
           r = await undiciFetch(currentUrl, {
             headers: { ...FETCH_HEADERS, ...selfAuth },
-            signal: AbortSignal.timeout(30_000),
+            signal: hopSignal(),
             redirect: "manual",
             dispatcher,
           });

@@ -414,6 +414,88 @@ describe("cross-host redirect egress re-check", () => {
     expect(seen).toEqual([]); // never connected
   });
 
+  // ── Turn-cancel (STOP) propagation ───────────────────────────────────────
+  // tool-runner threads the turn's AbortSignal as the 2nd arg to execute(). A
+  // user STOP must abort the in-flight fetch, not wait out the self-timeout.
+  // The mock hangs while honoring whatever signal the tool passes to undici, so
+  // these fail if the tool ignores the incoming signal (the pre-fix behavior).
+  function hangUntilAborted(opts: unknown) {
+    const sig = (opts as { signal?: AbortSignal }).signal;
+    return new Promise((_resolve, reject) => {
+      const onAbort = () =>
+        reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" }));
+      if (sig?.aborted) return onAbort();
+      sig?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  it("web_fetch: aborting the passed-in turn signal aborts the in-flight fetch", async () => {
+    undiciMock.handler = (_url, opts) => hangUntilAborted(opts);
+    const controller = new AbortController();
+    const p = webFetchTool.execute({ url: "https://public-a.example/page" }, controller.signal);
+    setTimeout(() => controller.abort(), 10);
+    const res = await p;
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/fetch failed|abort/i);
+  });
+
+  it("web_fetch: an already-aborted turn signal aborts immediately", async () => {
+    undiciMock.handler = (_url, opts) => hangUntilAborted(opts);
+    const res = await webFetchTool.execute(
+      { url: "https://public-a.example/page" },
+      AbortSignal.abort(),
+    );
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/fetch failed|abort/i);
+  });
+
+  it("web_fetch: with no turn signal, still fetches and still carries a timeout ceiling", async () => {
+    let seenSignal: AbortSignal | undefined;
+    undiciMock.handler = (_url, opts) => {
+      seenSignal = (opts as { signal?: AbortSignal }).signal;
+      return fakeResponse({ status: 200, body: "OK BODY" });
+    };
+    const res = await webFetchTool.execute({ url: "https://public-a.example/page" });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toContain("OK BODY");
+    // The self-bound wall-clock ceiling is still wired even with no turn signal.
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+    expect(seenSignal?.aborted).toBe(false);
+  });
+
+  it("http_request: aborting the passed-in turn signal aborts the in-flight request", async () => {
+    undiciMock.handler = (_url, opts) => hangUntilAborted(opts);
+    const tool = createHttpRequestTool();
+    const controller = new AbortController();
+    const p = tool.execute({ url: "https://public-a.example/page" }, controller.signal);
+    setTimeout(() => controller.abort(), 10);
+    const res = await p;
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/http request failed|abort/i);
+  });
+
+  it("http_request: an already-aborted turn signal aborts immediately", async () => {
+    undiciMock.handler = (_url, opts) => hangUntilAborted(opts);
+    const tool = createHttpRequestTool();
+    const res = await tool.execute(
+      { url: "https://public-a.example/page" },
+      AbortSignal.abort(),
+    );
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/http request failed|abort/i);
+  });
+
+  it("http_request: with no turn signal, its own timeout ceiling still aborts a hung request", async () => {
+    // args.timeout drives the self-bound ceiling (min with 120s). A tiny value
+    // proves the ceiling still fires without a turn signal — turn-cancel is
+    // ADDED, the self-timeout is not removed.
+    undiciMock.handler = (_url, opts) => hangUntilAborted(opts);
+    const tool = createHttpRequestTool();
+    const res = await tool.execute({ url: "https://public-a.example/page", timeout: 50 });
+    expect(res.isError).toBe(true);
+    expect(res.content).toMatch(/http request failed|abort/i);
+  });
+
   // Same-host redirect (A → A/other) is fine even in strict mode — the
   // allowlist is host-scoped, so a path change on an allowlisted host passes.
   it("strict mode: same-host redirect is still followed", async () => {

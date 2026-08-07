@@ -71,7 +71,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       },
       required: ["url"],
     },
-    async execute(args) {
+    async execute(args, signal?: AbortSignal) {
       const url = String(args.url);
       const method = String(args.method || "GET").toUpperCase();
       const timeout = Math.min((args.timeout as number) || 30_000, 120_000);
@@ -128,11 +128,18 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         bodyStr = secrets.resolve(bodyStr);
       }
 
+      // Combine the turn's cancellation signal (from tool-runner, so a user
+      // STOP aborts the in-flight request) with the self-bound wall-clock
+      // ceiling. AbortSignal.any fires on whichever trips first — including an
+      // already-aborted incoming signal, which aborts immediately.
+      const httpTimeout = AbortSignal.timeout(timeout);
+      const fetchSignal = signal ? AbortSignal.any([signal, httpTimeout]) : httpTimeout;
+
       const dispatcher = createPinningDispatcher();
       const fetchOpts: UndiciRequestInit = {
         method,
         headers,
-        signal: AbortSignal.timeout(timeout),
+        signal: fetchSignal,
         redirect: "manual",
         dispatcher,
       };

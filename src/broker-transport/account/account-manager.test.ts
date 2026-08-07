@@ -131,6 +131,43 @@ describe("AgentxosAccountManager — pairing", () => {
     expect(manager.status().pairing).toBeNull();
   });
 
+  it("force startPairing issues a re-pair QR while paired instead of no-opping or completing instantly", async () => {
+    // The bug: login adopts a lingering server pairing → "Connected" — but that never
+    // proves the PHONE scanned this desktop (fresh install / phone paired elsewhere).
+    // A forced start must genuinely issue a challenge, not adopt-and-return, and the
+    // poll must NOT "complete" off the pre-existing row on its first tick.
+    const { manager, getState, challengeCount } = harness({ pairings: () => [PAIRING()] });
+    await manager.startLogin(); // adopts the lingering pairing → paired
+    expect(manager.status().paired).toBe(true);
+    await manager.startPairing({ force: true });
+    expect(challengeCount()).toBe(1); // a QR was genuinely issued
+    // The row never changed (nothing scanned / same phone re-scanned idempotently):
+    // still paired to the same phone, and NO timeout error — lapsing back is normal.
+    expect(getState()?.pairedPhoneId).toBe("phone-9");
+    expect(manager.status().error).toBeNull();
+    expect(manager.status().pairing).toBeNull(); // QR torn down after expiry
+  });
+
+  it("force startPairing adopts a DIFFERENT phone that redeems the re-pair QR", async () => {
+    // listPairings call order: 1 = login reconcile, 2 = the re-pair prior-row snapshot,
+    // 3+ = poll ticks — so the replacement row appears only once the QR is up.
+    let calls = 0;
+    const { manager, getState } = harness({
+      pairings: () => (++calls >= 3 ? [PAIRING({ pairingId: "p2", phoneDeviceId: "phone-2" })] : [PAIRING()]),
+    });
+    await manager.startLogin(); // adopts phone-9
+    await manager.startPairing({ force: true });
+    expect(getState()?.pairedPhoneId).toBe("phone-2"); // re-targeted to the new phone
+    expect(manager.status().error).toBeNull();
+  });
+
+  it("unforced startPairing while paired stays a no-op", async () => {
+    const { manager, challengeCount } = harness({ pairings: () => [PAIRING()] });
+    await manager.startLogin();
+    await manager.startPairing();
+    expect(challengeCount()).toBe(0);
+  });
+
   it("unpair revokes the server-side pairing so a re-login won't re-adopt it", async () => {
     // The user's bug: sign-out then back in stayed Connected because the broker kept the
     // pairing. unpair() must REVOKE it server-side, not just locally — proven by signing in

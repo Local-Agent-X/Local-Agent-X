@@ -27,7 +27,9 @@ export const handleAccountRoutes: RouteHandler = async (method, url, req, res) =
     return true;
   }
   if (method === "POST" && url.pathname === "/api/account/pair/start") {
-    void manager.startPairing(); // background; page polls status for the QR
+    // ?force=1 → re-pair: show a QR even while paired (a phone that never scanned this
+    // desktop can re-link without a destructive Disconnect). Background; page polls status.
+    void manager.startPairing({ force: url.searchParams.get("force") === "1" });
     jsonResponse(res, 202, { ok: true }, req);
     return true;
   }

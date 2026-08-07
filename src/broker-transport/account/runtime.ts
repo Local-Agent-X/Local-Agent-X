@@ -28,6 +28,9 @@ const DEFAULT_BROKER_URL = "wss://broker.agentxos.ai";
 
 let manager: AgentxosAccountManager | null = null;
 let presence: BrokerPresence | null = null;
+/** The phone id the running presence was started for — a re-pair that adopts a
+ *  DIFFERENT phone must restart presence, or we'd keep dialing the old target. */
+let presencePhoneId: string | null = null;
 /** A SECOND presence in the voice rendezvous (channel=voice), so the phone can start a
  *  voice session on demand without touching the screen/chat peer. */
 let voicePresence: BrokerPresence | null = null;
@@ -67,9 +70,12 @@ export function getAccountManager(): AgentxosAccountManager {
  */
 export function maybeStartBrokerPresence(state: AccountState | null = loadAccountState()): void {
   if (isLocalOnlyMode()) return;
-  if (presence) return; // already running
   if (transportMode() !== "broker") return; // broker is the only transport
   if (!state || !state.pairedPhoneId) return; // need a session + a pairing
+  if (presence) {
+    if (presencePhoneId === state.pairedPhoneId) return; // already running for this phone
+    stopBrokerPresence(); // re-pair adopted a DIFFERENT phone — re-target the rendezvous
+  }
   logger.info(`[broker-transport] activating desktop presence (device ${state.deviceId} ↔ phone ${state.pairedPhoneId})`);
   const config = {
     brokerWsUrl: brokerWsUrl(),
@@ -79,6 +85,7 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
     getToken: () => loadAccountState()?.sessionToken ?? "",
   };
   presence = startBrokerPresence(config);
+  presencePhoneId = state.pairedPhoneId;
   // A second presence for the on-demand voice room (channel=voice). Same gating + token.
   voicePresence = startBrokerVoicePresence(config);
 }
@@ -87,6 +94,7 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
 export function stopBrokerPresence(): void {
   presence?.stop();
   presence = null;
+  presencePhoneId = null;
   voicePresence?.stop();
   voicePresence = null;
 }

@@ -158,21 +158,33 @@ export class AgentxosAccountManager {
   }
 
   /** Begin pairing: request a challenge, show its QR, then poll until a phone redeems
-   *  it and the pairing appears. No-op if not signed in / already paired / running. */
-  startPairing(): Promise<void> {
+   *  it and the pairing appears. No-op if not signed in / already paired / running.
+   *  `force` shows a QR even while paired (re-pair): a phone that never actually scanned
+   *  this desktop — login adopts lingering server pairings, so "Connected" doesn't prove
+   *  the phone knows about us — can scan it without a destructive Disconnect first. */
+  startPairing(opts: { force?: boolean } = {}): Promise<void> {
     const state = this.deps.loadState();
-    if (!state || this.pairingRunning || state.pairedPhoneId) return Promise.resolve();
+    if (!state || this.pairingRunning) return Promise.resolve();
+    if (state.pairedPhoneId && !opts.force) return Promise.resolve();
     this.pairingRunning = true;
     this.error = null;
-    return this.runPairing(state);
+    return this.runPairing(state, Boolean(opts.force && state.pairedPhoneId));
   }
 
-  private async runPairing(state: AccountState): Promise<void> {
+  private async runPairing(state: AccountState, repair: boolean): Promise<void> {
     try {
       // Already paired server-side? Adopt it instead of issuing a challenge: the poll below
       // would otherwise find the stale pairing on its first tick and "complete" instantly,
-      // tearing the QR down before you could scan it.
-      if (await this.adoptExistingPairing(state)) return;
+      // tearing the QR down before you could scan it. A forced re-pair instead SNAPSHOTS the
+      // existing row, so the poll only completes when the row changes (a different phone
+      // redeemed) rather than instantly "finding" the pre-existing pairing.
+      let prior: PairingEntry | null = null;
+      if (repair) {
+        prior =
+          (await this.deps.api.listPairings(state.sessionToken)).find(
+            (p) => p.desktopDeviceId === state.deviceId,
+          ) ?? null;
+      } else if (await this.adoptExistingPairing(state)) return;
       const issued = await this.deps.api.requestPairingChallenge(state.sessionToken, state.deviceId);
       this.pairing = { qrDataUrl: await this.deps.renderQr(issued.qrPayload), expiresAt: issued.expiresAt };
 
@@ -181,13 +193,15 @@ export class AgentxosAccountManager {
         await this.deps.sleep(PAIR_POLL_MS);
         const pairings = await this.deps.api.listPairings(state.sessionToken);
         const mine = pairings.find((p) => p.desktopDeviceId === state.deviceId);
-        if (mine) {
+        if (mine && (!prior || mine.pairingId !== prior.pairingId || mine.phoneDeviceId !== prior.phoneDeviceId)) {
           const next = this.deps.updateState({ pairedPhoneId: mine.phoneDeviceId });
           if (next) this.deps.onPaired?.(next);
           return;
         }
       }
-      this.error = "Pairing timed out — generate a new QR and scan it again.";
+      // A same-phone re-scan redeems idempotently (same row, no change to detect) and needs
+      // no state change here — so a re-pair QR lapsing is NOT an error; we're still paired.
+      if (!repair) this.error = "Pairing timed out — generate a new QR and scan it again.";
     } catch (e) {
       this.error = (e as Error).message;
     } finally {

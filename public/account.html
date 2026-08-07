@@ -96,7 +96,25 @@
       function render(s) {
         if (!s) return;
         showErr(s.error);
-        // 1) paired → done. Done closes now; a fresh QR-scan pair auto-closes 2s later.
+        // 1) pairing in flight → show QR. This is checked BEFORE paired so a re-pair QR
+        //    (the "Show pairing QR" button in the Connected state — login adopts lingering
+        //    server pairings, so "Connected" doesn't prove the phone ever scanned this Mac)
+        //    actually renders instead of being masked by the Connected panel. Only a QR
+        //    shown while UNPAIRED arms the auto-close: that flip to paired means a fresh
+        //    scan; a re-pair QR just lapses back to Connected.
+        if (s.pairing) {
+          if (!s.paired) sawPairing = true;
+          const secsLeft = Math.max(0, Math.round((s.pairing.expiresAt - Date.now()) / 1000));
+          bodyEl.innerHTML =
+            "<h1>Scan to pair your phone</h1>" +
+            "<p>" + (s.paired
+              ? "Open the agentxos app on your phone and scan this code to link it to this Mac. Your current pairing is kept if nothing scans."
+              : "Open the agentxos app on your phone and scan this code.") + "</p>" +
+            '<img class="qr" alt="Pairing QR" src="' + esc(s.pairing.qrDataUrl) + '" />' +
+            '<p class="muted">Code expires in ' + secsLeft + "s." + (s.paired ? "" : " It refreshes automatically if it lapses.") + "</p>";
+          return;
+        }
+        // 2) paired → done. Done closes now; a fresh QR-scan pair auto-closes 2s later.
         //    "Disconnect phone" REVOKES the server-side pairing (sign-out alone leaves it
         //    live, which is why a re-login re-adopts it) — confirm-gated, it's permanent.
         if (s.paired) {
@@ -110,10 +128,16 @@
             '<h1><span class="ok">✓ Connected</span></h1>' +
             "<p>This Mac is paired with your phone and reachable through the agentxos broker." +
             (justPaired ? " Closing this window…" : " You can close this window.") + "</p>" +
+            '<p class="muted">Phone never scanned a code? Show the pairing QR to link it — nothing is disconnected unless a new phone scans.</p>' +
             '<div class="row"><button class="btn" id="done">Done</button>' +
+            '<button class="btn ghost" id="repair">Show pairing QR</button>' +
             '<button class="btn ghost" id="out">Sign out</button></div>' +
             unpairUi;
           document.getElementById("done").onclick = () => window.close();
+          document.getElementById("repair").onclick = () => {
+            if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; } // don't close mid-repair
+            trigger("/api/account/pair/start?force=1");
+          };
           document.getElementById("out").onclick = () => trigger("/api/account/signout");
           if (confirmingUnpair) {
             document.getElementById("unpairYes").onclick = () => { confirmingUnpair = false; sawPairing = false; trigger("/api/account/pair/unpair"); };
@@ -125,18 +149,6 @@
             };
           }
           if (justPaired && !confirmingUnpair) { autoClosing = true; closeTimer = setTimeout(() => window.close(), 2000); }
-          return;
-        }
-        // 2) pairing in flight → show QR. Mark that we've shown it, so ONLY the eventual
-        //    transition to paired (the phone actually scanned) arms the auto-close.
-        if (s.pairing) {
-          sawPairing = true;
-          const secsLeft = Math.max(0, Math.round((s.pairing.expiresAt - Date.now()) / 1000));
-          bodyEl.innerHTML =
-            "<h1>Scan to pair your phone</h1>" +
-            "<p>Open the agentxos app on your phone and scan this code.</p>" +
-            '<img class="qr" alt="Pairing QR" src="' + esc(s.pairing.qrDataUrl) + '" />' +
-            '<p class="muted">Code expires in ' + secsLeft + "s. It refreshes automatically if it lapses.</p>";
           return;
         }
         // 3) signed in, not paired → offer to pair

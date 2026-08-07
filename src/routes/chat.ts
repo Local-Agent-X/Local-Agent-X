@@ -7,6 +7,7 @@ import { createLogger } from "../logger.js";
 import { handleAutoDelegateRoutes } from "./chat/auto-delegate-routes.js";
 import { handleCompactRoute } from "./chat/compact-route.js";
 import { handleEvalCompactRoute } from "./chat/eval-compact-route.js";
+import { handleRetractRoute } from "./chat/retract-route.js";
 import { runChatTurn } from "./chat/run-chat-turn.js";
 import { markDryRunSession, unmarkDryRunSession } from "../tool-execution/index.js";
 
@@ -18,6 +19,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
   if (await handleAutoDelegateRoutes(method, url, req, res)) return true;
   if (await handleCompactRoute(method, url, req, res, ctx)) return true;
+  if (await handleRetractRoute(method, url, req, res, ctx)) return true;
   if (await handleEvalCompactRoute(method, url, req, res)) return true;
 
   // Main chat SSE endpoint. The body of this turn used to live inline here

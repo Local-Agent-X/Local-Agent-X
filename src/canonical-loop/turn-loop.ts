@@ -13,10 +13,38 @@ import type { ProviderStateEnvelope } from "./types.js";
 import type { CommitTurnMessage } from "./checkpoint.js";
 import type { Op } from "../ops/types.js";
 import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
+import type { FiredMiddlewareResult } from "./middlewares/host.js";
 import { resolveTurnLoopDeps, type TurnLoopDeps } from "./turn-loop/turn-deps.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak } from "./turn-loop/adapter-throw-recovery.js";
 import { recoverReportedAdapterError } from "./turn-loop/reported-adapter-recovery.js";
 import { idleSuspension, middlewareSuspension, suspendedTurn } from "./turn-loop/suspension.js";
+
+// Map a per-phase middleware verdict (afterModelCall / afterToolExecution) to
+// the sticky MiddlewareDirective. Both phases translate abort/nudge/suspend the
+// same way — the first non-continue verdict wins, later phases only refine — so
+// the mapping lives here once instead of inline per phase. A `continue` verdict
+// falls through middlewareSuspension to null (no directive).
+function directiveFromPhaseResult(res: FiredMiddlewareResult): MiddlewareDirective | null {
+  if (res.kind === "abort") {
+    return {
+      kind: "abort",
+      reason: res.reason,
+      firedBy: res.firedBy ?? "unknown",
+      message: res.message,
+    };
+  }
+  if (res.kind === "nudge") {
+    return {
+      kind: "nudge",
+      reason: res.reason,
+      firedBy: res.firedBy ?? "unknown",
+      message: res.message,
+      metadata: res.metadata,
+      skipToolDispatch: res.skipToolDispatch,
+    };
+  }
+  return middlewareSuspension(res);
+}
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 export type { TurnLoopDeps } from "./turn-loop/turn-deps.js";
@@ -232,25 +260,7 @@ export async function driveTurn(
   afterModelCtx.hasReasoning = sawReasoning;
   afterModelCtx.completionTokens = typeof usageOut === "number" ? usageOut : undefined;
   const afterModelRes = await runMiddlewarePhase(afterModelCtx, "afterModelCall", middlewareStack);
-  if (afterModelRes.kind === "abort") {
-    middlewareDirective = {
-      kind: "abort",
-      reason: afterModelRes.reason,
-      firedBy: afterModelRes.firedBy ?? "unknown",
-      message: afterModelRes.message,
-    };
-  } else if (afterModelRes.kind === "nudge") {
-    middlewareDirective = {
-      kind: "nudge",
-      reason: afterModelRes.reason,
-      firedBy: afterModelRes.firedBy ?? "unknown",
-      message: afterModelRes.message,
-      metadata: afterModelRes.metadata,
-      skipToolDispatch: afterModelRes.skipToolDispatch,
-    };
-  } else {
-    middlewareDirective = middlewareSuspension(afterModelRes);
-  }
+  middlewareDirective = directiveFromPhaseResult(afterModelRes);
   middlewareDirective ??= idleSuspension(op.lane, reportedError);
   const toolDispatchStart = Date.now();
   const skipToolDispatch = middlewareDirective?.kind === "abort"
@@ -275,25 +285,7 @@ export async function driveTurn(
       assistantContent: assistantText,
     });
     const afterToolRes = await runMiddlewarePhase(afterToolCtx, "afterToolExecution", middlewareStack);
-    if (afterToolRes.kind === "abort") {
-      middlewareDirective = {
-        kind: "abort",
-        reason: afterToolRes.reason,
-        firedBy: afterToolRes.firedBy ?? "unknown",
-        message: afterToolRes.message,
-      };
-    } else if (afterToolRes.kind === "nudge") {
-      middlewareDirective = {
-        kind: "nudge",
-        reason: afterToolRes.reason,
-        firedBy: afterToolRes.firedBy ?? "unknown",
-        message: afterToolRes.message,
-        metadata: afterToolRes.metadata,
-        skipToolDispatch: afterToolRes.skipToolDispatch,
-      };
-    } else {
-      middlewareDirective = middlewareSuspension(afterToolRes);
-    }
+    middlewareDirective = directiveFromPhaseResult(afterToolRes);
   }
 
   // Stamp the compacted-view marker from buildTurnInput onto the envelope

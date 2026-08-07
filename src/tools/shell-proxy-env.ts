@@ -20,6 +20,17 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.shell-proxy-env");
 
+// Fail-fast bound on proxy startup. This is the one unguarded await on the bash
+// hot path (buildSanitizedEnv(await shellProxyEnv()) runs before the spawn and
+// before the tool's own killTimer arms). A stalled bind/resolver must not block
+// bash indefinitely: on timeout we fail CLOSED to {} exactly like a start
+// error, and the start keeps warming in the background so a later spawn picks
+// it up once currentShellEgressProxyUrl is populated. A few seconds matches the
+// "fail fast, fail closed" intent — long enough to cover a normal port bind,
+// short enough that a wedged proxy never holds a shell hostage.
+const PROXY_START_TIMEOUT_MS = 3000;
+const PROXY_START_TIMED_OUT = Symbol("shell-egress-proxy-start-timeout");
+
 // Loopback must bypass the proxy: dev servers, ollama, and the app's own API
 // live there, and the proxy's policy would only see hairpin traffic.
 const NO_PROXY_HOSTS = "localhost,127.0.0.1,::1";
@@ -49,22 +60,42 @@ function proxyEnvFor(url: string): Record<string, string> {
  * Env overlay routing a guarded shell's traffic through the egress proxy.
  * Returns {} for every other sandbox mode, and {} if the proxy cannot start.
  *
- * Never throws. The failure branch is NOT a silent-fallback violation: the
- * CAGE is the enforcement layer (once it enforces, off-machine traffic dies
- * at seatbelt/bwrap regardless of env), and this env is merely the sanctioned
- * route — so its absence fails CLOSED at the OS, not open. We log the
+ * Never throws, and never blocks the bash hot path for longer than
+ * PROXY_START_TIMEOUT_MS. The failure branch is NOT a silent-fallback
+ * violation: the CAGE is the enforcement layer (once it enforces, off-machine
+ * traffic dies at seatbelt/bwrap regardless of env), and this env is merely the
+ * sanctioned route — so its absence fails CLOSED at the OS, not open. We log the
  * consequence and let the shell run.
  */
 export async function shellProxyEnv(): Promise<Record<string, string>> {
   if (getSandboxMode() !== "guarded") return {};
+  const starting = ensureShellEgressProxy();
+  // On timeout we stop awaiting this start but it keeps warming in the
+  // background; swallow a late rejection so it can never surface as an
+  // unhandled rejection and crash the process.
+  starting.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<typeof PROXY_START_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(PROXY_START_TIMED_OUT), PROXY_START_TIMEOUT_MS);
+  });
   try {
-    const proxy = await ensureShellEgressProxy();
-    return proxyEnvFor(proxy.url);
+    const result = await Promise.race([starting, timeout]);
+    if (result === PROXY_START_TIMED_OUT) {
+      logger.warn(
+        `shell egress proxy did not start within ${PROXY_START_TIMEOUT_MS}ms; guarded shells run without a sanctioned egress route until it warms`,
+      );
+      return {};
+    }
+    return proxyEnvFor(result.url);
   } catch (e) {
     logger.warn(
       `shell egress proxy failed to start; guarded shells run without a sanctioned egress route: ${(e as Error).message}`,
     );
     return {};
+  } finally {
+    // Clear the pending timer so a resolved fast path never leaves a dangling
+    // handle keeping the event loop alive.
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

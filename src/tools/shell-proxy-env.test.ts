@@ -6,6 +6,12 @@ const sandboxState: { mode: SandboxMode } = { mode: "guarded" };
 // proxy is up. The mocked ensure sets it on success and clears it on failure.
 const proxyState = {
   fail: false,
+  // `hang` → the start never resolves on its own (simulates a wedged bind /
+  // resolver stall). With `lateRejectMs` set it instead rejects that many ms
+  // in — modelling a start that fails only AFTER shellProxyEnv has timed out
+  // and stopped awaiting it.
+  hang: false,
+  lateRejectMs: null as number | null,
   url: "http://127.0.0.1:45678",
   live: null as string | null,
 };
@@ -20,6 +26,15 @@ vi.mock("../sandbox/index.js", async (importOriginal) => {
 
 vi.mock("../net/shell-egress-proxy.js", () => ({
   ensureShellEgressProxy: vi.fn(async () => {
+    if (proxyState.hang) {
+      proxyState.live = null;
+      return new Promise<{ url: string; close: () => Promise<void> }>((_resolve, reject) => {
+        if (proxyState.lateRejectMs !== null) {
+          setTimeout(() => reject(new Error("late bind failure (test)")), proxyState.lateRejectMs);
+        }
+        // else: never settles.
+      });
+    }
     if (proxyState.fail) {
       proxyState.live = null;
       throw new Error("bind failed (test)");
@@ -44,6 +59,8 @@ const NO_PROXY_HOSTS = "localhost,127.0.0.1,::1";
 beforeEach(() => {
   sandboxState.mode = "guarded";
   proxyState.fail = false;
+  proxyState.hang = false;
+  proxyState.lateRejectMs = null;
   proxyState.url = "http://127.0.0.1:45678";
   proxyState.live = null;
   ensureProxy.mockClear();
@@ -69,6 +86,60 @@ describe("shellProxyEnv", () => {
   it("proxy-start rejection → {} and no throw (fails closed at the cage, not open)", async () => {
     proxyState.fail = true;
     await expect(shellProxyEnv()).resolves.toEqual({});
+  });
+
+  // REGRESSION: this is the one unguarded await on the bash hot path. A wedged
+  // proxy start (bind hang / resolver stall) must never hold a shell hostage —
+  // shellProxyEnv must time out and fail CLOSED to {} within the bound rather
+  // than block indefinitely before the tool's own killTimer can fire.
+  it("start hangs past the timeout → resolves {} within the bound (never blocks the spawn)", async () => {
+    vi.useFakeTimers();
+    try {
+      proxyState.hang = true;
+      const pending = shellProxyEnv();
+      // Just before the bound: still awaiting, no premature {}.
+      await vi.advanceTimersByTimeAsync(2999);
+      // Crossing the 3s bound trips the timeout race.
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fast path still returns the proxy env even with the timeout armed", async () => {
+    // The proxy resolves in microtasks, well inside the bound; the armed timer
+    // is cleared and the full 8-key env comes back unchanged.
+    const env = await shellProxyEnv();
+    for (const key of ALL_PROXY_KEYS) expect(env[key]).toBe(proxyState.url);
+    expect(Object.keys(env)).toHaveLength(8);
+  });
+
+  // REGRESSION: after a timeout we stop awaiting the start but it keeps warming
+  // in the background. A late rejection from that orphaned start must be
+  // swallowed — never an unhandled rejection that could crash the process.
+  it("late rejection from the backgrounded start (after timeout) never crashes", async () => {
+    vi.useFakeTimers();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      proxyState.hang = true;
+      proxyState.lateRejectMs = 5000; // rejects well after the 3s timeout
+      const pending = shellProxyEnv();
+      await vi.advanceTimersByTimeAsync(3000);
+      await expect(pending).resolves.toEqual({});
+      // Drive time past the backgrounded start's late rejection and let any
+      // rejection bookkeeping flush.
+      await vi.advanceTimersByTimeAsync(3000);
+      await Promise.resolve();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener("unhandledRejection", onUnhandled);
+      vi.useRealTimers();
+    }
   });
 
   it("survives buildSanitizedEnv's scrubbers via the extra overlay", async () => {

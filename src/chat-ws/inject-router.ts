@@ -9,6 +9,7 @@
 //   - Something holds the session → queue it; the running turn drains it.
 //   - Nothing holds it            → the message BECOMES a fresh turn.
 
+import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { broadcastToSession, getChatHandler } from "./state.js";
@@ -22,7 +23,7 @@ import { broadcastToSession, getChatHandler } from "./state.js";
 // race: enqueue happens in one event-loop turn, the guard sees it.
 import { listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
 import { hasActiveTurn, onTurnRelease } from "../session/turn-lock.js";
-import { pushInject, drainInjects, hasInjects } from "../agent-loop/inject-queue.js";
+import { pushInject, drainInjects, hasInjects, hasQueuedInjectText } from "../agent-loop/inject-queue.js";
 
 const logger = createLogger("chat-ws");
 
@@ -85,6 +86,19 @@ export function handleInject(sessionId: string, text: string, clientInjectId?: s
     // instead of sitting behind an indefinite approval wait.
     const denied = getApprovalManager().denyPendingForSession(sessionId);
     if (denied > 0) logger.info(`[ws-chat] user message denied ${denied} pending approval(s) sess=${sessionId}`);
+    // Identical-text dedup: a literal double-send — the user re-sends because
+    // the turn looks hung — must not queue the same message twice and get it
+    // answered twice. If an un-drained copy is already waiting, this one is a
+    // no-op: ack it as consumed (the client's only un-dim signal, so the
+    // duplicate echo doesn't pulse forever) and let the single queued copy be
+    // the one the running turn drains. Only the queue — un-drained text — is
+    // consulted, so re-asking the same thing across turns is unaffected.
+    if (hasQueuedInjectText(sessionId, text)) {
+      const dupId = clientInjectId || randomUUID();
+      logger.info(`[ws-chat] inject deduped sess=${sessionId} len=${text.length} — identical copy already queued`);
+      broadcastToSession(sessionId, { type: "inject_consumed", injectId: dupId });
+      return;
+    }
     const injectId = pushInject(sessionId, text, clientInjectId);
     logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length} pending=${hasPending} locked=${turnLocked}`);
     broadcastToSession(sessionId, { type: "inject_queued", injectId });

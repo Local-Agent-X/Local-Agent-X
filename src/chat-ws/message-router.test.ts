@@ -391,3 +391,102 @@ describe("C3.1 — inject routing consults the turn lock", () => {
     expect(drainInjects(sessionId).map(i => i.text)).toEqual(["wait for me"]);
   });
 });
+
+describe("CT-8 — a chat re-send during a live turn is absorbed as an inject", () => {
+  const sessionId = "sess-ct8";
+  const registry = getTurnRegistry();
+  const started: Array<{ sessionId: string; message: string }> = [];
+  const inertHandler: ChatHandler = () => {};
+
+  beforeEach(() => {
+    started.length = 0;
+    setChatHandler((sid, message) => { started.push({ sessionId: sid, message }); });
+  });
+
+  afterEach(() => {
+    // Queues first: releaseTurn fires promote-on-release, and an empty queue
+    // makes that deferred pass a guaranteed no-op (can't start a turn into the
+    // next test).
+    _resetInjectQueues();
+    releaseTurn(sessionId);
+    setChatHandler(inertHandler);
+  });
+
+  function subscribedRouter() {
+    const r = makeRouter();
+    clients.set(r.ws, new Set([sessionId]));
+    return r;
+  }
+
+  it("queues the re-send instead of starting/replacing the live turn", async () => {
+    // A turn holds the session (the app looks hung to the user while a long
+    // tool loop runs). Pre-fix a `chat` frame here went to startChat →
+    // tryAcquireOrReplace, which ABORTED the live turn (duplicate bubble) or
+    // refused with "previous request still running." It must instead be
+    // absorbed onto the running turn via the inject lane.
+    const live = new AbortController();
+    expect(registry.acquireTurn(sessionId, live, "long-turn")).toBe(true);
+
+    const r = subscribedRouter();
+    await r.dispatch({ type: "chat", sessionId, message: "also make it dark mode" });
+
+    // Not started as a new/replacement turn, and the live turn was NOT aborted.
+    expect(started).toEqual([]);
+    expect(live.signal.aborted).toBe(false);
+    // It landed in the inject queue — the running turn's next drain takes it.
+    expect(drainInjects(sessionId).map(i => i.text)).toEqual(["also make it dark mode"]);
+    const events = r.frames().filter(f => f.type === "event").map(f => f.event);
+    expect(events.some(e => e.type === "inject_queued")).toBe(true);
+  });
+
+  it("still starts a normal new turn when nothing is live (unchanged)", async () => {
+    // No turn lock held → behavior is exactly as before: the chat handler runs.
+    const r = subscribedRouter();
+    await r.dispatch({ type: "chat", sessionId, message: "hello there" });
+
+    expect(started).toEqual([{ sessionId, message: "hello there" }]);
+    expect(drainInjects(sessionId)).toEqual([]);
+  });
+
+  it("does NOT absorb a re-send that carries an attachment (no silent drop)", async () => {
+    // Injects carry no attachments, so an image-bearing re-send must take the
+    // normal path rather than have its attachment silently dropped.
+    const live = new AbortController();
+    expect(registry.acquireTurn(sessionId, live, "long-turn")).toBe(true);
+
+    const r = subscribedRouter();
+    await r.dispatch({
+      type: "chat",
+      sessionId,
+      message: "and this screenshot",
+      attachments: [{ isImage: true, dataUrl: "data:image/png;base64,AAAA" }],
+    });
+
+    // Routed to the chat handler (normal path), NOT queued as a text-only inject.
+    expect(started).toEqual([{ sessionId, message: "and this screenshot" }]);
+    expect(hasInjects(sessionId)).toBe(false);
+  });
+
+  it("dedupes an identical re-send to a no-op ack, not a second queued message", async () => {
+    // The core anti-duplicate guarantee: a literal double-send of the same text
+    // during a live turn queues ONCE and is answered once. The second send is a
+    // no-op acked with inject_consumed (the client's un-dim signal), not a
+    // second queue entry that the turn would answer twice.
+    const live = new AbortController();
+    expect(registry.acquireTurn(sessionId, live, "long-turn")).toBe(true);
+
+    const r = subscribedRouter();
+    await r.dispatch({ type: "chat", sessionId, message: "run the tests" });
+    await r.dispatch({ type: "chat", sessionId, message: "run the tests" });
+
+    expect(started).toEqual([]);
+    expect(live.signal.aborted).toBe(false);
+    // Queued exactly once.
+    expect(drainInjects(sessionId).map(i => i.text)).toEqual(["run the tests"]);
+    const events = r.frames().filter(f => f.type === "event").map(f => f.event);
+    expect(events.some(e => e.type === "inject_queued")).toBe(true);
+    // The duplicate got a consumed ack rather than a second inject_queued.
+    expect(events.some(e => e.type === "inject_consumed")).toBe(true);
+    expect(events.filter(e => e.type === "inject_queued")).toHaveLength(1);
+  });
+});

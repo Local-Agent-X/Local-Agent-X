@@ -44,6 +44,19 @@ export function hasInjects(sessionId: string): boolean {
 }
 
 /**
+ * Is an identical, un-drained message already waiting in this session's queue?
+ * Used to drop a literal double-send — the user re-sends because the turn looks
+ * hung — so the same text isn't queued, and answered, twice. Exact match on the
+ * (already-trimmed) text; only the un-drained queue is consulted, so a message
+ * the running turn has already drained can be sent again.
+ */
+export function hasQueuedInjectText(sessionId: string, message: string): boolean {
+  const q = queues.get(sessionId);
+  if (!q || q.length === 0) return false;
+  return q.some(item => item.text === message);
+}
+
+/**
  * Op types whose runs drain the inject queue mid-flight.
  *
  * `chat_turn` is the user's interactive thread. `agent_spawn` runs on the

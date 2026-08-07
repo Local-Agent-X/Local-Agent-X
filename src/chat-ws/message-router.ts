@@ -24,6 +24,7 @@ import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // Static import, like everything the inject path touches: that path is
 // synchronous by contract (see inject-router.ts's import note).
 import { handleInject } from "./inject-router.js";
+import { hasActiveTurn } from "../session/turn-lock.js";
 import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
@@ -307,6 +308,23 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
   }
   const _imgCount = _atts.filter(a => (a as { isImage?: unknown })?.isImage).length;
   logger.info(`[ws-chat] recv sess=${sessionId} msg_len=${_msgText.length} atts=${_atts.length} imgs=${_imgCount} handler=${handler ? "set" : "null"}`);
+  // A `chat` re-send that arrives WHILE a turn holds this session must be
+  // ABSORBED into that turn, not routed to startChat. The turn lock's
+  // tryAcquireOrReplace would otherwise either abort+replace the live turn or
+  // refuse with "previous request still running, cancel it first" — so a user
+  // who re-sends because the app looks hung gets a duplicated bubble or a
+  // restarted answer. The inject lane already does the right thing: queue it
+  // and let the running turn drain it inline (or, once nothing is live, promote
+  // it). Route through that SAME machinery rather than forking a parallel
+  // absorb path. Text-only: injects carry no attachments, so a re-send that
+  // includes an image still takes the normal path rather than silently
+  // dropping the attachment. Synchronous, ahead of the awaits below, for the
+  // same reason inject-router.ts is (its enqueue must not yield mid-frame).
+  if (_msgText && _atts.length === 0 && hasActiveTurn(sessionId)) {
+    ctx.subscriptions.add(sessionId); // so this socket receives the inject_* acks
+    handleInject(sessionId, _msgText, typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined);
+    return;
+  }
   // Stamp the chat's current project onto the session so agent_* tool
   // calls auto-scope. The frontend includes projectId on each chat
   // message when the chat is nested under a project.

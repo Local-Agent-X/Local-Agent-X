@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { opConsumesInjects } from "./inject-queue.js";
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  opConsumesInjects,
+  pushInject,
+  drainInjects,
+  hasQueuedInjectText,
+  _resetInjectQueues,
+} from "./inject-queue.js";
 
 describe("opConsumesInjects", () => {
   it("returns true for the interactive chat thread", () => {
@@ -17,5 +23,34 @@ describe("opConsumesInjects", () => {
     expect(opConsumesInjects("freeform")).toBe(false);
     expect(opConsumesInjects("build_app")).toBe(false);
     expect(opConsumesInjects("")).toBe(false);
+  });
+});
+
+describe("hasQueuedInjectText — identical-text dedup", () => {
+  const sessionId = "sess-dedup";
+  afterEach(() => _resetInjectQueues());
+
+  it("is false when nothing is queued for the session", () => {
+    expect(hasQueuedInjectText(sessionId, "make it blue")).toBe(false);
+  });
+
+  it("is true once an identical, un-drained copy is waiting", () => {
+    pushInject(sessionId, "make it blue");
+    expect(hasQueuedInjectText(sessionId, "make it blue")).toBe(true);
+    // A different message does not collide.
+    expect(hasQueuedInjectText(sessionId, "make it red")).toBe(false);
+  });
+
+  it("goes false again once the queue is drained — re-asking later is allowed", () => {
+    pushInject(sessionId, "run the tests");
+    expect(hasQueuedInjectText(sessionId, "run the tests")).toBe(true);
+    drainInjects(sessionId);
+    // The running turn consumed it; the same text is now a legitimate new ask.
+    expect(hasQueuedInjectText(sessionId, "run the tests")).toBe(false);
+  });
+
+  it("does not leak across sessions", () => {
+    pushInject(sessionId, "deploy");
+    expect(hasQueuedInjectText("other-sess", "deploy")).toBe(false);
   });
 });

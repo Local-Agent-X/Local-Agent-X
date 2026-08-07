@@ -77,6 +77,9 @@ import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import type { Op } from "../../ops/types.js";
+// Real (unmocked) per-op state registry — the interactive empty-turn counter
+// lives here; reset between cases so a prior turn's count can't leak.
+import { _resetMiddlewareStates } from "../middlewares/state.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
 
@@ -109,6 +112,7 @@ function input(over: Partial<DecideOutcomeInput> = {}): DecideOutcomeInput {
     // Default: no explicit continue signal (modelStop undefined path). Tests
     // that exercise the honor-tool_use fix set this true explicitly.
     modelWantsToContinue: false,
+    hasReasoning: false,
     adapterError: null,
     ...over,
   };
@@ -1154,5 +1158,106 @@ describe("decideTurnOutcome â€” completion gates vs a question (and the con
     } finally {
       gate.mockReturnValue(null);
     }
+  });
+});
+
+describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxTurns spin)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetMiddlewareStates();
+  });
+
+  // Interactive lane (chat_turn / voice_turn) — the case the terminator scopes to.
+  const iop = { id: "op-interactive", type: "chat_turn", ownerId: "local-user", lane: "interactive" } as unknown as Op;
+  // A fully-empty turn: no assistant text, no tool calls, no reasoning.
+  const empty = (over: Partial<DecideOutcomeInput> = {}): DecideOutcomeInput =>
+    input({
+      op: iop,
+      finalized: [],
+      assistantText: "",
+      toolCalls: [],
+      toolMessages: [],
+      toolSummary: [],
+      hasReasoning: false,
+      ...over,
+    });
+  const assistantTexts = (r: { allMessages: CommitTurnMessage[] }) =>
+    r.allMessages.filter((m) => m.role === "assistant").map((m) => (m.content as { text?: string })?.text ?? "");
+
+  it("(a) model signaled done but produced nothing → terminates on the FIRST turn, honestly", async () => {
+    const r = await decideTurnOutcome(empty({ modelSignaledDone: true }));
+    expect(r.terminalReason).toBe("done");
+    // An honest fallback is surfaced, not a fabricated answer, and not silence.
+    expect(assistantTexts(r)).toContain("I don't have anything to add here.");
+    expect((publishStreamChunk as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .some((c) => (c[1] as { delta?: string }).delta === "I don't have anything to add here.")).toBe(true);
+  });
+
+  it("(a) NOT-done empty turn allows ONE silent re-drive, then terminates on the second consecutive empty", async () => {
+    // First empty turn: re-drive once — terminalReason stays null, nothing committed.
+    const r1 = await decideTurnOutcome(empty({ modelSignaledDone: false }));
+    expect(r1.terminalReason).toBeNull();
+    expect(assistantTexts(r1)).toEqual([]);
+    // Second CONSECUTIVE empty turn (same op): terminate with an honest blocked terminal.
+    const r2 = await decideTurnOutcome(empty({ modelSignaledDone: false }));
+    expect(r2.terminalReason).toBe("done");
+    expect(assistantTexts(r2)[0]).toContain("I appear to be blocked");
+  });
+
+  it("(a) a non-empty turn between two empties RESETS the counter (only CONSECUTIVE empties count)", async () => {
+    expect((await decideTurnOutcome(empty())).terminalReason).toBeNull();       // empty #1 → re-drive
+    // A real turn with text lands and terminates normally, resetting the counter.
+    expect((await decideTurnOutcome(input({ op: iop, modelSignaledDone: true }))).terminalReason).toBe("done");
+    // The next empty is turn #1 again, not #2 → re-drive, NOT terminate.
+    expect((await decideTurnOutcome(empty())).terminalReason).toBeNull();
+  });
+
+  it("(b) a WORKER fully-empty turn is UNCHANGED — never terminated by this branch, no fallback committed", async () => {
+    const wop = { id: "op-worker", type: "self_edit", ownerId: "local-user", lane: "agent" } as unknown as Op;
+    // Even repeated empties must not trip the interactive terminator on a worker.
+    const r1 = await decideTurnOutcome(empty({ op: wop, modelSignaledDone: false }));
+    const r2 = await decideTurnOutcome(empty({ op: wop, modelSignaledDone: false }));
+    expect(r1.terminalReason).toBeNull();
+    expect(r2.terminalReason).toBeNull();
+    expect(assistantTexts(r2)).toEqual([]);
+    // Even a worker turn where the model signaled done but emitted nothing is
+    // left to the worker's own empty-response nudge stack, not terminated here.
+    const r3 = await decideTurnOutcome(empty({ op: wop, modelSignaledDone: true }));
+    expect(assistantTexts(r3)).toEqual([]);
+  });
+
+  it("(c) an interactive TOOL-ONLY turn still does NOT terminate (real work continues)", async () => {
+    // Text-empty but a real, non-silent tool call outstanding, no stop signal:
+    // the fallback path keeps it open so the tool result feeds back. The empty
+    // terminator must not fire — toolCalls.length > 0.
+    const r = await decideTurnOutcome(input({
+      op: iop,
+      finalized: [],
+      assistantText: "",
+      // bashCall/bashOkResult/bashSummary from the shared fixtures above.
+      modelSignaledDone: false,
+    }));
+    expect(r.terminalReason).toBeNull();
+    // Run it again to prove the empty-turn counter never engaged (no bounded terminate).
+    const r2 = await decideTurnOutcome(input({ op: iop, finalized: [], assistantText: "", modelSignaledDone: false }));
+    expect(r2.terminalReason).toBeNull();
+  });
+
+  it("(c) an interactive REASONING-ONLY empty turn is NOT terminated (the model was thinking)", async () => {
+    // No text, no tools, but reasoning streamed → excluded from 'fully empty'.
+    // Repeated so a missing reasoning guard would surface as a bounded terminate.
+    const r1 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
+    const r2 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
+    expect(r1.terminalReason).toBeNull();
+    expect(r2.terminalReason).toBeNull();
+    expect(assistantTexts(r2)).toEqual([]);
+  });
+
+  it("(d) an interactive turn WITH text still terminates as before", async () => {
+    const r = await decideTurnOutcome(input({ op: iop, modelSignaledDone: true, toolCalls: [], toolMessages: [], toolSummary: [] }));
+    expect(r.terminalReason).toBe("done");
+    // The real answer is preserved; no empty-turn fallback is appended over it.
+    expect(assistantTexts(r)).toContain("Working tree is clean.");
+    expect(assistantTexts(r)).not.toContain("I don't have anything to add here.");
   });
 });

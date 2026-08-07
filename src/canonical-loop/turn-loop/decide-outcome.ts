@@ -12,12 +12,14 @@
  * termination semantics are unchanged. Lives behind the ../turn-loop.ts
  * barrel like every other turn-loop helper.
  */
+import { randomUUID } from "node:crypto";
 import type { CanonicalMessage, ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
 import { publishStreamChunk } from "../event-emitter.js";
 import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
+import { getMiddlewareState } from "../middlewares/state.js";
 import type { Op } from "../../ops/types.js";
 
 import type { MiddlewareDirective } from "./types.js";
@@ -74,6 +76,16 @@ export interface DecideOutcomeInput {
    * and Anthropic). See adapters/model-stop.ts.
    */
   modelWantsToContinue: boolean;
+  /**
+   * True when the model streamed reasoning / chain-of-thought this turn
+   * (heartbeat or reasoning_chunk reports). Reasoning is bus-only — never
+   * persisted into a finalized message — so `finalized`/`assistantText` carry
+   * no trace of it, and the interactive empty-turn terminator below needs the
+   * signal explicitly to tell a genuinely-empty turn (nothing produced, spins
+   * to maxTurns) from a reasoning-only turn (the model "thought" and stopped),
+   * which must NOT be terminated. Threaded from turn-loop.ts (`sawReasoning`).
+   */
+  hasReasoning: boolean;
   adapterError: { code: string; message: string } | null;
 }
 
@@ -95,6 +107,39 @@ function replaceAssistantText(messages: CommitTurnMessage[], text: string): Comm
 }
 
 /**
+ * Per-op key for the interactive fully-empty-turn counter, held in the same
+ * per-op middleware-state registry the worker retry counters use (keyed by
+ * op.id, auto-dropped on op terminal — see middlewares/state.ts). Counts
+ * CONSECUTIVE fully-empty interactive turns so the terminator can allow one
+ * silent re-drive and then stop, instead of spinning to maxTurns. Not new
+ * global state and needs no field threaded through op state.
+ */
+const INTERACTIVE_EMPTY_TURN_KEY = "interactive-empty-turn-counter";
+
+/**
+ * Surface an honest, brief terminal for an interactive turn that produced
+ * nothing, rather than committing an empty assistant turn (which reads as a
+ * hang). Mirrors appendQuestionAsAnswer's publish-delta + push-message shape.
+ * Does NOT fabricate an answer: it states the true situation and stops.
+ */
+function appendEmptyTurnTerminal(
+  opId: string,
+  turnIdx: number,
+  allMessages: CommitTurnMessage[],
+  signaledDone: boolean,
+): void {
+  const text = signaledDone
+    ? "I don't have anything to add here."
+    : "I wasn't able to produce a response — I appear to be blocked. Please try rephrasing or asking again.";
+  publishStreamChunk(opId, { delta: text });
+  allMessages.push({
+    messageId: `empty-turn-${opId}-${turnIdx}-${randomUUID().slice(0, 6)}`,
+    role: "assistant",
+    content: { text },
+  });
+}
+
+/**
  * Decide the turn's terminal reason + assemble its commit-message list.
  * Async because the render-verify gate may await the preview iframe.
  */
@@ -102,7 +147,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const {
     op, turnIdx, middlewareDirective,
     finalized, toolMessages, toolSummary, toolCalls, observedTools,
-    assistantText, adapterTerminalReason, modelSignaledDone, modelWantsToContinue, adapterError,
+    assistantText, adapterTerminalReason, modelSignaledDone, modelWantsToContinue, hasReasoning, adapterError,
   } = in_;
 
   // A confirmed-false-claim nudge (phantom worker, fake "I scheduled it")
@@ -221,6 +266,48 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     assistantText.trim().length > 0
   ) {
     terminalReason = "done";
+  }
+
+  // INTERACTIVE FULLY-EMPTY-TURN TERMINATOR. The gate above is AND-gated on
+  // non-empty assistant text, so a FULLY-empty interactive turn (no text after
+  // trim AND no tool calls AND no reasoning) leaves terminalReason=null even
+  // when the model signaled end_turn — and the drive loop then re-drives the
+  // SAME prompt with no nudge, burning iterations to a maxTurns checkpoint while
+  // the app looks hung. This branch ends that spin HONESTLY, scoped tightly so
+  // it can never truncate real work:
+  //   - lane === "interactive" only (chat_turn + voice_turn). Worker lanes keep
+  //     their existing behavior — their empty-response nudge lives in the
+  //     post-turn-detector stack (gated when:isWorkerOp), untouched here.
+  //   - "fully empty" is EXACTLY: assistantText.trim() empty AND no tool calls
+  //     AND no reasoning. A tool-only turn (toolCalls.length>0) legitimately
+  //     continues; a reasoning-only turn (hasReasoning) is the model thinking,
+  //     not a hang — both are excluded so neither is cut off.
+  //   - terminalReason still null: an adapter error, a middleware abort/suspend
+  //     already decided this turn and must win, exactly as everywhere else.
+  // Bounded via a per-op CONSECUTIVE-empty counter (auto-reset the moment a
+  // non-empty interactive turn lands): the model may re-drive AT MOST ONCE, so
+  // a transient blank gets a second shot without a nudge-storm, and a second
+  // consecutive blank terminates. modelSignaledDone terminates on the first
+  // empty turn — the model explicitly ended, so there is nothing to re-drive
+  // for. The honest terminal message is deferred to after the continuation
+  // guard + gate chain settle (see below) so a re-opened turn never shows it.
+  let emptyInteractiveTerminal: { signaledDone: boolean } | null = null;
+  if (op.lane === "interactive" && !middlewareAborted && !middlewareSuspended) {
+    const fullyEmpty =
+      assistantText.trim().length === 0 && toolCalls.length === 0 && !hasReasoning;
+    const emptyState = getMiddlewareState(op.id, INTERACTIVE_EMPTY_TURN_KEY, () => ({ consecutive: 0 }));
+    if (!fullyEmpty) {
+      emptyState.consecutive = 0;
+    } else if (terminalReason === null) {
+      emptyState.consecutive += 1;
+      if (modelSignaledDone || emptyState.consecutive >= 2) {
+        terminalReason = "done";
+        emptyState.consecutive = 0;
+        emptyInteractiveTerminal = { signaledDone: modelSignaledDone };
+      }
+      // First empty non-done turn: leave terminalReason=null → the loop
+      // re-drives ONCE. The counter above bounds it to that single retry.
+    }
   }
 
   // ASK-USER TERMINATOR. Every heuristic above asks "did the model FINISH?" —
@@ -352,6 +439,15 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // loud-partial / ground-truth notes still get the last word.
   if (endsOnQuestion) {
     appendQuestionAsAnswer(op.id, turnIdx, assistantText, askedQuestions, allMessages);
+  }
+
+  // Honest terminal for a fully-empty interactive turn — deferred here, past the
+  // continuation guard and gate chain, and re-checked against terminalReason so a
+  // turn that got re-opened (a queued nudge, a mid-turn user inject) is silently
+  // re-driven instead of committing a stale "I appear to be blocked". Before the
+  // epilogue, matching appendQuestionAsAnswer's placement.
+  if (emptyInteractiveTerminal && terminalReason === "done") {
+    appendEmptyTurnTerminal(op.id, turnIdx, allMessages, emptyInteractiveTerminal.signaledDone);
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

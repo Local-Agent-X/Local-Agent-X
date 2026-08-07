@@ -329,6 +329,11 @@ export async function driveTurn(
     // tool turn in one pass; absence → it falls back to shape inference.
     modelSignaledDone: result.modelStop === "ended",
     modelWantsToContinue: result.modelStop === "continue",
+    // Reasoning is bus-only (never persisted into finalized), so decide-outcome
+    // can't infer it from assistantText/finalized — thread the turn's real
+    // signal so its interactive empty-turn terminator never truncates a
+    // reasoning-only turn. Same local the post-turn-detector reads (HE-5).
+    hasReasoning: sawReasoning,
     adapterError,
   });
 

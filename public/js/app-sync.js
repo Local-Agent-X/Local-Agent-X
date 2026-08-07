@@ -143,7 +143,12 @@ async function migrateLegacyLocalStorageProjects() {
   await syncProjectsFromServer();
 }
 
-async function hydrateChat(chat) {
+async function hydrateChat(chat, opts) {
+  // force:true (history_changed / retract path) bypasses the keptLocal guard
+  // below so a SHRUNK server history replaces the longer local copy instead of
+  // being discarded. Default (no opts) is unchanged — normal periodic/select
+  // hydrates keep their local-is-authoritative behavior.
+  const force = !!(opts && opts.force);
   try {
     const res = await fetch(`${API}/api/sessions/${chat.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     if (!res.ok) { delete chat._needsHydrate; return; }
@@ -163,7 +168,7 @@ async function hydrateChat(chat) {
     // messages and the newer timestamp.
     const localMsgs = Array.isArray(chat.messages) ? chat.messages : [];
     const serverMsgs = Array.isArray(session.messages) ? session.messages : [];
-    const keptLocal = (chat.updatedAt || 0) > (session.updatedAt || 0) || localMsgs.length > serverMsgs.length;
+    const keptLocal = !force && ((chat.updatedAt || 0) > (session.updatedAt || 0) || localMsgs.length > serverMsgs.length);
     if (keptLocal) {
       delete session.messages;
       session.updatedAt = Math.max(chat.updatedAt || 0, session.updatedAt || 0);

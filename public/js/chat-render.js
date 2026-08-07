@@ -236,4 +236,12 @@ function _applyPinBottom(el) {
   if (realMsgs[realMsgs.length - 1] === lastAssistant) {
     lastAssistant.classList.add('pin-bottom');
   }
+  // Last-turn recovery controls ("Regenerate" / "Edit & resend") — attach to
+  // the LAST real assistant bubble's footer only. appendLastTurnControls is
+  // self-gating: it renders nothing while streaming (a retract would 409 and
+  // sendMessage would re-route to inject) and is idempotent on re-render.
+  const footer = lastAssistant.querySelector('.msg-footer');
+  if (footer && typeof appendLastTurnControls === 'function') {
+    try { appendLastTurnControls(footer); } catch (e) { console.error('[chat] last-turn controls render error:', e); }
+  }
 }

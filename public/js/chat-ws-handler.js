@@ -116,6 +116,23 @@ function dispatchChatWsNonEvent(msg) {
   if (msg.type === 'sidebar_pins_changed' && msg.pins) handleSidebarPinsChanged(msg);
   if (msg.type === 'sidebar_clear_chats') handleSidebarClearChats(msg);
 
+  // Another socket retracted a turn (POST /api/retract): the server shrank the
+  // session history and broadcast a bare {type:"history_changed", sessionId}.
+  // Force a full server re-hydrate — retract SHRINKS history, so the normal
+  // hydrate keptLocal guard (which keeps the longer local copy) would wrongly
+  // discard server truth. The retracting client already updated from its ack;
+  // if this echoes back to it, force-replacing with the (matching) server copy
+  // is harmless and idempotent.
+  if (msg.type === 'history_changed' && msg.sessionId) {
+    try {
+      const chat = (typeof chats !== 'undefined' && Array.isArray(chats)) ? chats.find(c => c.id === msg.sessionId) : null;
+      if (chat && typeof hydrateChat === 'function') {
+        chat._needsHydrate = true;
+        hydrateChat(chat, { force: true }).catch(() => {});
+      }
+    } catch (e) { console.warn('[history_changed] rehydrate failed', e && e.message); }
+  }
+
   // Projects list changed (agent created/added via project_* tools).
   // Mirror createProject(): loadProjects() refreshes the Agents-page
   // dropdown; syncProjectsFromServer() refreshes the chat sidebar.

@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { z } from "zod";
 
-import { broadcastToSession } from "../../chat-ws/state.js";
+import { broadcastAll } from "../../chat-ws/state.js";
 import { retractLastTurn } from "../../memory/retract-last-turn.js";
 import { validateBody } from "../../route-schemas.js";
 import type { ServerContext } from "../../server-context.js";
@@ -70,9 +70,13 @@ export async function handleRetractRoute(
 	ctx.sessionStore.save(session);
 
 	// The compact route does NOT broadcast; retract SHOULD, so OTHER sockets
-	// on this session re-render from the server's now-authoritative history
-	// instead of showing the turn we just dropped.
-	broadcastToSession(sessionId, { type: "history_changed", sessionId });
+	// re-render from the server's now-authoritative history instead of showing
+	// the turn we just dropped. Sent BARE via broadcastAll (not wrapped in a
+	// {type:"event"} envelope) so the client's dispatchChatWsNonEvent handler
+	// sees msg.type === "history_changed" — the same bare-control-frame path as
+	// settings_changed / learning_changed. broadcastToSession would wrap it and
+	// the client would silently drop it; the sessionId field scopes the rehydrate.
+	broadcastAll({ type: "history_changed", sessionId });
 
 	json(200, { ok: true, mode: parsed.data.mode, removed, messageCount: session.messages.length });
 	return true;

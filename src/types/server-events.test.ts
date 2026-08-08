@@ -51,7 +51,6 @@ const ALL_SERVER_EVENT_TYPES: Record<ServerEvent["type"], true> = {
   inject_queued: true,
   inject_consumed: true,
   plan_mode_changed: true,
-  history_changed: true,
   op_heartbeat: true,
 };
 

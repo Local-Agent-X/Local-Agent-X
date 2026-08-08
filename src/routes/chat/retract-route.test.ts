@@ -12,9 +12,9 @@ vi.mock("../../session/turn-lock.js", () => ({
 	hasActiveTurn: (id: string) => hasActiveTurn(id),
 }));
 
-const broadcastToSession = vi.fn();
+const broadcastAll = vi.fn();
 vi.mock("../../chat-ws/state.js", () => ({
-	broadcastToSession: (...args: unknown[]) => broadcastToSession(...args),
+	broadcastAll: (...args: unknown[]) => broadcastAll(...args),
 }));
 
 let body: unknown;
@@ -74,7 +74,7 @@ describe("handleRetractRoute", () => {
 		expect(flushSession).toHaveBeenCalledWith("s1");
 		expect(session.messages).toEqual([user("hi"), asst("hello")]);
 		expect(save).toHaveBeenCalledWith(session);
-		expect(broadcastToSession).toHaveBeenCalledWith("s1", { type: "history_changed", sessionId: "s1" });
+		expect(broadcastAll).toHaveBeenCalledWith({ type: "history_changed", sessionId: "s1" });
 		const { status, data } = lastReply();
 		expect(status).toBe(200);
 		expect(data).toMatchObject({ ok: true, mode: "turn", removed: 2, messageCount: 2 });
@@ -95,7 +95,7 @@ describe("handleRetractRoute", () => {
 		expect(flushSession).toHaveBeenCalledWith("s1");
 		expect(session.messages).toEqual(before);
 		expect(save).not.toHaveBeenCalled();
-		expect(broadcastToSession).not.toHaveBeenCalled();
+		expect(broadcastAll).not.toHaveBeenCalled();
 		const { status, data } = lastReply();
 		expect(status).toBe(409);
 		expect(data).toMatchObject({ ok: false });
@@ -106,7 +106,7 @@ describe("handleRetractRoute", () => {
 		body = { sessionId: "s1", mode: "turn" };
 		await handleRetractRoute("POST", new URL("http://x/api/retract"), req, res, ctx);
 		expect(save).not.toHaveBeenCalled();
-		expect(broadcastToSession).not.toHaveBeenCalled();
+		expect(broadcastAll).not.toHaveBeenCalled();
 		expect(lastReply().data).toMatchObject({ ok: false, removed: 0 });
 	});
 });

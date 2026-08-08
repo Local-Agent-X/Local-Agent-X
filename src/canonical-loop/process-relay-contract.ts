@@ -92,7 +92,7 @@ export const SESSION_EVENT_TYPES = new Set<string>([
   "bg_op_progress", "bg_op_completed", "bg_op_nudge", "av_blocked_warning",
   "worker_stream", "worker_done", "chat_op_started", "inject_queued",
   "inject_consumed", "plan_mode_changed", "tool_chip", "op_heartbeat",
-  "turn_provider", "prepare_progress", "history_changed",
+  "turn_provider", "prepare_progress",
 ]);
 const CANONICAL_EVENT_TYPES = new Set<string>([
   "state_changed", "turn_started", "turn_committed", "iteration_checkpoint",

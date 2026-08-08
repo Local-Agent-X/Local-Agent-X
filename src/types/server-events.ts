@@ -214,13 +214,11 @@ export type ServerEvent =
   // enforced:false is the user's approval event — the standing mutation ban
   // is lifted. The UI mirrors the flag onto the composer's Plan chip.
   | { type: "plan_mode_changed"; enforced: boolean }
-  // The server rewrote this session's committed history out-of-band (e.g.
-  // POST /api/retract dropped or regenerated the last turn). Carries no
-  // payload beyond the session id — a client that has this session open
-  // should re-fetch/re-render its transcript from the server (the source of
-  // truth) rather than trust its local copy. Broadcast so OTHER connected
-  // sockets converge; the retracting client already knows from the ack.
-  | { type: "history_changed"; sessionId: string }
+  // NOTE: history_changed (POST /api/retract) is NOT a ServerEvent — it is a
+  // bare UI control frame sent via broadcastAll from the main-process route
+  // handler, in the same family as settings_changed / learning_changed (also
+  // not union members). The client handles it in dispatchChatWsNonEvent. It
+  // never rides the {type:"event"} session relay, so it has no place here.
   // Out-of-band UI hint emitted by tools that want to surface a structured
   // affordance (op id, kill button, blocked reason) WITHOUT putting that
   // info in the model-visible result text. Originally added so BLOCKED

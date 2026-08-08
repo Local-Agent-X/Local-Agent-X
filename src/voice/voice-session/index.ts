@@ -180,7 +180,15 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           },
         },
         sttCallbacks: {
-          onPartial: (text: string) => { if (!closed) ctx.sendEvent({ type: "partial", text }); },
+          // Gate on the utterance buffer: Zipformer decodes every mic frame,
+          // including TTS speaker echo and trailing audio after its decoder
+          // reset, so outside a VAD-confirmed utterance its "partials" are
+          // noise fragments ("SSION"). Nothing legitimate is lost — the agent
+          // consumes Whisper's re-transcription of the buffered utterance,
+          // never these previews.
+          onPartial: (text: string) => {
+            if (!closed && buffers.isBuffering) ctx.sendEvent({ type: "partial", text });
+          },
           onError: (err: Error) => {
             logger.warn(`[voice-session] ${ctx.sessionId}: stt runtime error: ${err.message}`);
             if (!closed) ctx.sendEvent({ type: "stt_error", message: err.message });

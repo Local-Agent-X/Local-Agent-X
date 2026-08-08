@@ -145,6 +145,12 @@ function handleVoiceWsMessage(e) {
       // tries to start a turn, just drop the events instead of injecting
       // a phantom assistant bubble into the chat thread.
       if (dictateMode) break;
+      // Any live-partial bubble still on screen here is an orphan — the real
+      // utterance was already committed by `final` (that's what triggered this
+      // turn), so a leftover preview is echo/noise that would otherwise sit
+      // blinking until the next vad_speech_start. (Also the only cleanup path
+      // for the browser STT tier, which never emits vad_speech_start.)
+      if (voicePartialEl) { try { voicePartialEl.remove(); } catch {} voicePartialEl = null; }
       if (typeof addMessageEl === 'function') {
         voiceCurrentMsgEl = addMessageEl('assistant', '');
         voiceCurrentMsgBody = voiceCurrentMsgEl?.querySelector('.msg-body');

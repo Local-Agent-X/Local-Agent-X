@@ -31,6 +31,11 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   let bridgeReady = false;
   let closed = false;
   let pendingTtsCount = 0;
+  // True between the sidecar's speech_start and speech_end. Streaming
+  // partials outside that window are decoder noise (TTS speaker echo,
+  // trailing audio after an endpoint reset) — never a real utterance, since
+  // finals come from the sidecar's own endpointed transcription.
+  let inUtterance = false;
   let nextSentenceId = 1;
   const pendingFrames: Int16Array[] = [];
 
@@ -139,6 +144,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       }
     },
     onSpeechStart: () => {
+      inUtterance = true;
       ctx.sendEvent({ type: "vad_speech_start" });
       // Barge-in (no-op when idle): machine aborts the turn, cancels TTS, tells
       // the browser to drop pending audio. Reset our chunk counter so late
@@ -146,8 +152,8 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       machine.interrupt();
       pendingTtsCount = 0;
     },
-    onSpeechEnd: () => { ctx.sendEvent({ type: "vad_speech_end" }); },
-    onPartial: (text) => { ctx.sendEvent({ type: "partial", text }); },
+    onSpeechEnd: () => { inUtterance = false; ctx.sendEvent({ type: "vad_speech_end" }); },
+    onPartial: (text) => { if (inUtterance) ctx.sendEvent({ type: "partial", text }); },
     onFinal: (text, ms) => {
       // The machine emits the `final` event (with sttMs) after its guards.
       void machine.handleFinalTranscript(text, ms);

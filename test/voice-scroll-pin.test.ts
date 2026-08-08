@@ -123,6 +123,19 @@ describe("voice chat scroll pin", () => {
 		expect(scrollSpy).toHaveBeenCalledWith({ block: "start" });
 	});
 
+	it("removes an orphaned live-partial bubble when the agent turn starts", () => {
+		// A stray partial (speaker echo / decoder noise) arriving after the
+		// final creates a fresh preview bubble; agent_start must clear it so
+		// it doesn't sit blinking next to the streaming reply.
+		fire({ type: "final", text: "hey what's the weather" });
+		fire({ type: "partial", text: "SSION" });
+		expect(document.querySelector(".msg.user.voice-partial")).not.toBeNull();
+
+		fire({ type: "agent_start" });
+		expect(document.querySelector(".msg.user.voice-partial")).toBeNull();
+		expect((window as any).voicePartialEl).toBeNull();
+	});
+
 	it("does not touch the thread pin in dictate mode", () => {
 		(window as any).dictateMode = true;
 		fire({ type: "final", text: "dictated text, not a chat turn" });

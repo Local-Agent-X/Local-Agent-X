@@ -10,6 +10,19 @@
 // Split out of chat-voice-mic.js so each file stays under 400 LOC. State
 // lives in chat-voice.js (shared script-global lexical env).
 
+// The previous reply's bubble keeps pin-bottom's ~100vh reservation after its
+// turn ends, so the next spoken utterance appends a full viewport BELOW the
+// visible thread. scrollIntoView then clamps at max-scroll (the utterance is
+// the last element — nothing below to scroll into) and the screen shows only
+// the stale empty reservation, with the whole conversation above the fold.
+// Strip the stale pin before building the new user bubble so the thread
+// reflows to sit right above it — same order chat-send.js uses for typed turns.
+function _voiceStripStalePin() {
+  const msgs = document.getElementById('messages');
+  if (!msgs) return;
+  msgs.querySelectorAll('.msg.assistant.pin-bottom').forEach(m => m.classList.remove('pin-bottom'));
+}
+
 function handleVoiceWsMessage(e) {
   // Binary frames are TTS PCM — pipe to playback worklet
   if (typeof e.data !== 'string') {
@@ -72,8 +85,10 @@ function handleVoiceWsMessage(e) {
         if (body) body.textContent = msg.text;
         voicePartialEl = null;
       } else if (typeof addMessageEl === 'function') {
+        _voiceStripStalePin();
         userEl = addMessageEl('user', msg.text);
       }
+      voiceLastUserEl = userEl || voiceLastUserEl;
       // Pin the just-spoken utterance near the top so it stays readable — the
       // user checks here whether their speech transcribed correctly. The reply
       // streams (and is spoken) below it instead of autoscroll shoving the
@@ -111,6 +126,7 @@ function handleVoiceWsMessage(e) {
       if (empty) empty.remove();
       if (!voicePartialEl) {
         if (typeof addMessageEl !== 'function') break;
+        _voiceStripStalePin();
         voicePartialEl = addMessageEl('user', msg.text);
         if (voicePartialEl) {
           voicePartialEl.classList.add('voice-partial');
@@ -135,6 +151,18 @@ function handleVoiceWsMessage(e) {
         if (voiceCurrentMsgBody) voiceCurrentMsgBody.innerHTML = thinkingHTML();
       }
       voiceCurrentMsgText = '';
+      // addMessageEl just migrated pin-bottom onto the new assistant bubble,
+      // so for the first time this turn there is a viewport of room below the
+      // utterance. Re-run the pin-to-top that clamped at max-scroll when the
+      // utterance was still the last element — this is what keeps the spoken
+      // prompt (and the thread above it) on screen while the reply streams
+      // below it, mirroring chat-send.js's rAF pin for typed turns.
+      const pinEl = voiceLastUserEl;
+      if (pinEl && typeof pinEl.scrollIntoView === 'function') {
+        requestAnimationFrame(() => {
+          try { pinEl.scrollIntoView({ block: 'start' }); } catch {}
+        });
+      }
       isSpeaking = true; updateVoiceUI();
       // Sphere stays in 'thinking' here — it transitions to 'speaking' when
       // the first audio frame actually arrives at the playback worklet,

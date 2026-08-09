@@ -15,6 +15,7 @@ import { VoiceTurnHygiene } from "./voice-turn-hygiene.js";
 import { warmModel } from "../local-runtimes/residency.js";
 import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
+import { retractLastTurn } from "../memory/retract-last-turn.js";
 const logger = createLogger("server.lifecycle");
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -60,7 +61,7 @@ export async function setupVoiceWs(deps: {
     const { prepareAgentRequest } = await import("../agent-request/index.js");
     setupVoiceWebSocket(server, config.authToken, config.maxUploadBytes);
 
-    const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
+    const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, continuationOf, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
       // Per-connection voice session id. The previous hardcoded "voice" caused
       // every concurrent voice connection to share global session-scoped state
       // (active onEvent callback, browser session, sub-agent inheritance).
@@ -86,6 +87,20 @@ export async function setupVoiceWs(deps: {
       // store's documented read-after-write invariant).
       await flushSession(sessionId);
       const session = getOrCreateSession(sessionId);
+
+      // Continuation merge (turn-runner armed it): this turn's text re-includes
+      // the barged-over utterance, so retract the interrupted turn's rows —
+      // via the canonical retractLastTurn, never a hand-splice — so the merged
+      // turn REPLACES them. Guarded on the tail actually being that turn: if
+      // any other writer slipped a row in, keep history intact (mild
+      // duplication beats deleting someone else's turn).
+      if (continuationOf) {
+        const lastUser = [...session.messages].reverse().find((m) => m.role === "user");
+        if (lastUser && typeof lastUser.content === "string" && lastUser.content === continuationOf) {
+          const retracted = retractLastTurn(session.messages, { includeUser: true });
+          if (retracted.removed > 0) session.messages = retracted.messages;
+        }
+      }
 
       const prepared = await prepareAgentRequest({
         channel: "web",

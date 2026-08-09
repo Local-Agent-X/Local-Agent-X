@@ -158,3 +158,91 @@ describe("voice turn machine", () => {
     expect(h.types().filter((type) => type === "agent_start")).toHaveLength(2);
   });
 });
+
+describe("voice turn machine — noise gate", () => {
+  it("drops a Whisper stage-direction final entirely: no event, no turn", async () => {
+    const h = harness();
+    const runTurn = vi.fn(twoDeltaRun);
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    await machine.handleFinalTranscript("(muffled speaking");
+
+    expect(h.types()).toEqual([]);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe("voice turn machine — continuation merge", () => {
+  // A runTurn whose FIRST call hangs until barge-in aborts it (a reply cut
+  // mid-stream) and records every input it receives.
+  function makeHangingRun() {
+    const inputs: Array<{ text: string; continuationOf?: string }> = [];
+    const run: VoiceTurnRunner = async (input) => {
+      inputs.push({ text: input.text, continuationOf: input.continuationOf });
+      if (inputs.length === 1) {
+        await new Promise<void>((res) => input.signal.addEventListener("abort", () => res()));
+        return {
+          assistantText: "partial reply",
+          updatedHistory: [...input.history,
+            { role: "user", content: input.text },
+            { role: "assistant", content: "partial reply" }],
+        };
+      }
+      return twoDeltaRun(input);
+    };
+    return { inputs, run };
+  }
+
+  it("merges the next final with a barged-over utterance the user barely heard", async () => {
+    const h = harness();
+    const { inputs, run } = makeHangingRun();
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: run, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    const p1 = machine.handleFinalTranscript("I was thinking about this");
+    await Promise.resolve(); // let runTurn start (activeTurn set)
+    machine.interrupt();     // barge-in before any audio shipped → heard 0ms
+    await p1;
+
+    await machine.handleFinalTranscript("and it keeps bothering me");
+
+    expect(inputs[1].text).toBe("I was thinking about this and it keeps bothering me");
+    expect(inputs[1].continuationOf).toBe("I was thinking about this");
+  });
+
+  it("survives a noise final between the barge-in and the real continuation", async () => {
+    const h = harness();
+    const { inputs, run } = makeHangingRun();
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: run, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    const p1 = machine.handleFinalTranscript("first half of the thought");
+    await Promise.resolve();
+    machine.interrupt();
+    await p1;
+
+    await machine.handleFinalTranscript("(muffled speaking"); // dropped by the noise gate
+    await machine.handleFinalTranscript("second half here");
+
+    expect(inputs[1].text).toBe("first half of the thought second half here");
+  });
+
+  it("does NOT merge when the user heard a real chunk of the reply first", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const h = harness();
+    const { inputs, run } = makeHangingRun();
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: run, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    const p1 = machine.handleFinalTranscript("tell me a long story");
+    await Promise.resolve();
+    vi.advanceTimersByTime(900);         // TTFT + synthesis lead-in
+    machine.noteAudioShipped(8000);      // reply started playing…
+    vi.advanceTimersByTime(4000);        // …and the user listened for 4s
+    machine.interrupt();                 // then cut in — that's a NEW intent
+    await p1;
+    vi.useRealTimers();
+
+    await machine.handleFinalTranscript("actually never mind");
+
+    expect(inputs[1].text).toBe("actually never mind");
+    expect(inputs[1].continuationOf).toBeUndefined();
+  });
+});

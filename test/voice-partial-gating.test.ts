@@ -121,11 +121,15 @@ describe("in-process voice session partial gating", () => {
 		sttCallbacks.onPartial("hey what's");
 		expect(partialsSent(ctx)).toEqual(["hey what's"]);
 
-		// After speech-end (utterance drained to Whisper): echo/trailing
-		// fragments must be dropped again.
+		// After speech-end the smart-endpointing hold keeps the utterance open
+		// briefly (speech may resume); once the hold elapses and the commit
+		// drains the buffer, echo/trailing fragments are dropped again.
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
 		vadCallbacks.onSpeechEnd();
+		vi.advanceTimersByTime(1500); // past any hold → utterance committed
 		sttCallbacks.onPartial("SSION");
 		expect(partialsSent(ctx)).toEqual(["hey what's"]);
+		vi.useRealTimers();
 
 		session.close?.();
 	});
@@ -149,6 +153,60 @@ describe("gpu (sidecar) voice session partial gating", () => {
 		cb.onPartial("SSION");
 		expect(partialsSent(ctx)).toEqual(["hey what's"]);
 
+		session.close?.();
+	});
+});
+
+describe("in-process voice session smart endpointing", () => {
+	function eventTypes(ctx: ReturnType<typeof makeCtx>): string[] {
+		return ctx.sendEvent.mock.calls.map(([e]: any[]) => e.type);
+	}
+
+	it("holds the commit for an unfinished partial; resuming speech cancels it silently", async () => {
+		const ctx = makeCtx();
+		const session = createVoiceSessionFactory(vi.fn())(ctx as any);
+		await new Promise((r) => setTimeout(r, 0));
+		const { sttCallbacks, vadCallbacks } = captured.init;
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+
+		vadCallbacks.onSpeechStart();
+		sttCallbacks.onPartial("i was thinking about it and");
+		vadCallbacks.onSpeechEnd();
+		// Mid-thought partial → the commit is held, not fired.
+		expect(eventTypes(ctx)).not.toContain("vad_speech_end");
+
+		// Speech resumes during the hold: cancelled, same utterance continues,
+		// no duplicate vad_speech_start for the client.
+		vadCallbacks.onSpeechStart();
+		vi.advanceTimersByTime(5000);
+		expect(eventTypes(ctx)).not.toContain("vad_speech_end");
+		expect(eventTypes(ctx).filter((t) => t === "vad_speech_start")).toHaveLength(1);
+
+		// Finished sentence → immediate commit on the next silence.
+		sttCallbacks.onPartial("i was thinking about it and now i am done.");
+		vadCallbacks.onSpeechEnd();
+		expect(eventTypes(ctx)).toContain("vad_speech_end");
+
+		vi.useRealTimers();
+		session.close?.();
+	});
+
+	it("commits a neutral-ending partial after the moderate hold elapses", async () => {
+		const ctx = makeCtx();
+		const session = createVoiceSessionFactory(vi.fn())(ctx as any);
+		await new Promise((r) => setTimeout(r, 0));
+		const { sttCallbacks, vadCallbacks } = captured.init;
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+
+		vadCallbacks.onSpeechStart();
+		sttCallbacks.onPartial("open the browser");
+		vadCallbacks.onSpeechEnd();
+		expect(eventTypes(ctx)).not.toContain("vad_speech_end");
+
+		vi.advanceTimersByTime(500); // > neutral hold (450ms)
+		expect(eventTypes(ctx)).toContain("vad_speech_end");
+
+		vi.useRealTimers();
 		session.close?.();
 	});
 });

@@ -7,6 +7,12 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 
 export interface VoiceTurnInput {
   text: string;
+  /** Set when this turn CONTINUES a barged-over turn: the previous user
+   *  utterance whose reply was cut almost immediately after it started.
+   *  `text` already includes it as a prefix. The host should retract the
+   *  interrupted turn's rows (user + partial reply) from durable history so
+   *  the merged turn replaces them instead of duplicating the words. */
+  continuationOf?: string;
   history: ChatCompletionMessageParam[];
   onDelta: (text: string) => void;
   /** Forwarded by the agent when it calls voice_visual — bridges the

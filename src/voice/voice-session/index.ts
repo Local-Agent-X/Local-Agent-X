@@ -19,6 +19,7 @@ import type { Tier4StreamingTTS } from "../tier4/types.js";
 
 import { resolveVoiceSettings } from "./settings.js";
 import { createAudioBuffers } from "./audio-buffers.js";
+import { classifyEndpointPartial, ENDPOINT_HOLD_MS } from "./endpointing.js";
 import { initializeVoiceStack } from "./model-init.js";
 import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./turn-runner.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "../proactive-registry.js";
@@ -73,6 +74,12 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     const pendingFrames: Int16Array[] = [];
 
     const buffers = createAudioBuffers();
+
+    // Smart-endpointing state: the deferred utterance commit (armed on VAD
+    // speech-end, cancelled if speech resumes) and the newest streaming
+    // partial, which picks the hold length. See endpointing.ts.
+    let pendingCommit: ReturnType<typeof setTimeout> | null = null;
+    let lastPartial = "";
 
     // In-process speaker: stream text to the Tier-4 / CPU TTS worker one whole
     // sentence at a time. The worker emits a single onIdle when its queue
@@ -187,7 +194,10 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           // consumes Whisper's re-transcription of the buffered utterance,
           // never these previews.
           onPartial: (text: string) => {
-            if (!closed && buffers.isBuffering) ctx.sendEvent({ type: "partial", text });
+            if (!closed && buffers.isBuffering) {
+              lastPartial = text;
+              ctx.sendEvent({ type: "partial", text });
+            }
           },
           onError: (err: Error) => {
             logger.warn(`[voice-session] ${ctx.sessionId}: stt runtime error: ${err.message}`);
@@ -222,14 +232,47 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
 
     function handleSpeechStart(): void {
       if (closed) return;
+      // Same-utterance resume: VAD flagged silence but the endpoint hold
+      // hadn't committed yet. Cancel the pending commit and keep buffering
+      // the SAME utterance — begin() must NOT run again (it would wipe the
+      // buffered audio) and the client still believes speech is live, so no
+      // duplicate vad_speech_start either. No turn started (commit deferred),
+      // so there is nothing to barge into.
+      if (pendingCommit) {
+        clearTimeout(pendingCommit);
+        pendingCommit = null;
+        return;
+      }
       // Barge-in (no-op when idle): the machine aborts the turn, cancels TTS,
       // and tells the browser to drop pending audio.
       machine.interrupt();
       ctx.sendEvent({ type: "vad_speech_start" });
+      lastPartial = "";
       buffers.begin();
     }
 
     function handleSpeechEnd(): void {
+      if (closed) return;
+      // Smart endpointing: VAD's ~300ms silence is right for a finished
+      // sentence but chops natural mid-thought pauses into separate turns.
+      // Hold the commit longer when the live partial reads unfinished;
+      // resuming speech during the hold cancels it (handleSpeechStart above)
+      // and the utterance continues unbroken.
+      const verdict = classifyEndpointPartial(lastPartial);
+      const holdMs = ENDPOINT_HOLD_MS[verdict];
+      if (pendingCommit) clearTimeout(pendingCommit);
+      if (holdMs <= 0) {
+        commitUtterance();
+        return;
+      }
+      logger.debug(`[voice-session] ${ctx.sessionId}: endpoint hold ${holdMs}ms (${verdict})`);
+      pendingCommit = setTimeout(() => {
+        pendingCommit = null;
+        commitUtterance();
+      }, holdMs);
+    }
+
+    function commitUtterance(): void {
       if (closed) return;
       ctx.sendEvent({ type: "vad_speech_end" });
       // Flush Zipformer so the next utterance starts with a clean decoder
@@ -315,6 +358,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       close() {
         if (closed) return;
         closed = true;
+        if (pendingCommit) { clearTimeout(pendingCommit); pendingCommit = null; }
         unregisterVoiceSpeaker(ctx.sessionId);
         machine.close();
         try { stt?.close(); } catch {}

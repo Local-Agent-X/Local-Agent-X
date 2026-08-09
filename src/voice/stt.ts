@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { detectInjection } from "../sanitize.js";
 import { WHISPER_EXE, WHISPER_MODEL, VOICE_DIR, tmpPath } from "./paths.js";
+import { stripTranscriptNoise } from "./transcript-noise.js";
 
 const logger = createLogger("voice");
 
@@ -46,11 +47,9 @@ export function transcribe(audioBuffer: Buffer): string {
       timeout: 30_000,
     });
 
-    // Strip Whisper's bracketed annotations ([BLANK_AUDIO], [music], etc.).
-    // dotAll so a span containing a newline is removed, and a second pass
-    // clears an unclosed trailing "[..." with no closing bracket — otherwise
-    // stray bracketed Whisper text could survive and mimic our notice.
-    let text = output.trim().replace(/\[[^\]]*\]/gs, "").replace(/\[[^\]]*$/s, "").trim();
+    // Strip Whisper noise annotations ([BLANK_AUDIO], "(muffled speaking",
+    // etc.) via the shared scrubber — one regex set for every STT path.
+    let text = stripTranscriptNoise(output);
     const lower = text.toLowerCase();
     if (lower === "thank you." || lower === "thanks for watching." || text.length < 2) {
       return "";

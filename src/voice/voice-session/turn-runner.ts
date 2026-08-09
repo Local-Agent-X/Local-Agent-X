@@ -19,6 +19,15 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceSessionContext } from "../audio-ws.js";
 import type { VoiceTurnRunner } from "./types.js";
+import { stripTranscriptNoise } from "../transcript-noise.js";
+
+// Continuation merge: a barge-in that lands before the user heard more than
+// this much of the reply almost always means "I wasn't done talking", not
+// "new topic" — so the NEXT final continues the interrupted turn's utterance
+// instead of standing alone (the model was answering only the last fragment).
+const CONTINUATION_MAX_HEARD_MS = 2_500;
+// The armed continuation expires if no follow-up final arrives in this window.
+const CONTINUATION_WINDOW_MS = 30_000;
 
 export const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 
@@ -123,6 +132,13 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   let ttftMs = 0;
   let firstAudioMs = 0;
 
+  // Continuation merge state — see the constants at the top of this file.
+  // `currentUtterance` is the (possibly already-merged) user text of the
+  // active turn; `continuation` is armed by interrupt() when its reply was
+  // cut before the user really heard it.
+  let currentUtterance = "";
+  let continuation: { text: string; at: number } | null = null;
+
   function clearTimer(): void {
     if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
   }
@@ -138,6 +154,14 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   function interrupt(): void {
     if (isClosed() || !activeTurn) return;
     logger.info(`[turn] ${sid}: barge-in → interrupting agent`);
+    // Heard-time: zero until first audio actually shipped, then wall-clock
+    // since it started playing. A reply cut this early means the user was
+    // continuing their thought — arm the merge for the next final.
+    const heardMs = firstAudioMs === 0 ? 0 : Math.max(0, Date.now() - (turnStartTs + firstAudioMs));
+    if (ctx.mode !== "dictate" && currentUtterance && heardMs < CONTINUATION_MAX_HEARD_MS) {
+      continuation = { text: currentUtterance, at: Date.now() };
+      logger.info(`[turn] ${sid}: continuation armed (heard ${heardMs}ms of reply)`);
+    }
     clearTimer();
     try { activeTurn.abort(); } catch { /* already settled */ }
     try { cancelTts(); } catch { /* engine already idle */ }
@@ -148,7 +172,10 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   function noteAudioShipped(ms: number): void {
     const now = Date.now();
     expectedPlaybackEndMs = Math.max(now, expectedPlaybackEndMs) + ms;
-    if (activeTurn && firstAudioMs === 0) firstAudioMs = now - turnStartTs;
+    // Floor at 1: 0 is the "no audio yet" sentinel (both here and in the
+    // [timing] log), and first audio landing in the same millisecond as turn
+    // start must still count as shipped.
+    if (activeTurn && firstAudioMs === 0) firstAudioMs = Math.max(1, now - turnStartTs);
   }
 
   function markTtsDrained(): void {
@@ -176,6 +203,9 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   function runProactiveTurn(text: string): void {
     ctx.sendEvent({ type: "agent_start" });
     const turn = new AbortController();
+    // A proactive line is not an answer to a user utterance — interrupting it
+    // must never arm a merge with a stale utterance from an earlier turn.
+    currentUtterance = "";
     activeTurn = turn;
     llmDone = false;
     ttsDrained = false;
@@ -220,12 +250,31 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
 
   async function handleFinalTranscript(rawText: string, sttMs?: number): Promise<void> {
     if (isClosed()) return;
-    const utterance = rawText.trim();
-    if (!utterance) return;
+    // Noise gate: Whisper hallucinates stage directions ("(muffled speaking",
+    // "[BLANK_AUDIO]") on quiet or cut-off audio. Those must never become a
+    // user turn — the agent would answer the garbage ("I didn't catch that")
+    // instead of the user's actual words. An armed continuation survives a
+    // dropped noise final and waits for the next real one.
+    const utterance = stripTranscriptNoise(rawText);
+    if (!utterance) {
+      if (rawText.trim()) logger.info(`[turn] ${sid}: dropped noise-only final: "${rawText.trim().slice(0, 40)}"`);
+      return;
+    }
     if (activeTurn) {
       logger.info(`[turn] ${sid}: ignoring final while turn in progress: "${utterance.slice(0, 40)}"`);
       return;
     }
+
+    // Continuation merge: this final arrived after a barge-in cut a reply the
+    // user had barely heard — treat it as the same thought. The model turn
+    // runs on the JOINED text; the client still shows just the new words.
+    let continuationOf: string | undefined;
+    if (continuation && Date.now() - continuation.at < CONTINUATION_WINDOW_MS) {
+      continuationOf = continuation.text;
+      logger.info(`[turn] ${sid}: continuing interrupted utterance (+"${utterance.slice(0, 40)}")`);
+    }
+    continuation = null;
+    const turnText = continuationOf ? `${continuationOf} ${utterance}` : utterance;
 
     ctx.sendEvent(sttMs != null ? { type: "final", text: utterance, sttMs } : { type: "final", text: utterance });
 
@@ -244,6 +293,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     // `turn` still reports aborted regardless of what `activeTurn` points at.
     const turn = new AbortController();
     activeTurn = turn;
+    currentUtterance = turnText;
     llmDone = false;
     ttsDrained = false;
     drainHandled = false;
@@ -254,7 +304,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
 
     try {
       const result = await runTurn({
-        text: utterance,
+        text: turnText,
+        continuationOf,
         history,
         sessionId: sid,
         signal: turn.signal,

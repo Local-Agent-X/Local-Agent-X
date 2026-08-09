@@ -32,9 +32,14 @@ interface ProviderAdapterOptions extends ProviderRuntimeOptions {
   sessionId?: string;
   preferAnthropicDirectHttp?: boolean;
   requireToolOnFirstTurn?: boolean;
-  /** Anthropic direct-HTTP profile knobs (voice / classifier lanes) — see
-   *  AnthropicAdapterOptions for semantics. Other runtimes ignore them. */
+  /** Short-path profile (voice / classifier lanes): skip silent reasoning
+   *  before the reply. Mapped per-runtime — Anthropic omits the thinking
+   *  config, Codex/OpenAI-compat force reasoning effort "low", Gemini turns
+   *  its thinking flag off. */
   disableThinking?: boolean;
+  /** Anthropic-only prompt-cache knobs — see AnthropicAdapterOptions. Other
+   *  runtimes ignore them (their caching is automatic/server-side; the
+   *  stable-prefix-first prompt ordering helps those on its own). */
   systemStablePrefixLen?: number;
   cacheConversation?: boolean;
 }
@@ -158,6 +163,11 @@ export async function createProviderAdapterFactory(
       model: identity.model,
       systemPrompt: options.systemPrompt,
       sessionId: options.sessionId ?? identity.sessionId,
+      // disableThinking, cross-provider: Codex has no thinking on/off switch —
+      // the equivalent short path is forcing low reasoning effort ("low", not
+      // "minimal": gpt-5.6 rejects minimal). Unset callers keep today's
+      // behavior (adapter/CLI defaults).
+      reasoningEffort: options.disableThinking ? "low" : undefined,
       transport,
     });
   }
@@ -169,7 +179,8 @@ export async function createProviderAdapterFactory(
       apiKey: options.apiKey,
       systemPrompt: options.systemPrompt,
       temperature: options.temperature,
-      thinking: /gemini-(2\.5|3)/i.test(identity.model),
+      // disableThinking, cross-provider: Gemini's knob is this boolean.
+      thinking: !options.disableThinking && /gemini-(2\.5|3)/i.test(identity.model),
       sessionId: options.sessionId ?? identity.sessionId,
     });
   }
@@ -188,6 +199,10 @@ export async function createProviderAdapterFactory(
     maxTokens: options.maxTokens,
     sessionId: options.sessionId ?? identity.sessionId,
     requireToolOnFirstTurn: options.requireToolOnFirstTurn,
+    // disableThinking, cross-provider: forwarded as reasoning_effort "low" on
+    // the wire; the HTTP adapter capability-gates it away for models that 400
+    // on the parameter, so local/older models are unaffected.
+    reasoningEffort: options.disableThinking ? "low" : undefined,
   });
 }
 

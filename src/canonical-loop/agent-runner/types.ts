@@ -15,9 +15,11 @@ export interface CanonicalAgentOptions extends AgentOptions {
   /** Interactive surfaces such as voice may use Anthropic's direct HTTP OAuth
    * transport, matching chat. Background agents omit this and stay on the CLI. */
   preferAnthropicDirectHttp?: boolean;
-  /** Voice/classifier profile: omit the thinking config on Anthropic direct
-   *  HTTP. Thinking time is silent dead air in a spoken reply — the deep
-   *  reasoning belongs to delegated workers, not the conversational hop. */
+  /** Voice/classifier short path: skip silent reasoning before the reply —
+   *  dead air in a spoken turn; deep reasoning belongs to delegated workers.
+   *  Provider-mapped in provider-adapter-factory.ts: Anthropic omits the
+   *  thinking config, Codex/OpenAI-compat force reasoning effort "low",
+   *  Gemini disables its thinking flag. */
   disableThinking?: boolean;
   /** Byte length of the stable prefix of systemPrompt (section-boundary
    *  aligned). Enables the two-block system prompt-cache split on the

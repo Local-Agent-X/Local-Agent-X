@@ -250,3 +250,68 @@ describe("delegated provider runtime identity", () => {
     })).rejects.toThrow("canonical provider endpoint changed");
   });
 });
+
+describe("disableThinking short-path mapping (cross-provider)", () => {
+	async function buildCodexFactory(disableThinking?: boolean) {
+		const resolved = await resolveProviderRuntime("codex", "exact-model", {
+			apiKey: "credential-must-stay-pinned",
+			authSource: "oauth",
+		});
+		const factory = await createProviderAdapterFactory({
+			provider: "codex",
+			credentialProvider: "codex",
+			authSource: "oauth",
+			model: "exact-model",
+			runtime: "codex",
+			target: resolved.identity.target,
+			sessionId: "session-exact",
+			integrity: { scheme: "hmac-sha256-v1", mac: "0".repeat(64) },
+		}, {
+			apiKey: "credential-must-stay-pinned",
+			authSource: "oauth",
+			sessionId: "session-exact",
+			disableThinking,
+		});
+		factory();
+	}
+
+	it("forces reasoning effort low on the Codex adapter (no thinking switch there)", async () => {
+		await buildCodexFactory(true);
+		expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reasoningEffort: "low" }),
+		);
+	});
+
+	it("leaves effort untouched when the short path is not requested", async () => {
+		await buildCodexFactory(undefined);
+		expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reasoningEffort: undefined }),
+		);
+	});
+
+	it("threads the flag to the Anthropic adapter unchanged", async () => {
+		const resolved = await resolveProviderRuntime("anthropic", "exact-model", {
+			apiKey: "credential-must-stay-pinned",
+			authSource: "env",
+		});
+		const factory = await createProviderAdapterFactory({
+			provider: "anthropic",
+			credentialProvider: "anthropic",
+			authSource: "env",
+			model: "exact-model",
+			runtime: "anthropic",
+			target: resolved.identity.target,
+			sessionId: "session-exact",
+			integrity: { scheme: "hmac-sha256-v1", mac: "0".repeat(64) },
+		}, {
+			apiKey: "credential-must-stay-pinned",
+			authSource: "env",
+			sessionId: "session-exact",
+			disableThinking: true,
+		});
+		factory();
+		expect(fixture.createAnthropicAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ disableThinking: true }),
+		);
+	});
+});

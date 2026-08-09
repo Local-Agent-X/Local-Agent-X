@@ -15,6 +15,18 @@ export interface CanonicalAgentOptions extends AgentOptions {
   /** Interactive surfaces such as voice may use Anthropic's direct HTTP OAuth
    * transport, matching chat. Background agents omit this and stay on the CLI. */
   preferAnthropicDirectHttp?: boolean;
+  /** Voice/classifier profile: omit the thinking config on Anthropic direct
+   *  HTTP. Thinking time is silent dead air in a spoken reply — the deep
+   *  reasoning belongs to delegated workers, not the conversational hop. */
+  disableThinking?: boolean;
+  /** Byte length of the stable prefix of systemPrompt (section-boundary
+   *  aligned). Enables the two-block system prompt-cache split on the
+   *  Anthropic direct-HTTP path. */
+  systemStablePrefixLen?: number;
+  /** Mark the last message with an Anthropic cache breakpoint so conversation
+   *  history caches across turns. Set only when the system prompt is
+   *  byte-stable turn-to-turn (see systemStablePrefixLen). */
+  cacheConversation?: boolean;
   /** Trusted dispatch origin. Omitted non-chat callers default to API. */
   callContext?: CallContext;
   /** Op-level wall-clock ceiling. Replaces caller-side setTimeout-driven

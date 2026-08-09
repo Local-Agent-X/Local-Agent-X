@@ -89,6 +89,9 @@ export async function registerProviderAdapter(
     maxTokens,
     sessionId,
     preferAnthropicDirectHttp: options.preferAnthropicDirectHttp,
+    disableThinking: options.disableThinking,
+    systemStablePrefixLen: options.systemStablePrefixLen,
+    cacheConversation: options.cacheConversation,
     requireToolOnFirstTurn: true,
   });
   registerAdapterForOp(op.id, factory);

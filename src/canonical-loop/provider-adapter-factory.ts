@@ -32,6 +32,11 @@ interface ProviderAdapterOptions extends ProviderRuntimeOptions {
   sessionId?: string;
   preferAnthropicDirectHttp?: boolean;
   requireToolOnFirstTurn?: boolean;
+  /** Anthropic direct-HTTP profile knobs (voice / classifier lanes) — see
+   *  AnthropicAdapterOptions for semantics. Other runtimes ignore them. */
+  disableThinking?: boolean;
+  systemStablePrefixLen?: number;
+  cacheConversation?: boolean;
 }
 
 export class RuntimeIdentityMismatchError extends Error {
@@ -136,6 +141,9 @@ export async function createProviderAdapterFactory(
       sessionId: options.sessionId ?? identity.sessionId,
       maxTokens: options.maxTokens,
       preferDirectHttp: options.preferAnthropicDirectHttp,
+      disableThinking: options.disableThinking,
+      systemStablePrefixLen: options.systemStablePrefixLen,
+      cacheConversation: options.cacheConversation,
       transport,
     });
   }

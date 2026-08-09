@@ -258,3 +258,71 @@ describe("streamViaAPI — disableThinking (classifier path)", () => {
     expect(cap.calls[0].body.thinking).toEqual({ type: "adaptive", display: "summarized" });
   });
 });
+
+describe("streamViaAPI — stable/volatile system split (voice cache profile)", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+
+  it("splits the system prompt into [stable w/ breakpoint, volatile uncached] at the given byte", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "STABLE-PART" + "VOLATILE", systemStablePrefixLen: 11 });
+    expect(cap.calls[0].body.system).toEqual([
+      { type: "text", text: "STABLE-PART", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "VOLATILE" },
+    ]);
+  });
+
+  it("keeps the identity prefix + split blocks in order on the OAuth path", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "direct-oauth:sk-ant-oat-fake", model: "claude-fable-5", systemPrompt: "AB" + "cd", systemStablePrefixLen: 2 });
+    const sys = cap.calls[0].body.system as Array<{ text: string; cache_control?: { type: string } }>;
+    expect(sys).toHaveLength(3);
+    expect(sys[0].cache_control).toBeUndefined(); // identity prefix rides inside the stable-block span
+    expect(sys[1]).toEqual({ type: "text", text: "AB", cache_control: { type: "ephemeral" } });
+    expect(sys[2]).toEqual({ type: "text", text: "cd" });
+  });
+
+  it("ignores a split length that is 0 or out of range (single cached block, legacy shape)", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "WHOLE", systemStablePrefixLen: 0 });
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "WHOLE", systemStablePrefixLen: 5 });
+    for (const call of cap.calls) {
+      expect(call.body.system).toEqual([
+        { type: "text", text: "WHOLE", cache_control: { type: "ephemeral" } },
+      ]);
+    }
+  });
+});
+
+describe("streamViaAPI — conversation-history breakpoint (cacheConversation)", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+
+  it("marks the last message's last block; string content becomes a text block", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      cacheConversation: true,
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "reply" },
+        { role: "user", content: "second" },
+      ],
+    });
+    const msgs = cap.calls[0].body.messages as Array<{ content: unknown }>;
+    // Earlier messages keep their original shape — only the LAST carries the marker.
+    expect(msgs[0].content).toBe("first");
+    expect(msgs[2].content).toEqual([
+      { type: "text", text: "second", cache_control: { type: "ephemeral" } },
+    ]);
+  });
+
+  it("does not touch messages when the flag is off", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ messages: [{ role: "user", content: "hi" }] });
+    expect(cap.calls[0].body.messages).toEqual([{ role: "user", content: "hi" }]);
+  });
+});

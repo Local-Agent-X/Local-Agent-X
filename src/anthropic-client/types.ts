@@ -53,8 +53,22 @@ export interface StreamOptions {
   /** Omit the thinking block and honor `temperature` verbatim. For short
    *  yes/no classifier calls: extended thinking burns seconds of reasoning
    *  tokens a verdict doesn't need, and the chat-tuned default forces
-   *  temperature 1. Only the direct-HTTP path reads this. */
+   *  temperature 1. Also set by the voice turn path: thinking time is dead
+   *  air in a spoken reply. Only the direct-HTTP path reads this. */
   disableThinking?: boolean;
+  /** Byte length of the stable prefix of `systemPrompt`. When set (and > 0,
+   *  < systemPrompt.length), the system prompt is sent as TWO text blocks —
+   *  [0, len) carrying the cache_control breakpoint, [len, end) uncached —
+   *  so per-turn churn in the tail (memory context, notices) no longer
+   *  invalidates the cached tools+system prefix. Callers must slice on a
+   *  section boundary they control; an arbitrary mid-token split is safe for
+   *  the API but wastes the cache on the next byte-different turn. */
+  systemStablePrefixLen?: number;
+  /** Mark the LAST message with a cache_control breakpoint so the whole
+   *  conversation prefix caches across turns. Only worth setting when the
+   *  system prompt is byte-stable across turns (see systemStablePrefixLen) —
+   *  the messages tier can only hit when everything before it matches. */
+  cacheConversation?: boolean;
 }
 
 export interface AnthropicMessage {
@@ -62,8 +76,12 @@ export interface AnthropicMessage {
   content: string | AnthropicContent[];
 }
 
-export type AnthropicContent =
+// cache_control is intersected onto every variant so the message-tier
+// prompt-caching breakpoint (StreamOptions.cacheConversation) can land on
+// whatever block type happens to be last in the conversation.
+export type AnthropicContent = (
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | { type: "tool_result"; tool_use_id: string; content: string }
+) & { cache_control?: { type: "ephemeral" } };

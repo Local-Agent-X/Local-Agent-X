@@ -105,6 +105,9 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
           signal: req.signal,
           sessionId: req.sessionId,
           forcedToolName: forced?.name,
+          disableThinking: req.disableThinking,
+          systemStablePrefixLen: req.systemStablePrefixLen,
+          cacheConversation: req.cacheConversation,
         });
 
         for await (const ev of stream) {

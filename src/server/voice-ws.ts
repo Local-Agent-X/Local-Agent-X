@@ -14,7 +14,7 @@ import { createLogger } from "../logger.js";
 import { VoiceTurnHygiene } from "./voice-turn-hygiene.js";
 import { warmModel } from "../local-runtimes/residency.js";
 import { createPromptTelemetry } from "../prompt-telemetry.js";
-import { buildVoicePromptPlan } from "./voice-prompt-plan.js";
+import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 const logger = createLogger("server.lifecycle");
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -152,12 +152,15 @@ export async function setupVoiceWs(deps: {
           "1/reply, 2.5s cooldown), e.g. voice_visual({kind:\"mood\", " +
           "value:\"excited\"}). Default to NO visual call."
         : "";
-      const voiceSystemPrompt = prepared.systemPrompt +
+      const voiceTail =
         "\n\n## Voice mode\n" +
         "You're a fast, conversational voice assistant. The user HEARS your reply " +
         "(TTS) and only hears your spoken words — tool calls and the sphere are " +
         "silent. Keep every spoken line short and natural; no markdown, lists, " +
         "code, or emoji.\n" +
+        "Open with a few natural words BEFORE the substance (\"Sure —\", \"Okay, " +
+        "so\", \"Good question —\") so speech starts immediately; vary the opener, " +
+        "don't repeat the same one every turn.\n" +
         "Route each request:\n" +
         "• A question you can answer, or a quick fact lookup: answer directly, or " +
         "use web_search inline, then say what you found in a sentence or two.\n" +
@@ -175,11 +178,18 @@ export async function setupVoiceWs(deps: {
         "• When a background task you started has completed, its result is in your " +
         "context — open with it (\"That search came back — …\").\n" +
         "Never say you did something you didn't." + visualPromptTail;
-      const voiceTail = voiceSystemPrompt.slice(prepared.systemPrompt.length);
-      const voiceRenderedPromptSections = buildVoicePromptPlan(
+      // Prompt-cache split: static sections + voice tail form the stable
+      // prefix; per-turn dynamic sections (memory retrieval, notices) move
+      // after it. stream-api caches the stable block, so consecutive spoken
+      // turns stop re-prefilling the whole system tier. When a turn has no
+      // dynamic sections at all, history-tier caching engages too.
+      const voiceSplit = buildVoicePromptSplit(
         prepared.renderedPromptSections,
+        prepared.systemPrompt,
         voiceTail,
       );
+      const voiceSystemPrompt = voiceSplit.systemPrompt;
+      const voiceRenderedPromptSections = voiceSplit.sections;
       const voicePromptTelemetry = createPromptTelemetry({
         profile: "voice",
         provider: prepared.provider,
@@ -271,6 +281,14 @@ export async function setupVoiceWs(deps: {
           // background agentic work and can sit silent while a subprocess
           // starts or wedges, leaving the user with no spoken response.
           preferAnthropicDirectHttp: true,
+          // Thinking time is dead air in a spoken reply — the user sits in
+          // silence while the model reasons about how to say two sentences.
+          // Same model, no silent stall; genuinely heavy work is delegated to
+          // op_submit_async workers, which keep their full thinking budget.
+          disableThinking: true,
+          // Prompt-cache profile from the split above (see buildVoicePromptSplit).
+          systemStablePrefixLen: voiceSplit.stableLen,
+          cacheConversation: voiceSplit.fullyStable,
           signal,
           onEvent,
           opType: "voice_turn",

@@ -130,6 +130,9 @@ export class AnthropicAdapter implements Adapter {
       sessionId: this.opts.sessionId,
       forcedToolChoice,
       preferDirectHttp: this.opts.preferDirectHttp,
+      disableThinking: this.opts.disableThinking,
+      systemStablePrefixLen: this.opts.systemStablePrefixLen,
+      cacheConversation: this.opts.cacheConversation,
     };
 
     // Idle-event detection lives in turn-loop now (provider-agnostic).

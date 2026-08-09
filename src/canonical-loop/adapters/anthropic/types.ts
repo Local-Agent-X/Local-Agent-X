@@ -34,6 +34,16 @@ export interface AnthropicTransportRequest {
   forcedToolChoice?: { type: "tool"; name: string };
   /** Chat lane opt-in to the direct-HTTP OAuth path — see AnthropicAdapterOptions. */
   preferDirectHttp?: boolean;
+  /** Omit the thinking config (spoken-turn / classifier profile — reasoning
+   *  time is dead air in voice). Direct-HTTP path only; the CLI proxy can't
+   *  stream thinking regardless. */
+  disableThinking?: boolean;
+  /** Byte length of the stable prefix of systemPrompt — enables the
+   *  two-block system cache split in anthropic-client/stream-api.ts. */
+  systemStablePrefixLen?: number;
+  /** Mark the last message with a cache breakpoint (history-tier caching).
+   *  Only useful when the system prompt is byte-stable across turns. */
+  cacheConversation?: boolean;
 }
 
 export interface TransportMessage {
@@ -136,6 +146,12 @@ export interface AnthropicAdapterOptions {
    * Falls back to the CLI path automatically when no direct token is available.
    */
   preferDirectHttp?: boolean;
+  /** See AnthropicTransportRequest.disableThinking. */
+  disableThinking?: boolean;
+  /** See AnthropicTransportRequest.systemStablePrefixLen. */
+  systemStablePrefixLen?: number;
+  /** See AnthropicTransportRequest.cacheConversation. */
+  cacheConversation?: boolean;
 }
 
 // ── Stream-consume result ────────────────────────────────────────────────

@@ -12,26 +12,26 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1496 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1497 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 114 | 24 | XL |  |
-| `src/security/` | 81 | 34 | XL |  |
-| `src/tools/` | 61 | 163 | XL |  |
+| `src/ops/` | 115 | 25 | XL |  |
+| `src/security/` | 83 | 34 | XL |  |
+| `src/tools/` | 62 | 163 | XL |  |
 | `src/providers/` | 58 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 209 | XL |  |
 | `src/memory/` | 44 | 126 | XL |  |
-| `src/workspace/` | 35 | 2 | M |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/session/` | 34 | 7 | L |  |
+| `src/workspace/` | 34 | 2 | M |  |
 | `src/util/` | 33 | 2 | S |  |
 | `src/threat/` | 32 | 12 | L |  |
 | `src/auth/` | 29 | 10 | L |  |
+| `src/tool-policy/` | 29 | 20 | L |  |
 | `src/browser/` | 28 | 76 | XL |  |
-| `src/tool-policy/` | 28 | 20 | L |  |
 | `src/agency/` | 27 | 19 | L |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/agent-store/` | 25 | 7 | M |  |
@@ -48,17 +48,17 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 14 | 20 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
+| `src/tool-execution/` | 12 | 38 | XL |  |
 | `src/voice/` | 12 | 67 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |
 | `src/self-edit/` | 11 | 20 | L |  |
-| `src/tool-execution/` | 11 | 38 | XL |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
+| `src/server/` *(entrypoint)* | 10 | 45 | XL |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
-| `src/server/` *(entrypoint)* | 9 | 45 | XL |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/sync/` | 8 | 19 | L |  |
 | `src/auto-build/` | 7 | 52 | XL |  |

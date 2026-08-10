@@ -158,7 +158,17 @@ export async function setupVoiceWs(deps: {
       // because the agent can't control what it opens there — a dead end. NO
       // http_request either (the model abused it to fake browser control via
       // invented localhost endpoints, then hallucinated success).
-      const VOICE_FAST_TOOLS = ["op_submit_async", "op_status", "web_search", "browser"];
+      // Mission scheduling is on the belt because it's a QUICK direct call,
+      // and delegating it is guaranteed failure: op_submit_async workers run
+      // with no registered toolset today, so a "check/set up my 2am mission"
+      // spawn comes back "I can't access the API" (live failure 2026-08-09).
+      // mission_schedule_delete stays off voice — destructive, belongs in
+      // text/UI where the target is unambiguous.
+      const VOICE_FAST_TOOLS = [
+        "op_submit_async", "op_status", "web_search", "browser",
+        "mission_schedule_list", "mission_schedule_create", "mission_schedule_update",
+        "mission_schedule_toggle", "mission_schedule_reports",
+      ];
       const voiceTools = allAgentTools.filter(t =>
         VOICE_FAST_TOOLS.includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
       const visualPromptTail = visualsEnabled
@@ -186,6 +196,12 @@ export async function setupVoiceWs(deps: {
         "everyday browser. Do the action, then say one short line about what you " +
         "see. Never claim you opened or did something the browser tool didn't " +
         "actually return.\n" +
+        "• Scheduled missions (\"set up a mission for 2am\", \"do I have a daily " +
+        "mission?\", \"pause my morning job\"): use the mission_schedule_* tools " +
+        "DIRECTLY — creating/listing/toggling a mission is a quick call, never " +
+        "delegate it to a worker. If the user states a schedule (\"every day at " +
+        "2am\") and no matching mission exists, they want it CREATED — create it " +
+        "and confirm aloud; ask only if the mission's task/goal is unclear.\n" +
         "• Genuinely heavy/long work (build an app, a big multi-site automation, " +
         "anything > ~30s): don't grind it on this turn. Call op_submit_async to " +
         "run it in the background, say one short line like \"On it — I'll let you " +

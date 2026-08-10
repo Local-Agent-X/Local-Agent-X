@@ -85,12 +85,21 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     // sentence at a time. The worker emits a single onIdle when its queue
     // drains (ttsCallbacks.onIdle below) — that is the machine's drain signal.
     //
-    // Opener size: a tiny first chunk ("Sure,") plays out before edge-tts / a
-    // CPU engine can synthesize the next clause, leaving an audible gap right
-    // after the first word. Require ~24 chars so the opener's audio bridges the
-    // next chunk's synthesis latency — costs a few hundred ms of first-audio for
-    // noticeably smoother cadence (the GPU clone path keeps the tiny default).
+    // Opener size: the first chunk cuts at a NATURAL clause break when one
+    // lands early ("Yeah," / "Okay, so") — a seam at punctuation reads as
+    // intended speech. Only when no clause break shows up by ~24 chars does it
+    // fall back to a word boundary. The old shape passed 24 for BOTH floors,
+    // which rejected "Yeah," and cut mid-phrase at char 24 ("…I'm oriented ▍
+    // toward…") — the seam gap then landed where no human would pause.
     const OPENER_MIN_CHARS = 24;
+    // Long-clause early flush for the chunks AFTER the opener: a whole long
+    // sentence synthesized as one piece leaves an audible gap while the engine
+    // (edge-tts is a network round-trip) works. Flushing at clause breaks once
+    // ≥ ~40 chars are pending starts synthesis sooner and puts every seam on
+    // punctuation. Same fix the GPU sidecar speaker shipped (CLAUSE_MIN_CHARS
+    // in gpu-session.ts); kept per-speaker because the engines' per-request
+    // overheads differ.
+    const CLAUSE_FLUSH_MIN_CHARS = 40;
     let sentenceBuf = "";
     let ttsQueued = false;
     let firstChunkSpoken = false;
@@ -110,11 +119,20 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
         // First-chunk flush: start speaking the reply's opening ASAP so the
         // voice leads the text instead of trailing it. Fires once per turn.
         if (!firstChunkSpoken) {
-          const cut = firstChunkCut(sentenceBuf, OPENER_MIN_CHARS, OPENER_MIN_CHARS);
+          const cut = firstChunkCut(sentenceBuf, OPENER_MIN_CHARS);
           if (cut > 0) {
             const chunk = sentenceBuf.slice(0, cut).trim();
             if (chunk) { tts.speak(chunk); ttsQueued = true; firstChunkSpoken = true; }
             sentenceBuf = sentenceBuf.slice(cut);
+          }
+        } else {
+          // Mid-sentence long-clause flush — seams land on commas/colons.
+          const clause = /[,;:]\s+/.exec(sentenceBuf);
+          if (clause && clause.index + clause[0].length >= CLAUSE_FLUSH_MIN_CHARS) {
+            const cutEnd = clause.index + clause[0].length;
+            const chunk = sentenceBuf.slice(0, cutEnd).trim();
+            sentenceBuf = sentenceBuf.slice(cutEnd);
+            if (chunk) { tts.speak(chunk); ttsQueued = true; }
           }
         }
       },

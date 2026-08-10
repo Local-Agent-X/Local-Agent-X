@@ -246,3 +246,20 @@ describe("voice turn machine — continuation merge", () => {
     expect(inputs[1].continuationOf).toBeUndefined();
   });
 });
+
+describe("firstChunkCut — opener seams land on punctuation", () => {
+  it("prefers an early natural clause break even with a large word-boundary floor", () => {
+    // The regression: passing 24 for BOTH floors rejected "Yeah," and cut
+    // mid-phrase at char 24 ("…I'm oriented ▍ toward…") — the TTS seam gap
+    // then sat where no human pauses.
+    const buf = "Yeah, I think I'm oriented toward doing good";
+    expect(buf.slice(0, firstChunkCut(buf, 24))).toBe("Yeah, ");
+  });
+
+  it("falls back to a word boundary past the floor when no clause break exists", () => {
+    const buf = "I believe the answer here is quite simple really";
+    const cut = firstChunkCut(buf, 24);
+    expect(cut).toBeGreaterThanOrEqual(24);
+    expect(buf[cut - 1]).toBe(" ");
+  });
+});

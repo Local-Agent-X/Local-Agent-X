@@ -159,9 +159,11 @@ export async function setupVoiceWs(deps: {
       // http_request either (the model abused it to fake browser control via
       // invented localhost endpoints, then hallucinated success).
       // Mission scheduling is on the belt because it's a QUICK direct call,
-      // and delegating it is guaranteed failure: op_submit_async workers run
-      // with no registered toolset today, so a "check/set up my 2am mission"
-      // spawn comes back "I can't access the API" (live failure 2026-08-09).
+      // and delegating it is impossible by design: scheduling is deliberately
+      // excluded from the delegated-worker belt (mission_schedule_* is denied —
+      // an unattended worker must not install recurring jobs), so a
+      // "check/set up my 2am mission" spawn could never do it. It stays a
+      // direct voice call.
       // mission_schedule_delete stays off voice — destructive, belongs in
       // text/UI where the target is unambiguous.
       const VOICE_FAST_TOOLS = [

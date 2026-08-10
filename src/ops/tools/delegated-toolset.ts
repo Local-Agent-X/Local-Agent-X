@@ -49,7 +49,13 @@ const DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 const DENIED_TOOL_PREFIXES: readonly string[] = ["mission_schedule_"];
 
-function isDeniedForDelegatedWorker(name: string): boolean {
+/**
+ * The one source of truth for what a delegated worker may never hold. Applied
+ * both at spawn (belt subtraction below) AND at runtime augmentation
+ * (chat-tool-dispatcher's tool_search path re-checks it) so tool_search can't
+ * re-acquire a denied tool the belt already dropped.
+ */
+export function isDeniedForDelegatedWorker(name: string): boolean {
   if (DENIED_TOOL_NAMES.has(name)) return true;
   return DENIED_TOOL_PREFIXES.some((prefix) => name.startsWith(prefix));
 }

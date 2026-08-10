@@ -27,6 +27,7 @@ import { readOpMessages } from "./store.js";
 import { opMessageRowToChatParam } from "./chat-runner/message-convert.js";
 import { registerToolsForOp } from "./runtime.js";
 import { unifiedRegistry } from "../tools/registry.js";
+import { isDeniedForDelegatedWorker } from "../ops/tools/delegated-toolset.js";
 import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
@@ -284,7 +285,7 @@ function shapeCallResult(
   //      request schema includes them.
   if (call.tool === "tool_search" && opts.opId && canonicalStatus === "ok") {
     try {
-      augmentFromToolSearch(content, opts.opId, toolMap, opts.onToolsAugmented);
+      augmentFromToolSearch(content, opts.opId, toolMap, opts.onToolsAugmented, opts.callContext);
     } catch (e) {
       if (opts.onToolsAugmented) throw e;
       logger.warn(`[augment] tool_search augmentation failed: ${(e as Error).message}`);
@@ -307,6 +308,13 @@ function shapeCallResult(
  * Idempotent — tools already present in toolMap are skipped, so repeated
  * tool_search calls don't blow up the schema with duplicates.
  *
+ * Delegated-worker guard: when `callContext === "delegated"`, discovered tools
+ * are filtered through the SAME denylist that shapes the spawn-time belt
+ * (isDeniedForDelegatedWorker — one source of truth). Without this a
+ * "read-only" worker could tool_search its way back to op_submit_async,
+ * mission_schedule_*, or write/edit at runtime. Non-delegated contexts
+ * ("local"/"api"/"cron") are unfiltered — behavior unchanged.
+ *
  * Exported for unit testing — production callers go through the dispatcher
  * closure above.
  */
@@ -315,6 +323,7 @@ export function augmentFromToolSearch(
   opId: string,
   toolMap: Map<string, ToolDefinition>,
   beforeRegister?: (tools: ToolDefinition[]) => void,
+  callContext?: CallContext,
 ): void {
   // tool_search returns content like:
   //   "No tools matched the query."   (skip path)
@@ -331,6 +340,12 @@ export function augmentFromToolSearch(
     const name = (entry as { name?: unknown }).name;
     if (typeof name !== "string" || !name) continue;
     if (toolMap.has(name)) continue;
+    // Denylist holds at AUGMENTATION time, not just spawn time: a delegated
+    // worker must not tool_search its way back to a denied tool.
+    if (callContext === "delegated" && isDeniedForDelegatedWorker(name)) {
+      logger.warn(`[augment] blocked denied tool '${name}' for delegated worker op=${opId.slice(0, 12)}`);
+      continue;
+    }
     const tool = unifiedRegistry.get(name);
     if (!tool) continue;
     discovered.push(tool);

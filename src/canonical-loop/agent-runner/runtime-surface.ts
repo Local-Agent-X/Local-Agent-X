@@ -4,23 +4,30 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import type { DelegatedRuntimeSurface, Op } from "../../ops/types.js";
 import { readOp, withOpLock, writeOp } from "../../ops/op-store.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
-import { RBACManager } from "../../rbac.js";
+import { RBACManager, type Role } from "../../rbac.js";
 import { SecurityLayer } from "../../security/index.js";
 import { ThreatEngine } from "../../threat/threat-engine.js";
-import { loadToolPolicy } from "../../tool-policy/index.js";
+import { loadToolPolicy, type ToolPolicy } from "../../tool-policy/index.js";
 import { TOOL_POLICIES } from "../../tool-policy/tool-policies.data.js";
 import { matchGlob } from "../../tool-policy/matchers.js";
 import { implementationFingerprintFor, unifiedRegistry } from "../../tools/registry.js";
-import type { ToolDefinition } from "../../types.js";
+import type { ServerEvent, ToolDefinition } from "../../types.js";
+import type { CallContext } from "../../tool-execution/context.js";
 import { installSessionWorkRoot, sessionWorkRootOf } from "../../workspace/paths.js";
-import { bridgeOpCancelToToolSignal } from "../cancel-handler.js";
+import { bridgeOpCancelToToolSignal, type ToolCancelBridge } from "../cancel-handler.js";
 import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
 import { registerRuntimeCleanupForOp, registerToolDispatcherForOp, registerToolsForOp } from "../runtime.js";
 import { sealDelegatedRuntime, verifyDelegatedRuntimeIntegrity } from "../runtime-integrity.js";
 import type { CanonicalAgentOptions } from "./types.js";
 import { RuntimeSurfaceMismatchError, runtimeSurfaceMismatch } from "./runtime-surface-error.js";
 
-export function buildAgentRuntimeSurface(options: CanonicalAgentOptions, sessionId: string): DelegatedRuntimeSurface {
+/** The slice of CanonicalAgentOptions the durable surface actually captures.
+ *  Narrowed so non-chat callers (delegated ops) can build a surface without
+ *  fabricating a full provider options object. */
+export type AgentRuntimeSurfaceOptions = Pick<CanonicalAgentOptions,
+  "systemPrompt" | "tools" | "security" | "toolPolicy" | "threatEngine" | "rbac" | "callerRole" | "callContext" | "runId">;
+
+export function buildAgentRuntimeSurface(options: AgentRuntimeSurfaceOptions, sessionId: string): DelegatedRuntimeSurface {
   return {
     kind: "agent-runner",
     systemPrompt: options.systemPrompt,
@@ -37,6 +44,70 @@ export function buildAgentRuntimeSurface(options: CanonicalAgentOptions, session
     callContext: options.callContext ?? "api",
     ...(options.runId ? { runId: options.runId } : {}),
   };
+}
+
+export interface OpToolRuntimeOptions {
+  tools: ToolDefinition[];
+  security: SecurityLayer;
+  toolPolicy?: ToolPolicy;
+  threatEngine?: ThreatEngine;
+  rbac?: RBACManager;
+  callerRole?: Role;
+  sessionId: string;
+  callContext: CallContext;
+  runId?: string;
+  onEvent?: (event: ServerEvent) => void;
+  /** External abort composed into the op-cancel bridge (e.g. run.ts's
+   *  caller-supplied AbortSignal). Omit when op-cancel is the only trigger. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Install the in-process tool runtime for an op whose descriptor already
+ * carries a durable surface: cancel bridge, chat tool dispatcher (with the
+ * onToolsAugmented / onRuntimeStateChange → persistRuntimeSurface wiring),
+ * cleanup registration, and the per-op tool list. This is the FIRST-RUN twin
+ * of rehydrateAgentRuntimeSurface — same registrations, but from live caller
+ * state instead of a persisted surface. Returns the cancel bridge so runners
+ * that manage their own lifetime (run.ts) can dispose it in their finally;
+ * dispose is idempotent with the registered cleanup.
+ */
+export function installOpToolRuntime(op: Op, opts: OpToolRuntimeOptions): ToolCancelBridge {
+  const cancelBridge = bridgeOpCancelToToolSignal(op.id, opts.signal);
+  registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
+    tools: opts.tools,
+    security: opts.security,
+    toolPolicy: opts.toolPolicy,
+    threatEngine: opts.threatEngine,
+    rbac: opts.rbac,
+    callerRole: opts.callerRole,
+    sessionId: opts.sessionId,
+    callContext: opts.callContext,
+    opId: op.id,
+    runId: opts.runId,
+    onEvent: opts.onEvent,
+    signal: cancelBridge.signal,
+    onToolsAugmented: augmented => persistRuntimeSurface(op, current => ({
+      ...current,
+      tools: augmented.map(tool => ({ name: tool.name, fingerprint: toolFingerprint(tool) })),
+    })),
+    onRuntimeStateChange: () => persistRuntimeSurface(op, current => ({
+      ...current,
+      security: {
+        ...opts.security.runtimeIdentity(opts.sessionId),
+        ...(sessionWorkRootOf(opts.sessionId) ? { sessionWorkRoot: sessionWorkRootOf(opts.sessionId) } : {}),
+        configFingerprint: current.security.configFingerprint,
+      },
+      threatEngine: opts.threatEngine ? { state: opts.threatEngine.snapshot() } : false,
+    })),
+  }));
+  registerRuntimeCleanupForOp(op.id, () => cancelBridge.dispose());
+  registerToolsForOp(op.id, opts.tools.map(tool => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.parameters,
+  })));
+  return cancelBridge;
 }
 
 export function rehydrateAgentRuntimeSurface(op: Op, surface: DelegatedRuntimeSurface): string {

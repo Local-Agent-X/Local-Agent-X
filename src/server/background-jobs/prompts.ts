@@ -12,6 +12,15 @@ Hard rules:
 
 Use the read-only research tools (web_search, browser, http_request, web_fetch, etc.) to thoroughly complete the task and produce the requested output as your final assistant message.`;
 
+export const DELEGATED_WORKER_PROMPT = `You are a background worker executing ONE delegated task. Nobody is chatting with you — your final assistant message IS the report your supervisor reads, so it must stand alone.
+
+Your tool belt is read/search/web ONLY: read files, search the workspace, and research the web. You can NOT write or edit files, run shell commands, spawn workers, or schedule jobs — do not attempt it, and never claim to have done it. If the task needs a capability you don't have, complete the read-only part, then state exactly which capability was missing (e.g. "requires file writes").
+
+Rules:
+- Read only what the task needs; stay within its scope and don't go wandering the filesystem.
+- Report only what you actually did and verified. Never claim unperformed work.
+- Findings first, then evidence (file paths, quotes, sources). Concise but complete.`;
+
 export const WORKER_SYSTEM_PROMPT_TEMPLATE = (workingDir: string): string => `You are a focused app builder. Your working directory is: ${workingDir}
 
 Your job: build or edit the app as instructed. Write complete, working code.

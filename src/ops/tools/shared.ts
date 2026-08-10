@@ -18,10 +18,16 @@ import {
   resolveProviderRuntime,
   sealDelegatedRuntime,
 } from "../../canonical-loop/public/delegated-runtime.js";
+import { buildAgentRuntimeSurface, installOpToolRuntime } from "../../canonical-loop/agent-runner/runtime-surface.js";
+import { SecurityLayer } from "../../security/index.js";
+import { loadFileAccessModeAtLeast } from "../../security/layer/index.js";
+import { loadToolPolicy } from "../../tool-policy/index.js";
+import { DELEGATED_WORKER_PROMPT } from "../../server/background-jobs/prompts.js";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
 import { newOpId, readOp, isInteractiveHostOpType } from "../op-store.js";
-import { readRecentSessionMessages, listOpsForSession } from "../session-bridge.js";
+import { broadcastToSession, readRecentSessionMessages, listOpsForSession } from "../session-bridge.js";
+import { delegatedToolsetForOp } from "./delegated-toolset.js";
 import type { Op, OpLane, OpVisibility } from "../types.js";
 
 export interface SubmitArgs {
@@ -71,12 +77,35 @@ export async function configureDelegatedRuntime(
     authSource = credential.source;
     apiKey = credential.credential;
   }
+  // Real toolset + durable surface for the delegated worker. The surface is
+  // INSIDE the descriptor MAC, so it must be attached before the single seal —
+  // recovery (createRecoveredAdapterFactory → rehydrateAgentRuntimeSurface)
+  // rebuilds tools/dispatcher from it after a restart or in a process worker.
+  // "agent"-lane ops (none reach this path today) fall back to the read-only
+  // interactive belt rather than failing the submission.
+  const tools = delegatedToolsetForOp(
+    op.lane === "build" ? "build" : op.lane === "background" ? "background" : "interactive",
+  );
+  // Same construction recovery performs: a fresh SecurityLayer over the
+  // configured workspace (file-access honors the user's global setting,
+  // floored at "workspace" — the cron background-job posture) and the live
+  // on-disk tool policy.
+  const security = new SecurityLayer(getRuntimeConfig().workspace, loadFileAccessModeAtLeast("workspace"));
+  const toolPolicy = loadToolPolicy(dataDir);
+  const surfaceOptions = {
+    systemPrompt: DELEGATED_WORKER_PROMPT,
+    tools,
+    security,
+    toolPolicy,
+    callContext: "delegated" as const,
+  };
   op.runtimeDescriptor = sealDelegatedRuntime(op.id, {
     kind: "delegated-op",
     adapter: "provider-exact",
     ...runtime.identity,
     authSource,
     sessionId,
+    surface: buildAgentRuntimeSurface(surfaceOptions, sessionId),
   });
   op.model = runtime.identity.model;
   const factory = await createProviderAdapterFactory(op.runtimeDescriptor, {
@@ -84,8 +113,22 @@ export async function configureDelegatedRuntime(
     authSource,
     customBaseURL: resolved.customBaseURL,
     sessionId: sessionId || undefined,
+    systemPrompt: DELEGATED_WORKER_PROMPT,
+    // Recovery derives this from surface.kind === "agent-runner"; set it here
+    // too so first-run and recovered turns force tools identically.
+    requireToolOnFirstTurn: true,
   });
   registerAdapterForOp(op.id, factory);
+  // First-run in-process registration: dispatcher + tool list are live
+  // immediately (recovery rehydrates the same runtime from the surface).
+  installOpToolRuntime(op, {
+    tools,
+    security,
+    toolPolicy,
+    sessionId,
+    callContext: "delegated",
+    onEvent: event => broadcastToSession(sessionId, event),
+  });
 }
 
 /** Every recoverable delegated op needs a durable session identity, including

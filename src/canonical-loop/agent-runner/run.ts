@@ -33,24 +33,20 @@ import type { AgentTurn } from "../../types.js";
 
 import { canonicalLoopEntry } from "../index.js";
 import {
-  registerToolDispatcherForOp,
   unregisterToolDispatcherForOp,
-  registerToolsForOp,
   unregisterToolsForOp,
 } from "../runtime.js";
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "../middlewares/host.js";
 import { opCancel, subscribeOpEvents, subscribeOpStream } from "../control-api.js";
 import { readOpTurns } from "../store.js";
 import { isCommittingTool } from "../../committing-tool-check.js";
-import { makeChatToolDispatcher } from "../chat-tool-dispatcher.js";
 import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { createLogger } from "../../logger.js";
-import { sessionWorkRootOf } from "../../workspace/paths.js";
 
 import { type CanonicalAgentOptions, DEFAULT_WALL_CLOCK_MS } from "./types.js";
 import { registerProviderAdapter, resolveAgentProviderRuntime } from "./register-adapter.js";
-import { buildAgentRuntimeSurface, persistRuntimeSurface, toolFingerprint } from "./runtime-surface.js";
+import { buildAgentRuntimeSurface, installOpToolRuntime } from "./runtime-surface.js";
 import { sealDelegatedRuntime } from "../runtime-integrity.js";
 import { seedOpMessages } from "./seed-messages.js";
 import { collectMessages, mapStopReason } from "./collect-result.js";
@@ -159,10 +155,9 @@ export async function runAgentViaCanonical(
   // (self_edit's claude -p, build_app's codex --full-auto) actually die on
   // Stop instead of running to natural completion while the op hangs in
   // `cancelling`. Composes with the caller's optional external signal.
-  const { bridgeOpCancelToToolSignal } = await import("../cancel-handler.js");
-  const cancelBridge = bridgeOpCancelToToolSignal(op.id, options.signal);
-
-  registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
+  // installOpToolRuntime owns the dispatcher/tool registrations (shared with
+  // the delegated-op submit path); the returned bridge is disposed in finally.
+  const cancelBridge = installOpToolRuntime(op, {
     tools: options.tools,
     security: options.security,
     toolPolicy: options.toolPolicy,
@@ -171,30 +166,10 @@ export async function runAgentViaCanonical(
     callerRole: options.callerRole,
     sessionId,
     callContext: options.callContext ?? "api",
-    opId: op.id,
     runId: options.runId,
     onEvent: options.onEvent,
-    signal: cancelBridge.signal,
-    onToolsAugmented: augmented => persistRuntimeSurface(op, current => ({
-      ...current,
-      tools: augmented.map(tool => ({ name: tool.name, fingerprint: toolFingerprint(tool) })),
-    })),
-    onRuntimeStateChange: () => persistRuntimeSurface(op, current => ({
-      ...current,
-      security: {
-        ...options.security.runtimeIdentity(sessionId),
-        ...(sessionWorkRootOf(sessionId) ? { sessionWorkRoot: sessionWorkRootOf(sessionId) } : {}),
-        configFingerprint: current.security.configFingerprint,
-      },
-      threatEngine: options.threatEngine ? { state: options.threatEngine.snapshot() } : false,
-    })),
-  }));
-
-  registerToolsForOp(op.id, options.tools.map(t => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.parameters,
-  })));
+    signal: options.signal,
+  });
 
   let terminal: TerminalState | null = null;
   let errorMessage: string | undefined;

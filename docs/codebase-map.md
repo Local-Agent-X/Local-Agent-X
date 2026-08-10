@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1497 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1498 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/ops/` | 115 | 25 | XL |  |
 | `src/security/` | 83 | 34 | XL |  |
 | `src/tools/` | 62 | 163 | XL |  |
-| `src/providers/` | 58 | 20 | XL |  |
+| `src/providers/` | 59 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 209 | XL |  |
 | `src/memory/` | 44 | 126 | XL |  |
 | `src/classifiers/` | 34 | 17 | L |  |
@@ -55,7 +55,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/server/` *(entrypoint)* | 10 | 45 | XL |  |
+| `src/server/` *(entrypoint)* | 10 | 46 | XL |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |

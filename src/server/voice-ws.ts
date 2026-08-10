@@ -16,6 +16,8 @@ import { warmModel } from "../local-runtimes/residency.js";
 import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 import { retractLastTurn } from "../memory/retract-last-turn.js";
+import { resolveVoiceModel } from "./voice-model.js";
+import type { ProviderId } from "../providers/provider-ids.js";
 const logger = createLogger("server.lifecycle");
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -120,12 +122,23 @@ export async function setupVoiceWs(deps: {
         throw new Error(`No API key configured for ${prepared.provider}.`);
       }
 
+      // Spoken-turn model: the selected provider's FAST tier, not the chat
+      // model. A reasoning chat model (gpt-5.6-sol) thinks 13-16s before
+      // speaking — dead air. resolveVoiceModel swaps in the provider's declared
+      // fast model (codex → gpt-5.4-mini, etc.) while keeping the provider;
+      // heavy work still delegates to full-power workers on the chat model.
+      const { getSetting } = await import("../settings.js");
+      const voiceModel = resolveVoiceModel(prepared.provider as ProviderId, prepared.model, getSetting);
+      if (voiceModel !== prepared.model) {
+        logger.info(`[voice-ws] spoken turn on fast tier: ${prepared.provider}/${voiceModel} (chat model ${prepared.model})`);
+      }
+
       // Keep a local voice model resident across the conversation: fire-and-
       // forget warm (deduped, 30m keep-alive) so turns after the first don't
       // pay a cold load, and the current turn's own request keeps it warm. The
       // very first turn of a cold session can still load-wait; a connect-time
       // prewarm is a follow-up. No-op / harmless 404 for non-Ollama runtimes.
-      if (prepared.provider === "local") warmModel(config.ollamaUrl, prepared.model);
+      if (prepared.provider === "local") warmModel(config.ollamaUrl, voiceModel);
 
       // Voice has the SAME tools as text chat (full parity). The old "tools
       // mostly off" policy was a vestige of a weaker harness: it was meant to
@@ -226,7 +239,7 @@ export async function setupVoiceWs(deps: {
       const voicePromptTelemetry = createPromptTelemetry({
         profile: "voice",
         provider: prepared.provider,
-        model: prepared.model,
+        model: voiceModel,
         toolSchemaFormat: prepared.promptTelemetry.toolSchemaFormat,
         prompt: voiceSystemPrompt,
         tools: voiceTools,
@@ -293,7 +306,7 @@ export async function setupVoiceWs(deps: {
       try {
         const result = await runAgentViaCanonical(text, prepared.cleanHistory, {
           apiKey: prepared.apiKey,
-          model: prepared.model,
+          model: voiceModel,
           provider: prepared.provider as AgentOptions["provider"],
           baseURL: prepared.customBaseURL,
           systemPrompt: voiceSystemPrompt,

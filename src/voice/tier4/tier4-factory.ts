@@ -8,6 +8,7 @@
 //
 // Built-in providers:
 //   - "kokoro"            (streaming-tts.ts, default)
+//   - "kitten"            (kitten-engine.ts via streaming-tts.ts, opt-in variant)
 //   - "chatterbox-clone"  (chatterbox-clone-stub.ts, opt-in via LAX_VOICE_CLONE_REF)
 //   - "edge-tts"          (edge-tts-adapter.ts, cloud Edge Read-Aloud)
 //
@@ -27,6 +28,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createTier4StreamingTTS as createKokoroPath } from "./streaming-tts.js";
+import { createKittenEngine } from "./kitten-engine.js";
 import { createChatterboxClonePath } from "./chatterbox-clone-stub.js";
 import { createEdgeTtsProvider, edgeTtsReadiness } from "./edge-tts-adapter.js";
 import type { Tier4Callbacks, Tier4Config, Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./types.js";
@@ -42,6 +44,9 @@ import {
 // adapter into the bundle; the calls below wire them into the registry. Tier 5
 // adapters can either register here or self-register from their own module.
 registerTtsProvider("kokoro", (opts, cb) => createKokoroPath(opts, cb));
+// Kitten reuses the shared streaming path — same drain/cancel/epoch logic —
+// with the KittenTTS engine swapped in via the engine-factory arg.
+registerTtsProvider("kitten", (opts, cb) => createKokoroPath(opts, cb, createKittenEngine));
 registerTtsProvider("chatterbox-clone", (opts, cb) =>
   createChatterboxClonePath({ ...opts, referenceWavPath: opts.referenceWavPath }, cb),
 );
@@ -49,7 +54,7 @@ registerTtsProvider("edge-tts", (opts, cb) => createEdgeTtsProvider(opts, cb), e
 
 // Variant key is now an open string so external adapters can register their
 // own. Kept the union members for back-compat call sites.
-export type Tier4Variant = "kokoro" | "chatterbox-clone" | "edge-tts" | (string & {});
+export type Tier4Variant = "kokoro" | "kitten" | "chatterbox-clone" | "edge-tts" | (string & {});
 
 export interface CreateTier4Options extends Tier4Config {
   variant?: Tier4Variant;

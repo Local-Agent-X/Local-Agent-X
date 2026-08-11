@@ -17,6 +17,11 @@ export { createTier4StreamingTTS, snapshotTier4Diag } from "./streaming-tts.js";
 export { createKokoroEngine, float32ToInt16 } from "./kokoro-engine.js";
 export type { KokoroEngine, KokoroEngineInit } from "./kokoro-engine.js";
 
+export { createKittenEngine, KITTEN_MODEL_ID } from "./kitten-engine.js";
+export type { KittenEngine, KittenEngineInit } from "./kitten-engine.js";
+export { KITTEN_VOICES, KITTEN_DEFAULT_VOICE, isValidKittenVoice, kittenVoiceList, kittenVoiceMeta } from "./kitten-voices.js";
+export type { KittenVoiceMeta } from "./kitten-voices.js";
+
 export {
   configureHFCache,
   getTier4CacheDir,

@@ -15,17 +15,34 @@
 // reset it and leak the cancelled audio.
 
 import { createKokoroEngine, float32ToInt16 } from "./kokoro-engine.js";
-import type { KokoroEngine } from "./kokoro-engine.js";
 import type {
   Tier4Callbacks,
   Tier4Config,
   Tier4DiagSnapshot,
+  Tier4Device,
+  Tier4Dtype,
   Tier4StreamingTTS,
 } from "./types.js";
 import { TIER4_DEFAULTS, TIER4_SAMPLE_RATE } from "./types.js";
 
+// Structural shape both tier-4 engines (kokoro-engine, kitten-engine) satisfy.
+// The adapter drives whichever engine the factory hands it through one path,
+// so we don't fork the drain/epoch/cancel logic per provider.
+type RawAudio = { audio: Float32Array; sampling_rate: number };
+export interface Tier4Engine {
+  synth(text: string, opts?: { voice?: string; speed?: number }): Promise<RawAudio>;
+  close(): Promise<void>;
+  readonly sampleRate: number;
+  readonly voice: string;
+  readonly modelId: string;
+  readonly runtime: { device: Tier4Device; dtype: Tier4Dtype; fellBack: boolean };
+}
+export type Tier4EngineFactory = (
+  init: { config: Tier4Config; onLoad?: (ms: number) => void },
+) => Promise<Tier4Engine>;
+
 interface RuntimeState {
-  engine: KokoroEngine | null;
+  engine: Tier4Engine | null;
   queue: string[];
   draining: boolean;
   epoch: number;
@@ -37,6 +54,7 @@ interface RuntimeState {
 export async function createTier4StreamingTTS(
   config: Tier4Config,
   cb: Tier4Callbacks,
+  engineFactory: Tier4EngineFactory = createKokoroEngine,
 ): Promise<Tier4StreamingTTS> {
   const cfg = { ...TIER4_DEFAULTS, ...config };
   const state: RuntimeState = {
@@ -58,15 +76,17 @@ export async function createTier4StreamingTTS(
     },
   };
 
-  state.engine = await createKokoroEngine({
+  state.engine = await engineFactory({
     config: cfg,
     onLoad: (ms) => { state.diag.loadMs = ms; },
   });
   // Engine may fall back to cpu+q8 if a GPU EP fails to bind. Reflect the
   // actual runtime in the diag so the UI / smoke test shows what loaded.
+  // modelId too, since a non-kokoro engine (kitten) overrides the config id.
   state.diag.device = state.engine.runtime.device;
   state.diag.dtype = state.engine.runtime.dtype;
   state.diag.fellBack = state.engine.runtime.fellBack;
+  state.diag.modelId = state.engine.modelId;
 
   async function drain(): Promise<void> {
     if (state.draining || !state.engine) return;

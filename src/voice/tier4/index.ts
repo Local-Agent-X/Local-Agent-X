@@ -19,6 +19,9 @@ export type { KokoroEngine, KokoroEngineInit } from "./kokoro-engine.js";
 
 export { createKittenEngine, KITTEN_MODEL_ID } from "./kitten-engine.js";
 export type { KittenEngine, KittenEngineInit } from "./kitten-engine.js";
+export { createPocketEngine, POCKET_MODEL_ID, pocketInstallDir } from "./pocket-engine.js";
+export type { PocketEngine, PocketEngineInit } from "./pocket-engine.js";
+export { guardPocketAudio, expectedMaxDurationSec } from "./pocket-guard.js";
 export { KITTEN_VOICES, KITTEN_DEFAULT_VOICE, isValidKittenVoice, kittenVoiceList, kittenVoiceMeta } from "./kitten-voices.js";
 export type { KittenVoiceMeta } from "./kitten-voices.js";
 

@@ -124,17 +124,28 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
         }
         // Only spread defined fields — the kokoro-engine merge below treats
         // explicit `undefined` as a real override and would clobber env vars.
-        const t4 = await createTier4(
-          {
-            variant,
-            referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
-            ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
-            ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
-            ...(voiceSettings.tier4Voice ? { voice: voiceSettings.tier4Voice } : {}),
-            ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
-          },
-          ttsCallbacks,
-        );
+        const tier4Opts = {
+          referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
+          ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
+          ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
+          ...(voiceSettings.tier4Voice ? { voice: voiceSettings.tier4Voice } : {}),
+          ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
+        };
+        let t4;
+        try {
+          t4 = await createTier4({ variant, ...tier4Opts }, ttsCallbacks);
+        } catch (e) {
+          // An opt-in variant (kitten/pocket/edge-tts) failed to start — e.g.
+          // Pocket's subprocess couldn't spawn. Degrade to kokoro rather than
+          // killing voice entirely, but NOT silently: warn + a tts_fallback
+          // banner tells the user which engine dropped and why. Kokoro itself
+          // failing is a real error and rethrows.
+          if (variant === "kokoro") throw e;
+          const reason = (e as Error).message;
+          logger.warn(`[voice-session] ${ctx.sessionId}: tier4 '${variant}' failed to start (${reason}) — falling back to kokoro`);
+          ctx.sendEvent({ type: "tts_fallback", from: variant, to: "kokoro", reason });
+          t4 = await createTier4({ variant: "kokoro", ...tier4Opts }, ttsCallbacks);
+        }
         tts = t4 as unknown as StreamingTTS;
       } else {
         tts = createStreamingTTS(getTTSModelPaths(), ttsCallbacks);

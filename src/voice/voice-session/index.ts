@@ -20,8 +20,10 @@ import type { Tier4StreamingTTS } from "../tier4/types.js";
 import { resolveVoiceSettings } from "./settings.js";
 import { createAudioBuffers } from "./audio-buffers.js";
 import { classifyEndpointPartial, ENDPOINT_HOLD_MS } from "./endpointing.js";
+import { createNearFieldGate } from "./near-field-gate.js";
 import { initializeVoiceStack } from "./model-init.js";
-import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./turn-runner.js";
+import { createVoiceTurnMachine } from "./turn-runner.js";
+import { createTier4Speaker } from "./tier4-speaker.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "../proactive-registry.js";
 import type { VoiceTurnRunner, SecretLookup } from "./types.js";
 import { isLocalOnlyMode } from "../../local-only-policy.js";
@@ -81,68 +83,20 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     let pendingCommit: ReturnType<typeof setTimeout> | null = null;
     let lastPartial = "";
 
-    // In-process speaker: stream text to the Tier-4 / CPU TTS worker one whole
-    // sentence at a time. The worker emits a single onIdle when its queue
-    // drains (ttsCallbacks.onIdle below) — that is the machine's drain signal.
-    //
-    // Opener size: the first chunk cuts at a NATURAL clause break when one
-    // lands early ("Yeah," / "Okay, so") — a seam at punctuation reads as
-    // intended speech. Only when no clause break shows up by ~24 chars does it
-    // fall back to a word boundary. The old shape passed 24 for BOTH floors,
-    // which rejected "Yeah," and cut mid-phrase at char 24 ("…I'm oriented ▍
-    // toward…") — the seam gap then landed where no human would pause.
-    const OPENER_MIN_CHARS = 24;
-    // Long-clause early flush for the chunks AFTER the opener: a whole long
-    // sentence synthesized as one piece leaves an audible gap while the engine
-    // (edge-tts is a network round-trip) works. Flushing at clause breaks once
-    // ≥ ~40 chars are pending starts synthesis sooner and puts every seam on
-    // punctuation. Same fix the GPU sidecar speaker shipped (CLAUSE_MIN_CHARS
-    // in gpu-session.ts); kept per-speaker because the engines' per-request
-    // overheads differ.
-    const CLAUSE_FLUSH_MIN_CHARS = 40;
-    let sentenceBuf = "";
-    let ttsQueued = false;
-    let firstChunkSpoken = false;
-    const speaker: TurnSpeaker = {
-      reset() { sentenceBuf = ""; ttsQueued = false; firstChunkSpoken = false; },
-      feed(delta) {
-        if (!tts) return;
-        sentenceBuf += delta;
-        while (true) {
-          const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
-          if (!m) break;
-          const cutEnd = m.index + m[0].length;
-          const sentence = sentenceBuf.slice(0, cutEnd).trim();
-          sentenceBuf = sentenceBuf.slice(cutEnd);
-          if (sentence) { tts.speak(sentence); ttsQueued = true; firstChunkSpoken = true; }
-        }
-        // First-chunk flush: start speaking the reply's opening ASAP so the
-        // voice leads the text instead of trailing it. Fires once per turn.
-        if (!firstChunkSpoken) {
-          const cut = firstChunkCut(sentenceBuf, OPENER_MIN_CHARS);
-          if (cut > 0) {
-            const chunk = sentenceBuf.slice(0, cut).trim();
-            if (chunk) { tts.speak(chunk); ttsQueued = true; firstChunkSpoken = true; }
-            sentenceBuf = sentenceBuf.slice(cut);
-          }
-        } else {
-          // Mid-sentence long-clause flush — seams land on commas/colons.
-          const clause = /[,;:]\s+/.exec(sentenceBuf);
-          if (clause && clause.index + clause[0].length >= CLAUSE_FLUSH_MIN_CHARS) {
-            const cutEnd = clause.index + clause[0].length;
-            const chunk = sentenceBuf.slice(0, cutEnd).trim();
-            sentenceBuf = sentenceBuf.slice(cutEnd);
-            if (chunk) { tts.speak(chunk); ttsQueued = true; }
-          }
-        }
-      },
-      flushTail() {
-        const tail = sentenceBuf.trim();
-        if (tail && tts) { tts.speak(tail); ttsQueued = true; }
-        sentenceBuf = "";
-      },
-      hasQueued() { return ttsQueued; },
-    };
+    // Near-field (proximity) gate — rejects background talkers VAD can't tell
+    // from the user (see near-field-gate.ts). Barge-in is DEFERRED until this
+    // much near-field-loud audio accumulates, so a room-away voice never cuts
+    // off a reply; commitUtterance re-checks the whole utterance so background
+    // never gets transcribed either.
+    const nearField = createNearFieldGate();
+    const BARGE_IN_CONFIRM_MS = 150;
+    let bargeInConfirmed = false;
+    let nearFieldMs = 0;
+
+    // In-process speaker (tier4-speaker.ts): streams reply text to the TTS
+    // engine one punctuation-aligned chunk at a time. Getter because `tts` is
+    // assigned after model init below.
+    const speaker = createTier4Speaker(() => tts);
 
     const machine = createVoiceTurnMachine({
       ctx,
@@ -261,11 +215,16 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
         pendingCommit = null;
         return;
       }
-      // Barge-in (no-op when idle): the machine aborts the turn, cancels TTS,
-      // and tells the browser to drop pending audio.
-      machine.interrupt();
+      // Barge-in is DEFERRED to near-field confirmation (in onMicFrame): a
+      // room-away talker fires VAD too, and interrupting the reply here would
+      // let background cut it off. We still open the utterance + live-partial
+      // UI now; the actual machine.interrupt() waits until enough near-field
+      // audio proves it's the person at the mic. (interrupt is a no-op when
+      // idle, so deferring costs nothing there.)
       ctx.sendEvent({ type: "vad_speech_start" });
       lastPartial = "";
+      bargeInConfirmed = false;
+      nearFieldMs = 0;
       buffers.begin();
     }
 
@@ -301,6 +260,13 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
         logger.info(`[voice-session] ${ctx.sessionId}: utterance too short (${audio.length} samples), skipping Whisper`);
         return;
       }
+      // Near-field gate: drop far-field/background utterances before Whisper so
+      // a talker across the room never becomes a transcribed turn.
+      const nf = nearField.accept(audio);
+      if (!nf.pass) {
+        logger.info(`[voice-session] ${ctx.sessionId}: dropped far-field utterance (loudness=${nf.loudness.toFixed(4)} < floor=${nf.floor.toFixed(4)})`);
+        return;
+      }
       if (!whisper) return;
 
       ctx.sendEvent({ type: "whisper_transcribing" });
@@ -334,6 +300,18 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
         vad?.feedAudio(frame);
         if (buffers.isBuffering) {
           buffers.append(frame);
+          // Deferred barge-in: only once enough NEAR-FIELD-loud audio has
+          // accumulated do we treat this as the user cutting in and interrupt
+          // the reply. A far-field talker never reaches the threshold, so the
+          // reply plays on and their utterance is dropped at commit.
+          if (!bargeInConfirmed) {
+            if (nearField.isNearFieldFrame(frame)) nearFieldMs += (frame.length / 16);
+            else nearFieldMs = Math.max(0, nearFieldMs - (frame.length / 16));
+            if (nearFieldMs >= BARGE_IN_CONFIRM_MS) {
+              bargeInConfirmed = true;
+              machine.interrupt();
+            }
+          }
         } else {
           buffers.pushPreroll(frame);
         }

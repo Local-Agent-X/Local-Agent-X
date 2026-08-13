@@ -241,11 +241,12 @@ export const screenCaptureTool: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const { captureScreen, listMonitors } = await import("../screen-capture.js");
+      const { captureScreenSmart, listMonitors } = await import("../screen-capture.js");
       const scale = Math.min(1, Math.max(0.1, Number(args.scale) || 0.5));
       const monitorArg = args.monitor != null ? Number(args.monitor) : undefined;
       logger.info(`[screen_capture] monitor=${monitorArg ?? "<primary>"} scale=${scale} region=${args.region ? "set" : "none"}`);
-      const result = captureScreen({
+      // Routes through Electron main (holds the macOS Screen Recording grant); see its doc.
+      const result = await captureScreenSmart({
         monitor: monitorArg,
         region: args.region as any,
         format: "jpg",

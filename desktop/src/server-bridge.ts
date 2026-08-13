@@ -7,6 +7,7 @@ import {
   wireBrowserEgressEvaluator,
   type BrowserBridgeMessage,
 } from "./server-bridge-browser";
+import { captureScreenInMain } from "./screen-capture-native";
 
 // Fulfills native-capability requests from the server child over the IPC
 // channel using Electron main-only APIs:
@@ -28,7 +29,12 @@ interface TrashRequest { type: "lax:trash-item"; id: number; path: string; }
 interface RestartRequest { type: "lax:restart-server" }
 interface RelaunchRequest { type: "lax:relaunch-app" }
 interface ProbeRequest { type: "lax:probe-app"; id: number; url: string; timeoutMs?: number; wantScreenshot?: boolean }
-type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest | BrowserBridgeMessage;
+interface CaptureScreenRequest {
+  type: "lax:capture-screen"; id: number;
+  monitor?: number; region?: { x: number; y: number; width: number; height: number };
+  format?: "png" | "jpg"; quality?: number; scale?: number;
+}
+type ServerMessage = TrashRequest | RestartRequest | RelaunchRequest | ProbeRequest | CaptureScreenRequest | BrowserBridgeMessage;
 
 interface ProbeError { kind: string; message: string; source?: string; line?: number }
 interface ProbeOutcome { ok: boolean; booted: boolean; errors: ProbeError[]; screenshotB64?: string; error?: string }
@@ -64,6 +70,13 @@ export function attachServerBridge(proc: ChildProcess, handlers: ServerBridgeHan
     if (msg.type === "lax:probe-app") {
       const result = await probeApp(msg); // never throws
       try { proc.send?.({ type: "lax:probe-app-result", id: msg.id, ...result }); } catch { /* child exited */ }
+      return;
+    }
+    if (msg.type === "lax:capture-screen") {
+      // Capture in MAIN, which holds the macOS Screen Recording grant the
+      // standalone-node server child doesn't. captureScreenInMain never throws.
+      const result = await captureScreenInMain(msg);
+      try { proc.send?.({ type: "lax:capture-screen-result", id: msg.id, ...result }); } catch { /* child exited */ }
       return;
     }
     if (msg.type === "lax:restart-server") {

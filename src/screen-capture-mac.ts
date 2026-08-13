@@ -104,11 +104,21 @@ export function captureScreenMacImpl(
     } catch (e) {
       const err = e as { stderr?: Buffer | string; message?: string };
       const reason = (err.stderr ? err.stderr.toString().trim() : "") || err.message || "unknown failure";
-      throw new Error(
-        `Screenshot capture failed: ${reason.split("\n")[0]}. ` +
-        "If the image is missing or black, grant Screen Recording to Local Agent X in " +
-        "System Settings → Privacy & Security → Screen Recording, then retry.",
-      );
+      // "could not create image from display" is screencapture's TCC-denied
+      // signature. The subtlety that makes the naive fix wrong: the desktop app
+      // runs the server as a standalone Node binary spawned OUTSIDE the .app
+      // bundle (required — native addons are built against standalone Node's
+      // ABI, see desktop/src/server-process.ts). macOS attributes the capture
+      // to that Node runtime (process.execPath), not to "Local Agent X", so the
+      // app's Screen Recording grant does NOT cover it. Toggling the app on —
+      // which is what users try first — changes nothing. Tell the truth so the
+      // agent stops advising a re-grant/restart that can't work.
+      const denied = /could not create image|not authori|allowed to capture|CGDisplay/i.test(reason);
+      const underBridge = process.env.LAX_DESKTOP_BRIDGE === "1";
+      const guidance = denied && underBridge
+        ? `macOS denied the capture. It ties Screen Recording to the process that runs it — here that's the Node runtime at ${process.execPath}, NOT the Local Agent X app, so granting the app alone has no effect. Fix: add that exact Node binary to System Settings → Privacy & Security → Screen & System Audio Recording (click "+", press ⌘⇧G, paste the path above), then retry.`
+        : "If the image is missing or black, grant Screen Recording in System Settings → Privacy & Security → Screen & System Audio Recording, then retry.";
+      throw new Error(`Screenshot capture failed: ${reason.split("\n")[0]}. ${guidance}`);
     }
 
     const raw = readFileSync(rawFile);

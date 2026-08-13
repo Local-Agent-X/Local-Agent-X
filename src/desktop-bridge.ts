@@ -17,6 +17,9 @@ import { createLogger } from "./logger.js";
 
 const logger = createLogger("desktop-bridge");
 const REPLY_TIMEOUT_MS = 5_000;
+// A full-resolution desktopCapturer.getSources on a 5K display can take a
+// second or two; give the round-trip more headroom than a trashItem.
+const CAPTURE_REPLY_TIMEOUT_MS = 8_000;
 const PROBE_DEFAULT_TIMEOUT_MS = 8_000;
 // Main keeps working after its load deadline (settle wait, blank check,
 // screenshot), so the IPC reply is allowed that much extra before we give up.
@@ -38,9 +41,15 @@ export interface ProbeAppResult {
 // Inbound wire shape of lax:probe-app-result (ok/error are consumed here).
 interface ProbeReply { ok: boolean; booted: boolean; errors: ProbeAppError[]; screenshotB64?: string; error?: string; }
 
+/** A screenshot captured by Electron main on the server's behalf. */
+export interface CaptureScreenResult { image: Buffer; format: "png" | "jpg"; width: number; height: number; }
+// Inbound wire shape of lax:capture-screen-result.
+interface CaptureReply { ok: boolean; imageB64?: string; format?: string; width?: number; height?: number; error?: string; }
+
 let seq = 0;
 const pending = new Map<number, (ok: boolean) => void>();
 const pendingProbes = new Map<number, (reply: ProbeReply) => void>();
+const pendingCaptures = new Map<number, (reply: CaptureReply) => void>();
 let listenerAttached = false;
 let panicHandler: (() => void) | null = null;
 
@@ -54,7 +63,7 @@ export function desktopBridgeAvailable(): boolean {
 function ensureListener(): void {
   if (listenerAttached) return;
   listenerAttached = true;
-  process.on("message", (msg: { type?: string; id?: number; ok?: boolean; booted?: boolean; errors?: ProbeAppError[]; screenshotB64?: string; error?: string }) => {
+  process.on("message", (msg: { type?: string; id?: number; ok?: boolean; booted?: boolean; errors?: ProbeAppError[]; screenshotB64?: string; imageB64?: string; format?: string; width?: number; height?: number; error?: string }) => {
     if (!msg || typeof msg.type !== "string") return;
     if (msg.type === "lax:trash-item-result") {
       const fn = pending.get(msg.id!);
@@ -64,6 +73,11 @@ function ensureListener(): void {
     if (msg.type === "lax:probe-app-result") {
       const fn = pendingProbes.get(msg.id!);
       if (fn) fn({ ok: !!msg.ok, booted: !!msg.booted, errors: Array.isArray(msg.errors) ? msg.errors : [], screenshotB64: msg.screenshotB64, error: msg.error });
+      return;
+    }
+    if (msg.type === "lax:capture-screen-result") {
+      const fn = pendingCaptures.get(msg.id!);
+      if (fn) fn({ ok: !!msg.ok, imageB64: msg.imageB64, format: msg.format, width: msg.width, height: msg.height, error: msg.error });
       return;
     }
     if (msg.type === "lax:panic-abort") {
@@ -151,6 +165,48 @@ export function probeApp(url: string, opts?: { timeoutMs?: number; wantScreensho
       process.send!({ type: "lax:probe-app", id, url, timeoutMs, wantScreenshot: opts?.wantScreenshot });
     } catch (e) {
       logger.warn(`[bridge] probeApp send failed: ${(e as Error).message}`);
+      finish(null);
+    }
+  });
+}
+
+/** Ask Electron main to capture the screen and return the image. WHY this
+ *  exists: the desktop app runs the server as a standalone Node binary spawned
+ *  OUTSIDE the .app bundle (native-addon ABI, see desktop/src/server-process.ts).
+ *  macOS ties the Screen Recording TCC grant to the .app, NOT to that Node
+ *  runtime, so a `screencapture` the server spawns itself is denied even when
+ *  "Local Agent X" is toggled on. Electron main IS the granted .app, so it
+ *  captures successfully and hands the bytes back over IPC. Resolves null when
+ *  the bridge is absent (headless / non-desktop) or main reports a failure —
+ *  the caller then falls back to the in-process CLI path (which yields the
+ *  accurate TCC-denied message). */
+export function desktopCaptureScreen(opts: {
+  monitor?: number;
+  region?: { x: number; y: number; width: number; height: number };
+  format?: "png" | "jpg";
+  quality?: number;
+  scale?: number;
+}): Promise<CaptureScreenResult | null> {
+  if (!desktopBridgeAvailable()) return Promise.resolve(null);
+  ensureListener();
+  const id = ++seq;
+  return new Promise<CaptureScreenResult | null>((resolve) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (result: CaptureScreenResult | null) => { clearTimeout(timer); pendingCaptures.delete(id); resolve(result); };
+    pendingCaptures.set(id, (reply) => {
+      if (!reply.ok || !reply.imageB64) { logger.warn(`[bridge] capture-screen failed in main: ${reply.error ?? "unknown"}`); finish(null); return; }
+      finish({
+        image: Buffer.from(reply.imageB64, "base64"),
+        format: reply.format === "png" ? "png" : "jpg",
+        width: reply.width ?? 0,
+        height: reply.height ?? 0,
+      });
+    });
+    timer = setTimeout(() => { logger.warn("[bridge] capture-screen timed out"); finish(null); }, CAPTURE_REPLY_TIMEOUT_MS);
+    try {
+      process.send!({ type: "lax:capture-screen", id, monitor: opts.monitor, region: opts.region, format: opts.format, quality: opts.quality, scale: opts.scale });
+    } catch (e) {
+      logger.warn(`[bridge] capture-screen send failed: ${(e as Error).message}`);
       finish(null);
     }
   });

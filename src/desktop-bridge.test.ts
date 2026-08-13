@@ -148,4 +148,57 @@ describe("desktop-bridge", () => {
     await vi.advanceTimersByTimeAsync(6_000); // 1s load deadline + 5s reply grace
     expect(await p).toBe(null);
   });
+
+  it("desktopCaptureScreen resolves null without sending when the bridge is absent (headless CLI fallback)", async () => {
+    delete process.env.LAX_DESKTOP_BRIDGE;
+    const send = vi.fn();
+    process.send = send as unknown as typeof process.send;
+    const { desktopCaptureScreen } = await import("./desktop-bridge.js");
+    expect(await desktopCaptureScreen({ scale: 0.5 })).toBe(null);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("desktopCaptureScreen round-trips through main and decodes the base64 image", async () => {
+    process.env.LAX_DESKTOP_BRIDGE = "1";
+    const sent: Array<{ type: string; id: number; monitor?: number; format?: string; scale?: number }> = [];
+    process.send = ((m: { type: string; id: number; monitor?: number; format?: string; scale?: number }) => { sent.push(m); return true; }) as unknown as typeof process.send;
+    const onSpy = vi.spyOn(process, "on");
+    const { desktopCaptureScreen } = await import("./desktop-bridge.js");
+    const p = desktopCaptureScreen({ monitor: 1, format: "jpg", quality: 80, scale: 0.5 });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].type).toBe("lax:capture-screen");
+    expect(sent[0].monitor).toBe(1);
+    expect(sent[0].format).toBe("jpg");
+    const b64 = Buffer.from([1, 2, 3, 4]).toString("base64");
+    const listener = onSpy.mock.calls.find((c) => c[0] === "message")![1] as (m: unknown) => void;
+    listener({ type: "lax:capture-screen-result", id: sent[0].id, ok: true, imageB64: b64, format: "jpg", width: 640, height: 400 });
+    const result = await p;
+    expect(result).not.toBeNull();
+    expect(result!.format).toBe("jpg");
+    expect(result!.width).toBe(640);
+    expect(result!.height).toBe(400);
+    expect(Array.from(result!.image)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("desktopCaptureScreen resolves null when main reports a denial (ok:false) so the caller falls back to the CLI path", async () => {
+    process.env.LAX_DESKTOP_BRIDGE = "1";
+    const sent: Array<{ id: number }> = [];
+    process.send = ((m: { id: number }) => { sent.push(m); return true; }) as unknown as typeof process.send;
+    const onSpy = vi.spyOn(process, "on");
+    const { desktopCaptureScreen } = await import("./desktop-bridge.js");
+    const p = desktopCaptureScreen({ scale: 1 });
+    const listener = onSpy.mock.calls.find((c) => c[0] === "message")![1] as (m: unknown) => void;
+    listener({ type: "lax:capture-screen-result", id: sent[0].id, ok: false, error: "Screen Recording denied" });
+    expect(await p).toBe(null);
+  });
+
+  it("desktopCaptureScreen resolves null on reply timeout (caller falls back)", async () => {
+    vi.useFakeTimers();
+    process.env.LAX_DESKTOP_BRIDGE = "1";
+    process.send = (() => true) as unknown as typeof process.send;
+    const { desktopCaptureScreen } = await import("./desktop-bridge.js");
+    const p = desktopCaptureScreen({ scale: 0.5 });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(await p).toBe(null);
+  });
 });

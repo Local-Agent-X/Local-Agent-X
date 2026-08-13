@@ -10,6 +10,7 @@ import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { ffmpegBin } from "./ffmpeg-bin.js";
 import { captureScreenMacImpl } from "./screen-capture-mac.js";
+import { desktopBridgeAvailable, desktopCaptureScreen } from "./desktop-bridge.js";
 
 const FFMPEG = ffmpegBin();
 
@@ -187,6 +188,44 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
     height: outH,
     capturedAt: new Date().toISOString(),
   };
+}
+
+/** Preferred entry point for the agent's screen_capture tool. On macOS under
+ *  the desktop app, capture runs in the Electron MAIN process (which holds the
+ *  Screen Recording TCC grant); the server child is a standalone Node binary
+ *  outside the .app bundle, so a screencapture IT spawns is denied even when the
+ *  app is granted — see desktop-bridge.desktopCaptureScreen. Everywhere else
+ *  (headless server, Windows, Linux, or if the bridge/main capture fails) this
+ *  falls back to the in-process captureScreen path. */
+export async function captureScreenSmart(options: ScreenCaptureOptions = {}): Promise<ScreenCaptureResult> {
+  if (process.platform === "darwin" && desktopBridgeAvailable()) {
+    const format = options.format ?? "png";
+    if (!/^(png|jpg)$/.test(format)) throw new Error(`Invalid format: ${format}`);
+    const scale = Math.min(1, Math.max(0.1, safeNum(options.scale ?? 1.0, "scale")));
+    // Validate the monitor against AppKit enumeration (enumeration isn't
+    // capture — no TCC involved) so an out-of-range index errors the same way
+    // the CLI path does, instead of main silently falling back to primary.
+    if (options.monitor != null) {
+      const monitorIdx = safeNum(options.monitor, "monitor");
+      const monitors = listMonitors();
+      if (!Number.isInteger(monitorIdx) || monitorIdx < 0 || !monitors.some((m) => m.index === monitorIdx)) {
+        throw monitorRangeError(monitorIdx, monitors);
+      }
+    }
+    // Drop a zero/degenerate region exactly as captureScreen does.
+    let region = options.region;
+    if (region) {
+      const w = Number(region.width), h = Number(region.height);
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) region = undefined;
+    }
+    const delegated = await desktopCaptureScreen({ monitor: options.monitor, region, format, quality: options.quality, scale });
+    if (delegated) {
+      return { image: delegated.image, format: delegated.format, width: delegated.width, height: delegated.height, capturedAt: new Date().toISOString() };
+    }
+    // Bridge present but main capture failed → fall through to the CLI path,
+    // which surfaces the accurate TCC-denied guidance for the user.
+  }
+  return captureScreen(options);
 }
 
 function monitorRangeError(index: number, monitors: MonitorInfo[]): Error {

@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1505 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1506 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -55,7 +55,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/server/` *(entrypoint)* | 10 | 46 | XL |  |
+| `src/server/` *(entrypoint)* | 10 | 47 | XL |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |

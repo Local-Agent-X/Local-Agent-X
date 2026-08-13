@@ -17,6 +17,7 @@ import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 import { retractLastTurn } from "../memory/retract-last-turn.js";
 import { resolveVoiceModel } from "./voice-model.js";
+import { VOICE_FAST_TOOLS, buildVoiceTail } from "./voice-prompt.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 const logger = createLogger("server.lifecycle");
 
@@ -178,52 +179,10 @@ export async function setupVoiceWs(deps: {
       // "check/set up my 2am mission" spawn could never do it. It stays a
       // direct voice call.
       // mission_schedule_delete stays off voice — destructive, belongs in
-      // text/UI where the target is unambiguous.
-      const VOICE_FAST_TOOLS = [
-        "op_submit_async", "op_status", "web_search", "browser",
-        "mission_schedule_list", "mission_schedule_create", "mission_schedule_update",
-        "mission_schedule_toggle", "mission_schedule_reports",
-      ];
+      // Voice belt + spoken-mode prompt tail (voice-prompt.ts).
       const voiceTools = allAgentTools.filter(t =>
-        VOICE_FAST_TOOLS.includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
-      const visualPromptTail = visualsEnabled
-        ? "\nThe sphere (voice_visual) is decoration, NOT your voice — never use it " +
-          "instead of speaking. Use it RARELY for an emotional beat only (max " +
-          "1/reply, 2.5s cooldown), e.g. voice_visual({kind:\"mood\", " +
-          "value:\"excited\"}). Default to NO visual call."
-        : "";
-      const voiceTail =
-        "\n\n## Voice mode\n" +
-        "You're a fast, conversational voice assistant. The user HEARS your reply " +
-        "(TTS) and only hears your spoken words — tool calls and the sphere are " +
-        "silent. Keep every spoken line short and natural; no markdown, lists, " +
-        "code, or emoji.\n" +
-        "Open with a few natural words BEFORE the substance (\"Sure —\", \"Okay, " +
-        "so\", \"Good question —\") so speech starts immediately; vary the opener, " +
-        "don't repeat the same one every turn.\n" +
-        "Route each request:\n" +
-        "• A question you can answer, or a quick fact lookup: answer directly, or " +
-        "use web_search inline, then say what you found in a sentence or two.\n" +
-        "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +
-        "X\", \"go to my email\"): use the browser tool. It opens and drives the " +
-        "agent's OWN visible Chrome window — yours to control, so you can keep " +
-        "going (\"open google\" then \"search it for X\" works). It is NOT the user's " +
-        "everyday browser. Do the action, then say one short line about what you " +
-        "see. Never claim you opened or did something the browser tool didn't " +
-        "actually return.\n" +
-        "• Scheduled missions (\"set up a mission for 2am\", \"do I have a daily " +
-        "mission?\", \"pause my morning job\"): use the mission_schedule_* tools " +
-        "DIRECTLY — creating/listing/toggling a mission is a quick call, never " +
-        "delegate it to a worker. If the user states a schedule (\"every day at " +
-        "2am\") and no matching mission exists, they want it CREATED — create it " +
-        "and confirm aloud; ask only if the mission's task/goal is unclear.\n" +
-        "• Genuinely heavy/long work (build an app, a big multi-site automation, " +
-        "anything > ~30s): don't grind it on this turn. Call op_submit_async to " +
-        "run it in the background, say one short line like \"On it — I'll let you " +
-        "know when it's done,\" and STOP. Never narrate steps or claim it finished.\n" +
-        "• When a background task you started has completed, its result is in your " +
-        "context — open with it (\"That search came back — …\").\n" +
-        "Never say you did something you didn't." + visualPromptTail;
+        (VOICE_FAST_TOOLS as readonly string[]).includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
+      const voiceTail = buildVoiceTail(visualsEnabled);
       // Prompt-cache split: static sections + voice tail form the stable
       // prefix; per-turn dynamic sections (memory retrieval, notices) move
       // after it. stream-api caches the stable block, so consecutive spoken

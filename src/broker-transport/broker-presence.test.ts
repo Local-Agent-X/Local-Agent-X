@@ -5,16 +5,24 @@ interface FakeDialer extends DialerHandle {
   connectUrl: string;
   stopped: boolean;
   fireClosed: () => void;
+  fireAuthError: (code: "unauthorized") => void;
 }
 
 function harness(token = "tok", random: () => number = () => 0.5) {
   const dialers: FakeDialer[] = [];
+  const authErrors: string[] = [];
   let timerFn: (() => void) | null = null;
   let lastDelay = 0;
   let clock = 0; // tests advance this to simulate dialer uptime
   const deps: BrokerPresenceDeps = {
-    createDialer: (connectUrl, _token, onClosed) => {
-      const d: FakeDialer = { connectUrl, stopped: false, stop: () => { d.stopped = true; }, fireClosed: onClosed };
+    createDialer: (connectUrl, _token, onClosed, onAuthError) => {
+      const d: FakeDialer = {
+        connectUrl,
+        stopped: false,
+        stop: () => { d.stopped = true; },
+        fireClosed: onClosed,
+        fireAuthError: onAuthError,
+      };
       dialers.push(d);
       return d;
     },
@@ -31,12 +39,19 @@ function harness(token = "tok", random: () => number = () => 0.5) {
     random, // default 0.5 → no jitter: backoff lands exactly on the capped base*factor^n
   };
   const presence = new BrokerPresence(
-    { brokerWsUrl: "wss://broker.agentxos.ai", deviceId: "desk-1", pairedPhoneId: "phone-9", getToken: () => token },
+    {
+      brokerWsUrl: "wss://broker.agentxos.ai",
+      deviceId: "desk-1",
+      pairedPhoneId: "phone-9",
+      getToken: () => token,
+      onAuthError: (code) => authErrors.push(code),
+    },
     deps,
   );
   return {
     presence,
     dialers,
+    authErrors,
     runTimer: () => timerFn?.(),
     hasTimer: () => timerFn !== null,
     lastDelay: () => lastDelay,
@@ -106,6 +121,19 @@ describe("BrokerPresence", () => {
     h.advance(15_000); // the new dialer ran a real session before dropping
     h.dialers.at(-1)!.fireClosed();
     expect(h.lastDelay()).toBe(3000); // reset → base, not 12000
+  });
+
+  it("STOPS on a terminal auth refusal (no reconnect) and surfaces the code to the owner", () => {
+    // The bug: a dead/rotated session token failed every dial with `unauthorized`, and
+    // the supervisor re-dialed forever (quietly, capped at 60s) while the account page
+    // said Connected. A terminal refusal must stop the loop and tell the owner.
+    const h = harness();
+    h.presence.start();
+    h.dialers[0].fireAuthError("unauthorized");
+    expect(h.authErrors).toEqual(["unauthorized"]);
+    expect(h.hasTimer()).toBe(false); // no reconnect scheduled
+    h.runTimer(); // no-op
+    expect(h.dialers).toHaveLength(1); // never re-dialed
   });
 
   it("jitters the backoff so a recovering broker avoids a synchronized reconnect stampede", () => {

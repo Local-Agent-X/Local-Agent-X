@@ -57,6 +57,9 @@ export interface BrokerScreenDialerDeps {
   /** Fires ONCE when this dialer goes terminal — the presence supervisor schedules a
    *  reconnect. A dialer is single-use: after this, build a new one. */
   onClosed?: () => void;
+  /** Fires INSTEAD of onClosed on a terminal broker auth/gate refusal (dead token,
+   *  revoked pairing) — the supervisor stops + surfaces it rather than re-dialing. */
+  onAuthError?: (code: import("./vendor/protocol.js").BrokerErrorCode) => void;
 }
 
 export class BrokerScreenDialer extends BrokerDialer {
@@ -70,7 +73,7 @@ export class BrokerScreenDialer extends BrokerDialer {
   private readonly rtcId = randomUUID();
 
   constructor(deps: BrokerScreenDialerDeps) {
-    super({ onClosed: deps.onClosed });
+    super({ onClosed: deps.onClosed, ...(deps.onAuthError ? { onAuthError: deps.onAuthError } : {}) });
     this.control = deps.control;
     this.chat = deps.chat ?? new NullChatChannel();
     this.http = deps.http ?? new NullHttpChannel();

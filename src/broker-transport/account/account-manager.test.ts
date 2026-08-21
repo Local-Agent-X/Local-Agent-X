@@ -168,6 +168,18 @@ describe("AgentxosAccountManager — pairing", () => {
     expect(challengeCount()).toBe(0);
   });
 
+  it("flagSessionInvalid surfaces on status and clears on the next login", async () => {
+    // A terminal broker refusal (dead token) must be visible on the account page —
+    // the persisted state still LOOKS signed-in, so without this the page says
+    // Connected while the phone can never reach the desktop.
+    const { manager } = harness();
+    await manager.startLogin();
+    manager.flagSessionInvalid("Your agentxos session expired. Sign out, then sign in again.");
+    expect(manager.status().error).toMatch(/session expired/i);
+    manager.signOut();
+    expect(manager.status().error).toBeNull();
+  });
+
   it("unpair revokes the server-side pairing so a re-login won't re-adopt it", async () => {
     // The user's bug: sign-out then back in stayed Connected because the broker kept the
     // pairing. unpair() must REVOKE it server-side, not just locally — proven by signing in

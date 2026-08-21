@@ -318,3 +318,51 @@ describe("DataChannelControl", () => {
     expect(events).toHaveLength(0);
   });
 });
+
+describe("BrokerScreenDialer — terminal auth refusal routing", () => {
+  function makeDialerWithCallbacks() {
+    const socket = new FakeSocket();
+    const closed: number[] = [];
+    const authCodes: string[] = [];
+    const dialer = new BrokerScreenDialer({
+      socket,
+      control: new SpyControl(),
+      createSession: () => new FakeSession(),
+      onClosed: () => closed.push(1),
+      onAuthError: (code) => authCodes.push(code),
+    });
+    return { dialer, socket, closed, authCodes };
+  }
+
+  it("routes a broker `unauthorized` to onAuthError, NOT onClosed (no reconnect loop)", () => {
+    // The bug: a dead/rotated session token made every dial fail with `unauthorized`,
+    // which fell into the generic onClosed → the presence supervisor re-dialed forever,
+    // quietly, while the account page still said Connected. Terminal auth refusals must
+    // take the auth path so the supervisor stops + surfaces it.
+    const { socket, closed, authCodes } = makeDialerWithCallbacks();
+    socket.deliver({ type: "error", code: "unauthorized", message: "Authentication failed." });
+    expect(authCodes).toEqual(["unauthorized"]);
+    expect(closed).toHaveLength(0);
+  });
+
+  it("keeps transient broker errors (no_peer) on the onClosed reconnect path", () => {
+    const { socket, closed, authCodes } = makeDialerWithCallbacks();
+    socket.deliver({ type: "error", code: "no_peer", message: "The other device is not connected yet" });
+    expect(closed).toHaveLength(1);
+    expect(authCodes).toHaveLength(0);
+  });
+
+  it("falls back to onClosed on auth errors when no onAuthError is wired (legacy behavior)", () => {
+    const socket = new FakeSocket();
+    const closed: number[] = [];
+    const dialer = new BrokerScreenDialer({
+      socket,
+      control: new SpyControl(),
+      createSession: () => new FakeSession(),
+      onClosed: () => closed.push(1),
+    });
+    socket.deliver({ type: "error", code: "unauthorized", message: "x" });
+    expect(closed).toHaveLength(1);
+    void dialer;
+  });
+});

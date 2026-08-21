@@ -229,6 +229,14 @@ export class AgentxosAccountManager {
     }
   }
 
+  /** Surface a terminal broker auth refusal on the account page. The persisted session
+   *  LOOKS signed-in ("Connected"), but the broker rejects its token/pairing — without
+   *  this the desktop's presence loop died quietly and the user had no idea why the
+   *  phone couldn't connect. Cleared by the next startLogin/signOut. */
+  flagSessionInvalid(message: string): void {
+    this.error = message;
+  }
+
   /** Sign out: clear the persisted session (the keypair identity is kept). In-flight
    *  state is reset; the caller stops any broker presence. */
   signOut(): void {

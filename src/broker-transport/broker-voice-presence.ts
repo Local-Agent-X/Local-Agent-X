@@ -22,10 +22,10 @@ import { getVoiceSessionFactory } from "../voice/audio-ws.js";
 /** Production deps: a real ws-backed voice dialer reusing the registered session factory. */
 export function defaultVoicePresenceDeps(): BrokerPresenceDeps {
   return {
-    createDialer: (connectUrl, token, onClosed) => {
+    createDialer: (connectUrl, token, onClosed, onAuthError) => {
       const socket = openBrokerSocket(connectUrl, token);
       // The SAME factory /ws/voice uses — broker voice runs the identical STT→LLM→TTS brain.
-      return new BrokerVoiceDialer({ socket, sessionFactory: getVoiceSessionFactory(), onClosed });
+      return new BrokerVoiceDialer({ socket, sessionFactory: getVoiceSessionFactory(), onClosed, onAuthError });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),

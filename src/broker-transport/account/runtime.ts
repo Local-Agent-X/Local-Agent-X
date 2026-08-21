@@ -83,11 +83,32 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
     pairedPhoneId: state.pairedPhoneId,
     // Read the token fresh each (re)dial so a re-login is picked up.
     getToken: () => loadAccountState()?.sessionToken ?? "",
+    onAuthError: handleBrokerAuthError,
   };
   presence = startBrokerPresence(config);
   presencePhoneId = state.pairedPhoneId;
   // A second presence for the on-demand voice room (channel=voice). Same gating + token.
   voicePresence = startBrokerVoicePresence(config);
+}
+
+/** A presence dialer hit a terminal broker auth refusal: stop BOTH presences and put
+ *  actionable copy on the account page (which otherwise says "Connected" off local
+ *  state while the token is dead — the "paired but phone can't reach the desktop"
+ *  trap). A later sign-in re-arms presence via the manager's onPaired reconcile. */
+function handleBrokerAuthError(code: string): void {
+  logger.warn(`[broker-transport] broker refused this desktop's session (${code}) — presence stopped until re-login`);
+  stopBrokerPresence();
+  const message =
+    code === "unauthorized"
+      ? "Your agentxos session expired. Sign out, then sign in again to reconnect your phone."
+      : code === "not_paired"
+        ? "This desktop's pairing was revoked. Show a pairing QR and scan it with your phone."
+        : `Your agentxos access is inactive (${code}). Check your account, then sign in again.`;
+  try {
+    getAccountManager().flagSessionInvalid(message);
+  } catch {
+    // Strict local-only mode refuses the manager; presence can't run there anyway.
+  }
 }
 
 /** Stop broker presence (shutdown / sign-out). Idempotent. */

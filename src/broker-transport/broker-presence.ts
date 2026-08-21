@@ -13,6 +13,7 @@
 // production factory wires the real ws socket + data-channel control (defaultDeps).
 
 import { buildConnectUrl } from "./vendor/connect-url.js";
+import type { BrokerErrorCode } from "./vendor/protocol.js";
 import { openBrokerSocket } from "./ws-socket-adapter.js";
 import { DataChannelControl } from "./control-channel.js";
 import { ChatBridge } from "./chat-bridge.js";
@@ -52,6 +53,10 @@ export interface BrokerPresenceConfig {
    *  the same pairing, so the voice peer never collides with the screen/chat peer. Omit
    *  for the main (screen/chat/apps) room. */
   channel?: string;
+  /** The broker refused our credential terminally (dead/rotated token, revoked pairing).
+   *  The supervisor has already STOPPED (no more re-dials — retrying a dead credential
+   *  loops forever); the owner surfaces it (account page) and re-arms after re-login. */
+  onAuthError?: (code: BrokerErrorCode) => void;
 }
 
 /** A live dialer the supervisor can stop. The real BrokerScreenDialer satisfies it. */
@@ -61,8 +66,14 @@ export interface DialerHandle {
 
 export interface BrokerPresenceDeps {
   /** Build + start a dialer for one rendezvous session. `onClosed` MUST be invoked
-   *  when the dialer goes terminal so the supervisor can reconnect. */
-  createDialer: (connectUrl: string, token: string, onClosed: () => void) => DialerHandle;
+   *  when the dialer goes terminal so the supervisor can reconnect; `onAuthError` fires
+   *  instead on a terminal broker auth refusal so the supervisor stops. */
+  createDialer: (
+    connectUrl: string,
+    token: string,
+    onClosed: () => void,
+    onAuthError: (code: BrokerErrorCode) => void,
+  ) => DialerHandle;
   /** Base reconnect delay; the actual wait grows exponentially from here per consecutive
    *  fast failure, capped at MAX_RECONNECT_MS. */
   reconnectMs: number;
@@ -127,7 +138,23 @@ export class BrokerPresence {
     const room = this.config.channel ? ` [${this.config.channel}]` : "";
     logger.info(`[broker-transport] presence: dialing broker as desktop ${this.config.deviceId}${room}`);
     this.dialStartedAt = this.deps.now();
-    this.current = this.deps.createDialer(connectUrl, token, () => this.onDialerClosed());
+    this.current = this.deps.createDialer(
+      connectUrl,
+      token,
+      () => this.onDialerClosed(),
+      (code) => this.onDialerAuthError(code),
+    );
+  }
+
+  /** The broker refused our credential terminally: STOP (a re-dial with the same dead
+   *  token/pairing just loops forever, quietly) and let the owner surface it. A later
+   *  re-login re-arms presence via the account manager's onPaired hook. */
+  private onDialerAuthError(code: BrokerErrorCode): void {
+    this.current = null; // the dialer already tore itself down
+    if (this.stopped) return;
+    logger.warn(`[broker-transport] presence: broker refused our session (${code}) — stopping until re-login`);
+    this.stop();
+    this.config.onAuthError?.(code);
   }
 
   private onDialerClosed(): void {
@@ -157,7 +184,7 @@ export class BrokerPresence {
 /** Production deps: build a real ws-backed dialer with a data-channel control path. */
 export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
   return {
-    createDialer: (connectUrl, token, onClosed) => {
+    createDialer: (connectUrl, token, onClosed, onAuthError) => {
       const socket = openBrokerSocket(connectUrl, token);
       const control = new DataChannelControl();
       const chat = new ChatBridge({
@@ -177,7 +204,7 @@ export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
           return { origin: `http://127.0.0.1:${cfg.port}`, token: cfg.authToken };
         },
       });
-      return new BrokerScreenDialer({ socket, control, chat, http, projection, onClosed });
+      return new BrokerScreenDialer({ socket, control, chat, http, projection, onClosed, onAuthError });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),

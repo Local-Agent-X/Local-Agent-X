@@ -11,12 +11,23 @@
 // answer / ice, what to drop on rebuild, and what to close on teardown.
 
 import { BrokerClient } from "./vendor/broker-client.js";
-import type { IceServer, RtcSignal } from "./vendor/protocol.js";
+import type { BrokerErrorCode, IceServer, RtcSignal } from "./vendor/protocol.js";
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
 import { iceSignal, type DialerIceCandidate } from "./ice-signal.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.dialer");
+
+/** Broker refusals no reconnect can fix — the CREDENTIAL is the problem (dead/rotated
+ *  session token, revoked pairing, lapsed entitlement). Retrying with the same one just
+ *  loops quietly forever while the account UI still says Connected. Mirrors the phone's
+ *  TERMINAL_AUTH_CODES (screen-broker-dialer.ts in agentxos-mobile). */
+const TERMINAL_AUTH_CODES = new Set<BrokerErrorCode>([
+  "unauthorized",
+  "not_paired",
+  "not_entitled",
+  "subscription_inactive",
+]);
 
 /** How long to wait after `peer-present` for the broker's `ice-servers` frame before
  *  starting anyway. A TURN-configured broker mints + sends ice-servers once both peers are
@@ -36,6 +47,10 @@ export interface BrokerDialerOptions {
   /** Fires ONCE when this dialer goes terminal (socket close, error, or stop) — the
    *  presence supervisor uses it to schedule a reconnect. A dialer is single-use. */
   onClosed?: () => void;
+  /** Fires INSTEAD of onClosed when the broker refuses with a terminal auth/gate code:
+   *  the supervisor must STOP reconnecting and surface it, not loop on a dead credential.
+   *  Omitted → those errors fall through to onClosed (legacy reconnect behavior). */
+  onAuthError?: (code: BrokerErrorCode) => void;
   /** Disambiguates log lines between the voice and screen dialers (e.g. "voice "). */
   logLabel?: string;
 }
@@ -43,6 +58,10 @@ export interface BrokerDialerOptions {
 export abstract class BrokerDialer {
   private client!: BrokerClient;
   private readonly onClosedCb: (() => void) | undefined;
+  private readonly onAuthErrorCb: ((code: BrokerErrorCode) => void) | undefined;
+  /** Set when the terminal path was a broker auth refusal — routes teardown's final
+   *  callback to onAuthError instead of onClosed. */
+  private authCode: BrokerErrorCode | null = null;
   private readonly logLabel: string;
 
   /** Latest broker-minted ICE config — readable by subclasses when they start the peer. */
@@ -56,6 +75,7 @@ export abstract class BrokerDialer {
 
   constructor(opts: BrokerDialerOptions = {}) {
     this.onClosedCb = opts.onClosed;
+    this.onAuthErrorCb = opts.onAuthError;
     this.logLabel = opts.logLabel ?? "";
   }
 
@@ -73,9 +93,11 @@ export abstract class BrokerDialer {
       onPeerLeft: () => this.prepareRebuild(),
       onClosed: () => this.teardown(),
       onError: (code, message) => {
-        // The phone receives its OWN broker error and surfaces actionable copy; on the
-        // desktop we just tear down (no UI here). Gate / auth errors are terminal.
         logger.warn(`[broker-transport] ${this.logLabel}broker error (${code}): ${message}`);
+        // A terminal auth/gate refusal (dead token, revoked pairing) routes to onAuthError
+        // so the supervisor stops + surfaces it instead of quietly re-dialing forever;
+        // transient errors (no_peer, turn_unavailable, …) stay on the reconnect path.
+        if (TERMINAL_AUTH_CODES.has(code) && this.onAuthErrorCb) this.authCode = code;
         this.teardown();
       },
     });
@@ -178,7 +200,8 @@ export abstract class BrokerDialer {
     // `role_taken`. client.stop() is idempotent, so a path where it already closed is safe.
     this.client.stop();
     this.onTeardown();
-    this.onClosedCb?.();
+    if (this.authCode !== null && this.onAuthErrorCb) this.onAuthErrorCb(this.authCode);
+    else this.onClosedCb?.();
   }
 
   private clearGrace(): void {

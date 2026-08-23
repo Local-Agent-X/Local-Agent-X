@@ -55,17 +55,22 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   } catch {}
 }
 
-function _browserSpeak(text) {
-  if (!('speechSynthesis' in window)) return;
+// One source of truth for a configured utterance: applies the saved speed
+// (matches the Settings slider) and the picked browser voice. Used by both the
+// streaming feed (_browserSpeak) and the per-bubble read-aloud button.
+function _makeUtterance(text) {
   const u = new SpeechSynthesisUtterance(text);
-  // Pull rate from saved settings so the speed slider in Settings matches.
   try {
     const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
     if (r > 0.4 && r < 2.5) u.rate = r;
   } catch {}
   const v = _browserResolveVoice();
   if (v) u.voice = v;
-  window.speechSynthesis.speak(u);
+  return u;
+}
+function _browserSpeak(text) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.speak(_makeUtterance(text));
 }
 function feedTTS(delta) {
   if (!_browserTtsActive() || !delta) return;
@@ -110,11 +115,58 @@ function stripSystemMarkers(s) {
   else if (b >= 0) cut = b;
   return cut >= 0 ? s.slice(0, cut) : s;
 }
+// ── Per-bubble "read aloud" (on-demand) ──
+//
+// Backs the 🔊 button on each finalized assistant bubble
+// (chat-render.appendReadAloudBtn). Unlike feedTTS — which is gated to the
+// "browser" streaming-TTS engine — this ALWAYS speaks: the user explicitly
+// asked to hear THIS message, via window.speechSynthesis (the one path needing
+// no GPU/sidecar). Clicking the active button, or any other bubble's button,
+// stops the current playback. Long replies are chunked by sentence so the
+// browser's per-utterance length cap can't truncate them.
+let _readAloudBtn = null;
+function _setReadAloudState(btn, on) {
+  if (!btn) return;
+  btn.classList.toggle('speaking', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  btn.title = on ? 'Stop reading' : 'Read aloud';
+  btn.textContent = on ? '⏹' : '🔊';
+}
+function speakBubble(btn, bodyEl) {
+  if (!('speechSynthesis' in window)) return;
+  const toggleOff = _readAloudBtn === btn && window.speechSynthesis.speaking;
+  const prev = _readAloudBtn;
+  // Null FIRST so any in-flight speakNext loop (fired via onend after cancel)
+  // sees it's superseded and stops instead of advancing.
+  _readAloudBtn = null;
+  try { window.speechSynthesis.cancel(); } catch {}
+  if (prev && prev !== btn) _setReadAloudState(prev, false);
+  if (toggleOff) { _setReadAloudState(btn, false); return; }
+  const text = stripSystemMarkers((bodyEl && bodyEl.textContent) || '').trim();
+  if (!text) return;
+  _readAloudBtn = btn;
+  _setReadAloudState(btn, true);
+  const parts = text.match(/[^.!?]+[.!?]+(?=\s|$)|\S[^.!?]*$/g) || [text];
+  let i = 0;
+  const speakNext = () => {
+    if (_readAloudBtn !== btn) return;                       // superseded / stopped
+    if (i >= parts.length) { _setReadAloudState(btn, false); _readAloudBtn = null; return; }
+    const u = _makeUtterance(parts[i++].trim());
+    u.onend = speakNext;
+    u.onerror = () => { if (_readAloudBtn === btn) { _setReadAloudState(btn, false); _readAloudBtn = null; } };
+    window.speechSynthesis.speak(u);
+  };
+  speakNext();
+}
+if (typeof window !== 'undefined') window.speakBubble = speakBubble;
+
 function stopSpeaking() {
   if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'flush' });
   if ('speechSynthesis' in window) {
     try { window.speechSynthesis.cancel(); } catch {}
   }
+  // Also clear any per-bubble read-aloud in flight so its button resets.
+  if (_readAloudBtn) { _setReadAloudState(_readAloudBtn, false); _readAloudBtn = null; }
   _browserTtsBuf = "";
   isSpeaking = false; updateVoiceUI();
 }

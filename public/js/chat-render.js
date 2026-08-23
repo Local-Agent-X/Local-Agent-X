@@ -134,9 +134,37 @@ function renderMessage(msg, ctx) {
       approvals: msg._approvals || [],
       stopNote: msg._stopNote || null,
     });
+    // Read-aloud button — only on bubbles that carry speakable text (not
+    // tool-only / approval-only rows). Live-note receipts are excluded too.
+    if ((msg.content || hasBlocks) && !msg._localNote) appendReadAloudBtn(node);
     return node;
   }
   return null;
+}
+
+// Add a 🔊 read-aloud button to a finalized assistant bubble's footer, wired to
+// speakBubble (chat-voice-tts.js), which speaks the bubble's rendered text via
+// the browser voice the user picked in Settings. Idempotent — skips if the
+// button (or a footer/body) is already absent/present. Fails soft so a TTS-less
+// environment never breaks message rendering.
+function appendReadAloudBtn(node) {
+  try {
+    if (!node || !('speechSynthesis' in window)) return;
+    const footer = node.querySelector('.msg-footer');
+    const body = node.querySelector('.msg-body');
+    if (!footer || !body || footer.querySelector('.read-aloud-btn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'read-aloud-btn';
+    btn.type = 'button';
+    btn.title = 'Read aloud';
+    btn.setAttribute('aria-label', 'Read this response aloud');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.textContent = '🔊';
+    btn.addEventListener('click', () => {
+      if (typeof speakBubble === 'function') speakBubble(btn, body);
+    });
+    footer.appendChild(btn);
+  } catch (e) { console.error('[chat] read-aloud button render error:', e); }
 }
 
 function renderMessages() {

@@ -341,6 +341,12 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .msg-footer{display:flex;align-items:center;gap:8px;margin-top:4px}
 .msg-time{font-family:var(--mono);font-size:.58rem;color:var(--muted);opacity:.6}
 .msg:hover .msg-time{opacity:1}
+/* Per-bubble read-aloud button: quiet by default (like .msg-time), surfaces on
+   hover, and lights up with the accent while it's speaking. */
+.read-aloud-btn{background:none;border:none;cursor:pointer;font-size:.8rem;line-height:1;padding:2px 4px;border-radius:6px;color:var(--muted);opacity:.35;transition:opacity .15s,background .15s}
+.msg:hover .read-aloud-btn{opacity:.75}
+.read-aloud-btn:hover{opacity:1;background:var(--surface-2)}
+.read-aloud-btn.speaking{opacity:1;color:var(--accent)}
 .msg-body{line-height:1.75;font-size:.92rem;word-break:break-word}
 .msg-body p{margin:0 0 8px}
 .msg-body p:last-child{margin-bottom:0}

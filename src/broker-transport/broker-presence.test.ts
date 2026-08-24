@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { BrokerPresence, MAX_RECONNECT_MS, type BrokerPresenceDeps, type DialerHandle } from "./broker-presence.js";
 
+/** A wall-clock jump comfortably past SUSPEND_GAP_MS (60s) — "the machine slept". */
+const SUSPEND_TEST_GAP_MS = 900_000;
+
 interface FakeDialer extends DialerHandle {
   connectUrl: string;
   stopped: boolean;
@@ -14,6 +17,7 @@ function harness(token = "tok", random: () => number = () => 0.5) {
   let timerFn: (() => void) | null = null;
   let lastDelay = 0;
   let clock = 0; // tests advance this to simulate dialer uptime
+  let watchdogFn: (() => void) | null = null;
   const deps: BrokerPresenceDeps = {
     createDialer: (connectUrl, _token, onClosed, onAuthError) => {
       const d: FakeDialer = {
@@ -34,6 +38,13 @@ function harness(token = "tok", random: () => number = () => 0.5) {
     },
     clearTimer: () => {
       timerFn = null;
+    },
+    setIntervalFn: (fn) => {
+      watchdogFn = fn;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    },
+    clearIntervalFn: () => {
+      watchdogFn = null;
     },
     now: () => clock,
     random, // default 0.5 → no jitter: backoff lands exactly on the capped base*factor^n
@@ -56,6 +67,8 @@ function harness(token = "tok", random: () => number = () => 0.5) {
     hasTimer: () => timerFn !== null,
     lastDelay: () => lastDelay,
     advance: (ms: number) => { clock += ms; },
+    tickWatchdog: () => watchdogFn?.(),
+    hasWatchdog: () => watchdogFn !== null,
   };
 }
 
@@ -121,6 +134,45 @@ describe("BrokerPresence", () => {
     h.advance(15_000); // the new dialer ran a real session before dropping
     h.dialers.at(-1)!.fireClosed();
     expect(h.lastDelay()).toBe(3000); // reset → base, not 12000
+  });
+
+  it("re-dials immediately after a system-sleep gap (the zombie-socket incident)", () => {
+    // Live incident 2026-08-23: sleep killed the broker socket SILENTLY (no close
+    // event — keepalive offload kept it looking open), so the desktop held a zombie
+    // presence for 6 hours while the phone waited for a desktop that never came.
+    // The watchdog detects the wall-clock gap on resume and force-re-dials.
+    const h = harness();
+    h.presence.start();
+    expect(h.dialers).toHaveLength(1);
+
+    h.advance(SUSPEND_TEST_GAP_MS); // the machine slept 15 minutes
+    h.tickWatchdog();
+    expect(h.dialers[0].stopped).toBe(true); // zombie dropped
+    expect(h.dialers).toHaveLength(2); // fresh dial, immediately (no backoff wait)
+
+    // The zombie's LATE close (async teardown) must not clobber the fresh dialer.
+    h.dialers[0].fireClosed();
+    expect(h.dialers).toHaveLength(2); // ignored — no extra reconnect scheduled
+    expect(h.hasTimer()).toBe(false);
+  });
+
+  it("watchdog ticks without a sleep gap leave a healthy dialer alone", () => {
+    const h = harness();
+    h.presence.start();
+    h.advance(5000); // normal tick cadence
+    h.tickWatchdog();
+    h.advance(5000);
+    h.tickWatchdog();
+    expect(h.dialers).toHaveLength(1);
+    expect(h.dialers[0].stopped).toBe(false);
+  });
+
+  it("stop() also stops the suspension watchdog", () => {
+    const h = harness();
+    h.presence.start();
+    expect(h.hasWatchdog()).toBe(true);
+    h.presence.stop();
+    expect(h.hasWatchdog()).toBe(false);
   });
 
   it("STOPS on a terminal auth refusal (no reconnect) and surfaces the code to the owner", () => {

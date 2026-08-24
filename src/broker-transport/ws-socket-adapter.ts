@@ -13,6 +13,13 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.ws");
 
+/** Protocol-ping cadence. System sleep and NAT/Wi-Fi churn kill this socket SILENTLY —
+ *  TCP keepalive offload keeps it LOOKING open, no close event ever fires, and the
+ *  desktop holds a zombie presence the broker evicted hours ago (live incident
+ *  2026-08-23: last dial 16:40, zombie until 22:00+). A missed pong terminates the
+ *  socket so the real 'close' fires and the presence supervisor re-dials. */
+const HEARTBEAT_MS = 30_000;
+
 /** Open a `ws` WebSocket to the broker connect URL with a bearer header, wrapped in
  *  the SocketAdapter seam. The socket begins connecting immediately; BrokerClient
  *  registers its handlers synchronously in its constructor, before any frame can
@@ -26,8 +33,49 @@ export function openBrokerSocket(connectUrl: string, token: string): SocketAdapt
  *  begun opening the socket (openBrokerSocket above). */
 export class WsSocketAdapter implements SocketAdapter {
   private closed = false;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private awaitingPong = false;
 
-  constructor(private readonly ws: WebSocket) {}
+  constructor(private readonly ws: WebSocket) {
+    ws.on("open", () => this.startHeartbeat());
+    ws.on("pong", () => {
+      this.awaitingPong = false;
+    });
+    ws.on("close", () => this.stopHeartbeat());
+  }
+
+  /** Liveness: ping every HEARTBEAT_MS once open; a tick with the previous ping still
+   *  unanswered means the path is dead even though the socket looks open — terminate
+   *  so 'close' fires and the supervisor re-dials. Cloudflare answers protocol pings
+   *  at the edge, so this proves the network path (the sleep/NAT death class), not DO
+   *  health — which is fine: a dead DO surfaces as broker frames, not silence. */
+  private startHeartbeat(): void {
+    if (this.heartbeat !== null || this.closed) return;
+    this.awaitingPong = false;
+    this.heartbeat = setInterval(() => {
+      if (this.ws.readyState !== WebSocket.OPEN) return;
+      if (this.awaitingPong) {
+        logger.warn("[broker-transport] heartbeat: no pong — terminating dead socket (slept/NAT-dropped path)");
+        this.stopHeartbeat();
+        this.ws.terminate(); // hard-close → 'close' fires → dialer teardown → re-dial
+        return;
+      }
+      this.awaitingPong = true;
+      try {
+        this.ws.ping();
+      } catch {
+        /* socket died mid-tick — the close event will drive teardown */
+      }
+    }, HEARTBEAT_MS);
+    this.heartbeat.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat !== null) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = null;
+    }
+  }
 
   send(text: string): void {
     // Only OPEN sockets accept frames; before OPEN, BrokerClient hasn't been asked to
@@ -44,6 +92,7 @@ export class WsSocketAdapter implements SocketAdapter {
   close(_reason: CloseReason): void {
     if (this.closed) return;
     this.closed = true;
+    this.stopHeartbeat();
     try {
       this.ws.close();
     } catch {

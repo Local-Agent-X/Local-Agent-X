@@ -38,6 +38,13 @@ const BACKOFF_FACTOR = 2;
 /** A dialer that stayed up at least this long met its peer / ran a real session, so the
  *  next drop is a normal reconnect, not an outage — reset the backoff to the base. */
 const STABLE_SESSION_MS = 10_000;
+/** Suspension watchdog cadence, and the wall-clock gap between ticks that means the
+ *  process was SUSPENDED (system sleep). Sleep kills the broker socket silently — no
+ *  close event, keepalive offload keeps it LOOKING open — leaving a zombie presence
+ *  the broker evicted long ago (live incident 2026-08-23: 6h zombie). On resume we
+ *  drop the old dialer and re-dial immediately instead of trusting it. */
+const SUSPEND_TICK_MS = 5_000;
+const SUSPEND_GAP_MS = 60_000;
 
 export interface BrokerPresenceConfig {
   /** Broker base URL (ws/wss), no /connect suffix. */
@@ -79,6 +86,11 @@ export interface BrokerPresenceDeps {
   reconnectMs: number;
   setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer: (timer: ReturnType<typeof setTimeout>) => void;
+  /** Repeating-timer pair for the suspension watchdog. OPTIONAL: absent → watchdog off
+   *  (unit harnesses that don't care about it stay simple). Production supplies the
+   *  real setInterval/clearInterval. */
+  setIntervalFn?: (fn: () => void, ms: number) => ReturnType<typeof setInterval>;
+  clearIntervalFn?: (timer: ReturnType<typeof setInterval>) => void;
   /** Clock for measuring how long a dialer stayed up (to decide reset-vs-grow). */
   now: () => number;
   /** Jitter source in [0, 1). Injected so the spread is deterministic under test. */
@@ -90,6 +102,8 @@ export class BrokerPresence {
   private readonly deps: BrokerPresenceDeps;
   private current: DialerHandle | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
+  private lastTick = 0;
   private stopped = false;
   /** Consecutive fast-failure count; drives the exponential backoff. Reset to 0 when a
    *  dialer held a stable session, so a real reconnect is fast and only an outage backs off. */
@@ -104,6 +118,7 @@ export class BrokerPresence {
   /** Begin maintaining presence: dial now, reconnect on every close until stopped. */
   start(): void {
     if (this.stopped) return;
+    this.startSuspendWatchdog();
     this.dial();
   }
 
@@ -115,8 +130,46 @@ export class BrokerPresence {
       this.deps.clearTimer(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.watchdog !== null) {
+      this.deps.clearIntervalFn?.(this.watchdog);
+      this.watchdog = null;
+    }
     this.current?.stop();
     this.current = null;
+  }
+
+  /** Detect system sleep by wall-clock gaps between ticks. On resume, the current
+   *  dialer's socket is presumed dead even though it looks open (sleep kills it with
+   *  no close event) — drop it and re-dial NOW rather than waiting on a heartbeat. */
+  private startSuspendWatchdog(): void {
+    if (!this.deps.setIntervalFn || this.watchdog !== null) return;
+    this.lastTick = this.deps.now();
+    this.watchdog = this.deps.setIntervalFn(() => {
+      const now = this.deps.now();
+      const gap = now - this.lastTick;
+      this.lastTick = now;
+      if (gap < SUSPEND_GAP_MS || this.stopped) return;
+      logger.warn(
+        `[broker-transport] presence: ${Math.round(gap / 1000)}s wall-clock gap (system slept) — dropping the zombie socket and re-dialing`,
+      );
+      this.redialNow();
+    }, SUSPEND_TICK_MS);
+    (this.watchdog as { unref?: () => void }).unref?.();
+  }
+
+  /** Drop the (presumed dead) dialer + any pending backoff and dial immediately. */
+  private redialNow(): void {
+    if (this.stopped) return;
+    if (this.current !== null) {
+      const dead = this.current;
+      this.current = null; // detach FIRST so its onClosed is ignored as stale
+      dead.stop();
+    }
+    if (this.reconnectTimer !== null) {
+      this.deps.clearTimer(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.dial();
   }
 
   private dial(): void {
@@ -138,26 +191,30 @@ export class BrokerPresence {
     const room = this.config.channel ? ` [${this.config.channel}]` : "";
     logger.info(`[broker-transport] presence: dialing broker as desktop ${this.config.deviceId}${room}`);
     this.dialStartedAt = this.deps.now();
-    this.current = this.deps.createDialer(
+    // Callbacks are identity-guarded: after redialNow() replaces a zombie dialer, the
+    // OLD one's (possibly late/async) close must not clobber the fresh dialer's state.
+    const handle = this.deps.createDialer(
       connectUrl,
       token,
-      () => this.onDialerClosed(),
-      (code) => this.onDialerAuthError(code),
+      () => this.onDialerClosed(handle),
+      (code) => this.onDialerAuthError(handle, code),
     );
+    this.current = handle;
   }
 
   /** The broker refused our credential terminally: STOP (a re-dial with the same dead
    *  token/pairing just loops forever, quietly) and let the owner surface it. A later
    *  re-login re-arms presence via the account manager's onPaired hook. */
-  private onDialerAuthError(code: BrokerErrorCode): void {
+  private onDialerAuthError(which: DialerHandle, code: BrokerErrorCode): void {
+    if (this.stopped || (this.current !== null && this.current !== which)) return; // stale dialer's ghost
     this.current = null; // the dialer already tore itself down
-    if (this.stopped) return;
     logger.warn(`[broker-transport] presence: broker refused our session (${code}) — stopping until re-login`);
     this.stop();
     this.config.onAuthError?.(code);
   }
 
-  private onDialerClosed(): void {
+  private onDialerClosed(which: DialerHandle): void {
+    if (this.current !== null && this.current !== which) return; // stale dialer's ghost close
     this.current = null;
     if (this.stopped) return;
     // A dialer that ran a real session (peer met, stream/voice flowed) resets the backoff so
@@ -209,6 +266,8 @@ export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (timer) => clearTimeout(timer),
+    setIntervalFn: (fn, ms) => setInterval(fn, ms),
+    clearIntervalFn: (timer) => clearInterval(timer),
     now: () => Date.now(),
     random: () => Math.random(),
   };

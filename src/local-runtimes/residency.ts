@@ -92,16 +92,73 @@ const inflightWarms = new Map<string, Promise<void>>();
  * caller. A warm is advisory — its failure is debug-noise, not a hidden
  * outage: the next REAL call still surfaces any genuine failure loudly.
  */
-export function warmModel(baseUrl: string, model: string, redirect?: "follow" | "error" | "manual"): void {
+/**
+ * Re-up cadence for the held chat model. Must beat Ollama's 5-minute default
+ * keep_alive: the OpenAI-compat /v1 endpoint IGNORES a keep_alive body field
+ * (verified against live Ollama 2026-08-25 — UNTIL stayed at the default),
+ * so every real chat request resets the model's expiry to that 5m default no
+ * matter what an earlier warm asked for. A one-shot post-turn warm therefore
+ * still idles out 5m after the last turn; only a re-up that lands inside
+ * every possible 5m window keeps the model hot. 4m does.
+ */
+const CHAT_RESIDENCY_REUP_MS = 4 * 60_000;
+
+// One hold at a time, matching "the user's current local chat model". Moving
+// the hold on a model switch lets the runtime evict the old model instead of
+// two 17GB models fighting for VRAM — the exact thrash this exists to end.
+let heldChat: { key: string; timer: ReturnType<typeof setInterval> } | null = null;
+
+/**
+ * Keep `model` resident on the Ollama-native runtime at `baseUrl` until the
+ * hold moves to another model. Idempotent per (baseUrl, model); switching
+ * targets releases the previous hold. Fire-and-forget like warmModel — a
+ * failed re-up is debug-noise and the next real call surfaces any genuine
+ * outage. Ollama-native only (rides /api/generate); OpenAI-compat-only
+ * runtimes (LM Studio, vLLM) manage their own TTLs.
+ */
+export function holdChatModelResidency(baseUrl: string, model: string): void {
   const base = baseUrl.replace(/\/+$/, "");
-  const key = `${base}|${model}|${redirect ?? "follow"}`;
+  const key = `${base}|${model}`;
+  if (heldChat?.key === key) return;
+  if (heldChat) clearInterval(heldChat.timer);
+  warmModel(base, model);
+  const timer = setInterval(() => warmModel(base, model), CHAT_RESIDENCY_REUP_MS);
+  timer.unref?.();
+  heldChat = { key, timer };
+}
+
+/** Drop the current hold (model switch away from local, shutdown, tests). */
+export function releaseChatModelResidency(): void {
+  if (heldChat) {
+    clearInterval(heldChat.timer);
+    heldChat = null;
+  }
+}
+
+export function warmModel(
+  baseUrl: string,
+  model: string,
+  redirect?: "follow" | "error" | "manual",
+  numCtx?: number,
+): void {
+  const base = baseUrl.replace(/\/+$/, "");
+  const key = `${base}|${model}|${redirect ?? "follow"}|${numCtx ?? "default"}`;
   if (inflightWarms.has(key)) return;
   const run = (async () => {
     try {
       const res = await fetch(`${base}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE }),
+        // num_ctx (when given) sizes the LOADED context. The warm decides the
+        // model's KV footprint for every call that follows it — a warm without
+        // it loads Ollama's auto default (131k on this generation), whose KV
+        // cache can be 8x the weights. Classifier warms pass the dispatch
+        // window so the warmed shape matches the real call; the chat-residency
+        // hold omits it on purpose (chat wants the full window).
+        body: JSON.stringify({
+          model, prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE,
+          ...(numCtx !== undefined ? { options: { num_ctx: numCtx } } : {}),
+        }),
         signal: AbortSignal.timeout(WARM_TIMEOUT_MS),
         ...(redirect ? { redirect } : {}),
       });

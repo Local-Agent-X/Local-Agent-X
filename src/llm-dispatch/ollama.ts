@@ -56,6 +56,19 @@ export async function resolveOllamaDispatchModel(): Promise<string | null> {
   return usable[0]?.id ?? null;
 }
 
+/**
+ * Loaded-context size for single-shot dispatch calls (classifiers, background
+ * extraction). Without it Ollama's auto default loads the model with
+ * min(model_max, 131072) context, and the KV cache for that window dwarfs the
+ * weights — a 2GB llama3.2:3b occupied 17GB of VRAM (observed 2026-08-25),
+ * recreating the exact "classifier and chat model can't coexist" thrash the
+ * small-classifier pick exists to end. 16384 is many times the largest
+ * dispatch prompt while keeping the KV footprint in the hundreds of MB.
+ * (Ollama truncates a longer prompt rather than erroring; a dispatch prompt
+ * anywhere near 16k tokens is misrouted — those belong on the chat path.)
+ */
+export const DISPATCH_NUM_CTX = 16_384;
+
 export async function callOllama(
   prompt: string,
   model: string,
@@ -76,7 +89,7 @@ export async function callOllama(
       // timeout. Same knob the residency warm path uses.
       body: JSON.stringify({
         model, prompt, stream: false, keep_alive: MODEL_KEEP_ALIVE,
-        options: { temperature, num_predict: maxTokens },
+        options: { temperature, num_predict: maxTokens, num_ctx: DISPATCH_NUM_CTX },
       }),
       signal: AbortSignal.timeout(timeoutMs),
       ...(exactBaseUrl ? { redirect: "manual" as const } : {}),

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-import { callOllama } from "./ollama.js";
+import { callOllama, DISPATCH_NUM_CTX } from "./ollama.js";
 import { MODEL_KEEP_ALIVE } from "../local-runtimes/residency.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -14,14 +14,16 @@ describe("callOllama", () => {
     expect(String(spy.mock.calls[0][0])).toMatch(/\/api\/generate$/);
     // Exact body shape: keep_alive keeps the utility model warm between
     // classifier calls (cold load burned the whole wallclock before), and
-    // num_predict / temperature must survive unchanged next to it.
+    // num_ctx caps the LOADED context — without it Ollama's auto default
+    // (131k) gives a 2GB classifier a 17GB KV cache and it evicts the chat
+    // model (observed 2026-08-25).
     const body = JSON.parse(String(spy.mock.calls[0][1]?.body));
     expect(body).toEqual({
       model: "llama3.2:3b",
       prompt: "p",
       stream: false,
       keep_alive: MODEL_KEEP_ALIVE,
-      options: { temperature: 0, num_predict: 64 },
+      options: { temperature: 0, num_predict: 64, num_ctx: DISPATCH_NUM_CTX },
     });
   });
 

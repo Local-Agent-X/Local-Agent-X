@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-import { isModelResident, warmModel, MODEL_KEEP_ALIVE } from "./residency.js";
+import {
+  isModelResident,
+  warmModel,
+  holdChatModelResidency,
+  releaseChatModelResidency,
+  MODEL_KEEP_ALIVE,
+} from "./residency.js";
 
 const BASE = "http://127.0.0.1:11434";
 
@@ -114,9 +120,81 @@ describe("warmModel", () => {
     await tick(); // drain the last in-flight entry so nothing leaks across tests
   });
 
+  it("carries num_ctx when given — the warm fixes the loaded KV size", async () => {
+    const spy = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", spy);
+    warmModel(BASE, "llama3.2:3b", undefined, 16_384);
+    await tick();
+    const body = JSON.parse(String(spy.mock.calls[0][1]?.body));
+    expect(body).toEqual({
+      model: "llama3.2:3b", prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE,
+      options: { num_ctx: 16_384 },
+    });
+  });
+
   it("swallows failures — fire-and-forget never throws or rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
     expect(() => warmModel(BASE, "x:1b")).not.toThrow();
     await tick();
+  });
+});
+
+describe("holdChatModelResidency", () => {
+  afterEach(() => {
+    releaseChatModelResidency();
+    vi.useRealTimers();
+  });
+
+  function okFetch() {
+    const spy = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", spy);
+    return spy;
+  }
+
+  it("warms immediately and re-ups inside every 5m window (Ollama's /v1 default)", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(spy.mock.calls[0][1]?.body));
+    expect(body).toEqual({ model: "qwen3.6:27b", prompt: "", stream: false, keep_alive: MODEL_KEEP_ALIVE });
+    // The re-up cadence must beat the 5m default a real /v1 chat request
+    // resets the expiry to — a hold that only fires past 5m is no hold.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("idempotent per target — re-resolving the same chat model adds no timers", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    holdChatModelResidency(`${BASE}/`, "qwen3.6:27b"); // trailing slash, same target
+    expect(spy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    // One re-up cycle, not three stacked ones.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(3);
+  });
+
+  it("switching models moves the hold — the old model stops being re-upped", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "muse-glimmer:30b");
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    const modelsWarmedAfterSwitch = spy.mock.calls
+      .slice(2) // calls 0/1 are the two immediate warms
+      .map(c => (JSON.parse(String(c[1]?.body)) as { model: string }).model);
+    expect(modelsWarmedAfterSwitch.length).toBeGreaterThan(0);
+    expect(modelsWarmedAfterSwitch.every(m => m === "qwen3.6:27b")).toBe(true);
+  });
+
+  it("release stops the re-up loop", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    releaseChatModelResidency();
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(spy).toHaveBeenCalledTimes(1); // only the immediate warm
   });
 });

@@ -80,7 +80,10 @@ describe("classify-with-llm local cold-skip", () => {
     expect(out).toBeNull();
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(mocks.warmModel).toHaveBeenCalledTimes(1);
-    expect(mocks.warmModel).toHaveBeenCalledWith("http://127.0.0.1:11434", "llama3.2:3b");
+    // The warm must carry the dispatch num_ctx: it fixes the loaded KV size,
+    // and a default-window warm (131k auto) pins 8x the VRAM the real
+    // DISPATCH_NUM_CTX call needs.
+    expect(mocks.warmModel).toHaveBeenCalledWith("http://127.0.0.1:11434", "llama3.2:3b", undefined, 16_384);
   });
 
   it("long-budget callers proceed even when cold — they can afford the load", async () => {

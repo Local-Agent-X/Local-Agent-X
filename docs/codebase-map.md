@@ -78,11 +78,11 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
+| `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
 | `src/net/` | 2 | 2 | M |  |
 | `src/types/` | 2 | 2 | M |  |
 | `src/agent-loop-detectors/` | 1 | 9 | M |  |
-| `src/llm-dispatch/` | 1 | 2 | M |  |
 
 ## No live importer (dead / superseded candidates)
 

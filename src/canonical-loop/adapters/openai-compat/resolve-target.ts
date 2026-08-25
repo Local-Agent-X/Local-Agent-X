@@ -67,6 +67,15 @@ export async function resolveOpenAICompatTarget(
       rt = getRuntimeForModel(model);
     }
     if (rt) {
+      // Chat rides /v1, which ignores keep_alive — without a held residency
+      // the chat model idles out on Ollama's 5m default and every post-idle
+      // turn pays the full cold load (30-60s observed 2026-08-25). Hold is
+      // Ollama-native only: it re-ups via /api/generate, which OpenAI-compat
+      // runtimes (LM Studio, vLLM) don't serve.
+      if (rt.kind === "ollama") {
+        const { holdChatModelResidency } = await import("../../../local-runtimes/residency.js");
+        holdChatModelResidency(rt.endpoint.baseUrl, model);
+      }
       return {
         baseURL: rt.chatBaseUrl,
         apiKey: prepared.apiKey || "ollama",
@@ -86,6 +95,10 @@ export async function resolveOpenAICompatTarget(
   // identical to pre-registry behavior.
   const apiKey = provider === "local" ? (prepared.apiKey || "ollama") : prepared.apiKey;
   if (provider === "local" && model) {
+    // Pre-seam fallback is config.ollamaUrl — Ollama-native by definition,
+    // so it gets the same residency hold as the discovered-runtime path.
+    const { holdChatModelResidency } = await import("../../../local-runtimes/residency.js");
+    holdChatModelResidency(getRuntimeConfig().ollamaUrl, model);
     const { getLocalModelCapabilityProfile } = await import("../../../local-runtimes/index.js");
     return { baseURL, apiKey, modelProfile: getLocalModelCapabilityProfile(baseURL, model) };
   }

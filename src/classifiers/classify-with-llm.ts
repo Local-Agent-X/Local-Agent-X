@@ -35,6 +35,7 @@
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import { isModelResident, warmModel } from "../local-runtimes/residency.js";
+import { DISPATCH_NUM_CTX } from "../llm-dispatch/ollama.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
 import { resolveBackgroundModel } from "../providers/background-model.js";
 import type { ProviderId } from "../providers/provider-ids.js";
@@ -266,8 +267,11 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
           : await isModelResident(ollamaBase, model, probeMs);
         if (resident === false) {
           logger.info(`cold-skip: model not resident (cold or not installed) — background warm attempted (provider=${provider}, model=${model})`);
-          if (exactRedirect) warmModel(ollamaBase, model, exactRedirect);
-          else warmModel(ollamaBase, model);
+          // Warm at the dispatch window, not Ollama's auto default: the warm
+          // fixes the loaded KV size, and the real call that follows uses
+          // DISPATCH_NUM_CTX — a default-window warm would pin 8x the VRAM.
+          if (exactRedirect) warmModel(ollamaBase, model, exactRedirect, DISPATCH_NUM_CTX);
+          else warmModel(ollamaBase, model, undefined, DISPATCH_NUM_CTX);
           return null;
         }
       }

@@ -19,7 +19,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { hasCapability } from "../tool-registry.js";
-import { checkOutboundRequest, checkOutboundPayload, checkAttachmentPaths } from "../tools/http-egress-guard.js";
+import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
 
@@ -35,6 +35,11 @@ export interface EgressBlocker {
   recovery: string;
   userHint: string;
   meta?: Record<string, unknown>;
+  /** Downgradeable to an interactive user confirmation (see GuardBlock.confirmable).
+   *  Only when EVERY blocker in the enforced set is confirmable does the gate
+   *  route to approval instead of blocking — a canary / taint / kernel blocker
+   *  in the set keeps the whole set a hard block. */
+  confirmable?: boolean;
 }
 
 // Extract the OUTBOUND payload an egress-class sink would emit, so the secret
@@ -147,8 +152,10 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   }
 
   // Outbound-secret scan. http-shaped sinks go through the host-allowlist-aware
-  // checkOutboundRequest; the rest through the destination-less payload scan.
-  let block: { message: string; meta: Record<string, unknown> } | null = null;
+  // checkOutboundRequest; email through the recipient-allowlist-aware
+  // checkOutboundEmail (own address + allowlist trusted, unknown recipient →
+  // confirmable); the rest through the destination-less payload scan.
+  let block: { message: string; meta: Record<string, unknown>; confirmable?: boolean } | null = null;
   if (tc.name === "http_request" || tc.name === "ari_http") {
     block = checkOutboundRequest({
       url: String(args.url ?? ""),
@@ -156,6 +163,15 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
       body: args.body,
       headers: args.headers,
     });
+  } else if (tc.name === "email_send") {
+    block = checkOutboundEmail(
+      {
+        to: args.to ? String(args.to) : "",
+        cc: args.cc ? String(args.cc) : "",
+        bcc: args.bcc ? String(args.bcc) : "",
+      },
+      text,
+    );
   } else {
     block = checkOutboundPayload(tc.name, text);
   }
@@ -164,6 +180,7 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
     layer: "egress-guard", label: "egress guard", reason: block.message,
     recovery: "Use {{SECRET_NAME}} placeholders instead of hardcoded credentials, or remove the secret from the outbound payload. Add a trusted destination to ~/.lax/egress-allowlist.json only if it legitimately needs credentials.",
     userHint: USER_HINTS.outboundContent, meta: block.meta,
+    confirmable: block.confirmable,
   };
 }
 
@@ -207,11 +224,25 @@ export function probeCanary(ctx: ToolCallContext): EgressBlocker | null {
   };
 }
 
+// Downgrade an all-confirmable blocker set to an interactive approval: stash
+// the reason on ctx.policyApprovalReason (the same channel a tool-policy "ask"
+// uses) and CONTINUE — requireApprovalPhase then prompts the user in attended
+// runs and hard-blocks unattended ones, which preserves the injection-safety
+// property (a silent run can never confirm its own exfil). Idempotent under the
+// hook-rewrite re-screen: the same reason is never appended twice.
+function deferToApproval(ctx: ToolCallContext, blockers: EgressBlocker[]): PhaseOutcome {
+  const reason = blockers.map((b) => b.reason).join(" ");
+  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
+  else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+  return CONTINUE;
+}
+
 // ── Single-gate enforcement wrappers (behaviour-preserving) ──────────────────
 
 export function egressGuardGate(ctx: ToolCallContext): PhaseOutcome {
   const b = probeEgressGuard(ctx);
   if (!b) return CONTINUE;
+  if (b.confirmable) return deferToApproval(ctx, [b]);
   return terminate(ctx, { rendered: "model", result: blockerResult(b), allowed: false });
 }
 
@@ -288,6 +319,10 @@ export function egressAggregateGate(ctx: ToolCallContext, upstream: EgressBlocke
   const { blockers, canaryTripped } = probeEgressCohort(ctx);
   const all = [...upstream, ...blockers];
   if (all.length === 0) return CONTINUE;
+  // EVERY blocker confirmable (in practice: only the email recipient-trust
+  // scan fired — canary / lineage / kernel / security blockers never are) →
+  // ask the user instead of blocking. Any hard blocker keeps the hard block.
+  if (all.every((b) => b.confirmable)) return deferToApproval(ctx, all);
   // Apply the canary audit exactly once, here, when the canary is part of the
   // enforced aggregate (probeCanary is side-effect-free by design).
   if (canaryTripped) recordCanaryExfilAudit(ctx.sessionId || "default", ctx.tc.name);

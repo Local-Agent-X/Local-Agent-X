@@ -173,3 +173,64 @@ describe("SC-10 · egressAggregateGate — the data-lineage + canary + egress-gu
     expect(egressAggregateGate(ctx).kind).toBe("continue");
   });
 });
+
+// Confirmable downgrade: an email whose ONLY blocker is the recipient-trust
+// scan routes to interactive approval (ctx.policyApprovalReason) instead of a
+// hard block; any hard blocker (data-lineage taint) keeps the hard block.
+describe("email_send confirmable downgrade — approval instead of hard block", () => {
+  afterEach(() => { delete process.env.SMTP_FROM; });
+
+  it("secret-shaped body to an unknown recipient CONTINUES with policyApprovalReason set", () => {
+    const sid = "sc10-email-confirm";
+    clearSessionTaint(sid);
+    const ctx = makeCtx(
+      "email_send",
+      { to: "stranger@untrusted.invalid", subject: "report", body: `key ${SECRET}` },
+      sid,
+    );
+    expect(egressAggregateGate(ctx).kind).toBe("continue");
+    expect(ctx.policyApprovalReason).toMatch(/stranger@untrusted\.invalid/);
+    expect(ctx.allowed).toBe(true);
+  });
+
+  it("the downgrade is idempotent under the hook-rewrite re-screen (reason not duplicated)", () => {
+    const sid = "sc10-email-rescreen";
+    clearSessionTaint(sid);
+    const ctx = makeCtx(
+      "email_send",
+      { to: "stranger@untrusted.invalid", subject: "report", body: `key ${SECRET}` },
+      sid,
+    );
+    egressAggregateGate(ctx);
+    const once = ctx.policyApprovalReason;
+    egressAggregateGate(ctx);
+    expect(ctx.policyApprovalReason).toBe(once);
+  });
+
+  it("self-send passes outright — no block, no approval", () => {
+    const sid = "sc10-email-self";
+    clearSessionTaint(sid);
+    process.env.SMTP_FROM = "me@selftest.invalid";
+    const ctx = makeCtx(
+      "email_send",
+      { to: "me@selftest.invalid", subject: "report", body: `key ${SECRET}` },
+      sid,
+    );
+    expect(egressAggregateGate(ctx).kind).toBe("continue");
+    expect(ctx.policyApprovalReason).toBeUndefined();
+  });
+
+  it("a web-tainted session stays a HARD block (data-lineage is never confirmable)", () => {
+    const sid = "sc10-email-tainted";
+    clearSessionTaint(sid);
+    recordSensitiveRead(sid, "web", "https://news.example/article");
+    const ctx = makeCtx(
+      "email_send",
+      { to: "stranger@untrusted.invalid", subject: "report", body: `key ${SECRET}` },
+      sid,
+    );
+    expect(egressAggregateGate(ctx).kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.policyApprovalReason).toBeUndefined();
+  });
+});

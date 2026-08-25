@@ -26,6 +26,7 @@ import { matchEgressList } from "../security/layer/index.js";
 import { classifyData } from "../threat/classification.js";
 import { loadDataEgressGuard } from "../security/layer/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { getOwnEmailAddresses } from "./email-config.js";
 import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
 import { realpathDeep } from "../security/layer/index.js";
 
@@ -63,6 +64,12 @@ export interface GuardArgs {
 export interface GuardBlock {
   message: string;
   meta: Record<string, unknown>;
+  /** True when the refusal may be downgraded to an interactive user
+   *  confirmation instead of a hard block: the payload is suspicious only
+   *  because the destination is unrecognized, and a human vouching for the
+   *  destination resolves exactly that doubt. Silent (unattended) runs still
+   *  hard-block — an approval with no one watching is a block. */
+  confirmable?: boolean;
 }
 
 /** Returns null if the call may proceed, or a GuardBlock describing the refusal. */
@@ -160,6 +167,83 @@ export function checkOutboundPayload(sink: string, text: string): GuardBlock | n
     };
   }
   return null;
+}
+
+/** Split a comma-separated recipient header into bare lowercase addresses,
+ *  unwrapping `Name <addr@host>` display forms. */
+export function parseRecipientAddresses(raw: string): string[] {
+  const out: string[] = [];
+  for (const token of raw.split(",")) {
+    const angled = /<([^<>]+)>/.exec(token);
+    const addr = (angled ? angled[1] : token).trim().toLowerCase();
+    if (addr.includes("@")) out.push(addr);
+  }
+  return out;
+}
+
+function isTrustedEmailRecipient(addr: string, own: ReadonlySet<string>): boolean {
+  if (own.has(addr)) return true;
+  const trusted = loadTrustedDestinations();
+  // An allowlist entry containing "@" is an exact address; a bare entry is a
+  // domain and matches the recipient's domain with the SAME semantics the
+  // host allowlist uses (exact / *.wildcard) — "gmail.com" in the allowlist
+  // already means "trusted egress destination", for mailboxes as for hosts.
+  if (trusted.has(addr)) return true;
+  const domain = addr.slice(addr.lastIndexOf("@") + 1);
+  const hostEntries = new Set([...trusted].filter((e) => !e.includes("@")));
+  return !!domain && matchEgressList(domain, hostEntries);
+}
+
+/**
+ * Destination-aware outbound scan for email_send — the email analogue of
+ * {@link checkOutboundRequest}. Unlike the destination-less
+ * {@link checkOutboundPayload}, an email HAS destinations (its recipients), so
+ * the same trusted-destination logic applies: the account's OWN address
+ * (getOwnEmailAddresses — sending to yourself is delivery, not exfiltration)
+ * and ~/.lax/egress-allowlist.json entries pass without question. A flagged
+ * payload to an unrecognized recipient returns a CONFIRMABLE block: the gate
+ * downgrades it to an interactive approval, because "is this stranger meant to
+ * receive this?" is precisely the question a human can answer and a scanner
+ * cannot. Recipients must ALL be trusted — one attacker cc on a self-send is
+ * still exfiltration.
+ */
+export function checkOutboundEmail(
+  recipients: { to?: string; cc?: string; bcc?: string },
+  text: string,
+): GuardBlock | null {
+  if (!text) return null;
+  const scan = scanForSecrets(text);
+  const financial = loadDataEgressGuard() && hasSensitiveEgressData(text);
+  if (scan.clean && !financial) return null;
+
+  const addrs = [
+    ...parseRecipientAddresses(recipients.to ?? ""),
+    ...parseRecipientAddresses(recipients.cc ?? ""),
+    ...parseRecipientAddresses(recipients.bcc ?? ""),
+  ];
+  const own = new Set(getOwnEmailAddresses());
+  const untrusted = addrs.filter((a) => !isTrustedEmailRecipient(a, own));
+  if (addrs.length > 0 && untrusted.length === 0) return null;
+
+  const kinds = scan.clean ? "" : [...new Set(scan.matches.map((m) => m.pattern))].join(", ");
+  const what = scan.clean
+    ? "sensitive personal data (financial account or SSN)"
+    : `secret-shaped content (${kinds})`;
+  const dest = untrusted.length > 0 ? untrusted.join(", ") : "no parseable recipient";
+  return {
+    message:
+      `email_send to ${dest}: the message content contains ${what} and the recipient is not a ` +
+      `trusted destination (your own address and ~/.lax/egress-allowlist.json entries are trusted). ` +
+      `Confirm the send only if these recipients are meant to receive this content; otherwise remove it, ` +
+      `or add the recipient to the allowlist if it should always receive such data.`,
+    meta: {
+      sink: "email_send",
+      blocked_by: scan.clean ? "data-egress-guard" : "outbound-secret-scan",
+      ...(kinds ? { secret_kinds: kinds } : {}),
+      untrusted_recipients: untrusted,
+    },
+    confirmable: true,
+  };
 }
 
 // US SSN (with separators — bare 9-digit runs are too false-positive-prone).

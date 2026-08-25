@@ -171,6 +171,26 @@ export function writeEmailCredentials(
   return null;
 }
 
+/**
+ * The account's own email address(es) — the configured SMTP identity (from +
+ * login user, plus the IMAP login when address-shaped). The egress guard treats
+ * these as trusted destinations: delivering to the user's own mailbox is not
+ * exfiltration. Reads only the non-secret keys (email.json / env), never the
+ * vault, so it is safe to call from a scan path.
+ */
+export function getOwnEmailAddresses(): string[] {
+  const out = new Set<string>();
+  for (const key of ["SMTP_FROM", "SMTP_USER", "IMAP_USER"]) {
+    const raw = env(key);
+    if (!raw) continue;
+    // SMTP_FROM may be the display form `Name <addr@host>` — keep the address.
+    const angled = /<([^<>]+)>/.exec(raw);
+    const addr = (angled ? angled[1] : raw).trim().toLowerCase();
+    if (addr.includes("@")) out.add(addr);
+  }
+  return [...out];
+}
+
 export function getSmtpConfig(): { host: string; port: number; user: string; pass: string; from: string } | string {
   const host = env("SMTP_HOST");
   const user = env("SMTP_USER");

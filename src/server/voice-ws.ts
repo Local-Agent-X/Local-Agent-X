@@ -106,7 +106,7 @@ export async function setupVoiceWs(deps: {
       }
 
       const prepared = await prepareAgentRequest({
-        channel: "web",
+        channel: "voice",
         message: text,
         sessionMessages: session.messages,
         sessionId,

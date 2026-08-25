@@ -3,7 +3,7 @@
 // a fake LoopbackChatSocket stands in for the desktop's own /ws/chat.
 
 import { describe, it, expect } from "vitest";
-import { ChatBridge, type LoopbackChatSocket } from "./chat-bridge.js";
+import { ChatBridge, stampMobileOrigin, type LoopbackChatSocket } from "./chat-bridge.js";
 import type { ControlTransport } from "../screen-stream/peer.js";
 
 class FakeTransport implements ControlTransport {
@@ -79,7 +79,9 @@ describe("ChatBridge", () => {
     loopback.open();
 
     transport.emit({ type: "chat", sessionId: "s1", message: "hi" });
-    expect(loopback.sentFrames).toEqual([{ type: "chat", sessionId: "s1", message: "hi" }]);
+    // chat frames gain the bridge's origin stamp so the server knows the
+    // sender is the phone app, not the desktop UI.
+    expect(loopback.sentFrames).toEqual([{ type: "chat", sessionId: "s1", message: "hi", origin: "mobile" }]);
   });
 
   it("BUFFERS phone frames sent before the loopback ws connects, then flushes in order", () => {
@@ -94,8 +96,32 @@ describe("ChatBridge", () => {
     loopback.open();
     expect(loopback.sentFrames).toEqual([
       { type: "subscribe", sessionId: "s1" },
-      { type: "chat", sessionId: "s1", message: "first" },
+      { type: "chat", sessionId: "s1", message: "first", origin: "mobile" },
     ]);
+  });
+
+  describe("stampMobileOrigin", () => {
+    it("stamps chat frames with origin mobile", () => {
+      expect(JSON.parse(stampMobileOrigin(JSON.stringify({ type: "chat", sessionId: "s1", message: "hi" }))))
+        .toEqual({ type: "chat", sessionId: "s1", message: "hi", origin: "mobile" });
+    });
+
+    it("overwrites a spoofed origin on the phone's own frame", () => {
+      // The bridge is the authority on where the frame came from.
+      expect(JSON.parse(stampMobileOrigin(JSON.stringify({ type: "chat", origin: "web" }))))
+        .toEqual({ type: "chat", origin: "mobile" });
+    });
+
+    it("leaves non-chat frames untouched", () => {
+      const subscribe = JSON.stringify({ type: "subscribe", sessionId: "s1" });
+      expect(stampMobileOrigin(subscribe)).toBe(subscribe);
+      const stop = JSON.stringify({ type: "stop", sessionId: "s1" });
+      expect(stampMobileOrigin(stop)).toBe(stop);
+    });
+
+    it("relays non-JSON verbatim", () => {
+      expect(stampMobileOrigin("not json")).toBe("not json");
+    });
   });
 
   it("relays server events back to the phone over the data channel", () => {

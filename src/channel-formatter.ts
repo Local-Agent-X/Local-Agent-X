@@ -68,6 +68,43 @@ const CHANNEL_CONFIGS: Record<ChannelType, ChannelConfig> = {
     supportsCodeBlocks: true,
     supportsTables: true,
   },
+  // Phone chat renders the same markdown as web, but the narrow screen makes
+  // wide tables unreadable — the prompt block also steers toward compact replies.
+  mobile: {
+    maxTextLength: Infinity,
+    markdownFlavor: "full",
+    supportsMedia: true,
+    supportsButtons: true,
+    supportsCodeBlocks: true,
+    supportsTables: false,
+  },
+  // Spoken aloud via TTS — any formatting would be read out literally.
+  voice: {
+    maxTextLength: Infinity,
+    markdownFlavor: "plain",
+    supportsMedia: false,
+    supportsButtons: false,
+    supportsCodeBlocks: false,
+    supportsTables: false,
+  },
+  // Autonomous lanes: output lands in mission results / another agent's
+  // context, not a constrained messenger.
+  cron: {
+    maxTextLength: Infinity,
+    markdownFlavor: "full",
+    supportsMedia: false,
+    supportsButtons: false,
+    supportsCodeBlocks: true,
+    supportsTables: true,
+  },
+  agent: {
+    maxTextLength: Infinity,
+    markdownFlavor: "full",
+    supportsMedia: false,
+    supportsButtons: false,
+    supportsCodeBlocks: true,
+    supportsTables: true,
+  },
 };
 
 // ── Core API ──

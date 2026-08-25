@@ -17,6 +17,23 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.chat-bridge");
 
+/** Mark a phone `chat` frame with its true origin so the chat pipeline (and the
+ *  agent's channel-context prompt block) knows this user is on the AgentX phone
+ *  app, not the desktop UI. Only the bridge can add this stamp — it sits on the
+ *  desktop between the broker data channel and loopback /ws/chat, so the phone
+ *  app itself needs no protocol change. Non-chat and non-JSON frames pass
+ *  through untouched. Exported for the bridge unit tests. */
+export function stampMobileOrigin(text: string): string {
+  try {
+    const frame = JSON.parse(text) as { type?: unknown; origin?: unknown };
+    if (typeof frame !== "object" || frame === null || frame.type !== "chat") return text;
+    frame.origin = "mobile";
+    return JSON.stringify(frame);
+  } catch {
+    return text; // not JSON — relay verbatim, the server will reject it
+  }
+}
+
 /** A minimal loopback WS client to the desktop's own /ws/chat. Connects async, so
  *  `onOpen` fires once it's ready (sends before that are buffered by the bridge). */
 export interface LoopbackChatSocket {
@@ -118,8 +135,9 @@ export class ChatBridge implements ChatChannel {
   /** Forward a phone frame to the loopback server, buffering until it's connected. */
   private toServer(text: string): void {
     if (this.closed) return;
-    if (this.socketOpen && this.socket) this.socket.send(text);
-    else this.pending.push(text);
+    const stamped = stampMobileOrigin(text);
+    if (this.socketOpen && this.socket) this.socket.send(stamped);
+    else this.pending.push(stamped);
   }
 
   /** Tear down with the data channel / session. Idempotent. */

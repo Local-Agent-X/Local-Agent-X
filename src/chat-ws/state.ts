@@ -112,8 +112,6 @@ export function recordInjectRun(sessionId: string, injectId: string, text: strin
   chat.runBoundary = true;
 }
 
-export type ChatHandler = (sessionId: string, message: string, attachments: unknown[]) => void;
-
 // Active chats — keyed by sessionId.
 export const activeChats = new Map<string, ActiveChat>();
 
@@ -206,11 +204,6 @@ function drainPendingStops(): void {
 
 // Connected clients — each client subscribes to sessionIds.
 export const clients = new Map<WebSocket, Set<string>>();
-
-// Chat handler — set by the server to process WS chat messages.
-let chatHandler: ChatHandler | null = null;
-export function setChatHandler(h: ChatHandler): void { chatHandler = h; }
-export function getChatHandler(): ChatHandler | null { return chatHandler; }
 
 // Message-count provider for the session_snapshot event. Wired from
 // src/server/index.ts where SessionStore is in scope; the chat-ws layer

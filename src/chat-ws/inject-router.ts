@@ -12,7 +12,8 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
-import { broadcastToSession, getChatHandler } from "./state.js";
+import { broadcastToSession } from "./state.js";
+import { getChatHandler } from "./chat-handler.js";
 // Static imports for the inject hot path. Previously these were `await
 // import(...)` inside the handler, but every `await` yields the event loop
 // and the worker's continuation guard (worker.ts:178) could run in between —

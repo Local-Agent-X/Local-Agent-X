@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getMessagingChannelDefinition, isMessagingChannelId } from "./channel-registry.js";
+import type { ChannelId } from "../channel-context.js";
 const require = createRequire(import.meta.url);
 
 const LAX_DIR = getLaxDir();
@@ -28,7 +29,8 @@ const LINKS_FILE = join(LAX_DIR, "identity-links.json");
 
 // ── Types ──
 
-export type ChannelType = "web" | "telegram" | "whatsapp" | "cli" | "api";
+/** Alias of the canonical channel union (src/channel-context.ts). */
+export type ChannelType = ChannelId;
 
 export interface ChannelIdentity {
   channel: ChannelType;
@@ -209,8 +211,12 @@ export function getGroupForUser(channel: ChannelType, channelUserId: string): Id
 export function buildChannelContext(route: SessionRoute): string {
   const channelNames: Record<Exclude<ChannelType, "telegram" | "whatsapp">, string> = {
     web: "Web UI",
+    mobile: "AgentX mobile app",
+    voice: "Voice",
     cli: "CLI",
     api: "API",
+    cron: "Scheduled job",
+    agent: "Agent lane",
   };
   const displayName = (channel: ChannelType): string => isMessagingChannelId(channel)
     ? getMessagingChannelDefinition(channel).displayName

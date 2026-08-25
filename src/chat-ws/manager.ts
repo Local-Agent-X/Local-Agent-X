@@ -9,14 +9,13 @@ import { startHeartbeat } from "./heartbeat.js";
 import {
   activeChats,
   type ActiveChat,
-  type ChatHandler,
   appendRun,
   broadcastActiveChats,
   broadcastToSession,
   replaceRunLane,
-  setChatHandler,
   terminateChat,
 } from "./state.js";
+import { setChatHandler, type ChatHandler } from "./chat-handler.js";
 
 const logger = createLogger("chat-ws");
 

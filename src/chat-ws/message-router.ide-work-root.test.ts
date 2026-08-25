@@ -32,7 +32,7 @@ vi.mock("../config.js", async (importOriginal) => {
 
 const { attachMessageRouter } = await import("./message-router.js");
 const { sessionWorkRootOf, clearSessionWorkRoot } = await import("../workspace/paths.js");
-const { setChatHandler } = await import("./state.js");
+const { setChatHandler } = await import("./chat-handler.js");
 
 const SESSION = "ide-todo-app";
 const APP_DIR = resolve(TMP_WS, "apps", "todo-app");

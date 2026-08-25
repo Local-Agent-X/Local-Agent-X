@@ -224,6 +224,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // build-intent CLI nudge if applicable).
   end = stepStart("buildSystemPrompt");
   const promptBuild = await buildSystemPromptWithTelemetry({
+    channel: input.channel,
     message: input.message,
     sessionId: input.sessionId,
     config: input.config,

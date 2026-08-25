@@ -16,6 +16,8 @@ import {
   harnessNotice,
   type SystemPromptBuildResult,
 } from "../../context/system-prompt-builder.js";
+import { channelContextBlock } from "../../channel-context.js";
+import type { ChannelKind } from "../types.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -46,6 +48,8 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
 }
 
 export interface BuildSystemPromptInput {
+  /** Which surface this turn arrived on — drives the channel-context section. */
+  channel: ChannelKind;
   message: string;
   sessionId: string;
   config: LAXConfig;
@@ -228,6 +232,7 @@ export async function buildSystemPromptWithTelemetry(
       smartContext: input.smartContext,
       memoryContext: input.memoryContext,
       notificationHint,
+      channelContext: channelContextBlock(input.channel),
       bridgeContext: input.bridgeContext,
     });
   }

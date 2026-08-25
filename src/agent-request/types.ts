@@ -11,7 +11,10 @@ import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { TargetPin } from "../ops/types.js";
 import type { ProviderSwitch } from "./resolve-provider.js";
 
-export type ChannelKind = "web" | "telegram" | "whatsapp" | "cron" | "agent";
+import type { ChannelId } from "../channel-context.js";
+
+/** Alias of the canonical channel union (src/channel-context.ts). */
+export type ChannelKind = ChannelId;
 
 export interface AgentRequestInput {
   /** Which entry point is calling */

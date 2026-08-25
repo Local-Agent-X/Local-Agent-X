@@ -185,6 +185,9 @@ export function createSystemPromptBuilder(opts: {
   canaryBlock?: string;
   // Bridge-specific
   bridgeContext?: string;
+  /** Which surface this turn arrived on + its limitations — rendered by
+   *  channelContextBlock (src/channel-context.ts). */
+  channelContext?: string;
 }): SystemPromptBuilder {
   const builder = new SystemPromptBuilder();
 
@@ -353,6 +356,19 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
       id: "notifications", label: "Notifications", type: "dynamic", policy: "required",
       build: () => opts.notificationHint!,
       shouldInclude: () => opts.notificationHint!.length > 0,
+    });
+  }
+
+  // Channel grounding — which surface the user is on (desktop UI, phone app,
+  // voice, messenger) and what it can render. Without it the model guesses:
+  // assumes a phone user can see the PC screen, sends tables to WhatsApp,
+  // reads markdown syntax aloud on voice. Ahead of bridge-context, which adds
+  // sender identity on top for the messenger bridges.
+  if (opts.channelContext) {
+    builder.addSection({
+      id: "channel-context", label: "Channel Context", type: "dynamic", policy: "required",
+      build: () => opts.channelContext!,
+      shouldInclude: () => opts.channelContext!.length > 0,
     });
   }
 

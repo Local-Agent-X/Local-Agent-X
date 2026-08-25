@@ -28,9 +28,8 @@ import {
   clients,
   terminateChat,
   broadcastActiveChats,
-  setChatHandler,
-  type ChatHandler,
 } from "./state.js";
+import { setChatHandler, type ChatHandler } from "./chat-handler.js";
 import { replayBufferedEvents } from "./replay.js";
 import { markChatHandlerPending, clearChatHandlerPending, listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
 import { getTurnRegistry, releaseTurn } from "../session/turn-lock.js";

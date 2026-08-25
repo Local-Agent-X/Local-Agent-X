@@ -50,6 +50,7 @@ describe("fileAccessGroundingBlock", () => {
 describe("local model-family rider wiring", () => {
   const inputFor = (provider: string, model: string): BuildSystemPromptInput => ({
     message: "hi there", // must not trip COLD_START_VERBS
+    channel: "web" as const,
     sessionId: `family-rider-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
     memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
@@ -157,6 +158,7 @@ describe("unified harness-notice format", () => {
 
     const input: BuildSystemPromptInput = {
       message: "build me a landing page for my gym", // trips COLD_START_VERBS
+      channel: "web",
       sessionId,
       config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
       memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
@@ -177,14 +179,15 @@ describe("unified harness-notice format", () => {
 
     const opens = prompt.match(/\[HARNESS NOTE: /g) ?? [];
     const closes = prompt.match(/\[END HARNESS NOTE\]/g) ?? [];
-    expect(opens).toHaveLength(5);
-    expect(closes).toHaveLength(5);
+    expect(opens).toHaveLength(6);
+    expect(closes).toHaveLength(6);
     for (const label of [
       "BACKGROUND COMPLETIONS",
       "MEMORY NOTIFICATION",
       "TURN DIRECTIVE",
       "FILE ACCESS",
       "COLD-START HINT",
+      "CHANNEL",
     ]) {
       expect(prompt).toContain(`[HARNESS NOTE: ${label}]`);
     }
@@ -207,6 +210,7 @@ describe("Product Build turn directive", () => {
       'Reason: the persisted build is halted. Call build_plan_resume with project_dir="C:/apps/crm" now.';
     const prompt = await buildSystemPrompt({
       message: "continue the build",
+      channel: "web",
       sessionId: "product-build-directive",
       config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
       memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],

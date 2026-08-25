@@ -13,9 +13,9 @@
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
+import { getChatHandler } from "./chat-handler.js";
 import {
   broadcastToSession,
-  getChatHandler,
   getMessageCountForSession,
   terminateChat,
 } from "./state.js";
@@ -348,7 +348,12 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
     logger.warn(`[ws-chat] failed to set IDE work root: ${(e as Error).message}`);
   }
   ctx.subscriptions.add(sessionId);
-  if (handler) handler(sessionId, _msgText, _atts);
+  // The broker chat-bridge stamps phone frames with origin:"mobile" so the
+  // turn knows the user is on the AgentX app, not the desktop UI. Validated —
+  // arbitrary origin claims from other clients are dropped, not trusted.
+  const { parseFrameOrigin } = await import("../channel-context.js");
+  const origin = parseFrameOrigin(msg.origin);
+  if (handler) handler(sessionId, _msgText, _atts, origin ? { channel: origin } : undefined);
 }
 
 async function handleApprovalResponse(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {

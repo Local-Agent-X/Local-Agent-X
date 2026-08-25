@@ -83,7 +83,7 @@ export function wireWsChat(deps: {
   buildCtx: () => import("../server-context.js").ServerContext;
 }): void {
   const { chatWs, buildCtx } = deps;
-  chatWs.onChat(async (sessionId, message, attachments) => {
+  chatWs.onChat(async (sessionId, message, attachments, meta) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
     console.log(`[chat-diag] lifecycle onChat sess=${sessionId.slice(-8)} len=${message.length}`);
     logger.info(`[ws-chat] onChat sess=${sessionId} msg_len=${message.length} atts=${(attachments || []).length} imgs=${_imgCount} → direct (no HTTP self-loop)`);
@@ -123,6 +123,9 @@ export function wireWsChat(deps: {
         ctx,
         requestRole: "operator",
         sseSink: null,
+        // The broker bridge stamps phone frames origin:"mobile" (validated in
+        // message-router); desktop/IDE clients carry no origin → "web".
+        channel: meta?.channel ?? "web",
       });
     } catch (e) {
       const msg = (e as Error).message;

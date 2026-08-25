@@ -4,6 +4,7 @@
 // the verdict and exposes it alongside the final tool list.
 
 import type { ToolDefinition } from "../../types.js";
+import type { ChannelKind } from "../types.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { classifyIntent, hasLiteralToolCall, mightNeedToolForcing, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
@@ -26,7 +27,7 @@ export type Tier = "weak" | "medium" | "strong";
 export interface ToolSelectionInput {
   message: string;
   sessionId: string;
-  channel: "web" | "telegram" | "whatsapp" | "cron" | "agent";
+  channel: ChannelKind;
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
   resolvedProvider: string;

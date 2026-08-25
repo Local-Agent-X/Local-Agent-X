@@ -32,7 +32,7 @@ const PACK_PRIORITY = 95;
 // Tools that contact a third party / ship a file to a person. These are
 // high-stakes regardless of whether destructiveOperationReason flags them, so
 // they're folded into isHighStakesEgress alongside the irreversibility signal.
-const THIRD_PARTY_SEND = new Set(["email_send", "telegram_send", "whatsapp_send", "send_video", "send_image"]);
+const THIRD_PARTY_SEND = new Set(["email_send", "telegram_send", "whatsapp_send", "send_video", "send_image", "send_file"]);
 
 const MAX_ARGS_CHARS = 2000;
 

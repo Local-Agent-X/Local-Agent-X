@@ -265,11 +265,15 @@ function shapeCallResult(
   // op_messages, so the bridge can't re-read it. Keyed by op id; the
   // bridge drains it after the turn. No-op (just bounded memory) for web
   // chat, which renders media inline from this same result envelope.
-  if (opts.opId && (harvestedImages.length > 0 || media)) {
+  // kind "file" (send_file) is pull-delivery: the client fetches the staged
+  // /uploads ref from the result text — the messenger bridges have no
+  // sendDocument verb, so enqueuing it would just strand a checkpoint file.
+  const bridgeMedia = media && media.kind !== "file" ? media : undefined;
+  if (opts.opId && (harvestedImages.length > 0 || bridgeMedia)) {
     enqueueBridgeMedia(opts.opId, {
       imageB64: harvestedImages.map(i => i.b64),
-      imagePath: media?.kind === "image" ? media.path : undefined,
-      videoPath: media?.kind === "video" ? media.path : undefined,
+      imagePath: bridgeMedia?.kind === "image" ? bridgeMedia.path : undefined,
+      videoPath: bridgeMedia?.kind === "video" ? bridgeMedia.path : undefined,
     });
   }
 

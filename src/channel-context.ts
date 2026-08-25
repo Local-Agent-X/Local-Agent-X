@@ -71,7 +71,9 @@ const SURFACE_PROSE: Record<ChannelId, string> = {
     "broker link. They are typically AWAY from the desktop and CANNOT see its screen — describe what " +
     "happens on the PC instead of assuming they can watch it. The phone renders markdown, images, tool " +
     "cards, and approval cards, but the screen is narrow: keep replies compact and avoid wide tables or " +
-    "long code dumps. Tools still run on the desktop; files you create live there, not on the phone.",
+    "long code dumps. Tools still run on the desktop; files you create live there, not on the phone. " +
+    "When the user asks for a document from the PC (Word, Excel, PDF, …), call send_file — it stages the " +
+    "file so a tappable card appears in their chat.",
   voice:
     "This is a live VOICE conversation: your reply is spoken aloud. No visual UI exists — never use " +
     "markdown, lists, tables, code blocks, links, or emoji; keep answers short and conversational. " +

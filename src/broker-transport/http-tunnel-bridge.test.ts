@@ -118,6 +118,64 @@ describe("HttpTunnelBridge", () => {
     expect(Buffer.from(res.body, "base64").equals(Buffer.from(png))).toBe(true);
   });
 
+  it("frames Office documents as base64 binary — openxmlformats is NOT an xml text type", async () => {
+    // Regression: includes("xml") matched application/vnd.openXMLformats and
+    // decoded docx/xlsx binaries as lossy UTF-8 text — corrupt on arrival.
+    const zipMagic = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0xfe, 0x81]);
+    const fetchImpl = vi.fn(async () =>
+      fakeBinaryResponse(200, zipMagic, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "12", method: "GET", path: "/uploads/abcd1234-budget.xlsx" });
+    await flush();
+
+    const res = t.lastRes() as { id: string; status: number; enc?: string; body: string };
+    expect(res).toMatchObject({ id: "12", status: 200, enc: "base64" });
+    expect(Buffer.from(res.body, "base64").equals(Buffer.from(zipMagic))).toBe(true);
+  });
+
+  it("returns 413 for an oversize binary body instead of silently truncating it", async () => {
+    // A truncated xlsx is a corrupt xlsx delivered with a 200 — the phone must
+    // get a clean error it can surface ("file too large") instead.
+    const big = new Uint8Array(8 * 1024 * 1024 + 1);
+    const fetchImpl = vi.fn(async () =>
+      fakeBinaryResponse(200, big, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "13", method: "GET", path: "/uploads/huge.xlsx" });
+    await flush();
+
+    const res = t.lastRes() as { id: string; status: number; enc?: string; body: string };
+    expect(res.status).toBe(413);
+    expect(res.enc).toBeUndefined();
+    expect(res.body).toContain("too large");
+  });
+
+  it("returns 413 for an oversize text body instead of slicing it", async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(200, "x".repeat(8 * 1024 * 1024 + 1)));
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "14", method: "GET", path: "/api/sessions/big" });
+    await flush();
+
+    expect(t.lastRes().status).toBe(413);
+  });
+
   it("frames a text response as utf8 with no enc (backward-compatible wire shape)", async () => {
     const fetchImpl = vi.fn(async () => fakeResponse(200, '{"ok":true}'));
     const bridge = new HttpTunnelBridge({

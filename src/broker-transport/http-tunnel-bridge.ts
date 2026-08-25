@@ -73,7 +73,11 @@ function isTextContentType(contentType: string): boolean {
     ct.startsWith("text/") ||
     ct.includes("json") ||
     ct.includes("javascript") ||
-    ct.includes("xml") ||
+    // Real XML types only ("application/xml", "…+xml"). A bare includes("xml")
+    // also matched application/vnd.openXMLformats (docx/xlsx/pptx) and decoded
+    // Office binaries as lossy UTF-8 text — corrupt on arrival.
+    ct.includes("/xml") ||
+    ct.includes("+xml") ||
     ct.includes("svg") ||
     ct.includes("ecmascript") ||
     ct.includes("x-www-form-urlencoded")
@@ -157,24 +161,27 @@ export class HttpTunnelBridge implements HttpChannel {
       const headers = { "content-type": contentType };
       if (isTextContentType(contentType)) {
         const text = await r.text();
-        return {
-          t: "res",
-          id: req.id,
-          status: r.status,
-          headers,
-          body: text.length > MAX_BODY ? text.slice(0, MAX_BODY) : text,
-        };
+        // Oversize is an ERROR, not a truncation: a sliced body parses as a
+        // corrupt payload with a 200 status, which is strictly worse than a
+        // clean failure the phone can surface ("file too large").
+        if (text.length > MAX_BODY) {
+          return { t: "res", id: req.id, status: 413, body: `response too large for the tunnel (${text.length} bytes, limit ${MAX_BODY})` };
+        }
+        return { t: "res", id: req.id, status: r.status, headers, body: text };
       }
-      // Binary asset (image/font/etc.): base64-frame it so it survives the JSON wire.
+      // Binary asset (image/font/document): base64-frame it so it survives the
+      // JSON wire. Same oversize rule — a truncated xlsx is a corrupt xlsx.
       const bytes = Buffer.from(await r.arrayBuffer());
-      const capped = bytes.length > MAX_BODY ? bytes.subarray(0, MAX_BODY) : bytes;
+      if (bytes.length > MAX_BODY) {
+        return { t: "res", id: req.id, status: 413, body: `response too large for the tunnel (${bytes.length} bytes, limit ${MAX_BODY})` };
+      }
       return {
         t: "res",
         id: req.id,
         status: r.status,
         headers,
         enc: "base64",
-        body: capped.toString("base64"),
+        body: bytes.toString("base64"),
       };
     } catch (e) {
       logger.warn(`[broker-transport] http tunnel proxy failed: ${(e as Error).message}`);

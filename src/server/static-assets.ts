@@ -7,7 +7,7 @@ import { confineToDir } from "../security/layer/index.js";
 import { getPageBundle, stampAssetTags } from "./static-bundle.js";
 import type { LAXConfig } from "../types.js";
 
-const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv" };
+const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", rtf: "application/rtf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint" };
 const MEDIA_CONTENT_TYPES: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
 const FILE_CONTENT_TYPES: Record<string, string> = { docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", html: "text/html", css: "text/css", js: "application/javascript" };
 const INLINEABLE_FILES = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf", "txt", "json", "csv", "md", "html", "css", "js", "mp4", "webm"]);
@@ -28,8 +28,11 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     const file = confineToDir(join(dataDir, "uploads"), filename);
     if (!file) { json(403, { error: "Path traversal blocked" }); return true; }
     if (!existsSync(file)) { json(404, { error: "File not found" }); return true; }
-    const ext = filename.split(".").pop() || "";
+    const ext = (filename.split(".").pop() || "").toLowerCase();
     const headers: Record<string, string> = { ...corsHeaders(req), "Content-Type": UPLOAD_CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" };
+    // Documents staged by send_file download rather than render inline — same
+    // inlineable-vs-attachment split /files/ applies below.
+    if (!INLINEABLE_FILES.has(ext)) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
     if (ext === "svg") headers["Content-Security-Policy"] = "script-src 'none'";
     res.writeHead(200, headers); res.end(readFileSync(file)); return true;
   }

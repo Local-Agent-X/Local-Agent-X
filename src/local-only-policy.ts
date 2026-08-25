@@ -68,7 +68,7 @@ const REMOTE_ONLY_TOOLS = new Set([
   "build_app",
   "web_search", "image_search", "extract_site_assets", "youtube_analyze",
   "generate_image", "edit_image", "generate_video", "email_send",
-  "telegram_send", "whatsapp_send", "send_image", "send_video",
+  "telegram_send", "whatsapp_send", "send_image", "send_video", "send_file",
   "check_for_updates", "apply_update", "connector_create",
 ]);
 

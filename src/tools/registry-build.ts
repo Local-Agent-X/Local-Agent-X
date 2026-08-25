@@ -9,6 +9,7 @@ import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
 import { viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
+import { sendFileTool } from "./file-delivery-tools.js";
 import { computerTool } from "./input-tools.js";
 import { buildAppTool } from "./build-app.js";
 import { appRebuildTool } from "./app-rebuild-tool.js";
@@ -55,7 +56,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
   selfEditTool, recallTool, askUserTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
-  viewImageTool, sendVideoTool, sendImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
+  viewImageTool, sendVideoTool, sendImageTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   buildAppTool, appRebuildTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,
   ...processTools,

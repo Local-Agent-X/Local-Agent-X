@@ -153,14 +153,15 @@ export interface ToolResult {
   _image?: { mime: string; b64: string; path: string; question: string };
 
   /**
-   * A large media file (video) the tool produced or wants delivered. Unlike
-   * `_image` this carries a PATH, not bytes — videos are too big to base64
-   * onto every result and the model can't ingest them as image_url. The
-   * WhatsApp/Telegram bridge reads the file off disk and forwards it. Set by
-   * generate_video and send_video (video), and send_image (image). Not fed to
-   * the model.
+   * A large media file the tool produced or wants delivered. Unlike `_image`
+   * this carries a PATH, not bytes — too big to base64 onto every result and
+   * the model can't ingest them as image_url. The WhatsApp/Telegram bridge
+   * reads the file off disk and forwards it (image/video only — documents are
+   * pulled by the client from the staged /uploads ref instead). Set by
+   * generate_video and send_video (video), send_image (image), and send_file
+   * (file, with `name` as the user-facing filename). Not fed to the model.
    */
-  _media?: { kind: "image" | "video"; path: string; mime: string };
+  _media?: { kind: "image" | "video" | "file"; path: string; mime: string; name?: string };
 }
 
 export interface AgentTurn {

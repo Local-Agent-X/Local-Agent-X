@@ -39,7 +39,7 @@ import {
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "../middlewares/host.js";
 import { opCancel, subscribeOpEvents, subscribeOpStream } from "../control-api.js";
 import { readOpTurns } from "../store.js";
-import { isCommittingTool } from "../../committing-tool-check.js";
+import { opCommittedWork } from "../../committing-tool-check.js";
 import type { CanonicalEvent, StateChangedBody } from "../types.js";
 import { isTerminalState, type TerminalState } from "../terminal-states.js";
 import { createLogger } from "../../logger.js";
@@ -267,14 +267,7 @@ export async function runAgentViaCanonical(
     // toolCallSummary only proves work when resultStatus === "ok". This status
     // is stripped from AgentTurn.messages, so it must be computed here where
     // op.id is in scope and the result-guard downstream can trust it.
-    let committedWork = false;
-    for (const turn of readOpTurns(op.id)) {
-      for (const s of turn.toolCallSummary ?? []) {
-        if (s.resultStatus !== "ok") continue;
-        if (isCommittingTool(s.tool)) { committedWork = true; break; }
-      }
-      if (committedWork) break;
-    }
+    const committedWork = opCommittedWork(readOpTurns(op.id));
     const result: AgentTurn = {
       messages,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },

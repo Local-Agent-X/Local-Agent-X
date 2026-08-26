@@ -41,7 +41,11 @@ const COMMITTING_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
 const ARG_AWARE_TOOLS: ReadonlySet<string> = new Set<string>([
   "http_request",  // GET/HEAD idempotent; POST/PUT/DELETE/PATCH committing
   "browser",       // click on commit-style buttons is committing
+  "pdf",           // read/extract_tables idempotent; create/merge committing
 ]);
+
+/** pdf actions that only read. Anything else on the tool writes a file. */
+const PDF_READONLY_ACTIONS: ReadonlySet<string> = new Set<string>(["read", "extract_tables"]);
 
 /** Committing tools NOT covered by the registry derivation. `tool-registry.ts`
  *  derives risk from the policy taxonomy, but plugin/integration tools register
@@ -111,6 +115,18 @@ export function detectCommittingCalls(
         continue;
       }
 
+      // pdf reads and table extraction commit nothing; create/merge write a file.
+      // Registry risk cannot express this — it is workspace-write because the
+      // tool CAN write, which made reading a contract look like doing work.
+      if (name === "pdf") {
+        let action = "";
+        try { action = String(JSON.parse(tc.function?.arguments || "{}").action || ""); } catch { /* unknown → committing */ }
+        if (!PDF_READONLY_ACTIONS.has(action)) {
+          findings.push({ toolName: name, reason: `pdf.${action || "unknown"} writes a file` });
+        }
+        continue;
+      }
+
       // browser tool: look for clicks on commit-style buttons
       if (name === "browser") {
         try {
@@ -152,4 +168,50 @@ export function isCommittingTool(name: string): boolean {
   const entry = TOOLS[name];
   if (!entry) return false;
   return COMMITTING_RISKS.has(entry.risk);
+}
+
+/** Minimal structural view of a stored op turn. Declared here rather than
+ *  imported from canonical-loop/types so this module stays a leaf — it is
+ *  consumed by session/, agent-guards/ and plugin-system/, none of which
+ *  should pull the loop's store types in behind it. */
+export interface OpTurnToolRecord {
+  toolCallSummary?: { tool: string; resultStatus: string }[] | null;
+}
+
+/** Tools whose only effect is the agent's OWN task ledger. They are genuinely
+ *  committing (a replay would duplicate them) so they stay in isCommittingTool,
+ *  but they are not progress on the user's request. Prefix-matched to mirror
+ *  opTouchedTaskLedger (middlewares/open-steps.ts) — a hand-listed set is the
+ *  drift this module's header exists to kill. */
+function isLedgerTool(name: string): boolean {
+  return name.startsWith("task_");
+}
+
+function opCommittedMatching(
+  turns: Iterable<OpTurnToolRecord>,
+  predicate: (tool: string) => boolean,
+): boolean {
+  for (const turn of turns) {
+    for (const s of turn.toolCallSummary ?? []) {
+      if (s.resultStatus !== "ok") continue;
+      if (predicate(s.tool)) return true;
+    }
+  }
+  return false;
+}
+
+/** Did this op commit anything? The failover / substantiation question:
+ *  planning counts, because replaying it would duplicate the tasks. */
+export function opCommittedWork(turns: Iterable<OpTurnToolRecord>): boolean {
+  return opCommittedMatching(turns, isCommittingTool);
+}
+
+/** Did this op commit work on the USER'S request, ignoring its own planning?
+ *  The completion-gate question. A gate that forces another turn because steps
+ *  are open must not accept the task_create calls that opened those steps as
+ *  the evidence that more work is owed — that reasoning is circular, and it is
+ *  what made a read-only "summarize these contracts" turn pay a second
+ *  round-trip to tick three checkboxes. */
+export function opCommittedSubstantiveWork(turns: Iterable<OpTurnToolRecord>): boolean {
+  return opCommittedMatching(turns, (t) => !isLedgerTool(t) && isCommittingTool(t));
 }

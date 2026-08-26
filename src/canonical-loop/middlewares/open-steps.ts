@@ -11,8 +11,11 @@
  * isn't safe for chat). A normal chat answer with no task list never trips it.
  *
  * Inert by design when no tasks exist, so it only bites on work the model
- * explicitly broke into steps. The system prompt directs task_create for
- * non-trivial multi-step work so the gate has teeth on the models that need it.
+ * explicitly broke into steps. Nothing in the system prompt asks for that list
+ * — the beforeTurn seed below (agent/background lanes) is the only directive in
+ * the repo, and capable models open one unprompted. So the gate must earn its
+ * extra turn from what the op COMMITTED, never from the task_* calls that
+ * opened the steps: crediting those makes the gate cite itself.
  */
 import type { CanonicalMiddleware, CanonicalLoopContext, CanonicalMiddlewareResult } from "./types.js";
 import type { Op } from "../../ops/types.js";
@@ -22,6 +25,7 @@ import { readOpTurns } from "../store.js";
 import { getMiddlewareState } from "./state.js";
 import { EDIT_TOOLS } from "../../agent-guards/verify-gate.js";
 import { capabilityForbiddenForOp, opForbidsCapability, planModeForbidsCapability } from "../instruction-ledger/index.js";
+import { opCommittedSubstantiveWork } from "../../committing-tool-check.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -79,6 +83,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
 
     const open = getOpenTasksForSession(sessionId);
     if (open.length === 0) return interactiveBuildPlanSeed(ctx);
+    if (!opCommittedSubstantiveWork(readOpTurns(ctx.op.id))) return { kind: "continue" };
 
     const signature = open.map((t) => t.id).sort().join(",");
     if (lastNudgedSignature.get(sessionId) === signature) return { kind: "continue" };
@@ -204,6 +209,7 @@ export function earnedDoneNudge(op: Op): string | null {
   const open = getOpenTasksForSession(sessionId);
   if (open.length === 0) return null;
   if (!opTouchedTaskLedger(op.id)) return null;
+  if (!opCommittedSubstantiveWork(readOpTurns(op.id))) return null;
 
   earnedDoneFired.add(op.id);
   const list = open.map((t, i) => `${i + 1}. ${t.description}`).join("\n");

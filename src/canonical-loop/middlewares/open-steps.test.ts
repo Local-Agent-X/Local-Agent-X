@@ -29,6 +29,13 @@ const mockSession = vi.mocked(getSessionForOp);
 const mockOpenTasks = vi.mocked(getOpenTasksForSession);
 const mockOpTurns = vi.mocked(readOpTurns);
 
+/** An op that planned AND did real work. The gates require committed work
+ *  beyond the task ledger, so a ledger-only fixture would assert the bug. */
+const OK_WORK_TURN = [{ toolCallSummary: [
+  { tool: "task_create", resultStatus: "ok" },
+  { tool: "write", resultStatus: "ok" },
+] }] as never;
+
 let opCounter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
   return {
@@ -49,6 +56,7 @@ describe("open-steps gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSession.mockReturnValue("sess-default");
+    mockOpTurns.mockReturnValue(OK_WORK_TURN);
   });
 
   it("continues when the turn still requested tools", async () => {
@@ -243,7 +251,6 @@ describe("openStepsTerminationWarning", () => {
 });
 
 describe("earnedDoneNudge — unattended earned-done gate", () => {
-  const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
   const op = (id: string, lane: Op["lane"]): Op => ({ id, lane } as unknown as Op);
 
   beforeEach(() => {
@@ -251,7 +258,7 @@ describe("earnedDoneNudge — unattended earned-done gate", () => {
     _resetEarnedDoneState();
     mockSession.mockReturnValue("sess-earned");
     mockOpenTasks.mockReturnValue([{ id: "1", description: "Wire the export endpoint" }]);
-    mockOpTurns.mockReturnValue(okTaskTurn);
+    mockOpTurns.mockReturnValue(OK_WORK_TURN);
   });
 
   it("forces one more turn for a worker op with an open step, then terminates", () => {
@@ -292,7 +299,6 @@ describe("earnedDoneNudge — unattended earned-done gate", () => {
 });
 
 describe("instruction-ledger gating (user forbade workspace writes)", () => {
-  const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
 
   function forbidWrites(opId: string): void {
     setOpLedger(opId, { prohibitions: ["workspace-write"], obligations: [], phrases: ["read-only"] });
@@ -304,7 +310,7 @@ describe("instruction-ledger gating (user forbade workspace writes)", () => {
     _resetOpLedgers();
     mockSession.mockReturnValue("sess-ledger");
     mockOpenTasks.mockReturnValue([{ id: "1", description: "Step one" }]);
-    mockOpTurns.mockReturnValue(okTaskTurn);
+    mockOpTurns.mockReturnValue(OK_WORK_TURN);
   });
 
   it("`when` suppresses both hooks when workspace-write is forbidden; fail-open without a ledger", () => {
@@ -324,5 +330,57 @@ describe("instruction-ledger gating (user forbade workspace writes)", () => {
     forbidWrites("op-warn-forbid");
     expect(openStepsTerminationWarning("op-warn-forbid")).toBeNull();
     expect(openStepsTerminationWarning("op-warn-free")).not.toBeNull();
+  });
+});
+
+describe("read-only ops never buy an extra turn", () => {
+  // The shape that regressed: three planning calls, two PDF reads, an answer.
+  // Both PDFs and the task ledger carry risk "workspace-write" in the registry,
+  // so a name-only committing check credits all five as work and forces a turn
+  // whose entire output is task_update x3.
+  const CONTRACTS_TURN = [{ toolCallSummary: [
+    { tool: "task_create", resultStatus: "ok" },
+    { tool: "task_create", resultStatus: "ok" },
+    { tool: "task_create", resultStatus: "ok" },
+    { tool: "pdf", resultStatus: "ok" },
+    { tool: "pdf", resultStatus: "ok" },
+  ] }] as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetEarnedDoneState();
+    _resetOpLedgers();
+    mockSession.mockReturnValue("sess-readonly");
+    mockOpenTasks.mockReturnValue([{ id: "1", description: "Summarize the amendment" }]);
+    mockOpTurns.mockReturnValue(CONTRACTS_TURN);
+  });
+
+  it("does not force a continuation after reading documents", async () => {
+    expect((await fire(ctx({ op: { id: "op-contracts", lane: "interactive" } as never }))).kind)
+      .toBe("continue");
+  });
+
+  it("does not force a continuation for a ledger-only op", async () => {
+    mockOpTurns.mockReturnValue(
+      [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never,
+    );
+    expect((await fire(ctx())).kind).toBe("continue");
+  });
+
+  it("earnedDoneNudge stays silent for a read-only unattended run", () => {
+    expect(earnedDoneNudge({ id: "op-research", lane: "agent" } as never)).toBeNull();
+  });
+
+  it("still fires once the op writes something", async () => {
+    mockOpTurns.mockReturnValue(OK_WORK_TURN);
+    expect((await fire(ctx())).kind).toBe("nudge");
+  });
+
+  it("does not burn the one-shot nudge slot on the suppressed turn", async () => {
+    mockSession.mockReturnValue("sess-slot");
+    const first = await fire(ctx());
+    expect(first.kind).toBe("continue");
+    mockOpTurns.mockReturnValue(OK_WORK_TURN);
+    expect((await fire(ctx())).kind).toBe("nudge");
   });
 });

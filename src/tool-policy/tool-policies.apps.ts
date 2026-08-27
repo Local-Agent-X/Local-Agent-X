@@ -31,7 +31,14 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyEntry> = {
   app_query:       { kernel: "internal", risk: "safe" },
   app_list:        { kernel: "internal", risk: "safe" },
   app_delete:      { kernel: "internal", risk: "destructive" },
-  app_permissions: { kernel: "internal", risk: "safe" },
+  // Every action mutates the app registry — grant/revoke rewrite an app's ACL,
+  // suspend/activate/archive flip its lifecycle state. There is no read-only
+  // action (app_read/app_query are the readers), so the tier is the sibling
+  // mutator one, not "safe". It was "safe", which made isCommittingTool() answer
+  // false: a real permission grant scored as zero committed work and did not
+  // suppress failover, so a replayed turn could double-grant. All actions are
+  // reversible, so it is not "destructive" like app_delete.
+  app_permissions: { kernel: "internal", risk: "workspace-write" },
 
   // ── Issues / tasks (issue_* / task_* globs) ──
   issue_create:   { kernel: "internal", risk: "workspace-write" },

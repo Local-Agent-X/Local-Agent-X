@@ -1,7 +1,6 @@
 // The six detector functions. Each is pure: takes TurnState, returns either
 // a RetryInstruction (turn needs a nudge) or null (turn is fine).
 
-import { isCommittingTool } from "../committing-tool-check.js";
 import {
   PLANNING_ONLY_INSTRUCTION,
   SINGLE_ACTION_STOP_INSTRUCTION,
@@ -37,14 +36,31 @@ export function detectPlanningOnly(state: TurnState): RetryInstruction | null {
   //      Wrote X, Created X, Shipped X, ...) — covers the case where the
   //      reply opens with a status line ("Build CLI timed out. I'll write
   //      it directly...") but ends with a real recap.
-  // Either way, if a committing tool ran this turn we treat it as a recap,
+  // Either way, if the op landed SUBSTANTIVE work we treat it as a recap,
   // not a plan, and skip the planning-only retry.
+  //
+  // The question THIS detector asks: did the model do real work on the USER'S
+  // task, or only talk about it? That is exactly what the SUBSTANTIVE tally
+  // encodes, so this is the one site of the three that reads
+  // `committedSubstantiveWork` — detectUncommittedTurn and detectEvidenceStale
+  // ask a broader question and read `committedWorkOrLedger` instead.
+  //
+  // The raw name-only tally is wrong here in BOTH directions, each verified
+  // independently: it says "committed" for a turn whose only side effect was
+  // the model's own task_* ledger, excusing the exact "wrote a plan, then
+  // promised to act" reply this detector exists to catch, and it says "did
+  // nothing" for a `pdf create` or a `browser` submit (isCommittingTool is
+  // name-only and answers false for every arg-aware tool), nagging a genuine
+  // recap of real work.
+  //
+  // This is the THIRD detector exposed to the arg-aware signal's noise, not a
+  // detector outside it: `committedSubstantiveWork` is built from the same
+  // per-call verdict that credits `browser` from a keyword regex over an `act`
+  // instruction. Measured at the detectUncommittedTurn call site below. Here
+  // the failure direction is a recap wrongly excused — a planning-only reply
+  // that follows a mis-scored browser click keeps its nudge suppressed.
   const looksLikeRecap = COMPLETION_OPENER.test(text) || COMPLETION_PHRASE_AT_SENTENCE_START.test(text);
-  if (looksLikeRecap) {
-    for (const name of state.toolsCalledThisTurn) {
-      if (isCommittingTool(name)) return null;
-    }
-  }
+  if (looksLikeRecap && state.committedSubstantiveWork) return null;
   if (!PLANNING_FUTURE_PROMISE.test(text)) return null;
   if (!ACTION_VERB.test(text)) return null;
   return { kind: "planning-only", instruction: PLANNING_ONLY_INSTRUCTION };
@@ -151,25 +167,94 @@ export function detectEmptyResponse(state: TurnState): RetryInstruction | null {
 }
 
 /**
- * Turn is ending (no tools this iteration) but no committing tool was
- * called in the whole turn. This catches the "ran exploratory tools,
- * never actually did the work" pattern.
+ * Turn is ending (no tools this iteration) but the op has no committed side
+ * effect on record at all. This catches the "ran exploratory tools, never
+ * actually did the work" pattern.
  */
 export function detectUncommittedTurn(state: TurnState): RetryInstruction | null {
   if (state.toolCallsThisIteration.length > 0) return null;
   if (state.iteration === 0) return null; // iter 0 with no tools is handled by planning-only + empty-response
-  let hasCommit = false;
-  for (const name of state.toolsCalledThisTurn) {
-    if (isCommittingTool(name)) { hasCommit = true; break; }
-  }
-  if (hasCommit) return null;
+  // The question THIS detector asks: is there ANY committed side effect on
+  // record for this op? — NOT detectPlanningOnly's narrower "was it the USER'S
+  // work?". So it reads `committedWorkOrLedger`, which the producer builds as
+  // the UNION of the two op-level tallies (raw name-only ∪ arg-aware
+  // substantive; see post-turn-detector.ts). Neither half answers this alone:
+  //
+  //   - Substantive alone: open-steps injects "lay them out with task_create"
+  //     on turn 0 of every agent/background op, and this detector stack runs on
+  //     worker ops (isWorkerOp — every non-interactive lane), so the ops it
+  //     seeds are squarely inside what this judges. A read-only research op
+  //     that takes that instruction (web_search / read / grep plus its own task
+  //     ledger) has substantive == 0 BY DEFINITION, so this would fire and
+  //     UNCOMMITTED_TURN_INSTRUCTION would tell the model to "call the tool
+  //     that actually commits work (write/edit/send/save/pin/deploy)" on an op
+  //     where the user asked for NO change — a nudge that op can never satisfy.
+  //     open-steps reads the identical substantive predicate in this same stack
+  //     with the OPPOSITE polarity — substantive == 0 is precisely when it
+  //     STANDS DOWN — and committing-tool-check's opCommittedSubstantiveWork
+  //     names the read-only "summarize these contracts" turn as the case that
+  //     predicate exists to spare. This detector must not nudge the very op the
+  //     rest of the stack stands down for.
+  //   - Raw alone: the name-only check answers false for every arg-aware tool,
+  //     so an op whose entire work was a `pdf create`, a `browser` submit or an
+  //     `http_request` POST read as uncommitted and got nagged to commit work
+  //     it had just committed. That was measured on real ops, and it also made
+  //     this detector contradict detectPlanningOnly on the SAME TurnState —
+  //     "did real work" there, "nothing committed" here.
+  //
+  // The union keeps the first stand-down (raw still supplies the task_* ledger)
+  // and closes the second.
+  //
+  // HONEST LIMIT that remains: the read-only stand-down is still ACCIDENTAL —
+  // it rides on task_* being committing BY NAME, so a read-only op that never
+  // opens a task list is still nagged. Fixing that properly needs a "did the
+  // user ask for a change?" signal, which does not exist yet.
+  //
+  // SECOND HONEST LIMIT — the input is noisy, and this is the one place the
+  // measurement is written down. canonical-loop/middlewares/types.ts documents
+  // the browser-regex false positives for the RAW tally's reader; the same
+  // noise reaches here through the arg-aware half of the union, and through
+  // both fields it reaches THREE detectors, not two: detectPlanningOnly via
+  // `committedSubstantiveWork`, this one and detectEvidenceStale via
+  // `committedWorkOrLedger`.
+  //
+  // Census of every `browser` call recorded in ~/.lax (3,681 calls — 2,154
+  // session files plus 333 operations; 516 of them click / click_text / act,
+  // 71 distinct action+target shapes): 9 shapes match
+  // COMMITTING_BROWSER_ACTION_BUTTONS and 7 of those 9 are false positives
+  // (13 of the 17 matching calls). Only `click "button[type=submit]"` and
+  // `act "sign up for a new account"` were real. Calling that "a regex over
+  // button text" understates the surface: 5 of the 9 matching shapes are
+  // `act`, whose target is a free-form natural-language INSTRUCTION, not
+  // button text — `act "Replace the purchase order number field with
+  // 111222333"` is scored as committed work on the word `purchase`, and so is
+  // `act "click Purchase Orders in the left navigation"`. `http_request`
+  // carries a smaller version: committingArgReason treats an args record
+  // holding `{_raw: …}` (how every adapter wraps JSON it could not parse) as
+  // committing, so a malformed GET would stand these detectors down. That one
+  // is mostly closed by rowCommittedWork's `resultStatus === "ok"` gate — a
+  // call whose args never parsed errors — but it is not closed by design.
+  //
+  // SCOPE, stated so nobody reads it as an exemption: of the 822 arg-aware
+  // (browser / http_request / pdf) tool-call summary rows on disk, 815 are
+  // interactive-lane and 7 sit in a single `agent`-lane op — and all 7 are
+  // `http_request`, not one a `browser` click. These detectors are
+  // isWorkerOp-gated, so today the browser noise cannot reach them. That is a
+  // SAMPLING ARTIFACT of this box, not a structural guarantee:
+  // tools/audience-map.ts advertises http_request, browser and pdf to the
+  // `spawned-agent` audience, so a worker op can call all three. Compounding
+  // it, zero of the 4,398 summary rows on disk carry a `committing` field yet,
+  // so for all existing history the arg-aware half silently degrades to the
+  // name-only fallback; the noise arrives with the first worker op that
+  // dispatches a browser click, not with a code change here.
+  if (state.committedWorkOrLedger) return null;
   // Only nudge once per turn for this class; caller tracks the counter.
   return { kind: "uncommitted-turn", instruction: UNCOMMITTED_TURN_INSTRUCTION };
 }
 
 /**
- * Evidence counter flat for 2+ rounds AND no committing tool was called
- * in that window. Prevents endless exploration.
+ * Evidence counter flat for 2+ rounds AND the op has no committed side effect
+ * on record. Prevents endless exploration.
  */
 export function detectEvidenceStale(state: TurnState): RetryInstruction | null {
   // Skip if the agent JUST called a tool this iteration — its result hasn't
@@ -186,10 +271,23 @@ export function detectEvidenceStale(state: TurnState): RetryInstruction | null {
   const prior1 = history[history.length - 2];
   const prior2 = history[history.length - 3];
   if (last !== prior1 || prior1 !== prior2) return null;
-  let hasCommit = false;
-  for (const name of state.toolsCalledThisTurn) {
-    if (isCommittingTool(name)) { hasCommit = true; break; }
-  }
-  if (hasCommit) return null;
+  // The question THIS detector asks: with the evidence counter flat, has
+  // ANYTHING at all been committed — or is the op purely spinning? Same
+  // `committedWorkOrLedger` union as detectUncommittedTurn above, chosen for
+  // the same reasons and carrying the same remaining limit; that comment is
+  // the one place the argument is written out. The short version: this
+  // detector judges the same agent/background ops open-steps seeds with a
+  // task_create plan, so the substantive half alone would tell a read-only
+  // research op, forever, to commit a change nobody asked for — while the raw
+  // half alone is blind to `pdf` / `browser` / `http_request` and nagged ops
+  // that had already committed their work.
+  //
+  // It also inherits the same NOISE, measured in full at that call site: the
+  // arg-aware half credits `browser` from a keyword regex that in a census of
+  // 3,681 real browser calls was a false positive on 7 of the 9 shapes it
+  // matched, 5 of which were free-form `act` instructions rather than button
+  // text. Here that only makes the detector stand down early — it can suppress
+  // an evidence-stale nudge, never fire a spurious one.
+  if (state.committedWorkOrLedger) return null;
   return { kind: "evidence-stale", instruction: EVIDENCE_STALE_INSTRUCTION };
 }

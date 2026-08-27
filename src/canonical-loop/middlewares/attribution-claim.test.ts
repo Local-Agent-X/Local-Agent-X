@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { attributionClaimMiddleware, looksLikeAttributionClaim } from "./attribution-claim.js";
 import { verifyAttributionConfabulationWithLLM } from "../../classifiers/claim-verify.js";
+import { makeCanonicalLoopContext, type CanonicalLoopContextOverrides } from "./ctx.test-helper.js";
 
 vi.mock("../../classifiers/claim-verify.js", () => ({
   verifyAttributionConfabulationWithLLM: vi.fn(async () => true),
@@ -13,8 +14,8 @@ const CONFAB = 'I created a 4-slide presentation that combines all four tools yo
   '(Runway Gen-3 cinematic style, Kling-level depth, Luma/Pika speed) into one cohesive artifact.';
 
 let opCounter = 0;
-function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
+  return makeCanonicalLoopContext({
     op: { id: `op-${opCounter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 1,
     toolCalls: [],
@@ -23,7 +24,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     userMessage: "combine all 4. topic is man's place in the universe",
     assistantContent: CONFAB,
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 const fire = (c: CanonicalLoopContext) => attributionClaimMiddleware.afterModelCall!(c);
 
@@ -69,8 +70,8 @@ describe("attribution-claim middleware", () => {
 
   it("only applies to chat_turn ops", () => {
     expect(attributionClaimMiddleware.when!(ctx())).toBe(true);
-    expect(attributionClaimMiddleware.when!(ctx({ op: { id: "v", type: "voice_turn" } as never }))).toBe(false);
-    expect(attributionClaimMiddleware.when!(ctx({ op: { id: "w", type: "agent_spawn" } as never }))).toBe(false);
+    expect(attributionClaimMiddleware.when!(ctx({ op: { id: "v", type: "voice_turn" } }))).toBe(false);
+    expect(attributionClaimMiddleware.when!(ctx({ op: { id: "w", type: "agent_spawn" } }))).toBe(false);
   });
 });
 

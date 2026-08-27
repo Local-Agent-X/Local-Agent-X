@@ -3,6 +3,7 @@ import { broadSweepNudgeMiddleware, looksLikeBroadSweep } from "./broad-sweep-nu
 import type { CanonicalLoopContext } from "./types.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 function opId(): string { return `op-bsn-test-${++_op}`; }
@@ -11,13 +12,13 @@ function ctxFor(
   op: string,
   opts: { task: string; toolCalls?: number; enumeratedThisOp?: boolean },
 ): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op },
     userMessage: opts.task,
     assistantContent: "",
     toolCalls: new Array(opts.toolCalls ?? 0).fill({ name: "x" }),
     toolsCalledThisOp: new Set(opts.enumeratedThisOp ? ["grep"] : []),
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const run = (op: string, opts: Parameters<typeof ctxFor>[1]) =>

@@ -27,18 +27,19 @@ import { _resetOpLedgers } from "./ledger.js";
 import { extractConstraints } from "./extract.js";
 import { prematureCompletionMiddleware } from "../middlewares/premature-completion.js";
 import type { CanonicalLoopContext } from "../middlewares/types.js";
+import { makeCanonicalLoopContext } from "../middlewares/ctx.test-helper.js";
 
 // A worker-op turn that ends tool-lessly with a final-sounding summary and
 // nothing committed — the exact shape premature-completion nudges, UNLESS the
 // op forbids workspace writes. Mirrors premature-completion.test.ts's ctx.
 function toollessDoneCtx(opId: string): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: opId, lane: "agent" },
     userMessage: "refactor the parser and save the result",
     assistantContent: "All done — here's a summary of what I'd change.",
     toolCalls: [],
     committingToolsThisOp: new Set<string>(),
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const runPersistenceGuard = (c: CanonicalLoopContext) =>

@@ -10,6 +10,7 @@ import { selfCheckMiddleware } from "./self-check.js";
 import { _resetMiddlewareStates } from "./state.js";
 import { readOpMessages } from "../store.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 vi.mock("../store.js", () => ({ readOpMessages: vi.fn(() => []) }));
 const mockRead = vi.mocked(readOpMessages);
@@ -27,12 +28,12 @@ const toolRes = (result: string, toolCallId = "t1") =>
 const ENOENT = "Error: ENOENT: no such file or directory, open 'config.json'";
 
 function ctxFor(op: string, over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: "agent" },
     assistantContent: "All set — the migration is complete.",
     toolCalls: [],
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const run = (c: CanonicalLoopContext) => selfCheckMiddleware.afterModelCall!(c);

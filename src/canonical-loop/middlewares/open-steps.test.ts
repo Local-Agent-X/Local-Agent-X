@@ -24,28 +24,31 @@ import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
+import { makeCanonicalLoopContext, type CanonicalLoopContextOverrides } from "./ctx.test-helper.js";
 
 const mockSession = vi.mocked(getSessionForOp);
 const mockOpenTasks = vi.mocked(getOpenTasksForSession);
 const mockOpTurns = vi.mocked(readOpTurns);
 
-/** An op that planned AND did real work. The gates require committed work
- *  beyond the task ledger, so a ledger-only fixture would assert the bug. */
+/** An op that planned AND did real work. Read from op_turns by the two
+ *  decide-outcome entry points, which have no ctx. */
 const OK_WORK_TURN = [{ toolCallSummary: [
   { tool: "task_create", resultStatus: "ok" },
   { tool: "write", resultStatus: "ok" },
 ] }] as never;
 
 let opCounter = 0;
-function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+// The hooks read the host-precomputed substantive set, never op_turns.
+function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
+  return makeCanonicalLoopContext({
     op: { id: `op-${opCounter++}`, lane: "agent" },
     turnIdx: 0,
     toolCalls: [],
     toolNames: new Set(["task_create", "task_update"]),
     assistantContent: "Here's the result.",
+    substantiveCommittingToolsThisOp: new Set(["write"]),
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 async function fire(c: CanonicalLoopContext) {
@@ -133,7 +136,7 @@ describe("turn-0 plan seed (beforeTurn)", () => {
   });
 
   it("fires for the background lane too (cron missions)", async () => {
-    expect((await seed(ctx({ op: { id: "op-bg", lane: "background" } as never }))).kind).toBe("nudge");
+    expect((await seed(ctx({ op: { id: "op-bg", lane: "background" } }))).kind).toBe("nudge");
   });
 
   it("skips turns after the first", async () => {
@@ -141,8 +144,8 @@ describe("turn-0 plan seed (beforeTurn)", () => {
   });
 
   it("skips interactive and build lanes", async () => {
-    expect((await seed(ctx({ op: { id: "op-i", lane: "interactive" } as never }))).kind).toBe("continue");
-    expect((await seed(ctx({ op: { id: "op-b", lane: "build" } as never }))).kind).toBe("continue");
+    expect((await seed(ctx({ op: { id: "op-i", lane: "interactive" } }))).kind).toBe("continue");
+    expect((await seed(ctx({ op: { id: "op-b", lane: "build" } }))).kind).toBe("continue");
   });
 
   it("skips when task tools aren't advertised to this op", async () => {
@@ -162,9 +165,9 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
     mockOpenTasks.mockReturnValue([]); // no declared plan → reach the reactive seed
   });
 
-  function ictx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
+  function ictx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
     return ctx({
-      op: { id: `ibs-${opCounter++}`, lane: "interactive" } as never,
+      op: { id: `ibs-${opCounter++}`, lane: "interactive" },
       committingToolsThisOp: new Set(["write"]),
       ...over,
     });
@@ -196,8 +199,8 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
   });
 
   it("never fires on worker lanes — they get the beforeTurn seed + earned-done instead", async () => {
-    expect((await fire(ictx({ op: { id: "ibs-agent", lane: "agent" } as never }))).kind).toBe("continue");
-    expect((await fire(ictx({ op: { id: "ibs-bg", lane: "background" } as never }))).kind).toBe("continue");
+    expect((await fire(ictx({ op: { id: "ibs-agent", lane: "agent" } }))).kind).toBe("continue");
+    expect((await fire(ictx({ op: { id: "ibs-bg", lane: "background" } }))).kind).toBe("continue");
   });
 
   it("does not fire when task_create isn't advertised to the op", async () => {
@@ -334,17 +337,15 @@ describe("instruction-ledger gating (user forbade workspace writes)", () => {
 });
 
 describe("read-only ops never buy an extra turn", () => {
-  // The shape that regressed: three planning calls, two PDF reads, an answer.
-  // Both PDFs and the task ledger carry risk "workspace-write" in the registry,
-  // so a name-only committing check credits all five as work and forces a turn
-  // whose entire output is task_update x3.
-  const CONTRACTS_TURN = [{ toolCallSummary: [
-    { tool: "task_create", resultStatus: "ok" },
-    { tool: "task_create", resultStatus: "ok" },
-    { tool: "task_create", resultStatus: "ok" },
-    { tool: "pdf", resultStatus: "ok" },
-    { tool: "pdf", resultStatus: "ok" },
-  ] }] as never;
+  // The shape that regressed: 3 planning calls + 2 PDF reads, all of them risk
+  // "workspace-write", so a name-only check credits five no-ops as work.
+  const CONTRACTS_TURN = [{ toolCallSummary:
+    ["task_create", "task_create", "task_create", "pdf", "pdf"]
+      .map((tool) => ({ tool, resultStatus: "ok" })) }] as never;
+
+  // The hook's view of that op: nothing substantive on record.
+  const readOnly = (over: CanonicalLoopContextOverrides = {}) =>
+    ctx({ substantiveCommittingToolsThisOp: new Set<string>(), ...over });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -356,31 +357,43 @@ describe("read-only ops never buy an extra turn", () => {
   });
 
   it("does not force a continuation after reading documents", async () => {
-    expect((await fire(ctx({ op: { id: "op-contracts", lane: "interactive" } as never }))).kind)
-      .toBe("continue");
+    const c = readOnly({ op: { id: "op-contracts", lane: "interactive" } });
+    expect((await fire(c)).kind).toBe("continue");
   });
 
   it("does not force a continuation for a ledger-only op", async () => {
-    mockOpTurns.mockReturnValue(
-      [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never,
-    );
-    expect((await fire(ctx())).kind).toBe("continue");
+    expect((await fire(readOnly())).kind).toBe("continue");
   });
 
-  it("earnedDoneNudge stays silent for a read-only unattended run", () => {
+  it("earnedDoneNudge stays silent for it, and the hook fires once work lands", async () => {
     expect(earnedDoneNudge({ id: "op-research", lane: "agent" } as never)).toBeNull();
-  });
-
-  it("still fires once the op writes something", async () => {
-    mockOpTurns.mockReturnValue(OK_WORK_TURN);
     expect((await fire(ctx())).kind).toBe("nudge");
   });
 
   it("does not burn the one-shot nudge slot on the suppressed turn", async () => {
     mockSession.mockReturnValue("sess-slot");
-    const first = await fire(ctx());
-    expect(first.kind).toBe("continue");
-    mockOpTurns.mockReturnValue(OK_WORK_TURN);
+    expect((await fire(readOnly())).kind).toBe("continue");
     expect((await fire(ctx())).kind).toBe("nudge");
+  });
+
+  it("the hook never re-reads op_turns — host already walked them", async () => {
+    await fire(readOnly());
+    await fire(ctx());
+    expect(mockOpTurns).not.toHaveBeenCalled();
+  });
+
+  // earnedDoneNudge still walks op_turns itself (no ctx at decide-outcome) —
+  // the end-to-end proof that the STORED verdict, not the name, decides.
+  it.each([
+    ["a pdf CREATE", { committing: true }, true],
+    ["the pdf READ sharing its name", { committing: false }, false],
+    ["a create the policy BLOCKED", { resultStatus: "blocked", committing: true }, false],
+    ["a legacy row carrying no verdict", {}, false],
+  ])("earnedDoneNudge on %s → fires: %s", (label, row, fires) => {
+    mockOpTurns.mockReturnValue([{ toolCallSummary: [
+      { tool: "task_create", resultStatus: "ok" },
+      { tool: "pdf", resultStatus: "ok", ...row },
+    ] }] as never);
+    expect(earnedDoneNudge({ id: `op-${label}`, lane: "agent" } as never) !== null).toBe(fires);
   });
 });

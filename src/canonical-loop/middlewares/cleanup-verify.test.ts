@@ -8,6 +8,7 @@ import { _resetMiddlewareStates } from "./state.js";
 import { setOpLedger, clearOpLedger } from "../instruction-ledger/index.js";
 import { CLEANUP_VERIFY_MAX_NUDGES } from "../../agent-guards/index.js";
 import type { CanonicalLoopContext, CanonicalMiddleware } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 // The default instance's confirm routes through classifyYesNo. Unit tests must
 // never reach a live provider: mocked to null = "classifier unavailable", which
@@ -25,7 +26,7 @@ const CLEANUP_TASK =
   "We moved off Tailscale — go through the project and remove every tailnet reference left over in the code.";
 
 function ctxFor(op: string, over: Partial<CanonicalLoopContext>): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: "interactive", type: "chat_turn" },
     turnIdx: 1,
     userMessage: CLEANUP_TASK,
@@ -33,7 +34,7 @@ function ctxFor(op: string, over: Partial<CanonicalLoopContext>): CanonicalLoopC
     toolCalls: [],
     toolResults: [],
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 function grepTurn(op: string, content: string, status: "ok" | "error" = "ok") {

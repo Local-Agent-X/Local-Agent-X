@@ -7,10 +7,11 @@ import {
   INSTRUCTION_VIOLATION_REASON,
   instructionAuditMiddleware,
 } from "./instruction-audit.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let counter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: `instruction-audit-${counter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 0,
     toolCalls: [],
@@ -20,7 +21,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     committingToolsThisOp: new Set(),
     attemptedToolsThisOp: new Set(),
     ...over,
-  } as CanonicalLoopContext;
+  });
 }
 
 function ledger(over: Partial<InstructionLedger> = {}): InstructionLedger {

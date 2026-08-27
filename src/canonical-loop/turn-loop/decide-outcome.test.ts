@@ -83,6 +83,12 @@ import { _resetMiddlewareStates } from "../middlewares/state.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
 
+// Per-op state now carries the bookkeeping-deferral counter as well as the
+// interactive empty-turn counter, and every case in this file reuses `op-test`.
+// Reset globally so a prior case's ledger turn can never spend the next case's
+// budget — the block-local resets below stay for readability.
+beforeEach(() => _resetMiddlewareStates());
+
 // A successful (non-mutating, non-silent) bash READ: data-returning, so the
 // shape heuristic treats it as needing a wrap-up. This is the exact turn shape
 // that produced spurious extra turns before the stop signal was plumbed.
@@ -316,6 +322,105 @@ describe("decideTurnOutcome — P-1 FIX: honor the model's continue signal", () 
     // don't hang waiting for a stop that never comes.
     const r = await decideTurnOutcome(continuingWrite({ modelWantsToContinue: false }));
     expect(r.terminalReason).toBe("done");
+  });
+});
+
+// C9 — the mutation flag used to answer two questions with one boolean:
+// "was there a real change, so 'done' is iteration not gaslighting?" (question
+// A, shouldNudgeForFailures) and "can this TURN END here?" (question B,
+// mutationTerminates). The agent's own task ledger separates them: task_create
+// is risk `workspace-write` so isMutationTool says mutation, and task_* is not
+// in silent-tool-check, so nothing upstream caught it — a planning turn on a
+// no-stop-reason adapter resolved `done` and transitioned the op to
+// `succeeded` having done none of the work it had just planned.
+//
+// Every case here runs the FALLBACK shape: tool calls present, none silent, no
+// stop signal either way, narration present. That is the only shape in which
+// mutationTerminates is the sole decider, so a change to it is visible and
+// nothing else can mask it.
+describe("decideTurnOutcome — nudge-suppression vs termination are separate questions", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const okResult = (toolCallId: string, text: string): CommitTurnMessage => ({
+    messageId: `tr-${toolCallId}`, role: "tool", content: { toolCallId, text: `[ok]\n${text}` },
+  } as unknown as CommitTurnMessage);
+  const errResult = (toolCallId: string, text: string): CommitTurnMessage => ({
+    messageId: `tr-${toolCallId}`, role: "tool", content: { toolCallId, text: `[error]\n${text}` },
+  } as unknown as CommitTurnMessage);
+
+  const ledgerCall: ToolCall = { toolCallId: "t1", tool: "task_create", args: { tasks: ["a", "b"] } };
+  const writeCall: ToolCall = { toolCallId: "w1", tool: "write", args: { path: "/x", content: "y" } };
+  const failedEdit: ToolCall = { toolCallId: "e1", tool: "edit", args: { path: "/x" } };
+
+  const nudgeMock = async () => {
+    const { appendNudgeAsUserMessage } = await import("./nudges.js");
+    return appendNudgeAsUserMessage as unknown as ReturnType<typeof vi.fn>;
+  };
+
+  it("a planning turn (task_create) does NOT terminate the op", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [ledgerCall],
+      toolMessages: [okResult("t1", "created 2 tasks")],
+      toolSummary: [{ tool: "task_create", toolCallId: "t1" }] as unknown as ToolCallSummary[],
+      assistantText: "Here's the plan: write the model, then the view.",
+    }));
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("CONTROL: the identical shape with a real file write STILL terminates", async () => {
+    // Without this, a stand-down that just returns false for question B would
+    // pass the case above vacuously.
+    const r = await decideTurnOutcome(input({
+      toolCalls: [writeCall],
+      toolMessages: [okResult("w1", "wrote 3 lines")],
+      toolSummary: [{ tool: "write", toolCallId: "w1" }] as unknown as ToolCallSummary[],
+      assistantText: "Wrote the file.",
+    }));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("failures + a ledger write: the gaslighting nudge is SUPPRESSED and the op still keeps going", async () => {
+    // The discriminator. terminalReason is null here WITHOUT the nudge firing,
+    // so it cannot be the continuation guard doing the work — question B said
+    // no on its own while question A said yes.
+    const r = await decideTurnOutcome(input({
+      toolCalls: [failedEdit, ledgerCall],
+      toolMessages: [errResult("e1", "old_string not found"), okResult("t1", "created 2 tasks")],
+      toolSummary: [
+        { tool: "edit", toolCallId: "e1" },
+        { tool: "task_create", toolCallId: "t1" },
+      ] as unknown as ToolCallSummary[],
+      assistantText: "Couldn't patch it directly — I've listed the steps instead.",
+    }));
+    expect(await nudgeMock()).not.toHaveBeenCalled();
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("CONTROL: failures + a real write suppresses the nudge AND terminates", async () => {
+    // Same suppression (question A), opposite termination (question B) — the
+    // pair is what proves the two fields are read independently.
+    const r = await decideTurnOutcome(input({
+      toolCalls: [failedEdit, writeCall],
+      toolMessages: [errResult("e1", "old_string not found"), okResult("w1", "wrote 3 lines")],
+      toolSummary: [
+        { tool: "edit", toolCallId: "e1" },
+        { tool: "write", toolCallId: "w1" },
+      ] as unknown as ToolCallSummary[],
+      assistantText: "edit hit an ambiguous match, so I wrote the file instead.",
+    }));
+    expect(await nudgeMock()).not.toHaveBeenCalled();
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("CONTROL: failures with NO mutation at all still nudge (the nudge path is live in this harness)", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [failedEdit],
+      toolMessages: [errResult("e1", "old_string not found")],
+      toolSummary: [{ tool: "edit", toolCallId: "e1" }] as unknown as ToolCallSummary[],
+      assistantText: "Fixed it.",
+    }));
+    expect(await nudgeMock()).toHaveBeenCalled();
+    expect(r.terminalReason).toBeNull();
   });
 });
 
@@ -1259,5 +1364,200 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     // The real answer is preserved; no empty-turn fallback is appended over it.
     expect(assistantTexts(r)).toContain("Working tree is clean.");
     expect(assistantTexts(r)).not.toContain("I don't have anything to add here.");
+  });
+});
+
+// C9b — C9 stopped a planning turn from ending the op, and justified the
+// resulting non-termination as "bounded by the per-op turn cap and the maxTokens
+// ceiling". Neither exists on an autonomous lane: worker.ts's `count >= maxTurns`
+// branch emits iteration_checkpoint{continuing:true} and resets `count = 0`
+// whenever `op.lane !== "interactive"`, the wall clock is armed only for
+// interactive, and budget.maxTokens defaults to 0 = OFF. Worse, the same
+// task_create disarms mid-turn-stale's second strike (it is a committing tool)
+// and resets both loop-detection counters (it is a mutation AND a progress tool,
+// read from the CALL not the result). So the bound is proven HERE, on the lane
+// with no backstop — an interactive-only proof would prove nothing.
+describe("decideTurnOutcome — the bookkeeping deferral is BOUNDED on autonomous lanes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetMiddlewareStates();
+  });
+
+  // Autonomous lane: no turn cap, no wall clock, no token ceiling.
+  const aop = { id: "op-autonomous", type: "agent_spawn", ownerId: "local-user", lane: "agent" } as unknown as Op;
+
+  const okRes = (toolCallId: string, text: string): CommitTurnMessage => ({
+    messageId: `tr-${toolCallId}`, role: "tool", content: { toolCallId, text: `[ok]\n${text}` },
+  } as unknown as CommitTurnMessage);
+
+  // Every turn below uses the FALLBACK shape — tool calls present, none silent,
+  // no stop signal in either direction, narration present. That is the only
+  // shape where mutationTerminates is the sole decider, so nothing else can
+  // mask or manufacture the result.
+  const planTurn = (n: number) => input({
+    op: aop,
+    toolCalls: [{ toolCallId: `t${n}`, tool: "task_create", args: { tasks: ["a"] } }],
+    toolMessages: [okRes(`t${n}`, "created 1 task")],
+    toolSummary: [{ tool: "task_create", toolCallId: `t${n}` }] as unknown as ToolCallSummary[],
+    // Varied wording: repeat-output (Jaccard >= 0.9) is the only surviving
+    // brake on this lane and varied plan text escapes it.
+    assistantText: `Step ${n}: I'll break the remaining work down further.`,
+  });
+  const writeTurn = (n: number) => input({
+    op: aop,
+    toolCalls: [{ toolCallId: `w${n}`, tool: "write", args: { path: "/x", content: "y" } }],
+    toolMessages: [okRes(`w${n}`, "wrote 3 lines")],
+    toolSummary: [{ tool: "write", toolCallId: `w${n}` }] as unknown as ToolCallSummary[],
+    assistantText: `Wrote file ${n}.`,
+  });
+  const readTurn = (n: number) => input({
+    op: aop,
+    toolCalls: [{ toolCallId: `r${n}`, tool: "read", args: { path: "/x" } }],
+    toolMessages: [okRes(`r${n}`, "file contents…")],
+    toolSummary: [{ tool: "read", toolCallId: `r${n}` }] as unknown as ToolCallSummary[],
+    assistantText: `Read file ${n}.`,
+  });
+
+  it("THE BOUND: consecutive planning turns defer 3 times, then the op terminates", async () => {
+    const reasons: (string | null)[] = [];
+    for (let n = 1; n <= 4; n++) reasons.push((await decideTurnOutcome(planTurn(n))).terminalReason);
+    // Turns 1-3 keep the op alive (the C9 fix — a plan is not a finished op).
+    expect(reasons.slice(0, 3)).toEqual([null, null, null]);
+    // Turn 4 spends the budget and terminates exactly as it did before C9.
+    expect(reasons[3]).toBe("done");
+  });
+
+  it("and it STAYS terminated — a 5th planning turn does not buy another budget", async () => {
+    for (let n = 1; n <= 4; n++) await decideTurnOutcome(planTurn(n));
+    expect((await decideTurnOutcome(planTurn(5))).terminalReason).toBe("done");
+  });
+
+  it("real work refreshes the budget: plan/plan/plan/WRITE/plan keeps the op alive", async () => {
+    for (let n = 1; n <= 3; n++) {
+      expect((await decideTurnOutcome(planTurn(n))).terminalReason).toBeNull();
+    }
+    expect((await decideTurnOutcome(writeTurn(1))).terminalReason).toBe("done");
+    // Budget refreshed by the write — the next plan defers again rather than
+    // terminating. Only a real mutation can do this; more planning cannot.
+    expect((await decideTurnOutcome(planTurn(4))).terminalReason).toBeNull();
+  });
+
+  it("interleaved reads cannot launder the count — plan/read/plan/read/plan/read/plan terminates", async () => {
+    expect((await decideTurnOutcome(planTurn(1))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(readTurn(1))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(planTurn(2))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(readTurn(2))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(planTurn(3))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(readTurn(3))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(planTurn(4))).terminalReason).toBe("done");
+  });
+
+  it("VACUITY CONTROL: on the same lane a real write terminates on turn 1, and every turn", async () => {
+    // Without this, a bound that just terminated everything after 3 turns —
+    // or one that terminated nothing until then — would still pass the case
+    // above. Real work must never be delayed by the bound.
+    for (let n = 1; n <= 5; n++) {
+      expect((await decideTurnOutcome(writeTurn(n))).terminalReason).toBe("done");
+    }
+  });
+
+  it("VACUITY CONTROL: a read-only autonomous op never terminates on this signal", async () => {
+    // The opposite vacuity: proves the bound is not a blanket "terminate after
+    // N turns" that would cut off a long legitimate research op.
+    for (let n = 1; n <= 6; n++) {
+      expect((await decideTurnOutcome(readTurn(n))).terminalReason).toBeNull();
+    }
+  });
+
+  // C9b item 3 — memory writes are bookkeeping too, and share the SAME budget.
+  it("memory_save + a data-returning call no longer strands the result", async () => {
+    const r = await decideTurnOutcome(input({
+      op: aop,
+      toolCalls: [
+        { toolCallId: "m1", tool: "memory_save", args: { fact: "x" } },
+        { toolCallId: "b1", tool: "bash", args: { command: "git log -1" } },
+      ],
+      toolMessages: [okRes("m1", "saved"), okRes("b1", "commit d8e77648 …")],
+      toolSummary: [
+        { tool: "memory_save", toolCallId: "m1" },
+        { tool: "bash", toolCallId: "b1" },
+      ] as unknown as ToolCallSummary[],
+      assistantText: "Noted that, and I pulled the last commit.",
+    }));
+    // Used to be "done" on the memory write while the git output was never
+    // surfaced. Now it drives the wrap-up turn that reports it.
+    expect(r.terminalReason).toBeNull();
+  });
+
+  // The pair below replaces a single case that passed for an unstated reason.
+  // Its comment claimed a memory-only turn is safe "because it is all-silent, so
+  // silentTerminates still ends it" — refuted: silentTerminates sits INSIDE
+  // decide-outcome's `assistantText.trim().length > 0` gate, exactly like
+  // mutationTerminates, so the assistant text the fixture happened to supply was
+  // load-bearing, not scenery. Production counter-example:
+  // op_memory_consolidation_88904dfe172f4577 turns 60-159 are 100 consecutive
+  // narration-less memory-write turns (60 memory_update_profile, 61-159
+  // `forget`), every one committed with terminalReason null — the cited safety
+  // net never fired once. The conclusion still holds (both
+  // terminators move together behind the same gate, so the carve-out changes
+  // nothing for a memory-only turn), but it is now pinned on the real mechanism:
+  // the two cases differ ONLY in assistantText.
+  it("CONTROL: a NARRATED memory-only turn still terminates — allSilent carries it, not the carve-out", async () => {
+    const r = await decideTurnOutcome(input({
+      op: aop,
+      toolCalls: [{ toolCallId: "m2", tool: "memory_save", args: { fact: "x" } }],
+      toolMessages: [okRes("m2", "saved")],
+      toolSummary: [{ tool: "memory_save", toolCallId: "m2" }] as unknown as ToolCallSummary[],
+      assistantText: "I'll remember that.", // LOAD-BEARING — see the next case.
+    }));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("MECHANISM: the same turn with NO narration terminates on nothing — silentTerminates is gated too", async () => {
+    const r = await decideTurnOutcome(input({
+      op: aop,
+      toolCalls: [{ toolCallId: "m2", tool: "memory_save", args: { fact: "x" } }],
+      toolMessages: [okRes("m2", "saved")],
+      toolSummary: [{ tool: "memory_save", toolCallId: "m2" }] as unknown as ToolCallSummary[],
+      assistantText: "", // the ONLY difference from the case above
+    }));
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("memory-only turns spend the SAME budget as planning turns", async () => {
+    const memTurn = (n: number) => input({
+      op: aop,
+      toolCalls: [
+        { toolCallId: `m${n}`, tool: "memory_save", args: { fact: "x" } },
+        { toolCallId: `b${n}`, tool: "bash", args: { command: "ls" } },
+      ],
+      toolMessages: [okRes(`m${n}`, "saved"), okRes(`b${n}`, "a  b  c")],
+      toolSummary: [
+        { tool: "memory_save", toolCallId: `m${n}` },
+        { tool: "bash", toolCallId: `b${n}` },
+      ] as unknown as ToolCallSummary[],
+      assistantText: `Noted item ${n}.`,
+    });
+    // Two plans + one memory turn = the 3 deferrals; the 4th terminates. If
+    // memory had its own separate budget this would still be null.
+    expect((await decideTurnOutcome(planTurn(1))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(planTurn(2))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(memTurn(1))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(memTurn(2))).terminalReason).toBe("done");
+  });
+
+  // DELETE ME WHEN FIXED — pins a KNOWN LIMIT, not desired behavior.
+  // The bound restores the PRE-C9 terminator; it does not add one C9 never had.
+  // When the provider reports tool_use (`modelWantsToContinue`), decide-outcome's
+  // `mutationTerminates` is false regardless of what the bound answers — that is
+  // the P-1 fix, which exists so a multi-step build does not end after every file
+  // write. An op whose provider reports tool_use on EVERY turn was already
+  // unbounded before C9 existed. Fixing that needs a separate terminator that
+  // does not undo P-1; when it lands, delete this test.
+  it("KNOWN LIMIT: an explicit tool_use continue signal still outranks the spent budget", async () => {
+    for (let n = 1; n <= 6; n++) {
+      const r = await decideTurnOutcome({ ...planTurn(n), modelWantsToContinue: true });
+      expect(r.terminalReason).toBeNull();
+    }
   });
 });

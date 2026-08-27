@@ -6,13 +6,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // vi.mock factory runs at import time — the mock fn must exist by then.
 const { refuteClaimMock } = vi.hoisted(() => ({ refuteClaimMock: vi.fn() }));
 vi.mock("../../classifiers/refute-claim.js", () => ({ refuteClaim: refuteClaimMock }));
+vi.mock("../store.js", () => ({ readOpTurns: vi.fn(() => []) }));
 
 import { refuteCompletionMiddleware } from "./refute-completion.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { readOpTurns } from "../store.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
+
+const mockOpTurns = vi.mocked(readOpTurns);
 
 let _op = 0;
 function opId(): string { return `op-refute-test-${++_op}`; }
 
+/**
+ * The gate reads host-precomputed ctx sets, never op_turns (host.test.ts pins
+ * that projection). `committing` is the RAW name-only tally and
+ * `substantive` the completion-gate one — they are deliberately settable
+ * apart so a test can prove the gate reads the right one.
+ */
 function ctxFor(
   op: string,
   opts: {
@@ -21,17 +32,19 @@ function ctxFor(
     claim?: string;
     toolCalls?: number;
     committing?: string[];
+    substantive?: string[];
     used?: string[];
   },
 ): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: opts.lane ?? "agent" },
     userMessage: opts.task ?? "Implement feature X and add a test.",
     assistantContent: opts.claim ?? "All done — feature X is implemented.",
     toolCalls: new Array(opts.toolCalls ?? 0).fill({ name: "x" }),
     committingToolsThisOp: new Set(opts.committing ?? ["write", "bash"]),
+    substantiveCommittingToolsThisOp: new Set(opts.substantive ?? ["write", "bash"]),
     toolsCalledThisOp: new Set(opts.used ?? ["read", "write", "bash"]),
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const run = (op: string, opts: Parameters<typeof ctxFor>[1]) =>
@@ -41,6 +54,8 @@ describe("refuteCompletionMiddleware", () => {
   beforeEach(() => {
     refuteClaimMock.mockReset();
     refuteClaimMock.mockResolvedValue({ refuted: false, verdict: {}, summary: "0/3", reasons: [] });
+    mockOpTurns.mockReset();
+    mockOpTurns.mockReturnValue([]);
   });
 
   it("is worker-only (when excludes interactive lanes)", () => {
@@ -54,8 +69,44 @@ describe("refuteCompletionMiddleware", () => {
   });
 
   it("stays quiet when NO work was committed (premature-completion's case, not ours)", async () => {
-    expect(await run(opId(), { committing: [] })).toEqual({ kind: "continue" });
+    expect(await run(opId(), { committing: [], substantive: [] })).toEqual({ kind: "continue" });
     expect(refuteClaimMock).not.toHaveBeenCalled();
+  });
+
+  // The gate asks "is there enough real work to be worth paying a skeptic
+  // pass?". task_create is risk:workspace-write, so the raw committingToolsThisOp
+  // tally bought an LLM panel for a planning-only op with nothing to refute.
+  it("does not buy a panel for a planning-only op (task ledger is not work)", async () => {
+    expect(await run(opId(), { committing: ["task_create", "task_update"], substantive: [] }))
+      .toEqual({ kind: "continue" });
+    expect(refuteClaimMock).not.toHaveBeenCalled();
+  });
+
+  it("still fires the panel when real work was committed alongside the plan", async () => {
+    await run(opId(), { committing: ["task_create", "write"], substantive: ["write"] });
+    expect(refuteClaimMock).toHaveBeenCalledTimes(1);
+  });
+
+  // browser/pdf/http_request work was invisible to the name-only tally, so an
+  // op that spent itself in the browser bought no skeptic pass at all.
+  it("buys a panel for an op whose only work was an arg-aware tool", async () => {
+    await run(opId(), { committing: [], substantive: ["browser"] });
+    expect(refuteClaimMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Item 6: the panel must be told what the gate just counted, not the raw
+  // tally it deliberately refused to count.
+  it("reports the SUBSTANTIVE actions to the panel, not the raw tally", async () => {
+    await run(opId(), { committing: ["task_create", "task_update", "pdf"], substantive: ["pdf"] });
+    const context = refuteClaimMock.mock.calls[0][0].context as string;
+    expect(context).toContain("Committing actions it actually took this op: pdf.");
+    expect(context).not.toContain("task_create");
+    expect(context).not.toContain("task_update");
+  });
+
+  it("never re-reads op_turns — host already walked them", async () => {
+    await run(opId(), {});
+    expect(mockOpTurns).not.toHaveBeenCalled();
   });
 
   it("stays quiet on an empty final message", async () => {

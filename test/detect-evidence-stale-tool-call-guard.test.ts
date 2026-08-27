@@ -24,6 +24,14 @@ function baseState(overrides: Partial<TurnState> = {}): TurnState {
     evidenceCount: 3,
     evidenceHistory: [3, 3, 3], // flat — would normally fire
     userMessageHasImages: false,
+    // The two commit verdicts the caller computes and plumbs in (state.ts).
+    // Both default to "nothing on record" — the value that lets the detector
+    // fire, which is what this suite's baseline needs. Stated explicitly rather
+    // than omitted: they are required fields precisely because `undefined` and
+    // `false` are both falsy, so an omission is indistinguishable from a
+    // deliberate "no commit" and would arm a nudge silently.
+    committedSubstantiveWork: false,
+    committedWorkOrLedger: false,
     ...overrides,
   };
 }
@@ -59,8 +67,17 @@ describe("detectEvidenceStale — tool-call guard", () => {
 
   it("does NOT fire when a committing tool was already called this turn", () => {
     // Pre-existing guard. Pinned so the new tool-call guard doesn't shadow it.
+    //
+    // The guard used to be re-derived INSIDE the detector by scanning
+    // toolsCalledThisTurn with isCommittingTool, so `new Set(["write"])` alone
+    // was what stood it down. The verdict is now computed once by the caller
+    // and plumbed in, and toolsCalledThisTurn is inert to this detector — so
+    // the fixture has to state the verdict itself. `write` is kept in the set
+    // to keep the scenario readable, but `committedWorkOrLedger` is what the
+    // detector reads; without it this test would run with an empty commit
+    // signal and pin nothing at all.
     const result = detectEvidenceStale(
-      baseState({ toolsCalledThisTurn: new Set(["write"]) }),
+      baseState({ toolsCalledThisTurn: new Set(["write"]), committedWorkOrLedger: true }),
     );
     expect(result).toBeNull();
   });

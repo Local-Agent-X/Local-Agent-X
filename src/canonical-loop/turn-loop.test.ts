@@ -33,7 +33,7 @@ import { driveTurn, type TurnLoopDeps } from "./turn-loop.js";
 import { publishStreamChunk } from "./event-emitter.js";
 import { appendNudgeAsUserMessage } from "./turn-loop/nudges.js";
 import type { Adapter, TurnInput } from "./adapter-contract.js";
-import type { CanonicalLoopContext } from "./middlewares/types.js";
+import { makeCanonicalLoopContext } from "./middlewares/ctx.test-helper.js";
 import type { Op } from "../ops/types.js";
 
 let opSeq = 0;
@@ -73,7 +73,7 @@ function makeDeps() {
     resolveLearningSessionId: vi.fn(() => "session-stable"),
     createTurnContextComposer: vi.fn(() => ({
       middlewareStack: [],
-      build: () => ({ toolCalls: [] }) as unknown as CanonicalLoopContext,
+      build: () => makeCanonicalLoopContext({ toolCalls: [] }),
     })),
   } satisfies TurnLoopDeps;
 }

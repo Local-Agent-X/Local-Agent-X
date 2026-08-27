@@ -14,6 +14,13 @@ function turn(over: Partial<TurnState>): TurnState {
     iteration: 1,
     evidenceCount: 0,
     evidenceHistory: [],
+    // Both commit verdicts are REQUIRED on TurnState and both default to
+    // "nothing on record" here — the value that lets a detector fire, which is
+    // what these run-order tests need. See state.ts for why neither is
+    // optional: falsy means "fire", so a fixture that omits one would silently
+    // arm a nudge instead of silently disarming it.
+    committedSubstantiveWork: false,
+    committedWorkOrLedger: false,
     ...over,
   };
 }

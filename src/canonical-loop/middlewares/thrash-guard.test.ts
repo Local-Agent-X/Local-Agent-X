@@ -10,6 +10,7 @@ import { _resetMiddlewareStates } from "./state.js";
 import type { CanonicalLoopContext, CanonicalToolResultView } from "./types.js";
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let seq = 0;
 
@@ -30,22 +31,13 @@ function mkOp(lane: Op["lane"] = "interactive"): Op {
 }
 
 function mkCtx(op: Op, calls: ToolCall[], results: CanonicalToolResultView[]): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op,
-    turnIdx: 0,
-    userMessage: "",
     provider: "xai",
     model: "grok-4.5",
-    tools: [],
-    toolNames: new Set(),
-    assistantContent: "",
     toolCalls: calls,
     toolResults: results,
-    toolsCalledThisOp: new Set(),
-    committingToolsThisOp: new Set(),
-    attemptedToolsThisOp: new Set(),
-    evidenceHistory: [],
-  };
+  });
 }
 
 function fail(tool: string, content: string): { call: ToolCall; result: CanonicalToolResultView } {

@@ -20,7 +20,7 @@ import type {
 } from "./types.js";
 import { getDefaultMiddlewareStack } from "./registry.js";
 import { readOpMessages, readOpTurns } from "../store.js";
-import { isCommittingTool } from "../../committing-tool-check.js";
+import { isCommittingTool, rowCommittedSubstantiveWork } from "../../committing-tool-check.js";
 import { resolveOpModel } from "../op-model.js";
 
 export type PhaseName = "beforeTurn" | "afterModelCall" | "afterToolExecution";
@@ -49,8 +49,8 @@ export interface BuildContextArgs {
 
 /**
  * Construct a CanonicalLoopContext for one phase invocation. Cheap to
- * rebuild — derived state (toolsCalledThisOp, committingToolsThisOp) is
- * read from op_messages each call.
+ * rebuild — derived state (toolsCalledThisOp, the three committing tallies,
+ * attemptedToolsThisOp) is read from op_turns/op_messages each call.
  */
 export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoopContext {
   const { op } = args;
@@ -83,8 +83,31 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   // "background worker is on it" and clear the hallucination guard. The
   // structured per-turn summary in op_turns is the authoritative source;
   // op_messages doesn't carry status alongside the tool name.
+  //
+  // The same walk also builds the ARG-AWARE projection (types.ts): substantive
+  // (rowCommittedSubstantiveWork — task ledger excluded). Two Sets in a loop
+  // that already runs. They answer DIFFERENT questions — do not collapse them,
+  // and do not add a third "abort-safety" projection back: one shipped, its
+  // only reader was mid-turn-stale, and it was reverted there because the
+  // arg-aware `browser` verdict is a regex over button text (see
+  // mid-turn-stale.ts). An unread Set with a safety-sounding name is the trap
+  // that produced that wiring in the first place.
+  //
+  // Why a middleware holding a ctx must read these instead of calling
+  // readOpTurns itself: THIS function runs three times per turn — turn-loop.ts
+  // rebuilds the context at beforeTurn (L110), afterModelCall (L249) and
+  // afterToolExecution (L282) — so its walk is already 3 per turn, and every
+  // reader that walks the op again is multiplied by the same 3. Exactly one
+  // per-turn re-walk was actually removed when these sets landed: open-steps'
+  // afterModelCall (opCommittedSubstantiveWork(readOpTurns(...))), and only on
+  // turns that get that far, since the hook returns early when the session has
+  // no open tasks. open-steps' other two readOpTurns calls (opTouchedTaskLedger
+  // and earnedDoneNudge) run on the decide-outcome path, have no ctx to read
+  // from, and stay. Nothing else was ever paying for a second walk — the rule
+  // is here to stop the NEXT reader from adding one, not to claim a fix.
   const toolsCalledThisOp = new Set<string>();
   const committingToolsThisOp = new Set<string>();
+  const substantiveCommittingToolsThisOp = new Set<string>();
   const attemptedToolsThisOp = new Set<string>();
   for (const turn of readOpTurns(op.id)) {
     for (const s of turn.toolCallSummary ?? []) {
@@ -92,6 +115,10 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
       if (s.resultStatus !== "ok") continue;
       toolsCalledThisOp.add(s.tool);
       if (isCommittingTool(s.tool)) committingToolsThisOp.add(s.tool);
+      // The row reader re-checks resultStatus itself — that gate is
+      // deliberately inside the shared reader so no caller can read a
+      // `committing: true` stamped on a call policy blocked before it ran.
+      if (rowCommittedSubstantiveWork(s)) substantiveCommittingToolsThisOp.add(s.tool);
     }
   }
 
@@ -119,6 +146,7 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     toolResults: args.toolResults ?? [],
     toolsCalledThisOp,
     committingToolsThisOp,
+    substantiveCommittingToolsThisOp,
     attemptedToolsThisOp,
     evidenceHistory: args.evidenceHistory,
     onEvent: args.onEvent,

@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { loopDetectionMiddleware } from "./loop-detection.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 const opId = () => `op-loop-test-${++_op}`;
@@ -19,15 +20,25 @@ function ctxFor(
   results: { content: string; status?: "ok" }[],
   call: { toolCallId?: string; tool: string; args: unknown } = lsCall,
 ): CanonicalLoopContext {
-  return {
+  // The ids and tool names below are filled in to satisfy the real ToolCall /
+  // CanonicalToolResultView shapes, which the old blanket
+  // `as unknown as CanonicalLoopContext` let this fixture skip. Neither is read
+  // here — noteToolResults keys on content + status only.
+  const toolCallId = call.toolCallId ?? "tc";
+  return makeCanonicalLoopContext({
     op: { id: op, lane },
     model: "grok-4.3",
-    toolCalls: [call],
-    toolResults: results,
+    toolCalls: [{ ...call, toolCallId }],
+    toolResults: results.map((r, i) => ({
+      toolName: call.tool,
+      toolCallId: `${toolCallId}-${i}`,
+      content: r.content,
+      status: r.status,
+    })),
     turnIdx: 1,
     toolNames: new Set<string>(),
     onEvent: () => {},
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 // Drive N turns of the same `ls` call through both hooks, as the loop does.

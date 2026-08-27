@@ -5,6 +5,7 @@ import { classifyGaveUp } from "../../classifiers/give-up-classify.js";
 import { recordGaveUpNudge } from "../../tool-tracker.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
+import { makeCanonicalLoopContext, type CanonicalLoopContextOverrides } from "./ctx.test-helper.js";
 
 vi.mock("../../classifiers/give-up-classify.js", () => ({
   classifyGaveUp: vi.fn(async () => null),
@@ -18,9 +19,9 @@ const mockClassify = classifyGaveUp as unknown as ReturnType<typeof vi.fn>;
 const mockRecord = recordGaveUpNudge as unknown as ReturnType<typeof vi.fn>;
 
 let opCounter = 0;
-function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
+function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
   const toolsCalledThisOp = over.toolsCalledThisOp ?? new Set(["browser"]);
-  return {
+  return makeCanonicalLoopContext({
     op: { id: `op-${opCounter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 1,
     toolCalls: [],
@@ -31,7 +32,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     userMessage: "open the page and tell me the headline",
     assistantContent: "Dismiss it yourself or give me a Cloudflare API token.",
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const fire = (c: CanonicalLoopContext) => browserHandoffMiddleware.afterModelCall!(c);
@@ -39,8 +40,8 @@ const fire = (c: CanonicalLoopContext) => browserHandoffMiddleware.afterModelCal
 describe("browser-handoff gate", () => {
   it("only applies to chat_turn ops", () => {
     expect(browserHandoffMiddleware.when!(ctx())).toBe(true);
-    expect(browserHandoffMiddleware.when!(ctx({ op: { id: "v", type: "voice_turn" } as never }))).toBe(false);
-    expect(browserHandoffMiddleware.when!(ctx({ op: { id: "w", type: "agent_spawn" } as never }))).toBe(false);
+    expect(browserHandoffMiddleware.when!(ctx({ op: { id: "v", type: "voice_turn" } }))).toBe(false);
+    expect(browserHandoffMiddleware.when!(ctx({ op: { id: "w", type: "agent_spawn" } }))).toBe(false);
   });
 
   it("nudges when a browser turn ends by punting the obstruction back to the user", async () => {

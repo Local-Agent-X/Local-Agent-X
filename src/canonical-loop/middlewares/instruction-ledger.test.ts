@@ -10,11 +10,12 @@ import { getOpLedger, opHasConstraints } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 import type { InstructionLedger } from "../instruction-ledger/index.js";
 import { _resetMiddlewareStates } from "./state.js";
+import { makeCanonicalLoopContext, type CanonicalLoopContextOverrides } from "./ctx.test-helper.js";
 
 let opCounter = 0;
 
-function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
+  return makeCanonicalLoopContext({
     op: { id: `op-instruction-ledger-${opCounter++}`, type: "agent_spawn", lane: "background" },
     turnIdx: 0,
     userMessage: "Fix the bug in the scheduler.",
@@ -22,7 +23,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     toolCalls: [],
     toolsCalledThisOp: new Set<string>(),
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 // Real extractor with the LLM confirm stubbed to null — exercises the genuine
@@ -50,7 +51,7 @@ describe("instructionLedgerMiddleware", () => {
     // This message WOULD yield a workspace-write ban on a normal op — but on an
     // app_build op it's the harness-authored per-build context, so it's ignored.
     const c = ctx({
-      op: { id: "op-appbuild-x", type: "app_build", lane: "build" } as never,
+      op: { id: "op-appbuild-x", type: "app_build", lane: "build" },
       userMessage: "You are building a web app. You must NOT edit core LAX; leave the locked files alone; do not edit the baseline.",
     });
     const r = await mw.beforeTurn!(c);
@@ -68,7 +69,7 @@ describe("instructionLedgerMiddleware", () => {
     // says "Never touch paths outside it" — a STRONG-tier workspace-write match
     // that bricked the preflight. The provenance stamp must skip extraction.
     const c = ctx({
-      op: { id: "op-spawn-harness-x", type: "agent_spawn", lane: "agent", taskProvenance: "harness" } as never,
+      op: { id: "op-spawn-harness-x", type: "agent_spawn", lane: "agent", taskProvenance: "harness" },
       userMessage: "Your project root is /apps/x. Never touch paths outside it. 1. Read the sentinel. 2. Write the echo file.",
     });
     const r = await mw.beforeTurn!(c);

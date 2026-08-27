@@ -4,9 +4,10 @@ import { postTurnDetectorMiddleware } from "./post-turn-detector.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { actionClaimMiddleware } from "./action-claim.js";
 import { selfCheckMiddleware } from "./self-check.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 function ctxWithLane(lane: string): CanonicalLoopContext {
-  return { op: { lane } } as unknown as CanonicalLoopContext;
+  return makeCanonicalLoopContext({ op: { lane } });
 }
 
 describe("isWorkerOp", () => {

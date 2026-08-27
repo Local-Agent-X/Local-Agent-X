@@ -21,6 +21,15 @@ export async function handleAdapterRetry(op: Op, reportedCode: string, message =
     scheduleQueuedRetry(op.id, op.lane as CanonicalLane, failover.delayMs);
     return "retrying";
   }
+  // `committingCallsAlreadyMade` is false by CONSTRUCTION, not by assumption:
+  // driveTurn only reports a retryCode when the failing turn streamed nothing,
+  // finalized nothing and dispatched no tool call at all (the activity guard in
+  // turn-loop/reported-adapter-recovery.ts), and the relaunch resumes at
+  // `readLatestOpTurn + 1` (worker.ts), so no committed turn is ever replayed.
+  // Earlier turns may well hold committed side effects — refusing the retry for
+  // those would hard-fail a long op on a transient 429 without preventing any
+  // double-mutate. Cross-provider replay is the case that IS unsafe, and
+  // attemptRuntimeFailover above gates it on hasAmbiguousSideEffects.
   const decision = decideRecovery(op, {
     committingCallsAlreadyMade: false,
     reason: `adapter:${code}`,

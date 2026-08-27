@@ -20,7 +20,16 @@ const SILENT_FIRE_AND_FORGET_TOOLS = new Set([
   "voice_visual",
 ]);
 
-const MEMORY_WRITE_TOOLS = new Set([
+/** Memory writes — nothing comes back for a follow-up turn to interpret.
+ *
+ *  Exported because turn-loop/tool-failure-summary.ts reads the SAME list for
+ *  the termination question ("is this the agent's own bookkeeping rather than
+ *  work on the user's request?"). One list, two decisions, deliberately: a
+ *  fourth hand-maintained memory-tool list is the drift this campaign is
+ *  closing. The coupling has a direction — adding a tool here that DOES return
+ *  data would suppress its wrap-up turn in both places, so only add tools whose
+ *  result the model genuinely never needs to read back. */
+export const MEMORY_WRITE_TOOLS = new Set([
   "remember",
   "update_fact",
   "forget",

@@ -13,6 +13,7 @@ import { externalChangeDiffMiddleware } from "./external-change-diff.js";
 import { recordFileSeen, checkFreshness, forgetSessionReads } from "../../tools/read-state.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _n = 0;
 /** Fresh op+session pair per case, with the op→session mapping the middleware
@@ -26,7 +27,7 @@ function ids(): { op: string; session: string } {
 }
 
 function ctxFor(op: string, over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: "agent" },
     turnIdx: 1,
     assistantContent: "",
@@ -37,7 +38,7 @@ function ctxFor(op: string, over: Partial<CanonicalLoopContext> = {}): Canonical
     attemptedToolsThisOp: new Set<string>(),
     evidenceHistory: [],
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 function fire(op: string, over: Partial<CanonicalLoopContext> = {}) {

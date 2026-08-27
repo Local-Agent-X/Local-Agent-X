@@ -9,8 +9,12 @@
  * side effects in the same order the orchestrator did inline.
  *
  * Pure structural lift out of the orchestrator: control flow, ordering, and
- * termination semantics are unchanged. Lives behind the ../turn-loop.ts
- * barrel like every other turn-loop helper.
+ * termination semantics are unchanged. Lives behind the ../turn-loop.ts barrel.
+ *
+ * SIZE — AT the hard 400-LOC gate (scripts/check-source-hygiene.mjs, MAX_LOC
+ * 400, GRANDFATHERED empty) in the file owning EVERY termination decision. The
+ * next addition FAILS THE BUILD — split it (as decide-outcome-gates.ts and
+ * empty-turn-termination.ts already were); never grandfather.
  */
 import type { CanonicalMessage, ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
@@ -22,21 +26,16 @@ import type { Op } from "../../ops/types.js";
 
 import type { MiddlewareDirective } from "./types.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
-import {
-  collectToolFailures,
-  formatFailureNudgeForModel,
-  shouldNudgeForFailures,
-} from "./tool-failure-summary.js";
+import { collectToolFailures, formatFailureNudgeForModel,
+  resolveTerminatingMutation, shouldNudgeForFailures } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-terminal.js";
 import { isRetractableHallucination, stripRetractedAssistant } from "./retract-false-claim.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { COMPLETION_GATES } from "./decide-outcome-gates.js";
 import { appendEmptyTurnTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
-import {
-  CODEBASE_ADVICE_GROUNDING_REASON,
-  CODEBASE_ADVICE_GROUNDING_STATUS,
-} from "../../agent-guards/index.js";
+import { CODEBASE_ADVICE_GROUNDING_REASON,
+  CODEBASE_ADVICE_GROUNDING_STATUS } from "../../agent-guards/index.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
@@ -153,9 +152,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       ? null
       : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
-  // Compute the failure summary up front — both the short-circuit below
-  // and the gaslighting-nudge block below depend on whether at least one
-  // mutation tool committed this turn.
+  // Two questions, two fields (tool-failure-summary.ts) — see mutationCommitted.
   const failureSummary = collectToolFailures(toolMessages, toolSummary);
 
   // Turn-completion decision. terminalReason is still null here only for a
@@ -179,8 +176,8 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   //   - noTools: a tool-less informational turn — nothing for a next turn to
   //     react to.
   //   - mutationCommitted: the model wrote/edited on disk AND narrated it — a
-  //     wrap-up would just be a recovery monologue ("edit failed on whitespace,
-  //     used write") the user already saw the result of.
+  //     wrap-up would be a recovery monologue the user already saw. Reads the
+  //     TERMINATION field: the agent's own task ledger must never end the op.
   // Mixed non-silent turns with no stop signal (e.g. bash/web_fetch that
   // returns data) still drive a wrap-up so the data gets surfaced.
   //
@@ -196,7 +193,10 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
   const hasSilentBrowser = allSilent && toolCalls.some(call => call.tool === "browser");
   const noTools = toolCalls.length === 0;
-  const mutationCommitted = failureSummary.hadSuccessfulMutation;
+  // QUESTION B (`hadTerminatingMutation`), never A — and BOUNDED there: after
+  // MAX_BOOKKEEPING_DEFERRALS consecutive bookkeeping-only turns, B falls back
+  // to A. worker.ts caps nothing on autonomous lanes; the bound lives here.
+  const mutationCommitted = resolveTerminatingMutation(op.id, failureSummary);
   // Browser actions are only no-signal fallback terminators. `tool_use` /
   // `tool_calls` means the model wants their result, so ending here cuts off
   // multi-step work after navigate/click/scroll. Other silent tools are truly
@@ -270,12 +270,12 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     terminalReason = "done";
   }
 
-  // Active gaslighting-prevention: when tools returned non-ok statuses
-  // this turn AND no successful mutation landed, inject a nudge into
-  // turn+1 telling the model to acknowledge or fix. Mixed turns
-  // (failures + at least one successful mutation) are NOT gaslighting —
-  // the model iterated and ultimately changed something on disk. The
-  // existing per-op turn cap bounds the retry.
+  // Active gaslighting-prevention: when tools returned non-ok statuses this
+  // turn AND no successful mutation landed, inject a nudge into turn+1 telling
+  // the model to acknowledge or fix. Mixed turns (failures + one successful
+  // mutation) are NOT gaslighting — the model iterated and changed something on
+  // disk. The retry is bounded by the continuation guard below re-opening ONE
+  // turn — NOT by a worker turn cap (see tool-failure-summary.ts LOOP SAFETY).
   let failureNudged = false;
   if (!middlewareAborted && !middlewareSuspended) {
     if (shouldNudgeForFailures(failureSummary)) {

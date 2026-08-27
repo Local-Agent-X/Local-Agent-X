@@ -12,12 +12,26 @@
 // Policy at the chat route:
 //   - No active turn → acquire + run
 //   - Active turn hasn't made a committing tool call yet → abort it, acquire, run
-//   - Active turn HAS made a committing tool call → 409 with turn details; caller
-//     decides whether to cancel (via abortTurn) or wait
+//   - Active turn HAS made (or is making) a committing tool call → refused with
+//     turn details; the route surfaces them on the live transport and the caller
+//     decides whether to cancel (via abortTurn) or wait. Not an HTTP status —
+//     routes/chat/run-chat-turn/orchestrator.ts emits a turn error and returns.
 //
-// `markIteration` is called from inside each agent loop at iteration start so
-// the registry reflects live progress (iteration count, last tool, committing
-// status). That's what the 409 response exposes and what session_status reads.
+// Live progress (iteration count, last tool, committing status) is written by
+// `beginToolRound`, called once per tool-dispatch round from
+// canonical-loop/turn-loop/dispatch-tools.ts BEFORE the tools execute. That is
+// the one seam that holds all three things this registry needs: the op id (so a
+// delegated background worker, which INHERITS the originating chat session id,
+// can be told apart from the user's own chat turn), the tool names, and the
+// call args (so the ARG-AWARE committing verdict is available — a name-only
+// verdict answers false for http_request/browser/pdf). Marking before execution
+// is deliberate: a turn whose payment POST is still in flight must already
+// refuse replacement. The caller settles each mark against the dispatch result;
+// only a user-DECLINED call, refused before the tool body ran, is settled back
+// down (dispatch-tools.ts NEVER_LANDED owns that judgement).
+//
+// `markIteration` is the name-only form, kept for callers with no result to
+// reconcile against; it latches immediately, exactly as it always did.
 
 import { isCommittingTool } from "../committing-tool-check.js";
 
@@ -28,7 +42,16 @@ export interface ActiveTurn {
   iteration: number;
   toolsCalled: string[];
   lastToolName?: string;
+  /** A committing tool call has COMPLETED (or could have landed). Write-once
+   *  for the life of the turn — only releaseTurn clears it, with the turn. */
   hasCommitted: boolean;
+  /** Committing tool calls dispatched but not yet settled. Held open across the
+   *  whole execution window on purpose: a turn whose payment POST is IN FLIGHT
+   *  must already refuse replacement, not only one that has returned. Settled
+   *  back down by the handle `beginToolRound` returns — a mark that never
+   *  settles would keep the turn off tryAcquireOrReplace's replaceable branch,
+   *  and so off its 5s force-release net, for the rest of the turn. */
+  committingInFlight: number;
   /** Set when acquireTurn was called with an explicit label (for logging) */
   origin?: string;
   /** Callbacks to run when the turn is released/aborted. Used by the
@@ -51,8 +74,36 @@ export interface ActiveTurnSnapshot {
   iteration: number;
   toolsCalled: string[];
   lastToolName?: string;
+  /** A committing tool call has completed OR one is in flight right now. Both
+   *  mean the same thing to every consumer — this turn must not be silently
+   *  aborted and replaced — so the snapshot merges them. */
   hasCommitted: boolean;
 }
+
+/** One call in a dispatch round, with the committing verdict already decided
+ *  by the caller. Only dispatch has the args, and only the arg-aware verdict
+ *  (committing-tool-check.isCommittingCall) can tell a `pdf` read from a `pdf
+ *  create` or an idempotent GET from a charge POST. */
+export interface ToolRoundCall {
+  name: string;
+  committing: boolean;
+}
+
+/** Settles the committing marks one dispatch round put in flight. */
+export interface ToolRoundHandle {
+  /** Settle ONE of this round's committing calls. `committed` false means the
+   *  call provably never reached its side effect (policy block, user decline,
+   *  reported failure) and so must not latch the session. */
+  settle(committed: boolean): void;
+  /** Settle every mark this round still holds as NOT committed. Idempotent,
+   *  and a no-op once `settle` has accounted for each call — call it on the
+   *  throw path so an exception can never strand a mark. */
+  abandon(): void;
+}
+
+/** Handle for a round that marked nothing (no active turn, or no committing
+ *  calls in the round). */
+const INERT_ROUND: ToolRoundHandle = { settle: () => {}, abandon: () => {} };
 
 class TurnRegistry {
   private turns = new Map<string, ActiveTurn>();
@@ -82,6 +133,7 @@ class TurnRegistry {
       iteration: 0,
       toolsCalled: [],
       hasCommitted: false,
+      committingInFlight: 0,
       origin,
       cleanupCallbacks: [],
       completion,
@@ -126,22 +178,54 @@ class TurnRegistry {
       iteration: t.iteration,
       toolsCalled: [...t.toolsCalled],
       lastToolName: t.lastToolName,
-      hasCommitted: t.hasCommitted,
+      hasCommitted: t.hasCommitted || t.committingInFlight > 0,
     };
   }
 
-  /** Update the active turn's iteration + tool-call history. Called from
-   *  inside each agent loop iteration. No-op if no active turn for the
-   *  session (e.g. the loop aborted but cleanup hasn't fired yet). */
-  markIteration(sessionId: string, toolNames: string[]): void {
+  /** Open one tool-dispatch round: bump the iteration, append the tool names,
+   *  and put every committing call IN FLIGHT so replacement is refused for the
+   *  whole execution window. The returned handle settles those marks against
+   *  the dispatch results. No-op (inert handle) if no active turn holds the
+   *  session — an agent-runner or delegated op, or a loop that aborted before
+   *  cleanup fired. */
+  beginToolRound(sessionId: string, calls: ToolRoundCall[]): ToolRoundHandle {
     const t = this.turns.get(sessionId);
-    if (!t) return;
+    if (!t) return INERT_ROUND;
     t.iteration += 1;
-    for (const name of toolNames) {
-      t.toolsCalled.push(name);
-      t.lastToolName = name;
-      if (isCommittingTool(name)) t.hasCommitted = true;
+    let unsettled = 0;
+    for (const call of calls) {
+      t.toolsCalled.push(call.name);
+      t.lastToolName = call.name;
+      if (call.committing) unsettled += 1;
     }
+    if (unsettled === 0) return INERT_ROUND;
+    t.committingInFlight += unsettled;
+    const settle = (committed: boolean): void => {
+      if (unsettled === 0) return;
+      unsettled -= 1;
+      // The turn this round belongs to may already be gone (user Stop, or a
+      // force-release followed by a replacement acquiring the slot). Settling
+      // then would credit or debit its SUCCESSOR's counters, so only the
+      // still-installed turn is touched.
+      if (this.turns.get(sessionId) !== t) return;
+      t.committingInFlight -= 1;
+      if (committed) t.hasCommitted = true;
+    };
+    return {
+      settle,
+      abandon: () => { while (unsettled > 0) settle(false); },
+    };
+  }
+
+  /** Name-only form of beginToolRound, for callers holding no dispatch result
+   *  to reconcile against. Every committing name latches immediately — the
+   *  write-once behavior this API has always had. Multi-action tools
+   *  (http_request / browser / pdf) answer false at the name-only layer;
+   *  callers with args in scope must use beginToolRound with isCommittingCall. */
+  markIteration(sessionId: string, toolNames: string[]): void {
+    const calls = toolNames.map(name => ({ name, committing: isCommittingTool(name) }));
+    const round = this.beginToolRound(sessionId, calls);
+    for (const call of calls) if (call.committing) round.settle(true);
   }
 
   /** Release the turn slot. Idempotent — safe to call multiple times. */
@@ -219,6 +303,16 @@ export function markIteration(sessionId: string | undefined, toolNames: string[]
   registry.markIteration(sessionId, toolNames);
 }
 
+/** See TurnRegistry.beginToolRound. Undefined session (a delegated/background
+ *  op, or a caller outside the chat lane) returns the inert handle. */
+export function beginToolRound(
+  sessionId: string | undefined,
+  calls: ToolRoundCall[],
+): ToolRoundHandle {
+  if (!sessionId) return INERT_ROUND;
+  return registry.beginToolRound(sessionId, calls);
+}
+
 export function releaseTurn(sessionId: string | undefined): void {
   if (!sessionId) return;
   registry.releaseTurn(sessionId);
@@ -266,6 +360,11 @@ export async function tryAcquireOrReplace(
     registry.acquireTurn(sessionId, newAbortController, origin);
     return { allowed: true, reason: "no-active" };
   }
+  // Snapshot `hasCommitted` covers both a settled commit and one in flight
+  // (see ActiveTurnSnapshot). Both must survive a second user message. Every
+  // other turn — including one whose committing call was DECLINED at the
+  // approval gate, because dispatch settles that mark back down — falls through
+  // to the replace path below and keeps its force-release safety net.
   if (existing.hasCommitted) {
     return { allowed: false, reason: "refused-committing", previous: existing };
   }

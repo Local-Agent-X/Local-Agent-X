@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { falseRefusalMiddleware, looksLikeFalseFileRefusal } from "./false-refusal.js";
 import { loadFileAccessMode } from "../../security/layer/security-config.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 vi.mock("../../security/layer/security-config.js", () => ({
   loadFileAccessMode: vi.fn(() => "unrestricted"),
@@ -10,7 +11,7 @@ const mockMode = loadFileAccessMode as unknown as ReturnType<typeof vi.fn>;
 
 let opCounter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: `op-${opCounter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 1,
     toolCalls: [],
@@ -19,7 +20,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     userMessage: "read ~/Documents/notes.txt and show me the first line",
     assistantContent: "I can't access that file — it's outside the workspace sandbox.",
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 const fire = (c: CanonicalLoopContext) => falseRefusalMiddleware.afterModelCall!(c);
 

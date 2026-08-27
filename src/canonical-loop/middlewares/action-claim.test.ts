@@ -9,6 +9,7 @@ import { actionClaimMiddleware } from "./action-claim.js";
 import { _resetMiddlewareStates } from "./state.js";
 import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 vi.mock("../../classifiers/claim-verify.js", () => ({
   verifyClaimHallucinationWithLLM: vi.fn(async () => true),
@@ -19,13 +20,13 @@ let _op = 0;
 const opId = () => `op-ac-test-${++_op}`;
 
 function ctxFor(op: string, over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: "agent" },
     assistantContent: "I removed the stale cron job and cleared the queue.",
     toolCalls: [],
     toolsCalledThisOp: new Set<string>(),
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const run = (c: CanonicalLoopContext) => actionClaimMiddleware.afterModelCall!(c);

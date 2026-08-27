@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { codebaseAdviceMiddleware } from "./codebase-advice.js";
 import { _resetMiddlewareStates } from "./state.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let opCounter = 0;
 
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: `op-codebase-advice-${opCounter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 1,
     userMessage: "Where do we still struggle as a harness, and what should we do next?",
@@ -14,7 +15,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     toolCalls: [],
     toolsCalledThisOp: new Set<string>(),
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const fire = (c: CanonicalLoopContext) => codebaseAdviceMiddleware.afterModelCall!(c);

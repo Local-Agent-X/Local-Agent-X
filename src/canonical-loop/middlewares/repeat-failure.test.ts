@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 function opId(): string { return `op-rf-test-${++_op}`; }
@@ -10,10 +11,10 @@ function ctxFor(
   results: Array<{ toolName: string; content: string; status: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled" }>,
   lane: "interactive" | "build" = "build",
 ): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane },
     toolResults: results.map((r) => ({ ...r, toolCallId: "tc" })),
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const fail = (content = "Failed to edit presentation: Could not read deck.pptx") =>

@@ -14,6 +14,7 @@ import { mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "no
 import { join } from "node:path";
 import type { LanguageIntel } from "../../language-intel/index.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 // Mock the language-intel facade BEFORE importing the middleware. Default
 // (override null) delegates to the REAL implementation; individual tests set
@@ -44,18 +45,11 @@ let _op = 0;
 const opId = () => `op-ped-test-${++_op}`;
 
 function ctxFor(op: string, over: Partial<CanonicalLoopContext>): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: "agent" },
     turnIdx: 1,
-    assistantContent: "",
-    toolCalls: [],
-    toolResults: [],
-    toolsCalledThisOp: new Set<string>(),
-    committingToolsThisOp: new Set<string>(),
-    attemptedToolsThisOp: new Set<string>(),
-    evidenceHistory: [],
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 function editTurn(op: string, file: string, status: "ok" | "error" = "ok") {

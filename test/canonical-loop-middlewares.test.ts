@@ -24,6 +24,7 @@ import { appendOpMessage, insertOpTurn } from "../src/canonical-loop/store.js";
 import { buildCanonicalLoopContext } from "../src/canonical-loop/middlewares/host.js";
 import { _resetMiddlewareStates } from "../src/canonical-loop/middlewares/state.js";
 import { _resetEvidenceHistories } from "../src/canonical-loop/middlewares/evidence-history.js";
+import { makeCanonicalLoopContext } from "../src/canonical-loop/middlewares/ctx.test-helper.js";
 
 import { loopDetectionMiddleware } from "../src/canonical-loop/middlewares/loop-detection.js";
 import { deadEndMiddleware } from "../src/canonical-loop/middlewares/dead-end.js";
@@ -75,11 +76,20 @@ function mkCtx(args: {
   toolCalls?: ToolCall[];
   toolResults?: CanonicalToolResultView[];
   toolsCalledThisOp?: string[];
+  // The two committing tallies are separate knobs on purpose: each test sets
+  // the one the middleware under test actually reads (raw name-only or
+  // substantive — see middlewares/types.ts).
   committingToolsThisOp?: string[];
+  substantiveCommittingToolsThisOp?: string[];
   tools?: ToolDescriptor[];
   evidenceHistory?: number[];
 }): CanonicalLoopContext {
-  return {
+  // Through the shared factory (src/canonical-loop/middlewares/ctx.test-helper.ts)
+  // so a newly required ctx field arrives here with a default instead of
+  // reaching a middleware as `undefined`. Files under test/ are outside
+  // tsconfig's `include: ["src"]`, so tsc never checked this literal at all —
+  // it was fully typed and STILL two fields short.
+  return makeCanonicalLoopContext({
     op: args.op,
     turnIdx: args.turnIdx ?? 0,
     userMessage: args.userMessage ?? "",
@@ -92,8 +102,9 @@ function mkCtx(args: {
     toolResults: args.toolResults ?? [],
     toolsCalledThisOp: new Set(args.toolsCalledThisOp ?? []),
     committingToolsThisOp: new Set(args.committingToolsThisOp ?? []),
+    substantiveCommittingToolsThisOp: new Set(args.substantiveCommittingToolsThisOp ?? []),
     evidenceHistory: args.evidenceHistory ?? [],
-  };
+  });
 }
 
 function mkToolCall(tool: string, args: unknown = {}): ToolCall {
@@ -281,7 +292,9 @@ describe("premature-completion middleware", () => {
     const r = await prematureCompletionMiddleware.afterModelCall!(mkCtx({
       op,
       assistantContent: "All set, the report is written.",
-      committingToolsThisOp: ["write"],
+      // The completion-gate tally — this guard asks "did the op do work on the
+      // USER'S request?", not the "any side effect on record" question.
+      substantiveCommittingToolsThisOp: ["write"],
     }));
     expect(r.kind).toBe("continue");
   });
@@ -369,6 +382,8 @@ describe("mid-turn-stale middleware", () => {
     const op = mkOp("stale-with-commit");
     const r = midTurnStaleMiddleware.beforeTurn!(mkCtx({
       op, turnIdx: 6, evidenceHistory: [1, 1, 1],
+      // The raw name-only tally — this brake asks "is there a side effect on
+      // record I'd be aborting on top of?".
       committingToolsThisOp: ["write"],
     }));
     expect((r as { kind: string }).kind).toBe("continue");

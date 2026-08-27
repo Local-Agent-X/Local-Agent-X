@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { deadEndMiddleware } from "./dead-end.js";
 import { _resetMiddlewareStates } from "./state.js";
 import type { CanonicalLoopContext, CanonicalToolResultView } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 const opId = () => `op-de-test-${++_op}`;
@@ -17,11 +18,11 @@ function result(content: string, toolName = "grep"): CanonicalToolResultView {
 }
 
 function ctxFor(op: string, lane: string, toolResults: CanonicalToolResultView[]): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane },
     toolCalls: [],
     toolResults,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 const turn = (op: string, lane: string, ...results: CanonicalToolResultView[]) =>

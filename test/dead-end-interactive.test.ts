@@ -14,23 +14,16 @@ import type {
   CanonicalLoopContext,
   CanonicalToolResultView,
 } from "../src/canonical-loop/middlewares/types.js";
+import { makeCanonicalLoopContext } from "../src/canonical-loop/middlewares/ctx.test-helper.js";
 
 function interactiveCtx(opId: string, results: CanonicalToolResultView[]): CanonicalLoopContext {
-  return {
-    op: { id: opId, lane: "interactive" } as CanonicalLoopContext["op"],
-    turnIdx: 0,
+  return makeCanonicalLoopContext({
+    op: { id: opId, lane: "interactive" },
     userMessage: "find the thing",
     provider: "xai",
     model: "grok-4",
-    tools: [],
-    toolNames: new Set(),
-    assistantContent: "",
-    toolCalls: [],
     toolResults: results,
-    toolsCalledThisOp: new Set(),
-    committingToolsThisOp: new Set(),
-    evidenceHistory: [],
-  };
+  });
 }
 
 const empty = (toolName: string): CanonicalToolResultView => ({

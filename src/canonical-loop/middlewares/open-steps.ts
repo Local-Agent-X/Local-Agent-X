@@ -25,7 +25,7 @@ import { readOpTurns } from "../store.js";
 import { getMiddlewareState } from "./state.js";
 import { EDIT_TOOLS } from "../../agent-guards/verify-gate.js";
 import { capabilityForbiddenForOp, opForbidsCapability, planModeForbidsCapability } from "../instruction-ledger/index.js";
-import { opCommittedSubstantiveWork } from "../../committing-tool-check.js";
+import { isLedgerTool, opCommittedSubstantiveWork } from "../../committing-tool-check.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -83,7 +83,14 @@ export const openStepsMiddleware: CanonicalMiddleware = {
 
     const open = getOpenTasksForSession(sessionId);
     if (open.length === 0) return interactiveBuildPlanSeed(ctx);
-    if (!opCommittedSubstantiveWork(readOpTurns(ctx.op.id))) return { kind: "continue" };
+    // The question THIS gate asks: "did the op do work on the USER'S request?"
+    // — the completion-gate question, so the task_* calls that opened these
+    // very steps are not an answer (that reasoning is circular) and a `pdf read`
+    // is not work. NOT the same question as mid-turn-stale's
+    // ctx.committingToolsThisOp check ("any side effect on record I'd be
+    // aborting on top of?", where planning counts). Do not unify the two.
+    // Read from ctx, never readOpTurns: host.ts already walked these rows.
+    if (ctx.substantiveCommittingToolsThisOp.size === 0) return { kind: "continue" };
 
     const signature = open.map((t) => t.id).sort().join(",");
     if (lastNudgedSignature.get(sessionId) === signature) return { kind: "continue" };
@@ -123,6 +130,10 @@ interface SeedFlag { fired: boolean }
 function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewareResult {
   if (ctx.op.lane !== "interactive") return { kind: "continue" };
   if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
+  // The RAW name-only tally, used ONLY as an EDIT_TOOLS name lookup — the one
+  // question all three committing tallies answer identically (see types.ts).
+  // Never read it as "the op committed something": it is blind to browser /
+  // pdf / http_request, which is why mid-turn-stale stopped reading it.
   const wroteFiles = [...ctx.committingToolsThisOp].some((t) => EDIT_TOOLS.has(t));
   if (!wroteFiles) return { kind: "continue" };
 
@@ -143,10 +154,16 @@ function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewar
 /** True when THIS op successfully called a task_* tool — the precondition both
  *  the loud-partial warning and the earned-done gate share before they nag
  *  about open steps (so a later op that never touched the list isn't blamed for
- *  steps an earlier one left open). */
+ *  steps an earlier one left open).
+ *
+ *  The predicate is the shared isLedgerTool, not a local `startsWith("task_")`.
+ *  Safe direction: committing-tool-check.ts is a leaf (tool-registry.ts +
+ *  plugin-system/tool-metadata.ts only, no stores) and this module ALREADY
+ *  imports opCommittedSubstantiveWork from it, so the edge is pre-existing and
+ *  nothing new is pulled in behind it. */
 function opTouchedTaskLedger(opId: string): boolean {
   return readOpTurns(opId).some((turn) =>
-    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && s.tool.startsWith("task_")),
+    (turn.toolCallSummary ?? []).some((s) => s.resultStatus === "ok" && isLedgerTool(s.tool)),
   );
 }
 
@@ -209,6 +226,11 @@ export function earnedDoneNudge(op: Op): string | null {
   const open = getOpenTasksForSession(sessionId);
   if (open.length === 0) return null;
   if (!opTouchedTaskLedger(op.id)) return null;
+  // Same completion-gate question as the afterModelCall hook above, but this is
+  // called from decide-outcome OUTSIDE the middleware phase — there is no ctx to
+  // read the precomputed set from, so it walks op_turns itself. That is 2 walks
+  // at op-terminal only (here + opTouchedTaskLedger), not the 4-per-turn the
+  // hooks used to pay. Do not contort the ctx design to remove them.
   if (!opCommittedSubstantiveWork(readOpTurns(op.id))) return null;
 
   earnedDoneFired.add(op.id);

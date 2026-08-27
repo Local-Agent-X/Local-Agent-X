@@ -94,7 +94,10 @@ function isToolSummary(value: unknown): value is ToolCallSummary {
   if (!record(value)) return false;
   return typeof value.tool === "string" && typeof value.argsHash === "string"
     && typeof value.resultStatus === "string" && TOOL_STATUSES.has(value.resultStatus)
-    && finite(value.durationMs);
+    && finite(value.durationMs)
+    // Optional on purpose: turns written before the dispatch-time verdict
+    // existed have no `committing` key and must keep validating.
+    && (value.committing === undefined || typeof value.committing === "boolean");
 }
 
 function isProjection(value: unknown): value is TurnCommitProjection {

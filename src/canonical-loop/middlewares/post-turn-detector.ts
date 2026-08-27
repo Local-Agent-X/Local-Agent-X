@@ -112,6 +112,90 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
         arguments: typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args ?? null),
       })),
       toolsCalledThisTurn: ctx.toolsCalledThisOp,
+      // The two commit verdicts the host already computed, in the SAME
+      // op_turns walk that builds toolsCalledThisOp (middlewares/types.ts), so
+      // the detectors that consume them no longer re-run isCommittingTool over
+      // the set whose filtered forms are already sitting in ctx.
+      //
+      // Both projections are read because the detectors do NOT ask one
+      // question, and neither projection is a subset of the other:
+      //   - SUBSTANTIVE (arg-aware, task_* ledger EXCLUDED) answers "did the
+      //     model do the USER'S work, as opposed to planning?" — a `pdf create`
+      //     or a `browser` submit counts where the name-only check sees
+      //     nothing, and a turn that only wrote its own plan still reads as
+      //     uncommitted. That is detectPlanningOnly's question, and only its.
+      //   - Their UNION answers "is there ANY committed side effect on record
+      //     for this op?" — detectUncommittedTurn's and detectEvidenceStale's
+      //     question. See the call-site comments in
+      //     agent-loop-detectors/detectors.ts.
+      //
+      // Why the union rather than either set alone — each one is blind exactly
+      // where the other sees, so OR is strictly better than picking one:
+      //   - RAW alone (name-only isCommittingTool) answers false for all three
+      //     ARG_AWARE_TOOLS, so an op whose only work was a `pdf create`, a
+      //     `browser` submit or an `http_request` POST reads as having
+      //     committed nothing and gets told to "call the tool that actually
+      //     commits work" — after doing exactly that.
+      //   - SUBSTANTIVE alone drops the task_* ledger, so a read-only research
+      //     op is 0 by definition once open-steps has seeded its task list on
+      //     turn 0, and both detectors would demand a commit the user never
+      //     asked for.
+      // The union keeps RAW's read-only stand-down verbatim — `a || b` can
+      // never be false where `a` was true, so no stand-down the raw tally used
+      // to give is lost — and adds the three arg-aware tools it was blind to.
+      // A registry-wide probe over all 197 tools confirms those three
+      // (`browser`, `http_request`, `pdf`) are the ONLY names on which the two
+      // projections diverge in that direction; every other tool is decided
+      // identically by both, so the union changes nothing else.
+      //
+      // WHAT THE UNION IS — stated plainly, because the comment that used to
+      // sit here denied it. `raw.size > 0 || substantive.size > 0` is not a
+      // near-miss for the repo's canonical "did this op commit anything?"
+      // predicate; it IS that predicate. It equals
+      // `opCommittedWork(readOpTurns(op.id))` exactly — arg-aware, task_*
+      // ledger included — for every row dispatch can write. Probed over the
+      // whole registry: 197 tools x 4 resultStatus values x 16 rows per pair
+      // (15 arg shapes each stamped through isCommittingCall, the way dispatch
+      // stamps them, plus the legacy absent-field row) = 12,608 single-row
+      // cases, zero disagreements. Multi-row follows, since all three
+      // quantities are ORs over the same rows. The contract test re-runs this
+      // sweep de-duplicated. The one shape that WOULD break it —
+      // `committing:false` stamped on a name-committing tool — is unreachable:
+      // dispatch-tools.ts is the sole writer of that field and writes
+      // isCommittingCall(tool, args), which never answers false where
+      // isCommittingTool answers true.
+      //
+      // So this call site deliberately re-derives opCommittedWork's semantics
+      // from the two tallies host.ts already holds. Both direct routes are
+      // closed on purpose:
+      //   - Calling opCommittedWork(readOpTurns(op.id)) here adds a FOURTH
+      //     op_turns walk per turn on top of the three buildCanonicalLoopContext
+      //     already does (host.ts, "why a middleware holding a ctx must read
+      //     these").
+      //   - Adding a third ctx Set is what host.ts forbids in as many words:
+      //     the last "abort-safety" projection shipped, was read by exactly one
+      //     site, and was reverted there.
+      // The cost of an inline re-derivation is silent drift, so
+      // committed-work-union-contract.test.ts pins this expression to
+      // opCommittedWork over the same rows. If you change how host.ts builds
+      // either tally, that test is what tells you the union stopped being the
+      // canonical predicate.
+      //
+      // WHY IT IS CORRECT HERE though mid-turn-stale rejected the same
+      // predicate: different consumer, opposite direction of failure. Both
+      // detectors that read this use it to STAND DOWN (`if (committed) return
+      // null`), so an over-generous "committed" costs at most one nudge the
+      // model never sees. mid-turn-stale used it to skip an abort BRAKE, so an
+      // over-generous "committed" left a spinning interactive turn with no
+      // circuit breaker — measured there as a left-nav "Purchase Orders" click
+      // disarming it from turn 3. Over-matching is cheap on this side of the
+      // seam and unsafe on that one; that asymmetry, not the predicate, is what
+      // decides which tally a reader takes. The noise this tolerance is
+      // absorbing is measured at the consumer call sites in
+      // agent-loop-detectors/detectors.ts.
+      committedSubstantiveWork: ctx.substantiveCommittingToolsThisOp.size > 0,
+      committedWorkOrLedger:
+        ctx.committingToolsThisOp.size > 0 || ctx.substantiveCommittingToolsThisOp.size > 0,
       // Real per-turn signals threaded by turn-loop (HE-5). Hardcoding
       // false/0 here made detectReasoningOnly unreachable: a turn that
       // burned reasoning tokens and stopped got "produced no visible reply"

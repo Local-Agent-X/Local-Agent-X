@@ -8,13 +8,14 @@ vi.mock("../store.js", () => ({ readOpMessages: () => rows }));
 vi.mock("../turn-loop/compact-history.js", () => ({ forceCompactNext }));
 
 import { _resetPersistedPivotRestores, autonomousStrategyPivot, restorePersistedPivot } from "./strategy-pivot.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 function ctx(toolNames: string[] = []): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: "pivot-op", lane: "build" },
     turnIdx: 9,
     toolNames: new Set(toolNames),
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 function addPivot(strategyId: string, epoch = 1, turnIdx = rows.length): void {

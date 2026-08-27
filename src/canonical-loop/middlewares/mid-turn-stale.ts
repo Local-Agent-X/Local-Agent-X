@@ -33,11 +33,15 @@ const logger = createLogger("canonical-loop.mid-turn-stale");
 const MIN_ITERATION = 5;
 const STALE_WINDOW = 3;
 
-// Tools that produce a real side effect (so they count as evidence and don't
-// read as committing) yet can be called turn after turn against a goal they
-// can't reach — the "productive-looking spin". Browser is the observed case
-// (scrape / consent-wall loops); http_request is the obvious next member if it
-// ever shows the same pattern.
+// Tools that produce a real side effect (so they count as evidence) yet can be
+// called turn after turn against a goal they can't reach — the
+// "productive-looking spin". Browser is the observed case (scrape /
+// consent-wall loops); http_request is the obvious next member if it ever shows
+// the same pattern. EVERY browser call reaches here, committing-looking or not:
+// the gate below reads the NAME-ONLY tally, and `browser` is false there no
+// matter what it clicked. An arg-aware split ("a navigate/scrape loop is spin,
+// a submitted order is work") was tried and reverted — the measurement that
+// killed it is in the beforeTurn comment.
 const SPIN_PRONE_ACTION_TOOLS: ReadonlySet<string> = new Set(["browser"]);
 
 interface MidTurnStaleState {
@@ -73,6 +77,39 @@ export const midTurnStaleMiddleware: CanonicalMiddleware = {
   beforeTurn(ctx) {
     if (isWorkerOp(ctx) && restorePersistedPivot(ctx)) return { kind: "continue" };
     if (ctx.turnIdx < MIN_ITERATION) return { kind: "continue" };
+    // The question THIS gate asks: "is there ANY side effect on record I'd be
+    // aborting on top of?" — abort safety, and it is load-bearing because
+    // Branch 1's second strike on an interactive lane returns {kind:"abort"}.
+    //
+    //   Ledger INCLUDED — the agent's own planning counts. task_create was
+    //   deliberately added to the committing registry so this brake would stop
+    //   aborting turns mid-plan (see committing-tool-check.ts header), which is
+    //   why this is NOT ctx.substantiveCommittingToolsThisOp: that set drops
+    //   the task_* ledger to answer the completion gates' different question,
+    //   "did the op do work on the USER'S request?".
+    //
+    //   NAME-ONLY, deliberately. An arg-aware tally (built from
+    //   rowCommittedWork) was wired in here and REVERTED. It credits `browser`
+    //   from COMMITTING_BROWSER_ACTION_BUTTONS — a 14-word regex over button
+    //   text. Measured over 590 real browser calls in ~/.lax: 5 matched and 4
+    //   of those were navigation, because `click_text "Purchase Orders"` (a
+    //   left-nav link) contains `purchase`. Both ops it touched were 20+ turn
+    //   INTERACTIVE browser runs, disarmed from turn 3 and turn 7 — i.e.
+    //   clicking a nav link switched off the only circuit-breaker capping a
+    //   spinning interactive turn. That regex cannot serve both readers:
+    //   over-matching is the SAFE direction for failover suppression (it
+    //   prevents a double purchase) and the UNSAFE one here (it disables a
+    //   brake), so this site takes the tally page text cannot move.
+    //   session/turn-lock.ts does take the arg-aware verdict, but for a
+    //   different decision — whether a NEW turn may replace an in-flight one —
+    //   where over-matching only refuses a replacement.
+    //
+    //   KNOWN GAP (pinned in mid-turn-stale.test.ts): the name-only tally
+    //   answers false for browser / pdf / http_request, so a turn whose only
+    //   work was a checkout click, a `pdf create` or an `http_request` POST
+    //   reads as having committed nothing and CAN still be aborted by the
+    //   second strike. Closing it needs a browser verdict that doesn't come
+    //   from button text — not a re-swap of these two tallies.
     if (ctx.committingToolsThisOp.size > 0) return { kind: "continue" };
 
     const state = getMiddlewareState<MidTurnStaleState>(

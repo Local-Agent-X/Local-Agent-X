@@ -29,7 +29,17 @@ export const prematureCompletionMiddleware: CanonicalMiddleware = {
     if (capabilityForbiddenForOp(ctx.op, "workspace-write")) return { kind: "continue" };
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };
-    if (ctx.committingToolsThisOp.size > 0) return { kind: "continue" };
+    // The question THIS gate asks: "did the worker take committing action
+    // toward the USER'S task?" — so the op's own task ledger is not an answer.
+    // An op whose only successful committing calls were task_create/task_update
+    // wrote a to-do list and nothing else, which is precisely the no-action case
+    // this gate exists to push. NOT the same question as mid-turn-stale's
+    // ctx.committingToolsThisOp check ("is there a side effect on record I'd
+    // be aborting on top of?" — where planning counts). Do not unify
+    // the two call sites; that re-merge is how this bug class regenerates.
+    // host.ts precomputes this from the op_turns walk it already does — never
+    // re-read op_turns here.
+    if (ctx.substantiveCommittingToolsThisOp.size > 0) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,

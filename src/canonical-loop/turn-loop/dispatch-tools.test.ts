@@ -10,7 +10,9 @@
 //   - per-call statuses and ORIGINAL call order survive the batch,
 //   - tool_started/tool_finished events keep the per-call vocabulary,
 //   - the tool_search augmentation side-effect still fires on the batch path,
-//   - a dispatcher WITHOUT dispatchBatch still works via the per-call loop.
+//   - a dispatcher WITHOUT dispatchBatch still works via the per-call loop,
+//   - each summary row carries the arg-aware committing verdict (both lanes),
+//     which is the only moment args are in scope to compute it.
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { existsSync, rmSync } from "node:fs";
@@ -25,7 +27,11 @@ import {
   unregisterToolsForOp,
   getToolsForOp,
 } from "../runtime.js";
-import { functionToolDispatcher } from "../tool-dispatch.js";
+import {
+  functionToolDispatcher,
+  type ToolDispatcher,
+  type ToolDispatchResult,
+} from "../tool-dispatch.js";
 import { getBus, eventsChannel } from "../bus.js";
 import { setAriRequired } from "../../ari-kernel/state.js";
 import { unifiedRegistry } from "../../tools/registry.js";
@@ -65,6 +71,16 @@ function registerChatDispatcher(opId: string, tools: ToolDefinition[], signal?: 
     opId,
     signal,
   }));
+}
+
+/** Minimal dispatcher that succeeds every call; `batched` picks the lane. */
+function echoDispatcher(batched: boolean): ToolDispatcher {
+  const one = (c: ToolCall): ToolDispatchResult =>
+    ({ toolCallId: c.toolCallId, status: "ok", result: `ran:${c.tool}`, durationMs: 1 });
+  return {
+    async dispatch(c) { return one(c); },
+    ...(batched ? { dispatchBatch: async (cs: ToolCall[]) => cs.map(one) } : {}),
+  };
 }
 
 function trackOp(opId: string): string {
@@ -234,6 +250,34 @@ describe("dispatchTools batch lane through the real executeToolCalls batcher", (
     } finally {
       unifiedRegistry.unregister("aug_target_tool_c2");
     }
+  });
+
+  it("records the arg-aware committing verdict per call on the batch path", async () => {
+    const opId = trackOp(freshOpId());
+    registerToolDispatcherForOp(opId, echoDispatcher(true));
+
+    // Same tool name, opposite verdicts: the row keeps argsHash, not args, so
+    // this is the distinction no downstream consumer can make on its own.
+    const out = await dispatchTools(opId, 0, [
+      call("c-1", "pdf", { action: "read", file_path: "a.pdf" }),
+      call("c-2", "pdf", { action: "create", file_path: "b.pdf" }),
+      call("c-3", "read", { file_path: "a.txt" }),
+    ]);
+
+    expect(out.toolSummary.map(s => s.tool)).toEqual(["pdf", "pdf", "read"]);
+    expect(out.toolSummary.map(s => s.committing)).toEqual([false, true, false]);
+  });
+
+  it("records the arg-aware committing verdict per call on the per-call path", async () => {
+    const opId = trackOp(freshOpId());
+    registerToolDispatcherForOp(opId, echoDispatcher(false));
+
+    const out = await dispatchTools(opId, 0, [
+      call("c-1", "pdf", { action: "extract_tables", file_path: "a.pdf" }),
+      call("c-2", "http_request", { method: "POST", url: "https://example.test/pay" }),
+    ]);
+
+    expect(out.toolSummary.map(s => s.committing)).toEqual([false, true]);
   });
 
   it("a dispatcher WITHOUT dispatchBatch falls back to the per-call loop", async () => {

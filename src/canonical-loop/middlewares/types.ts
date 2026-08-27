@@ -56,6 +56,14 @@ export interface CanonicalToolResultView {
 /**
  * What each middleware sees. Mutable in places where legacy middlewares
  * mutate ctx (toolsCalledThisOp grows as tool calls accrue across phases).
+ *
+ * ADDING A REQUIRED FIELD HERE: also give it a default in
+ * `ctx.test-helper.ts:makeCanonicalLoopContext`. Every test fixture builds its
+ * context through that factory precisely so `tsc` fails in ONE place instead of
+ * ~30 hand-built literals failing silently at runtime — the literals used
+ * `as unknown as CanonicalLoopContext`, which lets TypeScript accept a context
+ * missing the field and hands the first middleware that reads it a
+ * `Cannot read properties of undefined`.
  */
 export interface CanonicalLoopContext {
   op: Op;
@@ -101,7 +109,38 @@ export interface CanonicalLoopContext {
   // resultStatus === "ok". Failed/cancelled attempts are not included —
   // a failed spawn is not proof that a worker exists.
   toolsCalledThisOp: Set<string>;
+  // Two committing tallies, built in ONE op_turns walk by host.ts. They answer
+  // DIFFERENT questions and neither is a subset of the other. Read the one
+  // whose question you are asking; never substitute.
+  /** RAW name-only tally (isCommittingTool), task_* ledger included.
+   *
+   *  NOT a superset of the set below and not a subset of it either: the
+   *  name-only layer is blind to the arg-aware tools, so
+   *  `{tool:"pdf", committing:true}` is present there and ABSENT here, while
+   *  `task_create` is present here and absent there. Never shortcut on it —
+   *  `raw.size === 0` does not mean "this op committed nothing", it means
+   *  "nothing whose NAME alone proves it commits".
+   *
+   *  Readers, all three deliberate:
+   *    - mid-turn-stale's abort brake. Name-only ON PURPOSE: the arg-aware
+   *      verdict credits `browser` from a regex over button text, and a
+   *      left-nav "Purchase Orders" click was measured disarming the brake for
+   *      whole interactive ops. See the comment at that call site — it carries
+   *      the counts and the known gap this choice accepts.
+   *    - post-turn-detector's `committedWorkOrLedger` detector input.
+   *    - open-steps' interactiveBuildPlanSeed, which only asks whether an
+   *      EDIT_TOOLS name is present — a question both sets answer identically. */
   committingToolsThisOp: Set<string>;
+  /** PROGRESS / COMPLETION-GATE tally — "did this op do work on the USER'S
+   *  request?". The ARG-AWARE verdict (rowCommittedWork, so a `browser`
+   *  checkout click, a `pdf create` and an `http_request` POST all count where
+   *  the name-only tally sees nothing) MINUS the task_* ledger: a gate that
+   *  forces another turn because steps are open must not cite the task_create
+   *  calls that opened them as the evidence that work is owed. Read by
+   *  open-steps, premature-completion, refute-completion and the post-turn
+   *  detectors — they read this field and must never re-read op_turns for it
+   *  (see host.ts on why that multiplies). */
+  substantiveCommittingToolsThisOp: Set<string>;
   /** Every tool the op has ATTEMPTED across turns — incl. ones that errored or
    *  were cancelled. The counterpart to the ok-only set above: a browser that
    *  crashed mid-op is absent from toolsCalledThisOp but present here, which is

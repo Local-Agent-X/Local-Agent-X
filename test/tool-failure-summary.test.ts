@@ -1,9 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   collectToolFailures,
   formatFailureNudgeForModel,
   shouldNudgeForFailures,
+  resolveTerminatingMutation,
+  MAX_BOOKKEEPING_DEFERRALS,
 } from "../src/canonical-loop/turn-loop/tool-failure-summary.js";
+import { isLedgerTool } from "../src/committing-tool-check.js";
+import { _resetMiddlewareStates } from "../src/canonical-loop/middlewares/state.js";
+import { MEMORY_WRITE_TOOLS } from "../src/canonical-loop/turn-loop/silent-tool-check.js";
+import { isMutationTool } from "../src/tool-mutation-check.js";
+import { TOOLS } from "../src/tool-registry.js";
 
 function tm(text: string, toolCallId = "call-1") {
   return { role: "tool_result" as const, content: { text, toolCallId } };
@@ -127,6 +134,68 @@ describe("shouldNudgeForFailures — gaslighting heuristic", () => {
   });
 });
 
+// The C9 split. ONE flag used to answer two questions: "was there a real change,
+// so 'done' is iteration not gaslighting?" (A) and "can this TURN END here?" (B).
+// The agent's own task ledger answers YES to A and NO to B — task_create is
+// risk `workspace-write` so isMutationTool says mutation, but ending an op on
+// the task_create that opened its steps is circular in the destructive
+// direction. These cases pin the two fields apart at the source.
+describe("collectToolFailures — question A (nudge) vs question B (termination)", () => {
+  it("a task_create counts for the nudge question but NOT for termination", () => {
+    const r = collectToolFailures(
+      [tm("[ok] Created 3 tasks")],
+      [{ tool: "task_create" }],
+    );
+    expect(r.hadSuccessfulMutation).toBe(true);   // A: a real change landed
+    expect(r.hadTerminatingMutation).toBe(false); // B: planning is not a terminator
+  });
+
+  it("task_update is excluded from termination too (whole task_* ledger, not one name)", () => {
+    const r = collectToolFailures(
+      [tm("[ok] Marked step 2 complete")],
+      [{ tool: "task_update" }],
+    );
+    expect(r.hadSuccessfulMutation).toBe(true);
+    expect(r.hadTerminatingMutation).toBe(false);
+  });
+
+  it("CONTROL: a real file write answers YES to both — the split is not a blanket stand-down", () => {
+    const r = collectToolFailures(
+      [tm("[ok] Wrote /workspace/apps/x/index.html")],
+      [{ tool: "write" }],
+    );
+    expect(r.hadSuccessfulMutation).toBe(true);
+    expect(r.hadTerminatingMutation).toBe(true);
+  });
+
+  it("CONTROL: a read-only turn answers NO to both", () => {
+    const r = collectToolFailures(
+      [tm("[ok] file contents…")],
+      [{ tool: "read" }],
+    );
+    expect(r.hadSuccessfulMutation).toBe(false);
+    expect(r.hadTerminatingMutation).toBe(false);
+  });
+
+  it("a ledger write alongside a real write still terminates (the write carries B)", () => {
+    const r = collectToolFailures(
+      [tm("[ok] Created 3 tasks", "call-1"), tm("[ok] Wrote /x/y.ts", "call-2")],
+      [{ tool: "task_create" }, { tool: "write", toolCallId: "call-2" }],
+    );
+    expect(r.hadSuccessfulMutation).toBe(true);
+    expect(r.hadTerminatingMutation).toBe(true);
+  });
+
+  it("failures + a ledger write: nudge suppressed (A) while B stays false", () => {
+    const r = collectToolFailures(
+      [tm("[error] old_string not found", "call-1"), tm("[ok] Created 3 tasks", "call-2")],
+      [{ tool: "edit" }, { tool: "task_create", toolCallId: "call-2" }],
+    );
+    expect(shouldNudgeForFailures(r)).toBe(false); // A: a change landed, not gaslighting
+    expect(r.hadTerminatingMutation).toBe(false);  // B: op must keep going
+  });
+});
+
 describe("formatFailureNudgeForModel", () => {
   it("returns empty when no failures", () => {
     expect(formatFailureNudgeForModel({ failures: [] })).toBe("");
@@ -210,5 +279,211 @@ describe("formatFailureNudgeForModel", () => {
     // user-facing and has no place in a nudge addressed to the model.
     expect(msg).not.toMatch(/model's claims/);
     expect(msg).not.toMatch(/⚠/);
+  });
+});
+
+// C9b — the C9 carve-out DEFERS termination, and deferring is only safe if
+// something eventually stops the op. Nothing reliably does: worker.ts's per-op
+// turn count is a checkpoint cadence that resets on `op.lane !== "interactive"`,
+// its wall clock is armed for interactive only, and budget.maxTokens defaults to
+// 0 = OFF with no production path stamping one. So the bound lives here.
+describe("resolveTerminatingMutation — the bookkeeping deferral bound", () => {
+  beforeEach(() => _resetMiddlewareStates());
+
+  const ok = (text: string, toolCallId = "c1") =>
+    ({ role: "tool_result" as const, content: { text: `[ok]\n${text}`, toolCallId } });
+
+  /** A bookkeeping-only turn: a successful task_create and nothing else. */
+  const planTurn = () => collectToolFailures([ok("created 3 tasks")], [{ tool: "task_create" }]);
+  /** A real-work turn: a successful file write. */
+  const writeTurn = () => collectToolFailures([ok("wrote /x/y.ts")], [{ tool: "write" }]);
+  /** A read-only turn: successful, but no mutation of any kind. */
+  const readTurn = () => collectToolFailures([ok("file contents…")], [{ tool: "read" }]);
+
+  it(`defers exactly ${MAX_BOOKKEEPING_DEFERRALS} consecutive bookkeeping-only turns, then terminates`, () => {
+    const answers: boolean[] = [];
+    for (let i = 0; i < MAX_BOOKKEEPING_DEFERRALS + 1; i++) {
+      answers.push(resolveTerminatingMutation("op-bound", planTurn()));
+    }
+    // The first N defer (false = do not terminate on the ledger write); the
+    // N+1th spends the budget and returns the pre-C9 answer.
+    expect(answers.slice(0, MAX_BOOKKEEPING_DEFERRALS)).toEqual(
+      new Array(MAX_BOOKKEEPING_DEFERRALS).fill(false),
+    );
+    expect(answers[MAX_BOOKKEEPING_DEFERRALS]).toBe(true);
+  });
+
+  it("the budget is PER-OP — a spent op does not spend anyone else's", () => {
+    for (let i = 0; i < MAX_BOOKKEEPING_DEFERRALS + 1; i++) resolveTerminatingMutation("op-a", planTurn());
+    expect(resolveTerminatingMutation("op-a", planTurn())).toBe(true);
+    // A different op starts with a full budget.
+    expect(resolveTerminatingMutation("op-b", planTurn())).toBe(false);
+  });
+
+  it("real work RESETS the budget — and only real work can", () => {
+    for (let i = 0; i < MAX_BOOKKEEPING_DEFERRALS; i++) {
+      expect(resolveTerminatingMutation("op-reset", planTurn())).toBe(false);
+    }
+    // A real file write terminates AND refreshes the budget.
+    expect(resolveTerminatingMutation("op-reset", writeTurn())).toBe(true);
+    expect(resolveTerminatingMutation("op-reset", planTurn())).toBe(false);
+  });
+
+  it("read-only turns are NEUTRAL — interleaving them cannot launder the count", () => {
+    // The hole a naive "reset on any non-bookkeeping turn" counter would leave:
+    // plan / read / plan / read never terminates. Reads neither spend nor
+    // refresh, so the 4th plan still terminates.
+    expect(resolveTerminatingMutation("op-launder", planTurn())).toBe(false);
+    expect(resolveTerminatingMutation("op-launder", readTurn())).toBe(false);
+    expect(resolveTerminatingMutation("op-launder", planTurn())).toBe(false);
+    expect(resolveTerminatingMutation("op-launder", readTurn())).toBe(false);
+    expect(resolveTerminatingMutation("op-launder", planTurn())).toBe(false);
+    expect(resolveTerminatingMutation("op-launder", readTurn())).toBe(false);
+    expect(resolveTerminatingMutation("op-launder", planTurn())).toBe(true);
+  });
+
+  it("once spent it STAYS spent — a gate re-open does not buy another budget", () => {
+    for (let i = 0; i < MAX_BOOKKEEPING_DEFERRALS + 1; i++) resolveTerminatingMutation("op-spent", planTurn());
+    // Every subsequent bookkeeping-only turn terminates immediately.
+    expect(resolveTerminatingMutation("op-spent", planTurn())).toBe(true);
+    expect(resolveTerminatingMutation("op-spent", planTurn())).toBe(true);
+  });
+
+  it("VACUITY CONTROL: real work terminates on turn 1 and every turn after", () => {
+    // Without this, a bound that simply returned false forever would pass every
+    // "does not terminate" case above.
+    for (let i = 0; i < 10; i++) {
+      expect(resolveTerminatingMutation("op-vacuity-work", writeTurn())).toBe(true);
+    }
+  });
+
+  it("VACUITY CONTROL: a read-only op NEVER terminates on this signal, however long", () => {
+    // And without this, a bound that returned true after N turns regardless of
+    // what happened would pass the bound test.
+    for (let i = 0; i < 10; i++) {
+      expect(resolveTerminatingMutation("op-vacuity-read", readTurn())).toBe(false);
+    }
+  });
+
+  it("mixed bookkeeping + real work in ONE turn terminates and resets (the write carries B)", () => {
+    const mixed = collectToolFailures(
+      [ok("created 3 tasks", "c1"), ok("wrote /x/y.ts", "c2")],
+      [{ tool: "task_create" }, { tool: "write", toolCallId: "c2" }],
+    );
+    expect(resolveTerminatingMutation("op-mixed", mixed)).toBe(true);
+    expect(resolveTerminatingMutation("op-mixed", planTurn())).toBe(false);
+  });
+});
+
+// C9b item 3 — memory writes are bookkeeping for the TERMINATION question.
+// The shape this changes is the MIXED one, where memory_save used to terminate
+// a turn whose data-returning call had not been surfaced yet.
+//
+// A memory-only turn is unaffected — but NOT for the reason this block used to
+// give ("it is all-silent, so silentTerminates still ends it"). That mechanism
+// is refuted: silentTerminates sits inside the same
+// `assistantText.trim().length > 0` gate as mutationTerminates, so the two move
+// together. A NARRATED memory-only turn terminates on silentTerminates whatever
+// this carve-out answers, and a narration-less one terminates on NEITHER — see
+// the paired cases in src/canonical-loop/turn-loop/decide-outcome.test.ts,
+// which pin the assistant text as load-bearing rather than incidental.
+describe("collectToolFailures — memory writes are bookkeeping, not a terminator", () => {
+  const ok = (text: string, toolCallId = "c1") =>
+    ({ role: "tool_result" as const, content: { text: `[ok]\n${text}`, toolCallId } });
+
+  it("memory_save counts for the nudge question but NOT for termination", () => {
+    const r = collectToolFailures([ok("saved")], [{ tool: "memory_save" }]);
+    expect(r.hadSuccessfulMutation).toBe(true);
+    expect(r.hadTerminatingMutation).toBe(false);
+  });
+
+  it("covers the whole MEMORY_WRITE_TOOLS list, not one name", () => {
+    // ITERATE THE EXPORTED SET, never a hand-copy. This used to hardcode five
+    // names, so any tool added to silent-tool-check.ts was silently uncovered.
+    // Asserting hadSuccessfulMutation too pins the carve-out's premise: every
+    // name in the list really is a mutation tool, so excluding it from question
+    // B is a decision and not a no-op.
+    expect(MEMORY_WRITE_TOOLS.size).toBeGreaterThan(1);
+    for (const tool of MEMORY_WRITE_TOOLS) {
+      const r = collectToolFailures([ok("done")], [{ tool }]);
+      expect({ tool, mutation: r.hadSuccessfulMutation, terminating: r.hadTerminatingMutation })
+        .toEqual({ tool, mutation: true, terminating: false });
+    }
+  });
+
+  it("the stranded-read shape: memory_save + a data-returning call does NOT terminate", () => {
+    const r = collectToolFailures(
+      [ok("saved", "c1"), ok("nothing to commit, working tree clean", "c2")],
+      [{ tool: "memory_save" }, { tool: "bash", toolCallId: "c2" }],
+    );
+    expect(r.hadTerminatingMutation).toBe(false);
+  });
+
+  it("CONTROL: memory_save + a real WRITE still terminates — the carve-out is not a blanket stand-down", () => {
+    const r = collectToolFailures(
+      [ok("saved", "c1"), ok("wrote /x/y.ts", "c2")],
+      [{ tool: "memory_save" }, { tool: "write", toolCallId: "c2" }],
+    );
+    expect(r.hadTerminatingMutation).toBe(true);
+  });
+
+  // DELETE ME WHEN FIXED — pins a KNOWN GAP, not desired behavior.
+  // The carve-out reuses silent-tool-check.ts:MEMORY_WRITE_TOOLS, which lists
+  // `forget` / `memory_save` but NOT the SEVEN memory_* tools below. Each is
+  // workspace-write or destructive in tool-policy/tool-policies.memory.ts, so
+  // isMutationTool answers true and hadTerminatingMutation stays true: paired
+  // with a data-returning call they still terminate and still strand the
+  // result. This test previously named `memory_forget` alone and prescribed a
+  // fix that would have closed 1 of 7 — hence the derived-set case below.
+  // Fix = add all seven to MEMORY_WRITE_TOOLS (none returns anything the model
+  // needs to read back), then delete BOTH tests; the list-coverage case above
+  // iterates the Set and picks them up with no further edit.
+  const KNOWN_GAP_MEMORY_TOOLS = [
+    "memory_consolidate", "memory_dream", "memory_forget", "memory_forget_imports",
+    "memory_ingest", "memory_reflect", "memory_reindex",
+  ];
+
+  it("KNOWN GAP: seven memory_* mutation tools are absent from MEMORY_WRITE_TOOLS and still terminate", () => {
+    for (const tool of KNOWN_GAP_MEMORY_TOOLS) {
+      const r = collectToolFailures([ok("done")], [{ tool }]);
+      expect({ tool, mutation: r.hadSuccessfulMutation, terminating: r.hadTerminatingMutation })
+        .toEqual({ tool, mutation: true, terminating: true });
+    }
+  });
+
+  it("KNOWN GAP: the pinned list IS the derived gap — an eighth name cannot slip in unnoticed", () => {
+    // Derived from the registry rather than restated, so a newly-registered
+    // memory_* write tool fails HERE instead of quietly widening the gap.
+    const derived = Object.keys(TOOLS)
+      .filter(n => n.startsWith("memory_") && isMutationTool(n) && !MEMORY_WRITE_TOOLS.has(n))
+      .sort();
+    expect(derived).toEqual([...KNOWN_GAP_MEMORY_TOOLS].sort());
+  });
+});
+
+// C9b item 2 — the third copy of startsWith("task_") is gone. This pins the
+// SHARED predicate: committing-tool-check.ts:isLedgerTool is now exported and is
+// what both the loop's failure summary and open-steps' opTouchedTaskLedger read.
+describe("isLedgerTool — one definition, three decisions", () => {
+  it("is exported and answers for the task ledger", () => {
+    expect(isLedgerTool("task_create")).toBe(true);
+    expect(isLedgerTool("task_update")).toBe(true);
+    expect(isLedgerTool("task_list")).toBe(true);
+  });
+
+  it("does not swallow real work tools", () => {
+    for (const t of ["write", "edit", "bash", "browser", "http_request", "build_app"]) {
+      expect({ t, ledger: isLedgerTool(t) }).toEqual({ t, ledger: false });
+    }
+  });
+
+  // DELETE ME WHEN FIXED — pins the HAZARD documented on isLedgerTool, not
+  // desired behavior. The predicate is an unbounded PREFIX match, not a
+  // registry lookup, so an active plugin tool registered as `task_*` bypasses
+  // the policy table and is silently excluded from termination and from
+  // substantive-work credit. Fix = derive from the registry (or reserve the
+  // prefix at plugin registration), then delete this test.
+  it("KNOWN HAZARD: an unregistered plugin-style `task_*` name is treated as the ledger", () => {
+    expect(isLedgerTool("task_zapier_sync_invoices")).toBe(true);
   });
 });

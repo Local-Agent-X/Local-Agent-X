@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalLoopContext } from "./types.js";
 import { createOperationalClaimMiddleware, operationalClaimMiddleware } from "./operational-claim.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 // The default instance's confirm routes through classifyYesNo. Unit tests must
 // never reach a live provider: mocked to null = "classifier unavailable", which
@@ -12,7 +13,7 @@ vi.mock("../../classifiers/classify-with-llm.js", () => ({
 
 let counter = 0;
 function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: `operational-${counter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 0,
     toolCalls: [],
@@ -20,7 +21,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
     toolsCalledThisOp: new Set(),
     attemptedToolsThisOp: new Set(),
     ...over,
-  } as CanonicalLoopContext;
+  });
 }
 
 describe("operational-claim middleware", () => {

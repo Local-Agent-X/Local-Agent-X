@@ -26,6 +26,7 @@ import type { CanonicalLoopContext } from "./types.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 import type { CapabilityClass } from "../../tool-registry.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 function opId(): string { return `op-vg-test-${++_op}`; }
@@ -34,7 +35,7 @@ function ctxFor(
   op: string,
   over: Partial<CanonicalLoopContext>,
 ): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op, lane: "agent" },
     turnIdx: 1,
     assistantContent: "",
@@ -43,7 +44,7 @@ function ctxFor(
     committingToolsThisOp: new Set<string>(),
     evidenceHistory: [],
     ...over,
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 function editTurn(op: string, file: string) {

@@ -17,6 +17,10 @@ export function recoverRejectedExecutionLaunch(
 ): ExecutionLaunchRecovery {
   const op = readOp(opId);
   if (!op || op.canonical?.state !== "queued") return { kind: "owned" };
+  // `committingCallsAlreadyMade` is false because the guard above admits only
+  // `queued` ops: no turn is in flight, and the relaunch resumes at
+  // `readLatestOpTurn + 1` (worker.ts), so a re-queued op that already committed
+  // side effects replays none of them.
   const decision = allowRetry ? decideRecovery(op, {
     committingCallsAlreadyMade: false,
     reason: "execution_launch",

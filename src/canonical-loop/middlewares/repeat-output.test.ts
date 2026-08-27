@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { repeatOutputMiddleware, normalizeForRepeat, outputsSimilar } from "./repeat-output.js";
 import type { CanonicalLoopContext } from "./types.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 function opId(): string { return `op-repeat-out-${++_op}`; }
 
 function ctxFor(op: string, text: string): CanonicalLoopContext {
-  return { op: { id: op }, assistantContent: text } as unknown as CanonicalLoopContext;
+  return makeCanonicalLoopContext({ op: { id: op }, assistantContent: text });
 }
 const run = (op: string, text: string) => repeatOutputMiddleware.afterModelCall!(ctxFor(op, text));
 

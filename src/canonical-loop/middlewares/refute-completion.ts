@@ -9,8 +9,8 @@
  * This is the harness-driven counterpart to the model-driven "call tool_search"
  * nudge: the model that falsely claims done won't refute itself, so the harness
  * does it. Complements premature-completion (which catches the NO-work case —
- * this gates on committingToolsThisOp > 0, the opposite signal) and the
- * deterministic verify-gate/cleanup-verify.
+ * both read the same substantive-work signal, this one on the opposite side of
+ * it) and the deterministic verify-gate/cleanup-verify.
  *
  * Posture: worker-only, fire-once, FAIL-OPEN. Only an affirmative majority
  * refutation nudges; inconclusive/holds/any error proceeds. The skeptics see
@@ -39,7 +39,16 @@ export const refuteCompletionMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };            // still working, not a terminal claim
     const claim = ctx.assistantContent.trim();
     if (claim.length === 0) return { kind: "continue" };                  // empty → post-turn-detector's case
-    if (ctx.committingToolsThisOp.size === 0) return { kind: "continue" }; // no work → premature-completion's case
+    // The question THIS gate asks: "is there enough real work here to be worth
+    // paying for a skeptic pass?" — task_create/task_update do not answer it. A
+    // planning-only op has nothing to refute, so a ledger-including tally would
+    // buy an LLM panel against an empty ledger. NOT the same question as
+    // mid-turn-stale's ctx.committingToolsThisOp check ("any side effect on
+    // record I'd be aborting on top of?" — where planning counts).
+    // Do not unify the two call sites.
+    // host.ts precomputes this from the op_turns walk it already does — never
+    // re-read op_turns here.
+    if (ctx.substantiveCommittingToolsThisOp.size === 0) return { kind: "continue" }; // no real work → premature-completion's case
 
     // Fire once per op — the panel is the expensive path; a real worker gets
     // one refutation, fixes or re-affirms, and completes.
@@ -52,7 +61,12 @@ export const refuteCompletionMiddleware: CanonicalMiddleware = {
     flag.fired = true;
 
     const task = ctx.userMessage.trim().slice(0, TASK_MAX);
-    const actions = [...ctx.committingToolsThisOp].join(", ") || "(none recorded)";
+    // Report the SAME set the gate above judged on. The raw tally would tell
+    // the panel "actions it took: task_create, task_update" immediately after
+    // this gate refused to count exactly those as work — and hand the skeptics
+    // a `pdf`/`browser`/`http_request` blind spot the substantive set doesn't
+    // have.
+    const actions = [...ctx.substantiveCommittingToolsThisOp].join(", ") || "(none recorded)";
     const context =
       `The TASK the worker was given:\n${task}\n\n` +
       `Committing actions it actually took this op: ${actions}.\n` +

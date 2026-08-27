@@ -238,6 +238,14 @@ export interface ToolCallSummary {
   argsHash: string;
   resultStatus: ToolDispatchStatus;
   durationMs: number;
+  /** Did this specific call commit (non-idempotent, user-visible)? Recorded at
+   *  dispatch time because that is the only place the args exist — the row
+   *  keeps `argsHash`, not the args, so a `pdf` read and a `pdf create` are
+   *  otherwise indistinguishable to every op-level "did this op do work?"
+   *  check. OPTIONAL and must stay so: every op turn already on disk was
+   *  written without it, and readOpTurns parses those rows. Consumers MUST
+   *  fall back to isCommittingTool(tool) when it is undefined. */
+  committing?: boolean;
 }
 
 // ── op_messages row (PRD §9) ──────────────────────────────────────────────

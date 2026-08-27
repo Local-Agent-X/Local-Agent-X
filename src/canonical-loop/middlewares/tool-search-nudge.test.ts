@@ -11,6 +11,7 @@ import type { CanonicalLoopContext } from "./types.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 import type { CapabilityClass } from "../../tool-registry.js";
+import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 
 let _op = 0;
 function opId(): string { return `op-tsn-test-${++_op}`; }
@@ -19,12 +20,12 @@ function ctxFor(
   op: string,
   opts: { content: string; toolCalls?: number; searchedThisOp?: boolean },
 ): CanonicalLoopContext {
-  return {
+  return makeCanonicalLoopContext({
     op: { id: op },
     assistantContent: opts.content,
     toolCalls: new Array(opts.toolCalls ?? 0).fill({ name: "x" }),
     toolsCalledThisOp: new Set(opts.searchedThisOp ? ["tool_search"] : []),
-  } as unknown as CanonicalLoopContext;
+  });
 }
 
 // Default instance uses the real llmConfirm; in the test env there is no

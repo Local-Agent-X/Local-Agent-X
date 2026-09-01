@@ -242,9 +242,19 @@ describe("durable worktree recovery", () => {
 
     const unrelated = createNamedWorktree(f.name, f.branch, f.repo, "build-two:chunk:7");
 
-    expect(unrelated).toBeNull();
-    expect(pendingRecoveredWorktrees.get(f.name)?.runId).toBe("build-one:chunk:7");
-    expect(existsSync(join(f.path, "work.txt"))).toBe(true);
+    try {
+      // Not resumed: the quarantined worktree keeps its runId and its work. The
+      // unrelated build still proceeds — on its OWN worktree, cut on a
+      // side-stepped branch because the first run's unmerged branch is preserved.
+      expect(unrelated).not.toBeNull();
+      expect(unrelated!.path).not.toBe(f.path);
+      expect(unrelated!.branch).toBe(`${f.branch}-2`);
+      expect(pendingRecoveredWorktrees.get(f.name)?.runId).toBe("build-one:chunk:7");
+      expect(existsSync(join(f.path, "work.txt"))).toBe(true);
+      expect(run(f.repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    } finally {
+      cleanupWorktree(f.name); // the side-stepped worktree lives under WORKTREE_BASE, not the fixture
+    }
   });
 
   it("reclaims a stale crash lease", async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { randomId } from "../src/util/ids.js";
 import { isSyntheticSessionId, SYNTHETIC_SESSION_PREFIXES } from "../src/memory/synthetic-sessions.js";
 
 // Regression for the memory_dream self-ingestion blowup: dream globbed every
@@ -18,6 +19,17 @@ describe("isSyntheticSessionId", () => {
 
   it("the exact file that blew up is excluded (dream's own output)", () => {
     expect(isSyntheticSessionId("dream-1780687489740.jsonl")).toBe(true);
+  });
+
+  // Derived from the REAL minter (routes/chat.ts → randomId("eval") →
+  // `eval_<16hex>`), not a hand-typed literal: the list said `eval-` from
+  // f6e5f7b0 until 2026-08-31 and nothing caught it because the old fixture
+  // was typed to match the list rather than the minter.
+  it("classifies what /api/eval/run actually mints (randomId('eval') → eval_…)", () => {
+    const id = randomId("eval");
+    expect(id).toMatch(/^eval_[0-9a-f]{16}$/);
+    expect(isSyntheticSessionId(id)).toBe(true);
+    expect(isSyntheticSessionId(`${id}.jsonl`)).toBe(true);
   });
 
   it("treats real user conversations as NOT synthetic", () => {

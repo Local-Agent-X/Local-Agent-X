@@ -216,13 +216,15 @@ export function getMessageCountForSession(): ((sessionId: string) => number) | n
   return messageCountForSession;
 }
 
-// Eval sessions (/api/eval/run) are dry-run throwaways that run a real chat
-// turn purely to observe tool routing. They must never reach a browser:
-// announcing one via active_chats makes the UI subscribe and render its
-// streamed messages into the user's open chat. Filter them at the broadcast
-// source so no client path can pick them up.
+// Headless sessions must never reach a browser (active_chats would make the UI
+// subscribe and render them). eval_ (routes/chat.ts randomId("eval")) is the
+// LIVE case: it calls startChat. skill-review-/dream- (background-jobs) are
+// guards only — they never startChat and nothing subscribes. Local tuple: skill-
+// review.ts cycles via canonical-loop; memory's SYNTHETIC_SESSION_PREFIXES also
+// holds ide-/cron-, which ARE delivered here (live ide- chats) — do not unify.
+const HEADLESS_SESSION_PREFIXES = ["eval_", "skill-review-", "dream-"] as const;
 function isHeadlessSession(sessionId: string): boolean {
-  return sessionId.startsWith("eval-");
+  return HEADLESS_SESSION_PREFIXES.some(p => sessionId.startsWith(p));
 }
 
 // Backpressure ceiling for droppable delta frames (2026-07-13 audit I2). A

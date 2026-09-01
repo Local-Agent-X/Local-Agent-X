@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { handleSessionRoutes } from "../src/routes/sessions.js";
 import type { ServerContext } from "../src/server-context.js";
 import { mockJsonRequest, mockResponse } from "./helpers/http-mocks.js";
+import { randomId } from "../src/util/ids.js";
 
 // A small mixed list — enough to assert "nothing touched" without
 // listing every prefix family. The per-session test only needs wa-111.
@@ -44,14 +45,16 @@ describe("DELETE /api/sessions — aliased to sidebar_clear", () => {
 });
 
 describe("GET /api/sessions — hides system sessions from the sidebar", () => {
-  it("filters dream-/cron-/ide-/eval- prefixes, keeps regular + bridge sessions", async () => {
+  it("filters dream-/cron-/ide-/eval_ prefixes, keeps regular + bridge sessions", async () => {
     const list = [
       { id: "chat-aaa", title: "regular", updatedAt: 1, messageCount: 2 },
       { id: "wa-111", title: "whatsapp", updatedAt: 1, messageCount: 2 },
       { id: "dream-fff", title: "dream", updatedAt: 1, messageCount: 2 },
       { id: "cron-ggg", title: "cron", updatedAt: 1, messageCount: 2 },
       { id: "ide-hhh", title: "ide", updatedAt: 1, messageCount: 2 },
-      { id: "eval-mpu5htjohq00", title: "eval throwaway", updatedAt: 1, messageCount: 2 },
+      // From the real minter (routes/chat.ts randomId("eval") → eval_<hex>);
+      // the old hand-typed `eval-…` fixture pinned a prefix nothing mints.
+      { id: randomId("eval"), title: "eval throwaway", updatedAt: 1, messageCount: 2 },
     ];
     const ctx = { sessionStore: { list: vi.fn(() => list.slice()) } } as unknown as ServerContext;
     const url = new URL("http://test/api/sessions");

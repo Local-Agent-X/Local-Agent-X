@@ -80,6 +80,9 @@ import type { Op } from "../../ops/types.js";
 // Real (unmocked) per-op state registry — the interactive empty-turn counter
 // lives here; reset between cases so a prior turn's count can't leak.
 import { _resetMiddlewareStates } from "../middlewares/state.js";
+import { MISSING_TOOL_RESULT_TEXT } from "./orphan-tool-results.js";
+import { appendNudgeAsUserMessage } from "./nudges.js";
+import { createLogger } from "../../logger.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
 
@@ -1559,5 +1562,109 @@ describe("decideTurnOutcome — the bookkeeping deferral is BOUNDED on autonomou
       const r = await decideTurnOutcome({ ...planTurn(n), modelWantsToContinue: true });
       expect(r.terminalReason).toBeNull();
     }
+  });
+});
+
+// A skipped dispatch (loop-detection abort, or its mutation-repeat pivot nudge
+// with skipToolDispatch) used to commit the finalized assistant row still
+// carrying its tool calls with ZERO tool_result rows — an orphan every
+// provider rejected or mangled on the next replay. The commit seam now
+// synthesizes one tool_result per unanswered call (orphan-tool-results.ts).
+describe("decideTurnOutcome — skipped dispatch commits no orphan tool call", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const log = createLogger("test") as unknown as { info: ReturnType<typeof vi.fn> };
+
+  const twoCallRow = {
+    messageId: "am1",
+    role: "assistant" as const,
+    content: {
+      text: "",
+      toolCalls: [
+        { id: "call-a", name: "calendar_create_event", arguments: '{"title":"Review"}' },
+        { id: "call-b", name: "bash", arguments: '{"command":"ls"}' },
+      ],
+    },
+  };
+  // What turn-loop hands decide-outcome after the skip: no tool rows, no
+  // summary, and an EMPTY toolCalls list — loop-detection empties the live
+  // array itself (ctx.toolCalls.length = 0) — so only the finalized assistant
+  // row still knows the calls.
+  const skipped = (middlewareDirective: DecideOutcomeInput["middlewareDirective"]) => input({
+    middlewareDirective,
+    finalized: [twoCallRow],
+    toolMessages: [],
+    toolSummary: [],
+    toolCalls: [],
+    assistantText: "",
+  });
+  const synthesizedRow = (toolCallId: string, reason: string) => ({
+    toolCallId,
+    result: MISSING_TOOL_RESULT_TEXT,
+    status: "error",
+    synthesized: { code: "dispatch_skipped", middleware: "loop-detection", reason },
+  });
+
+  it("(a) loop-detection skipToolDispatch with 2 pending calls → 2 synthesized tool_result rows", async () => {
+    const r = await decideTurnOutcome(skipped({
+      kind: "nudge",
+      reason: "strategy-pivot",
+      firedBy: "loop-detection",
+      message: "duplicate committing call blocked",
+      skipToolDispatch: true,
+    }));
+    // Directly behind the assistant row — the shape every provider requires.
+    expect(r.allMessages.map(m => m.role)).toEqual(["assistant", "tool_result", "tool_result"]);
+    expect(r.allMessages.slice(1).map(m => m.content)).toEqual([
+      synthesizedRow("call-a", "strategy-pivot"),
+      synthesizedRow("call-b", "strategy-pivot"),
+    ]);
+    expect(log.info).toHaveBeenCalledWith(
+      "[canonical-loop] synthesized tool_result for calendar_create_event (call-a): dispatch skipped by loop-detection",
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      "[canonical-loop] synthesized tool_result for bash (call-b): dispatch skipped by loop-detection",
+    );
+    // Not a tool FAILURE: the synthesized rows never reach collectToolFailures,
+    // so the gaslighting nudge stays quiet — the pivot nudge owns the next turn.
+    expect(appendNudgeAsUserMessage).not.toHaveBeenCalled();
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("a loop-detection abort (dispatch skipped, turn → error) gets the same rows", async () => {
+    const r = await decideTurnOutcome(skipped({
+      kind: "abort", reason: "loop-detection", firedBy: "loop-detection", message: "Loop detected.",
+    }));
+    expect(r.terminalReason).toBe("error");
+    expect(r.allMessages.filter(m => m.role === "tool_result").map(m => m.content)).toEqual([
+      synthesizedRow("call-a", "loop-detection"),
+      synthesizedRow("call-b", "loop-detection"),
+    ]);
+  });
+
+  it("(b) every call answered → nothing synthesized; the commit list is byte-identical to before", async () => {
+    const answered = {
+      messageId: "am2",
+      role: "assistant" as const,
+      content: {
+        text: "Working tree is clean.",
+        toolCalls: [{ id: "tc1", name: "bash", arguments: '{"command":"git status"}' }],
+      },
+    };
+    const realRow: CommitTurnMessage = {
+      messageId: "tr1",
+      role: "tool_result",
+      content: { toolCallId: "tc1", result: "[ok]\nnothing to commit, working tree clean\n", status: "ok" },
+    };
+    const r = await decideTurnOutcome(input({ finalized: [answered], toolMessages: [realRow] }));
+    expect(JSON.stringify(r.allMessages)).toBe(JSON.stringify([answered, realRow]));
+    expect(r.allMessages[1]).toBe(realRow);
+    expect(log.info.mock.calls.map(c => String(c[0])).join("\n")).not.toContain("synthesized tool_result");
+  });
+
+  it("runs AFTER retraction: a retracted (hallucinated) assistant row leaves no call to answer", async () => {
+    const r = await decideTurnOutcome(skipped({
+      kind: "nudge", reason: "worker-hallucination", firedBy: "worker-hallucination", message: "No worker was spawned.",
+    }));
+    expect(r.allMessages).toEqual([]);
   });
 });

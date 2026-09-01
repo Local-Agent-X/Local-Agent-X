@@ -34,8 +34,8 @@ import { isRetractableHallucination, stripRetractedAssistant } from "./retract-f
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { COMPLETION_GATES } from "./decide-outcome-gates.js";
 import { appendEmptyTurnTerminal, evaluateEmptyInteractiveTurn } from "./empty-turn-termination.js";
-import { CODEBASE_ADVICE_GROUNDING_REASON,
-  CODEBASE_ADVICE_GROUNDING_STATUS } from "../../agent-guards/index.js";
+import { appendMissingToolResults } from "./orphan-tool-results.js";
+import { CODEBASE_ADVICE_GROUNDING_REASON, CODEBASE_ADVICE_GROUNDING_STATUS } from "../../agent-guards/index.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
@@ -138,9 +138,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   }
   for (const tm of toolMessages) allMessages.push(tm);
   if (retractFalseClaim) allMessages = stripRetractedAssistant(allMessages);
-  if (replaceWithGroundingStatus) {
-    allMessages = replaceAssistantText(allMessages, CODEBASE_ADVICE_GROUNDING_STATUS);
-  }
+  if (replaceWithGroundingStatus) allMessages = replaceAssistantText(allMessages, CODEBASE_ADVICE_GROUNDING_STATUS);
+  // A skipped dispatch must not commit calls with no results — orphan-tool-results.ts.
+  appendMissingToolResults(allMessages, middlewareDirective);
 
   // A middleware abort forces the turn to terminal=error so the worker
   // breaks the drive loop.

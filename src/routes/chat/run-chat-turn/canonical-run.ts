@@ -5,9 +5,14 @@ import type { Role } from "../../../rbac.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import { ThreatEngine } from "../../../threat/threat-engine.js";
 import { sanitizeModelOutput } from "../../../providers/output-sanitize.js";
+import type { TurnError } from "../../../providers/sanitize.js";
 import { createLogger } from "../../../logger.js";
 
 const logger = createLogger("routes.chat.canonical-run");
+
+/** Cap on the error text carried into history — the same cap the event pump
+ *  applies to the `error` ServerEvent it forwards to the UI. */
+const TURN_ERROR_MESSAGE_MAX = 240;
 
 export interface CanonicalRunInput {
   message: string;
@@ -53,7 +58,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
   // skipped it and the committed work never reached session.messages). Only
   // fully-committed turns are in op_messages (commitTurn writes assistant +
   // tool_results together), so the folded history is always provider-valid.
-  const salvage = async (interrupted: boolean): Promise<void> => {
+  const salvage = async (interrupted: boolean, terminalError: TurnError | null): Promise<void> => {
     if (salvaged) return;
     salvaged = true;
     try {
@@ -62,10 +67,11 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
         session, ctx, sessionId,
         images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
         interrupted,
+        terminalError,
         abortSignal,
       });
     } catch (e) {
-      logger.warn(`[chat] salvage/persist failed (${interrupted ? "interrupted" : "clean"}): ${(e as Error).message}`);
+      logger.warn(`[chat] salvage/persist failed (${interrupted ? "interrupted" : terminalError ? "error" : "clean"}): ${(e as Error).message}`);
     }
   };
 
@@ -86,6 +92,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     });
 
     let canonicalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let lastError: TurnError | null = null;
     for await (const ev of eventStream) {
       if (ev.type === "done") {
         if (ev.usage) canonicalUsage = ev.usage;
@@ -96,6 +103,11 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
       }
       if (ev.type === "stopped" && ev.firedBy === "iteration-budget") {
         iterationCheckpoint = true;
+      }
+      if (ev.type === "error") {
+        // Last error wins. Whether it was TERMINAL is settled against the
+        // op's final state after the drain (opEndedFailed) — not guessed here.
+        lastError = turnErrorFromEvent(ev.message);
       }
       primaryEventProxy(ev);
     }
@@ -112,7 +124,10 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
 
     // The stream can end gracefully even on abort (the loop just stops
     // yielding), so detect interruption here too — not only in catch.
-    await salvage(abortSignal.aborted || iterationCheckpoint);
+    // An error the UI showed is narrated to the next turn's model ONLY when
+    // the op actually died on it; recovered errors keep going and must not be.
+    const terminalError = lastError && await opEndedFailed(canonicalOpId) ? lastError : null;
+    await salvage(abortSignal.aborted || iterationCheckpoint, terminalError);
     return { doneEmitted: true };
   } catch (e) {
     // Abort (user stop) or provider error mid-stream. EITHER way, salvage the
@@ -120,7 +135,9 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     // event — skipping this is exactly what erased the interrupted turn.
     const interrupted = abortSignal.aborted;
     logger.error(`[chat] canonical chat path ${interrupted ? "interrupted (abort)" : "threw"}: ${(e as Error).message}`);
-    await salvage(interrupted);
+    // A throw is terminal by construction (nothing downstream can recover it)
+    // and reaches the UI as the `error` event below, so the model hears it too.
+    await salvage(interrupted, interrupted ? null : turnErrorFromEvent(`exception: ${(e as Error).message}`));
     // Emit the terminal error/done via wrappedOnEvent, NOT emitSse. On WS
     // clients sseSink is null, so emitSse is a no-op and both events vanish —
     // yet we still return doneEmitted:true, which suppresses the orchestrator's
@@ -130,6 +147,36 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
     if (!interrupted) wrappedOnEvent({ type: "error", message: `chat: ${(e as Error).message}` });
     wrappedOnEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
     return { doneEmitted: true };
+  }
+}
+
+/** The event pump folds the canonical error's code into the ServerEvent
+ *  message as `<code>: <message>` (chat-runner/event-pump.ts); split it back
+ *  out for the structural flag. A message without that shape (chat-runner's
+ *  submit failure) keeps code "error". Whitespace-flattened and capped so the
+ *  boundary stays one sentence. */
+function turnErrorFromEvent(message: string): TurnError {
+  const m = /^([A-Za-z0-9_.-]{1,64}): ([\s\S]*)$/.exec(message);
+  const body = (m ? m[2] : message).replace(/\s+/g, " ").trim();
+  return { code: m ? m[1] : "error", message: body.slice(0, TURN_ERROR_MESSAGE_MAX) };
+}
+
+/** Did the op itself die? The recovery modules (turn-loop/adapter-throw-
+ *  recovery, reported-adapter-recovery, worker-adapter-retry) emit `error`
+ *  events that reach the UI and the drain loop exactly like terminal ones —
+ *  context-overflow compact-and-retry, adapter retry streaks — so the op's
+ *  final state is the only signal that separates them. transitionOp persists
+ *  the row BEFORE it emits state_changed, so once the stream has drained the
+ *  read is current. A turn with no op (submit failed) had nothing that could
+ *  recover it: terminal by construction. */
+async function opEndedFailed(opId: string): Promise<boolean> {
+  if (!opId) return true;
+  try {
+    const { readOp } = await import("../../../ops/op-store.js");
+    return readOp(opId)?.canonical?.state === "failed";
+  } catch (e) {
+    logger.warn(`[chat] op state read failed (${opId.slice(0, 12)}) — not narrating the error: ${(e as Error).message}`);
+    return false;
   }
 }
 
@@ -145,6 +192,11 @@ interface PersistInput {
   /** Turn ended by user-stop / abort rather than a clean done. Salvage the
    *  committed work, mark the boundary, and refresh the stale context cache. */
   interrupted?: boolean;
+  /** Turn ended on a TERMINAL error the UI already showed (op state `failed`,
+   *  or a throw). Same salvage + boundary treatment as `interrupted`, with an
+   *  `_error` boundary row so the next turn's model explains the failure
+   *  instead of re-doing the work. Recovered errors never reach here. */
+  terminalError?: TurnError | null;
   /** This turn's abort signal — the same one its turn-lock acquire was tagged
    *  with. Used to refuse the persist if a newer turn has since taken the
    *  session's slot (write-generation check). Optional: direct callers (tests)
@@ -167,7 +219,7 @@ function sanitizeAssistantRowParam(param: ChatCompletionMessageParam): ChatCompl
 // Exported for the salvage regression test (an interrupted turn must persist
 // its work + boundary marker instead of erasing the turn).
 export async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, abortSignal } = input;
+  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, terminalError, abortSignal } = input;
   // Persist-profile pass over what the MODEL said this turn (leaked template
   // tokens, reasoning tags, hallucinated tool markup, whole-reply repeats —
   // providers/output-sanitize.ts). Applied to this turn's NEW text only: the
@@ -234,20 +286,29 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
     newChatMessages.push({ role: "assistant", content: assistantText });
   }
 
-  // A stopped turn ends without the model's natural closing reply. Leave the
-  // canonical boundary row (INTERRUPTED_TURN_BOUNDARY — owned by
-  // providers/sanitize.ts, which also scrubs any model echoes of it) so the
-  // resume turn reads a coherent history and continues from there instead of
-  // re-deriving. Standalone assistant text is a valid continuation after the
-  // salvaged messages, so this never breaks the tool_use/tool_result pairing
-  // the providers require. `_interrupted` marks it structurally so UI/replay
-  // can treat it as control-plane rather than speech.
+  // A stopped or errored turn ends without the model's natural closing reply.
+  // Leave the canonical boundary row (INTERRUPTED_TURN_BOUNDARY / the turn-
+  // error boundary — both owned by providers/sanitize.ts, which also scrubs
+  // any model echoes of them) so the resume turn reads a coherent history and
+  // continues from there instead of re-deriving. Standalone assistant text is
+  // a valid continuation after the salvaged messages, so this never breaks
+  // the tool_use/tool_result pairing the providers require. `_interrupted` /
+  // `_error` mark it structurally so UI/replay can treat it as control-plane
+  // rather than speech. One row: a user stop outranks a provider error, since
+  // the user's intent is the fact the next turn needs.
   if (interrupted) {
     const { INTERRUPTED_TURN_BOUNDARY } = await import("../../../providers/sanitize.js");
     newChatMessages.push({
       role: "assistant",
       content: INTERRUPTED_TURN_BOUNDARY,
       _interrupted: true,
+    } as ChatCompletionMessageParam);
+  } else if (terminalError) {
+    const { renderTurnErrorBoundary } = await import("../../../providers/sanitize.js");
+    newChatMessages.push({
+      role: "assistant",
+      content: renderTurnErrorBoundary(terminalError),
+      _error: { code: terminalError.code, message: terminalError.message },
     } as ChatCompletionMessageParam);
   }
 
@@ -293,11 +354,11 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
 
   ctx.saveSession(session);
 
-  // An interrupted turn changed session.messages; the cached memory/situational
-  // block built from the pre-interruption state is now stale (its 30-min TTL
-  // would otherwise serve it to the resume turn). Evict so the next turn
-  // rebuilds context that reflects the salvaged work.
-  if (interrupted) {
+  // An interrupted or errored turn changed session.messages; the cached
+  // memory/situational block built from the pre-interruption state is now
+  // stale (its TTL would otherwise serve it to the resume turn). Evict so the
+  // next turn rebuilds context that reflects the salvaged work.
+  if (interrupted || terminalError) {
     try {
       const { invalidateTurnContextCache } = await import("../../../agent-request/turn-context-cache.js");
       invalidateTurnContextCache(sessionId);

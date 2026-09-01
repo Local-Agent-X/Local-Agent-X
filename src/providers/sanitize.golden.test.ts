@@ -10,7 +10,13 @@
 import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
-import { buildCleanHistory, truncateHistory } from "./sanitize.js";
+import {
+	buildCleanHistory,
+	truncateHistory,
+	sanitizeHistory,
+	renderTurnErrorBoundary,
+	TURN_ERROR_BOUNDARY_HEAD,
+} from "./sanitize.js";
 
 const u = (text: string): ChatCompletionMessageParam => ({ role: "user", content: text });
 const a = (text: string): ChatCompletionMessageParam => ({ role: "assistant", content: text });
@@ -109,5 +115,67 @@ describe("golden: deterministic digest clip boundaries", () => {
 		expect(out[0]).toBe(leader);
 		expect(out[1].role).toBe("system");
 		expect(out[1].content).toContain('<prior_conversation count="10">');
+	});
+});
+
+// GOLDEN for the `_error` boundary row canonical-run.ts writes after a
+// terminal stream error: the provider copy carries the canonical sentence
+// exactly once, the structural flag never leaks, recovered errors (no row)
+// leave no marker, and the row survives the working-window cut.
+describe("golden: terminal-error boundary at the provider seam", () => {
+	const ERR = { code: "http_400", message: "text content blocks must be non-empty" };
+	const BOUNDARY = renderTurnErrorBoundary(ERR);
+	const errorRow = (content: string): ChatCompletionMessageParam =>
+		({ role: "assistant", content, _error: ERR }) as ChatCompletionMessageParam;
+	const copiesIn = (m: ChatCompletionMessageParam): number =>
+		String(m.content).split(TURN_ERROR_BOUNDARY_HEAD).length - 1;
+
+	it("renders the canonical sentence with the code and message", () => {
+		expect(BOUNDARY).toBe(
+			"[The previous assistant turn ended with an error (http_400: text content blocks must be non-empty). " +
+			"Work completed before the error stands; do not repeat side-effecting actions — explain the error to the user and continue from the current state.]",
+		);
+	});
+
+	it("the chat path's standalone _error row reaches the provider verbatim, once, flag stripped", () => {
+		const out = sanitizeHistory([u("q"), errorRow(BOUNDARY)]);
+		expect(out).toHaveLength(2);
+		expect(out[1]).toEqual({ role: "assistant", content: BOUNDARY });
+		expect(copiesIn(out[1])).toBe(1);
+	});
+
+	it("an _error flag on a speech row appends the boundary once after the speech", () => {
+		const out = sanitizeHistory([u("q"), errorRow("Starting on it.")]);
+		expect(out[1]).toEqual({ role: "assistant", content: `Starting on it.\n\n${BOUNDARY}` });
+	});
+
+	it("never twice: a flagged row that also carries an echoed copy renders one boundary", () => {
+		const out = sanitizeHistory([u("q"), errorRow(`Starting on it. ${BOUNDARY} As I was saying.`)]);
+		expect(copiesIn(out[1])).toBe(1);
+		expect(out[1].content).toBe(`Starting on it. As I was saying.\n\n${BOUNDARY}`);
+	});
+
+	it("a model echo inside unflagged speech is scrubbed, not re-rendered (mangled close tolerated)", () => {
+		const out = sanitizeHistory([u("q"), a(`Sure. ${BOUNDARY} Done. ${BOUNDARY.slice(0, -1)} Really.`)]);
+		expect(out[1].content).toBe("Sure. Done. Really.");
+		expect(copiesIn(out[1])).toBe(0);
+	});
+
+	it("no _error row → no marker anywhere (a recovered error leaves no trace)", () => {
+		const out = buildCleanHistory(alternating(50), "web");
+		for (const m of out) expect(copiesIn(m)).toBe(0);
+	});
+
+	it("truncation keeps the _error row in the working window", () => {
+		// 48 alternating rows, then the errored turn in the 400 shape: user row, boundary, no speech.
+		const out = buildCleanHistory([...alternating(48), u("last ask"), errorRow(BOUNDARY)], "web");
+		expect(out).toHaveLength(41);
+		expect(out[out.length - 1]).toEqual({ role: "assistant", content: BOUNDARY });
+		expect(out.filter((m) => copiesIn(m) > 0)).toHaveLength(1);
+	});
+
+	it("an _error row that ages out of the window survives in the digest", () => {
+		const out = buildCleanHistory([u("first ask"), errorRow(BOUNDARY), ...alternating(48)], "web");
+		expect(summaryOf(out)).toContain(`<prior_assistant>${TURN_ERROR_BOUNDARY_HEAD}http_400: `);
 	});
 });

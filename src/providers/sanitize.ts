@@ -20,22 +20,24 @@ export function sanitizeToolResults(results: ChatCompletionMessageParam[]): Chat
 //
 // INVARIANT: message `content` holds only what a speaker actually said.
 // Control-plane facts ABOUT a message (it was interrupted, it made tool
-// calls, it failed) travel as structured fields (`_interrupted`, like
-// `_ephemeral`), never as inline text — a text marker in history is language
-// the model reads and will eventually imitate. This has now bitten twice:
-// the "[Tool calls this turn: …]" marker (removed from voice-ws) and the
-// " [interrupted by user]" marker, which Grok echoed into a single assistant
-// message containing 763 copies.
+// calls, it failed) travel as structured fields (`_interrupted`, `_error`,
+// like `_ephemeral`), never as inline text — a text marker in history is
+// language the model reads and will eventually imitate. This has now bitten
+// twice: the "[Tool calls this turn: …]" marker (removed from voice-ws) and
+// the " [interrupted by user]" marker, which Grok echoed into a single
+// assistant message containing 763 copies.
 //
 // This seam is the single enforcement point (every provider-bound history
 // passes through buildCleanHistory → sanitizeHistory):
-//  1. `_interrupted: true` on a stored assistant message renders here — once,
-//     canonically, as INTERRUPTED_TURN_BOUNDARY appended to that message's
-//     provider-bound copy. Stored content and the UI transcript stay clean.
+//  1. `_interrupted: true` / `_error: { code, message }` on a stored
+//     assistant message render here — once each, canonically, as
+//     INTERRUPTED_TURN_BOUNDARY / the turn-error boundary appended to that
+//     message's provider-bound copy. Stored content and the UI transcript
+//     stay clean.
 //  2. Known marker text found INSIDE assistant content (legacy sessions
 //     written before the flag, or model echoes of the markers) is scrubbed,
 //     so polluted sessions self-heal instead of re-seeding the loop each turn.
-//  3. A message whose content IS exactly the boundary sentence is the chat
+//  3. A message whose content IS exactly a boundary sentence is the chat
 //     path's deliberate standalone boundary row — kept verbatim.
 
 /**
@@ -46,6 +48,43 @@ export function sanitizeToolResults(results: ChatCompletionMessageParam[]): Chat
  */
 export const INTERRUPTED_TURN_BOUNDARY =
   "[Previous turn was interrupted before it finished. The work above ran; continue from there.]";
+
+/**
+ * The one canonical rendering of "this turn ended with a terminal error" —
+ * INTERRUPTED_TURN_BOUNDARY's sibling for a turn that died on a provider or
+ * loop error the UI already showed (a 400, an exhausted retry streak, a
+ * deadline). Without it the next turn's model sees a clean history plus "you
+ * errored out" and re-does the work instead of explaining. Same discipline:
+ * full-sentence, instruction-shaped, never a short bracketed token. The
+ * payload varies, so the frame is HEAD/TAIL and `renderTurnErrorBoundary` is
+ * the single writer; canonical-run.ts uses it for the chat path's standalone
+ * `_error` boundary row, and the seam below re-renders from the flag.
+ */
+export interface TurnError { code: string; message: string }
+export const TURN_ERROR_BOUNDARY_HEAD = "[The previous assistant turn ended with an error (";
+export const TURN_ERROR_BOUNDARY_TAIL =
+  "). Work completed before the error stands; do not repeat side-effecting actions — explain the error to the user and continue from the current state.]";
+
+export function renderTurnErrorBoundary(err: TurnError): string {
+  const code = err.code.replace(/\s+/g, " ").trim() || "error";
+  const message = err.message.replace(/\s+/g, " ").trim();
+  return `${TURN_ERROR_BOUNDARY_HEAD}${code}: ${message}${TURN_ERROR_BOUNDARY_TAIL}`;
+}
+
+function asTurnError(v: unknown): TurnError | null {
+  if (!v || typeof v !== "object") return null;
+  const { code, message } = v as Record<string, unknown>;
+  return typeof code === "string" && typeof message === "string" ? { code, message } : null;
+}
+
+// Model echoes of an error boundary embedded in speech. The payload varies,
+// so match the fixed frame around a bounded single-line body; like
+// CONTROL_MARKERS, tolerates a model-mangled copy missing its closing bracket.
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const TURN_ERROR_ECHO = new RegExp(
+  `\\s*${escapeRe(TURN_ERROR_BOUNDARY_HEAD)}.{0,400}?${escapeRe(TURN_ERROR_BOUNDARY_TAIL.slice(0, -1))}\\]?`,
+  "g",
+);
 
 // Registry of retired inline markers to scrub from assistant content.
 // Add new entries here if another marker is ever found in the wild — and
@@ -66,14 +105,15 @@ const CONTROL_MARKERS: Array<{ pattern: RegExp; meansInterrupted: boolean }> = [
 function enforceMarkerInvariant(m: ChatCompletionMessageParam): ChatCompletionMessageParam {
   if (m.role !== "assistant" || typeof m.content !== "string") return m;
   const rec = m as unknown as Record<string, unknown>;
+  const turnError = asTurnError(rec._error);
+  const errorBoundary = turnError ? renderTurnErrorBoundary(turnError) : null;
 
-  // The chat path's deliberate standalone boundary row: keep as-is, minus
+  // The chat path's deliberate standalone boundary rows: keep as-is, minus
   // the structural flag (provider payloads carry only role/content shape).
-  if (m.content.trim() === INTERRUPTED_TURN_BOUNDARY) {
-    if (rec._interrupted === undefined) return m;
-    const bare = { ...m } as ChatCompletionMessageParam;
-    delete (bare as unknown as Record<string, unknown>)._interrupted;
-    return bare;
+  const trimmed = m.content.trim();
+  if (trimmed === INTERRUPTED_TURN_BOUNDARY || (errorBoundary !== null && trimmed === errorBoundary)) {
+    if (rec._interrupted === undefined && rec._error === undefined) return m;
+    return withoutControlFlags(m);
   }
 
   let interrupted = rec._interrupted === true;
@@ -85,20 +125,31 @@ function enforceMarkerInvariant(m: ChatCompletionMessageParam): ChatCompletionMe
     pattern.lastIndex = 0;
     content = content.replace(pattern, "");
   }
-  // Model echoes of the boundary sentence embedded inside speech.
+  // Model echoes of the boundary sentences embedded inside speech.
   while (content.includes(INTERRUPTED_TURN_BOUNDARY)) {
     content = content.replace(INTERRUPTED_TURN_BOUNDARY, "");
   }
+  content = content.replace(TURN_ERROR_ECHO, "");
 
-  if (content === m.content && !interrupted) return m;
+  if (content === m.content && !interrupted && errorBoundary === null) return m;
 
-  // Render the interruption fact once, canonically, on the provider copy.
+  // Render each control fact once, canonically, on the provider copy.
   content = content.trim();
   if (interrupted) {
     content = content ? `${content}\n\n${INTERRUPTED_TURN_BOUNDARY}` : INTERRUPTED_TURN_BOUNDARY;
   }
-  const copy = { ...m, content } as ChatCompletionMessageParam;
-  delete (copy as unknown as Record<string, unknown>)._interrupted;
+  if (errorBoundary !== null) {
+    content = content ? `${content}\n\n${errorBoundary}` : errorBoundary;
+  }
+  return withoutControlFlags({ ...m, content } as ChatCompletionMessageParam);
+}
+
+/** Provider copy without the structural control flags (shallow copy). */
+function withoutControlFlags(m: ChatCompletionMessageParam): ChatCompletionMessageParam {
+  const copy = { ...m } as ChatCompletionMessageParam;
+  const rec = copy as unknown as Record<string, unknown>;
+  delete rec._interrupted;
+  delete rec._error;
   return copy;
 }
 

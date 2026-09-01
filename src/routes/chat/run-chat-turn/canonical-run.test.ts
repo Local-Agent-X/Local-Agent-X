@@ -25,8 +25,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { Session } from "../../../types.js";
 
-const { fixtureRowsByOp } = vi.hoisted(() => ({
+const { fixtureRowsByOp, opStateByOp, runChatViaCanonical } = vi.hoisted(() => ({
 	fixtureRowsByOp: new Map<string, unknown[]>(),
+	opStateByOp: new Map<string, string>(),
+	runChatViaCanonical: vi.fn(),
 }));
 
 vi.mock("../../../canonical-loop/index.js", async () => {
@@ -36,14 +38,31 @@ vi.mock("../../../canonical-loop/index.js", async () => {
 	return {
 		readOpMessages: (opId: string) => fixtureRowsByOp.get(opId) ?? [],
 		opMessageRowToChatParam: real.opMessageRowToChatParam,
+		runChatViaCanonical,
 	};
 });
 
-import { persistTurnState } from "./canonical-run.js";
-import { INTERRUPTED_TURN_BOUNDARY } from "../../../providers/sanitize.js";
+// The op's terminal state is what separates a terminal stream error from a
+// recovered one (compact-and-retry, adapter retry streaks) — fed per opId.
+vi.mock("../../../ops/op-store.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../../ops/op-store.js")>()),
+	readOp: (opId: string) => {
+		const state = opStateByOp.get(opId);
+		return state ? { canonical: { state } } : null;
+	},
+}));
+
+import { persistTurnState, runCanonicalChat } from "./canonical-run.js";
+import { INTERRUPTED_TURN_BOUNDARY, renderTurnErrorBoundary, type TurnError } from "../../../providers/sanitize.js";
+import type { ServerEvent } from "../../../types.js";
 
 let seq = 0;
-function freshInput(opts: { assistantText: string; canonicalOpId?: string; interrupted?: boolean }) {
+function freshInput(opts: {
+	assistantText: string;
+	canonicalOpId?: string;
+	interrupted?: boolean;
+	terminalError?: TurnError | null;
+}) {
 	const session = { messages: [], updatedAt: 0 } as unknown as Session;
 	const persistTurn = vi.fn(async (_input: unknown) => {});
 	const ctx = {
@@ -59,6 +78,7 @@ function freshInput(opts: { assistantText: string; canonicalOpId?: string; inter
 		sessionId: `sess-persist-hygiene-${seq++}`,
 		images: [],
 		interrupted: opts.interrupted === true,
+		terminalError: opts.terminalError ?? null,
 	};
 	return { session, ctx, persistTurn, input };
 }
@@ -197,5 +217,152 @@ describe("persistTurnState — persist-profile hygiene (committed op rows)", () 
 
 		const assistant = session.messages[1] as { content: string };
 		expect(assistant.content).toBe(CLEAN_REPLY);
+	});
+});
+
+// A terminal stream error (the 2026-08-30 400 "text content blocks must be
+// non-empty") ended a turn with nothing in session.messages saying so; the
+// next turn's model saw a clean finished answer + "you errored out" and
+// re-did the work. The boundary row mirrors `_interrupted`: structural flag,
+// canonical sentence owned by providers/sanitize.ts.
+describe("persistTurnState — terminal-error boundary", () => {
+	const ERR: TurnError = { code: "http_400", message: "text content blocks must be non-empty" };
+
+	it("errored turn: cleaned text first, then ONE _error boundary row with code/message", async () => {
+		const { session, input } = freshInput({ assistantText: JUNK_REPLY, terminalError: ERR });
+		await persistTurnState(input);
+
+		expect(session.messages).toHaveLength(3);
+		expect(session.messages[1]).toEqual({ role: "assistant", content: CLEAN_REPLY });
+		const boundary = session.messages[2] as { content: string; _error?: unknown; _interrupted?: unknown };
+		expect(boundary.content).toBe(renderTurnErrorBoundary(ERR));
+		expect(boundary._error).toEqual(ERR);
+		expect(boundary._interrupted).toBeUndefined();
+	});
+
+	it("errored turn with no model text keeps the user row and the boundary (the 400 shape)", async () => {
+		const { session, persistTurn, input } = freshInput({ assistantText: "", terminalError: ERR });
+		await persistTurnState(input);
+
+		expect(session.messages).toHaveLength(2);
+		expect(session.messages[0]).toMatchObject({ role: "user" });
+		expect((session.messages[1] as { _error?: unknown })._error).toEqual(ERR);
+		expect(persistTurn).not.toHaveBeenCalled();
+	});
+
+	it("a user stop outranks a provider error: one _interrupted row, no _error row", async () => {
+		const { session, input } = freshInput({ assistantText: CLEAN_REPLY, interrupted: true, terminalError: ERR });
+		await persistTurnState(input);
+
+		expect(session.messages).toHaveLength(3);
+		expect(session.messages[2]).toMatchObject({ content: INTERRUPTED_TURN_BOUNDARY, _interrupted: true });
+		expect(session.messages.some((m) => "_error" in m)).toBe(false);
+	});
+
+	it("a clean turn persists no boundary row of either kind", async () => {
+		const { session, input } = freshInput({ assistantText: CLEAN_REPLY });
+		await persistTurnState(input);
+
+		expect(session.messages).toHaveLength(2);
+		expect(session.messages.some((m) => "_error" in m || "_interrupted" in m)).toBe(false);
+	});
+});
+
+describe("runCanonicalChat — terminal vs recovered stream errors", () => {
+	async function* streamOf(events: ServerEvent[]): AsyncGenerator<ServerEvent> {
+		for (const ev of events) yield ev;
+	}
+	const usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
+
+	function runWith(events: ServerEvent[], streamedText: string) {
+		runChatViaCanonical.mockImplementationOnce(() => streamOf(events));
+		const session = { messages: [], updatedAt: 0 } as unknown as Session;
+		const ctx = { memoryManager: { persistTurn: vi.fn(async () => {}) }, saveSession: vi.fn() };
+		const primaryEventProxy = vi.fn();
+		const wrappedOnEvent = vi.fn();
+		const run = runCanonicalChat({
+			message: "summarize the ledger",
+			sessionId: `sess-terminal-error-${seq++}`,
+			prepared: { model: "test-model", images: [] } as never,
+			sessionTools: [],
+			session,
+			ctx: ctx as never,
+			requestRole: "owner" as never,
+			threatEngine: {} as never,
+			abortSignal: new AbortController().signal,
+			primaryEventProxy,
+			wrappedOnEvent,
+			emitSse: vi.fn(),
+			getFullResponseText: () => streamedText,
+		});
+		return { run, session, primaryEventProxy, wrappedOnEvent };
+	}
+
+	beforeEach(() => {
+		opStateByOp.clear();
+	});
+
+	it("error then done on a FAILED op: assistant text, then one _error row with the code split back out", async () => {
+		opStateByOp.set("op-dead", "failed");
+		const { run, session, primaryEventProxy, wrappedOnEvent } = runWith([
+			{ type: "chat_op_started", opId: "op-dead" },
+			{ type: "stream", delta: "Starting on it." },
+			{ type: "error", message: "http_400: text content blocks must be non-empty" },
+			{ type: "done", usage },
+		], "Starting on it.");
+		await expect(run).resolves.toEqual({ doneEmitted: true });
+
+		expect(session.messages).toHaveLength(3);
+		expect(session.messages[1]).toEqual({ role: "assistant", content: "Starting on it." });
+		expect(session.messages[2]).toMatchObject({
+			role: "assistant",
+			_error: { code: "http_400", message: "text content blocks must be non-empty" },
+		});
+		// The UI still gets the error event, and done still follows it.
+		expect(primaryEventProxy).toHaveBeenCalledWith({ type: "error", message: "http_400: text content blocks must be non-empty" });
+		expect(wrappedOnEvent).toHaveBeenLastCalledWith({ type: "done", usage });
+	});
+
+	it("a RECOVERED error (compact-and-retry; op succeeded) is never narrated", async () => {
+		opStateByOp.set("op-recovered", "succeeded");
+		const { run, session } = runWith([
+			{ type: "chat_op_started", opId: "op-recovered" },
+			{ type: "error", message: "context_overflow_compacting: Context exceeded the model's window — compacting older history and retrying (1/3)." },
+			{ type: "stream", delta: "Here is the summary." },
+			{ type: "done", usage },
+		], "Here is the summary.");
+		await run;
+
+		expect(session.messages).toHaveLength(2);
+		expect(session.messages[1]).toEqual({ role: "assistant", content: "Here is the summary." });
+	});
+
+	it("a normal turn persists no boundary row", async () => {
+		opStateByOp.set("op-fine", "succeeded");
+		const { run, session } = runWith([
+			{ type: "chat_op_started", opId: "op-fine" },
+			{ type: "stream", delta: "All done." },
+			{ type: "done", usage },
+		], "All done.");
+		await run;
+
+		expect(session.messages).toHaveLength(2);
+		expect(session.messages.some((m) => "_error" in m || "_interrupted" in m)).toBe(false);
+	});
+
+	it("a submit failure (no op ever started) is terminal by construction; message is flattened and capped", async () => {
+		const noisy = `canonical chat submit failed: adapter\n\tnot configured ${"x".repeat(300)}`;
+		const { run, session } = runWith([
+			{ type: "error", message: noisy },
+			{ type: "done", usage },
+		], "");
+		await run;
+
+		expect(session.messages).toHaveLength(2);
+		const err = (session.messages[1] as { _error?: TurnError })._error;
+		expect(err?.code).toBe("error");
+		expect(err?.message.startsWith("canonical chat submit failed: adapter not configured x")).toBe(true);
+		expect(err?.message).toHaveLength(240);
+		expect(err?.message).not.toMatch(/\s{2}|\n/);
 	});
 });

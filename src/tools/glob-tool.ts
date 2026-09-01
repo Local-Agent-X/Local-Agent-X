@@ -3,6 +3,7 @@
  * Replaces bash find/ls with structured glob results sorted by mtime.
  */
 import { stat } from "node:fs/promises";
+import type { Readable } from "node:stream";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
@@ -29,15 +30,102 @@ function humanSize(bytes: number): string {
 
 interface FileEntry { path: string; mtime: number; size: number }
 
-async function globFiles(pattern: string, cwd: string, limit: number): Promise<FileEntry[]> {
-  const paths = await fg(pattern, {
-    cwd,
-    dot: false,
-    onlyFiles: true,
-    absolute: true,
-    suppressErrors: true,
-    ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/vendor/**", "**/.next/**", "**/__pycache__/**"],
+// ── Walk bounds ──
+//
+// glob is readOnly + concurrencySafe, so the executor runs N of them in one
+// Promise.all batch; every bound below is PER CALL and multiplies by that N.
+// Before these existed one wide pattern could exhaust the heap: depth and
+// readdir fan-out were unbounded (a symlink cycle, or a link into a huge tree,
+// walked until ELOOP with the error swallowed) and every match was collected
+// and stat()ed before the 200-entry limit applied last. The Aug 30 OOM
+// snapshot — 3.9GB heap, 126-206 pending FSReqCallbacks — was that fan-out.
+//
+// Symlinks ARE still followed. The packaged app bridges <cwd>/workspace to the
+// configured workspace with a dir symlink / junction (workspace/lifecycle.ts
+// ensureWorkspaceLink), and the default search root is that cwd — so a walk
+// that skipped links would return "No files matched." for every user file.
+// The depth and scan caps below are what bound a cycle, not link-skipping.
+
+// Directories never worth walking. `**` matches any prefix, so
+// `**/node_modules/**` already covers desktop/node_modules and every other
+// nested install. `.claude/worktrees` needs its own entry: `dot:false` keeps a
+// bare `**` out of `.claude`, but an explicit `.claude/**` pattern walks in,
+// and this repo carries 150+ worktrees under it.
+export const WALK_IGNORE = [
+  "**/node_modules/**",
+  "**/dist/**",
+  "**/.git/**",
+  "**/vendor/**",
+  "**/.next/**",
+  "**/__pycache__/**",
+  "**/coverage/**",
+  "**/.claude/worktrees/**",
+];
+
+// Nested directory levels ENTERED below the pattern's static base (files in a
+// level-12 directory are listed; a level-13 directory is not opened). Real
+// source trees bottom out around 8-10 (deep Java packages, nested monorepos),
+// so 12 loses nothing while bounding a `**` that lands on an unignored
+// generated tree or a symlink cycle. The model can re-root with `path`.
+export const MAX_DEPTH = 12;
+
+// Concurrent readdir()s per walk. fast-glob defaults to os.cpus().length —
+// 16-32 on a dev box — per CALL, which is how a batch of globs piled up
+// hundreds of pending fs callbacks.
+export const WALK_CONCURRENCY = 8;
+
+// Matches collected before the walk is cut off. 25x the 200-entry result
+// limit: plenty for the mtime sort to surface the newest files of any sane
+// tree, small enough that the path array stays in the low MBs however wide
+// the pattern. Past it the result says so and asks for a narrower pattern
+// instead of silently walking on.
+export const MAX_SCAN = 5000;
+
+interface Walk { paths: string[]; truncated: boolean }
+
+/** fast-glob's pluggable filesystem — a test seam for counting readdir()s. */
+export type WalkFs = NonNullable<fg.Options["fs"]>;
+
+// Stream matches and destroy the walk at MAX_SCAN. fast-glob wires the
+// returned stream's 'close' to the directory walker's destroy, so cutting it
+// off here stops the readdir fan-out rather than merely ignoring it.
+// Exported for the test that proves that (a virtual fs counts the readdirs).
+export function walkBounded(pattern: string, cwd: string, fs?: WalkFs): Promise<Walk> {
+  return new Promise((resolve, reject) => {
+    const paths: string[] = [];
+    let truncated = false;
+    // fast-glob types its stream as NodeJS.ReadableStream, which has no
+    // destroy(); the object it constructs is a node:stream Readable.
+    const stream = fg.stream(pattern, {
+      cwd,
+      dot: false,
+      onlyFiles: true,
+      absolute: true,
+      suppressErrors: true,
+      followSymbolicLinks: true,
+      // fast-glob's `deep` is exclusive — a directory AT that level is not
+      // opened — so +1 makes MAX_DEPTH mean "levels entered".
+      deep: MAX_DEPTH + 1,
+      concurrency: WALK_CONCURRENCY,
+      ignore: WALK_IGNORE,
+      fs,
+    }) as Readable;
+    stream.on("data", (p: string) => {
+      if (truncated) return;
+      paths.push(p);
+      if (paths.length >= MAX_SCAN) {
+        truncated = true;
+        stream.destroy();
+        resolve({ paths, truncated });
+      }
+    });
+    stream.once("end", () => resolve({ paths, truncated }));
+    stream.on("error", reject);
   });
+}
+
+async function globFiles(pattern: string, cwd: string, limit: number): Promise<{ entries: FileEntry[]; truncated: boolean }> {
+  const { paths, truncated } = await walkBounded(pattern, cwd);
 
   const entries: FileEntry[] = [];
   for (const p of paths) {
@@ -48,14 +136,15 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<F
   }
 
   entries.sort((a, b) => b.mtime - a.mtime);
-  return entries.slice(0, limit);
+  return { entries: entries.slice(0, limit), truncated };
 }
 
 export const globTool: ToolDefinition = {
   name: "glob",
   description:
     "Fast file pattern matching. Returns files matching a glob pattern, sorted by modification time (newest first). " +
-    "Supports patterns like **/*.ts, src/**/*.tsx, *.json.",
+    "Supports patterns like **/*.ts, src/**/*.tsx, *.json. " +
+    `Walks at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches — pass path to search deeper or narrower.`,
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -80,16 +169,20 @@ export const globTool: ToolDefinition = {
     const startMs = Date.now();
 
     try {
-      const entries = await globFiles(pattern, cwd, 200);
+      const { entries, truncated } = await globFiles(pattern, cwd, 200);
       const durationMs = Date.now() - startMs;
       if (entries.length === 0) return ok("No files matched.", { pattern, cwd, count: 0, duration_ms: durationMs });
 
       const lines = entries.map((e) => `${e.path}  (${humanSize(e.size)})`);
-      return ok(lines.join("\n"), {
+      const warning = truncated
+        ? `\nWARNING: the walk stopped after ${MAX_SCAN} matches — this list is the newest of THOSE, not of the whole tree; narrow the path or use a more specific pattern.`
+        : "";
+      return ok(lines.join("\n") + warning, {
         pattern,
         cwd,
         count: entries.length,
         capped: entries.length === 200 || undefined,
+        scan_truncated: truncated || undefined,
         duration_ms: durationMs,
       });
     } catch (e: unknown) {
@@ -116,6 +209,7 @@ export function prompt(): string {
     "Use the glob tool for fast file pattern matching instead of bash find/ls.",
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json.",
     "Results are sorted by modification time (newest first), limited to 200.",
+    `The walk enters at most ${MAX_DEPTH} directory levels below the search root and stops after ${MAX_SCAN} matches (the result says so) — pass path to re-root deeper, or narrow the pattern.`,
     "Provide an optional path to search in a specific directory.",
   ].join("\n");
 }

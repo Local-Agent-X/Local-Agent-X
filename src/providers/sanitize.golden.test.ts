@@ -178,4 +178,31 @@ describe("golden: terminal-error boundary at the provider seam", () => {
 		const out = buildCleanHistory([u("first ask"), errorRow(BOUNDARY), ...alternating(48)], "web");
 		expect(summaryOf(out)).toContain(`<prior_assistant>${TURN_ERROR_BOUNDARY_HEAD}http_400: `);
 	});
+
+	// The partial-text shape: the turn spoke ("Starting on it.") and THEN died,
+	// so canonical-run writes a standalone boundary row right after the speech
+	// row. sanitizeHistory coalesces the two for the provider — but the speech
+	// row it coalesces INTO is the live session.messages object (callers pass
+	// stored history uncopied). Merging in place used to persist the boundary
+	// into the stored speech row, so the reloaded transcript showed the sentence
+	// twice. The provider copy gets the merge; stored rows stay byte-identical.
+	it("coalescing speech + boundary for the provider never mutates the stored speech row", () => {
+		const speech = a("Starting on it.");
+		const boundary = errorRow(BOUNDARY);
+		const stored = [u("q"), speech, boundary];
+		const out = sanitizeHistory(stored);
+		expect(out).toHaveLength(2);
+		expect(out[1]).toEqual({ role: "assistant", content: `Starting on it.\n${BOUNDARY}` });
+		expect(speech).toEqual({ role: "assistant", content: "Starting on it." });
+		expect(boundary).toEqual({ role: "assistant", content: BOUNDARY, _error: ERR });
+		expect(stored).toHaveLength(3);
+	});
+
+	it("coalescing a user run (3x bridge messages) leaves the stored rows untouched too", () => {
+		const stored = [u("hey"), u("hey"), u("hey"), a("hi")];
+		const snapshot = stored.map((m) => ({ ...m }));
+		const out = sanitizeHistory(stored);
+		expect(out).toEqual([{ role: "user", content: "hey\nhey\nhey" }, { role: "assistant", content: "hi" }]);
+		expect(stored).toEqual(snapshot);
+	});
 });

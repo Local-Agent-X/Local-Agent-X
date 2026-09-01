@@ -264,8 +264,12 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
       !(last as unknown as MsgRecord).tool_calls &&
       !(m as unknown as MsgRecord).tool_calls
     ) {
-      // Merge into the previous message
-      (last as { content: string }).content = `${last.content}\n${m.content}`;
+      // Merge into the previous message — on a COPY. `last` is often the live
+      // session.messages row (callers pass stored history uncopied and
+      // enforceMarkerInvariant returns the original when nothing applies);
+      // mutating it would persist the merged text into stored history and the
+      // reloaded transcript would show the boundary sentence twice.
+      coalesced[coalesced.length - 1] = { ...last, content: `${last.content}\n${m.content}` } as ChatCompletionMessageParam;
       continue;
     }
     coalesced.push(m);

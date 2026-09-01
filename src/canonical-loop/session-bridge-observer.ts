@@ -59,6 +59,28 @@ function warnOnce(msg: string): void {
   logger.warn(`[canonical-bridge] ${msg} (further warnings suppressed)`);
 }
 
+/**
+ * Op types that never surface in the AGENTS sidebar, never queue a pending
+ * notification and never schedule an idle nudge. They STILL take the terminal
+ * release branch in recordCanonicalEventWithSink (see the leak note there).
+ *
+ *   chat_turn     the chat reply itself (WS stream channel), not a worker card
+ *   agent_spawn   handler-events emits the named-agent card; this doubled it
+ *   voice_turn    one per utterance; the reply is TTS audio, not a card
+ *   skill_review  background-jobs/skill-review.ts — headless post-turn audit,
+ *                 bound by trackOpForSession to its synthetic fork session
+ *                 (skill-review-<ts>-<seq>). bg_op_* is a GLOBAL chat-WS
+ *                 family, so every client saw "Worker: <untrusted-recalled-
+ *                 data …> FAILED" cards plus a "hit a snag" idle nudge.
+ *
+ * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
+ * opType) are the only feed for the ambient "dreaming" dock
+ * (public/js/chat-agent-feeds-ambient.js). Suppressing it kills that dock.
+ */
+const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
+  "chat_turn", "agent_spawn", "voice_turn", "skill_review",
+]);
+
 // Per-op stream subscriptions for sidebar progress. Subscribed when a
 // non-suppressed op enters queued; unsubscribed on terminal state.
 // Throttled to 250ms/op so chat-token streaming (if any non-chat op ever
@@ -68,11 +90,8 @@ const PROGRESS_MIN_INTERVAL_MS = 250;
 
 function ensureStreamForwarder(opId: string, sessionId: string, opType: string): void {
   if (streamSubscriptions.has(opId)) return;
-  // Same suppression rule as the canonical-event mapping below — chat_turn
-  // is the chat reply stream (lands in the chat box, not the sidebar);
-  // agent_spawn surfaces through handler-events' named-agent card;
-  // voice_turn lands as TTS audio.
-  if (opType === "chat_turn" || opType === "agent_spawn" || opType === "voice_turn") return;
+  // Same suppression rule as the canonical-event mapping below.
+  if (SIDEBAR_SUPPRESSED_OP_TYPES.has(opType)) return;
 
   const entry = { unsubscribe: () => { /* set below */ }, lastEmit: 0 };
   const listener = (msg: unknown): void => {
@@ -144,28 +163,12 @@ function recordCanonicalEventWithSink(
     const sessionId = sessionOverride ?? getSessionForOp(event.opId);
     if (!sessionId) return; // op wasn't submitted by a chat session — nothing to surface
 
-    // Suppress AGENTS-sidebar cards for `chat_turn` ops. The canonical
-    // chat-bridge submits one of these per chat reply for path unification;
-    // they are NOT worker delegations and shouldn't appear as worker cards.
-    // The chat reply itself surfaces through the WS stream channel directly.
-    //
-    // Same for `agent_spawn` ops: the spawned agent's lifecycle (handled
-    // by handler-events) emits its own agent-specific card keyed on the
-    // run id (e.g. field-agent-1-...). Surfacing the canonical-loop op
-    // here too would render TWO cards per spawn (Worker: <task> + the
-    // named specialist), which is what users see in the sidebar.
-    //
-    // Same for `voice_turn` ops: each voice utterance submits one of these
-    // through voiceTurnRunner. They are conversation turns, not background
-    // delegations — the spoken reply already surfaces through the voice WS
-    // (assistant_delta + TTS). Without this filter, every voice utterance
-    // stacks a "Worker: op_voice_..." card in the AGENTS sidebar — exactly
-    // the original triage symptom "Voice spawns an agent per sentence".
     const op = readOp(event.opId);
-    if (op?.type === "chat_turn" || op?.type === "agent_spawn" || op?.type === "voice_turn") {
-      // Suppressed from the AGENTS sidebar (these surface elsewhere), but the
-      // session→op binding MUST still be released on terminal state. Skipping
-      // it leaks every past chat_turn into listOpsForSession forever, which
+    if (op?.type && SIDEBAR_SUPPRESSED_OP_TYPES.has(op.type)) {
+      // Suppressed from the AGENTS sidebar (these surface elsewhere, or are
+      // headless — see SIDEBAR_SUPPRESSED_OP_TYPES), but the session→op
+      // binding MUST still be released on terminal state. Skipping it leaks
+      // every past chat_turn into listOpsForSession forever, which
       // (a) fires the worker-redirect Haiku classifier on EVERY later turn —
       // even on Codex/Grok, since that classifier hardcodes the Anthropic CLI —
       // and (b) poisons the system prompt with phantom "[PARALLEL CONTEXT]"

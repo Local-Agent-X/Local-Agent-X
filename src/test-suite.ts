@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { getLaxDir } from "./lax-data-dir.js";
+import { AUTH_TOKEN_ENV } from "./config.js";
+import { resolveToken, type TokenResolution } from "./test-suite-token.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("test-suite");
@@ -18,11 +20,18 @@ interface TestResult {
 
 const results: TestResult[] = [];
 
-function loadToken(): string {
-  const cfgPath = join(getLaxDir(), "config.json");
-  const raw = readFileSync(cfgPath, "utf-8");
-  const cfg = JSON.parse(raw);
-  return cfg.token ?? cfg.authToken ?? "";
+const CONFIG_PATH = join(getLaxDir(), "config.json");
+
+// Environment first (the same LAX_AUTH_TOKEN the server honors), then
+// ~/.lax/config.json. The decision lives in test-suite-token.ts so it is
+// unit-testable without touching ~/.lax — a hard deny inside the guarded
+// bash sandbox, where the file read fails with EPERM by design.
+function loadToken(): TokenResolution {
+  return resolveToken({
+    env: process.env,
+    configPath: CONFIG_PATH,
+    readConfig: (path) => readFileSync(path, "utf-8"),
+  });
 }
 
 function headers(token: string): Record<string, string> {
@@ -309,11 +318,15 @@ function printReport(elapsed: number): void {
 // ── Main ──
 
 async function main(): Promise<void> {
-  const token = loadToken();
-  if (!token) {
-    logger.error("Could not read auth token from ~/.lax/config.json");
+  const auth = loadToken();
+  if (!auth.ok) {
+    logger.error(auth.message);
     process.exit(1);
   }
+  // Say where the token came from: an env/file mismatch otherwise surfaces
+  // only as a wall of 401s with nothing to point at.
+  logger.info(`Auth token from ${auth.source === "env" ? `env ${AUTH_TOKEN_ENV}` : CONFIG_PATH}`);
+  const token = auth.token;
 
   const t0 = performance.now();
 

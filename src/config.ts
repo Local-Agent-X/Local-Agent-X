@@ -51,6 +51,9 @@ export function initConfig(): void {
   startManifestWatcher();
 }
 
+// The env var that overrides `authToken` from config.json — exported so
+// standalone entrypoints (test-suite) honor the same name, not a lookalike.
+export const AUTH_TOKEN_ENV = "LAX_AUTH_TOKEN";
 
 function getConfigDir(): string {
   const dir = getLaxDir();
@@ -98,7 +101,7 @@ export function loadConfig(): LAXConfig {
   if (process.env.OPENAI_API_KEY) raw.openaiApiKey = process.env.OPENAI_API_KEY;
   const portEnv = process.env.LAX_PORT;
   if (portEnv) raw.port = parseInt(portEnv, 10);
-  const authTokenEnv = process.env.LAX_AUTH_TOKEN;
+  const authTokenEnv = process.env[AUTH_TOKEN_ENV];
   if (authTokenEnv) raw.authToken = authTokenEnv;
   const workspaceEnv = process.env.LAX_WORKSPACE;
   if (workspaceEnv) raw.workspace = workspaceEnv;

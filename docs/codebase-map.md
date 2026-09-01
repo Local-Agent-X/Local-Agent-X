@@ -180,6 +180,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/startup-integrity.ts` | S |
 | `src/startup-test.ts` | S |
 | `src/symlink-capabilities.test-helper.ts` | S |
+| `src/test-suite-token.ts` | S |
 | `src/test-suite.ts` | M |
 | `src/tool-mutation-check.ts` | S |
 | `src/tool-registry.ts` | S |

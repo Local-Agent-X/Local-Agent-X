@@ -34,9 +34,7 @@ export interface MemoryPromotionRequest extends MemoryPromotionClaims {}
 const CAPABILITY = Symbol("memory-promotion-capability");
 const states = new WeakMap<object, { claims: MemoryPromotionClaims; consumed: boolean }>();
 
-function hash(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
-}
+const hash = (content: string): string => createHash("sha256").update(content).digest("hex");
 
 function mint(claims: MemoryPromotionClaims): MemoryPromotionCapability {
   const capability = Object.freeze({ kind: "memory-promotion" as const });
@@ -61,10 +59,7 @@ function supportedBy(span: string, proposed: string): boolean {
   return claims.filter((word) => evidence.has(word)).length / claims.length >= 0.6;
 }
 
-export function createUserEvidenceCapability(input: Omit<MemoryPromotionClaims, "origin"> & {
-  userMessage: string;
-  evidenceSpan: string;
-}): MemoryPromotionCapability {
+export function createUserEvidenceCapability(input: Omit<MemoryPromotionClaims, "origin"> & { userMessage: string; evidenceSpan: string }): MemoryPromotionCapability {
   if (!input.evidenceSpan || !input.userMessage.includes(input.evidenceSpan)) {
     throw new Error("supporting user span is not present in the current user turn");
   }
@@ -74,9 +69,7 @@ export function createUserEvidenceCapability(input: Omit<MemoryPromotionClaims, 
   return mint({ ...input, origin: "user_statement" });
 }
 
-export function createInternalMemoryCapability(
-  claims: Omit<MemoryPromotionClaims, "origin">,
-): MemoryPromotionCapability {
+export function createInternalMemoryCapability(claims: Omit<MemoryPromotionClaims, "origin">): MemoryPromotionCapability {
   return mint({ ...claims, origin: "durable_memory" });
 }
 
@@ -260,21 +253,29 @@ export function describePromotionForHuman(promotion: MemoryPromotionClaims): str
 
 const UNTRUSTED_MARKERS = /EXTERNAL_UNTRUSTED_CONTENT|INJECTION WARNING/i;
 
+/** A row's scannable text — string content as-is, structured content serialized. */
+function rowText(row: unknown): string {
+  const content = (row as { content?: unknown }).content;
+  return typeof content === "string" ? content : JSON.stringify(content ?? "");
+}
+
 function currentUserTurn(priorMessages: unknown[] | undefined): { text: string; turnTail: string } {
   if (!priorMessages) return { text: "", turnTail: "" };
   for (let i = priorMessages.length - 1; i >= 0; i--) {
     const message = priorMessages[i] as { role?: string; content?: unknown };
     if (message.role === "user" && typeof message.content === "string") {
-      const turnTail = priorMessages.slice(i + 1)
-        .map((later) => {
-          const content = (later as { content?: unknown }).content;
-          return typeof content === "string" ? content : JSON.stringify(content ?? "");
-        })
-        .join("\n");
-      return { text: message.content, turnTail };
+      return { text: message.content, turnTail: priorMessages.slice(i + 1).map(rowText).join("\n") };
     }
   }
   return { text: "", turnTail: "" };
+}
+
+/** Any row carries an untrusted-content marker. No last-user-row anchor (unlike
+ *  cleanTurnForModelSelfSave): a mid-turn user row — inject-drain commits injects
+ *  as plain user rows — cannot shift the window past a marked tool result. For
+ *  callers holding the turn's OWN rows exactly (end-of-turn, from persist time). */
+export function rowsContainUntrustedMarker(rows: readonly unknown[]): boolean {
+  return rows.some((row) => UNTRUSTED_MARKERS.test(rowText(row)));
 }
 
 // Trusted-user evidence needs no save-intent phrasing: any current-turn user
@@ -395,5 +396,3 @@ export function assertMemoryPromotionAllowed(content: string, target: string, co
     origin: context?.origin ?? "unknown",
   }, consume);
 }
-
-export function _resetMemoryPromotionApprovals(): void { /* WeakMap state is per-capability. */ }

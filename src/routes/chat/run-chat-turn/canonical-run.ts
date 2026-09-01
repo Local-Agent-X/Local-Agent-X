@@ -192,17 +192,26 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
   type MsgRecordC = Record<string, unknown>;
 
   const newChatMessages: ChatCompletionMessageParam[] = [];
+  // The end-of-turn profile pass scans this turn's rows for untrusted markers;
+  // only a COMPLETE op-row projection yields the tool results. The projection
+  // is built locally and adopted only once the loop finishes, so a throw
+  // mid-loop can neither persist a truncated prefix nor pass as "recovered";
+  // the fallback below cannot supply tool rows either. Both hand the pass
+  // null and it declines (not provably clean).
+  let turnRowsRecovered = false;
   if (canonicalOpId) {
     try {
-      const { readOpMessages } = await import("../../../canonical-loop/index.js");
-      const { opMessageRowToChatParam } = await import("../../../canonical-loop/index.js");
-      const rows = readOpMessages(canonicalOpId);
-      for (const row of rows) {
+      const { readOpMessages, opMessageRowToChatParam } = await import("../../../canonical-loop/index.js");
+      const projected: ChatCompletionMessageParam[] = [];
+      for (const row of readOpMessages(canonicalOpId)) {
         if (row.messageId.startsWith("hist-")) continue;
         const param = opMessageRowToChatParam(row);
-        if (param) newChatMessages.push(sanitizeAssistantRowParam(param));
+        if (param) projected.push(sanitizeAssistantRowParam(param));
       }
+      newChatMessages.push(...projected);
+      turnRowsRecovered = projected.length > 0;
     } catch (e) {
+      turnRowsRecovered = false;
       logger.warn(`[chat] canonical op-messages read failed: ${(e as Error).message}`);
     }
   }
@@ -270,6 +279,10 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
         skip: isTrivialCanonical,
         sessionId,
         hasExternalTaint: hasExternalIngestion(sessionId),
+        // This turn's OWN rows (user, tool calls, tool results, injects, final
+        // reply) for the end-of-turn marker scan — every row, no anchor; null
+        // when the op-row read failed and the tool rows are unknown.
+        turnMessages: turnRowsRecovered ? newChatMessages : null,
       });
     } catch (persistErr) {
       logger.warn(`[chat] canonical persistTurn failed (proceeding): ${(persistErr as Error).message}`);

@@ -44,6 +44,7 @@ function makeCtx(over: Partial<EndOfTurnContext> = {}): EndOfTurnContext {
     sessionId: "sess-1",
     userMessage: "user text",
     assistantReply: "agent text",
+    turnMessages: [],
     memory: {} as unknown as MemoryIndex,
     ...over,
   };

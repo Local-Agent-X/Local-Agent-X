@@ -71,10 +71,22 @@ export interface PersistTurnInput {
    * Blocks durable auto-promotion (auto-extract): an LLM paraphrase of
    * injected content erases the markers the content-based taint gate keys on.
    * Explicit remember/memory_save tool calls are unaffected (they stay behind
-   * the capability-based promotion gate; end-of-turn profile writes carry no
-   * capability and are already unconditionally blocked there).
+   * the capability-based promotion gate). The end-of-turn profile pass mints
+   * its own clean-session capability and re-reads the session taint itself
+   * (end-of-turn-write.ts), so it declines on the same signal.
    */
   hasExternalTaint?: boolean;
+  /**
+   * This turn's OWN persisted rows (user row, tool calls, tool results,
+   * mid-turn injects, final reply). The end-of-turn profile pass scans EVERY
+   * row for untrusted markers — no last-user-row anchor, so an inject row
+   * cannot shift the window past a marked tool result; final text alone would
+   * miss the markers non-ingesting tools emit (sql_* wrappers, read_file's
+   * INJECTION WARNING), which D6's tool-class registry does not cover. null
+   * when persist could not recover the rows (readOpMessages fallback): tool
+   * results unknown, the pass declines.
+   */
+  turnMessages: unknown[] | null;
 }
 
 export type RecallBy = "entity" | "kind" | "time";
@@ -255,6 +267,7 @@ export class MemoryManager {
           sessionId: input.sessionId,
           userMessage: input.userMessage,
           assistantReply: input.agentResponse,
+          turnMessages: input.turnMessages,
           memory: this.index,
         });
       } catch (e) {

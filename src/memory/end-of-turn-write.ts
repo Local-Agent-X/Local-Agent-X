@@ -29,9 +29,17 @@ import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { classifySchema } from "../classifiers/schema-output.js";
 import { resolveProviderContext } from "../providers/resolve-provider-context.js";
+import { hasExternalIngestion } from "../data-lineage/external.js";
 import { PERSONALITY_FILES } from "./personality.js";
 import { dedupeProfileMarkdownConfirmed } from "./personality-confirmed.js";
 import { writeMemorySafely, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
+import {
+  promotionContextFromToolArgs,
+  rowsContainUntrustedMarker,
+  stampCleanModelPromotion,
+  type MemoryPromotionContext,
+  type MemoryPromotionRequest,
+} from "./promotion-gate.js";
 import type { MemoryIndex } from "./index-core.js";
 
 const logger = createLogger("memory.end-of-turn-write");
@@ -65,6 +73,11 @@ export interface EndOfTurnContext {
   sessionId: string;
   userMessage: string;
   assistantReply: string;
+  /** The turn's OWN rows as persisted (canonical-run's newChatMessages: user
+   *  row, tool calls, tool results, mid-turn injects, final reply) — scanned
+   *  in full for untrusted markers. null when persist could not recover them
+   *  (readOpMessages fallback): tool results unknown, the pass declines. */
+  turnMessages: unknown[] | null;
   memory: MemoryIndex;
 }
 
@@ -112,6 +125,16 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<En
   // resetting keeps the safety net from double-firing during the transition.
   try { resetCurateNudge(ctx.sessionId); } catch {}
 
+  // Promotion precondition BEFORE the classifier call: a tainted session or a
+  // marked turn can never land this write (applyWrite re-checks, load-bearing),
+  // so don't spend the LLM call. Bookkeeping is the blocked-write path's:
+  // signal consumed, "completed" — final for this turn; taint is sticky.
+  const blocker = unattendedPromotionBlocker(ctx);
+  if (blocker) {
+    logger.warn(`[end-of-turn] skipped before classifier — BLOCKED by taint gate sess=${ctx.sessionId}: ${blocker}`);
+    return "completed";
+  }
+
   // Sanitize before sending to the classifier — the user's message and
   // assistant reply may contain credentials or other secrets registered
   // with the secrets vault.
@@ -145,9 +168,11 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<En
 
   // Execute the write server-side via the same memory_update_profile path
   // the model would have used. Don't go through the tool registry — call
-  // the underlying MemoryIndex directly to avoid nested tool dispatch.
+  // the underlying MemoryIndex directly to avoid nested tool dispatch. That
+  // also skips the approval phase that stamps a tool call's promotion
+  // capability, so applyWrite mints its own (mintCleanSelfPromotion).
   try {
-    const writeResult = await applyWrite(decision, ctx.memory);
+    const writeResult = await applyWrite(decision, ctx);
     if (writeResult.ok) {
       logger.info(
         `[end-of-turn] wrote to USER.md ` +
@@ -225,12 +250,99 @@ const WriteDecisionSchema = z.union([
     }),
 ]);
 
-export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): Promise<ApplyWriteResult> {
+// ── Promotion capability ──
+// Every memory write must carry a capability whose claims the gate (write-
+// safely.ts → assertMemoryPromotionAllowed) recomputes and verifies. Tool calls
+// get theirs stamped by the approval phase; this out-of-band pass mints its own.
+
+/** Audit-trail source of this writer's claims. The clean-session mint appends
+ *  CLEAN_SELF_SOURCE_SUFFIX, so a landed write is recorded as
+ *  "end-of-turn-classifier:clean-self" — auto-allowed, NOT human-approved. */
+const PROMOTION_SOURCE = "end-of-turn-classifier";
+/** Claim target: the profile routing key memory_update_profile's sink stamps
+ *  for USER.md (memory/tools/save.ts), so these claims twin the model's own
+ *  profile write — same content (the new text), target, origin and tier. */
+const PROMOTION_TARGET = "memory:profile:user";
+/** Inference tier — what the approval phase assigns a model profile write
+ *  that declares no provenance (factMetadata in promotion-gate.ts). The
+ *  classifier's verdict is a model inference about the user, never a
+ *  verbatim user statement. */
+const PROMOTION_PROVENANCE = "inference";
+const PROMOTION_CONFIDENCE = 0.6;
+
+/**
+ * Why an unattended end-of-turn write may NOT promote on this turn, or null
+ * when it may. Mirrors the approval phase's precondition for a silent model
+ * self-save (require-approval.ts): the session never ingested off-box content
+ * (data-lineage/external.ts, decision D6) AND the turn carries no
+ * external-untrusted marker. Where the tool path falls through to an
+ * interactive approval card, this background pass has nobody to ask — and a
+ * profile file cannot carry per-item provenance the way the Facts DB can —
+ * so the honest answer is to decline (the caller logs it as a taint-gate
+ * block).
+ */
+function unattendedPromotionBlocker(ctx: EndOfTurnContext): string | null {
+  if (hasExternalIngestion(ctx.sessionId)) {
+    return "session ingested external content — profile auto-promotion needs approval (D6)";
+  }
+  // Persist could not recover the turn's rows (readOpMessages fallback): the
+  // tool results are unknown, so the turn is not provably clean.
+  if (ctx.turnMessages === null) {
+    return "turn rows unavailable (persist fallback) — not provably clean, profile auto-promotion declined";
+  }
+  // Scan EVERY row of the turn — tool results included, no last-user-row
+  // anchor (a mid-turn inject row would shift cleanTurnForModelSelfSave's
+  // window past a marked tool result). Non-ingesting tools emit markers too
+  // (sql_* wrappers, read_file's INJECTION WARNING) and D6 excludes them.
+  if (rowsContainUntrustedMarker(ctx.turnMessages)) {
+    return "turn carries an external-untrusted marker — profile auto-promotion needs approval";
+  }
+  return null;
+}
+
+/**
+ * Mint this write's capability through the SAME clean-session model-self-save
+ * mint the approval phase uses (stampCleanModelPromotion), once
+ * unattendedPromotionBlocker has established its precondition.
+ * Not createInternalMemoryContext: that claims durable_memory origin at
+ * confidence 1 — the mint for trusted-code rewrites of memory that already
+ * passed the gate (compression, consolidation, sync). The classifier's verdict
+ * is fresh assistant-origin inference; claiming otherwise would launder it past
+ * the taint policy the tool path applies to identical content. The claims are
+ * exactly what the gate recomputes: content (= evidenceContent), target,
+ * source, session, provenance, confidence, origin.
+ */
+function mintCleanSelfPromotion(d: WriteDecisionPayload, sessionId: string): MemoryPromotionContext {
+  const request: MemoryPromotionRequest = {
+    content: d.content,
+    target: PROMOTION_TARGET,
+    source: PROMOTION_SOURCE,
+    sessionId,
+    provenance: PROMOTION_PROVENANCE,
+    confidence: PROMOTION_CONFIDENCE,
+    origin: "assistant",
+  };
+  // The stamp rides a tool-args carrier (the approval→sink hand-off object in
+  // the dispatch pipeline). Mint and sink are one function here, so the
+  // carrier is local and never leaves this scope.
+  const carrier: Record<string, unknown> = {};
+  stampCleanModelPromotion(carrier, request);
+  return promotionContextFromToolArgs(carrier, request);
+}
+
+export async function applyWrite(d: WriteDecisionPayload, ctx: EndOfTurnContext): Promise<ApplyWriteResult> {
+  // Promotion precondition first — ahead of the file read, the section regex
+  // and the (LLM-backed) dedupe, none of which a tainted session can land.
+  // Load-bearing here (applyWrite is the write seam); the earlier call in
+  // runEndOfTurnMemoryWrite only saves the classifier call.
+  const blocker = unattendedPromotionBlocker(ctx);
+  if (blocker) return { ok: false, blocked: true, reason: blocker };
+
   // Mirrors memory_update_profile's write path with the same char caps.
   // End-of-turn only writes USER.md — facts go through the agent's `remember`
   // tool during the turn, not this classifier.
   const filename = PERSONALITY_FILES.user;
-  const filePath = join(memory.getMemoryDir(), filename);
+  const filePath = join(ctx.memory.getMemoryDir(), filename);
   const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
 
   let updated: string;
@@ -273,11 +385,7 @@ export async function applyWrite(d: WriteDecisionPayload, memory: MemoryIndex): 
       source: "eot",
       target: filePath,
       mode: "overwrite",
-      promotion: {
-        origin: "assistant",
-        source: "end-of-turn-classifier",
-        evidenceContent: d.content,
-      },
+      promotion: mintCleanSelfPromotion(d, ctx.sessionId),
     });
     return { ok: true };
   } catch (e) {

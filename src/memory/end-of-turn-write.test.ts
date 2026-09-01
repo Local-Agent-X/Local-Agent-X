@@ -10,6 +10,10 @@
  * The caller switches on `blocked` to emit distinct WARN log lines. If a
  * future refactor silently reverts to void, or collapses the two failure
  * branches, these tests fail loudly.
+ *
+ * writeMemorySafely is MOCKED here. The real write gate + promotion gate are
+ * exercised UNMOCKED in end-of-turn-write.gate.test.ts — keep it that way, or
+ * a write that the gate blocks in production stays green in tests.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -63,6 +67,22 @@ interface FakeMemory {
 let tempDir: string;
 let memory: FakeMemory;
 
+/** EndOfTurnContext over the fake memory — applyWrite takes the whole turn
+ *  context (session for the promotion claims, turn rows for the marker scan). */
+function ctxFor(
+  sessionId: string,
+  userMessage = "always sort my reports by date",
+  assistantReply = "got it",
+) {
+  return {
+    sessionId,
+    userMessage,
+    assistantReply,
+    turnMessages: [{ role: "user", content: userMessage }, { role: "assistant", content: assistantReply }] as unknown[],
+    memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
+  };
+}
+
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "lax-eot-"));
   mkdirSync(join(tempDir, "memory"), { recursive: true });
@@ -90,10 +110,7 @@ describe("applyWrite — discriminated-union return contract", () => {
   it("returns { ok: true } when writeMemorySafely resolves", async () => {
     writeMemorySafelyMock.mockReturnValueOnce(undefined);
 
-    const result = await applyWrite(
-      appendDecision(),
-      memory as unknown as Parameters<typeof applyWrite>[1],
-    );
+    const result = await applyWrite(appendDecision(), ctxFor("sess-apply"));
 
     expect(result).toEqual({ ok: true });
     if (result.ok) {
@@ -115,10 +132,7 @@ describe("applyWrite — discriminated-union return contract", () => {
       });
     });
 
-    const result = await applyWrite(
-      appendDecision(),
-      memory as unknown as Parameters<typeof applyWrite>[1],
-    );
+    const result = await applyWrite(appendDecision(), ctxFor("sess-apply"));
 
     // Pin the discriminated property — this is the contract the caller's
     // switch depends on. A regression that drops `blocked: true` would make
@@ -138,12 +152,7 @@ describe("applyWrite — discriminated-union return contract", () => {
       throw new Error("disk full");
     });
 
-    await expect(
-      applyWrite(
-        appendDecision(),
-        memory as unknown as Parameters<typeof applyWrite>[1],
-      ),
-    ).rejects.toThrow(/disk full/);
+    await expect(applyWrite(appendDecision(), ctxFor("sess-apply"))).rejects.toThrow(/disk full/);
   });
 
   it("returns { ok: false, reason: /limit/i } and does NOT set blocked when char limit is exceeded", async () => {
@@ -154,7 +163,7 @@ describe("applyWrite — discriminated-union return contract", () => {
 
     const result = await applyWrite(
       appendDecision("y".repeat(200)), // (cap - 50) + ~200 > cap
-      memory as unknown as Parameters<typeof applyWrite>[1],
+      ctxFor("sess-apply"),
     );
 
     expect(result.ok).toBe(false);
@@ -205,16 +214,38 @@ describe("runEndOfTurnMemoryWrite — caller emits distinct WARN lines per varia
       });
     });
 
-    await runEndOfTurnMemoryWrite({
-      sessionId: "sess-block",
-      userMessage: "hello",
-      assistantReply: "hi",
-      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
-    });
+    await runEndOfTurnMemoryWrite(ctxFor("sess-block", "hello", "hi"));
 
     const blockedLine = findWarn(/blocked/i);
     expect(blockedLine).toBeDefined();
     expect(blockedLine).toMatch(/external marker present/);
+  });
+
+  it("a marker in a TOOL-RESULT row (final text clean) is declined BEFORE the classifier — no LLM call, WARN, 'completed'", async () => {
+    __nextDecision = appendDecision();
+    const ctx = ctxFor("sess-early-block", "hello", "hi");
+    // read_file's flag on an injection-pattern file lands in a tool row, not
+    // in the user/assistant text the classifier prompt is built from.
+    ctx.turnMessages.splice(1, 0, { role: "tool", tool_call_id: "c1", content: "INJECTION WARNING: file matched injection patterns" });
+
+    const outcome = await runEndOfTurnMemoryWrite(ctx);
+
+    expect(outcome).toBe("completed");
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+    expect(findWarn(/external-untrusted marker/)).toMatch(/BLOCKED by taint gate/);
+  });
+
+  it("persist fallback (turnMessages=null — tool rows unrecoverable) is declined BEFORE the classifier, logged once", async () => {
+    __nextDecision = appendDecision();
+
+    const outcome = await runEndOfTurnMemoryWrite({ ...ctxFor("sess-null-rows", "hello", "hi"), turnMessages: null });
+
+    expect(outcome).toBe("completed");
+    expect(classifyMock).not.toHaveBeenCalled();
+    expect(writeMemorySafelyMock).not.toHaveBeenCalled();
+    const declines = warnSpy.mock.calls.filter((call: unknown[]) => /rows unavailable/.test(call.map(String).join(" ")));
+    expect(declines).toHaveLength(1);
   });
 
   it("logs a WARN that does NOT say 'blocked' when applyWrite returns ok:false without the flag", async () => {
@@ -224,12 +255,7 @@ describe("runEndOfTurnMemoryWrite — caller emits distinct WARN lines per varia
 
     __nextDecision = appendDecision("y".repeat(200));
 
-    await runEndOfTurnMemoryWrite({
-      sessionId: "sess-skip",
-      userMessage: "hello",
-      assistantReply: "hi",
-      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
-    });
+    await runEndOfTurnMemoryWrite(ctxFor("sess-skip", "hello", "hi"));
 
     const skipLine = findWarn(/skipped/i);
     expect(skipLine).toBeDefined();
@@ -241,15 +267,6 @@ describe("runEndOfTurnMemoryWrite — caller emits distinct WARN lines per varia
 });
 
 describe("runEndOfTurnMemoryWrite — availability gating (unavailable ≠ success)", () => {
-  function ctxFor(sessionId: string) {
-    return {
-      sessionId,
-      userMessage: "always sort my reports by date",
-      assistantReply: "got it",
-      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
-    };
-  }
-
   it("no credentialed provider → 'unavailable': signal NOT consumed, classifier NOT called; a later run with a provider extracts with the survived signal", async () => {
     const sess = "sess-avail-1";
     boostNudgePriority(sess, "explicit-remember");
@@ -311,15 +328,6 @@ describe("runEndOfTurnMemoryWrite — availability gating (unavailable ≠ succe
 });
 
 describe("runEndOfTurnMemoryWrite — schema-validated decision (classifySchema wire)", () => {
-  function ctxFor(sessionId: string) {
-    return {
-      sessionId,
-      userMessage: "always sort my reports by date",
-      assistantReply: "got it",
-      memory: memory as unknown as Parameters<typeof runEndOfTurnMemoryWrite>[0]["memory"],
-    };
-  }
-
   it("a valid write decision on the wire lands the write", async () => {
     __nextDecision = appendDecision();
     writeMemorySafelyMock.mockReturnValueOnce(undefined);

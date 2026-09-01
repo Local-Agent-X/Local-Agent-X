@@ -8,7 +8,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
-import { linkDirectoryInto, unlinkSharedJunctions } from "./worktree-junctions.js";
+import { linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 
 /** Create an isolated worktree for an agent */
@@ -215,8 +215,67 @@ export function cleanupAllWorktrees(): void {
 // path-rewrite logic in tool-execution/). createNamedWorktree() lets the
 // caller supply both the map key (name) and the full branch name.
 
+/** Upper bound on `<branch>-N` probes before giving up. Reaching it means that
+ *  many unmerged leftovers of ONE name — something upstream is wrong, and a
+ *  loud creation failure (via the caller's catch) beats an endless probe. */
+const MAX_STALE_BRANCH_SUFFIX = 20;
+
+function branchExists(branch: string, repoRoot: string): boolean {
+  try { git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repoRoot); return true; }
+  catch { return false; }
+}
+
+/**
+ * Preflight for createNamedWorktree: the requested branch may already exist
+ * from a PREVIOUS run. auto-build names `autobuild/c<N>` from the chunk number
+ * alone, so run N+1 collides with run N; the recovery path only re-adopts a
+ * worktree whose runId matches, and a merged-but-unswept branch has no
+ * worktree at all — so `git branch <name> HEAD` fails and takes the whole
+ * worktree creation with it.
+ *
+ * Policy mirrors cleanupWorktree: delete the leftover ONLY when git proves it
+ * fully merged (`-d`, never `-D`) and no worktree has it checked out. Otherwise
+ * preserve it untouched and cut on the first free `<name>-2`, `<name>-3`, … so
+ * unmerged work is never lost and creation never fails on a leftover. Returns
+ * the branch name to actually create.
+ */
+function resolveStaleBranchName(branchName: string, repoRoot: string): string {
+  if (!branchExists(branchName, repoRoot)) return branchName;
+  let checkedOut: Set<string>;
+  try { checkedOut = listCheckedOutBranches(repoRoot); }
+  catch { checkedOut = new Set(); } // unknown → `-d` below still refuses a checked-out branch
+  // Why `candidate` cannot be (re)created, or null when it is free: absent, or
+  // a merged leftover that `-d` just removed. Applied to the suffixes too, so a
+  // merged `<name>-2` from an earlier side-step is reclaimed, not skipped.
+  const blocker = (candidate: string): string | null => {
+    if (!branchExists(candidate, repoRoot)) return null;
+    if (checkedOut.has(candidate)) return "checked out by another worktree";
+    try {
+      git(["branch", "-d", candidate], repoRoot);
+      logger.info(`[worktree] Deleted stale merged branch ${candidate} so its name can be reused`);
+      return null;
+    } catch {
+      return "unmerged, git branch -d refused";
+    }
+  };
+  const reason = blocker(branchName);
+  if (reason === null) return branchName;
+  for (let n = 2; n <= MAX_STALE_BRANCH_SUFFIX; n++) {
+    const candidate = `${branchName}-${n}`;
+    if (blocker(candidate) !== null) continue;
+    logger.warn(`[worktree] Stale branch ${branchName} preserved (${reason}); creating worktree on ${candidate} instead`);
+    return candidate;
+  }
+  throw new Error(`no free branch name for ${branchName}: ${MAX_STALE_BRANCH_SUFFIX} stale suffixes already exist`);
+}
+
 /**
  * Create an isolated worktree with caller-supplied branch name.
+ *
+ * The returned `branch` is the one actually created. It differs from
+ * `branchName` only when an UNMERGED (or checked-out) leftover of that name had
+ * to be preserved (see resolveStaleBranchName) — callers must read it rather
+ * than assume the name they asked for.
  * Used by autopilot + self-edit + update (which edit the LAX repo itself, so
  * process.cwd() IS that repo) and by auto-build's parallel path (which builds
  * the USER's app in a DIFFERENT repo, inside the long-lived LAX server process
@@ -269,8 +328,11 @@ export function createNamedWorktree(
     // when it's a subdir (git normalizes to the toplevel + strips symlinks).
     const wtPath = join(WORKTREE_BASE, name);
 
-    git(["branch", branchName, "HEAD"], resolvedRoot);
-    git(["worktree", "add", wtPath, branchName], resolvedRoot);
+    // A leftover branch of this name from an earlier run must not fail the
+    // whole creation — reuse the name if merged, side-step it if not.
+    const branch = resolveStaleBranchName(branchName, resolvedRoot);
+    git(["branch", branch, "HEAD"], resolvedRoot);
+    git(["worktree", "add", wtPath, branch], resolvedRoot);
 
     // Share node_modules + ari kernel package node_modules with the parent.
     // Autopilot edits source; the build needs deps that aren't tracked.
@@ -294,15 +356,15 @@ export function createNamedWorktree(
 
     const entry = registerWorktreeOwnership(name, {
       path: wtPath,
-      branch: branchName,
+      branch,
       baseBranch,
       repoRoot: resolvedRoot,
       runId,
       mergedSuccessfully: false,
     }, runId);
     activeWorktrees.set(name, entry);
-    logger.info(`[worktree] Created named worktree ${wtPath} on branch ${branchName} (base: ${baseBranch}, repo: ${resolvedRoot})`);
-    return { path: wtPath, branch: branchName, baseBranch };
+    logger.info(`[worktree] Created named worktree ${wtPath} on branch ${branch} (base: ${baseBranch}, repo: ${resolvedRoot})`);
+    return { path: wtPath, branch, baseBranch };
   } catch (e) {
     logger.warn(`[worktree] Failed to create named worktree ${name}: ${(e as Error).message}`);
     return null;

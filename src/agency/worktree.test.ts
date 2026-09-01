@@ -7,19 +7,35 @@
  * 3. Codex delegated agent does not create a worktree
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeWorktrees, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
+import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
 import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
+import { pruneMergedAgentBranches } from "./worktree-junctions.js";
 import { getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
 import { rewritePathForWorktree } from "../tool-execution/worktree-paths.js";
 
 const WT = join(tmpdir(), "lax-worktrees", "test-agent");
+
+// Shared helper: a real temp git repo with one commit on `main`.
+function initRepo(): { repo: string; g: (args: string[], cwd?: string) => string; baseHead: string } {
+  const repo = mkdtempSync(join(tmpdir(), "lax-wt-merge-"));
+  const g = (args: string[], cwd = repo): string =>
+    execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } }).trim();
+  g(["init", "-q"]);
+  g(["config", "user.email", "t@t"]);
+  g(["config", "user.name", "t"]);
+  writeFileSync(join(repo, "base.txt"), "base");
+  g(["add", "-A"]);
+  g(["commit", "-qm", "base"]);
+  g(["branch", "-M", "main"]);
+  return { repo, g, baseHead: g(["rev-parse", "HEAD"]) };
+}
 
 describe("Worktree path rewriting", () => {
   it("rewrites relative read path into worktree", () => {
@@ -235,21 +251,6 @@ describe("concurrent-worktree cap", () => {
     }
   });
 
-  // Shared helper: a real temp git repo with one commit on `main`.
-  function initRepo(): { repo: string; g: (args: string[], cwd?: string) => string; baseHead: string } {
-    const repo = mkdtempSync(join(tmpdir(), "lax-wt-merge-"));
-    const g = (args: string[], cwd = repo): string =>
-      execFileSync("git", args, { cwd, encoding: "utf-8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } }).trim();
-    g(["init", "-q"]);
-    g(["config", "user.email", "t@t"]);
-    g(["config", "user.name", "t"]);
-    writeFileSync(join(repo, "base.txt"), "base");
-    g(["add", "-A"]);
-    g(["commit", "-qm", "base"]);
-    g(["branch", "-M", "main"]);
-    return { repo, g, baseHead: g(["rev-parse", "HEAD"]) };
-  }
-
   // OP-8: mergeWorktree must NOT switch or clobber the user's live checkout.
   // The old path ran `git checkout <base>` in the parent repo root, so an
   // agent finishing while the user was on another branch mid-edit would yank
@@ -407,6 +408,126 @@ describe("concurrent-worktree cap", () => {
       Object.assign(process.env, env);
       rmSync(repo, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// C17: createNamedWorktree must not fail when a previous run left the requested
+// branch behind. auto-build names `autobuild/c<N>` from the chunk number alone,
+// so run N+1 collides with run N's leftover; the recovery path only re-adopts a
+// worktree whose runId matches, and a merged-but-unswept branch has no worktree
+// at all. Policy mirrors cleanupWorktree: delete only what git proves merged
+// (`-d`), otherwise preserve the stale branch and cut the worktree on `<name>-2`.
+describe("createNamedWorktree stale-branch preflight (C17)", () => {
+  const BRANCH = "autobuild/c1";
+  const staleWarns = (warn: { mock: { calls: unknown[][] } }): string[] =>
+    warn.mock.calls.map(([m]) => String(m)).filter(m => m.includes("Stale branch"));
+
+  function commitFile(g: (args: string[], cwd?: string) => string, repo: string, file: string): string {
+    writeFileSync(join(repo, file), file);
+    g(["add", "-A"]);
+    g(["commit", "-qm", file]);
+    return g(["rev-parse", "HEAD"]);
+  }
+
+  it("deletes a stale MERGED branch and cuts the worktree on the requested name", () => {
+    const { repo, g, baseHead } = initRepo();
+    const name = "c17-stale-merged";
+    try {
+      // Advance main past the leftover: `autobuild/c1` sits at baseHead — fully
+      // merged but NOT at HEAD — so a plain reuse (no delete) would start the
+      // worktree behind base and be distinguishable from a recreate at HEAD.
+      const newHead = commitFile(g, repo, "second.txt");
+      g(["branch", BRANCH, baseHead]);
+
+      const wt = createNamedWorktree(name, BRANCH, repo, "run-2");
+      expect(wt).not.toBeNull();
+      expect(wt!.branch).toBe(BRANCH);
+      expect(g(["rev-parse", "--abbrev-ref", "HEAD"], wt!.path)).toBe(BRANCH);
+      expect(g(["rev-parse", BRANCH])).toBe(newHead); // recreated at HEAD, not the stale tip
+      expect(activeWorktrees.get(name)?.branch).toBe(BRANCH);
+    } finally {
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a stale UNMERGED branch, cuts the worktree on <name>-2, and warns once", () => {
+    const { repo, g } = initRepo();
+    const name = "c17-stale-unmerged";
+    const warn = vi.spyOn(logger, "warn");
+    try {
+      g(["checkout", "-q", "-b", BRANCH]);
+      const staleTip = commitFile(g, repo, "unmerged-wip.txt");
+      g(["checkout", "-q", "main"]);
+
+      const wt = createNamedWorktree(name, BRANCH, repo, "run-2");
+      expect(wt).not.toBeNull();
+      expect(wt!.branch).toBe(`${BRANCH}-2`);
+      expect(g(["rev-parse", "--abbrev-ref", "HEAD"], wt!.path)).toBe(`${BRANCH}-2`);
+      // The stale branch and its unmerged commit are untouched …
+      expect(g(["rev-parse", BRANCH])).toBe(staleTip);
+      // … and the registry carries the branch ACTUALLY used, so merge/cleanup
+      // (which read the registry, not the caller's request) target the right one.
+      expect(activeWorktrees.get(name)?.branch).toBe(`${BRANCH}-2`);
+      const warns = staleWarns(warn);
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toContain(`${BRANCH}-2`);
+    } finally {
+      warn.mockRestore();
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("side-steps (never deletes) a branch another worktree has checked out", () => {
+    const { repo, g, baseHead } = initRepo();
+    const name = "c17-stale-checked-out";
+    const other = mkdtempSync(join(tmpdir(), "lax-wt-other-"));
+    const otherPath = join(other, "wt");
+    const warn = vi.spyOn(logger, "warn");
+    try {
+      // Fully merged (at HEAD) — deletable on its own — but held by a worktree.
+      g(["worktree", "add", "-b", BRANCH, otherPath, "main"]);
+
+      const wt = createNamedWorktree(name, BRANCH, repo, "run-2");
+      expect(wt).not.toBeNull();
+      expect(wt!.branch).toBe(`${BRANCH}-2`);
+      expect(g(["rev-parse", BRANCH])).toBe(baseHead);
+      expect(g(["rev-parse", "--abbrev-ref", "HEAD"], otherPath)).toBe(BRANCH);
+      const warns = staleWarns(warn);
+      expect(warns).toHaveLength(1);
+      expect(warns[0]).toContain("checked out");
+    } finally {
+      warn.mockRestore();
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      try { g(["worktree", "remove", otherPath, "--force"]); } catch { /* best-effort */ }
+      rmSync(other, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("pruneMergedAgentBranches sweeps a merged autobuild/ branch and leaves an unmerged one", () => {
+    const { repo, g, baseHead } = initRepo();
+    try {
+      commitFile(g, repo, "second.txt");
+      g(["branch", "autobuild/c1", baseHead]); // merged (ancestor of HEAD), no worktree
+      g(["branch", "feature/keep", baseHead]); // merged, but not an agent prefix
+      g(["checkout", "-q", "-b", "autobuild/c2"]);
+      commitFile(g, repo, "unmerged.txt");     // unmerged
+      g(["checkout", "-q", "main"]);
+
+      pruneMergedAgentBranches(repo);
+
+      const branches = g(["branch", "--list", "--format=%(refname:short)"]).split("\n");
+      expect(branches).not.toContain("autobuild/c1");
+      expect(branches).toContain("autobuild/c2");
+      expect(branches).toContain("feature/keep");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 });

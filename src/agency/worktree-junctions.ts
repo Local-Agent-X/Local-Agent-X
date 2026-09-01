@@ -157,12 +157,30 @@ export function unlinkAllShallowReparsePoints(wtPath: string): string[] {
   return [...new Set([...stuck, ...remaining, ...escaped])];
 }
 
+/** Branch prefixes the merged-branch sweep may delete. Every prefix here is
+ *  cut by createNamedWorktree for an app-owned flow, so a human's own branches
+ *  never match. autobuild/ names repeat across runs (`autobuild/c<N>` is keyed
+ *  by chunk number alone), so a merged leftover MUST be swept or the next run
+ *  finds its branch name already taken. */
+const PRUNABLE_AGENT_BRANCH_PREFIXES = ["selfedit/", "autopilot/", "autobuild/"];
+
+/** Branches currently checked out by ANY worktree of `repoRoot` (short names).
+ *  Throws if git cannot list worktrees — callers decide whether that is fatal. */
+export function listCheckedOutBranches(repoRoot: string): Set<string> {
+  const checkedOut = new Set<string>();
+  for (const line of git(["worktree", "list", "--porcelain"], repoRoot).split("\n")) {
+    if (line.startsWith("branch ")) checkedOut.add(line.slice(7).replace(/^refs\/heads\//, ""));
+  }
+  return checkedOut;
+}
+
 /**
  * After the orphan sweep, delete leftover agent branches (selfedit/<slug>/<ts>,
- * autopilot/<slug>/<ts>) that are FULLY MERGED into the current base and not
- * checked out in any worktree. A successful self_edit merge already deletes its
- * own branch; this catches the autopilot human-merge flow, where the user merges
- * the branch by hand and nothing in the app ever cleans up the dead ref.
+ * autopilot/<slug>/<ts>, autobuild/c<N>) that are FULLY MERGED into the current
+ * base and not checked out in any worktree. A successful self_edit merge already
+ * deletes its own branch; this catches the autopilot human-merge flow, where the
+ * user merges the branch by hand and nothing in the app ever cleans up the dead
+ * ref, and auto-build chunk branches whose run ended before its own cleanup.
  *
  * Merged-ONLY, deliberately narrower than "merged OR worktree-gone": a
  * held-for-review or gate-failed self_edit preserves its UNMERGED branch on
@@ -172,12 +190,8 @@ export function unlinkAllShallowReparsePoints(wtPath: string): string[] {
  * branch, so even a misclassified branch can't lose work.
  */
 export function pruneMergedAgentBranches(repoRoot: string): void {
-  const checkedOut = new Set<string>();
-  try {
-    for (const line of git(["worktree", "list", "--porcelain"], repoRoot).split("\n")) {
-      if (line.startsWith("branch ")) checkedOut.add(line.slice(7).replace(/^refs\/heads\//, ""));
-    }
-  } catch { return; }
+  let checkedOut: Set<string>;
+  try { checkedOut = listCheckedOutBranches(repoRoot); } catch { return; }
 
   let branches: string[];
   try {
@@ -188,7 +202,7 @@ export function pruneMergedAgentBranches(repoRoot: string): void {
 
   let deleted = 0;
   for (const b of branches) {
-    if (!(b.startsWith("selfedit/") || b.startsWith("autopilot/")) || checkedOut.has(b)) continue;
+    if (!PRUNABLE_AGENT_BRANCH_PREFIXES.some(p => b.startsWith(p)) || checkedOut.has(b)) continue;
     try { git(["branch", "-d", b], repoRoot); deleted++; }
     catch { /* unmerged or still in use — leave it */ }
   }

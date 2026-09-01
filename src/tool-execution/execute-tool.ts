@@ -9,7 +9,7 @@ import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
-import { createContext, type CallContext } from "./context.js";
+import { createContext, type CallContext, type ToolCallContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { dedupCheckPhase, dedupRecordPhase } from "./dedup-check.js";
@@ -20,6 +20,43 @@ import { runSandboxedPhase } from "./run-sandboxed.js";
 import { auditPhase } from "./audit-tool-call.js";
 import { parseStatusHeader } from "../tools/result-helpers.js";
 import { hasCapability, WORKTREE_PATH_TOOLS } from "../tool-registry.js";
+import { createLogger } from "../logger.js";
+import {
+  heapRefusalResult, isHeapGuardExempt, maxParallelToolBatch, newHeapGuardTurn, sampleHeapPressure, shouldRefuseToolCall,
+  type HeapGuardTurn, type HeapPressure,
+} from "./heap-guard.js";
+
+const logger = createLogger("tool-execution");
+
+// One heap sample shared by every call in a parallel (sub-)batch, plus that
+// turn's warn latch. The serial lane (one call per batch) samples per call —
+// v8.getHeapStatistics is ~0.5 µs, immaterial — and dispatchSingleToolCall
+// (MCP / arikernel bridge) takes its own sample and its own latch per call, so
+// "warn once per turn" is a batch-lane guarantee only.
+interface HeapGuard { pressure: HeapPressure; turn: HeapGuardTurn }
+
+// Refuse to START a call when the heap is at the guard ratio (heap-guard.ts).
+// Sits after resolve (tool_start already emitted, args parsed) and before the
+// policy chain, so a refused call does none of the policy/approval/sandbox work
+// and nothing executes — read-only tools included; a glob was the last straw in
+// the 2026-08-30 OOM. Control/terminal tools are exempt (their results are
+// bytes, and a refused ask_user could not end the turn). Mirrors the
+// pre-dispatch BLOCK shape (ctx.result set, no msg pushed) so the trailing
+// auditPhase renders the envelope, emits ONE tool_end, and records
+// status=blocked — exactly like a policy block. The warn is rate-limited to
+// one per turn; the refusal is not.
+function refuseUnderHeapPressure(ctx: ToolCallContext, heap: HeapGuard): boolean {
+  if (isHeapGuardExempt(ctx.tc.name)) return false;
+  if (!shouldRefuseToolCall(heap.pressure.ratio)) return false;
+  ctx.allowed = false;
+  ctx.result = heapRefusalResult(heap.pressure);
+  if (!heap.turn.warned) {
+    heap.turn.warned = true;
+    const { usedMb, limitMb, ratio } = heap.pressure;
+    logger.warn(`[heap-guard] refusing tool calls this turn: heap ${usedMb}/${limitMb} MB (${Math.round(ratio * 100)}%) — first refused: ${ctx.tc.name}`);
+  }
+  return true;
+}
 
 async function executeSingleTool(
   tc: { id: string; name: string; arguments: string },
@@ -36,10 +73,18 @@ async function executeSingleTool(
   runId?: string,
   operationId?: string,
   callContext: CallContext = "api",
+  // The batcher passes one shared sample + turn per (sub-)batch; a bare call
+  // (dispatchSingleToolCall) defaults to its own sample and its own warn-turn.
+  heap: HeapGuard = { pressure: sampleHeapPressure(), turn: newHeapGuardTurn() },
 ): Promise<ChatCompletionMessageParam[]> {
   const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, operationId, callContext, onEvent, signal, priorMessages });
 
   if ((await resolvePhase(ctx)).kind === "halt") return ctx.msgs;
+
+  if (refuseUnderHeapPressure(ctx, heap)) {
+    await auditPhase(ctx);
+    return ctx.msgs;
+  }
 
   const policy = await enforcePolicyPhase(ctx);
   if (policy.kind === "halt") return ctx.msgs;
@@ -191,6 +236,19 @@ export async function executeToolCalls(
   callContext: CallContext = "api",
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
+  const turn = newHeapGuardTurn();
+  const width = maxParallelToolBatch();
+
+  // Run one (sub-)batch concurrently under a single heap sample. Results come
+  // back in `calls` order (Promise.all), so pushing each sub-batch's flattened
+  // messages in sequence keeps every result 1:1 with the original call order
+  // — chat-tool-dispatcher's groupMessagesByCall relies on that contiguity.
+  const runBatch = (calls: typeof toolCalls): Promise<ChatCompletionMessageParam[][]> => {
+    const heap: HeapGuard = { pressure: sampleHeapPressure(), turn };
+    return Promise.all(
+      calls.map((c) => executeSingleTool(c, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext, heap)),
+    );
+  };
 
   let i = 0;
   while (i < toolCalls.length) {
@@ -211,17 +269,18 @@ export async function executeToolCalls(
           i++;
         } else break;
       }
-      if (batch.length > 1) {
-        const parallel = await Promise.all(
-          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext)),
-        );
+      // Width cap: at most `width` (LAX_MAX_PARALLEL_TOOLS, default 8) calls in
+      // flight at once, so a wide fan-out can't hold every result buffer
+      // simultaneously. Sub-batches run sequentially in order; a batch ≤ the
+      // cap is one Promise.all exactly as before. Each sub-batch takes a fresh
+      // heap sample.
+      for (let start = 0; start < batch.length; start += width) {
+        if (start > 0 && signal?.aborted) break;
+        const parallel = await runBatch(batch.slice(start, start + width));
         results.push(...parallel.flat());
-      } else {
-        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext);
-        results.push(...msgs);
       }
     } else {
-      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId, operationId, callContext);
+      const [msgs] = await runBatch([tc]);
       results.push(...msgs);
     }
     i++;

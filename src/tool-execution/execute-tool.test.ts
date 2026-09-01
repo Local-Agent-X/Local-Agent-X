@@ -13,11 +13,21 @@
 //     (dataLineageGate) sees the floor and BLOCKS — the read's sensitive path is
 //     tainted before the egress check runs.
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// The heap guard's once-per-turn warn must be observable at whatever
+// LAX_LOG_LEVEL the runner carries — mock the logger rather than sniff console.
+const { log } = vi.hoisted(() => {
+  const rec = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), child: () => rec };
+  return { log: rec };
+});
+vi.mock("../logger.js", () => ({ createLogger: () => log }));
+
 import { executeToolCalls, dispatchSingleToolCall } from "./execute-tool.js";
+import { setHeapStatsForTests } from "./heap-guard.js";
 import { _clearDedupCacheForTests, dedupRecord } from "./dedup-cache.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import { clearSessionTaint, getTaintSummary } from "../data-lineage/index.js";
@@ -449,5 +459,199 @@ describe("canonical unattended shell capability gate", () => {
     const result = await dispatch(name, "chat-looking-cron", "cron", true);
     expect(result.execute).not.toHaveBeenCalled();
     expect(result.content).toMatch(/categorically disabled for cron/i);
+  });
+});
+
+// C11: refuse new tool calls under heap pressure; cap parallel batch width.
+// The 2026-08-30 OOM died at heapUsed 3.9 GB / 4 GB mid-turn with a glob as
+// the last straw. Heap stats are injected via the heap-guard seam — these
+// tests never read the worker's real v8 statistics.
+describe("heap guard + parallel batch width (C11)", () => {
+  const GB = 1024 * 1024 * 1024;
+  const WIDTH = 8;
+  let seq = 0;
+  let savedRatioEnv: string | undefined;
+  let savedWidthEnv: string | undefined;
+
+  beforeAll(() => {
+    setAriRequired(false);
+    // The knobs are read per batch — pin them so a runner env carrying its
+    // own LAX_HEAP_GUARD_RATIO / LAX_MAX_PARALLEL_TOOLS can't skew the ratios
+    // and width these tests assert.
+    savedRatioEnv = process.env.LAX_HEAP_GUARD_RATIO;
+    savedWidthEnv = process.env.LAX_MAX_PARALLEL_TOOLS;
+    process.env.LAX_HEAP_GUARD_RATIO = "0.85";
+    process.env.LAX_MAX_PARALLEL_TOOLS = String(WIDTH);
+  });
+  afterAll(() => {
+    setAriRequired(true);
+    if (savedRatioEnv === undefined) delete process.env.LAX_HEAP_GUARD_RATIO; else process.env.LAX_HEAP_GUARD_RATIO = savedRatioEnv;
+    if (savedWidthEnv === undefined) delete process.env.LAX_MAX_PARALLEL_TOOLS; else process.env.LAX_MAX_PARALLEL_TOOLS = savedWidthEnv;
+  });
+  beforeEach(() => { _clearDedupCacheForTests(); log.warn.mockClear(); });
+  afterEach(() => setHeapStatsForTests(null));
+
+  // Inject a heap at `ratio` of a 4 GB limit; returns the sampler spy so a
+  // test can count how many times the batcher sampled.
+  function heapAt(ratio: number) {
+    const sampler = vi.fn(() => ({ used_heap_size: ratio * 4 * GB, heap_size_limit: 4 * GB }));
+    setHeapStatsForTests(sampler);
+    return sampler;
+  }
+
+  // A stub tool whose execute records in-flight concurrency and holds a real
+  // timer, so every member of one Promise.all sub-batch is inside execute at
+  // the same time — the only way to measure the batch width honestly.
+  // `delayMs(i)` lets a test make members of one sub-batch finish out of
+  // input order; `completed` records the finishing order.
+  function probe(
+    name: string,
+    readOnly = true,
+    stats?: { inflight: number; max: number; completed: number[] },
+    delayMs: (i: number) => number = () => 20,
+  ) {
+    const execute = vi.fn(async (args: Record<string, unknown>): Promise<ToolResult> => {
+      const i = Number(args.i ?? -1);
+      if (stats) { stats.inflight++; stats.max = Math.max(stats.max, stats.inflight); }
+      await new Promise((r) => setTimeout(r, delayMs(i)));
+      if (stats) { stats.inflight--; stats.completed.push(i); }
+      return { content: `executed:${name}:${String(args.i ?? "")}` };
+    });
+    const tool = {
+      name, description: "", parameters: { type: "object", properties: {} },
+      readOnly, concurrencySafe: readOnly, execute,
+    } as unknown as ToolDefinition;
+    return { tool, execute };
+  }
+
+  // Distinct args per call so the dedup cache can't collapse repeats.
+  const calls = (name: string, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ id: `${name}-${i}`, name, arguments: JSON.stringify({ i }) }));
+
+  const run = (toolCalls: Array<{ id: string; name: string; arguments: string }>, toolMap: Map<string, ToolDefinition>, onEvent?: (e: ServerEvent) => void) =>
+    executeToolCalls(toolCalls, toolMap, undefined as never, undefined, undefined, undefined, undefined, `heap-${seq++}`, onEvent,
+      undefined, undefined, undefined, undefined, "local");
+
+  const heapWarns = () => log.warn.mock.calls.filter(([m]) => String(m).includes("[heap-guard]"));
+  const idsOf = (msgs: Array<{ tool_call_id?: string }>) => msgs.map((m) => m.tool_call_id);
+
+  it("(a) at ratio 0.9 every call in the batch gets the blocked envelope and no tool body runs", async () => {
+    heapAt(0.9);
+    const a = probe("probe_a");
+    const b = probe("probe_b");
+    const toolMap = new Map([["probe_a", a.tool], ["probe_b", b.tool]]);
+    const events: ServerEvent[] = [];
+    const tc = [...calls("probe_a", 2), ...calls("probe_b", 1)];
+
+    const msgs = await run(tc, toolMap, (e) => events.push(e));
+
+    expect(msgs).toHaveLength(3);
+    expect(idsOf(msgs as Array<{ tool_call_id?: string }>)).toEqual(tc.map((c) => c.id));
+    for (const m of msgs) {
+      const content = String(m.content);
+      expect(content).toMatch(/^\[blocked, layer="heap-guard"\]/);
+      expect(content).toContain("refused: server heap at 3686/4096 MB (90%); the previous tool results are too large to hold — summarize what you have, avoid re-reading large files, or narrow the query");
+      expect(content).toContain("Recovery:");
+    }
+    expect(a.execute).not.toHaveBeenCalled();
+    expect(b.execute).not.toHaveBeenCalled();
+    // Exactly one tool_end per call, status blocked — and tool_start still
+    // precedes it (the guard sits after resolve), so UI pairing is intact.
+    const ends = events.filter((e) => e.type === "tool_end") as Array<{ status?: string; toolCallId?: string }>;
+    expect(ends.map((e) => e.toolCallId)).toEqual(tc.map((c) => c.id));
+    expect(ends.every((e) => e.status === "blocked")).toBe(true);
+    expect(events.filter((e) => e.type === "tool_start")).toHaveLength(3);
+  });
+
+  it("(b) at ratio 0.5 calls execute normally and nothing is logged", async () => {
+    heapAt(0.5);
+    const a = probe("probe_a");
+    const msgs = await run(calls("probe_a", 2), new Map([["probe_a", a.tool]]));
+    expect(a.execute).toHaveBeenCalledTimes(2);
+    expect(msgs.map((m) => String(m.content))).toEqual(["executed:probe_a:0", "executed:probe_a:1"]);
+    expect(heapWarns()).toHaveLength(0);
+  });
+
+  it("(c) 20 parallel-safe calls run at most 8 wide, results in input order even when they finish out of order, one heap sample per sub-batch", async () => {
+    const sampler = heapAt(0.5);
+    const stats = { inflight: 0, max: 0, completed: [] as number[] };
+    // Within each 8-wide sub-batch the FIRST member is the slowest (38 ms) and
+    // the last the fastest (10 ms), so completion order is the reverse of
+    // input order — order preservation has to do real work here.
+    const a = probe("probe_a", true, stats, (i) => 10 + (WIDTH - 1 - (i % WIDTH)) * 4);
+    const tc = calls("probe_a", 20);
+
+    const msgs = await run(tc, new Map([["probe_a", a.tool]]));
+
+    expect(a.execute).toHaveBeenCalledTimes(20);
+    // Exactly the cap: still genuinely parallel, never wider.
+    expect(stats.max).toBe(WIDTH);
+    // Completion really was out of input order (first sub-batch reversed)…
+    expect(stats.completed.slice(0, WIDTH)).toEqual([7, 6, 5, 4, 3, 2, 1, 0]);
+    expect(stats.completed).not.toEqual(tc.map((_, i) => i));
+    // …yet results map 1:1 to calls in input order.
+    expect(idsOf(msgs as Array<{ tool_call_id?: string }>)).toEqual(tc.map((c) => c.id));
+    expect(msgs.map((m) => String(m.content))).toEqual(tc.map((_, i) => `executed:probe_a:${i}`));
+    // ceil(20 / 8) = 3 sub-batches → 3 samples, not 20.
+    expect(sampler).toHaveBeenCalledTimes(3);
+  });
+
+  it("(f) control/terminal tools are exempt: ask_user executes at ratio 0.9 while a read-class stub is refused", async () => {
+    heapAt(0.9);
+    const a = probe("probe_a");
+    const ask = probe("ask_user", false);
+    const toolMap = new Map([["probe_a", a.tool], ["ask_user", ask.tool]]);
+    const tc = [
+      { id: "probe_a-0", name: "probe_a", arguments: JSON.stringify({ i: 0 }) },
+      { id: "ask-0", name: "ask_user", arguments: JSON.stringify({ question: "continue?", i: 1 }) },
+      { id: "probe_a-2", name: "probe_a", arguments: JSON.stringify({ i: 2 }) },
+    ];
+
+    const msgs = await run(tc, toolMap);
+
+    expect(idsOf(msgs as Array<{ tool_call_id?: string }>)).toEqual(tc.map((c) => c.id));
+    expect(ask.execute).toHaveBeenCalledTimes(1);
+    expect(String(msgs[1].content)).toContain("executed:ask_user:1");
+    expect(String(msgs[1].content)).not.toContain("refused: server heap");
+    expect(a.execute).not.toHaveBeenCalled();
+    expect(String(msgs[0].content)).toContain("refused: server heap at 3686/4096 MB (90%)");
+    expect(String(msgs[2].content)).toContain("refused: server heap at 3686/4096 MB (90%)");
+    // The exempt call neither warns nor counts as a refusal.
+    expect(heapWarns()).toHaveLength(1);
+  });
+
+  it("(d) warns once per turn across sequential batches; a new turn warns again", async () => {
+    const sampler = heapAt(0.9);
+    const a = probe("probe_a");
+    const w = probe("probe_w", false);
+    const toolMap = new Map([["probe_a", a.tool], ["probe_w", w.tool]]);
+    // parallel [a,a] → serial w → parallel [a]: three batches in ONE turn.
+    const tc = [...calls("probe_a", 2), { id: "w-0", name: "probe_w", arguments: "{}" }, { id: "probe_a-9", name: "probe_a", arguments: JSON.stringify({ i: 9 }) }];
+
+    const msgs = await run(tc, toolMap);
+    expect(msgs).toHaveLength(4);
+    expect(idsOf(msgs as Array<{ tool_call_id?: string }>)).toEqual(tc.map((c) => c.id));
+    expect(a.execute).not.toHaveBeenCalled();
+    expect(w.execute).not.toHaveBeenCalled();
+    expect(heapWarns()).toHaveLength(1);
+    expect(heapWarns()[0][0]).toContain("3686/4096 MB (90%)");
+    // One sample per batch (3), not per call (4).
+    expect(sampler).toHaveBeenCalledTimes(3);
+
+    await run(tc, toolMap);
+    expect(heapWarns()).toHaveLength(2);
+  });
+
+  it("(e) the unified single-call entry (MCP / arikernel bridge) reports the refusal as blocked", async () => {
+    heapAt(0.95);
+    const a = probe("probe_a");
+    const r = await dispatchSingleToolCall(
+      { id: "s1", name: "probe_a", args: { i: 1 } },
+      { toolMap: new Map([["probe_a", a.tool]]), security: undefined as never, callContext: "api" },
+    );
+    expect(r.status).toBe("blocked");
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("refused: server heap at 3891/4096 MB (95%)");
+    expect(a.execute).not.toHaveBeenCalled();
   });
 });

@@ -4,10 +4,9 @@ import ExcelJSDefault from "exceljs";
 const ExcelJS = (ExcelJSDefault as unknown as { default: typeof ExcelJSDefault }).default ?? ExcelJSDefault;
 type Workbook = ExcelJSTypes.Workbook;
 type Worksheet = ExcelJSTypes.Worksheet;
-type Cell = ExcelJSTypes.Cell;
 type CellValue = ExcelJSTypes.CellValue;
 type CellFormulaValue = ExcelJSTypes.CellFormulaValue;
-import { mkdirSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { Readable } from "node:stream";
 import type { ToolDefinition, ToolResult } from "../types.js";
@@ -16,10 +15,15 @@ import { verifyWriteLanded } from "./verify.js";
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
-import { readValidatedFile } from "../security/layer/index.js";
+import { openValidatedRead } from "../security/layer/index.js";
 import { resolveOfficeTheme, argb, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
 import { collapseFamily } from "./shared/collapse-family.js";
+// Pure formatting + the input caps (workbook bytes, rows, cells, padding). See
+// the module header there for what each cap bounds — and what it does not.
+import {
+  MAX_ROWS_UNRANGED, assertWorkbookSize, cellText, clampRange, matchCapNote, parseRange, rowCapNote, rowsToTable, valueText,
+} from "./spreadsheet-format.js";
 
 // ── Helpers ──
 
@@ -81,8 +85,16 @@ async function openWorkbook(filePath: string): Promise<Workbook> {
   // Read the VALIDATED canonical inode (realpath + O_NOFOLLOW leaf) and load
   // exceljs from those bytes, so a symlink swapped in after the gate (R4-19) is
   // rejected rather than parsed. exceljs reads the buffer/stream, never reopens
-  // the path itself, so there is no second lexical open to race.
-  const buf = readValidatedFile(filePath);
+  // the path itself, so there is no second lexical open to race. The size cap
+  // is fstat'd on that SAME fd, so it binds to the inode actually read.
+  const { fd } = openValidatedRead(filePath);
+  let buf: Buffer;
+  try {
+    assertWorkbookSize(fstatSync(fd).size);
+    buf = readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   const wb = new ExcelJS.Workbook();
   if (filePath.endsWith(".csv")) {
     await wb.csv.read(Readable.from(buf));
@@ -98,36 +110,6 @@ function getSheet(wb: Workbook, name?: string): Worksheet {
   const ws = name ? wb.getWorksheet(name) : wb.worksheets[0];
   if (!ws) throw new Error(name ? `Sheet "${name}" not found` : "Workbook has no sheets");
   return ws;
-}
-
-function colIndex(letter: string): number {
-  let n = 0;
-  for (const ch of letter.toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64;
-  return n;
-}
-
-function parseRange(range: string): { r1: number; c1: number; r2: number; c2: number } {
-  const m = range.match(/^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$/);
-  if (!m) throw new Error(`Invalid range "${range}"`);
-  return { c1: colIndex(m[1]), r1: Number(m[2]), c2: colIndex(m[3]), r2: Number(m[4]) };
-}
-
-function rowsToTable(headers: string[], rows: string[][]): string {
-  const widths = headers.map((h, i) =>
-    Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)),
-  );
-  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
-  const hdr = "| " + headers.map((h, i) => pad(h, widths[i])).join(" | ") + " |";
-  const sep = "| " + widths.map((w) => "-".repeat(w)).join(" | ") + " |";
-  const body = rows.map((r) => "| " + headers.map((_, i) => pad(r[i] ?? "", widths[i])).join(" | ") + " |");
-  return [hdr, sep, ...body].join("\n");
-}
-
-function cellText(cell: Cell): string {
-  const v = cell.value;
-  if (v == null) return "";
-  if (typeof v === "object" && "result" in v) return String((v as { result: unknown }).result ?? "");
-  return String(v);
 }
 
 // ── Tools ──
@@ -150,9 +132,13 @@ const spreadsheetRead: ToolDefinition = {
       const ws = getSheet(wb, args.sheet as string | undefined);
       let headers: string[] = [];
       const rows: string[][] = [];
+      let note = "";
+      let totalRows = 0;
 
       if (args.range) {
-        const { r1, c1, r2, c2 } = parseRange(args.range as string);
+        const clamped = clampRange(parseRange(args.range as string));
+        const { r1, c1, r2, c2 } = clamped.range;
+        note = clamped.note;
         const hdrRow = ws.getRow(r1);
         for (let c = c1; c <= c2; c++) headers.push(cellText(hdrRow.getCell(c)));
         for (let r = r1 + 1; r <= r2; r++) {
@@ -160,15 +146,20 @@ const spreadsheetRead: ToolDefinition = {
           rows.push(Array.from({ length: c2 - c1 + 1 }, (_, i) => cellText(row.getCell(c1 + i))));
         }
       } else {
+        // Rows past the cap are counted, never materialized: the object model
+        // is already resident; the text copies + table string are what this bounds.
         ws.eachRow((row, rowNum) => {
-          const vals = row.values as CellValue[];
-          const texts = vals.slice(1).map((v) => (v == null ? "" : String(v)));
-          if (rowNum === 1) headers = texts;
-          else rows.push(texts);
+          if (rowNum === 1) { headers = (row.values as CellValue[]).slice(1).map(valueText); return; }
+          totalRows++;
+          if (rows.length < MAX_ROWS_UNRANGED) rows.push((row.values as CellValue[]).slice(1).map(valueText));
         });
+        note = rowCapNote(rows.length, totalRows);
       }
       if (!headers.length) return ok("(empty sheet)");
-      return ok(rowsToTable(headers, rows), { rows: rows.length, columns: headers.length });
+      const meta: Record<string, unknown> = { rows: rows.length, columns: headers.length };
+      if (note) meta.truncated = true;
+      if (totalRows > rows.length) meta.totalRows = totalRows;
+      return ok(rowsToTable(headers, rows) + note, meta);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }
@@ -204,6 +195,11 @@ const spreadsheetWrite: ToolDefinition = {
 
       const theme = resolveOfficeTheme(args.theme);
       const wb = new ExcelJS.Workbook();
+      // Merging into an existing workbook loads it whole — same cap as read,
+      // checked OUTSIDE the new-file catch so an oversized target fails loudly
+      // instead of being silently replaced by a one-sheet workbook.
+      const onDisk = statSync(filePath, { throwIfNoEntry: false });
+      if (onDisk) assertWorkbookSize(onDisk.size);
       try { await wb.xlsx.readFile(filePath); } catch { /* new file */ }
       // File metadata: the USER's brand (or empty) — never the app name.
       wb.creator = brandAuthor(theme);
@@ -317,21 +313,12 @@ const spreadsheetQuery: ToolDefinition = {
       const wb = await openWorkbook(resolvePath(args.file_path as string));
       const ws = getSheet(wb, args.sheet as string | undefined);
       const headers: string[] = [];
-      const allRows: string[][] = [];
-
-      ws.eachRow((row, rowNum) => {
-        const vals = (row.values as CellValue[]).slice(1).map((v) => (v == null ? "" : String(v)));
-        if (rowNum === 1) headers.push(...vals);
-        else allRows.push(vals);
-      });
-
-      const ci = headers.indexOf(args.column as string);
-      if (ci === -1) return fail(`Column "${args.column}" not found. Available: ${headers.join(", ")}`);
-
+      const matched: string[][] = [];
+      let ci = -1;
+      let total = 0;
       const target = args.value as string;
       const op = args.operator as string;
-      const matched = allRows.filter((r) => {
-        const cv = r[ci] ?? "";
+      const test = (cv: string): boolean => {
         switch (op) {
           case "equals":   return cv === target;
           case "contains": return cv.toLowerCase().includes(target.toLowerCase());
@@ -339,10 +326,25 @@ const spreadsheetQuery: ToolDefinition = {
           case "lt":       return Number(cv) < Number(target);
           default:         return false;
         }
+      };
+
+      // Stream the scan: EVERY row is tested (a match past the cap is still
+      // counted, so the answer stays correct) but only the first
+      // MAX_ROWS_UNRANGED matches are kept — the sheet is never copied whole.
+      ws.eachRow((row, rowNum) => {
+        const vals = (row.values as CellValue[]).slice(1).map(valueText);
+        if (rowNum === 1) { headers.push(...vals); ci = headers.indexOf(args.column as string); return; }
+        if (ci === -1 || !test(vals[ci] ?? "")) return;
+        total++;
+        if (matched.length < MAX_ROWS_UNRANGED) matched.push(vals);
       });
 
+      if (ci === -1) return fail(`Column "${args.column}" not found. Available: ${headers.join(", ")}`);
       if (!matched.length) return ok("No matching rows found.");
-      return ok(rowsToTable(headers, matched), { matchedRows: matched.length });
+      const note = matchCapNote(matched.length, total);
+      const meta: Record<string, unknown> = { matchedRows: total };
+      if (note) { meta.shownRows = matched.length; meta.truncated = true; }
+      return ok(rowsToTable(headers, matched) + note, meta);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }

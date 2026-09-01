@@ -21,7 +21,13 @@ export type OpenAIVisionPart =
   | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
 
 export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVisionPart[] {
-  const parts: OpenAIVisionPart[] = [{ type: "text", text }];
+  const parts: OpenAIVisionPart[] = [];
+  // A persisted image-only user row arrives here as content:"". Anthropic
+  // rejects `{type:"text", text:""}` with 400 "text content blocks must be
+  // non-empty", so the leading text part is emitted only when there is
+  // something to say. Non-whitespace text is forwarded verbatim (no trim);
+  // whitespace-only counts as empty because the API treats it the same way.
+  if (text.trim().length > 0) parts.push({ type: "text", text });
   const filePathHints: string[] = [];
   for (const img of images) {
     try {
@@ -61,5 +67,9 @@ export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVis
         `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
     });
   }
+  // Nothing usable at all (empty text AND no readable image) — keep the
+  // historical single-text-part shape rather than returning an empty
+  // content array, which providers reject outright.
+  if (parts.length === 0) parts.push({ type: "text", text });
   return parts;
 }

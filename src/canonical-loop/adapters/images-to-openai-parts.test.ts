@@ -48,13 +48,13 @@ describe("imagesToOpenAIParts — leading text part", () => {
     expect(imagesToOpenAIParts("hello", [])).toEqual([{ type: "text", text: "hello" }]);
   });
 
-  it("empty text AND no usable image → historical single empty-text part, never an empty array", () => {
-    // Contract lock: this degenerate case is deliberately left as-is —
-    // callers only reach this helper when images exist, but an image with
-    // neither a data URL nor a file path is skipped, and an empty content
-    // array is rejected by every provider.
+  it("empty text AND zero images → historical single empty-text part, never an empty array", () => {
+    // Contract lock: the degenerate fallback is reserved for the one case
+    // where nothing was attached at all — callers only reach this helper
+    // when images exist, and an empty content array is rejected by every
+    // provider. Any requested image that cannot be sent yields a non-empty
+    // failure note instead (see the unreadable-attachments block below).
     expect(imagesToOpenAIParts("", [])).toEqual([{ type: "text", text: "" }]);
-    expect(imagesToOpenAIParts("", [{ url: "", name: "ghost.png" }])).toEqual([{ type: "text", text: "" }]);
   });
 
   it("several images with no text → one image part each, no text part", () => {
@@ -95,5 +95,71 @@ describe("imagesToOpenAIParts — on-disk attachments (the real upload shape)", 
     expect(parts.map(p => p.type)).toEqual(["text", "image_url", "text"]);
     expect(textParts(parts)[0]).toBe("use this logo");
     expect(textParts(parts)[1]).toContain(filePath);
+  });
+});
+
+describe("imagesToOpenAIParts — unreadable attachments are reported, not dropped", () => {
+  let dir = "";
+  let readable = "";
+  let missing = "";
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-img-parts-unreadable-"));
+    readable = join(dir, "logo.png");
+    writeFileSync(readable, Buffer.from("hello"));
+    missing = join(dir, "pruned.png"); // never written — readFileSync throws ENOENT
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("caption-less send, single unreadable file → exactly one non-empty failure note, no image part", () => {
+    // Regression: the read failure was swallowed, parts came back empty,
+    // the degenerate fallback emitted {text:""}, and the wire-site
+    // sanitizer told the model the user sent "[empty message]".
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "pruned.png", filePath: missing }]);
+    expect(parts).toHaveLength(1);
+    expect(parts[0].type).toBe("text");
+    const note = textParts(parts)[0];
+    expect(note.trim().length).toBeGreaterThan(0);
+    expect(note).toContain("pruned.png");
+    expect(note).toContain("could not be read");
+    expect(note).toContain("ENOENT");
+    expect(note).not.toContain(dir); // no absolute path in the note
+    expect(imageParts(parts)).toEqual([]);
+  });
+
+  it("caption + one readable + one unreadable → [text, image, failure-note, hint], every text non-empty", () => {
+    const parts = imagesToOpenAIParts("use the logo", [
+      { url: "", name: "logo.png", filePath: readable },
+      { url: "", name: "pruned.png", filePath: missing },
+    ]);
+    expect(parts.map(p => p.type)).toEqual(["text", "image_url", "text", "text"]);
+    const texts = textParts(parts);
+    expect(texts[0]).toBe("use the logo");
+    expect(texts[1]).toContain("pruned.png");
+    expect(texts[1]).toContain("could not be read");
+    // The path hint lists only the file that was actually sent.
+    expect(texts[2]).toContain(readable);
+    expect(texts[2]).not.toContain(missing);
+    for (const t of texts) expect(t.trim().length).toBeGreaterThan(0);
+  });
+
+  it("name-less ref → note falls back to the path basename, still no absolute path", () => {
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "", filePath: missing }]);
+    const note = textParts(parts)[0];
+    expect(note).toContain("pruned.png");
+    expect(note).not.toContain(dir);
+  });
+
+  it("ref with neither inline bytes nor a file path → failure note, not the empty-text fallback", () => {
+    // Previously locked as [{text:""}]; that shape reaches the model as
+    // "[empty message]" even though the user attached something.
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "ghost.png" }]);
+    expect(parts).toHaveLength(1);
+    expect(imageParts(parts)).toEqual([]);
+    expect(textParts(parts)[0]).toContain("ghost.png");
+    expect(textParts(parts)[0]).toContain("could not be read");
   });
 });

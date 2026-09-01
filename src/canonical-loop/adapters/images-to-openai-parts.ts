@@ -9,6 +9,7 @@
 // the path is the only way the model gets vision (via the `read` tool).
 
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 
 export interface ImageRef {
   url: string;
@@ -44,12 +45,21 @@ export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVis
         const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
         dataUrl = `data:${mime};base64,${data.toString("base64")}`;
       } else {
+        // Neither inline bytes nor an on-disk path — nothing to read.
+        parts.push({ type: "text", text: unreadableNote(img) });
         continue;
       }
       parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
       if (img.filePath) filePathHints.push(`  - ${img.name} → ${img.filePath}`);
-    } catch {
-      // Skip unreadable attachments rather than fail the whole turn.
+    } catch (err) {
+      // An unreadable upload (pruned ~/.lax/uploads, stale session row,
+      // permissions) must not fail the whole turn — but it must not vanish
+      // either. Dropping it silently left a caption-less send with zero
+      // parts, and the wire-site sanitizer then told the model the user
+      // sent "[empty message]" when they had attached an image. Emit an
+      // in-order note so the model knows what was attached and that it
+      // is unavailable.
+      parts.push({ type: "text", text: unreadableNote(img, err) });
     }
   }
   // Trailing text part with on-disk paths. Critical for Anthropic
@@ -67,9 +77,23 @@ export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVis
         `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
     });
   }
-  // Nothing usable at all (empty text AND no readable image) — keep the
-  // historical single-text-part shape rather than returning an empty
-  // content array, which providers reject outright.
+  // Nothing to send at all — empty text AND zero images requested. Keep the
+  // historical single-text-part shape rather than an empty content array,
+  // which providers reject outright. Unreachable once any image was
+  // requested: every ref yields either an image part or a non-empty
+  // failure note, so the model is never told the user sent nothing.
   if (parts.length === 0) parts.push({ type: "text", text });
   return parts;
+}
+
+/** Non-empty stand-in for an attachment whose bytes could not be sent.
+ *  Names the file (display name, else path basename) plus the errno code
+ *  when there is one; never leaks the absolute path. */
+function unreadableNote(img: ImageRef, err?: unknown): string {
+  const label = img.name || (img.filePath ? basename(img.filePath) : "image");
+  const code =
+    typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
+      ? err.code
+      : undefined;
+  return `[Attachment ${label} could not be read${code ? ` (${code})` : ""}]`;
 }

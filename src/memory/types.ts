@@ -251,6 +251,17 @@ export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>;
   embedBatch(texts: string[]): Promise<number[][]>;
   dimensions: number;
+  /**
+   * Subscribe to "this provider can serve vectors again". Fires once per
+   * transition INTO healthy — after a conviction, or on the first successful
+   * probe when health was still unknown at subscribe time — never on a
+   * recheck that merely reconfirms a healthy server. One subscriber slot; the
+   * returned disposer detaches it. Optional: only providers with a backing
+   * service that can be DOWN (Ollama) implement it. Chunks indexed while it
+   * was down carry no vector, and the index re-embeds them on this signal
+   * (index-core-reembed.ts) instead of waiting for the next boot.
+   */
+  onRecovered?(listener: () => void): () => void;
 }
 
 // ── Facts / entities types ──

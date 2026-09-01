@@ -104,6 +104,8 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private dimensionsDetected = false;
   private probing: Promise<boolean> | null = null;
   private recheckTimer: NodeJS.Timeout | null = null;
+  /** The one recovery subscriber (memory index) — see EmbeddingProvider.onRecovered. */
+  private recoveredListener: (() => void) | null = null;
   /** Monotonic clock; injected in tests so starvation is driven, not slept. */
   private readonly now: () => number;
 
@@ -283,12 +285,42 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     this.recheckTimer.unref?.();
   }
 
+  onRecovered(listener: () => void): () => void {
+    this.recoveredListener = listener;
+    return () => {
+      if (this.recoveredListener === listener) this.recoveredListener = null;
+    };
+  }
+
+  /**
+   * Health just flipped to serving. The listener runs isolated: a throw here
+   * would land in probeInBackground's .catch and convict a server that has
+   * just proved it is healthy.
+   */
+  private notifyRecovered(): void {
+    const listener = this.recoveredListener;
+    if (!listener) return;
+    try {
+      listener();
+    } catch (e) {
+      logger.warn(`[ollama-embed] onRecovered listener failed: ${(e as Error).message}`);
+    }
+  }
+
   private probeInBackground(): Promise<boolean> {
     this.probing ??= this.probe()
       .then((ok) => {
+        const wasServing = this.healthy === true;
         this.healthy = ok;
-        if (ok) logger.info(`[ollama-embed] healthy (model=${this.model})`);
-        else this.scheduleRecheck();
+        if (ok) {
+          logger.info(`[ollama-embed] healthy (model=${this.model})`);
+          // Unknown→healthy counts as a recovery too: boot attaches the memory
+          // index before the warm-up probe settles, so chunks indexed in that
+          // window are as vector-less as ones indexed during an outage.
+          if (!wasServing) this.notifyRecovered();
+        } else {
+          this.scheduleRecheck();
+        }
         return ok;
       })
       .catch((e) => {

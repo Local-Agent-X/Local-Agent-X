@@ -23,6 +23,7 @@ import * as Atlas from "./index-atlas.js";
 import * as ImportRecall from "./import-recall.js";
 import { getLayout } from "./atlas-layout.js";
 import { MemoryFactsBase } from "./index-core/facts-base.js";
+import { BackgroundReembed } from "./index-core-reembed.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-core");
@@ -35,6 +36,12 @@ export class MemoryIndex extends MemoryFactsBase {
   protected entitiesDir: string;
   private config: MemoryConfig;
   private embeddingProvider: EmbeddingProvider | null = null;
+  private reembed = new BackgroundReembed({
+    db: () => this.db,
+    provider: () => this.embeddingProvider,
+    config: () => this.config,
+    hasVec: () => this.hasVec,
+  });
   protected dirty = true;
   protected hasFts = false;
   private hasVec = false;
@@ -145,6 +152,7 @@ export class MemoryIndex extends MemoryFactsBase {
   // boot-time callers no longer starve concurrent awaited phases (measured
   // 17-21s setupVoiceWs inflation).
   async setEmbeddingProvider(provider: EmbeddingProvider): Promise<void> {
+    this.reembed.unwatch();
     this.embeddingProvider = provider;
     const { verdict, hasVec } = await Embedding.attachEmbeddingProvider(this.db, provider);
     if (hasVec) this.hasVec = true;
@@ -154,27 +162,13 @@ export class MemoryIndex extends MemoryFactsBase {
     // gates the re-embed so those NULLs are picked up in the same pass rather
     // than waiting for the next boot.
     BlobMigration.kickBackgroundBlobConversion(this.db, () => {
-      if (verdict !== "degraded") this.kickBackgroundReembed(verdict);
+      if (verdict !== "degraded") this.reembed.kick(verdict);
     });
-  }
-
-  private reembedInProgress = false;
-
-  private kickBackgroundReembed(reason: string): void {
-    if (this.reembedInProgress || !this.embeddingProvider) return;
-    const missing = Embedding.countChunksMissingEmbedding(this.db);
-    if (missing === 0) return;
-    this.reembedInProgress = true;
-    logger.info(`[memory] Background re-embed of ${missing} chunks started (${reason})`);
-    Embedding.reembedMissingChunks(this.db, this.embeddingProvider, this.config, this.hasVec)
-      .then((r) => {
-        logger.info(
-          `[memory] Background re-embed done: ${r.embedded} embedded` +
-          (r.missing > 0 ? `, ${r.missing} still missing (resumes next boot)` : "")
-        );
-      })
-      .catch((e) => logger.warn(`[memory] Background re-embed failed: ${(e as Error).message}`))
-      .finally(() => { this.reembedInProgress = false; });
+    // Subscribed after the signature reconcile above so a recovery cannot
+    // race the wipe; anything it would have caught is covered by the kick
+    // that just ran. The degraded verdict does not gate this path — recovery
+    // is precisely when a pass can succeed — the kick's own guards do.
+    this.reembed.watchProvider(provider);
   }
 
   // ── Sync ──
@@ -371,6 +365,7 @@ export class MemoryIndex extends MemoryFactsBase {
   maintenanceDb(): InstanceType<typeof Database> { return this.db; }
 
   close(): void {
+    this.reembed.unwatch();
     try {
       if (this.watcherHandle.debounceTimer) {
         clearTimeout(this.watcherHandle.debounceTimer);

@@ -80,6 +80,23 @@ describe("runPreflightProbe fail details carry worker evidence", () => {
     expect(res.detail).toContain("workspace-write forbidden");
   });
 
+  // The probe runs through the same chunk-runner as real chunks and threads
+  // the user's chat session as parentSessionId. Without parentOpId the
+  // worker's spawn carried no parentAgentId, so handler-events treated the
+  // probe like a chat-initiated agent and injected its "STATUS: done …
+  // preflight token" report into the chat on every build start/resume.
+  it("threads parentSessionId AND parentOpId to the runner so the probe is an orchestrator child", async () => {
+    let seen: { parentSessionId?: string; parentOpId?: string } | null = null;
+    await runPreflightProbe(
+      { projectDir, parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77" },
+      async (opts) => {
+        seen = { parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId };
+        return agentResult({ stdout: BLOCKED_REPORT });
+      },
+    );
+    expect(seen).toEqual({ parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77" });
+  });
+
   it("healthy round-trip still passes", async () => {
     const res = await runPreflightProbe(
       { projectDir },

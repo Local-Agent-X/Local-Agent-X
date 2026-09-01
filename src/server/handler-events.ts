@@ -5,11 +5,11 @@ import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { targetPinForModelOverride } from "../agent-request/target-pin.js";
 import { EventBus } from "../event-bus.js";
-import { ProjectStore, type AgentRun } from "../agent-store/index.js";
-import { looksLikeClarificationRequest, looksLikeUnsubstantiatedCompletion, looksLikeEmptyOrErrorOnly } from "../agents/result-guard.js";
+import { ProjectStore } from "../agent-store/index.js";
+import { looksLikeUnsubstantiatedCompletion, looksLikeEmptyOrErrorOnly } from "../agents/result-guard.js";
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import { Handler } from "../agency/handler.js";
-import { formatAgentDisplayName } from "../agency/agent-display-name.js";
+import { registerAgentLifecycleEvents, type PendingAgentMeta } from "./handler-events-agent-result.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -23,10 +23,10 @@ import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js"
 import { requiredPromptPlan } from "../context/system-prompt-builder.js";
 const logger = createLogger("server.handler-events");
 
-interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string; templateId?: string | null }
+// AgentSpawnEvent / AgentResultEvent live in handler-events-agent-result.ts
+// with the listeners that consume them.
 interface AgentOutputEvent { agentId: string; output: string }
 interface AgentBlockedEvent { agentId: string; reason: string; role: string }
-interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number; name?: string }
 interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
 interface AgentEscalationEvent {
   from: string;
@@ -78,7 +78,7 @@ export function registerHandlerEvents(deps: {
   } = deps;
 
   const eventBus = EventBus.getInstance();
-  const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[]; templateId: string | null }>();
+  const pendingMeta = new Map<string, PendingAgentMeta>();
 
   // Canonical-loop driver — registered with agents/runtime so invokeAgent
   // dispatches here. Returns the terminal outcome; invokeDefinition fans
@@ -332,51 +332,11 @@ export function registerHandlerEvents(deps: {
   };
   registerAgentRunDriver(agentRunDriver);
 
-  eventBus.on("handler:agent-spawn", (d: unknown) => {
-    const evt = d as AgentSpawnEvent;
-    const displayName = formatAgentDisplayName({ name: evt.name, role: evt.role, task: evt.task });
-    broadcastAll({ type: "agent-spawn", ...evt, name: displayName, displayName, rawName: evt.name });
-    pendingMeta.set(evt.agentId, { name: displayName, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [], templateId: evt.templateId || null });
-  });
+  // Spawn + result listeners (AgentRun persistence, parent-chat injection
+  // for chat-initiated spawns only, agent-spawn/agent-complete broadcasts).
+  registerAgentLifecycleEvents({ eventBus, pendingMeta, sessionStore, agentRunStore, broadcastAll });
   eventBus.on("handler:agent-output", (d: unknown) => { broadcastAll({ type: "agent-output", ...(d as AgentOutputEvent) }); });
   eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
-  eventBus.on("handler:agent-result", (d: unknown) => {
-    const evt = d as AgentResultEvent;
-    const m = pendingMeta.get(evt.agentId);
-    const displayName = formatAgentDisplayName({ name: evt.name || m?.name, role: m?.role, task: m?.task });
-    broadcastAll({ type: "agent-complete", ...evt, name: displayName, displayName });
-    if (m) {
-      // Result-shape guard: catch agents that finished by asking the
-      // user to resend the task instead of doing it. Without this, a
-      // 300-char clarification request quietly persists as status:
-      // "done" and inflates the success rate in History. See
-      // src/agents/result-guard.ts for the heuristic and rationale.
-      const explicitFailure = evt.success === false;
-      let guardError: string | undefined;
-      if (!explicitFailure && typeof evt.result === "string") {
-        const verdict = looksLikeClarificationRequest(evt.result);
-        if (verdict.isClarificationRequest) {
-          guardError = `Agent bailed without completing the task (clarification-request shape: "${verdict.matchedPhrase}"). Spawned agents do NOT have a conversation channel — they must complete or report a structured blocker.`;
-          logger.warn(`[handler] Agent ${evt.agentId} (${m.role}) bailed with clarification request — re-classified as error`);
-        }
-      }
-      const status: AgentRun["status"] = explicitFailure || guardError ? "failed" : "succeeded";
-      const errorField = explicitFailure ? evt.result : guardError;
-      agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField, templateId: m.templateId || undefined } as AgentRun);
-      if (m.sessionId && evt.result) {
-        try {
-          const parentSession = sessionStore.load(m.sessionId);
-          if (parentSession) {
-            const label = evt.success === false ? `Agent ${m.name} failed` : `Agent ${m.name} completed`;
-            parentSession.messages.push({ role: "assistant", content: `**${label}:**\n\n${evt.result}` } as any);
-            parentSession.updatedAt = Date.now();
-            sessionStore.save(parentSession);
-          }
-        } catch {}
-      }
-      pendingMeta.delete(evt.agentId);
-    }
-  });
   eventBus.on("handler:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
   // agent_escalate emits this when its `to` resolves to "user" (or
   // record-only to another agent). Forward to the chat-attached UI; the

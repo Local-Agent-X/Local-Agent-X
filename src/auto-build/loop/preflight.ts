@@ -37,6 +37,14 @@ export type PreflightResult =
 export interface PreflightOptions {
   projectDir: string;
   parentSessionId?: string;
+  /**
+   * Orchestrator run's op id. Becomes the probe worker's parentAgentId so
+   * handler-events treats it as an orchestrator child: without it the
+   * "STATUS: done … preflight token" report was injected into the user's
+   * chat once per build start/resume (2026-08-30). See isOrchestratorChild
+   * in src/server/handler-events-agent-result.ts.
+   */
+  parentOpId?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -99,6 +107,7 @@ export async function runPreflightProbe(
       task: preflightTask(projectRootFwd, token),
       projectDir: opts.projectDir,
       parentSessionId: opts.parentSessionId,
+      parentOpId: opts.parentOpId,
       signal: opts.signal,
       timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });

@@ -86,6 +86,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   const preflight = await runPreflightProbe({
     projectDir: opts.projectDir,
     parentSessionId: opts.parentSessionId,
+    parentOpId: opts.parentOpId,
     signal: opts.signal,
   });
   if (preflight.status === "fail") {

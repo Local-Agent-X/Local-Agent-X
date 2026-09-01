@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1509 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1510 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/tools/` | 62 | 164 | XL |  |
 | `src/providers/` | 59 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 210 | XL |  |
-| `src/memory/` | 44 | 126 | XL |  |
+| `src/memory/` | 45 | 126 | XL |  |
 | `src/session/` | 35 | 7 | L |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/workspace/` | 34 | 2 | M |  |
@@ -31,10 +31,10 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/threat/` | 32 | 12 | L |  |
 | `src/auth/` | 29 | 10 | L |  |
 | `src/tool-policy/` | 29 | 20 | L |  |
+| `src/agency/` | 28 | 19 | L |  |
 | `src/browser/` | 28 | 76 | XL |  |
-| `src/agency/` | 27 | 19 | L |  |
+| `src/agent-store/` | 26 | 7 | M |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
-| `src/agent-store/` | 25 | 7 | M |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/context/` | 21 | 3 | M |  |
 | `src/agent-request/` | 20 | 14 | L |  |
@@ -42,8 +42,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
 | `src/chat-ws/` | 18 | 17 | L |  |
+| `src/agents/` | 17 | 13 | L |  |
 | `src/agent-guards/` | 16 | 14 | L |  |
-| `src/agents/` | 16 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 14 | 20 | L |  |
@@ -55,7 +55,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
-| `src/server/` *(entrypoint)* | 10 | 47 | XL |  |
+| `src/server/` *(entrypoint)* | 10 | 48 | XL |  |
 | `src/integrations/` | 9 | 15 | M |  |
 | `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |

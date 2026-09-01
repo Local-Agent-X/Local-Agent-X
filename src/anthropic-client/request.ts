@@ -33,14 +33,27 @@ export function extractUserPrompt(messages: ChatCompletionMessageParam[]): strin
   return "";
 }
 
-/** Convert OpenAI-style user content (text OR array of text+image_url parts) to Anthropic format. */
+/** Stand-in for a user turn that carried no text and no images. The Messages
+ *  API rejects both an empty content array and an empty text block
+ *  ("text content blocks must be non-empty"), so the wire invariant is: every
+ *  text block we emit has non-whitespace text, and every user row has at
+ *  least one block. */
+const EMPTY_USER_PLACEHOLDER = "[empty message]";
+
+/** Convert OpenAI-style user content (text OR array of text+image_url parts) to Anthropic format.
+ *  Never returns empty/whitespace-only content — see EMPTY_USER_PLACEHOLDER. */
 export function convertUserContent(content: unknown): string | AnthropicContent[] {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return String(content ?? "");
+  if (!Array.isArray(content)) {
+    const text = typeof content === "string" ? content : String(content ?? "");
+    return text.trim() ? text : [{ type: "text", text: EMPTY_USER_PLACEHOLDER }];
+  }
   const out: AnthropicContent[] = [];
   for (const part of content as Array<Record<string, unknown>>) {
     if (part.type === "text") {
-      out.push({ type: "text", text: String(part.text || "") });
+      // Empty/whitespace text parts are dropped rather than forwarded — the
+      // API 400s on them. Mirrors extractUserPrompt's filter on the CLI leg.
+      const text = String(part.text || "");
+      if (text.trim()) out.push({ type: "text", text });
     } else if (part.type === "image_url") {
       const iu = part.image_url as { url: string } | undefined;
       const url = iu?.url || "";
@@ -53,7 +66,8 @@ export function convertUserContent(content: unknown): string | AnthropicContent[
       }
     }
   }
-  return out.length > 0 ? out : "";
+  // Image-only content is valid as-is; only a fully empty row needs the stand-in.
+  return out.length > 0 ? out : [{ type: "text", text: EMPTY_USER_PLACEHOLDER }];
 }
 
 export function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
@@ -72,7 +86,9 @@ export function convertMessages(messages: ChatCompletionMessageParam[]): Anthrop
     } else if (msg.role === "assistant") {
       const m = msg as unknown as Record<string, unknown>;
       const content: AnthropicContent[] = [];
-      if (typeof m.content === "string" && m.content) {
+      // trim(): a whitespace-only assistant text (common on tool-call-only
+      // turns) must not become an empty text block alongside the tool_use.
+      if (typeof m.content === "string" && m.content.trim()) {
         content.push({ type: "text", text: m.content });
       }
       if (m.tool_calls && Array.isArray(m.tool_calls)) {

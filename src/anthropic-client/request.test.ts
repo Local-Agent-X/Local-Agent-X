@@ -127,3 +127,117 @@ describe("convertMessages tool_use id dedup keeps tool_result pairing intact", (
     expect(toolResults).toEqual([{ tool_use_id: "call_orphan" }]);
   });
 });
+
+const IMAGE_PART = { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } };
+const IMAGE_BLOCK = { type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } };
+const PLACEHOLDER_BLOCK = { type: "text", text: "[empty message]" };
+
+function userParts(parts: unknown[]): ChatCompletionMessageParam {
+  return { role: "user", content: parts } as ChatCompletionMessageParam;
+}
+
+/** Wire invariant: no text block reaches the Messages API with empty/whitespace
+ *  text, and no user row reaches it with empty content. */
+function expectNoEmptyBlocks(result: ReturnType<typeof convertMessages>): void {
+  for (const msg of result) {
+    if (typeof msg.content === "string") {
+      expect(msg.content.trim(), `${msg.role} string content is empty`).not.toBe("");
+      continue;
+    }
+    expect(msg.content.length, `${msg.role} content array is empty`).toBeGreaterThan(0);
+    for (const block of msg.content as AnthropicContent[]) {
+      if (block.type === "text") {
+        expect(block.text.trim(), "empty text block reached the wire").not.toBe("");
+      }
+    }
+  }
+}
+
+describe("convertMessages never emits an empty text block", () => {
+  it("user parts [text:'', image] → only the image block", () => {
+    const result = convertMessages([userParts([{ type: "text", text: "" }, IMAGE_PART])]);
+    expect(result).toEqual([{ role: "user", content: [IMAGE_BLOCK] }]);
+    expectNoEmptyBlocks(result);
+  });
+
+  it("user parts [text:'  ', image] → only the image block", () => {
+    const result = convertMessages([userParts([{ type: "text", text: "  " }, IMAGE_PART])]);
+    expect(result).toEqual([{ role: "user", content: [IMAGE_BLOCK] }]);
+    expectNoEmptyBlocks(result);
+  });
+
+  it("user string '' → single [empty message] placeholder block", () => {
+    const result = convertMessages([{ role: "user", content: "" }]);
+    expect(result).toEqual([{ role: "user", content: [PLACEHOLDER_BLOCK] }]);
+    expectNoEmptyBlocks(result);
+  });
+
+  it("user string of only whitespace → placeholder (not a whitespace text block)", () => {
+    const result = convertMessages([{ role: "user", content: " \n\t " }]);
+    expect(result).toEqual([{ role: "user", content: [PLACEHOLDER_BLOCK] }]);
+    expectNoEmptyBlocks(result);
+  });
+
+  it("user parts with only an empty text part and no image → placeholder", () => {
+    const result = convertMessages([userParts([{ type: "text", text: "" }])]);
+    expect(result).toEqual([{ role: "user", content: [PLACEHOLDER_BLOCK] }]);
+    expectNoEmptyBlocks(result);
+  });
+
+  it("user parts [text:'hi', image] pass through unchanged", () => {
+    const result = convertMessages([userParts([{ type: "text", text: "hi" }, IMAGE_PART])]);
+    expect(result).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }, IMAGE_BLOCK] },
+    ]);
+  });
+
+  it("non-empty user string passes through as a bare string (byte-identical body)", () => {
+    const result = convertMessages([{ role: "user", content: "hello" }]);
+    expect(result).toEqual([{ role: "user", content: "hello" }]);
+  });
+
+  it("assistant whitespace-only text with tool_calls → tool_use block only", () => {
+    const result = convertMessages([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: "   ",
+        tool_calls: [
+          { id: "call_ws", type: "function", function: { name: "read_file", arguments: '{"path":"a.txt"}' } },
+        ],
+      } as ChatCompletionMessageParam,
+    ]);
+    expect(result[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "tool_use", id: "call_ws", name: "read_file", input: { path: "a.txt" } }],
+    });
+    expectNoEmptyBlocks(result);
+  });
+
+  it("assistant whitespace-only text with no tool_calls is dropped entirely", () => {
+    const result = convertMessages([
+      { role: "user", content: "go" },
+      { role: "assistant", content: "  \n" },
+      { role: "user", content: "again" },
+    ]);
+    expect(result.map((m) => m.role)).toEqual(["user", "user"]);
+    expectNoEmptyBlocks(result);
+  });
+
+  it("assistant real text with tool_calls keeps the text block untrimmed", () => {
+    const result = convertMessages([
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: " thinking... ",
+        tool_calls: [
+          { id: "call_t", type: "function", function: { name: "ls", arguments: "{}" } },
+        ],
+      } as ChatCompletionMessageParam,
+    ]);
+    expect(result[1].content).toEqual([
+      { type: "text", text: " thinking... " },
+      { type: "tool_use", id: "call_t", name: "ls", input: {} },
+    ]);
+  });
+});

@@ -22,9 +22,22 @@ vi.mock("../local-runtimes/residency.js", () => ({
   warmModel: mocks.warmModel,
 }));
 
+// The codex client is lazily imported by the branch under test, so the mock
+// factory runs at first classify call. Capture the exact params handed to
+// streamCodexResponse — the signal + effort assertions below read them back.
+const codexMock = vi.hoisted(() => ({ streamCodexResponse: vi.fn() }));
+vi.mock("../codex-client/index.js", () => ({
+  streamCodexResponse: codexMock.streamCodexResponse,
+}));
+
 // classifyYesNo lives in classify-conveniences.ts and reaches call sites via
 // this re-export — importing it from here doubles as the seam's regression test.
-import { classifyYesNo, parseYesNoReason } from "./classify-with-llm.js";
+import { classifyWithLLM, classifyYesNo, parseYesNoReason } from "./classify-with-llm.js";
+// Type-only: erased at runtime, so the vi.mock above stays the only thing
+// this file loads from the codex client. Keeps the captured-params type
+// honest against the real signature instead of a hand-written copy.
+import type { streamCodexResponse } from "../codex-client/index.js";
+type CodexCallParams = Parameters<typeof streamCodexResponse>[0];
 
 // Pin the ollama base URL — with a trailing slash, deliberately — so the
 // cold-skip tests can assert the exact NORMALIZED baseUrl handed to
@@ -129,6 +142,100 @@ describe("classify-with-llm local cold-skip", () => {
     mocks.ctx = { provider: "xai", apiKey: "k", model: "grok-4.3" };
     await classifyYesNo({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
     expect(mocks.isModelResident).not.toHaveBeenCalled();
+  });
+});
+
+describe("classify-with-llm codex branch", () => {
+  const yieldText = (delta: string) => (async function* () {
+    yield { type: "text", delta };
+  })();
+  const parse = (raw: string) => raw.trim();
+
+  beforeEach(() => {
+    codexMock.streamCodexResponse.mockReset();
+    mocks.ctx = { provider: "codex", apiKey: "tok", model: "gpt-5.5" };
+  });
+  afterEach(() => {
+    mocks.ctx = { provider: "xai", apiKey: "k", model: "grok-4.3" };
+  });
+
+  it("timeout budget aborts the signal handed to the codex stream", async () => {
+    // Regression for the orphaned-stream quota burn: a classifier whose
+    // budget expired used to leave its codex stream running to completion
+    // (no signal was passed), so every `wallclock timeout (provider=codex)`
+    // still billed a full reasoning pass. The stream below never yields
+    // until it observes an abort — the hung-upstream case the budget exists
+    // for. Path exercised: the abort timer (registered before the wallclock
+    // timer, same delay) fires first, the stream rejects with AbortError, and
+    // the wrapper returns null via its catch path. The wallclock sentinel is
+    // reached only when a stream ignores the abort — by then that same timer
+    // has already aborted this signal.
+    codexMock.streamCodexResponse.mockImplementationOnce((params: CodexCallParams) =>
+      (async function* () {
+        const signal = params.signal;
+        if (!signal) return;
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) return resolve();
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        throw new DOMException("aborted", "AbortError");
+      })(),
+    );
+    const out = await classifyWithLLM({
+      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 40, parse,
+    });
+    expect(out).toBeNull();
+    expect(codexMock.streamCodexResponse).toHaveBeenCalledTimes(1);
+    const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
+    expect(params.signal).toBeInstanceOf(AbortSignal);
+    expect(params.signal?.aborted).toBe(true);
+  });
+
+  it("background tier (default) runs the registry background model at low effort", async () => {
+    // gpt-5.4-mini authoring a yes/no verdict inside a seconds-long budget:
+    // the client's chat default "medium" is a reasoning pass for nothing —
+    // and the latency that pushed calls past the wallclock to begin with.
+    codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("NO"));
+    const out = await classifyWithLLM({
+      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
+    });
+    expect(out).toBe("NO");
+    const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
+    expect(params.model).toBe("gpt-5.4-mini");
+    expect(params.reasoningEffort).toBe("low");
+  });
+
+  it("a budget at the 8000ms default still runs at low effort", async () => {
+    // Every evidenced codex wallclock timeout ran on a budget <= the 8000ms
+    // DEFAULT_TIMEOUT_MS; the boundary itself must stay on the fast path.
+    codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("NO"));
+    await classifyWithLLM({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 8000, parse });
+    const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
+    expect(params.reasoningEffort).toBe("low");
+  });
+
+  it("a long budget keeps the client's default effort even on the background tier", async () => {
+    // Long-budget callers pass no tier but bought the time for a considered
+    // answer (scenario-judge 20s, compaction 30s — whose summary is persisted
+    // over history). Budget is the only signal they give; honor it.
+    codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
+    await classifyWithLLM({ category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 20_000, parse });
+    const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
+    expect(params.model).toBe("gpt-5.4-mini");
+    expect(params.reasoningEffort).toBeUndefined();
+  });
+
+  it("active tier keeps the chat model's effort untouched", async () => {
+    // "active" is opted into BECAUSE output quality matters (probe authoring,
+    // done-claim audit). The classifier must not quietly downgrade it.
+    codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
+    const out = await classifyWithLLM({
+      category: "test", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse, modelTier: "active",
+    });
+    expect(out).toBe("YES");
+    const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
+    expect(params.model).toBe("gpt-5.5");
+    expect(params.reasoningEffort).toBeUndefined();
   });
 });
 

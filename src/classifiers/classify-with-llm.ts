@@ -220,12 +220,36 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     } else if (provider === "codex") {
       providerCall = (async () => {
         const { streamCodexResponse } = await import("../codex-client/index.js");
+        // Same abort signal the anthropic branch hands its stream. Without it
+        // a classifier that lost the wallclock race (42x `wallclock timeout
+        // at 1500..4000ms (provider=codex)` in one night's server.log) left
+        // its stream running to completion — a full reasoning pass whose
+        // answer had already been discarded, billed against the Plus quota
+        // (21x `429 usage_limit_reached` in the same log). streamCodexResponse
+        // honors the signal: it cancels the fetch AND the body reader.
+        //
+        // Effort: the codex client defaults to the chat "medium". For a
+        // yes/no verdict on gpt-5.4-mini inside a seconds-long budget that
+        // reasoning pass is latency for nothing — and is what pushed those
+        // calls past the wallclock in the first place (every evidenced
+        // timeout ran on a budget <= DEFAULT_TIMEOUT_MS). "low" is accepted
+        // by every gpt-5.x. Two kinds of caller keep the client default:
+        // modelTier "active" (the chat model, chosen BECAUSE output quality
+        // matters — probe authoring, done-claim audit), and long-budget
+        // callers that pass no tier but bought the time for a considered
+        // answer — scenario-step-planner 10s, chunk-review-judgment 12s,
+        // auto-build-advisor 18s, scenario-judge 20s (throws on unparseable),
+        // compaction 30s (its summary is persisted over history). Budget is
+        // the only signal those callers give us. (memory/extract.ts calls
+        // dispatch() directly and never enters this branch.)
         const stream = streamCodexResponse({
           token: apiKey, model,
           messages: [{ role: "user", content: opts.userPrompt } as never],
           systemPrompt: opts.systemPrompt,
           tools: [],
           sessionId: undefined,
+          reasoningEffort: opts.modelTier === "active" || timeoutMs > DEFAULT_TIMEOUT_MS ? undefined : "low",
+          signal: linkedSignal,
         });
         let acc = "";
         for await (const event of stream) {

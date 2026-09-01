@@ -113,15 +113,21 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     return JSON.parse(fetchSpy.mock.calls[0][1].body as string) as Record<string, unknown>;
   }
 
-  it("anthropic WITHOUT images sends the exact pre-images body (string content, no extra keys)", async () => {
-    const out = await dispatch({ prompt: "ping", provider: "anthropic" });
+  // Model-explicit: haiku-4-5 is a legacy (non-adaptive) id, so `temperature`
+  // rides on the wire. The adaptive family is pinned to NO temperature below.
+  it("anthropic (legacy model) WITHOUT images sends the exact pre-images body (string content, no extra keys)", async () => {
+    const out = await dispatch({ prompt: "ping", provider: "anthropic", anthropicModel: "claude-haiku-4-5" });
     expect(out).toBe("anthropic-reply");
-    expect(sentBody()).toEqual({
-      model: dispatchBackgroundModel("anthropic"),
-      max_tokens: 200,
-      temperature: 0,
-      messages: [{ role: "user", content: "ping" }],
-    });
+    expect(sentBody()).toEqual({ model: "claude-haiku-4-5", max_tokens: 200, temperature: 0, messages: [{ role: "user", content: "ping" }] });
+  });
+
+  // Fable 5 / Opus 5 / Opus 4.7+ / Sonnet 5 return 400 "`temperature` is
+  // deprecated for this model" — forwarding the classifier's 0 nulled every
+  // API-key call. toEqual on the parsed wire body: absent key = never sent.
+  const ADAPTIVE = ["claude-fable-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"];
+  it.each(ADAPTIVE)("anthropic adaptive model %s: raw API-key body carries NO temperature (rest byte-identical)", async (model) => {
+    await dispatch({ prompt: "ping", provider: "anthropic", anthropicModel: model });
+    expect(sentBody()).toEqual({ model, max_tokens: 200, messages: [{ role: "user", content: "ping" }] });
   });
 
   it("anthropic WITH images prepends base64 PNG blocks before the text block", async () => {
@@ -138,8 +144,9 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     ]);
   });
 
-  it("anthropic with an EMPTY images array behaves as if images were absent", async () => {
+  it("anthropic with an EMPTY images array behaves as if images were absent (default = registry background model)", async () => {
     await dispatch({ prompt: "ping", provider: "anthropic", images: [] });
+    expect(sentBody().model).toBe(dispatchBackgroundModel("anthropic"));
     expect(sentBody().messages).toEqual([{ role: "user", content: "ping" }]);
   });
 
@@ -227,14 +234,9 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     });
   });
 
-  it("anthropic drops responseFormat silently — body unchanged", async () => {
-    await dispatch({ prompt: "ping", provider: "anthropic", responseFormat: RESPONSE_FORMAT });
-    expect(sentBody()).toEqual({
-      model: dispatchBackgroundModel("anthropic"),
-      max_tokens: 200,
-      temperature: 0,
-      messages: [{ role: "user", content: "ping" }],
-    });
+  it("anthropic (legacy model) drops responseFormat silently — body unchanged", async () => {
+    await dispatch({ prompt: "ping", provider: "anthropic", anthropicModel: "claude-haiku-4-5", responseFormat: RESPONSE_FORMAT });
+    expect(sentBody()).toEqual({ model: "claude-haiku-4-5", max_tokens: 200, temperature: 0, messages: [{ role: "user", content: "ping" }] });
   });
 
   it("ollama drops responseFormat silently — body unchanged", async () => {

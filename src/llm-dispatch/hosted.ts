@@ -17,7 +17,7 @@
  */
 
 import { resolveCredential } from "../auth/resolve.js";
-import { usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
+import { anthropicUsesAdaptiveThinking, usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { ProviderRequest } from "../providers/adapter/types.js";
 import { createLogger } from "../logger.js";
@@ -69,7 +69,14 @@ export async function callAnthropic(prompt: string, model: string, temperature: 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers,
-      body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages: [{ role: "user", content }] }),
+      // Fable 5 / Opus 5 / Opus 4.7+ / Sonnet 5 reject `temperature` with a 400
+      // ("`temperature` is deprecated for this model"), which nulled every
+      // API-key classifier call against them. anthropicUsesAdaptiveThinking is
+      // the one source of truth for "this model rejects sampling params" — the
+      // same predicate the CLI-proxy leg gates on in stream-api.ts, and it
+      // resolves aliases itself (api mode, which is this path's auth mode).
+      // Legacy models keep the byte-identical body, key order included.
+      body: JSON.stringify({ model, max_tokens: maxTokens, ...(anthropicUsesAdaptiveThinking(model) ? {} : { temperature }), messages: [{ role: "user", content }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {

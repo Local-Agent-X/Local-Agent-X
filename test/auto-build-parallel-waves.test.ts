@@ -32,6 +32,9 @@ const shared = vi.hoisted(() => ({
   mergeResults: new Map<string, { merged: boolean; files: number; error?: string }>(),
   /** worktree names for which createNamedWorktree returns null (cap reached). */
   nullNames: new Set<string>(),
+  /** worktree name → branch createNamedWorktree ACTUALLY cuts (b04b3d0f side-steps
+   *  to `<branch>-N` when an unmerged leftover of the requested name exists). */
+  branchOverrides: new Map<string, string>(),
   /** workerIndex threaded into each dispatched chunk's runChunkOnce. */
   workerIndices: [] as Array<{ chunk: number; workerIndex: number | undefined }>,
   /** chunkNumber → ChunkReport.changed list the mocked runChunkOnce reports. */
@@ -63,7 +66,7 @@ vi.mock("../src/agency/worktree.js", () => ({
   createNamedWorktree: vi.fn((name: string, branch: string) => {
     shared.calls.push(`create:${name}`);
     if (shared.nullNames.has(name)) return null;
-    return { path: `/fake-worktree/${name}`, branch, baseBranch: "main" };
+    return { path: `/fake-worktree/${name}`, branch: shared.branchOverrides.get(name) ?? branch, baseBranch: "main" };
   }),
   mergeWorktree: vi.fn((name: string) => {
     shared.calls.push(`merge:${name}`);
@@ -144,6 +147,7 @@ beforeEach(() => {
   shared.chunkActions.clear();
   shared.mergeResults.clear();
   shared.nullNames.clear();
+  shared.branchOverrides.clear();
   shared.workerIndices.length = 0;
   shared.chunkChanged.clear();
   shared.regateResults.length = 0;
@@ -267,6 +271,42 @@ describe("parallel path — rule 2: HALT on merge conflict, never auto-resolve",
     // The halt reason tells the user how to recover the preserved work.
     expect(result.haltReason).toContain("autobuild/c1");
     expect(result.haltReason.toLowerCase()).toContain("recover");
+  });
+});
+
+describe("parallel path — recovery hints name the branch createNamedWorktree ACTUALLY cut", () => {
+  // Since b04b3d0f createNamedWorktree preserves an unmerged `autobuild/c1`
+  // leftover from a previous run and cuts `autobuild/c1-2` instead. The registry
+  // (merge/cleanup by name) was always right, but DispatchedChunk recorded the
+  // REQUESTED branch — so every "git checkout <branch>" hint pointed the user at
+  // the OLD run's work. The requested name must not appear un-suffixed anywhere.
+  const STALE_REQUESTED_C1 = /autobuild\/c1(?!-)/;
+
+  it("a merge-conflict halt names the side-stepped branch, never the stale requested one", async () => {
+    shared.branchOverrides.set("autobuild-c1", "autobuild/c1-2");
+    shared.mergeResults.set("autobuild-c1", { merged: false, files: 2, error: "CONFLICT in src/alpha.ts" });
+
+    const result = await run(TWO_DISJOINT, 2);
+
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toContain("preserved on branch 'autobuild/c1-2'");
+    expect(result.haltReason).not.toMatch(STALE_REQUESTED_C1);
+  });
+
+  it("a pre-merge gate halt's recovery hints (halt reason + preserve event) name the side-stepped branch", async () => {
+    shared.branchOverrides.set("autobuild-c1", "autobuild/c1-2");
+    shared.chunkActions.set(2, "halt");
+
+    const result = await run(TWO_DISJOINT, 2);
+
+    expect(result.status).toBe("halted");
+    expect(result.haltReason).toContain("autobuild/c1-2");
+    expect(result.haltReason).not.toMatch(STALE_REQUESTED_C1);
+    // parallel-chunk-build's preserveWorktreeWork hint reads the same field.
+    const preserved = result.events.find((e) => e.type === "commit" && e.chunkNumber === 1 && e.message.includes("recover with"));
+    expect(preserved).toBeDefined();
+    expect(preserved!.message).toContain("git checkout autobuild/c1-2");
+    expect(preserved!.message).not.toMatch(STALE_REQUESTED_C1);
   });
 });
 

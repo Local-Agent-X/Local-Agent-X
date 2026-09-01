@@ -48,7 +48,9 @@ afterEach(() => { clients.clear(); activeChats.clear(); });
 
 describe("chat-ws headless (eval_) session filtering", () => {
   it("the minted eval id carries the underscore prefix the filter must match", () => {
-    expect(EVAL_SESSION).toMatch(/^eval_[0-9a-f]{16}$/);
+    // Only the prefix is this test's invariant; the body format is pinned in
+    // src/util/ids.test.ts where it belongs.
+    expect(EVAL_SESSION.startsWith("eval_")).toBe(true);
   });
 
   it("broadcastActiveChats omits the eval session, keeps real ones", () => {

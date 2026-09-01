@@ -174,7 +174,11 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
       degradedToSerial.push(chunk);
       continue;
     }
-    dispatched.push({ chunk, name, branch, worktreePath: wt.path, workerIndex: workerIndex++ });
+    // Record the branch createNamedWorktree ACTUALLY cut, not the one requested:
+    // an unmerged `autobuild/c<N>` leftover from a previous run is preserved and
+    // this run side-steps to `autobuild/c<N>-2`. Git ops go by `name`, but every
+    // "git checkout <branch>" recovery hint reads this field.
+    dispatched.push({ chunk, name, branch: wt.branch, worktreePath: wt.path, workerIndex: workerIndex++ });
   }
 
   // Wrap everything past worktree creation: ANY throw cleans up every worktree

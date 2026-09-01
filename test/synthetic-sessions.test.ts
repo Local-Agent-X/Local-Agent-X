@@ -27,7 +27,7 @@ describe("isSyntheticSessionId", () => {
   // was typed to match the list rather than the minter.
   it("classifies what /api/eval/run actually mints (randomId('eval') → eval_…)", () => {
     const id = randomId("eval");
-    expect(id).toMatch(/^eval_[0-9a-f]{16}$/);
+    expect(id.startsWith("eval_")).toBe(true); // prefix only — body format is ids.test.ts's pin
     expect(isSyntheticSessionId(id)).toBe(true);
     expect(isSyntheticSessionId(`${id}.jsonl`)).toBe(true);
   });

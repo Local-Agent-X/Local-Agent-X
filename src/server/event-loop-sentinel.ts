@@ -19,8 +19,9 @@
  * sentinel owns one dedicated timer, `.unref()`'d so it never holds the
  * process open, and does no async work on the sampling path.
  *
- * Cost when healthy: one performance.now(), two subtractions, one comparison,
- * one assignment, one atomic add. No allocation, no fs, no logging.
+ * Cost when healthy: one performance.now(), one atomic add, one atomic load,
+ * two subtractions, one comparison, a few assignments. No allocation, no fs,
+ * no logging.
  *
  * THIS FILE IS ONLY HALF THE INSTRUMENT. Everything below measures a stall from
  * the main thread, which means it can only report one ONCE THE LOOP COMES BACK
@@ -31,6 +32,14 @@
  * Keep both — the worker sees that the loop is wedged right now but cannot read
  * handles, requests or turns; the snapshot below can, and it is what named the
  * ChildProcess behind the 435s stall.
+ *
+ * The worker is also the only thing that can tell a stall from a SYSTEM
+ * SUSPENSION. A late sample looks the same after a 1000s sleep as after a
+ * 1000s block — the clock advances across sleep and the timer fires once on
+ * wake either way — but the worker keeps checking through a block and is
+ * frozen with everything else through a sleep. tick() reads its check count
+ * back and, when the worker demonstrably did not run across the gap, logs one
+ * info line carrying the snapshot and skips only the profile (isSuspension).
  *
  * Overrides:
  *   LAX_LOOP_SENTINEL_WARN_MS      threshold 1, default 5000
@@ -66,11 +75,16 @@ const PROFILE_DURATION_MS = 5_000;
  *  permanently sick server would otherwise grow that directory without bound. */
 const PROFILE_RETENTION = 12;
 
-/** Monotonic wall-clock-independent milliseconds. Date.now() would let a
- *  laptop resume or an NTP step forward fabricate a multi-hour "stall". */
+/** Monotonic wall-clock-independent milliseconds. Date.now() would let an NTP
+ *  or manual clock STEP fabricate a multi-hour "stall"; this cannot. It is NOT
+ *  a defence against system sleep: on macOS performance.now() (uv_hrtime)
+ *  keeps counting while the machine is asleep, so a resume still shows up here
+ *  as a lag equal to the sleep — observed as "blocked for 1000519ms" after a
+ *  1003s pmset maintenance sleep. That case is told apart by the worker's
+ *  check count, not by the choice of clock (see isSuspension). */
 const monotonicNowMs = (): number => Math.round(performance.now());
 
-type StallLogger = Pick<Logger, "warn" | "error">;
+type StallLogger = Pick<Logger, "info" | "warn" | "error">;
 
 /** Node exposes these but does not document them; they are absent under some
  *  runtimes and embeddings, so every use is typeof-guarded. */
@@ -247,6 +261,26 @@ export function captureStallProfile(lagMs: number, log: StallLogger = logger): s
 }
 
 /**
+ * Was a late sample the whole process being frozen rather than the loop being
+ * blocked? Decided from the off-thread watch's check count across the gap:
+ * through a real block it keeps looking once per interval, so the count covers
+ * roughly the whole lag; through a suspension it looks 0 or 1 times (the one
+ * check that fires on wake, whichever thread's overdue timer fires first).
+ *
+ * KNOWN LIMIT: a major GC of the main isolate parks the worker too (measured:
+ * a 5s full GC left it 26 of ~200 looks; a 46s one lost ~8.5s of them), so a
+ * GC stall — the OOM signature — can be answered "suspended". That is why the
+ * verdict only withholds the CPU profile and never the snapshot. Every
+ * "cannot tell" answers false: the caller drops a dead worker (checks() is
+ * null); a count still at 0 before the gap (worker booting) is refused here.
+ */
+function isSuspension(lagMs: number, checksBefore: number, checksAfter: number, checkIntervalMs: number): boolean {
+  if (checksBefore === 0) return false;
+  const observedMs = ((checksAfter - checksBefore) | 0) * checkIntervalMs; // `| 0`: int32 wrap
+  return observedMs < lagMs / 2;
+}
+
+/**
  * Build a sentinel. `tick()` is the whole measurement: lag is how much later
  * than promised this sample arrived, i.e. how long the loop was unavailable.
  */
@@ -275,6 +309,9 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
           });
 
   let lastTickAt = now();
+  /** The worker's check count as of the previous sample — the baseline the
+   *  suspension test compares against. */
+  let checksAtLastTick: number | null = observer?.checks() ?? null;
   let lastProfileAt = Number.NEGATIVE_INFINITY;
   let timer: NodeJS.Timeout | null = null;
 
@@ -284,11 +321,30 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
     // work here can throw.
     observer?.beat();
     const at = now();
+    const checks = observer?.checks() ?? null;
     const lagMs = at - lastTickAt - intervalMs;
+    const checksBefore = checksAtLastTick;
+    // Both baselines move on EVERY sample, suspension or not, so the next tick
+    // measures only its own gap and can never re-report this one.
     lastTickAt = at;
+    checksAtLastTick = checks;
     if (lagMs < warnMs) return; // healthy: nothing allocated, nothing logged
 
     const snapshot = snapshotOf(lagMs);
+    if (
+      observer && checksBefore !== null && checks !== null &&
+      isSuspension(lagMs, checksBefore, checks, observer.checkIntervalMs)
+    ) {
+      // The snapshot is KEPT — a major GC pause parks the worker too, and its
+      // memoryMb IS the diagnosis for that case. Only the profile is withheld:
+      // one night of maintenance sleeps produced twelve of them, all empty.
+      const observedS = Math.round((((checks - checksBefore) | 0) * observer.checkIntervalMs) / 1000);
+      log.info(
+        `[loop-sentinel] system suspended for ${Math.round(lagMs / 1000)}s (not an event-loop stall: ~${observedS}s observed by the worker, which a real block keeps running — a GC pause can park it too, so the snapshot is kept); snapshot on resume: ${JSON.stringify(snapshot)}; no profile`,
+      );
+      return;
+    }
+
     let profilePath: string | null = null;
     if (profileEnabled && lagMs >= profileMs && at - lastProfileAt >= profileCooldownMs) {
       // Consume the budget BEFORE capturing: a capture that throws must not
@@ -314,6 +370,7 @@ export function createEventLoopSentinel(deps: EventLoopSentinelDeps = {}): Event
       timer = setInterval(tick, intervalMs);
       timer.unref();
       observer?.start();
+      checksAtLastTick = observer?.checks() ?? null;
     },
     stop(): void {
       if (!timer) return;

@@ -34,6 +34,12 @@
  * keeps the observation clock-independent — the worker never compares its own
  * performance.now() against the main thread's (worker timeOrigins differ); it
  * only notices that the counter CHANGED and stamps that with its own clock.
+ * The second slot runs the other way: the worker bumps CHECKS_INDEX on every
+ * look, and the main thread reads that count to tell a stall from a SYSTEM
+ * SUSPENSION — through a block this thread keeps looking; through a sleep it is
+ * frozen too, so the count moves by 0 or 1 whichever overdue timer wakes first.
+ * The verdict lives in event-loop-sentinel.ts (isSuspension); createStallWatch
+ * strikes its own self-gap so the wake check is not a "STILL BLOCKED" line.
  *
  * LOGGING is appendFileSync straight to server.log, not console.error: a
  * worker's stdout/stderr is piped to the parent thread and delivered by the
@@ -64,13 +70,17 @@ import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { Worker, parentPort, workerData } from "node:worker_threads";
 
-/** Index of the beat counter inside the shared cell (one Int32). */
-export const BEAT_INDEX = 0;
-const BEAT_CELL_BYTES = 4;
+/** The shared cell: two Int32 slots, one written by each thread. */
+export const BEAT_INDEX = 0; // the main thread's liveness beat
+export const CHECKS_INDEX = 1; // the worker's check count, read back via StallObserver.checks()
+const CELL_BYTES = 8;
 
 /** How often the worker looks at the beat counter. One wakeup a second on an
  *  otherwise idle thread; it also bounds how much of a stall's head we miss. */
 const DEFAULT_CHECK_INTERVAL_MS = 1_000;
+/** Self-gap, in check intervals, past which this thread was frozen too — the
+ *  process was suspended. A slipped timer is fractions; a sleep is seconds+. */
+const SUSPEND_GAP_FACTOR = 4;
 /** Longest gap between two in-progress reports of the SAME stall. Reports back
  *  off exponentially from warnMs up to this cap, so a 7-minute wedge costs ~10
  *  lines instead of 400 while still showing the number grow. */
@@ -98,6 +108,10 @@ export interface StallWatchDeps {
   now: () => number;
   /** Current value of the main thread's beat counter. */
   readBeat: () => number;
+  /** Publish that a check happened — this thread's beat(), called first in check(). */
+  publishCheck: () => void;
+  /** The cadence check() is driven on; the suspension threshold scales off it. */
+  checkIntervalMs: number;
   warnMs: number;
   repeatCapMs: number;
   emit: (line: string) => void;
@@ -117,18 +131,33 @@ export interface StallWatch {
  * Reported durations are "at least" values on purpose. The last beat can land
  * anywhere inside a check window, so the worker's stamp for it is up to one
  * check interval LATE — which shortens the measured block. It never inflates.
+ *
+ * Time this thread was not running either is not time the main thread was
+ * blocked: a self-gap that dwarfs the cadence means the process was suspended
+ * and is struck from the stall's timeline (a wedged loop is reported net of it).
  */
 export function createStallWatch(deps: StallWatchDeps): StallWatch {
-  const { now, readBeat, warnMs, repeatCapMs, emit } = deps;
+  const { now, readBeat, publishCheck, checkIntervalMs, warnMs, repeatCapMs, emit } = deps;
+  const suspendGapMs = checkIntervalMs * SUSPEND_GAP_FACTOR;
   let lastBeat = readBeat();
   let lastBeatAt = now();
+  let lastCheckAt = lastBeatAt;
   /** In-progress reports emitted for the CURRENT stall; 0 when healthy. */
   let reports = 0;
   let nextReportAt = Number.NEGATIVE_INFINITY;
 
   return {
     check(): void {
+      publishCheck(); // FIRST: emit() appends synchronously and can wedge on a sick volume; this look is already counted
       const at = now();
+      const sinceLastCheck = at - lastCheckAt;
+      lastCheckAt = at;
+      if (sinceLastCheck >= suspendGapMs) {
+        // Strike the FULL self-gap, not gap-minus-one-cadence: crediting any of
+        // the sleep to the block would inflate; shortening ≤1 interval is "at least".
+        lastBeatAt += sinceLastCheck;
+        if (Number.isFinite(nextReportAt)) nextReportAt += sinceLastCheck;
+      }
       const beat = readBeat();
       if (beat !== lastBeat) {
         lastBeat = beat;
@@ -164,6 +193,11 @@ export function createStallWatch(deps: StallWatchDeps): StallWatch {
 export interface StallObserver {
   /** Publish one liveness beat. O(1), allocation-free, safe before start(). */
   beat(): void;
+  /** Looks taken by the off-thread watch so far; null while no worker is live.
+   *  Monotonic (int32 wrap — compare two readings), clock-independent. */
+  checks(): number | null;
+  /** The cadence behind checks(): one look per this many ms while running. */
+  readonly checkIntervalMs: number;
   start(): void;
   stop(): void;
 }
@@ -218,8 +252,8 @@ function spawnSentinelWorker(data: SentinelWorkerData): SentinelWorkerHandle {
  * is healthy when the log says otherwise. The on-resume half keeps working.
  */
 export function createWorkerStallObserver(deps: WorkerStallObserverDeps): StallObserver {
-  const cell = new SharedArrayBuffer(BEAT_CELL_BYTES);
-  const beats = new Int32Array(cell);
+  const cell = new SharedArrayBuffer(CELL_BYTES);
+  const slots = new Int32Array(cell);
   const data: SentinelWorkerData = {
     role: "lax-loop-sentinel",
     beats: cell,
@@ -240,8 +274,14 @@ export function createWorkerStallObserver(deps: WorkerStallObserverDeps): StallO
       // Wraps through int32 after ~68 years at two beats a second, and the
       // worker only ever compares for INEQUALITY, so a wrap is not a missed
       // beat. Nothing is allocated and nobody is woken.
-      Atomics.add(beats, BEAT_INDEX, 1);
+      Atomics.add(slots, BEAT_INDEX, 1);
     },
+    checks(): number | null {
+      // Null, not 0, without a live worker: a standing-still count would read
+      // as "frozen" and turn every real stall into a suspension. Report instead.
+      return worker ? Atomics.load(slots, CHECKS_INDEX) : null;
+    },
+    checkIntervalMs: data.checkIntervalMs,
     start(): void {
       if (worker) return;
       let spawned: SentinelWorkerHandle;
@@ -322,11 +362,13 @@ function appendStallLine(logPath: string, line: string): void {
 if (parentPort && isSentinelWorkerData(workerData)) {
   const config = workerData;
   const port = parentPort;
-  const beats = new Int32Array(config.beats);
+  const slots = new Int32Array(config.beats);
   let sinkFailure: string | null = null;
   const watch = createStallWatch({
     now: () => performance.now(),
-    readBeat: () => Atomics.load(beats, BEAT_INDEX),
+    readBeat: () => Atomics.load(slots, BEAT_INDEX),
+    publishCheck: () => { Atomics.add(slots, CHECKS_INDEX, 1); },
+    checkIntervalMs: config.checkIntervalMs,
     warnMs: config.warnMs,
     repeatCapMs: config.repeatCapMs,
     emit: (line) => {

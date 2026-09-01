@@ -19,6 +19,7 @@ import {
 } from "./event-loop-sentinel.js";
 import {
   BEAT_INDEX,
+  CHECKS_INDEX,
   createStallWatch,
   createWorkerStallObserver,
   type SentinelWorkerData,
@@ -33,12 +34,31 @@ const COOLDOWN = 600_000;
 const CHECK = 1_000;
 const REPEAT_CAP = 60_000;
 
-function harness(overrides: Parameters<typeof createEventLoopSentinel>[0] = {}) {
+/** Worker looks across `ms` of a REAL block, modelled the way production
+ *  under-counts them: a look is stamped up to one interval late and the first
+ *  look after the gap opens can be lost, so ≈ floor(ms / interval) − 1 — never
+ *  the rounded ideal, which would flatter the threshold. */
+const realisticChecks = (ms: number): number => Math.max(0, Math.floor(ms / CHECK) - 1);
+
+function harness(
+  overrides: Parameters<typeof createEventLoopSentinel>[0] = {},
+  checksFor: (ms: number) => number = realisticChecks,
+) {
   let clock = 1_000_000;
-  const log = { warn: vi.fn(), error: vi.fn() };
+  /** The off-thread watch's check count. advanceAndTick moves it by
+   *  checksFor(ms) — a worker that kept running, which is what a REAL block
+   *  looks like from the main thread; suspendAndTick freezes it. */
+  let workerChecks = 1_000;
+  const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   // Stand-in for the worker-backed observer: these cases are about the
   // main-thread half, and no test should spawn a thread to prove them.
-  const observer = { beat: vi.fn(), start: vi.fn(), stop: vi.fn() };
+  const observer = {
+    beat: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    checks: vi.fn(() => workerChecks),
+    checkIntervalMs: CHECK,
+  };
   const captureProfile = vi.fn((lagMs: number) => `profile-${lagMs}.cpuprofile`);
   const collectSnapshot = vi.fn((lagMs: number): StallSnapshot => ({
     lagMs,
@@ -60,9 +80,14 @@ function harness(overrides: Parameters<typeof createEventLoopSentinel>[0] = {}) 
     observer,
     ...overrides,
   });
-  /** Let `ms` of wall-clock pass, then take one sample. */
-  const advanceAndTick = (ms: number) => { clock += ms; sentinel.tick(); };
-  return { log, captureProfile, collectSnapshot, observer, sentinel, advanceAndTick };
+  /** Let `ms` pass with the PROCESS RUNNING (the worker kept looking), then
+   *  take one sample. */
+  const advanceAndTick = (ms: number) => { clock += ms; workerChecks += checksFor(ms); sentinel.tick(); };
+  /** The whole process was FROZEN for `ms` (system sleep): the clock advanced,
+   *  the worker looked `wakeChecks` times — 1 if its overdue timer fired before
+   *  the main thread's on wake, 0 if after — then take one sample. */
+  const suspendAndTick = (ms: number, wakeChecks: 0 | 1 = 1) => { clock += ms; workerChecks += wakeChecks; sentinel.tick(); };
+  return { log, captureProfile, collectSnapshot, observer, sentinel, advanceAndTick, suspendAndTick };
 }
 
 describe("event-loop sentinel — healthy loop is silent and free", () => {
@@ -177,6 +202,129 @@ describe("event-loop sentinel — threshold 2 profile capture", () => {
   });
 });
 
+describe("event-loop sentinel — a system suspension is not a stall", () => {
+  // Three pmset maintenance sleeps (1003s, 1045s, 936s) each came back as
+  // "event loop blocked for ~1000000ms" with activeTurns: [] and a useless
+  // .cpuprofile: the monotonic clock advances across sleep, so on wake the late
+  // sample is indistinguishable from a block BY THE CLOCK ALONE. The worker's
+  // check count is what tells them apart — it climbs through a block and
+  // stands still through a sleep.
+  it("logs one info line that carries the snapshot, and skips only the profile", () => {
+    const { log, collectSnapshot, captureProfile, advanceAndTick, suspendAndTick } = harness();
+    advanceAndTick(INTERVAL);
+    suspendAndTick(1_003_500);
+    expect(log.error).not.toHaveBeenCalled();
+    expect(captureProfile).not.toHaveBeenCalled();
+    // The snapshot is KEPT: a major GC pause of the main isolate parks the
+    // worker too, and memoryMb is the diagnosis for that case. The verdict may
+    // cost the (aftermath-only) profile; it must never cost the evidence.
+    expect(collectSnapshot).toHaveBeenCalledWith(1_003_000);
+    expect(log.info).toHaveBeenCalledTimes(1);
+    const line = String(log.info.mock.calls[0][0]);
+    expect(line).toContain("[loop-sentinel] system suspended for 1003s");
+    expect(line).toContain("not an event-loop stall");
+    expect(line).toContain("~1s observed by the worker");
+    expect(line).toContain('"handles":{"Socket":2}');
+    expect(line).toContain('"memoryMb":{"rss":100');
+    expect(line).toContain('"sessionId":"s1"');
+    expect(line).not.toContain("blocked for");
+    expect(line).not.toContain(".cpuprofile");
+  });
+
+  // The threshold is HALF the lag, and it has to survive production's
+  // under-count (≈ floor(lag/interval) − 1 looks for a real block). A mutant
+  // that compared observed time against the WHOLE lag would call every real
+  // block a suspension, because the worker never quite observes all of it.
+  it("classifies a real 6s and a real 600s block as stalls despite the under-count", () => {
+    const short = harness();
+    short.advanceAndTick(6_500); // lag 6000; the worker looked 5 times → 5000ms observed
+    expect(short.log.error).toHaveBeenCalledTimes(1);
+    expect(short.log.info).not.toHaveBeenCalled();
+    const long = harness();
+    long.advanceAndTick(600_500); // lag 600000; 599 looks → 599000ms observed
+    expect(long.log.error).toHaveBeenCalledTimes(1);
+    expect(long.captureProfile).toHaveBeenCalledTimes(1);
+    expect(long.log.info).not.toHaveBeenCalled();
+  });
+
+  it("sits exactly at half: 3 looks across a 6s lag is a stall, 2 is a suspension", () => {
+    const atHalf = harness({}, () => 3); // 3000ms observed of a 6000ms lag
+    atHalf.advanceAndTick(6_500);
+    expect(atHalf.log.error).toHaveBeenCalledTimes(1);
+    expect(atHalf.log.info).not.toHaveBeenCalled();
+    const under = harness({}, () => 2); // 2000ms observed of a 6000ms lag
+    under.advanceAndTick(6_500);
+    expect(under.log.info).toHaveBeenCalledTimes(1);
+    expect(under.log.error).not.toHaveBeenCalled();
+  });
+
+  it("is decided the same whichever overdue timer fires first on wake", () => {
+    // Both threads' timers are overdue on wake and fire in either order, so the
+    // count moved by 1 (worker first) or 0 (main first). A "we slept" flag the
+    // worker had not yet written would leave the second case reported as a
+    // stall; a count reads the same both ways.
+    for (const wakeChecks of [0, 1] as const) {
+      const { log, captureProfile, suspendAndTick } = harness();
+      suspendAndTick(936_500, wakeChecks);
+      expect(log.info).toHaveBeenCalledTimes(1);
+      expect(log.error).not.toHaveBeenCalled();
+      expect(captureProfile).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not re-report on the next sample, and still reports a later real stall", () => {
+    const { log, collectSnapshot, advanceAndTick, suspendAndTick } = harness();
+    suspendAndTick(1_045_500);
+    advanceAndTick(INTERVAL);
+    advanceAndTick(INTERVAL);
+    expect(log.info).toHaveBeenCalledTimes(1);
+    expect(log.error).not.toHaveBeenCalled();
+    advanceAndTick(6_500); // a real block afterwards: the worker kept looking
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(collectSnapshot).toHaveBeenCalledWith(6_000);
+  });
+
+  it("still reports a real block, which the worker watched happen", () => {
+    const { log, collectSnapshot, captureProfile, advanceAndTick } = harness();
+    advanceAndTick(6_500); // 6s of lag; the worker looked ~6 times
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(String(log.error.mock.calls[0][0])).toContain("event loop blocked for 6000ms");
+    expect(collectSnapshot).toHaveBeenCalledWith(6_000);
+    advanceAndTick(1_000_500); // a real 1000s block — ~1000 looks — is profiled as before
+    expect(captureProfile).toHaveBeenCalledTimes(1);
+  });
+
+  // Fail-safe direction: every "cannot tell" is reported as a stall. No worker,
+  // a dead one, or one that had not booted before the gap must never turn a
+  // real stall into a "system suspended" line.
+  it("reports a stall when there is no worker to ask", () => {
+    const { log, suspendAndTick } = harness({ observer: null });
+    suspendAndTick(1_003_500);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it("reports a stall when the worker is not live (checks() is null)", () => {
+    const observer = { beat: vi.fn(), start: vi.fn(), stop: vi.fn(), checks: vi.fn(() => null), checkIntervalMs: CHECK };
+    const { log, suspendAndTick } = harness({ observer });
+    suspendAndTick(1_003_500);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.info).not.toHaveBeenCalled();
+  });
+
+  it("reports a stall when the worker had never been seen running before the gap", () => {
+    // Count still at 0 = the worker was booting. Standing still is not frozen.
+    let checks = 0;
+    const observer = { beat: vi.fn(), start: vi.fn(), stop: vi.fn(), checks: vi.fn(() => checks), checkIntervalMs: CHECK };
+    const { log, suspendAndTick } = harness({ observer });
+    checks = 1; // its first look lands on wake — the same delta a sleep shows
+    suspendAndTick(1_003_500);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(log.info).not.toHaveBeenCalled();
+  });
+});
+
 describe("collectStallSnapshot — the real collector", () => {
   it("reads live process state without throwing", () => {
     const snap = collectStallSnapshot(91_240);
@@ -260,12 +408,17 @@ describe("event-loop sentinel — timer lifecycle", () => {
 });
 
 describe("event-loop sentinel — the default clock is monotonic", () => {
-  // Date.now() moves backwards and forwards: a laptop sleep/resume or an NTP
-  // step forward would fabricate a stall out of nothing, writing a bogus
-  // "blocked for <hours>ms" line — and a CPU profile — into the very log this
-  // feature exists to make readable. Lag must be measured monotonically.
-  it("does not fabricate a stall when the wall clock jumps forward", () => {
-    const log = { warn: vi.fn(), error: vi.fn() };
+  // Date.now() moves backwards and forwards: an NTP or manual clock STEP would
+  // fabricate a stall out of nothing, writing a bogus "blocked for <hours>ms"
+  // line — and a CPU profile — into the very log this feature exists to make
+  // readable. Lag must be measured monotonically. What a monotonic clock does
+  // NOT buy is immunity to system SLEEP: performance.now() keeps counting
+  // through one on macOS, so a resume DOES arrive as a lag the size of the
+  // sleep (three ~1000s maintenance sleeps did, as "blocked for 1000519ms").
+  // That case is decided by the worker's check count — see "a system
+  // suspension is not a stall" — never by the choice of clock.
+  it("ignores a wall-clock step: no stall is fabricated from Date.now()", () => {
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const collectSnapshot = vi.fn((lagMs: number): StallSnapshot => ({
       lagMs, handles: {}, requests: {},
       memoryMb: { rss: 1, heapUsed: 1, heapTotal: 1, external: 1 }, activeTurns: [],
@@ -323,10 +476,13 @@ describe("stall profiles — retention", () => {
 function watchHarness(opts: { warnMs?: number; repeatCapMs?: number } = {}) {
   let clock = 10_000;
   let beat = 7; // arbitrary start — only CHANGES mean anything
+  let published = 0;
   const lines: string[] = [];
   const watch = createStallWatch({
     now: () => clock,
     readBeat: () => beat,
+    publishCheck: () => { published += 1; },
+    checkIntervalMs: CHECK,
     warnMs: opts.warnMs ?? WARN,
     repeatCapMs: opts.repeatCapMs ?? REPEAT_CAP,
     emit: (line) => lines.push(line),
@@ -338,7 +494,7 @@ function watchHarness(opts: { warnMs?: number; repeatCapMs?: number } = {}) {
   const reported = () => lines
     .filter((l) => l.includes("STILL BLOCKED"))
     .map((l) => Number(/at least (\d+)ms/.exec(l)?.[1] ?? -1));
-  return { lines, alive, wedged, reported };
+  return { lines, alive, wedged, reported, published: () => published };
 }
 
 describe("stall watch — reports a stall that is still happening", () => {
@@ -391,6 +547,54 @@ describe("stall watch — reports a stall that is still happening", () => {
     expect(lines.length).toBeGreaterThan(closed);
     expect(lines.at(-1)).toContain("in-progress report 1"); // counter re-armed
     expect(lines.at(-1)).toContain("at least 5000ms");      // not cumulative
+  });
+
+  it("publishes one check per look, so the main thread can count them", () => {
+    const { alive, wedged, published } = watchHarness();
+    for (let i = 0; i < 4; i++) alive();
+    for (let i = 0; i < 3; i++) wedged();
+    expect(published()).toBe(7);
+  });
+});
+
+describe("stall watch — a system suspension is not a stall", () => {
+  // The worker's own timer is frozen with the rest of the process during a
+  // sleep, so on wake exactly ONE check fires, with a self-gap the size of the
+  // sleep and no beat — which used to be written up as "STILL BLOCKED — no
+  // liveness beat for at least 1000519ms". Nothing was blocked; nothing ran.
+  it("says nothing when its one check after a huge self-gap finds no beat", () => {
+    const { lines, alive, wedged } = watchHarness();
+    for (let i = 0; i < 5; i++) alive();
+    wedged(1_000_000); // the whole process was asleep; this is the wake check
+    expect(lines).toEqual([]);
+  });
+
+  it("still reports a stall it watched happen, look by look", () => {
+    // The same elapsed time delivered the way a real block is experienced:
+    // the worker kept looking. The existing contract, pinned next to its twin.
+    const { reported, wedged } = watchHarness();
+    for (let i = 0; i < 1_000; i++) wedged(1_000);
+    expect(reported()[0]).toBe(5_000);
+    expect(Math.max(...reported())).toBeGreaterThanOrEqual(900_000);
+  });
+
+  it("strikes the sleep from a stall that straddles it instead of inflating it", () => {
+    const { lines, reported, wedged } = watchHarness();
+    for (let i = 0; i < 8; i++) wedged(); // 8s wedged before the machine slept
+    expect(reported()).toEqual([5_000]);
+    wedged(1_000_000);                     // asleep, then the wake check
+    for (let i = 0; i < 7; i++) wedged();  // and the loop is STILL wedged after
+    expect(reported()).toEqual([5_000, 15_000]); // 15s of block, not 1015s
+    expect(lines.join("\n")).not.toContain("1015000");
+  });
+
+  it("keeps watching normally after the wake", () => {
+    const { lines, alive, wedged, reported } = watchHarness();
+    wedged(1_000_000);                    // asleep
+    alive();                              // the loop is fine after the wake
+    for (let i = 0; i < 6; i++) wedged(); // then a real, separate stall
+    expect(lines.join("\n")).not.toContain("beat again"); // nothing to bracket
+    expect(reported()).toEqual([5_000]);
   });
 });
 
@@ -601,7 +805,7 @@ describe("event-loop sentinel — a stall that NEVER ends is reported anyway", (
 
     let mainClock = 1_000_000;
     let workerClock = 1_000_000; // separate clock: the threads share no timeOrigin
-    const log = { warn: vi.fn(), error: vi.fn() };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const lines: string[] = [];
     const sentinel = createEventLoopSentinel({
       now: () => mainClock,
@@ -614,6 +818,8 @@ describe("event-loop sentinel — a stall that NEVER ends is reported anyway", (
     const watch = createStallWatch({
       now: () => workerClock,
       readBeat: () => Atomics.load(beats, BEAT_INDEX),
+      publishCheck: () => { Atomics.add(beats, CHECKS_INDEX, 1); },
+      checkIntervalMs: data.checkIntervalMs,
       warnMs: data.warnMs,
       repeatCapMs: data.repeatCapMs,
       emit: (line) => lines.push(line),
@@ -641,6 +847,80 @@ describe("event-loop sentinel — a stall that NEVER ends is reported anyway", (
     expect(lines.every((l) => l.includes("STILL BLOCKED"))).toBe(true);
     expect(reported[0]).toBe(5_000);
     expect(reported.at(-1)).toBeGreaterThanOrEqual(35_000); // and it keeps growing
+    expect(issues).toEqual([]);
+  });
+});
+
+describe("event-loop sentinel — both halves agree a sleep was a sleep", () => {
+  // Real beat cell, real check counter, real observer — only the thread is
+  // faked. The sentinel's verdict is read back through the same
+  // SharedArrayBuffer slot the worker's watch writes, so this proves the
+  // transport, not a stub answering the question for it.
+  it("reads the worker's check count through the shared cell and stays quiet on wake", () => {
+    const { observer, spawns, issues } = observerHarness();
+    observer.start();
+    const data = spawns[0];
+    const slots = new Int32Array(data.beats);
+
+    let mainClock = 1_000_000;
+    let workerClock = 1_000_000;
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const lines: string[] = [];
+    const collectSnapshot = vi.fn((lagMs: number): StallSnapshot => ({
+      lagMs, handles: {}, requests: {},
+      memoryMb: { rss: 1, heapUsed: 1, heapTotal: 1, external: 1 }, activeTurns: [],
+    }));
+    const sentinel = createEventLoopSentinel({
+      now: () => mainClock,
+      logger: log,
+      intervalMs: INTERVAL,
+      warnMs: WARN,
+      profileEnabled: false,
+      collectSnapshot,
+      observer,
+    });
+    const watch = createStallWatch({
+      now: () => workerClock,
+      readBeat: () => Atomics.load(slots, BEAT_INDEX),
+      publishCheck: () => { Atomics.add(slots, CHECKS_INDEX, 1); },
+      checkIntervalMs: data.checkIntervalMs,
+      warnMs: data.warnMs,
+      repeatCapMs: data.repeatCapMs,
+      emit: (line) => lines.push(line),
+    });
+
+    // Healthy for five seconds: the worker looks once per two samples.
+    for (let i = 0; i < 10; i++) {
+      if (i % 2) { workerClock += CHECK; watch.check(); }
+      mainClock += INTERVAL;
+      sentinel.tick();
+    }
+    expect(lines).toEqual([]);
+    expect(log.info).not.toHaveBeenCalled();
+
+    // The machine sleeps for 1003s. Nothing runs. On wake the worker's overdue
+    // check fires first, then the main thread's overdue sample.
+    workerClock += 1_003_500;
+    watch.check();
+    mainClock += 1_003_500;
+    sentinel.tick();
+
+    expect(lines).toEqual([]); // no "STILL BLOCKED for 1003500ms" from the worker
+    expect(log.error).not.toHaveBeenCalled();
+    expect(collectSnapshot).toHaveBeenCalledWith(1_003_000); // the evidence is kept
+    expect(log.info).toHaveBeenCalledTimes(1);
+    const line = String(log.info.mock.calls[0][0]);
+    expect(line).toContain("system suspended for 1003s");
+    expect(line).toContain("~1s observed by the worker");
+
+    // …and a real block afterwards is still seen by BOTH halves.
+    for (let i = 0; i < 8; i++) { workerClock += CHECK; watch.check(); }
+    mainClock += 8_500;
+    sentinel.tick();
+    expect(lines.some((l) => l.includes("STILL BLOCKED"))).toBe(true);
+    expect(log.error).toHaveBeenCalledTimes(1);
+    expect(String(log.error.mock.calls[0][0])).toContain("event loop blocked for 8000ms");
+    expect(collectSnapshot).toHaveBeenCalledWith(8_000);
     expect(issues).toEqual([]);
   });
 });

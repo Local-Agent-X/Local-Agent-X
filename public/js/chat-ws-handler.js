@@ -143,7 +143,9 @@ function dispatchChatWsNonEvent(msg) {
 
   if (msg.type === 'app-files-changed' && msg.appName) handleAppFilesChanged(msg);
 
-  if (msg.type === 'agent-complete' && msg.agentId) {
+  // Orchestrator children (parentAgentId set) never notify — their parent
+  // reports for them. Same decision table as the chat routing (misc.js).
+  if (msg.type === 'agent-complete' && msg.agentId && agentCompleteRouting(msg, activeChat ? activeChat.id : null).notify) {
     if (window.desktop) window.desktop.showNotification('Agent Finished', msg.result?.slice(0, 100) || 'Task complete');
   }
 

@@ -132,22 +132,84 @@ function handleAgentFeedEvent(msg) {
   } else if (msg.type === 'agent-complete' && msg.agentId) {
     if (typeof updateAgentFeed === 'function') {
       updateAgentFeed(msg.agentId, { status: msg.success ? 'succeeded' : 'failed', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
-      // Build a concise one-liner for chat — full details on Agents page
-      var statusIcon = msg.success ? '✅' : '❌';
-      var fullResult = msg.result || '';
-      // Render the full agent result — no cap. Normal assistant replies render
-      // full-length (addMessageEl applies no limit), so agent results shouldn't
-      // be the one path that truncates. The old 5000-char cap clipped long
-      // research/planning outputs AND persisted the clipped copy below, so a
-      // reload lost the tail permanently.
-      var agentMsg = statusIcon + ' **Agent ' + (msg.name || msg.agentId || '') + ' ' + (msg.success ? 'completed' : 'failed') + ':**\n\n' + (fullResult || (msg.success ? 'Done.' : 'Agent failed.'));
-      addMessageEl('assistant', agentMsg);
-      if (activeChat) {
-        activeChat.messages.push({ role: 'assistant', content: agentMsg });
-        activeChat.updatedAt = Date.now();
-        saveChats();
-      }
       setTimeout(function() { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.agentId); }, 10000);
     }
+    routeAgentCompleteToChat(msg);
   }
+}
+
+// Where an agent-complete report belongs. Pure (no globals) so the decision
+// is unit-testable without a DOM — test/chat-ws-agent-complete-routing.test.ts.
+// The server broadcast (handler-events-agent-result.ts) carries `sessionId`
+// (string, "" when the spawn had no parent session) and `parentAgentId`
+// (string | null).
+//   parentAgentId set → an orchestrator child (auto-build chunk runner, worker
+//                       sub-spawn). Its parent folds the result into its own
+//                       report; the sidebar card is the only surface. Never
+//                       chat, never a desktop notification. (Every chunk
+//                       runner's STATUS/DONE_WHEN block used to land in the
+//                       open chat this way.)
+//   sessionId === active → render live into the open view + store on it.
+//   sessionId names another chat → store on that chat only, no render.
+//   sessionId "" → the spawn had no parent session (auto-fix workers,
+//                       agent-wakeup, issue-update, escalation, the
+//                       agents/templates route — all parentAgentId null). The
+//                       server persists no chat row for these, so neither do
+//                       we: card update only, no notification. Product
+//                       consequence: the templates route loses its transient
+//                       chat echo — which vanished on the next server-wins
+//                       hydrate anyway.
+//   sessionId key absent → a server that predates the field: legacy append
+//                       to the open chat, whatever it is.
+function agentCompleteRouting(msg, activeChatId) {
+  if (msg.parentAgentId) return { render: false, store: null, notify: false };
+  if (!('sessionId' in msg)) return { render: true, store: activeChatId || null, notify: true };
+  var sid = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+  if (!sid) return { render: false, store: null, notify: false };
+  if (sid === activeChatId) return { render: true, store: sid, notify: true };
+  return { render: false, store: sid, notify: true };
+}
+
+function routeAgentCompleteToChat(msg) {
+  var active = (typeof activeChat !== 'undefined' && activeChat) ? activeChat : null;
+  var route = agentCompleteRouting(msg, active ? active.id : null);
+  if (!route.render && !route.store) return;
+  var fullResult = msg.result || '';
+  // Exactly the row the server persists into this session
+  // (handler-events-agent-result.ts: `**Agent <name> completed|failed:**\n\n<result>`,
+  // "failed" iff success === false). Byte-identical content is what lets the
+  // next hydrate classify the server copy as 'skip' (_hydrateRepaintMode
+  // compares role + content) instead of a full repaint that silently swapped
+  // the row — so no ✅/❌ prefix. Full result, no cap: normal assistant
+  // replies render full-length (addMessageEl applies no limit), and the old
+  // 5000-char cap clipped long research/planning outputs AND persisted the
+  // clipped copy, so a reload lost the tail permanently.
+  var failed = msg.success === false;
+  var label = 'Agent ' + (msg.name || msg.agentId || '') + (failed ? ' failed' : ' completed');
+  var agentMsg = '**' + label + ':**\n\n' + (fullResult || (failed ? 'Agent failed.' : 'Done.'));
+  if (route.render && typeof addMessageEl === 'function') addMessageEl('assistant', agentMsg);
+  var chat = null;
+  if (route.store) {
+    if (active && active.id === route.store) chat = active;
+    else if (typeof chats !== 'undefined' && Array.isArray(chats)) chat = chats.find(function(c) { return c && c.id === route.store; }) || null;
+  }
+  if (!chat || !Array.isArray(chat.messages)) return;
+  // The server persists this same row into the session. There is no message
+  // id, so hydrateChat can't dedupe by id — it replaces chat.messages
+  // wholesale unless the local copy is newer/longer (keptLocal). Identical
+  // content makes the later hydrate a no-op for this row: no duplicate, no swap.
+  chat.messages.push({ role: 'assistant', content: agentMsg });
+  if (route.render) {
+    // Active chat: bump updatedAt (status quo) — local stays authoritative on
+    // the next hydrate, and the active chat holds the full history.
+    chat.updatedAt = Date.now();
+  } else {
+    // Another chat: do NOT bump updatedAt. A non-active chat is often a
+    // metadata stub (messages: []), and hydrateChat keeps the LOCAL copy
+    // whenever chat.updatedAt is newer than the server's — a bumped stub
+    // would replace the full server history with this one row. Flag it so
+    // the next select re-fetches server truth (which already has the row).
+    chat._needsHydrate = true;
+  }
+  if (typeof saveChats === 'function') saveChats();
 }

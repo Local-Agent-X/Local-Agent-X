@@ -244,18 +244,42 @@ describe("streamViaAPI — disableThinking (classifier path)", () => {
     { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
   ]);
 
-  it("omits the thinking block and forwards temperature verbatim", async () => {
+  it("legacy (non-adaptive) model: omits the thinking block and forwards temperature verbatim", async () => {
     const cap = stubFetchCapturing(done);
-    await collect({ model: "claude-sonnet-4-6", disableThinking: true, temperature: 0 });
+    await collect({ model: "claude-sonnet-4-5", disableThinking: true, temperature: 0 });
     const { body } = cap.calls[0];
     expect(body.thinking).toBeUndefined();
     expect(body.temperature).toBe(0);
   });
 
+  // Fable 5 / Opus 5 / Opus 4.7+ / Sonnet 5 return 400 "`temperature` is
+  // deprecated for this model". The classifier's temperature:0 must be dropped
+  // on the wire — forwarding it fails every classifier call against these
+  // models and nulls the verdict. Same predicate as the thinking branch.
+  it.each(["claude-fable-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"])(
+    "adaptive model %s: sends NEITHER temperature NOR thinking on the no-thinking branch",
+    async (model) => {
+      const cap = stubFetchCapturing(done);
+      await collect({ model, disableThinking: true, temperature: 0 });
+      const { body } = cap.calls[0];
+      // Parsed from the wire string, so an absent key means it was never sent.
+      expect("temperature" in body).toBe(false);
+      expect("thinking" in body).toBe(false);
+    },
+  );
+
   it("still enables adaptive thinking when the flag is absent", async () => {
     const cap = stubFetchCapturing(done);
     await collect({ model: "claude-sonnet-4-6" });
     expect(cap.calls[0].body.thinking).toEqual({ type: "adaptive", display: "summarized" });
+  });
+
+  it("thinking-enabled adaptive model: `adaptive` shape and no temperature even when the caller passes one", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-fable-5", temperature: 0 });
+    const { body } = cap.calls[0];
+    expect((body.thinking as { type: string }).type).toBe("adaptive");
+    expect("temperature" in body).toBe(false);
   });
 });
 

@@ -130,18 +130,24 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     messages: markConversationCache(convertMessages(messages), cacheConversation),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
-    // family (Fable 5, Opus 4.6/4.7/4.8, Sonnet 4.6): send only `adaptive` —
-    // Fable 5 and Opus 4.7/4.8 reject `temperature`/`budget_tokens` with a
-    // 400. Legacy models keep the enabled+budget+temperature shape (the API
-    // requires temperature: 1 when enabled thinking is on).
+    // family (Fable 5, Opus 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6): send
+    // only `adaptive` — Fable 5, Opus 5, Opus 4.7/4.8 and Sonnet 5 reject
+    // `temperature`/`budget_tokens` with a 400. Legacy models keep the
+    // enabled+budget+temperature shape (the API requires temperature: 1 when
+    // enabled thinking is on).
     // `display: "summarized"` is required to get readable reasoning — on Opus
     // 4.8 / Sonnet 5 / Fable 5 the default is "omitted", which streams thinking
     // blocks with EMPTY text. Without it the "Thinking" UI block would be blank.
     // Classifier calls opt out of thinking entirely: a yes/no verdict must not
     // burn seconds of reasoning tokens, and it wants deterministic temperature 0
     // — not the chat-tuned temperature 1 the enabled-thinking shape forces.
+    // The no-thinking branch is gated on the SAME `adaptive` predicate: a
+    // classifier's temperature:0 forwarded to Fable 5 / Opus 5 / 4.7+ 400s
+    // ("`temperature` is deprecated for this model") and nulls the verdict.
+    // anthropicUsesAdaptiveThinking is the one source of truth for "this
+    // model rejects sampling params" — no second model list here.
     ...(disableThinking
-      ? (temperature !== undefined ? { temperature } : {})
+      ? (temperature !== undefined && !adaptive ? { temperature } : {})
       : adaptive
         ? { thinking: { type: "adaptive", display: "summarized" } }
         : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),

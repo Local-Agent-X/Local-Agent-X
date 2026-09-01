@@ -11,13 +11,18 @@
  *   4. A review is actually bounded — canonical's own wall clock and iteration
  *      cap are inert on the background lane, so the bound has to be ours.
  *   5. A transcript cannot break out of its fence.
+ *   6. A review whose op ended `failed` or `cancelled` is reported as failed —
+ *      the runner resolves on every terminal state, so "did not throw" is not
+ *      "reviewed".
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setRuntimeConfig, getRuntimeConfig } from "../src/config.js";
-import type { LAXConfig, ToolDefinition } from "../src/types.js";
+import type { AgentTurn, LAXConfig, ToolDefinition } from "../src/types.js";
+import { mapStopReason } from "../src/canonical-loop/agent-runner/collect-result.js";
+import type { TerminalState } from "../src/canonical-loop/terminal-states.js";
 import {
   createProtocol, editProtocol, loadCustomProtocols, saveCustomProtocols,
 } from "../src/protocols/builder.js";
@@ -117,6 +122,40 @@ function fakeDeps(over: Partial<SkillReviewDeps> = {}): SkillReviewDeps {
 }
 
 const HEAVY_TURN = ["browser", "browser", "read", "write"];
+
+/** What runAgentViaCanonical resolves with once the op reaches `terminal`.
+ *  Built through the runner's own terminal→stopReason fold (collect-result.ts:
+ *  succeeded→end_turn, cancelled→abort, failed→error) and its errorMessage
+ *  assembly (`<code>: <message>`, only on stopReason "error" —
+ *  agent-runner/run.ts), so these fixtures track the real seam rather than a
+ *  hand-written shape. The fold's fourth value, `max_iterations`, needs error
+ *  code `max_turns_exceeded`, which nothing in src/ emits — no case drives it. */
+function runnerResult(terminal: TerminalState, error?: { code: string; message: string }): AgentTurn {
+  const stopReason = mapStopReason(terminal, error?.code);
+  const turn: AgentTurn = {
+    messages: [],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    stopReason,
+    committedWork: false,
+  };
+  if (error && stopReason === "error") turn.errorMessage = `${error.code}: ${error.message}`;
+  return turn;
+}
+
+/** Run `fn` while capturing what the logger routes to stderr. createLogger
+ *  writes warn lines through console.error (src/logger.ts) so the server.log
+ *  mirror picks them up — that mirror is where the pass summary gets read. */
+async function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map(String).join(" "));
+  });
+  try {
+    return { result: await fn(), lines };
+  } finally {
+    spy.mockRestore();
+  }
+}
 
 describe("skill-review tool allowlist (the recursion guard)", () => {
   it("resolves nothing that can spawn another agent, even when spawn tools are on offer", () => {
@@ -382,7 +421,7 @@ describe("skill-review run", () => {
   });
 
   it("sends the fenced transcript as the user turn with the static prompt and the narrowed tools", async () => {
-    mocks.runAgent.mockResolvedValue({ messages: [] });
+    mocks.runAgent.mockResolvedValue(runnerResult("succeeded"));
     registerSkillReviewRunner(fakeDeps());
     queueOne("user: file a PO\nassistant: opened External > Create PO");
 
@@ -427,7 +466,7 @@ describe("skill-review run", () => {
     // guard has to live here or two passes run on the same provider key.
     let release: (() => void) | undefined;
     mocks.runAgent.mockImplementation(() => new Promise((resolve) => {
-      release = () => resolve({ messages: [] });
+      release = () => resolve(runnerResult("succeeded"));
     }));
     registerSkillReviewRunner(fakeDeps());
     queueOne();
@@ -453,12 +492,59 @@ describe("skill-review run", () => {
   });
 
   it("fails the review rather than running toolless when the registry carries no protocol tool", async () => {
-    mocks.runAgent.mockResolvedValue({ messages: [] });
+    mocks.runAgent.mockResolvedValue(runnerResult("succeeded"));
     registerSkillReviewRunner(fakeDeps({ allAgentTools: [stubTool("bash")] }));
     queueOne();
 
     await expect(runSkillReviewPass()).resolves.toMatchObject({ reviewed: 0, failed: 1 });
     expect(mocks.runAgent).not.toHaveBeenCalled();
+  });
+
+  // The runner's `while (terminal === null)` resolves on `failed` and
+  // `cancelled` exactly as it does on `succeeded`; a middleware abort
+  // (repeat-output, loop-detection, thrash-guard, repeat-failure) lands as
+  // terminal `failed` with reason turn_error. Before this pin, every such
+  // review counted as reviewed and the job logged `reviewed=1 failed=0`.
+  it("counts a review whose op ended failed under a middleware abort as failed, and says why in one warn line", async () => {
+    mocks.runAgent.mockResolvedValue(
+      runnerResult("failed", { code: "middleware-abort", message: "Turn aborted by repeat-output." }),
+    );
+    registerSkillReviewRunner(fakeDeps());
+    queueOne();
+
+    const { result, lines } = await captureStderr(() => runSkillReviewPass());
+    expect(result).toMatchObject({ reviewed: 0, failed: 1 });
+    expect(peekSkillReviewQueue(), "a failed review is not requeued").toHaveLength(0);
+
+    const warned = lines.filter((l) => l.includes("[skill-review]"));
+    expect(warned, "exactly one warn line for the failed review").toHaveLength(1);
+    const [line] = warned;
+    expect(line).toContain("Review of session chat-7 failed");
+    expect(line).toMatch(new RegExp(`fork ${SKILL_REVIEW_SESSION_PREFIX}\\d+-\\d+ ended failed`));
+    expect(line).toContain("stopReason=error");
+    expect(line).toContain("middleware-abort: Turn aborted by repeat-output.");
+  });
+
+  it("counts an op that ended cancelled (external cancel, not our timeout) as failed", async () => {
+    mocks.runAgent.mockResolvedValue(runnerResult("cancelled"));
+    registerSkillReviewRunner(fakeDeps());
+    queueOne();
+
+    const { result, lines } = await captureStderr(() => runSkillReviewPass());
+    expect(result).toMatchObject({ reviewed: 0, failed: 1 });
+    const warned = lines.filter((l) => l.includes("[skill-review]"));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain("ended cancelled (stopReason=abort)");
+  });
+
+  it("still counts an op that ended succeeded as reviewed, with no warning", async () => {
+    mocks.runAgent.mockResolvedValue(runnerResult("succeeded"));
+    registerSkillReviewRunner(fakeDeps());
+    queueOne();
+
+    const { result, lines } = await captureStderr(() => runSkillReviewPass());
+    expect(result).toMatchObject({ reviewed: 1, failed: 0 });
+    expect(lines.filter((l) => l.includes("[skill-review]"))).toHaveLength(0);
   });
 });
 

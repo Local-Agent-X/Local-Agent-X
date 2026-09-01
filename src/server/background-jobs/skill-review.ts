@@ -28,7 +28,7 @@ import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { SecurityLayer } from "../../security/index.js";
-import type { LAXConfig, ToolDefinition } from "../../types.js";
+import type { AgentTurn, LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
@@ -300,7 +300,46 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
   const wrote = outcome.messages.filter(
     (m) => m.role === "assistant" && Array.isArray((m as { tool_calls?: unknown[] }).tool_calls),
   ).length;
+  const failure = reviewFailure(outcome);
+  if (failure) {
+    throw new Error(`fork ${forkSessionId} ${failure} after ${wrote} tool-calling turns`);
+  }
   logger.info(`[skill-review] Session ${request.sessionId} reviewed (${wrote} tool-calling turns)`);
+}
+
+/** Longest slice of the op's error message the failure line carries. Middleware
+ *  abort messages are model-facing nudge paragraphs; mirrors event-pump's cap. */
+const FAILURE_MESSAGE_MAX = 240;
+
+/**
+ * Why a resolved run is still a failed review, or null when it succeeded.
+ *
+ * `runAgentViaCanonical` resolves on ANY terminal state — `failed` (a
+ * middleware abort such as repeat-output / loop-detection / thrash-guard, an
+ * exhausted adapter, a worker exception) and `cancelled` included — and folds
+ * the terminal into `stopReason` (agent-runner/collect-result.ts mapStopReason:
+ * succeeded→end_turn, cancelled→abort, failed→error; the fold is injective, so
+ * the terminal is recovered here without touching the runner). The fold also
+ * maps a `failed` carrying error code `max_turns_exceeded` to `max_iterations`,
+ * but nothing in src/ emits that code today — the branch below is defensive
+ * (a failed terminal by construction), not a path a review can currently hit.
+ * When the loop emitted an `error` event the runner also returns it as
+ * `errorMessage` = `<code>: <message>` — for a middleware abort that is
+ * `middleware-abort: <the middleware's message>`, the closest the seam gets to
+ * the abort reason. The op id itself is not returned; the fork session id is
+ * unique per review and is what the runner logs the op id against.
+ *
+ * Before this check a run that resolved at all counted as reviewed, so a night
+ * of middleware-aborted ops (every one `failed`, idle-nudge saying "hit a
+ * snag") logged `pass: reviewed=1 failed=0`.
+ */
+function reviewFailure(outcome: AgentTurn): string | null {
+  if (outcome.stopReason === "abort") return "ended cancelled (stopReason=abort)";
+  if (outcome.stopReason === "error" || outcome.stopReason === "max_iterations") {
+    const detail = outcome.errorMessage ? `: ${outcome.errorMessage.slice(0, FAILURE_MESSAGE_MAX)}` : "";
+    return `ended failed (stopReason=${outcome.stopReason}${detail})`;
+  }
+  return null;
 }
 
 /**

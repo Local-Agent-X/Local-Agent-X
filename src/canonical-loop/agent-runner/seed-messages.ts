@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { ImageAttachment } from "../../providers/types.js";
 import { appendOpMessage } from "../store.js";
 import type { CanonicalMessageRole } from "../types.js";
+import { buildRevivalPlan, historyImagesOf, reviveRowImages } from "../history-image-revival.js";
 
 export function seedOpMessages(
   opId: string,
@@ -12,8 +13,12 @@ export function seedOpMessages(
 ): void {
   let seqInTurn = 0;
   const turnIdx = 0;
+  // Bounded history-image revival — the SAME policy point the chat-runner
+  // seeder uses (../history-image-revival.ts): most-recent occurrence wins,
+  // count/byte caps, older/excess/oversize degrade to text placeholders.
+  const revivalPlan = buildRevivalPlan(history);
 
-  for (const msg of history) {
+  for (const [rowIdx, msg] of history.entries()) {
     const role = chatRoleToCanonicalRole(msg.role);
     if (!role) continue;
     const text = extractTextContent(msg.content);
@@ -32,8 +37,23 @@ export function seedOpMessages(
       }
     }
 
+    // Mirror chat-runner/seed-messages.ts: a caption-less photo row arrives
+    // here as text:"" plus a nonstandard `images` prop and used to fall to
+    // the emptiness filter below — the model lost sight of an image it was
+    // shown a turn ago. Revive those rows under the shared bounded plan.
+    let rowImages: ImageAttachment[] | undefined;
+    let imagePlaceholders = "";
+    if (role === "user") {
+      const all = historyImagesOf(msg);
+      if (all.length > 0) {
+        const revival = reviveRowImages(all, revivalPlan.get(rowIdx));
+        rowImages = revival.images;
+        imagePlaceholders = revival.placeholderText;
+      }
+    }
+
     const isToolResultWithId = role === "tool_result" && (msg as ChatCompletionMessageParam & { tool_call_id?: string }).tool_call_id;
-    if (!text && !toolCalls && !isToolResultWithId) continue;
+    if (!text && !toolCalls && !isToolResultWithId && !rowImages && !imagePlaceholders) continue;
 
     let content: unknown = { text };
     if (role === "tool_result") {
@@ -42,6 +62,14 @@ export function seedOpMessages(
     }
     if (role === "assistant" && toolCalls) {
       content = { text, toolCalls };
+    }
+    // Same content shape as the current-message row below — adapters extract
+    // `images` and hand them to the shared provider converters. Placeholder
+    // lines ride the row's text so a fully-placeholdered photo row is still
+    // a non-empty user row, never the empty-text 400 class.
+    if (role === "user" && (rowImages || imagePlaceholders)) {
+      const combined = imagePlaceholders ? (text ? `${text}\n${imagePlaceholders}` : imagePlaceholders) : text;
+      content = rowImages ? { text: combined, images: rowImages } : { text: combined };
     }
 
     appendOpMessage({

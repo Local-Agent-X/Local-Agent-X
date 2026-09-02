@@ -63,4 +63,44 @@ describe("decodeHtmlEntities / htmlToText", () => {
   it("strips tags to a fixpoint (split/nested tags cannot survive)", () => {
     expect(htmlToText("a<<b>>c")).not.toContain("<");
   });
+
+  it("decodes decimal and hex numeric character references", () => {
+    expect(decodeHtmlEntities("It&#8217;s")).toBe("It’s");
+    expect(decodeHtmlEntities("It&#x2019;s")).toBe("It’s");
+    expect(decodeHtmlEntities("caf&#233;")).toBe("café");
+  });
+
+  it("decodes common named typographic entities", () => {
+    expect(decodeHtmlEntities("&rsquo;&lsquo;&ldquo;&rdquo;&mdash;&ndash;&hellip;")).toBe(
+      "’‘“”—–…",
+    );
+    expect(decodeHtmlEntities("&copy; &trade; 5&times;4 90&deg;")).toBe(
+      "© ™ 5×4 90°",
+    );
+  });
+
+  it("is single-pass: &amp;amp; → &amp;, never cascading to &", () => {
+    expect(decodeHtmlEntities("&amp;amp;")).toBe("&amp;");
+    expect(decodeHtmlEntities("&amp;#8217;")).toBe("&#8217;");
+    // Replacement text is never rescanned: the & produced from &#38; cannot
+    // combine with the following `lt;` into a second decode.
+    expect(decodeHtmlEntities("&#38;lt;")).toBe("&lt;");
+  });
+
+  it("leaves invalid numeric references literal (surrogate, out of range, control)", () => {
+    expect(decodeHtmlEntities("&#xD800;")).toBe("&#xD800;");
+    expect(decodeHtmlEntities("&#1114112;")).toBe("&#1114112;");
+    expect(decodeHtmlEntities("&#7;")).toBe("&#7;");
+    expect(decodeHtmlEntities("&#x9F;")).toBe("&#x9F;");
+  });
+
+  it("leaves unknown names literal — including prototype property names", () => {
+    expect(decodeHtmlEntities("&nosuch;")).toBe("&nosuch;");
+    expect(decodeHtmlEntities("&constructor;")).toBe("&constructor;");
+    expect(decodeHtmlEntities("&hasOwnProperty;")).toBe("&hasOwnProperty;");
+  });
+
+  it("decodes astral-plane references via fromCodePoint", () => {
+    expect(decodeHtmlEntities("&#128512;")).toBe("\u{1F600}");
+  });
 });

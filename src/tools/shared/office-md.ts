@@ -7,7 +7,8 @@
  * HTML comments, or zero-width characters. `cleanText` strips all of those.
  * Markdown SYNTAX (**, _, `, [..](..), |, #) is consumed by the parser, not
  * printed. Code blocks/spans are preserved verbatim (literal code is content,
- * not a leak).
+ * not a leak). Everything cleanText touches is also NFC-normalized, so
+ * combining marks land composed in every document sink.
  */
 import { decodeHtmlEntities } from "../../app-renderer/sanitize.js";
 
@@ -18,16 +19,18 @@ const HTML_TAG_RE = /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*?)?\/?>/g;
 const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF]/g;
 
-/** Strip HTML tags/comments/entities + zero-width chars from a text fragment.
- *  Entities are decoded first so an ESCAPED tag (&lt;div&gt;) becomes a real
- *  tag and is then stripped; the tag pass loops to a fixpoint so split/nested
- *  tags can't survive. */
+/** Strip HTML tags/comments/entities + zero-width chars from a text fragment,
+ *  then NFC-normalize. Entities are decoded first (exactly once — the decoder
+ *  is single-pass, so &amp;amp; stays &amp;) so an ESCAPED tag (&lt;div&gt;)
+ *  becomes a real tag and is then stripped; the tag pass loops to a fixpoint
+ *  so split/nested tags can't survive. NFC runs last so decoded combining
+ *  marks (e + U+0301) land composed in every document sink. */
 export function cleanText(s: unknown): string {
   if (typeof s !== "string") return s == null ? "" : String(s);
   let out = decodeHtmlEntities(s).replace(HTML_COMMENT_RE, "");
   let prev: string;
   do { prev = out; out = out.replace(HTML_TAG_RE, ""); } while (out !== prev);
-  return out.replace(ZERO_WIDTH_RE, "");
+  return out.replace(ZERO_WIDTH_RE, "").normalize("NFC");
 }
 
 export interface Span { text: string; bold?: boolean; italic?: boolean; code?: boolean; strike?: boolean; href?: string }

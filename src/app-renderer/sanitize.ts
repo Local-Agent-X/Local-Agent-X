@@ -33,24 +33,43 @@ export function sanitizeHtml(html: string): string {
 }
 
 /**
- * Decode the HTML entities `escapeHtml` produces, plus a few common extras.
- * `&amp;` is decoded LAST: decoding it first turns `&amp;lt;` into `&lt;` and
- * then `<`, a double-decode that re-introduces markup (the bug CodeQL flags as
- * double-escaping). Ordering ampersand last makes the round-trip lossless.
+ * Decode the HTML entities `escapeHtml` produces, plus the named and numeric
+ * forms (`&#8217;`, `&#x2019;`) common in model output and scraped HTML.
+ * Decoding is a SINGLE combined pass: one regex consumes each entity exactly
+ * once and replacement text is never rescanned, so `&amp;lt;` → `&lt;` and
+ * `&amp;amp;` → `&amp;` — never a cascade to `<` or `&` (the double-decode
+ * CodeQL flags as double-escaping). Unknown names and invalid numeric
+ * references (lone surrogates, > U+10FFFF, control characters) stay literal.
  */
-const HTML_ENTITY_DECODES: [RegExp, string][] = [
-  [/&lt;/g, "<"],
-  [/&gt;/g, ">"],
-  [/&quot;/g, '"'],
-  [/&#x27;/g, "'"],
-  [/&#39;/g, "'"],
-  [/&nbsp;/g, " "],
-  [/&amp;/g, "&"],
-];
+const NAMED_ENTITIES = new Map<string, string>([
+  ["lt", "<"], ["gt", ">"], ["quot", '"'], ["apos", "'"], ["amp", "&"],
+  ["nbsp", " "],
+  ["rsquo", "\u2019"], ["lsquo", "\u2018"], ["rdquo", "\u201D"], ["ldquo", "\u201C"],
+  ["mdash", "\u2014"], ["ndash", "\u2013"], ["hellip", "\u2026"],
+  ["times", "\u00D7"], ["bull", "\u2022"], ["middot", "\u00B7"],
+  ["copy", "\u00A9"], ["reg", "\u00AE"], ["trade", "\u2122"],
+  ["deg", "\u00B0"], ["sect", "\u00A7"], ["para", "\u00B6"],
+  ["plusmn", "\u00B1"], ["frac12", "\u00BD"], ["frac14", "\u00BC"], ["frac34", "\u00BE"],
+  ["euro", "\u20AC"], ["pound", "\u00A3"], ["cent", "\u00A2"],
+]);
+const ENTITY_RE = /&(?:#[xX]([0-9a-fA-F]+)|#([0-9]+)|([a-zA-Z][a-zA-Z0-9]{1,31}));/g;
+
+/** A numeric character reference decodes only to a sane scalar value: no lone
+ *  surrogates, nothing past U+10FFFF, no C0/C1 control characters (or DEL) —
+ *  an invalid reference stays as the literal source text. */
+function decodeNumericRef(literal: string, cp: number): string {
+  if (!Number.isInteger(cp) || cp > 0x10ffff) return literal;
+  if (cp >= 0xd800 && cp <= 0xdfff) return literal;
+  if (cp < 0x20 || cp === 0x7f || (cp >= 0x80 && cp <= 0x9f)) return literal;
+  return String.fromCodePoint(cp);
+}
+
 export function decodeHtmlEntities(s: string): string {
-  let out = s;
-  for (const [re, ch] of HTML_ENTITY_DECODES) out = out.replace(re, ch);
-  return out;
+  return s.replace(ENTITY_RE, (m, hex?: string, dec?: string, name?: string) => {
+    // Map lookup, not object indexing: `&constructor;` must stay literal.
+    if (name !== undefined) return NAMED_ENTITIES.get(name) ?? m;
+    return decodeNumericRef(m, parseInt((hex ?? dec)!, hex !== undefined ? 16 : 10));
+  });
 }
 
 /** Reduce arbitrary HTML to plain text: strip tags (to fixpoint, so nested or

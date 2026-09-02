@@ -118,6 +118,24 @@ describe("spreadsheet — workbook size cap", () => {
   });
 });
 
+describe("spreadsheet write — entity decode + NFC at the cleanText seam", () => {
+  it("a cell with entities and a combining accent reads back decoded and composed", async () => {
+    const fp = join(dir, "entities.xlsx");
+    const w = await tool.execute({
+      action: "write",
+      file_path: fp,
+      data: JSON.stringify([{ Item: "Fish &amp; Chips&#8482; cafe\u0301" }]),
+    });
+    expect(w.isError).toBeFalsy();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fp);
+    const cell = String(wb.getWorksheet("Sheet1")?.getCell("A2").value);
+    // Entities decoded exactly once, combining accent composed to NFC.
+    expect(cell).toBe("Fish & Chips\u2122 caf\u00E9");
+    expect(cell).not.toContain("\u0301");
+  });
+});
+
 describe("spreadsheet query — streamed scan, capped materialization", () => {
   it(`keeps the first ${MAX_ROWS_UNRANGED} matches, counts all of them, and notes the cap`, async () => {
     const r = await tool.execute({ action: "query", file_path: big, column: "Name", operator: "contains", value: "row-" });

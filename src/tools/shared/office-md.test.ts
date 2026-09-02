@@ -38,6 +38,35 @@ describe("cleanText — no markup leaks", () => {
     expect(cleanText("if a < b and c > d then")).toBe("if a < b and c > d then");
     expect(cleanText("x <= 5")).toBe("x <= 5");
   });
+  it("decodes numeric and extended named entities", () => {
+    expect(cleanText("Fish &amp; Chips&#8482;")).toBe("Fish & Chips™");
+    expect(cleanText("It&#x2019;s &rsquo;fine&rsquo;")).toBe("It’s ’fine’");
+  });
+  it("decodes exactly once — &amp;amp; stays &amp;", () => {
+    expect(cleanText("&amp;amp;")).toBe("&amp;");
+  });
+  it("NFC-normalizes: decomposed e + U+0301 composes to é", () => {
+    expect(cleanText("cafe\u0301")).toBe("caf\u00E9");
+    expect(cleanText("caf\u00E9")).toBe("caf\u00E9"); // already-composed is untouched
+  });
+  it("leaves invalid numeric references literal", () => {
+    expect(cleanText("&#xD800; &#1114112;")).toBe("&#xD800; &#1114112;");
+  });
+  it("strips numerically-escaped tags like entity-escaped ones", () => {
+    expect(cleanText("&#60;div&#62;x&#60;/div&#62;")).toBe("x");
+  });
+});
+
+describe("code spans / fenced blocks — byte-verbatim escape hatch", () => {
+  it("inline code spans keep entities and decomposed characters untouched", () => {
+    const spans = parseInline("see `&amp; &#8217; cafe\u0301` here");
+    expect(spans.find((s) => s.code)?.text).toBe("&amp; &#8217; cafe\u0301");
+  });
+  it("fenced code blocks keep entities and decomposed characters untouched", () => {
+    const blocks = parseMarkdown("```\n&#8217; cafe\u0301 &rsquo;\n```");
+    const code = blocks.find((b) => b.kind === "code") as { kind: "code"; text: string } | undefined;
+    expect(code?.text).toBe("&#8217; cafe\u0301 &rsquo;");
+  });
 });
 
 describe("parseInline — consumes markdown markers", () => {

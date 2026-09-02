@@ -16,63 +16,20 @@ import { verifyWriteLanded } from "./verify.js";
 // (project-root anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath } from "../workspace/paths.js";
 import { openValidatedRead } from "../security/layer/index.js";
-import { resolveOfficeTheme, argb, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
 import { collapseFamily } from "./shared/collapse-family.js";
+import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 // Pure formatting + the input caps (workbook bytes, rows, cells, padding). See
 // the module header there for what each cap bounds — and what it does not.
 import {
   MAX_ROWS_UNRANGED, assertWorkbookSize, cellText, clampRange, matchCapNote, parseRange, rowCapNote, rowsToTable, valueText,
 } from "./spreadsheet-format.js";
+// House styling for freshly-written sheets — pure, split out for the
+// file-size gate.
+import { styleSheet } from "./spreadsheet-style.js";
 
 // ── Helpers ──
-
-const CURRENCY_HEADER = /price|cost|revenue|total|amount|sales|spend|budget|\$|usd/i;
-
-/** Apply the house style to a freshly-written sheet: bold accent header row,
- *  banded data rows, thin borders, frozen header, autofit widths, and a
- *  thousands/currency number format on numeric columns. */
-function styleSheet(
-  ws: Worksheet,
-  hdrs: string[],
-  rows: Record<string, unknown>[],
-  theme: OfficeTheme,
-): void {
-  const border = { style: "thin" as const, color: { argb: argb(theme.colors.border) } };
-  const allBorders = { top: border, left: border, bottom: border, right: border };
-
-  const header = ws.getRow(1);
-  header.height = 20;
-  header.eachCell((cell) => {
-    cell.font = { name: theme.fonts.heading, bold: true, color: { argb: argb(theme.colors.accentText) }, size: 11 };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: argb(theme.colors.accent) } };
-    cell.alignment = { vertical: "middle" };
-    cell.border = allBorders;
-  });
-
-  for (let r = 2; r <= rows.length + 1; r++) {
-    const row = ws.getRow(r);
-    const banded = r % 2 === 1; // every other data row
-    row.eachCell((cell) => {
-      cell.font = { name: theme.fonts.body, size: 11, color: { argb: argb(theme.colors.body) } };
-      cell.border = allBorders;
-      if (banded) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: argb(theme.colors.band) } };
-    });
-  }
-
-  hdrs.forEach((h, i) => {
-    const col = ws.getColumn(i + 1);
-    const maxLen = Math.max(h.length, ...rows.map((o) => String(o[h] ?? "").length));
-    col.width = Math.min(Math.max(maxLen + 2, 10), 60);
-    // Numeric/currency formatting: a column is numeric when every non-empty
-    // value parses as a number. Currency-named headers get a $ format.
-    const vals = rows.map((o) => o[h]).filter((v) => v !== "" && v != null);
-    const numeric = vals.length > 0 && vals.every((v) => typeof v === "number" || (!isNaN(Number(v)) && String(v).trim() !== ""));
-    if (numeric) col.numFmt = CURRENCY_HEADER.test(h) ? '$#,##0.00' : '#,##0.##';
-  });
-
-  ws.views = [{ state: "frozen", ySplit: 1 }];
-}
 
 function ok(content: string, metadata?: Record<string, unknown>): ToolResult {
   return { content, ...(metadata && { metadata }) };
@@ -172,7 +129,8 @@ const spreadsheetWrite: ToolDefinition = {
     "Create or overwrite an Excel sheet with structured data. " +
     "Pass data as a JSON string containing an array of objects (one object per row). " +
     "Keys become column headers. " +
-    'Example: data=\'[{"Product":"Widget","Price":9.99,"Qty":100},{"Product":"Gadget","Price":24.99,"Qty":50}]\'',
+    'Example: data=\'[{"Product":"Widget","Price":9.99,"Qty":100},{"Product":"Gadget","Price":24.99,"Qty":50}]\' ' +
+    SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
     properties: {
@@ -182,6 +140,7 @@ const spreadsheetWrite: ToolDefinition = {
       headers: { type: "array", items: { type: "string" }, description: "Column headers (auto-derived from data keys if omitted)" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path", "data"],
   },
@@ -262,7 +221,7 @@ const spreadsheetWrite: ToolDefinition = {
 
 const spreadsheetEdit: ToolDefinition = {
   name: "spreadsheet_edit",
-  description: "Edit a single cell in a spreadsheet.",
+  description: "Edit a single cell in a spreadsheet. " + SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
     properties: {
@@ -271,6 +230,7 @@ const spreadsheetEdit: ToolDefinition = {
       cell: { type: "string", description: 'Cell reference e.g. "B5"' },
       value: { type: "string", description: "Value to set" },
       formula: { type: "boolean", description: "Treat value as an Excel formula" },
+      sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path", "cell", "value"],
   },
@@ -388,6 +348,7 @@ export const spreadsheetTools: ToolDefinition[] = [
       formula: { type: "boolean", description: "(edit) Treat value as an Excel formula" },
       column: { type: "string", description: "(query) Column header to filter on" },
       operator: { type: "string", enum: ["equals", "contains", "gt", "lt"], description: "(query) Comparison operator" },
+      sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path"],
   }),

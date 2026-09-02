@@ -9,6 +9,7 @@ import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from
 import { acquireBrandLogo } from "./shared/office-brand.js";
 import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
 import { collapseFamily } from "./shared/collapse-family.js";
+import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 
 // Rung-3 guard text + note block shared by the create tools: a deck that
 // requested images but embedded none is a FAILURE the model must act on,
@@ -54,7 +55,7 @@ const SLIDE_SPEC_DOC =
 const presentationCreate: ToolDefinition = {
   name: "presentation_create",
   description:
-    "Create a PowerPoint (.pptx) presentation with one or more slides. " + SLIDE_SPEC_DOC,
+    "Create a PowerPoint (.pptx) presentation with one or more slides. " + SLIDE_SPEC_DOC + " " + SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object", required: ["file_path", "slides"],
     properties: {
@@ -64,6 +65,7 @@ const presentationCreate: ToolDefinition = {
       slides: { type: "string", description: "JSON array of slide specs (see description for shape — prefer charts/images over bullet walls)" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      sources: SOURCES_PARAM_SCHEMA,
     },
   },
   async execute(args) {
@@ -199,7 +201,7 @@ const presentationFromOutline: ToolDefinition = {
     "Use '# Title' for slide titles (each # starts a new slide), " +
     "'- item' for bullet points under that slide. " +
     'Example: "# Welcome\\nOur product overview\\n# Features\\n- Fast\\n- Secure\\n- Easy". ' +
-    "This makes text-only slides; for charts/images use presentation_create.",
+    "This makes text-only slides; for charts/images use presentation_create. " + SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object", required: ["file_path", "outline"],
     properties: {
@@ -208,6 +210,7 @@ const presentationFromOutline: ToolDefinition = {
       title: { type: "string", description: "Presentation title metadata" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      sources: SOURCES_PARAM_SCHEMA,
     },
   },
   async execute(args) {
@@ -348,6 +351,7 @@ export const presentationTools: ToolDefinition[] = [
       operations: { type: "string", description: "(edit) JSON array of operations (replace_text | set_title | delete_slide | add_image_slide)" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path"],
   }),

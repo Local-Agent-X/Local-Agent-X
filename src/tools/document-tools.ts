@@ -14,6 +14,7 @@ import { resolveOfficeTheme, half, brandAuthor, brandFooter, type OfficeTheme, T
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
 import { markdownToDocx } from "./shared/md-to-docx.js";
 import { collapseFamily } from "./shared/collapse-family.js";
+import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 
 const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle, Header, Footer, PageNumber, AlignmentType } = docx;
 
@@ -162,7 +163,8 @@ const documentCreate: ToolDefinition = {
     "IMPORTANT: Use markdown formatting with \\n newlines between elements. " +
     "# Heading 1, ## Heading 2, ### Heading 3 for headings. " +
     "Lines starting with - or * become bullet points. **word** for bold. " +
-    'Example: "# Report Title\\n\\n## Summary\\nRevenue grew 15%.\\n\\n## Action Items\\n- Hire 2 engineers\\n- Launch beta\\n- **Review** Q2 targets"',
+    'Example: "# Report Title\\n\\n## Summary\\nRevenue grew 15%.\\n\\n## Action Items\\n- Hire 2 engineers\\n- Launch beta\\n- **Review** Q2 targets" ' +
+    SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
     properties: {
@@ -171,6 +173,7 @@ const documentCreate: ToolDefinition = {
       content: { type: "string", description: "Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
   },
@@ -276,7 +279,8 @@ const documentTemplate: ToolDefinition = {
     "Fill a Word .docx template by replacing {{placeholders}} with values. " +
     "The template file must contain {{key}} markers. Pass variables as a JSON object string. " +
     'Example: template has "Dear {{name}}, your invoice {{invoice_id}} is due {{date}}." ' +
-    'Call with variables: \'{"name":"Alice","invoice_id":"INV-001","date":"2026-04-15"}\'',
+    'Call with variables: \'{"name":"Alice","invoice_id":"INV-001","date":"2026-04-15"}\' ' +
+    SOURCES_DOC_SENTENCE,
   parameters: {
     type: "object",
     properties: {
@@ -287,6 +291,7 @@ const documentTemplate: ToolDefinition = {
         description: 'JSON string of key:value pairs. Keys must match {{placeholders}} in template. Example: \'{"name":"Alice","date":"2026-01-01"}\'',
       },
       images: IMAGES_PARAM_SCHEMA,
+      sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["template_path", "output_path", "variables"],
   },
@@ -362,6 +367,7 @@ export const documentTools: ToolDefinition[] = [
       template_path: { type: "string", description: "(template) Path to template .docx containing {{placeholder}} markers" },
       output_path: { type: "string", description: "(template) Output .docx path for the filled document" },
       variables: { type: "string", description: '(template) JSON string of key:value pairs matching {{placeholders}}. Example: \'{"name":"Alice","date":"2026-01-01"}\'' },
+      sources: SOURCES_PARAM_SCHEMA,
     },
   }),
 ];

@@ -40,6 +40,12 @@ describe("collapseFamily", () => {
     expect(JSON.parse(String(r.content)).args).toEqual({ x: "2" });
   });
 
+  it("threads props unknown to the inner schema through untouched (load-bearing: the audit seam reads `sources` off the dispatched args)", async () => {
+    const sources = [{ url: "https://example.com/report", ref: "rows 2-40" }];
+    const r = await tool.execute({ action: "alpha", x: "1", sources });
+    expect(JSON.parse(String(r.content)).args).toEqual({ x: "1", sources });
+  });
+
   it("nested params win over flat keys on collision", async () => {
     const r = await tool.execute({ action: "alpha", x: "flat", params: { x: "nested" } });
     expect(JSON.parse(String(r.content)).args.x).toBe("nested");

@@ -142,6 +142,12 @@ describe("provenance input hygiene", () => {
 		expect(sidecarFiles()).toHaveLength(0);
 	});
 
+	it("a null/undefined record never throws (audit-phase never-throw contract)", () => {
+		expect(() => appendProvenance(null as never)).not.toThrow();
+		expect(() => appendProvenance(undefined as never)).not.toThrow();
+		expect(sidecarFiles()).toHaveLength(0);
+	});
+
 	it("caps stored sources per record at MAX_SOURCES_PER_RECORD", () => {
 		const many = Array.from({ length: MAX_SOURCES_PER_RECORD + 5 }, (_, i) => ({ ref: `src-${i}` }));
 		appendProvenance(record({ sources: many }));

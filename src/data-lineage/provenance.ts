@@ -139,7 +139,16 @@ function clip(text: string): string {
  * Best-effort: a write failure is logged, never thrown.
  */
 export function appendProvenance(record: ProvenanceRecord): void {
-	if (!record.file || !record.sessionId || !record.toolCallId || !record.tool) return;
+	// Null-safe and INSIDE the never-throw contract: this runs in the tool
+	// audit phase, where a throw is catastrophic. A record missing identity
+	// fields is a caller wiring bug (tc.id unplumbed) that would otherwise be
+	// 100% silent provenance loss — warn, don't drop silently. (The
+	// no-surviving-source no-op below stays silent by design: unattributed
+	// records are expected noise, not bugs.)
+	if (!record?.file || !record.sessionId || !record.toolCallId || !record.tool) {
+		if (record?.file) logger.warn(`record for ${record.file} dropped: missing identity fields (session/toolCallId/tool)`);
+		return;
+	}
 	try {
 		const sources = record.sources
 			.map(sanitizeSource)

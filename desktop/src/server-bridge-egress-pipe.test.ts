@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChildProcess } from "child_process";
 import { createServer, type Server, type Socket } from "net";
 import { randomBytes } from "crypto";
-import { tmpdir } from "os";
+import { realpathSync } from "fs";
 import { join } from "path";
 
 // browser-views drags in the Electron `app` singleton via window.ts/config.ts —
@@ -44,9 +44,13 @@ interface FakeWorkerPipe {
 
 function makeTestPipeName(): string {
 	const nonce = randomBytes(8).toString("hex");
-	return process.platform === "win32"
-		? `\\\\.\\pipe\\lax-egress-clienttest-${process.pid}-${nonce}`
-		: join(tmpdir(), `lax-egress-clienttest-${process.pid}-${nonce}.sock`);
+	if (process.platform === "win32") return `\\\\.\\pipe\\lax-egress-clienttest-${process.pid}-${nonce}`;
+	// Unix sockets, not files: sun_path caps the WHOLE path at ~104 bytes on
+	// macOS (108 Linux). tmpdir() is env-sized — the shared vitest setup
+	// canonicalizes TMPDIR to /private/var/folders/…, which pushed this past
+	// the cap (listen EINVAL). Sockets get a short, canonical base instead;
+	// realpathSync keeps /tmp→/private/tmp from re-opening the symlink class.
+	return join(realpathSync("/tmp"), `lax-egress-clienttest-${process.pid}-${nonce}.sock`);
 }
 
 const openServers: Server[] = [];

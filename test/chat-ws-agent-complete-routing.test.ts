@@ -20,8 +20,17 @@
 //   sessionId key absent     → pre-C4a server: legacy append to the open chat
 //
 // The rendered row is byte-identical to the server's persisted row
-// (`**Agent <name> completed|failed:**\n\n<result>`, no ✅/❌ prefix) so the
-// next hydrate classifies it 'skip' instead of a full repaint that swaps it.
+// (`**Agent <name> completed|failed:**\n\n<result>`, no ✅/❌ prefix, no row
+// at all for an empty result) so the next hydrate classifies it 'skip'
+// instead of a full repaint that swaps it. The canonical format is the
+// server's agentCompleteChatRow; the browser script can't import it, so the
+// drift gate below runs BOTH builders over the full success × result matrix
+// and asserts byte equality — a change to either file breaks CI.
+//
+// `success` is tri-state: true → succeeded, false → failed, absent/undefined
+// → completed with unknown status. Only an explicit false may read "failed"
+// anywhere (card status, chat row) — the server records "succeeded" and says
+// "completed" for undefined.
 //
 // chat-ws-handler-misc.js is a classic browser global-script, so — like
 // chat-ws-process-relay.test.ts — its source is evaluated in a Function factory
@@ -29,6 +38,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { agentCompleteChatRow } from "../src/server/handler-events-agent-result.js";
 
 const miscSource = readFileSync(join(process.cwd(), "public/js/chat-ws-handler-misc.js"), "utf8");
 const handlerSource = readFileSync(join(process.cwd(), "public/js/chat-ws-handler.js"), "utf8");
@@ -50,11 +60,12 @@ function loadMisc(activeChat: Chat | null, chats: Chat[]) {
 		var window = {};
 		var setTimeout = function() {};
 		${miscSource}
-		return { handleAgentFeedEvent, agentCompleteRouting };
+		return { handleAgentFeedEvent, agentCompleteRouting, buildAgentCompleteRow };
 	`);
 	const api = factory(activeChat, chats, addMessageEl, saveChats, updateAgentFeed) as {
 		handleAgentFeedEvent: (msg: Msg) => void;
 		agentCompleteRouting: (msg: Msg, activeChatId: string | null) => Route;
+		buildAgentCompleteRow: (msg: Msg) => string | null;
 	};
 	return { ...api, addMessageEl, saveChats, updateAgentFeed };
 }
@@ -192,9 +203,75 @@ describe("handleAgentFeedEvent(agent-complete)", () => {
 	it("failure shape uses the server's `failed` wording (no icon) and the failed card status", () => {
 		const active = chat("chat-a");
 		const h = loadMisc(active, [active]);
-		h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a", success: false, result: "" }));
+		h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a", success: false, result: "Agent timed out" }));
 		expect(h.updateAgentFeed).toHaveBeenCalledWith("ag-1", expect.objectContaining({ status: "failed" }));
-		expect(h.addMessageEl).toHaveBeenCalledWith("assistant", "**Agent Worker failed:**\n\nAgent failed.");
+		expect(h.addMessageEl).toHaveBeenCalledWith("assistant", "**Agent Worker failed:**\n\nAgent timed out");
+	});
+
+	it("empty result → no chat row on any path (mirrors the server's evt.result persistence gate)", () => {
+		// The server persists nothing for an empty result, so a synthesized
+		// 'Done.'/'Agent failed.' row here would silently vanish (or swap) on
+		// the next server-wins hydrate. Card + notification still report it.
+		const active = chat("chat-a", [{ role: "user", content: "hi" }]);
+		const h = loadMisc(active, [active]);
+		h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a", success: false, result: "" }));
+		h.handleAgentFeedEvent(done({ result: "" })); // legacy path (no sessionId key)
+		expect(h.updateAgentFeed).toHaveBeenCalledWith("ag-1", expect.objectContaining({ status: "failed" }));
+		expect(h.addMessageEl).not.toHaveBeenCalled();
+		expect(h.saveChats).not.toHaveBeenCalled();
+		expect(active.messages).toHaveLength(1);
+	});
+});
+
+describe("success tri-state (card status + row wording agree with the server)", () => {
+	const cases: Array<{ success: boolean | undefined; card: string; word: string }> = [
+		{ success: true, card: "succeeded", word: "completed" },
+		{ success: false, card: "failed", word: "failed" },
+		// undefined = completed with unknown status. The server records
+		// "succeeded" and persists "completed" — rendering "failed" here made
+		// the client disagree with its own reload.
+		{ success: undefined, card: "succeeded", word: "completed" },
+	];
+	for (const c of cases) {
+		it(`success: ${String(c.success)} → card '${c.card}', row '${c.word}'`, () => {
+			const active = chat("chat-a");
+			const h = loadMisc(active, [active]);
+			h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a", success: c.success, result: "r" }));
+			expect(h.updateAgentFeed).toHaveBeenCalledWith("ag-1", expect.objectContaining({ status: c.card }));
+			expect(h.addMessageEl).toHaveBeenCalledWith("assistant", `**Agent Worker ${c.word}:**\n\nr`);
+		});
+	}
+});
+
+describe("client render ↔ server persistence: byte-identical (drift gate)", () => {
+	// The canonical format is the server's agentCompleteChatRow
+	// (src/server/handler-events-agent-result.ts); the browser global-script
+	// can't import it, so this gate evaluates both builders and asserts byte
+	// equality over the whole input space (both are pure functions of
+	// name × success × result). Editing the literal in either file without
+	// the other fails here — that's the point.
+	const { buildAgentCompleteRow } = loadMisc(null, []);
+	const names = ["Worker", "Researcher: find flaky tests", "Agent"];
+	const successes: Array<boolean | undefined> = [true, false, undefined];
+	const results = ["STATUS: green", "line one\n\nline two — ünïcode ✔", ""];
+
+	it("agrees for every name × success × result combination (empty result → null on both sides)", () => {
+		for (const name of names) {
+			for (const success of successes) {
+				for (const result of results) {
+					const client = buildAgentCompleteRow({ name, agentId: "ag-9", success, result });
+					const server = agentCompleteChatRow(name, success, result);
+					expect(client).toBe(server);
+				}
+			}
+		}
+	});
+
+	it("pins the canonical literal: **Agent <name> completed|failed:**\\n\\n<result>, no icon", () => {
+		expect(agentCompleteChatRow("Worker", true, "STATUS: green")).toBe("**Agent Worker completed:**\n\nSTATUS: green");
+		expect(agentCompleteChatRow("Worker", undefined, "x")).toBe("**Agent Worker completed:**\n\nx");
+		expect(agentCompleteChatRow("Worker", false, "boom")).toBe("**Agent Worker failed:**\n\nboom");
+		expect(agentCompleteChatRow("Worker", true, "")).toBeNull();
 	});
 });
 

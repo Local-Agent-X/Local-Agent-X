@@ -131,7 +131,13 @@ function handleAgentFeedEvent(msg) {
     if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, { output: msg.output });
   } else if (msg.type === 'agent-complete' && msg.agentId) {
     if (typeof updateAgentFeed === 'function') {
-      updateAgentFeed(msg.agentId, { status: msg.success ? 'succeeded' : 'failed', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
+      // success is tri-state: true → succeeded, false → failed, absent →
+      // completed with UNKNOWN status. The server records "succeeded" for
+      // absent (handler-events-agent-result.ts) and its chat row says
+      // "completed" — so only an explicit false may paint the card failed.
+      // `msg.success ? … : 'failed'` showed every status-less completion
+      // as a failure the server disagreed with.
+      updateAgentFeed(msg.agentId, { status: msg.success === false ? 'failed' : 'succeeded', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
       setTimeout(function() { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.agentId); }, 10000);
     }
     routeAgentCompleteToChat(msg);
@@ -170,23 +176,37 @@ function agentCompleteRouting(msg, activeChatId) {
   return { render: false, store: sid, notify: true };
 }
 
+// Exactly the row the server persists into the session — the canonical
+// format lives in src/server/handler-events-agent-result.ts
+// (agentCompleteChatRow: `**Agent <name> completed|failed:**\n\n<result>`,
+// "failed" iff success === false, null when result is empty). This file
+// can't import it (classic browser global-script), so
+// test/chat-ws-agent-complete-routing.test.ts runs both builders over the
+// full success × result matrix and asserts byte-identical output — drift
+// breaks CI. Byte-identical content is what lets the next hydrate classify
+// the server copy as 'skip' (_hydrateRepaintMode compares role + content)
+// instead of a full repaint that silently swapped the row — so no ✅/❌
+// prefix, and no synthesized 'Done.' body for an empty result (the server
+// persists nothing then, and a client-only row would vanish on reload).
+// Full result, no cap: normal assistant replies render full-length
+// (addMessageEl applies no limit), and the old 5000-char cap clipped long
+// research/planning outputs AND persisted the clipped copy, so a reload
+// lost the tail permanently.
+function buildAgentCompleteRow(msg) {
+  var result = typeof msg.result === 'string' ? msg.result : '';
+  if (!result) return null;
+  var label = 'Agent ' + (msg.name || msg.agentId || '') + (msg.success === false ? ' failed' : ' completed');
+  return '**' + label + ':**\n\n' + result;
+}
+
 function routeAgentCompleteToChat(msg) {
   var active = (typeof activeChat !== 'undefined' && activeChat) ? activeChat : null;
   var route = agentCompleteRouting(msg, active ? active.id : null);
   if (!route.render && !route.store) return;
-  var fullResult = msg.result || '';
-  // Exactly the row the server persists into this session
-  // (handler-events-agent-result.ts: `**Agent <name> completed|failed:**\n\n<result>`,
-  // "failed" iff success === false). Byte-identical content is what lets the
-  // next hydrate classify the server copy as 'skip' (_hydrateRepaintMode
-  // compares role + content) instead of a full repaint that silently swapped
-  // the row — so no ✅/❌ prefix. Full result, no cap: normal assistant
-  // replies render full-length (addMessageEl applies no limit), and the old
-  // 5000-char cap clipped long research/planning outputs AND persisted the
-  // clipped copy, so a reload lost the tail permanently.
-  var failed = msg.success === false;
-  var label = 'Agent ' + (msg.name || msg.agentId || '') + (failed ? ' failed' : ' completed');
-  var agentMsg = '**' + label + ':**\n\n' + (fullResult || (failed ? 'Agent failed.' : 'Done.'));
+  var agentMsg = buildAgentCompleteRow(msg);
+  // Empty result → the server persisted no chat row (evt.result gate), so
+  // neither render nor store one; the sidebar card still reports completion.
+  if (agentMsg === null) return;
   if (route.render && typeof addMessageEl === 'function') addMessageEl('assistant', agentMsg);
   var chat = null;
   if (route.store) {

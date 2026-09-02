@@ -12,7 +12,38 @@ const logger = createLogger("server.handler-events");
 // happens when a run starts and when it finishes.
 
 export interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string | null; parentSessionId?: string; templateId?: string | null }
-export interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number; name?: string }
+// `success` is honestly tri-state on the wire: emitters normally set a
+// boolean, but an event that omits it must read as "completed (unknown
+// status)" — never as a failure. agentCompleteChatRow + the AgentRun status
+// mapping below and the client (public/js/chat-ws-handler-misc.js) all pivot
+// on `success === false` only.
+export interface AgentResultEvent { agentId: string; result: string; success?: boolean; tokens?: number; name?: string }
+
+/**
+ * The ONE chat-row format for a finished agent — the exact bytes persisted
+ * into the parent session AND rendered live by the client
+ * (public/js/chat-ws-handler-misc.js buildAgentCompleteRow). The two sides
+ * cannot share a constant across the src/public boundary (the client is a
+ * classic browser global-script, not a module), so
+ * test/chat-ws-agent-complete-routing.test.ts evaluates BOTH builders over
+ * the full success × result matrix and asserts byte-identical output —
+ * drift in either file breaks CI.
+ *
+ * Rules the client mirrors:
+ *   - tri-state success: only `success === false` reads "failed"; true AND
+ *     undefined read "completed" (the run store records "succeeded" for
+ *     undefined — an unknown outcome is not a failure).
+ *   - empty result → null: nothing is persisted, so the client must render
+ *     and store nothing either (a client-only synthesized row would vanish
+ *     on the next server-wins hydrate).
+ *   - no ✅/❌ prefix: hydrate classifies rows by byte equality; a decorated
+ *     live render would be silently swapped for this persisted copy on
+ *     reload.
+ */
+export function agentCompleteChatRow(name: string, success: boolean | undefined, result: string): string | null {
+  if (!result) return null;
+  return `**Agent ${name} ${success === false ? "failed" : "completed"}:**\n\n${result}`;
+}
 
 export interface PendingAgentMeta {
   name: string;
@@ -101,13 +132,17 @@ export function registerAgentLifecycleEvents(deps: {
       const errorField = explicitFailure ? evt.result : guardError;
       agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField, templateId: m.templateId || undefined } as AgentRun);
       // Chat-initiated spawns only — an orchestrator child's report is
-      // consumed by the orchestrator, never by the user's chat.
-      if (m.sessionId && evt.result && !isOrchestratorChild(m)) {
+      // consumed by the orchestrator, never by the user's chat. The persisted
+      // row uses `displayName` — the SAME name the agent-complete broadcast
+      // carries — not spawn-time m.name: if the result event renames the
+      // agent, the client renders the new name, and persisting the old one
+      // would silently swap the row's bytes on the next hydrate.
+      const row = agentCompleteChatRow(displayName, evt.success, evt.result || "");
+      if (m.sessionId && row !== null && !isOrchestratorChild(m)) {
         try {
           const parentSession = sessionStore.load(m.sessionId);
           if (parentSession) {
-            const label = evt.success === false ? `Agent ${m.name} failed` : `Agent ${m.name} completed`;
-            parentSession.messages.push({ role: "assistant", content: `**${label}:**\n\n${evt.result}` } as any);
+            parentSession.messages.push({ role: "assistant", content: row } as any);
             parentSession.updatedAt = Date.now();
             sessionStore.save(parentSession);
           }

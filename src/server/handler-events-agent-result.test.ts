@@ -6,7 +6,7 @@ import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy/index.js";
-import { registerAgentLifecycleEvents, isOrchestratorChild, type PendingAgentMeta } from "./handler-events-agent-result.js";
+import { registerAgentLifecycleEvents, isOrchestratorChild, agentCompleteChatRow, type PendingAgentMeta } from "./handler-events-agent-result.js";
 import { registerHandlerEvents } from "./handler-events.js";
 
 // Regression (2026-08-30 overnight auto-build): every chunk / retry /
@@ -49,6 +49,22 @@ describe("isOrchestratorChild", () => {
     expect(isOrchestratorChild({ parentAgentId: ORCH_OP })).toBe(true);
     expect(isOrchestratorChild({ parentAgentId: null })).toBe(false);
     expect(isOrchestratorChild({ parentAgentId: "" })).toBe(false);
+  });
+});
+
+describe("agentCompleteChatRow (canonical chat-row format)", () => {
+  // Client mirror: buildAgentCompleteRow in public/js/chat-ws-handler-misc.js.
+  // test/chat-ws-agent-complete-routing.test.ts asserts byte equality of the
+  // two builders over the full matrix; these pin the server side's tri-state.
+  it("only success === false reads 'failed' — true and undefined read 'completed'", () => {
+    expect(agentCompleteChatRow("W", true, "r")).toBe("**Agent W completed:**\n\nr");
+    expect(agentCompleteChatRow("W", undefined, "r")).toBe("**Agent W completed:**\n\nr");
+    expect(agentCompleteChatRow("W", false, "r")).toBe("**Agent W failed:**\n\nr");
+  });
+
+  it("empty result → null (nothing to persist or render)", () => {
+    expect(agentCompleteChatRow("W", true, "")).toBeNull();
+    expect(agentCompleteChatRow("W", false, "")).toBeNull();
   });
 });
 
@@ -110,6 +126,44 @@ describe("handler:agent-result — chat-initiated spawn (parentAgentId null)", (
 
     expect(h.session.messages[1]).toEqual({ role: "assistant", content: "**Agent Researcher failed:**\n\nAgent timed out" });
     expect(h.runs[0]).toMatchObject({ status: "failed", error: "Agent timed out" });
+  });
+
+  it("success undefined → 'completed' row + status 'succeeded': unknown status is not a failure", async () => {
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-5b", null));
+    await EventBus.emit("handler:agent-result", { agentId: "run-5b", result: "Report text" });
+
+    expect(h.session.messages[1]).toEqual({ role: "assistant", content: "**Agent Researcher completed:**\n\nReport text" });
+    expect(h.runs[0]).toMatchObject({ status: "succeeded" });
+    expect(h.runs[0].error).toBeUndefined();
+    // The broadcast must NOT coerce the missing flag — the client maps
+    // undefined to succeeded/'completed' itself and tests pin that.
+    expect(completeOf(h.broadcasts)).not.toHaveProperty("success", false);
+  });
+
+  it("empty result → no chat row persisted (the client mirrors this gate), run still recorded", async () => {
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-5c", null));
+    await EventBus.emit("handler:agent-result", { agentId: "run-5c", result: "", success: true });
+
+    expect(h.session.messages).toHaveLength(1);
+    expect(h.saved).toHaveLength(0);
+    expect(h.runs).toHaveLength(1);
+  });
+
+  it("a rename on the result event lands in the persisted row — same name the broadcast carries", async () => {
+    // The client renders the broadcast's `name`; persisting spawn-time
+    // m.name instead would silently swap the row's bytes on the next
+    // hydrate. One name, both surfaces.
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-5d", null));
+    await EventBus.emit("handler:agent-result", { agentId: "run-5d", result: "ok", success: true, name: "Renamed Worker" });
+
+    expect(completeOf(h.broadcasts)).toMatchObject({ name: "Renamed Worker" });
+    expect(h.session.messages[1]).toEqual({ role: "assistant", content: "**Agent Renamed Worker completed:**\n\nok" });
   });
 
   it("does not touch any session when the spawn had no parentSessionId", async () => {

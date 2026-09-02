@@ -63,6 +63,17 @@ describe("runChunkAgent lifecycle cancellation (AB-1)", () => {
   });
 });
 
+describe("runChunkAgent spawn lineage", () => {
+  it("maps parentOpId → invokeDefinition parentAgentId so the worker is an orchestrator child", async () => {
+    const p = runChunkAgent({ role: "scenario-fix", task: "fix it", parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77", timeoutMs: 60_000 });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "STATUS: done" });
+    await p;
+    expect(invokeCalls).toHaveLength(1);
+    expect(invokeCalls[0].opts.parentSessionId).toBe("chat-session-1");
+    expect(invokeCalls[0].opts.parentAgentId).toBe("orchestrator-op-77");
+  });
+});
+
 describe("runChunkAgent task provenance", () => {
   it("marks the spawn harness-authored so the instruction ledger skips its preamble", async () => {
     // The working-directory preamble ("Never touch paths outside it") is

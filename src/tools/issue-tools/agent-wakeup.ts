@@ -54,10 +54,16 @@ export const agentWakeupTool: ToolDefinition = {
       `Message: "${message}"\n\n` +
       `First call agent_whoami with agentId="${targetId}" to see your full context, then check issue ${issueId} and respond appropriately.`;
 
-    const { invokeAgent } = await import("../../agents/invoke.js");
+    const { invokeAgent, callerRunIdFromSession } = await import("../../agents/invoke.js");
     try {
       invokeAgent(targetId, wakeupTask, {
         scope: issue.projectId ? { projectId: issue.projectId } : undefined,
+        // The waking RUN is the honest spawn parent: nests the woken agent
+        // under its caller in the AGENTS panel / AgentRunStore lineage.
+        // A chat-driven wakeup (session without the agent- prefix) stays a
+        // parentless root. No parentSessionId — the woken run's report
+        // belongs to the issue thread, never to a chat transcript.
+        parentAgentId: callerRunIdFromSession(args._sessionId),
       });
     } catch (e) {
       return err(`Failed to wake ${target.name}: ${(e as Error).message}`);

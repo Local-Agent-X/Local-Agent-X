@@ -34,4 +34,26 @@ describe("runAutoFixWorker (AB-3)", () => {
       projectDir: "/tmp/lax-scenario-project",
     });
   });
+
+  // Regression (F5): AutoFixOptions carried parentSessionId but no
+  // parentOpId — a caller passing the chat session alone would have made
+  // the fix worker a CHAT spawn (parentAgentId null), injecting its
+  // STATUS block into the user's chat on completion (the preflight bug,
+  // 1b2458d0). Both keys must reach runChunkAgent together, exactly as
+  // preflight/run-chunk-once thread them.
+  it("threads parentSessionId AND parentOpId so the fix worker is an orchestrator child, not a chat spawn", async () => {
+    runChunkAgent.mockResolvedValue({ exitCode: 1, stdout: "", durationMs: 1, error: "boom" });
+
+    await runAutoFixWorker({
+      projectDir: "/tmp/lax-scenario-project",
+      chunk, failedReports: [], allReports: [],
+      parentSessionId: "chat-session-1",
+      parentOpId: "orchestrator-op-77",
+    });
+
+    expect(runChunkAgent.mock.calls[0][0]).toMatchObject({
+      parentSessionId: "chat-session-1",
+      parentOpId: "orchestrator-op-77",
+    });
+  });
 });

@@ -63,7 +63,7 @@ export const issueUpdateTool: ToolDefinition = {
 
           if (newStatus === "blocked") {
             try {
-              const { invokeAgent } = await import("../../agents/invoke.js");
+              const { invokeAgent, callerRunIdFromSession } = await import("../../agents/invoke.js");
               const task =
                 `Your report's issue ${id} just went BLOCKED: "${issue.title}".\n\n` +
                 `Read issue ${id} (use issue_list / issue_search), triage the blocker, ` +
@@ -71,6 +71,11 @@ export const issueUpdateTool: ToolDefinition = {
                 `(agent_escalate to your manager / user) if it needs a decision you can't make.`;
               invokeAgent(manager.id, task, {
                 scope: issue.projectId ? { projectId: issue.projectId } : undefined,
+                // The run that flipped the issue to blocked is the honest
+                // spawn parent — the manager's wake nests under it in the
+                // AGENTS panel / AgentRunStore lineage. Undefined for a
+                // chat-session caller (manager renders as a root).
+                parentAgentId: callerRunIdFromSession(args._sessionId),
               });
               updates.push(`manager ${manager.name} woken`);
             } catch (e) {

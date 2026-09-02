@@ -149,17 +149,19 @@ function handleAgentFeedEvent(msg) {
 // The server broadcast (handler-events-agent-result.ts) carries `sessionId`
 // (string, "" when the spawn had no parent session) and `parentAgentId`
 // (string | null).
-//   parentAgentId set → an orchestrator child (auto-build chunk runner, worker
-//                       sub-spawn). Its parent folds the result into its own
-//                       report; the sidebar card is the only surface. Never
-//                       chat, never a desktop notification. (Every chunk
-//                       runner's STATUS/DONE_WHEN block used to land in the
-//                       open chat this way.)
+//   parentAgentId set → a child of another run (auto-build chunk/retry/
+//                       preflight/scenario-fix worker under its orchestrator
+//                       op, or an agent woken BY another agent via
+//                       agent_wakeup / escalation / issue_update). Its parent
+//                       consumes the result; the sidebar card is the only
+//                       surface. Never chat, never a desktop notification.
+//                       (Every chunk runner's STATUS/DONE_WHEN block used to
+//                       land in the open chat this way.)
 //   sessionId === active → render live into the open view + store on it.
 //   sessionId names another chat → store on that chat only, no render.
-//   sessionId "" → the spawn had no parent session (auto-fix workers,
-//                       agent-wakeup, issue-update, escalation, the
-//                       agents/templates route — all parentAgentId null). The
+//   sessionId "" → the spawn had no parent session (chat-driven wakeups,
+//                       the watchdog's escalations, the agents/templates
+//                       route — all parentAgentId null). The
 //                       server persists no chat row for these, so neither do
 //                       we: card update only, no notification. Product
 //                       consequence: the templates route loses its transient

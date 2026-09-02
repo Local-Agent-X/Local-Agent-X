@@ -166,6 +166,10 @@ describe("agent_escalate to:'manager'", () => {
     expect(driverCalls).toHaveLength(1);
     expect(driverCalls[0].templateId).toBe(managerTpl.id);
     expect(driverCalls[0].task).toContain("escalated to by");
+    // Spawn lineage (F5): the woken manager nests under the escalating RUN
+    // — its id derived from the trusted agent-<runId> tool session.
+    expect(driverCalls[0].parentAgentId).toBe(sessionId.slice("agent-".length));
+    expect(driverCalls[0].parentSessionId).toBeUndefined();
   });
 
   it("auto-promotes to user when caller has no reportsTo (top of chain)", async () => {
@@ -258,6 +262,19 @@ describe("agent_escalate to:<agentId>", () => {
     expect(result.isError).toBeFalsy();
     expect(driverCalls).toHaveLength(1);
     expect(driverCalls[0].templateId).toBe(managerTpl.id);
+    expect(driverCalls[0].parentAgentId).toBe(sessionId.slice("agent-".length));
+  });
+
+  it("a chat-session caller wakes the target with NO spawn parent (renders as a root)", async () => {
+    const result = await agentEscalate.execute({
+      to: managerTpl.id,
+      context: "user-directed escalation",
+      urgency: "high",
+      _sessionId: "chat-session-xyz",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(driverCalls).toHaveLength(1);
+    expect(driverCalls[0].parentAgentId).toBeUndefined();
   });
 });
 

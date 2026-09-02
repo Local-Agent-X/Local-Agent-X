@@ -26,6 +26,16 @@ export interface AutoFixOptions {
   signal?: AbortSignal;
   subprocessTimeoutMs?: number;
   parentSessionId?: string;
+  /**
+   * Orchestrator run's op id. Becomes the fix worker's parentAgentId so
+   * handler-events treats it as an orchestrator child — its report is
+   * consumed by the phase-gate re-score, never injected into the user's
+   * chat (isOrchestratorChild, src/server/handler-events-agent-result.ts) —
+   * and its AGENTS-panel card nests under the orchestrator card. Without
+   * this field, any caller passing parentSessionId alone would leak the
+   * worker's STATUS block into the chat (the preflight bug, 2026-08-30).
+   */
+  parentOpId?: string;
 }
 
 export interface AutoFixResult {
@@ -52,6 +62,7 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
     timeoutMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,
+    parentOpId: opts.parentOpId,
   });
 
   const durationMs = Date.now() - startedAt;

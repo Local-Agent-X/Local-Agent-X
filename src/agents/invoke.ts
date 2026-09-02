@@ -151,6 +151,38 @@ export function invokeDefinition(
 }
 
 /**
+ * Derive the calling RUN's id from a trusted tool-session id.
+ *
+ * Spawned agents execute tools under the auto-minted session `agent-<runId>`
+ * (server/handler-events.ts: runSessionId = req.sessionId ?? `agent-<id>`),
+ * so a session-scoped tool call arriving with that prefix was made BY an
+ * agent run — and that run is the honest spawn parent for any agent the
+ * tool wakes in turn (agent_wakeup, agent_escalate urgency:'high',
+ * issue_update's blocked→manager wake). Threading it as
+ * InvokeOpts.parentAgentId nests the woken run under its caller in the
+ * AGENTS panel + AgentRunStore lineage, and keeps the woken run's report
+ * out of chat (isOrchestratorChild in server/handler-events-agent-result.ts
+ * — these spawns carry no parentSessionId, so there is nothing to inject
+ * either way).
+ *
+ * Returns undefined for chat sessions (no `agent-` prefix — the human is
+ * the caller; the woken run renders as a root, unchanged) and for suffixes
+ * the Handler doesn't recognise as a live run (e.g. an operations-phase
+ * borrowed session `agent-op-<opId>`, whose suffix is not a FieldAgent id —
+ * a fabricated parent would strand the run under a node nothing resolves).
+ */
+export function callerRunIdFromSession(sessionId: unknown): string | undefined {
+  if (typeof sessionId !== "string" || !sessionId.startsWith("agent-")) return undefined;
+  const runId = sessionId.slice("agent-".length);
+  try {
+    const status = Handler.getInstance().getAgentStatus(runId);
+    return Array.isArray(status) ? undefined : runId;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Event-bridge — translates the canonical-loop driver's terminal outcome
  * into the `handler:agent-result` signal. AgentRunStore.save fires on it
  * in `server/handler-events.ts`; chunk-runner.ts and operations/executor.ts

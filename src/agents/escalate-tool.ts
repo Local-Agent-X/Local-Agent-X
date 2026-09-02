@@ -17,6 +17,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { Handler } from "../agency/handler.js";
 import { performEscalation } from "./escalation-core.js";
+import { callerRunIdFromSession } from "./invoke.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -75,6 +76,10 @@ export const agentEscalate: ToolDefinition = {
 
     const outcome = await performEscalation({
       callerAgentId: resolveCallerAgentId(sessionId),
+      // The calling RUN's id — an urgency:'high' wake spawns with this as
+      // its parentAgentId so it nests under the escalating run in the
+      // AGENTS panel / AgentRunStore lineage. Undefined for chat callers.
+      callerRunId: callerRunIdFromSession(sessionId),
       to,
       context,
       urgency,

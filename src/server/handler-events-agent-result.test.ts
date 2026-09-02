@@ -93,6 +93,21 @@ describe("handler:agent-result — orchestrator child (parentAgentId set)", () =
     expect(h.runs[0]).toMatchObject({ status: "failed", error: "STATUS: blocked" });
   });
 
+  it("a system wake (parentAgentId = caller RUN id, no parentSessionId) touches no chat and keeps lineage in the run row", async () => {
+    // The agent_wakeup / agent_escalate / issue_update spawn shape: the
+    // calling run's id as parentAgentId, sessionId "". Nothing to inject,
+    // and the AgentRun row must still record the lineage for History.
+    const h = harness();
+    registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });
+    await EventBus.emit("handler:agent-spawn", spawnEvent("run-wake-1", "caller-run-42", ""));
+    await EventBus.emit("handler:agent-result", { agentId: "run-wake-1", result: "checked the issue", success: true });
+
+    expect(h.session.messages).toHaveLength(1);
+    expect(h.saved).toHaveLength(0);
+    expect(h.runs[0]).toMatchObject({ id: "run-wake-1", parentAgentId: "caller-run-42", sessionId: "", status: "succeeded" });
+    expect(completeOf(h.broadcasts)).toMatchObject({ sessionId: "", parentAgentId: "caller-run-42" });
+  });
+
   it("broadcasts agent-complete with sessionId + parentAgentId so the client can route/skip", async () => {
     const h = harness();
     registerAgentLifecycleEvents({ eventBus: EventBus.getInstance(), ...h });

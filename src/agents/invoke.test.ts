@@ -16,7 +16,7 @@ vi.mock("../agency/handler.js", () => ({
   },
 }));
 
-import { awaitAgentRunning } from "./invoke.js";
+import { awaitAgentRunning, callerRunIdFromSession } from "./invoke.js";
 import { EventBus } from "../event-bus.js";
 
 // Counter to mint a unique runId per test — keeps stray listeners from
@@ -35,6 +35,30 @@ afterEach(() => {
   // Scrub the only event channel awaitAgentRunning subscribes on.
   EventBus.removeAllListeners("handler:agent-result");
   vi.restoreAllMocks();
+});
+
+describe("callerRunIdFromSession", () => {
+  // Spawn-lineage derivation for agent-to-agent wakes (agent_wakeup,
+  // agent_escalate urgency:'high', issue_update's manager wake): the
+  // trusted tool session `agent-<runId>` names the calling run; that run
+  // becomes the woken agent's parentAgentId.
+  it("returns the run id for a live agent session", () => {
+    agentStatusImpl = () => ({ status: "working" });
+    expect(callerRunIdFromSession("agent-run-42")).toBe("run-42");
+  });
+
+  it("returns undefined for a chat session (human caller — woken run stays a root)", () => {
+    agentStatusImpl = () => ({ status: "working" });
+    expect(callerRunIdFromSession("chat-session-1")).toBeUndefined();
+    expect(callerRunIdFromSession(undefined)).toBeUndefined();
+    expect(callerRunIdFromSession("")).toBeUndefined();
+  });
+
+  it("returns undefined when the Handler doesn't know the run (cleaned up, or a borrowed agent-op-* session)", () => {
+    agentStatusImpl = () => { throw new Error("not found"); };
+    expect(callerRunIdFromSession("agent-run-42")).toBeUndefined();
+    expect(callerRunIdFromSession("agent-op-OP123")).toBeUndefined();
+  });
 });
 
 describe("awaitAgentRunning", () => {

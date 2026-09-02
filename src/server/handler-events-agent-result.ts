@@ -61,7 +61,7 @@ export interface PendingAgentMeta {
  * Orchestrator-child discriminator.
  *
  * `parentAgentId` is the ONLY reliable signal today that a spawned agent
- * belongs to a harness orchestrator rather than to the user's chat:
+ * belongs to another run rather than to the user's chat:
  *   - auto-build threads the orchestrator run's op id as `parentOpId` →
  *     `parentAgentId` for every chunk / retry / preflight worker
  *     (src/auto-build/orchestrator/manager.ts → loop/run.ts →
@@ -70,8 +70,12 @@ export interface PendingAgentMeta {
  *     worker's report itself (run-chunk-once.ts review + judgment,
  *     handle-push-back.ts). The scenario-fix worker
  *     (src/auto-build/scenario-scorer/auto-fix.ts, called from
- *     src/auto-build/loop-phase-gate.ts) threads NEITHER key — no
- *     parentSessionId means nothing is injected for it either way;
+ *     src/auto-build/loop-phase-gate.ts) threads BOTH keys the same way;
+ *   - agent-to-agent system wakes (agent_wakeup, agent_escalate
+ *     urgency:'high', issue_update's blocked→manager wake) carry the
+ *     calling RUN's id as parentAgentId (callerRunIdFromSession in
+ *     src/agents/invoke.ts) and NO parentSessionId — lineage nests, and
+ *     there is no chat to inject into either way;
  *   - a chat-initiated `agent_spawn` (src/agents/tools.ts) never sets it,
  *     so invoke.ts emits `parentAgentId: null`.
  * Both kinds thread the user's REAL chat session as parentSessionId, so

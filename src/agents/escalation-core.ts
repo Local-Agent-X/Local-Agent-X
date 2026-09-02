@@ -30,6 +30,14 @@ export interface EscalationRequest {
    *  `to: "user"`/<agentId> but not for `to: "manager"` (no roster to
    *  walk). */
   callerAgentId?: string;
+  /** FieldAgent RUN id of the caller (escalate-tool derives it from the
+   *  trusted tool session via callerRunIdFromSession). Threaded as the
+   *  woken target's spawn parent (InvokeOpts.parentAgentId) so an
+   *  urgency:'high' wake nests under the calling run in the AGENTS panel
+   *  and AgentRunStore lineage instead of rendering as a parentless root.
+   *  Undefined for chat-origin escalations and for the stall watchdog
+   *  (ambient trigger — no live caller run). */
+  callerRunId?: string;
   to: string; // "manager" | "user" | <agentId>
   context: string;
   urgency: "normal" | "high";
@@ -56,7 +64,7 @@ type ResolvedTarget =
 export async function performEscalation(
   req: EscalationRequest,
 ): Promise<EscalationOutcome> {
-  const { callerAgentId, to, context, urgency, issueId } = req;
+  const { callerAgentId, callerRunId, to, context, urgency, issueId } = req;
 
   // Caller identity from the template store — chat-origin escalations
   // (no callerAgentId) record "user" as the source.
@@ -115,7 +123,7 @@ export async function performEscalation(
   // heartbeat.
   if (urgency === "high") {
     try {
-      await wakeTarget(resolved.templateId, callerName, context, resolved.projectId, issueId);
+      await wakeTarget(resolved.templateId, callerName, context, resolved.projectId, issueId, callerRunId);
     } catch (e) {
       return {
         ok: false,
@@ -215,6 +223,7 @@ async function wakeTarget(
   context: string,
   projectId: string | undefined,
   issueId: string | undefined,
+  callerRunId: string | undefined,
 ): Promise<void> {
   const task =
     `You were escalated to by ${callerName}.\n\n` +
@@ -224,5 +233,9 @@ async function wakeTarget(
   const { invokeAgent } = await import("./invoke.js");
   invokeAgent(targetTemplateId, task, {
     scope: projectId ? { projectId } : undefined,
+    // The escalating run is the honest spawn parent: the woken agent's
+    // card/run nests under its caller. No parentSessionId — an escalation
+    // wake belongs to the agent org chart, not to any chat transcript.
+    parentAgentId: callerRunId,
   });
 }

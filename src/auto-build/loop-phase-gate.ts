@@ -102,6 +102,12 @@ async function runAdvisorDrivenRecovery(
         failedReports, allReports,
         signal: opts.signal,
         subprocessTimeoutMs: opts.subprocessTimeoutMs,
+        // Same lineage every other orchestrator worker carries: the chat
+        // session for sidebar attribution, the orchestrator op id so the
+        // fix worker is an orchestrator CHILD — its report is consumed by
+        // the re-score below, never injected into the user's chat.
+        parentSessionId: opts.parentSessionId,
+        parentOpId: opts.parentOpId,
       });
       if (!fix.workerCompleted) {
         return { kind: "halt-with-context", reason: `fix worker did not complete on attempt ${attempt}: ${fix.error || "unknown"}` };

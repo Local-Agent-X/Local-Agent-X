@@ -43,6 +43,11 @@ const SESSION_SCOPED_TOOLS = new Set([
   "self_edit",
   "build_app", "start_app_build", "finalize_app_build",
   "agent_escalate",
+  // agent_wakeup / issue_update wake other agents through the canonical
+  // invoke door; the trusted _sessionId is how they derive the calling RUN
+  // for spawn lineage (callerRunIdFromSession in agents/invoke.ts) so the
+  // woken agent nests under its caller instead of rendering as a root.
+  "agent_wakeup", "issue_update",
   // AriKernel bridge synonyms: stamp the trusted `_sessionId` so the bridge
   // derives runId/principal from trusted context (arikernel-bridge.ts), not
   // from forged model-supplied `_runId`/`_principalId`.

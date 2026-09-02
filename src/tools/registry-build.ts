@@ -5,6 +5,7 @@ import { buildToolPromptSection } from "./tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
 import { applyAudiences } from "./audience-map.js";
 import { readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool } from "./file-tools.js";
+import { restoreFileTool } from "./restore-file-tool.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
@@ -52,7 +53,7 @@ import { recallTool } from "./recall-tool.js";
 const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 
 export const allTools: ToolDefinition[] = applyPrompts([
-  readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, bashTool, webFetchTool,
+  readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, restoreFileTool, bashTool, webFetchTool,
   globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
   selfEditTool, recallTool, askUserTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,

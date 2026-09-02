@@ -15,6 +15,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import {
 	recordTaskArtifact,
+	unrecordTaskArtifact,
 	isTaskArtifact,
 	listTaskArtifacts,
 	clearTaskArtifacts,
@@ -116,6 +117,33 @@ describe("task-artifact registry", () => {
 		// And a non-existent query still misses cleanly.
 		expect(isTaskArtifact(s, join(root, "never-created.md"))).toBe(false);
 		clearTaskArtifacts(s);
+	});
+
+	it("unrecord mirrors record's canonicalization: a symlinked spelling un-enrolls the stored path; other sessions and other files stay", () => {
+		const s = freshSession();
+		const other = freshSession();
+		const root = tmpRoot();
+		const realDir = join(root, "real");
+		const linkDir = join(root, "link");
+		mkdirSync(realDir);
+		symlinkSync(realDir, linkDir);
+		const realFile = join(realDir, "report.md");
+		writeFileSync(realFile, "bytes");
+		const bystander = join(root, "keep.md");
+		writeFileSync(bystander, "keep");
+
+		recordTaskArtifact(s, realFile);
+		recordTaskArtifact(s, bystander);
+		recordTaskArtifact(other, realFile);
+		unrecordTaskArtifact(s, join(linkDir, "report.md")); // symlinked spelling of the stored path
+		expect(isTaskArtifact(s, realFile)).toBe(false);
+		expect(isTaskArtifact(s, bystander)).toBe(true);     // untouched sibling
+		expect(isTaskArtifact(other, realFile)).toBe(true);  // per-session, like record
+		// Un-enrolling a path that is gone from disk AND never stored is a no-op.
+		unrecordTaskArtifact(s, join(root, "never-stored.md"));
+		expect(listTaskArtifacts(s)).toHaveLength(1);
+		clearTaskArtifacts(s);
+		clearTaskArtifacts(other);
 	});
 
 	it("propagates child → parent like propagateTaint; clean child is a no-op; re-propagation adds nothing", () => {

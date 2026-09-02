@@ -22,6 +22,10 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   multi_edit:  ["main-chat", "spawned-agent", "operator", "build-intent"],
   bulk_replace: ["main-chat", "spawned-agent", "operator", "build-intent"],
   delete_file: ["main-chat"],
+  // restore_file mirrors delete_file's surface exactly: it exists to keep the
+  // promise delete_file's result text makes, so wherever that text can appear
+  // the tool must be resolvable.
+  restore_file: ["main-chat"],
   bash:        ["main-chat", "spawned-agent", "operator", "build-intent"],
   // glob/grep reach spawned agents too: the enforcement layer already
   // path-rewrites them for `agent-` sessions (enforce-policy.rewriteWorktreePaths),

@@ -59,6 +59,9 @@ const SESSION_SCOPED_TOOLS = new Set([
   // 2026-07-02: worker's relative read resolved to the workspace parent).
   "read", "write", "edit", "multi_edit", "edit_lines", "bulk_replace", "delete_file", "glob", "grep",
   "structural_search", // searchRoot(args) is session-anchored like grep's
+  // restore_file resolves the task-trash scope FROM the trusted _sessionId
+  // (the scope is per-session); without the stamp there is no scope at all.
+  "restore_file",
 ]);
 
 // `protocol` is the model-facing collapsed family. Keep the inner name for
@@ -72,6 +75,10 @@ const SESSION_REPEAT_SKIP_TOOLS = new Set([
   // that a new guard now rejects the path. Returning a prior success is false
   // progress.
   "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file",
+  // restore_file consumes its manifest entry on success — a delete→restore→
+  // delete cycle repeats identical args, and a cached "Restored" for a file
+  // that is back in the trash is false progress.
+  "restore_file",
   // STATEFUL live-state tools (browser, process/op/agent polling, live
   // captures) share one source of truth with the 60s dedup cache and the
   // threat-engine loop guard — see stateful-tools.ts for the rationale and the

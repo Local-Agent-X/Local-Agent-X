@@ -249,9 +249,36 @@ describe("task-scoped trash tier — reopen and manifest recovery", () => {
     expect(manifest.filter((e) => e.trashed.startsWith("second.txt")).length).toBe(1);
 
     // A recovered entry resolves by in-trash name / basename, but its original
-    // path is gone — restoring needs an explicit destination.
-    expect(restoreFromTaskTrash(sid, basename(destA))).toEqual({ error: expect.stringContaining("full destination path") });
+    // path is gone — restoring needs an explicit destination, and the error
+    // must TEACH the constraint: the destination's basename must match the
+    // trashed file's, or the retry matches nothing.
+    const noDest = restoreFromTaskTrash(sid, basename(destA));
+    expect(noDest).toEqual({ error: expect.stringContaining("full destination path") });
+    expect((noDest as { error: string }).error).toContain('basename must be "first.txt"');
     expect(restoreFromTaskTrash(sid, a)).toEqual({ restored: a });
     expect(readFileSync(a, "utf-8")).toBe("first bytes");
+  });
+
+  it("a valid-JSON garbage ARRAY manifest also triggers reconstruction — never a silent empty scope", () => {
+    // Skeptic fixture: JSON.parse succeeds and Array.isArray is true, but no
+    // element passes the shape filter. Pre-fix this read as "empty scope" and
+    // API-orphaned the already-trashed bytes; it must reconstruct instead.
+    const sid = "task-sess-garbage-array";
+    const scope = join(laxDir, "trash", "task", sid);
+    const f = join(workDir, "orphan-candidate.txt");
+    writeFileSync(f, "still restorable", "utf-8");
+    const dest = moveToTaskTrash(sid, f)!;
+    writeFileSync(join(scope, ".manifest.json"), JSON.stringify(["garbage", 42]), "utf-8");
+
+    // Recovered entry: original path lost (null), bytes findable by basename.
+    const r = restoreFromTaskTrash(sid, f); // ref with a directory part = explicit destination
+    expect(r).toEqual({ restored: f });
+    expect(readFileSync(f, "utf-8")).toBe("still restorable");
+    expect(existsSync(dest)).toBe(false);
+
+    // Control: a genuinely EMPTY array stays an empty scope (no reconstruction
+    // inventing entries out of the directory's dotfiles).
+    writeFileSync(join(scope, ".manifest.json"), "[]", "utf-8");
+    expect(restoreFromTaskTrash(sid, "anything.txt")).toEqual({ error: expect.stringContaining("No task-trash entry") });
   });
 });

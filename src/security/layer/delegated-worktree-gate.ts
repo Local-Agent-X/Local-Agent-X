@@ -91,8 +91,12 @@ export function evaluateDelegatedWorktreeGate(
       (ariFileAction === "write" && deps.isUserContentPath(String(args.path || "")));
     // delete_file shares edit's `path` arg + blast radius → a user-content delete
     // skips the worktree too (else all delegated deletes were refused).
+    // restore_file is delete_file's inverse (main-chat-only audience today, so
+    // reachable here only by a literal call) — kept in lockstep for parity: a
+    // delegated agent restoring a user-content file it deleted needs no
+    // worktree either, and asymmetry would strand a worker's own undo.
     const isContentWrite =
-      ((toolName === "write" || toolName === "edit" || toolName === "delete_file") &&
+      ((toolName === "write" || toolName === "edit" || toolName === "delete_file" || toolName === "restore_file") &&
         deps.isUserContentPath(String(args.path || ""))) ||
       ariFileExempt;
     if (!isContentWrite) {

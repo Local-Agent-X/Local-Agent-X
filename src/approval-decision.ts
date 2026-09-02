@@ -135,7 +135,7 @@ export function computeArgsFingerprint(
     return "";
   }
 
-  if (tool === "write" || tool === "edit" || tool === "delete_file") {
+  if (tool === "write" || tool === "edit" || tool === "delete_file" || tool === "restore_file") {
     const p = typeof args.path === "string" ? args.path : "";
     if (!p) return "<unresolvable>";
     try {

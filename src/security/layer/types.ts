@@ -45,4 +45,5 @@ export const WORKTREE_REQUIRED_TOOLS = new Set([
   "write", "edit", "ari_file",
   ...CAPABILITY_CLASS_MEMBERS.shell,
   "edit_lines", "multi_edit", "bulk_replace", "delete_file", // registered edit/delete synonyms — same blast radius as write/edit
+  "restore_file", // re-materializes task-trashed bytes on disk — a write under another spelling
 ]);

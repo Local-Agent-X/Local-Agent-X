@@ -91,6 +91,9 @@ const MAX_FAIL_NUDGES = 2;
  *  definition instead of a second drifting copy. */
 export const EDIT_TOOLS: ReadonlySet<string> = new Set([
   "write", "edit", "edit_lines", "multi_edit", "bulk_replace",
+  // restore_file puts a source file back on disk — the tree changed just as
+  // surely as an edit, so a restored .ts deserves the same build nudge.
+  "restore_file",
 ]);
 
 /** Extensions that have a meaningful compile / type-check / test step. Pure

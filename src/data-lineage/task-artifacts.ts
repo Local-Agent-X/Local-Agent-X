@@ -100,6 +100,40 @@ export function isTaskArtifact(sessionId: string, path: string): boolean {
 	return false;
 }
 
+/**
+ * Un-enroll one artifact — the coherence counterpart of recordTaskArtifact for
+ * the ONE production transition that moves an artifact out of the world:
+ * delete_file routing it into the task trash (restore_file re-enrolls on
+ * restore). Without this the entry is sticky, and a USER file later created at
+ * the same path inherits the artifact's shell rm-deny — the guard protecting a
+ * file the agent no longer owns. Canonicalizes exactly like record, and falls
+ * back to inode identity when the query target still exists (case-variant
+ * spellings, mirroring isTaskArtifact); a trashed file no longer stats, so the
+ * canonical-string match is the load-bearing one there.
+ */
+export function unrecordTaskArtifact(sessionId: string, path: string): void {
+	if (!sessionId || !path) return;
+	const set = sessionArtifacts.get(sessionId);
+	if (!set || set.size === 0) return;
+	const query = canonical(path);
+	if (set.delete(query)) return;
+	let q: { dev: number | bigint; ino: number | bigint };
+	try {
+		q = statSync(query);
+	} catch {
+		return; // gone from disk and not stored under this spelling — nothing to drop
+	}
+	for (const stored of set) {
+		try {
+			const s = statSync(stored);
+			if (s.dev === q.dev && s.ino === q.ino) {
+				set.delete(stored);
+				return;
+			}
+		} catch { /* stored artifact since deleted/moved — skip */ }
+	}
+}
+
 /** All artifacts recorded for the session (canonical spellings, copy). */
 export function listTaskArtifacts(sessionId: string): string[] {
 	return [...(sessionArtifacts.get(sessionId) ?? [])];

@@ -30,6 +30,7 @@ export const ARI_ACTION_MAP: Record<string, string> = {
   clipboard_write_from_secret: "clipboard",
   // file
   glob: "read", grep: "read", structural_search: "read", view_image: "read", send_video: "read", send_image: "read", send_file: "read", delete_file: "write",
+  restore_file: "write", // materializes the trashed bytes back on disk — a file write to the kernel
   // http — get for read paths, post for mutations
   calendar_check_availability: "get", calendar_list_events: "get",
   calendar_create_event: "post",

@@ -140,6 +140,9 @@ const WORKSPACE_WRITE_TOOLS: ReadonlySet<string> = new Set([
   // "write"). Left out, a workspace-write ban blocked `edit` but not
   // `edit_lines` — the class fails open under a different spelling.
   "edit_lines", "multi_edit", "bulk_replace", "delete_file",
+  // restore_file re-materializes a task-trashed file on disk — a workspace
+  // write under another spelling; a write ban must cover it too.
+  "restore_file",
 ]);
 
 // Shell = subprocess spawn / arbitrary command execution.

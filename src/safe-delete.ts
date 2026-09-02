@@ -159,9 +159,15 @@ function readTaskManifest(dir: string): TaskTrashEntry[] {
   try {
     const raw: unknown = JSON.parse(readFileSync(join(dir, TASK_MANIFEST), "utf-8"));
     if (Array.isArray(raw)) {
-      return raw.filter((e): e is TaskTrashEntry =>
+      const entries = raw.filter((e): e is TaskTrashEntry =>
         !!e && typeof (e as TaskTrashEntry).trashed === "string" &&
         ((e as TaskTrashEntry).original === null || typeof (e as TaskTrashEntry).original === "string"));
+      // A valid-JSON garbage ARRAY (non-empty, every entry failing the shape
+      // filter — e.g. ["garbage", 42]) is corruption wearing an array's
+      // clothes, not an empty scope: silently returning [] would API-orphan
+      // whatever is already trashed here. Reconstruct like any other corrupt
+      // manifest. A truly empty [] (or a partially-valid array) is honored.
+      if (entries.length > 0 || raw.length === 0) return entries;
     }
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -258,7 +264,7 @@ export function restoreFromTaskTrash(
     // the caller must name the destination (any ref with a directory part).
     const target = entry.original ?? (ref === basename(ref) ? null : resolve(ref));
     if (target === null) {
-      return { error: `The original path of ${entry.trashed} was lost when the manifest was recovered after corruption. The bytes are preserved at ${src} — restore again with the full destination path.` };
+      return { error: `The original path of ${entry.trashed} was lost when the manifest was recovered after corruption. The bytes are preserved at ${src} — restore again with the full destination path (absolute), keeping the file name: the destination's basename must be "${stripStamp(entry.trashed)}" (a recovered entry only matches a destination that shares the trashed file's basename).` };
     }
     if (existsSync(target)) {
       return { error: `Refusing to overwrite: ${target} already exists. Move or delete it first, then restore again.` };

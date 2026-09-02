@@ -87,6 +87,19 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyEntry> = {
   // delete_file is the path-bounded alternative to `bash rm` — single file
   // per call, directories refused, workspace-bounded by SecurityLayer.
   delete_file: { kernel: "file", risk: "destructive", pathArgs: [{ arg: "path", action: "delete_file" }], rules: [{ id: "allow-delete-file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 }] },
+  // restore_file is delete_file's inverse leg on the task-trash tier: it puts
+  // an agent-created file back where it was deleted from (safe-delete.ts,
+  // restoreFromTaskTrash). It materializes bytes on disk, so it is gated as a
+  // workspace write; the actual restore target is the manifest-recorded
+  // original path (already gated at delete time), while both declared args
+  // ride the same write confinement — a bare basename/in-trash ref resolves
+  // inside project bounds, and the explicit destination for recovered entries
+  // is a caller-chosen write sink.
+  restore_file: {
+    kernel: "file", risk: "workspace-write",
+    pathArgs: [{ arg: "path", action: "write" }, { arg: "destination", action: "write" }],
+    rules: [{ id: "allow-restore-file", decision: "allow", reason: "Task-trash restore (path-checked by SecurityLayer; refuses overwrite)", priority: 50 }],
+  },
   glob:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 }] },
   grep:        { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-grep", decision: "allow", reason: "Content search (read-only)", priority: 50 }] },
   structural_search: { kernel: "file", risk: "safe", pathArgs: [{ arg: "path", action: "read" }], rules: [{ id: "allow-structural-search", decision: "allow", reason: "Symbol-accurate code search (read-only)", priority: 50 }] },

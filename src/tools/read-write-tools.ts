@@ -3,7 +3,7 @@ import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { moveToTrash, moveToTaskTrash } from "../safe-delete.js";
-import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
+import { isTaskArtifact, unrecordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "../security/layer/index.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
@@ -296,6 +296,14 @@ export const deleteFileTool: ToolDefinition = {
         // result text is the restore contract (the restore_file tool's
         // argument shape) — keep it in lockstep with that tool.
         const taskTrashed = moveToTaskTrash(sid, filePath);
+        // Registry coherence: whether the move landed (bytes in the trash) or
+        // the source vanished first (bytes gone), the artifact no longer
+        // exists at this path — un-enroll it so a USER file later created at
+        // the same path doesn't inherit the artifact's shell rm-deny.
+        // restore_file re-enrolls the path when it brings the bytes back.
+        // Reached only on the non-throw path: a failed move (cpSync fallback
+        // threw) keeps the file AND its registry entry.
+        unrecordTaskArtifact(sid, filePath);
         // TOCTOU honesty: null = the source vanished between the existence
         // check and the move — nothing landed in the task trash, so never
         // claim restorability. Fall through to the existing route, which is

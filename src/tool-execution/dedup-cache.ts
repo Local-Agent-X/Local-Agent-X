@@ -43,8 +43,11 @@ const DEDUP_SKIP: ReadonlySet<string> = new Set([
   // File mutations are state-sensitive: repeating the same edit after the
   // first one should usually fail with "old_string not found" or trip the
   // current write guard. Replaying the previous "Edited/Wrote" result makes
-  // the model believe new work happened when nothing executed.
-  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file",
+  // the model believe new work happened when nothing executed. restore_file
+  // is the same class from the other side: a delete→restore→delete→restore
+  // cycle repeats identical args, and replaying cycle 1's "Restored" while
+  // the file sits back in the trash is pure false progress.
+  "write", "edit", "edit_lines", "multi_edit", "bulk_replace", "delete_file", "restore_file",
   // tool_search results depend on the deferred-tool catalog which can
   // shift as a turn progresses (registered via prior tool runs).
   "tool_search",

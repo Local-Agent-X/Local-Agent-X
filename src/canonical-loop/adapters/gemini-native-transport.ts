@@ -17,6 +17,7 @@
 
 import type { TransportMessage, TransportTool, TransportEvent } from "./anthropic/types.js";
 import { toGeminiTools } from "../../providers/shared/tool-shape.js";
+import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 
 export const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -74,8 +75,27 @@ export function toGeminiContents(messages: TransportMessage[]): Content[] {
     if (m.role === "system") continue; // → systemInstruction
     if (m.role === "user") {
       const parts: Part[] = [];
-      if (m.content) parts.push({ text: m.content });
-      for (const img of m.images ?? []) { const p = dataUrlToInline(img.url); if (p) parts.push(p); }
+      if (m.images && m.images.length > 0) {
+        // Adapter over the CANONICAL image-row converter (images-to-openai-
+        // parts.ts — the same one the anthropic/codex/openai-compat transports
+        // funnel through), so /uploads file reading, the no-empty-text rule,
+        // the unreadable-attachment note, and the on-disk path hint have one
+        // source of truth. Pre-fix this branch inlined only data: urls —
+        // null for the "/uploads/<f>" refs user attachments actually carry —
+        // so a caption-less photo row collapsed to {text:""}: the image was
+        // DROPPED and the row became the exact empty-text class the
+        // 2026-08-31 400 campaign is about, on the Gemini path.
+        for (const p of imagesToOpenAIParts(m.content, m.images)) {
+          if (p.type === "text") { parts.push({ text: p.text }); continue; }
+          const inline = dataUrlToInline(p.image_url.url);
+          if (inline) parts.push(inline);
+        }
+      } else if (m.content) {
+        parts.push({ text: m.content });
+      }
+      // Last-resort placeholder for a row with neither text nor images —
+      // unreachable when any image was requested: the converter yields an
+      // image part or a non-empty failure note for every ref.
       if (parts.length === 0) parts.push({ text: "" });
       contents.push({ role: "user", parts });
       continue;

@@ -9,7 +9,8 @@
 // the path is the only way the model gets vision (via the `read` tool).
 
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
+import { unreadableAttachmentNote } from "../../agent-request/attachments.js";
 
 export interface ImageRef {
   url: string;
@@ -41,12 +42,24 @@ export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVis
         dataUrl = img.url;
       } else if (img.filePath) {
         const data = readFileSync(img.filePath);
-        const ext = (img.name.split(".").pop() || "png").toLowerCase();
-        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        // Mime comes from the file's MAGIC BYTES, falling back to the
+        // on-disk path's extension — NEVER the display name (an
+        // extension-less name like "photo" used to yield the garbage mime
+        // "image/photo", and a lying name could smuggle any bytes under a
+        // png label). Formats outside the set every provider path accepts
+        // inline (gif/svg/bmp/unknown) degrade to a non-empty note plus the
+        // on-disk hint instead of a part that 400s the whole request — one
+        // rule HERE, inherited by every transport.
+        const mime = sniffImageMime(data) ?? mimeFromPathExt(img.filePath);
+        if (!mime || !SUPPORTED_INLINE_IMAGE_MIME.has(mime)) {
+          parts.push({ type: "text", text: unsupportedFormatNote(img, mime) });
+          filePathHints.push(`  - ${img.name} → ${img.filePath}`);
+          continue;
+        }
         dataUrl = `data:${mime};base64,${data.toString("base64")}`;
       } else {
         // Neither inline bytes nor an on-disk path — nothing to read.
-        parts.push({ type: "text", text: unreadableNote(img) });
+        parts.push({ type: "text", text: unreadableAttachmentNote(img) });
         continue;
       }
       parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
@@ -59,7 +72,7 @@ export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVis
       // sent "[empty message]" when they had attached an image. Emit an
       // in-order note so the model knows what was attached and that it
       // is unavailable.
-      parts.push({ type: "text", text: unreadableNote(img, err) });
+      parts.push({ type: "text", text: unreadableAttachmentNote(img, err) });
     }
   }
   // Trailing text part with on-disk paths. Critical for Anthropic
@@ -86,14 +99,41 @@ export function imagesToOpenAIParts(text: string, images: ImageRef[]): OpenAIVis
   return parts;
 }
 
-/** Non-empty stand-in for an attachment whose bytes could not be sent.
- *  Names the file (display name, else path basename) plus the errno code
- *  when there is one; never leaks the absolute path. */
-function unreadableNote(img: ImageRef, err?: unknown): string {
+// The unreadable-attachment note used above is unreadableAttachmentNote —
+// single definition in agent-request/attachments.ts, shared with the
+// prepare-time dangling-/uploads check so both seams stay byte-identical.
+
+/** The inline-image mimes EVERY provider path accepts (Gemini's inlineData
+ *  set is the narrowest). Anything else — gif/svg/bmp/unknown — becomes a
+ *  note: one provider rejecting an inline part fails the whole request. */
+export const SUPPORTED_INLINE_IMAGE_MIME: ReadonlySet<string> = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
+
+/** Identify an image by its magic bytes; null = unrecognized. */
+function sniffImageMime(data: Buffer): string | null {
+  if (data.length >= 4 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return "image/png";
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return "image/jpeg";
+  if (data.length >= 12 && data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  if (data.length >= 6 && (data.toString("ascii", 0, 6) === "GIF87a" || data.toString("ascii", 0, 6) === "GIF89a")) return "image/gif";
+  if (data.length >= 2 && data[0] === 0x42 && data[1] === 0x4d) return "image/bmp";
+  const head = data.subarray(0, 256).toString("utf8").trimStart();
+  if (head.startsWith("<?xml") || head.startsWith("<svg")) return "image/svg+xml";
+  return null;
+}
+
+/** Fallback mime from the ON-DISK path's extension (never the display name). */
+function mimeFromPathExt(filePath: string): string | null {
+  const ext = extname(filePath).slice(1).toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "svg") return "image/svg+xml";
+  return ext ? `image/${ext}` : null;
+}
+
+/** Non-empty stand-in for an image whose format no provider takes inline. */
+function unsupportedFormatNote(img: ImageRef, mime: string | null): string {
   const label = img.name || (img.filePath ? basename(img.filePath) : "image");
-  const code =
-    typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
-      ? err.code
-      : undefined;
-  return `[Attachment ${label} could not be read${code ? ` (${code})` : ""}]`;
+  return `[Attachment ${label} was not sent inline: unsupported image format${mime ? ` (${mime})` : ""}]`;
 }

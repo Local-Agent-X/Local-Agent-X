@@ -247,6 +247,13 @@ export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): 
  * shows up as an empty response. This is the root cause of the bridge handler
  * returning empty placeholders even for benign messages like "hey".
  */
+/** True when a row carries a non-empty attachments `images` prop (the
+ *  nonstandard session.messages shape a caption-less photo row uses). */
+function hasImagesProp(m: ChatCompletionMessageParam): boolean {
+  const imgs = (m as unknown as Record<string, unknown>).images;
+  return Array.isArray(imgs) && imgs.length > 0;
+}
+
 export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   type MsgRecord = Record<string, unknown>;
   const callIds = new Set<string>();
@@ -313,7 +320,11 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
   // Coalesce consecutive same-role text messages. Multiple bridge messages
   // arriving back-to-back with no agent reply (3x "hey") create runs of
   // user-only messages that violate the alternating-role expectation Codex
-  // enforces and cause empty responses.
+  // enforces and cause empty responses. Image-bearing rows are exempt —
+  // mirror of build-input.ts collapseAdjacentUserMessages' hasImages guard:
+  // the merge keeps only `last`'s props, so folding a caption-less photo row
+  // (content is the string "") into a neighbor silently dropped its `images`
+  // array, which seed-messages now revives into later-turn history.
   const coalesced: ChatCompletionMessageParam[] = [];
   for (const m of out) {
     const last = coalesced[coalesced.length - 1];
@@ -324,7 +335,9 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
       typeof last.content === "string" &&
       typeof m.content === "string" &&
       !(last as unknown as MsgRecord).tool_calls &&
-      !(m as unknown as MsgRecord).tool_calls
+      !(m as unknown as MsgRecord).tool_calls &&
+      !hasImagesProp(last) &&
+      !hasImagesProp(m)
     ) {
       // Merge into the previous message — on a COPY. `last` is often the live
       // session.messages row (callers pass stored history uncopied and

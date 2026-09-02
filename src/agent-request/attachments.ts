@@ -1,5 +1,5 @@
-import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { accessSync, constants as fsConstants, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
 // ── Attachment → model-readable reference resolution ──
@@ -19,6 +19,33 @@ import { randomBytes } from "node:crypto";
 // name — and a file tool called with the display name resolves against the
 // project root and 404s. resolveAgentPath maps `/uploads/<f>` back to the
 // uploads dir, and the SecurityLayer gate resolves it the SAME way.
+
+/** Non-empty stand-in for an attachment whose bytes could not be read.
+ *
+ *  THE single definition of the note string. Both surfacing sites emit it
+ *  byte-identically so the model has one vocabulary for the failure:
+ *    - prepare-time (this module): a dangling non-image "/uploads/<f>" ref,
+ *      surfaced once in the file-attachments prompt note;
+ *    - request-time (canonical-loop/adapters/images-to-openai-parts.ts, the
+ *      canonical image-row converter every provider transport funnels
+ *      through): an image whose file cannot be read when the request is built.
+ *  It lives HERE because the interface seal (canonical-loop/interface-seal
+ *  .test.ts) bans this module from importing canonical-loop internals, while
+ *  adapters may import outward.
+ *
+ *  Names the file (display name, else path basename) plus the errno code when
+ *  there is one; never leaks the absolute path. */
+export function unreadableAttachmentNote(
+  ref: { name?: string; filePath?: string },
+  err?: unknown,
+): string {
+  const label = ref.name || (ref.filePath ? basename(ref.filePath) : "image");
+  const code =
+    typeof err === "object" && err !== null && "code" in err && typeof (err as { code?: unknown }).code === "string"
+      ? (err as { code: string }).code
+      : undefined;
+  return `[Attachment ${label} could not be read${code ? ` (${code})` : ""}]`;
+}
 
 export interface RawAttachment {
   isImage: boolean;
@@ -40,6 +67,7 @@ export function processAttachments(
 ): ProcessedAttachments {
   const images: ProcessedAttachments["images"] = [];
   const fileAttachments: ProcessedAttachments["fileAttachments"] = [];
+  const unreadable: string[] = [];
 
   if (attachments && uploadsDir) {
     for (const a of attachments) {
@@ -64,16 +92,48 @@ export function processAttachments(
         ref = `/uploads/${fname}`;
         filePath = join(uploadsDir, fname);
       }
-      if (a.isImage) images.push({ name: a.name, url: ref, filePath });
-      else fileAttachments.push({ name: a.name, ref });
+      if (a.isImage) {
+        // Dangling image refs are NOT filtered here on purpose: the canonical
+        // image-row converter (canonical-loop/adapters/images-to-openai-parts
+        // .ts) reads the file at request time and, on failure, emits the SAME
+        // unreadableAttachmentNote in-order inside the user message — the
+        // single surfacing point for images. Checking + dropping here too
+        // would either surface the failure twice or turn an image-only send
+        // into an empty user row (the exact empty-text 400 class).
+        images.push({ name: a.name, url: ref, filePath });
+        continue;
+      }
+      // Non-image refs have NO downstream read — the model is handed the PATH
+      // and told it is readable. A dangling "/uploads/<f>" ref (pruned uploads
+      // dir, stale client url) used to flow through silently and 404 the
+      // model's first tool call. Verify readability HERE and surface the
+      // standard note once instead of claiming a readable path. Files decoded
+      // from a dataUrl were written a few lines up, so this only ever fires
+      // for pre-uploaded refs.
+      try {
+        accessSync(filePath, fsConstants.R_OK);
+        fileAttachments.push({ name: a.name, ref });
+      } catch (err) {
+        unreadable.push(unreadableAttachmentNote({ name: a.name, filePath }, err));
+      }
     }
   }
 
-  const fileAttachmentNote = fileAttachments.length
-    ? `\n\nThe user attached non-image file(s), saved and readable by your file tools. ` +
-      `Pass the PATH (not the display name) to a tool such as \`pdf\` (read) or \`read\`:\n` +
-      fileAttachments.map((f) => `- "${f.name}" → ${f.ref}`).join("\n")
-    : "";
+  const noteParts: string[] = [];
+  if (fileAttachments.length) {
+    noteParts.push(
+      `\n\nThe user attached non-image file(s), saved and readable by your file tools. ` +
+        `Pass the PATH (not the display name) to a tool such as \`pdf\` (read) or \`read\`:\n` +
+        fileAttachments.map((f) => `- "${f.name}" → ${f.ref}`).join("\n"),
+    );
+  }
+  if (unreadable.length) {
+    noteParts.push(
+      `\n\nSome attached file(s) could not be read from the uploads store — tell the user rather than guessing at their contents:\n` +
+        unreadable.map((n) => `- ${n}`).join("\n"),
+    );
+  }
+  const fileAttachmentNote = noteParts.join("");
 
   return { images, fileAttachments, fileAttachmentNote };
 }

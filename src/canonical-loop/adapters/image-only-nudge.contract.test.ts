@@ -9,6 +9,9 @@
 //   C1  images-to-openai-parts.ts omits the empty leading text part
 //   C2  anthropic-client/request.ts convertUserContent drops empty text blocks
 //   C21 images-to-openai-parts.ts emits a non-empty note for an unreadable file
+//   C22 gemini-native-transport.ts adapts user rows through the SAME converter
+//       (it used to drop /uploads images and emit {text:""} — the identical
+//       empty-text class on the Gemini path)
 //   C3  canonical-run.ts writes an `_error` boundary row; providers/sanitize.ts
 //       renders it once and strips the flag before any provider sees it
 //
@@ -27,6 +30,7 @@ import { buildTurnInput } from "../turn-loop/build-input.js";
 import { appendNudgeAsUserMessage } from "../turn-loop/nudges.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
+import { toGeminiContents } from "./gemini-native-transport.js";
 import { convertMessages } from "../../anthropic-client/request.js";
 import { convertMessagesToInput } from "../../codex-message-convert.js";
 import {
@@ -226,6 +230,53 @@ describe("B. the same two histories → Codex Responses input", () => {
 		expect(last.content).toHaveLength(1);
 		expect(last.content![0].type).toBe("input_text");
 		expect(last.content![0].text).toContain(NUDGE);
+	});
+});
+
+describe("E. the same two histories → Gemini native contents (C22)", () => {
+	const INLINE_PART = { inlineData: { mimeType: "image/png", data: PNG_B64 } };
+
+	it("before the nudge: digest text + inlineData + path hint — the /uploads image reaches the wire, no {text:''}", async () => {
+		seedImageOnlyUser(SHOT_PATH);
+		const contents = toGeminiContents((await pipeline(1)).transport);
+		expect(contents).toHaveLength(1);
+		expect(contents[0].role).toBe("user");
+		expect(contents[0].parts).toHaveLength(3);
+		expect((contents[0].parts[0] as { text: string }).text).toContain(DIGEST_OPEN);
+		expect(contents[0].parts[1]).toEqual(INLINE_PART);
+		expect((contents[0].parts[2] as { text: string }).text).toContain(SHOT_PATH);
+		expect(JSON.stringify(contents)).not.toContain('"text":""');
+	});
+
+	it("after the nudge the image row keeps its inlineData with no empty text part; the nudge is the last user turn", async () => {
+		seedImageOnlyUser(SHOT_PATH);
+		seedAssistantReply();
+		appendNudgeAsUserMessage(opId, 1, NUDGE);
+		const contents = toGeminiContents((await pipeline(1)).transport);
+		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
+		// Pre-fix: dataUrlToInline("/uploads/shot.png") → null, so this row was
+		// [{text:""}] — image dropped AND the empty-text class, both at once.
+		expect(contents[0].parts).toHaveLength(2);
+		expect(contents[0].parts[0]).toEqual(INLINE_PART);
+		expect((contents[0].parts[1] as { text: string }).text).toContain(SHOT_PATH);
+		const lastParts = contents[2].parts as Array<{ text: string }>;
+		expect(lastParts).toHaveLength(1);
+		expect(lastParts[0].text).toContain(NUDGE);
+		expect(lastParts[0].text).toContain(DIGEST_OPEN);
+		expect(JSON.stringify(contents)).not.toContain('"text":""');
+	});
+
+	it("unreadable upload: the byte-identical C21 note, no inlineData, no leaked path", async () => {
+		seedImageOnlyUser(MISSING_PATH);
+		seedAssistantReply();
+		appendNudgeAsUserMessage(opId, 1, NUDGE);
+		const contents = toGeminiContents((await pipeline(1)).transport);
+		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
+		expect(contents[0].parts).toEqual([{ text: UNREADABLE_NOTE }]);
+		const json = JSON.stringify(contents);
+		expect(json).not.toContain("inlineData");
+		expect(json).not.toContain(MISSING_PATH);
+		expect(json).not.toContain('"text":""');
 	});
 });
 

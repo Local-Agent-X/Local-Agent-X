@@ -273,4 +273,37 @@ describe("golden: terminal-error boundary at the provider seam", () => {
 		expect(out).toEqual([{ role: "user", content: "hey\nhey\nhey" }, { role: "assistant", content: "hi" }]);
 		expect(stored).toEqual(snapshot);
 	});
+
+	// GOLDEN for the image-bearing-row guard (2026-09-01): a caption-less
+	// photo row is {role:"user", content:"", images:[...]} — its content IS a
+	// string, so the coalesce used to merge it into the neighboring text row,
+	// keeping only `last`'s props and silently dropping `images`. Since
+	// seed-messages revives history images into the model view, that merge
+	// became a real image loss. Mirrors build-input.ts
+	// collapseAdjacentUserMessages, whose hasImages guard already exempted
+	// image rows — the two merge sites must not drift again.
+	it("a text row followed by a caption-less photo row survives UNMERGED with images intact", () => {
+		const photo = {
+			role: "user",
+			content: "",
+			images: [{ name: "shot.png", url: "/uploads/shot.png" }],
+		} as unknown as ChatCompletionMessageParam;
+		const out = sanitizeHistory([u("check this"), photo]);
+		expect(out).toHaveLength(2);
+		expect(out[0]).toEqual({ role: "user", content: "check this" });
+		expect(out[1]).toBe(photo); // passed through, not rebuilt — images prop intact
+		expect((out[1] as unknown as { images: unknown[] }).images).toHaveLength(1);
+	});
+
+	it("a photo row followed by a text row is also left unmerged (guard is symmetric)", () => {
+		const photo = {
+			role: "user",
+			content: "",
+			images: [{ name: "shot.png", url: "/uploads/shot.png" }],
+		} as unknown as ChatCompletionMessageParam;
+		const out = sanitizeHistory([photo, u("what is it?")]);
+		expect(out).toHaveLength(2);
+		expect(out[0]).toBe(photo);
+		expect(out[1]).toEqual({ role: "user", content: "what is it?" });
+	});
 });

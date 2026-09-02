@@ -163,3 +163,66 @@ describe("imagesToOpenAIParts — unreadable attachments are reported, not dropp
     expect(textParts(parts)[0]).toContain("could not be read");
   });
 });
+
+// SF-1 (2026-09-01 skeptic): mime used to come from the DISPLAY-NAME
+// extension — an extension-less name yielded the garbage mime
+// "image/<name>", and gif/svg/bmp sailed through as inline parts no
+// provider accepts, 400ing the whole request. Mime now comes from the
+// file's magic bytes (path extension as fallback), and unsupported
+// formats degrade to a note + on-disk hint at this one converter.
+describe("imagesToOpenAIParts — mime from magic bytes, unsupported formats degrade", () => {
+  const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  let dir = "";
+  beforeAll(() => { dir = mkdtempSync(join(tmpdir(), "lax-img-mime-")); });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  function fileWith(fname: string, bytes: Buffer): string {
+    const p = join(dir, fname);
+    writeFileSync(p, bytes);
+    return p;
+  }
+
+  it("extension-less display name → correct mime sniffed from the bytes (was: garbage 'image/photo')", () => {
+    const filePath = fileWith("att-abc123", PNG_MAGIC);
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "photo", filePath }]);
+    expect(imageParts(parts)).toEqual([`data:image/png;base64,${PNG_MAGIC.toString("base64")}`]);
+  });
+
+  it("a display name that LIES about the format loses to the magic bytes", () => {
+    const filePath = fileWith("fake.png.gif", Buffer.from("GIF89a-and-then-some"));
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "totally-a.png", filePath }]);
+    expect(imageParts(parts)).toEqual([]);
+    expect(textParts(parts)[0]).toBe(
+      "[Attachment totally-a.png was not sent inline: unsupported image format (image/gif)]",
+    );
+  });
+
+  it.each([
+    ["anim.gif", Buffer.from("GIF87a......"), "image/gif"],
+    ["pic.bmp", Buffer.from("BM\x00\x00rest"), "image/bmp"],
+    ["logo.svg", Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'), "image/svg+xml"],
+  ])("%s → note instead of an inline part, plus the on-disk hint", (fname, bytes, mime) => {
+    const filePath = fileWith(fname, bytes as Buffer);
+    const parts = imagesToOpenAIParts("", [{ url: "", name: fname as string, filePath }]);
+    expect(imageParts(parts)).toEqual([]);
+    const texts = textParts(parts);
+    expect(texts[0]).toBe(`[Attachment ${fname} was not sent inline: unsupported image format (${mime})]`);
+    // The file is still real and readable — the hint hands the model its path.
+    expect(texts[1]).toContain(filePath);
+    for (const t of texts) expect(t.trim().length).toBeGreaterThan(0);
+  });
+
+  it("unknown magic falls back to the ON-DISK extension, never the display name", () => {
+    const filePath = fileWith("weird.jpg", Buffer.from("not an image at all"));
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "holiday.png", filePath }]);
+    // .jpg on disk wins → sent as jpeg despite the .png display name.
+    expect(imageParts(parts)).toEqual([`data:image/jpeg;base64,${Buffer.from("not an image at all").toString("base64")}`]);
+  });
+
+  it("unknown magic AND no usable extension → note, never a garbage-mime part", () => {
+    const filePath = fileWith("att-noext", Buffer.from("mystery bytes"));
+    const parts = imagesToOpenAIParts("", [{ url: "", name: "mystery", filePath }]);
+    expect(imageParts(parts)).toEqual([]);
+    expect(textParts(parts)[0]).toBe("[Attachment mystery was not sent inline: unsupported image format]");
+  });
+});

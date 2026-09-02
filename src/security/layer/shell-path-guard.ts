@@ -1,7 +1,8 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
+import { isTaskArtifact } from "../../data-lineage/task-artifacts.js";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
@@ -162,7 +163,116 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // could redirect/cp/mv/rm over the same file. Same manifest is the authority.
   const baseline = detectLockedBaselineMutation(command, ctx.workspace);
   if (baseline) return { allowed: false, reason: baseline, userHint: USER_HINTS.commandShell };
+  // ALWAYS-ON (mode-independent, INCLUDING unrestricted) task-artifact delete
+  // guard: a file the agent itself CREATED this task must not be hard-deleted
+  // from the shell — delete_file routes it to the recoverable task trash. See
+  // detectTaskArtifactDelete for scope and best-effort posture.
+  const artifact = detectTaskArtifactDelete(command, ctx);
+  if (artifact) return { allowed: false, reason: artifact, userHint: USER_HINTS.commandShell };
   return evaluateShellPaths(command, ctx);
+}
+
+// ── ALWAYS-ON task-artifact delete guard (mode-independent) ──
+//
+// The per-session registry (data-lineage/task-artifacts.ts) records the files
+// the agent itself CREATED via create-class tools. delete_file routes those to
+// a recoverable task trash, but shell-policy's mode-aware rm rules left two
+// hard-delete holes for them: unrestricted mode allows flagged `rm -rf`, and a
+// bare `rm file` passes in EVERY mode. This rule closes both — in ALL
+// file-access modes — for the three shell hard-delete verbs, and points at the
+// recoverable path instead. It changes NOTHING about shell-policy's mode rules:
+// a non-artifact target still gets exactly the behavior it had.
+//
+// Posture matches the rest of this file: gate on the cheap checks first (no
+// session → no registry → inert; only a command that MENTIONS a delete verb is
+// lexed — this guard runs on every shell command), reuse the canonical lexer +
+// the SAME ~/relative resolution the path tokens above get, and never throw —
+// a glob or $VAR target is a runtime-only shape this parser cannot see (the
+// documented best-effort limit above; the verification pass is the backstop),
+// and an unresolvable token simply doesn't match.
+//
+// Two lexical refinements, both erring in the SAFE direction:
+//  • An in-command `cd`/`pushd` moves the shell's cwd, so a RELATIVE operand in
+//    any LATER segment no longer resolves at the workspace — `cd out && rm
+//    report.md` names out/report.md, and anchoring it at the workspace
+//    false-denied a basename-colliding USER file. Once the cwd has shifted,
+//    relative operands are SKIPPED (absolute and ~ spellings still check) —
+//    the same conservatism extractPathTokens applies to plain relative tokens
+//    it cannot place. False-negative direction, accepted: this rule is the
+//    belt — the registry + delete_file routing remain the primary protection.
+//  • Bash expands an unquoted brace group BEFORE the filesystem ever sees the
+//    path, so `rm report.md{,}` / `rm {report,notes}.md` name a registered
+//    file with no verbatim spelling in any token — the cheapest purely-lexical
+//    bypass. A SINGLE-LEVEL comma/empty group is expanded lexically and every
+//    expansion checked; nested/multiple groups stay out of scope alongside the
+//    glob/$VAR posture above.
+const SHELL_DELETE_VERBS = new Set(["rm", "unlink", "shred"]);
+const SHELL_DELETE_VERB_RE = /\b(?:rm|unlink|shred)\b/i;
+
+function detectTaskArtifactDelete(command: string, ctx: ShellPathGuardCtx, depth = 0, cwdShifted = false): string | null {
+  if (!ctx.sessionId || !SHELL_DELETE_VERB_RE.test(command)) return null;
+  for (const segment of splitShellSegments(command)) {
+    const words = tokenizeCommand(segment);
+    if (!words.length) continue;
+    const argv0Index = resolveRealArgv0Index(words) ?? 0;
+    const verb = execBasename(words[argv0Index]);
+    // From here on the shell's cwd is no longer the workspace — every LATER
+    // relative operand is ambiguous and skipped (posture note above).
+    if (verb === "cd" || verb === "pushd") { cwdShifted = true; continue; }
+    if (!SHELL_DELETE_VERBS.has(verb)) {
+      // `bash -c "rm …"`: the body is ONE opaque token — re-lex it exactly as
+      // extractPathTokens does, bounded by the same depth. The body runs in a
+      // subshell that INHERITS the current cwd, so cwdShifted rides along; a
+      // cd inside the body never leaks back out (per-call state).
+      if (depth < MAX_REPARSE_DEPTH) {
+        for (let i = argv0Index + 1; i < words.length; i++) {
+          if (isShellReparseFlag(verb, words[i]) && i + 1 < words.length) {
+            const hit = detectTaskArtifactDelete(words[i + 1], ctx, depth + 1, cwdShifted);
+            if (hit) return hit;
+            i++;
+          }
+        }
+      }
+      continue;
+    }
+    let operandsOnly = false; // a bare `--` ends flag parsing for all three verbs
+    for (let i = argv0Index + 1; i < words.length; i++) {
+      const raw = words[i];
+      if (!raw) continue;
+      if (!operandsOnly && raw.startsWith("-")) {
+        if (raw === "--") operandsOnly = true;
+        continue;
+      }
+      try {
+        // Tokens arrive quote-stripped; expand a single-level brace group the
+        // way bash would (verbatim spelling kept too — a QUOTED brace is
+        // literal, and the quotes are gone by now), then ~ as bash would, and
+        // anchor a relative operand at the workspace — the registry
+        // realpath+inode matches, so symlinked/case-variant spellings of a
+        // recorded file resolve to the same identity.
+        for (const spelling of expandBraces(raw)) {
+          const operand = expandTilde(spelling);
+          if (cwdShifted && !isAbsolute(operand)) continue; // cwd ambiguity — skip, don't guess
+          if (isTaskArtifact(ctx.sessionId, resolve(ctx.workspace, operand))) {
+            return `Blocked: \`${verb}\` targets "${raw}" — this file is a work product of the current task — use delete_file (recoverable) instead.`;
+          }
+        }
+      } catch { /* best-effort: an unresolvable token just doesn't match */ }
+    }
+  }
+  return null;
+}
+
+// Lexical SINGLE-LEVEL brace expansion: one non-nested `{…}` group whose body
+// holds a comma (`{a,b}.md`, `f{,}` — bash expands `{a}` literally, so a
+// comma-less body stays verbatim). Nested or multiple groups fail the match
+// and pass through verbatim — out of scope by the posture above. The verbatim
+// token is always kept: quoting would have made the braces literal, and the
+// lexer stripped the quotes before this point.
+function expandBraces(token: string): string[] {
+  const m = /^([^{}]*)\{([^{}]*)\}([^{}]*)$/.exec(token);
+  if (!m || !m[2].includes(",")) return [token];
+  return [token, ...m[2].split(",").map((alt) => m[1] + alt + m[3])];
 }
 
 // Pull the file-path-shaped arguments out of a command, via the canonical shell-lex
@@ -250,15 +360,22 @@ function extractPathTokens(command: string, depth = 0): PathToken[] {
       if (!raw) continue;
       if (BENIGN_PATHS.has(raw.toLowerCase())) continue;
 
-      // Expand a leading ~ exactly as bash will, so the gate sees the real target
-      // (~/secret → <home>/secret), not a project-relative-looking "~/secret".
-      if (raw === "~") raw = homedir();
-      else if (raw.startsWith("~/") || raw.startsWith("~\\")) raw = join(homedir(), raw.slice(2));
+      raw = expandTilde(raw);
 
       if (looksLikePath(raw)) out.push({ path: raw, action });
     }
   }
   return out;
+}
+
+// Expand a leading ~ exactly as bash will, so a gate sees the real target
+// (~/secret → <home>/secret), not a project-relative-looking "~/secret". ONE
+// implementation for the path tokens and the delete guard — they must never
+// disagree on what a spelling resolves to.
+function expandTilde(raw: string): string {
+  if (raw === "~") return homedir();
+  if (raw.startsWith("~/") || raw.startsWith("~\\")) return join(homedir(), raw.slice(2));
+  return raw;
 }
 
 // Is this token shaped like a path that could escape the workspace? Absolute

@@ -6,7 +6,7 @@
 
 import { unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { ToolCallDeniedError } from "@arikernel/core";
+import { type PolicyRule, ToolCallDeniedError, getPreset } from "@arikernel/core";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Firewall, createFirewall } from "../src/index.js";
 
@@ -39,7 +39,15 @@ const ALLOW_ALL_RULES = [
 	},
 ];
 
-function makeFirewall(name: string): Firewall {
+// The CANONICAL deny-tainted-shell policy, taken from the production preset
+// (LAX boots the kernel with "workspace-assistant" — src/ari-kernel/lifecycle.ts)
+// rather than a forked inline copy, so this suite exercises the exact rule that
+// ships. Priority 10 — it outranks the allow-all rule above (500).
+const DENY_TAINTED_SHELL: PolicyRule | undefined = getPreset("workspace-assistant").policies.find(
+	(p) => p.id === "deny-tainted-shell",
+);
+
+function makeFirewall(name: string, extraPolicies: PolicyRule[] = []): Firewall {
 	const fw = createFirewall({
 		principal: {
 			name: "test-agent",
@@ -48,7 +56,7 @@ function makeFirewall(name: string): Firewall {
 				{ toolClass: "shell", actions: ["exec"] },
 			],
 		},
-		policies: ALLOW_ALL_RULES,
+		policies: [...ALLOW_ALL_RULES, ...extraPolicies],
 		auditLog: auditPath(name),
 		runStatePolicy: { maxDeniedSensitiveActions: 5, behavioralRules: true },
 	});
@@ -114,7 +122,13 @@ describe("Rule 5: tainted_shell_with_data — commandLength metadata", () => {
 	});
 
 	it("short shell command with web taint is still blocked by the deny-tainted-shell policy", async () => {
-		const fw = makeFirewall("short-cmd-tainted");
+		// The fixture must actually LOAD the policy this test names: chunk L
+		// (1b47756a) removed shell from Rule 1's followups, so with allow-all
+		// policies alone nothing denies a short tainted command — the deny comes
+		// from the deny-tainted-shell preset policy, loaded here exactly as the
+		// production "workspace-assistant" preset loads it.
+		expect(DENY_TAINTED_SHELL, "workspace-assistant preset no longer carries deny-tainted-shell").toBeDefined();
+		const fw = makeFirewall("short-cmd-tainted", [DENY_TAINTED_SHELL as PolicyRule]);
 
 		const httpGrant = fw.requestCapability("http.read");
 		const shellGrant = fw.requestCapability("shell.exec");

@@ -136,6 +136,47 @@ describe("spreadsheet write — entity decode + NFC at the cleanText seam", () =
   });
 });
 
+describe("spreadsheet edit — string values route through the same cleanText seam", () => {
+  async function readBack(fp: string, ref: string): Promise<unknown> {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fp);
+    return wb.getWorksheet("Sheet1")?.getCell(ref).value;
+  }
+
+  it("an edited cell with entities and a combining accent reads back decoded and composed", async () => {
+    const fp = await writeSheet("edit-entities.xlsx", [["Item"], ["old"]]);
+    const r = await tool.execute({ action: "edit", file_path: fp, cell: "A2", value: "Fish &amp; Chips&#8482; cafe\u0301" });
+    expect(r.isError).toBeFalsy();
+    const cell = String(await readBack(fp, "A2"));
+    // Entities decoded exactly once, combining accent composed to NFC — same seam as write.
+    expect(cell).toBe("Fish & Chips\u2122 caf\u00E9");
+    expect(cell).not.toContain("\u0301");
+  });
+
+  it("formula: true stays byte-preserved even when it looks entity-encoded", async () => {
+    const fp = await writeSheet("edit-formula.xlsx", [["A"], [1]]);
+    const formula = 'CONCATENATE("&amp;","&#8482;","cafe\u0301")';
+    const r = await tool.execute({ action: "edit", file_path: fp, cell: "B1", value: formula, formula: true });
+    expect(r.isError).toBeFalsy();
+    const v = await readBack(fp, "B1") as { formula?: string };
+    expect(v.formula).toBe(formula);
+  });
+
+  it('numeric string "02134" keeps the existing edit coercion (becomes the number 2134)', async () => {
+    const fp = await writeSheet("edit-zip.xlsx", [["Zip"], ["x"]]);
+    const r = await tool.execute({ action: "edit", file_path: fp, cell: "A2", value: "02134" });
+    expect(r.isError).toBeFalsy();
+    expect(await readBack(fp, "A2")).toBe(2134);
+  });
+
+  it("a plain number value lands untouched", async () => {
+    const fp = await writeSheet("edit-number.xlsx", [["N"], ["x"]]);
+    const r = await tool.execute({ action: "edit", file_path: fp, cell: "A2", value: 42 });
+    expect(r.isError).toBeFalsy();
+    expect(await readBack(fp, "A2")).toBe(42);
+  });
+});
+
 describe("spreadsheet query — streamed scan, capped materialization", () => {
   it(`keeps the first ${MAX_ROWS_UNRANGED} matches, counts all of them, and notes the cap`, async () => {
     const r = await tool.execute({ action: "query", file_path: big, column: "Name", operator: "contains", value: "row-" });

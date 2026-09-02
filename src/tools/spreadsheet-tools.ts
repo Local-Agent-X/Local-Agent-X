@@ -282,9 +282,15 @@ const spreadsheetEdit: ToolDefinition = {
       const cell = ws.getCell(args.cell as string);
       if (args.formula) {
         cell.value = { formula: args.value as string } as CellFormulaValue;
+      } else if (typeof args.value !== "string") {
+        cell.value = args.value as CellValue; // out-of-contract non-strings land as-is
       } else {
+        // Edit is a write path too: string values go through the SAME
+        // normalization seam as write (cleanText: entity decode + NFC), so
+        // scraped text can't skip the invariant by entering via edit.
+        // Values that parse as numbers keep the existing coercion.
         const num = Number(args.value);
-        cell.value = isNaN(num) || (args.value as string).trim() === "" ? (args.value as string) : num;
+        cell.value = isNaN(num) || args.value.trim() === "" ? cleanText(args.value) : num;
       }
       await wb.xlsx.writeFile(filePath);
       return ok(`Set ${args.cell} = ${args.value}${args.formula ? " (formula)" : ""}`);

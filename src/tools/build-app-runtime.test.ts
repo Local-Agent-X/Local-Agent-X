@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,12 +20,19 @@ import {
   restorePersistedAppBuildRuntimes,
 } from "./build-app-runtime.js";
 
+// A temp app dir, NOT resolve("workspace", …): the repo-root `workspace` is a
+// SYMLINK into Documents on any dev box where the dev server has run
+// (loadConfig's intended behavior), so a cwd-anchored appDir canonicalizes to
+// a different spelling than the fixture compares against. TMPDIR is already
+// canonical (shared vitest setup), so this path round-trips realpath cleanly.
+const scratchRoot = mkdtempSync(join(tmpdir(), "build-app-runtime-"));
+
 const descriptor: AppBuildRuntimeDescriptor = {
   kind: "app-build",
   strategy: "in-canonical-sub-agent",
   provider: "test-provider",
   appName: "resumable-app",
-  appDir: resolve("workspace", "apps", "resumable-app"),
+  appDir: resolve(scratchRoot, "apps", "resumable-app"),
   appUrl: "/apps/resumable-app/",
   prompt: "Build it",
   brief: "Build it",
@@ -74,6 +81,10 @@ function successfulDispatcher(onDispatch?: (call: ToolCall) => void): ToolDispat
 }
 
 const workRootIds = new Set(["paused-build", "cancelled-build"]);
+
+afterAll(() => {
+  rmSync(scratchRoot, { recursive: true, force: true });
+});
 
 afterEach(() => {
   resetCanonicalRuntime();

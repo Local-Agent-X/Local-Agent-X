@@ -1,4 +1,4 @@
-import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicMaxOutputTokens } from "../anthropic-models.js";
+import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
@@ -11,6 +11,13 @@ import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 
 const logger = createLogger("anthropic-client.stream-api");
+
+// disableThinking on an always-on model (Fable 5 / Mythos 5) is a caller
+// contract the API cannot honor: `{type: "disabled"}` returns a 400 and
+// omitting the param runs adaptive anyway. Warn ONCE per model per process —
+// the classifier path can fire many calls a minute — instead of letting a
+// latency-sensitive caller silently keep paying thinking latency/tokens.
+const warnedThinkingAlwaysOn = new Set<string>();
 
 type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
 
@@ -62,6 +69,13 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   // anthropicMaxOutputTokens.
   const resolvedMaxTokens = maxTokens ?? anthropicMaxOutputTokens(resolvedModel);
   const adaptive = anthropicUsesAdaptiveThinking(resolvedModel);
+  // Wire shape for "thinking off" — per-model, because omission is not a
+  // universal off-switch (see anthropicThinkingOffMode).
+  const thinkingOff = disableThinking ? anthropicThinkingOffMode(resolvedModel) : null;
+  if (thinkingOff === "always-on" && !warnedThinkingAlwaysOn.has(resolvedModel)) {
+    warnedThinkingAlwaysOn.add(resolvedModel);
+    logger.warn(`disableThinking has no effect on ${resolvedModel} — adaptive thinking cannot be turned off (explicit disable is rejected with a 400, omission runs adaptive); the call still pays thinking latency/tokens`);
+  }
 
   // Fail fast if the caller already cancelled before we started.
   if (signal?.aborted) {
@@ -141,13 +155,21 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // Classifier calls opt out of thinking entirely: a yes/no verdict must not
     // burn seconds of reasoning tokens, and it wants deterministic temperature 0
     // — not the chat-tuned temperature 1 the enabled-thinking shape forces.
-    // The no-thinking branch is gated on the SAME `adaptive` predicate: a
+    // Turning thinking OFF is per-model wire shape (anthropicThinkingOffMode
+    // is the one source of truth — no second model list here): Opus 5 /
+    // Sonnet 5 / Opus 4.7/4.8 need an explicit {type: "disabled"} block
+    // (on Opus 5 / Sonnet 5 omission runs ADAPTIVE — omitting was a silent
+    // no-op that kept burning thinking latency/tokens); legacy + the 4.6
+    // generation turn it off by omission; Fable 5 / Mythos 5 cannot turn it
+    // off at all (warned above, param omitted so the request stays legal).
+    // Temperature stays gated on the SAME `adaptive` predicate: a
     // classifier's temperature:0 forwarded to Fable 5 / Opus 5 / 4.7+ 400s
     // ("`temperature` is deprecated for this model") and nulls the verdict.
-    // anthropicUsesAdaptiveThinking is the one source of truth for "this
-    // model rejects sampling params" — no second model list here.
     ...(disableThinking
-      ? (temperature !== undefined && !adaptive ? { temperature } : {})
+      ? {
+          ...(thinkingOff === "disabled-block" ? { thinking: { type: "disabled" } } : {}),
+          ...(temperature !== undefined && !adaptive ? { temperature } : {}),
+        }
       : adaptive
         ? { thinking: { type: "adaptive", display: "summarized" } }
         : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),

@@ -34,9 +34,11 @@ export interface AnthropicTransportRequest {
   forcedToolChoice?: { type: "tool"; name: string };
   /** Chat lane opt-in to the direct-HTTP OAuth path — see AnthropicAdapterOptions. */
   preferDirectHttp?: boolean;
-  /** Omit the thinking config (spoken-turn / classifier profile — reasoning
-   *  time is dead air in voice). Direct-HTTP path only; the CLI proxy can't
-   *  stream thinking regardless. */
+  /** Turn thinking off (spoken-turn / classifier profile — reasoning time is
+   *  dead air in voice). Direct-HTTP path only; the CLI proxy can't stream
+   *  thinking regardless. Per-model wire shape and the Fable 5 / Mythos 5
+   *  always-on caveat: see StreamOptions.disableThinking in
+   *  anthropic-client/types.ts. */
   disableThinking?: boolean;
   /** Byte length of the stable prefix of systemPrompt — enables the
    *  two-block system cache split in anthropic-client/stream-api.ts. */

@@ -50,11 +50,19 @@ export interface StreamOptions {
    *  calls). Without this, abort only stops the JS-side stream consumption
    *  while the subprocess keeps running. */
   signal?: AbortSignal;
-  /** Omit the thinking block and honor `temperature` verbatim. For short
-   *  yes/no classifier calls: extended thinking burns seconds of reasoning
-   *  tokens a verdict doesn't need, and the chat-tuned default forces
-   *  temperature 1. Also set by the voice turn path: thinking time is dead
-   *  air in a spoken reply. Only the direct-HTTP path reads this. */
+  /** Turn extended thinking OFF for this request and honor `temperature`
+   *  verbatim (legacy models only — the adaptive family rejects sampling
+   *  params). For short yes/no classifier calls: extended thinking burns
+   *  seconds of reasoning tokens a verdict doesn't need. Also set by the
+   *  voice turn path: thinking time is dead air in a spoken reply.
+   *  Wire shape is per-model (anthropicThinkingOffMode): legacy + the 4.6
+   *  generation omit `thinking`; Opus 5 / Sonnet 5 / Opus 4.7/4.8 send
+   *  `{type: "disabled"}` because omission leaves adaptive thinking ON on
+   *  Opus 5 / Sonnet 5. CAVEAT — Fable 5 / Mythos 5 cannot disable thinking
+   *  at all (explicit disable 400s, omission runs adaptive): the flag logs a
+   *  once-per-process warning there and the call still pays thinking
+   *  latency/tokens; pick a different model if latency is load-bearing.
+   *  Only the direct-HTTP path reads this. */
   disableThinking?: boolean;
   /** Byte length of the stable prefix of `systemPrompt`. When set (and > 0,
    *  < systemPrompt.length), the system prompt is sent as TWO text blocks —

@@ -252,21 +252,76 @@ describe("streamViaAPI — disableThinking (classifier path)", () => {
     expect(body.temperature).toBe(0);
   });
 
-  // Fable 5 / Opus 5 / Opus 4.7+ / Sonnet 5 return 400 "`temperature` is
-  // deprecated for this model". The classifier's temperature:0 must be dropped
-  // on the wire — forwarding it fails every classifier call against these
-  // models and nulls the verdict. Same predicate as the thinking branch.
-  it.each(["claude-fable-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"])(
-    "adaptive model %s: sends NEITHER temperature NOR thinking on the no-thinking branch",
+  // Opus 5 / Sonnet 5 run ADAPTIVE when `thinking` is omitted — omission was
+  // a silent no-op that kept burning thinking latency/tokens on exactly the
+  // paths that asked for none (classifier verdicts, voice turns). The
+  // documented off-switch is an explicit disabled block; Opus 4.7/4.8 accept
+  // the same block, which pins the intent on the wire instead of leaning on
+  // their omission default. Temperature still must not ride along — the whole
+  // family returns 400 "`temperature` is deprecated for this model".
+  it.each(["claude-opus-5", "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"])(
+    "%s: sends an explicit thinking {type: 'disabled'} block and drops temperature",
     async (model) => {
       const cap = stubFetchCapturing(done);
       await collect({ model, disableThinking: true, temperature: 0 });
       const { body } = cap.calls[0];
+      expect(body.thinking).toEqual({ type: "disabled" });
       // Parsed from the wire string, so an absent key means it was never sent.
       expect("temperature" in body).toBe(false);
-      expect("thinking" in body).toBe(false);
     },
   );
+
+  // 4.6 generation: omission IS the documented off-switch (adaptive must be
+  // requested explicitly there) and {type: "disabled"} is not a documented
+  // shape for it — the param stays off the wire.
+  it.each(["claude-opus-4-6", "claude-sonnet-4-6"])(
+    "%s: omits the thinking param entirely (omission = off on the 4.6 generation)",
+    async (model) => {
+      const cap = stubFetchCapturing(done);
+      await collect({ model, disableThinking: true, temperature: 0 });
+      const { body } = cap.calls[0];
+      expect("thinking" in body).toBe(false);
+      expect("temperature" in body).toBe(false);
+    },
+  );
+
+  // Fable 5 / Mythos 5: thinking cannot be turned off — explicit disable
+  // 400s and omission runs adaptive. The request must stay legal (no
+  // thinking param, no temperature) and the dead flag must be LOUD: one
+  // warning per model per process, not silence and not one line per call.
+  it("always-on model (fable-5): omits thinking + temperature and warns once per process per model", async () => {
+    const warnings: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const cap = stubFetchCapturing(done);
+      await collect({ model: "claude-fable-5", disableThinking: true, temperature: 0 });
+      await collect({ model: "claude-fable-5", disableThinking: true, temperature: 0 });
+      for (const call of cap.calls) {
+        expect("thinking" in call.body).toBe(false);
+        expect("temperature" in call.body).toBe(false);
+      }
+      const hits = warnings.filter(w => w.includes("disableThinking has no effect on claude-fable-5"));
+      expect(hits).toHaveLength(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("the no-effect warning is keyed per model — another always-on model still gets its own", async () => {
+    const warnings: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      stubFetchCapturing(done);
+      await collect({ model: "claude-mythos-5", disableThinking: true });
+      expect(warnings.filter(w => w.includes("disableThinking has no effect on claude-mythos-5"))).toHaveLength(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
 
   it("still enables adaptive thinking when the flag is absent", async () => {
     const cap = stubFetchCapturing(done);

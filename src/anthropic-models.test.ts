@@ -5,7 +5,7 @@
 // call 400s in production while unit-per-module tests stay green.
 
 import { describe, it, expect } from "vitest";
-import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicMaxOutputTokens } from "./anthropic-models.js";
+import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens } from "./anthropic-models.js";
 import { classifyModel } from "./model-tiers.js";
 import { PROVIDERS } from "./providers/registry.js";
 
@@ -64,6 +64,44 @@ describe("Claude Opus 5 wiring", () => {
 
   it("classifies as a strong tool-use tier", () => {
     expect(classifyModel("claude-opus-5")).toBe("strong");
+  });
+});
+
+// The disableThinking wire-shape map. Omission is NOT a universal off-switch:
+// Opus 5 / Sonnet 5 run adaptive when `thinking` is omitted, so only the
+// explicit disabled block turns thinking off there; Fable 5 / Mythos 5 reject
+// even that (thinking is always on). If a model drifts to the wrong bucket,
+// either requests 400 (disabled sent to Fable 5) or a latency-sensitive path
+// silently pays thinking again (omission sent to Opus 5 / Sonnet 5).
+describe("anthropicThinkingOffMode — per-model disableThinking wire shape", () => {
+  it("always-on: Fable 5 / Mythos 5 cannot turn thinking off", () => {
+    expect(anthropicThinkingOffMode("claude-fable-5")).toBe("always-on");
+    expect(anthropicThinkingOffMode("anthropic/claude-fable-5")).toBe("always-on");
+    expect(anthropicThinkingOffMode("claude-fable-5[1m]")).toBe("always-on");
+    expect(anthropicThinkingOffMode("claude-mythos-5")).toBe("always-on");
+  });
+
+  it("disabled-block: Opus 5 / Sonnet 5 (omission = adaptive ON) and Opus 4.7/4.8 (documented explicit off)", () => {
+    for (const m of ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"]) {
+      expect(anthropicThinkingOffMode(m)).toBe("disabled-block");
+    }
+    expect(anthropicThinkingOffMode("claude-opus-5[1m]")).toBe("disabled-block");
+    expect(anthropicThinkingOffMode("anthropic/claude-sonnet-5")).toBe("disabled-block");
+  });
+
+  it("omit: 4.6 generation and legacy models turn thinking off by leaving the param out", () => {
+    for (const m of [
+      "claude-opus-4-6", "claude-sonnet-4-6",
+      "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
+    ]) {
+      expect(anthropicThinkingOffMode(m)).toBe("omit");
+    }
+  });
+
+  // Same alternation-anchor regression guarded on anthropicUsesAdaptiveThinking:
+  // claude-opus-4-5 must not be swallowed by the opus-5 branch.
+  it("does NOT misclassify opus-4-5 via the opus-5 branch", () => {
+    expect(anthropicThinkingOffMode("claude-opus-4-5")).toBe("omit");
   });
 });
 

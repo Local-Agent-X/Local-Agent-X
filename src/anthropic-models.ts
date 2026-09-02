@@ -75,6 +75,37 @@ export function anthropicUsesAdaptiveThinking(model: string): boolean {
   return /^claude-(fable-5|mythos-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
 }
 
+export type AnthropicThinkingOffMode = "omit" | "disabled-block" | "always-on";
+
+/**
+ * How a request turns thinking OFF for a model — the wire shape behind
+ * `disableThinking`. Omission is NOT a universal off-switch: what leaving the
+ * `thinking` param out means varies per model family, which is exactly the
+ * trap that made the flag a silent no-op on part of the adaptive set.
+ *
+ * - "omit": omitting `thinking` runs WITHOUT thinking. Legacy
+ *   enabled+budget models, plus Opus 4.6 / Sonnet 4.6 (adaptive must be
+ *   requested explicitly there, and `{type: "disabled"}` is not a documented
+ *   shape for that generation).
+ * - "disabled-block": send `thinking: {type: "disabled"}`. Opus 5 and
+ *   Sonnet 5 default to adaptive when the param is omitted, so only the
+ *   explicit block turns thinking off; Opus 4.7/4.8 document the same block,
+ *   and sending it pins the intent instead of leaning on their omission
+ *   default. Opus 5 wrinkle: `disabled` is only legal at effort `high` or
+ *   below — this client never sends `output_config.effort`, so the API
+ *   default (`high`) keeps it legal. Revisit if effort ever rides this path.
+ * - "always-on": thinking cannot be turned off. Fable 5 / Mythos 5 reject
+ *   `{type: "disabled"}` with a 400 AND run adaptive when the param is
+ *   omitted — the request layer omits the param and warns so the caller's
+ *   latency budget isn't silently spent on reasoning tokens.
+ */
+export function anthropicThinkingOffMode(model: string): AnthropicThinkingOffMode {
+  const m = normalizeAnthropicModel(model).toLowerCase();
+  if (/^claude-(fable-5|mythos-5)/.test(m)) return "always-on";
+  if (/^claude-(opus-5|sonnet-5|opus-4-[78])/.test(m)) return "disabled-block";
+  return "omit";
+}
+
 /**
  * Maximum OUTPUT tokens for a Claude model — the single source of truth for the
  * `max_tokens` request ceiling when a caller doesn't pass an explicit one. The

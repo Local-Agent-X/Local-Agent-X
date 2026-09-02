@@ -17,6 +17,7 @@ import { resolveCredential } from "./auth/resolve.js";
 import { streamAnthropicResponse } from "./anthropic-client/index.js";
 import { streamCodexResponse } from "./codex-client/index.js";
 import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
+import { normalizeAnthropicModel } from "./anthropic-models.js";
 
 function ollamaRuntime(models: LocalRuntimeInfo["models"]): LocalRuntimeInfo {
   return {
@@ -69,6 +70,18 @@ describe("dispatchBackgroundModel reads the canonical registry", () => {
     for (const p of ["xai", "openai", "codex", "anthropic"] as const) {
       expect(dispatchBackgroundModel(p)).toBe(backgroundModelFor(p, ""));
     }
+  });
+
+  // The anthropic default rides the no-thinking dispatch path (classifiers,
+  // rerank) straight onto the wire. Repo convention is GA alias ids, never
+  // dated snapshots (registry.ts: "GA aliases, not dated … snapshots (those get
+  // retired → 404)"), so the pin is: the default is a registered catalog id
+  // that normalization passes through byte-identical — a real runtime id, not a
+  // phantom and not an alias needing a rewrite.
+  it("the anthropic no-thinking default resolves to a real registered runtime id", () => {
+    const model = dispatchBackgroundModel("anthropic");
+    expect(PROVIDERS.anthropic.models).toContain(model);
+    expect(normalizeAnthropicModel(model)).toBe(model);
   });
 });
 

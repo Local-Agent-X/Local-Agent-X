@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicMaxOutputTokens } from "./anthropic-models.js";
 import { classifyModel } from "./model-tiers.js";
+import { PROVIDERS } from "./providers/registry.js";
 
 describe("Claude Sonnet 5 wiring", () => {
   it("uses the adaptive-thinking request shape (the 400 guard)", () => {
@@ -94,6 +95,39 @@ describe("anthropicMaxOutputTokens — per-model output ceiling (single source o
   it("is never below the legacy 8192 for any input (regression: the fix must not lower a ceiling)", () => {
     for (const m of ["claude-opus-5", "claude-haiku-4-5", "claude-opus-4-0", "", "garbage"]) {
       expect(anthropicMaxOutputTokens(m)).toBeGreaterThanOrEqual(8_192);
+    }
+  });
+});
+
+// claude-sonnet-4-7 never existed: the Sonnet line went 4.5 → 4.6 → 5, and the
+// 4.7/4.8 generation is Opus-only. The tables briefly listed it anyway, which
+// made normalizeAnthropicModel MANUFACTURE the phantom runtime id from user
+// input ("claude-sonnet-4.7" → "claude-sonnet-4-7" → wire 404) — the one thing
+// the "normalization never invents a model" contract forbids. Pin its absence
+// from every table, and pin that the registry catalog carries no phantom: every
+// offered id is a runtime id with a real per-model output ceiling.
+describe("phantom claude-sonnet-4-7 stays out of the model tables", () => {
+  it("normalization passes the unknown id through untouched instead of inventing a runtime id", () => {
+    expect(normalizeAnthropicModel("claude-sonnet-4-7")).toBe("claude-sonnet-4-7");
+    expect(normalizeAnthropicModel("claude-sonnet-4.7")).toBe("claude-sonnet-4.7");
+    expect(normalizeAnthropicModel("anthropic/claude-sonnet-4.7")).toBe("claude-sonnet-4.7");
+  });
+
+  it("gets the unknown-model output floor, not a real model's 128K ceiling", () => {
+    expect(anthropicMaxOutputTokens("claude-sonnet-4-7")).toBe(8_192);
+  });
+
+  it("its real neighbors keep their ceilings (removal touched only the phantom)", () => {
+    expect(anthropicMaxOutputTokens("claude-sonnet-4-6")).toBe(128_000);
+    expect(anthropicMaxOutputTokens("claude-sonnet-4-5")).toBe(128_000);
+  });
+
+  it("the registry catalog never offered it, and every offered id is a real runtime id", () => {
+    const catalog = PROVIDERS.anthropic.models;
+    expect(catalog).not.toContain("claude-sonnet-4-7");
+    for (const id of catalog) {
+      expect(normalizeAnthropicModel(id)).toBe(id);
+      expect(anthropicMaxOutputTokens(id)).toBeGreaterThan(8_192);
     }
   });
 });

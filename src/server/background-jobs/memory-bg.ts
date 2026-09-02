@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionStore, MemoryIndex } from "../../memory/index.js";
+import { isExcludedFromSessionSummaries } from "../../memory/synthetic-sessions.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("server.background-jobs.memory-bg");
@@ -43,7 +44,12 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
       if (purged > 0) logger.info(`[memory-bg] Purged ${purged} long-invalidated facts (>${PURGE_RETENTION_MS / (24 * 60 * 60 * 1000)}d)`);
     } catch (e) { logger.warn("[memory-bg] Purge invalidated facts:", (e as Error).message); }
     try {
-      const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000, recent = sessionStore.list().filter(s => s.updatedAt > cutoff && s.messageCount > 2);
+      // Internal scratch (dream-/cron-/eval_/skill-review-) never enters
+      // session summaries — a chatty cron transcript is not user memory, and
+      // universal-index embeds every summary written here. ide- IS
+      // summarized (real user conversations; see the re-summarize comment
+      // below). One predicate — memory/synthetic-sessions.ts.
+      const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000, recent = sessionStore.list().filter(s => s.updatedAt > cutoff && s.messageCount > 2 && !isExcludedFromSessionSummaries(s.id));
       const dir = join(dataDir, "memory", "session-summaries"); mkdirSync(dir, { recursive: true }); let n = 0;
       const newlySummarized: string[] = [];
       for (const meta of recent.slice(0, 30)) {

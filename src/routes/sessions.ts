@@ -5,7 +5,7 @@ import type { RouteHandler } from "../server-context.js";
 import { isValidSessionId, safeErrorMessage, readBody, safeParseBody, jsonResponse } from "../server-utils.js";
 import { exportSession, importSession } from "../session/export.js";
 import { loadSessionPage } from "../progressive-loader.js";
-import { isHiddenFromChatLists, isSyntheticSessionId } from "../memory/synthetic-sessions.js";
+import { isExcludedFromSessionSummaries, isHiddenFromChatLists, isSyntheticSessionId } from "../memory/synthetic-sessions.js";
 
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -60,7 +60,12 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "GET" && url.pathname === "/api/sessions/summaries") {
     const summaryDir = join(ctx.dataDir, "memory", "session-summaries");
     if (!existsSync(summaryDir)) { json(200, { summaries: [] }); return true; }
-    const files = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
+    // Filter internal scratch (dream-/cron-/eval_/skill-review-) here too,
+    // not just at the writer: summaries written before memory-bg learned to
+    // skip synthetic sessions are still on disk. The predicate matches
+    // filenames (`cron-x.md`) as well as raw ids. ide- summaries are real
+    // user memory and stay served.
+    const files = readdirSync(summaryDir).filter(f => f.endsWith(".md") && !isExcludedFromSessionSummaries(f));
     const summaries = files.map(f => {
       const content = readFileSync(join(summaryDir, f), "utf-8");
       const id = f.replace(".md", "");
@@ -119,7 +124,9 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname === "/api/sessions/auto-summarize") {
     const allSessions = ctx.sessionStore.list();
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const stale = allSessions.filter(s => s.updatedAt < cutoff && s.messageCount > 4);
+    // Same seam as memory-bg's summarizer: internal scratch never becomes a
+    // session summary (this writer shares the dir the memory index ingests).
+    const stale = allSessions.filter(s => s.updatedAt < cutoff && s.messageCount > 4 && !isExcludedFromSessionSummaries(s.id));
     const summaries: Array<{ id: string; title: string; summary: string }> = [];
     const summaryDir = join(ctx.dataDir, "memory", "session-summaries");
     mkdirSync(summaryDir, { recursive: true });

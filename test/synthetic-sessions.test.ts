@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomId } from "../src/util/ids.js";
 import {
   CHAT_LIST_HIDDEN_PREFIXES,
+  isExcludedFromSessionSummaries,
   isHiddenFromChatLists,
   isSyntheticSessionId,
   SYNTHETIC_SESSION_PREFIXES,
@@ -75,6 +79,63 @@ describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/s
   it("real user chats are never hidden", () => {
     for (const id of ["chat-abc", "wa-111", "tg-222", "voice-1", "fork-deadbeef", "ide-app", "my-cron-job", "dreamer"]) {
       expect(isHiddenFromChatLists(id)).toBe(false);
+    }
+  });
+});
+
+// The THIRD predicate: session summaries (the memory-ingestion concern, the
+// FOURTH reader of the synthetic set). memory-bg summarizes recent sessions
+// into memory/session-summaries (which universal-index embeds) and
+// /api/sessions/summaries + /api/sessions/auto-summarize share the dir —
+// none of them filtered, so chatty cron-/dream- transcripts leaked into the
+// memory index (same class as dream's 150 MB self-ingestion). Same set as
+// chat-list hiding TODAY, but a separate concern: sidebar visibility must
+// never silently decide what enters user memory.
+describe("isExcludedFromSessionSummaries — internal scratch never becomes user memory", () => {
+  it("excludes every synthetic prefix except ide-", () => {
+    for (const prefix of SYNTHETIC_SESSION_PREFIXES.filter((p) => p !== "ide-")) {
+      expect(isExcludedFromSessionSummaries(`${prefix}1780687489740`)).toBe(true);
+      // The summaries route filters raw FILENAMES from disk.
+      expect(isExcludedFromSessionSummaries(`${prefix}1780687489740.md`)).toBe(true);
+    }
+  });
+
+  it("what the real minters produce is excluded (randomId('eval'), cron-<jobId>-<ts>)", () => {
+    expect(isExcludedFromSessionSummaries(randomId("eval"))).toBe(true);
+    expect(isExcludedFromSessionSummaries(`cron-daily-report-${Date.now()}`)).toBe(true);
+  });
+
+  it("ide- keeps summarizing — IDE-panel chats are real user conversations", () => {
+    expect(isSyntheticSessionId("ide-todo-app")).toBe(true); // synthetic for the live index…
+    expect(isExcludedFromSessionSummaries("ide-todo-app")).toBe(false); // …but summarized as user memory
+    expect(isExcludedFromSessionSummaries("ide-todo-app.md")).toBe(false);
+  });
+
+  it("real user chats and near-misses are never excluded", () => {
+    for (const id of ["chat-abc", "wa-111", "fork-deadbeef", "my-cron-job", "dreamer", "skill-reviewer"]) {
+      expect(isExcludedFromSessionSummaries(id)).toBe(false);
+    }
+  });
+});
+
+// One-source-of-truth pin for the new seam: the summarize readers/writers
+// import the predicate — they never re-type a prefix. A hand-typed "cron-"
+// in either file is exactly the drift that made the four readers diverge in
+// the first place (session-helpers 2 prefixes, routes/sessions 4, dream 0,
+// memory-bg none at all).
+describe("summary seam readers import the predicate — no re-typed prefix literals", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const files = [
+    join(here, "../src/server/background-jobs/memory-bg.ts"),
+    join(here, "../src/routes/sessions.ts"),
+  ];
+
+  it.each(files)("%s has no quoted synthetic-prefix literal and imports synthetic-sessions", (file) => {
+    const src = readFileSync(file, "utf-8");
+    expect(src).toMatch(/from "\.\.?\/.*memory\/synthetic-sessions\.js"/);
+    for (const prefix of SYNTHETIC_SESSION_PREFIXES) {
+      // Quoted occurrences only — prose in comments may name the prefixes.
+      expect(src).not.toMatch(new RegExp(`["']${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     }
   });
 });

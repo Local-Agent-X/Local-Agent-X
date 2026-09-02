@@ -101,6 +101,19 @@ const presentationCreate: ToolDefinition = {
 };
 
 // ── presentation_add_slide ──
+
+// Output naming for add_slide: pptxgenjs cannot modify an existing file, so
+// the new single-slide deck lands ALONGSIDE the original with a position
+// suffix. Exported for the task-artifact recording hook
+// (tool-execution/run-sandboxed.ts) — same parity contract as
+// chart-tools.chartOutPath: the hook must pre-stat the SAME output path this
+// tool will write, so the derivation (default position included) lives here
+// once. Takes the RESOLVED original path (resolvePath'd by both callers).
+export function addSlideOutPath(resolvedOriginalPath: string, position: unknown): string {
+  const pos = (position as number) ?? 2;
+  return resolvedOriginalPath.replace(/\.pptx$/i, `_slide_${pos}.pptx`);
+}
+
 const presentationAddSlide: ToolDefinition = {
   name: "presentation_add_slide",
   description:
@@ -124,7 +137,7 @@ const presentationAddSlide: ToolDefinition = {
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       const acquired = await acquireImages(specs);
       const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
-      const outPath = resolvePath(args.file_path as string).replace(/\.pptx$/i, `_slide_${pos}.pptx`);
+      const outPath = addSlideOutPath(resolvePath(args.file_path as string), pos);
       ensureDir(outPath);
       const pptx = await makePptx();
       pptx.author = brandAuthor(theme) || "";

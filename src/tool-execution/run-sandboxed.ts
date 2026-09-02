@@ -13,8 +13,8 @@ import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { RetryableToolResultError } from "../resilience-policy.js";
 import { ToolTimeoutError } from "./tool-timeout.js";
-import { timeout, blocked, ok } from "../tools/result-helpers.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { timeout, blocked, ok, statusOf } from "../tools/result-helpers.js";
+import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
@@ -22,6 +22,7 @@ import { unattendedShellBlock } from "./unattended-shell-gate.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { chartOutPath } from "../tools/chart-tools.js";
+import { addSlideOutPath } from "../tools/presentation-tools.js";
 
 // Edit-family tools that must not touch a file the session hasn't seen the
 // current bytes of (stale-read guard). Read-before-edit, enforced at the layer
@@ -40,22 +41,32 @@ const CREATE_CLASS: ReadonlySet<string> = new Set(["write", "spreadsheet", "docu
 
 // The resolved output path a create-class call will write, or null when this
 // (tool, action, args) combination creates nothing (e.g. spreadsheet read).
-// Resolution mirrors each tool's own: the office tools and write resolve via
-// resolveAgentPath (workspace/paths.ts), create_chart via its exported
-// chartOutPath (workspace-anchored, ".png" appended) — the SAME functions the
-// execute bodies call, so the pre-stat and the write land on one path.
-// presentation add_slide is deliberately absent: its file_path names the
-// ORIGINAL deck, and the output spelling (`_slide_N.pptx`) is derived inside
-// the tool — re-deriving it here would fork tool-internal naming.
+// PARITY RULE: resolve each tool's path EXACTLY as that tool's execute does —
+// never unify. `write` resolves WITH sessionIdOf(args) (read-write-tools.ts;
+// the resolve phase stamps _sessionId on file tools), so a registered session
+// work root (auto-build chunk workers) anchors its relative paths — a
+// sessionless resolve here enrolled a never-created project-root spelling and
+// missed the real artifact. The office families resolve SESSIONLESS (their
+// own resolvePath alias). create_chart and presentation add_slide go through
+// their tools' exported derivations (chartOutPath: workspace-anchored, ".png"
+// appended; addSlideOutPath: `_slide_N.pptx` beside the original) — the SAME
+// functions the execute bodies call, so pre-stat and write land on one path.
 function createTargetPath(toolName: string, args: Record<string, unknown>): string | null {
   const action = typeof args.action === "string" ? args.action : "";
   let raw: unknown;
   switch (toolName) {
-    case "write": raw = args.path; break;
+    case "write":
+      if (typeof args.path !== "string" || !args.path) return null;
+      try { return resolveAgentPath(args.path, sessionIdOf(args)); } catch { return null; }
     case "spreadsheet": if (action === "write") raw = args.file_path; break;
-    case "document": if (action === "create") raw = args.file_path; break;
+    case "document": raw = action === "create" ? args.file_path : action === "template" ? args.output_path : undefined; break;
     case "pdf": raw = action === "create" ? args.file_path : action === "merge" ? args.output_path : undefined; break;
-    case "presentation": if (action === "create" || action === "from_outline") raw = args.file_path; break;
+    case "presentation":
+      if (action === "create" || action === "from_outline") raw = args.file_path;
+      else if (action === "add_slide" && typeof args.file_path === "string" && args.file_path) {
+        try { return addSlideOutPath(resolveAgentPath(args.file_path), args.position); } catch { return null; }
+      }
+      break;
     case "create_chart":
       return typeof args.file_path === "string" && args.file_path ? chartOutPath(args.file_path) : null;
   }
@@ -204,10 +215,12 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     const view = tc.name === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
     try { recordFileSeen(sessionId, resolveAgentPath(args.path), view); } catch { /* freshness is best-effort */ }
   }
-  if (succeeded && sessionId && createdArtifactTarget) {
+  if (sessionId && createdArtifactTarget && statusOf(result) === "ok") {
     // The file did not exist pre-execute and the create-class call succeeded:
-    // the agent created it. SUCCESS-only, like the external-ingestion mark —
-    // a failed call enrolls nothing even if it left partial bytes behind.
+    // the agent created it. SUCCESS-only means envelope status "ok" — not
+    // merely !isError: a `running` (async-started) result has produced no
+    // finished deliverable yet, and a failed call enrolls nothing even if it
+    // left partial bytes behind (like the external-ingestion mark).
     try { recordTaskArtifact(sessionId, createdArtifactTarget); } catch { /* lineage is best-effort */ }
   }
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }

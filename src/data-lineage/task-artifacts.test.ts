@@ -24,6 +24,8 @@ import { runSandboxedPhase } from "../tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok } from "../tools/result-helpers.js";
+import { writeTool } from "../tools/read-write-tools.js";
+import { setSessionWorkRoot, clearSessionWorkRoot, resolveAgentPath } from "../workspace/paths.js";
 import { pushCompletionToParent } from "../agency/handler-completion.js";
 import type { FieldAgent } from "../agency/handler-types.js";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
@@ -92,6 +94,27 @@ describe("task-artifact registry", () => {
 		// Recorded under the SYMLINKED spelling → queryable via the realpath.
 		recordTaskArtifact(s, join(linkDir, "deck.pptx"));
 		expect(isTaskArtifact(s, realFile)).toBe(true);
+		clearTaskArtifacts(s);
+	});
+
+	it("matches a differently-CASED spelling of a recorded artifact via inode identity; different files never match", () => {
+		const s = freshSession();
+		const root = tmpRoot();
+		const target = join(root, "Case-Probe.md");
+		writeFileSync(target, "cased");
+		recordTaskArtifact(s, target);
+		const lower = join(root, "case-probe.md");
+		if (existsSync(lower)) {
+			// Case-insensitive volume (macOS/Windows default): the other-cased
+			// spelling is the SAME inode — the delete guard must see it.
+			expect(isTaskArtifact(s, lower)).toBe(true);
+		}
+		// Zero false positives: an existing DIFFERENT file is a different inode.
+		const other = join(root, "other.md");
+		writeFileSync(other, "different file");
+		expect(isTaskArtifact(s, other)).toBe(false);
+		// And a non-existent query still misses cleanly.
+		expect(isTaskArtifact(s, join(root, "never-created.md"))).toBe(false);
 		clearTaskArtifacts(s);
 	});
 
@@ -192,6 +215,70 @@ describe("runSandboxedPhase — task-artifact recording hook (create-class, did-
 		await runSandboxedPhase(ctxFor(creatingTool("create_chart", derived), { file_path: requested, type: "bar", series: "[]" }, s));
 		expect(isTaskArtifact(s, derived)).toBe(true);
 		expect(isTaskArtifact(s, requested)).toBe(false);
+		clearTaskArtifacts(s);
+	});
+
+	it("MB-1/P2: a work-rooted session's RELATIVE write enrolls the ACTUAL written path, not the project-root spelling", async () => {
+		// The registry's primary customers (delegated/auto-build workers) run
+		// with a registered session work root: the REAL write tool resolves
+		// relative paths against it via sessionIdOf(args) (_sessionId is
+		// stamped by the resolve phase — mirrored here). A sessionless resolve
+		// in the hook enrolled a never-created project-root path (future
+		// false delete-block) and missed the real artifact (delete-guard hole).
+		const s = freshSession();
+		const workRoot = tmpRoot();
+		setSessionWorkRoot(s, workRoot);
+		try {
+			const ctx = ctxFor(writeTool, { path: "chunk-artifact.md", content: "built by worker", _sessionId: s }, s);
+			await runSandboxedPhase(ctx);
+			expect(ctx.result!.isError).toBeFalsy();
+			const actual = join(workRoot, "chunk-artifact.md");
+			expect(existsSync(actual)).toBe(true);
+			expect(isTaskArtifact(s, actual)).toBe(true);
+			// The sessionless (project-root-anchored) spelling was never created
+			// and must NOT be enrolled.
+			const sessionless = resolveAgentPath("chunk-artifact.md");
+			expect(sessionless).not.toBe(actual);
+			expect(isTaskArtifact(s, sessionless)).toBe(false);
+		} finally {
+			clearSessionWorkRoot(s);
+			clearTaskArtifacts(s);
+		}
+	});
+
+	it("a 'running' (async-started) result does not enroll — SUCCESS means envelope status ok, not merely !isError", async () => {
+		const s = freshSession();
+		const target = join(tmpRoot(), "async-out.md");
+		const tool = fakeTool("write", async () => {
+			writeFileSync(target, "partial bytes");
+			return { content: "started in background", status: "running" } as ToolResult;
+		});
+		await runSandboxedPhase(ctxFor(tool, { path: target, content: "x" }, s));
+		expect(existsSync(target)).toBe(true); // bytes landed…
+		expect(isTaskArtifact(s, target)).toBe(false); // …but no finished deliverable yet
+	});
+
+	it("document template enrolls the filled OUTPUT file, never the template it read", async () => {
+		const s = freshSession();
+		const root = tmpRoot();
+		const template = join(root, "letter-template.docx");
+		writeFileSync(template, "the user's template");
+		const out = join(root, "letter-filled.docx");
+		await runSandboxedPhase(ctxFor(creatingTool("document", out), { action: "template", template_path: template, output_path: out, variables: "{}" }, s));
+		expect(isTaskArtifact(s, out)).toBe(true);
+		expect(isTaskArtifact(s, template)).toBe(false);
+		clearTaskArtifacts(s);
+	});
+
+	it("presentation add_slide enrolls the tool's DERIVED output file (addSlideOutPath parity)", async () => {
+		const s = freshSession();
+		const root = tmpRoot();
+		const original = join(root, "deck.pptx");
+		writeFileSync(original, "the existing deck");
+		const derived = join(root, "deck_slide_3.pptx"); // addSlideOutPath(original, 3)
+		await runSandboxedPhase(ctxFor(creatingTool("presentation", derived), { action: "add_slide", file_path: original, slide: "{}", position: 3 }, s));
+		expect(isTaskArtifact(s, derived)).toBe(true);
+		expect(isTaskArtifact(s, original)).toBe(false);
 		clearTaskArtifacts(s);
 	});
 

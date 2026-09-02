@@ -23,7 +23,12 @@
  * symlink-resolving canonicalizer the security layer's allow-set and gates
  * use), and queries canonicalize the same way, so a symlinked spelling of a
  * recorded file (macOS /tmp → /private/tmp, junctioned workspaces) can never
- * split one inode into two identities across the record/query seam.
+ * split one inode into two identities across the record/query seam. String
+ * canonicalization alone still misses CASE-variant spellings on
+ * case-insensitive volumes (macOS/Windows defaults — realpathSync preserves
+ * the query's casing), so isTaskArtifact falls back to inode ground truth on
+ * a miss: stat the query and compare (dev, ino) against the session's stored
+ * paths. Same inode on any volume matches; different files never do.
  *
  * Lifecycle mirrors external.ts: in-memory, STICKY for the session's life (no
  * production caller clears it — clearTaskArtifacts exists for tests, like
@@ -32,6 +37,7 @@
  * deliverables belong to the parent's task once the sub-agent completes.
  */
 
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { realpathDeep } from "../workspace/paths.js";
 
@@ -66,12 +72,32 @@ export function recordTaskArtifact(sessionId: string, realpath: string): void {
 }
 
 /** Did this session's agent create this file? The query path is realpath-
- *  normalized, so a symlinked spelling of a recorded artifact still matches. */
+ *  normalized, so a symlinked spelling of a recorded artifact still matches;
+ *  on a canonical-string miss, inode identity ((dev, ino) of an EXISTING
+ *  query target vs the stored paths) catches case-variant spellings on
+ *  case-insensitive volumes — a differently-cased rm target must not slip
+ *  past the delete guard. Zero false positives: a different file is a
+ *  different inode. Best-effort stats — an unstat-able side just doesn't
+ *  match. */
 export function isTaskArtifact(sessionId: string, path: string): boolean {
 	if (!sessionId || !path) return false;
 	const set = sessionArtifacts.get(sessionId);
 	if (!set || set.size === 0) return false;
-	return set.has(canonical(path));
+	const query = canonical(path);
+	if (set.has(query)) return true;
+	let q: { dev: number | bigint; ino: number | bigint };
+	try {
+		q = statSync(query);
+	} catch {
+		return false; // query target doesn't exist — nothing to identity-match
+	}
+	for (const stored of set) {
+		try {
+			const s = statSync(stored);
+			if (s.dev === q.dev && s.ino === q.ino) return true;
+		} catch { /* stored artifact since deleted/moved — skip */ }
+	}
+	return false;
 }
 
 /** All artifacts recorded for the session (canonical spellings, copy). */

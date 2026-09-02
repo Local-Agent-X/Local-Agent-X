@@ -23,7 +23,7 @@
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
 import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession } from "../ops/session-bridge.js";
-import { isHeadlessSession } from "../chat-ws/state.js";
+import { isHeadlessSession } from "../chat-ws/broadcast.js";
 import { isDispatchFailure } from "./types.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";

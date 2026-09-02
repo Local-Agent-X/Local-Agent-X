@@ -77,5 +77,5 @@ export function setupChatWebSocket(server: Server, authToken: string, maxPayload
   return buildManager();
 }
 
-export { broadcastAll } from "./state.js";
+export { broadcastAll } from "./broadcast.js";
 export type { ChatWsManager } from "./manager.js";

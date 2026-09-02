@@ -10,11 +10,9 @@ import {
   activeChats,
   type ActiveChat,
   appendRun,
-  broadcastActiveChats,
-  broadcastToSession,
   replaceRunLane,
-  terminateChat,
 } from "./state.js";
+import { broadcastActiveChats, broadcastToSession, terminateChat } from "./broadcast.js";
 import { setChatHandler, type ChatHandler } from "./chat-handler.js";
 
 const logger = createLogger("chat-ws");

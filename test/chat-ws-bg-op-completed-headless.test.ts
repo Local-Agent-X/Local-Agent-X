@@ -9,7 +9,7 @@
 // writes the failure trace into its fold body, and arms the 30-min prune.
 //
 // So the server stamps `headless: true` on bg_op_completed (derived from the
-// ONE predicate, src/chat-ws/state.ts isHeadlessSession — see
+// ONE predicate, src/chat-ws/broadcast.ts isHeadlessSession — see
 // session-bridge-observer.ts) and the client skips toast + fallback card on
 // that stamp while still applying the updateAgentFeed dock update. These
 // tests pin both halves of the client decision: headless → dock-only;

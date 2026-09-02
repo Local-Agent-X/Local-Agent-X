@@ -230,7 +230,7 @@ export const selfEditTool: ToolDefinition = {
     // this session, refuse the new call. Prevents the parallel-worktree mess
     // when a slow self_edit tempts the model to retry.
     //
-    // The local controller lets terminateChat (chat-ws/state.ts) reach in and
+    // The local controller lets terminateChat (chat-ws/broadcast.ts) reach in and
     // kill this self_edit immediately on stop. We chain the inbound `signal`
     // and the local controller through AbortSignal.any so EITHER source fires
     // killProcessTree in the sandbox/bypass runners. Without the local

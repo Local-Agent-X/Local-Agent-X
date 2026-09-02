@@ -23,7 +23,8 @@
 import { setSessionBroadcaster } from "../ops/session-bridge.js";
 import { setIdleNudgeBroadcaster } from "../ops/idle-nudge.js";
 import { GLOBAL_EVENT_TYPES } from "./process-relay-delivery.js";
-import { activeChats, broadcastAll, broadcastToSession } from "./state.js";
+import { activeChats } from "./state.js";
+import { broadcastAll, broadcastToSession } from "./broadcast.js";
 import type { ActiveChat } from "./state.js";
 import type { ServerEvent } from "../types.js";
 import { notifySessionEventObservers } from "./session-event-observers.js";

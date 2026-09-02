@@ -14,11 +14,8 @@ import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { getChatHandler } from "./chat-handler.js";
-import {
-  broadcastToSession,
-  getMessageCountForSession,
-  terminateChat,
-} from "./state.js";
+import { getMessageCountForSession } from "./state.js";
+import { broadcastToSession, terminateChat } from "./broadcast.js";
 import { replayBufferedEvents } from "./replay.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // Static import, like everything the inject path touches: that path is

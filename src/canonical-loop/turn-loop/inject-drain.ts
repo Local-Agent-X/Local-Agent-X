@@ -14,7 +14,8 @@ import { appendOpMessage, readOpMessages } from "../store.js";
 import { emit } from "../event-emitter.js";
 import { drainInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
-import { broadcastToSession, recordInjectRun } from "../../chat-ws/state.js";
+import { recordInjectRun } from "../../chat-ws/state.js";
+import { broadcastToSession } from "../../chat-ws/broadcast.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.turn-loop.inject-drain");

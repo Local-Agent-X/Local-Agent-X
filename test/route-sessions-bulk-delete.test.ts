@@ -45,13 +45,14 @@ describe("DELETE /api/sessions — aliased to sidebar_clear", () => {
 });
 
 describe("GET /api/sessions — hides system sessions from the sidebar", () => {
-  it("filters dream-/cron-/ide-/eval_ prefixes, keeps regular + bridge sessions", async () => {
+  it("filters dream-/cron-/ide-/eval_/skill-review- prefixes, keeps regular + bridge sessions", async () => {
     const list = [
       { id: "chat-aaa", title: "regular", updatedAt: 1, messageCount: 2 },
       { id: "wa-111", title: "whatsapp", updatedAt: 1, messageCount: 2 },
       { id: "dream-fff", title: "dream", updatedAt: 1, messageCount: 2 },
       { id: "cron-ggg", title: "cron", updatedAt: 1, messageCount: 2 },
       { id: "ide-hhh", title: "ide", updatedAt: 1, messageCount: 2 },
+      { id: "skill-review-iii", title: "skill review cycle", updatedAt: 1, messageCount: 2 },
       // From the real minter (routes/chat.ts randomId("eval") → eval_<hex>);
       // the old hand-typed `eval-…` fixture pinned a prefix nothing mints.
       { id: randomId("eval"), title: "eval throwaway", updatedAt: 1, messageCount: 2 },

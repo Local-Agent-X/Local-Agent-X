@@ -5,17 +5,17 @@ import type { RouteHandler } from "../server-context.js";
 import { isValidSessionId, safeErrorMessage, readBody, safeParseBody, jsonResponse } from "../server-utils.js";
 import { exportSession, importSession } from "../session/export.js";
 import { loadSessionPage } from "../progressive-loader.js";
-import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
+import { isHiddenFromChatLists, isSyntheticSessionId } from "../memory/synthetic-sessions.js";
 
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   // List sessions
   if (method === "GET" && url.pathname === "/api/sessions") {
-    // Hide system sessions (dream, cron, IDE, eval) from the sidebar. Eval
-    // sessions are dry-run throwaways from /api/eval/run — surfacing one lets
-    // the UI adopt it and route a real message into a dry-run turn (silent
-    // no-op reported as success).
+    // Hide system sessions (dream, cron, IDE, eval, skill-review) from the
+    // sidebar. Eval sessions are dry-run throwaways from /api/eval/run —
+    // surfacing one lets the UI adopt it and route a real message into a
+    // dry-run turn (silent no-op reported as success).
     const all = ctx.sessionStore.list();
     const visible = all.filter(s => !isSyntheticSessionId(s.id));
     json(200, visible);
@@ -26,7 +26,12 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "GET" && url.pathname === "/api/sessions/search") {
     const query = (url.searchParams.get("q") || "").toLowerCase().trim();
     if (!query || query.length < 2) { json(400, { error: "Query too short" }); return true; }
-    const allSessions = ctx.sessionStore.list();
+    // Same hiding as the chat lists (one predicate — synthetic-sessions.ts):
+    // a search hit on a cron-/dream-/eval_/skill-review- transcript opens as
+    // a fake chat the sidebar refuses to list. Filter BEFORE the slice(0,100)
+    // scan budget so hidden transcripts can't crowd out real ones. ide- stays
+    // searchable — live user chats with their own surface.
+    const allSessions = ctx.sessionStore.list().filter(s => !isHiddenFromChatLists(s.id));
     const results: Array<{ sessionId: string; title: string; matches: Array<{ role: string; snippet: string; index: number }> }> = [];
     for (const meta of allSessions.slice(0, 100)) {
       const session = ctx.sessionStore.load(meta.id);

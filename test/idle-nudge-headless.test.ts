@@ -6,7 +6,7 @@
  * event (process-relay-delivery.ts GLOBAL_EVENT_TYPES), so the "hit a snag"
  * text fanned out to every connected client — a background job posting into
  * the user's chat. scheduleIdleNudge now suppresses headless sessions at the
- * source using the ONE headless predicate, chat-ws/state.ts
+ * source using the ONE headless predicate, chat-ws/broadcast.ts
  * isHeadlessSession (prefixes eval_/skill-review-/dream-) — the same
  * discriminator broadcastToSession already applies. Failures stay visible in
  * logs and on the AGENTS panel dock (session-bridge-observer, untouched).
@@ -15,7 +15,10 @@
  * skill-review.ts `skill-review-<ts>-<seq>`, routes/chat.ts randomId("eval").
  * `ide-` sessions are LIVE user chats (memory's SYNTHETIC_SESSION_PREFIXES
  * holds them too — that list must NOT become the discriminator here), so they
- * keep nudging.
+ * keep nudging. Same for `cron-`: a cron job is a USER-SCHEDULED task — it is
+ * hidden from chat lists/search (isHiddenFromChatLists,
+ * memory/synthetic-sessions.ts) but its failures MUST still nudge, so cron-
+ * must never be added to HEADLESS_SESSION_PREFIXES.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +28,7 @@ import {
   setIdleNudgeBroadcaster,
 } from "../src/ops/idle-nudge.js";
 import { drainPendingNotifications, pushPendingNotification } from "../src/ops/pending-notifications.js";
-import { isHeadlessSession } from "../src/chat-ws/state.js";
+import { isHeadlessSession } from "../src/chat-ws/broadcast.js";
 import { randomId } from "../src/util/ids.js";
 
 let counter = 0;
@@ -128,6 +131,22 @@ describe("scheduleIdleNudge — headless/background sessions never nudge chat", 
 
   it("an ide- session is a LIVE user chat and still nudges (do not widen to SYNTHETIC_SESSION_PREFIXES)", () => {
     const s = `ide-${suffix()}`;
+    expect(isHeadlessSession(s)).toBe(false);
+    let fired = false;
+    setIdleNudgeBroadcaster(() => { fired = true; });
+    pushFailed(s);
+    scheduleIdleNudge(s);
+    vi.advanceTimersByTime(2 * 60 * 1000);
+    expect(fired).toBe(true);
+    drainPendingNotifications(s);
+  });
+
+  it("a cron- session is a USER-SCHEDULED task and still nudges (cron- stays out of the headless list)", () => {
+    // Mirrors the real minter (background-jobs/cron-runner.ts):
+    // `cron-${jobId}-${Date.now()}`. cron- is hidden from chat lists/search
+    // (the UI concern) but is NOT headless — muting it here would swallow the
+    // "your scheduled job failed" notification.
+    const s = `cron-daily-report-${Date.now()}`;
     expect(isHeadlessSession(s)).toBe(false);
     let fired = false;
     setIdleNudgeBroadcaster(() => { fired = true; });

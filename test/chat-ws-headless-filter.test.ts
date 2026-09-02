@@ -15,21 +15,30 @@
  * Background jobs mint synthetic sessions too — `skill-review-`
  * (background-jobs/skill-review.ts) and `dream-` (background-jobs/dream-check.ts)
  * — filtered as a guard. Prefix matching is exact on the trailing dash:
- * `skill-reviewer` is a real session. And `ide-` sessions are live user-facing
- * chats over this socket, so the filter must NOT be widened to
- * memory/synthetic-sessions.ts's SYNTHETIC_SESSION_PREFIXES.
+ * `skill-reviewer` is a real session.
+ *
+ * Two predicates, two concerns (2026-09-01):
+ *   - broadcastToSession filters isHeadlessSession (eval_/skill-review-/
+ *     dream-) — "never interrupts the user". cron- and ide- deliver.
+ *   - the active_chats LISTING (listActiveChatIds → broadcastActiveChats and
+ *     connection-setup's on-connect snapshot) filters isHiddenFromChatLists
+ *     (headless + cron-) — "never a chat row". A listed id makes the browser
+ *     mint a sidebar row (setActiveSidebarSet → ensure()), so a cron- id
+ *     there IS a fake chat; its events/nudges still flow. ide- chats are live
+ *     user-facing chats over this socket and stay listed.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
 import type { WebSocket } from "ws";
 import { randomId } from "../src/util/ids.js";
+import { clients, activeChats, type ActiveChat } from "../src/chat-ws/state.js";
 import {
-  clients,
-  activeChats,
   broadcastToSession,
   broadcastActiveChats,
-  type ActiveChat,
-} from "../src/chat-ws/state.js";
+  listActiveChatIds,
+  isHeadlessSession,
+} from "../src/chat-ws/broadcast.js";
+import { isHiddenFromChatLists } from "../src/memory/synthetic-sessions.js";
 
 /** Exactly what /api/eval/run mints (routes/chat.ts, `randomId("eval")`). */
 const EVAL_SESSION = randomId("eval");
@@ -116,5 +125,56 @@ describe("chat-ws headless filtering of background-job sessions (skill-review-, 
     expect(sent).toHaveLength(DELIVERABLE.length);
     const delivered = sent.map(s => (JSON.parse(s) as { sessionId: string }).sessionId);
     expect(delivered).toEqual(DELIVERABLE);
+  });
+});
+
+describe("cron- sessions: hidden chat row, unmuted transport", () => {
+  // Mirrors the real minter (background-jobs/cron-runner.ts):
+  // `cron-${jobId}-${Date.now()}`.
+  const CRON_SESSION = `cron-daily-report-${Date.now()}`;
+
+  it("broadcastActiveChats omits the cron session but keeps live ide-/chat- rows", () => {
+    activeChats.set("chat-real", fakeChat("chat-real"));
+    activeChats.set("ide-todo-app", fakeChat("ide-todo-app"));
+    activeChats.set(CRON_SESSION, fakeChat(CRON_SESSION));
+    const { ws, sent } = fakeWs();
+    clients.set(ws, new Set());
+
+    broadcastActiveChats();
+
+    const msg = JSON.parse(sent[0]) as { sessionIds: string[] };
+    expect(msg.sessionIds).toEqual(["chat-real", "ide-todo-app"]);
+  });
+
+  it("broadcastToSession STILL delivers cron- events to a subscriber — hiding the row must not mute the run", () => {
+    const { ws, sent } = fakeWs();
+    clients.set(ws, new Set([CRON_SESSION]));
+
+    broadcastToSession(CRON_SESSION, { type: "error", message: "job failed" } as never);
+
+    expect(sent).toHaveLength(1);
+    expect((JSON.parse(sent[0]) as { sessionId: string }).sessionId).toBe(CRON_SESSION);
+  });
+
+  it("headless ⊂ hidden: everything transport-muted is also list-hidden (the reverse is false for cron-)", () => {
+    for (const id of [EVAL_SESSION, "skill-review-123", "dream-456"]) {
+      expect(isHeadlessSession(id)).toBe(true);
+      expect(isHiddenFromChatLists(id)).toBe(true);
+    }
+    expect(isHiddenFromChatLists(CRON_SESSION)).toBe(true);
+    expect(isHeadlessSession(CRON_SESSION)).toBe(false);
+  });
+});
+
+describe("connection-setup on-connect snapshot uses the same filtered listing", () => {
+  it("listActiveChatIds (the snapshot + broadcast source) hides headless and cron-, keeps chat-/ide-", () => {
+    for (const id of ["chat-real", "ide-todo-app", "cron-nightly-9", "dream-1", "skill-review-2", EVAL_SESSION]) {
+      activeChats.set(id, fakeChat(id));
+    }
+    const doneChat = fakeChat("chat-done");
+    doneChat.done = true;
+    activeChats.set("chat-done", doneChat);
+
+    expect(listActiveChatIds()).toEqual(["chat-real", "ide-todo-app"]);
   });
 });

@@ -25,7 +25,8 @@ import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { buildManager } from "./manager.js";
 import { heartbeatEvent } from "./heartbeat.js";
-import { activeChats, clients, recordInjectRun, terminateChat } from "./state.js";
+import { activeChats, clients, recordInjectRun } from "./state.js";
+import { terminateChat } from "./broadcast.js";
 import { replayBufferedEvents } from "./replay.js";
 
 interface Frame {

@@ -13,7 +13,7 @@ vi.mock("../../session/turn-lock.js", () => ({
 }));
 
 const broadcastAll = vi.fn();
-vi.mock("../../chat-ws/state.js", () => ({
+vi.mock("../../chat-ws/broadcast.js", () => ({
 	broadcastAll: (...args: unknown[]) => broadcastAll(...args),
 }));
 

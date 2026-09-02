@@ -6,7 +6,8 @@
 // The message router itself is registered separately by the caller.
 
 import type { WebSocket } from "ws";
-import { activeChats, clients } from "./state.js";
+import { clients } from "./state.js";
+import { listActiveChatIds } from "./broadcast.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 
 const WS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -53,10 +54,14 @@ export function setupConnection(ws: WebSocket): ConnectionContext {
   ws.on("close", () => clearInterval(heartbeatTimer));
 
   // Send the list of currently active chats so the client can populate
-  // its "live indicator" badges immediately on connect.
+  // its "live indicator" badges immediately on connect. Same filtered
+  // listing as broadcastActiveChats — this snapshot used to send the raw
+  // map, leaking headless (eval_/skill-review-/dream-) and cron- ids to
+  // every fresh connection, and the browser mints a sidebar row for every
+  // id it receives here (setActiveSidebarSet → ensure()).
   ws.send(JSON.stringify({
     type: "active_chats",
-    sessionIds: [...activeChats.keys()].filter(id => !activeChats.get(id)!.done),
+    sessionIds: listActiveChatIds(),
   }));
 
   // Replay bg_op_started for currently-running autopilot ops so a

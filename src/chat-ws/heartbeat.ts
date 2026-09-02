@@ -8,7 +8,8 @@
 // beat is telemetry about a turn, never a reason to make a turn track more.
 
 import type { ServerEvent } from "../types.js";
-import { activeChats, broadcastToSession, type ActiveChat } from "./state.js";
+import { activeChats, type ActiveChat } from "./state.js";
+import { broadcastToSession } from "./broadcast.js";
 
 // Keepalive cadence for live turns. The client's stuck-stream watchdog
 // (public/js/chat-ws.js) fires reconnect_op after 60s without events, so a

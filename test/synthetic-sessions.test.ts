@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { randomId } from "../src/util/ids.js";
-import { isSyntheticSessionId, SYNTHETIC_SESSION_PREFIXES } from "../src/memory/synthetic-sessions.js";
+import {
+  CHAT_LIST_HIDDEN_PREFIXES,
+  isHiddenFromChatLists,
+  isSyntheticSessionId,
+  SYNTHETIC_SESSION_PREFIXES,
+} from "../src/memory/synthetic-sessions.js";
 
 // Regression for the memory_dream self-ingestion blowup: dream globbed every
 // *.jsonl in ~/.lax/sessions with NO prefix filter, so each run re-ingested
@@ -37,5 +42,39 @@ describe("isSyntheticSessionId", () => {
     expect(isSyntheticSessionId("1780687489740.jsonl")).toBe(false);
     expect(isSyntheticSessionId("daydream-notes")).toBe(false); // substring, not prefix
     expect(isSyntheticSessionId("my-cron-job")).toBe(false);    // prefix must be leading
+  });
+});
+
+// The OTHER predicate this module owns: chat-list hiding (the UI concern).
+// Derived as SYNTHETIC minus ide-. Kept strictly separate from chat-ws/
+// broadcast.ts isHeadlessSession ("never interrupts the user"): cron- is
+// hidden HERE but must keep nudging — test/idle-nudge-headless.test.ts and
+// test/chat-ws-headless-filter.test.ts pin the two sides.
+describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/search", () => {
+  it("hides every synthetic prefix except ide-", () => {
+    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "skill-review-"]);
+    for (const prefix of CHAT_LIST_HIDDEN_PREFIXES) {
+      expect(isHiddenFromChatLists(`${prefix}1780687489740`)).toBe(true);
+    }
+  });
+
+  it("what cron-runner.ts actually mints (`cron-<jobId>-<ts>`) is hidden", () => {
+    expect(isHiddenFromChatLists(`cron-daily-report-${Date.now()}`)).toBe(true);
+  });
+
+  it("skill-review- (SKILL_REVIEW_SESSION_PREFIX, background-jobs/skill-review.ts) is synthetic AND hidden", () => {
+    expect(isSyntheticSessionId("skill-review-1756687489740-0")).toBe(true);
+    expect(isHiddenFromChatLists("skill-review-1756687489740-0")).toBe(true);
+  });
+
+  it("ide- is synthetic (memory + persisted sidebar list) but NOT hidden from live chat lists", () => {
+    expect(isSyntheticSessionId("ide-todo-app")).toBe(true);
+    expect(isHiddenFromChatLists("ide-todo-app")).toBe(false);
+  });
+
+  it("real user chats are never hidden", () => {
+    for (const id of ["chat-abc", "wa-111", "tg-222", "voice-1", "fork-deadbeef", "ide-app", "my-cron-job", "dreamer"]) {
+      expect(isHiddenFromChatLists(id)).toBe(false);
+    }
   });
 });

@@ -23,12 +23,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import { attachMessageRouter } from "./message-router.js";
-import {
-  activeChats,
-  clients,
-  terminateChat,
-  broadcastActiveChats,
-} from "./state.js";
+import { activeChats, clients } from "./state.js";
+import { terminateChat, broadcastActiveChats } from "./broadcast.js";
 import { setChatHandler, type ChatHandler } from "./chat-handler.js";
 import { replayBufferedEvents } from "./replay.js";
 import { markChatHandlerPending, clearChatHandlerPending, listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";

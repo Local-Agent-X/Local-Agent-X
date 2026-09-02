@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { z } from "zod";
 
-import { broadcastAll } from "../../chat-ws/state.js";
+import { broadcastAll } from "../../chat-ws/broadcast.js";
 import { retractLastTurn } from "../../memory/retract-last-turn.js";
 import { validateBody } from "../../route-schemas.js";
 import type { ServerContext } from "../../server-context.js";

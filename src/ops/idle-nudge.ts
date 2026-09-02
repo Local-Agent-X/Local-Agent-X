@@ -21,7 +21,7 @@
  */
 import type { ServerEvent } from "../types.js";
 import { markSurfacedViaNudge, type PendingNotification } from "./pending-notifications.js";
-import { isHeadlessSession } from "../chat-ws/state.js";
+import { isHeadlessSession } from "../chat-ws/broadcast.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.idle-nudge");
 
@@ -88,7 +88,7 @@ export function setIdleNudgeBroadcaster(fn: (sessionId: string, event: ServerEve
 export function scheduleIdleNudge(sessionId: string, taskHint?: string): void {
   if (!sessionId) return;
   // Background jobs never interrupt chat. A headless session (dream-, skill-
-  // review-, eval_ — the canonical predicate lives in chat-ws/state.ts) has no
+  // review-, eval_ — the canonical predicate lives in chat-ws/broadcast.ts) has no
   // user behind it, and bg_op_nudge is a GLOBAL chat-WS event: relay delivery
   // fans it out to EVERY connected client, so a failed memory-consolidation
   // dream posted "hit a snag" into open chats. Suppress at the source — no

@@ -25,10 +25,26 @@
  * On OLD code the op stays `running` → this test fails (assert `failed`).
  * On the FIX the op ends `failed` with the lease released → passes.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+// Injectable finalize fault for the first-error-wins suite below: when armed,
+// recordTerminalOutcome (the first step of the worker catch's finalize) throws
+// like a completion-ledger disk failure. Pass-through otherwise, so the rest of
+// this file exercises the real module.
+const finalizeFault = vi.hoisted(() => ({ active: false }));
+vi.mock("../src/canonical-loop/turn-loop/record-outcome.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/canonical-loop/turn-loop/record-outcome.js")>();
+  return {
+    ...actual,
+    recordTerminalOutcome: (...args: Parameters<typeof actual.recordTerminalOutcome>) => {
+      if (finalizeFault.active) throw new Error("simulated completion-ledger disk failure");
+      return actual.recordTerminalOutcome(...args);
+    },
+  };
+});
 
 import {
   canonicalLoopEntry,
@@ -205,6 +221,57 @@ describe("worker loop exception finalizes the op (C3 regression)", () => {
       (e.body as { to?: string } | undefined)?.to === "cancelled",
     );
     expect(cancelledTransition).toBeDefined();
+  });
+});
+
+describe("finalize failure never overwrites the original terminal error (first-error-wins)", () => {
+  it("a turn that throws AND fails finalize reports the original exception, not worker_finalize_failed", async () => {
+    const op = mkOp("finalize-fails");
+
+    // Turn 0 requests a tool so the worker enters dispatchTools; the dispatcher
+    // throw is the ORIGINAL terminal error the turn must stay attributed to.
+    registerAdapterForOp(op.id, () => new FakeAdapter({
+      script: [scriptTurn({ toolCalls: [{ toolCallId: "wexc-fin-0", tool: "search", args: {} }] })],
+    }));
+    setToolDispatcher({
+      async dispatch() {
+        throw new Error("simulated tool-dispatch fault");
+      },
+    });
+
+    // Arm the finalize fault: recordTerminalOutcome throws inside the worker
+    // catch, so the finalize itself fails right after the worker_exception emit.
+    finalizeFault.active = true;
+    try {
+      canonicalLoopEntry(op);
+      // No terminal state lands (finalize failed), so sync on the worker's
+      // finally via the scheduler drain instead of on a terminal transition.
+      await awaitIdle(3_000).catch(() => undefined);
+    } finally {
+      finalizeFault.active = false;
+    }
+
+    const events = readCanonicalEvents(op.id);
+    const errorCodes = events
+      .filter(e => e.type === "error")
+      .map(e => (e.body as { code?: string } | undefined)?.code);
+
+    // The original exception is the turn's error…
+    expect(errorCodes).toContain("worker_exception");
+    // …and the finalize failure is NOT a competing `error` event. The chat
+    // path attributes the turn to the LAST error event it drains
+    // (canonical-run.ts "last error wins"), so a worker_finalize_failed emit
+    // would misattribute the turn to the finalize, not the exception.
+    expect(errorCodes).not.toContain("worker_finalize_failed");
+    expect(errorCodes[errorCodes.length - 1]).toBe("worker_exception");
+
+    // The finalize failure is still recorded secondarily on the lease_lost
+    // reason (durable in canonical-events.jsonl), never lost.
+    const leaseLost = events.find(e => e.type === "lease_lost");
+    expect(leaseLost).toBeDefined();
+    const reason = (leaseLost?.body as { reason?: string } | undefined)?.reason ?? "";
+    expect(reason).toContain("exception:simulated tool-dispatch fault");
+    expect(reason).toContain("finalize_failed:simulated completion-ledger disk failure");
   });
 });
 

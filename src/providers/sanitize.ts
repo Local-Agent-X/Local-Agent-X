@@ -81,10 +81,38 @@ function asTurnError(v: unknown): TurnError | null {
 // so match the fixed frame around a bounded single-line body; like
 // CONTROL_MARKERS, tolerates a model-mangled copy missing its closing bracket.
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** One shared body bound for the echo scrub and the standalone recognition. */
+const TURN_ERROR_BODY_BOUND = 400;
 const TURN_ERROR_ECHO = new RegExp(
-  `\\s*${escapeRe(TURN_ERROR_BOUNDARY_HEAD)}.{0,400}?${escapeRe(TURN_ERROR_BOUNDARY_TAIL.slice(0, -1))}\\]?`,
+  `\\s*${escapeRe(TURN_ERROR_BOUNDARY_HEAD)}.{0,${TURN_ERROR_BODY_BOUND}}?${escapeRe(TURN_ERROR_BOUNDARY_TAIL.slice(0, -1))}\\]?`,
   "g",
 );
+
+// A standalone `_error` boundary row is ALSO recognized by content — the
+// structural flag can be dropped by copy paths — but recognition is
+// deliberately STRICT, because a kept row is permanent while a scrubbed one
+// merely degrades to the pre-recognition behavior (narration lost). So:
+//  - the body must have renderTurnErrorBoundary's template shape — a bare
+//    `code: message` with code ≤64 chars of [A-Za-z0-9_.-] and a single-line,
+//    bracket-free message — so prose or bracketed payloads smuggled into the
+//    frame fail recognition and fall through to the echo scrub;
+//  - the bracket-free body also makes a multi-copy concatenation structurally
+//    unmatchable (HEAD contains `[`, TAIL contains `]`), and
+//    isStandaloneTurnErrorBoundary rejects any second HEAD explicitly;
+//  - sanitizeHistory adds the history-level rule: content recognition only
+//    applies when NO control-flagged row exists in the pass (flags re-render
+//    boundaries, so a flagless frame beside one is an echo), and only to the
+//    LAST matching row. When in doubt, scrub.
+const TURN_ERROR_STANDALONE = new RegExp(
+  `^${escapeRe(TURN_ERROR_BOUNDARY_HEAD)}[A-Za-z0-9_.-]{1,64}: [^\\[\\]\\r\\n]{0,${TURN_ERROR_BODY_BOUND}}?${escapeRe(TURN_ERROR_BOUNDARY_TAIL)}$`,
+);
+
+/** True iff `trimmed` is EXACTLY one canonically-shaped `_error` boundary. */
+function isStandaloneTurnErrorBoundary(trimmed: string): boolean {
+  // A second HEAD anywhere = concatenated echo copies, never one canonical row.
+  if (trimmed.indexOf(TURN_ERROR_BOUNDARY_HEAD, 1) !== -1) return false;
+  return TURN_ERROR_STANDALONE.test(trimmed);
+}
 
 // Registry of retired inline markers to scrub from assistant content.
 // Add new entries here if another marker is ever found in the wild — and
@@ -102,7 +130,10 @@ const CONTROL_MARKERS: Array<{ pattern: RegExp; meansInterrupted: boolean }> = [
  * Enforce the control-marker invariant on one provider-bound message.
  * Returns the message unchanged when nothing applies (common case).
  */
-function enforceMarkerInvariant(m: ChatCompletionMessageParam): ChatCompletionMessageParam {
+function enforceMarkerInvariant(
+  m: ChatCompletionMessageParam,
+  keepFlaglessErrorBoundary = false,
+): ChatCompletionMessageParam {
   if (m.role !== "assistant" || typeof m.content !== "string") return m;
   const rec = m as unknown as Record<string, unknown>;
   const turnError = asTurnError(rec._error);
@@ -110,8 +141,16 @@ function enforceMarkerInvariant(m: ChatCompletionMessageParam): ChatCompletionMe
 
   // The chat path's deliberate standalone boundary rows: keep as-is, minus
   // the structural flag (provider payloads carry only role/content shape).
+  // A flagless `_error` frame is kept ONLY when sanitizeHistory nominated
+  // this row (no control-flagged sibling anywhere in the history, and this
+  // is the last matching row); every other flagless frame is an echo and
+  // falls through to the scrub below.
   const trimmed = m.content.trim();
-  if (trimmed === INTERRUPTED_TURN_BOUNDARY || (errorBoundary !== null && trimmed === errorBoundary)) {
+  if (
+    trimmed === INTERRUPTED_TURN_BOUNDARY ||
+    (errorBoundary !== null && trimmed === errorBoundary) ||
+    (keepFlaglessErrorBoundary && isStandaloneTurnErrorBoundary(trimmed))
+  ) {
     if (rec._interrupted === undefined && rec._error === undefined) return m;
     return withoutControlFlags(m);
   }
@@ -223,9 +262,32 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
   }
   const orphanedCallIds = new Set([...callIds].filter((id) => !resultIds.has(id)));
 
+  // Nominate at most ONE flagless standalone `_error` boundary row for
+  // content recognition (the genuine flag-dropped copy). When ANY control-
+  // flagged row is present, the seam re-renders boundaries from flags, so a
+  // flagless frame beside one is a model echo — none is nominated and the
+  // echo scrub applies (sessions self-heal). With no flagged sibling, only
+  // the LAST matching row can be the genuine copy; earlier ones are echoes.
+  const anyControlFlagged = messages.some((m) => {
+    const rec = m as unknown as MsgRecord;
+    return rec._interrupted === true || asTurnError(rec._error) !== null;
+  });
+  let keepFlaglessBoundaryIdx = -1;
+  if (!anyControlFlagged) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "assistant" || typeof m.content !== "string") continue;
+      if (isStandaloneTurnErrorBoundary(m.content.trim())) {
+        keepFlaglessBoundaryIdx = i;
+        break;
+      }
+    }
+  }
+
   const out: ChatCompletionMessageParam[] = [];
-  for (const raw of messages) {
-    const m = enforceMarkerInvariant(raw);
+  for (let i = 0; i < messages.length; i++) {
+    const raw = messages[i];
+    const m = enforceMarkerInvariant(raw, i === keepFlaglessBoundaryIdx);
     const rec = m as unknown as MsgRecord;
     if (m.role === "assistant" && rec.tool_calls) {
       if (orphanedCallIds.size > 0) {

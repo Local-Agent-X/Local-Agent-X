@@ -13,8 +13,9 @@
  * dropped the call (providers/sanitize.ts). One defect, three behaviors —
  * repaired here at the producer so every adapter sees a well-formed
  * transcript. The codex wire keeps its own belt (codex-message-convert.ts
- * MISSING_TOOL_OUTPUT) for transcripts cut mid-call; both use ONE phrasing,
- * pinned equal by orphan-tool-results.test.ts.
+ * MISSING_TOOL_OUTPUT) for transcripts cut mid-call; both share ONE constant
+ * — codex-message-convert.ts owns the string and this file re-exports it
+ * (orphan-tool-results.test.ts still pins the equality).
  *
  * The row asserts no cause. Dispatch was skipped before any call started on
  * the loop-detection path, but the invariant is general — a call may have
@@ -32,12 +33,16 @@
  */
 import type { CommitTurnMessage } from "../checkpoint.js";
 import { createLogger } from "../../logger.js";
+import { MISSING_TOOL_OUTPUT } from "../../codex-message-convert.js";
 
 const logger = createLogger("canonical-loop.turn-loop.orphan-tool-results");
 
-/** Exact text the model sees for a call whose result was never recorded. */
-export const MISSING_TOOL_RESULT_TEXT =
-  "[No result was recorded for this tool call. It may or may not have run; check current state before repeating any action with side effects.]";
+/** Exact text the model sees for a call whose result was never recorded.
+ *  Single source: codex-message-convert.ts owns the string; importing it here
+ *  is legal (the interface seal constrains imports INTO canonical-loop
+ *  internals, not outward ones, and adapters/codex-transport.ts already
+ *  imports that module). Re-exported under the producer-side name. */
+export const MISSING_TOOL_RESULT_TEXT = MISSING_TOOL_OUTPUT;
 
 export const DISPATCH_SKIPPED_CODE = "dispatch_skipped";
 

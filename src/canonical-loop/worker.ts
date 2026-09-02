@@ -40,6 +40,9 @@ import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("canonical-loop.worker");
 
 // Fallback turn cap when the op carries no (or an invalid) iteration budget.
 // The real cap is the op budget the entry runner stamped — see maxTurns below;
@@ -347,13 +350,19 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         // IllegalTransitionError = the op raced to terminal between the guard
         // read and the write (the benign no-op cancel-handler / recovery
         // already rely on). Anything else (e.g. a disk write failure) is
-        // surfaced rather than silently dropped — but never re-thrown.
+        // recorded rather than silently dropped — but never re-thrown, and
+        // never as a second `error` event: the chat path attributes the turn
+        // to the LAST error event it drains (canonical-run.ts "last error
+        // wins"), so emitting `worker_finalize_failed` here overwrote the
+        // original exception the user actually hit. First error wins — the
+        // `worker_exception` emit above stays the op's terminal error; the
+        // finalize failure lands in the log and on the lease_lost reason
+        // (free-form; soak-metrics only matches the exact reason "expired").
         if (!(finalizeErr instanceof IllegalTransitionError)) {
-          emit(op.id, "error", {
-            code: "worker_finalize_failed",
-            message: (finalizeErr as Error).message,
-            retryable: false,
-          });
+          logger.error(
+            `finalize failed for op ${op.id} after ${releaseReason}: ${(finalizeErr as Error).message}`,
+          );
+          releaseReason = `${releaseReason}; finalize_failed:${(finalizeErr as Error).message}`;
         }
       }
     }

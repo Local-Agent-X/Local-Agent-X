@@ -73,6 +73,10 @@ export function parseReasoningItem(item: Record<string, unknown>): ReasoningItem
  * push`) or never started — so the model is told to check state before it
  * repeats a side-effecting action. Dropping the call instead would also drop
  * the reasoning trail that precedes it and desync ordering.
+ *
+ * Single source of truth for the phrasing: the producer-side repair
+ * (canonical-loop/turn-loop/orphan-tool-results.ts) re-exports this constant
+ * as MISSING_TOOL_RESULT_TEXT — edit the text here only.
  */
 export const MISSING_TOOL_OUTPUT =
   "[No result was recorded for this tool call. It may or may not have run; check current state before repeating any action with side effects.]";

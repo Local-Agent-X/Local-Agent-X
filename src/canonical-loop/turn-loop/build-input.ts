@@ -128,10 +128,14 @@ export function readPendingRedirect(opId: string): RedirectInstruction | null {
 // before the model sees them. Two paths produce them: a rapid double-send
 // (the user hits enter twice), and a retracted-hallucination turn whose false
 // assistant text was dropped, leaving the question adjacent to the corrective
-// nudge. Anthropic's API rejects consecutive same-role messages, so collapsing
-// here keeps every adapter's replay valid. op_messages on disk is untouched —
-// this only shapes the per-turn model view. Image-bearing user rows are left
-// standalone so their attachment semantics survive.
+// nudge. Anthropic's Messages API tolerates these (consecutive same-role
+// messages are merged into a single turn server-side), but codex-style
+// transports expect strict user/assistant alternation — runs of user-only
+// rows yield empty responses (see the coalesce step in providers/sanitize.ts)
+// — so collapsing at the canonical view keeps every adapter's replay uniform
+// instead of leaving each transport to repair it. op_messages on disk is
+// untouched — this only shapes the per-turn model view. Image-bearing user
+// rows are left standalone so their attachment semantics survive.
 export function collapseAdjacentUserMessages(messages: CanonicalMessage[]): CanonicalMessage[] {
   const out: CanonicalMessage[] = [];
   for (const m of messages) {

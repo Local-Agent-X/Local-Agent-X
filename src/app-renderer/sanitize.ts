@@ -61,6 +61,10 @@ function decodeNumericRef(literal: string, cp: number): string {
   if (!Number.isInteger(cp) || cp > 0x10ffff) return literal;
   if (cp >= 0xd800 && cp <= 0xdfff) return literal;
   if (cp < 0x20 || cp === 0x7f || (cp >= 0x80 && cp <= 0x9f)) return literal;
+  // One no-break-space policy: `&nbsp;` decodes to a plain space above, so
+  // its numeric spellings must too — a U+00A0 in a cell breaks equality and
+  // lookups invisibly.
+  if (cp === 0xa0) return " ";
   return String.fromCodePoint(cp);
 }
 

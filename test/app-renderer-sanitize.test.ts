@@ -70,6 +70,13 @@ describe("decodeHtmlEntities / htmlToText", () => {
     expect(decodeHtmlEntities("caf&#233;")).toBe("café");
   });
 
+  it("one no-break-space policy: numeric NBSP spellings decode to a plain space like &nbsp;", () => {
+    expect(decodeHtmlEntities("a&#160;b")).toBe("a b");
+    expect(decodeHtmlEntities("a&#xA0;b")).toBe("a b");
+    expect(decodeHtmlEntities("a&nbsp;b")).toBe("a b");
+    expect(decodeHtmlEntities("a&#160;b")).not.toContain("\u00A0");
+  });
+
   it("decodes common named typographic entities", () => {
     expect(decodeHtmlEntities("&rsquo;&lsquo;&ldquo;&rdquo;&mdash;&ndash;&hellip;")).toBe(
       "’‘“”—–…",

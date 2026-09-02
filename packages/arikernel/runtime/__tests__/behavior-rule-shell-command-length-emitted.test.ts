@@ -147,6 +147,9 @@ describe("Rule 5: tainted_shell_with_data — commandLength metadata", () => {
 		// Short command: the deny-tainted-shell POLICY denies it. Chunk L removed
 		// shell from Rule 1's followups (temporal FP), so the behavioral quarantine
 		// no longer fires here — but the policy deny is independent and still blocks.
+		// Pin the TAINT rule's reason, not just the error class: if shell ever
+		// re-enters a behavioral quarantine, a broken policy rule must not be
+		// masked by some other denier making this test pass vacuously.
 		await expect(
 			fw.execute({
 				toolClass: "shell",
@@ -154,7 +157,7 @@ describe("Rule 5: tainted_shell_with_data — commandLength metadata", () => {
 				parameters: { command: "ls -la" },
 				grantId: shellGrant.grant?.id,
 			}),
-		).rejects.toThrow(ToolCallDeniedError);
+		).rejects.toThrow(/untrusted input is forbidden/);
 	});
 
 	it("allows long shell command when no taint present", async () => {

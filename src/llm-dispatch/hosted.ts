@@ -17,7 +17,7 @@
  */
 
 import { resolveCredential } from "../auth/resolve.js";
-import { anthropicUsesAdaptiveThinking, usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
+import { anthropicUsesAdaptiveThinking, normalizeAnthropicModel, usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { ProviderRequest } from "../providers/adapter/types.js";
 import { createLogger } from "../logger.js";
@@ -57,6 +57,13 @@ export async function callAnthropic(prompt: string, model: string, temperature: 
       return callAnthropicViaCliProxy(apiKey, prompt, model, temperature, timeoutMs, images);
     }
     if (rejectOAuth && !apiKey.startsWith("sk-ant-api")) return null;
+    // The raw wire only accepts runtime ids — aliases users actually have in
+    // settings ("anthropic/…" prefixes, dotted versions, "[1m]" suffixes,
+    // dated snapshots) 404. normalizeAnthropicModel is the one alias map (the
+    // canonical client normalizes with it in stream-api.ts); "api" mode is
+    // this path's auth mode. Runtime ids pass through byte-identical, and the
+    // CLI-proxy leg above normalizes inside the client itself.
+    const wireModel = normalizeAnthropicModel(model);
     const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": apiKey };
     // No images → content stays the bare prompt string, so existing call
     // sites produce the exact request body they always have.
@@ -76,7 +83,7 @@ export async function callAnthropic(prompt: string, model: string, temperature: 
       // same predicate the CLI-proxy leg gates on in stream-api.ts, and it
       // resolves aliases itself (api mode, which is this path's auth mode).
       // Legacy models keep the byte-identical body, key order included.
-      body: JSON.stringify({ model, max_tokens: maxTokens, ...(anthropicUsesAdaptiveThinking(model) ? {} : { temperature }), messages: [{ role: "user", content }] }),
+      body: JSON.stringify({ model: wireModel, max_tokens: maxTokens, ...(anthropicUsesAdaptiveThinking(wireModel) ? {} : { temperature }), messages: [{ role: "user", content }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {

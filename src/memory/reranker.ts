@@ -11,6 +11,7 @@ import type { MemorySearchResult } from "./index.js";
 import { createLogger } from "../logger.js";
 import { resolveCredential } from "../auth/resolve.js";
 import { getRuntimeConfig } from "../config.js";
+import { dispatch } from "../llm-dispatch.js";
 const logger = createLogger("memory-reranker");
 
 export interface RerankOptions {
@@ -92,42 +93,26 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
   }
 
   if (provider === "anthropic") {
-    try {
-      const resolved = await resolveCredential("anthropic");
-      const apiKey = resolved?.credential || "";
-      if (!apiKey) { logger.warn("[reranker] No Anthropic API key"); return []; }
-      const model = options.model || "claude-haiku-4-5-20251001";
-
-      // Direct API call
-      const token = apiKey.startsWith("oauth:") ? apiKey.slice(6) : apiKey;
-      const isOAuth = apiKey.startsWith("oauth:");
-      const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
-      if (isOAuth) headers["Authorization"] = `Bearer ${token}`;
-      else headers["x-api-key"] = token;
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model, max_tokens: 200, temperature: 0,
-          messages: [{ role: "user", content: prompt }],
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        logger.warn(`[reranker] Anthropic ${res.status}: ${body.slice(0, 100)}`);
-        return [];
-      }
-      const data = await res.json() as { content?: Array<{ text?: string }> };
-      const text = data.content?.[0]?.text || "";
-      const scores = parseScores(text, count);
-      if (scores.length > 0) logger.info(`[reranker] Haiku scored ${scores.length} candidates`);
-      else logger.warn(`[reranker] Haiku returned unparseable: ${text.slice(0, 80)}`);
-      return scores;
-    } catch (e) {
-      logger.warn("[reranker] Anthropic call failed:", (e as Error).message);
-      return [];
-    }
+    // No private Anthropic wire here. This leg used to raw-fetch /v1/messages
+    // itself, which forked the canonical dispatch leg and drifted on both of
+    // its invariants: it Bearer-fetched `oauth:` (subscription) credentials —
+    // the banned direct-HTTP path, 429 since April 2026 — and hardcoded
+    // temperature:0, which adaptive-thinking models reject with a 400. The
+    // canonical single-shot dispatcher (llm-dispatch → hosted.js callAnthropic,
+    // the same seam memory-resolver/memory-extract/memory-hyde ride) already
+    // owns both: usesAnthropicSubscriptionAuth routes subscription creds
+    // through the canonical anthropic client (CLI proxy), and the API-key raw
+    // leg gates temperature on anthropicUsesAdaptiveThinking and normalizes
+    // the model id. Provider is pinned to "anthropic" — a failure returns []
+    // (original scores kept, warned), never a fallback to another provider.
+    // maxTokens/temperature/timeout defaults match the old literals (200/0/30s);
+    // the default model is the registry's Anthropic background model (Haiku).
+    const text = await dispatch({ prompt, provider: "anthropic", anthropicModel: options.model });
+    if (text === null) { logger.warn("[reranker] Anthropic dispatch failed"); return []; }
+    const scores = parseScores(text, count);
+    if (scores.length > 0) logger.info(`[reranker] Anthropic scored ${scores.length} candidates`);
+    else logger.warn(`[reranker] Anthropic returned unparseable: ${text.slice(0, 80)}`);
+    return scores;
   }
 
   if (provider === "openai") {

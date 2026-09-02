@@ -157,6 +157,13 @@ export const configSchema = z.object({
   // driving from mobile. Same risk profile: DEFAULT OFF, also needs the OS grant.
   enableRemoteControl: z.boolean().default(false),
   localOnlyMode: z.boolean().default(false),
+  // Deliverable verification: when a task builds a deliverable from external
+  // data (a report, spreadsheet, chart), an independent background model run
+  // re-checks the result against its sources before hand-off. Default ON —
+  // quality-over-cost product decision; each firing costs one background
+  // model run. Consulted live by the verification trigger, so flipping it
+  // off skips the pass with no restart.
+  verifyDeliverables: z.boolean().default(true),
 
   /** Opt-in USD spend caps on REAL per-call API spend. 0 = disabled (default).
    *  When > 0, the spend-cap rule pack blocks every tool call once the matching

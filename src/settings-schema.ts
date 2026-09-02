@@ -205,6 +205,13 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     protected: true,
     description: "Strict local-only mode. Allows only loopback network access and local models; blocks cloud auth, providers, web tools, remote MCP, connectors, integrations, bridges, account presence, sync, and updates",
   },
+  {
+    field: "verifyDeliverables",
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    description: "Independent verification pass when a task builds a deliverable from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources before hand-off. On by default; costs one background model run when it fires",
+  },
 
   // ── UI-only (renderer reads settings.json directly; no runtime mirror needed) ──
   {

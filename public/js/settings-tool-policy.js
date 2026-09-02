@@ -27,6 +27,8 @@ async function loadToolPolicyToggles() {
     setToolPolicyToggle('tp-toggle-local-only', s.localOnlyMode === true);
     applyLocalOnlyUi(s.localOnlyMode === true);
     setToolPolicyToggle('cfg-toggle-grok-media', s.preferGrokForMedia !== false);
+    // Deliverable verification pass defaults ON (!== false).
+    setToolPolicyToggle('tp-toggle-verify-deliverables', s.verifyDeliverables !== false);
     // developer_mode defaults OFF (=== true), unlike the kill-switches above
     // which default ON (!== false). The card only renders on installs where
     // self_edit can exist at all (git checkout) — packaged installs hide it.

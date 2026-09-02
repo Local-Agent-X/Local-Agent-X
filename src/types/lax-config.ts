@@ -159,6 +159,12 @@ export interface LAXConfig {
   /** User-controlled strict privacy posture. When enabled, every server-side
    * egress surface is limited to loopback and provider routing is local-only. */
   localOnlyMode: boolean;
+  /** Deliverable verification pass. When true (default), a task that builds a
+   *  deliverable from external data gets an independent verification pass — a
+   *  background model run that re-checks the result against its sources
+   *  before hand-off. Costs one background model run each time it fires.
+   *  Not a security kill-switch; user-flippable. */
+  verifyDeliverables: boolean;
 
   /** Opt-in daily USD spend cap. 0 (default) = disabled. When > 0, the
    *  spend-cap pack blocks every tool call once today's total cost reaches

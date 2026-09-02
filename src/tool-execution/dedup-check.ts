@@ -30,6 +30,10 @@ export const dedupCheckPhase: Phase = async (ctx: ToolCallContext) => {
   // emitter. Emitting in both places (the old terminate() path) produced
   // two tool messages + two tool_end events under one tool_call_id — the
   // MCP route serialized both and provider replays 400'd on the dup id.
+  // The reused result was NOT produced by an execution in this invocation —
+  // flag it so the trailing audit's execution-effect recorders (provenance)
+  // skip; only the original execution's audit attributes the write.
+  ctx.resultReused = "dedup-cache";
   ctx.allowed = hit.allowed;
   ctx.result = hit.result
     ? { ...hit.result, content: `${hit.result.content}\n\n${annotation}` }

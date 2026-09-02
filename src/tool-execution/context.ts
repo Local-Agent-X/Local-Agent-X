@@ -43,6 +43,13 @@ export interface ToolCallContext {
 
   startedAt?: number;
   result?: ToolResult;
+  /** Set when ctx.result was satisfied WITHOUT the tool executing in THIS
+   * invocation: a side-effect-journal decision that suppressed execution
+   * (crash-recovery replay of a completed entry, or its blocked siblings —
+   * run-sandboxed sets it) or a dedup-cache hit (dedup-check sets it).
+   * Execution-effect recorders (provenance) must skip when set — the write
+   * they would attribute did not happen now. */
+  resultReused?: "journal-replay" | "dedup-cache";
 
   allowed: boolean;
   msgs: ChatCompletionMessageParam[];

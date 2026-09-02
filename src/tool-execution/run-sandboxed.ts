@@ -14,15 +14,14 @@ import { CONTINUE } from "./context.js";
 import { RetryableToolResultError } from "../resilience-policy.js";
 import { ToolTimeoutError } from "./tool-timeout.js";
 import { timeout, blocked, ok, statusOf } from "../tools/result-helpers.js";
-import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
+import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
 import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
-import { chartOutPath } from "../tools/chart-tools.js";
-import { addSlideOutPath } from "../tools/presentation-tools.js";
+import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
 
 // Edit-family tools that must not touch a file the session hasn't seen the
 // current bytes of (stale-read guard). Read-before-edit, enforced at the layer
@@ -31,48 +30,9 @@ const FRESHNESS_GUARDED: ReadonlySet<string> = new Set(["edit", "edit_lines", "m
 // Tools that leave the session knowing a file's current on-disk bytes.
 const RECORDS_SEEN: ReadonlySet<string> = new Set(["read", "write", "edit", "edit_lines", "multi_edit"]);
 
-// Create-class tools — a SUCCESSFUL call means "a persistent file now exists
-// at a caller-named path". Cheap membership gate: every other tool skips the
-// task-artifact pre-stat entirely (this phase is on EVERY tool call). Registry
-// names, not the pre-collapse per-action defs: the office families register as
-// ONE collapsed tool with an `action` arg (collapse-family.ts), so membership
-// is (tool, action)-conditional in createTargetPath below.
-const CREATE_CLASS: ReadonlySet<string> = new Set(["write", "spreadsheet", "document", "pdf", "presentation", "create_chart"]);
-
-// The resolved output path a create-class call will write, or null when this
-// (tool, action, args) combination creates nothing (e.g. spreadsheet read).
-// PARITY RULE: resolve each tool's path EXACTLY as that tool's execute does —
-// never unify. `write` resolves WITH sessionIdOf(args) (read-write-tools.ts;
-// the resolve phase stamps _sessionId on file tools), so a registered session
-// work root (auto-build chunk workers) anchors its relative paths — a
-// sessionless resolve here enrolled a never-created project-root spelling and
-// missed the real artifact. The office families resolve SESSIONLESS (their
-// own resolvePath alias). create_chart and presentation add_slide go through
-// their tools' exported derivations (chartOutPath: workspace-anchored, ".png"
-// appended; addSlideOutPath: `_slide_N.pptx` beside the original) — the SAME
-// functions the execute bodies call, so pre-stat and write land on one path.
-function createTargetPath(toolName: string, args: Record<string, unknown>): string | null {
-  const action = typeof args.action === "string" ? args.action : "";
-  let raw: unknown;
-  switch (toolName) {
-    case "write":
-      if (typeof args.path !== "string" || !args.path) return null;
-      try { return resolveAgentPath(args.path, sessionIdOf(args)); } catch { return null; }
-    case "spreadsheet": if (action === "write") raw = args.file_path; break;
-    case "document": raw = action === "create" ? args.file_path : action === "template" ? args.output_path : undefined; break;
-    case "pdf": raw = action === "create" ? args.file_path : action === "merge" ? args.output_path : undefined; break;
-    case "presentation":
-      if (action === "create" || action === "from_outline") raw = args.file_path;
-      else if (action === "add_slide" && typeof args.file_path === "string" && args.file_path) {
-        try { return addSlideOutPath(resolveAgentPath(args.file_path), args.position); } catch { return null; }
-      }
-      break;
-    case "create_chart":
-      return typeof args.file_path === "string" && args.file_path ? chartOutPath(args.file_path) : null;
-  }
-  if (typeof raw !== "string" || !raw) return null;
-  try { return resolveAgentPath(raw); } catch { return null; }
-}
+// CREATE_CLASS + createTargetPath (the per-family tool→output-path mapping the
+// pre-stat below keys on) live in create-target-path.ts — shared with the
+// audit phase's provenance recording, one mapping for both.
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
@@ -161,6 +121,11 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
   const runner = createToolRunner({ tool, args, operationId: ctx.operationId, toolCallId: tc.id, toolName: tc.name, sessionId, signal, onProgress });
+  // A journal-suppressed call (crash-recovery re-dispatch replaying a
+  // completed entry, or its blocked siblings) never executes in THIS
+  // invocation — flag it so execution-effect recorders in the trailing audit
+  // (provenance) don't attribute a write that did not happen now.
+  if (runner.replayed) ctx.resultReused = "journal-replay";
 
   // Provisional arg-derived taint floor (R4-09): up before execute so a
   // co-batched egress check can't observe an empty floor. The post-execute

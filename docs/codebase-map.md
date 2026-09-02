@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1523 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1524 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -20,11 +20,11 @@ over 400 LOC (the source-hygiene ceiling).
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 118 | 25 | XL |  |
 | `src/security/` | 84 | 34 | XL |  |
-| `src/tools/` | 63 | 168 | XL |  |
+| `src/tools/` | 64 | 168 | XL |  |
 | `src/providers/` | 59 | 20 | XL |  |
 | `src/canonical-loop/` | 56 | 212 | XL |  |
 | `src/memory/` | 46 | 127 | XL |  |
-| `src/workspace/` | 37 | 2 | M |  |
+| `src/workspace/` | 38 | 2 | M |  |
 | `src/session/` | 35 | 7 | L |  |
 | `src/classifiers/` | 34 | 17 | L |  |
 | `src/util/` | 33 | 2 | S |  |
@@ -34,8 +34,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agency/` | 28 | 19 | L |  |
 | `src/browser/` | 28 | 76 | XL |  |
 | `src/agent-store/` | 26 | 7 | M |  |
+| `src/data-lineage/` | 26 | 8 | L |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
-| `src/data-lineage/` | 25 | 8 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/agent-request/` | 21 | 14 | L |  |
 | `src/context/` | 21 | 3 | M |  |
@@ -48,7 +48,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/sandbox/` | 16 | 9 | L |  |
 | `src/anthropic-client/` | 14 | 20 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
-| `src/tool-execution/` | 12 | 40 | XL |  |
+| `src/tool-execution/` | 12 | 41 | XL |  |
 | `src/voice/` | 12 | 74 | XL |  |
 | `src/whatsapp-bridge/` | 12 | 8 | L |  |
 | `src/autonomy/` | 11 | 4 | M |  |

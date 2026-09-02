@@ -7,6 +7,10 @@ import { createRetryCallSnapshot } from "./retry-call.js";
 import { createJournaledExecution } from "./journaled-execution.js";
 
 export interface ToolRunner {
+  /** True when the side-effect journal satisfied this call without executing
+   *  it (replay of a completed entry, or its blocked siblings). Decided at
+   *  creation — prepareSideEffect runs inside createToolRunner. */
+  readonly replayed: boolean;
   run(): Promise<ToolResult>;
   reconcile(error: unknown): ToolResult | null;
   complete(result: ToolResult): void;
@@ -44,6 +48,7 @@ export function createToolRunner(input: {
     return result;
   };
   return {
+    replayed: journal.replayed,
     run: () => call.retryable
       ? withRetry(runOnce, {
           maxRetries: 2,

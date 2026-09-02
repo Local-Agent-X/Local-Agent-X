@@ -9,6 +9,8 @@ import { renderToolResultForModel, statusOf } from "../tools/result-helpers.js";
 import { closeUnterminatedExternalBlocks } from "../sanitize.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { logToolUsage } from "./tool-usage-telemetry.js";
+import { appendProvenance, type ProvenanceSource } from "../data-lineage/provenance.js";
+import { createTargetPath } from "./create-target-path.js";
 import { spillFullResult } from "../tools/result-spill.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
@@ -192,11 +194,55 @@ function recordUsage(ctx: ToolCallContext): void {
   });
 }
 
+// Provenance recording (data-lineage/provenance.ts): a successful write-class
+// call that DECLARES its inputs (`args.sources` — the writer schemas grow the
+// optional arg in a later chunk) lands exactly ONE record in the deliverable's
+// sidecar, here at the canonical audit seam — never per-tool. The recorded
+// `file` comes from createTargetPath (create-target-path.ts), the SAME
+// per-family mapping the sandbox phase pre-stats with, so provenance and
+// task-artifact lineage agree on the deliverable's identity; a call with no
+// create-class target records nothing. Runs after evaluateThreat: a
+// threat-flipped result is no longer "ok" and records nothing. One rule for
+// suppressed executions: a result satisfied WITHOUT the tool executing in
+// this invocation (ctx.resultReused — side-effect-journal replay of a
+// crash-recovery re-dispatch, or a dedup-cache hit whose reused ok result
+// re-enters this phase at the dedup-position audit) records nothing — the
+// sidecar has no idempotency key, so re-recording would double-attribute the
+// ONE write the original execution already recorded. The 99%
+// no-sources call pays one property-existence check; malformed sources
+// (string / object / empty array) record nothing and warn nothing —
+// appendProvenance's own hygiene also guards, but it isn't even called for
+// non-arrays. Sessionless dispatches (no identity to attribute) skip too, so
+// appendProvenance's identity-drop warn stays reserved for real wiring bugs.
+function recordProvenance(ctx: ToolCallContext): void {
+  const { args, sessionId } = ctx;
+  if (args.sources === undefined) return;
+  if (!Array.isArray(args.sources) || args.sources.length === 0) return;
+  if (ctx.resultReused || !sessionId || statusOf(ctx.result!) !== "ok") return;
+  try {
+    const target = createTargetPath(ctx.tc.name, args);
+    if (!target) return;
+    appendProvenance({
+      ts: new Date().toISOString(),
+      sessionId,
+      opId: ctx.operationId,
+      toolCallId: ctx.tc.id,
+      tool: ctx.tc.name,
+      action: typeof args.action === "string" ? args.action : undefined,
+      file: target,
+      // Entry-level hygiene (non-object members, field caps) is
+      // appendProvenance's contract — pass the declared entries through.
+      sources: args.sources as ProvenanceSource[],
+    });
+  } catch { /* lineage is best-effort — never break the call */ }
+}
+
 export const auditPhase: Phase = async (ctx) => {
   evaluateThreat(ctx);
   applyBudget(ctx);
   firePostHook(ctx);
   recordUsage(ctx);
+  recordProvenance(ctx);
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata });
   harvestChip(ctx);
   shapeMsg(ctx);

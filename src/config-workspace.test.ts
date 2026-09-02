@@ -322,6 +322,22 @@ describe("migrateWorkspace (non-destructive merge)", () => {
     expect(readFileSync(join(newWs, "apps", "a.txt"), "utf-8")).toBe("KEEP-new"); // not clobbered
     expect(readFileSync(join(newWs, "apps", "b.txt"), "utf-8")).toBe("from-new"); // preserved
   });
+
+  // 2026-08-31 incident: a soak server booted with LAX_WORKSPACE aimed at the
+  // dev repo migrated the user's ENTIRE Documents workspace into the checkout
+  // root; the FROM-checkout guard then (correctly) refused the return trip on
+  // the next normal boot, stranding every app. Migrating INTO a checkout must
+  // be refused the same way migrating FROM one is.
+  it("refuses to migrate INTO a git checkout root", () => {
+    const base = mk();
+    const oldWs = join(base, "old"), repo = join(base, "repo");
+    mkdirSync(join(oldWs, "apps", "demo"), { recursive: true });
+    writeFileSync(join(oldWs, "apps", "demo", "index.html"), "<h1>hi</h1>");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    migrateWorkspace(oldWs, repo);
+    expect(readFileSync(join(oldWs, "apps", "demo", "index.html"), "utf-8")).toBe("<h1>hi</h1>"); // untouched
+    expect(existsSync(join(repo, "apps"))).toBe(false); // nothing moved in
+  });
 });
 
 describe("ensureWorkspaceLink retargets + migrates on a workspace change", () => {
@@ -343,6 +359,24 @@ describe("ensureWorkspaceLink retargets + migrates on a workspace change", () =>
 
     expect(resolve(readlinkSync(link))).toBe(resolve(newWs));         // relinked
     expect(readFileSync(join(newWs, "apps", "demo", "index.html"), "utf-8")).toBe("<h1>old</h1>"); // migrated
+  });
+
+  it.skipIf(!CAN_CREATE_DIRECTORY_LINK)("refuses to retarget the workspace link onto a git checkout root", () => {
+    const base = mk();
+    const oldWs = join(base, "old-workspace");
+    const repo = join(base, "repo"); // stand-in for a dev checkout
+    const link = join(base, "cwd-workspace");
+    mkdirSync(join(oldWs, "apps", "demo"), { recursive: true });
+    writeFileSync(join(oldWs, "apps", "demo", "index.html"), "<h1>old</h1>");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+
+    symlinkSync(oldWs, link, process.platform === "win32" ? "junction" : "dir");
+
+    ensureWorkspaceLink(repo, link);
+
+    expect(resolve(readlinkSync(link))).toBe(resolve(oldWs)); // link untouched
+    expect(readFileSync(join(oldWs, "apps", "demo", "index.html"), "utf-8")).toBe("<h1>old</h1>"); // not migrated
+    expect(existsSync(join(repo, "apps"))).toBe(false); // nothing moved into the repo
   });
 });
 

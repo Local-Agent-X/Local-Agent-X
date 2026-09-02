@@ -134,6 +134,17 @@ export function ensureWorkspaceLink(workspace: string, linkOverride?: string): v
   try {
     if (existsSync(link) && existsSync(target) && realpathSync(link) === realpathSync(target)) return;
   } catch { /* not resolvable yet — fall through to link creation */ }
+  // Guard: never point the workspace at a git checkout root. A server launched
+  // with LAX_WORKSPACE aimed at a repo (soak/qualification runs do this from
+  // the repo cwd) would otherwise migrate the user's ENTIRE real workspace
+  // into the checkout and retarget the link at it — and the next normal boot
+  // can't migrate back (the FROM-checkout guard below refuses, correctly),
+  // stranding every app the server serves (2026-08-31 incident: apps page
+  // empty, pins 404, workspace scattered through the repo root).
+  if (existsSync(join(target, ".git"))) {
+    logger.error(`[config] refusing to point workspace at ${target}: it is a git checkout, not a workspace — leaving the workspace link untouched`);
+    return;
+  }
   // Guard: never migrate or relink a real, populated workspace into an
   // EPHEMERAL (temp) target. A smoke/test run that points config.workspace at
   // /tmp would otherwise make the lifecycle treat the user's real workspace as a
@@ -199,6 +210,14 @@ export function migrateWorkspace(oldWorkspace: string, newWorkspace: string): vo
   // to be left whole). Better to leave a mis-resolved source untouched than move it.
   if (existsSync(join(oldWorkspace, ".git"))) {
     logger.warn(`[config] refusing to migrate workspace FROM ${oldWorkspace}: it is a git checkout, not a workspace`);
+    return;
+  }
+  // Mirror guard for the destination: migrating INTO a checkout root scatters
+  // the user's workspace through a repo, and the FROM guard above then blocks
+  // the return trip — a one-way door (2026-08-31: the whole Documents
+  // workspace, apps included, was moved into the dev repo this way).
+  if (existsSync(join(newWorkspace, ".git"))) {
+    logger.warn(`[config] refusing to migrate workspace INTO ${newWorkspace}: it is a git checkout, not a workspace`);
     return;
   }
   mkdirSync(newWorkspace, { recursive: true });

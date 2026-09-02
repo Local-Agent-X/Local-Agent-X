@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1515 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1516 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -25,8 +25,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/canonical-loop/` | 56 | 211 | XL |  |
 | `src/memory/` | 45 | 127 | XL |  |
 | `src/session/` | 35 | 7 | L |  |
+| `src/workspace/` | 35 | 2 | M |  |
 | `src/classifiers/` | 34 | 17 | L |  |
-| `src/workspace/` | 34 | 2 | M |  |
 | `src/util/` | 33 | 2 | S |  |
 | `src/threat/` | 32 | 12 | L |  |
 | `src/auth/` | 29 | 10 | L |  |
@@ -37,7 +37,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/local-runtimes/` | 26 | 18 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
 | `src/context/` | 21 | 3 | M |  |
-| `src/data-lineage/` | 21 | 6 | L |  |
+| `src/data-lineage/` | 21 | 7 | L |  |
 | `src/agent-request/` | 20 | 14 | L |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/chat-ws/` | 19 | 17 | L |  |
@@ -55,9 +55,9 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/self-edit/` | 11 | 20 | L |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/cron/` | 10 | 8 | L |  |
+| `src/persistence/` | 10 | 2 | S |  |
 | `src/server/` *(entrypoint)* | 10 | 48 | XL |  |
 | `src/integrations/` | 9 | 15 | M |  |
-| `src/persistence/` | 9 | 2 | S |  |
 | `src/screen-stream/` | 9 | 8 | L |  |
 | `src/ari-kernel/` | 8 | 11 | L |  |
 | `src/sync/` | 8 | 19 | L |  |

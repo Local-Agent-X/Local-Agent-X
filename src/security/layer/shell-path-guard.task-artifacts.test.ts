@@ -156,6 +156,18 @@ describe("shell task-artifact delete guard — in-command cd makes relative oper
 	it("still DENIES plain `rm report.md` with NO cd (workspace anchoring holds)", () => {
 		expectArtifactBlock("rm report.md");
 	});
+
+	// Segment-ORDER pins (skeptic hardening): a whole-command cd pre-scan
+	// would pass every test above while re-opening these two — the shift must
+	// only shield operands that come AFTER it, and a shift inside a re-parsed
+	// body must never leak to the outer command.
+	it("DENIES `rm report.md && cd out` — a LATER cd does not shield the earlier rm", () => {
+		expectArtifactBlock("rm report.md && cd out");
+	});
+
+	it("DENIES an outer rm after an inner-body cd (`bash -c \"cd out && ls\" && rm report.md`)", () => {
+		expectArtifactBlock('bash -c "cd out && ls" && rm report.md');
+	});
 });
 
 describe("shell task-artifact delete guard — single-level brace expansion (lexical)", () => {

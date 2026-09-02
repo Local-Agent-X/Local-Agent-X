@@ -17,8 +17,9 @@ import {
   createProviderAdapterFactory,
   resolveProviderRuntime,
   sealDelegatedRuntime,
+  buildAgentRuntimeSurface,
+  installOpToolRuntime,
 } from "../../canonical-loop/public/delegated-runtime.js";
-import { buildAgentRuntimeSurface, installOpToolRuntime } from "../../canonical-loop/agent-runner/runtime-surface.js";
 import { SecurityLayer } from "../../security/index.js";
 import { loadFileAccessModeAtLeast } from "../../security/layer/index.js";
 import { loadToolPolicy } from "../../tool-policy/index.js";

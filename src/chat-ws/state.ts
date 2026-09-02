@@ -222,8 +222,12 @@ export function getMessageCountForSession(): ((sessionId: string) => number) | n
 // guards only — they never startChat and nothing subscribes. Local tuple: skill-
 // review.ts cycles via canonical-loop; memory's SYNTHETIC_SESSION_PREFIXES also
 // holds ide-/cron-, which ARE delivered here (live ide- chats) — do not unify.
+// Exported as the ONE headless-session predicate for every chat-facing
+// surface: broadcastToSession/broadcastActiveChats here, and ops/idle-nudge
+// (a background op's completion must never nudge into user chat). Consumers
+// import this — never re-declare the prefix list.
 const HEADLESS_SESSION_PREFIXES = ["eval_", "skill-review-", "dream-"] as const;
-function isHeadlessSession(sessionId: string): boolean {
+export function isHeadlessSession(sessionId: string): boolean {
   return HEADLESS_SESSION_PREFIXES.some(p => sessionId.startsWith(p));
 }
 

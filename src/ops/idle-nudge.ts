@@ -21,6 +21,7 @@
  */
 import type { ServerEvent } from "../types.js";
 import { markSurfacedViaNudge, type PendingNotification } from "./pending-notifications.js";
+import { isHeadlessSession } from "../chat-ws/state.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.idle-nudge");
 
@@ -86,6 +87,17 @@ export function setIdleNudgeBroadcaster(fn: (sessionId: string, event: ServerEve
 
 export function scheduleIdleNudge(sessionId: string, taskHint?: string): void {
   if (!sessionId) return;
+  // Background jobs never interrupt chat. A headless session (dream-, skill-
+  // review-, eval_ — the canonical predicate lives in chat-ws/state.ts) has no
+  // user behind it, and bg_op_nudge is a GLOBAL chat-WS event: relay delivery
+  // fans it out to EVERY connected client, so a failed memory-consolidation
+  // dream posted "hit a snag" into open chats. Suppress at the source — no
+  // timer at all. Failures stay visible in logs and on the AGENTS panel dock
+  // (session-bridge-observer's bg_op_* events, untouched here).
+  if (isHeadlessSession(sessionId)) {
+    logger.info(`suppressed session=${sessionId} — headless/background session, chat nudges are user-chat only`);
+    return;
+  }
   // Cancel any prior timer but DO NOT clear the explicit-notify flag — that
   // flag tracks the user's most recent intent ("tell me when done") and a
   // newly-completing op should still honor it. Only a new user message

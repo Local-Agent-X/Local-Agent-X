@@ -4,8 +4,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // driven against a stubbed fetch — no network, no secrets store.
 const mocks = vi.hoisted(() => ({
   resolveCredential: vi.fn(),
+  streamAnthropicResponse: vi.fn(),
 }));
 vi.mock("../auth/resolve.js", () => ({ resolveCredential: mocks.resolveCredential }));
+vi.mock("../anthropic-client/index.js", () => ({ streamAnthropicResponse: mocks.streamAnthropicResponse }));
 
 import { callAnthropic } from "./hosted.js";
 
@@ -79,5 +81,33 @@ describe("callAnthropic raw leg normalizes the model id (fetch stubbed — no ne
     const body = sentBody();
     expect(body.model).toBe("claude-haiku-4-5");
     expect(body.temperature).toBe(0);
+  });
+});
+
+// The subscription leg rides streamAnthropicResponse; without an explicit
+// maxTokens the client falls back to the model's full output budget (64k on
+// Haiku), so a dispatch caller's tight cap (200 for classifiers/rerank) was
+// silently dropped on that leg. Pin: the cap reaches the client verbatim.
+describe("callAnthropic subscription leg forwards maxTokens (client stubbed — no network)", () => {
+  beforeEach(() => {
+    mocks.resolveCredential.mockResolvedValue({ credential: "oauth:sub-token" });
+    mocks.streamAnthropicResponse.mockImplementation(async function* () {
+      yield { type: "text", delta: "sub-reply" };
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("raw fetch must not run for subscription creds"); }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("passes the caller's cap through to streamAnthropicResponse, token unstripped", async () => {
+    const out = await callAnthropic("ping", "claude-haiku-4-5", 0, 200, 1000, false);
+    expect(out).toBe("sub-reply");
+    expect(mocks.streamAnthropicResponse).toHaveBeenCalledTimes(1);
+    const opts = mocks.streamAnthropicResponse.mock.calls[0][0] as Record<string, unknown>;
+    expect(opts.maxTokens).toBe(200);
+    expect(opts.token).toBe("oauth:sub-token");
   });
 });

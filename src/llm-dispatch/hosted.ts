@@ -54,7 +54,7 @@ export async function callAnthropic(prompt: string, model: string, temperature: 
       // very same seam). Previously degraded to null on the mistaken belief the
       // proxy was text-only — that dropped every Claude-on-subscription vision
       // check (the build design judge included).
-      return callAnthropicViaCliProxy(apiKey, prompt, model, temperature, timeoutMs, images);
+      return callAnthropicViaCliProxy(apiKey, prompt, model, temperature, maxTokens, timeoutMs, images);
     }
     if (rejectOAuth && !apiKey.startsWith("sk-ant-api")) return null;
     // The raw wire only accepts runtime ids — aliases users actually have in
@@ -103,7 +103,7 @@ export async function callAnthropic(prompt: string, model: string, temperature: 
  *  CLI-proxy-vs-direct-HTTP decision, so this can never regress into a
  *  banned Bearer fetch. Pass the credential UNSTRIPPED — the client's own
  *  usesAnthropicSubscriptionAuth check needs the oauth:/cli shape intact. */
-async function callAnthropicViaCliProxy(token: string, prompt: string, model: string, temperature: number, timeoutMs: number, images?: string[]): Promise<string | null> {
+async function callAnthropicViaCliProxy(token: string, prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[]): Promise<string | null> {
   const ac = new AbortController();
   const abortTimer = setTimeout(() => ac.abort(), timeoutMs);
   let raceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -120,7 +120,11 @@ async function callAnthropicViaCliProxy(token: string, prompt: string, model: st
     const run = (async () => {
       let acc = "";
       for await (const event of streamAnthropicResponse({
-        token, model, temperature,
+        // Without an explicit maxTokens the client defaults to the model's
+        // full output budget (64k on Haiku) — dispatch callers pass tight
+        // caps (200 for classifiers/rerank) and the subscription leg must
+        // honor them the same as the raw leg's max_tokens.
+        token, model, temperature, maxTokens,
         messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
       })) {

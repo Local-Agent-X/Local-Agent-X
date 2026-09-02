@@ -236,3 +236,95 @@ describe("session-bridge-observer — skill_review never reaches the sidebar", (
     cancelIdleNudge(sessionId);
   });
 });
+
+// Peter-approved invariant: background jobs never interrupt the user. The D1
+// skeptic proved a failed dream op still raised an OS toast + a global FAILED
+// card: memory_consolidation is deliberately NOT sidebar-suppressed (its
+// bg_op_queued/started feed the ambient "dreaming" dock), so its terminal
+// bg_op_completed rides the GLOBAL bg_op_* fan-out into every client's
+// handleBgOpCompleted → window.desktop.showNotification + fallback card.
+// The event must keep flowing (it is what flips the dock card out of
+// "dreaming" and arms its 30-min prune), so the server stamps
+// `headless: true` — derived from the ONE predicate, chat-ws/state.ts
+// isHeadlessSession — and the browser skips toast + fallback card on it.
+// Real user sessions must stay byte-identical: no headless key at all.
+describe("session-bridge-observer — headless sessions stamp bg_op_completed", () => {
+  it("a FAILED dream op emits bg_op_completed with headless:true and keeps the dock feed intact", () => {
+    const sessionId = `dream-${Date.now()}`;
+    const opId = "op_dream_headless_fail_1";
+    writeOp({ id: opId, type: "memory_consolidation", status: "running", lastFailureReason: "consolidation crashed" } as never);
+    created.push(opId);
+    trackOpForSession(opId, sessionId, "dream pass");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(queued(opId));
+    recordCanonicalEvent(stateChanged(opId, "running"));
+    recordCanonicalEvent(stateChanged(opId, "failed"));
+
+    // Dock feed unchanged: queued/started still carry the opType the ambient
+    // partition keys on (public/js/chat-agent-feeds-ambient.js).
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: "bg_op_queued", opType: "memory_consolidation" }));
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: "bg_op_started", opType: "memory_consolidation" }));
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      type: "bg_op_completed", status: "failed", summary: "consolidation crashed", headless: true,
+    }));
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a SUCCEEDED dream op is stamped too — the invariant is session-derived, not status-derived", () => {
+    const sessionId = `dream-${Date.now()}-b1`;
+    const opId = "op_dream_headless_ok_1";
+    makeOp(opId, "memory_consolidation");
+    trackOpForSession(opId, sessionId, "dream pass");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      type: "bg_op_completed", status: "completed", headless: true,
+    }));
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a failed REAL op's bg_op_completed carries NO headless key — byte-same event as before", () => {
+    const sessionId = "sess-obs-real-toast";
+    const opId = "op_real_headless_absent_1";
+    writeOp({ id: opId, type: "research", status: "running", lastFailureReason: "provider 500" } as never);
+    created.push(opId);
+    trackOpForSession(opId, sessionId, "look into it");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "failed"));
+
+    const completedEvent = broadcast.mock.calls
+      .map(([, event]) => event as Record<string, unknown>)
+      .find((event) => event.type === "bg_op_completed");
+    expect(completedEvent).toEqual({
+      type: "bg_op_completed", opId, status: "failed", summary: "provider 500", filesChanged: [],
+    });
+    expect(completedEvent).not.toHaveProperty("headless");
+    cancelIdleNudge(sessionId);
+  });
+
+  it("an eval_ session's chat_turn op still emits NOTHING (op-type suppression pin, test c)", () => {
+    const sessionId = `eval_${Date.now()}`;
+    const opId = "op_eval_chat_turn_fail_1";
+    makeOp(opId, "chat_turn");
+    trackOpForSession(opId, sessionId, "eval turn");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+    vi.mocked(pushPendingNotification).mockClear();
+    vi.mocked(scheduleIdleNudge).mockClear();
+
+    recordCanonicalEvent(queued(opId));
+    recordCanonicalEvent(stateChanged(opId, "failed"));
+
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(pushPendingNotification).not.toHaveBeenCalled();
+    expect(scheduleIdleNudge).not.toHaveBeenCalled();
+    expect(listOpsForSession(sessionId)).toEqual([]);
+  });
+});

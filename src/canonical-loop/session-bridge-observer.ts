@@ -23,6 +23,7 @@
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
 import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession } from "../ops/session-bridge.js";
+import { isHeadlessSession } from "../chat-ws/state.js";
 import { isDispatchFailure } from "./types.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
@@ -304,6 +305,11 @@ function recordCanonicalEventWithSink(
             summary,
             filesChanged: [],
             ...(resultUrl ? { resultUrl } : {}),
+            // Headless session (dream-/skill-review-/eval_): bg_op_completed
+            // is GLOBAL, and it must still flow (it's what flips the ambient
+            // dock card out of "dreaming" + arms its prune) — but the browser
+            // reads this stamp to skip the OS toast + fallback FAILED card.
+            ...(isHeadlessSession(sessionId) ? { headless: true } : {}),
           } as ServerEvent);
           if (emitBrowser) emitBrowser(sessionId, {
             type: "worker_done",

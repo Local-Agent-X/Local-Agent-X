@@ -151,7 +151,13 @@ export type ServerEvent =
   // it. Additive/optional — absent for progress lines that don't carry usage
   // (lifecycle markers, errors) and for ops that don't emit canonical turns.
   | { type: "bg_op_progress"; opId: string; line: string; totalTokens?: number }
-  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string }
+  // `headless` (optional) marks a completion whose originating session is a
+  // headless background one (the ONE predicate: chat-ws/state.ts
+  // isHeadlessSession — dream-/skill-review-/eval_). Stamped server-side so
+  // the browser can apply the ambient-dock update while skipping the OS toast
+  // and the fallback FAILED card (chat-ws-handler-bg-ops.js) WITHOUT
+  // re-deriving the prefix list client-side.
+  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string; headless?: boolean }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }
   // Antivirus interference detected. Bash tool detected ≥3 powershell
   // processes killed mid-stream within 60s — the AV-behavior-shield

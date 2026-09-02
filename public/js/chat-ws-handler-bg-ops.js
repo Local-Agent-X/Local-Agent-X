@@ -199,12 +199,22 @@ function handleBgOpCompleted(msg) {
     } else {
       output = (msg.event.summary || '(no summary)') + filesLine;
     }
+    // Headless background job (dream-/skill-review-/eval_ session). The
+    // server stamps event.headless from the ONE isHeadlessSession predicate
+    // (src/chat-ws/state.ts) — never re-derive the prefix list here.
+    // Invariant: background jobs never interrupt the user — no OS toast, no
+    // fallback card minted into the MAIN feed. The ambient dock card
+    // (created by bg_op_queued/started with opType) still gets its terminal
+    // update via updateAgentFeed below, and the 30-min prune still clears it.
+    var headless = msg.event.headless === true;
     // Defense in depth: bg_op_started broadcast can fail to land
     // (WS race, opSession unset, etc.) and we'd reach completion
     // with no card to update — agents panel sits empty even though
     // the op spawned + finished. Ensure a card exists FIRST, then
     // flip its state. addAgentFeed is idempotent on existing IDs.
-    if (typeof addAgentFeed === 'function') {
+    // (Skipped for headless: a completion-only card here has no opType, so it
+    // would land in the MAIN feed as an interrupting "Worker … failed" card.)
+    if (!headless && typeof addAgentFeed === 'function') {
       addAgentFeed({
         id: msg.event.opId,
         name: 'Worker: ' + (msg.event.opId || '').slice(0, 60),
@@ -221,7 +231,7 @@ function handleBgOpCompleted(msg) {
       if (msg.event.resultUrl) feedUpdate.resultUrl = msg.event.resultUrl;
       updateAgentFeed(msg.event.opId, feedUpdate);
     }
-    if (window.desktop) window.desktop.showNotification('Worker finished', (msg.event.summary || '').slice(0, 100));
+    if (!headless && window.desktop) window.desktop.showNotification('Worker finished', (msg.event.summary || '').slice(0, 100));
     // Keep completed cards visible for 30 min so user has plenty of
     // time to notice them. Previously auto-pruned at 2 min, which
     // meant if user wasn't watching the sidebar in that window they

@@ -175,10 +175,29 @@ export const requireApprovalPhase: Phase = async (ctx) => {
     };
     return terminate(ctx, { rendered: "model", result, allowed: false });
   }
+  // Interactive context but NO event sink: there is no channel to render an
+  // approval card through, so an answer can never arrive. Everything past the
+  // nothing-to-approve fast-path above REQUIRES a prompt (policy rule, memory
+  // promotion, destructive op, or a profile "ask" tier) — continuing here
+  // would let a sink-less "local" dispatch confirm its own gated call, the
+  // exact inversion of the unattended guarantee above (a silent run can never
+  // confirm its own exfil). Both live local dispatchers construct their event
+  // sinks unconditionally, so this is unreachable today; the block pins the
+  // invariant against the next "local" caller that forgets one. (Calls with
+  // nothing to approve never reach here — the fast-path above already
+  // continued — so the legitimate sink-less local dispatch is unaffected.)
   if (!ctx.onEvent) {
-    if (!promotion) return CONTINUE;
+    const need = promotion
+      ? "risky content cannot become durable memory without explicit user approval"
+      : ctx.policyApprovalReason
+        ? ctx.policyApprovalReason
+        : destructive
+          ? `irreversible operation (${destructive}) needs confirmation`
+          : "the active autonomy profile says ask";
     const result: ToolResult = {
-      content: `BLOCKED: ${ctx.tc.name} cannot promote model-originated content without an interactive approval channel.`,
+      content:
+        `BLOCKED: ${ctx.tc.name} requires approval (${need}), but no approval channel ` +
+        `exists on this dispatch — refusing rather than proceeding silently.`,
       isError: true,
       status: "blocked",
       metadata: { layer: "approval", userHint: USER_HINTS.policy },

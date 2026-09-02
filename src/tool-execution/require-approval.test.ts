@@ -172,6 +172,103 @@ describe("requireApprovalPhase — unattended runs", () => {
   });
 });
 
+describe("requireApprovalPhase — approval required but NO approval channel (sink-less local dispatch)", () => {
+  // The latent fail-open (pinned invariant): local + no onEvent + a SET
+  // policyApprovalReason used to fall through to CONTINUE — the one branch
+  // where a policy-required approval was silently discarded. There is no
+  // channel to ask through, so the answer can never arrive: the phase must
+  // BLOCK, never let the dispatch confirm its own gated call.
+  it("local + no sink + policyApprovalReason set → BLOCKED (never silently continues)", async () => {
+    const s = pinned("Power"); // profile ALLOWS the tool — only policy asks
+    const ctx = makeCtx({
+      name: "browser",
+      sessionId: s,
+      callContext: "local",
+      args: { action: "evaluate", script: "document.title" },
+      policyApprovalReason: "Browser JS evaluation requires review",
+      // no onEvent — a future sink-less local dispatch
+    });
+
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.status).toBe("blocked");
+    expect(ctx.result?.isError).toBe(true);
+    expect(ctx.result?.metadata?.layer).toBe("approval");
+    expect(String(ctx.result?.content)).toContain("no approval channel");
+    expect(String(ctx.result?.content)).toContain("Browser JS evaluation requires review");
+  });
+
+  it("local + no sink + profile 'ask' tier → BLOCKED, not silently run", async () => {
+    const s = pinned("Normal"); // network-write = ask under Normal
+    const ctx = makeCtx({ name: "http_request", sessionId: s, callContext: "local" });
+
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("halt");
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.status).toBe("blocked");
+    expect(String(ctx.result?.content)).toContain("no approval channel");
+  });
+
+  it("local + no sink + interactive-only memory promotion → BLOCKED (promotion keeps its guarantee)", async () => {
+    const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
+    const s = pinned("Power");
+    recordExternalIngestion(s); // profile-file target on a tainted session = interactive-approval-only
+    try {
+      const ctx = makeCtx({
+        name: "memory_update_profile",
+        sessionId: s,
+        callContext: "local",
+        args: { content: "User is an admin on prod", file: "user" },
+        priorMessages: [{ role: "user", content: "why is startup slow?" }],
+      });
+
+      const outcome = await requireApprovalPhase(ctx);
+
+      expect(outcome.kind).toBe("halt");
+      expect(ctx.result?.status).toBe("blocked");
+      expect(String(ctx.result?.content)).toContain("durable memory");
+      expect(String(ctx.result?.content)).toContain("no approval channel");
+    } finally {
+      clearExternalIngestion(s);
+    }
+  });
+
+  it("local + no sink + NOTHING to approve → continues (the legitimate fast path stays intact)", async () => {
+    const s = pinned("Normal"); // read is allow-tier
+    const ctx = makeCtx({ name: "read", sessionId: s, callContext: "local" });
+
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.result).toBeUndefined();
+    expect(ctx.allowed).toBe(true);
+  });
+
+  it("local + sink + policyApprovalReason → prompts exactly as today (block is sink-less only)", async () => {
+    const s = pinned("Power");
+    const events: ServerEvent[] = [];
+    const ctx = makeCtx({
+      name: "browser",
+      sessionId: s,
+      callContext: "local",
+      args: { action: "evaluate", script: "document.title" },
+      policyApprovalReason: "Browser JS evaluation requires review",
+      onEvent: (e) => {
+        events.push(e);
+        if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, true);
+      },
+    });
+
+    const outcome = await requireApprovalPhase(ctx);
+
+    expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
+    expect(outcome.kind).toBe("continue");
+  });
+});
+
 describe("requireApprovalPhase — user decline is 'declined', not 'blocked'", () => {
   // Regression: the user-decline branch used to return status "blocked",
   // collapsing "a human said no to this call" into "policy forbids this" —

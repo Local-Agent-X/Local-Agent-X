@@ -175,6 +175,18 @@ describe("skill-review breaker: backoff", () => {
     expect(mocks.runAgent).toHaveBeenCalledTimes(4);
   });
 
+  it("phase label tracks eligibility, not just streak: an expired window reads active again", async () => {
+    await failUntilStreak(3);
+    expect(getSkillReviewBreakerState()).toMatchObject({ phase: "backing-off", streak: 3 });
+
+    // Window expires (or the queue empties mid-streak): blocks() lets every
+    // tick run at normal cadence, so the telemetry must say "active" — a
+    // stale "backing-off" label would misreport a normally-running job
+    // indefinitely. The streak is preserved for context.
+    advancePastBackoff();
+    expect(getSkillReviewBreakerState()).toMatchObject({ phase: "active", streak: 3 });
+  });
+
   it("doubles the wait per failed pass and caps at 60 minutes", async () => {
     const waits: number[] = [];
     for (let i = 0; i < BREAKER_BACKOFF_AFTER + 4; i++) {

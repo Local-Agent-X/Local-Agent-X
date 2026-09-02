@@ -58,8 +58,8 @@ export class SkillReviewBreaker {
     private readonly log: Logger,
   ) {}
 
-  state(): SkillReviewBreakerState {
-    return { phase: this.phase(), streak: this.streak, nextEligibleAt: this.nextEligibleAt };
+  state(now: number = Date.now()): SkillReviewBreakerState {
+    return { phase: this.phase(now), streak: this.streak, nextEligibleAt: this.nextEligibleAt };
   }
 
   /** Why a scheduled pass may not run now, or null when it may. Forced/manual
@@ -83,11 +83,14 @@ export class SkillReviewBreaker {
    *  reset, park included — a successful forced pass is what revives a parked
    *  job without a restart. */
   recordSuccess(): void {
-    const was = this.phase();
+    // Announce on streak/park state, not the eligibility-sensitive phase
+    // label: a success that lands just after a window expires still ends a
+    // real failure streak, and that reset deserves its one info line.
+    const wasParked = this.parked;
     const streak = this.streak;
     this.reset();
-    if (was !== "active") {
-      this.log.info(`[skill-review] breaker reset: a pass succeeded (was ${was}, streak ${streak}) — normal cadence resumes`);
+    if (wasParked || streak >= BREAKER_BACKOFF_AFTER) {
+      this.log.info(`[skill-review] breaker reset: a pass succeeded (was ${wasParked ? "parked" : "backing-off"}, streak ${streak}) — normal cadence resumes`);
     }
   }
 
@@ -115,8 +118,12 @@ export class SkillReviewBreaker {
     this.parked = false;
   }
 
-  private phase(): SkillReviewBreakerPhase {
+  private phase(now: number): SkillReviewBreakerPhase {
     if (this.parked) return "parked";
-    return this.streak >= BREAKER_BACKOFF_AFTER ? "backing-off" : "active";
+    // "backing-off" only while a window is actually refusing ticks. A streak
+    // whose window expired (or that idles on an empty queue) runs at normal
+    // cadence, and the label must say so — blocks() is the behavior, the
+    // phase is the telemetry, and they must not disagree.
+    return this.streak >= BREAKER_BACKOFF_AFTER && now < this.nextEligibleAt ? "backing-off" : "active";
   }
 }

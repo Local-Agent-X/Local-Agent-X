@@ -2,7 +2,8 @@ import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { dirname } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
-import { moveToTrash } from "../safe-delete.js";
+import { moveToTrash, moveToTaskTrash } from "../safe-delete.js";
+import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "../security/layer/index.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
@@ -285,6 +286,26 @@ export const deleteFileTool: ToolDefinition = {
           `delete the directory's contents one file at a time.`,
           { path: filePath, isDirectory: true },
         );
+      }
+      const sid = sessionIdOf(args);
+      if (sid && isTaskArtifact(sid, filePath)) {
+        // Agent-CREATED file (data-lineage/task-artifacts.ts): route to the
+        // task-scoped trash tier so the delete stays programmatically
+        // reversible until the task ends — the invariant that an agent can
+        // never irrecoverably delete its own mid-task deliverables. The
+        // result text is the restore contract (the restore_file tool's
+        // argument shape) — keep it in lockstep with that tool.
+        const taskTrashed = moveToTaskTrash(sid, filePath);
+        // TOCTOU honesty: null = the source vanished between the existence
+        // check and the move — nothing landed in the task trash, so never
+        // claim restorability. Fall through to the existing route, which is
+        // equally a no-op on a vanished file.
+        if (taskTrashed) {
+          return ok(
+            `Deleted ${filePath} (agent-created file — moved to task trash; ` +
+            `restorable until this task ends via restore_file({ path: "${filePath}" })).`,
+          );
+        }
       }
       const trashed = await moveToTrash(filePath, "delete_file");
       return ok(`Deleted ${filePath}${trashed ? ` (moved to ${trashed} — recoverable)` : ""}`);

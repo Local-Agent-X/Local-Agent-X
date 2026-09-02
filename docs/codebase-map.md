@@ -35,8 +35,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/browser/` | 28 | 76 | XL |  |
 | `src/agent-store/` | 26 | 7 | M |  |
 | `src/local-runtimes/` | 26 | 18 | L |  |
+| `src/data-lineage/` | 25 | 8 | L |  |
 | `src/app-runtime/` | 23 | 12 | L |  |
-| `src/data-lineage/` | 23 | 8 | L |  |
 | `src/agent-request/` | 21 | 14 | L |  |
 | `src/context/` | 21 | 3 | M |  |
 | `src/chat-ws/` | 20 | 18 | L |  |
@@ -163,7 +163,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/retry-context.ts` | S |
 | `src/retry-telemetry.ts` | S |
 | `src/route-schemas.ts` | S |
-| `src/safe-delete.ts` | S |
+| `src/safe-delete.ts` | M |
 | `src/safe-regex.ts` | S |
 | `src/sanitize.ts` | M |
 | `src/screen-capture-mac.ts` | S |

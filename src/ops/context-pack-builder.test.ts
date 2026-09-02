@@ -87,8 +87,10 @@ describe("context pack memory pre-fetch lifecycle", () => {
     });
     expect(pack.context.memoryHits.length).toBeGreaterThan(0);
 
-    // The transient index binds itself during construction; once the build
-    // settles it must be CLOSED — an open handle here is the leak.
+    // The transient index binds during construction ONLY because nothing open
+    // holds the binding here (seeded is closed) — an open live index survives
+    // a transient's attach (see universal-index-attach.test.ts). Once the
+    // build settles the transient must be CLOSED — an open handle is the leak.
     const bound = await vi.waitFor(() => {
       const m = getUniversalIndex()?.getMemory();
       expect(m && m !== seeded).toBeTruthy();

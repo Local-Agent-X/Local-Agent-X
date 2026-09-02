@@ -108,6 +108,30 @@ describe("re-embed on provider recovery", () => {
     expect(current.subscribed()).toBe(false);
     expect(() => current.fireRecovery()).not.toThrow();
   });
+
+  it("close() during a running pass ends it quietly — no failure warn for the expected closed-handle trip", async () => {
+    const provider = recoverableProvider();
+    await memory.setEmbeddingProvider(provider);
+    insertUnembeddedChunk(memory, "eta");
+
+    provider.hold();
+    provider.fireRecovery();
+    await vi.waitFor(() => expect(provider.batches).toHaveLength(1)); // frozen mid-batch
+
+    // logger.warn lands on stderr via console.error; the shutdown-window trip
+    // over the closed handle must not reach it.
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      memory.close(); // dispose + db.close while the pass is in flight
+      provider.release();
+      await settle();
+      const warned = stderrSpy.mock.calls.some((args) =>
+        String(args[0]).includes("Background re-embed failed"));
+      expect(warned).toBe(false);
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
 });
 
 describe("re-embed flap backoff", () => {

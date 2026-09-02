@@ -300,12 +300,20 @@ export class UniversalIndex {
 //
 // MemoryIndex calls back into this module from its write paths. To keep
 // the dependency one-way, we expose a singleton bound to the active
-// MemoryIndex instance. attach() is called once during MemoryIndex
-// construction; getInstance() is what write paths use.
+// MemoryIndex instance. attach() is called during MemoryIndex construction;
+// getInstance() is what write paths use.
 
 let _instance: UniversalIndex | null = null;
 
 export function attachUniversalIndex(memory: MemoryIndex): UniversalIndex {
+  // Never rebind over a LIVE index: transient copies (the context-pack
+  // fallback opens one for a single search, then closes it) construct inside
+  // the same process, and stealing the binding from the server's open index
+  // turned universal write-through into a silent no-op once they closed.
+  // A closed binding is dead weight and is replaced, so the standalone case
+  // (no live index in the process) still binds normally.
+  const bound = _instance?.getMemory();
+  if (bound && bound !== memory && bound.isOpen()) return _instance!;
   _instance = new UniversalIndex(memory);
   return _instance;
 }

@@ -21,8 +21,8 @@ import { join } from "node:path";
 
 vi.mock("./index-embedding.js", async (importOriginal) => {
   const mod = await importOriginal<typeof import("./index-embedding.js")>();
-  const attachEmbeddingProvider: typeof mod.attachEmbeddingProvider = async (db, provider) => {
-    const out = await mod.attachEmbeddingProvider(db, provider);
+  const attachEmbeddingProvider: typeof mod.attachEmbeddingProvider = async (db, provider, ...rest) => {
+    const out = await mod.attachEmbeddingProvider(db, provider, ...rest);
     // Undefined for every provider that doesn't opt in — resolves immediately.
     await (provider as typeof provider & { attachGate?: Promise<void> }).attachGate;
     return out;
@@ -33,7 +33,7 @@ vi.mock("./index-embedding.js", async (importOriginal) => {
 import { MemoryIndex } from "./index.js";
 import { countChunksMissingEmbedding } from "./index-embedding.js";
 import {
-  recoverableProvider, insertUnembeddedChunk, settle,
+  recoverableProvider, insertUnembeddedChunk, insertEmbeddedChunkAt, settle, DIMS,
 } from "./reembed-recovery.test-helper.js";
 
 let tempDir: string;
@@ -97,6 +97,41 @@ describe("reentrant setEmbeddingProvider", () => {
     expect(p2.batches.length).toBeGreaterThan(0); // successor re-embedded the backlog
     expect(p1.subscribed()).toBe(false);
     expect(p2.subscribed()).toBe(true);
+  });
+
+  it("double-swap in one tick (p2→p1→p2): the superseded attach's interior halts — the end state is the winner's regime", async () => {
+    const p2 = recoverableProvider();
+    await memory.setEmbeddingProvider(p2); // signature adopted: fake/m1/4
+
+    // Rowids spread past UPDATE_BATCH_ROWS so the loser's signature wipe spans
+    // two batches and parks on the interior await between them — exactly where
+    // an epoch-blind attach used to resume and keep wiping.
+    for (let i = 0; i < 10; i++) insertEmbeddedChunkAt(memory, i + 1, `low-${i}`);
+    for (let i = 0; i < 10; i++) insertEmbeddedChunkAt(memory, 8001 + i, `high-${i}`);
+
+    const p1 = recoverableProvider({ name: "fake1", dimensions: 8 });
+    const loser = memory.setEmbeddingProvider(p1);  // parks inside its batched wipe
+    const winner = memory.setEmbeddingProvider(p2); // same tick: sees its own signature, finishes fast
+    await Promise.all([loser, winner]);
+
+    // Whatever the loser wiped before it went stale re-embeds under the winner.
+    await vi.waitFor(() => expect(missing()).toBe(0), { timeout: 3000 });
+
+    // Internally consistent end state: stored signature == live provider, and
+    // no vector survives under any other regime. Pre-fix the superseded attach
+    // finished its wipe, dropped chunks_vec and wrote fake1/m1/8 over the
+    // winner's signature — forcing a full paid re-embed at next boot.
+    const sig = memory["db"]
+      .prepare("SELECT value FROM meta WHERE key = 'embedding_signature'")
+      .get() as { value: string };
+    expect(sig.value).toBe(`${p2.name}/${p2.model}/${p2.dimensions}`);
+    expect(memory["embeddingProvider"]).toBe(p2);
+    const wrongDims = memory["db"]
+      .prepare("SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NOT NULL AND (typeof(embedding) != 'blob' OR length(embedding) != ?)")
+      .get(4 * DIMS) as { n: number };
+    expect(wrongDims.n).toBe(0);
+    expect(p2.subscribed()).toBe(true);
+    expect(p1.subscribed()).toBe(false);
   });
 
   it("attaching the same provider twice is idempotent — one listener, no duplicate pass", async () => {

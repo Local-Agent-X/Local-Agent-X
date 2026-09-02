@@ -156,10 +156,12 @@ export class MemoryIndex extends MemoryFactsBase {
     // recovery listener, stops an in-flight re-embed at its batch boundary,
     // and hands back a staleness probe. A call superseded while it awaited
     // must go inert — its tail used to re-subscribe the OLD provider over
-    // the winner's and double-fire the attach kick.
+    // the winner's and double-fire the attach kick. The probe is threaded
+    // INTO the attach too, so a superseded interior (signature wipe, dim-heal)
+    // halts at its next batch boundary instead of wiping the winner's regime.
     const swap = this.reembed.beginSwap();
     this.embeddingProvider = provider;
-    const { verdict, hasVec } = await Embedding.attachEmbeddingProvider(this.db, provider);
+    const { verdict, hasVec } = await Embedding.attachEmbeddingProvider(this.db, provider, () => !swap.stale());
     if (swap.stale()) return;
     if (hasVec) this.hasVec = true;
     // Drain legacy JSON-text vectors to float32 blobs, THEN backfill anything

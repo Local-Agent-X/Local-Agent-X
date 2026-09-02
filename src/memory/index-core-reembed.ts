@@ -158,6 +158,14 @@ export class BackgroundReembed {
         else this.resetBackoff();
       })
       .catch((e) => {
+        // Expected at shutdown: close() disposes mid-pass and a tail statement
+        // trips over the already-closed handle (the epoch probe only runs at
+        // batch boundaries). Nothing failed and nothing resumes — keep it out
+        // of warn.
+        if (!this.ctx.db().open) {
+          logger.debug(`[memory] Background re-embed stopped by close: ${(e as Error).message}`);
+          return;
+        }
         logger.warn(`[memory] Background re-embed failed: ${(e as Error).message}`);
         if (this.epoch === passEpoch) this.armBackoff();
       })

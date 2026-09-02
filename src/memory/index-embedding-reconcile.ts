@@ -50,10 +50,15 @@ export function yieldEventLoop(): Promise<void> {
 // with an event-loop yield between batches. Each batch UPDATE is atomic; rows
 // inserted after the bounds snapshot carry vectors from the CURRENT provider
 // (callers set the provider before invoking) and are correctly left alone.
+// shouldContinue is the attach path's swap-epoch probe (see
+// attachEmbeddingProvider): once it reports false the pass stops before its
+// next batch, so a superseded attach can never keep wiping under a regime the
+// winner has already replaced.
 async function nullEmbeddingsInBatches(
   db: InstanceType<typeof Database>,
   predicateSql: string,
-  params: readonly unknown[]
+  params: readonly unknown[],
+  shouldContinue: () => boolean = () => true
 ): Promise<number> {
   const bounds = db
     .prepare("SELECT MIN(rowid) AS lo, MAX(rowid) AS hi FROM chunks")
@@ -66,6 +71,7 @@ async function nullEmbeddingsInBatches(
   );
   let changed = 0;
   for (let lo = bounds.lo; lo <= bounds.hi; lo += UPDATE_BATCH_ROWS) {
+    if (!shouldContinue()) break;
     const hi = Math.min(lo + UPDATE_BATCH_ROWS - 1, bounds.hi);
     changed += stmt.run(lo, hi, ...params).changes;
     await yieldEventLoop();
@@ -77,11 +83,15 @@ export function embeddingSignature(p: EmbeddingProvider): string {
   return `${p.name}/${p.model}/${p.dimensions}`;
 }
 
-export type SignatureVerdict = "match" | "adopted" | "wiped" | "degraded";
+// "superseded": the attach was overtaken by a newer setEmbeddingProvider call
+// mid-flight and halted before its irreversible tail writes. The caller's own
+// staleness probe fires on the same epoch, so this verdict is never acted on.
+export type SignatureVerdict = "match" | "adopted" | "wiped" | "degraded" | "superseded";
 
 export async function reconcileEmbeddingSignature(
   db: InstanceType<typeof Database>,
-  provider: EmbeddingProvider
+  provider: EmbeddingProvider,
+  shouldContinue: () => boolean = () => true
 ): Promise<SignatureVerdict> {
   const sig = embeddingSignature(provider);
   const row = db
@@ -125,7 +135,14 @@ export async function reconcileEmbeddingSignature(
   // Batched so the event loop keeps turning. Signature written LAST: a crash
   // mid-wipe leaves it stale, so the next boot re-enters and the (idempotent)
   // wipe resumes.
-  await nullEmbeddingsInBatches(db, "", []);
+  await nullEmbeddingsInBatches(db, "", [], shouldContinue);
+  // A superseded attach stops HERE, before the two irreversible tail writes:
+  // dropping chunks_vec would orphan the winner's table (recreated next with
+  // the loser's dims, its inserts silently swallowed), and writing the loser's
+  // signature over the winner's forces a full paid re-embed at next boot.
+  // Rows already NULLed stay NULL — the winner's kick re-embeds them under
+  // its own regime.
+  if (!shouldContinue()) return "superseded";
   try { db.exec("DROP TABLE IF EXISTS chunks_vec"); } catch {}
   setSig.run(SIGNATURE_KEY, sig);
   logger.warn(
@@ -163,19 +180,22 @@ export function countChunksMissingEmbedding(db: InstanceType<typeof Database>): 
  */
 export async function nullDimensionMismatchedEmbeddings(
   db: InstanceType<typeof Database>,
-  provider: EmbeddingProvider
+  provider: EmbeddingProvider,
+  shouldContinue: () => boolean = () => true
 ): Promise<number> {
   let healed = 0;
   healed += await nullEmbeddingsInBatches(
     db,
     " AND typeof(embedding) = 'blob' AND length(embedding) != ?",
-    [provider.dimensions * 4]
+    [provider.dimensions * 4],
+    shouldContinue
   );
   try {
     healed += await nullEmbeddingsInBatches(
       db,
       " AND typeof(embedding) = 'text' AND json_array_length(embedding) != ?",
-      [provider.dimensions]
+      [provider.dimensions],
+      shouldContinue
     );
   } catch {
     // json_array_length unavailable, or a non-JSON text embedding — leave it
@@ -206,18 +226,21 @@ export async function nullDimensionMismatchedEmbeddings(
  *   bare "0". GLOB is a text operator, so it must not be aimed at blobs.
  */
 export async function nullZeroVectorEmbeddings(
-  db: InstanceType<typeof Database>
+  db: InstanceType<typeof Database>,
+  shouldContinue: () => boolean = () => true
 ): Promise<number> {
   let healed = 0;
   healed += await nullEmbeddingsInBatches(
     db,
     " AND typeof(embedding) = 'blob' AND embedding = zeroblob(length(embedding))",
-    []
+    [],
+    shouldContinue
   );
   healed += await nullEmbeddingsInBatches(
     db,
     " AND typeof(embedding) = 'text' AND embedding NOT GLOB '*[1-9]*'",
-    []
+    [],
+    shouldContinue
   );
   return healed;
 }
@@ -260,12 +283,23 @@ export function purgeZeroVectorEmbeddingCache(
  * provider — a model change can never permanently orphan content. Skipped
  * in the degraded local-fallback state: re-embedding a real provider's
  * corpus with TF-IDF would trade good vectors for junk.
+ *
+ * shouldContinue mirrors reembedMissingChunks' staleness probe: the caller
+ * hands in its swap-epoch check (setEmbeddingProvider's `!swap.stale()`), and
+ * once it reports false this attach halts at its next batch boundary. Without
+ * it a superseded attach resumed after every interior await and kept wiping,
+ * dropping chunks_vec and writing its signature under a regime the winner had
+ * already replaced.
  */
 export async function attachEmbeddingProvider(
   db: InstanceType<typeof Database>,
-  provider: EmbeddingProvider
+  provider: EmbeddingProvider,
+  shouldContinue: () => boolean = () => true
 ): Promise<{ verdict: SignatureVerdict; hasVec: boolean }> {
-  const verdict = await reconcileEmbeddingSignature(db, provider);
+  const verdict = await reconcileEmbeddingSignature(db, provider, shouldContinue);
+  if (verdict === "superseded" || !shouldContinue()) {
+    return { verdict: "superseded", hasVec: false };
+  }
   const { hasVec } = initVectorTable(db, provider.dimensions);
 
   // All-zero sentinel vectors are invalid for EVERY provider, so heal them
@@ -274,7 +308,8 @@ export async function attachEmbeddingProvider(
   // NULLed chunks re-embed on the next healthy backfill; the cache purge stops
   // getCachedEmbedding re-serving a stale zero into a chunk just cleared.
   const purged = purgeZeroVectorEmbeddingCache(db);
-  const zeroed = await nullZeroVectorEmbeddings(db);
+  const zeroed = await nullZeroVectorEmbeddings(db, shouldContinue);
+  if (!shouldContinue()) return { verdict: "superseded", hasVec };
   if (zeroed > 0 || purged > 0) {
     logger.warn(
       `[memory] Self-heal: cleared ${zeroed} all-zero chunk vector(s) + ${purged} cache row(s) ` +
@@ -282,8 +317,11 @@ export async function attachEmbeddingProvider(
     );
   }
 
+  // Guarded hardest: a superseded attach's dim-heal ran with the LOSER's
+  // dimensions, NULLing every vector the winner had just written or kept.
   if (verdict !== "degraded") {
-    const healed = await nullDimensionMismatchedEmbeddings(db, provider);
+    const healed = await nullDimensionMismatchedEmbeddings(db, provider, shouldContinue);
+    if (!shouldContinue()) return { verdict: "superseded", hasVec };
     if (healed > 0) {
       logger.warn(
         `[memory] Self-heal: ${healed} chunk(s) had stale-dimension embeddings ` +

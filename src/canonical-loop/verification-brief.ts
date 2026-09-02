@@ -39,7 +39,7 @@ const MANDATE = [
 	"You are auditing another agent's deliverable. Assume it is wrong until confirmed.",
 	"",
 	"Mandate:",
-	"1. Read each deliverable listed below with the matching read tool: spreadsheet_read for spreadsheets (.xlsx/.csv), document_read for documents (.docx), read otherwise.",
+	"1. Read each deliverable listed below with the matching read tool: the `spreadsheet` tool with action \"read\" for spreadsheets (.xlsx/.csv), the `document` tool with action \"read\" for documents (.docx), the plain `read` tool otherwise.",
 	"2. Pick 3-7 load-bearing values — the figures the deliverable's conclusions rest on (totals, prices, dates, shares, named quantities).",
 	"3. For each value, acquire the figure from a source OTHER than the one the deliverable claims: web_search first, then web_fetch a DIFFERENT domain than the claimed source. If no second source exists, re-fetch the claimed source fresh with web_fetch and compare against what the deliverable recorded.",
 	"4. Compare NFC-normalized text (Unicode NFC — normalize both sides before comparing) and numerically parsed values (strip currency symbols, thousands separators, and units before comparing numbers), reading the deliverable side with the spreadsheet/document read tools. Never compare raw bytes.",

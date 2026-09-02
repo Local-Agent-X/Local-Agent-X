@@ -328,3 +328,68 @@ describe("session-bridge-observer — headless sessions stamp bg_op_completed", 
     expect(listOpsForSession(sessionId)).toEqual([]);
   });
 });
+
+// Verification-invariants campaign: verify_deliverable is a HARNESS-spawned
+// audit op. A succeeded pass carries the verdict — the product — and keeps
+// full surfacing. A failed/cancelled pass (provider hiccup, deadline cancel)
+// is exactly the noise class the skill-review quieting purged: keep the
+// AGENTS card update (bg_op_completed still flows, stamped headless so the
+// browser skips the OS toast + fallback FAILED card) but no pending
+// notification and no idle nudge.
+describe("session-bridge-observer — verify_deliverable failures are quiet, verdicts are not", () => {
+  beforeEach(() => {
+    vi.mocked(scheduleIdleNudge).mockClear();
+    vi.mocked(pushPendingNotification).mockClear();
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "a %s verify op updates the card quietly — no notification, no nudge",
+    (to) => {
+      const sessionId = `sess-obs-verify-quiet-${to}`;
+      const opId = `op_verify_deliverable_quiet_${to}`;
+      writeOp({ id: opId, type: "verify_deliverable", status: "running", lastFailureReason: "provider 500" } as never);
+      created.push(opId);
+      trackOpForSession(opId, sessionId, "Verification pass: build the sheet");
+      const broadcast = vi.fn();
+      setSessionBroadcaster(broadcast);
+
+      recordCanonicalEvent(stateChanged(opId, to));
+
+      // Card visibility kept: the terminal event still flows, toast-quieted…
+      expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+        type: "bg_op_completed", status: to, headless: true,
+      }));
+      // …but nothing user-interrupting fires.
+      expect(pushPendingNotification).not.toHaveBeenCalled();
+      expect(scheduleIdleNudge).not.toHaveBeenCalled();
+      expect(listOpsForSession(sessionId)).toEqual([]);
+    },
+  );
+
+  it("a SUCCEEDED verify op keeps full surfacing — the verdict is the product", () => {
+    const sessionId = "sess-obs-verify-verdict";
+    const opId = "op_verify_deliverable_verdict_1";
+    makeOp(opId, "verify_deliverable");
+    appendOpMessage({
+      opId, messageId: "verdict-msg", turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: { text: "VERDICT: CONFIRMED\nall values matched" }, createdAt: new Date().toISOString(),
+    });
+    trackOpForSession(opId, sessionId, "Verification pass: build the sheet");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    const completedEvent = broadcast.mock.calls
+      .map(([, event]) => event as Record<string, unknown>)
+      .find((event) => event.type === "bg_op_completed");
+    expect(completedEvent).toMatchObject({ status: "completed", summary: expect.stringContaining("VERDICT: CONFIRMED") });
+    expect(completedEvent).not.toHaveProperty("headless");
+    expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      opId, status: "completed", summary: expect.stringContaining("VERDICT: CONFIRMED"),
+    }));
+    expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, "Verification pass: build the sheet");
+    expect(listOpsForSession(sessionId)).toEqual([]);
+    cancelIdleNudge(sessionId);
+  });
+});

@@ -28,20 +28,9 @@ import { isDispatchFailure } from "./types.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 
-/** A short, TTS-friendly line for a finished background op (no markdown, capped
- *  length). Spoken proactively when the user is in voice; the chat UI gets the
- *  full bg_op_completed event separately. */
-function toSpokenCompletion(task: string, summary: string, status: string): string {
-  const clean = (summary || "").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim();
-  const failed = status === "failed" || status === "cancelled";
-  const lead = failed ? "Heads up — that background task ran into trouble" : "Quick update — that background task finished";
-  if (!clean) {
-    const what = task ? ` (${task.slice(0, 60)})` : "";
-    return `${lead}${what}.`;
-  }
-  return `${lead}: ${clean.slice(0, 280)}`;
-}
+import { toSpokenCompletion } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
+import { VERIFICATION_OP_TYPE } from "./verification-trigger.js";
 import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
 import { getBus, streamChannel } from "./bus.js";
 import type { ServerEvent } from "../types.js";
@@ -242,6 +231,10 @@ function recordCanonicalEventWithSink(
           } as ServerEvent);
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
           const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;
+          // Failed/cancelled verification pass = harness noise (the class the
+          // skill-review quieting purged): AGENTS card + logs only — no toast,
+          // notification, spoken line, or nudge. A verdict keeps full surfacing.
+          const quietVerifyFailure = op?.type === VERIFICATION_OP_TYPE && status !== "completed";
           // Surface the worker's ACTUAL final message, not a bare "task
           // completed". On completed, the final assistant text IS the result
           // the parent asked for; on failure preserve the durable failure fact
@@ -309,7 +302,8 @@ function recordCanonicalEventWithSink(
             // is GLOBAL, and it must still flow (it's what flips the ambient
             // dock card out of "dreaming" + arms its prune) — but the browser
             // reads this stamp to skip the OS toast + fallback FAILED card.
-            ...(isHeadlessSession(sessionId) ? { headless: true } : {}),
+            // A failed verification pass borrows the stamp (card, no toast).
+            ...(isHeadlessSession(sessionId) || quietVerifyFailure ? { headless: true } : {}),
           } as ServerEvent);
           if (emitBrowser) emitBrowser(sessionId, {
             type: "worker_done",
@@ -318,7 +312,7 @@ function recordCanonicalEventWithSink(
             summary,
           } as ServerEvent);
 
-          if (core) pushPendingNotification(sessionId, {
+          if (core && !quietVerifyFailure) pushPendingNotification(sessionId, {
             opId: event.opId,
             status,
             summary: persistedSummary,
@@ -329,7 +323,7 @@ function recordCanonicalEventWithSink(
           // If the user is in a live voice session, speak the result at the next
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
-          if (core) {
+          if (core && !quietVerifyFailure) {
             proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status));
             scheduleIdleNudge(sessionId, task);
           }

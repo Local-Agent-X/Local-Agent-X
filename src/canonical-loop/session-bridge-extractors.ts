@@ -17,6 +17,21 @@ import { extractText } from "./turn-loop/content-extract.js";
 // 2026-05-23: agent emitted `**APP_READY: <url>**`, regex captured the
 // trailing `**`, the rendered sidebar link 404'd while the apps-page link
 // worked.
+/** A short, TTS-friendly line for a finished background op (no markdown, capped
+ *  length). Spoken proactively when the user is in voice; the chat UI gets the
+ *  full bg_op_completed event separately. (Lives here, with the observer's other
+ *  presentation helpers, to keep session-bridge-observer.ts under the LOC gate.) */
+export function toSpokenCompletion(task: string, summary: string, status: string): string {
+  const clean = (summary || "").replace(/[*_`#>|]/g, "").replace(/\s+/g, " ").trim();
+  const failed = status === "failed" || status === "cancelled";
+  const lead = failed ? "Heads up — that background task ran into trouble" : "Quick update — that background task finished";
+  if (!clean) {
+    const what = task ? ` (${task.slice(0, 60)})` : "";
+    return `${lead}${what}.`;
+  }
+  return `${lead}: ${clean.slice(0, 280)}`;
+}
+
 function trimUrlNoise(url: string): string {
   return url.replace(/[*)\]>.,;:'"`!?]+$/, "");
 }

@@ -1,29 +1,34 @@
 /**
- * verification-trigger — the keystone observer's condition chain.
+ * verification-trigger — the keystone observer's condition chain and, above
+ * all, its SPEND guards.
  *
- * Under test: every trigger condition individually falsified; dedup on
- * double-projected terminal events plus the live-peer guard; the recursion
- * guard (a verification op's own success never re-triggers); the one-line
- * wiring at the projectCanonicalEvent seam (running BEFORE the session-bridge
- * observer releases the op↔session binding); the cost pin — a non-terminal
- * event costs exactly ONE property read; and the never-throws posture.
+ * Under test: the skeptic's 3-ops probe (three terminals over one unchanged
+ * deliverable → exactly ONE submission); changed-file refire with a
+ * delta-only brief scope; one live verifier per session (both the in-flight
+ * flag and a tracked live verify op); every trigger condition individually
+ * falsified (interactive type, recursion guard, no session, no ingestion,
+ * wrong extensions, unreadable files, setting off, non-success terminals);
+ * the one-line wiring at the projectCanonicalEvent seam (running BEFORE the
+ * session-bridge observer releases the op↔session binding); the cost pin — a
+ * non-terminal event costs exactly ONE property read; and the never-throws
+ * posture.
  *
  * The heavy submission half (verification-submit.ts) is swapped for a capture
- * seam; its own behavior (op shape, setting gate, runtime failure posture) is
- * pinned in verification-submit.test.ts.
+ * seam; its own behavior (op shape, session split, deadline, failure posture)
+ * is pinned in verification-submit.test.ts.
  */
 import { describe, it, expect, afterAll, afterEach } from "vitest";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CanonicalEvent } from "./types.js";
 
 // ops/op-store.ts binds OPS_BASE = join(getLaxDir(), …) at import, so isolate
 // the data dir BEFORE the dynamic imports below (full-turn.test.ts pattern) —
-// nothing touches ~/.lax.
+// nothing touches ~/.lax. realpathSync so recorded artifact paths
+// (task-artifacts canonicalizes via realpathDeep — macOS /tmp → /private/tmp)
+// compare equal to expectations.
 const prevLaxDir = process.env.LAX_DATA_DIR;
-// realpathSync so recorded artifact paths (task-artifacts canonicalizes via
-// realpathDeep — macOS /tmp → /private/tmp) compare equal to expectations.
 const laxDir = realpathSync(mkdtempSync(join(tmpdir(), "lax-verify-trigger-")));
 process.env.LAX_DATA_DIR = laxDir;
 afterAll(() => {
@@ -47,6 +52,7 @@ const { trackOpForSession, releaseOpFromSession } = await import("../ops/session
 const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
 const { recordTaskArtifact, clearTaskArtifacts } = await import("../data-lineage/task-artifacts.js");
 const { cancelIdleNudge } = await import("../ops/idle-nudge.js");
+const { getRuntimeConfig, setRuntimeConfig } = await import("../config.js");
 
 let seq = 0;
 const trackedOps: string[] = [];
@@ -66,15 +72,27 @@ function makeSession(): string {
 	return sessionId;
 }
 
+/** Let the (immediately-resolving) seam submitter settle so the in-flight
+ *  PENDING flag clears — between terminals, not during a burst. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
 function succeededEvent(opId: string): CanonicalEvent {
 	return { opId, seq: ++seq, type: "state_changed", ts: new Date().toISOString(), body: { from: "running", to: "succeeded", reason: "done" } };
 }
 
-/** Arm a session so conditions 3+4 hold: external ingestion + one deliverable. */
-function armSession(sessionId: string, deliverable = join(laxDir, `report-${seq++}.xlsx`)): string {
+/** Create a real deliverable file and enroll it as a session artifact —
+ *  the fingerprint stats the file, so it must exist on disk. */
+function addDeliverable(sessionId: string, name = `report-${seq++}.xlsx`, content = "cells"): string {
+	const path = join(laxDir, name);
+	writeFileSync(path, content, "utf-8");
+	recordTaskArtifact(sessionId, path);
+	return path;
+}
+
+/** Arm a session so the ingestion + deliverable conditions hold. */
+function armSession(sessionId: string): string {
 	recordExternalIngestion(sessionId);
-	recordTaskArtifact(sessionId, deliverable);
-	return deliverable;
+	return addDeliverable(sessionId);
 }
 
 let calls: SubmitInput[] = [];
@@ -92,41 +110,94 @@ afterEach(() => {
 });
 afterAll(() => _setVerificationSubmitterForTests(null));
 
-describe("verification trigger — happy path", () => {
-	it("submits once for a succeeded non-interactive op with ingestion + deliverables", () => {
+describe("verification trigger — spend guards (the design center)", () => {
+	it("3-ops probe: three terminals over one unchanged deliverable submit exactly once", async () => {
 		const sessionId = makeSession();
 		const xlsx = armSession(sessionId);
-		const txt = join(laxDir, `notes-${seq++}.txt`);
-		recordTaskArtifact(sessionId, txt); // non-deliverable extension — filtered out
-		const opId = makeTrackedOp("freeform", sessionId);
 
-		recordVerificationTrigger(succeededEvent(opId));
-
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
 		expect(calls).toHaveLength(1);
-		expect(calls[0]!.parentOp.id).toBe(opId);
-		expect(calls[0]!.sessionId).toBe(sessionId);
 		expect(calls[0]!.deliverables).toEqual([xlsx]);
+		await settle(); // in-flight flag cleared — the skips below are the FINGERPRINT's
+
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(1); // unchanged set — no second spend
+		await settle();
+
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("research", sessionId)));
+		expect(calls).toHaveLength(1); // still nothing new to verify
 	});
 
-	it("resolves the session from the explicit override when the op is untracked", () => {
+	it("double-projected terminal events for one op submit exactly once", () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
-		const opId = `op_verify_trig_untracked_${seq++}`;
-		writeOp({ id: opId, type: "freeform", status: "completed", task: "untracked" } as never);
-
-		recordVerificationTrigger(succeededEvent(opId), sessionId);
-
+		const event = succeededEvent(makeTrackedOp("freeform", sessionId));
+		recordVerificationTrigger(event);
+		recordVerificationTrigger(event); // relay/dup projection of the same terminal
 		expect(calls).toHaveLength(1);
-		expect(calls[0]!.sessionId).toBe(sessionId);
 	});
 
-	it("matches deliverable extensions case-insensitively", () => {
-		expect(isDeliverablePath("/w/Report.XLSX")).toBe(true);
-		expect(isDeliverablePath("/w/summary.MD")).toBe(true);
-		expect(isDeliverablePath("/w/notes.txt")).toBe(false);
-		expect(isDeliverablePath("/w/page.html")).toBe(false);
-		expect(isDeliverablePath("/w/no-extension")).toBe(false);
-		expect([...DELIVERABLE_EXTENSIONS].sort()).toEqual([".csv", ".docx", ".md", ".pdf", ".pptx", ".xlsx"]);
+	it("a changed file re-fires with ONLY the delta in scope", async () => {
+		const sessionId = makeSession();
+		const unchanged = armSession(sessionId);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(1);
+		await settle();
+
+		// Add a SECOND deliverable now, keeping the first byte-identical:
+		// the refire must scope to the new file only.
+		const added = addDeliverable(sessionId, `late-${seq++}.csv`);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(2);
+		expect(calls[1]!.deliverables).toEqual([added]);
+		expect(calls[1]!.deliverables).not.toContain(unchanged);
+	});
+
+	it("an mtime-only change (same size) counts as changed and re-fires", async () => {
+		const sessionId = makeSession();
+		const xlsx = armSession(sessionId);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(1);
+		await settle();
+
+		const later = new Date(Date.now() + 5_000);
+		utimesSync(xlsx, later, later); // same bytes, bumped mtime
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(2);
+		expect(calls[1]!.deliverables).toEqual([xlsx]);
+	});
+
+	it("burst while a submission is in flight collapses to one live verifier", async () => {
+		const sessionId = makeSession();
+		armSession(sessionId);
+		let release!: () => void;
+		const gate = new Promise<boolean>((resolve) => { release = () => resolve(true); });
+		_setVerificationSubmitterForTests(async (input) => { calls.push(input); return gate; });
+
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(1);
+
+		// The set CHANGES mid-flight — still no second verifier while pending.
+		const added = addDeliverable(sessionId, `midflight-${seq++}.docx`);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(1);
+
+		release();
+		await settle(); // let .finally clear the in-flight flag
+
+		// Next terminal picks up the accumulated delta.
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(2);
+		expect(calls[1]!.deliverables).toEqual([added]);
+		_setVerificationSubmitterForTests(async (input) => { calls.push(input); return true; });
+	});
+
+	it("a tracked live verification op blocks a new one for the whole session", () => {
+		const sessionId = makeSession();
+		armSession(sessionId);
+		makeTrackedOp(VERIFICATION_OP_TYPE, sessionId, { status: "running", parentOpId: "op_some_other_parent" });
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(0);
 	});
 });
 
@@ -150,7 +221,7 @@ describe("verification trigger — each condition individually falsified", () =>
 
 	it("skips when the session has no external ingestion", () => {
 		const sessionId = makeSession();
-		recordTaskArtifact(sessionId, join(laxDir, `clean-${seq++}.docx`)); // deliverable, but no ingestion
+		addDeliverable(sessionId); // deliverable, but no ingestion
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
 		expect(calls).toHaveLength(0);
 	});
@@ -158,9 +229,32 @@ describe("verification trigger — each condition individually falsified", () =>
 	it("skips when the session has no deliverable-extension artifacts", () => {
 		const sessionId = makeSession();
 		recordExternalIngestion(sessionId);
-		recordTaskArtifact(sessionId, join(laxDir, `scratch-${seq++}.txt`)); // artifact, wrong extension
+		const txt = join(laxDir, `scratch-${seq++}.txt`);
+		writeFileSync(txt, "notes", "utf-8");
+		recordTaskArtifact(sessionId, txt); // artifact, wrong extension
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
 		expect(calls).toHaveLength(0);
+	});
+
+	it("skips when every deliverable has vanished from disk", () => {
+		const sessionId = makeSession();
+		const xlsx = armSession(sessionId);
+		rmSync(xlsx);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(0);
+	});
+
+	it("skips when the verifyDeliverables setting is off", () => {
+		const cfg = getRuntimeConfig();
+		setRuntimeConfig({ ...cfg, verifyDeliverables: false });
+		try {
+			const sessionId = makeSession();
+			armSession(sessionId);
+			recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+			expect(calls).toHaveLength(0);
+		} finally {
+			setRuntimeConfig({ ...cfg, verifyDeliverables: true });
+		}
 	});
 
 	it("skips when no session binding resolves and no override is given", () => {
@@ -179,35 +273,14 @@ describe("verification trigger — each condition individually falsified", () =>
 		}
 		expect(calls).toHaveLength(0);
 	});
-});
 
-describe("verification trigger — dedup", () => {
-	it("submits exactly once for double-projected terminal events", () => {
-		const sessionId = makeSession();
-		armSession(sessionId);
-		const opId = makeTrackedOp("freeform", sessionId);
-		const event = succeededEvent(opId);
-		recordVerificationTrigger(event);
-		recordVerificationTrigger(event); // relay/dup projection of the same terminal
-		expect(calls).toHaveLength(1);
-	});
-
-	it("skips when a live verification peer already exists for the same parent", () => {
-		const sessionId = makeSession();
-		armSession(sessionId);
-		const parentId = makeTrackedOp("freeform", sessionId);
-		makeTrackedOp(VERIFICATION_OP_TYPE, sessionId, { status: "pending", parentOpId: parentId });
-		recordVerificationTrigger(succeededEvent(parentId));
-		expect(calls).toHaveLength(0);
-	});
-
-	it("a live verification peer for a DIFFERENT parent does not block", () => {
-		const sessionId = makeSession();
-		armSession(sessionId);
-		const parentId = makeTrackedOp("freeform", sessionId);
-		makeTrackedOp(VERIFICATION_OP_TYPE, sessionId, { status: "running", parentOpId: "op_some_other_parent" });
-		recordVerificationTrigger(succeededEvent(parentId));
-		expect(calls).toHaveLength(1);
+	it("matches deliverable extensions case-insensitively", () => {
+		expect(isDeliverablePath("/w/Report.XLSX")).toBe(true);
+		expect(isDeliverablePath("/w/summary.MD")).toBe(true);
+		expect(isDeliverablePath("/w/notes.txt")).toBe(false);
+		expect(isDeliverablePath("/w/page.html")).toBe(false);
+		expect(isDeliverablePath("/w/no-extension")).toBe(false);
+		expect([...DELIVERABLE_EXTENSIONS].sort()).toEqual([".csv", ".docx", ".md", ".pdf", ".pptx", ".xlsx"]);
 	});
 });
 
@@ -220,6 +293,19 @@ describe("verification trigger — wiring and posture", () => {
 		// same projection; the trigger still resolved the session — proof it
 		// runs first (the wiring-order invariant).
 		projectCanonicalEvent(succeededEvent(opId));
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.sessionId).toBe(sessionId);
+		expect(calls[0]!.parentOp.id).toBe(opId);
+	});
+
+	it("resolves the session from the explicit override when the op is untracked", () => {
+		const sessionId = makeSession();
+		armSession(sessionId);
+		const opId = `op_verify_trig_untracked_${seq++}`;
+		writeOp({ id: opId, type: "freeform", status: "completed", task: "untracked" } as never);
+
+		recordVerificationTrigger(succeededEvent(opId), sessionId);
+
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.sessionId).toBe(sessionId);
 	});

@@ -226,22 +226,40 @@ async function collectAgentsRules(scopeHint?: string): Promise<string> {
  * index isn't reachable from this process, returns empty. The worker
  * still has memory_search tools at runtime; pre-fetching is a perf hint
  * and a way to ensure key facts are in the system prompt unconditionally.
+ *
+ * Searches the process's live MemoryIndex when one exists (the server binds
+ * it at construction — same accessor cognition/contradiction-detector.ts
+ * uses) rather than opening a private copy: a per-build MemoryIndex leaked
+ * its sqlite handle and fs watcher on every delegation, and re-pointed the
+ * universal-index singleton at the transient copy. The standalone fallback
+ * (no live index in this process) still opens one — and closes it.
  */
 async function fetchMemoryHits(query: string | undefined, limit: number): Promise<MemoryHit[]> {
   if (!query || !query.trim()) return [];
   try {
-    const dataDir = getLaxDir();
-    // Lazy import — memory module is heavy
+    // Lazy imports — memory module is heavy
+    const { getUniversalIndex } = await import("../memory/universal-index.js");
+    const shared = getUniversalIndex()?.getMemory();
+    if (shared?.isOpen()) {
+      return toMemoryHits(await shared.search(query, { maxResults: limit }));
+    }
     const { MemoryIndex } = await import("../memory/index.js");
-    const idx = new MemoryIndex(dataDir);
-    const results = await idx.search(query, { maxResults: limit });
-    return results.map(r => ({
-      source: r.source || "memory",
-      snippet: (r.snippet || "").slice(0, 400),
-      score: r.score,
-    }));
+    const idx = new MemoryIndex(getLaxDir());
+    try {
+      return toMemoryHits(await idx.search(query, { maxResults: limit }));
+    } finally {
+      idx.close();
+    }
   } catch (e) {
     logger.info(`[pack] memory pre-fetch skipped: ${(e as Error).message}`);
     return [];
   }
+}
+
+function toMemoryHits(results: Array<{ source?: string; snippet?: string; score: number }>): MemoryHit[] {
+  return results.map(r => ({
+    source: r.source || "memory",
+    snippet: (r.snippet || "").slice(0, 400),
+    score: r.score,
+  }));
 }

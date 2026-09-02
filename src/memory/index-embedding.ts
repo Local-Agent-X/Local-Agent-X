@@ -172,7 +172,14 @@ export async function reembedMissingChunks(
   db: InstanceType<typeof Database>,
   provider: EmbeddingProvider,
   config: MemoryConfig,
-  hasVec: boolean
+  hasVec: boolean,
+  /**
+   * Checked at each batch boundary; false stops the pass — with the
+   * just-embedded batch dropped unwritten, so a superseded provider's vectors
+   * never land after its replacement's signature reconcile. The successor's
+   * own pass re-embeds whatever stayed NULL.
+   */
+  shouldContinue: () => boolean = () => true
 ): Promise<{ embedded: number; missing: number }> {
   const BATCH = 32;
   const select = db.prepare(
@@ -198,6 +205,7 @@ export async function reembedMissingChunks(
       path: "", source: "", startLine: 0, endLine: 0,
     })) as Chunk[];
     await embedChunksWithRetry(db, provider, config, chunks);
+    if (!shouldContinue()) break;
 
     db.transaction(() => {
       for (const c of chunks) {

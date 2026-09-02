@@ -5,7 +5,9 @@
  * the next boot (17× in one night's logs). These lock the seam on one real
  * MemoryIndex: the provider's recovery signal starts exactly one pass, a
  * second signal mid-pass coalesces instead of running in parallel, and it is
- * honoured once the pass settles rather than dropped.
+ * honoured once the pass settles rather than dropped. The backoff suite locks
+ * the flap bound: consecutive unsuccessful passes space out exponentially
+ * instead of re-scanning back-to-back on every serving↔non-serving flap.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
@@ -13,57 +15,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "./index.js";
 import { countChunksMissingEmbedding } from "./index-embedding.js";
-import type { EmbeddingProvider } from "./types.js";
-
-const DIMS = 4;
-const realVector = () => Array.from({ length: DIMS }, (_, i) => (i + 1) / DIMS);
-const degradedVector = () => new Array<number>(DIMS).fill(0);
-
-interface RecoverableProvider extends EmbeddingProvider {
-  /** What the provider answers for calls made from now on. */
-  serving: boolean;
-  /** Batches observed, in call order. */
-  batches: string[][];
-  /** Park every in-flight batch until release(). */
-  hold(): void;
-  release(): void;
-  fireRecovery(): void;
-  /** Whether a listener is currently attached. */
-  subscribed(): boolean;
-}
-
-/**
- * A provider with Ollama's degraded contract — zero vectors while down — plus
- * test-driven recovery and a gate to freeze a pass mid-batch. The answer is
- * decided at call time, so a batch held while "down" stays a failed batch
- * even if the provider comes back before it is released.
- */
-function recoverableProvider(): RecoverableProvider {
-  let listener: (() => void) | null = null;
-  let gate: Promise<void> = Promise.resolve();
-  let open: () => void = () => {};
-  const provider: RecoverableProvider = {
-    name: "fake", model: "m1", dimensions: DIMS,
-    serving: true,
-    batches: [],
-    embed: async () => (provider.serving ? realVector() : degradedVector()),
-    embedBatch: async (texts) => {
-      provider.batches.push(texts);
-      const answer = provider.serving ? realVector : degradedVector;
-      await gate;
-      return texts.map(() => answer());
-    },
-    onRecovered(l) {
-      listener = l;
-      return () => { if (listener === l) listener = null; };
-    },
-    hold() { gate = new Promise<void>((resolve) => { open = resolve; }); },
-    release() { open(); },
-    fireRecovery() { listener?.(); },
-    subscribed: () => listener !== null,
-  };
-  return provider;
-}
+import { BackgroundReembed } from "./index-core-reembed.js";
+import type { MemoryConfig } from "./types.js";
+import {
+  recoverableProvider, insertUnembeddedChunk, settle,
+} from "./reembed-recovery.test-helper.js";
 
 let tempDir: string;
 let memory: MemoryIndex;
@@ -79,25 +35,14 @@ afterEach(() => {
   try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
 });
 
-/** A chunk indexed while the provider was down: text on disk, no vector. */
-function insertUnembeddedChunk(text: string): void {
-  memory["db"].prepare(`
-    INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at)
-    VALUES ('t.md', 'personality', 1, 1, ?, ?, ?, NULL, ?)
-  `).run(text, `h-${text}`, `h-${text}`, Date.now());
-}
-
 const missing = () => countChunksMissingEmbedding(memory["db"]);
-
-/** Long enough for a pass that was going to start to have reached embedBatch. */
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
 
 describe("re-embed on provider recovery", () => {
   it("provider down at attach: recovery triggers exactly one pass; a further recovery with nothing missing is a no-op", async () => {
     const provider = recoverableProvider();
     provider.serving = false;
-    insertUnembeddedChunk("alpha");
-    insertUnembeddedChunk("beta");
+    insertUnembeddedChunk(memory, "alpha");
+    insertUnembeddedChunk(memory, "beta");
 
     await memory.setEmbeddingProvider(provider);
     expect(provider.subscribed()).toBe(true);
@@ -119,9 +64,9 @@ describe("re-embed on provider recovery", () => {
   it("a recovery during a running pass does not start a parallel pass, and is honoured once the pass settles", async () => {
     const provider = recoverableProvider();
     await memory.setEmbeddingProvider(provider);
-    insertUnembeddedChunk("gamma");
-    insertUnembeddedChunk("delta");
-    insertUnembeddedChunk("epsilon");
+    insertUnembeddedChunk(memory, "gamma");
+    insertUnembeddedChunk(memory, "delta");
+    insertUnembeddedChunk(memory, "epsilon");
 
     // Freeze the first pass inside its (failing) batch.
     provider.serving = false;
@@ -150,7 +95,7 @@ describe("re-embed on provider recovery", () => {
     expect(stale.subscribed()).toBe(false);
     expect(current.subscribed()).toBe(true);
 
-    insertUnembeddedChunk("zeta");
+    insertUnembeddedChunk(memory, "zeta");
     stale.fireRecovery();
     await settle();
     expect(missing()).toBe(1);
@@ -162,5 +107,94 @@ describe("re-embed on provider recovery", () => {
     memory.close();
     expect(current.subscribed()).toBe(false);
     expect(() => current.fireRecovery()).not.toThrow();
+  });
+});
+
+describe("re-embed flap backoff", () => {
+  it("consecutive failed passes back off exponentially to the cap, kicks inside the window coalesce without scanning, and a full success resets", async () => {
+    const provider = recoverableProvider();
+    provider.serving = false;
+    let nowMs = 1_000_000;
+    const reembed = new BackgroundReembed({
+      db: () => memory["db"],
+      provider: () => provider,
+      config: () => memory.getConfig() as MemoryConfig,
+      hasVec: () => false,
+      now: () => nowMs,
+    });
+    insertUnembeddedChunk(memory, "alpha");
+    insertUnembeddedChunk(memory, "beta");
+
+    const settled = async (batchCount: number) => {
+      await vi.waitFor(() => expect(provider.batches).toHaveLength(batchCount));
+      await vi.waitFor(() => expect(reembed["inProgress"]).toBe(false));
+    };
+
+    // Failure #1 runs immediately; so does #2 — the mid-pass-recovery rerun
+    // contract keeps the FIRST retry after a failure undeferred.
+    reembed.kick("recovered (flap 1)");
+    await settled(1);
+    expect(reembed["backoffMs"]).toBe(60_000);
+    reembed.kick("recovered (flap 2)");
+    await settled(2);
+    expect(reembed["backoffMs"]).toBe(120_000);
+
+    // Inside the 60s window armed by failure #2: no scan, one deferred retry.
+    reembed.kick("recovered (flap 3)");
+    reembed.kick("recovered (flap 4)");
+    await settle();
+    expect(provider.batches).toHaveLength(2);
+
+    // Drive the ladder to the cap: each failure doubles the next window.
+    const expectedBackoffs = [240_000, 480_000, 900_000, 900_000];
+    for (const expected of expectedBackoffs) {
+      nowMs += 15 * 60_000 + 1; // past any window
+      reembed.kick("recovered (still flapping)");
+      await settled(provider.batches.length + 1);
+      expect(reembed["backoffMs"]).toBe(expected);
+    }
+
+    // Real recovery: the pass embeds everything and the ladder resets.
+    provider.serving = true;
+    nowMs += 15 * 60_000 + 1;
+    reembed.kick("recovered for real");
+    await vi.waitFor(() => expect(missing()).toBe(0));
+    await vi.waitFor(() => expect(reembed["inProgress"]).toBe(false));
+    expect(reembed["backoffMs"]).toBe(0);
+    expect(reembed["notBefore"]).toBe(0);
+
+    // Nothing missing → later kicks are no-ops regardless of backoff state.
+    const batches = provider.batches.length;
+    reembed.kick("recovered again");
+    await settle();
+    expect(provider.batches).toHaveLength(batches);
+    reembed.dispose();
+    expect(reembed["deferredKick"]).toBeNull();
+  });
+
+  it("dispose() cancels a deferred retry so it cannot fire against a closed index", async () => {
+    const provider = recoverableProvider();
+    provider.serving = false;
+    let nowMs = 1_000_000;
+    const reembed = new BackgroundReembed({
+      db: () => memory["db"],
+      provider: () => provider,
+      config: () => memory.getConfig() as MemoryConfig,
+      hasVec: () => false,
+      now: () => nowMs,
+    });
+    insertUnembeddedChunk(memory, "gamma");
+
+    reembed.kick("flap 1");
+    await vi.waitFor(() => expect(reembed["inProgress"]).toBe(false));
+    reembed.kick("flap 2"); // immediate retry, fails again → 60s window armed
+    await vi.waitFor(() => expect(reembed["inProgress"]).toBe(false));
+    nowMs += 1; // still inside the window
+    reembed.kick("flap 3");
+    expect(reembed["deferredKick"]).not.toBeNull();
+
+    reembed.dispose();
+    expect(reembed["deferredKick"]).toBeNull();
+    expect(reembed["backoffMs"]).toBe(0);
   });
 });

@@ -152,9 +152,15 @@ export class MemoryIndex extends MemoryFactsBase {
   // boot-time callers no longer starve concurrent awaited phases (measured
   // 17-21s setupVoiceWs inflation).
   async setEmbeddingProvider(provider: EmbeddingProvider): Promise<void> {
-    this.reembed.unwatch();
+    // beginSwap makes this call reentrant: it detaches the old provider's
+    // recovery listener, stops an in-flight re-embed at its batch boundary,
+    // and hands back a staleness probe. A call superseded while it awaited
+    // must go inert — its tail used to re-subscribe the OLD provider over
+    // the winner's and double-fire the attach kick.
+    const swap = this.reembed.beginSwap();
     this.embeddingProvider = provider;
     const { verdict, hasVec } = await Embedding.attachEmbeddingProvider(this.db, provider);
+    if (swap.stale()) return;
     if (hasVec) this.hasVec = true;
     // Drain legacy JSON-text vectors to float32 blobs, THEN backfill anything
     // missing a vector — a provider switch just wiped them, an earlier embed
@@ -162,6 +168,7 @@ export class MemoryIndex extends MemoryFactsBase {
     // gates the re-embed so those NULLs are picked up in the same pass rather
     // than waiting for the next boot.
     BlobMigration.kickBackgroundBlobConversion(this.db, () => {
+      if (swap.stale()) return;
       if (verdict !== "degraded") this.reembed.kick(verdict);
     });
     // Subscribed after the signature reconcile above so a recovery cannot
@@ -364,8 +371,11 @@ export class MemoryIndex extends MemoryFactsBase {
   /** Shared db handle for the memory-hygiene job (cache prune / pragmas). Not for general queries. */
   maintenanceDb(): InstanceType<typeof Database> { return this.db; }
 
+  /** Whether the underlying sqlite handle is open (false after close()). */
+  isOpen(): boolean { return this.db.open; }
+
   close(): void {
-    this.reembed.unwatch();
+    this.reembed.dispose();
     try {
       if (this.watcherHandle.debounceTimer) {
         clearTimeout(this.watcherHandle.debounceTimer);

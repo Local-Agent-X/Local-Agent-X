@@ -69,6 +69,22 @@ describe("awaitAgentRunning", () => {
     expect(EventBus.listenerCount("handler:agent-result")).toBe(0);
   });
 
+  it("an omitted success is NOT a failure signal — resolves running:true (tri-state contract)", async () => {
+    const runId = nextRunId();
+    agentStatusImpl = () => ({ status: "working" });
+
+    const promise = awaitAgentRunning(runId, 200);
+
+    await new Promise((r) => setTimeout(r, 5));
+    // success === false is the only failure signal on this event; a result
+    // event without the field means the run completed.
+    await EventBus.emit("handler:agent-result", { agentId: runId, result: "done" });
+
+    const result = await promise;
+    expect(result).toEqual({ running: true });
+    expect(EventBus.listenerCount("handler:agent-result")).toBe(0);
+  });
+
   it("resolves running:false 'not found' when getAgentStatus throws", async () => {
     const runId = nextRunId();
     agentStatusImpl = () => { throw new Error(`Agent ${runId} not found`); };

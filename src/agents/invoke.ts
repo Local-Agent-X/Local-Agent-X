@@ -207,12 +207,14 @@ export async function awaitAgentRunning(
       resolve(r);
     };
     const onResult = (data: unknown) => {
-      const d = data as { agentId: string; success: boolean; error?: string };
+      const d = data as { agentId: string; success?: boolean; error?: string };
       if (d.agentId !== runId) return;
       // Terminal during the window — only treat as "did not start" if the
       // outcome was failure. A success this fast means the run did execute,
-      // just quickly; we accept it.
-      if (d.success) { finish({ running: true }); return; }
+      // just quickly; we accept it. `success === false` is the one failure
+      // signal on this event (tri-state contract: omitted means completed),
+      // so an undefined success must NOT read as "failed during init".
+      if (d.success !== false) { finish({ running: true }); return; }
       finish({ running: false, reason: d.error || "agent run failed during init" });
     };
     EventBus.on("handler:agent-result", onResult);

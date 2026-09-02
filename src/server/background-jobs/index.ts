@@ -16,7 +16,12 @@ import { registerSelfEditSurgeonForServer } from "./self-edit-surgeon-runner.js"
 import { makeRunMemBg } from "./memory-bg.js";
 import { makeRunMemoryHygiene } from "./memory-hygiene.js";
 import { registerDreamRunnerForServer } from "./dream-check.js";
-import { registerSkillReviewRunner, runSkillReviewPass } from "./skill-review.js";
+import {
+  registerSkillReviewRunner,
+  runSkillReviewPass,
+  getSkillReviewBreakerState,
+  SKILL_REVIEW_POLL_INTERVAL_MS,
+} from "./skill-review.js";
 import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
 import { isLocalOnlyMode, registerLocalOnlyTeardown } from "../../local-only-policy.js";
 
@@ -266,14 +271,18 @@ export function startBackgroundJobs(deps: {
     ...withOverlapPolicy("skill-review"),
     // Poll often enough that a procedure is captured while the session is
     // still the user's current one; the queue is empty on most ticks, and
-    // foregroundIdle keeps it off the provider key during a live turn.
-    intervalMs: 5 * 60 * 1000,
+    // foregroundIdle keeps it off the provider key during a live turn. After
+    // consecutive all-failure passes the job's own breaker stretches or parks
+    // this cadence at the pass entry (skill-review-breaker.ts) — the interval
+    // itself stays fixed, ticks inside a backoff window are refused there.
+    intervalMs: SKILL_REVIEW_POLL_INTERVAL_MS,
     startupDelayMs: 3 * 60 * 1000,
     shouldRun: foregroundIdle,
     run: async () => {
       const r = await runSkillReviewPass();
       if (r.reviewed > 0 || r.failed > 0) {
-        logger.info(`[skill-review] pass: reviewed=${r.reviewed} failed=${r.failed}`);
+        const b = getSkillReviewBreakerState();
+        logger.info(`[skill-review] pass: reviewed=${r.reviewed} failed=${r.failed} breaker=${b.phase} streak=${b.streak}`);
       }
     },
   });

@@ -21,8 +21,8 @@
  * broadcasts spawn/token/complete events to every client unconditionally and
  * silently discards a tool override when a templateId resolves.
  *
- * This file owns the queue and the run. The prompt and the tool surface live in
- * skill-review-prompt.ts.
+ * This file owns the queue and the run. The prompt and tool surface live in
+ * skill-review-prompt.ts; the failure breaker in skill-review-breaker.ts.
  */
 import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/index.js";
@@ -33,6 +33,7 @@ import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { createOverlapGuard } from "../scheduler.js";
+import { SkillReviewBreaker, type SkillReviewBreakerState } from "./skill-review-breaker.js";
 import {
   SKILL_REVIEW_SYSTEM_PROMPT,
   SKILL_REVIEW_TOOL_NAMES,
@@ -55,6 +56,10 @@ export const SKILL_REVIEW_SESSION_PREFIX = "skill-review-";
  */
 export const MIN_TOOL_CALLS_FOR_REVIEW = 4;
 export const MIN_DISTINCT_TOOLS_FOR_REVIEW = 2;
+
+/** Scheduler poll cadence — one value for the ./index.ts registration and
+ *  the breaker's backoff base, so the two cannot drift. */
+export const SKILL_REVIEW_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5min
 
 /** Reviews drained per scheduler tick. Bounds the cost of a burst. */
 const MAX_REVIEWS_PER_PASS = 3;
@@ -160,6 +165,15 @@ let deps: SkillReviewDeps | null = null;
  *  minted, not a private flag") so a private boolean can't creep back. */
 const passGuard = createOverlapGuard();
 
+/** Spend breaker (Aug 31: hours of all-failure passes at full main-model
+ *  spend, one every 5 minutes, zero value). In-memory on purpose — a restart
+ *  resetting it IS the recovery path. See ./skill-review-breaker.ts. */
+const breaker = new SkillReviewBreaker(SKILL_REVIEW_POLL_INTERVAL_MS, logger);
+
+/** Current breaker state. The job's status surface is its logs plus this — no
+ *  jobs status endpoint exists (BackgroundJobsHandle exposes only the scheduler). */
+export const getSkillReviewBreakerState = (): SkillReviewBreakerState => breaker.state();
+
 /** Capture the heavy server deps so the scheduler can drive a pass without
  *  holding them. Mirrors registerDreamRunnerForServer. */
 export function registerSkillReviewRunner(next: SkillReviewDeps): void {
@@ -171,7 +185,7 @@ export interface SkillReviewPassResult {
   reviewed: number;
   failed: number;
   skipped: boolean;
-  reason?: "no-runner" | "empty" | "in-flight";
+  reason?: "no-runner" | "empty" | "in-flight" | "breaker-backoff" | "parked";
 }
 
 /**
@@ -180,8 +194,15 @@ export interface SkillReviewPassResult {
  * behind every other LLM-heavy background job rather than competing with a
  * live turn.
  */
-export async function runSkillReviewPass(): Promise<SkillReviewPassResult> {
+export async function runSkillReviewPass(options: { force?: boolean } = {}): Promise<SkillReviewPassResult> {
   if (!deps) return { reviewed: 0, failed: 0, skipped: true, reason: "no-runner" };
+  // Breaker gate — SCHEDULED spend only. `force` is the manual seam (no src/
+  // caller passes it today; the ./index.ts registration is the only production
+  // call site): it must never refuse a human, and a forced success un-parks.
+  if (!options.force) {
+    const blocked = breaker.blocks();
+    if (blocked) return { reviewed: 0, failed: 0, skipped: true, reason: blocked };
+  }
   if (!passGuard.tryEnter()) return { reviewed: 0, failed: 0, skipped: true, reason: "in-flight" };
 
   let reviewed = 0;
@@ -208,6 +229,12 @@ export async function runSkillReviewPass(): Promise<SkillReviewPassResult> {
         logger.warn(`[skill-review] Review of session ${request.sessionId} failed: ${(e as Error).message}`);
       }
     }
+
+    // Breaker verdict: any completed review means the spend bought something
+    // (full reset, park included); an all-failure batch deepens the streak; an
+    // empty pass says nothing either way. Failure logging above is untouched.
+    if (reviewed > 0) breaker.recordSuccess();
+    else if (failed > 0) breaker.recordFailure();
   } finally {
     passGuard.release();
   }
@@ -364,6 +391,7 @@ export function _resetSkillReviewQueue(): void {
   pending.clear();
   deps = null;
   passGuard.release();
+  breaker.reset();
 }
 
 /** Test/debug: what is currently queued. */

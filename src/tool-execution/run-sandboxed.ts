@@ -16,9 +16,12 @@ import { ToolTimeoutError } from "./tool-timeout.js";
 import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { isAbsolute } from "node:path";
+import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { unattendedShellBlock } from "./unattended-shell-gate.js";
 import { createToolRunner } from "./tool-runner.js";
+import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
+import { chartOutPath } from "../tools/chart-tools.js";
 
 // Edit-family tools that must not touch a file the session hasn't seen the
 // current bytes of (stale-read guard). Read-before-edit, enforced at the layer
@@ -26,6 +29,39 @@ import { createToolRunner } from "./tool-runner.js";
 const FRESHNESS_GUARDED: ReadonlySet<string> = new Set(["edit", "edit_lines", "multi_edit"]);
 // Tools that leave the session knowing a file's current on-disk bytes.
 const RECORDS_SEEN: ReadonlySet<string> = new Set(["read", "write", "edit", "edit_lines", "multi_edit"]);
+
+// Create-class tools — a SUCCESSFUL call means "a persistent file now exists
+// at a caller-named path". Cheap membership gate: every other tool skips the
+// task-artifact pre-stat entirely (this phase is on EVERY tool call). Registry
+// names, not the pre-collapse per-action defs: the office families register as
+// ONE collapsed tool with an `action` arg (collapse-family.ts), so membership
+// is (tool, action)-conditional in createTargetPath below.
+const CREATE_CLASS: ReadonlySet<string> = new Set(["write", "spreadsheet", "document", "pdf", "presentation", "create_chart"]);
+
+// The resolved output path a create-class call will write, or null when this
+// (tool, action, args) combination creates nothing (e.g. spreadsheet read).
+// Resolution mirrors each tool's own: the office tools and write resolve via
+// resolveAgentPath (workspace/paths.ts), create_chart via its exported
+// chartOutPath (workspace-anchored, ".png" appended) — the SAME functions the
+// execute bodies call, so the pre-stat and the write land on one path.
+// presentation add_slide is deliberately absent: its file_path names the
+// ORIGINAL deck, and the output spelling (`_slide_N.pptx`) is derived inside
+// the tool — re-deriving it here would fork tool-internal naming.
+function createTargetPath(toolName: string, args: Record<string, unknown>): string | null {
+  const action = typeof args.action === "string" ? args.action : "";
+  let raw: unknown;
+  switch (toolName) {
+    case "write": raw = args.path; break;
+    case "spreadsheet": if (action === "write") raw = args.file_path; break;
+    case "document": if (action === "create") raw = args.file_path; break;
+    case "pdf": raw = action === "create" ? args.file_path : action === "merge" ? args.output_path : undefined; break;
+    case "presentation": if (action === "create" || action === "from_outline") raw = args.file_path; break;
+    case "create_chart":
+      return typeof args.file_path === "string" && args.file_path ? chartOutPath(args.file_path) : null;
+  }
+  if (typeof raw !== "string" || !raw) return null;
+  try { return resolveAgentPath(raw); } catch { return null; }
+}
 
 export const runSandboxedPhase: Phase = async (ctx) => {
   const { tc, tool, args, sessionId, signal, onEvent } = ctx;
@@ -97,6 +133,20 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     }
   }
 
+  // Task-artifact pre-stat (data-lineage/task-artifacts.ts): remember whether
+  // a create-class target already exists BEFORE execute, so post-success we
+  // enroll only files the agent itself CREATED — an overwrite of a
+  // pre-existing user file must not become a "task artifact". Best-effort like
+  // the freshness guard above: any stat/resolve failure skips recording and
+  // never fails the tool call; non-create tools pay one Set lookup.
+  let createdArtifactTarget: string | null = null;
+  if (sessionId && CREATE_CLASS.has(tc.name)) {
+    try {
+      const target = createTargetPath(tc.name, args);
+      if (target && !existsSync(target)) createdArtifactTarget = target;
+    } catch { /* lineage is best-effort — never block the call */ }
+  }
+
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
   const runner = createToolRunner({ tool, args, operationId: ctx.operationId, toolCallId: tc.id, toolName: tc.name, sessionId, signal, onProgress });
@@ -153,6 +203,12 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // and re-recording refreshes the diff snapshot to the post-edit bytes.
     const view = tc.name === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
     try { recordFileSeen(sessionId, resolveAgentPath(args.path), view); } catch { /* freshness is best-effort */ }
+  }
+  if (succeeded && sessionId && createdArtifactTarget) {
+    // The file did not exist pre-execute and the create-class call succeeded:
+    // the agent created it. SUCCESS-only, like the external-ingestion mark —
+    // a failed call enrolls nothing even if it left partial bytes behind.
+    try { recordTaskArtifact(sessionId, createdArtifactTarget); } catch { /* lineage is best-effort */ }
   }
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }

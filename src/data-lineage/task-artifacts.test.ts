@@ -1,0 +1,273 @@
+/**
+ * Task-artifact registry (task-artifacts.ts) + its production hooks: the
+ * create-class pre-stat/record in runSandboxedPhase and the parent←child
+ * propagation in pushCompletionToParent.
+ *
+ * Semantics under test: a SUCCESSFUL create-class tool call whose target did
+ * NOT exist pre-execute enrolls the file as an artifact the agent itself
+ * created. An overwrite of a pre-existing file never enrolls (the agent
+ * edited the USER's file, it didn't create its own), a failed call never
+ * enrolls even when it left bytes behind, membership is per-session, paths
+ * are realpathDeep-canonical on BOTH the record and query sides (a symlinked
+ * spelling can't split one inode into two identities), and artifacts
+ * propagate parent←child like propagateTaint / propagateExternalIngestion.
+ */
+import { describe, it, expect, afterAll } from "vitest";
+import {
+	recordTaskArtifact,
+	isTaskArtifact,
+	listTaskArtifacts,
+	clearTaskArtifacts,
+	propagateTaskArtifacts,
+} from "./task-artifacts.js";
+import { runSandboxedPhase } from "../tool-execution/run-sandboxed.js";
+import type { ToolCallContext } from "../tool-execution/context.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
+import { ok } from "../tools/result-helpers.js";
+import { pushCompletionToParent } from "../agency/handler-completion.js";
+import type { FieldAgent } from "../agency/handler-types.js";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+let seq = 0;
+function freshSession(): string { return `task-artifact-${seq++}`; }
+
+const tmpRoots: string[] = [];
+function tmpRoot(): string {
+	const dir = mkdtempSync(join(tmpdir(), "task-artifacts-"));
+	tmpRoots.push(dir);
+	return dir;
+}
+afterAll(() => {
+	for (const dir of tmpRoots) rmSync(dir, { recursive: true, force: true });
+});
+
+// ── Registry semantics ───────────────────────────────────────────────────────
+
+describe("task-artifact registry", () => {
+	it("records, reports membership, and lists per session; other sessions stay clean", () => {
+		const s = freshSession();
+		const other = freshSession();
+		const file = join(tmpRoot(), "report.md");
+		expect(isTaskArtifact(s, file)).toBe(false);
+		recordTaskArtifact(s, file);
+		expect(isTaskArtifact(s, file)).toBe(true);
+		expect(listTaskArtifacts(s)).toHaveLength(1);
+		expect(isTaskArtifact(other, file)).toBe(false);
+		expect(listTaskArtifacts(other)).toEqual([]);
+		clearTaskArtifacts(s);
+	});
+
+	it("clearTaskArtifacts (test hook — no production caller) resets the session", () => {
+		const s = freshSession();
+		recordTaskArtifact(s, join(tmpRoot(), "a.txt"));
+		clearTaskArtifacts(s);
+		expect(listTaskArtifacts(s)).toEqual([]);
+	});
+
+	it("ignores an empty sessionId and an empty path", () => {
+		recordTaskArtifact("", "/tmp/whatever.txt");
+		expect(isTaskArtifact("", "/tmp/whatever.txt")).toBe(false);
+		const s = freshSession();
+		recordTaskArtifact(s, "");
+		expect(listTaskArtifacts(s)).toEqual([]);
+	});
+
+	it("matches a symlinked spelling of a recorded path in BOTH directions (realpath-canonical membership)", () => {
+		const s = freshSession();
+		const root = tmpRoot();
+		const realDir = join(root, "real");
+		const linkDir = join(root, "link");
+		mkdirSync(realDir);
+		symlinkSync(realDir, linkDir);
+		const realFile = join(realDir, "deck.pptx");
+		writeFileSync(realFile, "pptx");
+
+		// Recorded under the REAL spelling → queryable via the symlink.
+		recordTaskArtifact(s, realFile);
+		expect(isTaskArtifact(s, join(linkDir, "deck.pptx"))).toBe(true);
+		clearTaskArtifacts(s);
+
+		// Recorded under the SYMLINKED spelling → queryable via the realpath.
+		recordTaskArtifact(s, join(linkDir, "deck.pptx"));
+		expect(isTaskArtifact(s, realFile)).toBe(true);
+		clearTaskArtifacts(s);
+	});
+
+	it("propagates child → parent like propagateTaint; clean child is a no-op; re-propagation adds nothing", () => {
+		const parent = freshSession();
+		const child = freshSession();
+		const file = join(tmpRoot(), "summary.xlsx");
+		expect(propagateTaskArtifacts(child, parent)).toBe(0);
+		recordTaskArtifact(child, file);
+		expect(propagateTaskArtifacts(child, parent)).toBe(1);
+		expect(isTaskArtifact(parent, file)).toBe(true);
+		expect(propagateTaskArtifacts(child, parent)).toBe(0); // already present
+		clearTaskArtifacts(parent);
+		clearTaskArtifacts(child);
+	});
+});
+
+// ── runSandboxedPhase hook ───────────────────────────────────────────────────
+
+function fakeTool(name: string, execute: ToolDefinition["execute"]): ToolDefinition {
+	return {
+		name,
+		description: "test tool",
+		parameters: { type: "object", properties: {} },
+		execute,
+	} as unknown as ToolDefinition;
+}
+
+function ctxFor(tool: ToolDefinition, args: Record<string, unknown>, sessionId: string): ToolCallContext {
+	return {
+		tc: { id: "tc1", name: tool.name, arguments: JSON.stringify(args) },
+		toolMap: new Map([[tool.name, tool]]),
+		tool,
+		args,
+		sessionId,
+		callContext: "local",
+		riskLevel: "low",
+		approvalContext: "",
+		allowed: true,
+		msgs: [],
+	} as unknown as ToolCallContext;
+}
+
+/** A create-class fake whose execute actually lands the file, like the real tools. */
+function creatingTool(name: string, target: string, result?: () => ToolResult): ToolDefinition {
+	return fakeTool(name, async () => {
+		writeFileSync(target, "artifact bytes");
+		return result ? result() : ok(`Created ${target}`);
+	});
+}
+
+describe("runSandboxedPhase — task-artifact recording hook (create-class, did-not-exist-before)", () => {
+	it("a successful write of a NEW file enrolls it (create-then-membership)", async () => {
+		const s = freshSession();
+		const target = join(tmpRoot(), "notes.md");
+		await runSandboxedPhase(ctxFor(creatingTool("write", target), { path: target, content: "x" }, s));
+		expect(isTaskArtifact(s, target)).toBe(true);
+		expect(listTaskArtifacts(s)).toHaveLength(1);
+		clearTaskArtifacts(s);
+	});
+
+	it("overwriting a PRE-EXISTING file does NOT enroll it — the agent edited a user file, it created nothing", async () => {
+		const s = freshSession();
+		const target = join(tmpRoot(), "existing.md");
+		writeFileSync(target, "the user's own bytes");
+		await runSandboxedPhase(ctxFor(creatingTool("write", target), { path: target, content: "x" }, s));
+		expect(isTaskArtifact(s, target)).toBe(false);
+		expect(listTaskArtifacts(s)).toEqual([]);
+	});
+
+	it("a FAILED create does not enroll — even when partial bytes landed on disk", async () => {
+		const s = freshSession();
+		const target = join(tmpRoot(), "half-written.pdf");
+		const tool = creatingTool("write", target, () => ({ content: "disk full after partial write", isError: true }));
+		await runSandboxedPhase(ctxFor(tool, { path: target, content: "x" }, s));
+		expect(existsSync(target)).toBe(true); // bytes landed…
+		expect(isTaskArtifact(s, target)).toBe(false); // …but SUCCESS-only enrolls
+	});
+
+	it("collapsed office families enroll only on their CREATE actions (spreadsheet write yes, read no)", async () => {
+		const s = freshSession();
+		const root = tmpRoot();
+		const created = join(root, "sales.xlsx");
+		await runSandboxedPhase(ctxFor(creatingTool("spreadsheet", created), { action: "write", file_path: created, data: "[]" }, s));
+		expect(isTaskArtifact(s, created)).toBe(true);
+
+		const preExisting = join(root, "user-data.xlsx");
+		writeFileSync(preExisting, "user workbook");
+		await runSandboxedPhase(ctxFor(fakeTool("spreadsheet", async () => ok("| a |")), { action: "read", file_path: preExisting }, s));
+		expect(isTaskArtifact(s, preExisting)).toBe(false);
+		clearTaskArtifacts(s);
+	});
+
+	it("create_chart enrolls the tool's OWN derived output path (absolute input, .png appended)", async () => {
+		const s = freshSession();
+		const requested = join(tmpRoot(), "revenue"); // no extension — chartOutPath appends .png
+		const derived = `${requested}.png`;
+		await runSandboxedPhase(ctxFor(creatingTool("create_chart", derived), { file_path: requested, type: "bar", series: "[]" }, s));
+		expect(isTaskArtifact(s, derived)).toBe(true);
+		expect(isTaskArtifact(s, requested)).toBe(false);
+		clearTaskArtifacts(s);
+	});
+
+	it("a non-create tool that happens to take a path adds no membership (cheap-set gate)", async () => {
+		const s = freshSession();
+		const target = join(tmpRoot(), "seen.txt");
+		writeFileSync(target, "existing");
+		await runSandboxedPhase(ctxFor(fakeTool("read", async () => ok("existing")), { path: target }, s));
+		expect(listTaskArtifacts(s)).toEqual([]);
+	});
+
+	it("per-session isolation: session A's created file is not session B's artifact", async () => {
+		const a = freshSession();
+		const b = freshSession();
+		const target = join(tmpRoot(), "mine.docx");
+		await runSandboxedPhase(ctxFor(creatingTool("document", target), { action: "create", file_path: target, content: "x" }, a));
+		expect(isTaskArtifact(a, target)).toBe(true);
+		expect(isTaskArtifact(b, target)).toBe(false);
+		clearTaskArtifacts(a);
+	});
+
+	it("realpath vs symlinked QUERY spelling both match a file recorded via the hook", async () => {
+		const s = freshSession();
+		const root = tmpRoot();
+		const realDir = join(root, "out");
+		mkdirSync(realDir);
+		symlinkSync(realDir, join(root, "out-link"));
+		const target = join(realDir, "brief.pdf");
+		await runSandboxedPhase(ctxFor(creatingTool("pdf", target), { action: "create", file_path: target, content: "x" }, s));
+		expect(isTaskArtifact(s, target)).toBe(true);
+		expect(isTaskArtifact(s, join(root, "out-link", "brief.pdf"))).toBe(true);
+		clearTaskArtifacts(s);
+	});
+});
+
+// ── parent←child propagation wiring (handler-completion.ts) ─────────────────
+
+describe("pushCompletionToParent — task-artifact propagation wiring", () => {
+	it("child created a deliverable → parent session holds it after completion", async () => {
+		const parent = freshSession();
+		const child = freshSession();
+		const target = join(tmpRoot(), "research.docx");
+		await runSandboxedPhase(ctxFor(creatingTool("document", target), { action: "create", file_path: target, content: "x" }, child));
+		expect(isTaskArtifact(child, target)).toBe(true);
+		expect(isTaskArtifact(parent, target)).toBe(false);
+
+		const agent = {
+			id: "agt-ta-1",
+			name: "author",
+			parentSessionId: parent,
+			runSessionId: child,
+			output: [],
+			startedAt: Date.now(),
+			tokensUsed: 0,
+			messageQueue: [],
+		} as unknown as FieldAgent;
+		pushCompletionToParent(agent, "succeeded", "done");
+
+		expect(isTaskArtifact(parent, target)).toBe(true);
+		clearTaskArtifacts(parent);
+		clearTaskArtifacts(child);
+	});
+
+	it("child that created nothing leaves the parent registry empty", () => {
+		const parent = freshSession();
+		const agent = {
+			id: "agt-ta-2",
+			name: "worker",
+			parentSessionId: parent,
+			runSessionId: freshSession(),
+			output: [],
+			startedAt: Date.now(),
+			tokensUsed: 0,
+			messageQueue: [],
+		} as unknown as FieldAgent;
+		pushCompletionToParent(agent, "succeeded", "done");
+		expect(listTaskArtifacts(parent)).toEqual([]);
+	});
+});

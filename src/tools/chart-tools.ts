@@ -10,8 +10,10 @@ import { verifyWriteLanded } from "./verify.js";
 // Charts are an intermediate to be embedded, so anchor output UNDER the
 // workspace (and return the absolute path): that's exactly where the image
 // acquirer will accept it from when the agent embeds it. A "workspace/" prefix
-// is tolerated and stripped.
-function chartOutPath(p: string): string {
+// is tolerated and stripped. Exported because the task-artifact recording hook
+// (tool-execution/run-sandboxed.ts) must pre-stat the SAME output path this
+// tool will write — re-deriving the anchoring there would fork it.
+export function chartOutPath(p: string): string {
   let fp = isAbsolute(p) ? resolve(p) : join(workspacePath(), p.replace(/^\.?\/?workspace\//, "").replace(/^\/+/, ""));
   if (!/\.png$/i.test(fp)) fp += ".png";
   return fp;

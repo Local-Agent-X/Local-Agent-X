@@ -1,5 +1,6 @@
 import { propagateTaint } from "../data-lineage/index.js";
 import { propagateExternalIngestion } from "../data-lineage/external.js";
+import { propagateTaskArtifacts } from "../data-lineage/task-artifacts.js";
 import { createLogger } from "../logger.js";
 import type { FieldAgent } from "./handler-types.js";
 
@@ -39,6 +40,14 @@ export function pushCompletionToParent(
     // (data-lineage/external.ts, D6).
     if (propagateExternalIngestion(childSession, parent)) {
       logger.info(`[handler] propagated external-ingestion mark from sub-agent ${agent.id} → parent session ${parent}`);
+    }
+    // Same seam, third axis: files the child CREATED are deliverables of the
+    // parent's task once this completion flows back — the parent's delete
+    // guard and verification trigger must see them (data-lineage/
+    // task-artifacts.ts).
+    const artifacts = propagateTaskArtifacts(childSession, parent);
+    if (artifacts > 0) {
+      logger.info(`[handler] propagated ${artifacts} task artifact(s) from sub-agent ${agent.id} → parent session ${parent}`);
     }
   } catch (e) {
     logger.error(`[handler] taint propagation failed for sub-agent ${agent.id} → parent ${parent}: ${(e as Error).message}`);

@@ -223,7 +223,12 @@ function handleBgOpCompleted(msg) {
         output: '',
       });
     }
-    if (typeof updateAgentFeed === 'function') {
+    // For headless ops, update ONLY an existing dock card: updateAgentFeed
+    // creates the entry when it's missing, and a completion-only record is
+    // typeless — it would partition into the MAIN feed as a degenerate
+    // nameless card (late-connect browsers that missed queued/started).
+    var haveCard = typeof agentFeedsData !== 'undefined' && !!agentFeedsData[msg.event.opId];
+    if (typeof updateAgentFeed === 'function' && (!headless || haveCard)) {
       var feedUpdate = { status: statusLabel, output: output };
       // Build_app and any future op type that emits a resultUrl get
       // a clickable "Open" link in the card. updateAgentFeed renders

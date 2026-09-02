@@ -24,24 +24,27 @@ import { describe, expect, it, vi } from "vitest";
 
 const bgSource = readFileSync(join(process.cwd(), "public/js/chat-ws-handler-bg-ops.js"), "utf8");
 
-function loadBgOps() {
+function loadBgOps(feeds: Record<string, unknown> = {}) {
 	const addAgentFeed = vi.fn();
 	const updateAgentFeed = vi.fn();
 	const removeAgentFeed = vi.fn();
 	const showNotification = vi.fn();
 	const setTimeoutSpy = vi.fn();
 	const factory = new Function(
-		"addAgentFeed", "updateAgentFeed", "removeAgentFeed", "setTimeout", "showNotification",
+		"addAgentFeed", "updateAgentFeed", "removeAgentFeed", "setTimeout", "showNotification", "__feeds",
 		`
 		var window = { desktop: { showNotification: showNotification } };
 		var activeChat = null;
 		var ChatStreamStore = { setSidebarActive: function() {} };
 		var renderSidebar = function() {};
+		// The live-card map (owned by chat-agent-feeds.js): headless completions
+		// only update EXISTING cards, so tests seed it per scenario.
+		var agentFeedsData = __feeds;
 		${bgSource}
 		return { dispatchBgOpEventChecked: dispatchBgOpEventChecked };
 		`,
 	);
-	const api = factory(addAgentFeed, updateAgentFeed, removeAgentFeed, setTimeoutSpy, showNotification) as {
+	const api = factory(addAgentFeed, updateAgentFeed, removeAgentFeed, setTimeoutSpy, showNotification, feeds) as {
 		dispatchBgOpEventChecked: (msg: unknown) => boolean | null;
 	};
 	return { ...api, addAgentFeed, updateAgentFeed, removeAgentFeed, showNotification, setTimeoutSpy };
@@ -63,7 +66,7 @@ function completedMsg(overrides: Record<string, unknown> = {}, sessionId = "chat
 
 describe("handleBgOpCompleted — headless completions never toast or interrupt (dock only)", () => {
 	it("a FAILED dream op (headless:true): no OS toast, no fallback card, dock update still lands", () => {
-		const h = loadBgOps();
+		const h = loadBgOps({ "op-dream-1": { id: "op-dream-1", type: "memory_consolidation", status: "working" } });
 		const handled = h.dispatchBgOpEventChecked(completedMsg({ opId: "op-dream-1", headless: true }, "dream-123"));
 
 		expect(handled).toBe(true);
@@ -82,7 +85,7 @@ describe("handleBgOpCompleted — headless completions never toast or interrupt 
 	});
 
 	it("a SUCCEEDED headless op does not toast either — the invariant is session-, not status-derived", () => {
-		const h = loadBgOps();
+		const h = loadBgOps({ "op-x": { id: "op-x", type: "memory_consolidation", status: "working" } });
 		h.dispatchBgOpEventChecked(completedMsg({ status: "completed", summary: "memories consolidated", headless: true }, "dream-456"));
 
 		expect(h.showNotification).not.toHaveBeenCalled();
@@ -91,6 +94,19 @@ describe("handleBgOpCompleted — headless completions never toast or interrupt 
 			status: "completed",
 			output: "memories consolidated",
 		});
+	});
+
+	it("late-connect (no dock card exists): a headless completion creates NOTHING — no degenerate MAIN-feed card", () => {
+		// updateAgentFeed creates the entry when it's missing, and a
+		// completion-only record is typeless → it would partition into the
+		// MAIN feed as a nameless interrupting card. A browser that missed
+		// bg_op_queued/started must stay untouched.
+		const h = loadBgOps({});
+		h.dispatchBgOpEventChecked(completedMsg({ opId: "op-dream-9", headless: true }, "dream-789"));
+
+		expect(h.showNotification).not.toHaveBeenCalled();
+		expect(h.addAgentFeed).not.toHaveBeenCalled();
+		expect(h.updateAgentFeed).not.toHaveBeenCalled();
 	});
 
 	it("a failed REAL op keeps its toast and card byte-identical to before", () => {

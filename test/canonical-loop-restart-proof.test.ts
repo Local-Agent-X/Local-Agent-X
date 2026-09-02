@@ -11,6 +11,8 @@ let ledger: string;
 let port: number;
 
 function run(action: "persist" | "resume", opId: string, mutation = "") {
+  // cwd must stay the repo so node can resolve the bare `tsx` specifier; the
+  // fixture chdirs itself into the temp data dir before any product code runs.
   return spawnSync(process.execPath, ["--import=tsx", fixture, action, opId, ledger, mutation, String(port)], {
     cwd: process.cwd(),
     env: {

@@ -110,13 +110,26 @@ describe("global installation mutation lock", () => {
   });
 
   it("fails closed when an unrelated process already owns the kernel endpoint", async () => {
-    const server = createServer((socket) => socket.destroy());
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(mutationLockEndpoint(DATA_DIR).listen, resolve);
-    });
+    // On Linux/Windows the endpoint is ONE named socket/pipe, so a single
+    // squatter is the whole endpoint. On macOS it is a SET of 16 derived
+    // loopback ports and the lock tolerates unrelated services on SOME of
+    // them by design (any process can own an arbitrary TCP port — one
+    // squatter must not deny the lock forever). Fail-closed is the contract
+    // when the WHOLE set is unusable, so occupy every candidate. Occupying
+    // only listens[0] used to "pass" here solely because the symlinked macOS
+    // TMPDIR tripped the trustedDirectory guard first.
+    const endpoint = mutationLockEndpoint(DATA_DIR);
+    const candidates = endpoint.listens ?? [endpoint.listen];
+    const servers = await Promise.all(candidates.map((listen: { host: string; port: number } | { path: string }) =>
+      new Promise<ReturnType<typeof createServer>>((resolve, reject) => {
+        const server = createServer((socket) => socket.destroy());
+        server.once("error", reject);
+        server.listen(listen, () => resolve(server));
+      })));
     try { expect((await acquireGlobalSelfEditLock()).acquired).toBe(false); }
-    finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+    finally {
+      await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+    }
   });
 
   it("reports the live kernel owner to the boot sweep", async () => {

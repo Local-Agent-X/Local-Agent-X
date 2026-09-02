@@ -268,6 +268,9 @@ describe("native desktop auto-update package contract", () => {
     expect(desktopPackage.build.nsis).toEqual({
       oneClick: true,
       allowToChangeInstallationDirectory: false,
+      // d8e77648: uninstall registration moved into the NSIS include so it
+      // ships with every update payload instead of dying with the source tree.
+      include: "build/installer.nsh",
     });
     expect(desktopPackage.build.mac.hardenedRuntime).toBe(true);
     expect(desktopPackage.build.mac.entitlements).toBe("build/entitlements.mac.plist");
@@ -364,7 +367,13 @@ describe("signed native desktop rolling release contract", () => {
     const stable = publish.indexOf("- name: Publish signed native desktop update feed");
     const rolling = publish.indexOf("- name: Publish/refresh the `rolling` pre-release");
 
-    expect(publish).toContain("needs: [build-windows-rolling, build-macos-rolling]");
+    // c3ad7912: publish-rolling is the only job that writes the fleet updater
+    // feed, so it additionally gates on the blocking test suite (gate-tests) —
+    // a red suite must not be able to publish to a single user's updater.
+    expect(publish).toContain("needs: [build-windows-rolling, build-macos-rolling, gate-tests]");
+    const gateTests = workflow.slice(workflow.indexOf("  gate-tests:"), publishStart);
+    expect(gateTests).toContain("npm run test:unit");
+    expect(gateTests).toContain("npm run test:desktop");
     expect(stable).toBeGreaterThanOrEqual(0);
     expect(rolling).toBeGreaterThan(stable);
     expect(publish).toContain("tag_name: desktop-stable");

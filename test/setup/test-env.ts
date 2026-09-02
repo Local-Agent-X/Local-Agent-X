@@ -1,7 +1,26 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
+
+// Canonicalize the temp root BEFORE anything mints a temp dir. macOS hands
+// every process a symlinked TMPDIR (/var/folders/… → /private/var/folders/…),
+// so fixtures that build roots via mkdtempSync(join(tmpdir(), …)) and then
+// compare against product output that canonicalizes paths (realpathSync) fail
+// with "/var vs /private/var" — and fail-closed "linked ancestor" guards
+// (installer data-root, plugin-system) reject the root outright. os.tmpdir()
+// re-reads the env on every call, so realpathing it here — the shared vitest
+// setup file, which runs before each test file — is the ONE seam that gives
+// every fixture (and every child process that inherits the env) a canonical,
+// symlink-free temp root. Windows spells the variable TMP/TEMP; set all three.
+try {
+  const canonicalTmp = realpathSync(tmpdir());
+  process.env.TMPDIR = canonicalTmp;
+  process.env.TMP = canonicalTmp;
+  process.env.TEMP = canonicalTmp;
+} catch {
+  // tmpdir unresolvable — leave the env alone; the failing fixture will say so.
+}
 
 // Per-file test isolation. Runs before each test file (vitest setupFiles).
 //

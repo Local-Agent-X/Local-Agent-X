@@ -137,20 +137,25 @@ const definition = {
   version: QUALIFICATION_BENCHMARK_CATALOG_VERSION,
   packs: [
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 3,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 4,
       gate: { id: "installer", script: "test:installer-qualification", timeoutMs: 10 * 60_000, preflightScripts: [] },
       scenarios: [
         { id: "contract", version: 1, testPath: "test/installer-contract.test.ts", assertionCount: 23, assertionManifestSha256: "sha256:e3ab089e51e06f1b15df9b891a28e89a92ffab3456dcd18797a344e77ae0cf30", platformIndependent: false, allowedSkips: [] },
         { id: "resume", version: 1, testPath: "test/installer-resume.test.ts", assertionCount: 19, assertionManifestSha256: "sha256:c430e624a1adf05a7d5d087de4ff00cf9a2c76a8496f6fc2caae1716304df097", platformIndependent: false, allowedSkips: [] },
-        { id: "rollback", version: 2, testPath: "test/installer-rollback.test.ts", assertionCount: 45, assertionManifestSha256: "sha256:3e13f5515a85256475b1eebbee4dfcd43c6177da59fbe0fbdd5e41956a44b93c", platformIndependent: false, allowedSkips: [] },
+        // Refreshed for c4753262 (spent-rollback-journal fix added 3 tests) —
+        // same maintenance step as ded3a267. Recompute via `vitest list` when
+        // the scenario file changes; a stale pin fails every release gate with
+        // "benchmark reporter assertion manifest does not match the catalog".
+        { id: "rollback", version: 3, testPath: "test/installer-rollback.test.ts", assertionCount: 48, assertionManifestSha256: "sha256:30de50f19bb11aaa43826c4877eb445d4cce293221bb6b4a6fee0e243d903741", platformIndependent: false, allowedSkips: [] },
       ],
     },
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "local-model", version: 2,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "local-model", version: 3,
       gate: { id: "local-model", script: "test:local-product-qualification", timeoutMs: 45 * 60_000, preflightScripts: ["check:release-environment", "test:prepare"] },
       scenarios: [
         { id: "product", version: 1, testPath: "test/local-model-qualification.test.ts", assertionCount: 27, assertionManifestSha256: "sha256:39dc76d61f4a6e2265c9f02cb946364d20d5e8f0010964e735eaff552ea614e6", platformIndependent: false, allowedSkips: [] },
-        { id: "evidence", version: 1, testPath: "test/local-model-qualification-evidence.test.ts", assertionCount: 53, assertionManifestSha256: "sha256:9a4c46bdadf0489fc3dc843dc1e2c08380122f9644d51119a5cec7e6513a9568", platformIndependent: false, allowedSkips: [] },
+        // Refreshed for c7eedccb/9af6b4ae (qualification event grammar/schema work added 3 tests).
+        { id: "evidence", version: 2, testPath: "test/local-model-qualification-evidence.test.ts", assertionCount: 56, assertionManifestSha256: "sha256:064ff38c2ba499f0836143b7149d8d697a13256f621411fcc1a1cfcc3a5a5ddc", platformIndependent: false, allowedSkips: [] },
         { id: "isolation", version: 1, testPath: "test/local-model-qualification-isolation.test.ts", assertionCount: 52, assertionManifestSha256: "sha256:3b7d18b1a83f5a5eb1810a9cf5b563e723637dcaa495c81378b579f8ac1244fd", platformIndependent: false, allowedSkips: [] },
         { id: "proxy", version: 1, testPath: "test/local-model-qualification-proxy.test.ts", assertionCount: 2, assertionManifestSha256: "sha256:65c91236b3c5495a9f278da063764fe17f05d508906249adaac67abcbee39bb7", platformIndependent: false, allowedSkips: [] },
       ],
@@ -166,14 +171,15 @@ const definition = {
       ],
     },
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "channels", version: 2,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "channels", version: 3,
       gate: { id: "channels", script: "test:channel-qualification", timeoutMs: 10 * 60_000, preflightScripts: [] },
       scenarios: [
         { id: "channel-registry", version: 1, testPath: "src/session/channel-registry.test.ts", assertionCount: 3, assertionManifestSha256: "sha256:7b1eea2f682059379f902e3fcdbb2a1afaa2c96b42b7161d7006104658df1ac8", platformIndependent: false, allowedSkips: [] },
         { id: "inbound-channel-runner", version: 1, testPath: "src/server/inbound-channel-runner.test.ts", assertionCount: 12, assertionManifestSha256: "sha256:e916acdbe3fce9db934bfee380ff4517a9f04eba3add63ed67427ff07a374a7f", platformIndependent: false, allowedSkips: [] },
         { id: "phone-projection", version: 1, testPath: "src/broker-transport/phone-projection.test.ts", assertionCount: 26, assertionManifestSha256: "sha256:e3bfb1843a1c85f09781be024eeebbc5870ddb7494ab96a15c9505fa28d05f25", platformIndependent: false, allowedSkips: [] },
-        { id: "telegram-bridge", version: 1, testPath: "src/telegram-bridge/bridge.test.ts", assertionCount: 11, assertionManifestSha256: "sha256:35c9cf93c93bce806c12fa91f36a2b0bb3373a76645fea5f2e8fcd29266d7fc7", platformIndependent: false, allowedSkips: [] },
-        { id: "whatsapp-message-handler", version: 1, testPath: "src/whatsapp-bridge/message-handler.test.ts", assertionCount: 10, assertionManifestSha256: "sha256:a0bae2a84b9160bfe02f79d286e1edd97f22bf4bb908a0db78171e0460944531", platformIndependent: false, allowedSkips: [] },
+        // Refreshed for b1cb0ba2/d727dc75/173b0369 (inbound-execution convergence grew both bridge suites).
+        { id: "telegram-bridge", version: 2, testPath: "src/telegram-bridge/bridge.test.ts", assertionCount: 20, assertionManifestSha256: "sha256:d783fee10389648130407bf93f26e415a2609bf66b4d0cbf71b1f6bbfe7d0959", platformIndependent: false, allowedSkips: [] },
+        { id: "whatsapp-message-handler", version: 2, testPath: "src/whatsapp-bridge/message-handler.test.ts", assertionCount: 19, assertionManifestSha256: "sha256:05bcfa98817e9af90a058989caf5a8b14a2057a4e3a5f6144f8c3a91d818f1a0", platformIndependent: false, allowedSkips: [] },
       ],
     },
   ],

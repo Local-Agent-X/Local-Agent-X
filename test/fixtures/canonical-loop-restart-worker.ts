@@ -1,6 +1,7 @@
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 
 import {
@@ -31,6 +32,21 @@ import { getOrInitSecretsStore } from "../../src/secrets.js";
 const [action, opId, sideEffectLedger, mutation, rawPort] = process.argv.slice(2);
 const port = Number(rawPort);
 const baseURL = `http://127.0.0.1:${port}/v1`;
+
+// Run from the op's own temp data dir, never the repo checkout. Config boot in
+// this process — and in the process-execution-backend children it spawns with
+// LAX_WORKSPACE — links cwd-relative "workspace" via ensureWorkspaceLink; from
+// a repo cwd that plants a workspace symlink/dir (plus protocols/ cruft) in
+// the checkout. The spawn itself keeps the repo cwd so `--import=tsx`
+// resolves; chdir here runs before any product code touches the filesystem.
+// The backend children ALSO resolve the bare `tsx` execArgv specifier from
+// their (inherited) cwd, so give the temp dir a node_modules link first.
+{
+  const repoNodeModules = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "node_modules");
+  const tempNodeModules = join(process.env.LAX_DATA_DIR!, "node_modules");
+  if (!existsSync(tempNodeModules)) symlinkSync(repoNodeModules, tempNodeModules, "dir");
+}
+process.chdir(process.env.LAX_DATA_DIR!);
 
 const restartPluginTool: ToolDefinition = {
   name: "restart_plugin_action",
@@ -96,8 +112,14 @@ function exactDescriptor(): NonNullable<Op["runtimeDescriptor"]> {
 }
 
 function installFixtureRuntimeConfig(): void {
+  // Never the repo cwd: boot paths (learned-effectiveness reconcile) mkdir
+  // <workspace>/protocols, which litters the checkout with untracked cruft,
+  // and process-execution-backend children re-load config with LAX_WORKSPACE
+  // pointed here — so the directory must exist before recovery spawns them.
+  const workspace = join(process.env.LAX_DATA_DIR!, "workspace");
+  mkdirSync(workspace, { recursive: true });
   setRuntimeConfig(configSchema.parse({
-    workspace: process.cwd(),
+    workspace,
     authToken: "restart-test-token",
     ollamaUrl: baseURL.replace(/\/v1$/, ""),
     ollamaCloudUrl: baseURL.replace(/\/v1$/, ""),
@@ -214,12 +236,50 @@ function startProvider(requests: CapturedRequest[]): Promise<Server> {
       res.end(JSON.stringify({ models: [{ name: "restart-proof-model" }] }));
       return;
     }
+    if (req.url === "/api/version") {
+      // Runtime-discovery identify probe (refreshLocalRuntimes) — discovery
+      // plumbing, not part of the recovery contract this fixture records.
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ version: "0.0.0" }));
+      return;
+    }
+    if (req.url === "/api/generate") {
+      // Advisory chat-residency warm (bb3704f6, 2026-08-25): resolve-target
+      // fire-and-forgets a keep-alive /api/generate for local Ollama targets.
+      // It is not part of the recovery contract this fixture records, and it
+      // races the recorder — capturing it would make requestPaths and
+      // requestModels nondeterministic. Acknowledge and drop.
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("{}");
+      });
+      return;
+    }
     let raw = "";
     req.setEncoding("utf8");
     req.on("data", chunk => { raw += chunk; });
     req.on("end", () => {
       let body: CapturedRequest = { path: req.url ?? "", authorization: req.headers.authorization };
       try { body = { ...(JSON.parse(raw) as CapturedRequest), path: req.url ?? "", authorization: req.headers.authorization }; } catch { /* expose malformed request below */ }
+      // Advisory tool-capability probe (aa011ec9): after a completed no-tool
+      // chat turn the openai-compat adapter fire-and-forgets a "ping" probe
+      // at loopback runtimes. Like the residency warm, it races the recorder
+      // and is not part of the recovery contract — answer it conclusively
+      // (structured ping call → one attempt, {ok:true} recorded) and keep it
+      // out of the recorded requests.
+      const tools = (body as { tools?: Array<{ function?: { name?: string } }> }).tools;
+      if (req.url === "/v1/chat/completions" && tools?.length === 1 && tools[0]?.function?.name === "ping") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: null, tool_calls: [{ id: "probe-1", type: "function", function: { name: "ping", arguments: "{}" } }] },
+            finish_reason: "tool_calls",
+          }],
+        }));
+        return;
+      }
       requests.push(body);
       const isChatRequest = req.url === "/v1/chat/completions";
       if (isChatRequest) chatRequests += 1;

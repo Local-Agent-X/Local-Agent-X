@@ -33,8 +33,21 @@ const packages = [
   "runtime",
 ];
 
+// The repo this script belongs to — NOT the cwd, and NOT wherever
+// node_modules' symlinks lead. In a worktree whose node_modules is a symlink
+// into the main checkout, resolving @arikernel/* through the junction's
+// realpath compiled the MAIN repo's packages/*/dist from the WORKTREE's
+// invocation — a cross-worktree write that clobbered the main build with
+// whatever the worktree's sources happened to be. Prefer this repo's own
+// packages/ tree (identical directory to the junction target in a normal
+// checkout, where node_modules/@arikernel/<pkg> links to packages/arikernel/<pkg>);
+// fall back to the junction only when the local tree is absent.
+const repoRoot = resolve(import.meta.dirname, "..");
+
 function resolvePackageDir(pkg) {
-  const linked = resolve("node_modules", "@arikernel", pkg);
+  const local = resolve(repoRoot, "packages", "arikernel", pkg);
+  if (existsSync(local)) return local;
+  const linked = resolve(repoRoot, "node_modules", "@arikernel", pkg);
   if (existsSync(linked)) {
     try {
       return realpathSync(linked);
@@ -42,7 +55,7 @@ function resolvePackageDir(pkg) {
       return linked;
     }
   }
-  return resolve("packages", "arikernel", pkg);
+  return local;
 }
 
 function latestMtimeMs(dir) {
@@ -101,7 +114,6 @@ for (const pkg of packages) {
     // until the npx cache is rebuilt. Using the project-local bin avoids
     // the npx layer entirely. Files were quarantined and recovered via
     // `git checkout -- packages/arikernel/` (2026-05-19).
-    const repoRoot = resolve(import.meta.dirname, "..");
     const tsupBin = resolve(repoRoot, "node_modules", "tsup", "dist", "cli-default.js");
     const tscBin = resolve(repoRoot, "node_modules", "typescript", "bin", "tsc");
     const nodeBin = process.execPath;

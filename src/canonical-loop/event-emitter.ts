@@ -20,6 +20,7 @@ import { recordCanonicalEvent, recordStreamChunk } from "./soak-metrics.js";
 import { recordCanonicalEvent as bridgeRecord } from "./session-bridge-observer.js";
 import { recordCostEvent } from "./cost-recording.js";
 import { recordTrashScopeEvent } from "./trash-scope-observer.js";
+import { recordVerificationTrigger } from "./verification-trigger.js";
 import type { CanonicalEvent, CanonicalEventType } from "./types.js";
 import { publishProcessRelayOutput } from "./process-relay-output.js";
 
@@ -63,6 +64,7 @@ export function projectCanonicalEvent(
   getBus().publish(eventsChannel(event.opId), event);
   recordCanonicalEvent(event);
   recordTrashScopeEvent(event, sessionId); // must run BEFORE bridgeRecord: its terminal branch releases the op↔session binding
+  recordVerificationTrigger(event, sessionId); // same ordering constraint: needs the live op↔session binding
   if (nonBrowserOnly) {
     if (sessionId) bridgeRecord(event, "non-browser", sessionId);
     else bridgeRecord(event, "non-browser");

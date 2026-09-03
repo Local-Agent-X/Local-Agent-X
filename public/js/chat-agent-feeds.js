@@ -234,14 +234,7 @@ function updateAgentFeed(agentId, update) {
     // status text to "paused" but the button stayed as "Pause" forever.
     var controlsEl = card.querySelector('.agent-feed-controls');
     if (controlsEl) {
-      var safeId = esc(agentId);
-      var isPaused = existing.status === 'paused';
-      controlsEl.innerHTML =
-        (isPaused
-          ? '<button class="agent-ctrl-btn" data-agent-action="resume" data-agent-id="' + safeId + '">Resume</button>'
-          : '<button class="agent-ctrl-btn" data-agent-action="pause" data-agent-id="' + safeId + '">Pause</button>') +
-        '<button class="agent-ctrl-btn" data-agent-action="redirect" data-agent-id="' + safeId + '">Redirect</button>' +
-        '<button class="agent-ctrl-btn cancel" data-agent-action="cancel" data-agent-id="' + safeId + '">Cancel</button>';
+      controlsEl.innerHTML = renderAgentCardControls(esc(agentId), existing.status);
     }
   } else {
     _renderAgentFeedsList();

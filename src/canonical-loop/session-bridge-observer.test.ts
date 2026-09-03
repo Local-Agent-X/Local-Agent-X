@@ -26,9 +26,8 @@ vi.mock("../ops/pending-notifications.js", async (importOriginal) => {
 // Regression: chat_turn (and other sidebar-suppressed) ops were tracked in the
 // session→op map but never released on terminal state, because the observer
 // early-returned for those types BEFORE reaching releaseOpFromSession. The leak
-// made listOpsForSession grow unbounded, which fired the Anthropic-hardcoded
-// worker-redirect Haiku classifier on every later turn (even on Codex/Grok) and
-// injected phantom "[PARALLEL CONTEXT]" workers into the system prompt.
+// made listOpsForSession grow unbounded, which injected phantom
+// "[PARALLEL CONTEXT]" workers into the system prompt.
 
 const created: string[] = [];
 
@@ -143,6 +142,51 @@ describe("session-bridge-observer — terminal release for suppressed op types",
       expect(broadcast).not.toHaveBeenCalled();
     },
   );
+
+  it("does not turn model token deltas into sidebar activity rows", () => {
+    // The op_stream channel carries the worker's own text, one `{delta}` per
+    // token on a local model. Sampling it produced a sidebar row per fragment
+    // ("We", "logo", "-serif"), so the activity count read as hundreds of
+    // actions for a handful of real ones. Only canonical events belong here.
+    const sessionId = "sess-obs-stream-prose";
+    const opId = "op_app_build_stream_prose";
+    makeOp(opId, "app_build");
+    trackOpForSession(opId, sessionId, "Build app");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent({
+      type: "state_changed", opId, body: { from: null, to: "queued" },
+    } as unknown as CanonicalEvent, "non-browser", sessionId);
+    broadcast.mockClear();
+
+    for (const word of ["We", "logo", "headline", "modern", "-serif"]) {
+      getBus().publish(streamChannel(opId), { delta: word });
+    }
+    getBus().publish(streamChannel(opId), { replace: true, text: "rewritten" });
+
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("still surfaces committed turns, which is what the activity group is for", () => {
+    const sessionId = "sess-obs-stream-turns";
+    const opId = "op_app_build_stream_turns";
+    makeOp(opId, "app_build");
+    trackOpForSession(opId, sessionId, "Build app");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent({
+      type: "turn_committed", opId, body: { turnIdx: 7, tools: ["glob"] },
+    } as unknown as CanonicalEvent, "all", sessionId);
+
+    const lines = broadcast.mock.calls
+      .map(([, ev]) => (ev as { type: string; line?: string }))
+      .filter(ev => ev.type === "bg_op_progress")
+      .map(ev => ev.line);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("turn 7");
+  });
 });
 
 // Regression: skill-review runs through runAgentViaCanonical on the background

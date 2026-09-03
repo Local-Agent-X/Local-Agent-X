@@ -18,8 +18,15 @@
  *   - turn_committed                     → bg_op_progress ("turn N · <tools>")
  *
  * Skipped on purpose:
- *   - Stream chunks (op_stream channel) — too high frequency for the
- *     sidebar; would flood updateAgentFeed at token rates.
+ *   - Stream chunks (op_stream channel) — that channel carries model output
+ *     (`{delta}` tokens, `{replace,text}` rewrites) and nothing else; no
+ *     publisher emits a structured `{line}`. Sampling it cannot yield activity
+ *     lines, only one sentence-fragment per sample: a forwarder that did this
+ *     produced 588 sidebar rows for ~12 real actions against a local model,
+ *     which streams a delta per token. Terminal-epilogue notes (build-verify
+ *     confirmation, warnings, size notes) ride the same channel as `{delta}`,
+ *     but they are part of the worker's final assistant text and surface
+ *     intact via bg_op_completed.
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
 import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession } from "../ops/session-bridge.js";
@@ -32,7 +39,6 @@ import { toSpokenCompletion } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
-import { getBus, streamChannel } from "./bus.js";
 import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
 
@@ -70,52 +76,6 @@ function warnOnce(msg: string): void {
 const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
   "chat_turn", "agent_spawn", "voice_turn", "skill_review",
 ]);
-
-// Per-op stream subscriptions for sidebar progress. Subscribed when a
-// non-suppressed op enters queued; unsubscribed on terminal state.
-// Throttled to 250ms/op so chat-token streaming (if any non-chat op ever
-// turns it on) doesn't flood updateAgentFeed.
-const streamSubscriptions = new Map<string, { unsubscribe: () => void; lastEmit: number }>();
-const PROGRESS_MIN_INTERVAL_MS = 250;
-
-function ensureStreamForwarder(opId: string, sessionId: string, opType: string): void {
-  if (streamSubscriptions.has(opId)) return;
-  // Same suppression rule as the canonical-event mapping below.
-  if (SIDEBAR_SUPPRESSED_OP_TYPES.has(opType)) return;
-
-  const entry = { unsubscribe: () => { /* set below */ }, lastEmit: 0 };
-  const listener = (msg: unknown): void => {
-    const now = Date.now();
-    if (now - entry.lastEmit < PROGRESS_MIN_INTERVAL_MS) return;
-    const line = extractStreamLine(msg);
-    if (!line) return;
-    entry.lastEmit = now;
-    broadcastToSession(sessionId, {
-      type: "bg_op_progress",
-      opId,
-      line: line.slice(0, 200),
-    } as ServerEvent);
-  };
-  entry.unsubscribe = getBus().subscribe(streamChannel(opId), listener);
-  streamSubscriptions.set(opId, entry);
-}
-
-function teardownStreamForwarder(opId: string): void {
-  const entry = streamSubscriptions.get(opId);
-  if (!entry) return;
-  entry.unsubscribe();
-  streamSubscriptions.delete(opId);
-}
-
-function extractStreamLine(msg: unknown): string {
-  if (typeof msg === "string") return msg.replace(/\s+/g, " ").trim();
-  if (msg && typeof msg === "object") {
-    const obj = msg as Record<string, unknown>;
-    if (typeof obj.delta === "string") return obj.delta.replace(/\s+/g, " ").trim();
-    if (typeof obj.line === "string") return obj.line.replace(/\s+/g, " ").trim();
-  }
-  return "";
-}
 
 export function recordCanonicalEvent(
   event: CanonicalEvent,
@@ -158,16 +118,13 @@ function recordCanonicalEventWithSink(
       // Suppressed from the AGENTS sidebar (these surface elsewhere, or are
       // headless — see SIDEBAR_SUPPRESSED_OP_TYPES), but the session→op
       // binding MUST still be released on terminal state. Skipping it leaks
-      // every past chat_turn into listOpsForSession forever, which
-      // (a) fires the worker-redirect Haiku classifier on EVERY later turn —
-      // even on Codex/Grok, since that classifier hardcodes the Anthropic CLI —
-      // and (b) poisons the system prompt with phantom "[PARALLEL CONTEXT]"
-      // workers. Exactly the leak releaseOpFromSession's doc warns about.
+      // every past chat_turn into listOpsForSession forever, which poisons the
+      // system prompt with phantom "[PARALLEL CONTEXT]" workers. Exactly the
+      // leak releaseOpFromSession's doc warns about.
       if (event.type === "state_changed") {
         const to = (event.body as Record<string, unknown> | undefined)?.to;
         if (core && (to === "succeeded" || to === "failed" || to === "cancelled")) {
           releaseOpFromSession(event.opId);
-          teardownStreamForwarder(event.opId);
         }
       }
       return;
@@ -201,11 +158,6 @@ function recordCanonicalEventWithSink(
             // the hardcoded 'coder' glyph. Absent if op unreadable.
             ...(op?.type ? { opType: op.type } : {}),
           } as ServerEvent);
-          // Subscribe to the op's stream channel so adapter-emitted progress
-          // (build_app's tool_progress, etc.) surfaces as bg_op_progress in
-          // the AGENTS sidebar. Throttled internally. No-op for suppressed
-          // op types.
-          if (core && op?.type) ensureStreamForwarder(event.opId, sessionId, op.type);
         } else if (to === "running") {
           if (emitBrowser) emitBrowser(sessionId, {
             type: "bg_op_started",
@@ -329,7 +281,6 @@ function recordCanonicalEventWithSink(
           }
           if (core) {
             releaseOpFromSession(event.opId);
-            teardownStreamForwarder(event.opId);
           }
         }
         return;

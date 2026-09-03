@@ -6,8 +6,11 @@
  * stale one, and the model saw multiple `Name:` lines and either re-asked
  * the identity question or addressed the user by an outdated value.
  */
-import { describe, it, expect } from "vitest";
-import { dedupeProfileMarkdown, setUserScalarField } from "./personality.js";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { dedupeProfileMarkdown, readPersonalityFile, setUserScalarField } from "./personality.js";
 
 describe("dedupeProfileMarkdown", () => {
   it("is a no-op for a clean single-block file", () => {
@@ -281,5 +284,63 @@ describe("setUserScalarField", () => {
     const out = setUserScalarField(input, "Name", "Alex");
     const firstLine = out.split("\n").find((l) => l.startsWith("- Name:"));
     expect(firstLine).toBe("- Name: Alex");
+  });
+});
+
+describe("readPersonalityFile self-heals drifted files", () => {
+  let memDir: string;
+
+  beforeEach(() => {
+    memDir = mkdtempSync(join(tmpdir(), "lax-personality-"));
+  });
+
+  afterEach(() => {
+    rmSync(memDir, { recursive: true, force: true });
+  });
+
+  it("collapses stacked scalars that only the save path used to normalize", async () => {
+    // The shape a real drifted IDENTITY.md had: the writer appended new keys
+    // instead of replacing them, so the model received two Taglines and an
+    // empty Emoji ahead of the real one, and re-asked its own identity.
+    writeFileSync(
+      join(memDir, "IDENTITY.md"),
+      [
+        "# Agent Identity",
+        "- Name: Primal",
+        "- Emoji:",
+        "- Tagline: Ready to serve",
+        "- Tagline: Your operational partner",
+        "- Emoji: Z",
+        "",
+      ].join("\n"),
+    );
+
+    const out = await readPersonalityFile(memDir, "identity");
+
+    expect(out).not.toBeNull();
+    expect(out!.match(/^- Tagline:/gm)).toHaveLength(1);
+    expect(out!.match(/^- Emoji:/gm)).toHaveLength(1);
+    expect(out).toContain("- Tagline: Your operational partner");
+    expect(out).toContain("- Emoji: Z");
+    expect(out).toContain("- Name: Primal");
+  });
+
+  it("preserves a clean file's fields and renders identically on every read", async () => {
+    // <agent_identity> sits in the STABLE half of the context block, which is
+    // the prompt-cache boundary — so the read path has to be deterministic
+    // turn-to-turn. It normalizes spacing, hence identical-across-reads
+    // rather than identical-to-disk.
+    writeFileSync(
+      join(memDir, "IDENTITY.md"),
+      "# Agent Identity\n- Name: Primal\n- Tagline: Your operational partner\n",
+    );
+
+    const first = await readPersonalityFile(memDir, "identity");
+    const second = await readPersonalityFile(memDir, "identity");
+
+    expect(first).toBe(second);
+    expect(first).toContain("- Name: Primal");
+    expect(first).toContain("- Tagline: Your operational partner");
+    expect(first!.match(/^- Name:/gm)).toHaveLength(1);
   });
 });

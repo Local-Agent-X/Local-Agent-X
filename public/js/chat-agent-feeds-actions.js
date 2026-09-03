@@ -12,16 +12,37 @@ function onAgentRedirect(agentId) {
   if (!isVisible) input.focus();
 }
 
+// Returns true only if the instruction was handed to a transport. A finished
+// op can't receive one: opRedirect answers "not running", so accepting the
+// text and clearing the box would render a delivery that never happened.
 function sendAgentRedirect(agentId, instruction) {
-  if (!instruction || !instruction.trim()) return;
+  if (!instruction || !instruction.trim()) return false;
+
+  var card = document.getElementById('agent-card-' + agentId);
+  if (card && card.getAttribute('data-terminal') === '1') {
+    notifyRedirectFailed(agentId, 'that worker has already finished');
+    return false;
+  }
+
   var payload = { type: 'agent-redirect', agentId: agentId, instruction: instruction.trim() };
-  if (typeof window.sendChatWsControl === 'function' && window.sendChatWsControl(payload)) return;
+  if (typeof window.sendChatWsControl === 'function' && window.sendChatWsControl(payload)) return true;
   // Fallback: direct HTTP redirect when the chat WS isn't open
   fetch(API + '/api/agents/' + agentId + '/redirect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
     body: JSON.stringify({ instruction: instruction.trim() })
-  }).catch(function() {});
+  }).then(function(r) {
+    if (!r.ok) notifyRedirectFailed(agentId, 'server returned ' + r.status);
+  }).catch(function(e) {
+    notifyRedirectFailed(agentId, (e && e.message) || 'network error');
+  });
+  return true;
+}
+
+function notifyRedirectFailed(agentId, why) {
+  var text = 'Redirect not delivered — ' + why + '.';
+  if (typeof addNotification === 'function') addNotification(text, 'error');
+  else console.warn('[agent-redirect] ' + agentId + ': ' + text);
 }
 
 function onAgentPause(agentId) {
@@ -151,7 +172,9 @@ document.addEventListener('keydown', function(e) {
   if (e.key !== 'Enter' || !e.target.closest) return;
   var input = e.target.closest('[data-agent-redirect]');
   if (!input) return;
-  sendAgentRedirect(input.dataset.agentRedirect, input.value);
+  // Keep the text on failure. Clearing it discards what the user typed AND
+  // reads as confirmation the worker received it.
+  if (!sendAgentRedirect(input.dataset.agentRedirect, input.value)) return;
   input.value = '';
   input.classList.remove('visible');
 });

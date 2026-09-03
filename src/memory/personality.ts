@@ -129,7 +129,14 @@ export async function readPersonalityFile(
     }
   } catch {}
 
-  return cleaned;
+  // Structural dedupe on READ, not just on save. The save-path funnels below
+  // normalize what they write, but a file that drifted before those landed —
+  // or that no code path has rewritten since — keeps serving stacked
+  // `- Field:` duplicates into every system prompt forever. Real case: an
+  // IDENTITY.md with two Tagline/Vibe/Emoji values made the model re-ask its
+  // own name. Structural only (no contradiction sweep): removing duplicate
+  // keys is deterministic and idempotent, so it is safe on every read.
+  return dedupeProfileLines(cleaned).join("\n").trim() || null;
 }
 
 // ── Dedupe ──

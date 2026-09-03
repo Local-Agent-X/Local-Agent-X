@@ -35,7 +35,6 @@ vi.mock("./prepare-and-route.js", () => ({
   filterToolsForSession: vi.fn((t: unknown) => t),
   applyDiscussPrefix: vi.fn(async (m: string) => m),
 }));
-vi.mock("../jarvis-redirect.js", () => ({ tryWorkerRedirect: vi.fn(async () => false) }));
 vi.mock("../../../routing/index.js", () => ({
   routeMessage: vi.fn(async () => ({ destination: "agent" })),
 }));
@@ -64,7 +63,6 @@ vi.mock("./canonical-run.js", () => ({ runCanonicalChat }));
 
 import { runChatTurn } from "./orchestrator.js";
 import { preparePerTurnRequest } from "./prepare-and-route.js";
-import { tryWorkerRedirect } from "../jarvis-redirect.js";
 import { routeMessage } from "../../../routing/index.js";
 import { getTurnRegistry, releaseTurn, getActiveTurn } from "../../../session/turn-lock.js";
 
@@ -75,7 +73,6 @@ const SESSION_CHANNEL = "tg-transport-parity";
 const SESSION_SWITCH = "sess-dead-credential-switch";
 const SESSION_TRUTH = "sess-turn-provider-truth";
 const SESSION_LOCAL = "sess-local-only-reroute";
-const SESSION_REDIRECT = "sess-worker-redirect-no-claim";
 const SESSION_REFUSED = "sess-refused-turn-no-claim";
 const SESSION_BRIDGE = "sess-bridge-remedy";
 
@@ -87,7 +84,6 @@ afterEach(() => {
   releaseTurn(SESSION_SWITCH);
   releaseTurn(SESSION_TRUTH);
   releaseTurn(SESSION_LOCAL);
-  releaseTurn(SESSION_REDIRECT);
   releaseTurn(SESSION_REFUSED);
   releaseTurn(SESSION_BRIDGE);
   vi.clearAllMocks();
@@ -221,27 +217,6 @@ describe("orchestrator provider truth (C2.1)", () => {
     const msg = String(err?.ev.message);
     expect(msg).toMatch(/Google Gemini/);
     expect(msg).toMatch(/on the computer running Local Agent X/);
-  });
-
-  /**
-   * Finding 2, half one. A worker-redirect forwards the message into an ALREADY
-   * RUNNING background op (routes/chat/jarvis-redirect.ts) and runs no model
-   * turn of its own — prepared.provider/model describe a turn that never
-   * happens. Announcing them repaints the chip off a turn that did not run.
-   */
-  it("does not announce a provider for a turn the worker-redirect consumed", async () => {
-    vi.mocked(tryWorkerRedirect).mockResolvedValueOnce(true);
-
-    const emitted: Array<{ id: string; ev: ServerEvent }> = [];
-    const { ctx } = makeCtx((id, ev) => emitted.push({ id, ev }));
-
-    await runChatTurn({
-      sessionId: SESSION_REDIRECT, message: "make it blue", attachments: [],
-      projectId: null, ctx: ctx as never, requestRole: "operator", sseSink: null,
-    });
-
-    expect(runCanonicalChat).not.toHaveBeenCalled();
-    expect(emitted.map(e => e.ev.type)).not.toContain("turn_provider");
   });
 
   /**

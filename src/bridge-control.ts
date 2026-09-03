@@ -2,7 +2,8 @@
  * Bridge-side adapter for the canonical op control-plane.
  *
  * Lets Telegram/WhatsApp steer or kill the turn that's currently running for
- * a chat — the same primitives the web UI drives through jarvis-redirect:
+ * a chat — the same primitives the web UI drives through the worker card and
+ * the agent drives through op_redirect:
  *   - opCancel  (hard stop)
  *   - opRedirect (latest-wins mid-turn injection)
  *
@@ -11,8 +12,8 @@
  * `linked:<peer>`, NOT `tg-<chat>` / `wa-<phone>`, so the bridge can't
  * reconstruct it from the chat id alone.
  *
- * Dynamic imports mirror jarvis-redirect: keep the heavy canonical-loop
- * subsystem out of the bridge module-init graph.
+ * Dynamic imports keep the heavy canonical-loop subsystem out of the bridge
+ * module-init graph.
  */
 
 import { createLogger } from "./logger.js";

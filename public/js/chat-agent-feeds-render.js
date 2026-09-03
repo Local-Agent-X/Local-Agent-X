@@ -85,6 +85,25 @@ function isTerminalStatus(status) {
   return !!TERMINAL_AGENT_STATUSES[String(status == null ? '' : status).trim().toLowerCase()];
 }
 
+// Single owner of the control row. Both the initial render and
+// updateAgentFeed's targeted rewrite call this — they used to carry separate
+// copies of the markup, which had already drifted (the rewrite silently
+// dropped "Stay inline").
+//
+// Terminal cards get NO controls. Pause/Redirect/Cancel against a finished op
+// cannot succeed: opRedirect returns not-running and the card's redirect input
+// would accept text, clear itself and look exactly like a delivered message.
+function renderAgentCardControls(safeId, status) {
+  if (isTerminalStatus(status)) return '';
+  const paused = status === 'paused' || status === 'blocked' || status === 'stalled';
+  return (paused
+      ? '<button class="agent-ctrl-btn" data-agent-action="resume" data-agent-id="' + safeId + '">Resume</button>'
+      : '<button class="agent-ctrl-btn" data-agent-action="pause" data-agent-id="' + safeId + '">Pause</button>') +
+    '<button class="agent-ctrl-btn" data-agent-action="redirect" data-agent-id="' + safeId + '">Redirect</button>' +
+    '<button class="agent-ctrl-btn" title="This should have been a chat reply, not a worker. Kills this op and re-asks inline." data-agent-action="stayinline" data-agent-id="' + safeId + '">Stay inline</button>' +
+    '<button class="agent-ctrl-btn cancel" data-agent-action="cancel" data-agent-id="' + safeId + '">Cancel</button>';
+}
+
 // Pure: decide a card's folded state AFTER an update, so updateAgentFeed's
 // className rewrite doesn't wipe the fold. A card folds by DEFAULT the moment
 // it FIRST goes terminal; once terminal we preserve whatever fold/expand the
@@ -249,7 +268,6 @@ function renderAgentCard(agent, childrenHtml) {
   var outputLines = output.split('\n').filter(function(l) { return l.trim().length > 0; });
   var initialToolCount = outputLines.length;
   var latestLine = outputLines.length > 0 ? outputLines[outputLines.length - 1] : '';
-  var isPaused = status === 'paused' || status === 'blocked' || status === 'stalled';
   // Terminal cards fold to a one-line row by default (the "calm" feature). The
   // full body stays in the DOM (CSS hides it) so updateAgentFeed's targeted
   // writes + the 1s resync never miss their selectors — a late trailing event
@@ -315,14 +333,7 @@ function renderAgentCard(agent, childrenHtml) {
       '<span class="worker-token-count" style="font-variant-numeric:tabular-nums;font-family:var(--mono,monospace);font-size:.62rem;color:var(--muted,#888);white-space:nowrap;min-width:2.5em;text-align:right">' + esc(tokLabel) + '</span>' +
     '</div>' +
     '<div class="agent-feed-result-link" style="display:' + (agent.resultUrl ? 'block' : 'none') + ';padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)">' + (agent.resultUrl ? resultLinkHtml(agent.resultUrl) : '') + '</div>' +
-    '<div class="agent-feed-controls">' +
-      (isPaused
-        ? '<button class="agent-ctrl-btn" data-agent-action="resume" data-agent-id="' + safeId + '">Resume</button>'
-        : '<button class="agent-ctrl-btn" data-agent-action="pause" data-agent-id="' + safeId + '">Pause</button>') +
-      '<button class="agent-ctrl-btn" data-agent-action="redirect" data-agent-id="' + safeId + '">Redirect</button>' +
-      '<button class="agent-ctrl-btn" title="This should have been a chat reply, not a worker. Kills this op and re-asks inline." data-agent-action="stayinline" data-agent-id="' + safeId + '">Stay inline</button>' +
-      '<button class="agent-ctrl-btn cancel" data-agent-action="cancel" data-agent-id="' + safeId + '">Cancel</button>' +
-    '</div>' +
+    '<div class="agent-feed-controls">' + renderAgentCardControls(safeId, status) + '</div>' +
     '<input class="agent-redirect-input" id="agent-redirect-' + safeId + '" data-agent-redirect="' + safeId + '" placeholder="New instructions..." />' +
   '</div>';
   // No children → return the flat card unchanged (identical to pre-C6).

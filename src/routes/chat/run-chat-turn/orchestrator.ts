@@ -2,7 +2,6 @@ import type { ServerEvent } from "../../../types.js";
 import { safeErrorMessage } from "../../../server-utils.js";
 import { createLogger } from "../../../logger.js";
 import { runDelegationHandoff } from "../delegation-handoff.js";
-import { tryWorkerRedirect } from "../jarvis-redirect.js";
 import { createRetryContext, attachRetryContext, detachRetryContext } from "../../../retry-context.js";
 import type { RunChatTurnArgs } from "./types.js";
 import { handleApproveCommand, expandSlash } from "./slash-interceptors.js";
@@ -210,10 +209,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
     // Tell the client which provider+model this turn is ACTUALLY running on.
     // Announced at each point where the turn is COMMITTED to a model turn on
-    // exactly these values — never earlier. A worker-redirect forwards the
-    // message into an ALREADY RUNNING background op and runs no model turn of
-    // its own, and a turn the lock REFUSES runs nothing either; announcing
-    // before those checks describes a turn that never happens. Worst case is
+    // exactly these values — never earlier. A turn the lock REFUSES runs
+    // nothing, so announcing before that check describes a turn that never
+    // happens. Worst case is
     // the exact bug class this event exists to kill: turn A is streaming on
     // grok, the user switches to Anthropic and sends B, the lock refuses B —
     // and B's announcement repaints the chip to Anthropic while A is still
@@ -235,18 +233,6 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
 
     const { routeMessage } = await import("../../../routing/index.js");
     message = await applyDiscussPrefix(message);
-
-    // The redirect's ack + done must reach the client on whatever transport is
-    // live (emitLive) — WS clients have no per-turn onEvent yet (startChat
-    // hasn't run), and without the broadcast the browser's optimistic turn
-    // spins forever (no opId → invisible to the stuck-stream watchdog).
-    if (await tryWorkerRedirect({
-      sessionId, message, recentSessionMessages: session.messages, emit: emitLive,
-      ingressKey: args.ingressKey,
-    })) {
-      doneEmitted = true;
-      return;
-    }
 
     const routeDecision = await routeMessage(prepared.provider, message, channel);
     if (routeDecision.destination === "delegate") {

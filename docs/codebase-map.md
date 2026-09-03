@@ -12,21 +12,21 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1533 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1531 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 123 | 25 | XL |  |
+| `src/ops/` | 122 | 25 | XL |  |
 | `src/security/` | 85 | 34 | XL |  |
 | `src/tools/` | 64 | 169 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
-| `src/canonical-loop/` | 57 | 219 | XL |  |
+| `src/canonical-loop/` | 56 | 219 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 39 | 2 | M |  |
 | `src/session/` | 35 | 7 | L |  |
-| `src/classifiers/` | 34 | 17 | L |  |
+| `src/classifiers/` | 33 | 17 | L |  |
 | `src/util/` | 33 | 2 | S |  |
 | `src/threat/` | 32 | 12 | L |  |
 | `src/auth/` | 31 | 10 | L |  |
@@ -65,16 +65,16 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/autopilot/` | 7 | 13 | L |  |
 | `src/bridge-voice/` | 7 | 5 | M |  |
 | `src/plugin-system/` | 7 | 10 | L |  |
-| `src/routes/` | 7 | 87 | XL |  |
+| `src/routes/` | 7 | 86 | XL |  |
 | `src/telegram-bridge/` | 7 | 5 | M |  |
 | `src/app-renderer/` | 6 | 7 | M |  |
 | `src/mcp-client/` | 6 | 9 | L |  |
 | `src/credentials/` | 5 | 1 | S |  |
-| `src/routing/` | 5 | 7 | M |  |
 | `src/broker-transport/` | 4 | 28 | XL |  |
 | `src/codex-client/` | 4 | 5 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
+| `src/routing/` | 4 | 6 | M |  |
 | `src/errors/` | 3 | 2 | S |  |
 | `src/language-intel/` | 3 | 4 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |

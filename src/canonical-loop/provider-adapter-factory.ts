@@ -205,7 +205,7 @@ export async function createProviderAdapterFactory(
       systemPrompt: options.systemPrompt,
       temperature: options.temperature,
       // Short path, cross-provider: Gemini's knob is this boolean.
-      thinking: !shortPath(options) &&/gemini-(2\.5|3)/i.test(identity.model),
+      thinking: !shortPath(options) && /gemini-(2\.5|3)/i.test(identity.model),
       sessionId: options.sessionId ?? identity.sessionId,
     });
   }

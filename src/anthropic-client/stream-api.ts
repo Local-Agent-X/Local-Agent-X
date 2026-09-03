@@ -1,4 +1,4 @@
-import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, resolveAnthropicEffort } from "../anthropic-models.js";
+import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, planAnthropicReasoning } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
@@ -19,10 +19,12 @@ const logger = createLogger("anthropic-client.stream-api");
 // latency-sensitive caller silently keep paying thinking latency/tokens.
 const warnedThinkingAlwaysOn = new Set<string>();
 
-// An effort level the model can't take (unsupported model, `xhigh` before
-// Opus 4.7, or above Opus 5's disabled-thinking ceiling) is dropped instead of
-// 400'ing the turn — but never silently: the caller asked for a latency/cost
-// profile it is not getting. Warn ONCE per model+level per process.
+// An effort level NO lever on the model can express (`xhigh` before Opus 4.7,
+// `medium`+ on a model with no effort dial, or above Opus 5's disabled-thinking
+// ceiling) is dropped instead of 400'ing the turn — but never silently: the
+// caller asked for a latency/cost profile it is not getting. Warn ONCE per
+// model+level per process. A `low` request that the model expresses by omitting
+// thinking instead is NOT lossy and does not warn.
 const warnedEffortDropped = new Set<string>();
 
 type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
@@ -77,18 +79,19 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   const adaptive = anthropicUsesAdaptiveThinking(resolvedModel);
   // Wire shape for "thinking off" — per-model, because omission is not a
   // universal off-switch (see anthropicThinkingOffMode).
-  const thinkingOff = disableThinking ? anthropicThinkingOffMode(resolvedModel) : null;
+  // Thinking + effort are ONE decision, resolved per model (planAnthropicReasoning
+  // is the single source of truth). Deciding them apart is what put a voice turn
+  // on the legacy budget_tokens arm at max_tokens 600 — an unconditional 400.
+  const plan = planAnthropicReasoning(resolvedModel, { effort, disableThinking });
+  const thinkingOff = plan.thinkingOff ? anthropicThinkingOffMode(resolvedModel) : null;
   if (thinkingOff === "always-on" && !warnedThinkingAlwaysOn.has(resolvedModel)) {
     warnedThinkingAlwaysOn.add(resolvedModel);
     logger.warn(`disableThinking has no effect on ${resolvedModel} — adaptive thinking cannot be turned off (explicit disable is rejected with a 400, omission runs adaptive); the call still pays thinking latency/tokens`);
   }
-  // Per-model effort support + the disabled-thinking ceiling both live in
-  // resolveAnthropicEffort (one capability map, no second model table here).
-  const resolvedEffort = resolveAnthropicEffort(resolvedModel, effort, disableThinking === true);
-  const effortKey = `${resolvedModel}:${effort}`;
-  if (effort && !resolvedEffort && !warnedEffortDropped.has(effortKey)) {
+  const effortKey = `${resolvedModel}:${plan.unexpressibleEffort}`;
+  if (plan.unexpressibleEffort && !warnedEffortDropped.has(effortKey)) {
     warnedEffortDropped.add(effortKey);
-    logger.warn(`output_config.effort "${effort}" is not sendable on ${resolvedModel}${disableThinking ? " with thinking disabled" : ""} — field omitted, so the API default effort ("high") applies`);
+    logger.warn(`output_config.effort "${plan.unexpressibleEffort}" cannot be expressed on ${resolvedModel}${disableThinking ? " with thinking disabled" : ""} — the field is omitted and the request keeps this model's default reasoning behavior`);
   }
 
   // Fail fast if the caller already cancelled before we started.
@@ -179,7 +182,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // Temperature stays gated on the SAME `adaptive` predicate: a
     // classifier's temperature:0 forwarded to Fable 5 / Opus 5 / 4.7+ 400s
     // ("`temperature` is deprecated for this model") and nulls the verdict.
-    ...(disableThinking
+    ...(plan.thinkingOff
       ? {
           ...(thinkingOff === "disabled-block" ? { thinking: { type: "disabled" } } : {}),
           ...(temperature !== undefined && !adaptive ? { temperature } : {}),
@@ -192,7 +195,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // documented low-latency profile for a turn that also carries tools —
     // strictly better than disabling thinking, which can strand a tool call in
     // visible text. Nested under `output_config`; never a top-level field.
-    ...(resolvedEffort ? { output_config: { effort: resolvedEffort } } : {}),
+    ...(plan.effort ? { output_config: { effort: plan.effort } } : {}),
   };
 
   // On the OAuth wire, every tool name must be a bare or `mcp__` identifier or

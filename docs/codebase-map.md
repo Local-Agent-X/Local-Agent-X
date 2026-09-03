@@ -94,7 +94,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 
 | File | Size |
 |---|:--:|
-| `src/anthropic-models.ts` | S |
+| `src/anthropic-models.ts` | M |
 | `src/api-docs.ts` | M |
 | `src/approval-decision.ts` | M |
 | `src/approval-durable-record.ts` | S |

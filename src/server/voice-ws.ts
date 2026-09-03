@@ -288,16 +288,30 @@ export async function setupVoiceWs(deps: {
           preferAnthropicDirectHttp: true,
           // Thinking time is dead air in a spoken reply — the user sits in
           // silence while the model reasons about how to say two sentences.
-          // The lever for that is LOW EFFORT, not disabled thinking. A voice
-          // turn SENDS TOOLS (voiceTools above), and Anthropic documents that
-          // with `thinking: {type: "disabled"}` Opus 5 "occasionally writes a
-          // tool call into its visible text instead of a tool_use block: the
-          // turn succeeds, the call never runs, no error is raised" — in a
-          // spoken turn that is a tool call the user HEARS and that never
-          // executes, with nothing anywhere reporting a failure. The
-          // documented fix is the opposite lever: "Turning thinking on and
-          // lowering effort fixes both and still cuts cost." So adaptive
-          // thinking stays on and effort drops to the floor.
+          // This asks for the SHORT PATH declaratively; the client resolves
+          // it into whatever lever the resolved model actually has
+          // (planAnthropicReasoning). That conditionality is load-bearing:
+          //   - On an effort-capable model (Opus 5 et al) it becomes adaptive
+          //     thinking + output_config.effort "low". A voice turn SENDS
+          //     TOOLS (voiceTools above), and Anthropic documents that with
+          //     `thinking:{type:"disabled"}` Opus 5 "occasionally writes a
+          //     tool call into its visible text instead of a tool_use block:
+          //     the turn succeeds, the call never runs, no error is raised" —
+          //     a tool call the user HEARS and that never executes. The
+          //     documented fix is the opposite lever: "Turning thinking on and
+          //     lowering effort fixes both and still cuts cost."
+          //   - On a NON-ADAPTIVE model it becomes an omitted `thinking` param
+          //     — the pre-existing behavior, and hazard-free there because
+          //     those models have no adaptive mode to strand a call in text.
+          //     This is the branch voice takes BY DEFAULT: resolveVoiceModel
+          //     falls through to the provider's fast tier (anthropic →
+          //     claude-haiku-4-5). `voiceModel` is absent from settings-schema,
+          //     so it is not offered in the settings UI or to the agent's
+          //     setting tool — but getSetting reads settings.json raw, so a
+          //     hand-edited ~/.lax/settings.json DOES pin it and activate the
+          //     adaptive branch. Dormant by default, not by construction.
+          // Sending an unconditional effort here instead would drop haiku into
+          // the legacy budget_tokens arm (3000 > VOICE_MAX_TOKENS 600 → 400).
           // The classifier lane (classify-with-llm.ts) keeps disableThinking:
           // it sends NO tools, so the hazard cannot bite there.
           // Genuinely heavy work still delegates to op_submit_async workers,

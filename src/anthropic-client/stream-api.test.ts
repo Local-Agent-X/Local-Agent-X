@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { streamViaAPI } from "./stream-api.js";
+import { resolveVoiceModel } from "../server/voice-model.js";
+import { PROVIDERS } from "../providers/registry.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 // SSE body builder — each event as the API frames it on the wire.
@@ -406,29 +408,131 @@ describe("streamViaAPI — conversation-history breakpoint (cacheConversation)",
   });
 });
 
-// The voice profile: adaptive thinking + low effort, on a request that CARRIES
-// TOOLS. This is the wire shape that removes the disabled-thinking hazard —
-// Anthropic documents that with thinking disabled, Opus 5 can write a tool
-// call into visible TEXT instead of a tool_use block (turn succeeds, call
-// never runs, no error). A spoken tool call, never executed. These pins fail
-// if anything ever puts a {type:"disabled"} block back on a tool-carrying turn.
-describe("streamViaAPI — output_config.effort (voice profile)", () => {
+// Voice asks for the SHORT PATH declaratively (`effort: "low"`) and the client
+// resolves it into whatever lever the resolved model has. Every case below
+// asserts `body.thinking` as well as `body.output_config` — checking only the
+// effort field is what let a 400 through: dropping `disableThinking` on a
+// model with no effort dial silently fell into the LEGACY arm
+// (thinking:{enabled,budget_tokens:3000}), and budget_tokens >= max_tokens is
+// a documented 400.
+describe("streamViaAPI — short-path effort resolution", () => {
   const done = sse([
     { type: "content_block_delta", delta: { type: "text_delta", text: "ok" } },
     { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
   ]);
 
   const voiceTools = [{ name: "voice_visual", description: "show", parameters: { type: "object" } }];
+  // The real voice turn shape (voice-ws.ts): VOICE_MAX_TOKENS and the
+  // configured spoken-turn temperature.
+  const VOICE_MAX_TOKENS = 600;
+  const VOICE_TEMPERATURE = 0.7;
 
-  it.each(["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"])(
-    "%s: adaptive thinking + low effort, and NO disabled block",
+  // ── The model voice ACTUALLY runs on ───────────────────────────────────
+  // Driven through the real resolver, not a hardcoded id: `voiceModel` has no
+  // settings-schema entry, so getSetting always misses and every user lands on
+  // the provider's fast tier. If that fallback ever changes, this fails loudly.
+  const defaultVoiceModel = resolveVoiceModel("anthropic", "claude-opus-5", () => undefined);
+
+  it("the default voice model is a fast tier with no effort dial", () => {
+    expect(defaultVoiceModel).toBe("claude-haiku-4-5");
+  });
+
+  // BASE-EQUALITY PROOF, every non-adaptive model a voice turn can resolve to:
+  // the new declarative `effort: "low"` must produce a byte-identical request
+  // to the old `disableThinking: true` — which IS the pre-change voice shape.
+  // claude-opus-4-5 is here because it is the one model with an effort dial but
+  // no adaptive arm; before the predicate was aligned it silently produced
+  // thinking:{enabled,budget_tokens:3000} + output_config at max_tokens 600.
+  it.each([defaultVoiceModel, "claude-opus-4-5", "claude-sonnet-4-5"])(
+    "%s: effort low is byte-identical to the old disableThinking body",
     async (model) => {
       const cap = stubFetchCapturing(done);
-      await collect({ model, effort: "low", tools: voiceTools });
+      const voiceTurn = {
+        model, tools: voiceTools,
+        maxTokens: VOICE_MAX_TOKENS, temperature: VOICE_TEMPERATURE,
+      };
+      await collect({ ...voiceTurn, effort: "low" });
+      await collect({ ...voiceTurn, disableThinking: true });
+      expect(cap.calls[0].body).toEqual(cap.calls[1].body);
+      expect(JSON.stringify(cap.calls[0].body)).not.toContain("budget_tokens");
+      expect(cap.calls[0].body.temperature).toBe(VOICE_TEMPERATURE);
+    },
+  );
+
+  // EXHAUSTIVE INVARIANT over the whole Anthropic model list (not a sample):
+  // the legacy enabled+budget_tokens arm must NEVER carry an effort field.
+  // `budget_tokens` already owns depth on that arm, `output_config` has no
+  // defined interaction with it, and this is the exact shape that 400'd voice.
+  it("no model reaches the legacy thinking arm carrying an effort field", async () => {
+    const models = [...PROVIDERS.anthropic.models, "claude-fable-5", "claude-mythos-5"];
+    const levels = ["low", "medium", "high", "xhigh", "max"] as const;
+    const cap = stubFetchCapturing(done);
+    for (const model of models) {
+      for (const effort of levels) {
+        await collect({ model, effort, maxTokens: VOICE_MAX_TOKENS });
+      }
+    }
+    expect(cap.calls).toHaveLength(models.length * levels.length);
+    for (const call of cap.calls) {
+      const thinking = call.body.thinking as { type?: string } | undefined;
+      if (thinking?.type === "enabled") {
+        expect("output_config" in call.body).toBe(false);
+      }
+    }
+  });
+
+  // The pairing that actually 400s — enabled thinking whose budget exceeds the
+  // turn's max_tokens — must never be built for the SHORT-PATH intent, on any
+  // model. This is the invariant voice depends on: `effort: "low"` at
+  // VOICE_MAX_TOKENS 600 is the exact request that was 400ing.
+  //
+  // Scope note, deliberately not silently widened: `medium`+ on a legacy model
+  // at max_tokens < 3000 DOES still build budget_tokens 3000, because the
+  // legacy arm's fixed budget predates this work and no caller sends that
+  // combination. That is a pre-existing sharp edge, not one this change
+  // introduces, and fixing it is a separate chunk.
+  it("low-effort short path never builds budget_tokens >= max_tokens, on any model", async () => {
+    const models = [...PROVIDERS.anthropic.models, "claude-fable-5", "claude-mythos-5"];
+    const cap = stubFetchCapturing(done);
+    for (const model of models) {
+      await collect({ model, effort: "low", maxTokens: VOICE_MAX_TOKENS });
+    }
+    expect(cap.calls).toHaveLength(models.length);
+    for (const call of cap.calls) {
+      const thinking = call.body.thinking as { type?: string; budget_tokens?: number } | undefined;
+      expect(thinking?.type).not.toBe("enabled");
+      expect(JSON.stringify(call.body)).not.toContain("budget_tokens");
+    }
+  });
+
+  // ...and that shared shape is the one the API accepts at max_tokens 600.
+  it("default voice config: no thinking block, no budget_tokens, temperature preserved", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      model: defaultVoiceModel, tools: voiceTools, effort: "low",
+      maxTokens: VOICE_MAX_TOKENS, temperature: VOICE_TEMPERATURE,
+    });
+    const { body } = cap.calls[0];
+    expect("thinking" in body).toBe(false);
+    expect("output_config" in body).toBe(false);
+    // The regression that made this chunk ship-blocking: budget_tokens 3000
+    // against max_tokens 600 is a 400 on every spoken turn.
+    expect(JSON.stringify(body)).not.toContain("budget_tokens");
+    expect(body.max_tokens).toBe(VOICE_MAX_TOKENS);
+    expect(body.temperature).toBe(VOICE_TEMPERATURE);
+  });
+
+  // ── The model voice runs on once voiceModel can be pinned ──────────────
+  it.each(["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"])(
+    "pinned %s: adaptive thinking + low effort, and NO disabled block",
+    async (model) => {
+      const cap = stubFetchCapturing(done);
+      await collect({ model, effort: "low", tools: voiceTools, maxTokens: VOICE_MAX_TOKENS });
       const { body } = cap.calls[0];
       expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
       expect(body.output_config).toEqual({ effort: "low" });
       expect(JSON.stringify(body)).not.toContain('"disabled"');
+      expect(JSON.stringify(body)).not.toContain("budget_tokens");
       expect(body.tools).toBeDefined();
     },
   );
@@ -441,19 +545,24 @@ describe("streamViaAPI — output_config.effort (voice profile)", () => {
     expect(body.output_config).toEqual({ effort: "low" });
   });
 
-  it("omits output_config entirely when no effort is requested", async () => {
+  it("omits output_config and keeps adaptive when no effort is requested", async () => {
     const cap = stubFetchCapturing(done);
     await collect({ model: "claude-opus-5" });
-    expect("output_config" in cap.calls[0].body).toBe(false);
+    const { body } = cap.calls[0];
+    expect("output_config" in body).toBe(false);
+    expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
   });
 
-  // A model that errors on the parameter must get an omission, not the field.
-  it.each(["claude-sonnet-4-5", "claude-haiku-4-5"])(
-    "%s: omits output_config — the parameter errors on this model",
-    async (model) => {
+  // A level with no faithful expression must leave thinking UNTOUCHED — not
+  // silently reroute onto the thinking-off lever, and not 400.
+  it.each(["medium", "high", "xhigh", "max"] as const)(
+    "haiku 4.5: %s effort is dropped and thinking behavior is unchanged",
+    async (effort) => {
       const cap = stubFetchCapturing(done);
-      await collect({ model, effort: "low" });
-      expect("output_config" in cap.calls[0].body).toBe(false);
+      await collect({ model: "claude-haiku-4-5", effort, maxTokens: 16_000 });
+      const { body } = cap.calls[0];
+      expect("output_config" in body).toBe(false);
+      expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 3000 });
     },
   );
 
@@ -461,19 +570,31 @@ describe("streamViaAPI — output_config.effort (voice profile)", () => {
     const cap = stubFetchCapturing(done);
     await collect({ model: "claude-sonnet-4-6", effort: "xhigh" });
     expect("output_config" in cap.calls[0].body).toBe(false);
+    expect(cap.calls[0].body.thinking).toEqual({ type: "adaptive", display: "summarized" });
     await collect({ model: "claude-sonnet-4-6", effort: "max" });
     expect(cap.calls[1].body.output_config).toEqual({ effort: "max" });
   });
 
-  // F13's disabled block is legal only at effort high or below on Opus 5 — a
-  // caller combining it with xhigh/max must not lose the turn to a 400.
-  it("drops effort above the disabled-thinking ceiling instead of 400ing", async () => {
+  // Opus 5 ONLY — "disabled returns 400 when effort is xhigh or max".
+  it("opus-5: drops effort above the disabled-thinking ceiling instead of 400ing", async () => {
     const cap = stubFetchCapturing(done);
     await collect({ model: "claude-opus-5", effort: "xhigh", disableThinking: true });
     const { body } = cap.calls[0];
     expect(body.thinking).toEqual({ type: "disabled" });
     expect("output_config" in body).toBe(false);
   });
+
+  // The migration guide: "Opus 4.8 accepts that combination."
+  it.each(["claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"])(
+    "%s: keeps xhigh alongside a disabled block — no ceiling on this model",
+    async (model) => {
+      const cap = stubFetchCapturing(done);
+      await collect({ model, effort: "xhigh", disableThinking: true });
+      const { body } = cap.calls[0];
+      expect(body.thinking).toEqual({ type: "disabled" });
+      expect(body.output_config).toEqual({ effort: "xhigh" });
+    },
+  );
 
   it("keeps a legal disabled + low-effort pair on the wire", async () => {
     const cap = stubFetchCapturing(done);
@@ -483,16 +604,34 @@ describe("streamViaAPI — output_config.effort (voice profile)", () => {
     expect(body.output_config).toEqual({ effort: "low" });
   });
 
-  it("warns once per model+level when an effort is dropped", async () => {
+  it("warns once per model+level when an effort cannot be expressed", async () => {
     const warnings: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
       warnings.push(args.map(String).join(" "));
     });
     try {
       stubFetchCapturing(done);
-      await collect({ model: "claude-haiku-4-5", effort: "medium" });
-      await collect({ model: "claude-haiku-4-5", effort: "medium" });
-      expect(warnings.filter(w => w.includes('effort "medium" is not sendable on claude-haiku-4-5'))).toHaveLength(1);
+      // An id the exhaustive loops above cannot reach: the warn set is
+      // once-per-process, so any registry model+level pair is already spent.
+      await collect({ model: "some-unknown-model", effort: "medium" });
+      await collect({ model: "some-unknown-model", effort: "medium" });
+      expect(warnings.filter(w => w.includes('effort "medium" cannot be expressed on some-unknown-model'))).toHaveLength(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  // A low-effort request the model honors via thinking-omission lost nothing,
+  // so it must not warn — that would train the operator to ignore the channel.
+  it("does not warn when low effort is expressed by omitting thinking", async () => {
+    const warnings: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      stubFetchCapturing(done);
+      await collect({ model: "claude-haiku-4-5", effort: "low", maxTokens: 600 });
+      expect(warnings.filter(w => w.includes("output_config.effort"))).toHaveLength(0);
     } finally {
       errSpy.mockRestore();
     }
@@ -500,7 +639,7 @@ describe("streamViaAPI — output_config.effort (voice profile)", () => {
 
   // Regression pin for the classifier lane: it sends disableThinking and NO
   // effort, and F13's per-model off-shape must stay byte-identical to what it
-  // was before effort existed. No output_config key anywhere.
+  // was before effort existed.
   it("classifier lane (disableThinking, no effort) is unchanged by effort support", async () => {
     const cap = stubFetchCapturing(done);
     await collect({ model: "claude-opus-5", disableThinking: true, temperature: 0 });

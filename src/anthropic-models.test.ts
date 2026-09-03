@@ -5,7 +5,7 @@
 // call 400s in production while unit-per-module tests stay green.
 
 import { describe, it, expect } from "vitest";
-import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, anthropicEffortLevels, resolveAnthropicEffort } from "./anthropic-models.js";
+import { normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, anthropicEffortLevels, resolveAnthropicEffort, planAnthropicReasoning } from "./anthropic-models.js";
 import { classifyModel } from "./model-tiers.js";
 import { PROVIDERS } from "./providers/registry.js";
 
@@ -234,17 +234,26 @@ describe("resolveAnthropicEffort — what may actually go on the wire", () => {
     expect(resolveAnthropicEffort("claude-sonnet-4-6", "max")).toBe("max");
   });
 
-  // Opus 5 / Sonnet 5 / Opus 4.7/4.8 accept thinking:{disabled} ONLY at effort
-  // high or below — xhigh/max with a disabled block is a 400. The pair must be
-  // defused by dropping effort (omission = the API default "high", legal),
-  // never by sending it and losing the turn.
-  it.each(["claude-opus-5", "claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"])(
-    "%s: drops xhigh/max when thinking is disabled, keeps high and below",
+  // OPUS 5 ONLY: "thinking: {type: 'disabled'} returns 400 when effort is
+  // xhigh or max - it is accepted at high or below". The pair must be defused
+  // by dropping effort, never by sending it and losing the turn.
+  it("opus-5: drops xhigh/max when thinking is disabled, keeps high and below", () => {
+    expect(resolveAnthropicEffort("claude-opus-5", "xhigh", true)).toBeUndefined();
+    expect(resolveAnthropicEffort("claude-opus-5", "max", true)).toBeUndefined();
+    expect(resolveAnthropicEffort("claude-opus-5", "high", true)).toBe("high");
+    expect(resolveAnthropicEffort("claude-opus-5", "low", true)).toBe("low");
+    expect(resolveAnthropicEffort("anthropic/claude-opus-5[1m]", "max", true)).toBeUndefined();
+  });
+
+  // The ceiling is NOT family-wide. The migration guide is explicit that
+  // "Opus 4.8 accepts that combination", and Sonnet 5 / Opus 4.7 document
+  // `disabled` with no effort qualifier. An over-broad ceiling would silently
+  // downgrade effort on three models the API is perfectly happy with.
+  it.each(["claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"])(
+    "%s: keeps xhigh/max alongside disabled thinking — no ceiling on this model",
     (model) => {
-      expect(resolveAnthropicEffort(model, "xhigh", true)).toBeUndefined();
-      expect(resolveAnthropicEffort(model, "max", true)).toBeUndefined();
-      expect(resolveAnthropicEffort(model, "high", true)).toBe("high");
-      expect(resolveAnthropicEffort(model, "low", true)).toBe("low");
+      expect(resolveAnthropicEffort(model, "xhigh", true)).toBe("xhigh");
+      expect(resolveAnthropicEffort(model, "max", true)).toBe("max");
     },
   );
 
@@ -258,5 +267,78 @@ describe("resolveAnthropicEffort — what may actually go on the wire", () => {
   it("always-on models keep their effort even when disableThinking is set", () => {
     expect(resolveAnthropicEffort("claude-fable-5", "max", true)).toBe("max");
     expect(resolveAnthropicEffort("claude-mythos-5", "xhigh", true)).toBe("xhigh");
+  });
+});
+
+// The model-conditional resolution. `effort: "low"` is a declarative SHORT-PATH
+// request; each model expresses it with the lever it actually has. Deciding
+// thinking and effort separately is what sent a voice turn down the legacy
+// budget_tokens arm at max_tokens 600 — an unconditional 400.
+describe("planAnthropicReasoning — one intent, per-model levers", () => {
+  it("effort-capable model: adaptive stays on, effort rides output_config", () => {
+    expect(planAnthropicReasoning("claude-opus-5", { effort: "low" }))
+      .toEqual({ thinkingOff: false, effort: "low" });
+    expect(planAnthropicReasoning("claude-sonnet-4-6", { effort: "low" }))
+      .toEqual({ thinkingOff: false, effort: "low" });
+  });
+
+  // Every NON-ADAPTIVE model, including the default voice fast tier
+  // (haiku 4.5). The only lever there is omitting `thinking`, which is what
+  // disableThinking produced before effort existed — and it must NOT be
+  // reported as lossy.
+  //
+  // claude-opus-4-5 is the row that matters: it is the ONE model where "has an
+  // effort dial" and "uses adaptive thinking" disagree. Keying the short path
+  // on the dial sent it down the legacy enabled+budget_tokens arm carrying an
+  // effort field — a silent 400 at any max_tokens below 3000. The gate is
+  // anthropicUsesAdaptiveThinking precisely so this row cannot come back.
+  it.each(["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"])(
+    "%s: low effort becomes thinking-off, with no effort field and no warning",
+    (model) => {
+      expect(planAnthropicReasoning(model, { effort: "low" }))
+        .toEqual({ thinkingOff: true });
+    },
+  );
+
+  // Opus 4.5's dial is real per the reference and anthropicEffortLevels still
+  // reports it — the plan declines to use it because the only request shape
+  // this client builds for Opus 4.5 is the legacy one.
+  it("opus-4-5 has a real effort dial that the plan deliberately declines", () => {
+    expect(anthropicEffortLevels("claude-opus-4-5")).toEqual(["low", "medium", "high"]);
+    expect(planAnthropicReasoning("claude-opus-4-5", { effort: "low" }).effort).toBeUndefined();
+  });
+
+  // Only `low` maps onto the thinking-off lever. Higher levels have no
+  // faithful expression on a model with no effort dial — drop and warn rather
+  // than invent a behavior change.
+  it.each(["medium", "high", "xhigh", "max"] as const)(
+    "haiku 4.5: %s effort is unexpressible — dropped, flagged, thinking untouched",
+    (effort) => {
+      expect(planAnthropicReasoning("claude-haiku-4-5", { effort }))
+        .toEqual({ thinkingOff: false, unexpressibleEffort: effort });
+    },
+  );
+
+  it.each(["medium", "high"] as const)(
+    "opus-4-5: %s effort is dropped and flagged, not sent onto the legacy arm",
+    (effort) => {
+      expect(planAnthropicReasoning("claude-opus-4-5", { effort }))
+        .toEqual({ thinkingOff: false, unexpressibleEffort: effort });
+    },
+  );
+
+  it("disableThinking still turns thinking off on an effort-capable model", () => {
+    expect(planAnthropicReasoning("claude-opus-5", { disableThinking: true }))
+      .toEqual({ thinkingOff: true });
+  });
+
+  it("opus-5 ceiling: disabled + xhigh drops the effort and flags it", () => {
+    expect(planAnthropicReasoning("claude-opus-5", { effort: "xhigh", disableThinking: true }))
+      .toEqual({ thinkingOff: true, unexpressibleEffort: "xhigh" });
+  });
+
+  it("no intent at all leaves both knobs alone", () => {
+    expect(planAnthropicReasoning("claude-opus-5", {})).toEqual({ thinkingOff: false });
+    expect(planAnthropicReasoning("claude-haiku-4-5", {})).toEqual({ thinkingOff: false });
   });
 });

@@ -146,13 +146,17 @@ export function anthropicEffortLevels(model: string): readonly AnthropicEffort[]
  *
  * 1. Support — a level the model doesn't accept (any level on Sonnet 4.5 /
  *    Haiku 4.5, `xhigh` on the 4.6 generation) is OMITTED rather than sent and
- *    400'd. Omission means the API default `high`.
- * 2. Thinking interaction — Opus 5 / Sonnet 5 / Opus 4.7/4.8 accept
- *    `thinking: {type: "disabled"}` only at effort `high` or below; pairing it
- *    with `xhigh`/`max` returns a 400. A caller asking for both gets the
- *    effort dropped (default `high` keeps the pair legal) instead of a dead
- *    turn. This discharges the "revisit if effort ever rides this path" note
- *    left on anthropicThinkingOffMode when disableThinking was made honest.
+ *    400'd. Omission means the API default `high` on models that HAVE an
+ *    effort dial; on models without one the field simply has no meaning.
+ * 2. Thinking interaction, OPUS 5 ONLY — "`thinking: {type: "disabled"}`
+ *    returns 400 when `effort` is `xhigh` or `max`; it is accepted at `high`
+ *    or below". This is NOT a family-wide rule: the migration guide is
+ *    explicit that "Opus 4.8 accepts that combination", and Sonnet 5 /
+ *    Opus 4.7 document `disabled` with no effort qualifier. So the ceiling is
+ *    anchored on opus-5 alone, not on the whole disabled-block set — an
+ *    over-broad ceiling would silently downgrade effort on three models the
+ *    API is perfectly happy with. This also discharges the "revisit if effort
+ *    ever rides this path" note left on anthropicThinkingOffMode by F13.
  *
  * Dropping is never silent: the request layer warns once per model+level.
  */
@@ -163,10 +167,77 @@ export function resolveAnthropicEffort(
 ): AnthropicEffort | undefined {
   if (!effort) return undefined;
   if (!anthropicEffortLevels(model).includes(effort)) return undefined;
-  if (thinkingDisabled && anthropicThinkingOffMode(model) === "disabled-block" && (effort === "xhigh" || effort === "max")) {
-    return undefined;
-  }
+  const opus5 = /^claude-opus-5/.test(normalizeAnthropicModel(model).toLowerCase());
+  if (thinkingDisabled && opus5 && (effort === "xhigh" || effort === "max")) return undefined;
   return effort;
+}
+
+/** The resolved thinking + effort wire decision for one request. */
+export interface AnthropicReasoningPlan {
+  /** Value for `output_config.effort`; omit the field when undefined. */
+  effort?: AnthropicEffort;
+  /** Turn thinking off using this model's off-shape (anthropicThinkingOffMode). */
+  thinkingOff: boolean;
+  /** A requested effort no lever on this model could express — caller warns. */
+  unexpressibleEffort?: AnthropicEffort;
+}
+
+/**
+ * Resolve a caller's reasoning intent into the shape THIS model accepts.
+ *
+ * The two knobs are coupled by model capability, so they are decided together
+ * in one place. Deciding them separately is exactly how a low-latency voice
+ * turn ended up on the legacy `budget_tokens` arm: dropping `disableThinking`
+ * without checking what the model could take sent
+ * `thinking:{type:"enabled",budget_tokens:3000}` at `max_tokens: 600`, and
+ * `budget_tokens` >= `max_tokens` is a 400.
+ *
+ * `effort: "low"` is a declarative SHORT-PATH request — "don't spend time
+ * reasoning before answering" — and each model expresses it with the lever it
+ * actually has:
+ *
+ * - ADAPTIVE models (Claude 5 family, Opus 4.6/4.7/4.8, Sonnet 4.6): adaptive
+ *   thinking + `output_config.effort: "low"`. This is the lever the reference
+ *   prescribes for a turn that carries TOOLS, because disabling thinking on
+ *   Opus 5 can strand a tool call in visible text.
+ * - NON-ADAPTIVE models (Opus 4.5, Haiku 4.5, Sonnet 4.5, unknown ids): omit
+ *   `thinking` — byte-identical to what `disableThinking: true` produced, and
+ *   hazard-free there precisely because those models have no adaptive mode
+ *   that could strand a tool call in the first place.
+ *
+ * The gate is `anthropicUsesAdaptiveThinking` — deliberately the SAME predicate
+ * the request layer switches its thinking arm on, NOT "does this model have an
+ * effort dial". Those two disagree on exactly one model, Opus 4.5, which owns a
+ * `low/medium/high` dial while still taking the legacy enabled+budget_tokens
+ * request shape. Keying on the dial let `effort: "low"` skip the thinking-off
+ * branch there and land on the legacy arm carrying
+ * `thinking:{enabled,budget_tokens:3000}` — a 400 at any `max_tokens` below
+ * 3000, silently, since a resolved effort suppressed the warning. That is the
+ * same two-predicates-disagreeing root cause this function exists to prevent,
+ * so the two predicates are now one. Effort rides ONLY the adaptive arm, where
+ * it is the documented depth control; on the legacy arm `budget_tokens` already
+ * owns depth and `output_config` has no defined interaction with it.
+ *
+ * Consequence worth naming: Opus 4.5's dial is real per the reference, and
+ * anthropicEffortLevels still reports it truthfully — this function simply
+ * declines to use it, because the only request shape this client builds for
+ * Opus 4.5 is the legacy one.
+ *
+ * Only `low` maps onto the thinking-off lever. `medium`+ on a non-adaptive
+ * model has no faithful expression, so the field is dropped and the caller
+ * warns rather than inventing a behavior change.
+ */
+export function planAnthropicReasoning(
+  model: string,
+  opts: { effort?: AnthropicEffort; disableThinking?: boolean },
+): AnthropicReasoningPlan {
+  const adaptive = anthropicUsesAdaptiveThinking(model);
+  const shortPathViaThinkingOff = opts.effort === "low" && !adaptive;
+  const thinkingOff = opts.disableThinking === true || shortPathViaThinkingOff;
+  const effort = adaptive ? resolveAnthropicEffort(model, opts.effort, thinkingOff) : undefined;
+  // Lossy only when the caller asked for an effort that neither lever carried.
+  const unexpressible = opts.effort && !effort && !shortPathViaThinkingOff ? opts.effort : undefined;
+  return { thinkingOff, ...(effort ? { effort } : {}), ...(unexpressible ? { unexpressibleEffort: unexpressible } : {}) };
 }
 
 /**

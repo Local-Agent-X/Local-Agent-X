@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeOp } from "../ops/op-store.js";
 import { appendOpMessage } from "./store.js";
-import { trackOpForSession, listOpsForSession, setSessionBroadcaster } from "../ops/session-bridge.js";
+import { trackOpForSession, listOpsForSession, setSessionBroadcaster, setSessionPersister } from "../ops/session-bridge.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { cancelIdleNudge, scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { collectCanonicalBrowserEvents, recordCanonicalEvent } from "./session-bridge-observer.js";
@@ -166,6 +166,68 @@ describe("session-bridge-observer — terminal release for suppressed op types",
     getBus().publish(streamChannel(opId), { replace: true, text: "rewritten" });
 
     expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("records a redirect in the transcript once the worker consumes it", () => {
+    const sessionId = "sess-obs-redirect-applied";
+    const opId = "op_app_build_redirect_applied";
+    makeOp(opId, "app_build");
+    trackOpForSession(opId, sessionId, 'Build app "sipdirty805-clone"');
+    const broadcast = vi.fn();
+    const persisted: Array<{ sessionId: string; content: string }> = [];
+    setSessionBroadcaster(broadcast);
+    setSessionPersister((sid, content) => persisted.push({ sessionId: sid, content }));
+
+    recordCanonicalEvent({
+      type: "redirect_applied", opId,
+      body: { turnIdx: 3, instructionId: "i1", text: "make the header blue" },
+    } as unknown as CanonicalEvent, "all", sessionId);
+
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].sessionId).toBe(sessionId);
+    expect(persisted[0].content).toContain("make the header blue");
+    // Assistant-shaped row: a `system` row is stripped by the next persist.
+    expect(persisted[0].content).toContain("Redirect delivered");
+  });
+
+  it("does not record a redirect that was only QUEUED, never consumed", () => {
+    // redirect_received means "an instruction is waiting" — the op can finish
+    // or die before picking it up. Recording it would put a delivery in the
+    // transcript that never happened.
+    const sessionId = "sess-obs-redirect-received";
+    const opId = "op_app_build_redirect_received";
+    makeOp(opId, "app_build");
+    trackOpForSession(opId, sessionId, "Build app");
+    const persisted: string[] = [];
+    setSessionBroadcaster(vi.fn());
+    setSessionPersister((_sid, content) => persisted.push(content));
+
+    recordCanonicalEvent({
+      type: "redirect_received", opId, body: { actor: "user", instructionId: "i1" },
+    } as unknown as CanonicalEvent, "all", sessionId);
+
+    expect(persisted).toEqual([]);
+  });
+
+  it("persists exactly once — the browser-collect projection must not double-write", () => {
+    const sessionId = "sess-obs-redirect-once";
+    const opId = "op_app_build_redirect_once";
+    makeOp(opId, "app_build");
+    trackOpForSession(opId, sessionId, "Build app");
+    const persisted: string[] = [];
+    setSessionPersister((_sid, content) => persisted.push(content));
+
+    const event = {
+      type: "redirect_applied", opId,
+      body: { turnIdx: 1, instructionId: "i1", text: "use orange" },
+    } as unknown as CanonicalEvent;
+
+    // collectCanonicalBrowserEvents runs the same mapping with core=false to
+    // build the WS payload; only the core pass owns the write.
+    const projection = collectCanonicalBrowserEvents(event, sessionId);
+
+    expect(projection?.events.map(e => e.type)).toContain("bg_op_progress");
+    expect(persisted).toEqual([]);
   });
 
   it("still surfaces committed turns, which is what the activity group is for", () => {

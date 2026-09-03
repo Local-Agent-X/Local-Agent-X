@@ -29,13 +29,13 @@
  *     intact via bg_op_completed.
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
-import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession } from "../ops/session-bridge.js";
+import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession, getSessionPersister } from "../ops/session-bridge.js";
 import { isHeadlessSession } from "../chat-ws/broadcast.js";
 import { isDispatchFailure } from "./types.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 
-import { toSpokenCompletion } from "./session-bridge-extractors.js";
+import { toSpokenCompletion, redirectAppliedRow } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
@@ -329,10 +329,35 @@ function recordCanonicalEventWithSink(
         } as ServerEvent);
         return;
       }
+      case "redirect_applied": {
+        // Fires only once the worker has actually CONSUMED the instruction at a
+        // turn boundary — not when one was queued. Recording the queued form
+        // would put a delivery in the transcript that a finished or dying op
+        // never took.
+        //
+        // The redirect arrives from the worker card or a bridge, so without
+        // this it leaves no trace anywhere: the user typed into the sidebar and
+        // the chat log shows nothing. (The op_redirect TOOL path is already
+        // visible as a tool call in the turn that made it.)
+        const turnIdx = (b.turnIdx as number | undefined) ?? 0;
+        const text = typeof b.text === "string" ? b.text.trim() : "";
+        if (emitBrowser) emitBrowser(sessionId, {
+          type: "bg_op_progress",
+          opId: event.opId,
+          line: text ? `↪ redirect applied · ${text.slice(0, 120)}` : `↪ redirect applied at turn ${turnIdx}`,
+        } as ServerEvent);
+        // `core` gates the write so the browser-collect projection can't
+        // persist a second copy of the same row.
+        if (core) {
+          const persist = getSessionPersister();
+          if (persist) persist(sessionId, redirectAppliedRow(task, text));
+        }
+        return;
+      }
       default:
-        // lease_*, message_appended, turn_started, redirect_*, pause/resume —
-        // no sidebar surface today. Add cases here if a future event type
-        // earns one.
+        // lease_*, message_appended, turn_started, redirect_received,
+        // pause/resume — no sidebar surface today. Add cases here if a future
+        // event type earns one.
         return;
     }
   } catch (e) {

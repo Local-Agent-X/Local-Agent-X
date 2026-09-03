@@ -57,6 +57,17 @@ function toSpokenVerdict(summary: string): string {
   return "Verification finished. The verdict is in the chat.";
 }
 
+/** Transcript row for a redirect the worker actually consumed. Plain assistant
+ *  row, matching agentCompleteChatRow — a `system` row would be stripped by the
+ *  next turn's persist filter, which keeps only compaction summaries. */
+export function redirectAppliedRow(task: string, text: string): string {
+  const who = task ? ` to “${task.replace(/\s+/g, " ").trim().slice(0, 60)}”` : "";
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean
+    ? `**Redirect delivered${who}:** ${clean.slice(0, 500)}`
+    : `**Redirect delivered${who}.**`;
+}
+
 /** A short, TTS-friendly line for a finished background op (no markdown, capped
  *  length). Spoken proactively when the user is in voice; the chat UI gets the
  *  full bg_op_completed event separately. `opType` routes a verification

@@ -16,6 +16,7 @@ import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { dispatchSingleToolCall } from "./execute-tool.js";
 import { createContext } from "./context.js";
@@ -204,6 +205,64 @@ describe("protected-file anti-brick gate keys on the edit family, not a name lis
     const userFile = await resolveRaw("multi_edit", { path: "some/user/project/app.ts" });
     expect(userFile.outcome.kind).toBe("continue");
     expect(userFile.ctx.allowed).not.toBe(false);
+  });
+});
+
+describe("session-repeat dedup exempts stateful tools", () => {
+  // Regression (Jul 23 2026): a repeated `browser {action:"snapshot", full:true}`
+  // was served a 3-hour-old cached login-page snapshot after the user had
+  // logged in — the agent concluded the browser was wedged. Stateful tools
+  // whose results read live external state must re-execute on identical args.
+  const PRIOR_RESULT = "stale prior result";
+
+  function priorMessagesFor(name: string, args: Record<string, unknown>): ChatCompletionMessageParam[] {
+    return [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{ id: "prior-1", type: "function", function: { name, arguments: JSON.stringify(args) } }],
+      },
+      { role: "tool", tool_call_id: "prior-1", content: PRIOR_RESULT },
+    ] as unknown as ChatCompletionMessageParam[];
+  }
+
+  async function resolveRepeat(name: string, args: Record<string, unknown>) {
+    const ctx = createContext({
+      tc: { id: "repeat-1", name, arguments: JSON.stringify(args) },
+      toolMap: new Map(),
+      security: {} as SecurityLayer,
+      sessionId: "dedup-test-session",
+      callContext: "api",
+      priorMessages: priorMessagesFor(name, args),
+    });
+    const outcome = await resolvePhase(ctx);
+    return { ctx, outcome };
+  }
+
+  it("an identical browser snapshot re-executes — no cached replay, no repeat hint", async () => {
+    const { ctx, outcome } = await resolveRepeat("browser", { action: "snapshot", full: true });
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.msgs.some(m => String(m.content).includes("[REPEATED CALL"))).toBe(false);
+  });
+
+  it("every stateful exemption re-executes on identical args", async () => {
+    for (const name of [
+      "browser", "process_start", "process_status", "process_list",
+      "op_status", "op_wait", "session_status", "agent_status", "agent_output",
+      "screen_capture", "camera_capture", "clipboard_read", "computer_position",
+    ]) {
+      const { ctx, outcome } = await resolveRepeat(name, {});
+      expect(outcome.kind, name).toBe("continue");
+      expect(ctx.msgs.some(m => String(m.content).includes("[REPEATED CALL")), name).toBe(false);
+    }
+  });
+
+  it("an identical read still dedups — cached result returned with the repeat hint", async () => {
+    const { ctx, outcome } = await resolveRepeat("read", { path: "notes.txt" });
+    expect(outcome.kind).toBe("halt");
+    const msg = ctx.msgs.at(-1);
+    expect(String(msg?.content)).toContain("[REPEATED CALL");
+    expect(String(msg?.content)).toContain(PRIOR_RESULT);
   });
 });
 

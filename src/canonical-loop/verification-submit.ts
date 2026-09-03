@@ -55,7 +55,7 @@ import { broadcastToSession, trackOpForSession } from "../ops/session-bridge.js"
 import { delegatedToolsetForOp } from "../ops/tools/delegated-toolset.js";
 import type { Op, OpBudget, OpVisibility } from "../ops/types.js";
 import { buildVerificationBrief } from "./verification-brief.js";
-import { VERIFICATION_OP_TYPE, type VerificationSubmitInput } from "./verification-trigger.js";
+import { VERIFICATION_OP_TYPE, type VerificationSubmitInput } from "./verification-spend.js";
 import { createProviderAdapterFactory, resolveProviderRuntime } from "./provider-adapter-factory.js";
 import { sealDelegatedRuntime } from "./runtime-integrity.js";
 import { registerAdapterForOp } from "./runtime.js";

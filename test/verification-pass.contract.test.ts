@@ -88,7 +88,7 @@ vi.mock("../src/canonical-loop/provider-adapter-factory.js", async (importOrigin
 
 const { canonicalLoopEntry, registerAdapterForOp, awaitCanonicalOp, resetCanonicalRuntime, resetScheduler } = await import("../src/canonical-loop/index.js");
 const { projectCanonicalEvent } = await import("../src/canonical-loop/event-emitter.js");
-const { VERIFICATION_OP_TYPE, _resetVerificationTriggerForTests } = await import("../src/canonical-loop/verification-trigger.js");
+const { VERIFICATION_OP_TYPE, _resetVerificationTriggerForTests, _setVerificationDebounceMsForTests } = await import("../src/canonical-loop/verification-trigger.js");
 const { buildVerificationOp, verificationRuntimeSessionId } = await import("../src/canonical-loop/verification-submit.js");
 const { isWorkerScopedSession } = await import("../src/canonical-loop/trash-scope-observer.js");
 const { writeOp, readOp } = await import("../src/ops/op-store.js");
@@ -134,6 +134,14 @@ const wsEvents: { sessionId: string; event: Record<string, unknown> }[] = [];
 setSessionBroadcaster((sessionId, event) => wsEvents.push({ sessionId, event: event as unknown as Record<string, unknown> }));
 setAriRequired(false);
 setSessionProfile(SESSION, "Power");
+// Submissions are DEBOUNCED on session idle (verification-spend.ts). This file
+// drives the REAL canonical loop, which needs real timers, so it cannot
+// fake-advance the 45s window — it shrinks it instead. The debounce SHAPE
+// (cancel-and-re-arm, one verification per quiet period) is pinned under fake
+// timers in verification-trigger-chat.test.ts; what matters here is that the
+// end-to-end path still lands exactly one verification per settled change.
+const E2E_DEBOUNCE_MS = 10;
+_setVerificationDebounceMsForTests(E2E_DEBOUNCE_MS);
 
 let seq = 1000;
 const state: { verifyOpId?: string } = {};
@@ -148,6 +156,7 @@ afterAll(() => {
 		for (const id of listOpsForSession(sessionId)) releaseOpFromSession(id);
 	}
 	_resetVerificationTriggerForTests();
+	_setVerificationDebounceMsForTests(null);
 	setSessionBroadcaster(() => { /* detached */ });
 	resetCanonicalRuntime();
 	resetScheduler();
@@ -304,9 +313,11 @@ describe("verification pass — the end-to-end contract", () => {
 		expect(verdictNote?.task).toBe(`Verification pass: ${PARENT_TASK}`);
 		cancelIdleNudge(SESSION);
 
-		// Fingerprint recorded: a second identical terminal → no second spend.
+		// Fingerprint recorded: a second identical terminal → no second spend
+		// (waited out past the quiet period, so this is the fingerprint's skip
+		// and not merely a window that had yet to elapse).
 		projectCanonicalEvent(terminalEvent(makeTrackedOp("freeform", SESSION), "succeeded"));
-		await new Promise((resolve) => setImmediate(resolve));
+		await new Promise((resolve) => setTimeout(resolve, E2E_DEBOUNCE_MS * 8));
 		expect(verifyOpDirs()).toHaveLength(1);
 		drainPendingNotifications(SESSION); // the second parent's own note — not under test
 		cancelIdleNudge(SESSION);
@@ -464,9 +475,10 @@ describe("verification pass — the CHAT-TURN parent", () => {
 		cancelIdleNudge(CHAT_SESSION);
 
 		// The next conversational turn — nothing on disk changed, so the
-		// fingerprint absorbs it and the chat costs nothing further.
+		// fingerprint absorbs it and the chat costs nothing further, even after
+		// the quiet period has fully elapsed.
 		projectCanonicalEvent(terminalEvent(makeTrackedOp("chat_turn", CHAT_SESSION), "succeeded"));
-		await new Promise((resolve) => setImmediate(resolve));
+		await new Promise((resolve) => setTimeout(resolve, E2E_DEBOUNCE_MS * 8));
 		expect(verifyOpDirs()).toHaveLength(before.length + 1);
 		drainPendingNotifications(CHAT_SESSION);
 		cancelIdleNudge(CHAT_SESSION);

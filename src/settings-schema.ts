@@ -210,7 +210,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: true,
     broadcast: true,
-    description: "Independent verification pass when a task builds a deliverable from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources before hand-off. On by default; costs at most one background model run per changed set of deliverables (unchanged files are never re-verified, and only one verification runs per chat at a time)",
+    description: "Independent verification pass when a deliverable is built from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources. Covers work done in a chat turn as well as delegated tasks. On by default; it waits until you have stopped editing, then runs ONCE over everything that changed since the last check, so iterating on a file costs one verification and not one per save (unchanged files are never re-checked, and only one verification runs per chat at a time)",
   },
 
   // ── UI-only (renderer reads settings.json directly; no runtime mirror needed) ──

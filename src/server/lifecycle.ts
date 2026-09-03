@@ -263,6 +263,15 @@ export function registerShutdown(deps: {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Drop any armed verification quiet period FIRST (canonical-loop's
+    // verification-spend): its debounce timers are unref'd but still live, and
+    // one firing mid-teardown would submit an op into a runtime that is
+    // closing. Nothing is lost — a fingerprint is only recorded once a
+    // verification actually submits, so the next terminal re-detects it.
+    try {
+      const { cancelAllVerificationDebounces } = await import("../canonical-loop/public/verification-pass.js");
+      cancelAllVerificationDebounces();
+    } catch { /* observer may never have armed */ }
     getScheduler()?.stopAll();
     cronService.stop();
     // Kill any running full-stack app backends so they don't orphan past LAX

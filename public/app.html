@@ -850,7 +850,7 @@
             </select>
             <div class="field-hint">"Always for this session" on an approval card remembers your choice until the server restarts.</div>
           </div>
-          <div class="toggle-row"><div><div class="toggle-label">Verify deliverables</div><div class="toggle-desc">When a task builds a deliverable from external data (a report, spreadsheet, chart), run an independent verification pass that re-checks it against its sources before hand-off. Costs one background model run when it fires.</div></div><div id="tp-toggle-verify-deliverables" class="toggle on" onclick="toolPolicyToggle('verifyDeliverables', this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Verify deliverables</div><div class="toggle-desc">When a deliverable is built from external data (a report, spreadsheet, chart) — in a chat turn or a delegated task — run an independent verification pass that re-checks it against its sources. It waits until you have stopped editing, then runs once over everything that changed since the last check, so iterating on a file costs one background model run, not one per save.</div></div><div id="tp-toggle-verify-deliverables" class="toggle on" onclick="toolPolicyToggle('verifyDeliverables', this)"></div></div>
         </div>
         <div class="section-card">
           <div class="section-title">Rollback</div>

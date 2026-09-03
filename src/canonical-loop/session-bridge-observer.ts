@@ -30,7 +30,7 @@ import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 
 import { toSpokenCompletion } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
-import { VERIFICATION_OP_TYPE } from "./verification-trigger.js";
+import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
 import { getBus, streamChannel } from "./bus.js";
 import type { ServerEvent } from "../types.js";
@@ -324,7 +324,7 @@ function recordCanonicalEventWithSink(
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
           if (core && !quietVerifyFailure) {
-            proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status));
+            proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status, op?.type));
             scheduleIdleNudge(sessionId, task);
           }
           if (core) {

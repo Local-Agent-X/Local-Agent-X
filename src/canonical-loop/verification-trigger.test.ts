@@ -2,6 +2,12 @@
  * verification-trigger — the keystone observer's condition chain and, above
  * all, its SPEND guards.
  *
+ * Every submission here is DEBOUNCED (verification-spend.ts): a qualifying
+ * terminal arms a per-session quiet period and only its elapse submits, so
+ * these tests fake setTimeout and advance the window explicitly. That the
+ * timer, and not the terminal, is what spends is itself the pin — the edit-run
+ * count case lives in verification-trigger-chat.test.ts.
+ *
  * Under test: the skeptic's 3-ops probe (three terminals over one unchanged
  * deliverable → exactly ONE submission); changed-file refire with a
  * delta-only brief scope; one live verifier per session (both the in-flight
@@ -20,7 +26,7 @@
  * seam; its own behavior (op shape, session split, deadline, failure posture)
  * is pinned in verification-submit.test.ts.
  */
-import { describe, it, expect, afterAll, afterEach } from "vitest";
+import { describe, it, expect, vi, afterAll, afterEach, beforeEach } from "vitest";
 import { mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +53,7 @@ const {
 	isDeliverablePath,
 	DELIVERABLE_EXTENSIONS,
 	VERIFICATION_OP_TYPE,
+	VERIFICATION_DEBOUNCE_MS,
 } = await import("./verification-trigger.js");
 type SubmitInput = import("./verification-trigger.js").VerificationSubmitInput;
 const { projectCanonicalEvent } = await import("./event-emitter.js");
@@ -79,6 +86,15 @@ function makeSession(): string {
  *  PENDING flag clears — between terminals, not during a burst. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
+/** Elapse the session's quiet period, then let the submission settle. Only
+ *  setTimeout/clearTimeout are faked (clearTimeout too, or the debounce's
+ *  cancel-and-re-arm would leave the original timer live), so `settle`
+ *  (setImmediate) is still real. */
+async function flushDebounce(): Promise<void> {
+	vi.advanceTimersByTime(VERIFICATION_DEBOUNCE_MS);
+	await settle();
+}
+
 function succeededEvent(opId: string): CanonicalEvent {
 	return { opId, seq: ++seq, type: "state_changed", ts: new Date().toISOString(), body: { from: "running", to: "succeeded", reason: "done" } };
 }
@@ -101,15 +117,17 @@ function armSession(sessionId: string): string {
 let calls: SubmitInput[] = [];
 _setVerificationSubmitterForTests(async (input) => { calls.push(input); return true; });
 
+beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
 afterEach(() => {
 	calls = [];
-	_resetVerificationTriggerForTests();
+	_resetVerificationTriggerForTests(); // clears armed timers — must run while they are still fake
 	for (const id of trackedOps.splice(0)) releaseOpFromSession(id);
 	for (const sessionId of usedSessions.splice(0)) {
 		clearExternalIngestion(sessionId);
 		clearTaskArtifacts(sessionId);
 		cancelIdleNudge(sessionId);
 	}
+	vi.useRealTimers();
 });
 afterAll(() => _setVerificationSubmitterForTests(null));
 
@@ -119,38 +137,42 @@ describe("verification trigger — spend guards (the design center)", () => {
 		const xlsx = armSession(sessionId);
 
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		expect(calls).toHaveLength(0); // armed only — the terminal does not spend
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.deliverables).toEqual([xlsx]);
-		await settle(); // in-flight flag cleared — the skips below are the FINGERPRINT's
 
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(1); // unchanged set — no second spend
-		await settle();
 
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("research", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(1); // still nothing new to verify
 	});
 
-	it("double-projected terminal events for one op submit exactly once", () => {
+	it("double-projected terminal events for one op submit exactly once", async () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
 		const event = succeededEvent(makeTrackedOp("freeform", sessionId));
 		recordVerificationTrigger(event);
 		recordVerificationTrigger(event); // relay/dup projection of the same terminal
-		expect(calls).toHaveLength(1);
+		await flushDebounce();
+		expect(calls).toHaveLength(1); // the second projection re-armed, it did not re-spend
 	});
 
 	it("a changed file re-fires with ONLY the delta in scope", async () => {
 		const sessionId = makeSession();
 		const unchanged = armSession(sessionId);
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
-		await settle();
 
 		// Add a SECOND deliverable now, keeping the first byte-identical:
 		// the refire must scope to the new file only.
 		const added = addDeliverable(sessionId, `late-${seq++}.csv`);
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(2);
 		expect(calls[1]!.deliverables).toEqual([added]);
 		expect(calls[1]!.deliverables).not.toContain(unchanged);
@@ -160,12 +182,13 @@ describe("verification trigger — spend guards (the design center)", () => {
 		const sessionId = makeSession();
 		const xlsx = armSession(sessionId);
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
-		await settle();
 
 		const later = new Date(Date.now() + 5_000);
 		utimesSync(xlsx, later, later); // same bytes, bumped mtime
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(2);
 		expect(calls[1]!.deliverables).toEqual([xlsx]);
 	});
@@ -178,11 +201,13 @@ describe("verification trigger — spend guards (the design center)", () => {
 		_setVerificationSubmitterForTests(async (input) => { calls.push(input); return gate; });
 
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
-		expect(calls).toHaveLength(1);
+		await flushDebounce();
+		expect(calls).toHaveLength(1); // submitted; the gate keeps it in flight
 
 		// The set CHANGES mid-flight — still no second verifier while pending.
 		const added = addDeliverable(sessionId, `midflight-${seq++}.docx`);
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
 
 		release();
@@ -190,98 +215,131 @@ describe("verification trigger — spend guards (the design center)", () => {
 
 		// Next terminal picks up the accumulated delta.
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(2);
 		expect(calls[1]!.deliverables).toEqual([added]);
 		_setVerificationSubmitterForTests(async (input) => { calls.push(input); return true; });
 	});
 
-	it("a tracked live verification op blocks a new one for the whole session", () => {
+	it("a tracked live verification op blocks a new one for the whole session", async () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
 		makeTrackedOp(VERIFICATION_OP_TYPE, sessionId, { status: "running", parentOpId: "op_some_other_parent" });
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
+	});
+
+	it("a verifier that goes live DURING the quiet period defers the delta to the next terminal", async () => {
+		const sessionId = makeSession();
+		const xlsx = armSession(sessionId);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+
+		// A verification for this session starts while the window is running:
+		// the fire-time re-check drops the entry WITHOUT recording the
+		// fingerprint, so nothing is swallowed.
+		const liveId = makeTrackedOp(VERIFICATION_OP_TYPE, sessionId, { status: "running", parentOpId: "op_earlier_parent" });
+		await flushDebounce();
+		expect(calls).toHaveLength(0);
+
+		// It finishes; the next terminal re-detects the very same delta.
+		writeOp({ id: liveId, type: VERIFICATION_OP_TYPE, status: "completed", task: "done" } as never);
+		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.deliverables).toEqual([xlsx]);
 	});
 });
 
 describe("verification trigger — each condition individually falsified", () => {
-	it("does NOT skip interactive host op types — chat_turn / voice_turn fire like any other op", () => {
+	it("does NOT skip interactive host op types — chat_turn / voice_turn fire like any other op", async () => {
 		// SEMANTICS CHANGED. This condition used to be falsifiable: an
 		// interactive host turn was skipped as "a reply turn ending, not a task
 		// ending". That excluded the tier's most common case — a deliverable
 		// built entirely inside a conversation — so the exclusion is gone and
 		// both host types are eligible. Every OTHER condition still gates them;
 		// the fingerprint dedup is what keeps the per-turn spend flat.
+		const expected: [string, string][] = [];
 		for (const type of ["chat_turn", "voice_turn"]) {
 			const sessionId = makeSession();
-			const deliverable = armSession(sessionId);
+			expected.push([sessionId, armSession(sessionId)]);
 			recordVerificationTrigger(succeededEvent(makeTrackedOp(type, sessionId)));
-			expect(calls.at(-1)!.sessionId).toBe(sessionId);
-			expect(calls.at(-1)!.deliverables).toEqual([deliverable]);
 		}
+		await flushDebounce(); // both sessions' windows elapse together
 		expect(calls).toHaveLength(2);
+		for (const [sessionId, deliverable] of expected) {
+			const call = calls.find((c) => c.sessionId === sessionId);
+			expect(call?.deliverables).toEqual([deliverable]);
+		}
 	});
 
-	it("skips a verification op's own completion (recursion guard)", () => {
+	it("skips a verification op's own completion (recursion guard)", async () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
 		const opId = makeTrackedOp(VERIFICATION_OP_TYPE, sessionId, { parentOpId: "op_parent_x" });
 		recordVerificationTrigger(succeededEvent(opId));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 
-	it("skips when the session has no external ingestion", () => {
+	it("skips when the session has no external ingestion", async () => {
 		const sessionId = makeSession();
 		addDeliverable(sessionId); // deliverable, but no ingestion
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 
-	it("skips when the session has no deliverable-extension artifacts", () => {
+	it("skips when the session has no deliverable-extension artifacts", async () => {
 		const sessionId = makeSession();
 		recordExternalIngestion(sessionId);
 		const txt = join(laxDir, `scratch-${seq++}.txt`);
 		writeFileSync(txt, "notes", "utf-8");
 		recordTaskArtifact(sessionId, txt); // artifact, wrong extension
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 
-	it("skips when every deliverable has vanished from disk", () => {
+	it("skips when every deliverable has vanished from disk", async () => {
 		const sessionId = makeSession();
 		const xlsx = armSession(sessionId);
 		rmSync(xlsx);
 		recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 
-	it("skips when the verifyDeliverables setting is off", () => {
+	it("skips when the verifyDeliverables setting is off", async () => {
 		const cfg = getRuntimeConfig();
 		setRuntimeConfig({ ...cfg, verifyDeliverables: false });
 		try {
 			const sessionId = makeSession();
 			armSession(sessionId);
 			recordVerificationTrigger(succeededEvent(makeTrackedOp("freeform", sessionId)));
+			await flushDebounce();
 			expect(calls).toHaveLength(0);
 		} finally {
 			setRuntimeConfig({ ...cfg, verifyDeliverables: true });
 		}
 	});
 
-	it("skips when no session binding resolves and no override is given", () => {
+	it("skips when no session binding resolves and no override is given", async () => {
 		const opId = `op_verify_trig_orphan_${seq++}`;
 		writeOp({ id: opId, type: "freeform", status: "completed", task: "orphan" } as never);
 		recordVerificationTrigger(succeededEvent(opId));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 
-	it("skips failed and cancelled terminals — only success earns a verification pass", () => {
+	it("skips failed and cancelled terminals — only success earns a verification pass", async () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
 		const opId = makeTrackedOp("freeform", sessionId);
 		for (const to of ["failed", "cancelled", "running"]) {
 			recordVerificationTrigger({ ...succeededEvent(opId), body: { from: "running", to, reason: "x" } });
 		}
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 
@@ -296,26 +354,29 @@ describe("verification trigger — each condition individually falsified", () =>
 });
 
 describe("verification trigger — wiring and posture", () => {
-	it("fires through projectCanonicalEvent BEFORE the bridge releases the op↔session binding", () => {
+	it("fires through projectCanonicalEvent BEFORE the bridge releases the op↔session binding", async () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
 		const opId = makeTrackedOp("freeform", sessionId);
 		// The bridge observer's terminal branch releases the binding in this
 		// same projection; the trigger still resolved the session — proof it
-		// runs first (the wiring-order invariant).
+		// runs first (the wiring-order invariant). The debounce entry then
+		// carries that session id, so the window outliving the binding is fine.
 		projectCanonicalEvent(succeededEvent(opId));
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.sessionId).toBe(sessionId);
 		expect(calls[0]!.parentOp.id).toBe(opId);
 	});
 
-	it("resolves the session from the explicit override when the op is untracked", () => {
+	it("resolves the session from the explicit override when the op is untracked", async () => {
 		const sessionId = makeSession();
 		armSession(sessionId);
 		const opId = `op_verify_trig_untracked_${seq++}`;
 		writeOp({ id: opId, type: "freeform", status: "completed", task: "untracked" } as never);
 
 		recordVerificationTrigger(succeededEvent(opId), sessionId);
+		await flushDebounce();
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.sessionId).toBe(sessionId);
@@ -339,6 +400,8 @@ describe("verification trigger — wiring and posture", () => {
 		_setVerificationSubmitterForTests(async () => { throw new Error("boom"); });
 		const opId = makeTrackedOp("freeform", sessionId);
 		expect(() => recordVerificationTrigger(succeededEvent(opId))).not.toThrow();
+		// The submission — and its rejection — happen when the window elapses.
+		expect(() => vi.advanceTimersByTime(VERIFICATION_DEBOUNCE_MS)).not.toThrow();
 		await new Promise((resolve) => setImmediate(resolve)); // rejection is caught, not unhandled
 		expect(() => recordVerificationTrigger({ opId: "nope", seq: 1, type: "state_changed", ts: "", body: null })).not.toThrow();
 		_setVerificationSubmitterForTests(async (input) => { calls.push(input); return true; });

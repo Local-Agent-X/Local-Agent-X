@@ -1,38 +1,41 @@
 /**
- * verification-trigger — CHAT-TURN eligibility and the PER-TURN COST bound
- * that makes it affordable.
+ * verification-trigger — CHAT-TURN eligibility, its COUNT bound, and its
+ * PER-TURN COST bound.
  *
  * The trigger used to skip interactive host turns outright
  * (isInteractiveHostOpType), which excluded the tier's most common case: a
  * deliverable built entirely inside a conversation. Removing that exclusion
- * puts the trigger on the hot path of EVERY chat turn, so the cost question
- * is not rhetorical — this file answers it with counters, not assertion.
+ * puts the trigger on the hot path of EVERY chat turn, which raises two
+ * separate questions this file answers with counters rather than assertion.
  *
- * Under test:
- *   - THE COST PIN: N conversational turns after one deliverable-producing
- *     turn submit exactly ONE verification, and each of those N turns costs
- *     exactly ONE op-store read (the terminating turn's own op — a read every
- *     observer on this seam already pays) plus one statSync per session
- *     DELIVERABLE, with the per-peer op scan never reached. That last counter
- *     is the load-bearing one: the one-live-verifier scan does a readOp
- *     (existsSync + readFileSync + JSON.parse) per live peer op, so under the
- *     old guard order a long chat session would have paid it on every turn.
- *   - a chat turn that DOES write a new deliverable → exactly one submission,
- *     scoped to the delta, with the delta-only brief.
- *   - NO MID-TURN INJECTION: every event a chat turn emits while it is in
- *     flight fires nothing; only its `succeeded` terminal does.
- *   - WORKER-SCOPING, chat-parent case: the verifier's own `agent-op-<opId>`
- *     session absorbs its ingestion and its own writes, so a verifier can
- *     never arm the CHAT session it was spawned from. (The producer of that
- *     id, verificationRuntimeSessionId, is pinned against a real chat parent
- *     end-to-end in test/verification-pass.contract.test.ts; this file pins
- *     the consequence at the trigger.)
+ * COUNT — how many model runs does a chat session buy? The fingerprint alone
+ * answers this only for turns that change nothing. A turn that EDITS the
+ * deliverable is a new signature, so an iteration loop would have bought one
+ * verification per save, and narrated the verdict on v7 while the user was on
+ * v9. The session-idle debounce (verification-spend.ts) is what bounds count:
+ * 20 consecutive edit turns → ONE verification, over the final state.
+ *
+ * COST — what does a turn that buys nothing cost? Exactly ONE op-store read
+ * (the terminating turn's own op, which every observer on this seam already
+ * pays) plus one statSync per session DELIVERABLE, with the per-peer op scan
+ * never reached. That last counter is the load-bearing one: the
+ * one-live-verifier scan does a readOp (existsSync + readFileSync +
+ * JSON.parse) per live peer op, so under the old guard order a long chat
+ * session paid it on every turn.
+ *
+ * Also pinned: the delta-only brief on a follow-up turn; NO MID-TURN
+ * INJECTION (every event a chat turn emits while in flight fires nothing —
+ * only its `succeeded` terminal arms); and WORKER SCOPING for the chat-parent
+ * case — the verifier's own `agent-op-<opId>` session absorbs its ingestion
+ * and its writes, so it can never arm the CHAT session it was spawned from.
+ * (The producer of that id, verificationRuntimeSessionId, is pinned against a
+ * real chat parent end-to-end in test/verification-pass.contract.test.ts.)
  *
  * The heavy submission half is swapped for the capture seam, as in
  * verification-trigger.test.ts.
  */
-import { describe, it, expect, vi, afterAll, afterEach } from "vitest";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect, vi, afterAll, afterEach, beforeEach } from "vitest";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CanonicalEvent } from "./types.js";
@@ -87,6 +90,7 @@ const {
 	recordVerificationTrigger,
 	_setVerificationSubmitterForTests,
 	_resetVerificationTriggerForTests,
+	VERIFICATION_DEBOUNCE_MS,
 } = await import("./verification-trigger.js");
 type SubmitInput = import("./verification-trigger.js").VerificationSubmitInput;
 const { buildVerificationBrief } = await import("./verification-brief.js");
@@ -148,19 +152,30 @@ function deliverableProducingTurn(sessionId: string, name?: string): string {
 
 const settle = (): Promise<unknown> => new Promise((resolve) => setImmediate(resolve));
 
+/** Elapse the session's quiet period, then let the submission settle. Only
+ *  setTimeout/clearTimeout are faked (clearTimeout too, or the debounce's
+ *  cancel-and-re-arm would leave the original timer live), so `settle`
+ *  (setImmediate) is still real. */
+async function flushDebounce(): Promise<void> {
+	vi.advanceTimersByTime(VERIFICATION_DEBOUNCE_MS);
+	await settle();
+}
+
 let calls: SubmitInput[] = [];
 _setVerificationSubmitterForTests(async (input) => { calls.push(input); return true; });
 
+beforeEach(() => vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
 afterEach(() => {
 	calls = [];
 	probe.on = false;
-	_resetVerificationTriggerForTests();
+	_resetVerificationTriggerForTests(); // clears armed timers — while they are still fake
 	for (const id of trackedOps.splice(0)) releaseOpFromSession(id);
 	for (const sessionId of usedSessions.splice(0)) {
 		clearExternalIngestion(sessionId);
 		clearTaskArtifacts(sessionId);
 		cancelIdleNudge(sessionId);
 	}
+	vi.useRealTimers();
 });
 afterAll(() => _setVerificationSubmitterForTests(null));
 
@@ -170,32 +185,34 @@ describe("verification trigger — chat turns are eligible", () => {
 		const deliverable = deliverableProducingTurn(sessionId);
 
 		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		expect(calls).toHaveLength(0); // armed, waiting for the session to go quiet
+		await flushDebounce();
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.sessionId).toBe(sessionId);
 		expect(calls[0]!.parentOp.type).toBe("chat_turn");
 		expect(calls[0]!.deliverables).toEqual([deliverable]);
-		await settle();
 	});
 
 	it("a LATER chat turn that adds a deliverable re-fires with the delta-only brief", async () => {
 		const sessionId = makeSession();
 		const first = deliverableProducingTurn(sessionId);
 		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
-		await settle();
 
 		// Three ordinary conversational turns in between — the user asking
 		// follow-up questions about the sheet. Nothing changed on disk.
 		for (let i = 0; i < 3; i++) {
 			recordVerificationTrigger(chatTurnTerminal(sessionId));
-			await settle();
+			await flushDebounce();
 		}
 		expect(calls).toHaveLength(1);
 
 		// Now the user asks for a second sheet, built in-turn.
 		const second = addDeliverable(sessionId, `chat-followup-${seq++}.csv`);
 		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		await flushDebounce();
 
 		expect(calls).toHaveLength(2);
 		expect(calls[1]!.parentOp.type).toBe("chat_turn");
@@ -209,7 +226,7 @@ describe("verification trigger — chat turns are eligible", () => {
 		expect(brief).toContain("VERDICT: CONFIRMED | DISCREPANCIES | UNVERIFIABLE");
 	});
 
-	it("nothing is submitted mid-turn — only the chat turn's succeeded terminal fires", () => {
+	it("nothing is submitted mid-turn — only the chat turn's succeeded terminal arms", async () => {
 		const sessionId = makeSession();
 		deliverableProducingTurn(sessionId);
 		const opId = makeTrackedOp("chat_turn", sessionId);
@@ -226,10 +243,87 @@ describe("verification trigger — chat turns are eligible", () => {
 		for (const ev of inFlight) {
 			recordVerificationTrigger({ opId, seq: ++seq, ts: new Date().toISOString(), ...ev } as CanonicalEvent);
 		}
+		expect(vi.getTimerCount()).toBe(0); // nothing even armed while the turn runs
+		await flushDebounce();
 		expect(calls).toHaveLength(0); // the turn in flight is never interrupted
 
 		recordVerificationTrigger(succeededEvent(opId));
-		expect(calls).toHaveLength(1); // submitted at the terminal, onto the background lane
+		await flushDebounce();
+		expect(calls).toHaveLength(1); // armed at the terminal, submitted once quiet
+	});
+});
+
+describe("verification trigger — the COUNT bound (session-idle debounce)", () => {
+	it("20 consecutive edit turns on ONE deliverable submit exactly one verification, over the final state", async () => {
+		const sessionId = makeSession();
+		const deliverable = deliverableProducingTurn(sessionId);
+		recordVerificationTrigger(chatTurnTerminal(sessionId));
+
+		// 19 more turns, each REWRITING the same file. Content length differs
+		// every time, so mtime:size is a fresh fingerprint delta on every turn
+		// — exactly the case that used to buy one verification per save.
+		let lastTurnOpId = "";
+		for (let i = 1; i < 20; i++) {
+			writeFileSync(deliverable, `cells v${i}`.padEnd(24 + i, "x"), "utf-8");
+			// The user is still iterating: each turn lands inside the window.
+			vi.advanceTimersByTime(VERIFICATION_DEBOUNCE_MS / 2);
+			const event = chatTurnTerminal(sessionId);
+			lastTurnOpId = event.opId;
+			recordVerificationTrigger(event);
+			expect(calls).toHaveLength(0); // nothing spent mid-run, on any turn
+		}
+
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
+		// The UNION of everything that changed, deduped by path — one file.
+		expect(calls[0]!.deliverables).toEqual([deliverable]);
+		// Lineage and the brief's parent-task line come from the turn the user
+		// STOPPED at, not the one that started the run.
+		expect(calls[0]!.parentOp.id).toBe(lastTurnOpId);
+		// The brief is path-scoped and the verifier reads at run time, so what
+		// it audits is what is on disk now: the final state.
+		expect(readFileSync(deliverable, "utf-8")).toContain("v19");
+
+		// And the FINAL state is what got fingerprinted — a further quiet turn
+		// re-spends nothing. (Had v1's signature been recorded instead, this
+		// would fire a second verification.)
+		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
+	});
+
+	it("an edit landing mid-window restarts the quiet period rather than adding a verification", async () => {
+		const sessionId = makeSession();
+		const deliverable = deliverableProducingTurn(sessionId);
+		recordVerificationTrigger(chatTurnTerminal(sessionId));
+
+		// Just short of the window, the user saves again.
+		vi.advanceTimersByTime(VERIFICATION_DEBOUNCE_MS - 1);
+		writeFileSync(deliverable, "cells edited once more", "utf-8");
+		recordVerificationTrigger(chatTurnTerminal(sessionId));
+
+		// The ORIGINAL deadline passes — but it was cancelled and re-armed.
+		vi.advanceTimersByTime(2);
+		await settle();
+		expect(calls).toHaveLength(0);
+
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
+		expect(calls[0]!.deliverables).toEqual([deliverable]);
+	});
+
+	it("a session whose turns change nothing never arms a timer at all", async () => {
+		const sessionId = makeSession();
+		deliverableProducingTurn(sessionId);
+		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
+		expect(vi.getTimerCount()).toBe(0);
+
+		for (let i = 0; i < 5; i++) recordVerificationTrigger(chatTurnTerminal(sessionId));
+		expect(vi.getTimerCount()).toBe(0); // no delta → no timer after the session's last op
+		await flushDebounce();
+		expect(calls).toHaveLength(1);
 	});
 });
 
@@ -241,13 +335,13 @@ describe("verification trigger — the per-turn cost of chat-turn eligibility", 
 		const deliverable = deliverableProducingTurn(sessionId);
 
 		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
 		expect(calls[0]!.deliverables).toEqual([deliverable]);
-		await settle(); // in-flight flag cleared — every skip below is the FINGERPRINT's
 
 		for (let i = 0; i < CONVERSATIONAL_TURNS; i++) {
 			recordVerificationTrigger(chatTurnTerminal(sessionId));
-			await settle();
+			await flushDebounce();
 		}
 
 		expect(calls).toHaveLength(1);
@@ -259,11 +353,11 @@ describe("verification trigger — the per-turn cost of chat-turn eligibility", 
 		deliverableProducingTurn(sessionId);
 		addDeliverable(sessionId, `cost-b-${seq++}.csv`);
 		addDeliverable(sessionId, `cost-c-${seq++}.docx`);
-		recordVerificationTrigger(chatTurnTerminal(sessionId)); // arms the fingerprint
+		recordVerificationTrigger(chatTurnTerminal(sessionId));
+		// Let the window elapse so the fingerprint is RECORDED: the measured
+		// turns below must reach it, not stop one guard earlier.
+		await flushDebounce();
 		expect(calls).toHaveLength(1);
-		// Settle the in-flight flag: the measured turns below must reach the
-		// FINGERPRINT, not stop one guard earlier at the in-flight Set.
-		await settle();
 
 		// …and NOT by the session's op set. Twenty peer ops: under the old
 		// guard order (live-verifier scan before the fingerprint) each of them
@@ -298,7 +392,7 @@ describe("verification trigger — the per-turn cost of chat-turn eligibility", 
 });
 
 describe("verification trigger — the verifier cannot arm its parent chat session", () => {
-	it("a verifier's own worker-scoped session absorbs its ingestion and its writes", () => {
+	it("a verifier's own worker-scoped session absorbs its ingestion and its writes", async () => {
 		const chatSession = makeSession();
 		// The id verification-submit.ts borrows for the verifier's TOOL RUNTIME
 		// (verificationRuntimeSessionId; pinned against the real submit with a
@@ -322,6 +416,7 @@ describe("verification trigger — the verifier cannot arm its parent chat sessi
 		// every later turn would re-verify the verifier's scratch notes —
 		// compounding, on the surface where the user is watching.
 		recordVerificationTrigger(chatTurnTerminal(chatSession));
+		await flushDebounce();
 		expect(calls).toHaveLength(0);
 	});
 });

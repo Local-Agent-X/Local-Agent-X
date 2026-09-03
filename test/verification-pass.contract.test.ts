@@ -28,7 +28,15 @@
  *      under fake timers (timer-count delta 0, contrasted with an ordinary
  *      failure's ≥1) because the loop's own async terminal cannot run under
  *      fake timers — the strongest in-process observable for "no nudge".
- *   5. BOUNDARIES: the verifier's sealed runtime session is the worker-scoped
+ *   5. CHAT PARENT: the same walk with an INTERACTIVE `chat_turn` parent —
+ *      the deliverable built inside a conversation, which is the tier's most
+ *      common case and was excluded outright until chat-turn eligibility.
+ *      The verify op is background-lane (never inside the reply turn), its
+ *      verdict reaches the CHAT session's pending-notification queue (the
+ *      channel the agent narrates from on the user's next turn), its runtime
+ *      session is the worker-scoped bucket so its own tool activity cannot
+ *      arm the chat, and the next conversational turn re-spends nothing.
+ *   6. BOUNDARIES: the verifier's sealed runtime session is the worker-scoped
  *      `agent-op-<opId>` bucket (its artifact enrollments never grow the
  *      parent set — probed via the registry's public API; an in-run tool
  *      write would need an autonomy/approval fixture this contract test
@@ -37,7 +45,7 @@
  *      through the same real dispatch pipeline.
  */
 import { describe, it, expect, vi, afterAll } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canonical-loop/adapter-contract.js";
@@ -100,11 +108,14 @@ const { deleteFileTool } = await import("../src/tools/read-write-tools.js");
 const { evaluateShellCommandAndPaths } = await import("../src/security/layer/shell-path-guard.js");
 
 const SESSION = "sess-verify-e2e-parent"; // chat-parented (NOT headless — the stamp must come from quietVerifyFailure alone)
+const CHAT_SESSION = "sess-verify-e2e-chatturn"; // the interactive leg: an op_chat_turn parent, not a delegated worker
 const QUIET_SESSION = "sess-verify-e2e-quiet";
 const LOUD_SESSION = "sess-verify-e2e-loud";
 const PARENT_OP_ID = "op_parent_e2e";
 const PARENT_TASK = "Build the vendor market-share spreadsheet from the 2026 filings";
 const DELIVERABLE = join(workDir, "market-share.xlsx");
+const CHAT_DELIVERABLE = join(workDir, "in-chat-market-share.csv");
+const CHAT_USER_MESSAGE = "pull the 2026 GaN vendor shares and put them in a sheet";
 const SOURCES = [
 	{ url: "https://example.com/gan-2026-report", ref: "table 3" },
 	{ file: join(workDir, "vendor-filings.md"), ref: "rows 2-9", note: "headline share figures" },
@@ -130,7 +141,7 @@ const state: { verifyOpId?: string } = {};
 afterAll(() => {
 	setAriRequired(true);
 	clearSessionProfile(SESSION);
-	for (const sessionId of [SESSION, QUIET_SESSION, LOUD_SESSION]) {
+	for (const sessionId of [SESSION, CHAT_SESSION, LOUD_SESSION, QUIET_SESSION]) {
 		cancelIdleNudge(sessionId);
 		clearExternalIngestion(sessionId);
 		clearTaskArtifacts(sessionId);
@@ -379,4 +390,85 @@ describe("verification pass — the end-to-end contract", () => {
 		expect(delContent).toContain(`restore_file({ path: "${DELIVERABLE}" })`);
 		expect(existsSync(DELIVERABLE)).toBe(false);
 	});
+});
+
+describe("verification pass — the CHAT-TURN parent", () => {
+	it("a deliverable built inside a chat turn is verified, and the verdict lands in that chat's notification queue", async () => {
+		// The incident class the tier exists for, on the surface where it
+		// actually happens: the user asks in chat, the agent ingests off-box
+		// figures and writes the sheet inside the SAME turn. LEG 1 above already
+		// proves the create-class enrollment at its production site; this leg
+		// enrolls directly and spends its assertions on what is new here — an
+		// interactive host op as the trigger's parent, end to end.
+		writeFileSync(CHAT_DELIVERABLE, "Vendor,Share\nInfineon,41%\nNavitas,18%\n", "utf-8");
+		recordExternalIngestion(CHAT_SESSION);
+		recordTaskArtifact(CHAT_SESSION, CHAT_DELIVERABLE);
+
+		const before = verifyOpDirs();
+		mocks.adapterFactory = () => scriptedTextAdapter("fake-verifier", VERDICT_TEXT);
+
+		// An op_chat_turn, the shape chat-runner/create-op.ts submits: interactive
+		// lane, task = the user's message, tracked to the chat session.
+		const chatTurn: Op = { ...chatParentedOp("op_chat_turn_e2e", CHAT_USER_MESSAGE), type: "chat_turn" };
+		trackOpForSession(chatTurn.id, CHAT_SESSION, CHAT_USER_MESSAGE);
+		registerAdapterForOp(chatTurn.id, () => scriptedTextAdapter("fake-chat", "Here is the sheet."));
+		canonicalLoopEntry(chatTurn);
+		expect((await awaitCanonicalOp(chatTurn.id, 10_000))?.status).toBe("completed");
+
+		// ONE verify op, spawned off the chat turn's terminal.
+		const verifyOpId = await waitFor(
+			() => verifyOpDirs().find((d) => !before.includes(d)),
+			"verification op for the chat turn",
+		);
+		expect(verifyOpDirs()).toHaveLength(before.length + 1);
+		const submitted = readOp(verifyOpId)!;
+		expect(submitted.parentOpId).toBe(chatTurn.id);
+		// NOT interactive: the verifier runs on the background lane, off the
+		// turn that spawned it — it is submitted AT the terminal, so there is no
+		// in-flight turn left to interrupt.
+		expect(submitted.lane).toBe("background");
+		expect(submitted.taskProvenance).toBe("harness");
+		expect(submitted.task).toContain(CHAT_DELIVERABLE);
+		expect(submitted.task).toContain(CHAT_USER_MESSAGE); // the chat turn's own task is the brief's parent line
+
+		// WORKER SCOPING, chat-parent case: the verifier's tool runtime runs in
+		// its own agent-op-<opId> bucket while the projection session stays the
+		// chat — so its fetches and its own writes can never arm the chat session.
+		const runtimeSession = verificationRuntimeSessionId(verifyOpId);
+		expect((submitted.runtimeDescriptor as { sessionId?: string } | undefined)?.sessionId).toBe(runtimeSession);
+		expect(submitted.canonical?.sessionId).toBe(CHAT_SESSION);
+		expect(isWorkerScopedSession(runtimeSession)).toBe(true);
+		const chatArtifactsBefore = listTaskArtifacts(CHAT_SESSION);
+		recordTaskArtifact(runtimeSession, join(workDir, "chat-verifier-notes.md"));
+		recordExternalIngestion(runtimeSession);
+		expect(listTaskArtifacts(CHAT_SESSION)).toEqual(chatArtifactsBefore);
+		clearTaskArtifacts(runtimeSession);
+		clearExternalIngestion(runtimeSession);
+
+		// THE INTERACTIVE-PARENT NOTIFICATION PATH: the verdict rides the same
+		// bg_op_completed → pending-notifications channel a delegated parent
+		// uses, addressed to the CHAT session — which is where the user is
+		// sitting, so the agent narrates it on their very next turn.
+		expect((await awaitCanonicalOp(verifyOpId, 10_000))?.status).toBe("completed");
+		const completed = await waitFor(
+			() => wsEvents.find((e) => e.event.type === "bg_op_completed" && e.event.opId === verifyOpId),
+			"chat-turn verify bg_op_completed",
+		);
+		expect(completed.sessionId).toBe(CHAT_SESSION);
+		expect(completed.event.headless).toBeUndefined(); // a verdict is user-facing on the chat surface too
+		const notes = drainPendingNotifications(CHAT_SESSION);
+		const verdictNote = notes.find((n) => n.opId === verifyOpId);
+		expect(verdictNote?.status).toBe("completed");
+		expect(verdictNote?.summary).toContain("VERDICT: DISCREPANCIES");
+		expect(verdictNote?.task).toBe(`Verification pass: ${CHAT_USER_MESSAGE}`);
+		cancelIdleNudge(CHAT_SESSION);
+
+		// The next conversational turn — nothing on disk changed, so the
+		// fingerprint absorbs it and the chat costs nothing further.
+		projectCanonicalEvent(terminalEvent(makeTrackedOp("chat_turn", CHAT_SESSION), "succeeded"));
+		await new Promise((resolve) => setImmediate(resolve));
+		expect(verifyOpDirs()).toHaveLength(before.length + 1);
+		drainPendingNotifications(CHAT_SESSION);
+		cancelIdleNudge(CHAT_SESSION);
+	}, 30_000);
 });

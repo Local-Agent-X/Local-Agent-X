@@ -6,8 +6,11 @@
  * deliverable → exactly ONE submission); changed-file refire with a
  * delta-only brief scope; one live verifier per session (both the in-flight
  * flag and a tracked live verify op); every trigger condition individually
- * falsified (interactive type, recursion guard, no session, no ingestion,
- * wrong extensions, unreadable files, setting off, non-success terminals);
+ * falsified (recursion guard, no session, no ingestion, wrong extensions,
+ * unreadable files, setting off, non-success terminals) — plus the one
+ * condition that is deliberately NO LONGER falsifiable, the interactive-host
+ * op type (chat-turn eligibility; the chat-specific semantics and the
+ * per-turn cost bound live in verification-trigger-chat.test.ts);
  * the one-line wiring at the projectCanonicalEvent seam (running BEFORE the
  * session-bridge observer releases the op↔session binding); the cost pin — a
  * non-terminal event costs exactly ONE property read; and the never-throws
@@ -202,13 +205,21 @@ describe("verification trigger — spend guards (the design center)", () => {
 });
 
 describe("verification trigger — each condition individually falsified", () => {
-	it("skips interactive host op types (chat_turn / voice_turn)", () => {
+	it("does NOT skip interactive host op types — chat_turn / voice_turn fire like any other op", () => {
+		// SEMANTICS CHANGED. This condition used to be falsifiable: an
+		// interactive host turn was skipped as "a reply turn ending, not a task
+		// ending". That excluded the tier's most common case — a deliverable
+		// built entirely inside a conversation — so the exclusion is gone and
+		// both host types are eligible. Every OTHER condition still gates them;
+		// the fingerprint dedup is what keeps the per-turn spend flat.
 		for (const type of ["chat_turn", "voice_turn"]) {
 			const sessionId = makeSession();
-			armSession(sessionId);
+			const deliverable = armSession(sessionId);
 			recordVerificationTrigger(succeededEvent(makeTrackedOp(type, sessionId)));
+			expect(calls.at(-1)!.sessionId).toBe(sessionId);
+			expect(calls.at(-1)!.deliverables).toEqual([deliverable]);
 		}
-		expect(calls).toHaveLength(0);
+		expect(calls).toHaveLength(2);
 	});
 
 	it("skips a verification op's own completion (recursion guard)", () => {

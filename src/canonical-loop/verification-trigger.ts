@@ -4,7 +4,8 @@
  *
  * Always-on observer on the canonical event seam (projectCanonicalEvent,
  * event-emitter.ts), wired beside cost-recording.ts and
- * trash-scope-observer.ts. When a NON-interactive op SUCCEEDS in a session
+ * trash-scope-observer.ts. When ANY op SUCCEEDS — a delegated task or an
+ * interactive chat/voice turn (see CHAT TURNS below) — in a session
  * that (a) ingested external content (data-lineage/external.ts — untrusted
  * off-box figures flowed into this task) and (b) created persistent
  * deliverables (data-lineage/task-artifacts.ts, filtered to
@@ -31,6 +32,33 @@
  *     and its own artifact writes land in its own bucket and can never grow
  *     the parent session's deliverable set (no compounding).
  *
+ * CHAT TURNS ARE ELIGIBLE. Condition 2 once excluded interactive host turns
+ * (op-store.isInteractiveHostOpType) on the reasoning that a reply turn
+ * ending is not a task ending. That reasoning cost the tier its MOST COMMON
+ * case — and the incident class that motivated it: a deliverable built
+ * entirely inside a conversation (the agent scrapes figures and writes the
+ * spreadsheet in the same turn the user asked for it) never reached the
+ * trigger at all. The exclusion is gone; every other condition is unchanged.
+ * What makes it affordable is that the spend model above is FINGERPRINT-
+ * keyed, not op-keyed: a chat session's terminal fires on every turn, but a
+ * turn that changed no deliverable submits NOTHING, so N conversational
+ * turns after one deliverable-producing turn cost exactly ONE verification.
+ *
+ * PER-TURN COST is therefore the thing to bound, and the guard order below
+ * is sorted by it. Through guard 5 a no-op turn costs only Map/Set lookups
+ * on top of the single readOp every observer on this seam already pays. The
+ * two guards that touch the filesystem are the artifact-set fingerprint
+ * (statSync per session deliverable — bounded by how many files the agent
+ * created, and reached only in an ALREADY-ARMED session that both ingested
+ * external content and wrote a deliverable) and the one-live-verifier scan
+ * (readOp = existsSync + readFileSync + JSON.parse, per LIVE peer op in the
+ * session). The fingerprint runs FIRST on purpose: it is the guard that says
+ * "nothing changed" on essentially every conversational turn, so the
+ * per-peer disk reads are never paid on the common path. Swapping the two is
+ * behaviour-preserving because the fingerprint is only RECORDED once every
+ * gate has passed — a delta a live verifier blocks stays unrecorded and the
+ * next terminal picks it up. Pinned in verification-trigger-chat.test.ts.
+ *
  * The verification op is a NORMAL background op, deliberately NOT in
  * session-bridge-observer's SIDEBAR_SUPPRESSED_OP_TYPES: it shows in the
  * AGENTS panel nested under its parent (parentOpId carries the lineage), and
@@ -42,16 +70,21 @@
  * Guard order, cheapest discriminator first (the non-terminal-event path is
  * exactly ONE property check):
  *   1. event type: only `state_changed`, and only `to: "succeeded"`.
- *   2. op type: not an interactive host turn (chat_turn / voice_turn — a
- *      reply turn ending, not a task ending), and not VERIFICATION_OP_TYPE
- *      itself — the recursion guard (belted by the verifier's own-session
- *      confinement above and the hard budget the submit stamps).
- *   3. session facts: binding resolvable, external ingestion recorded, at
- *      least one deliverable-extension artifact.
+ *   2. op type: not VERIFICATION_OP_TYPE itself — the recursion guard
+ *      (belted by the verifier's own-session confinement above and the hard
+ *      budget the submit stamps). NOT filtered on interactive host turns
+ *      any more: see CHAT TURNS.
+ *   3. session facts, all in-memory: binding resolvable (Map), external
+ *      ingestion recorded (Set), at least one deliverable-extension artifact
+ *      (Set spread + extname filter).
  *   4. the `verifyDeliverables` runtime setting, read live via
- *      getRuntimeConfig (config.ts is already in this seam's static import
- *      graph — workspace/paths.ts et al. — so the import costs nothing).
- *   5. one-live-verifier and changed-fingerprint dedup, per the spend model.
+ *      getRuntimeConfig (memoized in config.ts; already in this seam's
+ *      static import graph — workspace/paths.ts et al. — so it costs
+ *      nothing).
+ *   5. in-flight-submission flag (Set).
+ *   6. changed-artifact fingerprint — statSync per session deliverable.
+ *   7. one-live-verifier scan — readOp per LIVE peer op, the only per-peer
+ *      DISK cost, deliberately last (see PER-TURN COST).
  *
  * ORDER-SENSITIVE: wired BEFORE the session-bridge observer in
  * projectCanonicalEvent (same reason as trash-scope-observer): the bridge's
@@ -66,7 +99,7 @@
 import { statSync } from "node:fs";
 import { extname } from "node:path";
 import { getRuntimeConfig } from "../config.js";
-import { readOp, isInteractiveHostOpType } from "../ops/op-store.js";
+import { readOp } from "../ops/op-store.js";
 import { getSessionForOp, listOpsForSession } from "../ops/session-bridge.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { listTaskArtifacts } from "../data-lineage/task-artifacts.js";
@@ -145,7 +178,9 @@ export function recordVerificationTrigger(event: CanonicalEvent, sessionOverride
 		// Unreadable op → type unknowable → do nothing (fail toward silence;
 		// a verification pass must never be the thing that guesses).
 		if (!op?.type) return;
-		if (isInteractiveHostOpType(op.type)) return; // a reply turn ending, not a task ending
+		// Interactive host turns (chat_turn / voice_turn) are deliberately NOT
+		// excluded here — see CHAT TURNS in the module header. The verifier's
+		// own type is the only op type this observer skips.
 		if (op.type === VERIFICATION_OP_TYPE) {
 			logger.debug(`[verify] skip ${op.id}: verification op itself (recursion guard)`);
 			return;
@@ -173,26 +208,17 @@ export function recordVerificationTrigger(event: CanonicalEvent, sessionOverride
 			return;
 		}
 
-		// ONE LIVE VERIFIER PER SESSION: a burst of terminals while a verifier
-		// runs collapses to nothing now; the next terminal after it finishes
-		// picks up the accumulated delta via the fingerprint below.
+		// ONE LIVE VERIFIER PER SESSION, part 1 — the O(1) half: a burst of
+		// terminals while a submission is in flight collapses to nothing; the
+		// next terminal after it settles picks up the accumulated delta.
 		if (PENDING_VERIFIER_SESSIONS.has(sessionId)) {
 			logger.debug(`[verify] skip ${op.id}: verification submission already in flight for ${sessionId}`);
 			return;
 		}
-		const liveVerifier = listOpsForSession(sessionId).some((id) => {
-			if (id === event.opId) return false; // the terminating parent itself
-			const peer = readOp(id);
-			return !!peer
-				&& peer.type === VERIFICATION_OP_TYPE
-				&& (peer.status === "running" || peer.status === "pending");
-		});
-		if (liveVerifier) {
-			logger.debug(`[verify] skip ${op.id}: a verification op is already live for ${sessionId}`);
-			return;
-		}
 
 		// ARTIFACT-SET FINGERPRINT: fire only for new/changed deliverables.
+		// THE per-turn exit for a chat session — a conversational turn that
+		// wrote nothing stops here, before any per-peer op read.
 		const current = new Map<string, string>();
 		for (const path of deliverables) {
 			const sig = artifactSignature(path);
@@ -206,6 +232,22 @@ export function recordVerificationTrigger(event: CanonicalEvent, sessionOverride
 		const delta = [...current.keys()].filter((path) => lastVerified?.get(path) !== current.get(path));
 		if (delta.length === 0) {
 			logger.debug(`[verify] skip ${op.id}: deliverable set unchanged since last verification`);
+			return;
+		}
+
+		// ONE LIVE VERIFIER PER SESSION, part 2 — the DISK half, reached only
+		// on a real delta. A tracked running/pending verifier blocks the submit
+		// WITHOUT recording the fingerprint, so this delta survives to the next
+		// terminal.
+		const liveVerifier = listOpsForSession(sessionId).some((id) => {
+			if (id === event.opId) return false; // the terminating parent itself
+			const peer = readOp(id);
+			return !!peer
+				&& peer.type === VERIFICATION_OP_TYPE
+				&& (peer.status === "running" || peer.status === "pending");
+		});
+		if (liveVerifier) {
+			logger.debug(`[verify] skip ${op.id}: a verification op is already live for ${sessionId}`);
 			return;
 		}
 

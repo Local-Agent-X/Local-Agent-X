@@ -1,4 +1,4 @@
-import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens } from "../anthropic-models.js";
+import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, resolveAnthropicEffort } from "../anthropic-models.js";
 import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
@@ -18,6 +18,12 @@ const logger = createLogger("anthropic-client.stream-api");
 // the classifier path can fire many calls a minute — instead of letting a
 // latency-sensitive caller silently keep paying thinking latency/tokens.
 const warnedThinkingAlwaysOn = new Set<string>();
+
+// An effort level the model can't take (unsupported model, `xhigh` before
+// Opus 4.7, or above Opus 5's disabled-thinking ceiling) is dropped instead of
+// 400'ing the turn — but never silently: the caller asked for a latency/cost
+// profile it is not getting. Warn ONCE per model+level per process.
+const warnedEffortDropped = new Set<string>();
 
 type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
 
@@ -55,7 +61,7 @@ function markConversationCache(messages: AnthropicMessage[], enabled?: boolean):
 }
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, systemStablePrefixLen, cacheConversation } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
   // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
   // only subscription path that streams real thinking text. See oauth-direct.ts.
@@ -75,6 +81,14 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   if (thinkingOff === "always-on" && !warnedThinkingAlwaysOn.has(resolvedModel)) {
     warnedThinkingAlwaysOn.add(resolvedModel);
     logger.warn(`disableThinking has no effect on ${resolvedModel} — adaptive thinking cannot be turned off (explicit disable is rejected with a 400, omission runs adaptive); the call still pays thinking latency/tokens`);
+  }
+  // Per-model effort support + the disabled-thinking ceiling both live in
+  // resolveAnthropicEffort (one capability map, no second model table here).
+  const resolvedEffort = resolveAnthropicEffort(resolvedModel, effort, disableThinking === true);
+  const effortKey = `${resolvedModel}:${effort}`;
+  if (effort && !resolvedEffort && !warnedEffortDropped.has(effortKey)) {
+    warnedEffortDropped.add(effortKey);
+    logger.warn(`output_config.effort "${effort}" is not sendable on ${resolvedModel}${disableThinking ? " with thinking disabled" : ""} — field omitted, so the API default effort ("high") applies`);
   }
 
   // Fail fast if the caller already cancelled before we started.
@@ -173,6 +187,12 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       : adaptive
         ? { thinking: { type: "adaptive", display: "summarized" } }
         : { thinking: { type: "enabled", budget_tokens: 3000 }, temperature: 1 }),
+    // Effort is a sibling of `thinking`, not a replacement: adaptive decides
+    // WHETHER to think, effort caps HOW MUCH. `low` + adaptive is the
+    // documented low-latency profile for a turn that also carries tools —
+    // strictly better than disabling thinking, which can strand a tool call in
+    // visible text. Nested under `output_config`; never a top-level field.
+    ...(resolvedEffort ? { output_config: { effort: resolvedEffort } } : {}),
   };
 
   // On the OAuth wire, every tool name must be a bare or `mcp__` identifier or

@@ -90,6 +90,7 @@ export async function registerProviderAdapter(
     sessionId,
     preferAnthropicDirectHttp: options.preferAnthropicDirectHttp,
     disableThinking: options.disableThinking,
+    effort: options.effort,
     systemStablePrefixLen: options.systemStablePrefixLen,
     cacheConversation: options.cacheConversation,
     requireToolOnFirstTurn: true,

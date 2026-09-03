@@ -405,3 +405,113 @@ describe("streamViaAPI — conversation-history breakpoint (cacheConversation)",
     expect(cap.calls[0].body.messages).toEqual([{ role: "user", content: "hi" }]);
   });
 });
+
+// The voice profile: adaptive thinking + low effort, on a request that CARRIES
+// TOOLS. This is the wire shape that removes the disabled-thinking hazard —
+// Anthropic documents that with thinking disabled, Opus 5 can write a tool
+// call into visible TEXT instead of a tool_use block (turn succeeds, call
+// never runs, no error). A spoken tool call, never executed. These pins fail
+// if anything ever puts a {type:"disabled"} block back on a tool-carrying turn.
+describe("streamViaAPI — output_config.effort (voice profile)", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "ok" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+
+  const voiceTools = [{ name: "voice_visual", description: "show", parameters: { type: "object" } }];
+
+  it.each(["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"])(
+    "%s: adaptive thinking + low effort, and NO disabled block",
+    async (model) => {
+      const cap = stubFetchCapturing(done);
+      await collect({ model, effort: "low", tools: voiceTools });
+      const { body } = cap.calls[0];
+      expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
+      expect(body.output_config).toEqual({ effort: "low" });
+      expect(JSON.stringify(body)).not.toContain('"disabled"');
+      expect(body.tools).toBeDefined();
+    },
+  );
+
+  it("nests effort under output_config — never as a top-level field", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", effort: "low" });
+    const { body } = cap.calls[0];
+    expect("effort" in body).toBe(false);
+    expect(body.output_config).toEqual({ effort: "low" });
+  });
+
+  it("omits output_config entirely when no effort is requested", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5" });
+    expect("output_config" in cap.calls[0].body).toBe(false);
+  });
+
+  // A model that errors on the parameter must get an omission, not the field.
+  it.each(["claude-sonnet-4-5", "claude-haiku-4-5"])(
+    "%s: omits output_config — the parameter errors on this model",
+    async (model) => {
+      const cap = stubFetchCapturing(done);
+      await collect({ model, effort: "low" });
+      expect("output_config" in cap.calls[0].body).toBe(false);
+    },
+  );
+
+  it("omits an xhigh the 4.6 generation cannot take, but sends one it can", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-sonnet-4-6", effort: "xhigh" });
+    expect("output_config" in cap.calls[0].body).toBe(false);
+    await collect({ model: "claude-sonnet-4-6", effort: "max" });
+    expect(cap.calls[1].body.output_config).toEqual({ effort: "max" });
+  });
+
+  // F13's disabled block is legal only at effort high or below on Opus 5 — a
+  // caller combining it with xhigh/max must not lose the turn to a 400.
+  it("drops effort above the disabled-thinking ceiling instead of 400ing", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", effort: "xhigh", disableThinking: true });
+    const { body } = cap.calls[0];
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect("output_config" in body).toBe(false);
+  });
+
+  it("keeps a legal disabled + low-effort pair on the wire", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", effort: "low", disableThinking: true });
+    const { body } = cap.calls[0];
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body.output_config).toEqual({ effort: "low" });
+  });
+
+  it("warns once per model+level when an effort is dropped", async () => {
+    const warnings: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    try {
+      stubFetchCapturing(done);
+      await collect({ model: "claude-haiku-4-5", effort: "medium" });
+      await collect({ model: "claude-haiku-4-5", effort: "medium" });
+      expect(warnings.filter(w => w.includes('effort "medium" is not sendable on claude-haiku-4-5'))).toHaveLength(1);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  // Regression pin for the classifier lane: it sends disableThinking and NO
+  // effort, and F13's per-model off-shape must stay byte-identical to what it
+  // was before effort existed. No output_config key anywhere.
+  it("classifier lane (disableThinking, no effort) is unchanged by effort support", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", disableThinking: true, temperature: 0 });
+    const { body } = cap.calls[0];
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect("output_config" in body).toBe(false);
+    expect("temperature" in body).toBe(false);
+    await collect({ model: "claude-sonnet-4-5", disableThinking: true, temperature: 0 });
+    const legacy = cap.calls[1].body;
+    expect("thinking" in legacy).toBe(false);
+    expect("output_config" in legacy).toBe(false);
+    expect(legacy.temperature).toBe(0);
+  });
+});

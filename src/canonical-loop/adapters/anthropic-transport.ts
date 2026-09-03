@@ -106,6 +106,7 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
           sessionId: req.sessionId,
           forcedToolName: forced?.name,
           disableThinking: req.disableThinking,
+          effort: req.effort,
           systemStablePrefixLen: req.systemStablePrefixLen,
           cacheConversation: req.cacheConversation,
         });

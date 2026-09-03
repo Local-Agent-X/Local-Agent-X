@@ -288,9 +288,21 @@ export async function setupVoiceWs(deps: {
           preferAnthropicDirectHttp: true,
           // Thinking time is dead air in a spoken reply — the user sits in
           // silence while the model reasons about how to say two sentences.
-          // Same model, no silent stall; genuinely heavy work is delegated to
-          // op_submit_async workers, which keep their full thinking budget.
-          disableThinking: true,
+          // The lever for that is LOW EFFORT, not disabled thinking. A voice
+          // turn SENDS TOOLS (voiceTools above), and Anthropic documents that
+          // with `thinking: {type: "disabled"}` Opus 5 "occasionally writes a
+          // tool call into its visible text instead of a tool_use block: the
+          // turn succeeds, the call never runs, no error is raised" — in a
+          // spoken turn that is a tool call the user HEARS and that never
+          // executes, with nothing anywhere reporting a failure. The
+          // documented fix is the opposite lever: "Turning thinking on and
+          // lowering effort fixes both and still cuts cost." So adaptive
+          // thinking stays on and effort drops to the floor.
+          // The classifier lane (classify-with-llm.ts) keeps disableThinking:
+          // it sends NO tools, so the hazard cannot bite there.
+          // Genuinely heavy work still delegates to op_submit_async workers,
+          // which keep their full effort budget.
+          effort: "low",
           // Prompt-cache profile from the split above (see buildVoicePromptSplit).
           systemStablePrefixLen: voiceSplit.stableLen,
           cacheConversation: voiceSplit.fullyStable,

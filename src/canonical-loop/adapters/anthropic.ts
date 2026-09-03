@@ -131,6 +131,7 @@ export class AnthropicAdapter implements Adapter {
       forcedToolChoice,
       preferDirectHttp: this.opts.preferDirectHttp,
       disableThinking: this.opts.disableThinking,
+      effort: this.opts.effort,
       systemStablePrefixLen: this.opts.systemStablePrefixLen,
       cacheConversation: this.opts.cacheConversation,
     };

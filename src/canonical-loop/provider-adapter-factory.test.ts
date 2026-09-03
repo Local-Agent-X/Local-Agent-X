@@ -315,3 +315,67 @@ describe("disableThinking short-path mapping (cross-provider)", () => {
 		);
 	});
 });
+
+// Voice moved off `disableThinking` onto `effort: "low"` (Anthropic's
+// disabled-thinking mode can strand a tool call in visible text). Anthropic
+// gets a real output_config.effort; the other runtimes have no effort field,
+// so "low" must land on the SAME short path the boolean used — otherwise the
+// switch silently restores full reasoning latency on Codex/Gemini/OpenAI voice.
+describe("effort short-path mapping (cross-provider)", () => {
+	async function buildFactory(runtime: "codex" | "anthropic", opts: { disableThinking?: boolean; effort?: "low" | "medium" | "high" | "xhigh" | "max" }) {
+		const authSource = runtime === "codex" ? "oauth" : "env";
+		const resolved = await resolveProviderRuntime(runtime, "exact-model", {
+			apiKey: "credential-must-stay-pinned",
+			authSource,
+		});
+		const factory = await createProviderAdapterFactory({
+			provider: runtime,
+			credentialProvider: runtime,
+			authSource,
+			model: "exact-model",
+			runtime,
+			target: resolved.identity.target,
+			sessionId: "session-exact",
+			integrity: { scheme: "hmac-sha256-v1", mac: "0".repeat(64) },
+		}, {
+			apiKey: "credential-must-stay-pinned",
+			authSource,
+			sessionId: "session-exact",
+			...opts,
+		});
+		factory();
+	}
+
+	it("threads effort to the Anthropic adapter verbatim", async () => {
+		await buildFactory("anthropic", { effort: "low" });
+		expect(fixture.createAnthropicAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ effort: "low", disableThinking: undefined }),
+		);
+	});
+
+	it("low effort takes the Codex short path even with disableThinking unset", async () => {
+		await buildFactory("codex", { effort: "low" });
+		expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reasoningEffort: "low" }),
+		);
+	});
+
+	// Anything above "low" has no faithful equivalent on a runtime with no
+	// effort dial — leave it on its own default rather than silently re-tuning.
+	it.each(["medium", "high", "xhigh", "max"] as const)(
+		"%s effort leaves Codex on its own default",
+		async (effort) => {
+			await buildFactory("codex", { effort });
+			expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+				expect.objectContaining({ reasoningEffort: undefined }),
+			);
+		},
+	);
+
+	it("the disableThinking short path still works on its own", async () => {
+		await buildFactory("codex", { disableThinking: true });
+		expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reasoningEffort: "low" }),
+		);
+	});
+});

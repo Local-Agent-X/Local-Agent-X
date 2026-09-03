@@ -6,6 +6,8 @@
 // or OAuth. Only ../anthropic.ts is audited for FORBIDDEN_ADAPTER_IMPORTS,
 // but the rule applies transitively — keep this file pure types.
 
+import type { AnthropicEffort } from "../../../anthropic-models.js";
+
 export const ANTHROPIC_ADAPTER_NAME = "anthropic";
 export const ANTHROPIC_ADAPTER_VERSION = "1.0.0";
 export const PROVIDER_STATE_MAX_BYTES_DEFAULT = 256 * 1024;
@@ -40,6 +42,12 @@ export interface AnthropicTransportRequest {
    *  always-on caveat: see StreamOptions.disableThinking in
    *  anthropic-client/types.ts. */
   disableThinking?: boolean;
+  /** `output_config.effort` — the low-latency lever for a turn that carries
+   *  TOOLS. Prefer this over disableThinking there: with thinking disabled,
+   *  Opus 5 can emit a tool call as visible text instead of a tool_use block,
+   *  so the call never runs. Per-model support + the disabled-thinking
+   *  ceiling: resolveAnthropicEffort in anthropic-models.ts. */
+  effort?: AnthropicEffort;
   /** Byte length of the stable prefix of systemPrompt — enables the
    *  two-block system cache split in anthropic-client/stream-api.ts. */
   systemStablePrefixLen?: number;
@@ -150,6 +158,8 @@ export interface AnthropicAdapterOptions {
   preferDirectHttp?: boolean;
   /** See AnthropicTransportRequest.disableThinking. */
   disableThinking?: boolean;
+  /** See AnthropicTransportRequest.effort. */
+  effort?: AnthropicEffort;
   /** See AnthropicTransportRequest.systemStablePrefixLen. */
   systemStablePrefixLen?: number;
   /** See AnthropicTransportRequest.cacheConversation. */

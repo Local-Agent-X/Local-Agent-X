@@ -3,6 +3,7 @@ import type { AgentOptions } from "../../providers/types.js";
 import type { CallContext } from "../../tool-execution/context.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js";
+import type { AnthropicEffort } from "../../anthropic-models.js";
 
 export interface CanonicalAgentOptions extends AgentOptions {
   /** Caller-declared exact provider/model pin, distinct from a resolved default. */
@@ -21,6 +22,13 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  thinking config, Codex/OpenAI-compat force reasoning effort "low",
    *  Gemini disables its thinking flag. */
   disableThinking?: boolean;
+  /** Reasoning-depth dial for the turn. On Anthropic it becomes
+   *  `output_config.effort`; other runtimes have no such field, so "low" maps
+   *  to the same short path disableThinking takes there (see
+   *  provider-adapter-factory.ts). The voice lane uses `low` INSTEAD of
+   *  disableThinking: voice sends tools, and a disabled-thinking Opus 5 can
+   *  write a tool call into visible text where it never executes. */
+  effort?: AnthropicEffort;
   /** Byte length of the stable prefix of systemPrompt (section-boundary
    *  aligned). Enables the two-block system prompt-cache split on the
    *  Anthropic direct-HTTP path. */

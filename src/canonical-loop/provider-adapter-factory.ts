@@ -1,15 +1,19 @@
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
 import type { CredentialSource } from "../auth/auth-provider.js";
 import type {
   DelegatedProviderRuntime,
   DelegatedRuntimeTarget,
   ExactDelegatedRuntimeDescriptor,
 } from "../ops/types.js";
-import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
+import { type ProviderId } from "../providers/provider-ids.js";
+import {
+  assertSurface, isCredentialSource, isFingerprint, isProviderId, isRuntime,
+  isTarget, sameTargetKind,
+} from "./runtime-identity-guards.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { AdapterFactory } from "./runtime.js";
 import { API_BASE as ANTHROPIC_API_BASE } from "../anthropic-client/request.js";
+import type { AnthropicEffort } from "../anthropic-models.js";
 import { CODEX_URL } from "../codex-client/types.js";
 import { GEMINI_BASE } from "./adapters/gemini-native-transport.js";
 import {
@@ -37,11 +41,31 @@ interface ProviderAdapterOptions extends ProviderRuntimeOptions {
    *  config, Codex/OpenAI-compat force reasoning effort "low", Gemini turns
    *  its thinking flag off. */
   disableThinking?: boolean;
+  /** Reasoning-depth dial. Anthropic sends it as `output_config.effort`;
+   *  runtimes with no effort field treat "low" as the same short path
+   *  disableThinking selects (see shortPath below). */
+  effort?: AnthropicEffort;
   /** Anthropic-only prompt-cache knobs — see AnthropicAdapterOptions. Other
    *  runtimes ignore them (their caching is automatic/server-side; the
    *  stable-prefix-first prompt ordering helps those on its own). */
   systemStablePrefixLen?: number;
   cacheConversation?: boolean;
+}
+
+/**
+ * Runtimes other than Anthropic have no `output_config.effort` — they have one
+ * short-path switch each (Codex/OpenAI-compat: reasoning_effort "low"; Gemini:
+ * a thinking boolean). A caller asking for LOW effort is asking for exactly
+ * what `disableThinking` asks for there: minimal reasoning before the reply.
+ * Mapping both onto one predicate is what lets the voice lane move from the
+ * boolean to low effort — needed because Anthropic's disabled-thinking mode
+ * can strand a tool call in visible text — without silently restoring full
+ * reasoning latency on Codex/Gemini/OpenAI voice turns. Levels above "low"
+ * leave those runtimes on their own defaults: `medium`/`xhigh`/`max` have no
+ * faithful equivalent there, and inventing one would be a silent re-tune.
+ */
+function shortPath(options: ProviderAdapterOptions): boolean {
+  return options.disableThinking === true || options.effort === "low";
 }
 
 export class RuntimeIdentityMismatchError extends Error {
@@ -147,6 +171,7 @@ export async function createProviderAdapterFactory(
       maxTokens: options.maxTokens,
       preferDirectHttp: options.preferAnthropicDirectHttp,
       disableThinking: options.disableThinking,
+      effort: options.effort,
       systemStablePrefixLen: options.systemStablePrefixLen,
       cacheConversation: options.cacheConversation,
       transport,
@@ -163,11 +188,11 @@ export async function createProviderAdapterFactory(
       model: identity.model,
       systemPrompt: options.systemPrompt,
       sessionId: options.sessionId ?? identity.sessionId,
-      // disableThinking, cross-provider: Codex has no thinking on/off switch —
-      // the equivalent short path is forcing low reasoning effort ("low", not
-      // "minimal": gpt-5.6 rejects minimal). Unset callers keep today's
-      // behavior (adapter/CLI defaults).
-      reasoningEffort: options.disableThinking ? "low" : undefined,
+      // Short path, cross-provider: Codex has no thinking on/off switch — the
+      // equivalent is forcing low reasoning effort ("low", not "minimal":
+      // gpt-5.6 rejects minimal). Unset callers keep today's behavior
+      // (adapter/CLI defaults).
+      reasoningEffort: shortPath(options) ? "low" : undefined,
       transport,
     });
   }
@@ -179,8 +204,8 @@ export async function createProviderAdapterFactory(
       apiKey: options.apiKey,
       systemPrompt: options.systemPrompt,
       temperature: options.temperature,
-      // disableThinking, cross-provider: Gemini's knob is this boolean.
-      thinking: !options.disableThinking && /gemini-(2\.5|3)/i.test(identity.model),
+      // Short path, cross-provider: Gemini's knob is this boolean.
+      thinking: !shortPath(options) &&/gemini-(2\.5|3)/i.test(identity.model),
       sessionId: options.sessionId ?? identity.sessionId,
     });
   }
@@ -199,10 +224,10 @@ export async function createProviderAdapterFactory(
     maxTokens: options.maxTokens,
     sessionId: options.sessionId ?? identity.sessionId,
     requireToolOnFirstTurn: options.requireToolOnFirstTurn,
-    // disableThinking, cross-provider: forwarded as reasoning_effort "low" on
-    // the wire; the HTTP adapter capability-gates it away for models that 400
-    // on the parameter, so local/older models are unaffected.
-    reasoningEffort: options.disableThinking ? "low" : undefined,
+    // Short path, cross-provider: forwarded as reasoning_effort "low" on the
+    // wire; the HTTP adapter capability-gates it away for models that 400 on
+    // the parameter, so local/older models are unaffected.
+    reasoningEffort: shortPath(options) ? "low" : undefined,
   });
 }
 
@@ -341,55 +366,6 @@ function assertFingerprint(raw: string, expected: string): void {
       "canonical provider endpoint changed since submission",
     );
   }
-}
-
-function sameTargetKind(a: DelegatedRuntimeTarget, b: DelegatedRuntimeTarget): boolean {
-  return a.kind === b.kind && (a.kind !== "local-runtime" || (b.kind === "local-runtime" && a.runtimeId === b.runtimeId));
-}
-
-function isTarget(value: unknown): value is DelegatedRuntimeTarget {
-  if (!value || typeof value !== "object") return false;
-  const target = value as Partial<DelegatedRuntimeTarget>;
-  if (target.kind === "provider-registry") return isFingerprint(target.endpointFingerprint);
-  if (target.kind === "local-runtime") return typeof target.runtimeId === "string" && !!target.runtimeId && isFingerprint(target.endpointFingerprint);
-  if (target.kind === "custom-config") {
-    return isFingerprint(target.endpointFingerprint)
-      && (target.locality === undefined || target.locality === "local" || target.locality === "remote");
-  }
-  return (target.kind === "ollama-cloud" || target.kind === "local-config") && isFingerprint(target.endpointFingerprint);
-}
-
-function assertSurface(value: unknown): void {
-  const surface = value as Partial<NonNullable<ExactDelegatedRuntimeDescriptor["surface"]>> | null;
-  if (!surface || surface.kind !== "agent-runner" || typeof surface.systemPrompt !== "string") throw new Error("invalid delegated agent surface");
-  if (!Array.isArray(surface.tools) || surface.tools.some(tool => !tool || typeof tool.name !== "string" || !tool.name || !isFingerprint(tool.fingerprint))) throw new Error("invalid delegated tool surface");
-  if (!surface.security || typeof surface.security.workspace !== "string" || !surface.security.workspace || !isFingerprint(surface.security.configFingerprint)) throw new Error("invalid delegated security surface");
-  if (!["workspace", "common", "unrestricted"].includes(surface.security.fileAccessMode)) throw new Error("invalid delegated file-access surface");
-  if (!["refuse", "allow"].includes(surface.security.inlineEvalPolicy)) throw new Error("invalid delegated inline-eval surface");
-  if (!Array.isArray(surface.security.allowedPaths)
-    || surface.security.allowedPaths.some(entry => !entry || typeof entry.sessionId !== "string"
-      || typeof entry.path !== "string" || !isAbsolute(entry.path))) throw new Error("invalid delegated allowed-path surface");
-  if (surface.security.sessionWorkRoot !== undefined && !isAbsolute(surface.security.sessionWorkRoot)) throw new Error("invalid delegated work-root surface");
-  if (surface.toolPolicyFingerprint !== undefined && !isFingerprint(surface.toolPolicyFingerprint)) throw new Error("invalid delegated tool-policy surface");
-  if (surface.threatEngine !== false && (!surface.threatEngine || typeof surface.threatEngine !== "object" || !("state" in surface.threatEngine))) throw new Error("invalid delegated threat-engine surface");
-  if (typeof surface.rbac !== "boolean") throw new Error("invalid delegated security service surface");
-  if (!["local", "api", "bridge", "cron", "delegated"].includes(surface.callContext as string)) throw new Error("invalid delegated call context");
-}
-
-function isFingerprint(value: unknown): value is string {
-  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
-}
-
-function isProviderId(value: unknown): value is ProviderId {
-  return typeof value === "string" && (PROVIDER_IDS as readonly string[]).includes(value);
-}
-
-function isCredentialSource(value: unknown): value is CredentialSource {
-  return value === "oauth" || value === "env" || value === "secrets-store" || value === "config" || value === "sentinel";
-}
-
-function isRuntime(value: unknown): value is DelegatedProviderRuntime {
-  return value === "anthropic" || value === "codex" || value === "gemini-native" || value === "openai-compat";
 }
 
 function providerRegistryEndpoint(provider: ProviderId): string {

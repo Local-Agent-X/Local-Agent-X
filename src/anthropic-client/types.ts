@@ -64,6 +64,17 @@ export interface StreamOptions {
    *  latency/tokens; pick a different model if latency is load-bearing.
    *  Only the direct-HTTP path reads this. */
   disableThinking?: boolean;
+  /** `output_config.effort` — how much thinking/token spend the model puts
+   *  into the turn. `low` is the low-latency lever for callers that ALSO send
+   *  tools: Anthropic documents that with thinking disabled, Opus 5
+   *  occasionally writes a tool call into visible TEXT instead of a tool_use
+   *  block (the turn succeeds, the call never runs, no error), and prescribes
+   *  adaptive thinking at lower effort instead. Omitted = the API default
+   *  `high`. Per-model support is anthropicEffortLevels; an unsendable level
+   *  (unsupported model, `xhigh` pre-4.7, or above the disabled-thinking
+   *  ceiling) is omitted with a warning rather than 400'd — see
+   *  resolveAnthropicEffort. Only the direct-HTTP path reads this. */
+  effort?: import("../anthropic-models.js").AnthropicEffort;
   /** Byte length of the stable prefix of `systemPrompt`. When set (and > 0,
    *  < systemPrompt.length), the system prompt is sent as TWO text blocks —
    *  [0, len) carrying the cache_control breakpoint, [len, end) uncached —

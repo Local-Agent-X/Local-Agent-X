@@ -92,8 +92,9 @@ export type AnthropicThinkingOffMode = "omit" | "disabled-block" | "always-on";
  *   explicit block turns thinking off; Opus 4.7/4.8 document the same block,
  *   and sending it pins the intent instead of leaning on their omission
  *   default. Opus 5 wrinkle: `disabled` is only legal at effort `high` or
- *   below — this client never sends `output_config.effort`, so the API
- *   default (`high`) keeps it legal. Revisit if effort ever rides this path.
+ *   below — effort now DOES ride this path (voice runs adaptive at low
+ *   effort), so resolveAnthropicEffort below drops an `xhigh`/`max` that would
+ *   be paired with a disabled block rather than letting the turn 400.
  * - "always-on": thinking cannot be turned off. Fable 5 / Mythos 5 reject
  *   `{type: "disabled"}` with a 400 AND run adaptive when the param is
  *   omitted — the request layer omits the param and warns so the caller's
@@ -104,6 +105,68 @@ export function anthropicThinkingOffMode(model: string): AnthropicThinkingOffMod
   if (/^claude-(fable-5|mythos-5)/.test(m)) return "always-on";
   if (/^claude-(opus-5|sonnet-5|opus-4-[78])/.test(m)) return "disabled-block";
   return "omit";
+}
+
+/** Levels the Messages API accepts on `output_config.effort`. */
+export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+const EFFORT_FULL: readonly AnthropicEffort[] = ["low", "medium", "high", "xhigh", "max"];
+const EFFORT_NO_XHIGH: readonly AnthropicEffort[] = ["low", "medium", "high", "max"];
+const EFFORT_LEGACY: readonly AnthropicEffort[] = ["low", "medium", "high"];
+const EFFORT_NONE: readonly AnthropicEffort[] = [];
+
+/**
+ * Which `output_config.effort` levels a model accepts — the third axis of the
+ * one capability map, alongside anthropicUsesAdaptiveThinking and
+ * anthropicThinkingOffMode. Effort rides INSIDE `output_config`, never
+ * top-level, and omitting it is equivalent to the API default `high`.
+ *
+ * - Fable 5 / Mythos 5 / Opus 5 / Opus 4.7 / 4.8 / Sonnet 5: all five levels.
+ * - Opus 4.6 / Sonnet 4.6: no `xhigh` — that level arrived with Opus 4.7.
+ * - Opus 4.5: `low`/`medium`/`high` only.
+ * - Everything else (Sonnet 4.5, Haiku 4.5, pre-4.5, unknown ids): the
+ *   parameter ERRORS there, so nothing is sendable and the field is omitted.
+ *
+ * Same anchored-alternation care as the two maps above: `opus-5` is its own
+ * branch so `claude-opus-4-5` cannot match it, and `opus-4-[78]` cannot match
+ * 4.5 either — 4.5 falls through to its own smaller set.
+ */
+export function anthropicEffortLevels(model: string): readonly AnthropicEffort[] {
+  const m = normalizeAnthropicModel(model).toLowerCase();
+  if (/^claude-(fable-5|mythos-5|opus-5|opus-4-[78]|sonnet-5)/.test(m)) return EFFORT_FULL;
+  if (/^claude-(opus-4-6|sonnet-4-6)/.test(m)) return EFFORT_NO_XHIGH;
+  if (/^claude-opus-4-5/.test(m)) return EFFORT_LEGACY;
+  return EFFORT_NONE;
+}
+
+/**
+ * The effort value a request may actually put on the wire, or `undefined` to
+ * omit the field. Two API constraints, both resolved here so no caller has to
+ * carry a second model table:
+ *
+ * 1. Support — a level the model doesn't accept (any level on Sonnet 4.5 /
+ *    Haiku 4.5, `xhigh` on the 4.6 generation) is OMITTED rather than sent and
+ *    400'd. Omission means the API default `high`.
+ * 2. Thinking interaction — Opus 5 / Sonnet 5 / Opus 4.7/4.8 accept
+ *    `thinking: {type: "disabled"}` only at effort `high` or below; pairing it
+ *    with `xhigh`/`max` returns a 400. A caller asking for both gets the
+ *    effort dropped (default `high` keeps the pair legal) instead of a dead
+ *    turn. This discharges the "revisit if effort ever rides this path" note
+ *    left on anthropicThinkingOffMode when disableThinking was made honest.
+ *
+ * Dropping is never silent: the request layer warns once per model+level.
+ */
+export function resolveAnthropicEffort(
+  model: string,
+  effort: AnthropicEffort | undefined,
+  thinkingDisabled = false,
+): AnthropicEffort | undefined {
+  if (!effort) return undefined;
+  if (!anthropicEffortLevels(model).includes(effort)) return undefined;
+  if (thinkingDisabled && anthropicThinkingOffMode(model) === "disabled-block" && (effort === "xhigh" || effort === "max")) {
+    return undefined;
+  }
+  return effort;
 }
 
 /**

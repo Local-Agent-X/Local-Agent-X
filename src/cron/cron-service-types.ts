@@ -61,6 +61,9 @@ export interface ExecuteResult {
   errorMessage?: string;
   provider?: string;
   model?: string;
+  /** Session this run's transcript landed in — recorded on the run record so
+   *  the cron detail view can link back to it (see CronRunRecord.sessionId). */
+  sessionId?: string;
 }
 
 export interface ExecuteContext {

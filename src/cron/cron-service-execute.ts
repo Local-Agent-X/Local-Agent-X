@@ -90,6 +90,10 @@ export async function runJob(
       manual: opts.manual,
       outputSummary: summarize(result.output),
       reportPath: result.reportPath,
+      // Discovery hook for the run's transcript. Cron sessions are hidden
+      // from the sidebar and from search, so recording the id here is the
+      // only way the cron detail view can link back to it.
+      sessionId: result.sessionId,
       errorMessage: status === "success" ? undefined : (result.errorMessage || extractErrorMessage(result.output)),
       provider: result.provider,
       model: result.model,

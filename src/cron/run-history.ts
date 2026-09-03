@@ -33,6 +33,20 @@ export interface CronRunRecord {
   outputSummary?: string;
   /** Path to the canonical report file, if one was written. */
   reportPath?: string;
+  /**
+   * The `cron-{jobId}-{ms}` session this run's transcript was written to
+   * (minted per-run in server/background-jobs/cron-runner.ts). Cron sessions
+   * are hidden from the sidebar and from /api/sessions/search
+   * (memory/synthetic-sessions.ts isHiddenFromChatLists), so this recorded id
+   * is the ONLY way back to the full transcript — the cron detail view links
+   * each run row to GET /api/sessions/{sessionId}?view=raw with it.
+   *
+   * Absent when the executor threw before returning a result: the session id
+   * lives inside the handler, and runJob's catch block never sees it. Every
+   * path the handler itself returns (success, quality-gate failure, no-output,
+   * report-write error) carries it, and "skipped" runs never minted one.
+   */
+  sessionId?: string;
   /** Failure / error / skip reason (single line). */
   errorMessage?: string;
   provider?: string;

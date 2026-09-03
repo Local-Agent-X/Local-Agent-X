@@ -227,9 +227,15 @@ async function loadCronHistory(jobId) {
       const c = colors[r.status] || 'var(--muted)';
       const tag = `<span style="color:${c};font-weight:600;text-transform:uppercase;font-size:.65rem;letter-spacing:.5px">${esc(r.status)}</span>`;
       const manual = r.manual ? ' <span style="color:var(--muted);font-size:.65rem">(manual)</span>' : '';
+      // Only runs whose executor recorded a session id get the link. A run
+      // that died before the handler returned (thrown transient failure) or a
+      // skipped overlap never minted one — no link rather than a dead one.
+      const transcript = r.sessionId
+        ? ` <span onclick="viewCronTranscript('${esc(r.sessionId)}')" title="Open this run's full transcript (read-only)" style="cursor:pointer;color:var(--accent);font-size:.65rem">transcript</span>`
+        : '';
       const note = r.errorMessage ? `<div style="color:#e07b5a;font-size:.7rem;margin-top:2px;margin-left:14px">${esc(r.errorMessage)}</div>` : '';
       return `<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:.75rem">
-        <div>${tag} <span>${esc(when)}${esc(dur)}</span>${manual}</div>
+        <div>${tag} <span>${esc(when)}${esc(dur)}</span>${manual}${transcript}</div>
         ${note}
       </div>`;
     }).join('');
@@ -274,14 +280,80 @@ async function deleteCronReport(jobId, fileName) {
   } catch (e) { alert('Failed: ' + e.message); }
 }
 
+// Read-only overlay. One modal shell for every artifact this panel shows —
+// the report viewer below and the run-transcript viewer under it. Backdrop
+// click or Close dismisses; nothing here is editable.
+function openCronModal(innerHtml) {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:999;display:flex;align-items:center;justify-content:center';
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;max-width:700px;width:90%;max-height:80vh;overflow:auto;padding:24px;white-space:pre-wrap;font-size:.82rem;line-height:1.5">${innerHtml}<div style="margin-top:16px;text-align:right"><button onclick="this.closest('[style*=fixed]').remove()" class="btn btn-sm">Close</button></div></div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
 async function viewCronReport(jobId, fileName) {
   try {
     const data = await apiJson(`/api/cron/${jobId}/reports/${fileName}`);
-    const content = data.content || 'Empty report';
-    const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:999;display:flex;align-items:center;justify-content:center';
-    modal.onclick = e => { if (e.target === modal) modal.remove(); };
-    modal.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;max-width:700px;width:90%;max-height:80vh;overflow:auto;padding:24px;white-space:pre-wrap;font-size:.82rem;line-height:1.5">${esc(content)}<div style="margin-top:16px;text-align:right"><button onclick="this.closest('[style*=fixed]').remove()" class="btn btn-sm">Close</button></div></div>`;
-    document.body.appendChild(modal);
+    openCronModal(esc(data.content || 'Empty report'));
   } catch (e) { alert('Failed to load report: ' + e.message); }
+}
+
+// ── Run transcript ──
+// A cron run writes its full transcript to a `cron-{jobId}-{ms}` session, and
+// those sessions are deliberately hidden from the sidebar and from
+// /api/sessions/search (src/memory/synthetic-sessions.ts isHiddenFromChatLists).
+// The run-history row's link is the only way back in, and it opens the
+// transcript READ-ONLY in the shared modal above — never selectChat(), which
+// would adopt the cron session as a sidebar chat and undo that hiding.
+// `?view=raw` on purpose: the default UI projection drops the tool rows, and
+// the tool calls are exactly what you came for when debugging last night's run.
+const CRON_TRANSCRIPT_CLIP = 800;
+
+function cronBlockText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
+  return content.map(b => (b && typeof b.text === 'string') ? b.text : '').join('');
+}
+
+function cronClip(text) {
+  const s = String(text == null ? '' : text);
+  return s.length > CRON_TRANSCRIPT_CLIP ? s.slice(0, CRON_TRANSCRIPT_CLIP) + ' …' : s;
+}
+
+function cronTranscriptBlocksHtml(content) {
+  const blocks = Array.isArray(content) ? content : [{ type: 'text', text: content == null ? '' : String(content) }];
+  return blocks.map(b => {
+    const type = b && b.type;
+    if (type === 'tool_use') {
+      return `<div style="color:var(--accent);margin:2px 0">▸ ${esc(b.name || 'tool')} <span style="color:var(--muted)">${esc(cronClip(JSON.stringify(b.input || {})))}</span></div>`;
+    }
+    if (type === 'tool_result') {
+      return `<div style="color:var(--muted);margin:2px 0">◂ ${esc(cronClip(cronBlockText(b.content).trim()) || '(no output)')}</div>`;
+    }
+    if (type === 'thinking' || type === 'redacted_thinking') {
+      return `<div style="color:var(--muted);font-style:italic;margin:2px 0">${esc(cronClip(b.thinking || '(redacted)'))}</div>`;
+    }
+    const text = (b && typeof b.text === 'string') ? b.text : '';
+    return text ? `<div style="margin:2px 0">${esc(text)}</div>` : '';
+  }).join('');
+}
+
+function cronTranscriptHtml(session) {
+  const messages = Array.isArray(session && session.messages) ? session.messages : [];
+  if (messages.length === 0) {
+    const why = session && session.error ? esc(session.error) : 'No transcript saved for this run.';
+    return `<div style="color:var(--muted)">${why}</div>`;
+  }
+  return messages.map(m => `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="color:var(--muted);font-size:.65rem;letter-spacing:.5px">${esc(String((m && m.role) || 'unknown')).toUpperCase()}</div>
+      ${cronTranscriptBlocksHtml(m && m.content)}
+    </div>`).join('');
+}
+
+async function viewCronTranscript(sessionId) {
+  try {
+    const session = await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}?view=raw`);
+    openCronModal(cronTranscriptHtml(session));
+  } catch (e) { alert('Failed to load transcript: ' + e.message); }
 }

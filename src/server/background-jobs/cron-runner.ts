@@ -71,6 +71,11 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     // instead of a hardcoded literal — so if the user chose unrestricted, a
     // scheduled delete of ~/Downloads works like it does interactively.
     const cronSecurity = new SecurityLayer(config.workspace, loadFileAccessModeAtLeast("workspace"));
+    // Per-run transcript session. Returned on every ExecuteResult below so the
+    // run-history record can carry it (CronRunRecord.sessionId): cron sessions
+    // are hidden from the sidebar and from /api/sessions/search, so the run row
+    // in the cron detail view is the only remaining path back to the full
+    // transcript (tool calls and all).
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);
@@ -182,7 +187,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         output: "ERROR: Agent produced no output — check provider/model config",
         status: "error",
         errorMessage: `no output (stopReason: ${result.stopReason})`,
-        provider: providerName, model: cronModel,
+        provider: providerName, model: cronModel, sessionId,
       };
     }
     const trimmed = output.trim();
@@ -209,7 +214,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         output: `FAILED: ${reason}`,
         status: "failed",
         errorMessage: reason,
-        provider: providerName, model: cronModel,
+        provider: providerName, model: cronModel, sessionId,
       };
     }
     const salvaged = !validation.valid && validation.contentValid;
@@ -227,7 +232,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
         output: `ERROR: report write failed — ${msg}`,
         status: "error",
         errorMessage: msg,
-        provider: providerName, model: cronModel,
+        provider: providerName, model: cronModel, sessionId,
       };
     }
     const slug = (job?.name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
@@ -249,7 +254,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     return {
       output: output.slice(0, 500), reportPath,
       status: "success",
-      provider: providerName, model: cronModel,
+      provider: providerName, model: cronModel, sessionId,
     };
   });
 }

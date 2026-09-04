@@ -311,7 +311,9 @@ describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", 
     expect(result.terminalReason).toBe("error");
     expect(gateRan).toBe(false);
     const err = reports.find(r => r.kind === "error");
-    expect(err).toMatchObject({ code: "app_smoke_failed" });
+    // Distinct from the smoke's own failure code — "nothing to serve" and
+    // "served and broke" must be tellable apart by the caller.
+    expect(err).toMatchObject({ code: "app_no_servable_target" });
     expect((err as { message: string }).message).toContain("no servable dev server");
   });
 
@@ -338,6 +340,36 @@ describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", 
     expect((err as { message: string }).message).toContain("Pick exactly one framework");
   });
 
+  it("a smoke failure and a no-servable-target failure carry DIFFERENT codes", async () => {
+    // Same tier, same "the build didn't work" outcome — but one had nothing to
+    // serve and the other served and broke. Asserted together so the two can
+    // never quietly collapse back into one code.
+    const brokeAdapter = new AppBuildVerifyAdapter(
+      doneInner, makeViteAppDir(), undefined,
+      async () => ({ verdict: "fail" as const, detail: "root never mounted" }),
+      { urlResolver: async () => "http://127.0.0.1:7007/apps/x/" },
+    );
+    const broke = collect();
+    await brokeAdapter.runTurn(turnInput(), broke.report);
+    const nothingAdapter = new AppBuildVerifyAdapter(
+      doneInner, makeViteAppDir(), undefined,
+      async () => ({ verdict: "pass" as const }),
+      {
+        urlResolver: async () => null,
+        finalizeDeps: {
+          registerDevServer: () => ({ ok: false, error: "port bind failed" }),
+          listDevServerRecords: () => [],
+          portBound: () => false,
+        },
+      },
+    );
+    const nothing = collect();
+    await nothingAdapter.runTurn(turnInput(), nothing.report);
+    const codeOf = (rs: AdapterReport[]) => (rs.find(r => r.kind === "error") as { code: string }).code;
+    expect(codeOf(broke.reports)).toBe("app_smoke_failed");
+    expect(codeOf(nothing.reports)).toBe("app_no_servable_target");
+  });
+
   it("a dev-server smoke failure flips done to error with evidence, same as static", async () => {
     const appDir = makeViteAppDir();
     const adapter = new AppBuildVerifyAdapter(
@@ -351,5 +383,77 @@ describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", 
     const err = reports.find(r => r.kind === "error");
     expect(err).toMatchObject({ code: "app_smoke_failed" });
     expect((err as { message: string }).message).toContain("never became ready");
+  });
+});
+
+// All three static scans block, and each reports under its OWN code with its
+// OWN message. They used to be joined into a single error whose code was just
+// the first scan that matched, so a caller reading `blocked_external_fetch`
+// could be handed startup-error text — and a reader of the message could not
+// tell which defect had actually set the code.
+describe("AppBuildVerifyAdapter — static scans report separately", () => {
+  function appDirWith(html: string, extra?: Record<string, string>): string {
+    const dir = mkdtempSync(join(tmpdir(), "verify-split-"));
+    tempDirs.push(dir);
+    writeFileSync(join(dir, "index.html"), html);
+    for (const [name, body] of Object.entries(extra ?? {})) writeFileSync(join(dir, name), body);
+    return dir;
+  }
+  const passingSmoke = async () => ({ verdict: "pass" as const });
+
+  it("a raw cross-origin fetch fails under its own code and its own message", async () => {
+    const appDir = appDirWith(
+      `<!doctype html><html><body><canvas width='960' height='640'></canvas>` +
+      `<script>fetch("https://api.example.com/data").then(r => r.json());</script></body></html>`);
+    let smokeRan = false;
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => {
+      smokeRan = true; return { verdict: "pass" as const };
+    });
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    expect(smokeRan).toBe(false);
+    const err = reports.find(r => r.kind === "error") as { code: string; message: string };
+    expect(err.code).toBe("blocked_external_fetch");
+    expect(err.message).toContain("api.example.com");
+  });
+
+  it("an unverified native-parity claim fails under its own code and its own message", async () => {
+    const appDir = appDirWith(
+      `<!doctype html><html><body><div id='root'>output</div>` +
+      `<script>/* the preview exactly matches the real program's output */</script></body></html>`,
+      { "main.c": "#include <stdio.h>\nint main(){ printf(\"hi\"); return 0; }\n" });
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, passingSmoke);
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    const err = reports.find(r => r.kind === "error") as { code: string; message: string };
+    expect(err.code).toBe("unverified_native_parity");
+    expect(err.message).toContain("index.html");
+  });
+
+  it("a startup error blocks before the smoke runs", async () => {
+    const appDir = appDirWith(`<!doctype html><html><body><script src="missing.js"></script></body></html>`);
+    let smokeRan = false;
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async () => {
+      smokeRan = true; return { verdict: "pass" as const };
+    });
+    const { reports, report } = collect();
+    const result = await adapter.runTurn(turnInput(), report);
+    expect(result.terminalReason).toBe("error");
+    expect(smokeRan).toBe(false);
+    expect(reports.find(r => r.kind === "error")).toMatchObject({ code: "app_startup_error" });
+  });
+
+  it("a startup error reports ONLY its own text — it no longer swallows the other scans' messages", async () => {
+    const appDir = appDirWith(
+      `<!doctype html><html><body><script src="missing.js"></script>` +
+      `<script>fetch("https://api.example.com/data");</script></body></html>`);
+    const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, passingSmoke);
+    const { reports, report } = collect();
+    await adapter.runTurn(turnInput(), report);
+    const errs = reports.filter(r => r.kind === "error") as Array<{ code: string; message: string }>;
+    expect(errs.map(e => e.code)).toEqual(["app_startup_error"]);
+    expect(errs[0].message).not.toContain("api.example.com");
   });
 });

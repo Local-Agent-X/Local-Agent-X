@@ -28,6 +28,11 @@
  * environment problem is never a build verdict. A dev server that never
  * becomes ready FAILS — a live server is the framework tiers' whole promise.
  *
+ * Every gate failure is blocking: any defect any layer finds fails the build.
+ * The static scans each report under their OWN code with their own message —
+ * they used to be joined into one error whose code was just the highest-
+ * priority one, which left a caller unable to tell which defect it read.
+ *
  * Every gate failure also emits a canonical USER message carrying the failure
  * text AND the screenshot(s) as image refs (VERIFY_EVIDENCE_MARKER). That row
  * is durable in op_messages; build-session-context reads it on the next
@@ -180,16 +185,27 @@ export class AppBuildVerifyAdapter implements Adapter {
     const { errors } = scanAppForStartupErrors(this.appDir);
     const { violations } = scanAppForBlockedFetch(this.appDir);
     const { violations: parity } = scanAppForUnverifiedNativeParity(this.appDir);
-    if (errors.length > 0 || violations.length > 0 || parity.length > 0) {
-      // Startup errors first — a blank-on-load app is the more fundamental break.
-      const parts: string[] = [];
-      if (errors.length > 0) parts.push(formatStartupErrors(errors));
-      if (violations.length > 0) parts.push(formatBlockedFetchError(violations));
-      if (parity.length > 0) parts.push(formatUnverifiedNativeParity(parity));
-      const code = errors.length > 0 ? "app_startup_error"
-        : violations.length > 0 ? "blocked_external_fetch"
-        : "unverified_native_parity";
-      report({ kind: "error", code, message: parts.join("\n\n"), retryable: false });
+    // All three block. They are checked in severity order and each reports its
+    // OWN message under its OWN code — previously the messages were joined into
+    // a single error whose code was just the first one that matched, so a
+    // caller reading the code could not tell which text it had been handed.
+    // A startup error is checked first: a blank-on-load app is the most
+    // fundamental break, so its text is the one worth acting on.
+    if (errors.length > 0) {
+      report({ kind: "error", code: "app_startup_error", message: formatStartupErrors(errors), retryable: false });
+      return { ...result, terminalReason: "error" };
+    }
+    // The app is served under `connect-src 'self'` (workspace-app-serving.ts),
+    // so a raw cross-origin call is not "may fail" — it is refused, and an app
+    // whose content depends on it ships an empty shell forever.
+    if (violations.length > 0) {
+      report({ kind: "error", code: "blocked_external_fetch", message: formatBlockedFetchError(violations), retryable: false });
+      return { ...result, terminalReason: "error" };
+    }
+    // A browser preview described as matching a compiled program's output, when
+    // that program was never run here, is an unverified claim shipped as fact.
+    if (parity.length > 0) {
+      report({ kind: "error", code: "unverified_native_parity", message: formatUnverifiedNativeParity(parity), retryable: false });
       return { ...result, terminalReason: "error" };
     }
     return this.smokeAndJudge(input, report, result, "strict");
@@ -225,7 +241,11 @@ export class AppBuildVerifyAdapter implements Adapter {
           `was scaffolded that LAX can serve at /apps/${appName}/, so the app renders a blank page. Scaffold a ` +
           `REAL project (package.json + the framework config + src/) and start it with app_serve_frontend, or ` +
           `if this is a static app, ship a plain index.html instead.`;
-        report({ kind: "error", code: "app_smoke_failed", message: detail, retryable: false });
+        // Distinct code from the smoke's own failure below: "there was nothing
+        // to serve" and "it served and then broke" are structurally different
+        // and a caller (or a fixer reading the reason) must be able to tell
+        // them apart — they were both `app_smoke_failed` before.
+        report({ kind: "error", code: "app_no_servable_target", message: detail, retryable: false });
         return { ...result, terminalReason: "error" };
       }
       url = resolved;

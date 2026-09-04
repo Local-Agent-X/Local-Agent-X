@@ -38,15 +38,117 @@ function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? dir + name : dir + "/" + name;
 }
 
+// Path comparisons fold case ONLY where the filesystem itself does. Folding
+// everywhere would make `/home/me/Workspace/Apps/web` compare equal to
+// `…/workspace/apps/web` on a case-SENSITIVE filesystem, where those are two
+// different directories — a false app match there disables a real project's
+// verification (see workspaceAppDir).
+const CASE_INSENSITIVE_FS = process.platform === "win32" || process.platform === "darwin";
+
+/** The comparison spelling of a path: forward slashes, case-folded only on a
+ *  case-insensitive filesystem. Exported as the ONE spelling this guard and
+ *  verify-gate.ts compare paths/commands in — NOT as a character-index basis:
+ *  toLowerCase() is not 1:1 per character (see findWorkspaceApp). */
+export function normPath(p: string): string {
+  const slashed = p.replace(/\\/g, "/");
+  return CASE_INSENSITIVE_FS ? slashed.toLowerCase() : slashed;
+}
+
+interface WorkspaceApp {
+  /** The `<slug>` segment, in comparison spelling. */
+  slug: string;
+  /** `…/workspace/apps/<slug>`, in the path's OWN spelling. */
+  dir: string;
+  /** The `…/workspace` prefix of `dir`, in the path's OWN spelling. */
+  workspaceDir: string;
+}
+
+// The agent's own app projects live at `<workspace>/apps/<slug>`. ONE parser for
+// that shape, shared with verify-gate.ts's verifyTargetsEditedApp.
+//
+// Matched by SEGMENT, never by indexing the original string with an offset taken
+// from its normalized spelling. Invariant that buys: `dir` and `workspaceDir`
+// are always real prefixes of `filePath`. A match offset would NOT give that —
+// normPath's case-fold is not 1:1 per character ("İ".toLowerCase() is two chars),
+// so on a path holding one the offset drifts and the "app dir" comes back
+// truncated: it then never equals any ancestor, the ceiling below never fires,
+// and the walk-up escapes into the workspace root's own project — the exact
+// incident the ceiling exists to prevent.
+function findWorkspaceApp(filePath: string): WorkspaceApp | null {
+  const values: string[] = [];
+  const ends: number[] = [];
+  let start = 0;
+  for (let i = 0; i <= filePath.length; i++) {
+    const c = filePath[i];
+    if (i === filePath.length || c === "/" || c === "\\") {
+      values.push(normPath(filePath.slice(start, i)));
+      ends.push(i);
+      start = i + 1;
+    }
+  }
+  for (let i = 0; i + 2 < values.length; i++) {
+    if (values[i] === "workspace" && values[i + 1] === "apps" && values[i + 2] !== "") {
+      return {
+        slug: values[i + 2],
+        dir: filePath.slice(0, ends[i + 2]),
+        workspaceDir: filePath.slice(0, ends[i]),
+      };
+    }
+  }
+  return null;
+}
+
+/** The slug of the `workspace/apps/<slug>` app a path belongs to, or null. */
+export function workspaceAppSlug(filePath: string): string | null {
+  return findWorkspaceApp(filePath)?.slug ?? null;
+}
+
+/**
+ * The `…/workspace/apps/<slug>` directory a path lives under — in the path's OWN
+ * spelling — or null when it isn't inside a workspace app.
+ *
+ * `workspaceRoot` ANCHORS the shape to the agent's REAL workspace: only
+ * `<workspaceRoot>/apps/<slug>` counts. Unanchored, this is a path-SHAPE guess,
+ * and `workspace/apps/<name>` is also the ordinary Turborepo/Nx layout under a
+ * personal `~/workspace` — calling a user's own monorepo an agent app puts a
+ * ceiling BELOW its manifest and the project silently stops being verified at
+ * all. Omitting the root yields NO ceiling (the pre-ceiling behavior) rather
+ * than a guess: the caller that knows the workspace passes it.
+ */
+export function workspaceAppDir(filePath: string, workspaceRoot?: string): string | null {
+  const found = findWorkspaceApp(filePath);
+  if (!found) return null;
+  if (workspaceRoot !== undefined && !sameDir(found.workspaceDir, workspaceRoot)) return null;
+  return found.dir;
+}
+
+function sameDir(a: string, b: string): boolean {
+  return normPath(a).replace(/\/+$/, "") === normPath(b).replace(/\/+$/, "");
+}
+
 /** Walk up from a file's directory to the nearest ancestor holding any build
- *  manifest. Returns null if none up to the filesystem root. */
-function nearestProjectDir(filePath: string, fs: FsProbe): string | null {
+ *  manifest. Returns null if none up to the filesystem root.
+ *
+ *  A file inside a workspace app stops at that app's own directory: above it is
+ *  the WORKSPACE root, which holds LAX's own package.json and tsconfig.json. An
+ *  unconfined walk-up out of an app with no manifest of its own (a static HTML
+ *  clone, a plain-JS app) therefore anchored on LAX's TypeScript project and the
+ *  gate type-checked src/ari-kernel/*.ts, telling the agent its edits had broken
+ *  a project it never opened. An app that declares no verifiable project has
+ *  nothing to verify — that's a no-op (null), never someone else's build.
+ *
+ *  The ceiling exists ONLY when the caller supplies the agent's real workspace
+ *  root — see workspaceAppDir. With no root there is no ceiling and the walk-up
+ *  is unconfined, exactly as it was before the ceiling existed. */
+function nearestProjectDir(filePath: string, fs: FsProbe, workspaceRoot?: string): string | null {
+  const appDir = workspaceRoot === undefined ? null : workspaceAppDir(filePath, workspaceRoot);
   let dir = dirname(filePath);
   // dirname("/") === "/" — stop when we stop ascending.
   for (let prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
     for (const m of MANIFESTS) {
       if (fs.exists(joinPath(dir, m))) return dir;
     }
+    if (appDir && sameDir(dir, appDir)) return null; // never escape the edited app
   }
   return null;
 }
@@ -129,12 +231,16 @@ function commandForDir(dir: string, fs: FsProbe): BuildCommand | null {
  * primary edit target); ties resolve to the first encountered. Returns null
  * when no buildable project is found — the caller must then NOT fabricate a
  * verification, only report it couldn't run one.
+ *
+ * `workspaceRoot` (the agent's real workspace dir) confines the walk-up inside
+ * an agent app; omitted, the walk-up is unconfined. Passed IN rather than read
+ * here so this module stays pure — no I/O, no config.
  */
-export function detectBuildCommand(editedPaths: string[], fs: FsProbe): BuildCommand | null {
+export function detectBuildCommand(editedPaths: string[], fs: FsProbe, workspaceRoot?: string): BuildCommand | null {
   const counts = new Map<string, number>();
   const order: string[] = [];
   for (const p of editedPaths) {
-    const dir = nearestProjectDir(p, fs);
+    const dir = nearestProjectDir(p, fs, workspaceRoot);
     if (!dir) continue;
     if (!counts.has(dir)) order.push(dir);
     counts.set(dir, (counts.get(dir) ?? 0) + 1);
@@ -169,8 +275,12 @@ export function isTestFile(path: string): boolean {
  * pass — never fabricates a verdict). Complements detectBuildCommand: the gate
  * type-checks first, then runs edited tests, because a type-clean edit whose own
  * test is red is not done.
+ *
+ * `workspaceRoot` carries the SAME meaning as in detectBuildCommand — both share
+ * nearestProjectDir, so both must be anchored the same way or the two halves of
+ * one gate would disagree about where a project ends.
  */
-export function detectTestCommand(editedPaths: string[], fs: FsProbe): TestCommand | null {
+export function detectTestCommand(editedPaths: string[], fs: FsProbe, workspaceRoot?: string): TestCommand | null {
   const testFiles = editedPaths.filter(isTestFile);
   if (testFiles.length === 0) return null;
 
@@ -179,7 +289,7 @@ export function detectTestCommand(editedPaths: string[], fs: FsProbe): TestComma
   const byDir = new Map<string, string[]>();
   const order: string[] = [];
   for (const p of testFiles) {
-    const dir = nearestProjectDir(p, fs);
+    const dir = nearestProjectDir(p, fs, workspaceRoot);
     if (!dir) continue;
     if (!byDir.has(dir)) { byDir.set(dir, []); order.push(dir); }
     byDir.get(dir)!.push(p);

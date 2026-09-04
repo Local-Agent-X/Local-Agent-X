@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { setSessionWorkRoot, clearSessionWorkRoot } from "../../workspace/paths.js";
+import { uploadsDir } from "../../config.js";
 
 // The gate writes its verdict into the verify-gate ledger and reads edited
 // paths from it. Mock that seam so the test isolates the gate's own control
@@ -34,10 +36,18 @@ import type { Op } from "../../ops/types.js";
 
 const op = { id: "op-bv" } as unknown as Op;
 
+// Edited paths go through the canonical resolver UNCONDITIONALLY, and resolve()
+// drive-prefixes a POSIX-absolute fixture path on win32. So the fixture project
+// is spelled through the same resolve() the gate applies, and probes compare
+// normalized — the tests then describe the same tree on either host.
+const PROJ = resolve("/proj");
+const nrm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+const at = (rel: string) => nrm(resolve(PROJ, rel));
+
 // A probe describing one buildable TS project at /proj (typecheck script).
 const probe: FsProbe = {
-  exists: (p) => p === "/proj/package.json",
-  readJson: (p) => (p === "/proj/package.json" ? { scripts: { typecheck: "tsc --noEmit" } } : null),
+  exists: (p) => nrm(p) === at("package.json"),
+  readJson: (p) => (nrm(p) === at("package.json") ? { scripts: { typecheck: "tsc --noEmit" } } : null),
 };
 
 const RED = async () => ({ ok: false, output: "src/a.ts(3,5): error TS2339: Property 'x' does not exist." });
@@ -46,8 +56,8 @@ const GREEN = async () => ({ ok: true, output: "" });
 // A project at /proj with a typecheck script AND a local vitest binary — so a
 // test file edit triggers the edited-test pass on top of the type-check.
 const probeWithVitest: FsProbe = {
-  exists: (p) => p === "/proj/package.json" || p === "/proj/node_modules/.bin/vitest",
-  readJson: (p) => (p === "/proj/package.json" ? { scripts: { typecheck: "tsc --noEmit" } } : null),
+  exists: (p) => nrm(p) === at("package.json") || nrm(p) === at("node_modules/.bin/vitest"),
+  readJson: (p) => (nrm(p) === at("package.json") ? { scripts: { typecheck: "tsc --noEmit" } } : null),
 };
 
 // An exec that answers by command: the vitest run vs the type-check.
@@ -67,7 +77,7 @@ describe("runBuildVerifyGate", () => {
   it("on a RED build: injects errors, asks to retry, records the verdict as failed", async () => {
     const exec = vi.fn(RED);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
     expect(r.shouldRetry).toBe(true);
     expect(r.capReached).toBe(false);
     expect(r.nudge).toContain("npm run typecheck");
@@ -132,8 +142,8 @@ describe("runBuildVerifyGate", () => {
   it("edited test that FAILS: type-check passes but the test is red → nudge + retry, records partial", async () => {
     const exec = byCommand(true, false);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
-    expect(exec).toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
+    expect(exec).toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", PROJ);
     expect(r.shouldRetry).toBe(true);
     expect(r.verifiedClean).toBe(false);
     expect(r.nudge).toMatch(/test you touched is FAILING/i);
@@ -157,7 +167,7 @@ describe("runBuildVerifyGate", () => {
     expect(r.shouldRetry).toBe(true);
     expect(r.nudge).toContain("TS2339");
     expect(exec).toHaveBeenCalledTimes(1); // type-check only; test pass skipped while red
-    expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", "/proj");
+    expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", PROJ);
   });
 });
 
@@ -218,7 +228,7 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
     vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce([]);
     const exec = vi.fn(GREEN);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
     expect(r.verifiedClean).toBe(true);
     expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", true);
   });
@@ -234,7 +244,7 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
     expect(first.shouldRetry).toBe(true);
     expect(exec).not.toHaveBeenCalled();
     const second = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", "/proj");
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
     expect(second.shouldRetry).toBe(false);
     expect(second.verifiedClean).toBe(true);
     expect(recordOrchestratorVerify).toHaveBeenLastCalledWith("op-bv", true);
@@ -311,6 +321,78 @@ describe("runBuildVerifyGate — retry reframe (error-diff nudge)", () => {
   });
 });
 
+// Relative edited paths must resolve where the agent actually WROTE them — via
+// the canonical resolver, with the op's session. A worker anchored on a project
+// outside the data root registers a session work root; anchoring on the project
+// root instead pointed at a path that does not exist, and the project walk-up
+// then latched onto whatever unrelated manifest sat above it.
+describe("runBuildVerifyGate — relative edited-path resolution", () => {
+  beforeEach(() => { _resetBuildVerifyState(); vi.clearAllMocks(); });
+
+  it("anchors a relative edited path on the session work root, not the project root", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "bv-root-")));
+    setSessionWorkRoot("sess-bv", dir);
+    try {
+      const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+      const root = norm(dir);
+      // Only the work root is a project; nothing above it is.
+      const workRootProbe: FsProbe = {
+        exists: (p) => norm(p) === `${root}/package.json`,
+        readJson: (p) => (norm(p) === `${root}/package.json` ? { scripts: { typecheck: "tsc --noEmit" } } : null),
+      };
+      const exec = vi.fn(GREEN);
+      const sessionOp = { id: "op-bv", sessionId: "sess-bv" } as unknown as Op;
+      const r = await runBuildVerifyGate(sessionOp, { editedPaths: ["src/a.ts"], probe: workRootProbe, exec });
+      expect(exec).toHaveBeenCalledWith("npm run typecheck", dir);
+      expect(r.verifiedClean).toBe(true);
+    } finally {
+      clearSessionWorkRoot("sess-bv");
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The PLATFORM-INDEPENDENT pin on the resolver being called UNCONDITIONALLY.
+  // resolveAgentPathFrom rewrites two absolute-LOOKING spellings before it ever
+  // reaches its own isAbsolute check (workspace/paths.ts): "/uploads/<file>",
+  // on every platform, and MSYS "/c/Users/…", on win32 only. An `isAbsolute(p) ?
+  // p : …` short-circuit ahead of it skips both, yielding a path that exists
+  // nowhere on disk ⇒ no manifest ⇒ the op is silently never verified. The MSYS
+  // case below can only be exercised on Windows, so this one carries the pin on
+  // Linux/macOS CI — restoring the short-circuit must fail on ANY host.
+  it("routes an absolute-looking /uploads ref through the canonical resolver", async () => {
+    const uploads = uploadsDir();
+    const uploadsProbe: FsProbe = {
+      exists: (p) => nrm(p) === `${nrm(uploads)}/package.json`,
+      readJson: (p) => (nrm(p) === `${nrm(uploads)}/package.json` ? { scripts: { typecheck: "tsc --noEmit" } } : null),
+    };
+    const exec = vi.fn(GREEN);
+    const r = await runBuildVerifyGate(op, { editedPaths: ["/uploads/a.ts"], probe: uploadsProbe, exec });
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", uploads);
+    expect(r.verifiedClean).toBe(true);
+  });
+
+  // isAbsolute("/c/Users/…") is TRUE on win32, so the short-circuit above let
+  // MSYS-spelled paths skip the resolver too — the spelling this box's own Git
+  // Bash actually emits, which is why it gets its own case.
+  it("routes an MSYS-spelled absolute path through the canonical resolver", async (ctx) => {
+    if (process.platform !== "win32") ctx.skip("MSYS drive spelling is a win32-only hazard");
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "bv-msys-")));
+    try {
+      const msys = `/${dir[0].toLowerCase()}${dir.slice(2).replace(/\\/g, "/")}`;
+      const msysProbe: FsProbe = {
+        exists: (p) => nrm(p) === `${nrm(dir)}/package.json`,
+        readJson: (p) => (nrm(p) === `${nrm(dir)}/package.json` ? { scripts: { typecheck: "tsc --noEmit" } } : null),
+      };
+      const exec = vi.fn(GREEN);
+      const r = await runBuildVerifyGate(op, { editedPaths: [`${msys}/src/a.ts`], probe: msysProbe, exec });
+      expect(exec).toHaveBeenCalledWith("npm run typecheck", dir);
+      expect(r.verifiedClean).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("groundTruthSizesNote — real file sizes when the model quotes one", () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -322,11 +404,32 @@ describe("groundTruthSizesNote — real file sizes when the model quotes one", (
       const file = join(dir, "big.ts");
       writeFileSync(file, "const x = 1;\n".repeat(137));
       vi.mocked(opEditedSourcePaths).mockReturnValueOnce([file]);
-      const note = groundTruthSizesNote("op-bv", "Done — big.ts is now 294 lines, clean split.");
+      const note = groundTruthSizesNote("op-bv", "Done — big.ts is now 294 lines, clean split.", undefined);
       expect(note).not.toBeNull();
       expect(note).toContain("137 lines");
       expect(note).toContain("wc -l");
     } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The note resolves relative edited paths itself. Without the op's SESSION
+  // work root it fell back to the project root — a location that doesn't exist
+  // for a worker anchored elsewhere — readFileSync threw, and the whole
+  // authoritative note was silently dropped.
+  // (Ordered before the quotes-NO-size case below on purpose: that one returns
+  // early without ever calling the mock, leaving its mockReturnValueOnce queued
+  // for whichever test calls next.)
+  it("resolves a relative edited path through the op's session work root", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "bv-sess-size-")));
+    setSessionWorkRoot("sess-size", dir);
+    try {
+      writeFileSync(join(dir, "big.ts"), "const x = 1;\n".repeat(42));
+      vi.mocked(opEditedSourcePaths).mockReturnValueOnce(["big.ts"]);
+      const note = groundTruthSizesNote("op-bv", "Done — big.ts is 294 lines.", "sess-size");
+      expect(note).toContain("42 lines");
+    } finally {
+      clearSessionWorkRoot("sess-size");
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -337,7 +440,7 @@ describe("groundTruthSizesNote — real file sizes when the model quotes one", (
       const file = join(dir, "big.ts");
       writeFileSync(file, "const x = 1;\n".repeat(10));
       vi.mocked(opEditedSourcePaths).mockReturnValueOnce([file]);
-      expect(groundTruthSizesNote("op-bv", "Done — renamed the type across the repo, tsc clean.")).toBeNull();
+      expect(groundTruthSizesNote("op-bv", "Done — renamed the type across the repo, tsc clean.", undefined)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -345,6 +448,6 @@ describe("groundTruthSizesNote — real file sizes when the model quotes one", (
 
   it("returns null when a size was quoted but no source file was edited", () => {
     vi.mocked(opEditedSourcePaths).mockReturnValueOnce([]);
-    expect(groundTruthSizesNote("op-bv", "The file is 400 lines.")).toBeNull();
+    expect(groundTruthSizesNote("op-bv", "The file is 400 lines.", undefined)).toBeNull();
   });
 });

@@ -84,7 +84,7 @@ export function applyTerminalEpilogue(
   // real sizes as the authoritative last word so a fabricated count can't stand.
   // Fires whether or not the model self-verified; silent when no size was quoted.
   if (terminalReason !== null && !endedPartial) {
-    const sizesNote = groundTruthSizesNote(op.id, assistantText);
+    const sizesNote = groundTruthSizesNote(op.id, assistantText, op.sessionId);
     if (sizesNote) {
       publishStreamChunk(op.id, { delta: `\n\n${sizesNote}` });
       allMessages.push({

@@ -15,12 +15,12 @@
 // clears on op terminal via clearBuildVerifyStateForOp (state-machine.ts).
 
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
 import { detectBuildCommand, detectTestCommand, type FsProbe } from "../../agent-guards/index.js";
 import { opEditedSourcePaths, recordOrchestratorVerify } from "../middlewares/verify-gate.js";
 import { opOutstandingIntroducedErrors } from "../middlewares/post-edit-diagnostics.js";
 import type { FileDiagnostic } from "../../language-intel/index.js";
-import { projectRoot } from "../../workspace/paths.js";
+import { resolveAgentPath } from "../../workspace/paths.js";
+import { workspaceRoot } from "../../config.js";
 import { bashTool } from "../../tools/shell-tool.js";
 import { statusOf } from "../../tools/result-helpers.js";
 import { createLogger } from "../../logger.js";
@@ -201,73 +201,9 @@ function formatTestFailuresForAgent(command: string, cwd: string, output: string
   );
 }
 
-interface EditedFileSize {
-  /** Path as the model would refer to it (relative to the build cwd when possible). */
-  display: string;
-  /** Line count the way `wc -l` reports it (newline count). */
-  lines: number;
-}
-
-/** Cap on files enumerated in the confirmation so a wide sweep doesn't flood the
- *  transcript; the truncation is disclosed. */
-const MAX_LISTED_FILES = 25;
-
-/**
- * Measure the on-disk line count of each edited file, `wc -l` semantics (newline
- * count) — the exact number the model or the user would get running `wc -l`, so
- * a fabricated size ("this file is 294 lines" when it's 588) is contradicted by
- * the same measure. Deleted / unreadable paths are skipped (a split that removed
- * a file has no size to report).
- */
-function measureEditedFiles(editedPaths: readonly string[], cwd: string): EditedFileSize[] {
-  const out: EditedFileSize[] = [];
-  for (const p of editedPaths) {
-    let text: string;
-    try {
-      text = readFileSync(p, "utf-8");
-    } catch {
-      continue;
-    }
-    const lines = text.match(/\n/g)?.length ?? 0;
-    const display = p.startsWith(cwd) ? p.slice(cwd.length).replace(/^[/\\]+/, "") : p;
-    out.push({ display, lines });
-  }
-  return out;
-}
-
-/** A line-count claim in prose: "294 lines", "530 LOC", "under 400 lines". Cheap
- *  structural trigger — a false positive only adds a (correct) sizes note; a miss
- *  degrades to today's silence. */
-const SIZE_CLAIM_RE = /\b\d{2,}\s*(?:lines?|loc)\b/i;
-
-/**
- * Ground-truth file sizes as an authoritative op-end note — the counterpart to
- * the claim-verify guards, which catch a lie about what a TOOL did but not a lie
- * about what a FILE is (its size). When the model's own summary quotes a line
- * count ("AgentController.ts is 294 lines" when it's 588), the harness measures
- * the edited files itself (`wc -l` semantics) and states the real numbers, so a
- * fabricated count can't be the last word. Fires WHETHER OR NOT the model
- * self-verified (unlike the build gate) — it keys on the reply making a size
- * claim, not on the build path. Silent (null) when the reply quoted no size or no
- * edited file is readable, so it adds zero noise to the ~all edits where size was
- * never discussed.
- */
-export function groundTruthSizesNote(opId: string, assistantText: string): string | null {
-  if (!SIZE_CLAIM_RE.test(assistantText)) return null;
-  const paths = opEditedSourcePaths(opId).map((p) => (isAbsolute(p) ? p : resolve(projectRoot(), p)));
-  if (paths.length === 0) return null;
-  const sizes = measureEditedFiles(paths, projectRoot());
-  if (sizes.length === 0) return null;
-  const listed = sizes.slice(0, MAX_LISTED_FILES);
-  const more = sizes.length - listed.length;
-  const rows = listed.map((s) => `  - ${s.display} — ${s.lines} lines`).join("\n");
-  return (
-    `Ground-truth size of the files edited this task, measured on disk now ` +
-    `(matches \`wc -l\`) — trust these over any remembered or estimated line counts:\n` +
-    rows +
-    (more > 0 ? `\n  - … and ${more} more` : "")
-  );
-}
+// The ground-truth-sizes op-end note lives in build-sizes.ts (this file is at
+// the 400-LOC gate); re-exported so terminal-epilogue keeps one import site.
+export { groundTruthSizesNote } from "./build-sizes.js";
 
 /** Green-path counterpart to formatBuildErrorsForAgent: the model edited source
  *  but couldn't self-verify (blocked from running the build on source paths), so
@@ -321,7 +257,14 @@ const NO_RETRY: BuildVerifyGateResult = { nudge: "", shouldRetry: false, capReac
  */
 export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}): Promise<BuildVerifyGateResult> {
   const raw = opts.editedPaths ?? opEditedSourcePaths(op.id);
-  const editedPaths = raw.map((p) => (isAbsolute(p) ? p : resolve(projectRoot(), p)));
+  // Resolve through the CANONICAL agent-path resolver, with the op's session —
+  // the same function and anchor the file tools used to WRITE these files.
+  // UNCONDITIONALLY, never behind an isAbsolute() short-circuit: the resolver
+  // handles "/uploads/<file>" (any platform) and MSYS "/c/Users/…" (win32)
+  // BEFORE its own isAbsolute check (workspace/paths.ts) precisely because both
+  // read as absolute. Skipping it on those yields a path that doesn't exist on
+  // disk ⇒ no manifest found ⇒ the op is silently never verified.
+  const editedPaths = raw.map((p) => resolveAgentPath(p, op.sessionId));
   if (editedPaths.length === 0) return NO_RETRY;
 
   // Red-path result: record the partial verdict, then loop (under cap) or stop
@@ -351,7 +294,14 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   }
 
   const probe = opts.probe ?? realProbe;
-  const detected = detectBuildCommand(editedPaths, probe);
+  // The agent's REAL workspace dir, so the "don't escape the edited app" ceiling
+  // is anchored to `<workspace>/apps/<slug>` instead of matching that path SHAPE
+  // anywhere — a user's own `~/workspace/apps/web` monorepo is not an agent app,
+  // and ceilinged below its manifest it would stop being verified at all. Read
+  // here, not in the detector: that module is pure (injected FsProbe, no I/O).
+  // Same spelling resolveAgentPath anchors relative paths to, above.
+  const wsRoot = workspaceRoot();
+  const detected = detectBuildCommand(editedPaths, probe, wsRoot);
   if (!detected) {
     logger.debug(`op=${op.id} edited source but no buildable project found in ${editedPaths.length} path(s) — can't self-verify`);
     return NO_RETRY;
@@ -372,7 +322,7 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   // 2. If the op edited a test file, run THOSE tests too. A type-clean change
   //    whose own test is red is not done — and the model couldn't run the test
   //    itself (blocked from shell on source paths), so it never saw the failure.
-  const testCmd = detectTestCommand(editedPaths, probe);
+  const testCmd = detectTestCommand(editedPaths, probe, wsRoot);
   if (testCmd) {
     const test = await exec(testCmd.command, testCmd.cwd);
     logger.info(`op=${op.id} ran \`${testCmd.command}\` in ${testCmd.cwd} → ${test.ok ? "PASSED" : "FAILED"} (retry ${getBuildVerifyRetries(op.id)})`);

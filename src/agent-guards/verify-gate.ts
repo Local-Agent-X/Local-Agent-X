@@ -15,7 +15,7 @@
 // test-file deletions and exposes a pure decision (decideDeletedTest); the
 // dodge-vs-legit-cleanup judgment itself is an async LLM call in the middleware.
 
-import { isTestFile } from "./build-command.js";
+import { isTestFile, normPath, workspaceAppSlug } from "./build-command.js";
 import { evaluateClaimGrounding, type EvidenceKind } from "./claim-grounding.js";
 
 /** Normalized view of one tool call + its dispatch outcome for a turn. */
@@ -120,15 +120,6 @@ const HTTP_SMOKE_CMD_RE =
 
 export function isSourceFile(filePath: string): boolean {
   return SOURCE_EXT_RE.test(filePath);
-}
-
-function normPath(s: string): string {
-  return s.replace(/\\/g, "/").toLowerCase();
-}
-
-function workspaceAppSlug(filePath: string): string | null {
-  const m = normPath(filePath).match(/(?:^|\/)workspace\/apps\/([^/]+)/);
-  return m?.[1] ?? null;
 }
 
 function verifyTargetsEditedApp(command: string, cwd: string | undefined, editedPaths: readonly string[]): boolean {

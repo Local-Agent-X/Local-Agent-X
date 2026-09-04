@@ -113,6 +113,7 @@ const EXPECTED_ORDER = [
   "post-turn-detector",
   "post-edit-diagnostics",
   "external-change-diff",
+  "app-design-guard",
   "dead-end",
   "repeat-failure",
   "thrash-guard",

@@ -72,6 +72,35 @@ export const DESIGN_CRAFT = [
   "• CONTENT POLISH: use realistic sample content, never 'lorem ipsum' or 'Item 1'; format numbers (thousands separators, currency, aligned decimals); and make sure long strings truncate or wrap cleanly instead of breaking the layout.",
 ].join("\n");
 
+/**
+ * Techniques — the modern CSS a model does not reach for on its own.
+ *
+ * Separate from CRAFT and the anti-patterns because it answers a third
+ * question. CRAFT says what polished looks like; the anti-patterns say what to
+ * avoid; this says which mechanism to build it WITH. Left unstated, a model
+ * writes the CSS that dominates its training data — four breakpoints, viewport
+ * media queries for components, full-width paragraphs, a focus ring that
+ * follows the mouse — and the result is dated in a way no amount of palette
+ * fixes. Every rule here is a widely-available feature, no polyfill and no
+ * fallback needed; anything still uneven across browsers is deliberately left
+ * out rather than shipped as progressive enhancement nobody tests.
+ *
+ * Applied to EVERY build, create and update, archetype-independent.
+ */
+export const DESIGN_TECHNIQUES = [
+  "TECHNIQUES — build the design with these, not with the defaults (apply to every build):",
+  "• FLUID, NOT STEPPED: express the page title and section padding as `clamp(<small-screen>, <preferred vw>, <large-screen>)`, where the size the DESIGN SYSTEM states is the large-screen end; body and label sizes stay exactly as given. The layout must hold at every width between 375 and 1440, not only at four of them.",
+  "• CONTAINER QUERIES: a component sizes itself to ITS CONTAINER, not the viewport — `container-type: inline-size` on the wrapper, then `@container (min-width: …)` for the component's own breaks. The same card in a sidebar and at full width must both read correctly without knowing where it is. Keep viewport media queries for page-level layout only.",
+  "• INTRINSIC GRIDS: lay card grids out with `grid-template-columns: repeat(auto-fit, minmax(<min>, 1fr))` so they reflow with no breakpoint math, and size widths with min()/max()/clamp() instead of fixed pixel columns.",
+  "• MEASURE: cap running text at about 65ch. A paragraph spanning a 1440px window is the fastest sign nobody set a line length.",
+  "• TEXT WRAPPING: `text-wrap: balance` on headings so the last line isn't a single orphaned word, and `text-wrap: pretty` on body copy. Two declarations, and the typography stops looking accidental.",
+  "• FOCUS RING ON :focus-visible: style `:focus-visible`, not `:focus`, so keyboard users get the ring and a mouse click does not leave one behind. Give it `outline-offset` so it sits clear of the control's own edge.",
+  "• NATIVE CONTROLS JOIN THE DESIGN: set `accent-color: var(--accent)` so checkboxes, radios and range inputs match the system instead of shipping browser blue. Validate with `:user-invalid`, never `:invalid` — the latter marks a field red before the user has typed anything.",
+  "• NO LAYOUT SHIFT: every image and video carries width/height attributes or an `aspect-ratio` plus `object-fit: cover`, so nothing reflows as media loads. Below the fold, add `loading=\"lazy\"` and `decoding=\"async\"`.",
+  "• STICKY HEADER OFFSET: if the header is sticky, give anchor targets `scroll-margin-top` equal to its height — otherwise every in-page link lands with its heading hidden underneath.",
+  "• STYLE FROM CONTENT WITH :has(): let a parent react to what it contains (`.card:has(img)`, `.field:has(:user-invalid)`) instead of adding a JavaScript class to say the same thing.",
+].join("\n");
+
 export interface DesignArchetype {
   /** Stable slug used by callers and tests. */
   id: string;

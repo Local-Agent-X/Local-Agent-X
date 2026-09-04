@@ -12,7 +12,7 @@ import { join, relative } from "node:path";
 import type { AppTier } from "./app-tier.js";
 import { inferFrameworkFromPrompt, type DetectedFramework } from "./framework-detect.js";
 import { frontendScaffoldRecipeLines, harnessOwnsScaffold } from "./framework-scaffold.js";
-import { selectDesignBrief, DESIGN_ANTI_PATTERNS, DESIGN_CRAFT } from "./design-brief.js";
+import { selectDesignBrief, DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, DESIGN_TECHNIQUES } from "./design-brief.js";
 
 const WEBSITE_NOUN_IN_PROMPT_RE =
   /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
@@ -233,6 +233,8 @@ ${NATIVE_BUILD_RULE_LINES.join("\n")}${tierBlock}
 - Do NOT ask questions — just build it based on the instructions
 
 ${design ? `${design.brief}\n\n` : ""}${DESIGN_CRAFT}
+
+${DESIGN_TECHNIQUES}
 
 ${DESIGN_ANTI_PATTERNS}
 

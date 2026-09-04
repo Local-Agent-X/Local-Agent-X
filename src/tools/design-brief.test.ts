@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, selectDesignBrief } from "./design-brief.js";
+import { DESIGN_ANTI_PATTERNS, DESIGN_CRAFT, DESIGN_TECHNIQUES, selectDesignBrief } from "./design-brief.js";
 
 describe("selectDesignBrief — archetype classification", () => {
   const cases: Array<[string, string]> = [
@@ -134,5 +134,30 @@ describe("DESIGN_CRAFT — the positive half (what 'polished' concretely means)"
   it("does NOT repeat the anti-patterns — icons/contrast/motion specifics live there, not here", () => {
     expect(DESIGN_CRAFT).not.toContain("4.5:1");
     expect(DESIGN_CRAFT).not.toContain("prefers-reduced-motion");
+  });
+});
+
+describe("DESIGN_TECHNIQUES — the modern-CSS mandate", () => {
+  it("names each mechanism a model will not reach for unprompted", () => {
+    for (const feature of [
+      "clamp(", "@container", "text-wrap: balance", "text-wrap: pretty", "65ch",
+      ":focus-visible", "accent-color", ":user-invalid", "aspect-ratio",
+      "scroll-margin-top", ":has(",
+    ]) {
+      expect(DESIGN_TECHNIQUES, `missing ${feature}`).toContain(feature);
+    }
+  });
+
+  it("frames fluid sizing so it cannot fight the archetype's exact type scale", () => {
+    // Both blocks reach the same build. "Make the type fluid" against "implement
+    // these EXACT sizes" is a contradiction the model resolves by picking one;
+    // the rule only works if it says WHICH value the stated size is.
+    expect(DESIGN_TECHNIQUES).toMatch(/large-screen end/);
+    expect(DESIGN_TECHNIQUES).toMatch(/body and label sizes stay exactly as given/);
+  });
+
+  it("stays clear of the craft and anti-pattern blocks it sits beside", () => {
+    expect(DESIGN_TECHNIQUES).not.toContain(DESIGN_CRAFT);
+    expect(DESIGN_TECHNIQUES).not.toContain(DESIGN_ANTI_PATTERNS);
   });
 });

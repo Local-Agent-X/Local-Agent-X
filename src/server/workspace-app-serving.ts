@@ -1,13 +1,13 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { jsonResponse } from "../server-utils.js";
-import { confineToDir } from "../security/layer/index.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
 import { ensureDevServerRunning, readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
 import { pidsOnPort } from "../tools/process-session.js";
 import { registerFrameworkDevServerFromDisk } from "../canonical-loop/public/build-adapters.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
+import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, resolveAppStaticFile } from "./app-serving-policy.js";
 import { decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import type { LAXConfig } from "../types.js";
@@ -33,7 +33,6 @@ const DEFAULT_DEPS: AppServingDeps = {
     });
   },
 };
-const CONTENT_TYPES: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml", ico: "image/x-icon", webp: "image/webp", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", woff: "font/woff", woff2: "font/woff2", map: "application/json", wasm: "application/wasm", txt: "text/plain" };
 
 export function serveWorkspaceApp(
   method: string,
@@ -83,30 +82,23 @@ export function serveWorkspaceApp(
 
   const serveRoot = distDir ?? workspace;
   const servePathname = distDir ? (url.pathname.slice(`/apps/${appId}`.length) || "/") : url.pathname;
-  let appFile = confineToDir(serveRoot, "." + servePathname);
-  if (!appFile) { json(403, { error: "Path traversal blocked" }); return true; }
-  try {
-    if (existsSync(appFile) && statSync(appFile).isDirectory()) {
-      const index = confineToDir(serveRoot, join(appFile, "index.html"));
-      if (index && existsSync(index)) appFile = index;
-    }
-  } catch {}
-  if (distDir && !existsSync(appFile) && !/\.[a-z0-9]+$/i.test(servePathname)) {
-    const index = confineToDir(serveRoot, "index.html");
-    if (index) appFile = index;
-  }
-  if (!existsSync(appFile)) return false;
+  // Shared with the app_build smoke gate's local origin (app-serving-policy.ts)
+  // so the gate resolves a request to the same file this route would.
+  const resolved = resolveAppStaticFile(serveRoot, servePathname, distDir !== null);
+  if (resolved.kind === "forbidden") { json(403, { error: "Path traversal blocked" }); return true; }
+  if (resolved.kind === "not-found") return false;
+  const appFile = resolved.path;
 
   const ext = appFile.split(".").pop() || "";
-  const headers: Record<string, string> = { "Content-Type": CONTENT_TYPES[ext] || "application/octet-stream" };
+  const headers: Record<string, string> = { "Content-Type": APP_CONTENT_TYPES[ext] || "application/octet-stream" };
   if (ext !== "html") {
     res.writeHead(200, headers); res.end(readFileSync(appFile)); return true;
   }
 
   if (appId) { try { deps.ensureDevServerRunning(appId); } catch {} }
-  headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'";
-  headers["X-Content-Type-Options"] = "nosniff"; headers["X-Frame-Options"] = "SAMEORIGIN"; headers["Referrer-Policy"] = "no-referrer"; headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
-  headers["Cache-Control"] = "no-cache, must-revalidate"; headers["Pragma"] = "no-cache";
+  // Shared with the app_build smoke gate's local origin (app-serving-policy.ts)
+  // so the gate loads a build under the SAME policy this route serves it with.
+  Object.assign(headers, WORKSPACE_APP_HTML_HEADERS);
   let html = readFileSync(appFile, "utf-8");
   const connectorCapability = deriveConnectorCapability(config.authToken);
   const errorPipe = req.headers["x-lax-tunnel"] && appId ? phoneErrorPipeScript(publicDir, appId) : "";

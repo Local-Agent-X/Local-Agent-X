@@ -370,6 +370,30 @@ describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", 
     expect(codeOf(nothing.reports)).toBe("app_no_servable_target");
   });
 
+  // A bind failure on the build box is a verdict about the MACHINE. Reported
+  // under app_smoke_failed it is indistinguishable from a broken app, and the
+  // only thing saying otherwise is English inside the message. Third code, same
+  // precedent as app_no_servable_target.
+  it("an ENVIRONMENT failure carries its own code, not the broken-app one [regression]", async () => {
+    const { result, reports } = await runWith({
+      verdict: "fail",
+      failureKind: "environment",
+      detail: "The smoke gate could not start its local origin, so this build was NOT verified: EADDRINUSE",
+    });
+    expect(result.terminalReason).toBe("error");
+    const err = reports.find(r => r.kind === "error") as { code: string; retryable: boolean };
+    expect(err.code).toBe("app_smoke_environment_failed");
+    expect(err.code).not.toBe("app_smoke_failed");
+    // Not retryable: a retryable report only re-drives a turn in which nothing
+    // happened, and this one has already streamed and finalized evidence.
+    expect(err.retryable).toBe(false);
+  });
+
+  it("a plain smoke failure still carries the broken-app code — the two never collapse", async () => {
+    const { reports } = await runWith({ verdict: "fail", detail: "root never mounted" });
+    expect((reports.find(r => r.kind === "error") as { code: string }).code).toBe("app_smoke_failed");
+  });
+
   it("a dev-server smoke failure flips done to error with evidence, same as static", async () => {
     const appDir = makeViteAppDir();
     const adapter = new AppBuildVerifyAdapter(

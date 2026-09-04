@@ -3,8 +3,16 @@
  * (AppBuildVerifyAdapter wires these; split out for the 400-LOC cap).
  *
  * Two smoke targets, one evaluator:
- *   - static builds smoke `file://index.html` in "strict" mode — any console
- *     error fails, exactly the original see-before-done contract.
+ *   - static builds smoke a LOCAL HTTP ORIGIN serving the build at the same
+ *     `/apps/<id>/` mount, under the same response policy and the same
+ *     request→file resolution the LAX server uses (app-build-smoke-origin.ts)
+ *     in "strict" mode — any console error fails, exactly the original
+ *     see-before-done contract. Chromium logs a CSP refusal and a 404 asset as
+ *     console errors, so both land in that net. This used to be
+ *     `file://index.html`, where there is neither a CSP nor a route shape: a
+ *     cross-origin fetch the served app can never make succeeded, and a
+ *     root-absolute `/main.js` resolved off the filesystem root, so the gate
+ *     observed a page the user would never get.
  *   - framework/full-stack builds smoke their LIVE dev-server proxy URL
  *     (`/apps/<name>/` — the same URL the user's Open button hits, which
  *     lazily boots the server) in "hard-signals" mode: uncaught pageerrors,
@@ -14,12 +22,16 @@
  *     Those console errors ride to the vision judge as notes instead.
  *
  * A dev server that never becomes ready is a FAIL, not a skip — the tier's
- * whole promise is a live server. Missing chromium stays a skip: an
- * environment problem is never a build verdict.
+ * whole promise is a live server.
+ *
+ * OUT OF SCOPE, parked as a product decision: missing chromium is still a skip,
+ * and a skip ships the build unverified. Whether a box with no browser may
+ * build apps at all is not a question this file gets to answer.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { smokeUrl, type SmokeResult } from "../../auto-build/scenario-scorer/smoke.js";
+import { startStaticSmokeOrigin, staticSmokeServeRoot, type SmokeOrigin } from "./app-build-smoke-origin.js";
 
 const SMOKE_LOAD_TIMEOUT_MS = 30_000;
 /** Generous because the proxy's first hit lazily COLD-STARTS the dev server —
@@ -29,7 +41,8 @@ const DEV_SERVER_POLL_MS = 1_000;
 
 export interface AppSmokeGateSpec {
   appDir: string;
-  /** Live URL to smoke (framework/full-stack builds). Absent → file://index.html. */
+  /** Live URL to smoke (framework/full-stack builds). Absent → the app is
+   *  served from a throwaway local origin under the real workspace-app policy. */
   url?: string;
   /** strict: console errors fail (static builds). hard-signals: only
    *  pageerrors / mount / interaction fail; console errors go to the judge. */
@@ -40,6 +53,12 @@ export interface AppSmokeGateOutcome {
   verdict: "pass" | "fail" | "skipped";
   /** fail → actionable error for the fixer; skipped → why the gate couldn't run. */
   detail?: string;
+  /** fail only: what the verdict is ABOUT. Default "app" — the build is broken.
+   *  "environment" — the gate itself could not run on THIS machine (e.g. no
+   *  loopback port to bind), so the build is unverified and the app is not the
+   *  thing to change. The prose detail says so; this is the same statement on
+   *  the machine-readable channel, so a caller need not parse English. */
+  failureKind?: "app" | "environment";
   /** Render-evidence PNG of the initial load, when captured. */
   screenshotPath?: string;
   /** Render-evidence PNG taken after clicking the primary action, when captured. */
@@ -124,13 +143,15 @@ async function waitForDevServer(url: string): Promise<{ ready: boolean; last: st
 }
 
 /**
- * Load the built app headlessly and judge what happened. file:// like the
- * chunk-review build-exec gate for static builds; the live proxy URL for
- * framework builds (smokeUrl handles both schemes).
+ * Load the built app headlessly and judge what happened. Static builds get a
+ * throwaway local origin serving them under the real workspace-app policy; the
+ * live proxy URL is used for framework builds (which the LAX server already
+ * serves under that policy itself).
  */
 export const runAppSmokeGate: AppSmokeGateRunner = async (spec) => {
   const { appDir, mode } = spec;
   let target: string;
+  let origin: SmokeOrigin | undefined;
   if (spec.url) {
     const ready = await waitForDevServer(spec.url);
     if (!ready.ready) {
@@ -144,7 +165,35 @@ export const runAppSmokeGate: AppSmokeGateRunner = async (spec) => {
     }
     target = spec.url;
   } else {
-    target = "file://" + resolve(appDir, "index.html").replace(/\\/g, "/");
+    // Ask about the file the browser will load: a finished static build serves
+    // its dist/, so a source-tree index.html is not the page under test.
+    const entry = resolve(staticSmokeServeRoot(appDir), "index.html");
+    if (!existsSync(entry)) {
+      return {
+        verdict: "fail",
+        detail:
+          `The build has no index.html at ${entry}, so there is nothing to open. It was reported APP_READY but ` +
+          `ships no page.`,
+      };
+    }
+    try {
+      origin = await startStaticSmokeOrigin(appDir);
+    } catch (e) {
+      // Port exhaustion, a firewall blocking loopback, EMFILE. NOT a statement
+      // about the build — but it must not be silently indistinguishable from a
+      // clean smoke either, because "skipped" ships the build unverified. Fail
+      // loudly and say plainly that this is the machine, not the code.
+      return {
+        verdict: "fail",
+        failureKind: "environment",
+        detail:
+          `The smoke gate could not start its local origin, so this build was NOT verified: ` +
+          `${(e as Error).message.slice(0, 200)}. This is an environment failure on the build machine ` +
+          `(no free loopback port, a firewall blocking 127.0.0.1, or too many open files) — not a defect in the app. ` +
+          `Fix the machine and re-run; do not "fix" the app for this.`,
+      };
+    }
+    target = origin.url;
   }
   const screenshotPath = join(appDir, ".lax-build", "smoke.png");
   const interactionScreenshotPath = join(appDir, ".lax-build", "smoke-2.png");
@@ -156,6 +205,8 @@ export const runAppSmokeGate: AppSmokeGateRunner = async (spec) => {
     });
   } catch (e) {
     return { verdict: "skipped", detail: `headless smoke unavailable: ${(e as Error).message.slice(0, 200)}` };
+  } finally {
+    await origin?.close();
   }
   return evaluateSmoke(smoke, mode);
 };
@@ -173,9 +224,9 @@ function evaluateSmoke(smoke: SmokeResult, mode: AppSmokeGateSpec["mode"]): AppS
   if (smoke.loadError) {
     return fail(`The built page failed to load headlessly (${smoke.loadError}). It was reported APP_READY but does not open.${evidence}`);
   }
-  // Strict (static file://): every console error fails — the page has no dev
-  // server to blame noise on. Hard-signals (live dev server): only UNCAUGHT
-  // errors fail; console chatter goes to the judge instead.
+  // Strict (static build on its own origin): every console error fails — the
+  // page has no dev server to blame noise on. Hard-signals (live dev server):
+  // only UNCAUGHT errors fail; console chatter goes to the judge instead.
   const hardErrors = mode === "strict" ? smoke.consoleErrors : smoke.pageErrors;
   const errorNoun = mode === "strict" ? "console" : "uncaught";
   if (hardErrors.length > 0) {

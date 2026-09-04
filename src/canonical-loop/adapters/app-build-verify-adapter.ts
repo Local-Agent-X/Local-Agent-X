@@ -8,11 +8,13 @@
  *      raw cross-origin fetch, unverified native parity. Static builds only —
  *      a framework scaffold has no flat HTML entry to scan.
  *   2. Headless smoke (see-before-done): actually LOAD the built app and
- *      observe it. Static builds load file://index.html in "strict" mode
- *      (any console error fails); framework/full-stack builds load their
- *      LIVE dev-server proxy URL in "hard-signals" mode (uncaught errors /
- *      mount fail; dev-server console chatter rides to the judge instead).
- *      Render evidence lands in .lax-build/smoke.png.
+ *      observe it. Static builds load over http from a throwaway local origin
+ *      that serves them at the real `/apps/<id>/` mount under the real
+ *      workspace-app CSP and request→file resolution (app-serving-policy.ts),
+ *      in "strict" mode (any console error fails); framework/full-stack builds
+ *      load their LIVE dev-server proxy URL in "hard-signals" mode (uncaught
+ *      errors / mount fail; dev-server console chatter rides to the judge
+ *      instead). Render evidence lands in .lax-build/smoke.png.
  *   3. Interact-then-re-smoke: a clean load clicks the page's primary action
  *      (semantic button role) and re-runs the checks — the maze-escape-3d
  *      class hid its breakage BEHIND the Start button, so the start screen
@@ -211,8 +213,9 @@ export class AppBuildVerifyAdapter implements Adapter {
     return this.smokeAndJudge(input, report, result, "strict");
   }
 
-  /** Layers 2–4 for one build: smoke (static file:// strict, or live
-   *  dev-server hard-signals), then the vision judge over the evidence. */
+  /** Layers 2–4 for one build: smoke (static build on a local origin under the
+   *  real serving policy, strict; or live dev-server, hard-signals), then the
+   *  vision judge over the evidence. */
   private async smokeAndJudge(
     input: TurnInput,
     report: (r: AdapterReport) => void,
@@ -255,7 +258,18 @@ export class AppBuildVerifyAdapter implements Adapter {
     if (smoke.verdict === "fail") {
       const detail = smoke.detail ?? "smoke failed";
       this.emitFailureEvidence(input, report, detail, shots);
-      report({ kind: "error", code: "app_smoke_failed", message: detail, retryable: false });
+      // Third distinct code, for the same reason app_no_servable_target is the
+      // second: "the app is broken" and "this machine could not run the gate"
+      // are structurally different outcomes, and a caller that reads only the
+      // code must not be told to fix an app that was never shown to be broken.
+      // retryable stays false. It is not a claim about transience (a bind
+      // failure often IS transient) — it is what the loop can act on: a
+      // retryable report only re-drives the turn when NOTHING happened
+      // (reported-adapter-recovery.ts), and by this point the build turn has
+      // streamed, finalized the evidence row, and run tools. A `true` here
+      // would be inert at best and would re-run a whole build at worst.
+      const code = smoke.failureKind === "environment" ? "app_smoke_environment_failed" : "app_smoke_failed";
+      report({ kind: "error", code, message: detail, retryable: false });
       return { ...result, terminalReason: "error" };
     }
     if (smoke.verdict === "skipped") {

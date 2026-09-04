@@ -56,15 +56,56 @@
   function appendBlockText(e, s) { appendLane(e, 'text', s); }
   function appendBlockReasoning(e, s) { appendLane(e, 'reasoning', s); }
 
-  // `replace` semantics for one lane (mirrors the content/reasoning lane
-  // replace): drop every block of that lane, then append one block holding
-  // the authoritative text at the tail. Positional history for the lane is
-  // gone by definition — the extractor's replace means "the text you
-  // streamed was wrong wholesale", and the replay wipe rebuilds positions
-  // from the run deltas that follow it.
+  // `replace` semantics for one lane — order-preserving.
+  //
+  // The replacement is not a DIFFERENT text. Every real emitter hands back a
+  // lightly edited derivative of the bytes already streamed: the
+  // tool-call-from-text extractor stripping trailing JSON
+  // (adapters/anthropic/stream-consume.js and its openai-compat / codex /
+  // gemini twins), the delivery-time sanitize repair on `done`
+  // (routes/chat/run-chat-turn/event-wiring.ts), the replay wipe (text:"").
+  // They diverge from what streamed LATE, or not at all.
+  //
+  // So align the replacement against the lane's existing blocks and keep
+  // every block it still agrees with, byte for byte. Only from the first
+  // differing byte is positional history genuinely void: the remainder lands
+  // in the block where the divergence began and later blocks of this lane go
+  // away. Blocks of the OTHER lanes never move.
+  //
+  // The previous rule dropped every block of the lane and reseeded one at the
+  // tail. That turned a think -> answer -> think -> answer turn into every
+  // Thinking chip stacked at the top with one slab of answer underneath — the
+  // exact "wall of thinking" the block timeline exists to prevent, brought
+  // back by any turn whose text needed a repair. Keep this rule identical to
+  // replaceRunLane in src/chat-ws/state.ts, or a live client and a replaying
+  // one render the same turn differently.
+  //
+  // Postcondition: the lane's blocks concatenate to `text`.
   function replaceBlockLane(e, type, text) {
-    e.blocks = e.blocks.filter(b => b.type !== type);
-    if (text) e.blocks.push({ id: nextId(e), type, text });
+    const replacement = text || '';
+    const next = [];
+    let cursor = 0;
+    let diverged = false;
+    for (const b of e.blocks) {
+      if (b.type !== type) { next.push(b); continue; }
+      if (diverged) continue; // lane history past the split point is void
+      if (replacement.startsWith(b.text, cursor)) {
+        cursor += b.text.length;
+        next.push(b);
+        continue;
+      }
+      diverged = true;
+      const rest = replacement.slice(cursor);
+      cursor = replacement.length;
+      if (rest) { b.text = rest; next.push(b); }
+    }
+    e.blocks = next;
+    // Replacement runs past everything this lane had streamed (or the lane
+    // had no blocks at all): the excess is new text, so it opens a block at
+    // the tail — where it would have landed had it streamed.
+    if (!diverged && cursor < replacement.length) {
+      e.blocks.push({ id: nextId(e), type, text: replacement.slice(cursor) });
+    }
     e.blockBoundary = false;
   }
 

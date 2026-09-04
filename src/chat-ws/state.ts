@@ -93,12 +93,47 @@ export function appendRun(chat: ActiveChat, lane: "stream" | "reasoning", s: str
   chat.runBoundary = false;
 }
 
-/** Drop one lane's runs and re-seed it with the authoritative replacement
- *  text at the tail (the extractor's `replace` means the streamed text was
- *  wrong wholesale — positional history for that lane is void). */
+/** `replace` semantics for one lane's runs — order-preserving, and the exact
+ *  twin of replaceBlockLane in public/js/chat-stream-blocks.js. The two rules
+ *  MUST stay identical: a live client applies the replace to its blocks, a
+ *  reconnecting one rebuilds from these runs, and they have to land on the
+ *  same timeline.
+ *
+ *  The replacement is a lightly edited derivative of the bytes already
+ *  streamed (tool-call-from-text extraction, the delivery-time sanitize
+ *  repair, the replay wipe's ""), so it diverges late or not at all. Keep
+ *  every run the replacement still agrees with byte-for-byte; only from the
+ *  first differing byte is positional history void — the remainder lands in
+ *  the run where the divergence began and later runs of that lane go away.
+ *  Runs of the other lanes (including injects) never move.
+ *
+ *  Postcondition: the lane's runs concatenate to `text`. */
 export function replaceRunLane(chat: ActiveChat, lane: "stream" | "reasoning", text: string): void {
-  chat.runs = chat.runs.filter(r => r.lane !== lane);
-  if (text) chat.runs.push({ lane, text, boundary: true });
+  const replacement = text ?? "";
+  const next: TurnRun[] = [];
+  let cursor = 0;
+  let diverged = false;
+  for (const run of chat.runs) {
+    if (run.lane === "inject" || run.lane !== lane) { next.push(run); continue; }
+    if (diverged) continue; // lane history past the split point is void
+    if (replacement.startsWith(run.text, cursor)) {
+      cursor += run.text.length;
+      next.push(run);
+      continue;
+    }
+    diverged = true;
+    const rest = replacement.slice(cursor);
+    cursor = replacement.length;
+    if (rest) next.push({ ...run, text: rest });
+  }
+  // Replacement runs past everything this lane had streamed (or the lane had
+  // no runs at all): the excess is new text, so it opens a run at the tail.
+  // boundary:true so a replaying client splits a block there rather than
+  // merging the excess into whatever run happens to sit before it.
+  if (!diverged && cursor < replacement.length) {
+    next.push({ lane, text: replacement.slice(cursor), boundary: true });
+  }
+  chat.runs = next;
 }
 
 /** Record a consumed mid-turn inject at its position in the turn's timeline

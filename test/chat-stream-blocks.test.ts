@@ -88,7 +88,7 @@ describe("blocks[] — arrival-order timeline", () => {
     expect(e.content).toBe("Checking.\n\nDone.");
   });
 
-  it("stream replace drops only the text blocks and reseeds the lane at the tail", () => {
+  it("stream replace rewrites the diverging text block in place, leaving other lanes alone", () => {
     ChatStreamStore.startTurn(sid, 0);
     ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "hmm" });
     ChatStreamStore.applyEvent(sid, { type: "stream", delta: '{"tool":"x"}' });
@@ -100,6 +100,100 @@ describe("blocks[] — arrival-order timeline", () => {
       ["text", "clean answer"],
     ]);
     expect(e.content).toBe("clean answer");
+  });
+
+  // The 2026-09-03 regression, reported from a live turn: a multi-phase
+  // think/answer turn rendered as every Thinking chip stacked at the top of
+  // the bubble with one slab of answer underneath. Root cause was the text
+  // lane's `replace`, which dropped EVERY text block and reseeded one at the
+  // tail — so any turn whose text got repaired (the sanitize pass on `done`,
+  // tool-call-from-text extraction) lost its whole interleave. Every emitter
+  // of a replace hands back a derivative of what streamed, so the matching
+  // prefix has to survive.
+  it("late-diverging repair keeps the think/answer interleave intact", () => {
+    ChatStreamStore.startTurn(sid, 0);
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "phase one" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "First. " });
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "phase two" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "Second. " });
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "phase three" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "Third.<|end|>" });
+    // Delivery-time sanitize repair: only the trailing junk changed.
+    ChatStreamStore.applyEvent(sid, { type: "stream", replace: true, text: "First. Second. Third." });
+
+    const e = ChatStreamStore.get(sid)!;
+    expect(shape(e.blocks)).toEqual([
+      ["reasoning", "phase one"],
+      ["text", "First. "],
+      ["reasoning", "phase two"],
+      ["text", "Second. "],
+      ["reasoning", "phase three"],
+      ["text", "Third."],
+    ]);
+    expect(e.content).toBe("First. Second. Third.");
+  });
+
+  it("identical replace is a no-op on the timeline", () => {
+    ChatStreamStore.startTurn(sid, 0);
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "why" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "A" });
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "more" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "B" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", replace: true, text: "AB" });
+
+    const e = ChatStreamStore.get(sid)!;
+    expect(shape(e.blocks)).toEqual([
+      ["reasoning", "why"],
+      ["text", "A"],
+      ["reasoning", "more"],
+      ["text", "B"],
+    ]);
+  });
+
+  it("mid-timeline divergence drops only the text blocks after the split", () => {
+    ChatStreamStore.startTurn(sid, 0);
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "keep " });
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "think" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "WRONG" });
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "more" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "ALSO WRONG" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", replace: true, text: "keep right" });
+
+    const e = ChatStreamStore.get(sid)!;
+    // "keep " survives in place; the remainder collapses into the block where
+    // the replacement first disagreed. Reasoning never moves.
+    expect(shape(e.blocks)).toEqual([
+      ["text", "keep "],
+      ["reasoning", "think"],
+      ["text", "right"],
+      ["reasoning", "more"],
+    ]);
+    expect(e.content).toBe("keep right");
+  });
+
+  it("replace longer than what streamed appends the excess at the tail", () => {
+    ChatStreamStore.startTurn(sid, 0);
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "A" });
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "t" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", replace: true, text: "A plus more" });
+
+    const e = ChatStreamStore.get(sid)!;
+    expect(shape(e.blocks)).toEqual([
+      ["text", "A"],
+      ["reasoning", "t"],
+      ["text", " plus more"],
+    ]);
+  });
+
+  it("replace with empty text still wipes the lane whole (false-claim retraction)", () => {
+    ChatStreamStore.startTurn(sid, 0);
+    ChatStreamStore.applyEvent(sid, { type: "reasoning", delta: "thought" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", delta: "a lie" });
+    ChatStreamStore.applyEvent(sid, { type: "stream", replace: true, text: "" });
+
+    const e = ChatStreamStore.get(sid)!;
+    expect(shape(e.blocks)).toEqual([["reasoning", "thought"]]);
+    expect(e.content).toBe("");
   });
 });
 

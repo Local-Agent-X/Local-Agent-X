@@ -69,9 +69,15 @@ describe("selectDesignBrief — brief content", () => {
     for (const p of ["fintech app", "analytics dashboard", "online store", "landing page", "a plain tool"]) {
       const { brief } = selectDesignBrief(p);
       expect(brief).toMatch(/EXACT values; do not substitute/);
-      // A real palette: at least three concrete hex values, not one "example".
-      const hexes = brief.match(/#[0-9a-fA-F]{6}\b/g) ?? [];
-      expect(hexes.length).toBeGreaterThanOrEqual(3);
+      // A real palette: many concrete color values, not one "example". Counted
+      // by notation-agnostic match because the palettes moved from hex to oklch
+      // — the invariant is "committed values", never a particular syntax.
+      const colors = brief.match(/oklch\([^)]+\)|#[0-9a-fA-F]{6}\b/g) ?? [];
+      expect(colors.length).toBeGreaterThanOrEqual(16);
+      // Both themes ship from one definition — a light-only brief is the bug
+      // that the light-dark() pairing exists to make impossible.
+      expect(brief).toMatch(/color-scheme: light dark/);
+      expect(brief.match(/light-dark\(/g)?.length ?? 0).toBeGreaterThanOrEqual(8);
       // The old hedge must be gone.
       expect(brief).not.toMatch(/illustrative|may replace|never a mandate|Example (accent|anchor|CTA|statement):/i);
     }

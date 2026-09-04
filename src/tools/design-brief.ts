@@ -20,6 +20,7 @@
  * values, it does not "pick something similar".
  */
 import { ARCHETYPES, NEUTRAL_ARCHETYPE } from "./design-systems.js";
+import { PALETTES, TOKEN_CSS_NAMES, type PaletteId, type PaletteTokens } from "./design-palettes.js";
 
 /**
  * Universal constraints — spliced into every build regardless of archetype.
@@ -38,6 +39,12 @@ export const DESIGN_ANTI_PATTERNS = [
   "• CONTRAST: body text and interactive text meet a contrast ratio of at least 4.5:1 against their background (WCAG AA); don't ship low-contrast grey-on-grey.",
   "• CURSOR AFFORDANCE: interactive elements show `cursor: pointer`; non-interactive text does not. The pointer must never lie about what is clickable.",
   "• RESPONSIVE: lay out and test at the common breakpoints ~375 (mobile), ~768 (tablet), ~1024 (small laptop), and ~1440 (desktop); no horizontal scroll or clipped content at any of them.",
+  "• TYPEFACE: implement the archetype's named face. Do NOT substitute a default UI sans and do NOT let a bare system-ui stack stand in as the identity — the same safe sans on every site is the single most recognized tell of a machine-made page. When you self-host an open-licensed face, ship its license file alongside the font files.",
+  "• NOT THE DEFAULT LAYOUT: a centered hero stacked over three equal feature cards is the shape every generated page takes; do not ship it. Vary the rhythm — an asymmetric split, a full-bleed band, cards of deliberately different sizes, content that starts left instead of centered.",
+  "• ELEVATION IS HIERARCHY: do not put the same large radius and the same drop shadow on every surface. Most blocks are flat with a 1px --border; reserve shadow for what genuinely floats above the page (a menu, a modal, one focal card).",
+  "• ICONS IN CONTEXT: no grid of icons each sitting in its own rounded-square tile, and no emoji standing in as feature bullets. An icon sits with its label, at text scale.",
+  "• BLUR IS NOT A STYLE: no reflexive frosted-glass panels. backdrop-filter belongs on something that genuinely overlays moving content — a sticky header above a scrolling page — not on a resting card.",
+  "• REAL COPY: write the actual sentence for the actual product. No filler voice — \"Elevate your…\", \"Seamlessly…\", \"Unlock the power of…\" — and no invented statistics or fake testimonials to fill a section.",
 ].join("\n");
 
 /**
@@ -74,8 +81,17 @@ export interface DesignArchetype {
   matchers: RegExp[];
   /** One-line visual attitude. */
   style: string;
-  /** EXACT, committed token block — palette + type scale + radius/shadow/spacing. */
-  tokens: string;
+  /** Role-mapped color, both modes. The values live in design-palettes.ts so
+   *  the contrast test can measure them; a palette inlined here as prose could
+   *  not be checked, which is how the 4.5:1 rule went unverified for so long. */
+  palette: PaletteId;
+  /** EXACT font stack + type scale with weights and letter-spacing. */
+  typography: string;
+  /** EXACT radius / shadow / spacing. */
+  geometry: string;
+  /** Anything true of this archetype alone — a chart series, a token that
+   *  behaves unusually here, a layout liberty it is granted. */
+  extra?: string;
   /** Layout & content hierarchy. */
   layout: string;
 }
@@ -87,11 +103,30 @@ export interface DesignBrief {
   brief: string;
 }
 
-/** Compose an archetype's exact tokens into an injectable, mandatory brief. */
+/**
+ * Render the palette as the CSS the builder should literally write. Emitting
+ * `light-dark()` pairs rather than a light palette plus "and add a dark mode"
+ * is the whole reason both modes survive: one definition, no second pass to
+ * forget, and no way to ship a token that only exists in one theme.
+ */
+function renderPalette(id: PaletteId): string {
+  const tokens = PALETTES[id];
+  const names = Object.keys(TOKEN_CSS_NAMES) as (keyof PaletteTokens)[];
+  return [
+    "Color tokens (EXACT). Put `color-scheme: light dark` on :root and define each token once — every value is a light-dark() pair, so the app ships BOTH themes from one definition:",
+    ...names.map((n) => `  ${TOKEN_CSS_NAMES[n]}: light-dark(${tokens[n][0]}, ${tokens[n][1]});`),
+    "Token roles — use the one that names the job: --surface-hover is a card under the pointer · --border is a component edge, --border-subtle a row divider · --accent is a FILL (buttons, active nav), never body-text color · --accent-contrast is the text ON --accent and is NOT always white · --success/--warn/--danger are semantic only. Derive any shade you still need with color-mix() against these, never a fresh invented hex.",
+  ].join("\n");
+}
+
+/** Compose an archetype's exact system into an injectable, mandatory brief. */
 function renderBrief(a: DesignArchetype): string {
   return [
     `DESIGN SYSTEM — ${a.name}. Implement these EXACT values; do not substitute your own colors, fonts, or sizes:`,
-    a.tokens,
+    renderPalette(a.palette),
+    `Typography: ${a.typography}`,
+    a.geometry,
+    ...(a.extra ? [a.extra] : []),
     `Attitude: ${a.style}`,
     `Layout & hierarchy: ${a.layout}`,
   ].join("\n");

@@ -11,6 +11,10 @@ import { getLaxDir } from "./lax-data-dir.js";
 import { workspaceRoot } from "./config.js";
 import { getToolStats } from "./tool-tracker.js";
 import { AUDIENCES_BY_TOOL } from "./tools/audience-map.js";
+import {
+  BROWSER_INSTALL_FIX, probeBrowserAvailability,
+  type BrowserAvailability, type BrowserMissingReason,
+} from "./browser-availability.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -121,13 +125,44 @@ function checkNode(): DiagnosticResult {
   return { name: "Node.js", status: "pass", message: version };
 }
 
+/**
+ * What each missing-browser condition actually COSTS on this machine — the half
+ * doctor owns. The probe answers "can the BUNDLED chromium launch"; that is not
+ * the same question as "are browser tools dead". browser/launcher.ts spawns
+ * system Chrome and connectOverCDP FIRST, and its first Playwright fallback is
+ * launchPersistentContext({ channel: "chrome" }) — system Chrome again; the
+ * bundled binary is only the third fallback. So rendering a missing bundled
+ * chromium as "browser tools disabled" was FALSE on the most common box (Chrome
+ * installed, `playwright install chromium` never run), where every browser tool
+ * works and only the app-build smoke gate and its screenshots are down.
+ */
+const BROWSER_IMPACT: Record<BrowserMissingReason, string> = {
+  "playwright-missing": "browser tools disabled",
+  "chromium-not-downloaded":
+    "the app_build smoke gate and its screenshots are disabled; browser tools fall back to system Chrome",
+};
+
+/** Render one probe verdict as the diagnostic row. Pure and exported so the
+ *  row's CLAIM is testable on any machine — the probe's real answer here is a
+ *  single fixed value, which is how "browser tools disabled" stayed false and
+ *  unnoticed. */
+export function playwrightDiagnostic(probe: BrowserAvailability): DiagnosticResult {
+  if (probe.available) return { name: "Playwright", status: "pass", message: "Installed" };
+  return {
+    name: "Playwright",
+    status: "warn",
+    message: `${probe.message} — ${BROWSER_IMPACT[probe.reason]}`,
+    fix: BROWSER_INSTALL_FIX,
+  };
+}
+
 function checkPlaywright(): DiagnosticResult {
-  try {
-    require.resolve("playwright");
-    return { name: "Playwright", status: "pass", message: "Installed" };
-  } catch {
-    return { name: "Playwright", status: "warn", message: "Not installed — browser tools disabled", fix: "npm install playwright && npx playwright install chromium" };
-  }
+  // Verdict + fix live in browser-availability.ts so the app_build smoke gate
+  // can report the SAME condition with the SAME remedy. Note this now also
+  // warns when the package is present but its chromium binary was never
+  // downloaded — previously a pass, and the state that silently shipped
+  // unverified app builds on this box.
+  return playwrightDiagnostic(probeBrowserAvailability());
 }
 
 function checkDiskSpace(): DiagnosticResult {

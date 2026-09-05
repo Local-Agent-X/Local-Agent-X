@@ -26,9 +26,15 @@
  *      the judge's reason. No verdict available (no vision-capable credential
  *      — CLI OAuth can't carry image bytes) → the check skips, never fails.
  *
- * A smoke that can't run (missing chromium binary) SKIPS with a warning — an
- * environment problem is never a build verdict. A dev server that never
- * becomes ready FAILS — a live server is the framework tiers' whole promise.
+ * A smoke that can't run (no browser would launch) SKIPS with a warning — an
+ * environment problem is never a build verdict. Whenever the skip is because
+ * the BROWSER never opened, the warning is ALSO written as a durable assistant
+ * row (app-build-unverified-note.ts), because a stream chunk dies with the live
+ * bubble and the user would otherwise never learn that nothing opened their
+ * app. That note carries the build's APP_READY URL and report, because being
+ * the last assistant row makes it the op's final text for op_wait/op_status/
+ * the phone — see that module's header. A dev server that never becomes ready
+ * FAILS — a live server is the framework tiers' whole promise.
  *
  * Every gate failure is blocking: any defect any layer finds fails the build.
  * The static scans each report under their OWN code with their own message —
@@ -56,6 +62,8 @@ import type { AppTier } from "../../tools/app-tier.js";
 import { detectFramework } from "../../tools/framework-detect.js";
 import { getDesignSpec } from "../turn-loop/design-verify.js";
 import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-finalize.js";
+import { emitUnverifiedNote } from "./app-build-unverified-note.js";
+import { extractText } from "../turn-loop/content-extract.js";
 import {
   runAppSmokeGate,
   runAppVisionJudge,
@@ -81,6 +89,10 @@ export {
  *  op_messages. build-session-context keys off it to thread the failure —
  *  text and screenshots — into the next update build's context. */
 export const VERIFY_EVIDENCE_MARKER = "=== BUILD VERIFY EVIDENCE ===";
+
+/** Leader of the durable assistant note a PASSING but unverified build emits.
+ *  Re-exported so callers have one import surface for this adapter's markers. */
+export { SMOKE_NO_BROWSER_MARKER } from "./app-build-unverified-note.js";
 
 export interface AppBuildVerifyOptions {
   /** The user's raw build brief — what the vision judge compares the render
@@ -151,7 +163,22 @@ export class AppBuildVerifyAdapter implements Adapter {
   }
 
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
-    const result = await this.inner.runTurn(input, report);
+    // Watch the builder's OWN final assistant row on its way past. It carries
+    // the deliverable (`APP_READY: <url>` + the build report), and if the
+    // unverified note below has to become the op's last assistant row, it must
+    // carry that deliverable forward or op_wait/op_status/the phone get the
+    // warning INSTEAD of the app. Pass-through only — every report still goes
+    // out unchanged, and only the inner adapter is watched (our own rows below
+    // use the raw `report`, so they can never be mistaken for the builder's).
+    let builderText = "";
+    const watch = (r: AdapterReport): void => {
+      if (r.kind === "message_finalized" && r.message.role === "assistant") {
+        const text = extractText(r.message.content).trim();
+        if (text) builderText = text;
+      }
+      report(r);
+    };
+    const result = await this.inner.runTurn(input, watch);
     if (result.terminalReason !== "done") return result;
     // A two-framework hybrid (Next + a serving vite.config, or vice-versa) ships
     // one dead config and a blank page — detectFramework serves ONE, the other's
@@ -175,14 +202,14 @@ export class AppBuildVerifyAdapter implements Adapter {
       // Real project present — the static-HTML scans below would misread it
       // (a Vite index.html legitimately points at /src/main.jsx). Smoke the
       // LIVE dev server instead of a flat file.
-      return this.smokeAndJudge(input, report, result, "hard-signals");
+      return this.smokeAndJudge(input, report, result, "hard-signals", builderText);
     }
     // On-disk truth supersedes the prompt-classified tier: a real framework
     // scaffold (Next/Vite/…) has no static HTML entry, so the scans below
     // would falsely reject it — same reasoning as the frontend-spa branch.
     const detected = detectFramework(this.appDir).framework;
     if (detected !== "static" && detected !== "unknown") {
-      return this.smokeAndJudge(input, report, result, "hard-signals");
+      return this.smokeAndJudge(input, report, result, "hard-signals", builderText);
     }
     const { errors } = scanAppForStartupErrors(this.appDir);
     const { violations } = scanAppForBlockedFetch(this.appDir);
@@ -210,7 +237,7 @@ export class AppBuildVerifyAdapter implements Adapter {
       report({ kind: "error", code: "unverified_native_parity", message: formatUnverifiedNativeParity(parity), retryable: false });
       return { ...result, terminalReason: "error" };
     }
-    return this.smokeAndJudge(input, report, result, "strict");
+    return this.smokeAndJudge(input, report, result, "strict", builderText);
   }
 
   /** Layers 2–4 for one build: smoke (static build on a local origin under the
@@ -221,6 +248,9 @@ export class AppBuildVerifyAdapter implements Adapter {
     report: (r: AdapterReport) => void,
     result: TurnResult,
     mode: AppSmokeGateSpec["mode"],
+    /** The builder's own final assistant text, forwarded into the unverified
+     *  note so it keeps carrying the deliverable (see runTurn). */
+    builderText: string,
   ): Promise<TurnResult> {
     let url: string | undefined;
     if (mode === "hard-signals") {
@@ -274,6 +304,11 @@ export class AppBuildVerifyAdapter implements Adapter {
     }
     if (smoke.verdict === "skipped") {
       report({ kind: "stream_chunk", body: { delta: `[verify] smoke gate skipped: ${smoke.detail}\n` } });
+      // Any classified skip means the BROWSER never opened, so nothing looked
+      // at the app — the one condition worth a durable row. An UNclassified
+      // skip (skipKind absent) is a future skip reason this note has no claim
+      // to describe, so it stays a stream chunk only.
+      if (smoke.skipKind) emitUnverifiedNote(input, report, { detail: smoke.detail ?? "", builderText, url });
       return result;
     }
     report({ kind: "stream_chunk", body: { delta: `[verify] smoke passed — ${url ?? "page"} loaded, mounted, no ${mode === "strict" ? "console" : "uncaught"} errors${smoke.interactionScreenshotPath ? ", survived its primary action" : ""}${smoke.screenshotPath ? ` (evidence: ${smoke.screenshotPath})` : ""}\n` } });

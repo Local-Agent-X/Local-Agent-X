@@ -12,7 +12,7 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1536 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1537 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
@@ -22,7 +22,7 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/security/` | 85 | 34 | XL |  |
 | `src/tools/` | 66 | 170 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
-| `src/canonical-loop/` | 56 | 222 | XL |  |
+| `src/canonical-loop/` | 56 | 223 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 41 | 2 | M |  |
 | `src/session/` | 35 | 7 | L |  |
@@ -105,6 +105,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/binary-sniff.ts` | S |
 | `src/bridge-control.ts` | S |
 | `src/bridge-media-queue.ts` | S |
+| `src/browser-availability.ts` | S |
 | `src/channel-context.ts` | S |
 | `src/channel-formatter.ts` | M |
 | `src/circuit-breaker.ts` | S |

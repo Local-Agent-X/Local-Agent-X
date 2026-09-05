@@ -19,6 +19,7 @@ import type { Adapter, AdapterReport, TurnInput } from "../src/canonical-loop/ad
 import {
   AppBuildVerifyAdapter,
   VERIFY_EVIDENCE_MARKER,
+  SMOKE_NO_BROWSER_MARKER,
   type AppSmokeGateOutcome,
   type AppVisionJudge,
 } from "../src/canonical-loop/adapters/app-build-verify-adapter.js";
@@ -47,6 +48,14 @@ function evidenceMessageFrom(reports: AdapterReport[]): { text: string; images?:
   if (!fin) return null;
   return fin.message.content as { text: string; images?: Array<{ name: string; filePath: string }> };
 }
+/** The durable "nothing ever opened this app" row, if the adapter emitted one. */
+function noBrowserNoticeFrom(reports: AdapterReport[]): { role: string; text: string } | null {
+  const fin = reports.find((r): r is Extract<AdapterReport, { kind: "message_finalized" }> =>
+    r.kind === "message_finalized" &&
+    (r.message.content as { text?: string })?.text?.startsWith(SMOKE_NO_BROWSER_MARKER) === true);
+  if (!fin) return null;
+  return { role: fin.message.role, text: (fin.message.content as { text: string }).text };
+}
 afterEach(() => {
   while (tempDirs.length > 0) {
     try { rmSync(tempDirs.pop()!, { recursive: true, force: true }); } catch { /* best-effort */ }
@@ -63,6 +72,36 @@ const doneInner: Adapter = {
   abort: async () => { /* no-op */ },
 };
 
+/** A builder that finalizes its own assistant row the way every real adapter
+ *  does (app-build-adapter, anthropic, codex, openai-compat, gemini-native) —
+ *  the row carrying `APP_READY: <url>` and the build report. */
+function buildingInner(finalText: string): Adapter {
+  return {
+    ...doneInner,
+    runTurn: async (input, report) => {
+      report({
+        kind: "message_finalized",
+        message: { messageId: `am-${input.opId}-0-build-done`, role: "assistant", content: { text: finalText } },
+      });
+      return {
+        providerState: { adapterName: "stub", adapterVersion: "1.0.0", providerPayload: {} },
+        terminalReason: "done" as const,
+      };
+    },
+  };
+}
+
+/** What op_wait / op_status / phone-projection actually consume: the text of
+ *  the op's LAST assistant row (extractFinalAssistantText walks newest-first).
+ *  Reproduced here over the reports so the note is tested through the shape its
+ *  real consumers see, not through the reports array's ordering. */
+function finalAssistantTextFrom(reports: AdapterReport[]): string {
+  const rows = reports.filter((r): r is Extract<AdapterReport, { kind: "message_finalized" }> =>
+    r.kind === "message_finalized" && r.message.role === "assistant");
+  const last = rows[rows.length - 1];
+  return last ? String((last.message.content as { text?: string }).text ?? "") : "";
+}
+
 function turnInput(): TurnInput {
   return { opId: "op_smoke_test", turnIdx: 0, messages: [], tools: [] };
 }
@@ -72,10 +111,10 @@ function collect(): { reports: AdapterReport[]; report: (r: AdapterReport) => vo
   return { reports, report: (r) => { reports.push(r); } };
 }
 
-async function runWith(outcome: AppSmokeGateOutcome) {
+async function runWith(outcome: AppSmokeGateOutcome, inner: Adapter = doneInner) {
   const appDir = makeStaticAppDir();
   const gateCalls: Array<{ appDir: string; url?: string; mode: string }> = [];
-  const adapter = new AppBuildVerifyAdapter(doneInner, appDir, undefined, async (spec) => {
+  const adapter = new AppBuildVerifyAdapter(inner, appDir, undefined, async (spec) => {
     gateCalls.push(spec);
     return outcome;
   });
@@ -102,6 +141,107 @@ describe("AppBuildVerifyAdapter — see-before-done smoke gate", () => {
     expect(result.terminalReason).toBe("done");
     const chunk = reports.find(r => r.kind === "stream_chunk");
     expect(chunk && (chunk as { body: { delta: string } }).body.delta).toContain("smoke gate skipped");
+  });
+
+  // The build PASSES on a browserless machine (decided product call) — but the
+  // user must be able to read, AFTER the fact, that nothing ever opened their
+  // app. A stream_chunk dies with the live bubble; the durable channel is the
+  // committed assistant row extractFinalAssistantText reads.
+  const NO_BROWSER_DETAIL =
+    "no headless browser on this machine — Playwright is installed, but its bundled chromium was never " +
+    "downloaded. The launch failed with: browserType.launch: Executable doesn't exist. " +
+    "Fix: npm install playwright && npx playwright install chromium";
+
+  it("a no-browser skip still passes AND leaves a durable note naming the condition and the fix [regression]", async () => {
+    const { result, reports } = await runWith({
+      verdict: "skipped", skipKind: "no-browser", detail: NO_BROWSER_DETAIL,
+    });
+    expect(result.terminalReason).toBe("done");
+    const note = noBrowserNoticeFrom(reports);
+    expect(note).not.toBeNull();
+    expect(note!.role).toBe("assistant");
+    expect(note!.text).toContain("never actually opened");
+    expect(note!.text).toContain("npx playwright install chromium");
+  });
+
+  // FIX 4/5: a partial `playwright install` leaves the executable path on disk
+  // but the binary truncated — the probe says "available" and the launch throws
+  // anyway. That used to fall through to an unclassified, un-noted skip: the
+  // build shipped unverified in total silence, the exact outcome this gate
+  // exists to end. It is now classified and noted like any other dead browser.
+  it("a launch that fails while the browser LOOKS installed is noted too — corrupt binaries are not silent [regression]", async () => {
+    const { result, reports } = await runWith({
+      verdict: "skipped",
+      skipKind: "browser-launch-failed",
+      detail: "the headless browser would not launch on this machine even though Playwright reports its chromium " +
+        "binary is present — the launch failed with: spawn ENOEXEC. An interrupted or partial browser install is " +
+        "the usual cause; re-run: npm install playwright && npx playwright install chromium",
+    });
+    expect(result.terminalReason).toBe("done");
+    const note = noBrowserNoticeFrom(reports);
+    expect(note).not.toBeNull();
+    // The REAL launch error survives into the durable row — not replaced by a
+    // generic "no headless browser" with a possibly-wrong remedy.
+    expect(note!.text).toContain("spawn ENOEXEC");
+  });
+
+  it("a skip that is NOT about the browser leaves no durable note — the note only speaks to what it knows", async () => {
+    const { result, reports } = await runWith({
+      verdict: "skipped",
+      detail: "headless smoke unavailable: Target page, context or browser has been closed",
+    });
+    expect(result.terminalReason).toBe("done");
+    expect(noBrowserNoticeFrom(reports)).toBeNull();
+  });
+
+  // FIX 1: the note is the LAST assistant row, so extractFinalAssistantText
+  // returns it — and op_wait (src/ops/tools/op-wait.ts:42), op_status
+  // (op-status.ts:130) and phone-projection.ts:217 have no appUrl field of
+  // their own. A warning-only note handed a delegating agent a complaint in
+  // place of the app and lost the URL outright. extractAppReadyUrl reads only
+  // the newest assistant row and gives up on a miss, so it lost it too.
+  it("the note carries the build's APP_READY url and report forward — op_wait-shaped consumers still get the app [regression]", async () => {
+    const builderText = "Built the maze app: canvas renderer, 3 levels.\n\nAPP_READY: http://127.0.0.1:7007/apps/maze/";
+    const { reports } = await runWith(
+      { verdict: "skipped", skipKind: "no-browser", detail: NO_BROWSER_DETAIL },
+      buildingInner(builderText),
+    );
+    // What op_wait/op_status/phone read: the op's final assistant text.
+    const finalText = finalAssistantTextFrom(reports);
+    expect(finalText).toContain(SMOKE_NO_BROWSER_MARKER);          // the warning is still there
+    expect(finalText).toContain("canvas renderer, 3 levels");      // …and so is the build's report
+    // Exactly the shape extractAppReadyUrl (session-bridge-extractors.ts:110)
+    // matches: /APP_READY:\s*(\S+)/ over the NEWEST assistant row.
+    expect(finalText.match(/APP_READY:\s*(\S+)/)?.[1]).toBe("http://127.0.0.1:7007/apps/maze/");
+  });
+
+  // The quoted build report is capped, and op_wait/op_status truncate on top of
+  // that — so quoting alone does NOT preserve the URL. The note restates
+  // APP_READY on its own line, above the quote, which is the only reason a
+  // chatty builder's URL survives.
+  it("a long build report cannot bury the URL — the marker is restated above the quote [regression]", async () => {
+    const chatter = "Wrote the renderer, wired the HUD, tuned the physics, added three levels. ".repeat(20);
+    const { reports } = await runWith(
+      { verdict: "skipped", skipKind: "no-browser", detail: NO_BROWSER_DETAIL },
+      buildingInner(`${chatter}\n\nAPP_READY: http://127.0.0.1:7007/apps/maze/`),
+    );
+    const finalText = finalAssistantTextFrom(reports);
+    expect(finalText.match(/APP_READY:\s*(\S+)/)?.[1]).toBe("http://127.0.0.1:7007/apps/maze/");
+    // …and it survives the consumers' own truncation (op_status takes 1500).
+    expect(finalText.slice(0, 1500)).toContain("APP_READY: http://127.0.0.1:7007/apps/maze/");
+  });
+
+  it("no builder text to carry → the note still stands on its own", async () => {
+    const { reports } = await runWith({ verdict: "skipped", skipKind: "no-browser", detail: NO_BROWSER_DETAIL });
+    const finalText = finalAssistantTextFrom(reports);
+    expect(finalText).toContain(SMOKE_NO_BROWSER_MARKER);
+    expect(finalText).not.toContain("APP_READY:");
+  });
+
+  it("a browser WAS available (passing smoke) → no durable note at all", async () => {
+    const { result, reports } = await runWith({ verdict: "pass", screenshotPath: "/x/.lax-build/smoke.png" });
+    expect(result.terminalReason).toBe("done");
+    expect(noBrowserNoticeFrom(reports)).toBeNull();
   });
 
   it("a passing smoke keeps done and reports the render evidence", async () => {

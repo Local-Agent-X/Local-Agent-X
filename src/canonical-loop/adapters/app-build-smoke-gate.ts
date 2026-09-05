@@ -24,13 +24,17 @@
  * A dev server that never becomes ready is a FAIL, not a skip — the tier's
  * whole promise is a live server.
  *
- * OUT OF SCOPE, parked as a product decision: missing chromium is still a skip,
- * and a skip ships the build unverified. Whether a box with no browser may
- * build apps at all is not a question this file gets to answer.
+ * A browser that never opens is still a SKIP (a decided product call) and a
+ * skip still ships the build unverified — but it is no longer silent: the
+ * outcome carries a `skipKind` and a detail naming the condition, the real
+ * launch error and the fix, which the verify adapter turns into a durable,
+ * after-the-fact user-visible note. Whether a box with no browser may build
+ * apps at all is still not a question this file gets to answer.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { smokeUrl, type SmokeResult } from "../../auto-build/scenario-scorer/smoke.js";
+import { BROWSER_INSTALL_FIX, probeBrowserAvailability } from "../../browser-availability.js";
 import { startStaticSmokeOrigin, staticSmokeServeRoot, type SmokeOrigin } from "./app-build-smoke-origin.js";
 
 const SMOKE_LOAD_TIMEOUT_MS = 30_000;
@@ -53,6 +57,22 @@ export interface AppSmokeGateOutcome {
   verdict: "pass" | "fail" | "skipped";
   /** fail → actionable error for the fixer; skipped → why the gate couldn't run. */
   detail?: string;
+  /** skipped only: WHY the gate could not run, machine-readably. Both values
+   *  mean THE BROWSER NEVER OPENED, so the smoke AND the vision judge that
+   *  reads its screenshots both no-opped — which is what earns the durable
+   *  user-visible note. They differ in what to do about it:
+   *   - "no-browser": there was nothing to launch. browser-availability.ts is
+   *     the authority, and the remedy is its install command.
+   *   - "browser-launch-failed": Playwright says its chromium IS on disk and
+   *     the launch threw anyway — a truncated/partial `playwright install`, a
+   *     missing shared library, a sandbox. The remedy is a REINSTALL, and the
+   *     real launch error (not a guessed cause) is in `detail`. Before this
+   *     existed, a corrupt binary probed as "available" and fell through to an
+   *     unclassified, un-noted skip: silently unverified, exactly the outcome
+   *     this classification exists to end.
+   *  Absent = a skip for some future reason that is NOT about the browser;
+   *  `detail` is then the only account of it. */
+  skipKind?: "no-browser" | "browser-launch-failed";
   /** fail only: what the verdict is ABOUT. Default "app" — the build is broken.
    *  "environment" — the gate itself could not run on THIS machine (e.g. no
    *  loopback port to bind), so the build is unverified and the app is not the
@@ -204,7 +224,40 @@ export const runAppSmokeGate: AppSmokeGateRunner = async (spec) => {
       interact: { screenshotPath: interactionScreenshotPath },
     });
   } catch (e) {
-    return { verdict: "skipped", detail: `headless smoke unavailable: ${(e as Error).message.slice(0, 200)}` };
+    // Anything thrown out of smokeUrl came from openPageWithConsoleCapture:
+    // everything after the launch is caught in there and surfaces as
+    // `loadError`, not a throw. So reaching here means THE BROWSER NEVER
+    // OPENED — nothing looked at the app — whatever the probe goes on to say.
+    //
+    // The launch error is carried in BOTH branches, never replaced by the
+    // probe's verdict. Reporting only the verdict meant every launch failure
+    // was retold as "no headless browser" with an install remedy that could be
+    // the wrong advice, and it destroyed the one piece of evidence that
+    // distinguishes a corrupt binary (probe says available, launch throws
+    // anyway) from a machine that genuinely has no browser.
+    //
+    // Probing here rather than before the launch keeps the happy path free of
+    // it and classifies the failure that actually happened rather than a
+    // prediction of it.
+    const launchError = (e as Error).message.slice(0, 200);
+    const browser = probeBrowserAvailability();
+    if (browser.available) {
+      return {
+        verdict: "skipped",
+        skipKind: "browser-launch-failed",
+        detail:
+          `the headless browser would not launch on this machine even though Playwright reports its chromium ` +
+          `binary is present — the launch failed with: ${launchError}. An interrupted or partial browser install ` +
+          `is the usual cause; re-run: ${BROWSER_INSTALL_FIX}`,
+      };
+    }
+    return {
+      verdict: "skipped",
+      skipKind: "no-browser",
+      detail:
+        `no headless browser on this machine — ${browser.message}. The launch failed with: ${launchError}. ` +
+        `Fix: ${BROWSER_INSTALL_FIX}`,
+    };
   } finally {
     await origin?.close();
   }

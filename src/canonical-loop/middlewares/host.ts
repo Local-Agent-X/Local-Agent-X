@@ -128,8 +128,10 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   // "the message that kicked off this op", which it is NOT once the session has
   // history: chat-runner/seed-messages.ts seeds the entire prior conversation
   // as user rows and appends the current message LAST, so this lands on the
-  // session's OLDEST user line. Left exactly as-is because ten middlewares read
-  // it and repointing all ten silently is not an approved change.
+  // session's OLDEST user line. Still populated for any external reader, but
+  // NO middleware may read it: all ten former readers moved to
+  // `currentUserMessage` (e9826231), and current-user-message.contract.test.ts
+  // fails naming the file if one reads `.userMessage` again.
   let userMessage = "";
   for (const r of readOpMessages(op.id)) {
     if (r.role !== "user") continue;

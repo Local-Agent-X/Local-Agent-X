@@ -78,6 +78,37 @@ registerBuiltinMigration({
   },
 });
 
+// v4: Spend ceilings became ON by default ($75/day, $15/session) in
+// config-schema, but a schema default only applies to a key that is ABSENT.
+// saveConfig writes the whole parsed config back, so every install that ever
+// opened Settings has `dailyBudgetUsd: 0, sessionBudgetUsd: 0` stored
+// explicitly — and both enforcement points (the spend-cap rule pack and the
+// checkpoint-stop predicate) short-circuit on 0. Those installs would silently
+// keep no spend ceiling at all. Flip a stored 0 to the new default ONCE. The
+// migration-version marker guarantees it never re-applies: a user who sets 0
+// after this has run keeps 0 forever.
+registerBuiltinMigration({
+  version: 4,
+  name: "spend-budget-defaults",
+  up: () => {
+    const cfgPath = join(getLaxDir(), "config.json");
+    if (!existsSync(cfgPath)) return;
+    let cfg: Record<string, unknown>;
+    try {
+      cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+    } catch {
+      return;
+    }
+    if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return;
+    let changed = false;
+    for (const [key, value] of [["dailyBudgetUsd", 75], ["sessionBudgetUsd", 15]] as const) {
+      if (cfg[key] === 0) { cfg[key] = value; changed = true; }
+    }
+    if (!changed) return;
+    atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  },
+});
+
 function registerBuiltinMigration(m: Migration): void {
   const existing = registeredMigrations.find(x => x.version === m.version);
   if (!existing) { registeredMigrations.push(m); registeredMigrations.sort((a, b) => a.version - b.version); }

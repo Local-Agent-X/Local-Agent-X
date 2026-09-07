@@ -111,6 +111,13 @@ function findProtocolByName(name: string): Protocol | undefined {
   }
 }
 
+// ── Expansion format + its inverse. formatBodyExpansion, formatTypedExpansion
+// and userAuthoredRequest MUST move together: the parser recovers the user's
+// request by the exact strings the two formatters emit (the backticked command
+// after the marker, the "The user's argument: " line, the "typed bare" sentence,
+// and the delimiter each formatter places right after the arg line). Change a
+// literal in one and slash-commands.test.ts's round-trip goes red.
+
 function formatBodyExpansion(command: string, argText: string, methodology: string): string {
   const argLine = argText
     ? `The user's argument: ${argText}\n\n`
@@ -149,6 +156,54 @@ function formatTypedExpansion(command: string, argText: string, protocol: Protoc
     argLine +
     closing
   );
+}
+
+const ARG_LINE_PREFIX = "\nThe user's argument: ";
+
+/**
+ * Recover the user-authored request from an expanded slash message:
+ * `/name arg text` (or bare `/name`). Non-expansions return the input
+ * unchanged, byte for byte.
+ *
+ * Why this exists: on the chat path op.task is the EXPANDED message — the
+ * marker, the whole SKILL.md body, and the closing section — so any gate that
+ * reads "what did the user ask for" from it is judging the template. The
+ * template is instruction TO the model; only the argument is a request FROM
+ * the user. Gates key on this function's output (middlewares/host.ts).
+ *
+ * The arg line is parsed at its FIRST occurrence (the header), never the
+ * closing section that repeats argText. The formatters are not injective on a
+ * blank line (a multi-paragraph argument contains "\n\n"), so the terminator
+ * is the structural delimiter each formatter emits right after the arg line —
+ * "---\n\n# /<cmd> methodology" for SKILL.md bodies, "## Now act on the user's
+ * request" for typed protocols. A blank line is only the fallback for a message
+ * that carries the marker but not the shape.
+ */
+export function userAuthoredRequest(message: string): string {
+  const s = (message || "").trimStart();
+  if (!s.startsWith(SLASH_COMMAND_MARKER)) return message;
+  const cmd = s.slice(SLASH_COMMAND_MARKER.length).match(/^ `\/([a-zA-Z][a-zA-Z0-9_-]*)`/);
+  if (!cmd) return message;
+  const command = cmd[1];
+
+  const bareAt = s.indexOf(`\nThe user typed bare \`/${command}\` with no argument.`);
+  const argAt = s.indexOf(ARG_LINE_PREFIX);
+  if (argAt === -1) return bareAt === -1 ? message : `/${command}`;
+  if (bareAt !== -1 && bareAt < argAt) return `/${command}`;
+
+  const start = argAt + ARG_LINE_PREFIX.length;
+  const terminators = [
+    `\n\n---\n\n# /${command} methodology\n\n`,
+    "\n\n## Now act on the user's request\n\n",
+  ];
+  let end = -1;
+  for (const t of terminators) {
+    const i = s.indexOf(t, start);
+    if (i !== -1 && (end === -1 || i < end)) end = i;
+  }
+  if (end === -1) end = s.indexOf("\n\n", start);
+  if (end === -1) end = s.length;
+  return `/${command} ${s.slice(start, end)}`;
 }
 
 /**

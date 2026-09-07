@@ -22,6 +22,7 @@ import { getDefaultMiddlewareStack } from "./registry.js";
 import { readOpMessages, readOpTurns } from "../store.js";
 import { isCommittingTool, rowCommittedSubstantiveWork } from "../../committing-tool-check.js";
 import { resolveOpModel } from "../op-model.js";
+import { userAuthoredRequest } from "../../slash-commands.js";
 
 export type PhaseName = "beforeTurn" | "afterModelCall" | "afterToolExecution";
 
@@ -140,13 +141,23 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   }
   if (!userMessage) userMessage = op.task ?? "";
 
-  // `currentUserMessage` = the message that actually opened THIS op. One op is
+  // `currentUserMessage` = what the user AUTHORED to open THIS op. One op is
   // created per user message and both interactive creation sites stamp the
-  // verbatim message into op.task (chat-runner/create-op.ts:70,
-  // agent-runner/run.ts:83), so op.task is exact and, unlike the last user row,
-  // cannot drift onto a harness nudge or a mid-turn inject — both of which are
-  // appended with role:"user" (turn-loop/nudges.ts, turn-loop/inject-drain.ts).
-  const currentUserMessage = op.task ?? "";
+  // message into op.task (chat-runner/create-op.ts:70, agent-runner/run.ts:83),
+  // so op.task is exact and, unlike the last user row, cannot drift onto a
+  // harness nudge or a mid-turn inject — both of which are appended with
+  // role:"user" (turn-loop/nudges.ts, turn-loop/inject-drain.ts).
+  //
+  // On the chat path op.task is stamped AFTER slash expansion, so for
+  // `/senior-engineer fix X` it holds the **SLASH COMMAND** wrapper plus the
+  // whole SKILL.md body. That body is instruction TO the model, not a request
+  // FROM the user: judged raw, every template trips the sweep/cleanup/look
+  // regexes on its own words ("every", "delete", "design"), the instruction
+  // ledger reads its "hands-off" prose as a user prohibition, and the LLM
+  // judges' 280/400-char task slices never reach the actual ask. The
+  // methodology still reaches the model through the seeded messages; the gates
+  // only need the ask, so recover it. Non-expansions pass through byte-identical.
+  const currentUserMessage = userAuthoredRequest(op.task ?? "");
 
   const tools = args.tools ?? [];
   const toolNames = new Set(tools.map(t => t.name));

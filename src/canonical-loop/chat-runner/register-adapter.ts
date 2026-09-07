@@ -42,11 +42,20 @@ export async function registerAdapterForChat(
         // Without this, one block carried the breakpoint at the END of the
         // system tier, so any per-turn churn in the dynamic tail (memory
         // blocks, turn directives, riders) missed AND re-wrote the whole
-        // ~40k-token tier at 1.25x. With it, the ~26.7k-est-token static head
-        // (core-identity + runtime-context + app-manifest + agents-md +
-        // provider-hint, ~93.5 KB measured 2026-09-06) reads from cache
-        // instead. The volatile tail is still covered by the conversation
-        // breakpoint below, so nothing that was cached stops being cached.
+        // ~40k-token tier at 1.25x. With it, the stable head reads from cache
+        // instead, and the volatile tail is still covered by the conversation
+        // breakpoint below — nothing that was cached stops being cached.
+        //
+        // The head is core-identity + runtime-context ONLY: ~76.9 KB /
+        // ~21,976 est tokens, 77.6% of the system prompt (measured
+        // 2026-09-07 by scripts/measure-prompt-prefix.mjs, snapshot
+        // catalog-sha256=276510d75470). Do NOT quote the larger ~26.5k figure
+        // from this file's history — that counted app-manifest and agents-md,
+        // which stableSystemPrefixLength now excludes precisely because a
+        // filesystem watcher rewrites the manifest and the agent itself edits
+        // AGENTS.md, so both churn during exactly the long app-build and
+        // self-edit sessions this optimisation exists for. estimateTokens is
+        // ceil(len/3.5), not a tokenizer.
         systemStablePrefixLen: stableSystemPrefixLength(prepared.renderedPromptSections),
         // Cache the conversation prefix, not just system+tools.
         //

@@ -59,7 +59,6 @@ import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { budgetLadderMiddleware } from "./budget-ladder.js";
-import { artifactRequestMiddleware } from "./artifact-request.js";
 import { assertionRepeatMiddleware } from "./assertion-repeat.js";
 import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { selfCheckMiddleware } from "./self-check.js";
@@ -181,8 +180,6 @@ const DEFAULT_STACK: StackEntry[] = [
   // the screenshot / device / failing input instead of re-measuring the thing
   // it CAN see. Sits with the reassessment family but cannot contend with
   // budget-ladder: its window closes at turn 6 and the earliest possible rung
-  // is turn 10 (25% of the ladder's 40-iteration minimum).
-  { order: 196, mw: artifactRequestMiddleware },
   // Stagnation measured from restated conclusions rather than tool shape —
   // the one signal the recorded livelock could not evade, since it wrote the
   // same "both fixes are live on prod" eight times.

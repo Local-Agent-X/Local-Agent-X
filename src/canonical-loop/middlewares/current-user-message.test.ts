@@ -24,7 +24,6 @@ vi.mock("../op-model.js", () => ({ resolveOpModel: vi.fn(() => "test-model") }))
 
 import { buildCanonicalLoopContext } from "./host.js";
 import { readOpMessages } from "../store.js";
-import { artifactRequestMiddleware } from "./artifact-request.js";
 import { clearMiddlewareStateForOp } from "./state.js";
 import type { Op } from "../../ops/types.js";
 
@@ -100,30 +99,3 @@ describe("currentUserMessage", () => {
   });
 });
 
-describe("artifact-request over a history-seeded op", () => {
-  const REPORT = "there is a grey bar above the nav bar on mobile";
-
-  it("fires on a defect reported mid-session, which the stale field never saw", () => {
-    seedHistory([
-      { role: "user", text: "Yo" },
-      { role: "assistant", text: "Hey!" },
-      { role: "user", text: REPORT },
-    ]);
-    const c = ctx(opWithTask(REPORT));
-    expect(artifactRequestMiddleware.beforeTurn!(c)).toMatchObject({ kind: "nudge" });
-  });
-
-  it("stays silent on a later op whose own message is not a defect report", () => {
-    // The unbounded repeat-nudge: one op per user message, each with a fresh
-    // per-op flag. Reading the stale first row re-fired this nudge on turn 2 of
-    // EVERY op for the life of the session, demanding a screenshot the user had
-    // already handed over.
-    seedHistory([
-      { role: "user", text: REPORT },
-      { role: "assistant", text: "Could you send a screenshot?" },
-      { role: "user", text: "sent it — the padding on the header is the cause, go fix it" },
-    ]);
-    const c = ctx(opWithTask("sent it — the padding on the header is the cause, go fix it"));
-    expect(artifactRequestMiddleware.beforeTurn!(c)).toMatchObject({ kind: "continue" });
-  });
-});

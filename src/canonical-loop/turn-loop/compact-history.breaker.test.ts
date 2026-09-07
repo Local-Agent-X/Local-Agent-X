@@ -12,6 +12,12 @@ const loggerMock = vi.hoisted(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.f
 vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
 import { compactHistory, compactionBreakerState } from "./compact-history.js";
+// The summary-stability cache (F1) makes a SUCCESSFUL compaction reusable for
+// an unchanged head — a second call on the same history deliberately makes no
+// summarize attempt at all. That interaction is covered in
+// compact-history.summary-stability.test.ts; this suite is about the breaker,
+// so it drops the cached entry wherever it wants a fresh attempt.
+import { clearSummaryCache } from "./compact-summary-cache.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { CanonicalMessage } from "../contract-types.js";
@@ -41,6 +47,7 @@ async function trip(opId: string): Promise<void> {
 }
 
 beforeEach(() => {
+  clearSummaryCache();
   mockStatus.mockReset();
   mockSummarize.mockReset();
   loggerMock.debug.mockReset();
@@ -88,6 +95,7 @@ describe("compactHistory — circuit breaker", () => {
     expect(loggerMock.info).not.toHaveBeenCalled();
 
     // Later failures start from 0: two more nulls do NOT trip.
+    clearSummaryCache(opId); // force fresh attempts (see the import note)
     mockSummarize.mockResolvedValue(null);
     await compactHistory(compactable(), MODEL, null, opId);
     await compactHistory(compactable(), MODEL, null, opId);
@@ -198,6 +206,7 @@ describe("compactHistory — circuit breaker cool-down probes", () => {
     expect(loggerMock.info.mock.calls[0][0]).toContain(opId);
 
     // Back to failing: one enabled-null neither trips nor skips — needs 3 fresh failures.
+    clearSummaryCache(opId); // force fresh attempts (see the import note)
     mockSummarize.mockResolvedValue(null);
     await compactHistory(compactable(), MODEL, null, opId);
     expect(compactionBreakerState(opId)).toEqual({ failures: 1, tripped: false, skipsSinceTrip: 0 });

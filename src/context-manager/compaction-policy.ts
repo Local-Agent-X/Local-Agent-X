@@ -71,6 +71,17 @@ export const TURN_KEEP_TIERS = {
 	aggressiveAtPct: 99,
 } as const;
 
+/**
+ * How many rows the summarized HEAD may grow before the turn loop re-runs the
+ * summarizer (consumed by turn-loop/compact-summary-cache.ts). Same number and
+ * same reason as the chat lane's CHAT_DIGEST_BUDGETS.summaryRefreshMinGrowth:
+ * don't re-summarize on every turn. It is load-bearing here for a second
+ * reason — the turn loop rebuilds its view from op_messages every turn, so a
+ * per-turn re-summarize also rewrites message index 0 every turn and destroys
+ * the Anthropic message-tier cache prefix.
+ */
+export const TURN_SUMMARY_REFRESH_MIN_GROWTH = 10;
+
 export function turnCompactionKeepLast(percentage: number, forced: boolean): number {
 	let keepLast: number = TURN_KEEP_TIERS.default;
 	if (percentage >= TURN_KEEP_TIERS.tightAtPct) keepLast = TURN_KEEP_TIERS.tight;

@@ -73,8 +73,16 @@ export async function registerAdapterForChat(
         // under a volatile prefix is the failure mode to avoid: it writes
         // every turn and never reads.
         //
-        // Compaction rewriting history costs one miss and one re-write at the
-        // rewrite, which is the normal price of compaction, not a regression.
+        // Compaction is the regime this has to survive, and it only does
+        // because the summary is PINNED per op (turn-loop/compact-summary-
+        // cache.ts). The view is never persisted, so an over-threshold op
+        // re-compacts every turn and the split point advances every turn: an
+        // unpinned summarizer would emit different bytes at message index 0
+        // every turn and this breakpoint would never read back a thing. With
+        // the pin, index 0 is byte-identical until the summarized head grows
+        // past TURN_SUMMARY_REFRESH_MIN_GROWTH — then one miss and one
+        // re-write, which IS the normal price of compaction. If that pin is
+        // ever removed, this flag stops paying on long chats.
         cacheConversation: true,
       }),
     );

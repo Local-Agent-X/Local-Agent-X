@@ -17,6 +17,13 @@ import { turnCompactionKeepLast } from "../../context-manager/compaction-policy.
 import { resolveAnthropicTransport } from "../../context-manager/resolve-transport.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { reusableSummary, storeSummary } from "./compact-summary-cache.js";
+import {
+  breakerGate,
+  consumeForcedCompaction,
+  recordBreakerFailure,
+  recordBreakerSuccess,
+} from "./compact-breaker.js";
 import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
 import { extractText, extractToolResultText } from "./content-extract.js";
 import { createLogger } from "../../logger.js";
@@ -131,114 +138,10 @@ export function locateAnchor(
   return { anchorTokens: usage.contextTokens, estimateFrom };
 }
 
-// ─── Compaction circuit breaker ──────────────────────────────────────────────
-// A session whose context is irrecoverably over the summarizer's own limits
-// fails the summarize call every turn, forever — each retry burns up to two
-// 30s LLM calls for nothing (the rewrite guard may retry a degenerate output). After TRIP_THRESHOLD consecutive failed attempts for an op
-// the breaker trips and compactHistory skips the attempt on later calls — but
-// not forever: a transient provider outage must not disable summarization for
-// a long-lived op's whole life. While tripped, every PROBE_INTERVAL-th
-// otherwise-skipped call runs the normal full path once as a recovery probe.
-// A probe whose summarize attempt succeeds fully resets the breaker (entry
-// deleted — a later failure streak needs TRIP_THRESHOLD fresh failures to
-// re-trip); an enabled-null re-trips immediately (no 3-strike grace, no
-// re-logged error — debug only) and starts the next skip window. Any
-// successful compaction resets the count.
-//
-// What counts as a FAILED attempt: we decided to compact (over threshold, safe
-// split point) and summarizeOldMessages returned null WHILE ENABLED. The
-// LAX_LLM_COMPACTION=0 kill switch (classify-with-llm.ts) is an intentional
-// off-switch, not an error loop — it never counts. A structural no-op (under
-// threshold, or no safe split) never touches the counter either way.
-//
-// State is per-op, in-memory, bounded (mirrors memory/extraction-coalescer.ts):
-// cap entries, evict the oldest-touched when full. Callers without an opId
-// (direct/test callers) bypass the breaker entirely — stateless as before.
-
-const TRIP_THRESHOLD = 3;
-// While tripped, every PROBE_INTERVAL-th otherwise-skipped call re-attempts.
-const PROBE_INTERVAL = 10;
-const MAX_TRACKED_OPS = 500;
-
-interface BreakerEntry {
-  failures: number;
-  tripped: boolean;
-  /** Calls short-circuited since the trip (or since the last consumed probe). */
-  skipsSinceTrip: number;
-  touchedAt: number;
-}
-
-const breakers = new Map<string, BreakerEntry>();
-
-function getBreaker(opId: string): BreakerEntry {
-  let b = breakers.get(opId);
-  if (!b) {
-    if (breakers.size >= MAX_TRACKED_OPS) {
-      let oldestKey: string | undefined;
-      let oldestAt = Infinity;
-      for (const [key, e] of breakers) {
-        if (e.touchedAt < oldestAt) { oldestAt = e.touchedAt; oldestKey = key; }
-      }
-      if (oldestKey !== undefined) breakers.delete(oldestKey);
-    }
-    b = { failures: 0, tripped: false, skipsSinceTrip: 0, touchedAt: Date.now() };
-    breakers.set(opId, b);
-  }
-  b.touchedAt = Date.now();
-  return b;
-}
-
-function recordBreakerFailure(opId: string): void {
-  const b = getBreaker(opId);
-  b.failures += 1;
-  if (b.tripped) {
-    // A recovery probe failed: stay tripped and start the next skip window
-    // immediately — no 3-strike grace. The trip was already surfaced at error
-    // once; probes stay quiet.
-    b.skipsSinceTrip = 0;
-    logger.debug(`compaction breaker probe failed for op ${opId}; staying tripped`);
-    return;
-  }
-  if (b.failures >= TRIP_THRESHOLD) {
-    b.tripped = true;
-    // Surface the error state honestly, ONCE, at trip time. Later skips log at
-    // debug only — the state is readable via compactionBreakerState().
-    // A null from summarizeOldMessages doesn't distinguish a summarize FAILURE
-    // (provider error, timeout) from summarization being UNAVAILABLE (no provider
-    // configured — classify-with-llm returns null fast when
-    // resolveProviderContext() is null), so the message covers both.
-    logger.error(
-      `compaction circuit breaker tripped for op ${opId} after ${b.failures} consecutive ` +
-      `summarize attempts returned nothing — summarization unavailable or failing ` +
-      `(provider error, timeout, or no provider configured). Compaction now skips, ` +
-      `re-probing every ${PROBE_INTERVAL}th call; context stays unsummarized ` +
-      `meanwhile — over-window provider errors may follow.`,
-    );
-  }
-}
-
-// ─── Forced compaction (overflow recovery) ───────────────────────────────────
-// When the PROVIDER rejects a call as over-window (context_overflow /
-// payload-too-large), the threshold estimate demonstrably undershot — the next
-// build-input must compact regardless of what the estimate says. The overflow
-// recovery (adapter-throw-recovery.ts) sets this marker; compactHistory
-// consumes it once: threshold check bypassed, aggressive keep, and the breaker
-// skip is overridden (the provider error IS the probe signal).
-const forcedOps = new Set<string>();
-
-export function forceCompactNext(opId: string): void {
-  forcedOps.add(opId);
-}
-
-/** Readonly view of an op's breaker state, for telemetry/doctor. */
-export function compactionBreakerState(
-  opId: string,
-): Readonly<{ failures: number; tripped: boolean; skipsSinceTrip: number }> | undefined {
-  const b = breakers.get(opId);
-  return b
-    ? { failures: b.failures, tripped: b.tripped, skipsSinceTrip: b.skipsSinceTrip }
-    : undefined;
-}
+// The compaction circuit breaker and the forced-compaction marker live in
+// compact-breaker.ts (file-size gate); re-exported so callers keep importing
+// them from here.
+export { forceCompactNext, compactionBreakerState } from "./compact-breaker.js";
 
 export interface CompactHistoryResult {
   messages: CanonicalMessage[];
@@ -267,25 +170,12 @@ export async function compactHistory(
   // recall HINT line is suppressed (the range citation itself still lands).
   sessionBacked = true,
 ): Promise<CompactHistoryResult> {
-  // Consume the overflow-recovery marker (set once per provider overflow).
-  const forced = opId ? forcedOps.delete(opId) : false;
-  const breaker = opId ? breakers.get(opId) : undefined;
-  if (breaker?.tripped && !forced) {
-    breaker.touchedAt = Date.now();
-    if (breaker.skipsSinceTrip + 1 < PROBE_INTERVAL) {
-      breaker.skipsSinceTrip += 1;
-      logger.debug(`compaction breaker open for op ${opId}; skipping summarize attempt`);
-      return { messages, compacted: false };
-    }
-    // Every PROBE_INTERVAL-th otherwise-skipped call falls through as a recovery
-    // probe. The probe window is consumed only where a summarize attempt actually
-    // resolves (a probe failure resets skipsSinceTrip; a success deletes the
-    // entry): a probe that turns out structurally unneeded (under threshold, no
-    // safe split) or kill-switch-disabled leaves the counter parked one shy of
-    // the interval, so the NEXT eligible call probes instead of waiting out a
-    // fresh window — the probe only counts once summarize actually ran.
-    logger.debug(`compaction breaker probing for op ${opId} after ${breaker.skipsSinceTrip} skipped calls`);
-  }
+  // Consume the overflow-recovery marker (set once per provider overflow), then
+  // the breaker gate: while tripped it short-circuits, except on every
+  // PROBE_INTERVAL-th call (a recovery probe) and when forced.
+  const forced = consumeForcedCompaction(opId);
+  const gate = breakerGate(opId, forced);
+  if (gate.skip) return { messages, compacted: false };
   const usageAnchor = usage ? locateAnchor(messages, usage) : null;
   if (usage && !usageAnchor) {
     logger.debug(`anchor at turn ${usage.turnIdx} not mappable onto the current view; sizing by pure estimate`);
@@ -300,10 +190,20 @@ export async function compactHistory(
   const splitIdx = safeSplitIndex(messages, keepLast);
   if (splitIdx <= 0) return { messages, compacted: false };
 
-  const head = messages.slice(0, splitIdx);
-  const recent = messages.slice(splitIdx);
+  // Summary STABILITY (compact-summary-cache.ts): the view is never persisted,
+  // so an over-threshold op compacts every turn and splitIdx advances every
+  // turn. Re-summarizing each time rewrites message index 0 each time, which
+  // destroys the cache prefix AND burns a summarizer call per turn. A reusable
+  // entry PINS the boundary at the head it covers — the rows between there and
+  // splitIdx just stay verbatim — so index 0 is byte-identical until the head
+  // has grown past TURN_SUMMARY_REFRESH_MIN_GROWTH. Callers without an opId
+  // (direct/test) are stateless as before.
+  const reuse = opId ? reusableSummary(opId, messages, splitIdx) : null;
+  const summarizedCount = reuse ? reuse.covered : splitIdx;
+  const head = messages.slice(0, summarizedCount);
+  const recent = messages.slice(summarizedCount);
 
-  const summary = await summarizeOldMessages(toChatParams(head));
+  const summary = reuse ? reuse.summary : await summarizeOldMessages(toChatParams(head));
   // Disabled (LAX_LLM_COMPACTION), timed out, or failed: keep the full history
   // rather than silently truncating. An over-window call surfaces as a provider
   // error, which is honest; a silent drop corrupts the conversation.
@@ -318,10 +218,8 @@ export async function compactHistory(
   // Successful compaction resets the consecutive-failure count. When the op was
   // tripped this is a probe recovering — surface that once at info.
   if (opId) {
-    if (breaker?.tripped) {
-      logger.info(`compaction summarization recovered for op ${opId}; circuit breaker reset`);
-    }
-    breakers.delete(opId);
+    recordBreakerSuccess(opId, gate.tripped);
+    if (!reuse) storeSummary(opId, messages, summarizedCount, summary);
   }
 
   const anchor = recent[0];

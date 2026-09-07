@@ -492,6 +492,52 @@ describe("what the untrusted-content wrapper does to the document", () => {
     }
   });
 
+  /** The hole this file's escaping opened, and the reason redaction now matches
+   *  the JSON-escaped renderings too: the script serializes every non-ASCII code
+   *  point (and `<`, `>`, `[`, control chars) as \uXXXX, so a registered secret
+   *  carrying one of them was NOT present in the report as plaintext bytes —
+   *  redactKnownSecrets matched nothing and the live secret reached the model.
+   *  End-to-end: real handler + real wrapper, secret in the url AND a label. */
+  it("a registered secret with a non-ASCII char is redacted even though the script escapes it as \\uXXXX", async () => {
+    const SECRET = "sk-live-éé-9f2b7c41";
+    const ESCAPED = "sk-live-\\u00e9\\u00e9-9f2b7c41"; // what the script actually writes
+    document.body.innerHTML =
+      `<div id="tok-${SECRET}" data-rect="0,0,900,20">key ${SECRET} echoed</div>` +
+      `<p data-rect="0,40,390,20">clean copy</p>`;
+    override(globalThis, "location", { href: `https://shop.example.com/?key=${SECRET}` });
+    registerRedactedSecretValue(SECRET);
+    try {
+      const raw = await evaluateScript(page, LAYOUT_REPORT_SCRIPT);
+      // Precondition: the plaintext really is absent from the report — this is
+      // exactly why a plaintext-only matcher missed it.
+      expect(raw).not.toContain(SECRET);
+      expect(raw).toContain(ESCAPED);
+
+      const backend = { getCurrentUrl: () => "https://shop.example.com/", evaluate: (script: string) => evaluateScript(page, script) } as unknown as BrowserBackend;
+      const result = await handleLayoutReport(backend);
+      const unwrapped = payload(String(result.content));
+
+      // The secret is gone in EVERY form, and the diff is the substitution only.
+      expect(unwrapped).not.toContain(SECRET);
+      expect(unwrapped).not.toContain(ESCAPED);
+      expect(unwrapped).not.toContain("9f2b7c41");
+      expect(unwrapped).not.toContain("sk-live");
+      expect(unwrapped).toBe(raw.split(ESCAPED).join("[REDACTED_SECRET]"));
+
+      // …and it is still the same document.
+      const before = JSON.parse(raw) as Record<string, unknown>;
+      const after = JSON.parse(unwrapped) as Record<string, unknown>;
+      expect(Object.keys(after)).toEqual(Object.keys(before));
+      for (const key of FLAG_KEYS) expect(after[key]).toEqual(before[key]);
+      expect(after.url).toBe("https://shop.example.com/?key=[REDACTED_SECRET]");
+      const rows = after.overflowingElements as { selector: string; text: string }[];
+      expect(rows[0].selector).toBe("div#tok-[REDACTED_SECRET]");
+      expect(rows[0].text).toBe("key [REDACTED_SECRET] echoed");
+    } finally {
+      unregisterRedactedSecretValue(SECRET);
+    }
+  });
+
   it("the shipped script is the builder at the shipped budget", () => {
     expect(LAYOUT_REPORT_SCRIPT).toBe(buildLayoutReportScript());
     expect(LAYOUT_REPORT_SCRIPT).toContain(`MAX_CHARS = ${LAYOUT_REPORT_MAX_CHARS};`);

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { MAX_INJECTION_SCAN_LENGTH } from "./safe-regex.js";
 import {
   isSecretShaped,
-  knownSecretValues,
+  knownSecretMatchers,
   registerRedactedSecretValue,
   unregisterRedactedSecretValue,
 } from "./security/secrets/known-secrets.js";
@@ -173,18 +173,21 @@ export function detectInjection(text: string): Array<{ label: string; score: num
  * in a DOM input or echoed by a tool result can't leak back via snapshot,
  * extract, screenshot OCR, or any other tool result flowing through
  * wrapExternalContent.
+ *
+ * ENCODING: each value matches in plaintext AND in the JSON-escaped renderings
+ * this codebase produces — layout_report writes non-ASCII, `<`, `>`, `[` and
+ * control chars as \uXXXX, which a plaintext-only byte match sailed past. The
+ * matchers are precomputed at registration; the SCOPE note in
+ * security/secrets/known-secrets.ts states what is NOT covered (base64,
+ * URL-encoding, HTML entities — unreachable by substring matching).
  */
 export function redactKnownSecrets(content: string): string {
   // Longest-first so a value that is a substring of another redacts the most
-  // specific match first.
-  const values = knownSecretValues();
-  if (values.length === 0) return content;
+  // specific match first. Each pattern is /g, so String.replace scans from 0.
+  const matchers = knownSecretMatchers();
+  if (matchers.length === 0) return content;
   let out = content;
-  for (const v of values) {
-    if (!v) continue;
-    // Global literal replace — no regex special-char problems.
-    out = out.split(v).join("[REDACTED_SECRET]");
-  }
+  for (const { pattern } of matchers) out = out.replace(pattern, "[REDACTED_SECRET]");
   return out;
 }
 

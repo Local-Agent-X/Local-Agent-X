@@ -830,6 +830,99 @@ describe("Known-secret redaction filter", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
+// Known-secret redaction — JSON-escaped renderings
+//
+// The class of bug: redaction matched raw bytes while a producer changed the
+// encoding underneath it. browser.layout_report's page script serializes every
+// non-ASCII code point plus `<`, `>`, `[` and the control chars as \uXXXX, so a
+// registered secret containing any of them reached the model unredacted.
+// redactKnownSecrets now matches the JSON-escaped renderings this codebase
+// produces as well as the plaintext.
+// ═══════════════════════════════════════════════════════════════════
+
+describe("Known-secret redaction across JSON-escaped renderings", () => {
+  const hex4 = (ch: string) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+
+  /** The layout-report serializer's rendering: JSON escaping, then `<`, `>`,
+   *  `[` and every code unit at or above U+007F forced to \uXXXX. Written
+   *  independently of the implementation (code-unit test, not a shared helper). */
+  const producerEscape = (s: string) =>
+    JSON.stringify(s)
+      .slice(1, -1)
+      .split("")
+      .map((ch) => {
+        const c = ch.charCodeAt(0);
+        return c === 0x3c || c === 0x3e || c === 0x5b || c >= 0x7f ? hex4(ch) : ch;
+      })
+      .join("");
+
+  const withSecret = <T>(secret: string, body: () => T): T => {
+    registerRedactedSecretValue(secret);
+    try {
+      return body();
+    } finally {
+      unregisterRedactedSecretValue(secret);
+    }
+  };
+
+  it("redacts a secret with a non-ASCII char from JSON-escaped content (the reported hole)", () => {
+    const secret = "sk-live-éé-9f2b7c41";
+    withSecret(secret, () => {
+      const escaped = producerEscape(secret);
+      // Precondition: the escaped rendering really does hide the plaintext.
+      expect(escaped).not.toBe(secret);
+      expect(escaped).toContain("\\u00e9");
+      const content = `{"url":"https://x.test/?key=${escaped}"}`;
+      const out = redactKnownSecrets(content);
+      expect(out).toBe('{"url":"https://x.test/?key=[REDACTED_SECRET]"}');
+      expect(out).not.toContain("00e9");
+    });
+  });
+
+  it("redacts a secret containing `<` from JSON-escaped content", () => {
+    const secret = "tok<live>4kQz7Rm2";
+    withSecret(secret, () => {
+      const escaped = producerEscape(secret);
+      expect(escaped).toContain("\\u003c");
+      expect(redactKnownSecrets(`label ${escaped} end`)).toBe("label [REDACTED_SECRET] end");
+    });
+  });
+
+  it("redacts a plain-ASCII secret in both plaintext and fully-escaped form", () => {
+    const secret = "ghp_AbC123dEf456GhI789xyz";
+    withSecret(secret, () => {
+      const allEscaped = secret.split("").map(hex4).join("");
+      expect(redactKnownSecrets(`token=${secret}`)).toBe("token=[REDACTED_SECRET]");
+      expect(redactKnownSecrets(`token=${allEscaped}`)).toBe("token=[REDACTED_SECRET]");
+    });
+  });
+
+  it("matches \\uXXXX hex digits case-insensitively (a serializer may emit uppercase)", () => {
+    const secret = "sk-live-é-Zq7Rm24k";
+    withSecret(secret, () => {
+      const upper = producerEscape(secret).replace(/\\u([0-9a-f]{4})/g, (_m, h: string) => "\\u" + h.toUpperCase());
+      expect(upper).toContain("\\u00E9");
+      expect(redactKnownSecrets(`x ${upper} y`)).toBe("x [REDACTED_SECRET] y");
+    });
+  });
+
+  it("does NOT redact a near-miss escaped string (one code point off)", () => {
+    const secret = "sk-live-éé-9f2b7c41";
+    withSecret(secret, () => {
+      const nearMiss = producerEscape("sk-live-éè-9f2b7c41");
+      expect(redactKnownSecrets(`x ${nearMiss} y`)).toBe(`x ${nearMiss} y`);
+      // …and a plaintext near-miss stays put too.
+      expect(redactKnownSecrets("sk-live-éè-9f2b7c41")).toBe("sk-live-éè-9f2b7c41");
+    });
+  });
+
+  it("leaves content alone when nothing is registered", () => {
+    const escaped = producerEscape("sk-live-éé-9f2b7c41");
+    expect(redactKnownSecrets(escaped)).toBe(escaped);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════
 // Shared shell-spawn gate (evaluateShellCommand) — parity floor for
 // EVERY bash-spawning path (bash, process_start, process_restart).
 // These exercise the gate directly, since that's the single seam the

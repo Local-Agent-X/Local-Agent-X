@@ -22,12 +22,25 @@
  *    particular reads a bounded prefix of the subtree rather than serializing
  *    the whole of it and slicing the result.
  *
- * KNOWN GAP: `@container` queries have no representation here. There is no
- * matchMedia equivalent for container queries — evaluating one needs the
- * containing element's size, per container — so this reports @media only. A
- * page whose responsiveness is entirely container-query driven will show few
- * or no matching queries; that is a limit of the report, not a finding about
- * the page.
+ * KNOWN GAPS. Each one that a page can actually trigger is REPORTED at runtime
+ * (see `cssWalkIncomplete` / `elementScanIncomplete`, which the tool layer turns
+ * into an INCOMPLETE caveat) rather than being left for the reader to remember:
+ *  - `@container` queries have no representation here, and this one is NOT
+ *    detectable: there is no matchMedia equivalent — evaluating one needs the
+ *    containing element's size, per container — so this reports @media only. A
+ *    page whose responsiveness is entirely container-query driven will show few
+ *    or no matching queries; that is a limit of the report, not a finding about
+ *    the page. It is stated unconditionally in the tool's caveat text.
+ *  - The element walk does NOT pierce shadow roots or iframe documents. Open
+ *    shadow roots and iframes are counted and reported; a CLOSED shadow root
+ *    cannot be detected at all, so it is neither counted nor reported.
+ *  - The CSS walk covers document.styleSheets, document.adoptedStyleSheets and
+ *    the styleSheets/adoptedStyleSheets of the open shadow roots it found (the
+ *    first CAP of them). Sheets inside a closed shadow root or an iframe are not
+ *    walked; iframes are counted, closed roots cannot be.
+ *  - Both walks are capped (nodes, rules, nesting depth). Every cap that
+ *    actually fires sets its reason string, so a truncated walk can never
+ *    present itself as a complete one.
  */
 
 /** Max elements listed per section, and max nodes walked. */
@@ -90,7 +103,25 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
   const nodes = Array.prototype.slice.call(document.querySelectorAll("*"), 0, SCAN);
   const overflowing = [];
   const stuck = [];
+  // querySelectorAll("*") does NOT pierce shadow roots or iframe documents, so
+  // an element inside a web component or a frame is never measured. Count what
+  // was skipped so the summary can say the element counts are floors instead of
+  // printing a confident zero over an unexamined subtree. Open shadow roots are
+  // also collected (bounded) so their CSS can at least be walked below.
+  const shadowRootsSeen = [];
+  let shadowRootCount = 0;
+  let iframeCount = 0;
+  let sameOriginIframeCount = 0;
   for (const el of nodes) {
+    const root = el.shadowRoot || null;
+    if (root) {
+      shadowRootCount++;
+      if (shadowRootsSeen.length < CAP) shadowRootsSeen.push(root);
+    }
+    if (el.tagName === "IFRAME") {
+      iframeCount++;
+      try { if (el.contentDocument) sameOriginIframeCount++; } catch (e) { /* cross-origin */ }
+    }
     const cs = getComputedStyle(el);
     if (cs.display === "none" || cs.visibility === "hidden") continue;
     const r = el.getBoundingClientRect();
@@ -127,8 +158,13 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     if (!cond || matching.indexOf(cond) !== -1) return;
     try { if (matchMedia(cond).matches) matching.push(cond); } catch (e) { /* invalid condition */ }
   };
+  let depthTruncations = 0;
   const walkRules = (rules, depth) => {
-    if (!rules || depth > RULE_DEPTH) return;
+    if (!rules) return;
+    // The depth cap MUST be observable. A silent return here is exactly how a
+    // deeply nested build reported "0 matching @media queries" with every flag
+    // clean — the caller then read the zero as a finding about the page.
+    if (depth > RULE_DEPTH) { depthTruncations++; return; }
     for (const rule of Array.prototype.slice.call(rules)) {
       if (ruleBudget <= 0) return;
       ruleBudget--;
@@ -143,11 +179,45 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
       if (child) walkRules(child, depth + 1);
     }
   };
-  for (const sheet of Array.prototype.slice.call(document.styleSheets)) {
+  // document.styleSheets is NOT every sheet on the page. Constructed sheets
+  // handed to document.adoptedStyleSheets are not members of it, and a shadow
+  // root carries its own styleSheets/adoptedStyleSheets. A page whose responsive
+  // CSS is entirely adopted used to report zero matching queries with no flag,
+  // so all three sources are walked here.
+  const sheets = [];
+  const addSheets = (list) => {
+    if (!list) return 0;
+    let added = 0;
+    for (const s of Array.prototype.slice.call(list)) { if (s) { sheets.push(s); added++; } }
+    return added;
+  };
+  addSheets(document.styleSheets);
+  let adoptedSheets = addSheets(document.adoptedStyleSheets);
+  let shadowSheets = 0;
+  for (const root of shadowRootsSeen) {
+    shadowSheets += addSheets(root.styleSheets);
+    shadowSheets += addSheets(root.adoptedStyleSheets);
+  }
+  for (const sheet of sheets) {
     let rules = null;
     try { rules = sheet.cssRules; } catch (e) { unreadableSheets++; continue; }
     walkRules(rules, 0);
   }
+  // ONE field per count, naming every reason it is incomplete. Two booleans the
+  // summary has to remember to OR together is precisely how the depth cap went
+  // unreported: whoever added the cap did not add it to the OR. A reader that
+  // forgets THIS field prints no caveat at all, which is visible in a test,
+  // rather than printing a confident wrong number.
+  const cssNotes = [];
+  if (unreadableSheets > 0) cssNotes.push(unreadableSheets + " stylesheet(s) could not be read (cross-origin CSS - e.g. served from a CDN)");
+  if (ruleBudget <= 0) cssNotes.push("the CSS rule walk hit its cap of " + RULE_CAP + " rules");
+  if (depthTruncations > 0) cssNotes.push("the CSS rule walk hit its nesting-depth cap of " + RULE_DEPTH + " at " + depthTruncations + " point(s) (deeply nested @layer/@supports/@media, native CSS nesting, or a long @import chain), so every rule below those points was skipped");
+  if (shadowRootCount > shadowRootsSeen.length) cssNotes.push("only " + shadowRootsSeen.length + " of " + shadowRootCount + " open shadow root(s) had their stylesheets walked");
+  if (iframeCount > 0) cssNotes.push(iframeCount + " iframe(s) are on the page and their stylesheets were NOT walked");
+  const elementNotes = [];
+  if (nodes.length >= SCAN) elementNotes.push("the element scan stopped after " + nodes.length + " nodes (its cap), so nothing later in the document was measured");
+  if (shadowRootCount > 0) elementNotes.push(shadowRootCount + " open shadow root(s) were found and the elements inside them were NOT measured (the walk does not pierce shadow DOM; closed shadow roots cannot be detected at all)");
+  if (iframeCount > 0) elementNotes.push(iframeCount + " iframe(s) (" + sameOriginIframeCount + " same-origin) were found and their documents were NOT measured");
   const htmlBg = getComputedStyle(de).backgroundColor;
   const bodyBg = body ? getComputedStyle(body).backgroundColor : null;
   const clear = (c) => !c || c === "transparent" || c.replace(/ /g, "") === "rgba(0,0,0,0)";
@@ -175,9 +245,18 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     matchingMediaQueriesTotal: matching.length,
     unreadableStyleSheets: unreadableSheets,
     cssRulesTruncated: ruleBudget <= 0,
+    cssDepthTruncated: depthTruncations > 0,
+    styleSheetsWalked: sheets.length,
+    adoptedStyleSheets: adoptedSheets,
+    shadowRootStyleSheets: shadowSheets,
+    cssWalkIncomplete: cssNotes.length ? cssNotes.join("; ") : null,
     backgrounds: { html: htmlBg, body: bodyBg, canvas: canvas },
     listCap: CAP,
     elementsScanned: nodes.length,
     scanTruncated: nodes.length >= SCAN,
+    openShadowRoots: shadowRootCount,
+    iframes: iframeCount,
+    sameOriginIframes: sameOriginIframeCount,
+    elementScanIncomplete: elementNotes.length ? elementNotes.join("; ") : null,
   };
 })()`;

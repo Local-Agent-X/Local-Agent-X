@@ -21,6 +21,7 @@ const seam = vi.hoisted(() => {
     cdp: {} as Record<string, unknown>,
     cdpThrows: null as Error | null,
     blockedPattern: null as string | null,
+    routeKind: "cdp" as "cdp" | "in-app",
     FakeCdpOnlyOperationError,
   };
 });
@@ -34,6 +35,7 @@ vi.mock("../../browser/index.js", () => ({
 }));
 vi.mock("../../browser/instance.js", () => ({
   CdpOnlyOperationError: seam.FakeCdpOnlyOperationError,
+  resolveBrowserBackendKind: () => seam.routeKind,
   getCdpBrowserManager: (sessionId: string) => {
     if (seam.cdpThrows) throw seam.cdpThrows;
     void sessionId;
@@ -74,6 +76,13 @@ const CLEAN_REPORT = {
   matchingMediaQueries: ["(max-width: 767px)"],
   matchingMediaQueriesTotal: 1,
   unreadableStyleSheets: 0,
+  cssRulesTruncated: false,
+  cssDepthTruncated: false,
+  openShadowRoots: 0,
+  iframes: 0,
+  sameOriginIframes: 0,
+  cssWalkIncomplete: null,
+  elementScanIncomplete: null,
   backgrounds: { html: "rgb(255, 255, 255)", body: "rgb(255, 255, 255)", canvas: "rgb(255, 255, 255)" },
   listCap: 20,
   elementsScanned: 312,
@@ -103,6 +112,7 @@ const TRUNCATED_REPORT = {
   fixedAndStickyTotal: 0,
   elementsScanned: 4000,
   scanTruncated: true,
+  elementScanIncomplete: "the element scan stopped after 4000 nodes (its cap), so nothing later in the document was measured",
 };
 
 /** Every stylesheet came from a CDN, so not one @media rule was readable. */
@@ -111,6 +121,7 @@ const CDN_CSS_REPORT = {
   matchingMediaQueries: [],
   matchingMediaQueriesTotal: 0,
   unreadableStyleSheets: 6,
+  cssWalkIncomplete: "6 stylesheet(s) could not be read (cross-origin CSS - e.g. served from a CDN)",
 };
 
 function tool(sessionId: string = SESSION) {
@@ -124,6 +135,7 @@ beforeEach(() => {
   for (const k of Object.keys(seam.cdp)) delete seam.cdp[k];
   seam.cdpThrows = null;
   seam.blockedPattern = null;
+  seam.routeKind = "cdp";
   seam.manager.getCurrentUrl = () => PAGE;
   seam.manager.observe = vi.fn(async () => ({ title: "Products", url: PAGE, currentRefs: [], crossOriginIframes: [] }));
   seam.cdp.getEngine = () => "chromium";
@@ -290,6 +302,78 @@ describe("browser layout_report", () => {
     expect(headline).not.toMatch(/(?<!at least )\b0 matching @media/);
   });
 
+  // FINDING 1 (critical): the rule walk's DEPTH cap was silent. It set no flag,
+  // the summary read only unreadableStyleSheets/cssRulesTruncated, and a page
+  // with @layer > @supports > @media nested past the cap printed a confident
+  // "0 matching @media quer(ies)".
+  it("never presents a clean @media verdict off a walk that hit its NESTING-DEPTH cap", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify({
+      ...CLEAN_REPORT,
+      matchingMediaQueries: [],
+      matchingMediaQueriesTotal: 0,
+      cssDepthTruncated: true,
+      cssWalkIncomplete: "the CSS rule walk hit its nesting-depth cap of 12 at 3 point(s), so every rule below those points was skipped",
+    }));
+
+    const headline = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content)
+      .split("Full report:")[0];
+
+    expect(headline).toMatch(/INCOMPLETE/);
+    expect(headline).toMatch(/nesting-depth cap/);
+    expect(headline).toMatch(/at least 0 matching @media/);
+    expect(headline).not.toMatch(/(?<!at least )0 matching @media/);
+  });
+
+  // The reason string is what the summary reads. A report that predates the
+  // field (or loses it) must still not print a clean verdict off a truncated
+  // walk — the derived arm can only ADD a caveat, never remove one.
+  it("still caveats a depth-truncated walk from the raw counter when the reason string is missing", async () => {
+    const { cssWalkIncomplete: _dropped, ...noReason } = CLEAN_REPORT as Record<string, unknown>;
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify({
+      ...noReason, matchingMediaQueries: [], matchingMediaQueriesTotal: 0, cssDepthTruncated: true,
+    }));
+
+    const headline = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content)
+      .split("Full report:")[0];
+
+    expect(headline).toMatch(/INCOMPLETE/);
+    expect(headline).toMatch(/nesting-depth cap/);
+    expect(headline).toMatch(/at least 0 matching @media/);
+  });
+
+  // FINDING 2: querySelectorAll("*") pierces neither shadow roots nor iframes,
+  // so an overflowing element inside a web component is never measured.
+  it("reports element counts as floors when shadow roots or iframes went unmeasured", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify({
+      ...CLEAN_REPORT,
+      openShadowRoots: 4,
+      iframes: 2,
+      sameOriginIframes: 1,
+      elementScanIncomplete: "4 open shadow root(s) were found and the elements inside them were NOT measured (the walk does not pierce shadow DOM; closed shadow roots cannot be detected at all); 2 iframe(s) (1 same-origin) were found and their documents were NOT measured",
+      cssWalkIncomplete: "2 iframe(s) are on the page and their stylesheets were NOT walked",
+    }));
+
+    const headline = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content)
+      .split("Full report:")[0];
+
+    expect(headline).toMatch(/at least 0 element\(s\) extend past the viewport/);
+    expect(headline).toMatch(/does not pierce shadow DOM/);
+    expect(headline).toMatch(/closed shadow roots cannot be detected/);
+    expect(headline).toMatch(/2 iframe\(s\)/);
+  });
+
+  // The one gap with NO detector: it must be stated on every report, including
+  // a fully clean one, because a container-query-driven page is indistinguishable
+  // from a page with no responsive CSS.
+  it("always states the undetectable @container gap", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify(CLEAN_REPORT));
+
+    const headline = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content)
+      .split("Full report:")[0];
+
+    expect(headline).toMatch(/@container queries are never counted here and cannot be detected/);
+  });
+
   it("stays a plain clean headline when the scan really was complete", async () => {
     seam.manager.evaluate = vi.fn(async () => JSON.stringify(CLEAN_REPORT));
 
@@ -345,7 +429,12 @@ describe("emulate never re-identifies a browser the caller does not own", () => 
     expect(result.isError).toBe(true);
     expect(String(result.content)).toMatch(/does not own its browser/i);
     expect(String(result.content)).toContain(PARENT);
-    expect(String(result.content)).toMatch(/Ask the parent chat to run emulate/i);
+    // FINDING 4: the way forward must NOT read as consequence-free. Handing the
+    // job to the parent closes the shared context — including THIS session's
+    // tabs and refs — and nobody is told.
+    expect(String(result.content)).toMatch(/parent chat CAN run emulate/i);
+    expect(String(result.content)).toMatch(/this session's own tabs close too/i);
+    expect(String(result.content)).toMatch(/every ref it holds goes stale/i);
     // The parent's context was NOT torn down and NO profile was installed —
     // not on the parent, not on the subagent, not on the resolved id.
     expect(seam.cdp.close).not.toHaveBeenCalled();
@@ -362,12 +451,47 @@ describe("emulate never re-identifies a browser the caller does not own", () => 
     expect(seam.cdp.close).toHaveBeenCalled();
   });
 
-  it("refuses before it can even consult the backend", async () => {
+  // FINDING 5: this used to assert only `isError === true`. With the ownership
+  // guard deleted, the stubbed getEngine throw is caught upstream and ALSO
+  // returns an error result — so the test passed with the guard gone. It now
+  // pins the specific refusal, which only the guard can produce, and asserts
+  // the backend-throw message is nowhere in the output.
+  it("refuses before it can even consult the backend, with the ownership refusal and not a backend error", async () => {
     seam.cdp.getEngine = () => { throw new Error("emulate must refuse before touching the backend"); };
 
     const result = await tool(SUBAGENT).execute({ action: "emulate", device: "iphone", _sessionId: SUBAGENT });
+    const text = String(result.content);
 
     expect(result.isError).toBe(true);
+    expect(text).toMatch(/does not own its browser/i);
+    expect(text).toContain(PARENT);
+    expect(text).not.toMatch(/must refuse before touching the backend/);
+  });
+
+  // FINDING 6: on the DEFAULT (in-app) route, "ask the parent to run emulate"
+  // is a dead end — the parent hits IN_APP_REFUSAL. The refusal must name the
+  // route the caller is actually on.
+  it("does not send the subagent down a dead end when the shared browser is the in-app view", async () => {
+    seam.routeKind = "in-app";
+
+    const text = String((await tool(SUBAGENT).execute({ action: "emulate", device: "iphone", _sessionId: SUBAGENT })).content);
+
+    expect(text).toMatch(/does not own its browser/i);
+    expect(text).toMatch(/will NOT work either/);
+    expect(text).toMatch(/in-app view the user is looking at/i);
+    expect(text).not.toMatch(/parent chat CAN run emulate/i);
+  });
+
+  // FINDING 4, the other half: the OWNER's success is a destructive act on
+  // every session that shares the browser, and only the caller is told.
+  it("tells the owner that every session sharing this browser lost its tabs and refs", async () => {
+    const text = String((await tool(PARENT).execute({ action: "emulate", device: "iphone", _sessionId: PARENT })).content);
+
+    expect(text).toMatch(/NOT a private change/i);
+    expect(text).toMatch(/closing the context closed their tabs/i);
+    expect(text).toMatch(/every ref they hold is now stale/i);
+    // Honest about the limit rather than inventing a count.
+    expect(text).toMatch(/cannot enumerate them/i);
   });
 });
 

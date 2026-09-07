@@ -20,7 +20,12 @@ import type { BrowserManager } from "../../browser/manager.js";
 // Concrete modules, not the barrel: the dispatcher's tests mock
 // ../../browser/index.js with a hand-written factory, and a handler that
 // reaches for extra barrel exports would break every one of them.
-import { CdpOnlyOperationError, getCdpBrowserManager } from "../../browser/instance.js";
+import {
+  CdpOnlyOperationError,
+  getCdpBrowserManager,
+  resolveBrowserBackendKind,
+  type BrowserBackendKind,
+} from "../../browser/instance.js";
 import { resolveBrowserSessionId } from "../../browser/session-owner-registry.js";
 import { describeEmulation, resolveEmulationProfile, setSessionEmulation } from "../../browser/emulation.js";
 import { LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_SCRIPT } from "../../browser/layout-report.js";
@@ -49,15 +54,33 @@ const IN_APP_REFUSAL =
  *  lose their cookies, logins and viewport, and only the caller is told. So the
  *  caller must own the browser it is about to re-identify. Same shape as the
  *  in-app refusal above: refuse, name the reason, name the way forward. */
-function sharedBrowserRefusal(sessionId: string, ownerId: string): string {
+function sharedBrowserRefusal(sessionId: string, ownerId: string, route: BrowserBackendKind): string {
+  // The way forward has to match the OWNER's route. On the in-app route (the
+  // default) "ask the parent to run emulate" is a dead end: the parent hits
+  // IN_APP_REFUSAL, because the shared browser there is the view the user is
+  // looking at. Only the CDP route can honour the suggestion at all.
+  const forward = route === "in-app"
+    ? "Telling the parent to run emulate will NOT work either on this session's route: the shared browser is the " +
+      "in-app view the user is looking at, and emulate refuses there. Do this work in a session whose browserMode " +
+      "selects external Chrome (or run with LAX_BROWSER_HEADLESS=1), where the browser is the agent's own."
+    : "The parent chat CAN run emulate (and clear it with device='desktop' afterwards) - but that is not free: it " +
+      "closes the shared context, so this session's own tabs close too and every ref it holds goes stale, with no " +
+      "notification to anyone but the caller. Prefer doing this work in a session that owns its own browser.";
   return (
     `emulate is not available here: this session (${sessionId}) does not own its browser - it drives ` +
     `the browser of session ${ownerId} (the chat that spawned it), which its parent and any sibling ` +
     "agents are using at the same time. emulate re-identifies that browser: it installs a new viewport " +
     "and user agent and DESTROYS the shared context, so every logged-in tab the parent has open would " +
-    "come back cookieless, and the parent would never be told. Ask the parent chat to run emulate (and " +
-    "to clear it with device='desktop' afterwards), or do this work in a session that owns its own browser."
+    `come back cookieless, and the parent would never be told. ${forward}`
   );
+}
+
+/** Which browser this session would get, for message accuracy only. A pure read
+ *  of the routing matrix (config + env); it opens nothing and mints nothing. A
+ *  throw here must not turn a refusal into a crash, so it fails to "cdp" - the
+ *  arm whose advice is merely less specific, never the arm that is a dead end. */
+function routeKindForMessage(): BrowserBackendKind {
+  try { return resolveBrowserBackendKind(); } catch { return "cdp"; }
 }
 
 export async function handleEmulate(
@@ -69,7 +92,7 @@ export async function handleEmulate(
   // both unrecoverable for the owner.
   const actingId = sessionId || "default";
   const ownerId = resolveBrowserSessionId(actingId);
-  if (ownerId !== actingId) return err(sharedBrowserRefusal(actingId, ownerId));
+  if (ownerId !== actingId) return err(sharedBrowserRefusal(actingId, ownerId, routeKindForMessage()));
   let cdp: BrowserManager;
   try {
     // Doubles as THE in-app refusal: this throws rather than opening a second
@@ -117,7 +140,12 @@ export async function handleEmulate(
     `${header}\n${carried}\n\n` +
     "This session's browser now runs in a FRESH isolated context: cookies, logins and storage " +
     "from the previous context did NOT carry over. Take a snapshot or run layout_report to see " +
-    "the page as the emulated device sees it — a site can serve a different document per user agent.",
+    "the page as the emulated device sees it — a site can serve a different document per user agent.\n\n" +
+    "This was NOT a private change. Every subagent or scheduled run spawned from this chat drives THIS " +
+    "browser, so closing the context closed their tabs as well and every ref they hold is now stale — " +
+    "their next click/fill by ref will miss. They were not notified (there is no channel to tell them), " +
+    "and this tool cannot enumerate them, so it cannot say how many there are. If any are running, tell " +
+    "them to re-observe before acting.",
   );
 }
 
@@ -133,9 +161,10 @@ export async function handleLayoutReport(manager: BrowserBackend): Promise<ToolR
   //
   // The blocklist is NOT skipped - but it is not inherited either. Only
   // ElectronInAppBackend.evaluate scans internally; BrowserManager.evaluate
-  // hands the text straight to the page, and external Chrome is the ONLY
-  // backend emulate/layout_report run on. So the scan runs HERE, on the path
-  // both backends share, instead of being asserted by a comment. The constant
+  // hands the text straight to the page. layout_report (unlike emulate) runs on
+  // WHICHEVER backend the session has, so on the CDP arm nothing would scan it
+  // at all. The scan therefore runs HERE, on the path both backends share,
+  // instead of being asserted by a comment. The constant
   // passes it (pinned in test/browser-layout-report-script.test.ts); this arm
   // fires only if the script is ever edited into something the blocklist
   // rejects, and refuses rather than relaxing the blocklist for it.
@@ -162,6 +191,39 @@ interface LayoutJson {
   scanTruncated?: boolean;
   unreadableStyleSheets?: number;
   cssRulesTruncated?: boolean;
+  cssDepthTruncated?: boolean;
+  openShadowRoots?: number;
+  iframes?: number;
+  /** The script's OWN account of why each count is a floor - one field per
+   *  count, naming every reason. Preferred over re-deriving from the raw
+   *  counters below, which is how the depth cap went unreported: it had a
+   *  counter nobody added to the OR. */
+  cssWalkIncomplete?: string | null;
+  elementScanIncomplete?: string | null;
+}
+
+/** Why the @media count is a floor, or null if the walk really was complete.
+ *  Trusts the script's own reason string; the derived arm is a floor of its own,
+ *  for a report produced before a field existed - it can only ADD a caveat. */
+function cssIncompleteReason(p: LayoutJson): string | null {
+  if (typeof p.cssWalkIncomplete === "string" && p.cssWalkIncomplete) return p.cssWalkIncomplete;
+  const bits: string[] = [];
+  const unreadable = p.unreadableStyleSheets ?? 0;
+  if (unreadable > 0) bits.push(`${unreadable} stylesheet(s) could not be read (cross-origin CSS - e.g. served from a CDN)`);
+  if (p.cssRulesTruncated === true) bits.push("the CSS rule walk hit its rule cap");
+  if (p.cssDepthTruncated === true) bits.push("the CSS rule walk hit its nesting-depth cap, so every rule below those points was skipped");
+  if ((p.iframes ?? 0) > 0) bits.push(`${p.iframes} iframe(s) had their stylesheets skipped`);
+  return bits.length ? bits.join("; ") : null;
+}
+
+/** Why the element counts are floors, or null. Same contract as above. */
+function elementIncompleteReason(p: LayoutJson): string | null {
+  if (typeof p.elementScanIncomplete === "string" && p.elementScanIncomplete) return p.elementScanIncomplete;
+  const bits: string[] = [];
+  if (p.scanTruncated === true) bits.push(`the element scan stopped after ${p.elementsScanned ?? "its cap of"} nodes`);
+  if ((p.openShadowRoots ?? 0) > 0) bits.push(`${p.openShadowRoots} open shadow root(s) were not measured`);
+  if ((p.iframes ?? 0) > 0) bits.push(`${p.iframes} iframe(s) were not measured`);
+  return bits.length ? bits.join("; ") : null;
 }
 
 /**
@@ -185,14 +247,14 @@ function layoutSummary(raw: string): string {
   }
   const overflow = parsed.documentScroll.horizontalOverflowPx;
   const offenders = parsed.overflowingElementsTotal ?? 0;
-  const truncated = parsed.scanTruncated === true;
-  const unreadable = parsed.unreadableStyleSheets ?? 0;
-  // Either an unreadable sheet or a truncated rule walk leaves @media rules unseen.
-  const mediaPartial = unreadable > 0 || parsed.cssRulesTruncated === true;
-  // Element counts come from the capped walk; the media count comes from the
-  // sheets that could be read. Each is a floor, not a total, when its own
-  // source was incomplete.
-  const atLeast = truncated ? "at least " : "";
+  // Element counts come from a capped walk that does not pierce shadow DOM or
+  // iframes; the media count comes from the sheets that could be read, to a
+  // bounded rule count and nesting depth. Each is a floor, not a total, when its
+  // own source was incomplete - and each reads exactly ONE reason field.
+  const elementReason = elementIncompleteReason(parsed);
+  const mediaReason = cssIncompleteReason(parsed);
+  const mediaPartial = mediaReason !== null;
+  const atLeast = elementReason !== null ? "at least " : "";
   const verdict = overflow > 0
     ? `Horizontal overflow: ${overflow}px (document is wider than the viewport).`
     : "Horizontal overflow: none at the document level (the document itself fits the viewport).";
@@ -202,22 +264,23 @@ function layoutSummary(raw: string): string {
     `${atLeast}${parsed.fixedAndStickyTotal ?? 0} fixed/sticky element(s); ` +
     `${mediaPartial ? "at least " : ""}${parsed.matchingMediaQueriesTotal ?? 0} matching @media quer(ies).`;
   const caveats: string[] = [];
-  if (truncated) {
+  if (elementReason) {
     caveats.push(
-      `INCOMPLETE: the element scan stopped after ${parsed.elementsScanned ?? "its cap of"} nodes, so the element ` +
-      "counts above cover only the start of the document and are LOWER BOUNDS. An offender further down was never " +
-      "measured - a zero here does NOT mean the page has no overflowing elements. Scope the check to the suspect " +
-      "subtree before concluding anything about the parts that were not scanned.",
+      `INCOMPLETE: ${elementReason}. The element counts above are LOWER BOUNDS. An element that was never ` +
+      "measured cannot appear in them - a zero here does NOT mean the page has no overflowing elements. Scope the " +
+      "check to the suspect subtree before concluding anything about the parts that were not scanned.",
     );
   }
-  if (mediaPartial) {
+  if (mediaReason) {
     caveats.push(
-      `INCOMPLETE: ${unreadable > 0
-        ? `${unreadable} stylesheet(s) could not be read (cross-origin CSS - e.g. served from a CDN)`
-        : "the CSS rule walk hit its cap"}, so some @media rules were never seen. The @media count above is a ` +
+      `INCOMPLETE: ${mediaReason}, so some @media rules were never seen. The @media count above is a ` +
       "LOWER BOUND and is NOT evidence that the site lacks responsive CSS. Use emulate plus a real measurement " +
-      "to tell whether the layout responds. (Note: @container queries are never counted - see layout-report.ts.)",
+      "to tell whether the layout responds.",
     );
   }
+  // Unconditional: unlike every caveat above, this gap has no detector - there
+  // is no matchMedia for container queries, so a page driven entirely by them
+  // looks identical to a page with no responsive CSS at all.
+  caveats.push("Note: @container queries are never counted here and cannot be detected - see layout-report.ts.");
   return caveats.length ? `${body}\n${caveats.join("\n")}\nFull report:` : `${body} Full report:`;
 }

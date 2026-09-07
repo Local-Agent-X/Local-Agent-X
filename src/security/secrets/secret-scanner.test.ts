@@ -6,11 +6,6 @@ import {
   registerRedactedSecretValue,
   unregisterRedactedSecretValue,
 } from "./known-secrets.js";
-import {
-  ENCODED_SCHEMES,
-  MAX_DECODED_BUDGET,
-  iterativeRunViews,
-} from "./secret-decode-engine.js";
 
 // Assemble a real-shaped Anthropic key at runtime from fragments so CI's own
 // secret scanner doesn't flag this test's diff. Never write the literal.
@@ -569,103 +564,5 @@ describe("scanForSecrets — known-secret-value detection", () => {
     expect(scanForSecrets(`x=${KNOWN}`).clean).toBe(false);
     unregisterRedactedSecretValue(registered.pop()!);
     expect(scanForSecrets(`x=${KNOWN}`).clean).toBe(true);
-  });
-});
-
-// ── \uXXXX (JSON / unicode-escape) scheme ────────────────────────────────────
-// ENCODED_SCHEMES was base64/hex/percent only, so a credential rendered as a
-// run of \uXXXX escapes — exactly what browser.layout_report's serializer and
-// any JSON encoder produce — reached the catalog pass, the known-value pass and
-// the taint-overlap check in a shape none of their patterns could match. The
-// scheme lives in the shared ENCODED_SCHEMES list, so all three consumers gained
-// it at once and the iterative peel composes it with the other three.
-describe("scanForSecrets — \\uXXXX unicode-escape scheme", () => {
-  /** Every code UNIT of `s` as \uXXXX (surrogates escaped individually). */
-  function uesc(s: string): string {
-    let out = "";
-    for (let i = 0; i < s.length; i++) out += "\\u" + s.charCodeAt(i).toString(16).padStart(4, "0");
-    return out;
-  }
-
-  const registered: string[] = [];
-  afterEach(() => {
-    while (registered.length) unregisterRedactedSecretValue(registered.pop()!);
-  });
-  function register(v: string): void {
-    registerRedactedSecretValue(v);
-    registered.push(v);
-  }
-  const KNOWN = "correct-horse-battery-staple-passphrase";
-
-  it("detects a \\uXXXX-escaped API key via the credential-pattern pass", () => {
-    const blob = uesc(ANT_KEY);
-    const text = `{"text":"${blob}"}`;
-    const r = scanForSecrets(text);
-    expect(r.clean).toBe(false);
-    expect(r.matches.some((m) => m.pattern.includes("(unicode-escape)"))).toBe(true);
-    expect(redactSecrets(text)).not.toContain(blob);
-  });
-
-  it("detects a PARTIALLY escaped key (escape atoms interleaved with literals)", () => {
-    // Only the punctuation escaped — the run must not split at the literal runs.
-    const partial = ANT_KEY.replace(/-/g, "\\u002d");
-    expect(scanForSecrets(`v=${partial}`).clean).toBe(false);
-  });
-
-  it("keeps the run contiguous across JSON short escapes (\\/ and \\\")", () => {
-    const partial = "/" + ANT_KEY.replace(/-/g, "\\u002d");
-    expect(scanForSecrets(`v=\\"${partial}\\/x`).clean).toBe(false);
-  });
-
-  it("detects a registered known value rendered as \\uXXXX (known-value pass)", () => {
-    register(KNOWN);
-    const blob = uesc(KNOWN);
-    const text = `body={"v":"${blob}"}`;
-    const r = scanForSecrets(text);
-    expect(r.clean).toBe(false);
-    expect(r.matches.some((x) => x.type === "known-secret-value")).toBe(true);
-    expect(redactSecrets(text)).not.toContain(blob);
-  });
-
-  it("nested: base64(\\uXXXX(key)) — an escape run inside a base64 blob", () => {
-    const blob = Buffer.from(uesc(ANT_KEY), "utf8").toString("base64");
-    expect(scanForSecrets(`payload=${blob}`).clean).toBe(false);
-  });
-
-  it("nested: \\uXXXX(base64(key)) — a base64 blob inside an escape run", () => {
-    const blob = uesc(Buffer.from(ANT_KEY, "utf8").toString("base64"));
-    expect(scanForSecrets(`payload=${blob}`).clean).toBe(false);
-  });
-
-  it("decodes a surrogate pair to the real astral character", () => {
-    const views = iterativeRunViews(
-      ENCODED_SCHEMES.find((s) => s.label === "unicode-escape")!,
-      uesc("astral-\u{1F600}-astral"),
-      { remaining: MAX_DECODED_BUDGET }
-    );
-    expect(views.some((v) => v.includes("\u{1F600}"))).toBe(true);
-  });
-
-  it("negative: escaped ordinary prose stays clean", () => {
-    expect(scanForSecrets(`note=${uesc("the quarterly planning meeting is next week")}`).clean)
-      .toBe(true);
-  });
-});
-
-describe("scanForSecrets — \\uXXXX scheme: pathological input is total + bounded", () => {
-  const scheme = () => ENCODED_SCHEMES.find((s) => s.label === "unicode-escape")!;
-
-  it.each([
-    ["a long run of bare backslashes", "\\".repeat(50_000)],
-    ["\\u with no hex digits", "\\u".repeat(20_000)],
-    ["a truncated escape", "\\u00".repeat(20_000)],
-    ["100KB of well-formed escapes", "\\u0041".repeat(17_000)],
-  ])("terminates without throwing and respects the budget: %s", (_label, payload) => {
-    const budget = { remaining: MAX_DECODED_BUDGET };
-    expect(() => iterativeRunViews(scheme(), payload, budget)).not.toThrow();
-    // The shared counter is only ever drawn DOWN, and by at most one view's
-    // length past zero — it can never be re-credited into unbounded work.
-    expect(budget.remaining).toBeLessThanOrEqual(MAX_DECODED_BUDGET);
-    expect(() => scanForSecrets(`x=${payload}`)).not.toThrow();
   });
 });

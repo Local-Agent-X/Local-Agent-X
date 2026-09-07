@@ -214,17 +214,23 @@ export function getCdpBrowserManager(sessionId: string = "default"): BrowserMana
  *
  *  Set/clear the profile FIRST; this only drops the context, and the next page
  *  access re-mints from whatever the profile then says (ordering pinned by
- *  emulate-in-app-hazards.test.ts). */
-export async function releaseEmulatedBrowser(sessionId: string = "default"): Promise<void> {
+ *  emulate-in-app-hazards.test.ts).
+ *
+ *  RETURNS whether a context was actually closed. `emulate` reports what it did
+ *  from this value rather than from the fact that it ran: device='desktop' on a
+ *  session that was never emulating used to announce "the private emulated
+ *  context is closed" when there had been nothing to close. */
+export async function releaseEmulatedBrowser(sessionId: string = "default"): Promise<boolean> {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	if (!emulatedCdpKeys.has(key)) return;
+	if (!emulatedCdpKeys.has(key)) return false;
 	forgetReportedRoute(key);
 	emulatedCdpKeys.delete(key);
 	const manager = cdpManagers.get(key);
-	if (!manager) return;
+	if (!manager) return false;
 	cdpManagers.delete(key);
 	await manager.close();
 	if (cdpManagers.size === 0) await closeSharedBrowser();
+	return true;
 }
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
@@ -259,7 +265,10 @@ export type WedgeRecoveryOutcome =
 	 *  tab's URL preserved so the recreated view re-navigates to it. */
 	| "view-recreated"
 	/** CDP arm: shared Chrome force-killed; the next call launches a fresh one. */
-	| "cdp-reset";
+	| "cdp-reset"
+	/** Emulated arm: only THIS session's private emulated context was dropped.
+	 *  The shared Chrome process is left running — see resetWedgedBrowser. */
+	| "emulated-context-reset";
 
 /**
  * In-process wedge recovery (no LAX restart). When a browser action hangs and
@@ -279,6 +288,19 @@ export type WedgeRecoveryOutcome =
  * a wedged bridge can hang) — and even then the backend stays in the map with
  * the active tab's URL preserved, so the next action's ensureView recreates
  * the view AND re-navigates instead of landing on about:blank.
+ *
+ * EMULATED: drop THIS session's private emulated context and nothing else.
+ * There is exactly ONE shared Chrome process (runtime.ts), so the CDP arm's
+ * force-kill is process-wide: it takes every other session's tabs with it —
+ * including a concurrent chat that fell back to a REAL external Chrome and has
+ * the user's logins open in it. That was never reachable from an emulated wedge
+ * before the emulation route existed, and it must not become reachable now. The
+ * emulated context is disposable by construction (no cookies, no logins, minted
+ * on demand), so the recovery is: remove it from the map, close it
+ * fire-and-forget — awaiting teardown on a wedged connection can hang, same
+ * reasoning as the in-app hard path — and let the next page access mint a fresh
+ * one from the still-installed profile. Pinned by emulate-in-app-hazards.test.ts
+ * ("F3 — a wedge in one session's emulated context").
  *
  * CDP: force-kill the shared Chrome. Every session's cached page now points
  * at a dead connection, so the next browser call re-launches a fresh Chrome
@@ -302,6 +324,13 @@ export async function resetWedgedBrowser(sessionId: string = "default"): Promise
 	const manager = cdpManagers.get(key);
 	cdpManagers.delete(key);
 	emulatedCdpKeys.delete(key);
+	if (emulating) {
+		// Scoped teardown: this key's context only. NOT awaited (a wedged
+		// connection can hang the close) and NOT closeSharedBrowser — other
+		// sessions' managers are still live in that process.
+		void manager?.close().catch(() => { /* already gone */ });
+		return "emulated-context-reset";
+	}
 	if (manager) await manager.resetRuntime();
 	else forceKillSharedBrowser();
 	return "cdp-reset";

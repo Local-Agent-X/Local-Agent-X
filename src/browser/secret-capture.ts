@@ -14,6 +14,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { getSecretBrowserOps } from "./index.js";
+import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -117,7 +118,13 @@ export function createBrowserSecretCaptureTool(
 
       const sessionIdForLock = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
       const { withBrowserLock } = await import("./index.js");
-      return withBrowserLock(sessionIdForLock, async () => {
+      // Same reason as secret-fill: this tool reaches the page through
+      // getSecretBrowserOps, not the browser dispatcher, so while a profile is
+      // installed it READS the private emulated context rather than the window
+      // the user is looking at. Applied over every exit below; the two
+      // argument/overwrite refusals ABOVE this line carry no notice, because
+      // neither of them touched a page.
+      const locked = await withBrowserLock(sessionIdForLock, async () => {
 
       const service = args.service ? String(args.service) : undefined;
       const account = args.account ? String(args.account) : undefined;
@@ -201,6 +208,7 @@ export function createBrowserSecretCaptureTool(
         `Value was NOT shown to you or logged. Reference it via {{${name}}} in http_request headers/body.`,
       );
       });
+      return withEmulationNotice(sessionIdForLock, "secret_capture", locked);
     },
   };
 }

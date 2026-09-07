@@ -57,7 +57,7 @@ import {
 } from "./page.js";
 import { handleAct } from "./act.js";
 import { handleEmulate } from "./emulate.js";
-import { emulationBanner } from "./emulation-banner.js";
+import { withEmulationNotice } from "./emulation-banner.js";
 import { handleLayoutReport } from "./layout-report.js";
 import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
@@ -93,6 +93,15 @@ function wedgeRecoveryMessage(outcome: WedgeRecoveryOutcome): string {
         "The browser stopped responding and its session was reset. The action did not " +
         "complete — retry it and a fresh browser will open."
       );
+    case "emulated-context-reset":
+      return (
+        "The private emulated context stopped responding and was dropped; the emulation profile is " +
+        "still installed, so the next action mints a fresh emulated context (again with no cookies or " +
+        "logins) and the user's in-app window was not touched. The action did not complete — retry it. " +
+        "If the retry hangs the same way, the shared Chrome process itself is wedged rather than the " +
+        "context: run browser {action:\"emulate\", device:\"desktop\"} to leave emulation and go back to " +
+        "the in-app view."
+      );
   }
 }
 
@@ -120,10 +129,17 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
 
         // Validate engine if provided
         const engine = args.engine ? String(args.engine) as BrowserEngine : undefined;
+
+        // The standing emulation notice is applied ONCE, here, over EVERY exit
+        // of this dispatcher — the pre-dispatch gate halt, the human-verification
+        // block, the wedge branch, the sensitive-page stub, the normal result AND
+        // the whole catch block below (timeouts, crashes, BrowserWedgeError). It
+        // used to be prefixed at one point inside the happy path, which left all
+        // of those silent while a profile was installed. See emulation-banner.ts.
+        const dispatched = await (async (): Promise<ToolResult> => {
         if (engine && !VALID_ENGINES.includes(engine)) {
           return err(`Invalid engine: "${engine}". Must be one of: ${VALID_ENGINES.join(", ")}`);
         }
-
         try {
           const gated = await runPreDispatchGates(action, args, manager, sessionId, onEvent);
           if (gated.kind === "halt") return gated.result;
@@ -207,12 +223,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           // post-mutation snapshots carry content at open too) names the
           // cloud provider the contents go to.
           const openWarning = secrecyOpenWarning(sessionId, manager.getCurrentUrl());
-          // Standing emulation notice — see emulation-banner.ts for why this is
-          // per-action rather than per-turn.
-          const banner = emulationBanner(sessionId, action);
-          const prefix = [banner, openWarning].filter(Boolean).join("\n\n");
-          return prefix && typeof finalResult.content === "string"
-            ? { ...finalResult, content: `${prefix}\n\n${finalResult.content}` }
+          return openWarning && typeof finalResult.content === "string"
+            ? { ...finalResult, content: `${openWarning}\n\n${finalResult.content}` }
             : finalResult;
           };
           return grantedReadUrl
@@ -248,6 +260,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           }
           return err(`Browser error: ${message}`);
         }
+        })();
+        return withEmulationNotice(sessionId, action, dispatched);
       }, () => {
         if (onEvent) onEvent({ type: "browser_queued", sessionId });
       });

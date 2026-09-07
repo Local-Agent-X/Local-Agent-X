@@ -57,6 +57,7 @@ vi.mock("../sanitize.js", () => ({
 
 // ───────────────────────── imports after mocks ─────────────────────────
 import { createBrowserSecretFillTool } from "./secret-fill.js";
+import { EMULATION_PRESETS, setSessionEmulation, _resetSessionEmulationForTest } from "./emulation.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecretBrowserOps, SecretFillOutcome } from "./secret-ops.js";
 
@@ -186,5 +187,41 @@ describe("browser_fill_from_secret — readback never leaks the secret", () => {
     expect(result.isError).toBe(true);
     expect(result.content).toMatch(/Fill failed/);
     assertNoSecretLeak([result.content, ...auditCalls]);
+  });
+});
+
+// This tool reaches the page through getSecretBrowserOps, which follows the
+// emulation override — so while a profile is installed the credential goes into
+// the PRIVATE emulated context, not the user's logged-in view. It does not go
+// through the browser dispatcher, so it carried none of the standing notice the
+// dispatcher applies, and its own result said only "Filled … on <origin>".
+describe("browser_fill_from_secret — the standing emulation notice", () => {
+  beforeEach(() => { _resetSessionEmulationForTest(); });
+
+  it("labels the result while the session is emulating — success AND refusal", async () => {
+    setSessionEmulation("test-session", EMULATION_PRESETS.iphone);
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
+
+    const okResult = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
+    expect(okResult.isError).not.toBe(true);
+    expect(okResult.content).toContain("[emulating]");
+    expect(okResult.content).toContain("not the browser window the user is looking at");
+    expect(okResult.content).toContain("Filled");
+    assertNoSecretLeak([okResult.content, ...auditCalls]);
+
+    elementDescriptor = { found: false, tag: "", type: "", autocomplete: "" };
+    const errResult = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
+    expect(errResult.isError).toBe(true);
+    expect(errResult.content).toContain("[emulating]");
+  });
+
+  it("says nothing when the session is not emulating", async () => {
+    currentOps = buildOps({ outcome: { kind: "landed" } });
+    const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
+
+    const result = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
+
+    expect(result.content).not.toContain("[emulating]");
   });
 });

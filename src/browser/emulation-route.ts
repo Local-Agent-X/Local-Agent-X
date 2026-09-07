@@ -6,9 +6,12 @@
  * context of its own. On the in-app route the session's browser is the window
  * the USER is looking at, which must never be resized, re-UA'd, navigated or
  * closed. So while a profile is installed the session's page actions are routed
- * to a private, quarantined, headless CDP context instead (runtime.ts mints it
- * from the profile), and the in-app backend is left untouched and still in the
- * map. Clearing the profile — emulate device='desktop', or closeBrowser —
+ * to a private, quarantined CDP context instead (runtime.ts mints it from the
+ * profile), and the in-app backend is left untouched and still in the map. That
+ * context is asked for headless and IS headless when this is the call that
+ * starts Chrome; there is one shared Chrome process, so a Chrome another
+ * session already started headful is reused headful and a window does appear —
+ * runtime.ts getSharedBrowser is where that limit is stated. Clearing the profile — emulate device='desktop', or closeBrowser —
  * restores the in-app route and hands back the SAME backend, view and page.
  *
  * This used to be a refusal ("emulate is not available on the in-app browser"),

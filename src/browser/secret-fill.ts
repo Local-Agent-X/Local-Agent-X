@@ -29,6 +29,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { deriveOrigin, normalizeSecretName } from "../secrets.js";
 import { getSecretBrowserOps } from "./index.js";
+import { withEmulationNotice } from "../tools/browser-tools/emulation-banner.js";
 import { registerRedactedSecretValue } from "../sanitize.js";
 import { getActivePreBlessedSecrets } from "../ops/pre-bless.js";
 import type { SecretElementDescriptor, SecretFillOutcome } from "./secret-ops.js";
@@ -105,7 +106,14 @@ export function createBrowserSecretFillTool(
       const pressEnter = args.press_enter === true;
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
       const { withBrowserLock } = await import("./index.js");
-      return withBrowserLock(sessionId, async () => {
+      // This tool reaches the page through getSecretBrowserOps, NOT the browser
+      // dispatcher, so the standing emulation notice has to be applied here as
+      // well: while a profile is installed the fill lands in the PRIVATE emulated
+      // context (getSecretBrowserOps follows the same override), not the user's
+      // logged-in in-app view, and nothing else in this result says so. Applied
+      // over every exit below; the four argument-validation refusals ABOVE this
+      // line carry no notice, because none of them touched a page.
+      const locked = await withBrowserLock(sessionId, async () => {
 
       // Look up secret metadata. We do NOT pull the value yet — only confirm it
       // exists and inspect origin/provenance. Value fetch is deferred to the
@@ -281,6 +289,7 @@ export function createBrowserSecretFillTool(
         `Take a new snapshot to see the next page state.`
       );
       });
+      return withEmulationNotice(sessionId, "secret_fill", locked);
     },
   };
 }

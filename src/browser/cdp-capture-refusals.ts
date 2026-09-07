@@ -26,7 +26,8 @@ function emulationPrefix(ownerId: string): string | null {
   return (
     "not available while this session is emulating a device: a device-emulation profile " +
     `(${describeEmulation(profile).split("\n")[0]}) redirected this session's page actions to a private ` +
-    "headless context, and capture rides the in-app browser's plumbing, not that context. " +
+    "emulated context (headless unless an earlier external-Chrome fallback had already started the one " +
+    "shared Chrome visible), and capture rides the in-app browser's plumbing, not that context. " +
     "Run emulate with device='desktop' to close the emulated context and put this session back on the " +
     "in-app browser view, then read again."
   );

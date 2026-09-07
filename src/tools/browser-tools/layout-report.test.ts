@@ -9,12 +9,19 @@
  * real wrapper does to a real report (trigger strings, a registered secret) in
  * test/browser-layout-report-adversarial.test.ts.
  *
- * The property under test here is STRUCTURAL: the result text is byte-for-byte
- * wrapExternalContent(<what evaluate returned>, "browser.layout_report") —
- * no preamble, no verdict, no flags sentence, no emulation profile — for a
- * clean report, a truncated report, a non-JSON string and a session with a
- * profile installed. The wrapper is real: the last test shows it rewrites an
- * UNESCAPED document and passes the script's escaped form straight through.
+ * The property under test here is STRUCTURAL, and it is asserted over the WHOLE
+ * result, prefix included: the HANDLER's bytes are byte-for-byte
+ * wrapExternalContent(<what evaluate returned>, "browser.layout_report") — no
+ * preamble, no verdict, no flags sentence, no emulation profile — and the only
+ * thing that may precede them is the dispatcher's standing emulation banner,
+ * asserted exactly. So the prefix is EMPTY for a clean report, a truncated
+ * report and a non-JSON string, and is exactly the banner for a session with a
+ * profile installed. Byte-for-byte equality of the whole result is therefore
+ * true for every case EXCEPT the emulating one, which is the case this file
+ * previously discarded before asserting anything.
+ *
+ * The wrapper is real: the last test shows it rewrites an UNESCAPED document
+ * and passes the script's escaped form straight through.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +49,7 @@ import { createBrowserTools } from "./index.js";
 import { scanEvaluateScript } from "../../browser/guards.js";
 import { LAYOUT_REPORT_JSON_ESCAPE, LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_SCRIPT } from "../../browser/layout-report.js";
 import { EMULATION_PRESETS, _resetSessionEmulationForTest, setSessionEmulation } from "../../browser/emulation.js";
+import { emulationBanner } from "./emulation-banner.js";
 import { wrapExternalContent } from "../../sanitize.js";
 
 const SESSION = "layout-session";
@@ -124,23 +132,40 @@ const runReport = (report: unknown): Promise<string> => runRaw(JSON.stringify(re
  *  masked. */
 const maskId = (text: string): string => text.replace(/ id="[0-9a-f]+"/g, ' id="X"');
 
-/** The dispatcher may prepend its own trusted notices ABOVE the wrapper (the
- *  secrecy open warning, the emulation banner — index.ts). Those are not the
- *  handler's output; strip one so the handler's own bytes can still be pinned
- *  exactly. Nothing may be appended after the wrapper. */
-const handlerBytes = (text: string): string => {
+/** The dispatcher may prepend ONE trusted notice above the wrapper: the standing
+ *  emulation banner (index.ts / emulation-banner.ts). Nothing else, and nothing
+ *  appended after.
+ *
+ *  This used to slice at the wrapper marker and assert only on the remainder,
+ *  which made `startsWith` tautological and let a preamble the handler itself
+ *  wrote sail past all eleven VERDICT_PATTERNS — a mutation adding
+ *  "Layout report for this page: horizontal overflow of at least 240px was
+ *  found. " to the handler left this file AND the adversarial file green. So the
+ *  prefix is now asserted EXACTLY: it is empty unless a profile is installed,
+ *  and exactly the banner plus one blank line when one is. That is also the only
+ *  test anywhere that the banner is WIRED into the dispatcher rather than merely
+ *  being a correct pure function. */
+function splitPrefix(text: string): { prefix: string; wrapped: string } {
   const at = text.indexOf("<<<EXTERNAL_UNTRUSTED_CONTENT id=");
   expect(at).toBeGreaterThan(-1);
-  return text.slice(at);
-};
+  return { prefix: text.slice(0, at), wrapped: text.slice(at) };
+}
 
-/** Asserts the handler's own output is exactly the wrapper over `raw`. */
-async function expectWrapperOnly(raw: string): Promise<string> {
-  const text = handlerBytes(await runRaw(raw));
-  expect(maskId(text)).toBe(maskId(wrapExternalContent(raw, SOURCE)));
-  expect(text.startsWith("<<<EXTERNAL_UNTRUSTED_CONTENT id=")).toBe(true);
-  for (const pattern of VERDICT_PATTERNS) expect(text).not.toMatch(pattern);
-  return text;
+/** Asserts the result is exactly `expectedPrefix` + the wrapper over `raw`. */
+async function expectWrapperOnly(raw: string, expectedPrefix = ""): Promise<string> {
+  const { prefix, wrapped } = splitPrefix(await runRaw(raw));
+  // Exact, not "starts with" and not "after slicing it off": any preamble the
+  // handler writes fails HERE, whatever it says.
+  expect(prefix).toBe(expectedPrefix);
+  expect(maskId(wrapped)).toBe(maskId(wrapExternalContent(raw, SOURCE)));
+  // VERDICT_PATTERNS covers the handler's own bytes plus an unexpected prefix.
+  // A prefix the caller declared is pinned by identity above instead — the
+  // banner legitimately contains the words "device-emulation profile", which
+  // /Emulation profile/i matches, and it carries no viewport numbers and no
+  // verdict (emulation-banner.test.ts).
+  const scanned = expectedPrefix === "" ? `${prefix}${wrapped}` : wrapped;
+  for (const pattern of VERDICT_PATTERNS) expect(scanned).not.toMatch(pattern);
+  return wrapped;
 }
 
 /** The bytes inside the untrusted-content wrapper's <content> block. */
@@ -162,7 +187,7 @@ beforeEach(() => {
 });
 
 describe("browser layout_report", () => {
-  it("the result text is exactly the untrusted wrapper over the JSON — no preamble, no prose", async () => {
+  it("with no profile installed the result is exactly the untrusted wrapper over the JSON — no preamble, no prose", async () => {
     const text = await expectWrapperOnly(JSON.stringify(CLEAN_REPORT));
 
     expect(text).toContain(`source: ${SOURCE}`);
@@ -179,10 +204,28 @@ describe("browser layout_report", () => {
     setSessionEmulation(SESSION, EMULATION_PRESETS.iphone);
     const report = { ...CLEAN_REPORT, viewport: { ...CLEAN_REPORT.viewport, clientWidth: 1280 } };
 
-    const text = await expectWrapperOnly(JSON.stringify(report));
+    // The handler's bytes are unchanged; what is ABOVE them is the dispatcher's
+    // banner and exactly that — no numbers, no verdict, no second notice.
+    const banner = emulationBanner(SESSION, "layout_report")!;
+    expect(banner).not.toBeNull();
+    const text = await expectWrapperOnly(JSON.stringify(report), `${banner}\n\n`);
 
     expect(text).not.toMatch(/390x844|isMobile|hasTouch|User-Agent/);
     expect(text).toContain('"clientWidth":1280');
+  });
+
+  // The banner is the ONLY thing standing between an emulated session and a
+  // report it believes came from the user's window. `const banner = null` at the
+  // dispatcher used to leave the whole browser suite green.
+  it("the dispatcher WIRES the banner: a report from an emulated session is labelled, an unemulated one is not", async () => {
+    const plain = await runReport(CLEAN_REPORT);
+    expect(splitPrefix(plain).prefix).toBe("");
+
+    setSessionEmulation(SESSION, EMULATION_PRESETS.iphone);
+    const labelled = await runReport(CLEAN_REPORT);
+
+    expect(splitPrefix(labelled).prefix).toBe(`${emulationBanner(SESSION, "layout_report")}\n\n`);
+    expect(labelled).toContain("not the browser window the user is looking at");
   });
 
   it("does not parse or reshape the page's result — an unexpected shape is wrapped as-is", async () => {

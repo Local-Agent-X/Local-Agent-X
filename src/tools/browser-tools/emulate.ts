@@ -29,13 +29,14 @@ import type { BrowserManager } from "../../browser/manager.js";
 import {
   CdpOnlyOperationError,
   getCdpBrowserManager,
+  hasInAppBackend,
   hasNonEmulatedCdpBrowser,
   releaseEmulatedBrowser,
   resolveBrowserBackendKind,
   type BrowserBackendKind,
 } from "../../browser/instance.js";
 import { resolveBrowserSessionId } from "../../browser/session-owner-registry.js";
-import { describeEmulation, resolveEmulationProfile, setSessionEmulation } from "../../browser/emulation.js";
+import { describeEmulation, getSessionEmulation, resolveEmulationProfile, setSessionEmulation } from "../../browser/emulation.js";
 import { USER_AGENTS } from "../../browser/launcher.js";
 import { isBlankish } from "../../browser/blankish.js";
 import { ok, err } from "./shared.js";
@@ -99,13 +100,29 @@ function sessionRouteKind(): BrowserBackendKind {
  *  down (route reason "no-desktop-bridge") and the bridge has since come back.
  *  Both browsers live at the same key, so there is no way to stand an emulated
  *  context up here without destroying that one. Refuse and say so; the previous
- *  behaviour closed it and reported "the in-app view was unchanged throughout". */
-function fallbackBrowserRefusal(ownerId: string): string {
+ *  behaviour closed it and reported "the in-app view was unchanged throughout".
+ *
+ *  The escape it names is `browser {action:"close"}`, and that action is NOT
+ *  narrow: closeBrowser (instance.ts) closes BOTH kinds of backend at the key,
+ *  so on a session that also has an in-app view it takes the user's window and
+ *  every tab in it with the fallback. Prescribing it without saying so told the
+ *  caller to destroy exactly what this refusal exists to protect. There is no
+ *  tool-level action that closes only the CDP manager, so the cost is stated
+ *  instead — and stated from the ACTUAL state of the session (hasInAppBackend),
+ *  not from a guess about it. */
+function fallbackBrowserRefusal(ownerId: string, alsoClosesInAppView: boolean): string {
+  const cost = alsoClosesInAppView
+    ? "That action is not narrow: it closes BOTH browsers this session has — the leftover fallback AND the " +
+      "in-app view the user is looking at, with every tab in it. Say so before you run it, or ask the user " +
+      "first; there is no action that closes only the fallback."
+    : "This session has no in-app view open at the moment, so that action closes the leftover fallback and " +
+      "nothing the user can see. (The same action WOULD also close the in-app view if one were open — it " +
+      "closes every browser backend this session holds.)";
   return (
     `emulate cannot run here yet: this session (${ownerId}) is routed to the in-app browser, but it still ` +
     "holds an external Chrome it fell back to earlier (the desktop bridge was unavailable at the time). The " +
     "emulated context would have to take that browser's place, closing its tabs and dropping its logins. " +
-    "Run browser {action:\"close\"} to close the leftover fallback browser first, then emulate again."
+    `Run browser {action:"close"} to close the leftover fallback browser first, then emulate again. ${cost}`
   );
 }
 
@@ -126,9 +143,19 @@ async function emulateBesideInAppView(
   const resolved = resolveEmulationProfile(args, USER_AGENTS.chromium);
   if ("error" in resolved) return err(resolved.error);
   const { profile } = resolved;
-  if (profile && hasNonEmulatedCdpBrowser(ownerId)) return err(fallbackBrowserRefusal(ownerId));
+  if (profile && hasNonEmulatedCdpBrowser(ownerId)) {
+    return err(fallbackBrowserRefusal(ownerId, hasInAppBackend(ownerId)));
+  }
   const previousUrl = manager.getCurrentUrl();
   const carryUrl = previousUrl && !isBlankish(previousUrl) ? previousUrl : null;
+  // Read BEFORE the write below: the clearing arm reports what it actually
+  // changed, and "was a profile installed" is not recoverable afterwards.
+  const wasEmulating = getSessionEmulation(ownerId) !== undefined;
+  // Whether this session has an in-app view AT ALL. The emulate result used to
+  // say the user's window is "still open in front of the user" unconditionally,
+  // which is a claim about a window that may never have been created — a
+  // session whose first browser call is `emulate` has no ElectronInAppBackend.
+  const hasView = hasInAppBackend(ownerId);
 
   // ORDER IS LOAD-BEARING, and pinned by emulate-in-app-hazards.test.ts: the
   // profile is set FIRST, then the context dropped. Release only drops; the next
@@ -139,15 +166,33 @@ async function emulateBesideInAppView(
   // Drops a PREVIOUS emulated context (repeat emulate) or, when the profile was
   // just cleared, the emulated context itself. Never touches the in-app backend,
   // and never touches a CDP browser that was not minted as the emulated
-  // stand-in (instance.releaseEmulatedBrowser checks that).
-  await releaseEmulatedBrowser(ownerId);
+  // stand-in (instance.releaseEmulatedBrowser checks that). Its return value is
+  // whether a context was ACTUALLY closed — the desktop arm below reports from
+  // that, not from having run.
+  const closedContext = await releaseEmulatedBrowser(ownerId);
   if (!profile) {
-    return ok(
-      "Emulation cleared. The private emulated context is closed and this session is back on the in-app " +
-      "browser view — which was unchanged throughout: same window, same size, same user agent, same page. " +
-      "tabs / switch_tab can reach the user's real tabs again, and read_console / read_network / " +
-      "read_response work again.",
-    );
+    // device='desktop' with nothing installed is a no-op, and used to announce a
+    // teardown and a restoration that never happened. Three distinguishable
+    // states, three sentences.
+    const leftoverFallback = hasNonEmulatedCdpBrowser(ownerId);
+    const head = closedContext
+      ? "Emulation cleared: the profile is removed and the private emulated context is closed. Emulation " +
+        "never touched the in-app view while it was installed — it did not resize, re-UA, navigate or close " +
+        "it — so that view still shows whatever it showed before, as far as this tool is concerned (the " +
+        "user, or another tool, may have moved it in the meantime)."
+      : wasEmulating
+        ? "Emulation cleared: the profile is removed. No emulated context had been minted for it yet (no " +
+          "page action ran while it was installed), so there was nothing to close."
+        : "Nothing to clear: this session was not emulating. No profile was removed and no context was " +
+          "closed — this call changed nothing.";
+    const tail = leftoverFallback
+      ? " This session is NOT on the in-app view: it still holds the external Chrome it fell back to earlier " +
+        "(the desktop bridge was down at the time), so that browser is what page actions drive, what `tabs` " +
+        "lists, and why read_console / read_network / read_response still refuse. It also still blocks " +
+        "emulate; close it first, and read what that costs in emulate's own refusal before you do."
+      : " This session is on the in-app browser view: tabs / switch_tab can reach the user's real tabs " +
+        "again, and read_console / read_network / read_response work again.";
+    return ok(`${head}${tail}`);
   }
 
   let carried = "No page was open, so nothing was opened in it.";
@@ -159,13 +204,23 @@ async function emulateBesideInAppView(
       carried = `Could not open ${carryUrl}: ${(error as Error).message} — navigate again to continue.`;
     }
   }
+  // What is true about the user's window depends on whether there IS one. With
+  // no ElectronInAppBackend at this key, nothing is open in front of the user
+  // on this session's account and "untouched … still open" would be inventing
+  // a window; the promise that matters (emulation is not driving their view) is
+  // the same either way, so only the second clause moves.
+  const windowClause = hasView
+    ? "This session's in-app browser view was not touched by this call: not resized, not re-UA'd, not " +
+      "navigated, not closed — it still holds the page it held. (Whether it is on screen at this instant is " +
+      "the desktop's to say: a user ✕ on the view is not visible to this seam until the next action.)"
+    : "This session has no in-app browser view open right now (nothing has opened one yet), so there is no " +
+      "window of yours in front of the user to touch, and this call opened none.";
   return ok(
     `Emulating: ${describeEmulation(profile)}\n${carried}\n\n` +
-    "This runs in a PRIVATE, isolated Chromium context — NOT the in-app browser window. That window is " +
-    "untouched: same size, same user agent, same page, still open in front of the user. The context is " +
-    "asked for headless, and is headless unless this session's Chrome had already been started visible by " +
-    "an earlier external-Chrome fallback — there is one shared Chrome process and it cannot be relaunched " +
-    "without closing other sessions' tabs, so in that case a window does appear.\n\n" +
+    `This runs in a PRIVATE, isolated Chromium context — NOT the in-app browser window. ${windowClause} ` +
+    "The context is asked for headless, and is headless unless this session's Chrome had already been " +
+    "started visible by an earlier external-Chrome fallback — there is one shared Chrome process and it " +
+    "cannot be relaunched without closing other sessions' tabs, so in that case a window does appear.\n\n" +
     "Until you clear it, this session's page actions — navigate, snapshot, screenshot, extract, evaluate, " +
     "layout_report, click/fill/scroll, tabs, and the secret fill/capture tools — run against the EMULATED " +
     "context. read_console / read_network / read_response read the in-app browser and are unavailable " +

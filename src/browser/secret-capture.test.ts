@@ -16,6 +16,7 @@ vi.mock("./index.js", () => ({
 }));
 
 import { createBrowserSecretCaptureTool } from "./secret-capture.js";
+import { EMULATION_PRESETS, setSessionEmulation, _resetSessionEmulationForTest } from "./emulation.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecretBrowserOps } from "./secret-ops.js";
 import type { SecretMetaView } from "../secrets-types.js";
@@ -91,5 +92,34 @@ describe("browser_capture_to_secret", () => {
     expect(result.isError).not.toBe(true);
     expect(set).toHaveBeenCalledWith(SECRET_NAME, SECRET_VALUE, expect.anything());
     expect(result.content).not.toContain(SECRET_VALUE);
+  });
+
+  // getSecretBrowserOps follows the emulation override, so while a profile is
+  // installed this reads the PRIVATE emulated context — a logged-out page — and
+  // not the user's window. This tool does not go through the browser dispatcher,
+  // so the standing notice has to be applied by the tool itself.
+  describe("the standing emulation notice", () => {
+    beforeEach(() => { _resetSessionEmulationForTest(); });
+
+    it("labels the result while the session is emulating", async () => {
+      setSessionEmulation("test-session", EMULATION_PRESETS.iphone);
+      const { store } = buildStore(undefined);
+      const tool = createBrowserSecretCaptureTool(store, () => "test-session");
+
+      const result = await tool.execute({ name: SECRET_NAME, text_selector: "code#token" });
+
+      expect(result.content).toContain("[emulating]");
+      expect(result.content).toContain("not the browser window the user is looking at");
+      expect(result.content).not.toContain(SECRET_VALUE);
+    });
+
+    it("says nothing when the session is not emulating", async () => {
+      const { store } = buildStore(undefined);
+      const tool = createBrowserSecretCaptureTool(store, () => "test-session");
+
+      const result = await tool.execute({ name: SECRET_NAME, text_selector: "code#token" });
+
+      expect(result.content).not.toContain("[emulating]");
+    });
   });
 });

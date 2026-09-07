@@ -11,7 +11,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "Control a REAL Chrome browser (visible window on user's desktop) to interact with web pages. " +
   "Its screenshot action captures ONLY the current WEB PAGE/TAB — shown to you INLINE in one call — never the user's physical desktop, monitor, taskbar, or other apps. " +
   "For requests like 'screenshot my screen', 'capture my desktop', or 'show my monitor', use `screen_capture` instead. " +
-  "This is NOT headless — the user can see the browser window. " +
+  "This is NOT headless — the user can see the browser window — EXCEPT while a device-emulation profile is installed, when this session's page actions run in a private context the user cannot see (see `emulate` below; every action then carries an [emulating] notice saying so). " +
   "Use this for sites that require JavaScript rendering, form filling, authentication flows, " +
   "scraping dynamic content, or any task that web_fetch/http_request cannot handle. " +
   "The browser session persists across calls — navigate once, then click/fill/extract as needed. " +

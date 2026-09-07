@@ -24,7 +24,14 @@ const seam = vi.hoisted(() => {
     // A leftover external-Chrome fallback at the same key — emulate refuses
     // rather than closing the user's real tabs (instance.ts F2).
     fallbackCdpBrowser: false,
-    releaseEmulated: vi.fn(async (_sessionId?: string) => {}),
+    // Does this session have an ElectronInAppBackend at all? The emulate result
+    // claims the user's window is "still open in front of them", which is a
+    // claim about a window that need not exist — a session whose first browser
+    // call is `emulate` has none.
+    inAppBackend: true,
+    // releaseEmulatedBrowser reports whether it ACTUALLY closed a context; the
+    // device='desktop' arm reports from that rather than from having run.
+    releaseEmulated: vi.fn(async (_sessionId?: string) => true),
     FakeCdpOnlyOperationError,
   };
 });
@@ -46,6 +53,7 @@ vi.mock("../../browser/instance.js", () => ({
   },
   releaseEmulatedBrowser: seam.releaseEmulated,
   hasNonEmulatedCdpBrowser: () => seam.fallbackCdpBrowser,
+  hasInAppBackend: () => seam.inAppBackend,
 }));
 
 import { createBrowserTools } from "./index.js";
@@ -86,7 +94,9 @@ beforeEach(() => {
   seam.cdpThrows = null;
   seam.routeKind = "cdp";
   seam.fallbackCdpBrowser = false;
+  seam.inAppBackend = true;
   seam.releaseEmulated.mockClear();
+  seam.releaseEmulated.mockResolvedValue(true);
   seam.manager.getCurrentUrl = () => PAGE;
   seam.manager.observe = vi.fn(async () => ({ title: "Products", url: PAGE, currentRefs: [], crossOriginIframes: [] }));
   for (const name of MUTATING_BACKEND_CALLS) seam.manager[name] = vi.fn(async () => "");
@@ -181,7 +191,7 @@ describe("emulate on the in-app route runs beside the user's window, not in it",
     const text = String(result.content);
     expect(text).toMatch(/PRIVATE, isolated Chromium context/);
     expect(text).toMatch(/NOT the in-app browser window/);
-    expect(text).toMatch(/window is untouched/i);
+    expect(text).toMatch(/in-app browser view was not touched by this call/);
     // The headless promise is CONDITIONAL and says so: preferHeadless is
     // honoured only by the call that starts Chrome (runtime.ts), so a Chrome an
     // earlier fallback already started visible is reused visible.
@@ -211,7 +221,34 @@ describe("emulate on the in-app route runs beside the user's window, not in it",
     expect(getSessionEmulation(SESSION)).toBeUndefined();
     // …and the emulated context is actually torn down, not leaked.
     expect(seam.releaseEmulated).toHaveBeenCalledWith(SESSION);
-    expect(String(result.content)).toMatch(/back on the in-app browser view/);
+    expect(String(result.content)).toMatch(/the private emulated context is closed/);
+    expect(String(result.content)).toMatch(/This session is on the in-app browser view/);
+    untouched();
+  });
+
+  // P11-F6: the arm reported a teardown and a restoration unconditionally, so a
+  // session that was never emulating was told a context it never had was closed.
+  it("device='desktop' on a session that was never emulating reports a no-op", async () => {
+    seam.releaseEmulated.mockResolvedValue(false);
+
+    const result = await tool().execute({ action: "emulate", device: "desktop", _sessionId: SESSION });
+
+    expect(result.isError).not.toBe(true);
+    const text = String(result.content);
+    expect(text).toMatch(/Nothing to clear/);
+    expect(text).toMatch(/this call changed nothing/);
+    expect(text).not.toMatch(/emulated context is closed/);
+    untouched();
+  });
+
+  // P11-F7: the window sentence is a claim about a window that may not exist.
+  it("claims the user's window is open only when this session actually has one", async () => {
+    seam.inAppBackend = false;
+
+    const text = String((await tool().execute({ action: "emulate", device: "iphone", _sessionId: SESSION })).content);
+
+    expect(text).toMatch(/no in-app browser view open right now/);
+    expect(text).not.toMatch(/was not touched by this call/);
     untouched();
   });
 

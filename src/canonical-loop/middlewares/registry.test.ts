@@ -108,6 +108,8 @@ const EXPECTED_ORDER = [
   "instruction-audit",
   "refute-completion",
   "open-steps",
+  "budget-ladder",
+  "assertion-repeat",
   "browser-handoff",
   "self-check",
   "post-turn-detector",

@@ -58,6 +58,9 @@ import { isMutationTool } from "../../tool-mutation-check.js";
 import { isLedgerTool } from "../../committing-tool-check.js";
 import { MEMORY_WRITE_TOOLS } from "./silent-tool-check.js";
 import { getMiddlewareState } from "../middlewares/state.js";
+import {
+  createConstraintLedger, formatConstraintReminder, noteFailures,
+} from "./constraint-ledger.js";
 
 type ToolSummaryEntry = { tool: string; toolCallId?: string };
 
@@ -250,6 +253,7 @@ export function collectToolFailures(
 export const MAX_BOOKKEEPING_DEFERRALS = 3;
 
 const BOOKKEEPING_DEFERRAL_STATE = "bookkeeping-only-deferrals";
+const CONSTRAINT_LEDGER_KEY = "constraint-ledger";
 
 /**
  * QUESTION B, BOUNDED. The only supported reader of hadTerminatingMutation.
@@ -338,7 +342,11 @@ export function shouldNudgeForFailures(summary: ToolFailureSummary): boolean {
   return summary.failures.length > 0 && !summary.hadSuccessfulMutation;
 }
 
-export function formatFailureNudgeForModel(summary: ToolFailureSummary): string {
+/** `opId` opts this turn's failures into the per-op standing-constraint ledger
+ *  (constraint-ledger.ts): a refusal seen twice is deterministic, and the
+ *  generic "retry or report" header is the wrong instruction for it. Omitting
+ *  the id keeps the old pure behavior, which is what the unit tests assert. */
+export function formatFailureNudgeForModel(summary: ToolFailureSummary, opId?: string): string {
   if (summary.failures.length === 0) return "";
   const n = summary.failures.length;
   const noun = n === 1 ? "call" : "calls";
@@ -360,6 +368,11 @@ export function formatFailureNudgeForModel(summary: ToolFailureSummary): string 
       "",
       "Note: a call marked \"declined by the user\" means the user said no to that specific action — the tool is NOT broken and this is not a policy block. Do not immediately repeat that call; adjust your approach or ask the user what they'd prefer. If the user then tells you to proceed, you may request approval again.",
     );
+  }
+  if (opId) {
+    const ledger = getMiddlewareState(opId, CONSTRAINT_LEDGER_KEY, createConstraintLedger);
+    const reminder = formatConstraintReminder(noteFailures(ledger, summary.failures));
+    if (reminder) lines.push(reminder);
   }
   return lines.join("\n");
 }

@@ -58,6 +58,8 @@ import { falseRefusalMiddleware } from "./false-refusal.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
+import { budgetLadderMiddleware } from "./budget-ladder.js";
+import { assertionRepeatMiddleware } from "./assertion-repeat.js";
 import { browserHandoffMiddleware } from "./browser-handoff.js";
 import { selfCheckMiddleware } from "./self-check.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
@@ -167,6 +169,15 @@ const DEFAULT_STACK: StackEntry[] = [
   // the LLM panel only runs when they all passed. Disable: LAX_REFUTE_COMPLETION=0.
   { order: 180, mw: refuteCompletionMiddleware },
   { order: 190, mw: openStepsMiddleware },
+  // Forced self-assessment at 25/50/75% of the iteration budget, and an
+  // honest stop when two consecutive rungs learn nothing new. All lanes:
+  // the budget wall that prompted it fires on interactive ops, and the
+  // same no-progress spend happens unattended on worker ops.
+  { order: 195, mw: budgetLadderMiddleware },
+  // Stagnation measured from restated conclusions rather than tool shape —
+  // the one signal the recorded livelock could not evade, since it wrote the
+  // same "both fixes are live on prod" eight times.
+  { order: 197, mw: assertionRepeatMiddleware },
   // Interactive chat only — forces one more turn when a browser-driving turn
   // ends by punting the obstruction back to the user while the page is still
   // open (the chat analogue of premature-completion, which is worker-only).

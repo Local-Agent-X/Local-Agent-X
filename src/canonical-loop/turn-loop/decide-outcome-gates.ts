@@ -34,6 +34,7 @@ import { runSpecAuditGate } from "./spec-audit.js";
 import { runDesignVerifyGate } from "./design-verify.js";
 import { earnedDoneNudge } from "../middlewares/open-steps.js";
 import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
+import { userAuthoredRequest } from "../../slash-commands.js";
 
 /** Everything a completion gate reads about the turn under decision. */
 export interface CompletionGateContext {
@@ -81,8 +82,15 @@ const renderVerifyGate: CompletionGate = {
     // a phone-served page knows its appId, not a chat session id.
     for (const appId of appIdsTouchedByTurn(toolCalls)) registerOpAppTouch(op.id, appId);
     // appUrl lets the gate headlessly probe a build that no preview opened
-    // (e.g. phone-triggered); task is the description for the screenshot judge.
-    const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: op.task });
+    // (e.g. phone-triggered). appDescription is what the screenshot judge is
+    // told the app IS (`The app is described as: "…"` in vision-verify.ts) —
+    // the user's ask, not the methodology. On the chat path op.task is stamped
+    // AFTER slash expansion, so for `/app-build a todo app` it is the marker
+    // plus the whole SKILL.md body; userAuthoredRequest recovers
+    // `/app-build a todo app` and passes a non-expansion through unchanged.
+    // The judge never needs the template: the mandated design spec reaches it
+    // separately via getDesignSpec(opId) inside the bootstrap probe.
+    const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: userAuthoredRequest(op.task ?? "") });
     if (gate.shouldRetry) {
       appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
       return { reopen: true };

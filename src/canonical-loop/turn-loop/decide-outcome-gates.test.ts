@@ -1,12 +1,72 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Partial mock: keep the real touched-app-files detection so the gate's own
+// trigger path runs, but capture what it hands the render-verify probe.
+vi.mock("./render-verify.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./render-verify.js")>();
+  return {
+    ...actual,
+    runRenderVerifyGate: vi.fn(async () => ({ nudge: "", retryCount: 0, shouldRetry: false, capReached: false })),
+  };
+});
+
 import { COMPLETION_GATES, COMPLETION_GATE_ORDER } from "./decide-outcome-gates.js";
+import { runRenderVerifyGate } from "./render-verify.js";
+import { expandSlashCommand } from "../../slash-commands.js";
 import type { Op } from "../../ops/types.js";
+import type { ToolCall } from "../contract-types.js";
 
 const frameworkServe = COMPLETION_GATES.find(g => g.name === "framework-serve")!;
+const renderVerify = COMPLETION_GATES.find(g => g.name === "render-verify")!;
+const mockRenderVerify = vi.mocked(runRenderVerifyGate);
 
 function op(overrides: Partial<Op>): Op {
   return { id: "op-test", type: "chat", task: "t", ...overrides } as unknown as Op;
 }
+
+/** A turn that wrote an app file — the render-verify gate's trigger. */
+const APP_WRITE: ToolCall[] = [{ toolCallId: "t1", tool: "write", args: { path: "workspace/apps/todo/index.html" } }];
+
+beforeEach(() => { mockRenderVerify.mockClear(); });
+
+describe("render-verify gate — appDescription is the user's ask, not the slash template", () => {
+  const EXPANDED = expandSlashCommand("/app-build a todo app with dark mode")!.agentMessage;
+
+  it("premise: on the chat path op.task is the EXPANDED message", () => {
+    expect(EXPANDED).toContain("**SLASH COMMAND**");
+    expect(EXPANDED).toContain("# /app-build methodology");
+    expect(EXPANDED.length).toBeGreaterThan(1000);
+  });
+
+  it("hands the screenshot judge `/app-build a todo app with dark mode`, never the SKILL.md body", async () => {
+    const out = await renderVerify.evaluate({
+      op: op({ id: "op-slash", type: "app_build", task: EXPANDED, appUrl: "http://127.0.0.1:7007/apps/todo/index.html" }),
+      turnIdx: 1,
+      toolCalls: APP_WRITE,
+    });
+    expect(out.reopen).toBe(false);
+    expect(mockRenderVerify).toHaveBeenCalledTimes(1);
+    expect(mockRenderVerify).toHaveBeenCalledWith("op-slash", {
+      appUrl: "http://127.0.0.1:7007/apps/todo/index.html",
+      appDescription: "/app-build a todo app with dark mode",
+    });
+  });
+
+  it("a plain (non-slash) task reaches the judge byte-identical", async () => {
+    await renderVerify.evaluate({
+      op: op({ id: "op-plain", type: "app_build", task: "a todo app with dark mode", appUrl: "http://x/apps/todo/index.html" }),
+      turnIdx: 1,
+      toolCalls: APP_WRITE,
+    });
+    expect(mockRenderVerify.mock.calls[0][1]?.appDescription).toBe("a todo app with dark mode");
+  });
+
+  it("does not run at all when the turn touched no app files (trigger unchanged)", async () => {
+    const out = await renderVerify.evaluate({ op: op({ task: EXPANDED }), turnIdx: 1, toolCalls: [] });
+    expect(out.reopen).toBe(false);
+    expect(mockRenderVerify).not.toHaveBeenCalled();
+  });
+});
 
 describe("completion gate order", () => {
   it("runs framework-serve LAST — it registers a dev server, so it must fire only on a real terminal (no earlier gate re-opened)", () => {

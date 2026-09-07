@@ -270,9 +270,13 @@ export const opSubmitBatchTool: ToolDefinition = {
       const secs = r.wallMs !== undefined ? ` (${Math.round(r.wallMs / 1000)}s)` : "";
       const id = r.opId ? ` ${r.opId}` : "";
       const head = `  [${r.status}]${id}${secs} — ${r.task.slice(0, 60)}${r.task.length > 60 ? "…" : ""}`;
+      // A partial task's finalSummary opens with the PARTIAL line the caller
+      // is told to relay (op-result-summary.ts). It has to be IN the content:
+      // the model reads content, and metadata.batch.results is for the UI.
+      const partial = r.status === "partial" ? `\n      ${r.finalSummary.split("\n")[0]}` : "";
       const err = r.error ? `\n      error: ${r.error}` : "";
       const files = r.filesChanged.length > 0 ? `\n      files: ${r.filesChanged.slice(0, 5).join(", ")}${r.filesChanged.length > 5 ? "…" : ""}` : "";
-      return `${i + 1}.${head}${err}${files}`;
+      return `${i + 1}.${head}${partial}${err}${files}`;
     });
 
     const summary =

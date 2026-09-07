@@ -160,6 +160,14 @@ describe("op_submit_batch — partial is counted on its own", () => {
     const partialTask = meta.results.find(r => r.status === "partial")!;
     expect(partialTask.finalSummary.startsWith(`PARTIAL — child op ${partialTask.opId} stopped at a checkpoint`)).toBe(true);
     expect(res.content).toContain(`[partial] ${partialTask.opId}`);
+    // The tool description promises the PARTIAL line is relayed; the model
+    // reads CONTENT, so the line must follow the task's own row there — not
+    // live only in metadata.batch.results.
+    const row = res.content.indexOf(`[partial] ${partialTask.opId}`);
+    const partialLine = res.content.indexOf(`PARTIAL — child op ${partialTask.opId} stopped at a checkpoint`);
+    expect(partialLine).toBeGreaterThan(row);
+    // The completed and failed rows carry no PARTIAL line of their own.
+    expect(res.content.match(/PARTIAL — child op/g)).toHaveLength(1);
   });
 
   it("a batch whose only landed work is partial is not an error either", async () => {

@@ -10,7 +10,7 @@ function ctx(over: Partial<CanonicalLoopContext> = {}): CanonicalLoopContext {
   return makeCanonicalLoopContext({
     op: { id: `op-codebase-advice-${opCounter++}`, type: "chat_turn", lane: "interactive" },
     turnIdx: 1,
-    userMessage: "Where do we still struggle as a harness, and what should we do next?",
+    currentUserMessage: "Where do we still struggle as a harness, and what should we do next?",
     assistantContent: "The move is to add a verifier middleware and wire it into the canonical loop.",
     toolCalls: [],
     toolsCalledThisOp: new Set<string>(),
@@ -56,5 +56,28 @@ describe("codebaseAdviceMiddleware", () => {
     const c = ctx();
     expect((await fire(c)).kind).toBe("nudge");
     expect((await fire(c)).kind).toBe("continue");
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The "is this a codebase-advice request?" classifier must read the
+// current request — in both directions.
+describe("codebase-advice — classifies the CURRENT request, not the session's opening line", () => {
+  it("stays quiet when only the stale opening line asked for codebase advice", async () => {
+    _resetMiddlewareStates();
+    const r = await fire(ctx({
+      userMessage: "Where do we still struggle as a harness, and what should we do next?",
+      currentUserMessage: "What's the capital of France?",
+    }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("nudges when the current request asks for codebase advice, whatever the opening line was", async () => {
+    _resetMiddlewareStates();
+    const r = await fire(ctx({
+      userMessage: "What's the capital of France?",
+      currentUserMessage: "Where do we still struggle as a harness, and what should we do next?",
+    }));
+    expect(r.kind).toBe("nudge");
   });
 });

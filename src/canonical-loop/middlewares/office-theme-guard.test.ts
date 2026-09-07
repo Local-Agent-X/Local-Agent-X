@@ -8,8 +8,8 @@ import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 // guard strips `theme` by MUTATING call.args in place — so these must reach
 // ctx by reference, never copied. They carry a real toolCallId because the old
 // blanket `as unknown as CanonicalLoopContext` let the fixture skip it.
-function ctxFor(userMessage: string, toolCalls: ToolCall[]): CanonicalLoopContext {
-  return makeCanonicalLoopContext({ op: { id: "op-otg" }, userMessage, toolCalls });
+function ctxFor(currentUserMessage: string, toolCalls: ToolCall[]): CanonicalLoopContext {
+  return makeCanonicalLoopContext({ op: { id: "op-otg" }, currentUserMessage, toolCalls });
 }
 
 describe("office-theme-guard", () => {
@@ -41,6 +41,29 @@ describe("office-theme-guard", () => {
   it("ignores non-office tools", () => {
     const tc = { toolCallId: "tc-1", tool: "build_app", args: { name: "x", theme: "dark" } };
     officeThemeGuardMiddleware.afterModelCall!(ctxFor("build me an app", [tc]));
+    expect(tc.args).toHaveProperty("theme");
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. "Did the user ask for a look?" is about THIS request — in both
+// directions.
+describe("office-theme-guard — reads the CURRENT request, not the session's opening line", () => {
+  it("strips the theme when only the stale opening line asked for a look", () => {
+    const tc = { toolCallId: "tc-1", tool: "presentation", args: { action: "create", file_path: "a.pptx", slides: "[]", theme: "{}" } };
+    officeThemeGuardMiddleware.afterModelCall!({
+      ...ctxFor("make a power point about reckless ben", [tc]),
+      userMessage: "make the deck red and bold",
+    });
+    expect(tc.args).not.toHaveProperty("theme");
+  });
+
+  it("keeps the theme when the current request asks for a look, whatever the opening line was", () => {
+    const tc = { toolCallId: "tc-1", tool: "presentation", args: { action: "create", file_path: "a.pptx", slides: "[]", theme: "{}" } };
+    officeThemeGuardMiddleware.afterModelCall!({
+      ...ctxFor("make the deck red and bold", [tc]),
+      userMessage: "make a power point about reckless ben",
+    });
     expect(tc.args).toHaveProperty("theme");
   });
 });

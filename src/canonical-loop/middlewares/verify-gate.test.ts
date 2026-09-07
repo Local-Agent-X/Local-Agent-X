@@ -205,7 +205,7 @@ describe("verify-gate — deleted-test judge (dodge vs legit cleanup)", () => {
     const op = opId();
     classifyTestDeletionMock.mockResolvedValue("dodge");
     await deleteTurn(op, ghost);
-    const r = await wrapUp(op, { userMessage: "make the tests pass" });
+    const r = await wrapUp(op, { currentUserMessage: "make the tests pass" });
     expect(r.kind).toBe("nudge");
     expect((r as { reason: string }).reason).toBe("verify-gate-test-deletion");
     expect(opDeletedTestDodge(op)).toBe(true);
@@ -216,7 +216,7 @@ describe("verify-gate — deleted-test judge (dodge vs legit cleanup)", () => {
     const op = opId();
     classifyTestDeletionMock.mockResolvedValue("legit-cleanup");
     await deleteTurn(op, ghost);
-    const r = await wrapUp(op, { userMessage: "delete the obsolete auth test" });
+    const r = await wrapUp(op, { currentUserMessage: "delete the obsolete auth test" });
     expect(r.kind).toBe("continue");
     expect(opDeletedTestDodge(op)).toBe(false);
   });
@@ -283,5 +283,21 @@ describe("verify-gate — instruction-ledger gating", () => {
     forbid(op, "egress");
     await editTurn(op, "src/parser.ts");
     expect((await wrapUp(op)).kind).toBe("nudge");
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The deleted-test judge decides dodge-vs-legit from the USER REQUEST,
+// so a mid-session "delete the obsolete auth test" must reach it verbatim.
+describe("verify-gate — deleted-test judge sees the CURRENT request, not the session's opening line", () => {
+  it("hands the judge the current request, never the stale opening message", async () => {
+    _resetMiddlewareStates();
+    classifyTestDeletionMock.mockReset();
+    classifyTestDeletionMock.mockResolvedValue("legit-cleanup");
+    const op = opId();
+    await deleteTurn(op, "src/__vg_ghost_current__.test.ts");
+    await wrapUp(op, { userMessage: "Yo", currentUserMessage: "delete the obsolete auth test" });
+    expect(classifyTestDeletionMock).toHaveBeenCalledTimes(1);
+    expect(classifyTestDeletionMock.mock.calls[0][0].userRequest).toBe("delete the obsolete auth test");
   });
 });

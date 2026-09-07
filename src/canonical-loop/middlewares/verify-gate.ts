@@ -126,7 +126,7 @@ async function evaluateDeletedTests(
       return { test: t, subjectGuess, subjectExists: existsSync(resolveAgentPath(subjectGuess)) };
     });
     verdict = await classifyTestDeletion({
-      userRequest: ctx.userMessage,
+      userRequest: ctx.currentUserMessage,
       deletedTests: stillDeleted,
       editedPaths: state.editedPaths,
       subjects,

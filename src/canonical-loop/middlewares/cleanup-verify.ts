@@ -115,7 +115,7 @@ export function createCleanupVerifyMiddleware(
     name: "cleanup-verify",
 
     afterToolExecution(ctx) {
-      if (!looksLikeCleanupSweep(ctx.userMessage)) return { kind: "continue" };
+      if (!looksLikeCleanupSweep(ctx.currentUserMessage)) return { kind: "continue" };
       const state = getMiddlewareState<CleanupVerifyState>(
         ctx.op.id, "cleanup-verify", createCleanupVerifyState,
       );
@@ -127,7 +127,7 @@ export function createCleanupVerifyMiddleware(
       // Only at wrap-up: model ended the turn with text and no tool calls.
       if (ctx.toolCalls.length > 0) return { kind: "continue" };
       if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };
-      if (!looksLikeCleanupSweep(ctx.userMessage)) return { kind: "continue" };
+      if (!looksLikeCleanupSweep(ctx.currentUserMessage)) return { kind: "continue" };
 
       const state = getMiddlewareState<CleanupVerifyState>(
         ctx.op.id, "cleanup-verify", createCleanupVerifyState,

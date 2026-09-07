@@ -49,7 +49,7 @@ export const prematureCompletionMiddleware: CanonicalMiddleware = {
     if (flag.fired) return { kind: "continue" };
     flag.fired = true;
 
-    const task = ctx.userMessage.trim().slice(0, TASK_MAX);
+    const task = ctx.currentUserMessage.trim().slice(0, TASK_MAX);
     const message =
       `Task: ${task}\n\n` +
       "You're ending this turn without having taken any committing action " +

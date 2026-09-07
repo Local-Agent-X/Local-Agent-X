@@ -20,12 +20,12 @@ function appPath(appId: string, file: string): string {
 /** One turn: the same write call seen before dispatch and after it. */
 function ctxFor(
   file: string,
-  opts: { userMessage?: string; opType?: string; status?: string; tool?: string } = {},
+  opts: { currentUserMessage?: string; opType?: string; status?: string; tool?: string } = {},
 ): CanonicalLoopContext {
   const tc = { toolCallId: "tc-1", tool: opts.tool ?? "write", args: { file_path: file } };
   return makeCanonicalLoopContext({
     op: { id: "op-adg", type: opts.opType ?? "" },
-    userMessage: opts.userMessage ?? "build me a landing page for my startup",
+    currentUserMessage: opts.currentUserMessage ?? "build me a landing page for my startup",
     toolCalls: [tc],
     toolResults: [{ toolName: tc.tool, toolCallId: "tc-1", content: "ok", status: (opts.status ?? "ok") as never }],
   });
@@ -68,7 +68,7 @@ describe("app-design-guard", () => {
   it("withholds the archetype brief when the app already exists (an update)", () => {
     mkdirSync(join(workspace, "apps", "pmajlabs"), { recursive: true });
     writeFileSync(appPath("pmajlabs", "index.html"), "<h1>existing</h1>");
-    const result = runTurn(ctxFor(appPath("pmajlabs", "styles.css"), { userMessage: "add a contact section" }));
+    const result = runTurn(ctxFor(appPath("pmajlabs", "styles.css"), { currentUserMessage: "add a contact section" }));
 
     expect(result.kind).toBe("nudge");
     const message = (result as { message: string }).message;
@@ -112,5 +112,28 @@ describe("app-design-guard", () => {
     } finally {
       delete process.env.LAX_APP_DESIGN_GUARD;
     }
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The archetype brief is selected FROM the request, so a mid-session
+// "build me a storefront" must not get the archetype of the session's opener.
+describe("app-design-guard — selects the brief from the CURRENT request, not the session's opening line", () => {
+  it("injects the current request's archetype, never the stale opening message's", () => {
+    const stale = "build me a fintech banking app for payments and invoicing";
+    const current = "build me an online store with a cart, checkout and a product catalog";
+    // Precondition: the two requests must classify to different archetypes, or
+    // this test could not tell which one the guard read.
+    expect(selectDesignBrief(stale).archetypeId).not.toBe(selectDesignBrief(current).archetypeId);
+
+    mkdirSync(join(workspace, "apps", "storefront"), { recursive: true });
+    const c = ctxFor(appPath("storefront", "index.html"), { currentUserMessage: current });
+    c.userMessage = stale;
+    const result = runTurn(c);
+
+    expect(result.kind).toBe("nudge");
+    const message = (result as { message: string }).message;
+    expect(message).toContain(selectDesignBrief(current).brief);
+    expect(message).not.toContain(selectDesignBrief(stale).brief);
   });
 });

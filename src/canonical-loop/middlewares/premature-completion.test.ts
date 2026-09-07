@@ -29,7 +29,7 @@ function ctxFor(
 ): CanonicalLoopContext {
   return makeCanonicalLoopContext({
     op: { id: op, lane: "agent" },
-    userMessage: "refactor the parser and save the result",
+    currentUserMessage: "refactor the parser and save the result",
     assistantContent: "All done — here's a summary of what I'd change.",
     toolCalls: [],
     committingToolsThisOp: new Set<string>(),
@@ -121,5 +121,21 @@ describe("premature-completion — instruction-ledger gating", () => {
     const op = opId();
     forbid(op, "egress");
     expect((await run(ctxFor(op))).kind).toBe("nudge");
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op (host.ts + seed-messages ordering). The nudge names THE TASK the
+// worker is being pushed on, so it must be the current request.
+describe("premature-completion — reads the CURRENT request, not the session's opening line", () => {
+  it("names the current request as the task, never the stale opening message", async () => {
+    const r = await run(ctxFor(opId(), {
+      userMessage: "Yo",
+      currentUserMessage: "refactor the parser and save the result",
+    }));
+    expect(r.kind).toBe("nudge");
+    const message = (r as { message: string }).message;
+    expect(message).toContain("Task: refactor the parser and save the result");
+    expect(message).not.toContain("Task: Yo");
   });
 });

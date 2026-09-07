@@ -24,7 +24,7 @@ export const officeThemeGuardMiddleware: CanonicalMiddleware = {
   name: "office-theme-guard",
 
   afterModelCall(ctx) {
-    if (LOOK_REQUEST_RE.test(ctx.userMessage)) return { kind: "continue" };
+    if (LOOK_REQUEST_RE.test(ctx.currentUserMessage)) return { kind: "continue" };
     for (const tc of ctx.toolCalls) {
       if (!OFFICE_TOOLS.has(tc.tool)) continue;
       if (typeof tc.args === "string") {

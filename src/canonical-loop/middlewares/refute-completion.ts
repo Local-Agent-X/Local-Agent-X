@@ -60,7 +60,7 @@ export const refuteCompletionMiddleware: CanonicalMiddleware = {
     if (flag.fired) return { kind: "continue" };
     flag.fired = true;
 
-    const task = ctx.userMessage.trim().slice(0, TASK_MAX);
+    const task = ctx.currentUserMessage.trim().slice(0, TASK_MAX);
     // Report the SAME set the gate above judged on. The raw tally would tell
     // the panel "actions it took: task_create, task_update" immediately after
     // this gate refused to count exactly those as work — and hand the skeptics

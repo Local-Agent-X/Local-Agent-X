@@ -38,7 +38,7 @@ function ctxFor(
 ): CanonicalLoopContext {
   return makeCanonicalLoopContext({
     op: { id: op, lane: opts.lane ?? "agent" },
-    userMessage: opts.task ?? "Implement feature X and add a test.",
+    currentUserMessage: opts.task ?? "Implement feature X and add a test.",
     assistantContent: opts.claim ?? "All done — feature X is implemented.",
     toolCalls: new Array(opts.toolCalls ?? 0).fill({ name: "x" }),
     committingToolsThisOp: new Set(opts.committing ?? ["write", "bash"]),
@@ -143,5 +143,23 @@ describe("refuteCompletionMiddleware", () => {
     expect(await run(op, {})).toMatchObject({ kind: "nudge" });
     expect(await run(op, {})).toEqual({ kind: "continue" });
     expect(refuteClaimMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The skeptic panel judges the claim AGAINST THE TASK, so handing it
+// the opening line would refute a done-claim against the wrong request.
+describe("refute-completion — judges against the CURRENT request, not the session's opening line", () => {
+  it("hands the panel the current request as the task, never the stale opening message", async () => {
+    refuteClaimMock.mockReset();
+    refuteClaimMock.mockResolvedValue({ refuted: false, verdict: {}, summary: "0/3", reasons: [] });
+    await refuteCompletionMiddleware.afterModelCall!({
+      ...ctxFor(opId(), { task: "Implement feature X and add a test." }),
+      userMessage: "Yo",
+    });
+    expect(refuteClaimMock).toHaveBeenCalledTimes(1);
+    const context = refuteClaimMock.mock.calls[0][0].context as string;
+    expect(context).toContain("The TASK the worker was given:\nImplement feature X and add a test.");
+    expect(context).not.toContain("Yo");
   });
 });

@@ -76,12 +76,13 @@ export interface CanonicalLoopContext {
    *  OLDER message. Verified on op_chat_turn_690ce6c3cd1b4394: op.task = "Hi",
    *  first user row = "Yo".
    *
-   *  Ten middlewares read this (app-design-guard, broad-sweep-nudge,
-   *  browser-handoff, cleanup-verify, codebase-advice, instruction-ledger,
-   *  office-theme-guard, premature-completion, refute-completion, verify-gate).
-   *  Repointing it under all ten at once is an unapproved blast radius, so the
-   *  field keeps its existing (wrong-for-most-purposes) meaning and
-   *  `currentUserMessage` was added beside it. New readers want that one. */
+   *  NO middleware reads this any more. The ten that did (app-design-guard,
+   *  broad-sweep-nudge, browser-handoff, cleanup-verify, codebase-advice,
+   *  instruction-ledger, office-theme-guard, premature-completion,
+   *  refute-completion, verify-gate) were migrated to `currentUserMessage`, and
+   *  `current-user-message.contract.test.ts` fails by file name on any new
+   *  `.userMessage` read in this directory. The field itself stays populated
+   *  (host.ts) for external readers; it is NOT the op's request. */
   userMessage: string;
   /** The message that actually OPENED this op — `op.task`.
    *

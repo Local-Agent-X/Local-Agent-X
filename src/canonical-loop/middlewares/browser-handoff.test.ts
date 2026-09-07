@@ -29,7 +29,7 @@ function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
     // Defaults to the ok-only set; the crash-then-punt test overrides it to
     // exercise a drive tool that was attempted but never succeeded.
     attemptedToolsThisOp: over.attemptedToolsThisOp ?? toolsCalledThisOp,
-    userMessage: "open the page and tell me the headline",
+    currentUserMessage: "open the page and tell me the headline",
     assistantContent: "Dismiss it yourself or give me a Cloudflare API token.",
     ...over,
   });
@@ -215,5 +215,22 @@ describe("instruction-ledger gating (user forbade egress)", () => {
     const c = ctx({ assistantContent: "I'm blocked by the overlay." });
     setOpLedger(c.op.id, { prohibitions: ["workspace-write"], obligations: [], phrases: ["read-only"] });
     expect((await fire(c)).kind).toBe("nudge");
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The give-up classifier judges the final text AGAINST THE TASK, so a
+// mid-session op must be judged on its own request, not the opening line.
+describe("browser-handoff — judges against the CURRENT request, not the session's opening line", () => {
+  it("hands the classifier the current request as the task, never the stale opening message", async () => {
+    mockClassify.mockClear();
+    mockClassify.mockResolvedValueOnce(true);
+    await fire(ctx({
+      userMessage: "Yo",
+      currentUserMessage: "open the page and tell me the headline",
+    }));
+    expect(mockClassify).toHaveBeenCalledTimes(1);
+    const arg = mockClassify.mock.calls[0][0] as { task: string };
+    expect(arg.task).toBe("open the page and tell me the headline");
   });
 });

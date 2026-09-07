@@ -14,7 +14,7 @@ function ctxFor(
 ): CanonicalLoopContext {
   return makeCanonicalLoopContext({
     op: { id: op },
-    userMessage: opts.task,
+    currentUserMessage: opts.task,
     assistantContent: "",
     toolCalls: new Array(opts.toolCalls ?? 0).fill({ name: "x" }),
     toolsCalledThisOp: new Set(opts.enumeratedThisOp ? ["grep"] : []),
@@ -94,5 +94,26 @@ describe("instruction-ledger gating", () => {
     const op = opId();
     setOpLedger(op, { prohibitions: ["egress"], obligations: [], phrases: ["stay offline"] });
     expect(run(op, { task: SWEEPS[0], toolCalls: 0 })).toMatchObject({ kind: "nudge" });
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The sweep classifier must read the current request — in both
+// directions.
+describe("broad-sweep-nudge — classifies the CURRENT request, not the session's opening line", () => {
+  it("stays quiet when only the stale opening line was a sweep", () => {
+    const r = broadSweepNudgeMiddleware.afterModelCall!({
+      ...ctxFor(opId(), { task: NARROW[0] }),
+      userMessage: SWEEPS[0],
+    });
+    expect(r).toEqual({ kind: "continue" });
+  });
+
+  it("nudges when the current request is a sweep, whatever the opening line was", () => {
+    const r = broadSweepNudgeMiddleware.afterModelCall!({
+      ...ctxFor(opId(), { task: SWEEPS[0] }),
+      userMessage: NARROW[0],
+    });
+    expect(r).toMatchObject({ kind: "nudge", reason: "broad-sweep-enumerate" });
   });
 });

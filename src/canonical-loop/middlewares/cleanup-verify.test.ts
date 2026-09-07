@@ -29,7 +29,7 @@ function ctxFor(op: string, over: Partial<CanonicalLoopContext>): CanonicalLoopC
   return makeCanonicalLoopContext({
     op: { id: op, lane: "interactive", type: "chat_turn" },
     turnIdx: 1,
-    userMessage: CLEANUP_TASK,
+    currentUserMessage: CLEANUP_TASK,
     assistantContent: "",
     toolCalls: [],
     toolResults: [],
@@ -57,7 +57,7 @@ function bashSearchTurn(op: string, command: string, content: string, status: "o
 
 function wrapUp(op: string, task = CLEANUP_TASK, text = "Done — all tailnet references removed.") {
   return cleanupVerifyMiddleware.afterModelCall!(
-    ctxFor(op, { userMessage: task, toolCalls: [], assistantContent: text }),
+    ctxFor(op, { currentUserMessage: task, toolCalls: [], assistantContent: text }),
   );
 }
 
@@ -202,7 +202,7 @@ describe("LLM confirm gates the FALSE-DONE retract (regex is the prefilter)", ()
     text = "Done — all tailnet references removed.",
   ) {
     return mw.afterModelCall!(
-      ctxFor(op, { userMessage: CLEANUP_TASK, toolCalls: [], assistantContent: text }),
+      ctxFor(op, { currentUserMessage: CLEANUP_TASK, toolCalls: [], assistantContent: text }),
     );
   }
 
@@ -284,5 +284,59 @@ describe("LLM confirm gates the FALSE-DONE retract (regex is the prefilter)", ()
       expect(r.kind === "nudge" ? r.message : "").toContain(`${i}/${CLEANUP_VERIFY_MAX_NUDGES}`);
     }
     expect((await wrapUpWith(mw, op)).kind).toBe("continue");
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. Both hooks gate on "is THIS op a cleanup sweep?", so both must read
+// the current request — in both directions.
+describe("cleanup-verify — classifies the CURRENT request, not the session's opening line", () => {
+  it("stays quiet at wrap-up when only the stale opening line was a cleanup", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const r = await cleanupVerifyMiddleware.afterModelCall!(
+      ctxFor(op, {
+        userMessage: CLEANUP_TASK,
+        currentUserMessage: "What's the capital of France?",
+        toolCalls: [],
+        assistantContent: "Done — all tailnet references removed.",
+      }),
+    );
+    expect(r.kind).toBe("continue");
+    expect(opCleanupUnverified(op)).toBe(false);
+  });
+
+  it("nudges at wrap-up when the current request is a cleanup, whatever the opening line was", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    const r = await cleanupVerifyMiddleware.afterModelCall!(
+      ctxFor(op, {
+        userMessage: "What's the capital of France?",
+        currentUserMessage: CLEANUP_TASK,
+        toolCalls: [],
+        assistantContent: "Done — all tailnet references removed.",
+      }),
+    );
+    expect(r.kind).toBe("nudge");
+  });
+
+  it("accrues grep evidence only for a CURRENT cleanup request", async () => {
+    _resetMiddlewareStates();
+    const op = opId();
+    // Stale line is a cleanup, current is not: afterToolExecution must not
+    // record the clean grep.
+    await cleanupVerifyMiddleware.afterToolExecution!(
+      ctxFor(op, {
+        userMessage: CLEANUP_TASK,
+        currentUserMessage: "What's the capital of France?",
+        toolCalls: [{ toolCallId: "g1", tool: "grep", args: { pattern: "tailnet" } }],
+        toolResults: [{ toolCallId: "g1", toolName: "grep", content: "", status: "ok" }],
+      } as Partial<CanonicalLoopContext>),
+    );
+    // Now the CURRENT request is the cleanup and nothing was accrued → nudge.
+    const r = await cleanupVerifyMiddleware.afterModelCall!(
+      ctxFor(op, { currentUserMessage: CLEANUP_TASK, toolCalls: [], assistantContent: "Done — all tailnet references removed." }),
+    );
+    expect(r.kind).toBe("nudge");
   });
 });

@@ -76,7 +76,7 @@ export function createInstructionLedgerMiddleware(
 
       let ledger: InstructionLedger;
       try {
-        ledger = await extract(ctx.userMessage);
+        ledger = await extract(ctx.currentUserMessage);
       } catch {
         ledger = emptyLedger(); // fail open — an extractor fault constrains nothing
       }

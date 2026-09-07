@@ -18,7 +18,7 @@ function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
   return makeCanonicalLoopContext({
     op: { id: `op-instruction-ledger-${opCounter++}`, type: "agent_spawn", lane: "background" },
     turnIdx: 0,
-    userMessage: "Fix the bug in the scheduler.",
+    currentUserMessage: "Fix the bug in the scheduler.",
     assistantContent: "",
     toolCalls: [],
     toolsCalledThisOp: new Set<string>(),
@@ -38,7 +38,7 @@ beforeEach(() => {
 describe("instructionLedgerMiddleware", () => {
   it("turn 0: records a workspace-write prohibition for 'don't edit'", async () => {
     const mw = createInstructionLedgerMiddleware(offlineExtract);
-    const c = ctx({ userMessage: "Find the root cause but don't edit any code." });
+    const c = ctx({ currentUserMessage: "Find the root cause but don't edit any code." });
     const r = await mw.beforeTurn!(c);
     expect(r.kind).toBe("continue");
     expect(getOpLedger(c.op.id)?.prohibitions).toContain("workspace-write");
@@ -52,7 +52,7 @@ describe("instructionLedgerMiddleware", () => {
     // app_build op it's the harness-authored per-build context, so it's ignored.
     const c = ctx({
       op: { id: "op-appbuild-x", type: "app_build", lane: "build" },
-      userMessage: "You are building a web app. You must NOT edit core LAX; leave the locked files alone; do not edit the baseline.",
+      currentUserMessage: "You are building a web app. You must NOT edit core LAX; leave the locked files alone; do not edit the baseline.",
     });
     const r = await mw.beforeTurn!(c);
     expect(r.kind).toBe("continue");
@@ -70,7 +70,7 @@ describe("instructionLedgerMiddleware", () => {
     // that bricked the preflight. The provenance stamp must skip extraction.
     const c = ctx({
       op: { id: "op-spawn-harness-x", type: "agent_spawn", lane: "agent", taskProvenance: "harness" },
-      userMessage: "Your project root is /apps/x. Never touch paths outside it. 1. Read the sentinel. 2. Write the echo file.",
+      currentUserMessage: "Your project root is /apps/x. Never touch paths outside it. 1. Read the sentinel. 2. Write the echo file.",
     });
     const r = await mw.beforeTurn!(c);
     expect(r.kind).toBe("continue");
@@ -80,7 +80,7 @@ describe("instructionLedgerMiddleware", () => {
 
   it("user-authored agent_spawn op (no provenance stamp): still extracts", async () => {
     const mw = createInstructionLedgerMiddleware(offlineExtract);
-    const c = ctx({ userMessage: "Investigate the crash but don't edit any code." });
+    const c = ctx({ currentUserMessage: "Investigate the crash but don't edit any code." });
     const r = await mw.beforeTurn!(c);
     expect(r.kind).toBe("continue");
     expect(getOpLedger(c.op.id)?.prohibitions).toContain("workspace-write");
@@ -114,7 +114,7 @@ describe("instructionLedgerMiddleware", () => {
       calls++;
       return { prohibitions: ["workspace-write"], obligations: [], phrases: ["don't edit"] };
     });
-    const c = ctx({ userMessage: "don't edit anything" });
+    const c = ctx({ currentUserMessage: "don't edit anything" });
     await mw.beforeTurn!(c);
     await mw.beforeTurn!(c);
     expect(calls).toBe(1);
@@ -125,7 +125,7 @@ describe("instructionLedgerMiddleware", () => {
     const mw = createInstructionLedgerMiddleware(async () => {
       throw new Error("extractor exploded");
     });
-    const c = ctx({ userMessage: "don't edit anything" });
+    const c = ctx({ currentUserMessage: "don't edit anything" });
     const r = await mw.beforeTurn!(c);
     expect(r.kind).toBe("continue");
     expect(getOpLedger(c.op.id)).toEqual({ prohibitions: [], obligations: [], phrases: [] });
@@ -135,9 +135,35 @@ describe("instructionLedgerMiddleware", () => {
   it("default instance: unconstrained message takes the no-cue path (no LLM) and stays permissive", async () => {
     // phraseGate finds no cues → extractConstraints returns empty without any
     // confirm call, so the default (un-injected) middleware is network-free here.
-    const c = ctx({ userMessage: "Refactor the parser and add tests." });
+    const c = ctx({ currentUserMessage: "Refactor the parser and add tests." });
     const r = await instructionLedgerMiddleware.beforeTurn!(c);
     expect(r.kind).toBe("continue");
+    expect(opHasConstraints(c.op.id)).toBe(false);
+  });
+});
+
+// ctx.userMessage is the session's FIRST user row, not the message that opened
+// this op. The ledger's prohibitions/obligations govern THIS op, so they must be
+// extracted from the request that opened it — in both directions.
+describe("instruction-ledger — extracts from the CURRENT request, not the session's opening line", () => {
+  it("records a prohibition stated in the current request even when the opening line had none", async () => {
+    const mw = createInstructionLedgerMiddleware(offlineExtract);
+    const c = ctx({
+      userMessage: "Fix the bug in the scheduler.",
+      currentUserMessage: "Find the root cause but don't edit any code.",
+    });
+    await mw.beforeTurn!(c);
+    expect(getOpLedger(c.op.id)?.prohibitions).toContain("workspace-write");
+  });
+
+  it("records NO prohibition when only the stale opening line had one", async () => {
+    const mw = createInstructionLedgerMiddleware(offlineExtract);
+    const c = ctx({
+      userMessage: "Find the root cause but don't edit any code.",
+      currentUserMessage: "Fix the bug in the scheduler.",
+    });
+    await mw.beforeTurn!(c);
+    expect(getOpLedger(c.op.id)).toEqual({ prohibitions: [], obligations: [], phrases: [] });
     expect(opHasConstraints(c.op.id)).toBe(false);
   });
 });

@@ -26,7 +26,7 @@ export const codebaseAdviceMiddleware: CanonicalMiddleware = {
     if (flag.fired) return { kind: "continue" };
 
     const nudge = checkUngroundedCodebaseAdvice(
-      ctx.userMessage,
+      ctx.currentUserMessage,
       ctx.assistantContent,
       ctx.toolsCalledThisOp,
     );

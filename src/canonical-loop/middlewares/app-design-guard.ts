@@ -173,7 +173,7 @@ export const appDesignGuardMiddleware: CanonicalMiddleware = {
       return {
         kind: "nudge",
         reason: "app-design-guard",
-        message: formatInjection(isCreate ? selectDesignBrief(ctx.userMessage).brief : null),
+        message: formatInjection(isCreate ? selectDesignBrief(ctx.currentUserMessage).brief : null),
       };
     } catch (err) {
       logger.warn(

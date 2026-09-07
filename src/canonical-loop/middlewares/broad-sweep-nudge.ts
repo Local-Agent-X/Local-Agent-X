@@ -46,7 +46,7 @@ export const broadSweepNudgeMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };           // still acting
     if (ctx.toolsCalledThisOp.has("grep") || ctx.toolsCalledThisOp.has("glob"))
       return { kind: "continue" };                                       // already enumerated
-    if (!looksLikeBroadSweep(ctx.userMessage)) return { kind: "continue" };
+    if (!looksLikeBroadSweep(ctx.currentUserMessage)) return { kind: "continue" };
 
     const flag = getMiddlewareState<FiredFlag>(
       ctx.op.id,

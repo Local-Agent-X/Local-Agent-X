@@ -124,7 +124,7 @@ export const browserHandoffMiddleware: CanonicalMiddleware = {
     // phrasing (the regex missed novel give-ups like "Blocked by overlay"). The
     // HANDOFF_PATTERNS regex is the FALLBACK, used only when the classifier is
     // unavailable / times out (null), preserving the prior behavior on that path.
-    const gaveUp = await classifyGaveUp({ task: ctx.userMessage, finalText: text });
+    const gaveUp = await classifyGaveUp({ task: ctx.currentUserMessage, finalText: text });
     const shouldFire = gaveUp ?? looksLikeHandoff(text);
 
     // Persist the verdict BEFORE the once-per-op short-circuit, every qualifying

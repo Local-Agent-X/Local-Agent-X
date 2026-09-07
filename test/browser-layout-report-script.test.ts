@@ -21,8 +21,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Page } from "playwright";
 import {
-  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_RULE_DEPTH,
-  LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
+  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_RULE_CAP,
+  LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
 } from "../src/browser/layout-report.js";
 import { evaluateScript } from "../src/browser/page-ops.js";
 import { MAX_TEXT_LENGTH } from "../src/browser/launcher.js";
@@ -407,9 +407,13 @@ describe("counted silent skips in the CSS walk", () => {
     expect(withSheets([wide], []).cssRulesTruncated).toBe(true);
     expect(withSheets([wide], []).cssWalkIncomplete).toMatch(/hit its cap of \d+ rules/);
 
-    // Exactly the budget: nothing was skipped, so nothing is flagged.
-    const exact = group(Array.from({ length: 20000 - 1 }, () => group([])));
+    // The outer group is the SHEET, so its children are the rules. Exactly
+    // RULE_CAP rules: nothing was skipped, so nothing is flagged; one more
+    // and the last rule was skipped.
+    const exact = group(Array.from({ length: LAYOUT_REPORT_RULE_CAP }, () => group([])));
     expect(withSheets([exact], []).cssRulesTruncated).toBe(false);
+    const oneOver = group(Array.from({ length: LAYOUT_REPORT_RULE_CAP + 1 }, () => group([])));
+    expect(withSheets([oneOver], []).cssRulesTruncated).toBe(true);
   });
 
   it("walks document.adoptedStyleSheets, not only document.styleSheets", () => {

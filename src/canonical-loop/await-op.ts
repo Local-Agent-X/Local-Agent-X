@@ -11,39 +11,27 @@
 import type { OpResult } from "../ops/types.js";
 import { readOp } from "../ops/op-store.js";
 import { subscribeOpEvents } from "./control-api.js";
-import { describeCheckpointStop, readCheckpointStop } from "./checkpoint-stop.js";
+import { resolveTerminalOpStatus } from "./checkpoint-stop.js";
 import type { CanonicalEvent, StateChangedBody } from "./types.js";
-
-function terminalToResultStatus(to: string): OpResult["status"] {
-  switch (to) {
-    case "succeeded": return "completed";
-    case "failed": return "failed";
-    case "cancelled": return "cancelled";
-    case "paused": return "paused";
-    default: return "failed";
-  }
-}
 
 /**
  * The OpResult for a canonical op that reached terminal state `to`.
  *
  * `succeeded` is not always `completed`: an op the worker ended at an
- * iteration checkpoint (dry checkpoints / spend ceiling) is `succeeded /
- * iteration_checkpoint` on the state machine, and used to reach its parent
- * as a plain "completed" with the child's last text — the parent built on a
- * half-finished result with no idea it was one. The checkpoint's own event
- * (checkpoint-stop.ts readCheckpointStop) is the single source of truth; here
- * it becomes `partial`, and finalSummary opens with the PARTIAL line.
+ * iteration checkpoint (dry checkpoints / spend ceiling) is
+ * `succeeded / iteration_checkpoint` on the state machine, and used to reach
+ * its parent as a plain "completed" with the child's last text — the parent
+ * built on a half-finished result with no idea it was one. The checkpoint's
+ * own event is the single source of truth and checkpoint-stop.ts
+ * resolveTerminalOpStatus is its one reader; here it becomes `partial`, and
+ * finalSummary opens with the PARTIAL line.
  */
 function resultForTerminal(opId: string, to: string, lastFailureReason?: string): OpResult {
-  const stop = to === "succeeded" ? readCheckpointStop(opId) : null;
-  const status: OpResult["status"] = stop ? "partial" : terminalToResultStatus(to);
+  const { status, partialSummary } = resolveTerminalOpStatus(opId, to);
   return {
     opId,
     status,
-    finalSummary: stop
-      ? describeCheckpointStop(opId, stop)
-      : (lastFailureReason || `op ${opId} ${status}`),
+    finalSummary: partialSummary ?? (lastFailureReason || `op ${opId} ${status}`),
     filesChanged: [],
     error: lastFailureReason
       ? { message: lastFailureReason, recoverable: false }

@@ -12,7 +12,7 @@ import { readRecentSessionMessages } from "../ops/session-bridge.js";
 import { listOps } from "../ops/op-store.js";
 import { readCheckpoint } from "../ops/checkpoint.js";
 import type { Op, OpCheckpoint } from "../ops/types.js";
-import { extractFinalAssistantText, readOpTurns, type OpTurnRow } from "../canonical-loop/index.js";
+import { extractFinalAssistantText, readOpTurns, resolveTerminalOpStatus, type OpTurnRow } from "../canonical-loop/index.js";
 import { redactString } from "../ops/redactor.js";
 import { scanForSecrets } from "../security/secrets/secret-scanner.js";
 import { parseMessagingSessionTarget } from "../session/channel-registry.js";
@@ -271,9 +271,13 @@ export function projectDurableOperation(op: Op, facts: DurableOperationFacts): P
   const state = op.canonical?.state ?? op.status;
   if (state === "succeeded" || state === "completed" || state === "failed"
     || state === "cancelled") {
-    const status = state === "succeeded" ? "completed" : state;
+    // `succeeded` is `partial` when the worker's own checkpoint record says
+    // the op stopped mid-work (checkpoint-stop.ts) — the same resolver op_wait
+    // and the session observer use, so a phone rebuilding from durable state
+    // sees the PARTIAL line, never "completed" with the worker's last text.
+    const { status, partialSummary } = resolveTerminalOpStatus(op.id, state);
     return redactItem({ kind: "notification", opId: op.id, status,
-      summary: facts.finalText || op.lastFailureReason || status });
+      summary: partialSummary ?? (facts.finalText || op.lastFailureReason || status) });
   }
 
   const latestTurn = facts.turns.at(-1);

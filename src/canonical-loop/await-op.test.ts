@@ -19,11 +19,22 @@ vi.mock("./control-api.js", () => ({
 // reader is exercised against a real worker in
 // test/worker-honors-iteration-budget.test.ts. Here it is a switch.
 const readCheckpointStopMock = vi.fn();
-vi.mock("./checkpoint-stop.js", () => ({
-  readCheckpointStop: (...args: unknown[]) => readCheckpointStopMock(...args),
-  describeCheckpointStop: (opId: string, facts: { completedTurns: number | null; reason: string | null }) =>
-    `PARTIAL — child op ${opId} stopped at a checkpoint after ${facts.completedTurns} turns (reason: ${facts.reason})`,
-}));
+vi.mock("./checkpoint-stop.js", () => {
+  const describeCheckpointStop = (opId: string, facts: { completedTurns: number | null; reason: string | null }) =>
+    `PARTIAL — child op ${opId} stopped at a checkpoint after ${facts.completedTurns} turns (reason: ${facts.reason})`;
+  // Same shape as the real resolver, over the mocked stop record.
+  const resolveTerminalOpStatus = (opId: string, state: string) => {
+    const stop = state === "succeeded" ? readCheckpointStopMock(opId) : null;
+    if (stop) return { status: "partial", stop, partialSummary: describeCheckpointStop(opId, stop) };
+    const status = state === "succeeded" ? "completed" : state === "cancelled" ? "cancelled" : "failed";
+    return { status, stop: null, partialSummary: null };
+  };
+  return {
+    readCheckpointStop: (...args: unknown[]) => readCheckpointStopMock(...args),
+    describeCheckpointStop,
+    resolveTerminalOpStatus,
+  };
+});
 
 import { awaitOpRunning, awaitCanonicalOp } from "./await-op.js";
 

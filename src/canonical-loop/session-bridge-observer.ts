@@ -40,7 +40,7 @@ import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { toSpokenCompletion, redirectAppliedRow } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
-import { describeCheckpointStop, readCheckpointStop } from "./checkpoint-stop.js";
+import { resolveTerminalOpStatus, type TerminalOpStatus } from "./checkpoint-stop.js";
 import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
 import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
@@ -54,7 +54,7 @@ let warnedOnce = false;
 
 /** Terminal status a card / notification carries. `partial` is a `succeeded`
  *  op that stopped at an iteration checkpoint (checkpoint-stop.ts). */
-type TerminalCardStatus = "completed" | "partial" | "failed" | "cancelled";
+type TerminalCardStatus = TerminalOpStatus;
 
 /** Spoken line for a checkpoint-stopped op. toSpokenCompletion's lead
  *  ("that background task finished") is the one claim a partial must not make,
@@ -206,8 +206,8 @@ function recordCanonicalEventWithSink(
           // sidebar all say "unfinished", and no "Open" link is offered for a
           // half-built artifact. Before this, the chat agent was told the op
           // "completed" with the worker's last text as the result.
-          const stop = to === "succeeded" ? readCheckpointStop(event.opId) : null;
-          const status: TerminalCardStatus = stop ? "partial" : to === "succeeded" ? "completed" : to;
+          const resolved = resolveTerminalOpStatus(event.opId, to);
+          const status: TerminalCardStatus = resolved.status;
           // Failed/cancelled/partial verification pass = harness noise (the
           // class the skill-review quieting purged): AGENTS card + logs only —
           // no toast, notification, spoken line, or nudge. A verdict keeps
@@ -217,11 +217,10 @@ function recordCanonicalEventWithSink(
           // completed". On completed, the final assistant text IS the result
           // the parent asked for; on failure preserve the durable failure fact
           // rather than replaying stale assistant text from before termination.
-          const persistedSummary = stop
-            ? describeCheckpointStop(event.opId, stop)
-            : status === "completed"
+          const persistedSummary = resolved.partialSummary
+            ?? (status === "completed"
               ? (extractFinalAssistantText(event.opId) || "task completed")
-              : (op?.lastFailureReason || status);
+              : (op?.lastFailureReason || status));
           const summary = persistedSummary.slice(0, 400);
 
           // Surface an "Open" link on the AGENTS sidebar card. Resolution

@@ -31,7 +31,11 @@
  *       reaches 2, so a checkpoint could never observe it.
  *       KNOWN GAP: that FIFO also means a spin wider than 256 distinct results
  *       re-mints each result as novel after its eviction and never reads dry
- *       here — the wall-clock and the cycle detector are the brakes for it.
+ *       here. The cycle detector is the brake for it; the wall clock is
+ *       NOT — worker.ts arms that timer for the interactive lane only,
+ *       so a non-interactive op's maxWallTimeMs is stamped and never
+ *       enforced. Open, and the reason a period-9 spin on a worker
+ *       lane has no turn-based stop today.
  *   (b) SPEND CEILING — real per-call API spend has reached the configured
  *       daily or session budget (ON by default: $75 / $15, config-schema.ts).
  *       Judged on THIS op's credential source, never a process global: a
@@ -69,14 +73,18 @@ export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling";
 // event with `continuing: false` (worker.ts), emitted just before the op is
 // ended `succeeded / iteration_checkpoint`. That event is the source of truth
 // for "did this op finish, or did it stop mid-work?" — there is deliberately
-// no second flag on the op row. Every surface that reports a terminal op reads
-// it through here and renders `partial` with describeCheckpointStop:
+// no second flag on the op row. Every surface that reports a terminal op goes
+// through resolveTerminalOpStatus below, which reads it and renders `partial`
+// with describeCheckpointStop:
 //   - await-op.ts → OpResult (op_wait, op_status, op_submit, op_submit_batch)
 //   - session-bridge-observer.ts → bg_op_completed / worker_done, the pending
 //     notification the chat agent drains, the spoken line, the idle nudge
+//   - broker-transport/phone-projection.ts → the durable `notification` item
+//     a phone rebuilds from on every phone_projection_subscribe (it mapped
+//     succeeded → "completed" with the worker's last text for a week too)
 // Nothing enforces this list mechanically: a NEW terminal-reporting surface
 // that maps `succeeded` straight to "completed" reintroduces the bug (the
-// observer did exactly that for a week). Read the record; render the line.
+// observer did exactly that for a week). Call the resolver; render the line.
 
 export interface CheckpointStopFacts {
   /** Turns the op had completed when it stopped, when the event carried it. */
@@ -122,6 +130,33 @@ export function describeCheckpointStop(opId: string, facts: CheckpointStopFacts)
   const turns = facts.completedTurns !== null ? ` after ${facts.completedTurns} turns` : "";
   const reason = `${facts.reason ?? "iteration-checkpoint"}${facts.detail ? `: ${facts.detail}` : ""}`;
   return `PARTIAL — child op ${opId} stopped at a checkpoint${turns} (reason: ${reason}); its work is saved but the task is NOT finished. To continue it, submit a follow-up op (op_submit_async) whose task states what this op already did (not_what_to_redo), or report the partial result to the user.`;
+}
+
+/** Terminal status every reporting surface renders for an op. `partial` is a
+ *  `succeeded` op whose own checkpoint record says it stopped mid-work. */
+export type TerminalOpStatus = "completed" | "partial" | "failed" | "cancelled";
+
+export interface TerminalOpResolution {
+  status: TerminalOpStatus;
+  /** The stop record when status is `partial`, else null. */
+  stop: CheckpointStopFacts | null;
+  /** The PARTIAL line (describeCheckpointStop) when status is `partial`, else null. */
+  partialSummary: string | null;
+}
+
+/**
+ * The ONE mapping from an op's terminal state to the status a parent, card,
+ * notification or phone shows. `state` is the canonical state (or the legacy
+ * `completed` row status); anything that is not a known terminal state reads
+ * as `failed`, never as a finished result.
+ */
+export function resolveTerminalOpStatus(opId: string, state: string): TerminalOpResolution {
+  const stop = state === "succeeded" ? readCheckpointStop(opId) : null;
+  if (stop) return { status: "partial", stop, partialSummary: describeCheckpointStop(opId, stop) };
+  const status: TerminalOpStatus = state === "succeeded" || state === "completed"
+    ? "completed"
+    : state === "cancelled" ? "cancelled" : "failed";
+  return { status, stop: null, partialSummary: null };
 }
 
 export interface CheckpointStopDecision {

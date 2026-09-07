@@ -9,6 +9,11 @@ import {
 } from "./phone-projection.js";
 import type { Op } from "../ops/types.js";
 import { clearSessionCanaries, registerSessionCanaries } from "../threat/canaries.js";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
+import { writeOp } from "../ops/op-store.js";
+import { appendCanonicalEvent } from "../canonical-loop/index.js";
 
 class FakeTransport implements ControlTransport {
   readonly sent: Array<Record<string, unknown>> = [];
@@ -395,6 +400,60 @@ describe("read-only phone projection", () => {
       status: "running",
       task: "repair all blockers",
       progress: "turn 7 · apply_patch",
+    });
+  });
+});
+
+// A checkpoint-stopped op is `succeeded / iteration_checkpoint` on the state
+// machine. The durable projection — what a phone rebuilds from on EVERY
+// phone_projection_subscribe — mapped succeeded → "completed" with the
+// worker's last text as the summary, so the phone said a half-done task had
+// finished. The worker's own checkpoint event is the one record of the stop
+// (checkpoint-stop.ts); the projection must read it through the same resolver
+// op_wait and the session observer use.
+describe("durable operation projection — a checkpoint stop is partial, not completed", () => {
+  const created: string[] = [];
+  afterEach(() => {
+    for (const id of created) {
+      try { rmSync(join(getLaxDir(), "operations", id), { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    created.length = 0;
+  });
+
+  function succeededOp(id: string): Op {
+    const op = {
+      id, sessionId: "session-a", task: "repair all blockers", status: "running",
+      canonical: { state: "succeeded" },
+    } as Op;
+    writeOp(op);
+    created.push(id);
+    return op;
+  }
+  const facts = { turns: [], checkpoint: null, finalText: "All blockers repaired — done!" };
+
+  it("a dry-stopped op projects as `partial` with the PARTIAL line, never the worker's last text", () => {
+    const op = succeededOp("op-phone-partial-stop");
+    appendCanonicalEvent(op.id, "iteration_checkpoint", { maxTurns: 3, completedTurns: 3, continuing: true });
+    appendCanonicalEvent(op.id, "iteration_checkpoint", {
+      maxTurns: 3, completedTurns: 9, continuing: false,
+      stopReason: "dry-checkpoints", stopDetail: "two checkpoints in a row learned nothing new",
+    });
+
+    const item = projectDurableOperation(op, facts);
+    expect(item.kind).toBe("notification");
+    expect(item).toMatchObject({ opId: op.id, status: "partial" });
+    const summary = (item as { summary: string }).summary;
+    expect(summary.startsWith(`PARTIAL — child op ${op.id} stopped at a checkpoint after 9 turns (reason: dry-checkpoints`)).toBe(true);
+    expect(summary).toContain("NOT finished");
+    expect(summary).not.toContain("done!");
+  });
+
+  it("a genuinely finished op still projects as `completed` with its final text", () => {
+    const op = succeededOp("op-phone-finished");
+    appendCanonicalEvent(op.id, "iteration_checkpoint", { maxTurns: 3, completedTurns: 3, continuing: true });
+
+    expect(projectDurableOperation(op, facts)).toEqual({
+      kind: "notification", opId: op.id, status: "completed", summary: "All blockers repaired — done!",
     });
   });
 });

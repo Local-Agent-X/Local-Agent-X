@@ -184,7 +184,6 @@ export { type RedirectSignal } from "./signals.js";
 export { opResolveApproval, recordApprovalRequested, recordApprovalResolved, readPendingApproval, consumePendingApproval, resolveExpiredPendingApproval, type ApprovalControlResult, type ApprovalControlOk, type ApprovalControlErr, type ApprovalResolution } from "./control-api-approvals.js";
 
 // ── Issue 08 lease + crash-recovery surface ───────────────────────────────
-
 export { acquireLease, heartbeatLease, releaseLease, isLeaseExpired, getLeaseConfig,
   setLeaseConfig, resetLeaseConfig, _setLeaseRaceHookForTest, clearObservedExpiredLease,
   withObservedExpiredLeaseRecovery, leaseClaimFromOp, type LeaseConfig, type LeaseClaim,
@@ -265,6 +264,7 @@ export * from "./public/verify-bridge.js";
 
 // Leaf op facts (isDispatchFailure and the op types are exported above).
 export type { TerminalState } from "./terminal-states.js";
+export { resolveTerminalOpStatus, type TerminalOpResolution, type TerminalOpStatus } from "./checkpoint-stop.js";
 export { isEmbeddingModel } from "./model-capabilities.js";
 
 // Chat/session bridge helpers.

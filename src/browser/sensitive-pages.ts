@@ -50,8 +50,12 @@ export interface SensitivePageDecision {
   unlocksRead?: boolean;
 }
 
+// emulate belongs here: it tears down the session's browser context and
+// RE-NAVIGATES the current page in a fresh, cookieless identity. On a bank or
+// vault page that is a high-risk action on the user's live session (it drops
+// their login), so it takes the same approval path as a click or a fill.
 const MUTATING_BROWSER_ACTIONS = new Set([
-  "click", "click_text", "fill", "select", "act", "dialog_accept",
+  "click", "click_text", "fill", "select", "act", "dialog_accept", "emulate",
 ]);
 // read_console/read_network belong here too: a secret-bearing page's console
 // output and request URLs are page-controlled channels that can carry the
@@ -59,9 +63,12 @@ const MUTATING_BROWSER_ACTIONS = new Set([
 // returns the endpoint's response BODY, not just the URL, so a vault/account
 // API's secret payload would flow straight into the tool result. bookmark_add
 // reads the page's url+title AND persists them to disk — on a vault-ish page
-// that's a secret write-out.
+// that's a secret write-out. layout_report is here too: it returns element
+// selectors (ids and class names) and visible-text labels for everything that
+// overflows or is pinned — page structure read out of a secret-bearing page is
+// exactly what this gate withholds from snapshot/observe.
 const SECRET_READING_ACTIONS = new Set([
-  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "read_response", "bookmark_add",
+  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "read_response", "bookmark_add", "layout_report",
 ]);
 
 export function browserSecrecyLevel(): BrowserSecrecy {

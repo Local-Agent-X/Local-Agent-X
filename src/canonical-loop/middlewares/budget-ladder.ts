@@ -19,12 +19,13 @@
  *      needed — the questions a senior engineer asks when a task is running
  *      long.
  *
- *   2. A DRY-RUNG check: the number of distinct tool results the op has ever
- *      seen (loop-detection's `novelResultsTotal`, already volatility-
- *      normalized by loop-progress.noveltySignature) is snapshotted at each
- *      rung. If two consecutive rungs show the same count, the op has burned a
- *      quarter of its budget without learning one new thing, and it is told to
- *      stop and ask rather than spend the rest. The counter is MONOTONIC; the
+ *   2. A DRY-RUNG check: the op's progress count (loop-detection's
+ *      `progressTotal` — distinct tool results, volatility-normalized by
+ *      loop-progress.noveltySignature, PLUS distinct mutation targets, so
+ *      write-only work counts) is snapshotted at each rung. If two consecutive
+ *      rungs show the same count, the op has burned a quarter of its budget
+ *      without learning or building one new thing, and it is told to stop and
+ *      ask rather than spend the rest. The counter is MONOTONIC; the
  *      `seenResultSigs` Set beside it is a bounded FIFO whose `.size` saturates
  *      at RESULT_SIG_MEMORY, so reading the Set would call every long
  *      productive op dry once it passed 256 distinct results.
@@ -48,7 +49,7 @@ const MIN_BUDGET_FOR_LADDER = 40;
 interface LadderState {
   /** Rung fractions already fired, so a rung never repeats on a retried turn. */
   fired: Set<number>;
-  /** novelResultsTotal at the previous rung, or null before the first. */
+  /** progressTotal at the previous rung, or null before the first. */
   lastEvidenceCount: number | null;
   /** Consecutive rungs that saw no new distinct results. */
   dryRungs: number;
@@ -105,10 +106,10 @@ export const budgetLadderMiddleware: CanonicalMiddleware = {
     // op), so this reads live counts rather than a copy; creating it when absent
     // is harmless — a fresh state reads as zero evidence, which cannot fire the
     // dry stop on its own because the first rung has no prior count to compare
-    // against. novelResultsTotal, never seenResultSigs.size: the Set is capped
+    // against. progressTotal, never seenResultSigs.size: the Set is capped
     // and its size goes flat past RESULT_SIG_MEMORY while the op is still learning.
     const loop = getMiddlewareState<LoopState>(ctx.op.id, "loop-detection", createLoopState);
-    const evidence = loop.novelResultsTotal;
+    const evidence = loop.progressTotal;
     const dry = state.lastEvidenceCount !== null && evidence === state.lastEvidenceCount;
     state.dryRungs = dry ? state.dryRungs + 1 : 0;
     state.lastEvidenceCount = evidence;

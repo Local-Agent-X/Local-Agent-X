@@ -13,15 +13,25 @@
  * So maxIterations is a CADENCE for every lane, and termination is decided
  * here by exactly two conditions that mean something:
  *
- *   (a) DRY CHECKPOINTS — two consecutive checkpoints that learned nothing.
- *       Evidence is loop-detection's `novelResultsTotal`: the MONOTONIC count
- *       of volatility-normalized distinct results (loop-progress.ts). It is
- *       deliberately NOT `seenResultSigs.size` — that Set is a 256-entry FIFO
- *       whose size saturates, so a size comparison read every long, productive
- *       op as permanently dry past its 256th result and killed it mid-work
- *       while telling the user "nothing new turned up". budget-ladder's own
+ *   (a) DRY CHECKPOINTS — two consecutive checkpoints that made no progress.
+ *       Evidence is loop-detection's `progressTotal`, a MONOTONIC count fed by
+ *       TWO sources: volatility-normalized distinct results (loop-progress.ts
+ *       rememberNovelResult) and distinct mutation TARGETS (loop-detection
+ *       noteToolResults). The second source exists because committing results
+ *       are excluded from the novelty set on purpose — a write's "ok" text is
+ *       not information — so an op that wrote a new file every turn had a
+ *       counter that never moved and was stopped as "nothing new" with nine
+ *       fresh files on disk. Rewriting one target with new bytes still counts
+ *       as nothing: that IS the livelock shape. It is deliberately NOT
+ *       `seenResultSigs.size` — that Set is a 256-entry FIFO whose size
+ *       saturates, so a size comparison read every long, productive op as
+ *       permanently dry past its 256th result and killed it mid-work while
+ *       telling the user "nothing new turned up". budget-ladder's own
  *       `dryRungs` is not consulted either: it resets itself to 0 the moment it
  *       reaches 2, so a checkpoint could never observe it.
+ *       KNOWN GAP: that FIFO also means a spin wider than 256 distinct results
+ *       re-mints each result as novel after its eviction and never reads dry
+ *       here — the wall-clock and the cycle detector are the brakes for it.
  *   (b) SPEND CEILING — real per-call API spend has reached the configured
  *       daily or session budget (ON by default: $75 / $15, config-schema.ts).
  *       Judged on THIS op's credential source, never a process global: a
@@ -70,7 +80,7 @@ const CADENCE_KEY = "checkpoint-cadence";
 const DRY_LIMIT = 2;
 
 interface CadenceState {
-  /** novelResultsTotal at the previous checkpoint, null before the first. */
+  /** progressTotal at the previous checkpoint, null before the first. */
   lastNovelTotal: number | null;
   /** Consecutive checkpoints that saw no new distinct results. */
   dryCheckpoints: number;
@@ -86,7 +96,7 @@ export function evaluateCheckpointStop(op: Op): CheckpointStopDecision {
   const loop = getMiddlewareState<LoopState>(op.id, LOOP_KEY, createLoopState);
 
   // (a) Dry checkpoints.
-  const evidence = loop.novelResultsTotal;
+  const evidence = loop.progressTotal;
   const cadence = getMiddlewareState<CadenceState>(op.id, CADENCE_KEY, () => ({
     lastNovelTotal: null,
     dryCheckpoints: 0,
@@ -99,7 +109,7 @@ export function evaluateCheckpointStop(op: Op): CheckpointStopDecision {
     return {
       stop: true,
       reason: "dry-checkpoints",
-      detail: `two checkpoints in a row learned nothing new (${evidence} distinct results over the whole op)`,
+      detail: `two checkpoints in a row learned nothing new (${evidence} distinct results or targets over the whole op)`,
     };
   }
 

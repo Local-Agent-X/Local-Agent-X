@@ -100,18 +100,26 @@ export const RESULT_SIG_MEMORY = 256;
  * Two records, two audiences. `seenResultSigs` is the bounded FIFO the
  * per-turn detectors read ("have I seen THIS result?"); it evicts its oldest
  * entry at the cap, so its `.size` saturates at RESULT_SIG_MEMORY and says
- * nothing about progress after that. `novelResultsTotal` is the MONOTONIC
- * lifetime count of novel results — never evicted, never reset, never capped —
- * and is the only honest answer to "did the op learn anything since the last
- * checkpoint?" (checkpoint-stop.ts). Comparing `.size` across checkpoints was
- * a measured defect: every long, productive op read as permanently dry past
- * its 256th distinct result.
+ * nothing about progress after that. `progressTotal` is the MONOTONIC
+ * lifetime progress count — never evicted, never reset, never capped — and is
+ * the only honest answer to "did the op advance since the last checkpoint?"
+ * (checkpoint-stop.ts, budget-ladder.ts). Comparing `.size` across
+ * checkpoints was a measured defect: every long, productive op read as
+ * permanently dry past its 256th distinct result.
+ *
+ * This is ONE of the counter's two feeders. The other is loop-detection's
+ * noteToolResults, which bumps it for every mutation that reaches a target
+ * (path/url) the op has not written before. Committing results are excluded
+ * from the novelty SET on purpose — a write's "ok" text is not information —
+ * so without the target-side feeder an op that wrote a new file every turn
+ * read as dry and was stopped mid-work. Rewriting ONE target with new bytes
+ * still feeds nothing: that is the livelock shape, not progress.
  */
 export function rememberNovelResult(
-  state: { seenResultSigs: Set<string>; novelResultsTotal: number },
+  state: { seenResultSigs: Set<string>; progressTotal: number },
   signature: string,
 ): void {
-  state.novelResultsTotal++;
+  state.progressTotal++;
   state.seenResultSigs.add(signature);
   if (state.seenResultSigs.size > RESULT_SIG_MEMORY) {
     state.seenResultSigs.delete(state.seenResultSigs.values().next().value!);

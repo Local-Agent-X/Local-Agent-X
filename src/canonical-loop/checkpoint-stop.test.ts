@@ -96,8 +96,34 @@ function repeat(opId: string, n: number): void {
   }
 }
 
+/** One successful `write` per turn. `path` is the mutation TARGET; `content`
+ *  varies every call so a full-args key would always look fresh — only the
+ *  target-keyed rule can tell "new file" from "same file rewritten". The tool
+ *  result is the same "ok" every time, exactly as a real write's is. */
+let writeSeq = 0;
+function writeTurn(opId: string, path: string): void {
+  const state = loopOf(opId);
+  const call = [{ name: "write", arguments: JSON.stringify({ path, content: `v${writeSeq++}` }) }];
+  noteToolResults(call, state, [{ content: "ok", status: "ok" }]);
+}
+
+/** An `edit` of `path` followed by `bash npm test` whose output is IDENTICAL
+ *  every turn — the shape of real iterative work where the only thing that
+ *  changes each turn is which file got touched. */
+function editThenTestTurn(opId: string, path: string): void {
+  const state = loopOf(opId);
+  const calls = [
+    { name: "edit", arguments: JSON.stringify({ path, old_string: "a", new_string: `b${writeSeq++}` }) },
+    { name: "bash", arguments: JSON.stringify({ command: "npm test" }) },
+  ];
+  noteToolResults(calls, state, [
+    { content: "ok", status: "ok" },
+    { content: "Tests: 12 passed, 12 total", status: "ok" },
+  ]);
+}
+
 // $6 of opus output tokens (25/M output).
-function spend6Usd(authSource: "env" | "oauth", sessionId: string = SESSION): void {
+function spend6Usd(authSource: "env" | "oauth" | "sentinel", sessionId: string = SESSION): void {
   trackUsage(sessionId, "claude-opus-4-8", "anthropic", 0, 240_000, undefined, authSource);
 }
 
@@ -187,7 +213,7 @@ describe("evaluateCheckpointStop — dry checkpoints (monotonic counter)", () =>
     // The lie: the old check now calls a productive op dry and stops it.
     expect(oldPredicateWouldStop()).toBe(true);
     // The truth: the counter moved 310 -> 350, so the op keeps going.
-    expect(loop.novelResultsTotal).toBe(350);
+    expect(loop.progressTotal).toBe(350);
     expect(evaluateCheckpointStop(op)).toMatchObject({ stop: false, reason: null });
 
     // And it can STILL stop honestly once the op actually goes dry.
@@ -195,6 +221,64 @@ describe("evaluateCheckpointStop — dry checkpoints (monotonic counter)", () =>
     expect(evaluateCheckpointStop(op).stop).toBe(false);
     repeat(op.id, 3);
     expect(evaluateCheckpointStop(op)).toMatchObject({ stop: true, reason: "dry-checkpoints" });
+  });
+});
+
+// REGRESSION. Successful committing results are excluded from the novelty SET
+// on purpose (a write's "ok" is not information), which meant an op whose
+// every turn wrote a NEW file never moved the counter and was stopped at its
+// third checkpoint as "nothing new" — nine fresh files on disk, all
+// "turned up nothing new". Progress is novel results OR novel mutation
+// targets; the counter must move on either.
+describe("evaluateCheckpointStop — write-only work is progress", () => {
+  it("(a) an op that writes a new file every turn is never dry", () => {
+    const op = mkOp("op-write-only");
+    let n = 0;
+    const scaffold = (files: number) => { for (let i = 0; i < files; i++) writeTurn(op.id, `/w/file-${n++}.ts`); };
+
+    scaffold(3);
+    expect(evaluateCheckpointStop(op).stop).toBe(false);
+    scaffold(3);
+    expect(evaluateCheckpointStop(op).stop).toBe(false);
+    scaffold(3);
+    expect(evaluateCheckpointStop(op)).toMatchObject({ stop: false, reason: null });
+
+    const loop = loopOf(op.id);
+    // The novelty SET still refuses the write's "ok" text — that exclusion is
+    // load-bearing for the cycle detector and must survive this fix.
+    expect(loop.seenResultSigs.size).toBe(0);
+    expect(loop.seenMutationTargets.size).toBe(9);
+    expect(loop.progressTotal).toBe(9);
+  });
+
+  it("(b) rewriting ONE scratch file with new bytes every turn is the livelock shape — dry", () => {
+    const op = mkOp("op-rewrite-one");
+    writeTurn(op.id, "/w/_scratch.html");
+    expect(evaluateCheckpointStop(op).stop).toBe(false); // first: nothing to compare against
+    for (let i = 0; i < 4; i++) writeTurn(op.id, "/w/_scratch.html"); // new content, same target
+    expect(evaluateCheckpointStop(op).stop).toBe(false); // dry once
+    for (let i = 0; i < 4; i++) writeTurn(op.id, "/w/_scratch.html");
+    expect(evaluateCheckpointStop(op)).toMatchObject({ stop: true, reason: "dry-checkpoints" });
+    expect(loopOf(op.id).progressTotal).toBe(1);
+  });
+
+  it("(c) edit distinct files + an identical `npm test` output every turn is not dry", () => {
+    const op = mkOp("op-edit-test");
+    let n = 0;
+    const lap = (files: number) => { for (let i = 0; i < files; i++) editThenTestTurn(op.id, `/w/mod-${n++}.ts`); };
+
+    lap(2);
+    expect(evaluateCheckpointStop(op).stop).toBe(false);
+    lap(2);
+    expect(evaluateCheckpointStop(op).stop).toBe(false);
+    lap(2);
+    expect(evaluateCheckpointStop(op)).toMatchObject({ stop: false, reason: null });
+
+    const loop = loopOf(op.id);
+    // The test output was novel exactly once; every later turn's progress
+    // came from the edit target alone.
+    expect(loop.seenResultSigs.size).toBe(1);
+    expect(loop.progressTotal).toBe(1 + 6);
   });
 });
 

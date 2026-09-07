@@ -51,9 +51,11 @@ export interface LoopState {
   identicalResultRepeats: number;
   toolNameCounts: Map<string, number>;
   seenResultSigs: Set<string>;
-  // Monotonic lifetime count of novel results (loop-progress.rememberNovelResult).
-  // seenResultSigs is capped and its .size saturates; THIS is the progress signal.
-  novelResultsTotal: number;
+  // Monotonic lifetime PROGRESS count, fed by two sources: novel results
+  // (loop-progress.rememberNovelResult) and novel mutation targets (noteToolResults
+  // below — a write's "ok" text is not information, so write-only work would
+  // otherwise never move it). The capped Sets saturate; THIS is the checkpoint signal.
+  progressTotal: number;
   seenSuccessfulMutationKeys: Set<string>;
   lastTurnHadNovelResult: boolean;
   lastTurnHadNovelMutation: boolean;
@@ -95,7 +97,7 @@ export function createLoopState(): LoopState {
     identicalResultRepeats: 0,
     toolNameCounts: new Map(),
     seenResultSigs: new Set(),
-    novelResultsTotal: 0,
+    progressTotal: 0,
     seenSuccessfulMutationKeys: new Set(),
     lastTurnHadNovelResult: false,
     lastTurnHadNovelMutation: false,
@@ -297,6 +299,7 @@ export function noteToolResults(
     const targetKey = mutationTargetKey(tc) ?? successfulCommittingCallKey(tc);
     if (!state.seenMutationTargets.has(targetKey)) {
       novelTarget = true;
+      state.progressTotal++;
       state.seenMutationTargets.add(targetKey);
       if (state.seenMutationTargets.size > RESULT_SIG_MEMORY) {
         state.seenMutationTargets.delete(state.seenMutationTargets.values().next().value!);

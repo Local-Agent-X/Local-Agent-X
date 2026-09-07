@@ -57,7 +57,7 @@ function repeat(opId: string, n: number): void {
 /** Bring the op's evidence to exactly `n` distinct results (only ever upward —
  *  novelty is monotonic in production too). */
 function setEvidence(opId: string, n: number): void {
-  const have = loopOf(opId).novelResultsTotal;
+  const have = loopOf(opId).progressTotal;
   if (n < have) throw new Error(`setEvidence(${n}) below current ${have}`);
   learn(opId, n - have);
 }
@@ -156,15 +156,42 @@ describe("budget-ladder — dry-rung stop", () => {
     // counter has. Reading .size here would count this as the first dry rung.
     learn(opId, 40);
     expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
-    expect(loop.novelResultsTotal).toBe(310);
+    expect(loop.progressTotal).toBe(310);
     expect(await reasonAt(80)).toBe("budget-ladder");
 
     // 75% rung: still learning every turn. Under .size this would be the
     // second consecutive dry rung and the op would be told to stop.
     learn(opId, 40);
     expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
-    expect(loop.novelResultsTotal).toBe(350);
+    expect(loop.progressTotal).toBe(350);
     expect(await reasonAt(120)).toBe("budget-ladder");
+  });
+
+  // Same regression as checkpoint-stop.test.ts "write-only work is progress":
+  // the ladder reads the same counter, so write-only scaffolding must never
+  // read as two dry rungs here either.
+  it("does not call an op dry when every turn between rungs wrote a NEW file", async () => {
+    const loop = loopOf(opId);
+    const reasonAt = async (turn: number) =>
+      (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId)) as { reason?: string }).reason;
+    let n = 0;
+    const scaffold = (files: number) => {
+      for (let i = 0; i < files; i++) {
+        noteToolResults(
+          [{ name: "write", arguments: JSON.stringify({ path: `/w/f-${n++}.ts`, content: `v${n}` }) }],
+          loop,
+          [{ content: "ok", status: "ok" }],
+        );
+      }
+    };
+    scaffold(4);
+    expect(await reasonAt(40)).toBe("budget-ladder");
+    scaffold(4);
+    expect(await reasonAt(80)).toBe("budget-ladder");
+    scaffold(4);
+    expect(await reasonAt(120)).toBe("budget-ladder"); // not "budget-ladder-dry"
+    expect(loop.seenResultSigs.size).toBe(0); // the SET still excludes the write's "ok"
+    expect(loop.progressTotal).toBe(12);
   });
 
   it("still stops honestly past 256 distinct results once the op actually goes dry", async () => {

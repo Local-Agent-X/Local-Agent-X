@@ -1,17 +1,15 @@
-// Tool-call loop detection. Three signals:
-//   1. Exact-repeat: same {tool, args} N times in a row with UNCHANGED results
-//      → abort.
-//   2. Discovery loop: same READ-ONLY discovery tool (read/grep/glob/
-//      web_search/...) called 8+ times with no new information → nudge.
-//   3. No-progress: N iterations with no PROGRESS → abort.
+// Tool-call loop detection — the one entry point, sequencing five signals
+// against the one per-op LoopState:
+//   1. Exact-repeat  — same {tool, args} N turns running, UNCHANGED results.
+//   2. Cycle         — the same PROCEDURE repeating over a novelty-free span
+//                      (loop-progress.ts); catches circles exact-repeat can't.
+//   3. No-progress   — N iterations with no progress.
+//   4. Redundant search / 5. Discovery loop — loop-discovery.ts.
 //
-// Progress (signals 2 + 3) is result-delta, not tool-identity: a turn made
-// progress if it surfaced a tool result not seen before (the agent learned or
-// changed something) OR it completed a successful mutation signature not seen
-// before. A read returning new info is
-// progress; a read/click returning the same bytes is not, regardless of the
-// tool's class. The result-delta is the same sha1 signal the exact-repeat
-// detector already uses, generalized across varied tools and across the op.
+// Progress is result-delta, not tool-identity: a turn progressed if it
+// surfaced a result not seen before, or wrote a target not written before.
+// Both signals are computed in loop-progress.ts — see that file for why a raw
+// content hash and an args-keyed mutation key were each wrong.
 //
 // Weak/medium models loop harder and faster, so thresholds halve when the
 // caller passes modelTier="weak"|"medium".
@@ -24,7 +22,15 @@ import { createHash } from "node:crypto";
 import { logRetry } from "../retry-telemetry.js";
 import { isMutationTool, isProgressTool } from "../tool-mutation-check.js";
 import { isCommittingTool } from "../committing-tool-check.js";
-import { normalizeGrepPattern } from "./cleanup-verify.js";
+import {
+  cycleAbortNote, cycleNudge, detectCycle, mutationTargetKey, noteTurnShape,
+  noveltySignature, turnShapeKey,
+  type CycleTurn,
+} from "./loop-progress.js";
+import {
+  checkRedundantSearch, discoveryLimitFor, discoveryNudge, findDiscoveryLoop,
+  redundantSearchNudge, searchKeyOf, searchLimitFor, SPIRALABLE_TOOLS,
+} from "./loop-discovery.js";
 import { chooseStrategyPivot, successfulCommittingCallKey, type StrategyPivotPattern, type ToolResultObservation } from "./strategy-pivot-pattern.js";
 
 function isProtectedCommittingCall(name: string): boolean {
@@ -68,6 +74,14 @@ export interface LoopState {
   // can just send another message.)
   nudgeCount: number;
   pendingStrategyPivot: StrategyPivotPattern | null;
+  // Rolling per-turn SHAPE history for cycle detection (loop-progress.ts) —
+  // the multi-turn CIRCLE that burned 110 turns of a real op unseen.
+  cycleWindow: CycleTurn[];
+  // Mutation TARGETS (tool + path/url) already written this op. Kept separate
+  // from seenSuccessfulMutationKeys, which stays args-keyed for the
+  // mutation-repeat pivot; progress resets read THIS set, so twelve rewrites
+  // of one scratch file count as one advance.
+  seenMutationTargets: Set<string>;
 }
 
 export function createLoopState(): LoopState {
@@ -86,34 +100,9 @@ export function createLoopState(): LoopState {
     searchKeyCounts: new Map(),
     nudgeCount: 0,
     pendingStrategyPivot: null,
+    cycleWindow: [],
+    seenMutationTargets: new Set(),
   };
-}
-
-// Re-running the SAME search this many times is redundant: the answer won't
-// change without an intervening edit, and even with edits between, re-confirming
-// one broad pattern over and over is waste. Generous so a careful grep→fix→grep
-// convergence (which narrows or changes the pattern as it goes) isn't tripped;
-// the weak floor catches models that loop harder. Re-nudges every few repeats
-// past the limit, routing through the lifetime ceiling like the other paths.
-const REDUNDANT_SEARCH_LIMIT = 8;
-const REDUNDANT_SEARCH_LIMIT_WEAK = 5;
-const REDUNDANT_SEARCH_RENUDGE = 4;
-// Tools whose repeated identical SEARCH (not the call bytes — the pattern) is
-// the waste signal. Curated + read-only, like SPIRALABLE_TOOLS.
-const REPEAT_SEARCH_TOOLS = new Set(["grep", "web_search"]);
-
-/** A stable key for "the same search", or null for a non-search call. Keys on
- *  the search PATTERN/QUERY (normalized), NOT the full args — so a re-grep with
- *  a different glob/scope still collapses to one key. */
-function searchKeyOf(name: string, argsJson: string): string | null {
-  if (!REPEAT_SEARCH_TOOLS.has(name)) return null;
-  let args: Record<string, unknown>;
-  try { args = JSON.parse(argsJson) as Record<string, unknown>; } catch { return null; }
-  const raw = typeof args.pattern === "string" ? args.pattern
-    : typeof args.query === "string" ? args.query
-    : null;
-  if (!raw) return null;
-  return `${name}:${normalizeGrepPattern(raw)}`;
 }
 
 // Cap on remembered result signatures (~50 bytes each → ~13 KB at the cap).
@@ -121,8 +110,6 @@ function searchKeyOf(name: string, argsJson: string): string | null {
 // spin's signature stays resident across the whole no-progress window.
 const RESULT_SIG_MEMORY = 256;
 
-const DISCOVERY_LOOP_THRESHOLD = 8;
-const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 // No-progress abort: iterations of consecutive non-mutating tool calls allowed
 // before the agent is forced to end its turn. Raised from 12/6 → 25/15 after
 // "research the latest tech in X and make a powerpoint" aborted at 6 web_search
@@ -140,24 +127,10 @@ export const NO_PROGRESS_LIMIT_WEAK = 15;
 // model being told to pivot and ignoring it. The wall-clock ceiling (up to 2h)
 // is the only other backstop, so without this a stubborn loop ran far too long.
 export const NUDGE_CEILING = 6;
-// Read-only discovery / lookup tools an agent spins on when it can't find
-// something. No risk-taxonomy tier models "discovery spin", so this stays a
-// curated list — but every member MUST be read-only (a fence test in
-// loop-detection.test.ts asserts risk ∈ {safe, network-read}), so a mutating
-// tool can never be mistaken for a harmless lookup. Worker-pool status checks
-// (op_status / op_wait / agent_status) get polled in a tight loop — a chat agent
-// polled op_status 16x in one turn — so they're spiralable too.
-//
-// Mutation / progress classification (which tools reset the no-progress and
-// discovery counters) lives in tool-mutation-check.ts, derived from the risk
-// taxonomy. Only this discovery set is curated.
-export const SPIRALABLE_TOOLS = new Set([
-  "glob", "web_search", "read", "grep",
-  "agent_whoami", "agent_team_list", "issue_list", "issue_search",
-  "memory_search", "memory_recall", "memory_get",
-  "task_list",
-  "op_status", "op_wait", "agent_status", "agent_output",
-]);
+// SPIRALABLE_TOOLS and the exploration-waste detectors moved to
+// loop-discovery.ts under the LOC ceiling. Re-exported so existing importers
+// (agent-guards/index.ts, the read-only fence test) keep their path.
+export { SPIRALABLE_TOOLS } from "./loop-discovery.js";
 
 /**
  * Check for exact-repeat loops and discovery loops. Weak/medium models
@@ -177,7 +150,6 @@ export function checkToolLoops(
 ): { abort: boolean; nudge: string | null } {
   const isWeakOrMedium = opts?.modelTier === "weak" || opts?.modelTier === "medium";
   const repeatLimit = isWeakOrMedium ? 2 : 3;
-  const discoveryLimit = isWeakOrMedium ? DISCOVERY_LOOP_THRESHOLD_WEAK : DISCOVERY_LOOP_THRESHOLD;
 
   // Every nudge below routes through here so the per-op lifetime ceiling can
   // bound a runaway. In the interactive lane (nudgeOnly), once the model has
@@ -189,7 +161,7 @@ export function checkToolLoops(
     state.nudgeCount++;
     if (opts?.nudgeOnly && state.nudgeCount > NUDGE_CEILING) {
       logRetry({ kind: "loop-abort", tool: "nudge-ceiling", detail: { nudgeCount: state.nudgeCount, ceiling: NUDGE_CEILING, modelTier: opts?.modelTier } });
-      return { abort: true, nudge: `SYSTEM: ending the turn — you've been told you're looping ${state.nudgeCount} times and kept going. Stopping now. Reply with what you have, or ask the user how to proceed.` };
+      return { abort: true, nudge: `SYSTEM: ending the turn — you've been told you're looping ${state.nudgeCount} times and kept going. Stopping now. Report what you established and what you could not determine, and ask the user for what only they can supply (a screenshot, a device you can't reach, a decision). Ending on a question is a complete outcome, not a failure.` };
     }
     return { abort: false, nudge };
   };
@@ -224,6 +196,17 @@ export function checkToolLoops(
     state.lastResultSig = null;
   }
 
+  // Cycle detection — the multi-turn analogue of exact-repeat, which only ever
+  // compares this turn to the one before it and so cannot see a CIRCLE. See
+  // loop-progress.ts for why it is gated on a novelty-free span.
+  const cycle = detectCycle(state.cycleWindow, { modelTier: opts?.modelTier });
+  if (cycle && !opts?.deferWorkerPivot) {
+    state.cycleWindow.length = 0; // must re-accumulate before firing again
+    logRetry({ kind: "loop-abort", tool: "cycle", detail: { ...cycle, modelTier: opts?.modelTier, nudgeOnly: opts?.nudgeOnly ?? false } });
+    if (opts?.nudgeOnly) return emitNudge(cycleNudge(cycle));
+    return { abort: true, nudge: cycleAbortNote(cycle) };
+  }
+
   // Discovery-style loop detection: same READ-ONLY discovery tool (SPIRALABLE_
   // TOOLS, module scope) called 8+ times suggests the agent is spinning trying
   // to find something. Action tools (browser, http_request) are intentionally
@@ -238,10 +221,19 @@ export function checkToolLoops(
   // result keeps neither signal, so its count climbs to the nudge. isProgressTool
   // derives from the risk taxonomy (tool-mutation-check.ts); the novelty signal
   // is the completed-result delta below.
-  let madeProgress = false, madeMutation = false;
+  let madeProgress = false, newTarget = false;
   for (const tc of toolCalls) {
     if (isProgressTool(tc.name)) madeProgress = true;
-    if (isMutationTool(tc.name)) madeMutation = true;
+    // A mutation counts as immediate progress only when it touches a target
+    // this op has not already written. Re-writing one scratch file every lap
+    // was what kept iterationsSinceProgress pinned at zero through a
+    // 110-turn livelock.
+    if (isMutationTool(tc.name)) {
+      // Null target (no path/url in args) falls back to the full-args key —
+      // the pre-existing behavior. Only path/url calls get the tighter rule.
+      const target = mutationTargetKey(tc) ?? successfulCommittingCallKey(tc);
+      if (!state.seenMutationTargets.has(target)) newTarget = true;
+    }
     state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
   }
   if (madeProgress || state.lastTurnHadNovelResult) {
@@ -251,7 +243,7 @@ export function checkToolLoops(
     for (const name of SPIRALABLE_TOOLS) state.toolNameCounts.delete(name);
   }
   // Current mutations count immediately; result novelty arrives after dispatch.
-  if (madeMutation || state.lastTurnHadNovelResult || state.lastTurnHadNovelMutation) {
+  if (newTarget || state.lastTurnHadNovelResult || state.lastTurnHadNovelMutation) {
     state.iterationsSinceProgress = 0;
   } else {
     state.iterationsSinceProgress++;
@@ -270,41 +262,19 @@ export function checkToolLoops(
       };
     }
   }
-  // Redundant-search detector. Counts by normalized search PATTERN and never
-  // resets on progress, so it catches the diffuse re-search the discovery loop
-  // above can't see (edits between greps + varied globs keep that one resetting).
-  const searchLimit = isWeakOrMedium ? REDUNDANT_SEARCH_LIMIT_WEAK : REDUNDANT_SEARCH_LIMIT;
-  let redundant: { term: string; count: number } | null = null;
-  for (const tc of toolCalls) {
-    const sk = searchKeyOf(tc.name, tc.arguments);
-    if (!sk) continue;
-    const n = (state.searchKeyCounts.get(sk) || 0) + 1;
-    state.searchKeyCounts.set(sk, n);
-    if (n >= searchLimit && (n - searchLimit) % REDUNDANT_SEARCH_RENUDGE === 0) {
-      redundant = { term: sk.slice(sk.indexOf(":") + 1), count: n };
-    }
-  }
-  if (redundant) {
-    if (opts?.deferWorkerPivot) return { abort: false, nudge: null };
+  // Read-only exploration waste (loop-discovery.ts): re-running one search,
+  // and spinning on one discovery tool. checkRedundantSearch mutates the op's
+  // searchKeyCounts, so it must run on every pass, not only when it can nudge.
+  const redundant = checkRedundantSearch(toolCalls, state.searchKeyCounts, isWeakOrMedium);
+  if (redundant && !opts?.deferWorkerPivot) {
     logRetry({ kind: "loop-abort", tool: "redundant-search", detail: { term: redundant.term, count: redundant.count, modelTier: opts?.modelTier } });
-    return emitNudge(`SYSTEM: you've run the same search (${redundant.term}) ${redundant.count}× this op — re-running it won't change the answer. Stop re-searching: act on the matches you already have (edit the files), or if the search came back clean, move on. Re-run the search only ONCE after you've actually changed files, to confirm.`);
+    return emitNudge(redundantSearchNudge(redundant.term, redundant.count));
   }
 
-  const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
-    count >= discoveryLimit && SPIRALABLE_TOOLS.has(name)
-  );
-  if (stuck) {
-    const [toolName, count] = stuck;
-    if (opts?.deferWorkerPivot) return { abort: false, nudge: null };
-    state.toolNameCounts.set(toolName, 0);
-    // Pivot-toward-action nudge, not a dead-end "STOP." The model usually
-    // has enough context by call N — what it needs is permission to switch
-    // tactics, not an instruction to give up. Mention the natural next
-    // action so weak models don't flounder picking the next tool.
-    const pivotHint = (toolName === "read" || toolName === "glob" || toolName === "grep")
-      ? " You have enough context — switch tactic: use write/edit/bash to act on what you've already read, or ask the user a focused question if you're truly stuck."
-      : " You have enough context — produce the answer or take the next concrete action.";
-    return emitNudge(`SYSTEM: ${toolName} called ${count} times this turn — that's a discovery loop signal.${pivotHint} Do not call ${toolName} again unless you have a specific new file/path/term to look up.`);
+  const stuck = findDiscoveryLoop(state.toolNameCounts, isWeakOrMedium);
+  if (stuck && !opts?.deferWorkerPivot) {
+    state.toolNameCounts.set(stuck.tool, 0);
+    return emitNudge(discoveryNudge(stuck.tool, stuck.count));
   }
 
   return { abort: false, nudge: null };
@@ -318,12 +288,21 @@ export function noteToolResults(
 ): ToolResultObservation {
   let successfulMutation = false;
   let repeatedMutation = false;
+  let novelTarget = false;
   const committingResultIndexes = new Set<number>();
   for (const [index, tc] of toolCalls.entries()) {
     const result = results[index];
     if (!result || !isProtectedCommittingCall(tc.name)) continue;
     if (result.status !== undefined && result.status !== "ok") continue;
     committingResultIndexes.add(index);
+    const targetKey = mutationTargetKey(tc) ?? successfulCommittingCallKey(tc);
+    if (!state.seenMutationTargets.has(targetKey)) {
+      novelTarget = true;
+      state.seenMutationTargets.add(targetKey);
+      if (state.seenMutationTargets.size > RESULT_SIG_MEMORY) {
+        state.seenMutationTargets.delete(state.seenMutationTargets.values().next().value!);
+      }
+    }
     const key = successfulCommittingCallKey(tc);
     if (state.seenSuccessfulMutationKeys.has(key)) {
       repeatedMutation = true;
@@ -340,7 +319,11 @@ export function noteToolResults(
   for (const [index, result] of results.entries()) {
     if (result.status !== undefined && result.status !== "ok") continue;
     if (committingResultIndexes.has(index)) continue;
-    const signature = createHash("sha1").update(result.content).digest("hex");
+    // Volatility-normalized (loop-progress.ts): a raw sha1 made every
+    // screenshot and every re-navigated DOM snapshot look like new
+    // information, which latched novelty true for the life of any
+    // browser-driving op and disarmed every counter downstream.
+    const signature = noveltySignature(result.content);
     if (state.seenResultSigs.has(signature)) continue;
     novel = true;
     state.seenResultSigs.add(signature);
@@ -349,8 +332,22 @@ export function noteToolResults(
     }
   }
   state.lastTurnHadNovelResult = novel;
-  state.lastTurnHadNovelMutation = successfulMutation;
+  // Target-keyed, not args-keyed: rewriting one file with new bytes is
+  // iteration on a single artifact, not a fresh advance.
+  state.lastTurnHadNovelMutation = novelTarget;
   if (novel || successfulMutation) state.pendingStrategyPivot = null;
+  // Record this turn's procedure shape for cycle detection, flagged by RESULT
+  // novelty only — deliberately not novelTarget.
+  //
+  // The cycle detector asks "is this procedure teaching us anything?", and
+  // creating a file is an action, not information. Counting a new target as
+  // novelty here would let an agent defeat the detector by renaming its
+  // scratch harness every lap, which is exactly what the recorded livelock
+  // did (_mt.html -> _prod.html -> _h.html). Real scaffolding work is not
+  // caught by this, because a write's own result names the file it wrote and
+  // is therefore novel on its own. The no-progress counter keeps its mutation
+  // reset; only this signal is information-gated.
+  noteTurnShape(state.cycleWindow, turnShapeKey(toolCalls), novel);
 
   // Exact-repeat signal — only while the repeated {tool,args} key holds.
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
@@ -369,12 +366,15 @@ export function noteToolResults(
     const weak = opts.modelTier === "weak" || opts.modelTier === "medium";
     const repeatLimit = weak ? 2 : 3;
     const noProgressLimit = weak ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
-    const searchLimit = weak ? REDUNDANT_SEARCH_LIMIT_WEAK : REDUNDANT_SEARCH_LIMIT;
-    const discoveryLimit = weak ? DISCOVERY_LOOP_THRESHOLD_WEAK : DISCOVERY_LOOP_THRESHOLD;
+    const searchLimit = searchLimitFor(weak);
+    const discoveryLimit = discoveryLimitFor(weak);
     state.pendingStrategyPivot = chooseStrategyPivot({
       exactRepeat: state.identicalResultRepeats >= repeatLimit - 1,
       mutationRepeat: repeatedMutation,
-      noProgress: state.iterationsSinceProgress >= noProgressLimit,
+      // A detected cycle IS non-progress; the worker lane arms the same
+      // strategy pivot rather than a pattern of its own.
+      noProgress: state.iterationsSinceProgress >= noProgressLimit
+        || detectCycle(state.cycleWindow, { modelTier: opts?.modelTier }) !== null,
       redundantSearch: toolCalls.some(tc => {
         const key = searchKeyOf(tc.name, tc.arguments);
         return key !== null && (state.searchKeyCounts.get(key) ?? 0) >= searchLimit;

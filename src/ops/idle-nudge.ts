@@ -161,12 +161,17 @@ function composeNudgeText(items: PendingNotification[]): string {
     if (n.status === "failed") {
       return `Heads up — that op hit a snag (${taskPreview}). Want me to look at what went wrong?`;
     }
+    if (n.status === "partial") {
+      return `Heads up — that op stopped at a checkpoint before finishing (${taskPreview}). Its work is saved. Want me to pick it back up?`;
+    }
     return `Heads up — that op was cancelled (${taskPreview}).`;
   }
   const completed = items.filter(i => i.status === "completed").length;
+  const partial = items.filter(i => i.status === "partial").length;
   const failed = items.filter(i => i.status === "failed").length;
   const parts: string[] = [];
   if (completed > 0) parts.push(`${completed} finished`);
+  if (partial > 0) parts.push(`${partial} unfinished`);
   if (failed > 0) parts.push(`${failed} failed`);
   return `Heads up — ${items.length} background op${items.length === 1 ? "" : "s"} wrapped while you were away (${parts.join(", ")}). Want a rundown?`;
 }

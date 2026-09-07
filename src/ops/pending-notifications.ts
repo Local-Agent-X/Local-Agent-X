@@ -35,7 +35,10 @@ import { harnessNotice } from "../context/system-prompt-builder.js";
 
 export interface PendingNotification {
   opId: string;
-  status: "completed" | "failed" | "cancelled";
+  // `partial`: a succeeded op that stopped at an iteration checkpoint
+  // (canonical-loop/checkpoint-stop.ts). Its work is saved but the task is
+  // NOT done; `summary` is the PARTIAL line the parent must relay.
+  status: "completed" | "partial" | "failed" | "cancelled";
   summary: string;
   filesChanged: string[];
   task: string;             // the original user message that spawned the op
@@ -83,7 +86,9 @@ export function pushPendingNotification(sessionId: string, n: PendingNotificatio
 
   // Sub-agent completions stay OUT of the dedup history: their `task` is an
   // agent name, and matching new op tasks against it produces false BLOCKs.
-  if (!n.subAgent) {
+  // So does a PARTIAL stop: the way to continue it IS a follow-up op naming
+  // the same task, which the "already completed" guard would block.
+  if (!n.subAgent && n.status !== "partial") {
     let h = completionHistory.get(sessionId);
     if (!h) { h = []; completionHistory.set(sessionId, h); }
     h.push(n);
@@ -184,39 +189,49 @@ const SUMMARY_PREVIEW_CHARS = 180;
 export function formatNotificationsForSystemPrompt(notifications: PendingNotification[]): string {
   if (notifications.length === 0) return "";
   const lines = notifications.map(n => {
-    const statusEmoji = n.status === "completed" ? "✓" : n.status === "failed" ? "✗" : "⊘";
+    const partial = n.status === "partial";
+    const statusEmoji = n.status === "completed" ? "✓" : partial ? "◐" : n.status === "failed" ? "✗" : "⊘";
+    // A partial's summary IS the PARTIAL line (checkpoint-stop.ts
+    // describeCheckpointStop) — the instruction the agent must act on, not a
+    // result to preview — so it is shown whole, never truncated.
+    const statusPhrase = partial ? "stopped at a checkpoint (unfinished)" : n.status;
     if (n.subAgent) {
       // Sub-agent completion (agency completion-queue bridge): `task` holds
       // the agent's NAME, not a user task — don't label it "Original task",
       // and point at agent_output (there is no real op behind its opId).
-      const preview = n.summary.slice(0, SUMMARY_PREVIEW_CHARS);
-      const truncatedNote = n.summary.length > SUMMARY_PREVIEW_CHARS
+      const preview = partial ? n.summary : n.summary.slice(0, SUMMARY_PREVIEW_CHARS);
+      const truncatedNote = !partial && n.summary.length > SUMMARY_PREVIEW_CHARS
         ? ` …[truncated — ${n.summary.length} chars total; full result via agent_output(agent_id="${n.agentId ?? n.opId}") if needed]`
         : "";
       return (
-        `${statusEmoji} Sub-agent \`${n.task.slice(0, 80)}\` ${n.status}.\n` +
-        `   Result: ${preview}${truncatedNote}`
+        `${statusEmoji} Sub-agent \`${n.task.slice(0, 80)}\` ${statusPhrase}.\n` +
+        `   ${partial ? "" : "Result: "}${preview}${truncatedNote}`
       );
     }
     const filesLine = n.filesChanged.length > 0
       ? ` (changed ${n.filesChanged.length} file${n.filesChanged.length === 1 ? "" : "s"}: ${n.filesChanged.slice(0, 5).join(", ")})`
       : "";
-    const preview = n.summary.slice(0, SUMMARY_PREVIEW_CHARS);
-    const truncatedNote = n.summary.length > SUMMARY_PREVIEW_CHARS
+    const preview = partial ? n.summary : n.summary.slice(0, SUMMARY_PREVIEW_CHARS);
+    const truncatedNote = !partial && n.summary.length > SUMMARY_PREVIEW_CHARS
       ? ` …[full summary withheld — ${n.summary.length} chars total; available via op_status(op_id="${n.opId}") if user asks]`
       : "";
     const nudgedNote = n.surfacedViaNudge
       ? `\n   [ALREADY ANNOUNCED to the user via a proactive heads-up ("…that op just finished. Want me to walk through what landed?"). Do NOT re-announce it. If the user's current message is accepting that offer ("yes", "sure", "go ahead"), proceed directly with the next action (walkthrough/diff/summary). Otherwise don't bring it up again unless they ask.]`
       : "";
     return (
-      `${statusEmoji} Background op \`${n.opId}\` ${n.status}${filesLine}.\n` +
+      `${statusEmoji} Background op \`${n.opId}\` ${statusPhrase}${filesLine}.\n` +
       `   Original task: "${n.task.slice(0, 160)}${n.task.length > 160 ? "..." : ""}"\n` +
-      `   Preview: ${preview}${truncatedNote}${nudgedNote}`
+      `   ${partial ? "" : "Preview: "}${preview}${truncatedNote}${nudgedNote}`
     );
   });
+  const anyPartial = notifications.some(n => n.status === "partial");
   return harnessNotice("BACKGROUND COMPLETIONS",
     `${notifications.length} op${notifications.length === 1 ? "" : "s"} finished while the user was idle.\n` +
-    `Worker ops you (or auto-delegate) submitted earlier have finished. The work IS DONE.\n\n` +
+    `Worker ops you (or auto-delegate) submitted earlier have finished. The work IS DONE` +
+    (anyPartial ? ` — EXCEPT any ◐ entry marked "stopped at a checkpoint (unfinished)".\n\n` : `.\n\n`) +
+    (anyPartial
+      ? `**◐ UNFINISHED entries**: that op is NOT done. Its work is saved, but it stopped before finishing (the PARTIAL line says why). Tell the user plainly that it is unfinished — never present it as complete — and offer to continue it (a follow-up op_submit_async whose task names what was already done) or to leave it. The "already completed" duplicate guard does not apply to it.\n\n`
+      : "") +
     `**HOW TO SURFACE — STRICT FORMAT (this is a hard contract, not a suggestion):**\n` +
     `- **One short sentence acknowledging it's done** + **one short sentence offering the next action**. That is the entire mention. Two sentences max.\n` +
     `- **NEVER paste the preview text into your reply.** Never paste the summary, never paraphrase a paragraph of it, never list the files changed unless the user asks. The preview below is for YOUR understanding only — it tells you what the work was so you can offer the right next action.\n` +

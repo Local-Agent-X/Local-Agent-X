@@ -69,9 +69,14 @@ export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling";
 // event with `continuing: false` (worker.ts), emitted just before the op is
 // ended `succeeded / iteration_checkpoint`. That event is the source of truth
 // for "did this op finish, or did it stop mid-work?" — there is deliberately
-// no second flag on the op row. Everything that reports the op to a parent
-// (await-op.ts → OpResult, op_wait, op_status) reads it through here, so a
-// checkpoint stop can never again reach a parent as a plain `completed`.
+// no second flag on the op row. Every surface that reports a terminal op reads
+// it through here and renders `partial` with describeCheckpointStop:
+//   - await-op.ts → OpResult (op_wait, op_status, op_submit, op_submit_batch)
+//   - session-bridge-observer.ts → bg_op_completed / worker_done, the pending
+//     notification the chat agent drains, the spoken line, the idle nudge
+// Nothing enforces this list mechanically: a NEW terminal-reporting surface
+// that maps `succeeded` straight to "completed" reintroduces the bug (the
+// observer did exactly that for a week). Read the record; render the line.
 
 export interface CheckpointStopFacts {
   /** Turns the op had completed when it stopped, when the event carried it. */

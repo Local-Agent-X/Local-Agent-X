@@ -22,7 +22,7 @@
  * the "did we learn anything" counter is advanced by production code rather
  * than seeded by the test.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +47,9 @@ import type { Op } from "../src/ops/types.js";
 import { awaitCanonicalOp } from "../src/canonical-loop/index.js";
 import { opWaitTool } from "../src/ops/tools/op-wait.js";
 import { opStatusTool } from "../src/ops/tools/op-status.js";
+import { setSessionBroadcaster, trackOpForSession } from "../src/ops/session-bridge.js";
+import { drainPendingNotifications, formatNotificationsForSystemPrompt } from "../src/ops/pending-notifications.js";
+import { cancelIdleNudge } from "../src/ops/idle-nudge.js";
 
 import { FakeAdapter, scriptTurn } from "./canonical-loop/fake-adapter.js";
 
@@ -209,6 +212,93 @@ describe("worker honors budget.maxIterations (CL-7 regression)", () => {
     expect(status.isError).toBeFalsy();
     expect(status.content).toContain(`op ${op.id} [partial]`);
     expect(status.content).toContain(`PARTIAL — child op ${op.id} stopped at a checkpoint after ${completedTurns} turns (reason: dry-checkpoints`);
+  });
+
+  // The parent-facing PARTIAL above rides await-op.ts. The SESSION-facing path
+  // (session-bridge-observer.ts, wired into every emit) is what the chat agent
+  // actually drains on its next turn — and it mapped succeeded → "completed"
+  // with the worker's last text as the result, a card link, and a nudge that
+  // said the task finished. Same worker, same dry stop, observer wired.
+  it("surfaces a worker-lane dry stop to the chat session as PARTIAL, never completed", async () => {
+    const sessionId = `sess-partial-observer-${Date.now()}`;
+    const op = mkOp(3, "build");
+    const script = Array.from({ length: 20 }, (_, i) =>
+      scriptTurn({ toolCalls: [{ toolCallId: `partial-obs-tc-${i}`, tool: "search", args: {} }] }),
+    );
+    const fake = new FakeAdapter({ script });
+    registerAdapterForOp(op.id, () => fake);
+    setToolDispatcher({
+      async dispatch(call) {
+        return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 0 };
+      },
+    });
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+    trackOpForSession(op.id, sessionId, "iteration-budget cap");
+
+    try {
+      canonicalLoopEntry(op, { sessionId });
+      await awaitTerminal(op.id);
+      await awaitIdle(5_000).catch(() => undefined);
+      expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+      const stop = readCanonicalEvents(op.id).filter(e => e.type === "iteration_checkpoint").at(-1)!;
+      expect(stop.body).toMatchObject({ continuing: false, stopReason: "dry-checkpoints" });
+      const completedTurns = (stop.body as { completedTurns: number }).completedTurns;
+      const partialLine = `PARTIAL — child op ${op.id} stopped at a checkpoint after ${completedTurns} turns (reason: dry-checkpoints`;
+
+      // The pending notification the chat agent drains on its next turn.
+      const pending = drainPendingNotifications(sessionId);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ opId: op.id, status: "partial" });
+      expect(pending[0].summary.startsWith(partialLine)).toBe(true);
+      const block = formatNotificationsForSystemPrompt(pending);
+      expect(block).toContain(`◐ Background op \`${op.id}\` stopped at a checkpoint (unfinished).`);
+      expect(block).not.toContain(`\`${op.id}\` completed`);
+
+      // The AGENTS card events carry the same status and no link.
+      const card = broadcast.mock.calls
+        .map(([, event]) => event as Record<string, unknown>)
+        .find((event) => event.type === "bg_op_completed")!;
+      expect(card).toMatchObject({ opId: op.id, status: "partial" });
+      expect(card).not.toHaveProperty("resultUrl");
+      expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: "worker_done", status: "partial" }));
+    } finally {
+      cancelIdleNudge(sessionId);
+      setSessionBroadcaster(() => {});
+    }
+  });
+
+  it("surfaces a genuinely finished worker-lane op to the chat session as completed", async () => {
+    const sessionId = `sess-completed-observer-${Date.now()}`;
+    const op = mkOp(3, "build");
+    // Distinct results every turn, script ends after 5: a normal finish.
+    const script = Array.from({ length: 5 }, (_, i) =>
+      scriptTurn({ toolCalls: [{ toolCallId: `done-obs-tc-${i}`, tool: "search", args: { q: `q-${i}` } }] }),
+    );
+    const fake = new FakeAdapter({ script });
+    registerAdapterForOp(op.id, () => fake);
+    let n = 0;
+    setToolDispatcher({
+      async dispatch(call) {
+        return { toolCallId: call.toolCallId, status: "ok", result: { ok: true, finding: `distinct-${n++}` }, durationMs: 0 };
+      },
+    });
+    setSessionBroadcaster(vi.fn());
+    trackOpForSession(op.id, sessionId, "iteration-budget cap");
+
+    try {
+      canonicalLoopEntry(op, { sessionId });
+      await awaitTerminal(op.id);
+      await awaitIdle(5_000).catch(() => undefined);
+      expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
+      const pending = drainPendingNotifications(sessionId);
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ opId: op.id, status: "completed" });
+      expect(pending[0].summary).not.toContain("PARTIAL");
+    } finally {
+      cancelIdleNudge(sessionId);
+      setSessionBroadcaster(() => {});
+    }
   });
 
   it("stops an interactive op at the checkpoint where two in a row learned nothing", async () => {

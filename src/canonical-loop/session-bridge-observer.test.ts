@@ -3,9 +3,9 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { writeOp } from "../ops/op-store.js";
-import { appendOpMessage } from "./store.js";
+import { appendCanonicalEvent, appendOpMessage } from "./store.js";
 import { trackOpForSession, listOpsForSession, setSessionBroadcaster, setSessionPersister } from "../ops/session-bridge.js";
-import { pushPendingNotification } from "../ops/pending-notifications.js";
+import { formatNotificationsForSystemPrompt, pushPendingNotification, type PendingNotification } from "../ops/pending-notifications.js";
 import { cancelIdleNudge, scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { collectCanonicalBrowserEvents, recordCanonicalEvent } from "./session-bridge-observer.js";
 import { getBus, streamChannel } from "./bus.js";
@@ -496,6 +496,111 @@ describe("session-bridge-observer — verify_deliverable failures are quiet, ver
     }));
     expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, "Verification pass: build the sheet");
     expect(listOpsForSession(sessionId)).toEqual([]);
+    cancelIdleNudge(sessionId);
+  });
+});
+
+// A `succeeded` op that stopped at an iteration checkpoint (checkpoint-stop.ts:
+// dry checkpoints / spend ceiling) is NOT done. await-op.ts already reported it
+// to a PARENT as `partial` (op_wait / op_status), but this observer — the path
+// every chat session actually sees — still mapped succeeded → "completed": a
+// "✓ Background op … completed" notification with the worker's last text as
+// the result, an "Open" link on the card, and a "that task finished" spoken
+// line. The checkpoint's own event is the one record; the observer must read
+// it and render the same PARTIAL line the parent gets.
+describe("session-bridge-observer — a checkpoint-stopped op is partial, not completed", () => {
+  beforeEach(() => {
+    vi.mocked(scheduleIdleNudge).mockClear();
+    vi.mocked(pushPendingNotification).mockClear();
+  });
+
+  function dryStop(opId: string, completedTurns: number): void {
+    appendCanonicalEvent(opId, "iteration_checkpoint", { maxTurns: 3, completedTurns: 3, continuing: true });
+    appendCanonicalEvent(opId, "iteration_checkpoint", {
+      maxTurns: 3, completedTurns, continuing: false,
+      stopReason: "dry-checkpoints", stopDetail: "two checkpoints in a row learned nothing new",
+    });
+  }
+
+  it("renders the PARTIAL line, status partial, and no artifact link on every surface", () => {
+    const sessionId = "sess-obs-partial";
+    const opId = "op_app_build_partial_stop_1";
+    // app_build with a known appUrl: the deterministic "Open" link source.
+    writeOp({ id: opId, type: "app_build", status: "running", appUrl: "/apps/half-built/" } as never);
+    created.push(opId);
+    appendOpMessage({
+      opId, messageId: "partial-last-text", turnIdx: 8, seqInTurn: 0,
+      role: "assistant", content: { text: "APP_READY: /apps/half-built/ — all done!" }, createdAt: new Date().toISOString(),
+    });
+    dryStop(opId, 9);
+    trackOpForSession(opId, sessionId, 'Build app "half-built"');
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    const partialLine = `PARTIAL — child op ${opId} stopped at a checkpoint after 9 turns (reason: dry-checkpoints: two checkpoints`;
+    const completedEvent = broadcast.mock.calls
+      .map(([, event]) => event as Record<string, unknown>)
+      .find((event) => event.type === "bg_op_completed")!;
+    expect(completedEvent.status).toBe("partial");
+    expect(String(completedEvent.summary).startsWith(partialLine)).toBe(true);
+    expect(completedEvent.summary).not.toContain("all done");
+    expect(completedEvent).not.toHaveProperty("resultUrl");
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({ type: "worker_done", status: "partial" }));
+
+    expect(pushPendingNotification).toHaveBeenCalledTimes(1);
+    const notification = vi.mocked(pushPendingNotification).mock.calls[0][1] as PendingNotification;
+    expect(notification.status).toBe("partial");
+    expect(notification.summary.startsWith(partialLine)).toBe(true);
+    const block = formatNotificationsForSystemPrompt([notification]);
+    expect(block).toContain(`◐ Background op \`${opId}\` stopped at a checkpoint (unfinished).`);
+    expect(block).toMatch(/PARTIAL — child op .* NOT finished/);
+    expect(block).not.toContain(`\`${opId}\` completed`);
+    expect(block).toContain("EXCEPT any ◐ entry");
+
+    expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, 'Build app "half-built"');
+    expect(listOpsForSession(sessionId)).toEqual([]);
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a genuinely finished op (its last checkpoint continued) still renders completed with its link", () => {
+    const sessionId = "sess-obs-partial-control";
+    const opId = "op_app_build_partial_control_1";
+    writeOp({ id: opId, type: "app_build", status: "running", appUrl: "/apps/whole/" } as never);
+    created.push(opId);
+    appendOpMessage({
+      opId, messageId: "control-last-text", turnIdx: 4, seqInTurn: 0,
+      role: "assistant", content: { text: "APP_READY: /apps/whole/" }, createdAt: new Date().toISOString(),
+    });
+    appendCanonicalEvent(opId, "iteration_checkpoint", { maxTurns: 3, completedTurns: 3, continuing: true });
+    trackOpForSession(opId, sessionId, 'Build app "whole"');
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      type: "bg_op_completed", status: "completed", summary: "APP_READY: /apps/whole/", resultUrl: "/apps/whole/",
+    }));
+    expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({ opId, status: "completed" }));
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a partial notification does not arm the 'already completed' re-delegation guard", async () => {
+    const { findRecentCompletionMatching } = await import("../ops/pending-notifications.js");
+    const sessionId = "sess-obs-partial-guard";
+    const opId = "op_research_partial_guard_1";
+    makeOp(opId, "research");
+    dryStop(opId, 6);
+    trackOpForSession(opId, sessionId, "research the widget market in depth");
+    setSessionBroadcaster(vi.fn());
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    // The PARTIAL line tells the parent to continue with a follow-up op that
+    // names the same task; the completed-dedup guard must not block it.
+    expect(findRecentCompletionMatching(sessionId, "research the widget market in depth")).toBeNull();
     cancelIdleNudge(sessionId);
   });
 });

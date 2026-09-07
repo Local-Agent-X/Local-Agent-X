@@ -11,7 +11,9 @@
  * Mapping:
  *   - state_changed  null   → queued     → bg_op_queued
  *   - state_changed  queued → running    → bg_op_started
- *   - state_changed  *      → succeeded  → bg_op_completed (status: completed)
+ *   - state_changed  *      → succeeded  → bg_op_completed (status: completed —
+ *                                          or `partial` when the op stopped at
+ *                                          an iteration checkpoint, see below)
  *   - state_changed  *      → failed     → bg_op_completed (status: failed)
  *   - state_changed  *      → cancelled  → bg_op_completed (status: cancelled)
  *   - error event                        → bg_op_progress (last error code)
@@ -38,6 +40,7 @@ import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { toSpokenCompletion, redirectAppliedRow } from "./session-bridge-extractors.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
+import { describeCheckpointStop, readCheckpointStop } from "./checkpoint-stop.js";
 import { extractAppReadyUrl, extractArtifactUrl, extractFinalAssistantText } from "./session-bridge-extractors.js";
 import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
@@ -48,6 +51,18 @@ const require = createRequire(import.meta.url);
 const logger = createLogger("canonical-loop.session-bridge-observer");
 
 let warnedOnce = false;
+
+/** Terminal status a card / notification carries. `partial` is a `succeeded`
+ *  op that stopped at an iteration checkpoint (checkpoint-stop.ts). */
+type TerminalCardStatus = "completed" | "partial" | "failed" | "cancelled";
+
+/** Spoken line for a checkpoint-stopped op. toSpokenCompletion's lead
+ *  ("that background task finished") is the one claim a partial must not make,
+ *  and reading the PARTIAL line aloud (op ids, tool names) is noise. */
+function toSpokenPartial(task: string): string {
+  const what = task ? ` (${task.slice(0, 60)})` : "";
+  return `Heads up — that background task stopped at a checkpoint before finishing${what}. Its work is saved, but the task is not done.`;
+}
 
 function warnOnce(msg: string): void {
   if (warnedOnce) return;
@@ -182,19 +197,31 @@ function recordCanonicalEventWithSink(
             resumable: true,
           } as ServerEvent);
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
-          const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;
-          // Failed/cancelled verification pass = harness noise (the class the
-          // skill-review quieting purged): AGENTS card + logs only — no toast,
-          // notification, spoken line, or nudge. A verdict keeps full surfacing.
+          // A `succeeded` op that ended at an iteration checkpoint (dry
+          // checkpoints / spend ceiling) is NOT done. The checkpoint's own
+          // event is the one record of that (checkpoint-stop.ts), and the
+          // PARTIAL line rendered from it is the same one op_wait / op_status
+          // show a parent — one formatter. Here it becomes status `partial`:
+          // the card, the pending notification, the spoken line and the
+          // sidebar all say "unfinished", and no "Open" link is offered for a
+          // half-built artifact. Before this, the chat agent was told the op
+          // "completed" with the worker's last text as the result.
+          const stop = to === "succeeded" ? readCheckpointStop(event.opId) : null;
+          const status: TerminalCardStatus = stop ? "partial" : to === "succeeded" ? "completed" : to;
+          // Failed/cancelled/partial verification pass = harness noise (the
+          // class the skill-review quieting purged): AGENTS card + logs only —
+          // no toast, notification, spoken line, or nudge. A verdict keeps
+          // full surfacing.
           const quietVerifyFailure = op?.type === VERIFICATION_OP_TYPE && status !== "completed";
           // Surface the worker's ACTUAL final message, not a bare "task
           // completed". On completed, the final assistant text IS the result
           // the parent asked for; on failure preserve the durable failure fact
           // rather than replaying stale assistant text from before termination.
-          const finalText = extractFinalAssistantText(event.opId);
-          const persistedSummary = status === "completed"
-            ? (finalText || "task completed")
-            : (op?.lastFailureReason || status);
+          const persistedSummary = stop
+            ? describeCheckpointStop(event.opId, stop)
+            : status === "completed"
+              ? (extractFinalAssistantText(event.opId) || "task completed")
+              : (op?.lastFailureReason || status);
           const summary = persistedSummary.slice(0, 400);
 
           // Surface an "Open" link on the AGENTS sidebar card. Resolution
@@ -211,7 +238,8 @@ function recordCanonicalEventWithSink(
           //      spreadsheet / write / create_page / etc.
           //
           // The generic scan is gated to `status === "completed"` so a
-          // failed run doesn't surface a half-written artifact as a link.
+          // failed or partial run doesn't surface a half-written artifact as
+          // a link.
           let resultUrl: string | undefined;
           if (status === "completed") {
             if (op?.type === "app_build") {
@@ -276,7 +304,10 @@ function recordCanonicalEventWithSink(
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
           if (core && !quietVerifyFailure) {
-            proactiveSpeakToSession(sessionId, toSpokenCompletion(task, summary, status, op?.type));
+            proactiveSpeakToSession(
+              sessionId,
+              status === "partial" ? toSpokenPartial(task) : toSpokenCompletion(task, summary, status, op?.type),
+            );
             scheduleIdleNudge(sessionId, task);
           }
           if (core) {

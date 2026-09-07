@@ -7,7 +7,12 @@
  * strings pass through the caller's `str` helper before they are listed.
  *
  * Arguments: the open shadow roots the element scan collected, the rule and
- * depth caps, the media-text cap (serialized chars), and `str`.
+ * depth caps, the media-text cap (serialized chars), `str`, and `B` — the bag
+ * of builtins layout-report.ts captured at its script's first statement. This
+ * walk runs on that bag rather than on the live globals, so a page that swaps
+ * Map, Set or an Array method while the probe is running is not in the path.
+ * LIMIT: a page that swapped one before that first statement is (header of
+ * layout-report.ts).
  *
  * What the named tests prove (test/browser-layout-report-script.test.ts):
  *  - the "counted silent skips in the CSS walk" block — one test per counted
@@ -19,13 +24,13 @@
  *    de-duplication key is the FULL condition text, evaluated once; the
  *    listed text is cut to the media cap.
  */
-export const LAYOUT_REPORT_CSS_WALK = `(shadowRootsSeen, RULE_CAP, RULE_DEPTH, MEDIA_CHARS, str) => {
+export const LAYOUT_REPORT_CSS_WALK = `(shadowRootsSeen, RULE_CAP, RULE_DEPTH, MEDIA_CHARS, str, B) => {
   const matching = [];
   const listed = [];
   // Full condition text -> matchMedia result (true/false) or null when
   // matchMedia refused it. One evaluation per distinct full text.
-  const evaluated = new Map();
-  const noted = new Set();
+  const evaluated = new B.Map();
+  const noted = new B.Set();
   let unreadableSheets = 0;
   let unreadableRules = 0;
   let unloadedImports = 0;
@@ -36,34 +41,36 @@ export const LAYOUT_REPORT_CSS_WALK = `(shadowRootsSeen, RULE_CAP, RULE_DEPTH, M
   let sheetsSkippedByMedia = 0;
   const condOf = (o) => (o && o.media && typeof o.media.mediaText === "string" && o.media.mediaText) ? o.media.mediaText : null;
   const evaluate = (cond) => {
-    if (!evaluated.has(cond)) {
+    if (!B.mapHas.call(evaluated, cond)) {
       // COUNTED: a condition matchMedia refuses to evaluate.
       let result = null;
       try { result = matchMedia(cond).matches === true; } catch (e) { unevaluableConditions++; }
-      evaluated.set(cond, result);
+      B.mapSet.call(evaluated, cond, result);
     }
-    return evaluated.get(cond);
+    return B.mapGet.call(evaluated, cond);
   };
   // A rule's condition: listed on its first sighting when it matches. Returns
   // the evaluation (null: no condition, or matchMedia refused it).
   const noteCondition = (rule) => {
     const cond = condOf(rule);
     if (cond === null) return null;
-    if (noted.has(cond)) return evaluate(cond);
-    noted.add(cond);
+    if (B.setHas.call(noted, cond)) return evaluate(cond);
+    B.setAdd.call(noted, cond);
     const matches = evaluate(cond);
-    if (matches === true) { matching.push(cond); listed.push(str(cond, MEDIA_CHARS).value); }
+    if (matches === true) { B.push.call(matching, cond); B.push.call(listed, str(cond, MEDIA_CHARS).value); }
     return matches;
   };
   // A sheet-level condition (<link media>, an @import's target sheet) that
-  // evaluates false gates every rule inside; one matchMedia refuses is
+  // evaluates false gates the rules inside it; one matchMedia refuses is
   // walked as unconditional (counted above).
   const sheetApplies = (sheet) => { const cond = condOf(sheet); return cond === null || evaluate(cond) !== false; };
   const walkRules = (rules, depth) => {
     // COUNTED: the caller only recurses into a NON-EMPTY child list, so a
     // trip here means rules below this point were skipped.
     if (depth > RULE_DEPTH) { depthTruncations++; return; }
-    for (const rule of Array.prototype.slice.call(rules)) {
+    const snapshot = B.slice.call(rules);
+    for (let i = 0; i < snapshot.length; i++) {
+      const rule = snapshot[i];
       // COUNTED: rules remaining after the budget ran out are skipped.
       if (ruleBudget <= 0) { ruleCapTruncations++; return; }
       ruleBudget--;
@@ -75,7 +82,7 @@ export const LAYOUT_REPORT_CSS_WALK = `(shadowRootsSeen, RULE_CAP, RULE_DEPTH, M
         // failed) contributes no rules and would otherwise vanish silently.
         if (rule.styleSheet == null) { unloadedImports++; continue; }
         // COUNTED: an @import's own condition, or the imported sheet's, that
-        // does not match gates every rule inside it.
+        // does not match gates the rules inside it.
         if (matches === false || !sheetApplies(rule.styleSheet)) { sheetsSkippedByMedia++; continue; }
       }
       // Grouping rules expose children as cssRules; @import exposes a sheet
@@ -97,27 +104,29 @@ export const LAYOUT_REPORT_CSS_WALK = `(shadowRootsSeen, RULE_CAP, RULE_DEPTH, M
     // adoptedStyleSheets support), so there are no sheets in it to walk.
     if (!list) return 0;
     let added = 0;
-    for (const s of Array.prototype.slice.call(list)) {
+    const snapshot = B.slice.call(list);
+    for (let i = 0; i < snapshot.length; i++) {
       // COUNTED: a null entry is a sheet that was not read.
-      if (s) { sheets.push(s); added++; } else { unreadableSheets++; }
+      if (snapshot[i]) { B.push.call(sheets, snapshot[i]); added++; } else { unreadableSheets++; }
     }
     return added;
   };
   addSheets(document.styleSheets);
   const adoptedSheets = addSheets(document.adoptedStyleSheets);
   let shadowSheets = 0;
-  for (const root of shadowRootsSeen) {
-    shadowSheets += addSheets(root.styleSheets);
-    shadowSheets += addSheets(root.adoptedStyleSheets);
+  for (let i = 0; i < shadowRootsSeen.length; i++) {
+    shadowSheets += addSheets(shadowRootsSeen[i].styleSheets);
+    shadowSheets += addSheets(shadowRootsSeen[i].adoptedStyleSheets);
   }
   let disabledSheets = 0;
   let sheetsWalked = 0;
-  for (const sheet of sheets) {
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
     // COUNTED: a disabled sheet applies nothing to the page, so its @media
     // conditions are not "currently matching" whatever matchMedia says.
     if (sheet.disabled === true) { disabledSheets++; continue; }
     // COUNTED: a sheet-level condition (<link media="print">) that does not
-    // match gates every rule inside it.
+    // match gates the rules inside it.
     if (!sheetApplies(sheet)) { sheetsSkippedByMedia++; continue; }
     let rules = null;
     // COUNTED: cssRules threw (cross-origin) or came back null/undefined.

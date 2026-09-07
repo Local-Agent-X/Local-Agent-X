@@ -1,24 +1,27 @@
 // @vitest-environment happy-dom
 /**
- * The two invariants of the layout diagnostic script, proven against a page
- * that owns every global the script reads.
+ * The layout diagnostic script driven by pages that own the globals it reads
+ * and the builtins it runs on.
  *
- * INVARIANT 1 — the value the script returns is valid JSON of at most
- * LAYOUT_REPORT_MAX_CHARS chars, for any page. A seeded fuzz: each iteration
- * randomizes the page-controlled inputs across a hostile set (backslash,
- * control-char, invisible, homoglyph and surrogate strings up to 20k chars in
- * url / userAgent / ids / classes / text / media conditions / background
- * colours; innerWidth as a 9k string; getComputedStyle replaced by a proxy;
- * maxTouchPoints NaN; 0-300 overflowing, 0-50 fixed, 0-50 media conditions;
- * the scan, rule, depth and list caps) and runs the script through the REAL
- * evaluateScript. Then a batch at a reduced budget, where the fallback
- * document is reachable, and a page whose global throws.
+ * OUTPUT SHAPE — a seeded fuzz: each iteration randomizes the page-controlled
+ * inputs across a hostile set (backslash, control-char, invisible, homoglyph
+ * and surrogate strings up to 20k chars in url / userAgent / ids / classes /
+ * text / media conditions / background colours; innerWidth as a 9k string;
+ * getComputedStyle replaced by a proxy; maxTouchPoints NaN; 0-300 overflowing,
+ * 0-50 fixed, 0-50 media conditions; the scan, rule, depth and list caps) and
+ * runs the script through the REAL evaluateScript, checking the result parses
+ * within LAYOUT_REPORT_MAX_CHARS. Then a batch at a reduced budget, where the
+ * reportTooLarge document is reachable, a page whose global throws, and a page
+ * that swapped JSON.stringify and Array.prototype.map before the script ran.
  *
- * INVARIANT 2 — the untrusted-content wrapper cannot change the parsed
- * document. A page whose labels and ids carry the wrapper's own trigger
+ * WRAPPER EDITS — a page whose labels and ids carry the wrapper's own trigger
  * strings round-trips through the handler and the real wrapper to the same
- * bytes; and for every UTF-16 code unit, the script's one-char literal is a
- * fixed point of the wrapper's pure edit steps.
+ * bytes; the script's one-char literal is a fixed point of the wrapper's pure
+ * edit steps for each UTF-16 code unit, and matches JSON.stringify +
+ * LAYOUT_REPORT_JSON_ESCAPE over the same range. A page echoing a REGISTERED
+ * secret is the one case where the wrapper does edit the bytes: the diff is
+ * [REDACTED_SECRET] substitutions, and the document still parses to the same
+ * shape and counts.
  *
  * Seed: LAYOUT_FUZZ_SEED in the environment, else DEFAULT_SEED. A failure
  * names the seed and the iteration.
@@ -28,11 +31,13 @@ import type { Page } from "playwright";
 import {
   buildLayoutReportScript, LAYOUT_REPORT_JSON_ESCAPE, LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP,
   LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_RULE_CAP, LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
+  LAYOUT_REPORT_URL_MAX,
 } from "../src/browser/layout-report.js";
 import { evaluateScript } from "../src/browser/page-ops.js";
 import { handleLayoutReport } from "../src/tools/browser-tools/layout-report.js";
 import type { BrowserBackend } from "../src/browser/backend.js";
 import { normalizeHomoglyphs, stripControlChars, stripSystemInjectionTags } from "../src/sanitize.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../src/security/secrets/known-secrets.js";
 
 const DEFAULT_SEED = 0x5eed2026;
 const SEED = Number(process.env.LAYOUT_FUZZ_SEED) || DEFAULT_SEED;
@@ -87,9 +92,12 @@ function hostile(rng: () => number, maxLen: number): string {
 const media = (mediaText: string, children: unknown[] = []) => ({ media: { mediaText }, cssRules: children });
 const group = (children: unknown[]) => ({ cssRules: children });
 
+/** The rect stub stands in for the page's own getBoundingClientRect, so it is
+ *  written without Array.prototype.map — one test takes that method away. */
 function box(el: Element): DOMRect {
   const raw = (el as HTMLElement).dataset?.rect;
-  const [x, y, width, height] = raw ? raw.split(",").map(Number) : [0, 0, 100, 20];
+  const parts = raw ? raw.split(",") : ["0", "0", "100", "20"];
+  const x = Number(parts[0]), y = Number(parts[1]), width = Number(parts[2]), height = Number(parts[3]);
   return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height } as DOMRect;
 }
 
@@ -139,7 +147,7 @@ function buildHostilePage(rng: () => number): Shape {
     for (let i = 0; i < LAYOUT_REPORT_SCAN_CAP + 10; i++) filler.append(document.createElement("i"));
     body.append(filler);
   }
-  // getComputedStyle is the page's: a proxy whose every property is page text,
+  // getComputedStyle is the page's: a proxy answering each property with page text,
   // with display/position set so the rows above are measured and classified.
   const kinds = ["over", "fixed", "filler"];
   override(globalThis, "getComputedStyle", (el: Element) => {
@@ -191,7 +199,7 @@ function buildHostilePage(rng: () => number): Shape {
 interface Outcome { text: string; fallback: boolean }
 
 /** One iteration: build, run through the real evaluateScript, assert the
- *  invariant for the given budget. */
+ *  document parses inside the given budget. */
 async function fuzzOnce(seed: number, iteration: number, script: string, cap: number): Promise<Outcome> {
   const rng = rngFor(seed + iteration * 7919);
   buildHostilePage(rng);
@@ -245,7 +253,11 @@ afterEach(() => {
   for (const undo of restores.splice(0).reverse()) undo();
 });
 
-describe("invariant 1: valid JSON under the budget, for any page", () => {
+/** The script without the evaluate layer, for the tests that take the page's
+ *  builtins away from evaluateScript too (it uses JSON.stringify and .map). */
+const runRaw = (script: string): string => new Function(`return ${script}`)() as string;
+
+describe("output shape: a parseable document under the budget, or a stated fallback", () => {
   it(`${ITERATIONS} hostile pages through the real evaluateScript at the shipped budget`, async () => {
     const { maxSize } = await fuzzBatch(LAYOUT_REPORT_SCRIPT, LAYOUT_REPORT_MAX_CHARS, ITERATIONS, "shipped");
 
@@ -289,6 +301,40 @@ describe("invariant 1: valid JSON under the budget, for any page", () => {
     expect(JSON.stringify(parsed.error).length).toBeLessThanOrEqual(256);
     expect(parsed.knownGaps).toEqual([...LAYOUT_REPORT_KNOWN_GAPS]);
   });
+
+  /** The serializer runs on the builtins the script's FIRST STATEMENT read, so
+   *  a page that owns JSON.stringify and Array.prototype.map is off the path:
+   *  the document is built by index loops and a per-code-unit escaper. The
+   *  evaluate layer is skipped here because page-ops itself calls both.
+   *  Mutation: serialize the document with the page's JSON.stringify, or map
+   *  over the rows in toJson, and this goes red. */
+  it("a page that replaces JSON.stringify and Array.prototype.map before the script's first statement still yields a parseable report under the budget", () => {
+    document.body.innerHTML =
+      `<div id="promo-strip" data-rect="0,0,900,32">Free shipping</div>` +
+      `<nav class="site-nav" data-rect="0,40,390,56" style="position: fixed">Home</nav>`;
+    const savedStringify = JSON.stringify;
+    const savedMap = Array.prototype.map;
+    let raw = "";
+    try {
+      JSON.stringify = (() => '"' + "x".repeat(20_000) + '"') as unknown as typeof JSON.stringify;
+      Array.prototype.map = function (): never { throw new Error("page owns map"); } as unknown as typeof Array.prototype.map;
+      raw = runRaw(LAYOUT_REPORT_SCRIPT);
+    } finally {
+      JSON.stringify = savedStringify;
+      Array.prototype.map = savedMap;
+    }
+
+    expect(raw.length).toBeLessThanOrEqual(LAYOUT_REPORT_MAX_CHARS);
+    const parsed = JSON.parse(raw) as {
+      reportFailed?: true; reportTooLarge?: true; url: string;
+      overflowingElements: { selector: string; overflowRightPx: number }[]; fixedAndStickyElements: { selector: string }[];
+    };
+    expect(parsed.reportFailed).toBeUndefined();
+    expect(parsed.reportTooLarge).toBeUndefined();
+    expect(parsed.overflowingElements[0].selector).toBe("div#promo-strip");
+    expect(parsed.overflowingElements[0].overflowRightPx).toBe(900 - VIEWPORT);
+    expect(parsed.fixedAndStickyElements[0].selector).toBe("nav.site-nav");
+  });
 });
 
 /** The bytes inside the untrusted-content wrapper's <content> block. */
@@ -300,7 +346,7 @@ function payload(text: string): string {
   return text.slice(open + "<content>\n".length, close);
 }
 
-describe("invariant 2: the wrapper cannot change the parsed document", () => {
+describe("what the untrusted-content wrapper does to the document", () => {
   const TRIGGERS = [
     // The first LIST_CAP go into ids (the selector), so the members of JS \s
     // (U+2028, U+FEFF) survive the label's whitespace collapse.
@@ -375,8 +421,79 @@ describe("invariant 2: the wrapper cannot change the parsed document", () => {
     expect(edited).toEqual([]);
   });
 
+  /** The script escapes by code-unit range instead of calling JSON.stringify,
+   *  so the exported regex and the script can drift apart. This walks the
+   *  whole UTF-16 range through the real script's `url` field, in chunks that
+   *  fill LAYOUT_REPORT_URL_MAX, and compares the emitted literal to
+   *  JSON.stringify + LAYOUT_REPORT_JSON_ESCAPE code unit for code unit.
+   *  Mutation: change one bound in the script's `width`/`jsonStr` and this
+   *  names the range that moved. */
+  it("the script's serializer agrees with JSON.stringify + LAYOUT_REPORT_JSON_ESCAPE over the whole UTF-16 range", () => {
+    const hex4 = (ch: string) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+    const mirror = (s: string) => JSON.stringify(s).replace(LAYOUT_REPORT_JSON_ESCAPE, hex4);
+    const HEAD = '{"url":';
+    document.body.innerHTML = "";
+    const mismatches: string[] = [];
+    let code = 0;
+    let chunks = 0;
+    while (code <= 0xffff) {
+      const start = code;
+      let chunk = "";
+      while (code <= 0xffff && mirror(chunk + String.fromCharCode(code)).length <= LAYOUT_REPORT_URL_MAX) {
+        chunk += String.fromCharCode(code);
+        code++;
+      }
+      override(globalThis, "location", { href: chunk });
+      let raw = "";
+      try { raw = runRaw(LAYOUT_REPORT_SCRIPT); } finally { for (const undo of restores.splice(0).reverse()) undo(); }
+      chunks++;
+      const emitted = raw.slice(HEAD.length, raw.indexOf(',"urlTruncated"'));
+      if (emitted !== mirror(chunk)) mismatches.push(`U+${start.toString(16)}..U+${(code - 1).toString(16)}`);
+    }
+
+    expect(mismatches).toEqual([]);
+    expect(chunks).toBeGreaterThan(100);
+  }, 60_000);
+
+  /** The one edit the wrapper does make to this document: redactKnownSecrets
+   *  (step 0) replaces a REGISTERED plaintext secret wherever it lands in a
+   *  string value. The diff against the raw bytes is those substitutions and
+   *  nothing else, and the result is still the same document. */
+  it("a page echoing a registered secret: the wrapped bytes differ from the raw bytes by [REDACTED_SECRET] substitutions and nothing else", async () => {
+    const SECRET = "sk-live-9f2b7c41d8e6a350";
+    document.body.innerHTML =
+      `<div id="tok-${SECRET}" data-rect="0,0,900,20">key ${SECRET} echoed</div>` +
+      `<p data-rect="0,40,390,20">clean copy</p>`;
+    override(globalThis, "location", { href: `https://shop.example.com/?key=${SECRET}` });
+    registerRedactedSecretValue(SECRET);
+    try {
+      const raw = await evaluateScript(page, LAYOUT_REPORT_SCRIPT);
+      const backend = { getCurrentUrl: () => "https://shop.example.com/", evaluate: (script: string) => evaluateScript(page, script) } as unknown as BrowserBackend;
+      const result = await handleLayoutReport(backend);
+      const unwrapped = payload(String(result.content));
+
+      // The page really did echo it, in the url and in a row's selector+label.
+      expect(raw).toContain(SECRET);
+      expect(unwrapped).not.toContain(SECRET);
+      // The ONLY difference is the substitution.
+      expect(unwrapped).toBe(raw.split(SECRET).join("[REDACTED_SECRET]"));
+      const before = JSON.parse(raw) as Record<string, unknown>;
+      const after = JSON.parse(unwrapped) as Record<string, unknown>;
+      expect(Object.keys(after)).toEqual(Object.keys(before));
+      expect(after).toEqual(JSON.parse(JSON.stringify(before).split(SECRET).join("[REDACTED_SECRET]")));
+      for (const key of FLAG_KEYS) expect(after[key]).toEqual(before[key]);
+      const rows = after.overflowingElements as { selector: string; text: string }[];
+      expect(rows).toHaveLength((before.overflowingElements as unknown[]).length);
+      expect(rows[0].selector).toBe("div#tok-[REDACTED_SECRET]");
+      expect(rows[0].text).toBe("key [REDACTED_SECRET] echoed");
+      expect(after.url).toBe("https://shop.example.com/?key=[REDACTED_SECRET]");
+    } finally {
+      unregisterRedactedSecretValue(SECRET);
+    }
+  });
+
   it("the shipped script is the builder at the shipped budget", () => {
     expect(LAYOUT_REPORT_SCRIPT).toBe(buildLayoutReportScript());
-    expect(LAYOUT_REPORT_SCRIPT).toContain(`const MAX_CHARS = ${LAYOUT_REPORT_MAX_CHARS};`);
+    expect(LAYOUT_REPORT_SCRIPT).toContain(`MAX_CHARS = ${LAYOUT_REPORT_MAX_CHARS};`);
   });
 });

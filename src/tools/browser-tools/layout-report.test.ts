@@ -3,18 +3,18 @@
  * tool's execute() so the gate pipeline (sensitive page → human verification
  * → dispatch → progress guard) is exercised, not bypassed.
  *
- * Mocked at the BACKEND boundary only: no real browser, no real page. The
- * script's own measuring, sizing and read-only behaviour are proven against a
- * real DOM in test/browser-layout-report-script.test.ts.
+ * Mocked at the BACKEND boundary: no real browser, no real page. LIMIT — the
+ * script's own measuring, sizing and read-only behaviour is pinned against a
+ * real DOM in test/browser-layout-report-script.test.ts instead, and what the
+ * real wrapper does to a real report (trigger strings, a registered secret) in
+ * test/browser-layout-report-adversarial.test.ts.
  *
- * The property under test here is STRUCTURAL: the result text is exactly
+ * The property under test here is STRUCTURAL: the result text is byte-for-byte
  * wrapExternalContent(<what evaluate returned>, "browser.layout_report") —
  * no preamble, no verdict, no flags sentence, no emulation profile — for a
  * clean report, a truncated report, a non-JSON string and a session with a
  * profile installed. The wrapper is real: the last test shows it rewrites an
- * UNESCAPED document and passes the script's escaped form through unchanged
- * (Invariant 2 itself is proven against a real page in
- * test/browser-layout-report-adversarial.test.ts).
+ * UNESCAPED document and passes the script's escaped form straight through.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -119,8 +119,8 @@ async function runRaw(raw: string): Promise<string> {
 /** The page script returns compact JSON (one line); the mock does the same. */
 const runReport = (report: unknown): Promise<string> => runRaw(JSON.stringify(report));
 
-/** wrapExternalContent mints a random boundary id per call; everything else
- *  is deterministic, so two wraps of the same bytes are equal once the id is
+/** wrapExternalContent mints a random boundary id per call; the rest of it is
+ *  deterministic, so two wraps of the same bytes are equal once the id is
  *  masked. */
 const maskId = (text: string): string => text.replace(/ id="[0-9a-f]+"/g, ' id="X"');
 

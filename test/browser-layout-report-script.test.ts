@@ -2,7 +2,7 @@
 /**
  * The layout diagnostic script, run against a REAL DOM.
  *
- * Proven here, which a mocked backend cannot show:
+ * Pinned here, which a mocked backend does not reach:
  *   1. it measures — an element wider than the viewport is found and named;
  *   2. the counted early returns / catches in its walks that the "silent skip"
  *      blocks below enumerate each move a counter that feeds a flag,
@@ -12,13 +12,14 @@
  *   4. the known gaps are stated on a clean report;
  *   5. the per-field rules: the string caps are in serialized chars (boundary
  *      tests at the cap and one over, for plain, backslash and control-char
- *      input), selectorTruncated, nonNumericFields, media de-duplication on
- *      the full text, the list trim and its tie order;
+ *      input), selectorTruncated, nonNumericFields and its cap, per-row rect
+ *      fields, media de-duplication on the full text, the list trim and its
+ *      tie order;
  *   6. it does not mutate the state that observableState() enumerates, and
  *      the ESCAPES table shows that harness going red for the listed escapes.
- * The two invariants (valid JSON under the cap for any page; the wrapper
- * cannot change the parsed document) are proven by the fuzz and round-trip
- * tests in browser-layout-report-adversarial.test.ts.
+ * The output-shape and wrapper-edit behaviour (the fuzz, the builtin swap, the
+ * round-trip and the registered-secret case) lives in
+ * browser-layout-report-adversarial.test.ts.
  *
  * happy-dom does no layout, so rects come from a per-element `data-rect`
  * attribute (same approach as browser-extract-stable-ids.test.ts).
@@ -28,7 +29,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Page } from "playwright";
 import {
   LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LABEL_CHARS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_MEDIA_CHARS,
-  LAYOUT_REPORT_RULE_CAP, LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
+  LAYOUT_REPORT_NON_NUMERIC_CAP, LAYOUT_REPORT_RULE_CAP, LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
   LAYOUT_REPORT_SELECTOR_CHARS, LAYOUT_REPORT_URL_MAX, LAYOUT_REPORT_USER_AGENT_MAX,
 } from "../src/browser/layout-report.js";
 import { evaluateScript } from "../src/browser/page-ops.js";
@@ -62,10 +63,11 @@ interface LayoutReport {
   shadowRootStyleSheets: number;
   documentScroll: { scrollWidth: number; clientWidth: number; horizontalOverflowPx: number };
   nonNumericFields: string[];
+  nonNumericFieldsTruncated: boolean;
   overflowingElements: { selector: string; selectorTruncated?: true; text: string; overflowRightPx: number; overflowLeftPx: number; position: string; backgroundColor: string }[];
   overflowingElementsTotal: number;
   overflowingElementsListed: number;
-  fixedAndStickyElements: { selector: string; position: string; rect: { y: number } }[];
+  fixedAndStickyElements: { selector: string; position: string; rect: { x: number | null; y: number | null; width: number | null; height: number | null; right: number | null; bottom: number | null } }[];
   fixedAndStickyTotal: number;
   fixedAndStickyListed: number;
   backgrounds: { html: string; body: string; canvas: string };
@@ -630,7 +632,51 @@ describe("layout_report output survives the evaluate path", () => {
   it("numeric fields on a normal page leave nonNumericFields empty", () => {
     document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
 
-    expect(withGlobals({ innerWidth: 390 }, run).nonNumericFields).toEqual([]);
+    const report = withGlobals({ innerWidth: 390 }, run);
+    expect(report.nonNumericFields).toEqual([]);
+    expect(report.nonNumericFieldsTruncated).toBe(false);
+  });
+
+  /** getBoundingClientRect is the page's. A rect field that is not a finite
+   *  number goes through num() like any other page number: null in the row,
+   *  and named so the reader knows which row lost which field rather than
+   *  reading a bare null as "0". */
+  it("a page whose getBoundingClientRect returns NaN names the rect fields per row and stops the list at its cap", () => {
+    const rows = (n: number) => Array.from({ length: n }, (_, i) => `<nav data-rect="x,y,z,w" style="position: fixed">row ${i}</nav>`).join("");
+    const RECT_FIELDS = ["x", "y", "width", "height", "right", "bottom"];
+
+    document.body.innerHTML = rows(3);
+    const small = run();
+
+    expect(small.fixedAndStickyElements).toHaveLength(3);
+    for (const row of small.fixedAndStickyElements) {
+      expect(row.rect).toEqual({ x: null, y: null, width: null, height: null, right: null, bottom: null });
+    }
+    expect(small.nonNumericFields).toEqual(
+      [0, 1, 2].flatMap((i) => RECT_FIELDS.map((f) => `fixedAndStickyElements[${i}].rect.${f}`)),
+    );
+    expect(small.nonNumericFieldsTruncated).toBe(false);
+
+    // 8 rows want 48 names; the list stops at its cap and says so.
+    document.body.innerHTML = rows(8);
+    const capped = run();
+
+    expect(capped.nonNumericFields).toHaveLength(LAYOUT_REPORT_NON_NUMERIC_CAP);
+    expect(capped.nonNumericFieldsTruncated).toBe(true);
+    expect(capped.nonNumericFields[0]).toBe("fixedAndStickyElements[0].rect.x");
+    expect(capped.fixedAndStickyElements[7].rect.y).toBeNull();
+  });
+
+  /** The scalars are read before the element loop, so a page with more NaN
+   *  rects than the cap still names its own viewport/documentScroll fields. */
+  it("a scalar field keeps its place in nonNumericFields when the rows would have filled the cap", () => {
+    document.body.innerHTML = Array.from({ length: 20 }, () => `<nav data-rect="x,y,z,w" style="position: fixed">r</nav>`).join("");
+
+    const report = withGlobals({ innerWidth: "not a number" as unknown as number }, run);
+
+    expect(report.nonNumericFields[0]).toBe("viewport.innerWidth");
+    expect(report.nonNumericFields).toHaveLength(LAYOUT_REPORT_NON_NUMERIC_CAP);
+    expect(report.nonNumericFieldsTruncated).toBe(true);
   });
 
   /** With three equal lists the trim's tie order decides which list loses

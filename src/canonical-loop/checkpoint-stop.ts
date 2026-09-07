@@ -29,13 +29,17 @@
  *       telling the user "nothing new turned up". budget-ladder's own
  *       `dryRungs` is not consulted either: it resets itself to 0 the moment it
  *       reaches 2, so a checkpoint could never observe it.
- *       KNOWN GAP: that FIFO also means a spin wider than 256 distinct results
- *       re-mints each result as novel after its eviction and never reads dry
- *       here. The cycle detector is the brake for it; the wall clock is
- *       NOT — worker.ts arms that timer for the interactive lane only,
- *       so a non-interactive op's maxWallTimeMs is stamped and never
- *       enforced. Open, and the reason a period-9 spin on a worker
- *       lane has no turn-based stop today.
+ *       That FIFO also means a spin wider than 256 distinct results re-mints
+ *       each result as novel after its eviction and never reads dry here. The
+ *       cycle detector is one brake for it; the WALL CLOCK is the other, and
+ *       it now binds on every lane (worker-wall-clock.ts) — it used to be
+ *       armed for `interactive` alone, so a non-interactive op's
+ *       maxWallTimeMs was stamped and enforced nowhere and a period-9 spin
+ *       on a worker lane had no turn-based stop at all. A wall-clock stop is
+ *       recorded as the third `CheckpointStopReason` below; it is decided in
+ *       the worker against elapsed time, not here, because this predicate
+ *       only runs when a checkpoint is REACHED and a spinning op with a large
+ *       cadence may never reach one.
  *   (b) SPEND CEILING — real per-call API spend has reached the configured
  *       daily or session budget (ON by default: $75 / $15, config-schema.ts).
  *       Judged on THIS op's credential source, never a process global: a
@@ -65,7 +69,11 @@ import { readCanonicalEvents } from "./store.js";
 import type { Op } from "../ops/types.js";
 import type { CanonicalEvent } from "./types.js";
 
-export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling";
+/** `wall-clock` is written by worker-wall-clock.ts, not by the predicate
+ *  below — it is the one stop decided against elapsed time rather than at a
+ *  reached checkpoint. It rides the SAME record so every partial reader
+ *  renders it unchanged. */
+export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling" | "wall-clock";
 
 // ── Reading a stop back ────────────────────────────────────────────────────
 //
@@ -93,7 +101,7 @@ export interface CheckpointStopFacts {
   detail: string | null;
 }
 
-const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling"]);
+const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling", "wall-clock"]);
 
 /** The stop recorded in an op's event log, or null when its latest checkpoint
  *  (if any) continued. A stop is always the LAST checkpoint the op reached. */

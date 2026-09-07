@@ -41,6 +41,7 @@ import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
 import { evaluateCheckpointStop } from "./checkpoint-stop.js";
+import { armWallClock, finishOnWallClock, wallClockBudgetMs } from "./worker-wall-clock.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.worker");
@@ -105,16 +106,12 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   try { ensureAriKernelScope(op.id); } catch { /* the evaluate path still fail-closes */ }
 
   transitionOp(op, "running", "leased");
-  // Interactive requests retain their wall-clock deadline. Autonomous lanes
-  // are governed by progress middleware: long useful work is allowed, while
-  // repeated failures and idle turns suspend the resumable operation.
-  const wallClockMs = op.contextPack?.budget?.maxWallTimeMs;
+  // Wall clock on EVERY lane, from the op's own budget (worker-wall-clock.ts):
+  // it is the one brake on a livelock the cycle detector cannot see.
+  const wallClockMs = wallClockBudgetMs(op);
   const drivingSince = Date.now();
-  if (op.lane === "interactive" && typeof wallClockMs === "number" && Number.isFinite(wallClockMs) && wallClockMs > 0) {
-    wallClockTimer = setTimeout(() => {
-      deadlineExceeded = true;
-      void adapter.abort(new Error("deadline-exceeded")).catch(() => undefined);
-    }, wallClockMs);
+  if (wallClockMs !== null) {
+    wallClockTimer = armWallClock(adapter, wallClockMs, () => { deadlineExceeded = true; });
   }
 
   // Seed the initial user op_message before the first driveTurn so the
@@ -147,6 +144,18 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     let count = 0;
     for (;;) {
       activeTurnIdx = turnIdx;
+      // Wall clock, read off the clock SYNCHRONOUSLY at the turn boundary.
+      // The armed timer is only the mid-turn preempt and can NOT be the
+      // enforcement: a turn whose every await settles as a microtask starves
+      // every setTimeout in the process — see worker-wall-clock.ts.
+      if (wallClockMs !== null && !deadlineExceeded && Date.now() - drivingSince >= wallClockMs) {
+        deadlineExceeded = true;
+        void adapter.abort(new Error("deadline-exceeded")).catch(() => undefined);
+        releaseReason = finishOnWallClock({
+          op, wallClockMs, elapsedMs: Date.now() - drivingSince, maxTurns, completedTurns: turnIdx,
+        });
+        break;
+      }
       if (count >= maxTurns) {
         // maxIterations is a checkpoint CADENCE for every lane, including
         // interactive. Whether the op ends here is decided by real stop
@@ -194,19 +203,11 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
 
       if (deadlineExceeded) {
         // Now that the turn wall is gone this is the backstop a user who walked
-        // away actually hits. `message` stays the diagnostic string (logs,
-        // the background dock); elapsedMs/maxWallTimeMs let the chat event pump
-        // render the human version ("ran for 2h; work saved; say continue").
-        releaseReason = "deadline_exceeded";
-        emit(op.id, "error", {
-          code: "deadline_exceeded",
-          message: `interactive operation exceeded maxWallTimeMs=${wallClockMs}`,
-          retryable: true,
-          elapsedMs: Date.now() - drivingSince,
-          maxWallTimeMs: wallClockMs,
+        // away actually hits: interactive ends `failed / deadline_exceeded`,
+        // every other lane ends the way a checkpoint stop does (partial).
+        releaseReason = finishOnWallClock({
+          op, wallClockMs: wallClockMs!, elapsedMs: Date.now() - drivingSince, maxTurns, completedTurns: turnIdx,
         });
-        recordTerminalOutcome(op, "aborted");
-        transitionOp(op, "failed", "deadline_exceeded", { learnedOutcome: "aborted" });
         break;
       }
 

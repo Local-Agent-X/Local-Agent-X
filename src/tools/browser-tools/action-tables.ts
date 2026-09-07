@@ -62,19 +62,29 @@ export const RESET_ACTIONS = sealedTable(["navigate", "new_tab", "switch_tab", "
 // a read never "tries to move the page", and blocking the agent's own
 // re-perceive recovery move with the stall error is the opposite of helpful.
 export const TRACKED_ACTIONS = sealedTable(["click", "click_text", "fill", "select", "scroll", "act"]);
-export const READ_ONLY_ACTIONS = sealedTable(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks"]);
+// layout_report belongs here: it evaluates a fixed script that reads geometry,
+// computed style, stylesheets and matching media queries. The tool's declared
+// effect class for it is "read-only"; the no-mutation proof and its limits are
+// in test/browser-layout-report-script.test.ts.
+export const READ_ONLY_ACTIONS = sealedTable(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks", "layout_report"]);
 // Page-script evaluation is nominally inspection-only, but executing arbitrary
 // page JavaScript can still invoke getters or site-defined functions with side
 // effects. Dialog responses can likewise advance a challenge. Keep escape and
 // observation actions available while the user completes verification.
 //
-// emulate is blocked here despite not being an "advancing" action: it destroys
-// the session's browser context and re-navigates, which would throw away a
-// challenge the user is part-way through solving.
+// Two more are blocked here despite not being "advancing" actions:
+//   - emulate destroys the session's browser context and re-navigates, which
+//     would throw away a challenge the user is part-way through solving;
+//   - layout_report executes script in the challenge page. The script is fixed
+//     and read-only, but a challenge page is the one place where running ANY
+//     script is worth refusing, and the diagnostic is worthless on a challenge
+//     interstitial anyway. It is therefore the ONE read-only action that is
+//     blocked here (pinned as such in action-tables.test.ts).
 export const HUMAN_VERIFICATION_BLOCKED_ACTIONS = sealedTable([
   ...TRACKED_ACTIONS,
   "evaluate",
   "dialog_accept",
   "dialog_dismiss",
   "emulate",
+  "layout_report",
 ]);

@@ -16,6 +16,7 @@
  *                      dialog_accept, dialog_dismiss, close
  *   act.ts           — act (natural-language)
  *   emulate.ts       — emulate (device/viewport/UA)
+ *   layout-report.ts — layout_report (raw layout JSON, no verdict)
  *   observe.ts       — observe (role-bucketed, diff-aware view)
  */
 
@@ -56,6 +57,7 @@ import {
 } from "./page.js";
 import { handleAct } from "./act.js";
 import { handleEmulate } from "./emulate.js";
+import { handleLayoutReport } from "./layout-report.js";
 import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
 import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perception.js";
@@ -159,12 +161,13 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "act": return await handleAct(manager, args);
             case "observe": return await handleObserve(manager);
             case "emulate": return await handleEmulate(manager, args, sessionId);
+            case "layout_report": return await handleLayoutReport(manager, sessionId);
             case "read_console": return await handleReadConsole(manager);
             case "read_network": return await handleReadNetwork(manager);
             case "read_response": return await handleReadResponse(manager, args);
             default:
               return err(
-                `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, emulate, tabs, switch_tab, info, close`
+                `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, emulate, layout_report, tabs, switch_tab, info, close`
               );
           }
           })();

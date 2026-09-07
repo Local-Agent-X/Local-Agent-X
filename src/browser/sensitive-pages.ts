@@ -64,8 +64,12 @@ const MUTATING_BROWSER_ACTIONS = new Set([
 // API's secret payload would flow straight into the tool result. bookmark_add
 // reads the page's url+title AND persists them to disk — on a vault-ish page
 // that's a secret write-out.
+// layout_report is here too: it returns element selectors (ids and class
+// names) and visible-text labels for everything that overflows or is pinned —
+// page structure read out of a secret-bearing page is exactly what this gate
+// withholds from snapshot/observe.
 const SECRET_READING_ACTIONS = new Set([
-  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "read_response", "bookmark_add",
+  "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "read_response", "bookmark_add", "layout_report",
 ]);
 
 export function browserSecrecyLevel(): BrowserSecrecy {

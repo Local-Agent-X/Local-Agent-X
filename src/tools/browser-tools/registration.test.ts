@@ -1,8 +1,8 @@
 /**
  * A new `browser` action is registered at NINE sites. Missing one is not a
  * cosmetic gap — it is an action that skips a policy gate, is mis-declared as
- * read-only, or is invisible to the model. This pins every site for `emulate`,
- * INCLUDING the tables it must deliberately stay OUT of.
+ * read-only, or is invisible to the model. This pins every site for `emulate`
+ * and `layout_report`, INCLUDING the tables they must deliberately stay OUT of.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ import { buildApprovalContext } from "../../tool-execution/approval-context.js";
 import { TOOL_POLICIES_NETWORK } from "../../tool-policy/tool-policies.network.js";
 
 const BANK = "https://chase.com/account";
+const VAULT = "https://vault.bitwarden.com/passwords";
 
 const actionEnum = (BROWSER_TOOL_PARAMETERS.properties.action as { enum: string[] }).enum;
 
@@ -73,5 +74,57 @@ describe("browser action registration: emulate", () => {
     expect(catchAll?.decision).toBe("allow");
     expect(catchAll).not.toHaveProperty("action");
     expect(rules.some((r) => (r as { action?: string }).action === "emulate")).toBe(false);
+  });
+});
+
+describe("browser action registration: layout_report", () => {
+  it("1. is dispatchable — the action enum offers it", () => {
+    expect(actionEnum).toContain("layout_report");
+  });
+
+  it("2. is described to the model as RAW data whose flags the model must read — no verdict promised", () => {
+    expect(BROWSER_TOOL_DESCRIPTION).toContain("- layout_report:");
+    const line = BROWSER_TOOL_DESCRIPTION.split("\n").find((l) => l.startsWith("- layout_report:")) ?? "";
+    expect(line).toMatch(/RAW/);
+    expect(line).toMatch(/NO verdict/);
+    expect(line).toMatch(/LOWER BOUNDS/);
+    expect(line).toContain("cssWalkIncomplete");
+    expect(line).toContain("elementScanIncomplete");
+    expect(line).toContain("knownGaps");
+  });
+
+  it("3. is neither a context reset nor a tracked (advancing) action", () => {
+    expect(RESET_ACTIONS.has("layout_report")).toBe(false);
+    expect(TRACKED_ACTIONS.has("layout_report")).toBe(false);
+  });
+
+  it("4. declares layout_report read-only (its effect class)", () => {
+    expect(READ_ONLY_ACTIONS.has("layout_report")).toBe(true);
+  });
+
+  it("5. blocks layout_report while a human-verification challenge is on screen (it runs script in that page)", () => {
+    expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.has("layout_report")).toBe(true);
+  });
+
+  it("6. treats layout_report as a secret READ on a secret-bearing page (it returns ids, classes and visible text)", () => {
+    const decision = sensitivePageActionDecision(VAULT, "layout_report");
+    expect(decision.disposition).toBe("approval-required");
+    expect(decision.unlocksRead).toBe(true);
+    expect(sensitivePageActionDecision("https://example.com/", "layout_report").disposition).toBe("allow");
+  });
+
+  it("7. maps to the kernel's read verb without any change to ari-action-map", () => {
+    expect(deriveAriAction("browser", { action: "layout_report" })).toBe("get");
+  });
+
+  it("8. has no bespoke approval label — the generic one is truthful for a read", () => {
+    expect(buildApprovalContext("browser", { action: "layout_report" })).toBe("Browser: layout_report");
+  });
+
+  it("9. is covered by the browser tool policy's catch-all allow, with no per-action override", () => {
+    const rules = TOOL_POLICIES_NETWORK.browser.rules ?? [];
+    const catchAll = rules.find((r) => r.id === "allow-browser");
+    expect(catchAll?.decision).toBe("allow");
+    expect(rules.some((r) => (r as { action?: string }).action === "layout_report")).toBe(false);
   });
 });

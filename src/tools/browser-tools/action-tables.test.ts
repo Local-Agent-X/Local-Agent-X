@@ -51,7 +51,7 @@ describe("browser action tables", () => {
     expect([...HUMAN_VERIFICATION_BLOCKED_ACTIONS].sort()).toEqual(
       [
         "act", "click", "click_text", "dialog_accept", "dialog_dismiss", "emulate",
-        "evaluate", "fill", "scroll", "select",
+        "evaluate", "fill", "layout_report", "scroll", "select",
       ].sort(),
     );
   });
@@ -62,11 +62,12 @@ describe("browser action tables", () => {
     }
   });
 
-  it("leaves every read-only escape/observation action available during verification", () => {
-    expect(intersect(READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS)).toEqual([]);
+  it("blocks exactly ONE read-only action during verification: layout_report, which runs script in the challenge page", () => {
+    expect(intersect(READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS)).toEqual(["layout_report"]);
   });
 
-  it("does not classify emulate as read-only: it destroys and re-mints the session's context", () => {
+  it("classifies layout_report read-only and emulate not (emulate destroys and re-mints the session's context)", () => {
+    expect(READ_ONLY_ACTIONS.has("layout_report")).toBe(true);
     expect(READ_ONLY_ACTIONS.has("emulate")).toBe(false);
   });
 
@@ -105,6 +106,6 @@ describe("browser action tables", () => {
 
   it("keeps evaluate gated after every bypass attempt above", () => {
     expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.has("evaluate")).toBe(true);
-    expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.size).toBe(10);
+    expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.size).toBe(11);
   });
 });

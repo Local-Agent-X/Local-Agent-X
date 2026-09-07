@@ -107,6 +107,32 @@ describe("event pump — held `aborted` error", () => {
     expect(await orHung(pump.pull())).toEqual({ events: [], terminal: null });
   });
 
+  // The deadline is not the only coded cause of an adapter abort: the worker
+  // also aborts the adapter on the per-op token ceiling and on an uncaught
+  // exception, and emits a coded error for each. Those must REPLACE the held
+  // acknowledgement exactly as the deadline does — not be delivered behind it
+  // as "aborted" and then the reason.
+  it.each(["max_tokens_exceeded", "worker_exception"])("is replaced by a following %s, which is delivered alone", async (code) => {
+    const pump = createEventPump(`op-cause-${code}`);
+    const emit = eventListeners.get(`op-cause-${code}`)!;
+    emit(abortedEvent);
+    emit({ type: "error", body: { code, message: `${code} happened` } });
+    const { events } = await pump.pull();
+    expect(events).toEqual([{ type: "error", message: `${code}: ${code} happened` }]);
+    pump.dispose();
+    expect(await orHung(pump.pull())).toEqual({ events: [], terminal: null });
+  });
+
+  it("is still flushed AHEAD of an unrelated coded error, in order", async () => {
+    const pump = createEventPump("op-unrelated");
+    const emit = eventListeners.get("op-unrelated")!;
+    emit(abortedEvent);
+    emit({ type: "error", body: { code: "provider_500", message: "upstream" } });
+    const { events } = await pump.pull();
+    expect(events).toEqual([ABORTED_SERVER_EVENT, { type: "error", message: "provider_500: upstream" }]);
+    pump.dispose();
+  });
+
   it("is flushed unchanged and in order when any other event follows", async () => {
     const pump = createEventPump("op-6");
     const emit = eventListeners.get("op-6")!;

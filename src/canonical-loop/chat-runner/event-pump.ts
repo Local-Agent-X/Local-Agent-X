@@ -76,9 +76,12 @@ export function createEventPump(opId: string): EventPump {
   let emittedIterationCheckpoint = false;
   // An adapter's `aborted` error report, held back for exactly one event. It
   // is an acknowledgement, not news: whatever aborted the adapter (deadline,
-  // cancel, lease loss) explains itself on the very next event. The deadline
-  // path replaces it with the human notice; every other event flushes it
-  // unchanged and in order, so nothing else's behaviour moves.
+  // cancel, lease loss, a token ceiling, a worker crash) explains itself on
+  // the very next event. When that next event is one of the CODED errors the
+  // worker emits for the cause (ABORT_CAUSE_CODES), the hold is dropped and
+  // only the cause is delivered — the user sees "why", not "aborted" followed
+  // by "why". Every other event flushes it unchanged and in order, so nothing
+  // else's behaviour moves.
   //
   // A hold must never outlive the pump. When `aborted` is the LAST event the
   // op ever emits (the worker bails on lease loss / a commit fence and never
@@ -88,6 +91,10 @@ export function createEventPump(opId: string): EventPump {
   // pending pull() — which then returns instead of waiting forever.
   let heldAbort: ServerEvent | null = null;
   let disposed = false;
+  // Worker-emitted error codes that ARE the cause of a preceding adapter
+  // `aborted` (worker.ts): the wall clock, the per-op token ceiling, and an
+  // uncaught worker exception. Each replaces the held acknowledgement.
+  const ABORT_CAUSE_CODES: ReadonlySet<unknown> = new Set(["deadline_exceeded", "max_tokens_exceeded", "worker_exception"]);
 
   const flushHeldAbort = (): void => {
     if (!heldAbort) return;
@@ -151,9 +158,16 @@ export function createEventPump(opId: string): EventPump {
     const eventCode = event.type === "error"
       ? ((event.body ?? {}) as Record<string, unknown>).code
       : undefined;
-    if (heldAbort && eventCode !== "deadline_exceeded") {
-      flushHeldAbort();
-      wake();
+    if (heldAbort) {
+      if (ABORT_CAUSE_CODES.has(eventCode)) {
+        // The cause has arrived; the acknowledgement is redundant. The
+        // deadline branch below renders its own notice, the other two fall
+        // through to the plain coded error.
+        heldAbort = null;
+      } else {
+        flushHeldAbort();
+        wake();
+      }
     }
     if (event.type === "state_changed") {
       const body = event.body as StateChangedBody | undefined;
@@ -199,9 +213,8 @@ export function createEventPump(opId: string): EventPump {
         // checkpoint notice — how long it ran, that the work is saved, how to
         // continue — not a raw maxWallTimeMs string. The op still ends
         // `failed` (learnedOutcome aborted); only the wording changes here.
-        // The adapter's own "aborted" acknowledgement (held above) is what
-        // the deadline caused, not a second failure — drop it.
-        heldAbort = null;
+        // The adapter's own "aborted" acknowledgement was already dropped
+        // above (ABORT_CAUSE_CODES) — the deadline caused it.
         const elapsedMs = typeof b.elapsedMs === "number" ? b.elapsedMs : null;
         const ranFor = elapsedMs !== null ? ` after ${humanDuration(elapsedMs)}` : "";
         if (!emittedIterationCheckpoint) {

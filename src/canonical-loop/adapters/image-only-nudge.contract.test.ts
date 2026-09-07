@@ -190,18 +190,20 @@ describe("A. image-only user row + middleware nudge → Anthropic Messages wire"
 
 		const { transport, params } = await pipeline(1);
 		// Premise: the image row's text is EMPTY — exactly the
-		// `{type:"text",text:""}` that reached the API pre-fix. The nudge and the
-		// digest are now distinct rows: the nudge is persisted history, the digest
-		// is the ephemeral tail that must stay below the cache breakpoint.
-		expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
+		// `{type:"text",text:""}` that reached the API pre-fix. The digest lands
+		// on the trailing user row: the nudge is persisted history and the digest
+		// is the ephemeral tail, but they SHARE a row, because two user rows in a
+		// row is the shape codex/gemini return empty responses on (F5). The row
+		// is still the last one, so it is still the volatile tail the cache
+		// breakpoint sits beneath.
+		expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
 		expect(transport[0].content).toBe("");
 		expect(transport[2].content).toContain(NUDGE);
-		expect(transport[2].content).not.toContain(DIGEST_OPEN);
-		expect(transport[3].content).toContain(DIGEST_OPEN);
+		expect(transport[2].content).toContain(DIGEST_OPEN);
 
 		const wire = convertMessages(params);
 		assertAnthropicWellFormed(wire);
-		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
+		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user"]);
 		const first = blocksOf(wire[0]);
 		expect(first.map(b => b.type)).toEqual(["image", "text"]); // caption omitted; image + path hint kept
 		expect(first[0]).toEqual(IMAGE_BLOCK);
@@ -211,7 +213,7 @@ describe("A. image-only user row + middleware nudge → Anthropic Messages wire"
 		expect(last.role).toBe("user");
 		expect(typeof last.content).toBe("string");
 		expect(last.content as string).toContain(DIGEST_OPEN);
-		expect(wire[2].content as string).toContain(NUDGE);
+		expect(last.content as string).toContain(NUDGE);
 	});
 });
 
@@ -233,15 +235,17 @@ describe("B. the same two histories → Codex Responses input", () => {
 		appendNudgeAsUserMessage(opId, 1, NUDGE);
 		const items = codexItems((await pipeline(1)).params);
 		assertCodexWellFormed(items);
+		// No user-only RUN reaches codex: the digest shares the nudge's row
+		// (F5 — a run of user items is what makes this endpoint answer empty).
 		expect(items.map(i => `${i.type}:${i.role ?? ""}`)).toEqual([
-			"message:user", "message:assistant", "message:user", "message:user",
+			"message:user", "message:assistant", "message:user",
 		]);
 		expect(items[0].content!.map(p => p.type)).toEqual(["input_image", "input_text"]);
 		expect(items[0].content![0]).toEqual({ type: "input_image", image_url: PNG_DATA_URL, detail: "auto" });
-		expect(items[2].content![0].text).toContain(NUDGE);
 		const last = items[items.length - 1];
 		expect(last.content).toHaveLength(1);
 		expect(last.content![0].type).toBe("input_text");
+		expect(last.content![0].text).toContain(NUDGE);
 		expect(last.content![0].text).toContain(DIGEST_OPEN);
 	});
 });
@@ -266,17 +270,16 @@ describe("E. the same two histories → Gemini native contents (C22)", () => {
 		seedAssistantReply();
 		appendNudgeAsUserMessage(opId, 1, NUDGE);
 		const contents = toGeminiContents((await pipeline(1)).transport);
-		expect(contents.map(c => c.role)).toEqual(["user", "model", "user", "user"]);
+		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
 		// Pre-fix: dataUrlToInline("/uploads/shot.png") → null, so this row was
 		// [{text:""}] — image dropped AND the empty-text class, both at once.
 		expect(contents[0].parts).toHaveLength(2);
 		expect(contents[0].parts[0]).toEqual(INLINE_PART);
 		expect((contents[0].parts[1] as { text: string }).text).toContain(SHOT_PATH);
-		const nudgeParts = contents[2].parts as Array<{ text: string }>;
-		expect(nudgeParts).toHaveLength(1);
-		expect(nudgeParts[0].text).toContain(NUDGE);
-		const lastParts = contents[3].parts as Array<{ text: string }>;
+		// Nudge + digest share the trailing turn (F5): no user/user run.
+		const lastParts = contents[2].parts as Array<{ text: string }>;
 		expect(lastParts).toHaveLength(1);
+		expect(lastParts[0].text).toContain(NUDGE);
 		expect(lastParts[0].text).toContain(DIGEST_OPEN);
 		expect(JSON.stringify(contents)).not.toContain('"text":""');
 	});
@@ -286,7 +289,7 @@ describe("E. the same two histories → Gemini native contents (C22)", () => {
 		seedAssistantReply();
 		appendNudgeAsUserMessage(opId, 1, NUDGE);
 		const contents = toGeminiContents((await pipeline(1)).transport);
-		expect(contents.map(c => c.role)).toEqual(["user", "model", "user", "user"]);
+		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
 		expect(contents[0].parts).toEqual([{ text: UNREADABLE_NOTE }]);
 		const json = JSON.stringify(contents);
 		expect(json).not.toContain("inlineData");
@@ -321,7 +324,7 @@ describe("C. unreadable upload (C21) → a non-empty note, never an image block,
 
 		const wire = convertMessages(params);
 		assertAnthropicWellFormed(wire);
-		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
+		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user"]); // nudge + digest share the tail (F5)
 		expect(blocksOf(wire[0])).toEqual([{ type: "text", text: UNREADABLE_NOTE }]);
 		expect(JSON.stringify(wire)).not.toContain("[empty message]");
 		expect(JSON.stringify(wire)).not.toContain(MISSING_PATH);

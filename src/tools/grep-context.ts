@@ -104,16 +104,54 @@ export function parsePattern(raw: string, caseInsensitive: boolean): { source: s
 // A pattern carrying regex syntax that matches nothing may simply be a WRONG
 // pattern (the real failure: an agent grepped for a symbol with a pattern that
 // could not match, got zero results, and reported the symbol as absent). These
-// three helpers let both engines re-run the zero-match case literally and say
-// so. Deliberately local: cleanup-verify's normalizeGrepPattern is a lossy
+// helpers let both engines re-run such a zero-match case literally and say so.
+// Deliberately local: cleanup-verify's normalizeGrepPattern is a lossy
 // bucketing key (it lowercases and passes regex-bearing patterns through
 // verbatim) and is unsafe to hand back to a search engine.
-const REGEX_META_RE = /[\\^$.|?*+()[\]{}]/;
+//
+// The TRIGGER is deliberately narrow. "The literal text appears somewhere" is
+// NOT proof the pattern was wrong, so the retry runs only where a literal hit
+// would be real evidence of an accidental regex:
+//   - never when the pattern is ANCHORED (`^`/`$` unescaped). Anchors are
+//     deliberate, and the anchored pattern's own text routinely appears
+//     verbatim in prose/docs — a correct `^tailnet` over a genuinely-clean tree
+//     used to be told, falsely, that the text was still there.
+//   - never when literal-match is necessarily a SUBSET of regex-match. An
+//     unescaped `.` (`package.json`) or an escaped `\.` matches at least
+//     everything the literal does, so the retry could not produce a true
+//     warning — it would only ever cost a second full tree scan.
+//   - `{`/`}` are excluded too: in practice they are quantifiers (`a{2}`), so
+//     a literal hit on the pattern's own text is the same false evidence.
+// What DOES qualify: a pattern that isn't a valid regex at all (unambiguous —
+// the model meant literal text), or an unescaped `(`/`[` immediately after an
+// identifier character, i.e. a call/index expression pasted in as a pattern
+// (`addCanvasBorder(ctx, opts)`, `foo[0]`). In both cases the literal form can
+// match where the regex form cannot, so a literal hit is real evidence.
 
-/** True when the pattern carries regex syntax, i.e. zero matches might mean
- *  "bad pattern" rather than "not there". */
-export function hasRegexMeta(raw: string): boolean {
-  return REGEX_META_RE.test(raw);
+/** Single pass over the pattern, honoring backslash escapes. */
+function scanPattern(raw: string): { anchored: boolean; codeCall: boolean } {
+  let anchored = false;
+  let codeCall = false;
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === "\\") { i++; continue; }
+    if (c === "^" || c === "$") { anchored = true; continue; }
+    if ((c === "(" || c === "[") && i > 0 && /[A-Za-z0-9_]/.test(raw[i - 1])) codeCall = true;
+  }
+  return { anchored, codeCall };
+}
+
+/** True when a zero-match result is worth ONE literal re-run — i.e. when a
+ *  literal hit would be genuine evidence that the pattern, not the tree, is
+ *  why nothing came back. */
+export function shouldLiteralRetry(raw: string): boolean {
+  const { anchored, codeCall } = scanPattern(raw);
+  if (anchored) return false;
+  if (codeCall) return true;
+  // Not a compilable regex at all → the model meant literal text. (rg rejects
+  // most such patterns itself with exit 2, which never reaches this path; this
+  // catches the ones its Rust engine accepts and JS does not, e.g. `(?P<n>x)`.)
+  try { new RegExp(raw); return false; } catch { return true; }
 }
 
 /** Literalise a pattern for a fixed-string re-run: escape every metacharacter. */
@@ -140,9 +178,13 @@ export const NO_MATCHES_SENTINEL = "No matches found.";
  */
 export function noMatchesResult(literalMatches: number | null): ToolResult {
   if (literalMatches == null || literalMatches <= 0) return ok(NO_MATCHES_SENTINEL);
-  const plural = literalMatches === 1 ? "match" : "matches";
+  // LINES, not occurrences: rg `-c` and the fallback's per-file match arrays
+  // both count matching LINES, so three hits on one line count once. Say what
+  // is actually counted — this message's whole job is telling the model how
+  // much of the text is really there.
+  const plural = literalMatches === 1 ? "matching line" : "matching lines";
   return ok(
-    `${NO_MATCHES_SENTINEL}\n\nWARNING: your pattern contains regex metacharacters and matched nothing, but a LITERAL ` +
+    `${NO_MATCHES_SENTINEL}\n\nWARNING: your pattern was run as a REGEX and matched nothing, but a LITERAL ` +
     `(fixed-string) search for the same text over the same path found ${literalMatches} ${plural}. ` +
     `Your PATTERN is wrong — the text is NOT absent. Escape the metacharacters or search a simpler ` +
     `literal substring before concluding anything is missing.`,
@@ -281,13 +323,23 @@ export async function fallbackSearch(args: Record<string, unknown>, limit: numbe
 
 /**
  * One literal re-walk of the SAME root/filters, run only when the fallback
- * engine found nothing AND the pattern carries regex syntax. `_literalRetry`
- * makes the recursion depth exactly one. head_limit 1 stops rendering almost
- * immediately; the walk (and therefore match_count) is unaffected by it.
+ * engine found nothing AND the pattern qualifies (shouldLiteralRetry).
+ *
+ * The recursion guard is a module-private SYMBOL, not a `_literalRetry` string
+ * key: nothing strips unknown args before execute(), so a string flag was
+ * caller-settable and a caller could silently switch the safety net off. A
+ * symbol survives the `{...args}` spread (own enumerable symbol keys are
+ * copied) but cannot be forged from outside this module, which makes the
+ * depth-one guarantee an invariant instead of a convention. head_limit 1 stops
+ * rendering almost immediately; the walk (and therefore match_count) is
+ * unaffected by it.
  */
+const LITERAL_RETRY = Symbol("grep.literalRetry");
+
 async function literalFallbackCount(args: Record<string, unknown>): Promise<number | null> {
   const raw = String(args.pattern);
-  if (args._literalRetry === true || !hasRegexMeta(raw)) return null;
+  if ((args as Record<string | symbol, unknown>)[LITERAL_RETRY] === true) return null;
+  if (!shouldLiteralRetry(raw)) return null;
   const res = await fallbackSearch(
     {
       ...args,
@@ -295,7 +347,7 @@ async function literalFallbackCount(args: Record<string, unknown>): Promise<numb
       output_mode: "content",
       context: 0,
       _onProgress: undefined,
-      _literalRetry: true,
+      [LITERAL_RETRY]: true,
     },
     1,
   );

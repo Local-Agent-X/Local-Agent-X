@@ -73,6 +73,7 @@ export function convertUserContent(content: unknown): string | AnthropicContent[
 export function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
   const result: AnthropicMessage[] = [];
   const seenToolUseIds = new Set<string>();
+  const dupToolUseCounts = new Map<string, number>();
   // Original tool_call id → FIFO queue of emitted tool_use ids. When a duplicate
   // id is renamed on the assistant side, the matching tool_result (which still
   // carries the original id) must be renamed to the same value, in order.
@@ -96,9 +97,16 @@ export function convertMessages(messages: ChatCompletionMessageParam[]): Anthrop
           let input: Record<string, unknown> = {};
           try { input = JSON.parse(tc.function.arguments); } catch {}
           // Deduplicate tool_use IDs — Anthropic rejects duplicates across the message array
+          // Suffix from a per-CONVERSION occurrence count, never the module
+          // counter: convertMessages replays the whole history every turn, so a
+          // process-global would rename the same historical row differently on
+          // each turn, diverging the prompt-cache prefix at an early index and
+          // silently killing the message-tier cache for the rest of the op.
           let toolId = tc.id;
           if (seenToolUseIds.has(toolId)) {
-            toolId = `${toolId}_${++_toolCallSeq}`;
+            const n = (dupToolUseCounts.get(tc.id) ?? 0) + 1;
+            dupToolUseCounts.set(tc.id, n);
+            toolId = `${toolId}_${n}`;
           }
           seenToolUseIds.add(toolId);
           const queue = pendingResultIds.get(tc.id);

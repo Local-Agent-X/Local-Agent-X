@@ -12,25 +12,25 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1553 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1561 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 123 | 26 | XL |  |
+| `src/ops/` | 124 | 26 | XL |  |
 | `src/security/` | 85 | 34 | XL |  |
-| `src/tools/` | 66 | 174 | XL |  |
+| `src/tools/` | 68 | 175 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
-| `src/canonical-loop/` | 57 | 227 | XL |  |
+| `src/canonical-loop/` | 57 | 230 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 41 | 2 | M |  |
 | `src/session/` | 36 | 7 | L |  |
 | `src/auth/` | 33 | 10 | L |  |
 | `src/classifiers/` | 33 | 17 | L |  |
 | `src/util/` | 33 | 2 | S |  |
+| `src/browser/` | 32 | 82 | XL |  |
 | `src/threat/` | 32 | 12 | L |  |
-| `src/browser/` | 31 | 79 | XL |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/data-lineage/` | 28 | 8 | L |  |
@@ -40,13 +40,13 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/agent-request/` | 22 | 14 | L |  |
 | `src/chat-ws/` | 21 | 18 | L |  |
 | `src/context/` | 21 | 3 | M |  |
+| `src/context-manager/` | 20 | 10 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/agent-guards/` | 19 | 17 | L |  |
-| `src/context-manager/` | 19 | 10 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |
-| `src/anthropic-client/` | 14 | 20 | L |  |
+| `src/anthropic-client/` | 14 | 21 | L |  |
 | `src/cognition/` | 12 | 30 | XL |  |
 | `src/server/` *(entrypoint)* | 12 | 50 | XL |  |
 | `src/tool-execution/` | 12 | 41 | XL |  |
@@ -197,5 +197,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | M |
+| `src/user-notice.ts` | S |
 | `src/worker-session.ts` | S |
 

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { budgetLadderMiddleware } from "./budget-ladder.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 import { getMiddlewareState, clearMiddlewareStateForOp } from "./state.js";
-import { createLoopState, type LoopState } from "../../agent-guards/index.js";
+import { createLoopState, noteToolResults, type LoopState } from "../../agent-guards/index.js";
+import { RESULT_SIG_MEMORY } from "../../agent-guards/loop-progress.js";
 
 const MAX = 160;
 
@@ -23,11 +24,42 @@ function ctxAt(turnIdx: number, opId: string) {
   });
 }
 
-/** Give the op's shared loop-detection state N distinct observed results. */
+function loopOf(opId: string): LoopState {
+  return getMiddlewareState<LoopState>(opId, "loop-detection", createLoopState);
+}
+
+/** Feed the op `n` DISTINCT tool results through the real noteToolResults, so
+ *  the evidence the ladder reads moves the way production moves it. Mirrors
+ *  checkpoint-stop.test.ts — the two predicates must read the same signal. */
+let resultSeq = 0;
+const lastLearned = new Map<string, string>();
+function learn(opId: string, n: number): void {
+  const state = loopOf(opId);
+  for (let i = 0; i < n; i++) {
+    const call = [{ name: "search", arguments: `{"q":"${resultSeq}"}` }];
+    const content = `finding-${opId}-${resultSeq++}`;
+    lastLearned.set(opId, content);
+    noteToolResults(call, state, [{ content, status: "ok" }]);
+  }
+}
+
+/** Feed the op a result it has ALREADY seen (its most recent one) — learns
+ *  nothing. A fresh literal would itself be novel the first time. */
+function repeat(opId: string, n: number): void {
+  const state = loopOf(opId);
+  const content = lastLearned.get(opId);
+  if (content === undefined) throw new Error(`repeat() before learn() for ${opId}`);
+  for (let i = 0; i < n; i++) {
+    noteToolResults([{ name: "search", arguments: "{}" }], state, [{ content, status: "ok" }]);
+  }
+}
+
+/** Bring the op's evidence to exactly `n` distinct results (only ever upward —
+ *  novelty is monotonic in production too). */
 function setEvidence(opId: string, n: number): void {
-  const loop = getMiddlewareState<LoopState>(opId, "loop-detection", createLoopState);
-  loop.seenResultSigs.clear();
-  for (let i = 0; i < n; i++) loop.seenResultSigs.add(`sig-${i}`);
+  const have = loopOf(opId).novelResultsTotal;
+  if (n < have) throw new Error(`setEvidence(${n}) below current ${have}`);
+  learn(opId, n - have);
 }
 
 let opId = "";
@@ -108,5 +140,42 @@ describe("budget-ladder — dry-rung stop", () => {
     setEvidence(opId, 0); // no evidence at all yet
     const first = await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
     expect((first as { reason?: string }).reason).toBe("budget-ladder");
+  });
+
+  it("keeps a productive op alive past 256 distinct results, where the Set size would have called it dry", async () => {
+    const loop = loopOf(opId);
+    const reasonAt = async (turn: number) =>
+      (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId)) as { reason?: string }).reason;
+
+    // 25% rung: already past the cap — the Set is saturated from here on.
+    learn(opId, 270);
+    expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
+    expect(await reasonAt(40)).toBe("budget-ladder");
+
+    // 50% rung: 40 more distinct results. The Set's size has not moved; the
+    // counter has. Reading .size here would count this as the first dry rung.
+    learn(opId, 40);
+    expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
+    expect(loop.novelResultsTotal).toBe(310);
+    expect(await reasonAt(80)).toBe("budget-ladder");
+
+    // 75% rung: still learning every turn. Under .size this would be the
+    // second consecutive dry rung and the op would be told to stop.
+    learn(opId, 40);
+    expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
+    expect(loop.novelResultsTotal).toBe(350);
+    expect(await reasonAt(120)).toBe("budget-ladder");
+  });
+
+  it("still stops honestly past 256 distinct results once the op actually goes dry", async () => {
+    const reasonAt = async (turn: number) =>
+      (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId)) as { reason?: string }).reason;
+
+    learn(opId, 300);
+    expect(await reasonAt(40)).toBe("budget-ladder");
+    repeat(opId, 20); // nothing new between the rungs
+    expect(await reasonAt(80)).toBe("budget-ladder"); // one dry rung
+    repeat(opId, 20);
+    expect(await reasonAt(120)).toBe("budget-ladder-dry"); // two: stop and ask
   });
 });

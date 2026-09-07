@@ -12,26 +12,26 @@ import it (0 ⇒ no live wiring). *Size*: S <250 · M <1k · L <3k · XL ≥3k n
 (tiers, not raw lines, so trivial edits don't churn this file). *God*: non-test files
 over 400 LOC (the source-hygiene ceiling).
 
-**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1546 non-test source files · 0 god files (>400 LOC).
+**Totals:** 65 top-level dirs · 65 live · 0 with no live importer · 1553 non-test source files · 0 god files (>400 LOC).
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | God files |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 122 | 25 | XL |  |
+| `src/ops/` | 123 | 26 | XL |  |
 | `src/security/` | 85 | 34 | XL |  |
-| `src/tools/` | 66 | 172 | XL |  |
+| `src/tools/` | 66 | 174 | XL |  |
 | `src/providers/` | 61 | 20 | XL |  |
-| `src/canonical-loop/` | 56 | 227 | XL |  |
+| `src/canonical-loop/` | 57 | 227 | XL |  |
 | `src/memory/` | 46 | 128 | XL |  |
 | `src/workspace/` | 41 | 2 | M |  |
 | `src/session/` | 36 | 7 | L |  |
+| `src/auth/` | 33 | 10 | L |  |
 | `src/classifiers/` | 33 | 17 | L |  |
 | `src/util/` | 33 | 2 | S |  |
 | `src/threat/` | 32 | 12 | L |  |
-| `src/auth/` | 31 | 10 | L |  |
+| `src/browser/` | 31 | 79 | XL |  |
 | `src/tool-policy/` | 30 | 20 | L |  |
-| `src/browser/` | 29 | 76 | XL |  |
 | `src/agency/` | 28 | 19 | L |  |
 | `src/data-lineage/` | 28 | 8 | L |  |
 | `src/agent-store/` | 26 | 7 | M |  |
@@ -41,8 +41,8 @@ over 400 LOC (the source-hygiene ceiling).
 | `src/chat-ws/` | 21 | 18 | L |  |
 | `src/context/` | 21 | 3 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/agent-guards/` | 19 | 17 | L |  |
 | `src/context-manager/` | 19 | 10 | M |  |
-| `src/agent-guards/` | 18 | 16 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/protocols/` | 16 | 41 | XL |  |
 | `src/sandbox/` | 16 | 9 | L |  |

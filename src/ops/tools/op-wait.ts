@@ -6,7 +6,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import { awaitCanonicalOp } from "../../canonical-loop/index.js";
-import { extractFinalAssistantText } from "../../canonical-loop/index.js";
+import { formatAwaitedOpResult } from "./op-result-summary.js";
 
 export const opWaitTool: ToolDefinition = {
   name: "op_wait",
@@ -36,25 +36,8 @@ export const opWaitTool: ToolDefinition = {
       };
     }
 
-    // The worker's actual final message — what the caller asked op_wait to
-    // hold the turn open FOR. result.finalSummary is a synthesized status line
-    // ("op <id> completed") with no content; prefer the real assistant text.
-    //
-    // EXCEPT for a partial child: an op that stopped at a checkpoint is not
-    // done, and its last text reads like a finished answer. The PARTIAL line
-    // (finalSummary, from the checkpoint's own event via await-op.ts) MUST
-    // open the content so the parent cannot build on it as if complete.
-    const finalText = extractFinalAssistantText(opId);
-    const partial = result.status === "partial";
-    const summary =
-      (partial ? `${result.finalSummary}\n\n` : "") +
-      `op ${opId} ${result.status} in ${Math.round(wallMs / 1000)}s` +
-      (result.error ? `\n  error: ${result.error.message}` : "") +
-      (result.filesChanged.length > 0 ? `\n  files: ${result.filesChanged.slice(0, 5).join(", ")}${result.filesChanged.length > 5 ? "..." : ""}` : "") +
-      `\n\n${finalText || (partial ? "(no final message — the worker stopped mid-work)" : result.finalSummary)}`;
-
-    // Partial is not an error: the work is saved and the parent must act on
-    // it (continue or report), which an isError result would tell it to abandon.
-    return { content: summary, isError: result.status !== "completed" && !partial };
+    // One rendering, shared with op_submit — see op-result-summary.ts for the
+    // partial-child contract (PARTIAL line first, not an error).
+    return formatAwaitedOpResult(opId, result, wallMs);
   },
 };

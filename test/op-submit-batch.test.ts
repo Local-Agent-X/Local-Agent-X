@@ -160,7 +160,7 @@ describe("op_submit_batch — fan-out launcher", () => {
     }
     const ids = new Set(meta.results.map(r => r.opId));
     expect(ids.size).toBe(5); // distinct ops, no dedup collapsing them
-    expect(content).toContain("5/5 succeeded");
+    expect(content).toContain("5/5 completed, 0 partial, 0 failed");
   });
 
   it("(b) never runs more than `concurrency` ops in flight at once", async () => {

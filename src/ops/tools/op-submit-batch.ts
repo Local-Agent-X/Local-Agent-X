@@ -5,8 +5,11 @@
  * bounded worker pool (default concurrency 4 — the locked "start fan-out at 4"
  * policy; clamped to [1,12], where 12 is the global scheduler ceiling), blocks
  * until ALL of them finish, and returns one AGGREGATED result: per-task
- * {task, status, finalSummary, filesChanged, error?} plus an n-succeeded /
- * n-failed / n-total roll-up.
+ * {task, status, finalSummary, filesChanged, error?} plus an n-completed /
+ * n-partial / n-failed / n-total roll-up. `partial` (a task that stopped at
+ * an iteration checkpoint — canonical-loop/checkpoint-stop.ts) is counted on
+ * its own: it is neither done nor failed, and its finalSummary is the PARTIAL
+ * line the caller must relay.
  *
  * Each task reuses the SAME lower-level primitives the sync single-op path
  * (op-submit.ts) uses — buildOpFromArgs → registerAdapterForOp → canonicalLoopEntry
@@ -41,7 +44,7 @@ const PER_OP_TIMEOUT_MS = 30 * 60 * 1000;
 interface BatchTaskResult {
   task: string;
   opId: string | null;
-  status: string; // "completed" | "failed" | "cancelled" | "needs-input" | "paused" | "timeout" | "invalid"
+  status: string; // "completed" | "partial" | "failed" | "cancelled" | "needs-input" | "paused" | "timeout" | "invalid"
   finalSummary: string;
   filesChanged: string[];
   error?: string;
@@ -215,7 +218,7 @@ async function runPool(
 export const opSubmitBatchTool: ToolDefinition = {
   name: "op_submit_batch",
   description:
-    "FAN-OUT LAUNCHER: run a LIST of DISTINCT tasks as parallel ops at once, watch them all, and get back one aggregated result. Use this when you have several INDEPENDENT jobs to do in parallel (e.g. 'research these 5 topics', 'refactor these 4 files', 'check each of these repos') and you want them all done before you answer. Each task is submitted as its own op and driven concurrently with a bounded pool: `concurrency` defaults to 4 and is clamped to [1,12]. The call BLOCKS until every task reaches a terminal state, then returns per-task {task, status, finalSummary, filesChanged, error?} plus a roll-up (n succeeded / n failed / total). A failing task does NOT abort the batch — its error is captured and the rest keep running. Tasks MUST be genuinely distinct — this is not a retry mechanism; do not pass the same task N times. Each task takes the SAME fields as op_submit (task, success_criteria, constraints, context_files, scope_hint, lane, etc.); CONTEXT-RELAY RULE applies per task — a worker sees only its own task string + fields, never the chat thread or its sibling tasks. Prefer op_submit_async for a SINGLE long job; use this only for real parallel fan-out.",
+    "FAN-OUT LAUNCHER: run a LIST of DISTINCT tasks as parallel ops at once, watch them all, and get back one aggregated result. Use this when you have several INDEPENDENT jobs to do in parallel (e.g. 'research these 5 topics', 'refactor these 4 files', 'check each of these repos') and you want them all done before you answer. Each task is submitted as its own op and driven concurrently with a bounded pool: `concurrency` defaults to 4 and is clamped to [1,12]. The call BLOCKS until every task reaches a terminal state, then returns per-task {task, status, finalSummary, filesChanged, error?} plus a roll-up (n completed / n partial / n failed / total; `partial` = stopped at an iteration checkpoint with its work saved but unfinished — its finalSummary opens with a PARTIAL line you must relay, not a failure). A failing task does NOT abort the batch — its error is captured and the rest keep running. Tasks MUST be genuinely distinct — this is not a retry mechanism; do not pass the same task N times. Each task takes the SAME fields as op_submit (task, success_criteria, constraints, context_files, scope_hint, lane, etc.); CONTEXT-RELAY RULE applies per task — a worker sees only its own task string + fields, never the chat thread or its sibling tasks. Prefer op_submit_async for a SINGLE long job; use this only for real parallel fan-out.",
   parameters: {
     type: "object",
     properties: {
@@ -258,7 +261,10 @@ export const opSubmitBatchTool: ToolDefinition = {
     const wallMs = Date.now() - startMs;
 
     const succeeded = results.filter(r => r.status === "completed").length;
-    const failed = results.length - succeeded;
+    // Partial is neither: the work is saved but unfinished, and the caller is
+    // told so per task (finalSummary opens with the PARTIAL line).
+    const partial = results.filter(r => r.status === "partial").length;
+    const failed = results.length - succeeded - partial;
 
     const lines = results.map((r, i) => {
       const secs = r.wallMs !== undefined ? ` (${Math.round(r.wallMs / 1000)}s)` : "";
@@ -270,17 +276,20 @@ export const opSubmitBatchTool: ToolDefinition = {
     });
 
     const summary =
-      `Batch: ${succeeded}/${results.length} succeeded, ${failed} failed ` +
-      `(${results.length} total, concurrency=${concurrency}) in ${Math.round(wallMs / 1000)}s\n` +
+      `Batch: ${succeeded}/${results.length} completed, ${partial} partial, ${failed} failed ` +
+      `(concurrency=${concurrency}) in ${Math.round(wallMs / 1000)}s\n` +
       lines.join("\n");
 
     return {
       content: summary,
-      isError: succeeded === 0,
+      // A batch is an error only when nothing landed: a partial task saved
+      // real work the caller must act on, which isError would tell it to drop.
+      isError: succeeded + partial === 0,
       metadata: {
         batch: {
           total: results.length,
           succeeded,
+          partial,
           failed,
           concurrency,
           wallMs,

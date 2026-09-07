@@ -16,6 +16,7 @@ import {
   delegatedRuntimeSessionId,
   submitParameters,
 } from "./shared.js";
+import { formatAwaitedOpResult } from "./op-result-summary.js";
 
 export const opSubmitTool: ToolDefinition = {
   name: "op_submit",
@@ -43,12 +44,9 @@ export const opSubmitTool: ToolDefinition = {
       };
     }
 
-    const summary =
-      `op ${op.id} ${result.status} in ${Math.round(wallMs / 1000)}s` +
-      (result.error ? `\n  error: ${result.error.message}` : "") +
-      (result.filesChanged.length > 0 ? `\n  files: ${result.filesChanged.slice(0, 5).join(", ")}${result.filesChanged.length > 5 ? "..." : ""}` : "") +
-      `\n\n${result.finalSummary}`;
-
-    return { content: summary, isError: result.status !== "completed" };
+    // Same rendering op_wait gives — this tool IS op_submit_async + op_wait.
+    // A partial child (stopped at a checkpoint) opens with the PARTIAL line,
+    // then the child's final text, and is not an error (op-result-summary.ts).
+    return formatAwaitedOpResult(op.id, result, wallMs);
   },
 };

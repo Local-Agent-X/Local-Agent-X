@@ -107,6 +107,44 @@ describe("buildDeferredToolManifest", () => {
       expect(m).toContain("tool_search");
     });
 
+    // C6-polish F4. The legend describes the `prefix_*: a, b` line SHAPE. It was
+    // emitted unconditionally, so a catalog where nothing grouped paid ~215 B to
+    // explain a line that is not on screen.
+    it("emits the family legend when at least one family collapsed", () => {
+      const m = buildDeferredToolManifest(family, []);
+      expect(m).toContain("are ONE FAMILY listed by name only");
+    });
+
+    it("omits the family legend entirely when nothing grouped", () => {
+      const m = buildDeferredToolManifest([tool("ocr"), tool("doctor")], []);
+      expect(m).not.toContain("ONE FAMILY");
+      expect(m).not.toContain("prefix_*");
+      // The rest of the manifest is untouched — names and the tool_search
+      // instruction both survive.
+      expect(m).toContain("- ocr:");
+      expect(m).toContain("- doctor:");
+      expect(m).toContain("tool_search");
+    });
+
+    // C6-polish F3. Solo entries are the half of the manifest that carries the
+    // capability signal, so their cap must not truncate a real directive.
+    it("does not truncate a solo directive that grouping never touches", () => {
+      const directive =
+        "ALWAYS use this for any YouTube URL or video ID — never web_fetch the watch page.";
+      expect(directive.length).toBeGreaterThan(80); // would have been cut at the old cap
+      const m = buildDeferredToolManifest([tool("youtube_analyze", directive)], []);
+      expect(m).toContain(`- youtube_analyze: ${directive}`);
+      expect(m).not.toContain("…");
+    });
+
+    it("still caps a runaway solo first sentence at 140", () => {
+      const runaway = "x".repeat(400);
+      const m = buildDeferredToolManifest([tool("ocr", runaway)], []);
+      const line = m.split("\n").find((l) => l.startsWith("- ocr: "))!;
+      expect(line.length - "- ocr: ".length).toBe(140);
+      expect(line.endsWith("…")).toBe(true);
+    });
+
     it("is materially smaller than one described line per tool", () => {
       const desc = "A long first sentence that would otherwise be repeated twenty times over.";
       // Same tool count, same descriptions; only whether they share a prefix.

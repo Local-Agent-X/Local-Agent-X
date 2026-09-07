@@ -55,8 +55,14 @@ const MANIFEST_GROUP_MIN = 2;
 /** Description cap for a tool with NO family. A lone opaque name (`ocr`,
  *  `doctor`, `recall`, `protocol`) carries no capability signal by itself, so
  *  these keep their one-liner: that is the half of the manifest that is
- *  actually load-bearing for discovery. */
-const SOLO_SENTENCE_CAP = 80;
+ *  actually load-bearing for discovery — which is exactly why it must not also
+ *  be cut in half. At 80 this truncated live directives mid-word
+ *  (`youtube_analyze: …never web_fetch the watch pag…`, `start_app_build:
+ *  …NOT \`build_app\`, whene…`, `bash: …else PowerS…`). Measured on the real
+ *  catalog the family GROUPING does the saving; halving the cap on top of it
+ *  bought ~9% more bytes and paid for them in discoverability. Held at the
+ *  historical 140, which clears every first sentence in the live catalog. */
+const SOLO_SENTENCE_CAP = 140;
 
 /** Family key for a tool name: the segment before the first underscore, or ""
  *  for a single-word name (which can never group). */
@@ -130,8 +136,16 @@ export function buildDeferredToolManifest(
   // with their capped first sentence. Every deferred tool is still NAMED exactly
   // once — grouping removes only DESCRIPTIONS that the shared prefix already
   // implies, never a name, so nothing becomes unfindable and guarantee (2) in
-  // the docstring is untouched. Measured on the real 176-tool catalog
-  // (113 deferred): 10,290 B of one-line entries → 3,978 B, all 113 names intact.
+  // the docstring is untouched.
+  //
+  // Measured by `npx tsx scripts/measure-prompt-prefix.mjs --plugins` over the
+  // AVAILABILITY-FILTERED catalog this function is actually called with
+  // (snapshot catalog-sha256=276510d75470, 169 available / 106 deferred):
+  // one described line per tool = 10,057 B; grouped = 4,988 B, all 106 names
+  // intact. Grouping is the entire saving — see SOLO_SENTENCE_CAP for why the
+  // ungrouped leftovers keep a full-length one-liner rather than a shorter one.
+  // NB: an earlier note here quoted 10,290 → 3,978 over the RAW 176-tool
+  // catalog, which is a different, larger set than the one that ships.
   const families = new Map<string, ToolDefinition[]>();
   for (const t of shown) {
     const key = familyKey(t.name);
@@ -141,9 +155,11 @@ export function buildDeferredToolManifest(
   }
   const lines: string[] = [];
   const ungrouped: ToolDefinition[] = [];
+  let groupedLines = 0;
   for (const [key, members] of families) {
     if (key && members.length >= MANIFEST_GROUP_MIN) {
       lines.push(`- ${key}_*: ${members.map((t) => t.name).join(", ")}`);
+      groupedLines++;
     } else {
       ungrouped.push(...members);
     }
@@ -162,9 +178,14 @@ export function buildDeferredToolManifest(
     `tool it returns. This list is exhaustive: never tell the user a capability is ` +
     `missing or that you lack a tool without first calling \`tool_search\`. The tools ` +
     `loaded above take precedence when they already cover the need.\n` +
-    `Entries written \`prefix_*: a, b, c\` are ONE FAMILY listed by name only — the ` +
-    `names are the index. If a name might cover what you need, \`tool_search\` it and ` +
-    `read the real description before concluding it doesn't.\n` +
+    // The legend explains a line SHAPE. On a catalog where nothing collapsed
+    // (few tools, or all single-word names) that shape never appears and the
+    // paragraph is ~215 B of prompt describing nothing that is on screen.
+    (groupedLines > 0
+      ? `Entries written \`prefix_*: a, b, c\` are ONE FAMILY listed by name only — the ` +
+        `names are the index. If a name might cover what you need, \`tool_search\` it and ` +
+        `read the real description before concluding it doesn't.\n`
+      : "") +
     lines.join("\n") +
     `\n`
   );

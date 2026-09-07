@@ -247,17 +247,51 @@ describe("stableSystemPrefixLength", () => {
     const sections = [
       section("core-identity", "static", "IDENTITY"),
       section("runtime-context", "static", "RUNTIME"),
-      section("agents-md", "static", "RULES"),
       section("context-block", "dynamic", "PER-TURN MEMORY"),
       section("turn-directive", "dynamic", "DO THE THING"),
     ];
-    const expected = "IDENTITY".length + "RUNTIME".length + "RULES".length;
+    const expected = "IDENTITY".length + "RUNTIME".length;
 
     expect(stableSystemPrefixLength(sections)).toBe(expected);
     // And it is a real PREFIX of the assembled prompt, which is the property
     // stream-api's `systemPrompt.slice(0, stableLen)` depends on.
     const prompt = sections.map((s) => s.text).join("");
-    expect(prompt.slice(0, expected)).toBe("IDENTITYRUNTIMERULES");
+    expect(prompt.slice(0, expected)).toBe("IDENTITYRUNTIME");
+  });
+
+  // C6-polish F1. app-manifest is rewritten by manifest-generator/watcher.ts
+  // (5 s debounce over public/, src/routes/, workspace/apps/, CONFIG_DIR) and
+  // renders per-app FILE COUNTS; agents-md is re-read from disk every build and
+  // the agent edits AGENTS.md itself. During an app-build or self_edit session —
+  // the workload this split exists for — both move turn to turn, so keeping them
+  // in the prefix would make the cache win silently evaporate exactly there.
+  it("excludes app-manifest and agents-md, which the agent's own writes churn", () => {
+    for (const churningId of ["app-manifest", "agents-md"]) {
+      expect(stableSystemPrefixLength([
+        section("core-identity", "static", "IDENTITY"),
+        section(churningId, "static", "COUNTS THAT MOVE MID-SESSION"),
+        section("provider-hint", "static", "HINT"),
+      ])).toBe("IDENTITY".length);
+    }
+  });
+
+  // C6-polish F5. recall-reflex (~1.5 KB, genuinely byte-stable) sits AFTER
+  // tool-guidance in the builder's order, so it can only be reached by skipping
+  // a volatile section in the MIDDLE — which would stop the result being a
+  // contiguous byte prefix. Stopping dead is the correct behaviour; this pins it
+  // so a future "free 1.5 KB" refactor has to break a test to break the split.
+  it("never skips a volatile section to reach a stable one behind it", () => {
+    const sections = [
+      section("core-identity", "static", "IDENTITY"),
+      section("tool-guidance", "static", "VOLATILE"),
+      section("recall-reflex", "static", "REFLEX"),
+    ];
+    const len = stableSystemPrefixLength(sections)!;
+    const prompt = sections.map((s) => s.text).join("");
+    expect(len).toBe("IDENTITY".length);
+    // The load-bearing assertion is the prefix property, not the number.
+    expect(prompt.startsWith(prompt.slice(0, len))).toBe(true);
+    expect(prompt.slice(0, len)).toBe("IDENTITY");
   });
 
   it("is identical across two builds whose dynamic content differs", () => {

@@ -61,13 +61,33 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
  *    writing a memory mid-op changes it.
  *  - `integrations`: IntegrationRegistry.getAgentContext(), which reflects live
  *    connector state and can change when a connector is added or gated.
+ *  - `app-manifest`: getManifestSummary() renders per-app FILE COUNTS
+ *    (manifest-generator/summary.ts), and manifest-generator/watcher.ts watches
+ *    `public/`, `src/routes/`, `workspace/apps/` and CONFIG_DIR on a 5 s debounce
+ *    and rewrites the manifest. During an app-build or `self_edit` session — the
+ *    long, expensive sessions this split exists for — the agent's OWN writes
+ *    move those counts, so the section changes turn to turn.
+ *  - `agents-md`: re-read from disk on every build (system-prompt-builder.ts's
+ *    `agents-md` section) and the agent edits AGENTS.md itself during self_edit.
  *
- * Everything before them — core-identity, runtime-context, app-manifest,
- * agents-md, provider-hint — is byte-stable for the life of an op unless its
- * underlying FILE changes (config/system-prompt.md, .lax manifest, AGENTS.md),
- * which is a legitimate invalidation, not per-turn churn.
+ * The last two are not a COST regression when they churn (a changed prefix is
+ * the same miss the old single-block shape always took), but leaving them in
+ * would make the cached prefix silently stop matching in exactly the workload
+ * the split was measured for. Excluding them makes the win smaller and real.
+ *
+ * That leaves core-identity + runtime-context as the prefix: process-lifetime
+ * stable, invalidated only when config/system-prompt.md changes.
+ *
+ * Not fixable by skipping: `recall-reflex` (~1.5 KB, genuinely byte-stable) sits
+ * AFTER `tool-guidance` in the builder's section order, so accumulating it would
+ * require skipping over a volatile section in the MIDDLE. The result would no
+ * longer be a contiguous byte prefix of `systemPrompt`, which is the one
+ * property `systemPrompt.slice(0, stableLen)` in stream-api depends on. The walk
+ * therefore stops dead at the first volatile section, on purpose.
  */
 const TURN_VARIANT_STATIC_SECTIONS = new Set([
+  "app-manifest",
+  "agents-md",
   "tool-guidance",
   "project-catalog",
   "integrations",

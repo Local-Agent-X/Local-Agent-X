@@ -71,6 +71,20 @@ export interface TurnInput {
    * usage (its token counts describe the summary view, not the full replay).
    */
   viewCompacted?: boolean;
+  /**
+   * How many messages at the TAIL of `messages` are ephemeral — rebuilt from
+   * scratch every turn, never persisted, and therefore byte-different on the
+   * next turn even when the conversation itself is unchanged. Today that is
+   * the situational-awareness digest (0 or 1; see build-input.ts).
+   *
+   * Adapters whose provider supports a conversation-prefix cache breakpoint
+   * must place it BELOW this tail — on `messages[len - 1 - ephemeralTail]` —
+   * otherwise the cached block contains volatile bytes, the prefix diverges
+   * every turn, and the whole conversation is re-written to cache (1.25x) and
+   * never read back (0.1x). Additive v1 metadata: ABSENT / 0 means "the last
+   * message is stable", i.e. exactly the pre-existing behavior.
+   */
+  ephemeralTailMessages?: number;
 }
 
 export type AdapterReport =

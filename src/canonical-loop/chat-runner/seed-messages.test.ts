@@ -78,17 +78,19 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
       "what did I show you earlier?",
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    // Trailing extra "user" = the ephemeral situational-awareness digest row
+    // build-input.ts appends below the cache breakpoint.
+    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
     // filePath revived via mapUploadsRef — the same single-source mapping the
     // file tools and the security gate resolve "/uploads/<f>" with.
     const shotPath = join(uploadsDir(), SHOT_NAME);
     expect(transport[0].content).toBe("");
     expect(transport[0].images).toEqual([{ name: SHOT_NAME, url: `/uploads/${SHOT_NAME}`, filePath: shotPath }]);
-    expect(transport[2].content).toContain(DIGEST_OPEN);
+    expect(transport[3].content).toContain(DIGEST_OPEN);
 
     // Anthropic wire: image block + path hint, no empty text block anywhere.
     const wire = convertMessages(toParams(transport));
-    expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
     const blocks = wire[0].content as Array<{ type: string; text?: string }>;
     expect(blocks.map(b => b.type)).toEqual(["image", "text"]);
     expect(blocks[1].text).toContain(shotPath);
@@ -96,7 +98,7 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
 
     // Gemini wire: inlineData + path hint, no {text:""}.
     const contents = toGeminiContents(transport);
-    expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
+    expect(contents.map(c => c.role)).toEqual(["user", "model", "user", "user"]);
     expect(contents[0].parts[0]).toEqual({ inlineData: { mimeType: "image/png", data: PNG_B64 } });
     expect((contents[0].parts[1] as { text: string }).text).toContain(shotPath);
     expect(JSON.stringify(contents)).not.toContain('"text":""');
@@ -109,7 +111,9 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
       "so what was on it?",
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    // Trailing extra "user" = the ephemeral situational-awareness digest row
+    // build-input.ts appends below the cache breakpoint.
+    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
 
     const NOTE = `[Attachment ${GONE_NAME} could not be read (ENOENT)]`;
     const wire = convertMessages(toParams(transport));
@@ -144,7 +148,7 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
       "which of those had the chart?",
     );
     const transport = await pipeline();
-    expect(transport).toHaveLength(9);
+    expect(transport).toHaveLength(10); // 9 history rows + the ephemeral digest
 
     // Row 0 lost both: A's bytes moved to its most recent occurrence, B is
     // the 7th unique image — but the ROW survives as non-empty placeholders.
@@ -185,7 +189,9 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
       "and?",
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    // Trailing extra "user" = the ephemeral situational-awareness digest row
+    // build-input.ts appends below the cache breakpoint.
+    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
     expect(transport[0].images).toBeUndefined();
     expect(transport[0].content).toBe(`[Image ${big} omitted from history: too large to resend]`);
     expect(JSON.stringify(convertMessages(toParams(transport)))).not.toContain('"type":"image"');
@@ -202,6 +208,6 @@ describe("seedOpMessages — caption-less photo rows in seeded history", () => {
       "hi again",
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["assistant", "user"]);
+    expect(transport.map(m => m.role)).toEqual(["assistant", "user", "user"]);
   });
 });

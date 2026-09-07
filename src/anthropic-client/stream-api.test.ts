@@ -406,6 +406,55 @@ describe("streamViaAPI — conversation-history breakpoint (cacheConversation)",
     await collect({ messages: [{ role: "user", content: "hi" }] });
     expect(cap.calls[0].body.messages).toEqual([{ role: "user", content: "hi" }]);
   });
+
+  // The situational-awareness digest is rebuilt every turn; marking IT would
+  // put volatile bytes inside the cached block and the prefix could never hit.
+  it("places the breakpoint BENEATH an ephemeral tail, not on the volatile last row", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      cacheConversation: true,
+      ephemeralTailMessages: 1,
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "reply" },
+        { role: "user", content: "[SITUATIONAL CONTEXT ...]" },
+      ],
+    });
+    const msgs = cap.calls[0].body.messages as Array<{ content: unknown }>;
+    expect(msgs[1].content).toEqual([
+      { type: "text", text: "reply", cache_control: { type: "ephemeral" } },
+    ]);
+    // The volatile row rides UNCACHED at the tail — and still reaches the model.
+    expect(msgs[2].content).toBe("[SITUATIONAL CONTEXT ...]");
+    expect(msgs[0].content).toBe("first");
+  });
+
+  it("tail count 0 is identical to omitting it (unchanged behavior)", async () => {
+    const cap = stubFetchCapturing(done);
+    const messages = [
+      { role: "user" as const, content: "first" },
+      { role: "assistant" as const, content: "reply" },
+    ];
+    await collect({ cacheConversation: true, ephemeralTailMessages: 0, messages });
+    await collect({ cacheConversation: true, messages });
+    expect(cap.calls[0].body.messages).toEqual(cap.calls[1].body.messages);
+    expect((cap.calls[0].body.messages as Array<{ content: unknown }>)[1].content).toEqual([
+      { type: "text", text: "reply", cache_control: { type: "ephemeral" } },
+    ]);
+  });
+
+  it("clamps a tail that would swallow the whole conversation", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      cacheConversation: true,
+      ephemeralTailMessages: 5,
+      messages: [{ role: "user", content: "only" }],
+    });
+    const msgs = cap.calls[0].body.messages as Array<{ content: unknown }>;
+    expect(msgs[0].content).toEqual([
+      { type: "text", text: "only", cache_control: { type: "ephemeral" } },
+    ]);
+  });
 });
 
 // Voice asks for the SHORT PATH declaratively (`effort: "low"`) and the client

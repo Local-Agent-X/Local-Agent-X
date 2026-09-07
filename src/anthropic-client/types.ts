@@ -88,6 +88,16 @@ export interface StreamOptions {
    *  system prompt is byte-stable across turns (see systemStablePrefixLen) —
    *  the messages tier can only hit when everything before it matches. */
   cacheConversation?: boolean;
+  /** How many messages at the END of `messages` are EPHEMERAL — regenerated
+   *  every turn, so byte-different next turn even when the conversation is
+   *  otherwise unchanged (the canonical loop's situational-awareness digest is
+   *  the one such row today). The cacheConversation breakpoint is placed on
+   *  `messages[len - 1 - ephemeralTailMessages]` instead of the last message,
+   *  so the cached prefix contains only bytes that will recur verbatim. Absent
+   *  or 0 → the breakpoint stays on the last message (prior behavior). Ignored
+   *  when cacheConversation is off. Counted in POST-conversion messages: the
+   *  tail rows must survive convertMessages 1:1 (plain user text does). */
+  ephemeralTailMessages?: number;
 }
 
 export interface AnthropicMessage {

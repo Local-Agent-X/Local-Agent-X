@@ -5,8 +5,9 @@ import {
   isDirectOAuthToken, unwrapDirectOAuthToken, buildOAuthHeaders,
   CLAUDE_CODE_SYSTEM_PREFIX, toOAuthWireName, fromOAuthWireName,
 } from "./oauth-direct.js";
-import type { AnthropicContent, AnthropicMessage } from "./types.js";
+import type { AnthropicContent } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
+import { markConversationCache, splitSystemBlocks } from "./cache-breakpoints.js";
 import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 
@@ -27,43 +28,8 @@ const warnedThinkingAlwaysOn = new Set<string>();
 // thinking instead is NOT lossy and does not warn.
 const warnedEffortDropped = new Set<string>();
 
-type SystemBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
-
-// System prompt → text blocks. Without a valid split point: one block carrying
-// the breakpoint (the long-standing behavior). With one: [stable w/ breakpoint,
-// volatile tail uncached], so a per-turn tail rewrite costs only the tail
-// instead of missing the whole tools+system tier.
-function splitSystemBlocks(systemPrompt: string, stableLen?: number): SystemBlock[] {
-  if (stableLen !== undefined && stableLen > 0 && stableLen < systemPrompt.length) {
-    return [
-      { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: { type: "ephemeral" } },
-      { type: "text", text: systemPrompt.slice(stableLen) },
-    ];
-  }
-  return [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }];
-}
-
-// Message-tier breakpoint: mark the last block of the last message so the whole
-// conversation prefix is cacheable. String content becomes a single text block
-// (cache_control only exists on block form). No-op when the flag is off or the
-// conversation is empty.
-function markConversationCache(messages: AnthropicMessage[], enabled?: boolean): AnthropicMessage[] {
-  if (!enabled || messages.length === 0) return messages;
-  const last = messages[messages.length - 1];
-  let content: AnthropicContent[];
-  if (typeof last.content === "string") {
-    if (!last.content) return messages;
-    content = [{ type: "text", text: last.content, cache_control: { type: "ephemeral" } }];
-  } else {
-    if (last.content.length === 0) return messages;
-    content = [...last.content];
-    content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: "ephemeral" } };
-  }
-  return [...messages.slice(0, -1), { ...last, content }];
-}
-
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation, ephemeralTailMessages } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
   // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
   // only subscription path that streams real thinking text. See oauth-direct.ts.
@@ -158,7 +124,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       : systemPrompt
         ? splitSystemBlocks(systemPrompt, systemStablePrefixLen)
         : undefined,
-    messages: markConversationCache(convertMessages(messages), cacheConversation),
+    messages: markConversationCache(convertMessages(messages), cacheConversation, ephemeralTailMessages),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
     // family (Fable 5, Opus 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6): send

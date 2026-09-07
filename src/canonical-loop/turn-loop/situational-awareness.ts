@@ -17,10 +17,18 @@
  *     back; a one-liner keeps it anchored. Skipped early when it's still
  *     visible right above.
  *
- * The digest is EPHEMERAL: built fresh each turn and prepended to the turn's
- * last user message in build-input.ts. It is never written to op_messages, so
- * it does not accumulate across turns and the persisted transcript / UI never
+ * The digest is EPHEMERAL: built fresh each turn and APPENDED by build-input.ts
+ * as its own trailing user message. It is never written to op_messages, so it
+ * does not accumulate across turns and the persisted transcript / UI never
  * sees it.
+ *
+ * Placement is load-bearing for cost, not just for reading order. Its bytes
+ * change every turn; folding it into an existing (early) user row made the
+ * conversation prefix diverge mid-array every turn, which meant the Anthropic
+ * message-tier cache breakpoint could never hit — the whole conversation was
+ * re-written to cache each turn at 1.25x and read back never. As a trailing
+ * row it sits BELOW the breakpoint (TurnInput.ephemeralTailMessages), so
+ * everything above it stays byte-stable and cacheable.
  *
  * Capability awareness is deliberately NOT here: the adapter already ships the
  * full tool surface (TurnInput.tools) to the model every turn, so a "tools you

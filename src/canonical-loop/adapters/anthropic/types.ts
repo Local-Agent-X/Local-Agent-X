@@ -54,6 +54,11 @@ export interface AnthropicTransportRequest {
   /** Mark the last message with a cache breakpoint (history-tier caching).
    *  Only useful when the system prompt is byte-stable across turns. */
   cacheConversation?: boolean;
+  /** Number of trailing `messages` entries that are rebuilt every turn and are
+   *  therefore NOT byte-stable (the situational-awareness digest; 0 or 1). The
+   *  cacheConversation breakpoint moves below them. Per-TURN — sourced from
+   *  TurnInput.ephemeralTailMessages, not from the adapter's static options. */
+  ephemeralTailMessages?: number;
 }
 
 export interface TransportMessage {

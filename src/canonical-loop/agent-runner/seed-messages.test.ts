@@ -72,7 +72,9 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
       undefined,
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    // Trailing extra "user" = the ephemeral situational-awareness digest row
+    // build-input.ts appends below the cache breakpoint.
+    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
     // filePath revived via mapUploadsRef — the same single-source mapping the
     // file tools and the security gate resolve "/uploads/<f>" with.
     const shotPath = join(uploadsDir(), SHOT_NAME);
@@ -82,7 +84,7 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
 
     // Anthropic wire: image block + path hint, no empty text block anywhere.
     const wire = convertMessages(toParams(transport));
-    expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
     const blocks = wire[0].content as Array<{ type: string; text?: string }>;
     expect(blocks.map(b => b.type)).toEqual(["image", "text"]);
     expect(blocks[1].text).toContain(shotPath);
@@ -90,7 +92,7 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
 
     // Gemini wire: inlineData + path hint, no {text:""}.
     const contents = toGeminiContents(transport);
-    expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
+    expect(contents.map(c => c.role)).toEqual(["user", "model", "user", "user"]);
     expect(contents[0].parts[0]).toEqual({ inlineData: { mimeType: "image/png", data: PNG_B64 } });
     expect((contents[0].parts[1] as { text: string }).text).toContain(shotPath);
     expect(JSON.stringify(contents)).not.toContain('"text":""');
@@ -120,7 +122,7 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
       undefined,
     );
     const transport = await pipeline();
-    expect(transport).toHaveLength(9);
+    expect(transport).toHaveLength(10); // 9 history rows + the ephemeral digest
 
     // Row 0 lost both: A's bytes moved to its most recent occurrence, B is
     // the 7th unique image — but the ROW survives as non-empty placeholders.
@@ -162,7 +164,9 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
       undefined,
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+    // Trailing extra "user" = the ephemeral situational-awareness digest row
+    // build-input.ts appends below the cache breakpoint.
+    expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
     expect(transport[0].images).toBeUndefined();
     expect(transport[0].content).toBe(`[Image ${big} omitted from history: too large to resend]`);
     expect(JSON.stringify(convertMessages(toParams(transport)))).not.toContain('"type":"image"');
@@ -180,6 +184,6 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
       undefined,
     );
     const transport = await pipeline();
-    expect(transport.map(m => m.role)).toEqual(["assistant", "user"]);
+    expect(transport.map(m => m.role)).toEqual(["assistant", "user", "user"]);
   });
 });

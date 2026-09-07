@@ -134,6 +134,9 @@ export class AnthropicAdapter implements Adapter {
       effort: this.opts.effort,
       systemStablePrefixLen: this.opts.systemStablePrefixLen,
       cacheConversation: this.opts.cacheConversation,
+      // Per-turn, from the loop's own input — the digest row build-input.ts
+      // appends is volatile, so the cache breakpoint must land beneath it.
+      ephemeralTailMessages: input.ephemeralTailMessages,
     };
 
     // Idle-event detection lives in turn-loop now (provider-agnostic).

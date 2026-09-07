@@ -1,7 +1,7 @@
 // Cross-seam contract for the 2026-08-31 Anthropic 400 "text content blocks
 // must be non-empty" and its sibling fixes. Drives the REAL seams end to end:
 //
-//   op_messages on disk → buildTurnInput (digest on the last user row)
+//   op_messages on disk → buildTurnInput (digest = its own trailing user row)
 //     → canonicalToTransport → transport→ChatCompletion (mirrored below)
 //     → anthropic-client convertMessages   |   codex convertMessagesToInput
 //
@@ -65,7 +65,7 @@ let opSeq = 0;
 let opId = "";
 beforeEach(() => { opId = `op_c19_contract_${opSeq++}`; });
 
-// Interactive chat_turn op — the lane build-input.ts prepends the digest on.
+// Interactive chat_turn op — the lane build-input.ts appends the digest on.
 function op(): Op {
 	return { id: opId, type: "chat_turn", task: "look at this", lane: "interactive" } as unknown as Op;
 }
@@ -149,22 +149,29 @@ function assertCodexWellFormed(items: CodexItem[]): void {
 }
 
 describe("A. image-only user row + middleware nudge → Anthropic Messages wire", () => {
-	it("first request of the turn: the digest rides the image row, so text is non-empty and the image is a base64 block", async () => {
+	// The digest is now its OWN trailing row (cache-prefix stability), so it no
+	// longer papers over the image row's empty caption — the C1/C2 omission is
+	// what keeps `{type:"text",text:""}` off the wire here, on EVERY turn rather
+	// than only turn 0.
+	it("first request of the turn: the image row carries no empty caption block and the digest is a separate trailing row", async () => {
 		seedImageOnlyUser(SHOT_PATH);
 		const { transport, params } = await pipeline(1);
 		// Premise: the persisted caption is "" and the image survives the transport seam.
-		expect(transport).toHaveLength(1);
+		expect(transport).toHaveLength(2);
 		expect(transport[0].images).toEqual([{ name: "shot.png", url: "/uploads/shot.png", filePath: SHOT_PATH }]);
-		expect(transport[0].content).toContain(DIGEST_OPEN);
+		expect(transport[0].content).toBe("");
+		expect(transport[1].content).toContain(DIGEST_OPEN);
+		expect(transport[1].images).toBeUndefined();
 
 		const wire = convertMessages(params);
 		assertAnthropicWellFormed(wire);
-		expect(wire.map(m => m.role)).toEqual(["user"]);
+		expect(wire.map(m => m.role)).toEqual(["user", "user"]);
 		const blocks = blocksOf(wire[0]);
-		expect(blocks.map(b => b.type)).toEqual(["text", "image", "text"]);
-		expect((blocks[0] as TextBlock).text).toContain(DIGEST_OPEN);
-		expect(blocks[1]).toEqual(IMAGE_BLOCK);
-		expect((blocks[2] as TextBlock).text).toContain(SHOT_PATH); // on-disk path hint
+		expect(blocks.map(b => b.type)).toEqual(["image", "text"]);
+		expect(blocks[0]).toEqual(IMAGE_BLOCK);
+		expect((blocks[1] as TextBlock).text).toContain(SHOT_PATH); // on-disk path hint
+		expect(JSON.stringify(blocks)).not.toContain(DIGEST_OPEN);
+		expect(textBlocks(wire[1])[0].text).toContain(DIGEST_OPEN);
 	});
 
 	it("turn 0 has no digest yet: the empty caption is omitted rather than sent as an empty text block", async () => {
@@ -182,16 +189,19 @@ describe("A. image-only user row + middleware nudge → Anthropic Messages wire"
 		expect(appendNudgeAsUserMessage(opId, 1, NUDGE)).toBe(true);
 
 		const { transport, params } = await pipeline(1);
-		// Premise: the digest moved to the nudge row, leaving the image row's text
-		// EMPTY — exactly the `{type:"text",text:""}` that reached the API pre-fix.
-		expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+		// Premise: the image row's text is EMPTY — exactly the
+		// `{type:"text",text:""}` that reached the API pre-fix. The nudge and the
+		// digest are now distinct rows: the nudge is persisted history, the digest
+		// is the ephemeral tail that must stay below the cache breakpoint.
+		expect(transport.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
 		expect(transport[0].content).toBe("");
-		expect(transport[2].content).toContain(DIGEST_OPEN);
 		expect(transport[2].content).toContain(NUDGE);
+		expect(transport[2].content).not.toContain(DIGEST_OPEN);
+		expect(transport[3].content).toContain(DIGEST_OPEN);
 
 		const wire = convertMessages(params);
 		assertAnthropicWellFormed(wire);
-		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
 		const first = blocksOf(wire[0]);
 		expect(first.map(b => b.type)).toEqual(["image", "text"]); // caption omitted; image + path hint kept
 		expect(first[0]).toEqual(IMAGE_BLOCK);
@@ -200,8 +210,8 @@ describe("A. image-only user row + middleware nudge → Anthropic Messages wire"
 		const last = wire[wire.length - 1];
 		expect(last.role).toBe("user");
 		expect(typeof last.content).toBe("string");
-		expect(last.content as string).toContain(NUDGE);
 		expect(last.content as string).toContain(DIGEST_OPEN);
+		expect(wire[2].content as string).toContain(NUDGE);
 	});
 });
 
@@ -211,10 +221,10 @@ describe("B. the same two histories → Codex Responses input", () => {
 		const items = codexItems((await pipeline(1)).params);
 		assertCodexWellFormed(items);
 		const users = items.filter(i => i.type === "message" && i.role === "user");
-		expect(users).toHaveLength(1);
-		expect(users[0].content!.map(p => p.type)).toEqual(["input_text", "input_image", "input_text"]);
-		expect(users[0].content![0].text).toContain(DIGEST_OPEN);
-		expect(users[0].content![1]).toEqual({ type: "input_image", image_url: PNG_DATA_URL, detail: "auto" });
+		expect(users).toHaveLength(2); // image row + the ephemeral digest row
+		expect(users[0].content!.map(p => p.type)).toEqual(["input_image", "input_text"]);
+		expect(users[0].content![0]).toEqual({ type: "input_image", image_url: PNG_DATA_URL, detail: "auto" });
+		expect(users[1].content![0].text).toContain(DIGEST_OPEN);
 	});
 
 	it("after the nudge: the image row keeps its input_image with no empty input_text; the nudge is the last user item", async () => {
@@ -223,28 +233,31 @@ describe("B. the same two histories → Codex Responses input", () => {
 		appendNudgeAsUserMessage(opId, 1, NUDGE);
 		const items = codexItems((await pipeline(1)).params);
 		assertCodexWellFormed(items);
-		expect(items.map(i => `${i.type}:${i.role ?? ""}`)).toEqual(["message:user", "message:assistant", "message:user"]);
+		expect(items.map(i => `${i.type}:${i.role ?? ""}`)).toEqual([
+			"message:user", "message:assistant", "message:user", "message:user",
+		]);
 		expect(items[0].content!.map(p => p.type)).toEqual(["input_image", "input_text"]);
 		expect(items[0].content![0]).toEqual({ type: "input_image", image_url: PNG_DATA_URL, detail: "auto" });
+		expect(items[2].content![0].text).toContain(NUDGE);
 		const last = items[items.length - 1];
 		expect(last.content).toHaveLength(1);
 		expect(last.content![0].type).toBe("input_text");
-		expect(last.content![0].text).toContain(NUDGE);
+		expect(last.content![0].text).toContain(DIGEST_OPEN);
 	});
 });
 
 describe("E. the same two histories → Gemini native contents (C22)", () => {
 	const INLINE_PART = { inlineData: { mimeType: "image/png", data: PNG_B64 } };
 
-	it("before the nudge: digest text + inlineData + path hint — the /uploads image reaches the wire, no {text:''}", async () => {
+	it("before the nudge: inlineData + path hint — the /uploads image reaches the wire, no {text:''}", async () => {
 		seedImageOnlyUser(SHOT_PATH);
 		const contents = toGeminiContents((await pipeline(1)).transport);
-		expect(contents).toHaveLength(1);
-		expect(contents[0].role).toBe("user");
-		expect(contents[0].parts).toHaveLength(3);
-		expect((contents[0].parts[0] as { text: string }).text).toContain(DIGEST_OPEN);
-		expect(contents[0].parts[1]).toEqual(INLINE_PART);
-		expect((contents[0].parts[2] as { text: string }).text).toContain(SHOT_PATH);
+		expect(contents).toHaveLength(2);
+		expect(contents.map(c => c.role)).toEqual(["user", "user"]);
+		expect(contents[0].parts).toHaveLength(2);
+		expect(contents[0].parts[0]).toEqual(INLINE_PART);
+		expect((contents[0].parts[1] as { text: string }).text).toContain(SHOT_PATH);
+		expect((contents[1].parts[0] as { text: string }).text).toContain(DIGEST_OPEN);
 		expect(JSON.stringify(contents)).not.toContain('"text":""');
 	});
 
@@ -253,15 +266,17 @@ describe("E. the same two histories → Gemini native contents (C22)", () => {
 		seedAssistantReply();
 		appendNudgeAsUserMessage(opId, 1, NUDGE);
 		const contents = toGeminiContents((await pipeline(1)).transport);
-		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
+		expect(contents.map(c => c.role)).toEqual(["user", "model", "user", "user"]);
 		// Pre-fix: dataUrlToInline("/uploads/shot.png") → null, so this row was
 		// [{text:""}] — image dropped AND the empty-text class, both at once.
 		expect(contents[0].parts).toHaveLength(2);
 		expect(contents[0].parts[0]).toEqual(INLINE_PART);
 		expect((contents[0].parts[1] as { text: string }).text).toContain(SHOT_PATH);
-		const lastParts = contents[2].parts as Array<{ text: string }>;
+		const nudgeParts = contents[2].parts as Array<{ text: string }>;
+		expect(nudgeParts).toHaveLength(1);
+		expect(nudgeParts[0].text).toContain(NUDGE);
+		const lastParts = contents[3].parts as Array<{ text: string }>;
 		expect(lastParts).toHaveLength(1);
-		expect(lastParts[0].text).toContain(NUDGE);
 		expect(lastParts[0].text).toContain(DIGEST_OPEN);
 		expect(JSON.stringify(contents)).not.toContain('"text":""');
 	});
@@ -271,7 +286,7 @@ describe("E. the same two histories → Gemini native contents (C22)", () => {
 		seedAssistantReply();
 		appendNudgeAsUserMessage(opId, 1, NUDGE);
 		const contents = toGeminiContents((await pipeline(1)).transport);
-		expect(contents.map(c => c.role)).toEqual(["user", "model", "user"]);
+		expect(contents.map(c => c.role)).toEqual(["user", "model", "user", "user"]);
 		expect(contents[0].parts).toEqual([{ text: UNREADABLE_NOTE }]);
 		const json = JSON.stringify(contents);
 		expect(json).not.toContain("inlineData");
@@ -285,14 +300,16 @@ describe("C. unreadable upload (C21) → a non-empty note, never an image block,
 		seedImageOnlyUser(MISSING_PATH);
 		const wire = convertMessages((await pipeline(1)).params);
 		assertAnthropicWellFormed(wire);
-		expect(wire).toHaveLength(1);
+		expect(wire).toHaveLength(2); // image row + the ephemeral digest row
 		const blocks = blocksOf(wire[0]);
 		expect(blocks.filter(b => b.type === "image")).toHaveLength(0);
 		const notes = textBlocks(wire[0]).filter(b => b.text.includes("could not be read"));
 		expect(notes).toHaveLength(1);
 		expect(notes[0].text).toBe(UNREADABLE_NOTE);
-		// Digest text block + note; no on-disk hint (there is no readable file to point at).
-		expect(blocks.map(b => b.type)).toEqual(["text", "text"]);
+		// The note is the row's ONLY block — no empty caption, no on-disk hint
+		// (there is no readable file to point at), and no digest folded in.
+		expect(blocks.map(b => b.type)).toEqual(["text"]);
+		expect(textBlocks(wire[1])[0].text).toContain(DIGEST_OPEN);
 		expect(JSON.stringify(wire)).not.toContain(MISSING_PATH);
 	});
 
@@ -304,7 +321,7 @@ describe("C. unreadable upload (C21) → a non-empty note, never an image block,
 
 		const wire = convertMessages(params);
 		assertAnthropicWellFormed(wire);
-		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user"]);
+		expect(wire.map(m => m.role)).toEqual(["user", "assistant", "user", "user"]);
 		expect(blocksOf(wire[0])).toEqual([{ type: "text", text: UNREADABLE_NOTE }]);
 		expect(JSON.stringify(wire)).not.toContain("[empty message]");
 		expect(JSON.stringify(wire)).not.toContain(MISSING_PATH);

@@ -109,6 +109,7 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
           effort: req.effort,
           systemStablePrefixLen: req.systemStablePrefixLen,
           cacheConversation: req.cacheConversation,
+          ephemeralTailMessages: req.ephemeralTailMessages,
         });
 
         for await (const ev of stream) {

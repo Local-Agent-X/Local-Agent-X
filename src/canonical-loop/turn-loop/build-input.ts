@@ -91,23 +91,39 @@ export async function buildTurnInput(
   // describes the summary view, not the full replay (see types.ts).
   if (viewCompacted) input.viewCompacted = true;
 
-  // Ephemeral situational-awareness digest — goal/constraint re-anchoring +
-  // the durable open-plan, recomputed each turn and prepended to the last user
-  // message (never persisted to op_messages, so it doesn't accumulate). Now on
-  // the long autonomous lanes too (agent/background), which drift from the goal
-  // over many turns exactly like interactive does — they were the lane most in
-  // need of re-anchoring, not least. The `build` (app-build) lane stays out: it
-  // has its own evidence/render gates and is the soak-sensitive one.
-  if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
-    const digest = buildSituationalAwareness(op, turnIdx);
-    if (digest) input.messages = prependDigestToLastUser(input.messages, digest);
-  }
-
   // Per-step effort hint: a mechanical continuation (trailing all-ok
   // file-mechanics tool_result batch, turn > 0) lets adapters down-shift
   // reasoning effort for this step. Absent = standard = today's behavior.
   // Classifier + kill switch (LAX_STEP_EFFORT=off) live in step-effort.ts.
+  // MUST run BEFORE the digest append below: the classifier keys off the
+  // TRAILING tool_result batch, and an ephemeral trailing user row hides it.
   if (classifyStepEffort(input) === "mechanical") input.stepEffortHint = "mechanical";
+
+  // Ephemeral situational-awareness digest — goal/constraint re-anchoring +
+  // the durable open-plan, recomputed each turn and APPENDED as its own
+  // trailing user message (never persisted to op_messages, so it doesn't
+  // accumulate). Now on the long autonomous lanes too (agent/background),
+  // which drift from the goal over many turns exactly like interactive does —
+  // they were the lane most in need of re-anchoring, not least. The `build`
+  // (app-build) lane stays out: it has its own evidence/render gates and is
+  // the soak-sensitive one.
+  //
+  // Why a trailing message and not a rewrite of the last user row (the old
+  // prependDigestToLastUser): the digest's bytes change EVERY turn, and the
+  // last user row sits EARLY in the array on a continuation turn. Rewriting it
+  // moved a mutation into the middle of the conversation prefix, so turn N's
+  // message array was never a prefix of turn N+1's and the Anthropic
+  // message-tier cache breakpoint could never hit — every turn re-wrote the
+  // whole conversation to cache at 1.25x and read back nothing. Appending
+  // keeps [0, len-1) byte-identical across turns; `ephemeralTailMessages`
+  // tells the transport to put the breakpoint BELOW the volatile tail.
+  if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
+    const digest = buildSituationalAwareness(op, turnIdx);
+    if (digest) {
+      input.messages = [...input.messages, situationalMessage(op.id, turnIdx, digest)];
+      input.ephemeralTailMessages = 1;
+    }
+  }
 
   return input;
 }
@@ -149,31 +165,14 @@ export function collapseAdjacentUserMessages(messages: CanonicalMessage[]): Cano
   return out;
 }
 
-// Prepend the situational-awareness digest to the text of the last user
-// message, ephemerally. We target the last user row (not a trailing append)
-// so we never create consecutive user messages and the model reads the
-// context immediately before the request it's answering. Continuation turns
-// (last row is assistant/tool_result) target the most recent user message
-// earlier in the array — the model re-reads the digest as it keeps working.
-// Returns a new array; the matched row is shallow-copied so op_messages and
-// other readers are untouched.
-function prependDigestToLastUser(messages: CanonicalMessage[], digest: string): CanonicalMessage[] {
-  let idx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") { idx = i; break; }
-  }
-  if (idx === -1) return messages;
-
-  const target = messages[idx];
-  const existing = userText(target.content);
-  const merged = `${digest}\n\n${existing}`;
-  const nextContent = hasImages(target.content)
-    ? { ...(target.content as Record<string, unknown>), text: merged }
-    : { text: merged };
-
-  const out = messages.slice();
-  out[idx] = { ...target, content: nextContent };
-  return out;
+// The ephemeral situational-awareness row. A plain user message carrying only
+// the digest, placed LAST so everything above it is byte-identical to the
+// previous turn's array (the property the Anthropic message-tier prompt cache
+// needs). The messageId is derived, not random, so two builds of the same turn
+// are identical; it is never written to op_messages — buildTurnInput is a pure
+// read and only adapter-finalized messages are committed (see checkpoint.ts).
+function situationalMessage(opId: string, turnIdx: number, digest: string): CanonicalMessage {
+  return { messageId: `sa-${opId}-${turnIdx}`, role: "user", content: { text: digest } };
 }
 
 function hasImages(content: unknown): boolean {

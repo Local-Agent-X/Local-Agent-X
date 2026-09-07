@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildTurnInput, collapseAdjacentUserMessages } from "./build-input.js";
 import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
+import { markConversationCache } from "../../anthropic-client/cache-breakpoints.js";
 import type { CanonicalMessage } from "../contract-types.js";
 import { appendOpMessage } from "../store.js";
 import { trackOpForSession, releaseOpFromSession } from "../../ops/session-bridge.js";
@@ -184,6 +185,42 @@ describe("buildTurnInput — situational-awareness wiring", () => {
       expect(JSON.stringify(turn2.messages[i]), `message ${i} diverged`)
         .toBe(JSON.stringify(turn1.messages[i]));
     }
+  });
+
+  // F2 — a redirect turn. The `[REDIRECT]` row is appended by the ADAPTER,
+  // below everything buildTurnInput produced (including the digest), so the
+  // marked prefix has to account for it. Before the fix the wire tail was
+  // [user(digest), user(REDIRECT)] while ephemeralTailMessages said 1, and the
+  // cache_control marker landed ON the volatile digest: every redirect turn
+  // wrote the whole conversation at 1.25x and could never read it back.
+  it("keeps the cache marker off the volatile tail on a redirect turn", async () => {
+    const redirect = {
+      instructionId: "ri-1",
+      text: "actually deploy staging first",
+      receivedAt: "2026-06-06T10:02:00.000Z",
+    };
+    const input = await buildTurnInput(makeOp("interactive"), 1, redirect);
+    const wire = canonicalToTransport(input.messages, input.pendingRedirect);
+
+    // One volatile row on the wire: the digest with the redirect folded in.
+    const tail = wire[wire.length - 1];
+    expect(tail.role).toBe("user");
+    expect(tail.content).toContain("[SITUATIONAL CONTEXT");
+    expect(tail.content).toContain("[REDIRECT] actually deploy staging first");
+    expect(input.ephemeralTailMessages).toBe(1);
+
+    // …and the marker computed from that count lands BELOW it, on a row whose
+    // bytes do not change next turn.
+    const marked = markConversationCache(
+      wire.map(m => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content ?? "" })),
+      true,
+      input.ephemeralTailMessages,
+    );
+    const markedIdx = marked.findIndex(m =>
+      Array.isArray(m.content) && m.content.some(b => (b as { cache_control?: unknown }).cache_control));
+    expect(markedIdx).toBe(marked.length - 2);
+    expect(JSON.stringify(marked[markedIdx])).not.toContain("REDIRECT");
+    expect(JSON.stringify(marked[markedIdx])).not.toContain("SITUATIONAL CONTEXT");
   });
 
   it("still delivers the digest to the model (the re-anchoring is not silently dropped)", async () => {

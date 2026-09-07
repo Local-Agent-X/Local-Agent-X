@@ -32,7 +32,9 @@
  *     user messages with a `[CONTROL] ` prefix.
  *   - A pendingRedirect (turn-boundary user message from the redirect
  *     control API) is appended as a user message with a `[REDIRECT] `
- *     prefix.
+ *     prefix — folded into the trailing user row when there already is
+ *     one, so the volatile tail stays one row and no transport ever sees
+ *     two user rows in a row (see the call site for why both matter).
  *
  * Anything that's adapter-SPECIFIC (e.g. Codex's compound call_id|item_id
  * encoding inside transport→provider conversion) stays inside that
@@ -154,7 +156,28 @@ export function canonicalToTransport(
   }
   flushImageSidecars();
   if (pendingRedirect) {
-    out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
+    // FOLD the redirect into a trailing user row when there is one, instead of
+    // pushing a second user row after it. Two reasons, both load-bearing:
+    //
+    //  1. The ephemeral-awareness digest (build-input.ts) is itself a trailing
+    //     user row, so appending after it made the wire tail [user(digest),
+    //     user(REDIRECT)] while TurnInput.ephemeralTailMessages still said 1 —
+    //     the Anthropic cache breakpoint then landed ON the volatile digest,
+    //     re-writing the whole conversation at 1.25x every redirect turn and
+    //     never reading it back. Folding keeps the volatile tail exactly ONE
+    //     row, which is what the count promises.
+    //  2. Runs of user-only rows make Codex-style transports return empty
+    //     responses (see providers/sanitize.ts and collapseAdjacentUserMessages
+    //     in build-input.ts) — the canonical view exists so no transport has to
+    //     repair that, and this row is appended below that view.
+    //
+    // Only TEXT is appended, so an image-bearing user row keeps its images.
+    const last = out[out.length - 1];
+    if (last && last.role === "user") {
+      out[out.length - 1] = { ...last, content: `${last.content}\n\n[REDIRECT] ${pendingRedirect.text}` };
+    } else {
+      out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
+    }
   }
   return out;
 }

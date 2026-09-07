@@ -117,13 +117,28 @@ export async function buildTurnInput(
   // whole conversation to cache at 1.25x and read back nothing. Appending
   // keeps [0, len-1) byte-identical across turns; `ephemeralTailMessages`
   // tells the transport to put the breakpoint BELOW the volatile tail.
+  let digestAppended = false;
   if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
     const digest = buildSituationalAwareness(op, turnIdx);
     if (digest) {
       input.messages = [...input.messages, situationalMessage(op.id, turnIdx, digest)];
-      input.ephemeralTailMessages = 1;
+      digestAppended = true;
     }
   }
+  // The volatile trailing rows the transport must place its cache breakpoint
+  // BENEATH. Two things land there and both are regenerated per turn: the
+  // digest above, and the pendingRedirect the adapters append OUTSIDE
+  // `messages` (canonical-to-transport.ts / canonical-to-chat-param.ts). The
+  // redirect is FOLDED into a trailing user row when there is one, so the
+  // volatile tail is exactly one row in every combination:
+  //   digest only            → the digest row
+  //   redirect only          → the appended [REDIRECT] row (or the fold)
+  //   digest + redirect      → one row: the digest with the redirect folded in
+  // Counting the redirect as a second row would push the marker one row too
+  // high (harmless but wasteful); omitting it entirely put the marker ON the
+  // volatile digest on every redirect turn — the exact 1.25x-write-never-read
+  // failure this field exists to prevent.
+  if (digestAppended || pendingRedirect) input.ephemeralTailMessages = 1;
 
   return input;
 }

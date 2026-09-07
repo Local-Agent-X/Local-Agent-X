@@ -85,7 +85,7 @@ describe("canonicalToTransport image-sidecar placement (PR-7)", () => {
     expect(out.map((m) => m.role)).toEqual(["tool", "user", "assistant"]);
   });
 
-  it("flushes a trailing sidecar before the pendingRedirect user row", () => {
+  it("folds the pendingRedirect into the flushed trailing sidecar (one user row, images kept)", () => {
     const messages: CanonicalMessage[] = [
       msg(
         "tool_result",
@@ -99,8 +99,21 @@ describe("canonicalToTransport image-sidecar placement (PR-7)", () => {
       text: "do something else",
       receivedAt: "2026-07-02T00:00:00Z",
     });
-    expect(out.map((m) => m.role)).toEqual(["tool", "user", "user"]);
+    // The sidecar still flushes before the redirect text, but they share ONE
+    // user row: no user/user run for codex-style transports, and the volatile
+    // wire tail stays the single row TurnInput.ephemeralTailMessages promises.
+    expect(out.map((m) => m.role)).toEqual(["tool", "user"]);
     expect((out[1] as { images?: unknown[] }).images).toHaveLength(1);
-    expect(out[2].content).toContain("[REDIRECT]");
+    expect(out[1].content).toContain("Tool returned 1 image");
+    expect(out[1].content).toContain("[REDIRECT]");
+  });
+
+  it("appends the redirect as its own row when the tail is not a user row", () => {
+    const out = canonicalToTransport(
+      [msg("assistant", { text: "done" }, "m1")],
+      { instructionId: "ri-2", text: "change course", receivedAt: "2026-07-02T00:00:00Z" },
+    );
+    expect(out.map((m) => m.role)).toEqual(["assistant", "user"]);
+    expect(out[1].content).toBe("[REDIRECT] change course");
   });
 });

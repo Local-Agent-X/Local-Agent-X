@@ -105,7 +105,7 @@ function isProjection(value: unknown): value is TurnCommitProjection {
   return typeof value.opType === "string" && typeof value.sessionId === "string"
     && optionalString(value.task) && optionalString(value.learningSessionId)
     && optionalString(value.redirectInstructionId) && optionalString(value.redirectText)
-    && optionalString(value.appUrl)
+    && optionalString(value.appUrl) && optionalString(value.failureReason)
     && (value.learnedOutcome === undefined || LEARNED.has(value.learnedOutcome as string))
     && isRoutingFeedback(value.routingFeedback)
     && (value.stateBefore === undefined || STATES.has(value.stateBefore as string));

@@ -52,6 +52,10 @@ export interface CommitTurnInput {
   modelMs?: number;
   toolDispatchMs?: number;
   nextTurnPivot?: OpTurnRow["nextTurnPivot"];
+  /** The note behind a terminalReason:"error" turn (a middleware abort's
+   *  message). Becomes op.lastFailureReason when this commit fails the op —
+   *  without it the op failed as `turn_error` and the card said only "failed". */
+  failureReason?: string;
 }
 
 export interface CommitTurnOutput {
@@ -194,6 +198,7 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
       redirectText: input.redirectText,
       appUrl: input.op.appUrl,
       stateBefore: input.op.canonical?.state,
+      ...(input.failureReason ? { failureReason: input.failureReason } : {}),
     },
   };
   if (!isTurnCommitEnvelope(envelope) || hasMessageCollision(messages, promptMessages)) {
@@ -294,6 +299,9 @@ function projectTurnCommit(
     || (state === "running" && !controlBlocksTerminal
       && (!op.canonical?.leaseOwner || isLeaseExpired(op)));
   if (terminal && state !== terminal && recoveryMayTransition) {
+    // The reason rides the persisted envelope, so a recovery replay of this
+    // commit stamps the same cause the owned commit did.
+    if (terminal === "failed" && projection.failureReason) op.lastFailureReason = projection.failureReason;
     transitionOp(op, terminal, terminalReason, {
       learnedOutcome: projection.learnedOutcome,
       learningSessionId: projection.learningSessionId,

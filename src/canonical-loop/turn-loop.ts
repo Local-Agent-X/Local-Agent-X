@@ -353,6 +353,8 @@ export async function driveTurn(
     toolDispatchMs,
     learnedOutcome: terminalOutcome ?? undefined,
     learningSessionId: learningSessionId ?? undefined,
+    // A middleware abort's note is the op's failure reason (commitTurn stamps it at the failed transition).
+    failureReason: middlewareAborted ? (middlewareDirective!.message?.trim() || `Turn aborted by ${middlewareDirective!.firedBy}.`) : undefined,
     nextTurnPivot: middlewareDirective?.kind === "nudge" && middlewareDirective.metadata?.strategyPivot
       ? { message: middlewareDirective.message, metadata: { strategyPivot: middlewareDirective.metadata.strategyPivot } }
       : undefined,

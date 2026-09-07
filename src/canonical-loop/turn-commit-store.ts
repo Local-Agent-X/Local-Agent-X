@@ -43,6 +43,10 @@ export interface TurnCommitProjection {
   redirectText?: string;
   appUrl?: string;
   stateBefore?: CanonicalState;
+  /** Why a terminalReason:"error" turn ended the op — a middleware abort's
+   *  note (pivot ceiling, nudge ceiling). Projected onto op.lastFailureReason
+   *  at the failed transition, so the card and op_wait can name the cause. */
+  failureReason?: string;
 }
 
 export interface TurnCommitEnvelope {

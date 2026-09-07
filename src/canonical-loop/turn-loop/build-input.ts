@@ -97,6 +97,10 @@ export async function buildTurnInput(
   // Classifier + kill switch (LAX_STEP_EFFORT=off) live in step-effort.ts.
   // MUST run BEFORE the digest append below: the classifier keys off the
   // TRAILING tool_result batch, and an ephemeral trailing user row hides it.
+  // Order is asserted by build-input.test.ts ("classifies a mechanical
+  // continuation BEFORE the digest append hides the batch"): appending first
+  // makes `start === messages.length` in step-effort.ts and every mechanical
+  // continuation silently classifies "standard".
   if (classifyStepEffort(input) === "mechanical") input.stepEffortHint = "mechanical";
 
   // Ephemeral situational-awareness digest — goal/constraint re-anchoring +

@@ -187,6 +187,36 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     }
   });
 
+  // F4 — the classify/append ORDER is load-bearing and was untested through
+  // the real builder: classifyStepEffort walks back over the TRAILING
+  // tool_result batch (step-effort.ts), so a trailing user row makes
+  // `start === messages.length` and every mechanical continuation classifies
+  // "standard" instead — silently raising reasoning effort on exactly the
+  // steps this hint exists to cheapen. The step-effort unit tests build the
+  // input by hand and never see the digest append, so they cannot catch it.
+  //
+  // Mutation check: move the classifyStepEffort call in build-input.ts below
+  // the digest append — this test must go red.
+  it("classifies a mechanical continuation BEFORE the digest append hides the batch", async () => {
+    appendOpMessage({
+      messageId: "am-mech", opId, turnIdx: 1, seqInTurn: 0,
+      role: "assistant", content: { text: "", toolCalls: [{ id: "tc-1", name: "read", arguments: "{}" }] },
+      createdAt: "2026-06-06T10:01:00.000Z",
+    });
+    appendOpMessage({
+      messageId: "tr-mech", opId, turnIdx: 1, seqInTurn: 1,
+      role: "tool_result", content: { toolCallId: "tc-1", result: "file body", status: "ok" },
+      createdAt: "2026-06-06T10:01:01.000Z",
+    });
+
+    const input = await buildTurnInput(makeOp("interactive"), 2, null);
+    // The digest DID fire on this lane (that is the whole point — the trailing
+    // user row exists), and the hint survived it.
+    const last = input.messages[input.messages.length - 1];
+    expect((last.content as { text: string }).text).toContain("[SITUATIONAL CONTEXT");
+    expect(input.stepEffortHint).toBe("mechanical");
+  });
+
   // F2 — a redirect turn. The `[REDIRECT]` row is appended by the ADAPTER,
   // below everything buildTurnInput produced (including the digest), so the
   // marked prefix has to account for it. Before the fix the wire tail was

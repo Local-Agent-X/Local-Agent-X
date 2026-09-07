@@ -31,6 +31,25 @@ export async function registerAdapterForChat(
         // subscription token is resolvable; auto-falls back to the CLI proxy
         // otherwise. Sub-agents/builds omit this and stay on the CLI loop.
         preferDirectHttp: true,
+        // Cache the conversation prefix, not just system+tools.
+        //
+        // Without this the breakpoint sits at the end of the system blocks and
+        // never advances, so every turn re-sends the whole growing message tail
+        // as uncached input at full rate. Measured on a real 160-turn chat op:
+        // cacheRead pinned at 88,104 for all 160 turns, cacheCreate zero after
+        // turn 0, and 3.5M tokens of tail re-sent at 10x the cache-read price.
+        //
+        // Safe here because the prefix BELOW the breakpoint is byte-stable
+        // within an op — the same measurement proves it, since a volatile
+        // system prompt would have driven cacheRead to zero rather than a
+        // constant. Voice gates this on voiceSplit.fullyStable because its
+        // system prompt has a volatile tail; chat's does not. A breakpoint
+        // under a volatile prefix is the failure mode to avoid: it writes
+        // every turn and never reads.
+        //
+        // Compaction rewriting history costs one miss and one re-write at the
+        // rewrite, which is the normal price of compaction, not a regression.
+        cacheConversation: true,
       }),
     );
     return;

@@ -14,6 +14,7 @@ import { refuteCompletionMiddleware } from "./refute-completion.js";
 import { instructionLedgerMiddleware } from "./instruction-ledger.js";
 import { instructionAuditMiddleware } from "./instruction-audit.js";
 import { thrashGuardMiddleware } from "./thrash-guard.js";
+import { artifactRequestMiddleware } from "./artifact-request.js";
 
 // CLASS LOCK for the model-behavior guards. Each of these is a safety/quality
 // guard that catches a distinct LLM failure mode (looping, fabricated actions,
@@ -36,6 +37,7 @@ const REQUIRED_GUARDS = [
   instructionLedgerMiddleware,
   instructionAuditMiddleware,
   thrashGuardMiddleware,
+  artifactRequestMiddleware,
 ];
 
 describe("default middleware stack completeness", () => {
@@ -109,6 +111,7 @@ const EXPECTED_ORDER = [
   "refute-completion",
   "open-steps",
   "budget-ladder",
+  "artifact-request",
   "assertion-repeat",
   "browser-handoff",
   "self-check",

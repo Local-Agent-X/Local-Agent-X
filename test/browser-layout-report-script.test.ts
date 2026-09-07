@@ -4,30 +4,28 @@
  *
  * Proven here, which a mocked backend cannot show:
  *   1. it measures — an element wider than the viewport is found and named;
- *   2. every early return / catch in its walks is accounted for: each one
- *      either increments a counter that feeds a completeness flag, or is
- *      lossless for every count (the "silent skip" tests below);
+ *   2. the counted early returns / catches in its walks that the "silent skip"
+ *      blocks below enumerate each move a counter that feeds a flag;
  *   3. a capped ELEMENT scan also flags the CSS walk, because shadow-root and
  *      iframe sheet discovery lives inside the element loop;
- *   4. the known gaps are stated on every report, clean ones included;
- *   5. it does not mutate the page, to the extent a snapshot diff can show.
- *
- * ON (5), precisely: a mutation to any state the snapshot COVERS fails by
- * outcome, whether or not anyone anticipated it. The snapshot's coverage is
- * enumerated in observableState(); what it cannot cover is listed under
- * "WHAT THIS STILL CANNOT SEE". Each listed escape from the previous review
- * is either closed and verified by mutation below, or named there with the
- * reason it stays open. This is not a proof that the script is read-only in
- * a real browser — the real defense for that is that the script is a fixed
- * constant reviewed as read-only — it is the strongest available proof under
- * happy-dom, with its edges drawn.
+ *   4. the known gaps are stated on a clean report;
+ *   5. the compact JSON survives page-ops' evaluate truncation with its flags
+ *      intact (the real evaluateScript, not a mock);
+ *   6. it does not mutate the state that observableState() enumerates, and
+ *      the ESCAPES table shows that harness going red for the listed escapes.
  *
  * happy-dom does no layout, so rects come from a per-element `data-rect`
  * attribute (same approach as browser-extract-stable-ids.test.ts).
  * Lives under test/ because the root tsconfig compiles src/ without the DOM lib.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT } from "../src/browser/layout-report.js";
+import type { Page } from "playwright";
+import {
+  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_RULE_DEPTH,
+  LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
+} from "../src/browser/layout-report.js";
+import { evaluateScript } from "../src/browser/page-ops.js";
+import { MAX_TEXT_LENGTH } from "../src/browser/launcher.js";
 import { scanEvaluateScript } from "../src/browser/guards.js";
 import { evaluateMutationReason } from "../src/tools/browser-tools/page.js";
 
@@ -36,6 +34,7 @@ const VIEWPORT = 390;
 interface LayoutReport {
   matchingMediaQueries: string[];
   matchingMediaQueriesTotal: number;
+  matchingMediaQueriesListed: number;
   unreadableStyleSheets: number;
   unreadableRules: number;
   unloadedImports: number;
@@ -53,16 +52,31 @@ interface LayoutReport {
   documentScroll: { scrollWidth: number; clientWidth: number; horizontalOverflowPx: number };
   overflowingElements: { selector: string; overflowRightPx: number; backgroundColor: string }[];
   overflowingElementsTotal: number;
+  overflowingElementsListed: number;
   fixedAndStickyElements: { selector: string; position: string }[];
   fixedAndStickyTotal: number;
+  fixedAndStickyListed: number;
   backgrounds: { html: string; body: string; canvas: string };
   viewport: { clientWidth: number };
   elementsScanned: number;
   scanTruncated: boolean;
   hiddenElementsSkipped: number;
+  zeroSizeElementsSkipped: number;
   listCap: number;
+  listsTrimmedForSize: boolean;
   knownGaps: string[];
 }
+
+/** Flags and totals a reader needs before trusting any count. A serialization
+ *  that lost one of these is the F1 failure. */
+const FLAG_KEYS = [
+  "listsTrimmedForSize", "overflowingElementsTotal", "overflowingElementsListed", "fixedAndStickyTotal",
+  "fixedAndStickyListed", "matchingMediaQueriesTotal", "matchingMediaQueriesListed", "unreadableStyleSheets",
+  "unreadableRules", "unloadedImports", "unevaluableMediaConditions", "cssRulesTruncated", "cssDepthTruncated",
+  "cssWalkIncomplete", "elementsScanned", "scanTruncated", "hiddenElementsSkipped", "zeroSizeElementsSkipped",
+  "openShadowRoots", "iframes", "sameOriginIframes", "elementScanIncomplete", "knownGaps",
+] as const;
+const LIST_KEYS = ["overflowingElements", "fixedAndStickyElements", "matchingMediaQueries"] as const;
 
 function box(el: Element): DOMRect {
   const raw = (el as HTMLElement).dataset?.rect;
@@ -70,8 +84,13 @@ function box(el: Element): DOMRect {
   return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height } as DOMRect;
 }
 
+/** The script returns a compact JSON STRING (so page-ops does not pretty-print
+ *  it); the tests parse it. */
+function runRaw(script: string): string {
+  return new Function(`return ${script}`)() as string;
+}
 function runScript(script: string): LayoutReport {
-  return new Function(`return ${script}`)() as LayoutReport;
+  return JSON.parse(runRaw(script)) as LayoutReport;
 }
 const run = (): LayoutReport => runScript(LAYOUT_REPORT_SCRIPT);
 
@@ -121,7 +140,7 @@ describe("layout_report script measures", () => {
     expect(report.overflowingElements[0].backgroundColor).toContain("221");
   });
 
-  it("reports zero overflow, with every flag clear, for a page that fits", () => {
+  it("reports zero overflow, with the flags clear, for a page that fits", () => {
     document.body.innerHTML = `<p data-rect="0,0,390,20">Fits exactly</p>`;
     Object.defineProperty(document.documentElement, "scrollWidth", { value: VIEWPORT, configurable: true });
 
@@ -133,6 +152,7 @@ describe("layout_report script measures", () => {
     expect(report.cssWalkIncomplete).toBeNull();
     expect(report.elementScanIncomplete).toBeNull();
     expect(report.scanTruncated).toBe(false);
+    expect(report.listsTrimmedForSize).toBe(false);
   });
 
   it("reports the geometry of fixed and sticky furniture", () => {
@@ -147,12 +167,39 @@ describe("layout_report script measures", () => {
     expect(report.fixedAndStickyElements.map((e) => e.position)).toEqual(["sticky", "fixed"]);
     expect(report.fixedAndStickyElements[1].selector).toBe("nav.site-nav");
   });
+
+  it("lists a 1px and a sub-pixel overflow — there is no tolerance beyond 2-decimal rounding", () => {
+    document.body.innerHTML =
+      `<div id="one" data-rect="0,0,391,20">one px</div>` +
+      `<div id="frac" data-rect="0,20,390.4,20">fraction</div>` +
+      `<div id="dust" data-rect="0,40,390.004,20">rounds to zero</div>`;
+
+    const report = run();
+
+    expect(report.overflowingElements.map((e) => [e.selector, e.overflowRightPx])).toEqual([["div#one", 1], ["div#frac", 0.4]]);
+    expect(report.overflowingElementsTotal).toBe(2);
+  });
+
+  it("counts, and does not list, an element whose rect is zero-size", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">shown</p>`;
+    const baseline = run().zeroSizeElementsSkipped;
+
+    document.body.innerHTML = `<span id="anchor" data-rect="1000,0,0,0"></span><p data-rect="0,0,390,20">shown</p>`;
+    const report = run();
+
+    expect(report.zeroSizeElementsSkipped).toBe(baseline + 1);
+    expect(report.overflowingElementsTotal).toBe(0);
+  });
+
+  it("elementsScanned is the number of elements in the document, not the cap", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">a</p><p data-rect="0,20,390,20">b</p>`;
+
+    expect(run().elementsScanned).toBe(document.querySelectorAll("*").length);
+  });
 });
 
-/** Z4: caveats with no runtime detector are on EVERY report, never gated on
- *  some other flag having tripped. */
 describe("known gaps are stated unconditionally", () => {
-  it("lists @container and closed shadow roots on a clean report whose every flag is clear", () => {
+  it("lists @container and closed shadow roots on a clean report", () => {
     document.body.innerHTML = `<p data-rect="0,0,390,20">plain</p>`;
 
     const report = run();
@@ -161,14 +208,80 @@ describe("known gaps are stated unconditionally", () => {
     expect(report.elementScanIncomplete).toBeNull();
     expect(report.knownGaps).toEqual([...LAYOUT_REPORT_KNOWN_GAPS]);
     expect(report.knownGaps.some((g) => /@container/.test(g))).toBe(true);
-    expect(report.knownGaps.some((g) => /closed shadow roots cannot be detected/i.test(g))).toBe(true);
-    expect(report.knownGaps.some((g) => /open shadow roots and inside iframe documents are never measured/i.test(g))).toBe(true);
+    expect(report.knownGaps.some((g) => /closed shadow roots are not detectable/i.test(g))).toBe(true);
+    expect(report.knownGaps.some((g) => /open shadow roots and inside iframe documents are not measured/i.test(g))).toBe(true);
   });
 });
 
-/** Z3: every silent skip counts. One test per early return / catch that can
- *  lose a rule or a sheet; the LOSSLESS ones are argued in the script. */
-describe("every silent skip in the CSS walk is counted", () => {
+/**
+ * F1 — the output must survive page-ops.evaluateScript, which pretty-prints
+ * non-string results and hard-truncates at MAX_TEXT_LENGTH. Run through the
+ * REAL evaluateScript against a fake Page whose evaluate() is happy-dom eval.
+ */
+describe("layout_report output survives the evaluate path", () => {
+  const page = { evaluate: async (expression: string) => (0, eval)(expression) } as unknown as Page;
+  const overflowRows = (n: number, textLen = 5): string =>
+    Array.from({ length: n }, (_, i) =>
+      `<div class="promo-strip-row-${i} banner-full-bleed" data-rect="0,${i * 20},${500 + i},20">${"x".repeat(textLen)}</div>`).join("");
+
+  it("compact JSON, flags before lists, under the evaluate cap at 200 rows through the real evaluateScript", async () => {
+    expect(LAYOUT_REPORT_MAX_CHARS).toBeLessThan(MAX_TEXT_LENGTH);
+    document.body.innerHTML = overflowRows(200, 60);
+
+    const text = await evaluateScript(page, LAYOUT_REPORT_SCRIPT);
+
+    expect(text).not.toContain("[Truncated at");
+    expect(text.length).toBeLessThan(MAX_TEXT_LENGTH);
+    expect(text.length).toBeLessThanOrEqual(LAYOUT_REPORT_MAX_CHARS);
+    expect(text).not.toContain("\n");
+    const report = JSON.parse(text) as LayoutReport;
+    for (const key of FLAG_KEYS) expect(report).toHaveProperty(key);
+    expect(report.overflowingElementsTotal).toBe(200);
+    expect(report.overflowingElementsListed).toBe(report.overflowingElements.length);
+    expect(report.overflowingElements.length).toBeLessThanOrEqual(LAYOUT_REPORT_LIST_CAP);
+  });
+
+  it("orders scalars and flags before knownGaps and the lists", () => {
+    document.body.innerHTML = overflowRows(3);
+    const keys = Object.keys(JSON.parse(runRaw(LAYOUT_REPORT_SCRIPT)) as object);
+    const firstList = Math.min(...LIST_KEYS.map((k) => keys.indexOf(k)));
+
+    expect(firstList).toBeGreaterThan(-1);
+    for (const key of FLAG_KEYS) expect(keys.indexOf(key)).toBeLessThan(firstList);
+    expect(keys.indexOf("knownGaps")).toBe(firstList - 1);
+  });
+
+  it("trims list rows from the tail, in order, to fit the budget, and says so", () => {
+    // 20 long-labelled rows exceed the budget; the trim drops rows (not flags)
+    // and records the retained count. Totals stay at the measured value.
+    document.body.innerHTML = overflowRows(200, 200) + `<nav data-rect="0,0,390,56" style="position: fixed">Home</nav>`;
+
+    const text = runRaw(LAYOUT_REPORT_SCRIPT);
+    const report = JSON.parse(text) as LayoutReport;
+
+    expect(text.length).toBeLessThanOrEqual(LAYOUT_REPORT_MAX_CHARS);
+    expect(report.listsTrimmedForSize).toBe(true);
+    expect(report.overflowingElementsTotal).toBe(200);
+    expect(report.overflowingElementsListed).toBeLessThan(LAYOUT_REPORT_LIST_CAP);
+    expect(report.overflowingElementsListed).toBe(report.overflowingElements.length);
+    // The worst offenders are kept: the tail (smallest overflow) is what went.
+    expect(report.overflowingElements[0].overflowRightPx).toBe(500 + 199 - VIEWPORT);
+    // Overflowing rows go before fixed/sticky rows.
+    expect(report.fixedAndStickyListed).toBe(1);
+    expect(report.fixedAndStickyElements).toHaveLength(1);
+  });
+
+  it("does not trim a report that fits", () => {
+    document.body.innerHTML = overflowRows(20);
+    const report = JSON.parse(runRaw(LAYOUT_REPORT_SCRIPT)) as LayoutReport;
+
+    expect(report.listsTrimmedForSize).toBe(false);
+    expect(report.overflowingElementsListed).toBe(LAYOUT_REPORT_LIST_CAP);
+  });
+});
+
+/** One test per counted early return / catch that can lose a rule or a sheet. */
+describe("counted silent skips in the CSS walk", () => {
   it("finds an @media nested inside @layer > @supports, and inside another @media", () => {
     const report = withSheets(
       [group([group([media("(max-width: 767px)", [media("(orientation: portrait)")])])]), group([media("print")])],
@@ -178,6 +291,17 @@ describe("every silent skip in the CSS walk is counted", () => {
     expect(report.matchingMediaQueries.sort()).toEqual(["(max-width: 767px)", "(orientation: portrait)"]);
     expect(report.matchingMediaQueries).not.toContain("print");
     expect(report.cssWalkIncomplete).toBeNull();
+  });
+
+  it("counts a repeated matching condition once, in the list and in the total", () => {
+    const report = withSheets(
+      [group([media("(max-width: 767px)"), media("(max-width: 767px)")]), group([media("(max-width: 767px)")])],
+      ["(max-width: 767px)"],
+    );
+
+    expect(report.matchingMediaQueries).toEqual(["(max-width: 767px)"]);
+    expect(report.matchingMediaQueriesTotal).toBe(1);
+    expect(report.matchingMediaQueriesListed).toBe(1);
   });
 
   it("a sheet whose cssRules THROWS (cross-origin) is counted", () => {
@@ -222,6 +346,15 @@ describe("every silent skip in the CSS walk is counted", () => {
     expect(report.cssWalkIncomplete).toBeNull();
   });
 
+  it("an @import's own media condition (`@import url() (max-width: 600px)`) is evaluated, loaded or not", () => {
+    const loaded = { href: "https://same.example.com/a.css", styleSheet: { cssRules: [] }, media: { mediaText: "(max-width: 600px)" } };
+    const pending = { href: "https://cdn.example.com/b.css", styleSheet: null, media: { mediaText: "(orientation: portrait)" } };
+    const report = withSheets([group([loaded, pending])], ["(max-width: 600px)", "(orientation: portrait)"]);
+
+    expect(report.matchingMediaQueries.sort()).toEqual(["(max-width: 600px)", "(orientation: portrait)"]);
+    expect(report.unloadedImports).toBe(1);
+  });
+
   it("an @import whose loaded sheet throws on cssRules is counted as an unreadable rule", () => {
     const crossOrigin = { href: "https://cdn.example.com/theme.css", styleSheet: { get cssRules(): unknown { throw new Error("SecurityError"); } } };
     const report = withSheets([group([crossOrigin])], []);
@@ -245,15 +378,28 @@ describe("every silent skip in the CSS walk is counted", () => {
     expect(report.cssWalkIncomplete).toMatch(/1 media condition\(s\) could not be evaluated/);
   });
 
-  it("bounds the walk by DEPTH and says so", () => {
-    let deep: unknown = media("(max-width: 1px)");
-    for (let i = 0; i < 40; i++) deep = group([deep]);
-    const report = withSheets([deep], ["(max-width: 1px)"]);
+  it("bounds the walk by DEPTH and says so — only when a non-empty list sat below the cap", () => {
+    const nest = (leaf: unknown, depth: number): unknown => {
+      let node = leaf;
+      for (let i = 0; i < depth; i++) node = group([node]);
+      return node;
+    };
+    // The outermost group is the sheet (depth 0 holds its children), so a
+    // leaf under RULE_DEPTH+2 groups is the first one past the cap.
+    const past = LAYOUT_REPORT_RULE_DEPTH + 2;
+    expect(withSheets([nest(media("(max-width: 1px)"), past - 1)], ["(max-width: 1px)"]).cssDepthTruncated).toBe(false);
+    const skipped = withSheets([nest(media("(max-width: 1px)"), past)], ["(max-width: 1px)"]);
+    expect(skipped.matchingMediaQueries).toEqual([]);
+    expect(skipped.cssDepthTruncated).toBe(true);
+    expect(skipped.cssWalkIncomplete).toMatch(/nesting-depth cap/);
+    expect(skipped.cssWalkIncomplete).toMatch(/rules below those points were skipped/);
 
-    expect(report.matchingMediaQueries).toEqual([]);
-    expect(report.cssDepthTruncated).toBe(true);
-    expect(report.cssWalkIncomplete).toMatch(/nesting-depth cap/);
-    expect(report.cssWalkIncomplete).toMatch(/every rule below those points was skipped/);
+    // A rule AT the cap whose child list is EMPTY (a plain style rule in
+    // Chromium carries an empty cssRules) skipped nothing, so nothing is
+    // flagged; the pre-fix walk recursed into the empty list and tripped.
+    const empty = withSheets([nest(group([]), past - 1)], []);
+    expect(empty.cssDepthTruncated).toBe(false);
+    expect(empty.cssWalkIncomplete).toBeNull();
   });
 
   it("bounds the walk by rule COUNT and says so — and only when rules were actually skipped", () => {
@@ -276,7 +422,7 @@ describe("every silent skip in the CSS walk is counted", () => {
   });
 });
 
-describe("every silent skip in the element scan is counted", () => {
+describe("counted silent skips in the element scan", () => {
   it("counts display:none / visibility:hidden elements it did not measure", () => {
     // Baseline first: happy-dom's <head> is itself display:none, so the count
     // is asserted relative to a page with no hidden content of its own.
@@ -305,11 +451,41 @@ describe("every silent skip in the element scan is counted", () => {
     expect(report.openShadowRoots).toBe(1);
     expect(report.iframes).toBe(1);
     // The wide element inside the shadow root is NOT in the count — that is
-    // the honest limit, and the flag is what makes the zero safe to read.
+    // the limit, and the flag is what makes the zero safe to read.
     expect(report.overflowingElementsTotal).toBe(0);
     expect(report.elementScanIncomplete).toMatch(/does not pierce shadow DOM/);
     expect(report.elementScanIncomplete).toMatch(/1 iframe\(s\)/);
     expect(report.cssWalkIncomplete).toMatch(/iframe\(s\) are on the page/);
+  });
+
+  it("distinguishes same-origin iframes (contentDocument readable) from cross-origin ones (it throws)", () => {
+    document.body.innerHTML =
+      `<iframe id="same" data-rect="0,0,390,100"></iframe><iframe id="cross" data-rect="0,100,390,100"></iframe>`;
+    Object.defineProperty(document.getElementById("cross"), "contentDocument", {
+      get() { throw new DOMException("Blocked a frame with origin", "SecurityError"); }, configurable: true,
+    });
+
+    const report = run();
+
+    expect(report.iframes).toBe(2);
+    expect(report.sameOriginIframes).toBe(1);
+    expect(report.elementScanIncomplete).toMatch(/2 iframe\(s\) \(1 same-origin\)/);
+  });
+
+  it("walks the sheets of at most listCap open shadow roots and says how many it did not", () => {
+    const hosts = LAYOUT_REPORT_LIST_CAP + 1;
+    document.body.innerHTML = Array.from({ length: hosts }, (_, i) => `<div id="h${i}" data-rect="0,${i * 20},390,20"></div>`).join("");
+    for (let i = 0; i < hosts; i++) {
+      const root = (document.getElementById(`h${i}`) as HTMLElement).attachShadow({ mode: "open" });
+      Object.defineProperty(root, "adoptedStyleSheets", { value: [group([media(`(min-width: ${i}px)`)])], configurable: true });
+    }
+
+    const report = withSheets([], Array.from({ length: hosts }, (_, i) => `(min-width: ${i}px)`));
+
+    expect(report.openShadowRoots).toBe(hosts);
+    expect(report.shadowRootStyleSheets).toBe(LAYOUT_REPORT_LIST_CAP);
+    expect(report.matchingMediaQueriesTotal).toBe(LAYOUT_REPORT_LIST_CAP);
+    expect(report.cssWalkIncomplete).toMatch(new RegExp(`only ${LAYOUT_REPORT_LIST_CAP} of ${hosts} open shadow root\\(s\\) had their stylesheets walked`));
   });
 
   it("walks an open shadow root's adopted stylesheets", () => {
@@ -322,11 +498,30 @@ describe("every silent skip in the element scan is counted", () => {
     expect(report.shadowRootStyleSheets).toBe(1);
   });
 
+  it("scan cap fires only when a node was skipped: exactly SCAN nodes is clean, SCAN+1 is flagged", () => {
+    const fill = (count: number) => Array.from({ length: count }, () => `<i data-rect="0,0,1,1"></i>`).join("");
+    document.body.innerHTML = "";
+    const chrome = document.querySelectorAll("*").length;
+
+    document.body.innerHTML = fill(LAYOUT_REPORT_SCAN_CAP - chrome);
+    expect(document.querySelectorAll("*").length).toBe(LAYOUT_REPORT_SCAN_CAP);
+    const exact = run();
+    expect(exact.scanTruncated).toBe(false);
+    expect(exact.elementsScanned).toBe(LAYOUT_REPORT_SCAN_CAP);
+    expect(exact.elementScanIncomplete).toBeNull();
+
+    document.body.innerHTML = fill(LAYOUT_REPORT_SCAN_CAP - chrome + 1);
+    const over = run();
+    expect(over.scanTruncated).toBe(true);
+    expect(over.elementsScanned).toBe(LAYOUT_REPORT_SCAN_CAP);
+    expect(over.elementScanIncomplete).toMatch(/stopped after 4000 nodes/);
+  });
+
   /**
-   * Z2 — the reproduction from the final review. Shadow-root sheet discovery
-   * happens inside the element loop over the first SCAN nodes, so a host past
-   * the cap is never seen and its responsive CSS is never walked. The old code
-   * flagged only the ELEMENT scan here and printed a bare zero for @media.
+   * Shadow-root sheet discovery happens inside the element loop over the
+   * first SCAN nodes, so a host past the cap is never seen and its responsive
+   * CSS is never walked. The old code flagged only the ELEMENT scan here and
+   * printed a bare zero for @media.
    */
   it("a capped element scan flags the CSS walk too: a late shadow host's matching @media is unseen AND said so", () => {
     const filler = Array.from({ length: LAYOUT_REPORT_SCAN_CAP + 50 }, () => `<i data-rect="0,0,1,1"></i>`).join("");
@@ -358,72 +553,114 @@ describe("every silent skip in the element scan is counted", () => {
 });
 
 /**
- * Z5 — the no-mutation proof.
+ * The no-mutation harness.
  *
- * observableState() covers: the serialized light DOM; the innerHTML and
- * adopted-sheet count of every OPEN shadow root; every form field's live
- * value; per-sheet rule counts for document.styleSheets AND
- * document.adoptedStyleSheets (so a replaced adoptedStyleSheets array, a
- * replaceSync, an insertRule/deleteRule all show); window.name; title;
- * designMode; location; history length; focus; scroll; and EVERY own property
- * of window by getOwnPropertyNames + getOwnPropertySymbols — enumerable or
- * not — so Object.defineProperty(window, x, {enumerable:false}) is seen.
+ * THE SNAPSHOT COVERS (observableState):
+ *   - the serialized light DOM (outerHTML);
+ *   - the innerHTML and adopted-sheet count of each OPEN shadow root reachable
+ *     from the light DOM;
+ *   - the live value of each input/textarea/select;
+ *   - for document.styleSheets and document.adoptedStyleSheets: per-sheet
+ *     `disabled`, rule count, and per-rule cssText / selectorText /
+ *     media.mediaText (so replaceSync, insertRule/deleteRule, a rewritten
+ *     condition or selector, and a disabled sheet show);
+ *   - title, designMode, window.name, location, history length, focus, scroll;
+ *   - localStorage length and keys, document.cookie;
+ *   - the own properties of window by getOwnPropertyNames plus
+ *     getOwnPropertySymbols, enumerable or not: primitives by VALUE, functions
+ *     and objects by IDENTITY (a per-run identity table, so a replaced
+ *     window.matchMedia / getComputedStyle / setTimeout is a different id);
+ *   - by identity, the prototype methods the script calls that do not live on
+ *     window: Element.prototype.getBoundingClientRect / querySelectorAll /
+ *     getAttribute, Document.prototype.querySelectorAll, Array.prototype.slice /
+ *     filter / indexOf.
  *
- * The INTERCEPT list is a supplement for effects the snapshot cannot diff:
- * scheduling (setTimeout / setInterval / setImmediate / queueMicrotask /
- * requestAnimationFrame / postMessage — a deferred mutation is caught at the
- * point it is SCHEDULED, and the harness also flushes one macrotask plus the
- * microtask queue before the after-snapshot, so a setTimeout(fn, 0) or
- * queueMicrotask(fn) mutation is caught twice), customElements.define (the
- * registry cannot be enumerated), attachShadow (a new CLOSED root would be
- * invisible to the snapshot), and APIs happy-dom does not model.
+ * THE INTERCEPT LIST (proveReadOnly) supplements it for effects with nothing
+ * to diff: scheduling (setTimeout / setInterval / setImmediate / queueMicrotask
+ * / requestAnimationFrame / postMessage — caught when SCHEDULED; the harness
+ * also flushes the microtask queue and one macrotask before the after-snapshot),
+ * customElements.define, attachShadow, history and scroll calls, sheet and
+ * style-declaration writes, observer registration. A method the script
+ * REPLACES rather than calls is reported too: restore() checks the wrapper is
+ * still in place.
  *
- * WHAT THIS STILL CANNOT SEE, honestly:
- *   - A deferral through a channel that is neither intercepted nor flushed:
- *     an event listener the page fires later, a MutationObserver /
- *     IntersectionObserver callback (observe() IS intercepted, so registering
- *     one trips the test; a pre-existing observer's callback does not), an
- *     Image/fetch load handler. The script registers no handlers, but that is
- *     a review fact, not something this test proves.
- *   - Mutations whose only effect is unimplemented in happy-dom and leave
- *     nothing to diff: el.animate(), CSS.registerProperty() — intercepted by
- *     name where happy-dom defines the API at all (the intercept no-ops on an
- *     absent host), which is a denylist and only as good as the list.
- *   - Mutation of a CLOSED shadow root the page created before the script
- *     ran: the script has no handle to one, but nor does the snapshot.
- *   - Anything observable only in a real browser: layout/paint side effects,
+ * NOT COVERED:
+ *   - a deferral through a channel neither intercepted nor flushed: a listener
+ *     the page fires later, a pre-existing MutationObserver /
+ *     IntersectionObserver callback, an Image/fetch load handler;
+ *   - mutations happy-dom does not model and that leave nothing to diff:
+ *     el.animate(), CSS.registerProperty() — intercepted by name where the
+ *     host defines the API, a denylist;
+ *   - a CLOSED shadow root the page created before the script ran;
+ *   - ShadowRoot.styleSheets: happy-dom's ShadowRoot has none, so the script's
+ *     addSheets(root.styleSheets) branch runs on an absent list here and its
+ *     behaviour on a populated one is not exercised by this file;
+ *   - the prototype chain beyond the methods named above, and any getter with
+ *     side effects;
+ *   - a window accessor that returns a fresh object on each read (happy-dom's
+ *     window.CSS): it has no identity to pin, so a replacement is not seen;
+ *   - anything observable only in a real browser: layout/paint side effects,
  *     scroll anchoring, cross-frame effects.
  */
-function observableState(): string {
+function observableState(ids: Map<unknown, number>): string {
+  const identity = (v: unknown): string => {
+    if (!ids.has(v)) ids.set(v, ids.size);
+    return `#${ids.get(v)}`;
+  };
+  const describeValue = (v: unknown): string => {
+    const t = typeof v;
+    return t === "string" || t === "number" || t === "boolean" || t === "undefined" || v === null ? `=${String(v)}` : `:${t}${identity(v)}`;
+  };
   const win = window as unknown as Record<PropertyKey, unknown>;
   const describeProp = (k: PropertyKey): string => {
     let v: unknown;
-    try { v = win[k]; } catch { return `${String(k)}:throws`; }
-    const t = typeof v;
-    return t === "string" || t === "number" || t === "boolean" ? `${String(k)}=${String(v)}` : `${String(k)}:${t}`;
+    let again: unknown;
+    try { v = win[k]; again = win[k]; } catch { return `${String(k)}:throws`; }
+    // An accessor that mints a new object per read (happy-dom's window.CSS)
+    // has no identity to pin; it is recorded as such and listed as not covered.
+    if (v !== again && (typeof v === "object" || typeof v === "function")) return `${String(k)}:${typeof v}:fresh`;
+    return `${String(k)}${describeValue(v)}`;
   };
   const globals = [
     ...Object.getOwnPropertyNames(win).sort().map(describeProp),
     ...Object.getOwnPropertySymbols(win).map((s) => describeProp(s)).sort(),
   ];
+  const prototypes = [
+    ["Element.getBoundingClientRect", Element.prototype.getBoundingClientRect],
+    ["Element.querySelectorAll", Element.prototype.querySelectorAll],
+    ["Element.getAttribute", Element.prototype.getAttribute],
+    ["Document.querySelectorAll", Document.prototype.querySelectorAll],
+    ["Array.slice", Array.prototype.slice],
+    ["Array.filter", Array.prototype.filter],
+    ["Array.indexOf", Array.prototype.indexOf],
+  ].map(([name, fn]) => `${String(name)}${describeValue(fn)}`);
   const fields = [...document.querySelectorAll("input, textarea, select")]
     .map((el) => `${el.id}=${(el as HTMLInputElement).value}`);
-  const ruleCount = (sheet: CSSStyleSheet): number | string => {
-    try { return sheet.cssRules.length; } catch { return "unreadable"; }
+  const describeSheet = (sheet: CSSStyleSheet): string => {
+    let rules: string;
+    try {
+      rules = [...sheet.cssRules].map((r) => {
+        const styleRule = r as Partial<CSSStyleRule>;
+        const mediaRule = r as Partial<CSSMediaRule>;
+        return `${r.cssText}|sel=${styleRule.selectorText ?? ""}|media=${mediaRule.media?.mediaText ?? ""}`;
+      }).join("\n");
+    } catch { rules = "unreadable"; }
+    return `disabled=${sheet.disabled};${rules}`;
   };
-  const sheetRuleCounts = [...document.styleSheets].map(ruleCount);
-  const adoptedRuleCounts = [...document.adoptedStyleSheets].map(ruleCount);
+  const sheets = [...document.styleSheets].map(describeSheet);
+  const adoptedSheets = [...document.adoptedStyleSheets].map(describeSheet);
   const shadowRoots = [...document.querySelectorAll("*")].flatMap((el) => {
     const root = el.shadowRoot;
     return root ? [`${el.tagName}#${el.id}:${root.innerHTML}|adopted=${root.adoptedStyleSheets.length}`] : [];
   });
   const active = document.activeElement as HTMLElement | null;
+  const storage = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i));
   return JSON.stringify({
     html: document.documentElement.outerHTML,
     shadowRoots,
     fields,
-    sheetRuleCounts,
-    adoptedRuleCounts,
+    sheets,
+    adoptedSheets,
     title: document.title,
     designMode: document.designMode,
     windowName: window.name,
@@ -431,22 +668,26 @@ function observableState(): string {
     historyLength: history.length,
     active: active ? `${active.tagName}#${active.id}` : null,
     scroll: [window.scrollX, window.scrollY, document.documentElement.scrollTop, document.documentElement.scrollLeft],
+    storage,
+    cookie: document.cookie,
     globals,
+    prototypes,
   });
 }
 
-/** Runs `script` under the full harness. Returns whether the snapshot changed
- *  and which intercepted APIs were called; the caller asserts. */
+/** Runs `script` under the harness. Returns whether the snapshot changed and
+ *  which intercepted APIs were called or replaced; the caller asserts. */
 async function proveReadOnly(script: string): Promise<{ changed: boolean; called: string[] }> {
-  // Materialize every sheet BEFORE the intercepts go in: happy-dom builds a
-  // <style> element's CSSStyleSheet on the first styleSheets read, via one
-  // replaceSync call of its own (verified: exactly one call on first read,
-  // none on later reads, and the object is stable and keeps mutations). Read
-  // now so that call is the harness's, not attributed to the script.
+  // Materialize each sheet BEFORE the snapshot and the intercepts go in:
+  // happy-dom builds a <style> element's CSSStyleSheet on the first
+  // styleSheets read, via one replaceSync call of its own. Read now so that
+  // call is the harness's, not attributed to the script.
   void document.styleSheets.length;
-  // (happy-dom's ShadowRoot has no styleSheets at all; the script treats an
-  // absent list as an empty one.)
   for (const el of document.querySelectorAll("*")) void el.shadowRoot?.styleSheets?.length;
+  // The before-snapshot is taken BEFORE the intercepts install so the identity
+  // of an intercepted method compares to itself once restore() has run.
+  const ids = new Map<unknown, number>();
+  const before = observableState(ids);
   const called: string[] = [];
   const restore: (() => void)[] = [];
   const intercept = (host: object | undefined, name: string) => {
@@ -454,11 +695,15 @@ async function proveReadOnly(script: string): Promise<{ changed: boolean; called
     const target = host as Record<string, unknown>;
     if (typeof target[name] !== "function") return;
     const original = target[name];
-    target[name] = function (...args: unknown[]) {
+    const wrapper = function (this: unknown, ...args: unknown[]) {
       called.push(name);
       return (original as (...a: unknown[]) => unknown).apply(this, args);
     };
-    restore.push(() => { target[name] = original; });
+    target[name] = wrapper;
+    restore.push(() => {
+      if (target[name] !== wrapper) called.push(`replaced:${name}`);
+      target[name] = original;
+    });
   };
   for (const name of ["scrollIntoView", "focus", "blur", "click", "setAttribute", "removeAttribute", "remove", "insertBefore", "appendChild", "requestFullscreen", "animate", "attachShadow"]) {
     intercept(Element.prototype, name);
@@ -476,7 +721,6 @@ async function proveReadOnly(script: string): Promise<{ changed: boolean; called
   intercept((globalThis as { IntersectionObserver?: { prototype: object } }).IntersectionObserver?.prototype, "observe");
   intercept((globalThis as { MutationObserver?: { prototype: object } }).MutationObserver?.prototype, "observe");
 
-  const before = observableState();
   try {
     runScript(script);
   } finally {
@@ -486,7 +730,7 @@ async function proveReadOnly(script: string): Promise<{ changed: boolean; called
   // real macrotask (setTimeout 0 / setImmediate land here).
   for (let i = 0; i < 5; i++) await Promise.resolve();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  return { changed: observableState() !== before, called };
+  return { changed: observableState(ids) !== before, called };
 }
 
 function mutationPage(): void {
@@ -504,6 +748,9 @@ function mutationPage(): void {
 }
 
 describe("layout_report script does not mutate the page", () => {
+  const ORIGINAL_MATCH_MEDIA = window.matchMedia;
+  const ORIGINAL_GET_COMPUTED_STYLE = window.getComputedStyle;
+
   it("leaves the observable state byte-identical and calls no intercepted API", async () => {
     mutationPage();
 
@@ -513,9 +760,9 @@ describe("layout_report script does not mutate the page", () => {
     expect(outcome.changed).toBe(false);
   });
 
-  /** Guards the guard: every escape the last review found, plus the ones the
-   *  round before it found, must now go red. Each runs the REAL script with
-   *  the mutation prepended, so a harness that went blind would pass them. */
+  /** Guards the guard: each listed escape runs the REAL script with the
+   *  mutation prepended and must go red. A harness that went blind passes
+   *  the test above and fails these. */
   const escape = (mutation: string) => `(() => { ${mutation}; return ${LAYOUT_REPORT_SCRIPT}; })()`;
   const ESCAPES: [string, string, () => void][] = [
     ["window.name assignment (the original denylist escape)", `window.name = "pwned"`, () => { window.name = ""; }],
@@ -534,6 +781,17 @@ describe("layout_report script does not mutate the page", () => {
     ["form field value", `document.getElementById("typed").value = "typed-into"`, () => {}],
     ["designMode", `document.designMode = "on"`, () => { document.designMode = "off"; }],
     ["attachShadow (a closed root would be invisible afterwards)", `document.getElementById("promo-strip").attachShadow({ mode: "closed" })`, () => {}],
+    // F2: the previous harness recorded only `typeof` for non-primitives and
+    // nothing at all for the state below, so each of these stayed green.
+    ["window.matchMedia replaced", `window.matchMedia = () => ({ matches: false, media: "" })`, () => { window.matchMedia = ORIGINAL_MATCH_MEDIA; }],
+    ["window.getComputedStyle replaced", `window.getComputedStyle = window.getComputedStyle.bind(window)`, () => { window.getComputedStyle = ORIGINAL_GET_COMPUTED_STYLE; }],
+    ["Element.prototype.getBoundingClientRect replaced", `Element.prototype.getBoundingClientRect = function () { return { x: 0, y: 0, width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 }; }`, () => {}],
+    ["an intercepted prototype method replaced, not called", `Element.prototype.setAttribute = function () {}`, () => {}],
+    ["sheet.disabled", `document.styleSheets[0].disabled = true`, () => {}],
+    ["rule.media.mediaText rewritten", `document.styleSheets[0].cssRules[0].media.mediaText = "print"`, () => {}],
+    ["rule.selectorText shadowed", `Object.defineProperty(document.styleSheets[0].cssRules[1], "selectorText", { value: ".hacked", configurable: true })`, () => {}],
+    ["localStorage.setItem", `localStorage.setItem("lr-escape", "1")`, () => { localStorage.clear(); }],
+    ["document.cookie", `document.cookie = "lr_escape=1"`, () => { document.cookie = "lr_escape=; expires=Thu, 01 Jan 1970 00:00:00 GMT"; }],
   ];
 
   it.each(ESCAPES)("goes red for: %s", async (_label, mutation, cleanup) => {

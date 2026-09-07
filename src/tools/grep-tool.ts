@@ -19,10 +19,8 @@ import {
   contextLines,
   fallbackSearch,
   modeOf,
-  noMatchesResult,
   resultMeta,
   searchRoot,
-  shouldLiteralRetry,
   truncate,
 } from "./grep-context.js";
 
@@ -161,12 +159,6 @@ async function rgMatchCount(
   exec: ExecFileLike = defaultExec,
 ): Promise<number | null> {
   const { error, stdout } = await execRgOnce(exec, buildRgCountArgs(args), signal);
-  return parseRgCounts(stdout, error);
-}
-
-/** Sum of rg's `-c` per-file counts (`path:N`, parsed on the LAST colon so a
- *  Windows drive letter can't confuse it). Null on any anomaly. */
-function parseRgCounts(stdout: string, error: ExecError | null): number | null {
   const out = (stdout || "").trim();
   const code = error?.code;
   // Exit 2 WITH output = counts for the readable subtree (mirrors the
@@ -179,27 +171,6 @@ function parseRgCounts(stdout: string, error: ExecError | null): number | null {
     total += n;
   }
   return total;
-}
-
-/**
- * ONE extra rg pass, on the zero-match path only, and only for the narrow set
- * of patterns where a literal hit is real evidence of an accidental regex (see
- * shouldLiteralRetry): the same `-c` count over the SAME filters, root and
- * abort signal, but `--fixed-strings` so the pattern is treated as literal text
- * (precedent: structural-search-tool.ts). A non-zero result means the model's
- * regex was wrong, not that the text is absent. Never runs when the first pass
- * matched, never on an anchored or subset-safe pattern, and never loops.
- */
-async function rgLiteralCount(
-  args: Record<string, unknown>,
-  signal?: AbortSignal,
-  exec: ExecFileLike = defaultExec,
-): Promise<number | null> {
-  if (!shouldLiteralRetry(String(args.pattern))) return null;
-  const { error, stdout } = await execRgOnce(exec, ["--fixed-strings", ...buildRgCountArgs(args)], signal);
-  if (signal?.aborted) return null;
-  const total = parseRgCounts(stdout, error);
-  return total != null && total > 0 ? total : null;
 }
 
 /** Exported for tests — the tool routes searches through this. */
@@ -240,18 +211,7 @@ export async function runRg(
   // cleanup-verify.ts) and EMPTY_RESULT_RE (errors/classifier.ts, feeds
   // the dead-end detector). Verbatim keeps the sentinel parseable, and a
   // headerless result already parses as status "ok", which is correct.
-  // Zero matches is only evidence of absence if the pattern was valid, so a
-  // metacharacter-bearing pattern gets one literal re-run before we let the
-  // model conclude the text isn't there.
-  if (!out) {
-    const literal = await rgLiteralCount(args, signal, exec);
-    // Re-check AFTER the retry: the abort check above covers only the first
-    // pass, so a search cancelled mid-retry used to return the bare sentinel —
-    // which isEmptyGrepResult reads as proof of absence. A cancelled search
-    // must never vouch for a cleanup.
-    if (signal?.aborted) return err("Aborted", baseMeta(args));
-    return noMatchesResult(literal);
-  }
+  if (!out) return ok("No matches found.");
   const allLines = out.split("\n");
   const body = truncate(allLines, limit);
   const warning = truncated

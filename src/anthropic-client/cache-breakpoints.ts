@@ -47,7 +47,15 @@ export function markConversationCache(
   ephemeralTail = 0,
 ): AnthropicMessage[] {
   if (!enabled || messages.length === 0) return messages;
-  const idx = messages.length - 1 - Math.max(0, Math.min(ephemeralTail, messages.length - 1));
+  // A tail that would swallow the whole conversation leaves NOTHING stable to
+  // mark. The old clamp pinned the marker at index 0 — i.e. onto the very row
+  // the caller just declared volatile, which is the one thing this file
+  // forbids: the block is re-written at 1.25x every turn and never read back.
+  // Emitting no marker at all is strictly better (the system tier still
+  // carries its own breakpoint), and the message tier starts paying again on
+  // the first turn there is a stable row beneath the tail.
+  if (ephemeralTail >= messages.length) return messages;
+  const idx = messages.length - 1 - Math.max(0, ephemeralTail);
   const target = messages[idx];
   let content: AnthropicContent[];
   if (typeof target.content === "string") {

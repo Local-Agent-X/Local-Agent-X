@@ -443,7 +443,11 @@ describe("streamViaAPI — conversation-history breakpoint (cacheConversation)",
     ]);
   });
 
-  it("clamps a tail that would swallow the whole conversation", async () => {
+  // A tail that covers the whole conversation leaves no stable row to mark.
+  // The old clamp put the breakpoint at index 0 — ON the row the caller just
+  // declared volatile — which is precisely the write-every-turn / read-never
+  // failure this field exists to prevent. No marker is the honest answer.
+  it("emits NO marker when the declared tail would swallow the whole conversation", async () => {
     const cap = stubFetchCapturing(done);
     await collect({
       cacheConversation: true,
@@ -451,9 +455,8 @@ describe("streamViaAPI — conversation-history breakpoint (cacheConversation)",
       messages: [{ role: "user", content: "only" }],
     });
     const msgs = cap.calls[0].body.messages as Array<{ content: unknown }>;
-    expect(msgs[0].content).toEqual([
-      { type: "text", text: "only", cache_control: { type: "ephemeral" } },
-    ]);
+    expect(msgs[0].content).toBe("only");
+    expect(JSON.stringify(msgs)).not.toContain("cache_control");
   });
 });
 

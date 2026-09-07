@@ -3,39 +3,39 @@
  * DATA about the current page as a compact JSON string: document overflow,
  * elements whose rect extends past the viewport, currently matching @media
  * conditions, html/body/canvas background colours, fixed/sticky geometry,
- * and per-count completeness flags.
+ * and per-count completeness flags. It states no verdict and its consumer
+ * adds none (see the revert 55cea840 for why). Where a flag is set, the
+ * count it covers is a floor.
  *
- * This module states no verdict and its consumer adds none (see the revert
- * 55cea840 for why). Where a flag is set, the count it covers is a floor.
+ * The page owns each global the script reads (navigator.userAgent,
+ * innerWidth, getComputedStyle, clientWidth, ...), so the script is written
+ * around two invariants rather than per-field trust:
  *
- * What the named tests prove (test/browser-layout-report-script.test.ts unless
- * noted; nothing beyond these is claimed here):
- *  - "finds the element that overflows the viewport and names it" — measuring;
- *    the rest of the "measures" and "selectors and rows" blocks — left-edge
- *    overflow, zero-size on either axis, backgrounds, innerWidth, fixed/sticky
- *    ordering by y, nth-of-type, class selectors, the row's position.
- *  - "compact JSON, flags before lists, under the evaluate cap at 200 rows
- *    through the real evaluateScript" — the output survives page-ops'
- *    8,000-char evaluate truncation with its flags intact (F1).
- *  - "a 20,000-char url, 200 overflowing, 30 fixed and quote-heavy labels
- *    still fit the budget with every flag present" — url and userAgent are
- *    bounded before sizing, so the trim has only list rows left to spend.
- *  - "trims the LONGEST list first, so the primary list is the last to empty"
- *    — the trim policy.
- *  - "*Listed is min(total, listCap) with no trim" — the listed counts.
- *  - "scan cap fires only when a node was skipped" — scanTruncated semantics.
- *  - the "silent skip" describe blocks — one test per counted early return /
- *    catch in the CSS walk and the element scan listed in those blocks,
- *    including a disabled sheet and a sheet-level media condition.
- *  - "leaves the observable state byte-identical and calls no intercepted
- *    API" plus the ESCAPES table — no mutation of the state that harness
- *    enumerates; the harness header lists what it does and does not cover.
- *  - layout-report.test.ts (handler): the constant clears scanEvaluateScript
- *    and the handler refuses if it ever stops clearing it.
+ * INVARIANT 1 — the return value is valid JSON of at most
+ * LAYOUT_REPORT_MAX_CHARS chars, for any page. Page strings go through one
+ * `str` helper that cuts by SERIALIZED length; numbers go through `num`,
+ * which reports a non-finite value as null plus its name in
+ * nonNumericFields; the lists are trimmed by row; and if the document is
+ * still over the cap after that, the fallback document
+ * {reportTooLarge, bytesBeforeFallback, url, knownGaps} is returned instead.
+ * A page global that THROWS yields {reportFailed, error, knownGaps}.
+ * Proof: test/browser-layout-report-adversarial.test.ts ("invariant 1" — a
+ * seeded fuzz through the real evaluateScript, plus the reduced-cap batch
+ * that reaches the fallback and the throwing-global test).
  *
- * `knownGaps` is on the report unconditionally (test "lists @container and
- * closed shadow roots on a clean report").
+ * INVARIANT 2 — the untrusted-content wrapper (sanitize.ts
+ * wrapExternalContent) cannot change the parsed document: inside string
+ * values, `<`, `>`, `[` and every code point from U+007F up are serialized
+ * as \uXXXX, so nothing the wrapper strips or normalizes occurs in the
+ * bytes. Proof: the "invariant 2" block of the same file (a page whose
+ * labels carry the wrapper's own trigger strings round-trips through the
+ * handler and the wrapper to a deep-equal document; the escape class is
+ * checked against the sanitizer's regexes code point by code point).
+ *
+ * Per-field rules, each named by the test that proves it, live on the
+ * constants below and in the header of layout-report-css.ts.
  */
+import { LAYOUT_REPORT_CSS_WALK } from "./layout-report-css.js";
 
 /** Max elements listed per section, and max nodes walked. */
 export const LAYOUT_REPORT_LIST_CAP = 20;
@@ -45,27 +45,36 @@ export const LAYOUT_REPORT_SCAN_CAP = 4000;
 export const LAYOUT_REPORT_RULE_CAP = 20000;
 export const LAYOUT_REPORT_RULE_DEPTH = 12;
 /** Per-element label budget: nodes visited and characters collected BEFORE the
- *  60-char slice. Bounds the work, not just the result. */
+ *  cut to LAYOUT_REPORT_LABEL_CHARS. Bounds the work, not just the result. */
 export const LAYOUT_REPORT_LABEL_NODES = 40;
-export const LAYOUT_REPORT_LABEL_CHARS = 200;
+export const LAYOUT_REPORT_LABEL_COLLECT = 200;
 /** Size budget for the compact JSON the script returns. page-ops.evaluateScript
  *  hard-truncates evaluate output at MAX_TEXT_LENGTH (8,000, launcher.ts) and a
- *  truncated document is not JSON, so the script trims its LISTS from the tail
- *  — one row at a time from whichever list is currently longest (ties: media
- *  queries, then fixed/sticky, then overflowing) — until the whole document
- *  fits, and records that in `listsTrimmedForSize`. */
+ *  truncated document is not JSON. Test: "compact JSON, flags before lists,
+ *  under the evaluate cap at 200 rows through the real evaluateScript". */
 export const LAYOUT_REPORT_MAX_CHARS = 7_800;
-/** Page-supplied strings are sliced BEFORE sizing, so the trim above only ever
- *  has list rows to spend: url and userAgent (flagged urlTruncated /
- *  userAgentTruncated), each selector (an id or class name is unbounded), each
- *  media condition text, and each label (60, above). The remaining strings are
- *  computed keywords/colours and the fixed-text notes. Test: "a 20,000-char
- *  url, 200 overflowing, 30 fixed and quote-heavy labels still fit the budget
- *  with every flag present". */
+/** Caps on page-supplied strings, in SERIALIZED chars (the length of the
+ *  string's JSON literal, quotes and escapes included — a backslash costs 2,
+ *  a control char or a non-ASCII char 6). Tests: "url ... at exactly the cap
+ *  and one over", "userAgent ... at exactly the cap and one over", "a selector
+ *  built from a huge id is cut ... and marked", "a media condition longer than
+ *  LAYOUT_REPORT_MEDIA_CHARS is evaluated whole and listed cut", "a row's
+ *  label is the element's text cut to the label cap". */
 export const LAYOUT_REPORT_URL_MAX = 2_048;
 export const LAYOUT_REPORT_USER_AGENT_MAX = 512;
 export const LAYOUT_REPORT_SELECTOR_CHARS = 120;
 export const LAYOUT_REPORT_MEDIA_CHARS = 200;
+export const LAYOUT_REPORT_LABEL_CHARS = 62;
+/** Computed keywords and colours (position, zIndex, backgroundColor) — page
+ *  strings too, since the page can replace getComputedStyle. */
+export const LAYOUT_REPORT_VALUE_CHARS = 80;
+/** The url in the reportTooLarge fallback document. */
+export const LAYOUT_REPORT_FALLBACK_URL_CHARS = 256;
+/** Escaped as \uXXXX inside serialized string values (Invariant 2): the
+ *  angle brackets and the `[` of the wrapper's own markers, and everything
+ *  from U+007F up (its control, invisible and homoglyph classes are all
+ *  there). JSON.stringify already escapes U+0000–U+001F. */
+export const LAYOUT_REPORT_JSON_ESCAPE = /[<>\[\u007f-\uffff]/g;
 
 /** Stated on the report unconditionally. These are limits of the probe, not
  *  findings about the page, and none of them has a runtime detector. */
@@ -76,29 +85,77 @@ export const LAYOUT_REPORT_KNOWN_GAPS: readonly string[] = Object.freeze([
   "Stylesheets inside iframe documents are not walked; only the document's own sheets, its adoptedStyleSheets and the sheets of the open shadow roots that were visited are.",
 ]);
 
-export const LAYOUT_REPORT_SCRIPT = `(() => {
+/** The script, with the size budget as a parameter so a test can lower it
+ *  far enough to reach the fallback document (at the shipped budget the
+ *  capped scalars sum to less than it). */
+export function buildLayoutReportScript(maxChars = LAYOUT_REPORT_MAX_CHARS): string {
+  return `(() => {
   const CAP = ${LAYOUT_REPORT_LIST_CAP};
   const SCAN = ${LAYOUT_REPORT_SCAN_CAP};
-  const RULE_CAP = ${LAYOUT_REPORT_RULE_CAP};
-  const RULE_DEPTH = ${LAYOUT_REPORT_RULE_DEPTH};
   const LABEL_NODES = ${LAYOUT_REPORT_LABEL_NODES};
-  const LABEL_CHARS = ${LAYOUT_REPORT_LABEL_CHARS};
-  const MAX_CHARS = ${LAYOUT_REPORT_MAX_CHARS};
+  const LABEL_COLLECT = ${LAYOUT_REPORT_LABEL_COLLECT};
+  const MAX_CHARS = ${maxChars};
   const URL_MAX = ${LAYOUT_REPORT_URL_MAX};
   const UA_MAX = ${LAYOUT_REPORT_USER_AGENT_MAX};
   const SELECTOR_CHARS = ${LAYOUT_REPORT_SELECTOR_CHARS};
-  const MEDIA_CHARS = ${LAYOUT_REPORT_MEDIA_CHARS};
+  const LABEL_CHARS = ${LAYOUT_REPORT_LABEL_CHARS};
+  const VALUE_CHARS = ${LAYOUT_REPORT_VALUE_CHARS};
+  const FALLBACK_URL_CHARS = ${LAYOUT_REPORT_FALLBACK_URL_CHARS};
   const KNOWN_GAPS = ${JSON.stringify(LAYOUT_REPORT_KNOWN_GAPS)};
+  const ESCAPE_RE = /${LAYOUT_REPORT_JSON_ESCAPE.source}/g;
+  const hex4 = (ch) => "\\\\u" + ("000" + ch.charCodeAt(0).toString(16)).slice(-4);
+  // A JSON string literal with the Invariant 2 class escaped.
+  const jsonStr = (s) => JSON.stringify(s).replace(ESCAPE_RE, hex4);
+  // The whole document, serialized in one place: keys and string values via
+  // jsonStr; numbers, booleans and null via JSON.stringify (NaN/Infinity and
+  // undefined serialize as null).
+  const toJson = (v) => {
+    if (typeof v === "string") return jsonStr(v);
+    if (Array.isArray(v)) return "[" + v.map(toJson).join(",") + "]";
+    if (v && typeof v === "object") return "{" + Object.keys(v).map((k) => jsonStr(k) + ":" + toJson(v[k])).join(",") + "}";
+    const j = JSON.stringify(v);
+    return j === undefined ? "null" : j;
+  };
+  // Every page string enters the document through here: cut so that its
+  // serialized literal is at most cap chars (binary search on the cut point).
+  const str = (v, cap) => {
+    let s = "";
+    try { s = String(v); } catch (e) { s = ""; }
+    if (jsonStr(s).length <= cap) return { value: s, truncated: false };
+    let lo = 0;
+    let hi = Math.min(s.length, cap);
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (jsonStr(s.slice(0, mid)).length <= cap) lo = mid; else hi = mid - 1;
+    }
+    return { value: s.slice(0, lo), truncated: true };
+  };
+  const val = (v) => str(v, VALUE_CHARS).value;
+  // Every page number enters through here: a non-finite value (a string the
+  // page put on innerWidth, NaN, a missing property) is null and named.
+  const nonNumericFields = [];
+  const num = (v, name) => {
+    let n = NaN;
+    try { n = Number(v); } catch (e) { n = NaN; }
+    if (Number.isFinite(n)) return n;
+    nonNumericFields.push(name);
+    return null;
+  };
+  const failed = (e) => {
+    let message = "";
+    try { message = String(e && e.message ? e.message : e); } catch (x) { message = ""; }
+    return toJson({ reportFailed: true, error: str(message, FALLBACK_URL_CHARS).value, knownGaps: KNOWN_GAPS });
+  };
+  try {
   const de = document.documentElement;
   const body = document.body;
-  const vw = de.clientWidth;
-  const vh = de.clientHeight;
+  const vw = Number(de.clientWidth);
   const round = (n) => Math.round(n * 100) / 100;
   // tag#id, else tag + up to 2 classes + :nth-of-type among same-tag
-  // siblings; sliced to SELECTOR_CHARS because an id or class is page text.
+  // siblings; cut to SELECTOR_CHARS because an id or class is page text.
   const describe = (el) => {
-    const tag = el.tagName.toLowerCase();
-    if (el.id) return (tag + "#" + el.id).slice(0, SELECTOR_CHARS);
+    const tag = String(el.tagName).toLowerCase();
+    if (el.id) return str(tag + "#" + el.id, SELECTOR_CHARS);
     let out = tag;
     const raw = typeof el.className === "string" ? el.className : "";
     const cls = raw.trim().split(/\\s+/).filter(Boolean).slice(0, 2);
@@ -108,26 +165,37 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
       const sibs = Array.prototype.filter.call(parent.children, (c) => c.tagName === el.tagName);
       if (sibs.length > 1) out += ":nth-of-type(" + (sibs.indexOf(el) + 1) + ")";
     }
-    return out.slice(0, SELECTOR_CHARS);
+    return str(out, SELECTOR_CHARS);
   };
-  // Bounded label: at most LABEL_NODES nodes visited, LABEL_CHARS collected,
-  // then sliced to 60. The early return inside collect() shortens the display
-  // label of one element and touches no count or flag.
+  // Bounded label: at most LABEL_NODES nodes visited, LABEL_COLLECT chars
+  // collected, then cut to LABEL_CHARS. The early return inside collect()
+  // shortens the display label of one element and touches no count or flag.
   const label = (el) => {
     let out = "";
     let budget = LABEL_NODES;
     const collect = (node) => {
       for (let c = node.firstChild; c; c = c.nextSibling) {
-        if (budget <= 0 || out.length >= LABEL_CHARS) return;
+        if (budget <= 0 || out.length >= LABEL_COLLECT) return;
         budget--;
         if (c.nodeType === 3) out += c.nodeValue || "";
         else if (c.nodeType === 1) collect(c);
       }
     };
     collect(el);
-    return out.replace(/\\s+/g, " ").trim().slice(0, 60);
+    return str(out.replace(/\\s+/g, " ").trim(), LABEL_CHARS).value;
   };
   const rectOf = (r) => ({ x: round(r.x), y: round(r.y), width: round(r.width), height: round(r.height), right: round(r.right), bottom: round(r.bottom) });
+  const row = (el, cs, r) => {
+    const sel = describe(el);
+    const out = { selector: sel.value };
+    if (sel.truncated) out.selectorTruncated = true;
+    out.text = label(el);
+    out.position = val(cs.position);
+    out.rect = rectOf(r);
+    out.backgroundColor = val(cs.backgroundColor);
+    out.zIndex = val(cs.zIndex);
+    return out;
+  };
   // COUNTED: scanTruncated is true only when at least one node past SCAN
   // existed and was skipped; it feeds BOTH reason fields (see below).
   const allNodes = document.querySelectorAll("*");
@@ -170,126 +238,29 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
       const overRight = Math.max(0, round(r.right - vw));
       const overLeft = Math.max(0, round(-r.left));
       if (overRight > 0 || overLeft > 0) {
-        overflowing.push({
-          selector: describe(el), text: label(el), rect: rectOf(r),
-          overflowRightPx: overRight, overflowLeftPx: overLeft,
-          position: cs.position, zIndex: cs.zIndex, backgroundColor: cs.backgroundColor,
-        });
+        const o = row(el, cs, r);
+        o.overflowRightPx = overRight;
+        o.overflowLeftPx = overLeft;
+        overflowing.push(o);
       }
     } else {
       zeroSizeSkipped++;
     }
-    if (cs.position === "fixed" || cs.position === "sticky") {
-      stuck.push({
-        selector: describe(el), text: label(el), position: cs.position, rect: rectOf(r),
-        backgroundColor: cs.backgroundColor, zIndex: cs.zIndex,
-      });
-    }
+    if (cs.position === "fixed" || cs.position === "sticky") stuck.push(row(el, cs, r));
   }
   overflowing.sort((a, b) => (b.overflowRightPx + b.overflowLeftPx) - (a.overflowRightPx + a.overflowLeftPx));
   stuck.sort((a, b) => a.rect.y - b.rect.y);
-  // @media rules sit inside @layer / @supports / another @media in any modern
-  // build, and an @import pulls a whole sheet in behind one more hop. Recurse
-  // into grouping rules, bounded by RULE_CAP total rules and RULE_DEPTH nesting.
-  const matching = [];
-  let unreadableSheets = 0;
-  let unreadableRules = 0;
-  let unloadedImports = 0;
-  let unevaluableConditions = 0;
-  let ruleBudget = RULE_CAP;
-  let ruleCapTruncations = 0;
-  let depthTruncations = 0;
-  const noteCondition = (rule) => {
-    // No mediaText means this is not a conditional rule; a repeat condition
-    // is already in the list. Evaluated in full, listed sliced to MEDIA_CHARS.
-    const cond = rule && rule.media && rule.media.mediaText ? rule.media.mediaText : null;
-    if (!cond) return;
-    const listed = cond.slice(0, MEDIA_CHARS);
-    if (matching.indexOf(listed) !== -1) return;
-    // COUNTED: a condition matchMedia refuses to evaluate.
-    try { if (matchMedia(cond).matches) matching.push(listed); } catch (e) { unevaluableConditions++; }
-  };
-  const walkRules = (rules, depth) => {
-    // COUNTED: the caller only recurses into a NON-EMPTY child list, so a
-    // trip here means rules below this point were skipped.
-    if (depth > RULE_DEPTH) { depthTruncations++; return; }
-    for (const rule of Array.prototype.slice.call(rules)) {
-      // COUNTED: rules remaining after the budget ran out are skipped.
-      if (ruleBudget <= 0) { ruleCapTruncations++; return; }
-      ruleBudget--;
-      // COUNTED: a null entry in a rule list is a rule that was not read.
-      if (!rule) { unreadableRules++; continue; }
-      noteCondition(rule);
-      // COUNTED: an @import whose sheet has not loaded (blocked, pending or
-      // failed) contributes no rules and would otherwise vanish silently.
-      if (typeof rule.href === "string" && rule.styleSheet == null) { unloadedImports++; continue; }
-      // Grouping rules expose children as cssRules; @import exposes a sheet
-      // whose rules are cross-origin-guarded like a top-level one.
-      let child = null;
-      // COUNTED: a rule whose children threw on read (cross-origin @import).
-      try { child = rule.cssRules || (rule.styleSheet ? rule.styleSheet.cssRules : null); }
-      catch (e) { unreadableRules++; continue; }
-      // An empty child list (a plain style rule; in Chromium those carry an
-      // empty cssRules too) has nothing to walk and must not trip the depth cap.
-      if (child && child.length > 0) walkRules(child, depth + 1);
-    }
-  };
-  // document.styleSheets is NOT the whole set: constructed sheets adopted by
-  // the document are not in it, and each shadow root carries its own lists.
-  const sheets = [];
-  const addSheets = (list) => {
-    // An absent list means the host has no such collection (e.g. no
-    // adoptedStyleSheets support), so there are no sheets in it to walk.
-    if (!list) return 0;
-    let added = 0;
-    for (const s of Array.prototype.slice.call(list)) {
-      // COUNTED: a null entry is a sheet that was not read.
-      if (s) { sheets.push(s); added++; } else { unreadableSheets++; }
-    }
-    return added;
-  };
-  addSheets(document.styleSheets);
-  const adoptedSheets = addSheets(document.adoptedStyleSheets);
-  let shadowSheets = 0;
-  for (const root of shadowRootsSeen) {
-    shadowSheets += addSheets(root.styleSheets);
-    shadowSheets += addSheets(root.adoptedStyleSheets);
-  }
-  let disabledSheets = 0;
-  let sheetsSkippedByMedia = 0;
-  let sheetsWalked = 0;
-  for (const sheet of sheets) {
-    // COUNTED: a disabled sheet applies nothing to the page, so its @media
-    // conditions are not "currently matching" whatever matchMedia says.
-    if (sheet.disabled === true) { disabledSheets++; continue; }
-    // COUNTED: a sheet-level condition (<link media="print">, @import ... print)
-    // that does not match gates every rule inside it; the rules' own
-    // conditions are only evaluated when the sheet's one holds. A sheet
-    // condition matchMedia refuses is counted with the rule-level ones and the
-    // sheet is walked as if unconditional.
-    const sheetMedia = sheet.media && sheet.media.mediaText ? sheet.media.mediaText : null;
-    if (sheetMedia) {
-      let sheetMatches = true;
-      try { sheetMatches = matchMedia(sheetMedia).matches; } catch (e) { unevaluableConditions++; }
-      if (!sheetMatches) { sheetsSkippedByMedia++; continue; }
-    }
-    let rules = null;
-    // COUNTED: cssRules threw (cross-origin) or came back null/undefined.
-    try { rules = sheet.cssRules; } catch (e) { unreadableSheets++; continue; }
-    if (rules == null) { unreadableSheets++; continue; }
-    sheetsWalked++;
-    walkRules(rules, 0);
-  }
+  const css = (${LAYOUT_REPORT_CSS_WALK})(shadowRootsSeen, ${LAYOUT_REPORT_RULE_CAP}, ${LAYOUT_REPORT_RULE_DEPTH}, ${LAYOUT_REPORT_MEDIA_CHARS}, str);
   // ONE reason field per count, naming each reason it is incomplete. Two
   // booleans a reader has to remember to OR together is how a cap once went
   // unreported: the reader forgot to include it.
   const cssNotes = [];
-  if (unreadableSheets > 0) cssNotes.push(unreadableSheets + " stylesheet(s) could not be read (cross-origin CSS, e.g. served from a CDN, or a sheet whose rules were unavailable)");
-  if (unreadableRules > 0) cssNotes.push(unreadableRules + " rule(s) could not be read or had unreadable children");
-  if (unloadedImports > 0) cssNotes.push(unloadedImports + " @import rule(s) had no loaded stylesheet (blocked, still loading, or failed), so their rules were not walked");
-  if (unevaluableConditions > 0) cssNotes.push(unevaluableConditions + " media condition(s) could not be evaluated by matchMedia");
-  if (ruleCapTruncations > 0) cssNotes.push("the CSS rule walk hit its cap of " + RULE_CAP + " rules, so rules after that point were skipped");
-  if (depthTruncations > 0) cssNotes.push("the CSS rule walk hit its nesting-depth cap of " + RULE_DEPTH + " at " + depthTruncations + " point(s) (deeply nested @layer/@supports/@media, native CSS nesting, or a long @import chain), so the rules below those points were skipped");
+  if (css.unreadableSheets > 0) cssNotes.push(css.unreadableSheets + " stylesheet(s) could not be read (cross-origin CSS, e.g. served from a CDN, or a sheet whose rules were unavailable)");
+  if (css.unreadableRules > 0) cssNotes.push(css.unreadableRules + " rule(s) could not be read or had unreadable children");
+  if (css.unloadedImports > 0) cssNotes.push(css.unloadedImports + " @import rule(s) had no loaded stylesheet (blocked, still loading, or failed), so their rules were not walked");
+  if (css.unevaluableConditions > 0) cssNotes.push(css.unevaluableConditions + " media condition(s) could not be evaluated by matchMedia");
+  if (css.ruleCapTruncations > 0) cssNotes.push("the CSS rule walk hit its cap of ${LAYOUT_REPORT_RULE_CAP} rules, so rules after that point were skipped");
+  if (css.depthTruncations > 0) cssNotes.push("the CSS rule walk hit its nesting-depth cap of ${LAYOUT_REPORT_RULE_DEPTH} at " + css.depthTruncations + " point(s) (deeply nested @layer/@supports/@media, native CSS nesting, or a long @import chain), so the rules below those points were skipped");
   if (shadowRootCount > shadowRootsSeen.length) cssNotes.push("only " + shadowRootsSeen.length + " of " + shadowRootCount + " open shadow root(s) had their stylesheets walked");
   // Sheet discovery for shadow roots and iframes happens INSIDE the element
   // loop over nodes[0..SCAN), so a capped element scan is ALSO a capped CSS
@@ -300,34 +271,31 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
   if (scanCapped) elementNotes.push("the element scan stopped after " + nodes.length + " nodes (its cap), so nothing later in the document was measured");
   if (shadowRootCount > 0) elementNotes.push(shadowRootCount + " open shadow root(s) were found and the elements inside them were NOT measured (the walk does not pierce shadow DOM)");
   if (iframeCount > 0) elementNotes.push(iframeCount + " iframe(s) (" + sameOriginIframeCount + " same-origin) were found and their documents were NOT measured");
-  const htmlBg = getComputedStyle(de).backgroundColor;
-  const bodyBg = body ? getComputedStyle(body).backgroundColor : null;
+  const htmlBg = val(getComputedStyle(de).backgroundColor);
+  const bodyBg = body ? val(getComputedStyle(body).backgroundColor) : null;
   const clear = (c) => !c || c === "transparent" || c.replace(/ /g, "") === "rgba(0,0,0,0)";
   const canvas = !clear(htmlBg) ? htmlBg : (!clear(bodyBg) ? bodyBg : "rgb(255, 255, 255) (browser default: neither html nor body paints one)");
-  // The two unbounded page scalars are sliced here, before sizing, so a long
-  // url costs the budget at most URL_MAX chars (test: "a 20,000-char url ...
-  // still fit the budget with every flag present").
-  const href = String(location.href);
-  const ua = String(navigator.userAgent);
-  // Key order is load-bearing: scalars, totals and flags first, knownGaps
-  // next, the lists LAST, so a truncated serialization loses list rows before
-  // it loses a flag. The size trim below keeps the document under MAX_CHARS.
+  const href = str(location.href, URL_MAX);
+  const ua = str(navigator.userAgent, UA_MAX);
+  // Key order: scalars, totals and flags first, knownGaps next, the lists
+  // LAST. The size trim below pops list rows until the document fits.
   const report = {
-    url: href.slice(0, URL_MAX),
-    urlTruncated: href.length > URL_MAX,
+    url: href.value,
+    urlTruncated: href.truncated,
     viewport: {
-      clientWidth: vw, clientHeight: vh,
-      innerWidth: innerWidth, innerHeight: innerHeight,
-      devicePixelRatio: devicePixelRatio,
-      userAgent: ua.slice(0, UA_MAX),
-      userAgentTruncated: ua.length > UA_MAX,
-      maxTouchPoints: navigator.maxTouchPoints,
+      clientWidth: num(de.clientWidth, "viewport.clientWidth"), clientHeight: num(de.clientHeight, "viewport.clientHeight"),
+      innerWidth: num(innerWidth, "viewport.innerWidth"), innerHeight: num(innerHeight, "viewport.innerHeight"),
+      devicePixelRatio: num(devicePixelRatio, "viewport.devicePixelRatio"),
+      userAgent: ua.value,
+      userAgentTruncated: ua.truncated,
+      maxTouchPoints: num(navigator.maxTouchPoints, "viewport.maxTouchPoints"),
     },
     documentScroll: {
-      scrollWidth: de.scrollWidth, clientWidth: de.clientWidth,
-      horizontalOverflowPx: de.scrollWidth - de.clientWidth,
-      scrollHeight: de.scrollHeight, clientHeight: de.clientHeight,
+      scrollWidth: num(de.scrollWidth, "documentScroll.scrollWidth"), clientWidth: num(de.clientWidth, "documentScroll.clientWidth"),
+      horizontalOverflowPx: num(de.scrollWidth - de.clientWidth, "documentScroll.horizontalOverflowPx"),
+      scrollHeight: num(de.scrollHeight, "documentScroll.scrollHeight"), clientHeight: num(de.clientHeight, "documentScroll.clientHeight"),
     },
+    nonNumericFields: nonNumericFields,
     backgrounds: { html: htmlBg, body: bodyBg, canvas: canvas },
     listCap: CAP,
     listsTrimmedForSize: false,
@@ -335,19 +303,19 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     overflowingElementsListed: Math.min(overflowing.length, CAP),
     fixedAndStickyTotal: stuck.length,
     fixedAndStickyListed: Math.min(stuck.length, CAP),
-    matchingMediaQueriesTotal: matching.length,
-    matchingMediaQueriesListed: Math.min(matching.length, CAP),
-    unreadableStyleSheets: unreadableSheets,
-    unreadableRules: unreadableRules,
-    unloadedImports: unloadedImports,
-    unevaluableMediaConditions: unevaluableConditions,
-    cssRulesTruncated: ruleCapTruncations > 0,
-    cssDepthTruncated: depthTruncations > 0,
-    styleSheetsWalked: sheetsWalked,
-    disabledSheetsSkipped: disabledSheets,
-    sheetsSkippedByMedia: sheetsSkippedByMedia,
-    adoptedStyleSheets: adoptedSheets,
-    shadowRootStyleSheets: shadowSheets,
+    matchingMediaQueriesTotal: css.matching.length,
+    matchingMediaQueriesListed: Math.min(css.matching.length, CAP),
+    unreadableStyleSheets: css.unreadableSheets,
+    unreadableRules: css.unreadableRules,
+    unloadedImports: css.unloadedImports,
+    unevaluableMediaConditions: css.unevaluableConditions,
+    cssRulesTruncated: css.ruleCapTruncations > 0,
+    cssDepthTruncated: css.depthTruncations > 0,
+    styleSheetsWalked: css.sheetsWalked,
+    disabledSheetsSkipped: css.disabledSheets,
+    sheetsSkippedByMedia: css.sheetsSkippedByMedia,
+    adoptedStyleSheets: css.adoptedSheets,
+    shadowRootStyleSheets: css.shadowSheets,
     cssWalkIncomplete: cssNotes.length ? cssNotes.join("; ") : null,
     elementsScanned: nodes.length,
     scanTruncated: scanCapped,
@@ -360,16 +328,16 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     knownGaps: KNOWN_GAPS,
     overflowingElements: overflowing.slice(0, CAP),
     fixedAndStickyElements: stuck.slice(0, CAP),
-    matchingMediaQueries: matching.slice(0, CAP),
+    matchingMediaQueries: css.listed.slice(0, CAP),
   };
   // COUNTED: rows dropped here show as listsTrimmedForSize plus the *Listed
   // counts falling below min(total, listCap). The totals are untouched. Each
   // pass pops the tail of whichever list is currently LONGEST; on a tie the
-  // earlier entry here goes first, so the overflowing list — the primary one
-  // — is the last to empty.
+  // earlier entry here goes first (test: "the trim tie-break is media, then
+  // fixed, then overflowing").
   const tiePriority = ["matchingMediaQueries", "fixedAndStickyElements", "overflowingElements"];
   const listedKey = { overflowingElements: "overflowingElementsListed", fixedAndStickyElements: "fixedAndStickyListed", matchingMediaQueries: "matchingMediaQueriesListed" };
-  let json = JSON.stringify(report);
+  let json = toJson(report);
   while (json.length > MAX_CHARS) {
     let key = null;
     for (const k of tiePriority) {
@@ -379,7 +347,16 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     report[key].pop();
     report[listedKey[key]] = report[key].length;
     report.listsTrimmedForSize = true;
-    json = JSON.stringify(report);
+    json = toJson(report);
+  }
+  // Invariant 1's last guard: with the lists empty and the document still
+  // over the cap, return the fallback document instead.
+  if (json.length > MAX_CHARS) {
+    json = toJson({ reportTooLarge: true, bytesBeforeFallback: json.length, url: str(href.value, FALLBACK_URL_CHARS).value, knownGaps: KNOWN_GAPS });
   }
   return json;
+  } catch (e) { return failed(e); }
 })()`;
+}
+
+export const LAYOUT_REPORT_SCRIPT = buildLayoutReportScript();

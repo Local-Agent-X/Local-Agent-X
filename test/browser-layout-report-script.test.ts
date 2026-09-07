@@ -5,14 +5,20 @@
  * Proven here, which a mocked backend cannot show:
  *   1. it measures — an element wider than the viewport is found and named;
  *   2. the counted early returns / catches in its walks that the "silent skip"
- *      blocks below enumerate each move a counter that feeds a flag;
+ *      blocks below enumerate each move a counter that feeds a flag,
+ *      including the @import media gate;
  *   3. a capped ELEMENT scan also flags the CSS walk, because shadow-root and
  *      iframe sheet discovery lives inside the element loop;
  *   4. the known gaps are stated on a clean report;
- *   5. the compact JSON survives page-ops' evaluate truncation with its flags
- *      intact (the real evaluateScript, not a mock);
+ *   5. the per-field rules: the string caps are in serialized chars (boundary
+ *      tests at the cap and one over, for plain, backslash and control-char
+ *      input), selectorTruncated, nonNumericFields, media de-duplication on
+ *      the full text, the list trim and its tie order;
  *   6. it does not mutate the state that observableState() enumerates, and
  *      the ESCAPES table shows that harness going red for the listed escapes.
+ * The two invariants (valid JSON under the cap for any page; the wrapper
+ * cannot change the parsed document) are proven by the fuzz and round-trip
+ * tests in browser-layout-report-adversarial.test.ts.
  *
  * happy-dom does no layout, so rects come from a per-element `data-rect`
  * attribute (same approach as browser-extract-stable-ids.test.ts).
@@ -21,7 +27,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Page } from "playwright";
 import {
-  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_MEDIA_CHARS,
+  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LABEL_CHARS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_MEDIA_CHARS,
   LAYOUT_REPORT_RULE_CAP, LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
   LAYOUT_REPORT_SELECTOR_CHARS, LAYOUT_REPORT_URL_MAX, LAYOUT_REPORT_USER_AGENT_MAX,
 } from "../src/browser/layout-report.js";
@@ -55,7 +61,8 @@ interface LayoutReport {
   adoptedStyleSheets: number;
   shadowRootStyleSheets: number;
   documentScroll: { scrollWidth: number; clientWidth: number; horizontalOverflowPx: number };
-  overflowingElements: { selector: string; text: string; overflowRightPx: number; overflowLeftPx: number; position: string; backgroundColor: string }[];
+  nonNumericFields: string[];
+  overflowingElements: { selector: string; selectorTruncated?: true; text: string; overflowRightPx: number; overflowLeftPx: number; position: string; backgroundColor: string }[];
   overflowingElementsTotal: number;
   overflowingElementsListed: number;
   fixedAndStickyElements: { selector: string; position: string; rect: { y: number } }[];
@@ -75,7 +82,7 @@ interface LayoutReport {
 /** Flags and totals a reader needs before trusting any count. A serialization
  *  that lost one of these is the F1 failure. */
 const FLAG_KEYS = [
-  "urlTruncated", "listsTrimmedForSize", "overflowingElementsTotal", "overflowingElementsListed", "fixedAndStickyTotal",
+  "urlTruncated", "nonNumericFields", "listsTrimmedForSize", "overflowingElementsTotal", "overflowingElementsListed", "fixedAndStickyTotal",
   "fixedAndStickyListed", "matchingMediaQueriesTotal", "matchingMediaQueriesListed", "unreadableStyleSheets",
   "unreadableRules", "unloadedImports", "unevaluableMediaConditions", "cssRulesTruncated", "cssDepthTruncated",
   "disabledSheetsSkipped", "sheetsSkippedByMedia",
@@ -321,25 +328,51 @@ describe("layout_report selectors and rows", () => {
     expect(run().fixedAndStickyElements[0].position).toBe("fixed");
   });
 
-  it("a selector built from a huge id is cut to LAYOUT_REPORT_SELECTOR_CHARS", () => {
+  // The caps are in SERIALIZED chars: the length of the value's JSON literal.
+  it("a selector built from a huge id is cut to LAYOUT_REPORT_SELECTOR_CHARS serialized chars and marked selectorTruncated", () => {
     document.body.innerHTML = `<div id="${"i".repeat(5000)}" data-rect="0,0,500,20">x</div>`;
 
     const [row] = run().overflowingElements;
 
-    expect(row.selector.length).toBe(LAYOUT_REPORT_SELECTOR_CHARS);
+    expect(JSON.stringify(row.selector)).toHaveLength(LAYOUT_REPORT_SELECTOR_CHARS);
     expect(row.selector.startsWith("div#iii")).toBe(true);
+    expect(row.selectorTruncated).toBe(true);
   });
 
-  it("a row's label is the element's text cut to 60 chars", () => {
+  it("a selector that was not cut carries no selectorTruncated key", () => {
+    document.body.innerHTML = `<div id="promo" data-rect="0,0,500,20">x</div>`;
+
+    const [row] = run().overflowingElements;
+
+    expect(row.selector).toBe("div#promo");
+    expect("selectorTruncated" in row).toBe(false);
+  });
+
+  it("a row's label is the element's text cut to the label cap (serialized chars)", () => {
     document.body.innerHTML = `<div data-rect="0,0,500,20">${"w".repeat(200)}</div>`;
 
-    expect(run().overflowingElements[0].text).toBe("w".repeat(60));
+    const [row] = run().overflowingElements;
+
+    expect(JSON.stringify(row.text)).toHaveLength(LAYOUT_REPORT_LABEL_CHARS);
+    expect(row.text).toBe("w".repeat(LAYOUT_REPORT_LABEL_CHARS - 2));
+  });
+
+  it("a backslash-heavy label spends two serialized chars per backslash, so the cut lands on fewer raw chars", () => {
+    document.body.innerHTML = `<div data-rect="0,0,500,20">${"\\".repeat(200)}</div>`;
+
+    const [row] = run().overflowingElements;
+
+    expect(JSON.stringify(row.text)).toHaveLength(LAYOUT_REPORT_LABEL_CHARS);
+    expect(row.text).toBe("\\".repeat((LAYOUT_REPORT_LABEL_CHARS - 2) / 2));
   });
 
   it("a huge class list is cut the same way", () => {
     document.body.innerHTML = `<div class="${"c".repeat(5000)} ${"d".repeat(5000)}" data-rect="0,0,500,20">x</div>`;
 
-    expect(run().overflowingElements[0].selector.length).toBe(LAYOUT_REPORT_SELECTOR_CHARS);
+    const [row] = run().overflowingElements;
+
+    expect(JSON.stringify(row.selector)).toHaveLength(LAYOUT_REPORT_SELECTOR_CHARS);
+    expect(row.selectorTruncated).toBe(true);
   });
 });
 
@@ -359,7 +392,7 @@ describe("known gaps are stated unconditionally", () => {
 });
 
 /**
- * F1 — the output must survive page-ops.evaluateScript, which pretty-prints
+ * The output goes through page-ops.evaluateScript, which pretty-prints
  * non-string results and hard-truncates at MAX_TEXT_LENGTH. Run through the
  * REAL evaluateScript against a fake Page whose evaluate() is happy-dom eval.
  */
@@ -473,9 +506,9 @@ describe("layout_report output survives the evaluate path", () => {
     expect(queries.matchingMediaQueries).toHaveLength(LAYOUT_REPORT_LIST_CAP);
   });
 
-  /** H1 — the page controls url, userAgent, ids, classes, labels and media
-   *  text. None of them may spend the budget the lists need, and none may
-   *  push the document past the evaluate cap. */
+  /** The page controls url, userAgent, ids, classes, labels and media text;
+   *  this is one fixed hostile page through the real evaluateScript. The
+   *  randomized version is the fuzz in browser-layout-report-adversarial.test.ts. */
   it("a 20,000-char url, 200 overflowing, 30 fixed and quote-heavy labels still fit the budget with every flag present", async () => {
     const quoteHeavy = '"\\"quoted\\" \\\\ back\\\\slash "'.repeat(6);
     document.body.innerHTML =
@@ -497,16 +530,16 @@ describe("layout_report output survives the evaluate path", () => {
       const report = JSON.parse(text) as LayoutReport;
       for (const key of FLAG_KEYS) expect(report).toHaveProperty(key);
       expect(report.viewport).toHaveProperty("userAgentTruncated");
-      expect(report.url).toHaveLength(LAYOUT_REPORT_URL_MAX);
+      expect(JSON.stringify(report.url)).toHaveLength(LAYOUT_REPORT_URL_MAX);
       expect(report.urlTruncated).toBe(true);
-      expect(report.viewport.userAgent).toHaveLength(LAYOUT_REPORT_USER_AGENT_MAX);
+      expect(JSON.stringify(report.viewport.userAgent)).toHaveLength(LAYOUT_REPORT_USER_AGENT_MAX);
       expect(report.viewport.userAgentTruncated).toBe(true);
       expect(report.overflowingElementsTotal).toBe(200);
       expect(report.fixedAndStickyTotal).toBe(30);
       expect(report.overflowingElementsListed).toBeGreaterThan(0);
       expect(report.fixedAndStickyListed).toBeGreaterThan(0);
-      expect(report.overflowingElements[0].selector).toHaveLength(LAYOUT_REPORT_SELECTOR_CHARS);
-      expect(report.matchingMediaQueries[0]).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
+      expect(JSON.stringify(report.overflowingElements[0].selector)).toHaveLength(LAYOUT_REPORT_SELECTOR_CHARS);
+      expect(JSON.stringify(report.matchingMediaQueries[0])).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
       expect(report.matchingMediaQueriesTotal).toBe(1);
     } finally {
       globalThis.matchMedia = previousMatchMedia;
@@ -523,6 +556,114 @@ describe("layout_report output survives the evaluate path", () => {
     expect(report.urlTruncated).toBe(false);
     expect(report.viewport.userAgent).toBe("Mozilla/5.0 (iPhone)");
     expect(report.viewport.userAgentTruncated).toBe(false);
+  });
+
+  // The cap is on the SERIALIZED literal: a plain-ASCII string of cap-2 raw
+  // chars serializes to exactly cap chars; one more raw char is over.
+  it("url at exactly the cap passes whole and unflagged; one over is cut to the cap and flagged", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+    const exact = "u".repeat(LAYOUT_REPORT_URL_MAX - 2);
+
+    const atCap = withGlobals({ href: exact }, run);
+    expect(atCap.url).toBe(exact);
+    expect(JSON.stringify(atCap.url)).toHaveLength(LAYOUT_REPORT_URL_MAX);
+    expect(atCap.urlTruncated).toBe(false);
+
+    const overCap = withGlobals({ href: exact + "v" }, run);
+    expect(overCap.url).toBe(exact);
+    expect(JSON.stringify(overCap.url)).toHaveLength(LAYOUT_REPORT_URL_MAX);
+    expect(overCap.urlTruncated).toBe(true);
+  });
+
+  it("a backslash url is measured in serialized chars: cap/2 - 1 backslashes pass, one more is cut and flagged", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+    const fits = "\\".repeat(LAYOUT_REPORT_URL_MAX / 2 - 1);
+
+    const atCap = withGlobals({ href: fits }, run);
+    expect(JSON.stringify(atCap.url)).toHaveLength(LAYOUT_REPORT_URL_MAX);
+    expect(atCap.urlTruncated).toBe(false);
+
+    const overCap = withGlobals({ href: fits + "\\" }, run);
+    expect(overCap.url).toBe(fits);
+    expect(overCap.urlTruncated).toBe(true);
+  });
+
+  it("userAgent at exactly the cap passes whole and unflagged; one over is cut to the cap and flagged", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+    const exact = "a".repeat(LAYOUT_REPORT_USER_AGENT_MAX - 2);
+
+    const atCap = withGlobals({ userAgent: exact }, run);
+    expect(atCap.viewport.userAgent).toBe(exact);
+    expect(JSON.stringify(atCap.viewport.userAgent)).toHaveLength(LAYOUT_REPORT_USER_AGENT_MAX);
+    expect(atCap.viewport.userAgentTruncated).toBe(false);
+
+    const overCap = withGlobals({ userAgent: exact + "b" }, run);
+    expect(overCap.viewport.userAgent).toBe(exact);
+    expect(JSON.stringify(overCap.viewport.userAgent)).toHaveLength(LAYOUT_REPORT_USER_AGENT_MAX);
+    expect(overCap.viewport.userAgentTruncated).toBe(true);
+  });
+
+  it("a control-char userAgent is measured in serialized chars (6 per char), so the cut lands well before the raw cap", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+
+    const report = withGlobals({ userAgent: "".repeat(LAYOUT_REPORT_USER_AGENT_MAX) }, run);
+
+    expect(JSON.stringify(report.viewport.userAgent)).toHaveLength(LAYOUT_REPORT_USER_AGENT_MAX);
+    expect(report.viewport.userAgent).toHaveLength((LAYOUT_REPORT_USER_AGENT_MAX - 2) / 6);
+    expect(report.viewport.userAgentTruncated).toBe(true);
+  });
+
+  it("a page-defined non-numeric innerWidth / maxTouchPoints is reported as null and named in nonNumericFields", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+    const saved = Object.getOwnPropertyDescriptor(navigator, "maxTouchPoints");
+    Object.defineProperty(navigator, "maxTouchPoints", { value: NaN, configurable: true });
+    try {
+      const report = withGlobals({ innerWidth: "9".repeat(9000) as unknown as number }, run);
+
+      expect(report.viewport.innerWidth).toBeNull();
+      expect(report.nonNumericFields).toEqual(["viewport.innerWidth", "viewport.maxTouchPoints"]);
+    } finally {
+      if (saved) Object.defineProperty(navigator, "maxTouchPoints", saved); else delete (navigator as unknown as Record<string, unknown>).maxTouchPoints;
+    }
+  });
+
+  it("numeric fields on a normal page leave nonNumericFields empty", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+
+    expect(withGlobals({ innerWidth: 390 }, run).nonNumericFields).toEqual([]);
+  });
+
+  /** With three equal lists the trim's tie order decides which list loses
+   *  the k-th row: media first, then fixed, then overflowing. After k pops
+   *  the listed counts are 20 - ceil(k/3), 20 - ceil((k-1)/3), 20 - floor(k/3).
+   *  k depends on the page size, so the url length is varied to walk k
+   *  through every residue mod 3 — a wrong tie order is visible at k%3 = 1
+   *  or 2, and the test checks it saw both. */
+  it("the trim tie-break is media, then fixed, then overflowing", () => {
+    const n = LAYOUT_REPORT_LIST_CAP;
+    const conditions = Array.from({ length: n }, (_, i) => `(min-width: ${String(i).padStart(2, "0")}${"0".repeat(150)}px)`);
+    document.body.innerHTML = overflowRows(n, 60) + fixedRows(n, 60);
+    Object.defineProperty(document, "styleSheets", { value: [group(conditions.map((c) => media(c)))], configurable: true });
+    const previousMatchMedia = globalThis.matchMedia;
+    globalThis.matchMedia = ((q: string) => ({ matches: true, media: q })) as typeof matchMedia;
+    const residues = new Set<number>();
+    try {
+      for (let extra = 0; extra <= 800; extra += 40) {
+        const report = withGlobals({ href: "https://shop.example.com/" + "p".repeat(extra) }, run);
+        const listed = [report.matchingMediaQueriesListed, report.fixedAndStickyListed, report.overflowingElementsListed];
+        const k = 3 * n - listed[0] - listed[1] - listed[2];
+        expect(report.listsTrimmedForSize).toBe(true);
+        expect(k).toBeGreaterThan(0);
+        expect(Math.min(...listed)).toBeGreaterThan(0);
+        expect(listed).toEqual([n - Math.ceil(k / 3), n - Math.ceil((k - 1) / 3), n - Math.floor(k / 3)]);
+        residues.add(k % 3);
+      }
+    } finally {
+      globalThis.matchMedia = previousMatchMedia;
+      restoreSheetProperties();
+    }
+    expect(residues.has(1)).toBe(true);
+    expect(residues.has(2)).toBe(true);
   });
 });
 
@@ -706,7 +847,60 @@ describe("counted silent skips in the CSS walk", () => {
     const report = withSheets([group([media(long)])], [], (q) => { seen.push(q); return { matches: true, media: q }; });
 
     expect(seen).toEqual([long]);
-    expect(report.matchingMediaQueries[0]).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
+    expect(JSON.stringify(report.matchingMediaQueries[0])).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
+    expect(report.matchingMediaQueriesTotal).toBe(1);
+  });
+
+  it("two matching conditions that share a 200-char prefix are two distinct conditions: total 2, both listed cut", () => {
+    const prefix = `(min-width: ${"0".repeat(200)}`;
+    const a = `${prefix}1px)`;
+    const b = `${prefix}2px)`;
+    const seen: string[] = [];
+    const report = withSheets([group([media(a), media(b), media(a)])], [], (q) => { seen.push(q); return { matches: true, media: q }; });
+
+    // De-duplicated on the FULL text before evaluation: each evaluated once.
+    expect(seen).toEqual([a, b]);
+    expect(report.matchingMediaQueriesTotal).toBe(2);
+    expect(report.matchingMediaQueriesListed).toBe(2);
+    expect(report.matchingMediaQueries).toHaveLength(2);
+    for (const listed of report.matchingMediaQueries) expect(JSON.stringify(listed)).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
+  });
+
+  // The author's stub shape for an @import: a rule with href + styleSheet and
+  // its own media (Chromium's CSSImportRule.media is a MediaList).
+  it("an @import whose own media condition does not match (`@import url(print.css) print`) is not descended into and is counted", () => {
+    const printImport = { href: "https://same.example.com/print.css", media: { mediaText: "print" }, styleSheet: { cssRules: [media("(max-width: 767px)")] } };
+    const report = withSheets([group([printImport])], ["(max-width: 767px)"]);
+
+    expect(report.matchingMediaQueries).toEqual([]);
+    expect(report.matchingMediaQueriesTotal).toBe(0);
+    expect(report.sheetsSkippedByMedia).toBe(1);
+    expect(report.unloadedImports).toBe(0);
+  });
+
+  it("an @import whose target sheet carries its own non-matching media (styleSheet.media) is gated the same way", () => {
+    const gated = { href: "https://same.example.com/a.css", styleSheet: { media: { mediaText: "print" }, cssRules: [media("(max-width: 767px)")] } };
+    const report = withSheets([group([gated])], ["(max-width: 767px)"]);
+
+    expect(report.matchingMediaQueries).toEqual([]);
+    expect(report.sheetsSkippedByMedia).toBe(1);
+  });
+
+  it("an @import whose own media condition matches is descended into, and the condition is listed once", () => {
+    const screenImport = { href: "https://same.example.com/screen.css", media: { mediaText: "screen" }, styleSheet: { cssRules: [media("(max-width: 767px)")] } };
+    const report = withSheets([group([screenImport])], ["screen", "(max-width: 767px)"]);
+
+    expect(report.matchingMediaQueries.sort()).toEqual(["(max-width: 767px)", "screen"]);
+    expect(report.sheetsSkippedByMedia).toBe(0);
+  });
+
+  it("an @import condition matchMedia refuses is counted and the import is walked as unconditional", () => {
+    const odd = { href: "https://same.example.com/odd.css", media: { mediaText: "(bogus" }, styleSheet: { cssRules: [media("(max-width: 767px)")] } };
+    const report = withSheets([group([odd])], [], (q) => { if (q === "(bogus") throw new Error("SyntaxError"); return { matches: q === "(max-width: 767px)", media: q }; });
+
+    expect(report.unevaluableMediaConditions).toBe(1);
+    expect(report.matchingMediaQueries).toEqual(["(max-width: 767px)"]);
+    expect(report.sheetsSkippedByMedia).toBe(0);
   });
 
   it("walks document.adoptedStyleSheets, not only document.styleSheets", () => {

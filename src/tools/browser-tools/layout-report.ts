@@ -14,15 +14,17 @@
  * What layout-report.test.ts proves: the result text is byte-for-byte
  * wrapExternalContent(<what evaluate returned>, "browser.layout_report") for
  * a clean report, a truncated report, a non-JSON string and a session with an
- * emulation profile installed; the wrapper may strip, redact or rewrite
- * INSIDE a string value (a zero-width space, a homoglyph, a <system>...</system>
- * pair inside one label) and the payload still parses with the JSON around
- * it intact — but a <system> in one label and its </system> in another are
- * stripped WITH the JSON between them (the cut runs string-interior to
- * string-interior, so the result still parses as a shorter list under an
- * unchanged total), and that case is pinned; the constant clears the evaluate
- * blocklist and the handler refuses if it ever stops clearing it; one
- * evaluate call and no mutating backend method.
+ * emulation profile installed; the constant clears the evaluate blocklist and
+ * the handler refuses if it ever stops clearing it; one evaluate call and no
+ * mutating backend method.
+ *
+ * The wrapper edits the bytes it is given: it strips <system>...</system>
+ * spans (across string boundaries), control and invisible chars and its own
+ * markers, and normalizes homoglyphs. The script serializes so that none of
+ * those occur in its bytes (Invariant 2 in browser/layout-report.ts, proven
+ * against a real page and the real wrapper in
+ * test/browser-layout-report-adversarial.test.ts); layout-report.test.ts
+ * shows the escape is load-bearing — the same document unescaped is rewritten.
  */
 
 import type { ToolResult } from "../../types.js";

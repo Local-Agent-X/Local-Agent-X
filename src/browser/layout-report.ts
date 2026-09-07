@@ -10,13 +10,23 @@
  *
  * What the named tests prove (test/browser-layout-report-script.test.ts unless
  * noted; nothing beyond these is claimed here):
- *  - "finds the element that overflows the viewport and names it" — measuring.
+ *  - "finds the element that overflows the viewport and names it" — measuring;
+ *    the rest of the "measures" and "selectors and rows" blocks — left-edge
+ *    overflow, zero-size on either axis, backgrounds, innerWidth, fixed/sticky
+ *    ordering by y, nth-of-type, class selectors, the row's position.
  *  - "compact JSON, flags before lists, under the evaluate cap at 200 rows
  *    through the real evaluateScript" — the output survives page-ops'
  *    8,000-char evaluate truncation with its flags intact (F1).
+ *  - "a 20,000-char url, 200 overflowing, 30 fixed and quote-heavy labels
+ *    still fit the budget with every flag present" — url and userAgent are
+ *    bounded before sizing, so the trim has only list rows left to spend.
+ *  - "trims the LONGEST list first, so the primary list is the last to empty"
+ *    — the trim policy.
+ *  - "*Listed is min(total, listCap) with no trim" — the listed counts.
  *  - "scan cap fires only when a node was skipped" — scanTruncated semantics.
  *  - the "silent skip" describe blocks — one test per counted early return /
- *    catch in the CSS walk and the element scan listed in those blocks.
+ *    catch in the CSS walk and the element scan listed in those blocks,
+ *    including a disabled sheet and a sheet-level media condition.
  *  - "leaves the observable state byte-identical and calls no intercepted
  *    API" plus the ESCAPES table — no mutation of the state that harness
  *    enumerates; the harness header lists what it does and does not cover.
@@ -40,10 +50,22 @@ export const LAYOUT_REPORT_LABEL_NODES = 40;
 export const LAYOUT_REPORT_LABEL_CHARS = 200;
 /** Size budget for the compact JSON the script returns. page-ops.evaluateScript
  *  hard-truncates evaluate output at MAX_TEXT_LENGTH (8,000, launcher.ts) and a
- *  truncated document is not JSON, so the script trims its LISTS (overflowing,
- *  then fixed/sticky, then media queries; from the tail) until the whole
- *  document fits, and records that in `listsTrimmedForSize`. */
+ *  truncated document is not JSON, so the script trims its LISTS from the tail
+ *  — one row at a time from whichever list is currently longest (ties: media
+ *  queries, then fixed/sticky, then overflowing) — until the whole document
+ *  fits, and records that in `listsTrimmedForSize`. */
 export const LAYOUT_REPORT_MAX_CHARS = 7_800;
+/** Page-supplied strings are sliced BEFORE sizing, so the trim above only ever
+ *  has list rows to spend: url and userAgent (flagged urlTruncated /
+ *  userAgentTruncated), each selector (an id or class name is unbounded), each
+ *  media condition text, and each label (60, above). The remaining strings are
+ *  computed keywords/colours and the fixed-text notes. Test: "a 20,000-char
+ *  url, 200 overflowing, 30 fixed and quote-heavy labels still fit the budget
+ *  with every flag present". */
+export const LAYOUT_REPORT_URL_MAX = 2_048;
+export const LAYOUT_REPORT_USER_AGENT_MAX = 512;
+export const LAYOUT_REPORT_SELECTOR_CHARS = 120;
+export const LAYOUT_REPORT_MEDIA_CHARS = 200;
 
 /** Stated on the report unconditionally. These are limits of the probe, not
  *  findings about the page, and none of them has a runtime detector. */
@@ -62,15 +84,21 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
   const LABEL_NODES = ${LAYOUT_REPORT_LABEL_NODES};
   const LABEL_CHARS = ${LAYOUT_REPORT_LABEL_CHARS};
   const MAX_CHARS = ${LAYOUT_REPORT_MAX_CHARS};
+  const URL_MAX = ${LAYOUT_REPORT_URL_MAX};
+  const UA_MAX = ${LAYOUT_REPORT_USER_AGENT_MAX};
+  const SELECTOR_CHARS = ${LAYOUT_REPORT_SELECTOR_CHARS};
+  const MEDIA_CHARS = ${LAYOUT_REPORT_MEDIA_CHARS};
   const KNOWN_GAPS = ${JSON.stringify(LAYOUT_REPORT_KNOWN_GAPS)};
   const de = document.documentElement;
   const body = document.body;
   const vw = de.clientWidth;
   const vh = de.clientHeight;
   const round = (n) => Math.round(n * 100) / 100;
+  // tag#id, else tag + up to 2 classes + :nth-of-type among same-tag
+  // siblings; sliced to SELECTOR_CHARS because an id or class is page text.
   const describe = (el) => {
     const tag = el.tagName.toLowerCase();
-    if (el.id) return tag + "#" + el.id;
+    if (el.id) return (tag + "#" + el.id).slice(0, SELECTOR_CHARS);
     let out = tag;
     const raw = typeof el.className === "string" ? el.className : "";
     const cls = raw.trim().split(/\\s+/).filter(Boolean).slice(0, 2);
@@ -80,7 +108,7 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
       const sibs = Array.prototype.filter.call(parent.children, (c) => c.tagName === el.tagName);
       if (sibs.length > 1) out += ":nth-of-type(" + (sibs.indexOf(el) + 1) + ")";
     }
-    return out;
+    return out.slice(0, SELECTOR_CHARS);
   };
   // Bounded label: at most LABEL_NODES nodes visited, LABEL_CHARS collected,
   // then sliced to 60. The early return inside collect() shortens the display
@@ -173,11 +201,13 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
   let depthTruncations = 0;
   const noteCondition = (rule) => {
     // No mediaText means this is not a conditional rule; a repeat condition
-    // is already in the list.
+    // is already in the list. Evaluated in full, listed sliced to MEDIA_CHARS.
     const cond = rule && rule.media && rule.media.mediaText ? rule.media.mediaText : null;
-    if (!cond || matching.indexOf(cond) !== -1) return;
+    if (!cond) return;
+    const listed = cond.slice(0, MEDIA_CHARS);
+    if (matching.indexOf(listed) !== -1) return;
     // COUNTED: a condition matchMedia refuses to evaluate.
-    try { if (matchMedia(cond).matches) matching.push(cond); } catch (e) { unevaluableConditions++; }
+    try { if (matchMedia(cond).matches) matching.push(listed); } catch (e) { unevaluableConditions++; }
   };
   const walkRules = (rules, depth) => {
     // COUNTED: the caller only recurses into a NON-EMPTY child list, so a
@@ -225,11 +255,29 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     shadowSheets += addSheets(root.styleSheets);
     shadowSheets += addSheets(root.adoptedStyleSheets);
   }
+  let disabledSheets = 0;
+  let sheetsSkippedByMedia = 0;
+  let sheetsWalked = 0;
   for (const sheet of sheets) {
+    // COUNTED: a disabled sheet applies nothing to the page, so its @media
+    // conditions are not "currently matching" whatever matchMedia says.
+    if (sheet.disabled === true) { disabledSheets++; continue; }
+    // COUNTED: a sheet-level condition (<link media="print">, @import ... print)
+    // that does not match gates every rule inside it; the rules' own
+    // conditions are only evaluated when the sheet's one holds. A sheet
+    // condition matchMedia refuses is counted with the rule-level ones and the
+    // sheet is walked as if unconditional.
+    const sheetMedia = sheet.media && sheet.media.mediaText ? sheet.media.mediaText : null;
+    if (sheetMedia) {
+      let sheetMatches = true;
+      try { sheetMatches = matchMedia(sheetMedia).matches; } catch (e) { unevaluableConditions++; }
+      if (!sheetMatches) { sheetsSkippedByMedia++; continue; }
+    }
     let rules = null;
     // COUNTED: cssRules threw (cross-origin) or came back null/undefined.
     try { rules = sheet.cssRules; } catch (e) { unreadableSheets++; continue; }
     if (rules == null) { unreadableSheets++; continue; }
+    sheetsWalked++;
     walkRules(rules, 0);
   }
   // ONE reason field per count, naming each reason it is incomplete. Two
@@ -256,16 +304,23 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
   const bodyBg = body ? getComputedStyle(body).backgroundColor : null;
   const clear = (c) => !c || c === "transparent" || c.replace(/ /g, "") === "rgba(0,0,0,0)";
   const canvas = !clear(htmlBg) ? htmlBg : (!clear(bodyBg) ? bodyBg : "rgb(255, 255, 255) (browser default: neither html nor body paints one)");
+  // The two unbounded page scalars are sliced here, before sizing, so a long
+  // url costs the budget at most URL_MAX chars (test: "a 20,000-char url ...
+  // still fit the budget with every flag present").
+  const href = String(location.href);
+  const ua = String(navigator.userAgent);
   // Key order is load-bearing: scalars, totals and flags first, knownGaps
   // next, the lists LAST, so a truncated serialization loses list rows before
   // it loses a flag. The size trim below keeps the document under MAX_CHARS.
   const report = {
-    url: location.href,
+    url: href.slice(0, URL_MAX),
+    urlTruncated: href.length > URL_MAX,
     viewport: {
       clientWidth: vw, clientHeight: vh,
       innerWidth: innerWidth, innerHeight: innerHeight,
       devicePixelRatio: devicePixelRatio,
-      userAgent: navigator.userAgent,
+      userAgent: ua.slice(0, UA_MAX),
+      userAgentTruncated: ua.length > UA_MAX,
       maxTouchPoints: navigator.maxTouchPoints,
     },
     documentScroll: {
@@ -288,7 +343,9 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     unevaluableMediaConditions: unevaluableConditions,
     cssRulesTruncated: ruleCapTruncations > 0,
     cssDepthTruncated: depthTruncations > 0,
-    styleSheetsWalked: sheets.length,
+    styleSheetsWalked: sheetsWalked,
+    disabledSheetsSkipped: disabledSheets,
+    sheetsSkippedByMedia: sheetsSkippedByMedia,
     adoptedStyleSheets: adoptedSheets,
     shadowRootStyleSheets: shadowSheets,
     cssWalkIncomplete: cssNotes.length ? cssNotes.join("; ") : null,
@@ -306,13 +363,19 @@ export const LAYOUT_REPORT_SCRIPT = `(() => {
     matchingMediaQueries: matching.slice(0, CAP),
   };
   // COUNTED: rows dropped here show as listsTrimmedForSize plus the *Listed
-  // counts falling below min(total, listCap). The totals are untouched.
-  const trimOrder = ["overflowingElements", "fixedAndStickyElements", "matchingMediaQueries"];
+  // counts falling below min(total, listCap). The totals are untouched. Each
+  // pass pops the tail of whichever list is currently LONGEST; on a tie the
+  // earlier entry here goes first, so the overflowing list — the primary one
+  // — is the last to empty.
+  const tiePriority = ["matchingMediaQueries", "fixedAndStickyElements", "overflowingElements"];
   const listedKey = { overflowingElements: "overflowingElementsListed", fixedAndStickyElements: "fixedAndStickyListed", matchingMediaQueries: "matchingMediaQueriesListed" };
   let json = JSON.stringify(report);
   while (json.length > MAX_CHARS) {
-    const key = trimOrder.find((k) => report[k].length > 0);
-    if (!key) break;
+    let key = null;
+    for (const k of tiePriority) {
+      if (report[k].length > 0 && (key === null || report[k].length > report[key].length)) key = k;
+    }
+    if (key === null) break;
     report[key].pop();
     report[listedKey[key]] = report[key].length;
     report.listsTrimmedForSize = true;

@@ -1,17 +1,26 @@
 /**
  * Layout diagnostics — the `layout_report` action.
  *
- * Returns the compact JSON string produced by browser/layout-report.ts under
- * one preamble line that names the page and nothing else. The handler adds
- * no summary, no flags sentence and no emulation profile: the JSON's
- * `viewport` block is what the page measured, and a profile recorded for the
- * session is not evidence of what the current context runs (the context can
- * be re-minted by `navigate engine=`, or the profile set after it was minted).
+ * The tool result is the compact JSON string produced by
+ * browser/layout-report.ts inside the untrusted-content wrapper, and nothing
+ * else: no preamble, no summary, no flags sentence, no emulation profile. The
+ * page names itself — the JSON `url` is the page's own location.href. The
+ * backend's getCurrentUrl() is not printed because the in-app backend stamps
+ * it only on navigate/observe/getInfo (in-app-backend.ts), so after a
+ * click-navigation it is stale; it is still what the sensitive-page gate
+ * below is keyed on — the same url the dispatcher's own gate (index.ts)
+ * reads — and that staleness is a separate, unaddressed issue.
  *
- * What layout-report.test.ts proves: the preamble is exactly
- * "Layout report for <url>." with a profile installed or not, the same bytes
- * for a clean and a truncated report; the JSON passes through unchanged
- * inside the untrusted-content wrapper; the constant clears the evaluate
+ * What layout-report.test.ts proves: the result text is byte-for-byte
+ * wrapExternalContent(<what evaluate returned>, "browser.layout_report") for
+ * a clean report, a truncated report, a non-JSON string and a session with an
+ * emulation profile installed; the wrapper may strip, redact or rewrite
+ * INSIDE a string value (a zero-width space, a homoglyph, a <system>...</system>
+ * pair inside one label) and the payload still parses with the JSON around
+ * it intact — but a <system> in one label and its </system> in another are
+ * stripped WITH the JSON between them (the cut runs string-interior to
+ * string-interior, so the result still parses as a shorter list under an
+ * unchanged total), and that case is pinned; the constant clears the evaluate
  * blocklist and the handler refuses if it ever stops clearing it; one
  * evaluate call and no mutating backend method.
  */
@@ -22,10 +31,6 @@ import { LAYOUT_REPORT_SCRIPT } from "../../browser/layout-report.js";
 import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { err } from "./shared.js";
-
-export function layoutReportPreamble(url: string): string {
-  return url ? `Layout report for ${url}.` : "Layout report for the current page.";
-}
 
 // The dispatcher (index.ts) hands each action the session id; this handler
 // keys nothing on it (see the header: no per-session profile is printed).
@@ -59,7 +64,7 @@ export async function handleLayoutReport(manager: BrowserBackend, _sessionId?: s
   // through as-is instead of pretty-printing it.
   const raw = await manager.evaluate(LAYOUT_REPORT_SCRIPT);
   return {
-    content: `${layoutReportPreamble(url)}\n\n${wrapExternalContent(raw, "browser.layout_report")}`,
+    content: wrapExternalContent(raw, "browser.layout_report"),
     metadata: { browserStatus: "layout-report" },
   };
 }

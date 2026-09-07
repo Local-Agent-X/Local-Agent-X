@@ -21,8 +21,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Page } from "playwright";
 import {
-  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_RULE_CAP,
-  LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
+  LAYOUT_REPORT_KNOWN_GAPS, LAYOUT_REPORT_LIST_CAP, LAYOUT_REPORT_MAX_CHARS, LAYOUT_REPORT_MEDIA_CHARS,
+  LAYOUT_REPORT_RULE_CAP, LAYOUT_REPORT_RULE_DEPTH, LAYOUT_REPORT_SCAN_CAP, LAYOUT_REPORT_SCRIPT,
+  LAYOUT_REPORT_SELECTOR_CHARS, LAYOUT_REPORT_URL_MAX, LAYOUT_REPORT_USER_AGENT_MAX,
 } from "../src/browser/layout-report.js";
 import { evaluateScript } from "../src/browser/page-ops.js";
 import { MAX_TEXT_LENGTH } from "../src/browser/launcher.js";
@@ -32,6 +33,10 @@ import { evaluateMutationReason } from "../src/tools/browser-tools/page.js";
 const VIEWPORT = 390;
 
 interface LayoutReport {
+  url: string;
+  urlTruncated: boolean;
+  disabledSheetsSkipped: number;
+  sheetsSkippedByMedia: number;
   matchingMediaQueries: string[];
   matchingMediaQueriesTotal: number;
   matchingMediaQueriesListed: number;
@@ -50,14 +55,14 @@ interface LayoutReport {
   adoptedStyleSheets: number;
   shadowRootStyleSheets: number;
   documentScroll: { scrollWidth: number; clientWidth: number; horizontalOverflowPx: number };
-  overflowingElements: { selector: string; overflowRightPx: number; backgroundColor: string }[];
+  overflowingElements: { selector: string; text: string; overflowRightPx: number; overflowLeftPx: number; position: string; backgroundColor: string }[];
   overflowingElementsTotal: number;
   overflowingElementsListed: number;
-  fixedAndStickyElements: { selector: string; position: string }[];
+  fixedAndStickyElements: { selector: string; position: string; rect: { y: number } }[];
   fixedAndStickyTotal: number;
   fixedAndStickyListed: number;
   backgrounds: { html: string; body: string; canvas: string };
-  viewport: { clientWidth: number };
+  viewport: { clientWidth: number; innerWidth: number; userAgent: string; userAgentTruncated: boolean };
   elementsScanned: number;
   scanTruncated: boolean;
   hiddenElementsSkipped: number;
@@ -70,9 +75,10 @@ interface LayoutReport {
 /** Flags and totals a reader needs before trusting any count. A serialization
  *  that lost one of these is the F1 failure. */
 const FLAG_KEYS = [
-  "listsTrimmedForSize", "overflowingElementsTotal", "overflowingElementsListed", "fixedAndStickyTotal",
+  "urlTruncated", "listsTrimmedForSize", "overflowingElementsTotal", "overflowingElementsListed", "fixedAndStickyTotal",
   "fixedAndStickyListed", "matchingMediaQueriesTotal", "matchingMediaQueriesListed", "unreadableStyleSheets",
   "unreadableRules", "unloadedImports", "unevaluableMediaConditions", "cssRulesTruncated", "cssDepthTruncated",
+  "disabledSheetsSkipped", "sheetsSkippedByMedia",
   "cssWalkIncomplete", "elementsScanned", "scanTruncated", "hiddenElementsSkipped", "zeroSizeElementsSkipped",
   "openShadowRoots", "iframes", "sameOriginIframes", "elementScanIncomplete", "knownGaps",
 ] as const;
@@ -112,6 +118,31 @@ function withSheets(sheets: unknown[], matches: string[], matchMediaImpl?: (q: s
 function restoreSheetProperties(): void {
   delete (document as unknown as Record<string, unknown>).styleSheets;
   delete (document as unknown as Record<string, unknown>).adoptedStyleSheets;
+}
+
+/** Overrides the page globals the script reads as bare identifiers
+ *  (location, innerWidth, navigator.userAgent) for one call, then puts the
+ *  original descriptors back. */
+function withGlobals<T>(overrides: { href?: string; innerWidth?: number; userAgent?: string }, fn: () => T): T {
+  const saved: [object, string, PropertyDescriptor | undefined][] = [];
+  const set = (host: object, key: string, value: unknown) => {
+    saved.push([host, key, Object.getOwnPropertyDescriptor(host, key)]);
+    Object.defineProperty(host, key, { value, configurable: true, writable: true });
+  };
+  const restore = () => {
+    for (const [host, key, desc] of saved.reverse()) {
+      if (desc) Object.defineProperty(host, key, desc); else delete (host as Record<string, unknown>)[key];
+    }
+  };
+  if (overrides.href !== undefined) set(globalThis, "location", { href: overrides.href });
+  if (overrides.innerWidth !== undefined) set(globalThis, "innerWidth", overrides.innerWidth);
+  if (overrides.userAgent !== undefined) set(navigator, "userAgent", overrides.userAgent);
+  let result: T;
+  try { result = fn(); } catch (e) { restore(); throw e; }
+  // An async fn (the evaluateScript path) keeps the overrides until it settles.
+  if (result instanceof Promise) return result.finally(restore) as T;
+  restore();
+  return result;
 }
 
 beforeEach(() => {
@@ -196,6 +227,120 @@ describe("layout_report script measures", () => {
 
     expect(run().elementsScanned).toBe(document.querySelectorAll("*").length);
   });
+
+  it("measures overflow past the LEFT edge, separately from the right", () => {
+    document.body.innerHTML = `<div id="shifted" data-rect="-30,0,300,20">pulled left</div>`;
+
+    const [row] = run().overflowingElements;
+
+    expect(row.selector).toBe("div#shifted");
+    expect(row.overflowLeftPx).toBe(30);
+    expect(row.overflowRightPx).toBe(0);
+  });
+
+  it("a rect with width but no height is zero-size too — counted, not measured", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">shown</p>`;
+    const baseline = run().zeroSizeElementsSkipped;
+
+    document.body.innerHTML = `<div id="flat" data-rect="0,0,900,0">wide but flat</div><p data-rect="0,0,390,20">shown</p>`;
+    const report = run();
+
+    expect(report.zeroSizeElementsSkipped).toBe(baseline + 1);
+    expect(report.overflowingElementsTotal).toBe(0);
+  });
+
+  it("reports the html and body backgrounds and which one paints the canvas", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+    const neither = run().backgrounds;
+    expect(neither.canvas).toMatch(/^rgb\(255, 255, 255\) \(browser default/);
+
+    document.body.setAttribute("style", "background-color: rgb(1, 2, 3)");
+    const bodyOnly = run().backgrounds;
+    expect(bodyOnly.body).toBe("rgb(1, 2, 3)");
+    expect(bodyOnly.canvas).toBe("rgb(1, 2, 3)");
+
+    document.documentElement.setAttribute("style", "background-color: rgb(9, 8, 7)");
+    try {
+      const both = run().backgrounds;
+      expect(both.html).toBe("rgb(9, 8, 7)");
+      expect(both.body).toBe("rgb(1, 2, 3)");
+      expect(both.canvas).toBe("rgb(9, 8, 7)");
+    } finally {
+      document.documentElement.removeAttribute("style");
+    }
+  });
+
+  it("viewport.innerWidth is window.innerWidth, not the root element's clientWidth", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+
+    const report = withGlobals({ innerWidth: 1234 }, run);
+
+    expect(report.viewport.innerWidth).toBe(1234);
+    expect(report.viewport.clientWidth).toBe(VIEWPORT);
+  });
+
+  it("orders fixed/sticky rows by their y, not by document order", () => {
+    document.body.innerHTML =
+      `<footer id="low" data-rect="0,800,390,44" style="position: fixed">Footer</footer>` +
+      `<nav id="high" data-rect="0,0,390,56" style="position: fixed">Nav</nav>`;
+
+    const rows = run().fixedAndStickyElements;
+
+    expect(rows.map((r) => r.selector)).toEqual(["nav#high", "footer#low"]);
+    expect(rows.map((r) => r.rect.y)).toEqual([0, 800]);
+  });
+});
+
+describe("layout_report selectors and rows", () => {
+  it("nth-of-type counts same-tag siblings from 1, and only when there is more than one", () => {
+    document.body.innerHTML =
+      `<p data-rect="0,0,390,20">first</p><p data-rect="0,20,500,20">second, wide</p><p data-rect="0,40,390,20">third</p>` +
+      `<div data-rect="0,60,500,20">only div</div>`;
+
+    const selectors = run().overflowingElements.map((r) => r.selector);
+
+    expect(selectors).toEqual(["p:nth-of-type(2)", "div"]);
+  });
+
+  it("one class gives tag.class; more than two are cut to the first two", () => {
+    document.body.innerHTML =
+      `<div class="hero" data-rect="0,0,500,20">one</div>` +
+      `<section class="a b c d" data-rect="0,20,500,20">many</section>`;
+
+    const selectors = run().overflowingElements.map((r) => r.selector);
+
+    expect(selectors).toEqual(["div.hero", "section.a.b"]);
+  });
+
+  it("an overflowing row carries the element's computed position", () => {
+    document.body.innerHTML = `<div id="bar" data-rect="0,0,500,40" style="position: fixed">bar</div>`;
+
+    const [row] = run().overflowingElements;
+
+    expect(row.position).toBe("fixed");
+    expect(run().fixedAndStickyElements[0].position).toBe("fixed");
+  });
+
+  it("a selector built from a huge id is cut to LAYOUT_REPORT_SELECTOR_CHARS", () => {
+    document.body.innerHTML = `<div id="${"i".repeat(5000)}" data-rect="0,0,500,20">x</div>`;
+
+    const [row] = run().overflowingElements;
+
+    expect(row.selector.length).toBe(LAYOUT_REPORT_SELECTOR_CHARS);
+    expect(row.selector.startsWith("div#iii")).toBe(true);
+  });
+
+  it("a row's label is the element's text cut to 60 chars", () => {
+    document.body.innerHTML = `<div data-rect="0,0,500,20">${"w".repeat(200)}</div>`;
+
+    expect(run().overflowingElements[0].text).toBe("w".repeat(60));
+  });
+
+  it("a huge class list is cut the same way", () => {
+    document.body.innerHTML = `<div class="${"c".repeat(5000)} ${"d".repeat(5000)}" data-rect="0,0,500,20">x</div>`;
+
+    expect(run().overflowingElements[0].selector.length).toBe(LAYOUT_REPORT_SELECTOR_CHARS);
+  });
 });
 
 describe("known gaps are stated unconditionally", () => {
@@ -223,6 +368,9 @@ describe("layout_report output survives the evaluate path", () => {
   const overflowRows = (n: number, textLen = 5): string =>
     Array.from({ length: n }, (_, i) =>
       `<div class="promo-strip-row-${i} banner-full-bleed" data-rect="0,${i * 20},${500 + i},20">${"x".repeat(textLen)}</div>`).join("");
+  const fixedRows = (n: number, textLen = 5): string =>
+    Array.from({ length: n }, (_, i) =>
+      `<nav class="sticky-bar-${i} site-chrome" data-rect="0,${i * 20},390,20" style="position: fixed">${"y".repeat(textLen)}</nav>`).join("");
 
   it("compact JSON, flags before lists, under the evaluate cap at 200 rows through the real evaluateScript", async () => {
     expect(LAYOUT_REPORT_MAX_CHARS).toBeLessThan(MAX_TEXT_LENGTH);
@@ -251,7 +399,7 @@ describe("layout_report output survives the evaluate path", () => {
     expect(keys.indexOf("knownGaps")).toBe(firstList - 1);
   });
 
-  it("trims list rows from the tail, in order, to fit the budget, and says so", () => {
+  it("trims list rows from the tail to fit the budget, and says so", () => {
     // 20 long-labelled rows exceed the budget; the trim drops rows (not flags)
     // and records the retained count. Totals stay at the measured value.
     document.body.innerHTML = overflowRows(200, 200) + `<nav data-rect="0,0,390,56" style="position: fixed">Home</nav>`;
@@ -266,9 +414,28 @@ describe("layout_report output survives the evaluate path", () => {
     expect(report.overflowingElementsListed).toBe(report.overflowingElements.length);
     // The worst offenders are kept: the tail (smallest overflow) is what went.
     expect(report.overflowingElements[0].overflowRightPx).toBe(500 + 199 - VIEWPORT);
-    // Overflowing rows go before fixed/sticky rows.
+    // The one-row fixed list is never the longest, so it is untouched.
     expect(report.fixedAndStickyListed).toBe(1);
     expect(report.fixedAndStickyElements).toHaveLength(1);
+  });
+
+  it("trims the LONGEST list first, so the primary list is the last to empty", () => {
+    document.body.innerHTML = overflowRows(200, 60) + fixedRows(30, 60);
+
+    const text = runRaw(LAYOUT_REPORT_SCRIPT);
+    const report = JSON.parse(text) as LayoutReport;
+
+    expect(text.length).toBeLessThanOrEqual(LAYOUT_REPORT_MAX_CHARS);
+    expect(report.listsTrimmedForSize).toBe(true);
+    expect(report.overflowingElementsTotal).toBe(200);
+    expect(report.fixedAndStickyTotal).toBe(30);
+    expect(report.overflowingElementsListed).toBeGreaterThan(0);
+    expect(report.fixedAndStickyListed).toBeGreaterThan(0);
+    // Round-robin from equal lengths: the overflowing list keeps at least as
+    // many rows as the fixed list (a first-non-empty policy drains it first).
+    expect(report.overflowingElementsListed).toBeGreaterThanOrEqual(report.fixedAndStickyListed);
+    expect(report.overflowingElementsListed).toBe(report.overflowingElements.length);
+    expect(report.fixedAndStickyListed).toBe(report.fixedAndStickyElements.length);
   });
 
   it("does not trim a report that fits", () => {
@@ -277,6 +444,85 @@ describe("layout_report output survives the evaluate path", () => {
 
     expect(report.listsTrimmedForSize).toBe(false);
     expect(report.overflowingElementsListed).toBe(LAYOUT_REPORT_LIST_CAP);
+  });
+
+  it("*Listed is min(total, listCap) with no trim — for all three lists", () => {
+    // One list at a time: 25 rows of each list together would need the trim.
+    const over = LAYOUT_REPORT_LIST_CAP + 5;
+
+    document.body.innerHTML = overflowRows(over, 1);
+    const overflow = run();
+    expect(overflow.listsTrimmedForSize).toBe(false);
+    expect(overflow.overflowingElementsTotal).toBe(over);
+    expect(overflow.overflowingElementsListed).toBe(LAYOUT_REPORT_LIST_CAP);
+    expect(overflow.overflowingElements).toHaveLength(LAYOUT_REPORT_LIST_CAP);
+
+    document.body.innerHTML = fixedRows(over, 1);
+    const fixed = run();
+    expect(fixed.listsTrimmedForSize).toBe(false);
+    expect(fixed.fixedAndStickyTotal).toBe(over);
+    expect(fixed.fixedAndStickyListed).toBe(LAYOUT_REPORT_LIST_CAP);
+    expect(fixed.fixedAndStickyElements).toHaveLength(LAYOUT_REPORT_LIST_CAP);
+
+    document.body.innerHTML = "";
+    const conditions = Array.from({ length: over }, (_, i) => `(min-width: ${i}px)`);
+    const queries = withSheets([group(conditions.map((c) => media(c)))], conditions);
+    expect(queries.listsTrimmedForSize).toBe(false);
+    expect(queries.matchingMediaQueriesTotal).toBe(over);
+    expect(queries.matchingMediaQueriesListed).toBe(LAYOUT_REPORT_LIST_CAP);
+    expect(queries.matchingMediaQueries).toHaveLength(LAYOUT_REPORT_LIST_CAP);
+  });
+
+  /** H1 — the page controls url, userAgent, ids, classes, labels and media
+   *  text. None of them may spend the budget the lists need, and none may
+   *  push the document past the evaluate cap. */
+  it("a 20,000-char url, 200 overflowing, 30 fixed and quote-heavy labels still fit the budget with every flag present", async () => {
+    const quoteHeavy = '"\\"quoted\\" \\\\ back\\\\slash "'.repeat(6);
+    document.body.innerHTML =
+      `<div id="${"i".repeat(5000)}" data-rect="0,0,900,20">${quoteHeavy}</div>` +
+      overflowRows(199, 0).replace(/><\/div>/g, `>${quoteHeavy}</div>`) +
+      fixedRows(30, 0).replace(/><\/nav>/g, `>${quoteHeavy}</nav>`);
+    const longCondition = `(min-width: ${"0".repeat(5000)}1px)`;
+    Object.defineProperty(document, "styleSheets", { value: [group([media(longCondition)])], configurable: true });
+    const previousMatchMedia = globalThis.matchMedia;
+    globalThis.matchMedia = ((q: string) => ({ matches: true, media: q })) as typeof matchMedia;
+    try {
+      const text = await withGlobals(
+        { href: "https://shop.example.com/?q=" + "u".repeat(20000), userAgent: "Mozilla/5.0 " + "a".repeat(700) },
+        () => evaluateScript(page, LAYOUT_REPORT_SCRIPT),
+      );
+
+      expect(text).not.toContain("[Truncated at");
+      expect(text.length).toBeLessThanOrEqual(LAYOUT_REPORT_MAX_CHARS);
+      const report = JSON.parse(text) as LayoutReport;
+      for (const key of FLAG_KEYS) expect(report).toHaveProperty(key);
+      expect(report.viewport).toHaveProperty("userAgentTruncated");
+      expect(report.url).toHaveLength(LAYOUT_REPORT_URL_MAX);
+      expect(report.urlTruncated).toBe(true);
+      expect(report.viewport.userAgent).toHaveLength(LAYOUT_REPORT_USER_AGENT_MAX);
+      expect(report.viewport.userAgentTruncated).toBe(true);
+      expect(report.overflowingElementsTotal).toBe(200);
+      expect(report.fixedAndStickyTotal).toBe(30);
+      expect(report.overflowingElementsListed).toBeGreaterThan(0);
+      expect(report.fixedAndStickyListed).toBeGreaterThan(0);
+      expect(report.overflowingElements[0].selector).toHaveLength(LAYOUT_REPORT_SELECTOR_CHARS);
+      expect(report.matchingMediaQueries[0]).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
+      expect(report.matchingMediaQueriesTotal).toBe(1);
+    } finally {
+      globalThis.matchMedia = previousMatchMedia;
+      restoreSheetProperties();
+    }
+  });
+
+  it("a short url and userAgent are passed whole, with the flags clear", () => {
+    document.body.innerHTML = `<p data-rect="0,0,390,20">x</p>`;
+
+    const report = withGlobals({ href: "https://shop.example.com/products", userAgent: "Mozilla/5.0 (iPhone)" }, run);
+
+    expect(report.url).toBe("https://shop.example.com/products");
+    expect(report.urlTruncated).toBe(false);
+    expect(report.viewport.userAgent).toBe("Mozilla/5.0 (iPhone)");
+    expect(report.viewport.userAgentTruncated).toBe(false);
   });
 });
 
@@ -414,6 +660,53 @@ describe("counted silent skips in the CSS walk", () => {
     expect(withSheets([exact], []).cssRulesTruncated).toBe(false);
     const oneOver = group(Array.from({ length: LAYOUT_REPORT_RULE_CAP + 1 }, () => group([])));
     expect(withSheets([oneOver], []).cssRulesTruncated).toBe(true);
+  });
+
+  // Sheet-level conditions and disabled sheets are stubbed the same way as
+  // rules: happy-dom's CSSStyleSheet.media is a bare string (no MediaList),
+  // so a real <style media> or <link media> cannot exercise this path here.
+  it("a DISABLED sheet is not walked: its @media conditions are not applied to the page", () => {
+    const report = withSheets([{ disabled: true, cssRules: [media("(max-width: 767px)")] }], ["(max-width: 767px)"]);
+
+    expect(report.matchingMediaQueries).toEqual([]);
+    expect(report.disabledSheetsSkipped).toBe(1);
+    expect(report.styleSheetsWalked).toBe(0);
+  });
+
+  it("a sheet whose OWN media condition does not match (link media=print) is skipped whole and counted", () => {
+    const sheet = { media: { mediaText: "print" }, cssRules: [media("(max-width: 767px)")] };
+    const report = withSheets([sheet], ["(max-width: 767px)"]);
+
+    expect(report.matchingMediaQueries).toEqual([]);
+    expect(report.sheetsSkippedByMedia).toBe(1);
+    expect(report.styleSheetsWalked).toBe(0);
+  });
+
+  it("a sheet whose own media condition matches is walked as before, and its condition is not itself listed", () => {
+    const sheet = { media: { mediaText: "screen" }, cssRules: [media("(max-width: 767px)")] };
+    const report = withSheets([sheet], ["screen", "(max-width: 767px)"]);
+
+    expect(report.matchingMediaQueries).toEqual(["(max-width: 767px)"]);
+    expect(report.sheetsSkippedByMedia).toBe(0);
+    expect(report.styleSheetsWalked).toBe(1);
+  });
+
+  it("a sheet-level condition matchMedia refuses is counted and the sheet is walked as unconditional", () => {
+    const sheet = { media: { mediaText: "(bogus" }, cssRules: [media("(max-width: 767px)")] };
+    const report = withSheets([sheet], [], (q) => { if (q === "(bogus") throw new Error("SyntaxError"); return { matches: q === "(max-width: 767px)", media: q }; });
+
+    expect(report.unevaluableMediaConditions).toBe(1);
+    expect(report.matchingMediaQueries).toEqual(["(max-width: 767px)"]);
+    expect(report.styleSheetsWalked).toBe(1);
+  });
+
+  it("a media condition longer than LAYOUT_REPORT_MEDIA_CHARS is evaluated whole and listed cut", () => {
+    const long = `(min-width: ${"0".repeat(400)}1px)`;
+    const seen: string[] = [];
+    const report = withSheets([group([media(long)])], [], (q) => { seen.push(q); return { matches: true, media: q }; });
+
+    expect(seen).toEqual([long]);
+    expect(report.matchingMediaQueries[0]).toHaveLength(LAYOUT_REPORT_MEDIA_CHARS);
   });
 
   it("walks document.adoptedStyleSheets, not only document.styleSheets", () => {

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fallbackSearch, parsePattern, ripgrepBin, runRg, type ExecFileLike } from "./grep-tool.js";
 import { parseStatusHeader, renderToolResultForModel } from "./result-helpers.js";
+import { isEmptyGrepResult } from "../agent-guards/cleanup-verify.js";
+import { isEmptyResultText } from "../errors/classifier.js";
 
 // The Node fallback used `new RegExp(pattern)` directly, which throws "Invalid
 // group" on ripgrep/PCRE inline flags like `(?i)` — so a case-insensitive
@@ -519,5 +521,142 @@ describe("grep — counts stay exact when head_limit truncates (path parity)", (
     const cut = await fallbackSearch({ pattern: "needle", path: dir }, 2);
     expect(cut.metadata?.truncated).toBe(true);
     expect(cut.metadata?.file_count).toBe(6);
+  });
+});
+
+// An empty result is evidence of absence ONLY if the search was valid. The real
+// failure: an agent grepped for `addCanvasBorder(ctx, opts)` — whose bare
+// parens are a regex GROUP, so the pattern could never match the source text —
+// got zero results, and reported the symbol as absent. On zero matches a
+// metacharacter-bearing pattern now gets ONE fixed-string re-run over the same
+// path/filters, and its count is reported after the (byte-identical) sentinel.
+describe("grep zero-match — literal re-run when the pattern carries regex syntax", () => {
+  /** Two literal `addCanvasBorder(ctx, opts)` call sites — present in the text,
+   *  unmatchable by the naive regex the model typed. */
+  function makeCanvasTree(): string {
+    const dir = mkdtempSync(join(tmpdir(), "greplit-"));
+    writeFileSync(
+      join(dir, "canvas.ts"),
+      "export function render() {\n  addCanvasBorder(ctx, opts);\n}\nexport function redraw() {\n  addCanvasBorder(ctx, opts);\n}\n",
+    );
+    return dir;
+  }
+
+  const NAIVE = "addCanvasBorder(ctx, opts)";
+
+  it("rg path: an unmatchable regex reports the literal count instead of implying absence", async () => {
+    const res = await runRg({ pattern: NAIVE, path: makeCanvasTree() }, 250);
+    expect(res.isError).toBeFalsy();
+    expect(res.content.startsWith("No matches found.")).toBe(true);
+    expect(res.content).toContain("LITERAL");
+    expect(res.content).toContain("found 2 matches");
+    expect(res.content).toContain("NOT absent");
+  });
+
+  it("fallback path: identical behavior, identical wording", async () => {
+    const dir = makeCanvasTree();
+    const rg = await runRg({ pattern: NAIVE, path: dir }, 250);
+    const fb = await fallbackSearch({ pattern: NAIVE, path: dir }, 250);
+    expect(fb.isError).toBeFalsy();
+    expect(fb.content).toBe(rg.content);
+    expect(fb.content).toContain("found 2 matches");
+  });
+
+  it("singularizes a single literal hit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "greplit1-"));
+    writeFileSync(join(dir, "a.ts"), "const x = ONE(a, b);\n");
+    const rg = await runRg({ pattern: "ONE(a, b)", path: dir }, 250);
+    const fb = await fallbackSearch({ pattern: "ONE(a, b)", path: dir }, 250);
+    expect(rg.content).toContain("found 1 match.");
+    expect(fb.content).toBe(rg.content);
+  });
+
+  it("a genuinely absent term stays a bare sentinel with NOTHING appended — both engines", async () => {
+    const dir = makeCanvasTree();
+    // literal pattern, absent
+    const rgPlain = await runRg({ pattern: "zzzNotHere", path: dir }, 250);
+    const fbPlain = await fallbackSearch({ pattern: "zzzNotHere", path: dir }, 250);
+    expect(rgPlain.content).toBe("No matches found.");
+    expect(fbPlain.content).toBe("No matches found.");
+    // metacharacter pattern whose literal text is ALSO absent — the retry runs
+    // and finds nothing, so nothing is appended.
+    const rgMeta = await runRg({ pattern: "zzzNotHere(a, b)", path: dir }, 250);
+    const fbMeta = await fallbackSearch({ pattern: "zzzNotHere(a, b)", path: dir }, 250);
+    expect(rgMeta.content).toBe("No matches found.");
+    expect(fbMeta.content).toBe("No matches found.");
+  });
+
+  it("the literal re-run respects the caller's path scope", async () => {
+    const dir = makeCanvasTree();
+    const empty = mkdtempSync(join(tmpdir(), "grepempty-"));
+    expect((await runRg({ pattern: NAIVE, path: empty }, 250)).content).toBe("No matches found.");
+    expect((await fallbackSearch({ pattern: NAIVE, path: empty }, 250)).content).toBe("No matches found.");
+    expect((await runRg({ pattern: NAIVE, path: dir }, 250)).content).toContain("found 2 matches");
+  });
+
+  it("the sentinel prefix stays byte-identical and the downstream consumers still classify both shapes", async () => {
+    const dir = makeCanvasTree();
+    const absent = renderToolResultForModel(await runRg({ pattern: "zzzNotHere", path: dir }, 250));
+    const badPattern = renderToolResultForModel(await runRg({ pattern: NAIVE, path: dir }, 250));
+
+    // No status header on either: metadata would shift the sentinel off byte 0.
+    expect(absent).toBe("No matches found.");
+    expect(badPattern.slice(0, "No matches found.".length)).toBe("No matches found.");
+    expect(parseStatusHeader(absent)).toBe("ok");
+    expect(parseStatusHeader(badPattern)).toBe("ok");
+
+    // agent-guards cleanup gate: a genuine empty search is still cleanup proof…
+    expect(isEmptyGrepResult(absent)).toBe(true);
+    // …while a pattern that COULDN'T match is not — it must not vouch for a
+    // cleanup, which is exactly what the full-anchored guard now reports.
+    expect(isEmptyGrepResult(badPattern)).toBe(false);
+
+    // errors/classifier dead-end detector is prefix-anchored: both are "empty".
+    expect(isEmptyResultText(absent)).toBe(true);
+    expect(isEmptyResultText(badPattern)).toBe(true);
+  });
+
+  it("never spends a second rg pass on the happy path or on a literal pattern", async () => {
+    let calls = 0;
+    const counting = (error: (Error & { code?: number | string | null }) | null, stdout: string): ExecFileLike =>
+      (_file, _args, _options, callback) => {
+        calls++;
+        queueMicrotask(() => callback(error, stdout, ""));
+        return { stdin: { end() {} } };
+      };
+    const noMatch = Object.assign(new Error("no matches"), { code: 1 });
+
+    // literal pattern, zero matches → no retry
+    calls = 0;
+    await runRg({ pattern: "addCanvasBorder" }, 250, undefined, counting(noMatch, ""));
+    expect(calls).toBe(1);
+
+    // metacharacter pattern that DID match → no retry
+    calls = 0;
+    await runRg({ pattern: "add(Canvas|Svg)Border" }, 250, undefined, counting(null, "a.ts\n"));
+    expect(calls).toBe(1);
+
+    // metacharacter pattern, zero matches → exactly one extra --fixed-strings pass
+    const seen: string[][] = [];
+    const recording: ExecFileLike = (_file, args, _options, callback) => {
+      seen.push([...args]);
+      queueMicrotask(() => callback(noMatch, "", ""));
+      return { stdin: { end() {} } };
+    };
+    await runRg({ pattern: "add(Canvas)Border" }, 250, undefined, recording);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).not.toContain("--fixed-strings");
+    expect(seen[1]).toContain("--fixed-strings");
+    expect(seen[1]).toContain("-c");
+    // same pattern and same root as the original pass
+    expect(seen[1][seen[1].indexOf("--") + 1]).toBe("add(Canvas)Border");
+    expect(seen[1][seen[1].indexOf("--") + 2]).toBe(seen[0][seen[0].indexOf("--") + 2]);
+  });
+
+  it("carries the caller's filters into the literal pass (no wider search than asked for)", async () => {
+    const dir = makeCanvasTree();
+    writeFileSync(join(dir, "notes.md"), "addCanvasBorder(ctx, opts)\n");
+    const scoped = await runRg({ pattern: NAIVE, path: dir, glob: "*.md" }, 250);
+    expect(scoped.content).toContain("found 1 match.");
   });
 });

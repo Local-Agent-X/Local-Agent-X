@@ -100,6 +100,55 @@ export function parsePattern(raw: string, caseInsensitive: boolean): { source: s
   return { source, flags: [...flags].join("") };
 }
 
+// An empty result is evidence of absence ONLY if the search itself was valid.
+// A pattern carrying regex syntax that matches nothing may simply be a WRONG
+// pattern (the real failure: an agent grepped for a symbol with a pattern that
+// could not match, got zero results, and reported the symbol as absent). These
+// three helpers let both engines re-run the zero-match case literally and say
+// so. Deliberately local: cleanup-verify's normalizeGrepPattern is a lossy
+// bucketing key (it lowercases and passes regex-bearing patterns through
+// verbatim) and is unsafe to hand back to a search engine.
+const REGEX_META_RE = /[\\^$.|?*+()[\]{}]/;
+
+/** True when the pattern carries regex syntax, i.e. zero matches might mean
+ *  "bad pattern" rather than "not there". */
+export function hasRegexMeta(raw: string): boolean {
+  return REGEX_META_RE.test(raw);
+}
+
+/** Literalise a pattern for a fixed-string re-run: escape every metacharacter. */
+export function escapeRegexPattern(raw: string): string {
+  return raw.replace(/[\\^$.|?*+()[\]{}]/g, "\\$&");
+}
+
+/** The exact zero-match sentinel. LOAD-BEARING: two consumers in another
+ *  concern match the RENDERED result from position 0 — isEmptyGrepResult
+ *  (agent-guards/cleanup-verify.ts) and EMPTY_RESULT_RE (errors/classifier.ts).
+ *  Never move it off the front of the content, and never attach metadata to a
+ *  zero-match result (that would make the renderer prepend a status header). */
+export const NO_MATCHES_SENTINEL = "No matches found.";
+
+/**
+ * Zero-match result, shared by both engines.
+ *
+ * `literalMatches` > 0 means a fixed-string pass over the SAME path scope and
+ * filters did find the text: the pattern was wrong, the code is not absent.
+ * The note is appended AFTER the sentinel so EMPTY_RESULT_RE (prefix-anchored)
+ * still classifies it as an empty result, while isEmptyGrepResult (fully
+ * anchored) correctly stops treating it as proof of absence — which is the
+ * point: a pattern that could not match is not cleanup evidence.
+ */
+export function noMatchesResult(literalMatches: number | null): ToolResult {
+  if (literalMatches == null || literalMatches <= 0) return ok(NO_MATCHES_SENTINEL);
+  const plural = literalMatches === 1 ? "match" : "matches";
+  return ok(
+    `${NO_MATCHES_SENTINEL}\n\nWARNING: your pattern contains regex metacharacters and matched nothing, but a LITERAL ` +
+    `(fixed-string) search for the same text over the same path found ${literalMatches} ${plural}. ` +
+    `Your PATTERN is wrong — the text is NOT absent. Escape the metacharacters or search a simpler ` +
+    `literal substring before concluding anything is missing.`,
+  );
+}
+
 // Fallback walk. Divergences from rg, accepted because this path runs ONLY
 // when the rg binary is missing entirely:
 //   - rg honors .gitignore/.ignore inside git repos. Faithful gitignore
@@ -221,10 +270,35 @@ export async function fallbackSearch(args: Record<string, unknown>, limit: numbe
   }
 
   // Zero-match result stays legacy-shaped — same anchored-sentinel reasoning
-  // as the rg path in grep-tool.ts.
-  if (matchTotal === 0) return ok("No matches found.");
+  // as the rg path in grep-tool.ts — but first check whether the pattern, not
+  // the tree, is why nothing came back.
+  if (matchTotal === 0) return noMatchesResult(await literalFallbackCount(args));
   return ok(
     truncate(lines, limit),
     resultMeta(args, lines, lines.length > limit || renderCut, matchTotal, fileCount),
   );
+}
+
+/**
+ * One literal re-walk of the SAME root/filters, run only when the fallback
+ * engine found nothing AND the pattern carries regex syntax. `_literalRetry`
+ * makes the recursion depth exactly one. head_limit 1 stops rendering almost
+ * immediately; the walk (and therefore match_count) is unaffected by it.
+ */
+async function literalFallbackCount(args: Record<string, unknown>): Promise<number | null> {
+  const raw = String(args.pattern);
+  if (args._literalRetry === true || !hasRegexMeta(raw)) return null;
+  const res = await fallbackSearch(
+    {
+      ...args,
+      pattern: escapeRegexPattern(raw),
+      output_mode: "content",
+      context: 0,
+      _onProgress: undefined,
+      _literalRetry: true,
+    },
+    1,
+  );
+  const n = res.metadata?.match_count;
+  return typeof n === "number" && n > 0 ? n : null;
 }

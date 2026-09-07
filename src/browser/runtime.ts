@@ -85,7 +85,7 @@ export function createQuarantinedChromiumContext(
   return create;
 }
 
-async function launch(engine: BrowserEngine, userDataDir?: string): Promise<Browser> {
+async function launch(engine: BrowserEngine, userDataDir?: string, preferHeadless = false): Promise<Browser> {
   const proxy = await ensureBrowserEgressProxy();
   proxyServer = proxy.url;
   const pw = await import("playwright");
@@ -94,13 +94,16 @@ async function launch(engine: BrowserEngine, userDataDir?: string): Promise<Brow
       // userDataDir carries the shared persistent browser identity. The
       // launcher keeps its own legacy default when this is undefined, so a
       // direct/legacy call is unchanged.
-      const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url, { userDataDir });
+      const { browser: b, chromeProcess: proc, cleanup } = await launchViaCDP(pw, proxy.url, {
+        userDataDir,
+        ...(preferHeadless ? { headless: true } : {}),
+      });
       chromeProcess = proc;
       browserLaunchCleanup = cleanup ?? null;
       return b;
     }
     return pw[engine].launch({
-      headless: process.env.LAX_BROWSER_HEADLESS === "1",
+      headless: preferHeadless || process.env.LAX_BROWSER_HEADLESS === "1",
       args: STEALTH_ARGS,
       downloadsPath: resetBrowserNativeDownloadDir(),
       proxy: browserProxyConfig(proxy.url),
@@ -122,8 +125,17 @@ async function launch(engine: BrowserEngine, userDataDir?: string): Promise<Brow
  *  is the accepted CDP-fallback limitation: true per-(session,profile) browsing
  *  is the in-app backend's job (isolated WebContentsView partitions); CDP is the
  *  single-profile fallback that at least persists the driving profile's logins.
- *  An already-connected browser ignores the arg (its dir is already committed). */
-export async function getSharedBrowser(engine: BrowserEngine, userDataDir?: string): Promise<Browser> {
+ *  An already-connected browser ignores the arg (its dir is already committed).
+ *
+ *  `preferHeadless` applies to the LAUNCH only, and only when this call is the
+ *  one that starts Chrome: an already-connected browser is reused as it is
+ *  (there is exactly one shared process). It exists for the in-app route's
+ *  emulation stand-in, which must not put a second window on the user's screen. */
+export async function getSharedBrowser(
+  engine: BrowserEngine,
+  userDataDir?: string,
+  preferHeadless = false,
+): Promise<Browser> {
   if (browser && browser.isConnected() && engine !== currentEngine) {
     await closeSharedBrowser();
   }
@@ -132,7 +144,7 @@ export async function getSharedBrowser(engine: BrowserEngine, userDataDir?: stri
   sharedContext = null;
   sharedContextCreation = null;
   if (!launching) {
-    launching = launch(engine, userDataDir)
+    launching = launch(engine, userDataDir, preferHeadless)
       .then((b) => { browser = b; return b; })
       .finally(() => { launching = null; });
   }
@@ -207,7 +219,6 @@ export async function acquireSessionContext(
   ownerId: string,
   userDataDir?: string,
 ): Promise<BrowserContext> {
-  const b = await getSharedBrowser(engine, userDataDir);
   // Device emulation (browser tool `emulate`) FORCES an ephemeral, quarantined,
   // session-private context regardless of the session's mode. viewport /
   // userAgent / isMobile / hasTouch / deviceScaleFactor are context-CREATION
@@ -217,6 +228,12 @@ export async function acquireSessionContext(
   // isMobile is unsupported on firefox/webkit, and the tool layer refuses
   // there rather than minting a context that would throw here.
   const emulation = engine === "chromium" ? getSessionEmulation(ownerId) : undefined;
+  // mode "in-app" + a profile is the emulation stand-in for a session whose real
+  // browser is the WebContentsView the user is looking at — that view may not be
+  // re-identified, so the measurement runs here instead. It must stay INVISIBLE:
+  // a second Chrome window on the user's desktop is exactly the intrusion the
+  // in-app refusal used to prevent. Honoured only if this call starts Chrome.
+  const b = await getSharedBrowser(engine, userDataDir, Boolean(emulation) && mode === "in-app");
   if (emulation) {
     const context = await createQuarantinedChromiumContext(b, { ...CONTEXT_OPTS(engine), ...emulation });
     emulatedContexts.add(context);

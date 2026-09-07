@@ -10,6 +10,13 @@
  * the context runtime when it mints a fresh QUARANTINED Playwright context —
  * never as a raw CDP call (the Emulation domain) against a live page, which
  * would attach a debugger to the browser the user is looking at.
+ *
+ * TWO ARMS. On the CDP route the session's own context is re-minted emulated.
+ * On the IN-APP route (the default) the session's browser is the window the
+ * user is looking at, so emulation is minted in a PRIVATE headless context
+ * BESIDE it and the session's page actions are routed there until
+ * `device='desktop'` clears it — see browser/emulation-route.ts. This used to
+ * be a flat refusal, which left the capability nonexistent on the default route.
  */
 
 import type { ToolResult } from "../../types.js";
@@ -21,6 +28,7 @@ import type { BrowserManager } from "../../browser/manager.js";
 import {
   CdpOnlyOperationError,
   getCdpBrowserManager,
+  releaseEmulatedBrowser,
   resolveBrowserBackendKind,
   type BrowserBackendKind,
 } from "../../browser/instance.js";
@@ -32,12 +40,11 @@ import { ok, err } from "./shared.js";
 
 /** The in-app view is the browser the USER is looking at, and its page is a
  *  bridge adapter with a read-only viewportSize() (in-app-observe.ts). Nothing
- *  here may resize or re-UA it. */
-const IN_APP_REFUSAL =
-  "emulate is not available on the in-app browser: that view is the window the user is " +
-  "looking at, so resizing it or changing its user agent would move the user's own browser. " +
-  "Emulation runs in a separate, isolated Chrome context — set browserMode to an external-Chrome " +
-  "mode (or run with LAX_BROWSER_HEADLESS=1) for this session and try again.";
+ *  here may resize, re-UA, navigate or close it — so on that route emulation
+ *  runs in a PRIVATE headless context beside it (see browser/emulation-route.ts)
+ *  and the session's page actions are routed there until it is cleared. */
+const WAY_BACK = "Run emulate with device='desktop' to close the emulated context and put this session " +
+  "back on the in-app browser view.";
 
 /** A subagent (or any child run) resolves to its ROOT CHAT's browser session:
  *  registerChildSessionOwner flattens every spawned run onto the parent chat,
@@ -47,35 +54,95 @@ const IN_APP_REFUSAL =
  *  then closes the context so the next access re-mints it. Run by a non-owner
  *  that is a cross-session hijack - the parent chat and every sibling silently
  *  lose their cookies, logins and viewport, and only the caller is told. So the
- *  caller must own the browser it is about to re-identify. Same shape as the
- *  in-app refusal above: refuse, name the reason, name the way forward. */
+ *  caller must own the browser it is about to re-identify. Refuse, name the
+ *  reason, name the way forward. */
 function sharedBrowserRefusal(sessionId: string, ownerId: string, route: BrowserBackendKind): string {
-  // The way forward has to match the OWNER's route. On the in-app route (the
-  // default) "ask the parent to run emulate" is a dead end: the parent hits
-  // IN_APP_REFUSAL, because the shared browser there is the view the user is
-  // looking at. Only the CDP route can honour the suggestion at all.
+  // The consequence and the way forward both depend on the OWNER's route. On
+  // the in-app route emulate no longer destroys anything: it stands a private
+  // emulated context up beside the user's untouched view. What it still does is
+  // MOVE the whole shared session onto that context - silently, for the parent
+  // and every sibling - which is exactly what a non-owner may not do.
+  const consequence = route === "in-app"
+    ? "emulate re-identifies that browser. On this route it leaves the user's in-app window alone, but it " +
+      "REDIRECTS every page action of the parent and each sibling onto a private emulated context: their next " +
+      "click/fill by ref misses, their next snapshot describes a different page, and none of them are told."
+    : "emulate re-identifies that browser: it installs a new viewport and user agent and DESTROYS the shared " +
+      "context, so every logged-in tab the parent has open would come back cookieless, and the parent would " +
+      "never be told.";
   const forward = route === "in-app"
-    ? "Telling the parent to run emulate will NOT work either on this session's route: the shared browser is the " +
-      "in-app view the user is looking at, and emulate refuses there. Do this work in a session whose browserMode " +
-      "selects external Chrome (or run with LAX_BROWSER_HEADLESS=1), where the browser is the agent's own."
+    ? "The parent chat CAN run emulate here (and undo it with device='desktop'), but doing so moves the parent's " +
+      "WHOLE session onto the emulated context, not just yours - so ask for it explicitly rather than assuming " +
+      "it is free. Prefer doing this work in a session that owns its own browser."
     : "The parent chat CAN run emulate (and clear it with device='desktop' afterwards) - but that is not free: it " +
       "closes the shared context, so this session's own tabs close too and every ref it holds goes stale, with no " +
       "notification to anyone but the caller. Prefer doing this work in a session that owns its own browser.";
   return (
     `emulate is not available here: this session (${sessionId}) does not own its browser - it drives ` +
     `the browser of session ${ownerId} (the chat that spawned it), which its parent and any sibling ` +
-    "agents are using at the same time. emulate re-identifies that browser: it installs a new viewport " +
-    "and user agent and DESTROYS the shared context, so every logged-in tab the parent has open would " +
-    `come back cookieless, and the parent would never be told. ${forward}`
+    `agents are using at the same time. ${consequence} ${forward}`
   );
 }
 
-/** Which browser this session would get, for message accuracy only. A pure read
- *  of the routing matrix (config + env); it opens nothing and mints nothing. A
- *  throw here must not turn a refusal into a crash, so it fails to "cdp" - the
- *  arm whose advice is merely less specific, never the arm that is a dead end. */
-function routeKindForMessage(): BrowserBackendKind {
+/** Which browser this session's route selects — it picks the arm below AND the
+ *  wording of the ownership refusal. A pure read of the routing matrix (config +
+ *  env); it opens nothing and mints nothing. A throw here must not turn a
+ *  refusal into a crash, so it fails to "cdp", whose arm re-checks the route at
+ *  getCdpBrowserManager and falls back to the in-app arm if it was wrong. */
+function sessionRouteKind(): BrowserBackendKind {
   try { return resolveBrowserBackendKind(); } catch { return "cdp"; }
+}
+
+/**
+ * The IN-APP route. The user's WebContentsView is read (its URL) and otherwise
+ * never touched: not resized, not re-UA'd, not navigated, not closed. The
+ * profile is installed, any previous emulated context is dropped, and a private
+ * quarantined headless Chromium context is minted in its place — after which
+ * browser/emulation-route.ts routes this session's page actions there until
+ * `device='desktop'` clears it.
+ */
+async function emulateBesideInAppView(
+  manager: BrowserBackend,
+  args: Record<string, unknown>,
+  ownerId: string,
+): Promise<ToolResult> {
+  // The in-app view is Chromium; there is no engine to choose here.
+  const resolved = resolveEmulationProfile(args, USER_AGENTS.chromium);
+  if ("error" in resolved) return err(resolved.error);
+  const { profile } = resolved;
+  const previousUrl = manager.getCurrentUrl();
+  const carryUrl = previousUrl && !isBlankish(previousUrl) ? previousUrl : null;
+
+  setSessionEmulation(ownerId, profile);
+  // Drops a PREVIOUS emulated context (repeat emulate) or, when the profile was
+  // just cleared, the emulated context itself. Never touches the in-app backend.
+  await releaseEmulatedBrowser(ownerId);
+  if (!profile) {
+    return ok(
+      "Emulation cleared. The private emulated context is closed and this session is back on the in-app " +
+      "browser view — which was unchanged throughout: same window, same size, same user agent, same page.",
+    );
+  }
+
+  let carried = "No page was open, so nothing was opened in it.";
+  if (carryUrl) {
+    try {
+      await getCdpBrowserManager(ownerId).navigate(carryUrl);
+      carried = `Opened ${carryUrl} in it.`;
+    } catch (error) {
+      carried = `Could not open ${carryUrl}: ${(error as Error).message} — navigate again to continue.`;
+    }
+  }
+  return ok(
+    `Emulating: ${describeEmulation(profile)}\n${carried}\n\n` +
+    "This runs in a PRIVATE, isolated, headless Chromium context — NOT the in-app browser window. That " +
+    "window is untouched: same size, same user agent, same page, still open in front of the user.\n\n" +
+    "Until you clear it, this session's page actions — navigate, snapshot, screenshot, extract, evaluate, " +
+    "layout_report, click/fill/scroll, tabs — run against the EMULATED context, which starts with no cookies " +
+    "or logins. read_console / read_network / read_response read the in-app browser and are unavailable " +
+    `while emulating.\n\n${WAY_BACK}\n\n` +
+    "Next: layout_report to get the raw layout data for this width (what overflows, which @media conditions " +
+    "match, what the fixed/sticky elements are), or screenshot to see the rendering.",
+  );
 }
 
 export async function handleEmulate(
@@ -87,14 +154,15 @@ export async function handleEmulate(
   // both unrecoverable for the owner.
   const actingId = sessionId || "default";
   const ownerId = resolveBrowserSessionId(actingId);
-  if (ownerId !== actingId) return err(sharedBrowserRefusal(actingId, ownerId, routeKindForMessage()));
+  if (ownerId !== actingId) return err(sharedBrowserRefusal(actingId, ownerId, sessionRouteKind()));
+  if (sessionRouteKind() === "in-app") return await emulateBesideInAppView(manager, args, ownerId);
   let cdp: BrowserManager;
   try {
-    // Doubles as THE in-app refusal: this throws rather than opening a second
-    // browser identity beside the session's live view.
     cdp = getCdpBrowserManager(sessionId);
   } catch (error) {
-    if (error instanceof CdpOnlyOperationError) return err(IN_APP_REFUSAL);
+    // The route flipped between the read above and this call (a mid-session
+    // mode change, or the desktop bridge coming back). Same answer, one seam.
+    if (error instanceof CdpOnlyOperationError) return await emulateBesideInAppView(manager, args, ownerId);
     throw error;
   }
   const engine = cdp.getEngine();

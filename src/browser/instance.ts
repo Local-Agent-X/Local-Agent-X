@@ -6,7 +6,8 @@ import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
 import { resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
-import { clearSessionEmulation } from "./emulation.js";
+import { clearSessionEmulation, getSessionEmulation } from "./emulation.js";
+import { applyEmulationRoute, emulationRouteLine } from "./emulation-route.js";
 import { desktopBridgeAvailable } from "../desktop-bridge.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -79,7 +80,10 @@ export type BrowserRouteReason =
 	/** Windows uses installed Chrome because Electron is rejected by common human checks. */
 	| "windows-chat-chrome"
 	/** Wanted in-app but the desktop app/bridge isn't there. The surprising arm. */
-	| "no-desktop-bridge";
+	| "no-desktop-bridge"
+	/** In-app session with a device-emulation profile installed: page actions run
+	 *  in a private quarantined CDP context (see emulation-route.ts). */
+	| "emulation";
 
 export interface BrowserRoute {
 	kind: BrowserBackendKind;
@@ -135,6 +139,12 @@ function inAppBackendAvailable(): boolean {
 	return resolveBrowserRoute().kind === "in-app";
 }
 
+/** The session's route with the emulation override applied — see
+ *  emulation-route.ts for why an in-app session can be sent to a CDP context. */
+function routeForSession(key: string): BrowserRoute {
+	return applyEmulationRoute(resolveBrowserRoute(), key);
+}
+
 /** Reason last reported per session, so a steady state stays quiet. */
 const routeReported = new Map<string, BrowserRouteReason>();
 
@@ -168,6 +178,9 @@ function reportBrowserRoute(sessionId: string, route: BrowserRoute): void {
 			return;
 		case "windows-chat-chrome":
 			logger.info(`[browser-route] dedicated chat-scoped Chrome ${who} — Windows in-app compatibility route.`);
+			return;
+		case "emulation":
+			logger.info(emulationRouteLine(who));
 			return;
 		case "no-desktop-bridge":
 			logger.warn(
@@ -239,7 +252,7 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
 	// The CDP manager is bound to the chat-scoped browser session, while its
 	// userDataDir is threaded into launchViaCDP at first getPage() — so every
 	// arms share the same persistent login identity.
-	const route = resolveBrowserRoute();
+	const route = routeForSession(key);
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key);
 	return ensureCdpManager(key, route.reason === "windows-chat-chrome");
@@ -255,7 +268,9 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
  */
 export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowserOps {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	const route = resolveBrowserRoute();
+	// Same override as getBrowserManager: while emulating, the session's live
+	// page IS the emulated one, so a secret fill must land there.
+	const route = routeForSession(key);
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key).secretOps();
 	const manager = ensureCdpManager(key, route.reason === "windows-chat-chrome");
@@ -271,10 +286,28 @@ export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowse
  */
 export function getCdpBrowserManager(sessionId: string = "default"): BrowserManager {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	if (inAppBackends.has(key) || inAppBackendAvailable()) {
+	// The emulation override (emulation-route.ts) is the ONE case where an in-app
+	// session legitimately holds a CDP manager: the private emulated context
+	// standing in for the view the user is looking at.
+	if (!getSessionEmulation(key) && (inAppBackends.has(key) || inAppBackendAvailable())) {
 		throw new CdpOnlyOperationError(key);
 	}
 	return ensureCdpManager(key, resolveBrowserRoute().reason === "windows-chat-chrome");
+}
+
+/** Close the private emulated CDP context of a session whose real browser is
+ *  the in-app view — the way back, and the re-mint step when `emulate` runs a
+ *  second time. Leaves inAppBackends alone: the user's view, tabs and page
+ *  survive untouched. Set/clear the profile FIRST; this only drops the context,
+ *  and the next page access re-mints from whatever the profile then says. */
+export async function releaseEmulatedBrowser(sessionId: string = "default"): Promise<void> {
+	const key = resolveBrowserSessionId(sessionId || "default");
+	routeReported.delete(key);
+	const manager = cdpManagers.get(key);
+	if (!manager) return;
+	cdpManagers.delete(key);
+	await manager.close();
+	if (cdpManagers.size === 0) await closeSharedBrowser();
 }
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {

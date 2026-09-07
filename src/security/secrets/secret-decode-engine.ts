@@ -29,8 +29,10 @@ export function maskSecret(value: string): string {
 //
 // scanForSecrets matches the credential catalog against the RAW text. An
 // attacker (or a compromised model) can evade that by encoding the secret:
-// base64("sk-ant-…") or its hex/percent-encoded/unicode-obfuscated forms sail
-// past a raw regex. The passes below detect a secret that is present only in a
+// base64("sk-ant-…") or its hex/percent/\uXXXX-escaped forms sail
+// past a raw regex. Those four are the schemes THIS file decodes; homoglyph and
+// zero-width obfuscation is a different mechanism, owned by the normalized view
+// in secret-normalize.ts. The passes below detect a secret present only in a
 // DECODED or NORMALIZED view of the text. Detection (the `clean` flag) is the
 // must-have; for redaction we attribute the match to the ORIGINAL span (the
 // whole encoded blob, or the normalized-out run) so redactSecrets /
@@ -187,6 +189,53 @@ function decodeHex(run: string): string | null {
   return buf === null ? null : buf.toString("latin1");
 }
 
+// ── JSON / \uXXXX unicode-escape scheme ──────────────────────────────────────
+//
+// Any JSON-encoded payload renders a secret as `sk…`, and
+// browser.layout_report's serializer forces `<`, `>`, `[`, the control chars and
+// every code unit >= U+007F into that form. The normalized view
+// (secret-normalize.ts) does NOT decode these — it folds homoglyphs and strips
+// invisibles — so without this scheme an escaped credential reached the catalog
+// and known-value passes in a shape their patterns cannot match.
+//
+// Run shape mirrors PERCENT_RUN_RE: escape atoms INTERLEAVED with literal
+// non-space, non-backslash chars, so a PARTIALLY escaped secret
+// (`sk-ant-api03…`) stays ONE run instead of being split into
+// fragments that decode to nothing. The three alternatives are disjoint on their
+// first character (`\u`, `\<short>`, non-backslash), so the alternation is
+// unambiguous — no nested quantifier, linear time, ReDoS-safe. A bare `\` that
+// begins no valid escape terminates the run, so backslash spam matches nothing.
+//
+// SHORT FORMS (`\\ \" \/ \b \f \n \r \t`) are INCLUDED as run atoms because
+// excluding them would NARROW detection: JSON.stringify emits `\/`, `\"` and
+// `\\` inline, and a run that broke at one of those would split an escaped
+// secret in half. They widen the run, never the match set — a decoded quote or
+// newline trips no credential pattern on its own.
+const UNICODE_ESCAPE_RUN_RE = /(?:\\u[0-9a-fA-F]{4}|\\[bfnrt"\\/]|[^\s\\]){12,}/g;
+const ESCAPE_ATOM_RE = /\\u([0-9a-fA-F]{4})|\\([bfnrt"\\/])/g;
+const SHORT_ESCAPES: Record<string, string> = {
+  b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", '"': '"', "\\": "\\", "/": "/",
+};
+
+// Total: malformed input (`\u` with no digits, a truncated `\u00`, lone
+// backslashes) simply isn't matched by an atom and stays literal — never throws.
+// Surrogate pairs need no special case: appending each escape's CODE UNIT via
+// fromCharCode rebuilds `😀` as the real astral character.
+function decodeUnicodeEscapes(run: string): string | null {
+  if (!run.includes("\\u")) return null; // fast reject — the run is plain text
+  let out = "";
+  let last = 0;
+  ESCAPE_ATOM_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ESCAPE_ATOM_RE.exec(run)) !== null) {
+    out += run.slice(last, m.index);
+    out += m[1] !== undefined ? String.fromCharCode(parseInt(m[1], 16)) : SHORT_ESCAPES[m[2]];
+    last = m.index + m[0].length;
+  }
+  out += run.slice(last);
+  return out === run ? null : out;
+}
+
 function decodePercent(run: string): string | null {
   if (!run.includes("%")) return null;
   try {
@@ -218,6 +267,7 @@ export const ENCODED_SCHEMES: EncodedScheme[] = [
   { re: BASE64_RUN_RE, decode: decodeBase64, label: "base64" },
   { re: HEX_RUN_RE, decode: decodeHex, label: "hex" },
   { re: PERCENT_RUN_RE, decode: decodePercent, label: "percent" },
+  { re: UNICODE_ESCAPE_RUN_RE, decode: decodeUnicodeEscapes, label: "unicode-escape" },
 ];
 
 // C3-18: a fixed one-extra-layer peel let `base64(base64(hex(secret)))` (3

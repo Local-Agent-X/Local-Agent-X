@@ -70,11 +70,13 @@ import {
 	resolveBrowserRoute,
 	getSecretBrowserOps,
 	CdpOnlyOperationError,
+	releaseEmulatedBrowser,
 	_setBrowserRoutePlatformForTest,
 } from "./instance.js";
 import { BrowserManager } from "./manager.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { _resetSessionOwnerRegistry, registerChildSessionOwner } from "./session-owner-registry.js";
+import { EMULATION_PRESETS, setSessionEmulation, _resetSessionEmulationForTest } from "./emulation.js";
 
 function setInApp(bridge = true): void {
 	state.browserMode = "in-app";
@@ -384,6 +386,100 @@ describe("closeBrowser / closeAllBrowsers", () => {
 		state.browserMode = "isolated";
 		state.bridge = false;
 		expect(getBrowserManager("cdp-session")).not.toBe(cdp);
+	});
+});
+
+/**
+ * The emulation override (emulation-route.ts). `emulate` needs a context of its
+ * own — viewport / UA / isMobile are Playwright context-CREATION options — and
+ * on the in-app route the session's browser is the window the USER is looking
+ * at. So while a profile is installed the SESSION is routed to a private
+ * quarantined CDP context and the in-app backend is left standing, untouched,
+ * still in the map, ready to be handed back the moment emulation is cleared.
+ *
+ * This replaces a flat refusal that made `emulate` nonexistent on the default
+ * route (op_chat_turn_620ed38e8d2c42bf: ten hand-written Playwright scratch
+ * probes, zero layout_report calls).
+ */
+describe("device emulation routes an in-app session to a private CDP context", () => {
+	beforeEach(() => { _resetSessionEmulationForTest(); });
+	afterEach(() => { _resetSessionEmulationForTest(); });
+
+	it("hands out the CDP manager while a profile is installed, and the SAME in-app backend after it is cleared", async () => {
+		setInApp();
+		const inApp = getBrowserManager("chat-1");
+		expect(inApp).toBeInstanceOf(ElectronInAppBackend);
+
+		setSessionEmulation("chat-1", EMULATION_PRESETS.iphone);
+		const emulated = getBrowserManager("chat-1");
+		expect(emulated).toBeInstanceOf(BrowserManager);
+		expect(emulated).not.toBe(inApp);
+		// The ROUTE itself did not change — only this session's, and only while
+		// it is emulating. Nothing closed the user's view.
+		expect(resolveBrowserRoute().kind).toBe("in-app");
+
+		// THE WAY BACK.
+		setSessionEmulation("chat-1", null);
+		await releaseEmulatedBrowser("chat-1");
+		expect(getBrowserManager("chat-1")).toBe(inApp);
+	});
+
+	it("says so in the route log", () => {
+		setInApp();
+		getBrowserManager("chat-1");
+		setSessionEmulation("chat-1", EMULATION_PRESETS.android);
+		getBrowserManager("chat-1");
+
+		const line = routeLines("info").find((m) => m.includes("private emulated Chrome context"));
+		expect(line).toBeDefined();
+		expect(line).toContain("in-app view is untouched");
+		expect(line).toContain("device='desktop'");
+	});
+
+	it("only moves the emulating session — a sibling chat still gets its in-app view", () => {
+		setInApp();
+		const other = getBrowserManager("chat-2");
+		setSessionEmulation("chat-1", EMULATION_PRESETS.iphone);
+
+		expect(getBrowserManager("chat-1")).toBeInstanceOf(BrowserManager);
+		expect(getBrowserManager("chat-2")).toBe(other);
+	});
+
+	it("lets getCdpBrowserManager mint the emulated context, and refuses again once emulation is cleared", async () => {
+		setInApp();
+		getBrowserManager("chat-1");
+		expect(() => getCdpBrowserManager("chat-1")).toThrow(CdpOnlyOperationError);
+
+		setSessionEmulation("chat-1", EMULATION_PRESETS.ipad);
+		expect(getCdpBrowserManager("chat-1")).toBeInstanceOf(BrowserManager);
+
+		setSessionEmulation("chat-1", null);
+		await releaseEmulatedBrowser("chat-1");
+		expect(() => getCdpBrowserManager("chat-1")).toThrow(CdpOnlyOperationError);
+	});
+
+	it("releaseEmulatedBrowser drops ONLY the emulated context — the in-app backend survives", async () => {
+		setInApp();
+		const inApp = getBrowserManager("chat-1") as ElectronInAppBackend;
+		const closeSpy = vi.spyOn(inApp, "close");
+		setSessionEmulation("chat-1", EMULATION_PRESETS.iphone);
+		const emulated = getBrowserManager("chat-1") as BrowserManager;
+		const emulatedClose = vi.spyOn(emulated, "close");
+
+		await releaseEmulatedBrowser("chat-1");
+
+		expect(emulatedClose).toHaveBeenCalledOnce();
+		expect(closeSpy).not.toHaveBeenCalled();
+		setSessionEmulation("chat-1", null);
+		expect(getBrowserManager("chat-1")).toBe(inApp);
+	});
+
+	it("a subagent shares its parent's emulated context, never a second one", () => {
+		setInApp();
+		registerChildSessionOwner("agent-child", "chat-1");
+		setSessionEmulation("chat-1", EMULATION_PRESETS.iphone);
+
+		expect(getBrowserManager("agent-child")).toBe(getBrowserManager("chat-1"));
 	});
 });
 

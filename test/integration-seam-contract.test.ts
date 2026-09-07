@@ -213,6 +213,40 @@ async function systemPrompt(reg: IntegrationRegistry, message: string, loaded: T
 }
 
 /**
+ * Tool names the deferred manifest actually advertises.
+ *
+ * Parsed rather than substring-matched because the manifest emits TWO line
+ * shapes (buildDeferredToolManifest): `- name: first sentence` for a tool with
+ * no family, and `- prefix_*: a, b, c` for a family listed by name only. A
+ * grouped tool is still named and still discoverable via tool_search, so a
+ * matcher that only understood `- name:` would report a false NEGATIVE for
+ * every grouped tool. Names are compared WHOLE, never as substrings, because
+ * the negative assertions below ("this gated tool is not named") have to be
+ * exact - `email_read` is a substring of `email_read_message`.
+ *
+ * Scoped to the manifest section so the `- **name**: nudge` lines that
+ * buildToolPromptSection emits earlier can never be read as manifest entries.
+ */
+function manifestNamesIn(prompt: string): Set<string> {
+  const start = prompt.indexOf("## More tools available on demand");
+  if (start < 0) return new Set();
+  const names = new Set<string>();
+  for (const line of prompt.slice(start).split("\n")) {
+    if (!line.startsWith("- ")) continue;
+    const body = line.slice(2);
+    const colon = body.indexOf(":");
+    if (colon < 0) continue;
+    const head = body.slice(0, colon);
+    if (head.endsWith("_*")) {
+      for (const n of body.slice(colon + 1).split(",")) names.add(n.trim());
+    } else if (!head.includes(" ")) {
+      names.add(head);
+    }
+  }
+  return names;
+}
+
+/**
  * One observation of the whole chain for a given user message.
  *
  * `loaded` is the real main-chat resolver's output (filterToolsForMessage →
@@ -230,7 +264,9 @@ async function observe(reg: IntegrationRegistry, message = "send an email to bob
   const loaded = filterToolsForMessage(allTools, message);
   const prompt = await systemPrompt(reg, message, loaded);
   const loadedNames = new Set(loaded.map((t) => t.name));
-  const manifested = new Set(allTools.filter((t) => prompt.includes(`- ${t.name}:`)).map((t) => t.name));
+  const manifested = new Set(
+    allTools.filter((t) => manifestNamesIn(prompt).has(t.name)).map((t) => t.name),
+  );
   return {
     prompt,
     loadedNames,

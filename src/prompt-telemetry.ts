@@ -2,10 +2,12 @@ import { estimateTokens } from "./context-manager/token-estimation.js";
 import type { ToolDefinition } from "./types.js";
 import { toOAuthWireName } from "./anthropic-client/oauth-direct.js";
 import {
+  toAnthropicTools,
   toolSchemaFormatForProvider,
   toProviderToolSchemaPayload,
   type ToolSchemaFormat,
 } from "./providers/shared/tool-shape.js";
+import { isAnthropicCliTransportEnabled } from "./anthropic-client/cli-transport.js";
 
 type PromptTelemetryTool = Pick<ToolDefinition, "name" | "description" | "parameters">;
 
@@ -76,6 +78,45 @@ export function measurePromptSection(
   };
 }
 
+/**
+ * The tool payload that ACTUALLY goes on the wire for this format.
+ *
+ * `toProviderToolSchemaPayload()` returns null for `anthropic-dynamic` and
+ * `anthropic-cli-managed` on the theory that the CLI subprocess owns the tool
+ * definitions. That was true when the CLI transport shipped enabled. It is not
+ * true now: `isAnthropicCliTransportEnabled()` is false by default, so
+ * `streamAnthropicResponse()` (anthropic-client/stream.ts:36-54) promotes every
+ * subscription-shaped credential to the direct-HTTP OAuth path, and
+ * `streamViaAPI` (stream-api.ts:208-232) then sets `body.tools =
+ * toAnthropicTools(tools, { mapName: toOAuthWireName, cacheControlLast: true })`
+ * UNCONDITIONALLY — it never consults ToolSchemaFormat at all.
+ *
+ * The consequence was that telemetry reported `toolSchemaEstimatedTokens: null`
+ * on precisely the lane that pays the largest tool-schema bill (~23,300 est
+ * tokens for the 63 main-chat eager tools, measured 2026-09-06), so any attempt
+ * to measure prompt cost from this record was blind to about a quarter of it.
+ *
+ * So: mirror the wire. Null now means what it says — the schemas genuinely are
+ * not in OUR request body — and that is only the case when the hidden CLI
+ * transport has been re-enabled with LAX_ANTHROPIC_CLI_TRANSPORT=1. Read at
+ * call time, like the gate itself, so a toggle takes effect without a restart.
+ *
+ * The shape is measured, never retained: only the token count survives into the
+ * record, so no tool description or schema leaks into telemetry.
+ */
+function toolSchemaPayloadOnTheWire(
+  format: ToolSchemaFormat,
+  tools: readonly PromptTelemetryTool[],
+): unknown {
+  if (format === "anthropic-dynamic" || format === "anthropic-cli-managed") {
+    if (isAnthropicCliTransportEnabled()) return null;
+    return toAnthropicTools(tools, { mapName: toOAuthWireName, cacheControlLast: true });
+  }
+  return toProviderToolSchemaPayload(format, tools, {
+    mapAnthropicOAuthName: toOAuthWireName,
+  });
+}
+
 export function createPromptTelemetry(input: {
   profile: PromptTelemetry["profile"];
   provider: string;
@@ -92,9 +133,7 @@ export function createPromptTelemetry(input: {
   const toolSchemaFormat = input.toolSchemaFormat
     ?? toolSchemaFormatForProvider(input.provider, input.authSource);
   const toolSchemaPayload = input.tools.length > 0
-    ? toProviderToolSchemaPayload(toolSchemaFormat, input.tools, {
-        mapAnthropicOAuthName: toOAuthWireName,
-      })
+    ? toolSchemaPayloadOnTheWire(toolSchemaFormat, input.tools)
     : null;
   return {
     version: 2,

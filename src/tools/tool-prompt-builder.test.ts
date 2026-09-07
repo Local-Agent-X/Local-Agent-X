@@ -60,6 +60,64 @@ describe("buildDeferredToolManifest", () => {
     expect(m).not.toContain("caveats");
   });
 
+  // C6c - family grouping. The manifest was 10,715 B for 113 deferred tools on
+  // the real catalog, 83% of the whole tool-guidance section, re-sent uncached
+  // every turn. Grouping drops DESCRIPTIONS the shared prefix already implies;
+  // it must never drop a NAME, or a tool becomes unfindable.
+  describe("family grouping", () => {
+    const family = [
+      tool("email_send"), tool("email_read"), tool("email_search"),
+      tool("sql_query"), tool("sql_schema"),
+      tool("ocr", "Extract text from an image using OCR (Tesseract)."),
+      tool("doctor", "Run system self-diagnostics."),
+    ];
+
+    it("NAMES every deferred tool exactly once, grouped or not (discoverability)", () => {
+      const m = buildDeferredToolManifest(family, []);
+      for (const t of family) {
+        const hits = m.split(t.name).length - 1;
+        expect(hits, `${t.name} must appear exactly once`).toBe(1);
+      }
+    });
+
+    it("collapses a family to one names-only line and drops its descriptions", () => {
+      const m = buildDeferredToolManifest(family, []);
+      expect(m).toContain("- email_*: email_send, email_read, email_search");
+      expect(m).toContain("- sql_*: sql_query, sql_schema");
+      expect(m).not.toContain("email_send does a thing");
+      expect(m).not.toContain("sql_query does a thing");
+    });
+
+    it("keeps the one-liner for a tool with no family - a lone name says nothing", () => {
+      const m = buildDeferredToolManifest(family, []);
+      expect(m).toContain("- ocr: Extract text from an image using OCR (Tesseract).");
+      expect(m).toContain("- doctor: Run system self-diagnostics.");
+    });
+
+    it("does not group a one-member prefix", () => {
+      const m = buildDeferredToolManifest([tool("email_send"), tool("ocr")], []);
+      expect(m).not.toContain("email_*");
+      expect(m).toContain("- email_send:");
+    });
+
+    it("tells the model how to read a grouped line, and to search before denying", () => {
+      const m = buildDeferredToolManifest(family, []);
+      expect(m).toContain("prefix_*: a, b, c");
+      expect(m.toLowerCase()).toContain("never tell the user a capability is");
+      expect(m).toContain("tool_search");
+    });
+
+    it("is materially smaller than one described line per tool", () => {
+      const desc = "A long first sentence that would otherwise be repeated twenty times over.";
+      // Same tool count, same descriptions; only whether they share a prefix.
+      const groupable = Array.from({ length: 20 }, (_, i) => tool(`email_${i}`, desc));
+      const ungroupable = Array.from({ length: 20 }, (_, i) => tool(`solo${i}`, desc));
+      const grouped = buildDeferredToolManifest(groupable, []);
+      const flat = buildDeferredToolManifest(ungroupable, []);
+      expect(grouped.length).toBeLessThan(flat.length / 2);
+    });
+  });
+
   it("caps the list and DISCLOSES the overflow instead of silently dropping tools", () => {
     const many = Array.from({ length: 300 }, (_, i) => tool(`t${i}`));
     const m = buildDeferredToolManifest(many, []);

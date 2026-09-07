@@ -8,6 +8,7 @@
 //     the local dropdown still routes to the cloud endpoint.
 
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
+import { stableSystemPrefixLength } from "../../agent-request/prepare-request/build-system-prompt.js";
 import { registerAdapterForOp } from "../runtime.js";
 import { createAnthropicAdapter } from "../adapters/anthropic.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
@@ -31,6 +32,22 @@ export async function registerAdapterForChat(
         // subscription token is resolvable; auto-falls back to the CLI proxy
         // otherwise. Sub-agents/builds omit this and stay on the CLI loop.
         preferDirectHttp: true,
+        // Split the system prompt into [stable | volatile] instead of shipping
+        // one block. Computed HERE, inside the lazy factory, so it reflects the
+        // final prompt: prepare-request appends learned-protocol/file-
+        // attachments, create-op appends op grounding, and the capability-aware
+        // degradation pass can drop sections — all of which land before the
+        // adapter is actually constructed.
+        //
+        // Without this, one block carried the breakpoint at the END of the
+        // system tier, so any per-turn churn in the dynamic tail (memory
+        // blocks, turn directives, riders) missed AND re-wrote the whole
+        // ~40k-token tier at 1.25x. With it, the ~26.7k-est-token static head
+        // (core-identity + runtime-context + app-manifest + agents-md +
+        // provider-hint, ~93.5 KB measured 2026-09-06) reads from cache
+        // instead. The volatile tail is still covered by the conversation
+        // breakpoint below, so nothing that was cached stops being cached.
+        systemStablePrefixLen: stableSystemPrefixLength(prepared.renderedPromptSections),
         // Cache the conversation prefix, not just system+tools.
         //
         // Without this the breakpoint sits at the end of the system blocks and

@@ -46,6 +46,25 @@ function firstSentence(desc: string, cap = 140): string {
  *  the prompt. Overflow is disclosed to the model, not silently dropped. */
 const MANIFEST_MAX = 250;
 
+/** Minimum members before a `<prefix>_*` family collapses to a names-only line.
+ *  Two is enough: once a second sibling exists the shared prefix is doing the
+ *  describing (`email_*`, `sql_*`, `mission_schedule_*`), and repeating a first
+ *  sentence per member buys the model nothing `tool_search` won't give it. */
+const MANIFEST_GROUP_MIN = 2;
+
+/** Description cap for a tool with NO family. A lone opaque name (`ocr`,
+ *  `doctor`, `recall`, `protocol`) carries no capability signal by itself, so
+ *  these keep their one-liner: that is the half of the manifest that is
+ *  actually load-bearing for discovery. */
+const SOLO_SENTENCE_CAP = 80;
+
+/** Family key for a tool name: the segment before the first underscore, or ""
+ *  for a single-word name (which can never group). */
+function familyKey(name: string): string {
+  const i = name.indexOf("_");
+  return i > 0 ? name.slice(0, i) : "";
+}
+
 /**
  * Deferred-tool name manifest — companion to buildToolPromptSection().
  *
@@ -59,9 +78,13 @@ const MANIFEST_MAX = 250;
  *
  * This lists the deferred tools by NAME + a one-line description so the model
  * knows the capability exists and loads the schema on demand via `tool_search`
- * (the canonical loader, always eager). It rides the system prompt, which is
- * NOT cache-anchored (only the tools array is — see stream-api.ts), so its
- * per-turn variance costs nothing on the cached tools block.
+ * (the canonical loader, always eager). It rides the system prompt inside the
+ * `tool-guidance` section, which per-turn tool selection makes volatile — which
+ * is exactly why `tool-guidance` sits OUTSIDE the chat lane's stable cache
+ * prefix (stableSystemPrefixLength, agent-request/prepare-request/build-system-prompt.ts).
+ * Its variance therefore costs nothing on the cached prefix, but it IS re-sent
+ * uncached every turn, so its size is a real per-turn cost — hence the family
+ * grouping below.
  *
  * What this function guarantees, exactly: the manifest is `all − loaded`. So
  * given an `all` that is the AVAILABILITY-FILTERED catalog (filterAvailableTools
@@ -102,7 +125,32 @@ export function buildDeferredToolManifest(
 
   const shown = deferred.slice(0, MANIFEST_MAX);
   const overflow = deferred.length - shown.length;
-  const lines = shown.map((t) => `- ${t.name}: ${firstSentence(t.description)}`);
+
+  // Group by name family, then emit families as names-only and the leftovers
+  // with their capped first sentence. Every deferred tool is still NAMED exactly
+  // once — grouping removes only DESCRIPTIONS that the shared prefix already
+  // implies, never a name, so nothing becomes unfindable and guarantee (2) in
+  // the docstring is untouched. Measured on the real 176-tool catalog
+  // (113 deferred): 10,290 B of one-line entries → 3,978 B, all 113 names intact.
+  const families = new Map<string, ToolDefinition[]>();
+  for (const t of shown) {
+    const key = familyKey(t.name);
+    const bucket = families.get(key);
+    if (bucket) bucket.push(t);
+    else families.set(key, [t]);
+  }
+  const lines: string[] = [];
+  const ungrouped: ToolDefinition[] = [];
+  for (const [key, members] of families) {
+    if (key && members.length >= MANIFEST_GROUP_MIN) {
+      lines.push(`- ${key}_*: ${members.map((t) => t.name).join(", ")}`);
+    } else {
+      ungrouped.push(...members);
+    }
+  }
+  for (const t of ungrouped) {
+    lines.push(`- ${t.name}: ${firstSentence(t.description, SOLO_SENTENCE_CAP)}`);
+  }
   if (overflow > 0) {
     lines.push(`- …and ${overflow} more — call \`tool_search\` with a keyword to find them.`);
   }
@@ -114,6 +162,9 @@ export function buildDeferredToolManifest(
     `tool it returns. This list is exhaustive: never tell the user a capability is ` +
     `missing or that you lack a tool without first calling \`tool_search\`. The tools ` +
     `loaded above take precedence when they already cover the need.\n` +
+    `Entries written \`prefix_*: a, b, c\` are ONE FAMILY listed by name only — the ` +
+    `names are the index. If a name might cover what you need, \`tool_search\` it and ` +
+    `read the real description before concluding it doesn't.\n` +
     lines.join("\n") +
     `\n`
   );

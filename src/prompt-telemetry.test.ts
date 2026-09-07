@@ -117,17 +117,57 @@ describe("prompt telemetry", () => {
     expect(JSON.stringify(telemetry)).not.toContain("internal-operation-key");
   });
 
-  it("marks Anthropic subscription dispatch as dynamic instead of persisting a false wire count", () => {
-    const telemetry = createPromptTelemetry({
-      profile: "full", provider: "anthropic", model: "claude-test", authSource: "oauth",
-      prompt: "prompt", tools: [{
-        name: "memory_search", description: "Read a file",
-        parameters: { type: "object", properties: {} },
-      }], allToolCount: 1, historyMessageCount: 0, sections: [],
+  // C6a. The anthropic+oauth+direct-HTTP lane is the one that pays the biggest
+  // tool-schema bill and it used to report null, because
+  // toProviderToolSchemaPayload() returns null for anthropic-dynamic on the
+  // theory that the CLI subprocess owns the definitions. With the CLI transport
+  // hidden (the shipped default) that theory is false: streamViaAPI sets
+  // body.tools unconditionally. These two tests pin the wire, not the theory.
+  describe("Anthropic subscription dispatch", () => {
+    const tools = [{
+      name: "memory_search", description: "Read a file",
+      parameters: { type: "object", properties: {} },
+    }];
+    const telemetryFor = (format?: "anthropic-dynamic" | "anthropic-cli-managed") =>
+      createPromptTelemetry({
+        profile: "full", provider: "anthropic", model: "claude-test", authSource: "oauth",
+        toolSchemaFormat: format,
+        prompt: "prompt", tools, allToolCount: 1, historyMessageCount: 0, sections: [],
+      });
+
+    it("measures the schemas that direct-HTTP OAuth actually sends", () => {
+      const telemetry = telemetryFor();
+      const onTheWire = [{
+        // toOAuthWireName renames the billing-classifier fingerprint tools.
+        name: "lax_memory_search", description: "Read a file",
+        input_schema: { type: "object", properties: {} },
+        cache_control: { type: "ephemeral" },
+      }];
+
+      expect(telemetry.toolSchemaFormat).toBe("anthropic-dynamic");
+      expect(telemetry.toolSchemaEstimatedTokens)
+        .toBe(estimateTokens(JSON.stringify(onTheWire)));
+      expect(telemetry.toolSchemaEstimatedTokens).not.toBeNull();
+      // Measured, never retained.
+      expect(JSON.stringify(telemetry)).not.toContain("Read a file");
     });
 
-    expect(telemetry.toolSchemaFormat).toBe("anthropic-dynamic");
-    expect(telemetry.toolSchemaEstimatedTokens).toBeNull();
+    it("measures anthropic-cli-managed too, since it also lands on direct HTTP", () => {
+      expect(telemetryFor("anthropic-cli-managed").toolSchemaEstimatedTokens)
+        .toBe(telemetryFor().toolSchemaEstimatedTokens);
+    });
+
+    it("reports null ONLY when the hidden CLI transport is actually re-enabled", () => {
+      const prior = process.env.LAX_ANTHROPIC_CLI_TRANSPORT;
+      process.env.LAX_ANTHROPIC_CLI_TRANSPORT = "1";
+      try {
+        expect(telemetryFor().toolSchemaEstimatedTokens).toBeNull();
+        expect(telemetryFor("anthropic-cli-managed").toolSchemaEstimatedTokens).toBeNull();
+      } finally {
+        if (prior === undefined) delete process.env.LAX_ANTHROPIC_CLI_TRANSPORT;
+        else process.env.LAX_ANTHROPIC_CLI_TRANSPORT = prior;
+      }
+    });
   });
 
   it("records zero schema tokens when the provider sends no tools field", () => {

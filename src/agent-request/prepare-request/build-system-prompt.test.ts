@@ -3,10 +3,11 @@ import {
   buildSystemPrompt,
   buildSystemPromptWithTelemetry,
   fileAccessGroundingBlock,
+  stableSystemPrefixLength,
 } from "./build-system-prompt.js";
 import { pushPendingNotification } from "../../ops/pending-notifications.js";
 import type { BuildSystemPromptInput } from "./build-system-prompt.js";
-import { harnessNotice } from "../../context/system-prompt-builder.js";
+import { harnessNotice, renderPromptSection } from "../../context/system-prompt-builder.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import { modelFamilyRiderFor } from "./provider-riders.js";
 
@@ -231,5 +232,112 @@ describe("Product Build turn directive", () => {
     expect(prompt).toContain("[HARNESS NOTE: TURN DIRECTIVE]");
     expect(prompt).toContain(directive);
     expect(prompt).not.toContain("Call the build_app tool");
+  });
+});
+
+// C6b — the chat lane's stable/volatile cache split.
+describe("stableSystemPrefixLength", () => {
+  const section = (
+    id: string,
+    type: "static" | "dynamic",
+    text: string,
+  ) => renderPromptSection({ id, label: id, type, policy: "required", text });
+
+  it("equals the byte length of the concatenated leading static sections", () => {
+    const sections = [
+      section("core-identity", "static", "IDENTITY"),
+      section("runtime-context", "static", "RUNTIME"),
+      section("agents-md", "static", "RULES"),
+      section("context-block", "dynamic", "PER-TURN MEMORY"),
+      section("turn-directive", "dynamic", "DO THE THING"),
+    ];
+    const expected = "IDENTITY".length + "RUNTIME".length + "RULES".length;
+
+    expect(stableSystemPrefixLength(sections)).toBe(expected);
+    // And it is a real PREFIX of the assembled prompt, which is the property
+    // stream-api's `systemPrompt.slice(0, stableLen)` depends on.
+    const prompt = sections.map((s) => s.text).join("");
+    expect(prompt.slice(0, expected)).toBe("IDENTITYRUNTIMERULES");
+  });
+
+  it("is identical across two builds whose dynamic content differs", () => {
+    const head = [
+      section("core-identity", "static", "IDENTITY"),
+      section("runtime-context", "static", "RUNTIME"),
+    ];
+    const a = [...head, section("context-block", "dynamic", "short")];
+    const b = [
+      ...head,
+      section("context-block", "dynamic", "a much, much longer per-turn memory block"),
+      section("turn-directive", "dynamic", "and another appended tail section"),
+    ];
+
+    expect(stableSystemPrefixLength(a)).toBe(stableSystemPrefixLength(b));
+  });
+
+  it("stops before tool-guidance, which per-turn tool selection makes volatile", () => {
+    const sections = [
+      section("core-identity", "static", "IDENTITY"),
+      section("tool-guidance", "static", "MANIFEST THAT CHANGES EVERY TURN"),
+      section("recall-reflex", "static", "REFLEX"),
+    ];
+    // Not "IDENTITY + MANIFEST + REFLEX" — the walk stops at the first
+    // turn-variant section, so nothing after it can enter the cached prefix.
+    expect(stableSystemPrefixLength(sections)).toBe("IDENTITY".length);
+  });
+
+  it("stops before project-catalog and integrations too", () => {
+    for (const volatileId of ["project-catalog", "integrations"]) {
+      expect(stableSystemPrefixLength([
+        section("core-identity", "static", "IDENTITY"),
+        section(volatileId, "static", "LIVE STATE"),
+        section("recall-reflex", "static", "REFLEX"),
+      ])).toBe("IDENTITY".length);
+    }
+  });
+
+  it("returns undefined when nothing stable leads, so stream-api ships one block", () => {
+    expect(stableSystemPrefixLength([])).toBeUndefined();
+    expect(stableSystemPrefixLength([section("canary", "dynamic", "x")])).toBeUndefined();
+    expect(stableSystemPrefixLength([section("tool-guidance", "static", "x")])).toBeUndefined();
+  });
+
+  it("real assembly: the prefix is stable across turns that change the dynamic tail", async () => {
+    const base = (): BuildSystemPromptInput => ({
+      channel: "web",
+      message: "hello",
+      sessionId: "sess-c6b",
+      config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
+      memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
+      integrations: { getAgentContext: () => "" } as BuildSystemPromptInput["integrations"],
+      allAgentTools: [],
+      resolvedProvider: "anthropic",
+      resolvedModel: "claude-test",
+      contextBlock: "",
+      relevantMemories: "",
+      smartContext: "",
+      memoryContext: "",
+      memoryNotifications: [],
+      memoryCurateBlock: "",
+      forceBuildIntent: false,
+    });
+
+    const turn1 = await buildSystemPromptWithTelemetry(base());
+    const turn2 = await buildSystemPromptWithTelemetry({
+      ...base(),
+      relevantMemories: "a memory recalled only on this turn",
+      memoryNotifications: [{ message: "mention the thing", priority: 9 }],
+      buildTurnDirective: "a turn directive that did not exist on turn 1",
+    });
+
+    const len1 = stableSystemPrefixLength(turn1.renderedSections);
+    const len2 = stableSystemPrefixLength(turn2.renderedSections);
+    expect(len1).toBeGreaterThan(0);
+    expect(len2).toBe(len1);
+    // The bytes themselves, not just the length — a same-length-but-different
+    // prefix would be a cache miss AND a cache write on every turn.
+    expect(turn2.prompt.slice(0, len2!)).toBe(turn1.prompt.slice(0, len1!));
+    // And the prompts genuinely diverge after it, so the test is not vacuous.
+    expect(turn2.prompt).not.toBe(turn1.prompt);
   });
 });

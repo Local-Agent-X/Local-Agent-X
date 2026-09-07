@@ -14,6 +14,7 @@ import type { FileAccessMode } from "../../security/layer/index.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import {
   harnessNotice,
+  type RenderedPromptSection,
   type SystemPromptBuildResult,
 } from "../../context/system-prompt-builder.js";
 import { channelContextBlock } from "../../channel-context.js";
@@ -45,6 +46,62 @@ export function fileAccessGroundingBlock(mode: FileAccessMode): string {
     case "workspace":
       return harnessNotice("FILE ACCESS", "Mode: WORKSPACE-ONLY. Reads are limited to the workspace folder and ~/.lax. Reads elsewhere are blocked BY POLICY, not by a missing tool. Attempt the read; if it is blocked, say so in one line and tell the user they can switch to Common or Unrestricted in Settings — don't claim you are unable.");
   }
+}
+
+/**
+ * Sections that carry `type: "static"` but are NOT byte-stable turn-to-turn, so
+ * they must not sit inside a cache-anchored prefix. Each one is here for a
+ * checked reason, not a guess:
+ *
+ *  - `tool-guidance`: contains the deferred-tool manifest, which is the
+ *    complement of the PER-TURN selected tool set (buildDeferredToolManifest),
+ *    and also absorbs the COLD-START HINT below, which is gated on a regex over
+ *    THIS TURN'S message. Both change mid-op.
+ *  - `project-catalog`: derived from the memory dir (60 s cache); the agent
+ *    writing a memory mid-op changes it.
+ *  - `integrations`: IntegrationRegistry.getAgentContext(), which reflects live
+ *    connector state and can change when a connector is added or gated.
+ *
+ * Everything before them — core-identity, runtime-context, app-manifest,
+ * agents-md, provider-hint — is byte-stable for the life of an op unless its
+ * underlying FILE changes (config/system-prompt.md, .lax manifest, AGENTS.md),
+ * which is a legitimate invalidation, not per-turn churn.
+ */
+const TURN_VARIANT_STATIC_SECTIONS = new Set([
+  "tool-guidance",
+  "project-catalog",
+  "integrations",
+]);
+
+/**
+ * Length of the leading run of provably byte-stable system-prompt text, for
+ * StreamOptions.systemStablePrefixLen (anthropic-client/stream-api.ts:36).
+ *
+ * Without it the Anthropic lane ships ONE system block carrying the breakpoint,
+ * so any churn in the dynamic tail (memory blocks, turn directives, riders)
+ * re-writes the whole ~40k-token system tier at the 1.25x cache-write rate. The
+ * voice lane already splits (server/voice-ws.ts:321); chat passed nothing.
+ *
+ * Returns a JS string index, NOT a byte count — stream-api slices with
+ * `systemPrompt.slice(0, stableLen)`, so the unit must match `String.length`.
+ *
+ * Walks from the START and stops at the first section that is dynamic or
+ * turn-variant, which is what makes the result a genuine PREFIX: the builder
+ * emits all static sections before all dynamic ones, but
+ * `appendSystemPromptSection` can append later, so "sum of every static
+ * section" would not be a prefix. Undefined when nothing stable leads, which
+ * makes stream-api fall back to the single-block behaviour.
+ */
+export function stableSystemPrefixLength(
+  sections: readonly RenderedPromptSection[],
+): number | undefined {
+  let len = 0;
+  for (const section of sections) {
+    if (section.type !== "static") break;
+    if (TURN_VARIANT_STATIC_SECTIONS.has(section.id)) break;
+    len += section.text.length;
+  }
+  return len > 0 ? len : undefined;
 }
 
 export interface BuildSystemPromptInput {

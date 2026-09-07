@@ -13,8 +13,9 @@
  *
  * TWO ARMS. On the CDP route the session's own context is re-minted emulated.
  * On the IN-APP route (the default) the session's browser is the window the
- * user is looking at, so emulation is minted in a PRIVATE headless context
- * BESIDE it and the session's page actions are routed there until
+ * user is looking at, so emulation is minted in a PRIVATE context BESIDE it
+ * (headless when this is the call that starts Chrome — runtime.ts states the
+ * reuse limit) and the session's page actions are routed there until
  * `device='desktop'` clears it — see browser/emulation-route.ts. This used to
  * be a flat refusal, which left the capability nonexistent on the default route.
  */
@@ -28,6 +29,7 @@ import type { BrowserManager } from "../../browser/manager.js";
 import {
   CdpOnlyOperationError,
   getCdpBrowserManager,
+  hasNonEmulatedCdpBrowser,
   releaseEmulatedBrowser,
   resolveBrowserBackendKind,
   type BrowserBackendKind,
@@ -41,8 +43,8 @@ import { ok, err } from "./shared.js";
 /** The in-app view is the browser the USER is looking at, and its page is a
  *  bridge adapter with a read-only viewportSize() (in-app-observe.ts). Nothing
  *  here may resize, re-UA, navigate or close it — so on that route emulation
- *  runs in a PRIVATE headless context beside it (see browser/emulation-route.ts)
- *  and the session's page actions are routed there until it is cleared. */
+ *  runs in a PRIVATE context beside it (see browser/emulation-route.ts) and the
+ *  session's page actions are routed there until it is cleared. */
 const WAY_BACK = "Run emulate with device='desktop' to close the emulated context and put this session " +
   "back on the in-app browser view.";
 
@@ -92,11 +94,26 @@ function sessionRouteKind(): BrowserBackendKind {
   try { return resolveBrowserBackendKind(); } catch { return "cdp"; }
 }
 
+/** The route says in-app, but this session already holds a REAL external Chrome
+ *  with the user's tabs in it — it fell back to CDP while the desktop bridge was
+ *  down (route reason "no-desktop-bridge") and the bridge has since come back.
+ *  Both browsers live at the same key, so there is no way to stand an emulated
+ *  context up here without destroying that one. Refuse and say so; the previous
+ *  behaviour closed it and reported "the in-app view was unchanged throughout". */
+function fallbackBrowserRefusal(ownerId: string): string {
+  return (
+    `emulate cannot run here yet: this session (${ownerId}) is routed to the in-app browser, but it still ` +
+    "holds an external Chrome it fell back to earlier (the desktop bridge was unavailable at the time). The " +
+    "emulated context would have to take that browser's place, closing its tabs and dropping its logins. " +
+    "Run browser {action:\"close\"} to close the leftover fallback browser first, then emulate again."
+  );
+}
+
 /**
  * The IN-APP route. The user's WebContentsView is read (its URL) and otherwise
  * never touched: not resized, not re-UA'd, not navigated, not closed. The
  * profile is installed, any previous emulated context is dropped, and a private
- * quarantined headless Chromium context is minted in its place — after which
+ * quarantined Chromium context is minted in its place — after which
  * browser/emulation-route.ts routes this session's page actions there until
  * `device='desktop'` clears it.
  */
@@ -109,17 +126,27 @@ async function emulateBesideInAppView(
   const resolved = resolveEmulationProfile(args, USER_AGENTS.chromium);
   if ("error" in resolved) return err(resolved.error);
   const { profile } = resolved;
+  if (profile && hasNonEmulatedCdpBrowser(ownerId)) return err(fallbackBrowserRefusal(ownerId));
   const previousUrl = manager.getCurrentUrl();
   const carryUrl = previousUrl && !isBlankish(previousUrl) ? previousUrl : null;
 
+  // ORDER IS LOAD-BEARING, and pinned by emulate-in-app-hazards.test.ts: the
+  // profile is set FIRST, then the context dropped. Release only drops; the next
+  // page access re-mints from whatever the profile then says — so releasing
+  // first would let an action that interleaves on the await mint an
+  // UNEMULATED context and hand it back as the emulated one.
   setSessionEmulation(ownerId, profile);
   // Drops a PREVIOUS emulated context (repeat emulate) or, when the profile was
-  // just cleared, the emulated context itself. Never touches the in-app backend.
+  // just cleared, the emulated context itself. Never touches the in-app backend,
+  // and never touches a CDP browser that was not minted as the emulated
+  // stand-in (instance.releaseEmulatedBrowser checks that).
   await releaseEmulatedBrowser(ownerId);
   if (!profile) {
     return ok(
       "Emulation cleared. The private emulated context is closed and this session is back on the in-app " +
-      "browser view — which was unchanged throughout: same window, same size, same user agent, same page.",
+      "browser view — which was unchanged throughout: same window, same size, same user agent, same page. " +
+      "tabs / switch_tab can reach the user's real tabs again, and read_console / read_network / " +
+      "read_response work again.",
     );
   }
 
@@ -134,12 +161,26 @@ async function emulateBesideInAppView(
   }
   return ok(
     `Emulating: ${describeEmulation(profile)}\n${carried}\n\n` +
-    "This runs in a PRIVATE, isolated, headless Chromium context — NOT the in-app browser window. That " +
-    "window is untouched: same size, same user agent, same page, still open in front of the user.\n\n" +
+    "This runs in a PRIVATE, isolated Chromium context — NOT the in-app browser window. That window is " +
+    "untouched: same size, same user agent, same page, still open in front of the user. The context is " +
+    "asked for headless, and is headless unless this session's Chrome had already been started visible by " +
+    "an earlier external-Chrome fallback — there is one shared Chrome process and it cannot be relaunched " +
+    "without closing other sessions' tabs, so in that case a window does appear.\n\n" +
     "Until you clear it, this session's page actions — navigate, snapshot, screenshot, extract, evaluate, " +
-    "layout_report, click/fill/scroll, tabs — run against the EMULATED context, which starts with no cookies " +
-    "or logins. read_console / read_network / read_response read the in-app browser and are unavailable " +
-    `while emulating.\n\n${WAY_BACK}\n\n` +
+    "layout_report, click/fill/scroll, tabs, and the secret fill/capture tools — run against the EMULATED " +
+    "context. read_console / read_network / read_response read the in-app browser and are unavailable " +
+    "while emulating.\n\n" +
+    "THREE THINGS THAT FOLLOW, because this context is brand new and separate:\n" +
+    "1. It has NO cookies and NO logins — not even the ones the user is signed in with in the window in " +
+    "front of them. A login-gated page renders LOGGED OUT here, so comparing it against the desktop " +
+    "rendering compares a logged-out mobile document with a logged-in desktop one. That is a different " +
+    "page, not a mobile layout defect.\n" +
+    "2. `tabs` now lists only THIS context's tabs. The [user tab] rows are gone and `switch_tab` can no " +
+    "longer reach the tabs the user has open — so the usual escape hatch for a login-gated page (\"the user " +
+    "says they're already logged in, switch to their tab\") is unavailable until you clear emulation.\n" +
+    "3. A credential filled into this context is discarded with it — the next `emulate`, the next wedge " +
+    "recovery, or `device='desktop'` all drop the context and the login with it.\n\n" +
+    `${WAY_BACK}\n\n` +
     "Next: layout_report to get the raw layout data for this width (what overflows, which @media conditions " +
     "match, what the fixed/sticky elements are), or screenshot to see the rendering.",
   );

@@ -1,20 +1,33 @@
 import type { Page } from "playwright";
 import { BrowserManager } from "./manager.js";
 import type { BrowserBackend } from "./backend.js";
-import type { BrowserMode } from "../types.js";
 import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
 import { resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
-import { clearSessionEmulation, getSessionEmulation } from "./emulation.js";
-import { applyEmulationRoute, emulationRouteLine } from "./emulation-route.js";
-import { desktopBridgeAvailable } from "../desktop-bridge.js";
+import { clearAllSessionEmulation, clearSessionEmulation, getSessionEmulation } from "./emulation.js";
+import {
+	forgetAllReportedRoutes,
+	forgetReportedRoute,
+	inAppBackendAvailable,
+	reportBrowserRoute,
+	resolveBrowserRoute,
+	routeForSession,
+} from "./route-resolve.js";
 import { getRuntimeConfig } from "../config.js";
-import { createLogger } from "../logger.js";
 import { createCdpSecretOps, type SecretBrowserOps } from "./secret-ops.js";
 import { WindowsChatChromeRuntime } from "./windows-chat-chrome-runtime.js";
 
-const logger = createLogger("browser.route");
+// The routing decision itself lives in route-resolve.ts; re-exported here
+// because instance.js is the import site every caller and test already uses.
+export {
+	resolveBrowserRoute,
+	resolveBrowserBackendKind,
+	_setBrowserRoutePlatformForTest,
+	type BrowserRoute,
+	type BrowserRouteReason,
+	type BrowserBackendKind,
+} from "./route-resolve.js";
 
 // One backend per session — THE routing seam for the browser tool. Two kinds:
 //   - BrowserManager (CDP): one external Chrome process, one manager per
@@ -26,6 +39,27 @@ const logger = createLogger("browser.route");
 // Identity ownership is selected explicitly by browserMode.
 const cdpManagers = new Map<string, BrowserManager>();
 const inAppBackends = new Map<string, { backend: ElectronInAppBackend; viewId: string }>();
+
+/**
+ * Keys whose cdpManagers entry was minted UNDER the emulation route — i.e. the
+ * private quarantined context standing in for an in-app view, not a browser the
+ * user has tabs in.
+ *
+ * This distinction is load-bearing: `cdpManagers` holds both kinds under the
+ * same key, so "close the emulated context" and "close the session's real
+ * external Chrome" were indistinguishable, and releaseEmulatedBrowser closed
+ * whichever it found. A session that fell back to CDP while the desktop bridge
+ * was down holds a REAL browser with real tabs at that key.
+ */
+const emulatedCdpKeys = new Set<string>();
+
+/** Does this session hold a CDP browser that is NOT the emulated stand-in — a
+ *  real external Chrome with the user's tabs in it? Read by the `emulate` tool,
+ *  which must not stand an emulated context up on top of one. */
+export function hasNonEmulatedCdpBrowser(sessionId: string = "default"): boolean {
+	const key = resolveBrowserSessionId(sessionId || "default");
+	return cdpManagers.has(key) && !emulatedCdpKeys.has(key);
+}
 
 // User ✕ on an agent pill (desktop push, via bridge-client): tell the owning
 // backend its view is gone so the next op recreates it instead of wedging on
@@ -50,147 +84,6 @@ export class CdpOnlyOperationError extends Error {
 	}
 }
 
-/**
- * Does this browserMode select the in-app backend? The "in-app" enum value is
- * now the default (chunk F2 added it to BrowserMode + made it the fresh-config
- * default), so this predicate is live in production: a windowed desktop run
- * routes to the embedded WebContentsView, and everything else falls back to
- * CDP (see resolveBrowserBackendKind).
- */
-function wantsInAppBackend(mode: BrowserMode): boolean {
-	return mode === "in-app";
-}
-
-export type BrowserBackendKind = "in-app" | "cdp";
-
-/**
- * WHY a session landed on its backend. The kind alone can't be reported
- * usefully: "cdp" collapses a deliberate config choice, an expected headless
- * run, and a genuine failure to reach the desktop app into one indistinguishable
- * bit. Each arm wants a different severity and a different thing said to the
- * user, so the reason is the return value and the kind is derived from it.
- */
-export type BrowserRouteReason =
-	/** Every condition held — the embedded WebContentsView. */
-	| "in-app"
-	/** Config selects external Chrome. A choice being honored, not a fallback. */
-	| "mode-not-in-app"
-	/** LAX_BROWSER_HEADLESS=1 — CI/soak, no desktop window to mount a view in. */
-	| "headless"
-	/** Windows uses installed Chrome because Electron is rejected by common human checks. */
-	| "windows-chat-chrome"
-	/** Wanted in-app but the desktop app/bridge isn't there. The surprising arm. */
-	| "no-desktop-bridge"
-	/** In-app session with a device-emulation profile installed: page actions run
-	 *  in a private quarantined CDP context (see emulation-route.ts). */
-	| "emulation";
-
-export interface BrowserRoute {
-	kind: BrowserBackendKind;
-	reason: BrowserRouteReason;
-}
-
-let routePlatformOverride: NodeJS.Platform | null = null;
-
-export function _setBrowserRoutePlatformForTest(platform: NodeJS.Platform | null): void {
-	routePlatformOverride = platform;
-}
-
-/**
- * THE fallback matrix — one source of truth for both the routing decision and
- * the reason reported for it. A session resolves to the embedded in-app
- * WebContentsView ONLY when all three conditions hold; it falls to the CDP
- * BrowserManager (which carries the profile's own userDataDir, so the fallback
- * keeps the profile's logins) on the first condition that fails.
- *
- * Order is deliberate: an explicit non-in-app browserMode outranks the
- * environment checks, so a user who picked external Chrome is told THAT, not
- * that some bridge was missing.
- *
- * All synchronous — NO live lifecycle ping: getBrowserManager is sync and on the
- * tool hot path. A ping-based mounted-view check was considered and rejected:
- * the backend's view create is lazy and fails loudly (bridge-client rejects
- * typed errors), so the tool layer surfaces a dead bridge at first use instead
- * of this seam guessing ahead of time.
- */
-export function resolveBrowserRoute(platform: NodeJS.Platform = routePlatformOverride ?? process.platform): BrowserRoute {
-	if (!wantsInAppBackend(getRuntimeConfig().browserMode)) {
-		return { kind: "cdp", reason: "mode-not-in-app" };
-	}
-	if (process.env.LAX_BROWSER_HEADLESS === "1") {
-		return { kind: "cdp", reason: "headless" };
-	}
-	// Windows once forced external Chrome here because "Electron is rejected by
-	// common human checks" — but that rejection was the app.userAgentFallback UA
-	// drift (a spoofed <App>/<ver> token contradicting the page identity), fixed in
-	// embedded-chrome-identity. A UA-consistent embedded browser clears Cloudflare
-	// on every platform, so Windows now takes the SAME in-app route as macOS/Linux.
-	if (!desktopBridgeAvailable()) {
-		return { kind: "cdp", reason: "no-desktop-bridge" };
-	}
-	return { kind: "in-app", reason: "in-app" };
-}
-
-export function resolveBrowserBackendKind(): BrowserBackendKind {
-	return resolveBrowserRoute().kind;
-}
-
-function inAppBackendAvailable(): boolean {
-	return resolveBrowserRoute().kind === "in-app";
-}
-
-/** The session's route with the emulation override applied — see
- *  emulation-route.ts for why an in-app session can be sent to a CDP context. */
-function routeForSession(key: string): BrowserRoute {
-	return applyEmulationRoute(resolveBrowserRoute(), key);
-}
-
-/** Reason last reported per session, so a steady state stays quiet. */
-const routeReported = new Map<string, BrowserRouteReason>();
-
-/**
- * Say which browser a session got, and why, ONCE — and again only when the
- * answer changes (a mid-session mode flip, or the desktop bridge dropping).
- * getBrowserManager is on the tool hot path, so this must never emit per call.
- *
- * Before this, every arm of the matrix was silent: a session that asked for the
- * in-app browser and got external Chrome said nothing anywhere, and the only
- * signal a user ever got was noticing a Chrome window appear on their desktop.
- */
-function reportBrowserRoute(sessionId: string, route: BrowserRoute): void {
-	if (routeReported.get(sessionId) === route.reason) return;
-	routeReported.set(sessionId, route.reason);
-	const who = `(sessionId=${sessionId})`;
-	switch (route.reason) {
-		case "in-app":
-			logger.debug(`[browser-route] embedded in-app browser ${who}`);
-			return;
-		case "mode-not-in-app":
-			logger.info(
-				`[browser-route] external Chrome ${who} — browserMode="${getRuntimeConfig().browserMode}" ` +
-					`selects it. Set browserMode="in-app" for the embedded co-drivable browser.`,
-			);
-			return;
-		case "headless":
-			logger.info(
-				`[browser-route] external Chrome ${who} — LAX_BROWSER_HEADLESS=1, no desktop window to mount a view in.`,
-			);
-			return;
-		case "windows-chat-chrome":
-			logger.info(`[browser-route] dedicated chat-scoped Chrome ${who} — Windows in-app compatibility route.`);
-			return;
-		case "emulation":
-			logger.info(emulationRouteLine(who));
-			return;
-		case "no-desktop-bridge":
-			logger.warn(
-				`[browser-route] external Chrome ${who} — browserMode="in-app" wants the embedded browser, ` +
-					`but the desktop bridge is unavailable (not running under the desktop app?). Falling back to CDP.`,
-			);
-			return;
-	}
-}
-
 /** Deterministic first-tab id for one chat-owned embedded browser session. */
 export function inAppViewId(sessionId: string): string {
 	return `view-${sessionId}-shared`;
@@ -199,7 +92,13 @@ export function inAppViewId(sessionId: string): string {
 /** Does this session currently own a live in-app browser backend? Read by the
  *  pre-dispatch screen-capture redirect gate. Cheap map lookup, no lifecycle
  *  ping — same reasoning as getBrowserManager: a dead view fails loudly at
- *  first use, so this seam never guesses ahead of time. */
+ *  first use, so this seam never guesses ahead of time.
+ *
+ *  LIMIT: this answers "is there a view", NOT "is that view what the browser
+ *  tool reads". While a session emulates, the entry is deliberately still here
+ *  (emulation-route.ts) but page actions run on the private emulated context,
+ *  so a caller that uses this to tell the agent "screenshot the browser pane"
+ *  is naming a pane the screenshot will not show. */
 export function hasInAppBackend(sessionId: string = "default"): boolean {
 	return inAppBackends.has(resolveBrowserSessionId(sessionId || "default"));
 }
@@ -222,10 +121,17 @@ function ensureCdpManager(key: string, dedicatedWindowsChrome = false): BrowserM
 		manager = new BrowserManager(key, getRuntimeConfig().browserMode, runtime);
 		manager.setPeerPages(() => peerPagesExcept(manager!));
 		manager.setIdleHandler(() => {
-			if (cdpManagers.get(key) === manager) cdpManagers.delete(key);
+			if (cdpManagers.get(key) === manager) {
+				cdpManagers.delete(key);
+				emulatedCdpKeys.delete(key);
+			}
 			if (cdpManagers.size === 0) void closeSharedBrowser();
 		});
 		cdpManagers.set(key, manager);
+		// Minted while a profile is installed → this IS the emulated stand-in.
+		// Recorded at mint time because the profile can be cleared before the
+		// context is dropped (emulate device='desktop' does exactly that).
+		if (getSessionEmulation(key)) emulatedCdpKeys.add(key);
 	}
 	return manager;
 }
@@ -268,8 +174,9 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
  */
 export function getSecretBrowserOps(sessionId: string = "default"): SecretBrowserOps {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	// Same override as getBrowserManager: while emulating, the session's live
-	// page IS the emulated one, so a secret fill must land there.
+	// Same override as getBrowserManager (routeForSession, NOT the raw route):
+	// while emulating, the session's live page IS the emulated one, so a secret
+	// fill must land there and NOT in the user's real logged-in view.
 	const route = routeForSession(key);
 	reportBrowserRoute(key, route);
 	if (route.kind === "in-app") return ensureInAppBackend(key).secretOps();
@@ -298,11 +205,21 @@ export function getCdpBrowserManager(sessionId: string = "default"): BrowserMana
 /** Close the private emulated CDP context of a session whose real browser is
  *  the in-app view — the way back, and the re-mint step when `emulate` runs a
  *  second time. Leaves inAppBackends alone: the user's view, tabs and page
- *  survive untouched. Set/clear the profile FIRST; this only drops the context,
- *  and the next page access re-mints from whatever the profile then says. */
+ *  survive untouched.
+ *
+ *  PRECONDITION, now CHECKED rather than asserted: this closes the key's CDP
+ *  manager ONLY if that manager was minted under the emulation route. A session
+ *  that fell back to real external Chrome (bridge down) holds a browser with the
+ *  user's tabs at the same key, and this used to close it and report success.
+ *
+ *  Set/clear the profile FIRST; this only drops the context, and the next page
+ *  access re-mints from whatever the profile then says (ordering pinned by
+ *  emulate-in-app-hazards.test.ts). */
 export async function releaseEmulatedBrowser(sessionId: string = "default"): Promise<void> {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	routeReported.delete(key);
+	if (!emulatedCdpKeys.has(key)) return;
+	forgetReportedRoute(key);
+	emulatedCdpKeys.delete(key);
 	const manager = cdpManagers.get(key);
 	if (!manager) return;
 	cdpManagers.delete(key);
@@ -312,10 +229,11 @@ export async function releaseEmulatedBrowser(sessionId: string = "default"): Pro
 
 export async function closeBrowser(sessionId: string = "default"): Promise<void> {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	routeReported.delete(key);
+	forgetReportedRoute(key);
 	// Device emulation dies with the session: a reused session id must never
 	// inherit the previous session's phone viewport / spoofed user agent.
 	clearSessionEmulation(key);
+	emulatedCdpKeys.delete(key);
 	// A session can (rarely) have entries of both kinds — e.g. the mode flipped
 	// mid-session. Close whichever exist.
 	const inApp = inAppBackends.get(key);
@@ -347,6 +265,13 @@ export type WedgeRecoveryOutcome =
  * In-process wedge recovery (no LAX restart). When a browser action hangs and
  * its deadline fires, recover the offending session's backend.
  *
+ * WHICH backend is the same question getBrowserManager answers — routeForSession,
+ * not the raw map. While a profile is installed the session's page actions run
+ * on the private emulated CDP context, so THAT is what wedged; the in-app entry
+ * is deliberately still in the map (emulation-route.ts). Branching on the map
+ * first aborted the user's in-flight load and closed every tab they own, and
+ * left the actual wedge unrecovered.
+ *
  * In-app: SOFT first — abort the active view's in-flight load and ping it
  * (bounded by LIFECYCLE_TIMEOUT_MS). A live view keeps its backend, view and
  * URL, so a 10s page-scan wedge no longer costs the tab and every ref on it.
@@ -363,18 +288,20 @@ export type WedgeRecoveryOutcome =
  */
 export async function resetWedgedBrowser(sessionId: string = "default"): Promise<WedgeRecoveryOutcome> {
 	const key = resolveBrowserSessionId(sessionId || "default");
-	const inApp = inAppBackends.get(key);
+	const emulating = getSessionEmulation(key) !== undefined;
+	const inApp = emulating ? undefined : inAppBackends.get(key);
 	if (inApp) {
 		if (await inApp.backend.recoverFromWedge()) {
 			// Same backend, same view — the session's route did not change.
 			return "recovered-in-place";
 		}
-		routeReported.delete(key);
+		forgetReportedRoute(key);
 		return "view-recreated";
 	}
-	routeReported.delete(key);
+	forgetReportedRoute(key);
 	const manager = cdpManagers.get(key);
 	cdpManagers.delete(key);
+	emulatedCdpKeys.delete(key);
 	if (manager) await manager.resetRuntime();
 	else forceKillSharedBrowser();
 	return "cdp-reset";
@@ -387,7 +314,12 @@ export async function closeAllBrowsers(): Promise<void> {
 	];
 	inAppBackends.clear();
 	cdpManagers.clear();
-	routeReported.clear();
+	emulatedCdpKeys.clear();
+	forgetAllReportedRoutes();
+	// Every backend just went away, so no session can still be "on" an emulated
+	// context. Leaving the profiles behind stranded the next use of those session
+	// ids on a headless phone viewport with no window to see (F3).
+	clearAllSessionEmulation();
 	let teardownError: unknown;
 	for (const b of all) {
 		try { await b.close(); } catch (error) { teardownError ??= error; }

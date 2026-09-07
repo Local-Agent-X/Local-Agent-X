@@ -21,6 +21,9 @@ const seam = vi.hoisted(() => {
     cdp: {} as Record<string, unknown>,
     cdpThrows: null as Error | null,
     routeKind: "cdp" as "cdp" | "in-app",
+    // A leftover external-Chrome fallback at the same key — emulate refuses
+    // rather than closing the user's real tabs (instance.ts F2).
+    fallbackCdpBrowser: false,
     releaseEmulated: vi.fn(async (_sessionId?: string) => {}),
     FakeCdpOnlyOperationError,
   };
@@ -42,6 +45,7 @@ vi.mock("../../browser/instance.js", () => ({
     return seam.cdp;
   },
   releaseEmulatedBrowser: seam.releaseEmulated,
+  hasNonEmulatedCdpBrowser: () => seam.fallbackCdpBrowser,
 }));
 
 import { createBrowserTools } from "./index.js";
@@ -81,6 +85,7 @@ beforeEach(() => {
   for (const k of Object.keys(seam.cdp)) delete seam.cdp[k];
   seam.cdpThrows = null;
   seam.routeKind = "cdp";
+  seam.fallbackCdpBrowser = false;
   seam.releaseEmulated.mockClear();
   seam.manager.getCurrentUrl = () => PAGE;
   seam.manager.observe = vi.fn(async () => ({ title: "Products", url: PAGE, currentRefs: [], crossOriginIframes: [] }));
@@ -174,9 +179,13 @@ describe("emulate on the in-app route runs beside the user's window, not in it",
     // The page was opened in the PRIVATE context instead.
     expect(seam.cdp.navigate).toHaveBeenCalledWith(PAGE);
     const text = String(result.content);
-    expect(text).toMatch(/PRIVATE, isolated, headless/);
+    expect(text).toMatch(/PRIVATE, isolated Chromium context/);
     expect(text).toMatch(/NOT the in-app browser window/);
     expect(text).toMatch(/window is untouched/i);
+    // The headless promise is CONDITIONAL and says so: preferHeadless is
+    // honoured only by the call that starts Chrome (runtime.ts), so a Chrome an
+    // earlier fallback already started visible is reused visible.
+    expect(text).toMatch(/headless unless/);
   });
 
   it("names where subsequent actions go, and the way back", async () => {

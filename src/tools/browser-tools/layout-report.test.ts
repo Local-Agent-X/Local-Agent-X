@@ -124,9 +124,19 @@ const runReport = (report: unknown): Promise<string> => runRaw(JSON.stringify(re
  *  masked. */
 const maskId = (text: string): string => text.replace(/ id="[0-9a-f]+"/g, ' id="X"');
 
-/** Asserts the result text is exactly the wrapper over `raw` and nothing else. */
+/** The dispatcher may prepend its own trusted notices ABOVE the wrapper (the
+ *  secrecy open warning, the emulation banner — index.ts). Those are not the
+ *  handler's output; strip one so the handler's own bytes can still be pinned
+ *  exactly. Nothing may be appended after the wrapper. */
+const handlerBytes = (text: string): string => {
+  const at = text.indexOf("<<<EXTERNAL_UNTRUSTED_CONTENT id=");
+  expect(at).toBeGreaterThan(-1);
+  return text.slice(at);
+};
+
+/** Asserts the handler's own output is exactly the wrapper over `raw`. */
 async function expectWrapperOnly(raw: string): Promise<string> {
-  const text = await runRaw(raw);
+  const text = handlerBytes(await runRaw(raw));
   expect(maskId(text)).toBe(maskId(wrapExternalContent(raw, SOURCE)));
   expect(text.startsWith("<<<EXTERNAL_UNTRUSTED_CONTENT id=")).toBe(true);
   for (const pattern of VERDICT_PATTERNS) expect(text).not.toMatch(pattern);

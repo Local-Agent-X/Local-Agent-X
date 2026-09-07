@@ -80,6 +80,14 @@ export function clearSessionEmulation(ownerId: string): void {
   sessionEmulation.delete(ownerId);
 }
 
+/** Every browser backend just went away (closeAllBrowsers — app teardown, a
+ *  settings change, the local-only policy switch). No session can still be ON an
+ *  emulated context once its context is gone, and a surviving profile silently
+ *  strands the next use of that session id on a headless phone viewport. */
+export function clearAllSessionEmulation(): void {
+  sessionEmulation.clear();
+}
+
 export function _resetSessionEmulationForTest(): void {
   sessionEmulation.clear();
 }

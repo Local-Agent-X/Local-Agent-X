@@ -42,6 +42,9 @@ let proxyServer: string | null = null;
 // Dedupe concurrent launches: two sessions calling getSharedBrowser() before
 // Chrome is up must await the same spawn, not race two Chrome processes.
 let launching: Promise<Browser> | null = null;
+/** Was the LIVE shared Chrome started headless? null = none running. The first
+ *  launcher fixes it for every session until teardown. */
+let launchedHeadless: boolean | null = null;
 let contextCreationTail: Promise<void> = Promise.resolve();
 const contextDownloadSessions = new WeakMap<BrowserContext, CDPSession>();
 // Contexts minted with a device-emulation profile. They are ALWAYS ephemeral
@@ -100,10 +103,12 @@ async function launch(engine: BrowserEngine, userDataDir?: string, preferHeadles
       });
       chromeProcess = proc;
       browserLaunchCleanup = cleanup ?? null;
+      launchedHeadless = preferHeadless;
       return b;
     }
+    launchedHeadless = preferHeadless || process.env.LAX_BROWSER_HEADLESS === "1";
     return pw[engine].launch({
-      headless: preferHeadless || process.env.LAX_BROWSER_HEADLESS === "1",
+      headless: launchedHeadless,
       args: STEALTH_ARGS,
       downloadsPath: resetBrowserNativeDownloadDir(),
       proxy: browserProxyConfig(proxy.url),
@@ -130,7 +135,9 @@ async function launch(engine: BrowserEngine, userDataDir?: string, preferHeadles
  *  `preferHeadless` applies to the LAUNCH only, and only when this call is the
  *  one that starts Chrome: an already-connected browser is reused as it is
  *  (there is exactly one shared process). It exists for the in-app route's
- *  emulation stand-in, which must not put a second window on the user's screen. */
+ *  emulation stand-in, which SHOULD not put a second window on the user's
+ *  screen — but a Chrome already started headful by another session is reused
+ *  headful, and acquireSessionContext logs a warning when that happens. */
 export async function getSharedBrowser(
   engine: BrowserEngine,
   userDataDir?: string,
@@ -228,12 +235,24 @@ export async function acquireSessionContext(
   // isMobile is unsupported on firefox/webkit, and the tool layer refuses
   // there rather than minting a context that would throw here.
   const emulation = engine === "chromium" ? getSessionEmulation(ownerId) : undefined;
-  // mode "in-app" + a profile is the emulation stand-in for a session whose real
-  // browser is the WebContentsView the user is looking at — that view may not be
-  // re-identified, so the measurement runs here instead. It must stay INVISIBLE:
-  // a second Chrome window on the user's desktop is exactly the intrusion the
-  // in-app refusal used to prevent. Honoured only if this call starts Chrome.
-  const b = await getSharedBrowser(engine, userDataDir, Boolean(emulation) && mode === "in-app");
+  // A profile on a session whose MODE is "in-app" asks for a headless launch: a
+  // second Chrome window on the desktop is the intrusion the old in-app refusal
+  // prevented. Two limits, both real: this tests `mode`, NOT the resolved route
+  // (on the no-desktop-bridge arm the mode is still "in-app" and there is no
+  // WebContentsView at all, so "the view the user is looking at" does not hold
+  // there); and preferHeadless is honoured only by the call that STARTS Chrome —
+  // one shared process, so a Chrome already launched headful is reused and the
+  // emulated context does get a visible window. Relaunching would kill every
+  // other session's tabs, so it is logged and the emulate tool states the limit.
+  const wantHeadless = Boolean(emulation) && mode === "in-app";
+  const b = await getSharedBrowser(engine, userDataDir, wantHeadless);
+  if (wantHeadless && launchedHeadless === false) {
+    log.warn(
+      "[browser-runtime] emulated context is reusing a Chrome that was already launched VISIBLE " +
+      "(an earlier non-headless fallback started it) — this emulated context will appear as a window " +
+      "on the user's desktop.",
+    );
+  }
   if (emulation) {
     const context = await createQuarantinedChromiumContext(b, { ...CONTEXT_OPTS(engine), ...emulation });
     emulatedContexts.add(context);
@@ -342,6 +361,7 @@ export async function closeSharedBrowser(): Promise<void> {
   }
   chromeProcess = null;
   proxyServer = null;
+  launchedHeadless = null;
   await closeBrowserEgressProxy();
   log.info("[browser-runtime] shared Chrome closed");
 }
@@ -363,6 +383,7 @@ export function forceKillSharedBrowser(): void {
   chromeProcess = null;
   browserLaunchCleanup = null;
   browser = null;
+  launchedHeadless = null;
   sharedContext = null;
   sharedContextCreation = null;
   continuityContext = null;

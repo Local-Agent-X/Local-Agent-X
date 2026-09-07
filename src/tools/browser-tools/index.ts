@@ -57,6 +57,7 @@ import {
 } from "./page.js";
 import { handleAct } from "./act.js";
 import { handleEmulate } from "./emulate.js";
+import { emulationBanner } from "./emulation-banner.js";
 import { handleLayoutReport } from "./layout-report.js";
 import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
@@ -206,8 +207,12 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           // post-mutation snapshots carry content at open too) names the
           // cloud provider the contents go to.
           const openWarning = secrecyOpenWarning(sessionId, manager.getCurrentUrl());
-          return openWarning && typeof finalResult.content === "string"
-            ? { ...finalResult, content: `${openWarning}\n\n${finalResult.content}` }
+          // Standing emulation notice — see emulation-banner.ts for why this is
+          // per-action rather than per-turn.
+          const banner = emulationBanner(sessionId, action);
+          const prefix = [banner, openWarning].filter(Boolean).join("\n\n");
+          return prefix && typeof finalResult.content === "string"
+            ? { ...finalResult, content: `${prefix}\n\n${finalResult.content}` }
             : finalResult;
           };
           return grantedReadUrl

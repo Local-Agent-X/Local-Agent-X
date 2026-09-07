@@ -24,6 +24,7 @@ import {
   type ScreenshotResult,
 } from "./page-ops.js";
 import { isBlankish } from "./blankish.js";
+import { consoleCaptureRefusal, networkCaptureRefusal, responseCaptureRefusal } from "./cdp-capture-refusals.js";
 import type { BrowserMode } from "../types.js";
 import { waitForContinuityCacheRestore } from "./continuity-cache.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
@@ -305,25 +306,18 @@ export class BrowserManager implements BrowserBackend {
     return clickTextOn(await this.getPage(), this.registry, text);
   }
 
-  // Console/network capture rides the desktop's WebContentsView plumbing —
-  // not-supported strings here, honestly (matches the in-app dialog stubs).
+  // Console/network capture rides the desktop's WebContentsView plumbing — so
+  // these refuse here. WHICH refusal depends on why this manager is the
+  // session's backend (external Chrome vs the emulated stand-in): see
+  // cdp-capture-refusals.ts.
   async readConsole(): Promise<string> {
-    return (
-      "Console capture is not supported on the external-Chrome backend — " +
-      "it is available in the in-app browser. No console output was read."
-    );
+    return consoleCaptureRefusal(this.sessionId);
   }
   async readNetwork(): Promise<string> {
-    return (
-      "Network capture is not supported on the external-Chrome backend — " +
-      "it is available in the in-app browser. No network activity was read."
-    );
+    return networkCaptureRefusal(this.sessionId);
   }
   async readResponse(_url: string): Promise<string> {
-    return (
-      "Response-body capture is not supported on the external-Chrome backend — " +
-      "it is available in the in-app browser. Use http_request to fetch the URL instead."
-    );
+    return responseCaptureRefusal(this.sessionId);
   }
 
   async dialogAccept(promptText?: string): Promise<string> {

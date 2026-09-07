@@ -16,11 +16,15 @@
  * into hand-written Playwright scratch scripts.
  */
 
-import type { BrowserRoute } from "./instance.js";
+import type { BrowserRoute } from "./route-resolve.js";
 import { getSessionEmulation } from "./emulation.js";
 
 /** The route a session gets once its emulation profile is taken into account.
- *  Only the in-app arm is overridden: a CDP session already owns its context. */
+ *  ONLY the in-app arm is overridden: a CDP session already owns its context,
+ *  and re-labelling it "emulation" would make the route log claim an in-app view
+ *  is untouched for a session that has no in-app view at all. The
+ *  route.kind === "in-app" guard is what makes emulationRouteLine's sentence
+ *  true; emulation-route-guard.test.ts kills the mutant that drops it. */
 export function applyEmulationRoute(route: BrowserRoute, ownerId: string): BrowserRoute {
   if (route.kind === "in-app" && getSessionEmulation(ownerId)) return { kind: "cdp", reason: "emulation" };
   return route;

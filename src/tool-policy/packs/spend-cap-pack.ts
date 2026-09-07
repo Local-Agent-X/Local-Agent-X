@@ -9,10 +9,14 @@
  * token×price figure is a shadow estimate, not money). The cap bills only
  * usage on a real per-token API key — see cost-tracker `isBillableSource`.
  *
- * Disabled by default: with both budgets at 0/undefined this pack always
- * allows, so it's a no-op until the user sets a cap in Settings. Runs early
- * (low priority number) so a tripped budget short-circuits before any other
- * policy work.
+ * ON by default (config-schema.ts: $15/session, $75/day); a user who sets both
+ * budgets to 0 opts out and this pack always allows. Runs early (low priority
+ * number) so a tripped budget short-circuits before any other policy work.
+ *
+ * Sibling enforcement point: canonical-loop/checkpoint-stop.ts ends an op at
+ * its next iteration checkpoint on the same budgets. That predicate judges
+ * the op's OWN credential (op.contextPack.routing.authSource); this pack
+ * cannot — see the note at the oauth short-circuit below.
  */
 import { getRuntimeConfig } from "../../config.js";
 import { getTodayBillableCost, getSessionBillableCost, getResolvedAuthSource, getResolvedModel, getBillableCostForModelSince } from "../../cost-tracker.js";
@@ -54,13 +58,25 @@ export function makeSpendCapPack(): RulePack {
       const modelBudgets = cfg.modelDailyBudgetsUsd ?? {};
       const hasModelBudget = Object.values(modelBudgets).some(v => (v ?? 0) > 0);
 
-      // Disabled by default — no caps configured.
+      // Every cap explicitly disabled (0) — nothing to enforce.
       if (!dailyBudgetUsd && !sessionBudgetUsd && !hasModelBudget) return { allowed: true };
 
       // Flat-rate subscription (Claude CLI / SuperGrok / ChatGPT): per-call USD
       // is fiction — the user pays a fixed monthly fee, not per token. A USD cap
-      // must never block them. Runaway loops are still bounded by the universal
-      // iteration + wall-clock guards on the op budget.
+      // must never block them. Runaway loops are still bounded by the
+      // checkpoint predicate's dry-checkpoint stop and the wall-clock deadline.
+      //
+      // KNOWN LIMITATION — process-global, not per-op. PolicyEvalCtx carries
+      // only {sessionId, callContext}; it does not identify the op whose tool
+      // call this is, and one session can host ops on different credentials
+      // (a chat turn on a subscription, a spawned sub-agent on an API key), so
+      // sessionId cannot be mapped to a single authSource without widening
+      // PolicyEvalCtx — a type owned by tool-policy/evaluator.ts, outside this
+      // change. Until it carries the op's authSource, this reads the LAST
+      // credential any model call in the process resolved. The ledger reads
+      // below are per-record (isBillableSource), so subscription spend is
+      // never billed regardless; the exposure is only in WHICH op this early
+      // return exempts when two credentials are in flight at once.
       if (getResolvedAuthSource() === "oauth") return { allowed: true };
 
       // Bill only real-money (per-call API key) usage; subscription/local spend

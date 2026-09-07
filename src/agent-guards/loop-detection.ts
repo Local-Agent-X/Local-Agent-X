@@ -24,7 +24,7 @@ import { isMutationTool, isProgressTool } from "../tool-mutation-check.js";
 import { isCommittingTool } from "../committing-tool-check.js";
 import {
   cycleAbortNote, cycleNudge, detectCycle, mutationTargetKey, noteTurnShape,
-  noveltySignature, turnShapeKey,
+  noveltySignature, rememberNovelResult, RESULT_SIG_MEMORY, turnShapeKey,
   type CycleTurn,
 } from "./loop-progress.js";
 import {
@@ -51,6 +51,9 @@ export interface LoopState {
   identicalResultRepeats: number;
   toolNameCounts: Map<string, number>;
   seenResultSigs: Set<string>;
+  // Monotonic lifetime count of novel results (loop-progress.rememberNovelResult).
+  // seenResultSigs is capped and its .size saturates; THIS is the progress signal.
+  novelResultsTotal: number;
   seenSuccessfulMutationKeys: Set<string>;
   lastTurnHadNovelResult: boolean;
   lastTurnHadNovelMutation: boolean;
@@ -92,6 +95,7 @@ export function createLoopState(): LoopState {
     identicalResultRepeats: 0,
     toolNameCounts: new Map(),
     seenResultSigs: new Set(),
+    novelResultsTotal: 0,
     seenSuccessfulMutationKeys: new Set(),
     lastTurnHadNovelResult: false,
     lastTurnHadNovelMutation: false,
@@ -104,11 +108,6 @@ export function createLoopState(): LoopState {
     seenMutationTargets: new Set(),
   };
 }
-
-// Cap on remembered result signatures (~50 bytes each → ~13 KB at the cap).
-// Comfortably larger than NO_PROGRESS_LIMIT × a few results/turn, so a steady
-// spin's signature stays resident across the whole no-progress window.
-const RESULT_SIG_MEMORY = 256;
 
 // No-progress abort: iterations of consecutive non-mutating tool calls allowed
 // before the agent is forced to end its turn. Raised from 12/6 → 25/15 after
@@ -326,10 +325,7 @@ export function noteToolResults(
     const signature = noveltySignature(result.content);
     if (state.seenResultSigs.has(signature)) continue;
     novel = true;
-    state.seenResultSigs.add(signature);
-    if (state.seenResultSigs.size > RESULT_SIG_MEMORY) {
-      state.seenResultSigs.delete(state.seenResultSigs.values().next().value!);
-    }
+    rememberNovelResult(state, signature);
   }
   state.lastTurnHadNovelResult = novel;
   // Target-keyed, not args-keyed: rewriting one file with new bytes is

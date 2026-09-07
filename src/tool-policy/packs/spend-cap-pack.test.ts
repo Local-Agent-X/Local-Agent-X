@@ -18,6 +18,7 @@ afterAll(() => {
 
 const { trackUsage, isBillableSource, noteResolvedAuthSource, noteResolvedModel } = await import("../../cost-tracker.js");
 const { setRuntimeConfig, loadConfig } = await import("../../config.js");
+const { configSchema } = await import("../../config-schema.js");
 const { makeSpendCapPack } = await import("./spend-cap-pack.js");
 
 const SESSION = "sess-cap";
@@ -51,8 +52,45 @@ describe("isBillableSource", () => {
   });
 });
 
+describe("spend-cap pack — schema defaults bind without opt-in", () => {
+  function setSchemaDefaults(): void {
+    const d = configSchema.parse({});
+    setRuntimeConfig({ ...loadConfig(), dailyBudgetUsd: d.dailyBudgetUsd, sessionBudgetUsd: d.sessionBudgetUsd, modelDailyBudgetsUsd: {} });
+  }
+
+  it("ships with $15/session and $75/day", () => {
+    const d = configSchema.parse({});
+    expect(d.sessionBudgetUsd).toBe(15);
+    expect(d.dailyBudgetUsd).toBe(75);
+  });
+
+  it("denies a DEFAULT-configured API-key user once the session passes $15", async () => {
+    setSchemaDefaults();
+    noteResolvedAuthSource("env");
+    // $16 of opus output tokens.
+    trackUsage(SESSION, "claude-opus-4-8", "anthropic", 0, 640_000, undefined, "env");
+    const d = await evalCap();
+    expect(d.allowed).toBe(false);
+    expect(d.ruleId).toBe("spend-cap.session");
+  });
+
+  it("still allows a DEFAULT-configured API-key user under $15", async () => {
+    setSchemaDefaults();
+    noteResolvedAuthSource("env");
+    spend6Usd("env");
+    expect((await evalCap()).allowed).toBe(true);
+  });
+
+  it("never denies a DEFAULT-configured subscription user", async () => {
+    setSchemaDefaults();
+    noteResolvedAuthSource("oauth");
+    trackUsage(SESSION, "claude-opus-4-8", "anthropic", 0, 640_000, undefined, "oauth");
+    expect((await evalCap()).allowed).toBe(true);
+  });
+});
+
 describe("spend-cap pack — auth-aware", () => {
-  it("allows when no budgets are configured", async () => {
+  it("allows when the user has explicitly disabled both budgets (0)", async () => {
     setBudgets(0, 0);
     noteResolvedAuthSource("env");
     spend6Usd("env");

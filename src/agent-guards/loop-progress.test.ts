@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  detectCycle, mutationTargetKey, noteTurnShape, noveltySignature, turnShapeKey,
+  detectCycle, mutationTargetKey, noteTurnShape, noveltySignature, rememberNovelResult,
+  RESULT_SIG_MEMORY, turnShapeKey,
   type CycleTurn,
 } from "./loop-progress.js";
 import { checkToolLoops, noteToolResults, createLoopState } from "./loop-detection.js";
@@ -56,6 +57,54 @@ describe("noveltySignature — volatile spans are not information", () => {
     const a = "[ok, status=200, bytes=20359] text/css";
     const b = "[ok, status=200, bytes=21044] text/css";
     expect(noveltySignature(a)).not.toBe(noveltySignature(b));
+  });
+});
+
+describe("rememberNovelResult — a monotonic counter beside a capped set", () => {
+  it("counts every novel result forever while the set stays bounded", () => {
+    const state = { seenResultSigs: new Set<string>(), novelResultsTotal: 0 };
+    for (let i = 0; i < RESULT_SIG_MEMORY + 100; i++) rememberNovelResult(state, `sig-${i}`);
+    expect(state.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
+    expect(state.novelResultsTotal).toBe(RESULT_SIG_MEMORY + 100);
+    // FIFO: the oldest signatures were the ones evicted.
+    expect(state.seenResultSigs.has("sig-0")).toBe(false);
+    expect(state.seenResultSigs.has(`sig-${RESULT_SIG_MEMORY + 99}`)).toBe(true);
+  });
+
+  it("advances through noteToolResults only on a NOVEL result", () => {
+    const state = createLoopState();
+    const call = [{ name: "search", arguments: "{}" }];
+    noteToolResults(call, state, [{ content: "alpha", status: "ok" }]);
+    noteToolResults(call, state, [{ content: "alpha", status: "ok" }]); // repeat — not novel
+    noteToolResults(call, state, [{ content: "beta", status: "ok" }]);
+    noteToolResults(call, state, [{ content: "failed", status: "error" }]); // failures never count
+    expect(state.novelResultsTotal).toBe(2);
+    expect(state.seenResultSigs.size).toBe(2);
+  });
+
+  it("is volatility-normalized like the set — two screenshots of one page count once", () => {
+    const state = createLoopState();
+    const call = [{ name: "browser", arguments: "{}" }];
+    const shot = (blob: string, ms: number) => `[ok, duration_ms=${ms}] screenshot: data:image/png;base64,${blob}`;
+    noteToolResults(call, state, [{ content: shot("A".repeat(128), 51), status: "ok" }]);
+    noteToolResults(call, state, [{ content: shot("B".repeat(128), 4231), status: "ok" }]);
+    expect(state.novelResultsTotal).toBe(1);
+  });
+
+  // The checkpoint predicate's regression, at the guard level: past the cap,
+  // the set's size is a constant while the counter keeps telling the truth.
+  it("keeps counting past the cap where seenResultSigs.size has gone flat", () => {
+    const state = createLoopState();
+    const call = [{ name: "search", arguments: "{}" }];
+    for (let i = 0; i < 300; i++) {
+      noteToolResults(call, state, [{ content: `distinct result ${i}`, status: "ok" }]);
+    }
+    const sizeAt300 = state.seenResultSigs.size;
+    for (let i = 300; i < 340; i++) {
+      noteToolResults(call, state, [{ content: `distinct result ${i}`, status: "ok" }]);
+    }
+    expect(state.seenResultSigs.size).toBe(sizeAt300); // flat — the lie
+    expect(state.novelResultsTotal).toBe(340);          // the truth
   });
 });
 

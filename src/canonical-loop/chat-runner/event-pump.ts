@@ -25,11 +25,61 @@ export interface EventPump {
   dispose(): void;
 }
 
+/** User-facing wording for a checkpoint that STOPPED. `stopReason` comes from
+ *  canonical-loop/checkpoint-stop.ts; the turn-count phrasing is the fallback
+ *  for an op that stopped without one (e.g. a relayed pre-upgrade event). */
+function checkpointStopPhrase(
+  stopReason: string | null,
+  stopDetail: string | null,
+  maxTurns: number | null,
+): { line: string; short: string } {
+  switch (stopReason) {
+    case "dry-checkpoints":
+      return {
+        line: "I stopped here: the last stretch of work turned up nothing new, so continuing would just repeat it.",
+        short: "Stopped — no new information in the last stretch.",
+      };
+    case "spend-ceiling":
+      return {
+        line: `I stopped here to stay inside your spend budget${stopDetail ? ` (${stopDetail})` : ""}. You can raise it in Settings.`,
+        short: "Stopped — spend budget reached.",
+      };
+    default:
+      return maxTurns
+        ? {
+          line: `I reached the ${maxTurns}-iteration checkpoint.`,
+          short: `Checkpoint reached after ${maxTurns} iterations.`,
+        }
+        : { line: "I reached the iteration checkpoint.", short: "Iteration checkpoint reached." };
+  }
+}
+
+/** "2 hours", "45 minutes", "1 hour 30 minutes", "12 seconds" — for the
+ *  wall-clock notice. */
+function humanDuration(ms: number): string {
+  if (ms < 60_000) {
+    const s = Math.max(1, Math.round(ms / 1000));
+    return `${s} second${s === 1 ? "" : "s"}`;
+  }
+  const totalMin = Math.round(ms / 60_000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const hours = h > 0 ? `${h} hour${h === 1 ? "" : "s"}` : "";
+  const mins = m > 0 ? `${m} minute${m === 1 ? "" : "s"}` : "";
+  return [hours, mins].filter(Boolean).join(" ");
+}
+
 export function createEventPump(opId: string): EventPump {
   const eventQueue: ServerEvent[] = [];
   let waiter: (() => void) | null = null;
   let terminal: TerminalState | null = null;
   let emittedIterationCheckpoint = false;
+  // An adapter's `aborted` error report, held back for exactly one event. It
+  // is an acknowledgement, not news: whatever aborted the adapter (deadline,
+  // cancel, lease loss) explains itself on the very next event. The deadline
+  // path replaces it with the human notice; every other event flushes it
+  // unchanged and in order, so nothing else's behaviour moves.
+  let heldAbort: ServerEvent | null = null;
 
   const wake = () => {
     if (waiter) {
@@ -84,6 +134,14 @@ export function createEventPump(opId: string): EventPump {
   });
 
   const offEvents = subscribeOpEvents(opId, (event: CanonicalEvent) => {
+    const eventCode = event.type === "error"
+      ? ((event.body ?? {}) as Record<string, unknown>).code
+      : undefined;
+    if (heldAbort && eventCode !== "deadline_exceeded") {
+      eventQueue.push(heldAbort);
+      heldAbort = null;
+      wake();
+    }
     if (event.type === "state_changed") {
       const body = event.body as StateChangedBody | undefined;
       const to = body?.to;
@@ -118,6 +176,37 @@ export function createEventPump(opId: string): EventPump {
         wake();
         return;
       }
+      if (code === "aborted") {
+        heldAbort = { type: "error", message: `${code}: ${message.slice(0, 240)}` };
+        return;
+      }
+      if (code === "deadline_exceeded") {
+        // The interactive wall-clock backstop. With no turn wall this is what
+        // a user who walked away comes back to, so it must read like the
+        // checkpoint notice — how long it ran, that the work is saved, how to
+        // continue — not a raw maxWallTimeMs string. The op still ends
+        // `failed` (learnedOutcome aborted); only the wording changes here.
+        // The adapter's own "aborted" acknowledgement (held above) is what
+        // the deadline caused, not a second failure — drop it.
+        heldAbort = null;
+        const elapsedMs = typeof b.elapsedMs === "number" ? b.elapsedMs : null;
+        const ranFor = elapsedMs !== null ? ` after ${humanDuration(elapsedMs)}` : "";
+        if (!emittedIterationCheckpoint) {
+          eventQueue.push({
+            type: "stream",
+            delta: `\n\nI stopped here${ranFor} — that's the time limit for a single request. The work so far is saved; say "continue" and I'll pick it up from there.`,
+          });
+          emittedIterationCheckpoint = true;
+        }
+        eventQueue.push({
+          type: "stopped",
+          reason: `Stopped${ranFor} — time limit for one request reached. Say "continue" to keep going.`,
+          debug: `${code}: ${message.slice(0, 240)}`,
+          firedBy: "wall-clock",
+        });
+        wake();
+        return;
+      }
       eventQueue.push({ type: "error", message: `${code}: ${message.slice(0, 240)}` });
       wake();
       return;
@@ -125,20 +214,39 @@ export function createEventPump(opId: string): EventPump {
     if (event.type === "iteration_checkpoint") {
       const b = (event.body ?? {}) as Record<string, unknown>;
       const maxTurns = typeof b.maxTurns === "number" ? b.maxTurns : null;
-      const continuing = b.continuing === true;
-      if (continuing) return;
-      const checkpoint = maxTurns
-        ? `\n\nI reached the ${maxTurns}-iteration checkpoint. The work so far is saved; say "continue" and I'll pick it up from there.`
-        : `\n\nI reached the iteration checkpoint. The work so far is saved; say "continue" and I'll pick it up from there.`;
+      const completedTurns = typeof b.completedTurns === "number" ? b.completedTurns : null;
+      const stopReason = typeof b.stopReason === "string" ? b.stopReason : null;
+      const stopDetail = typeof b.stopDetail === "string" ? b.stopDetail : null;
+      if (b.continuing === true) {
+        // A continuing checkpoint is a CADENCE marker, not a stop. This branch
+        // used to `return` and emit nothing at all — which, now that the
+        // interactive lane also continues, would leave a user who walked away
+        // staring at a transcript that says nothing for hours. Surface the same
+        // progress line the background dock shows (session-bridge-observer.ts).
+        // Deliberately NOT gated on `emittedIterationCheckpoint`: the cadence
+        // repeats, and each pass is fresh news.
+        const turns = completedTurns ?? maxTurns;
+        eventQueue.push({
+          type: "stream",
+          delta: `\n\n_Checkpoint saved${turns !== null ? ` after ${turns} turns` : ""} — still working; continuing automatically._\n\n`,
+        });
+        wake();
+        return;
+      }
+      // Stopped. Name the real reason when the worker supplied one; the bare
+      // count is only meaningful when nothing better is known.
+      const because = checkpointStopPhrase(stopReason, stopDetail, maxTurns);
       if (!emittedIterationCheckpoint) {
-        eventQueue.push({ type: "stream", delta: checkpoint });
+        eventQueue.push({
+          type: "stream",
+          delta: `\n\n${because.line} The work so far is saved; say "continue" and I'll pick it up from there.`,
+        });
         emittedIterationCheckpoint = true;
       }
       eventQueue.push({
         type: "stopped",
-        reason: maxTurns
-          ? `Checkpoint reached after ${maxTurns} iterations. Say "continue" to keep going.`
-          : `Iteration checkpoint reached. Say "continue" to keep going.`,
+        reason: `${because.short} Say "continue" to keep going.`,
+        ...(stopDetail ? { debug: stopDetail.slice(0, 240) } : {}),
         firedBy: "iteration-budget",
       });
       wake();

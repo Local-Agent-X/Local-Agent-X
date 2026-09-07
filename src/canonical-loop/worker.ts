@@ -40,6 +40,7 @@ import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
+import { evaluateCheckpointStop } from "./checkpoint-stop.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.worker");
@@ -108,6 +109,7 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   // are governed by progress middleware: long useful work is allowed, while
   // repeated failures and idle turns suspend the resumable operation.
   const wallClockMs = op.contextPack?.budget?.maxWallTimeMs;
+  const drivingSince = Date.now();
   if (op.lane === "interactive" && typeof wallClockMs === "number" && Number.isFinite(wallClockMs) && wallClockMs > 0) {
     wallClockTimer = setTimeout(() => {
       deadlineExceeded = true;
@@ -146,21 +148,26 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
     for (;;) {
       activeTurnIdx = turnIdx;
       if (count >= maxTurns) {
-        const continuing = op.lane !== "interactive";
+        // maxIterations is a checkpoint CADENCE for every lane, including
+        // interactive. Whether the op ends here is decided by real stop
+        // conditions (no new evidence / spend ceiling), not by an arbitrary
+        // turn count — see checkpoint-stop.ts.
+        const stop = evaluateCheckpointStop(op);
         emit(op.id, "iteration_checkpoint", {
           maxTurns,
           completedTurns: turnIdx,
-          continuing,
+          continuing: !stop.stop,
+          ...(stop.reason ? { stopReason: stop.reason, stopDetail: stop.detail } : {}),
         });
-        if (!continuing) {
+        if (stop.stop) {
           releaseReason = "iteration_checkpoint";
           recordTerminalOutcome(op, "partial");
           transitionOp(op, "succeeded", "iteration_checkpoint", { learnedOutcome: "partial" });
           break;
         }
-        // Autonomous lanes treat maxIterations as a checkpoint cadence. Keep
-        // the same worker, lease, wall-clock timer, cancellation tracker, and
-        // adapter registrations; only reset the cadence counter.
+        // Continuing: keep the same worker, lease, wall-clock timer,
+        // cancellation tracker and adapter registrations; only reset the
+        // cadence counter.
         count = 0;
       }
       count++;
@@ -186,11 +193,17 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       }
 
       if (deadlineExceeded) {
+        // Now that the turn wall is gone this is the backstop a user who walked
+        // away actually hits. `message` stays the diagnostic string (logs,
+        // the background dock); elapsedMs/maxWallTimeMs let the chat event pump
+        // render the human version ("ran for 2h; work saved; say continue").
         releaseReason = "deadline_exceeded";
         emit(op.id, "error", {
           code: "deadline_exceeded",
           message: `interactive operation exceeded maxWallTimeMs=${wallClockMs}`,
           retryable: true,
+          elapsedMs: Date.now() - drivingSince,
+          maxWallTimeMs: wallClockMs,
         });
         recordTerminalOutcome(op, "aborted");
         transitionOp(op, "failed", "deadline_exceeded", { learnedOutcome: "aborted" });

@@ -86,6 +86,38 @@ export function noveltySignature(content: string): string {
   return createHash("sha1").update(normalized).digest("hex");
 }
 
+/**
+ * Cap on remembered signatures (~50 bytes each -> ~13 KB at the cap).
+ * Comfortably larger than NO_PROGRESS_LIMIT x a few results/turn, so a steady
+ * spin's signature stays resident across the whole no-progress window.
+ * Shared by every capped Set on LoopState (results, mutation keys, targets).
+ */
+export const RESULT_SIG_MEMORY = 256;
+
+/**
+ * Remember a result signature the op has not seen before.
+ *
+ * Two records, two audiences. `seenResultSigs` is the bounded FIFO the
+ * per-turn detectors read ("have I seen THIS result?"); it evicts its oldest
+ * entry at the cap, so its `.size` saturates at RESULT_SIG_MEMORY and says
+ * nothing about progress after that. `novelResultsTotal` is the MONOTONIC
+ * lifetime count of novel results — never evicted, never reset, never capped —
+ * and is the only honest answer to "did the op learn anything since the last
+ * checkpoint?" (checkpoint-stop.ts). Comparing `.size` across checkpoints was
+ * a measured defect: every long, productive op read as permanently dry past
+ * its 256th distinct result.
+ */
+export function rememberNovelResult(
+  state: { seenResultSigs: Set<string>; novelResultsTotal: number },
+  signature: string,
+): void {
+  state.novelResultsTotal++;
+  state.seenResultSigs.add(signature);
+  if (state.seenResultSigs.size > RESULT_SIG_MEMORY) {
+    state.seenResultSigs.delete(state.seenResultSigs.values().next().value!);
+  }
+}
+
 // -- 2. Mutation target ---------------------------------------------------
 
 /** Argument names that name the THING a mutating call acts on, in priority

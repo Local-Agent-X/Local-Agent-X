@@ -165,15 +165,20 @@ export const configSchema = z.object({
   // off skips the pass with no restart.
   verifyDeliverables: z.boolean().default(true),
 
-  /** Opt-in USD spend caps on REAL per-call API spend. 0 = disabled (default).
-   *  When > 0, the spend-cap rule pack blocks every tool call once the matching
-   *  billable spend reaches the budget — dailyBudgetUsd against today's,
-   *  sessionBudgetUsd against the active session's. Flat-rate subscription
-   *  (Claude CLI / SuperGrok / ChatGPT) usage is not billed and never capped.
+  /** USD spend ceilings on REAL per-call API spend — ON by default ($15 per
+   *  session, $75 per day) so a runaway op on a per-token API key is bounded
+   *  by money, not by an arbitrary turn count. Two enforcement points read
+   *  them live: the spend-cap rule pack denies every further tool call once
+   *  the matching billable spend reaches the budget, and the canonical-loop
+   *  checkpoint predicate (checkpoint-stop.ts) ends the op at its next
+   *  iteration checkpoint. dailyBudgetUsd is measured against today's spend,
+   *  sessionBudgetUsd against the active session's. 0 = disabled — a user
+   *  who explicitly sets 0 opts out. Flat-rate subscription (Claude CLI /
+   *  SuperGrok / ChatGPT) usage is shadow cost, never billed, never capped.
    *  Not security kill-switches, so they're user-flippable in interactive
    *  sessions (not protected). */
-  dailyBudgetUsd: z.number().min(0).default(0),
-  sessionBudgetUsd: z.number().min(0).default(0),
+  dailyBudgetUsd: z.number().min(0).default(75),
+  sessionBudgetUsd: z.number().min(0).default(15),
   /** Per-model daily USD caps on real per-call API spend, keyed by model id.
    *  A model over its cap is blocked for the rest of the day. Subscription
    *  (flat-rate) models are never billable, so they're never capped here. */

@@ -24,6 +24,8 @@ vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
 import { compactHistory } from "./compact-history.js";
 import { clearSummaryCache } from "./compact-summary-cache.js";
+import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
+import { markConversationCache } from "../../anthropic-client/cache-breakpoints.js";
 import { getContextStatus } from "../../context-manager/status.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import type { CanonicalMessage } from "../contract-types.js";
@@ -105,6 +107,45 @@ describe("compactHistory — summary stability across consecutive compacted turn
     const after = await compactHistory(historyAt(11), MODEL, null, OP);
     expect(mockSummarize).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(after.messages[0])).toBe(JSON.stringify(later.messages[0]));
+  });
+
+  // The runtime shape this whole chunk is for: compacted view → wire →
+  // breakpoint. Everything at or above the marker must be byte-identical turn
+  // over turn, which is what makes cacheRead pay instead of cacheCreate.
+  it("keeps the MARKED wire prefix byte-identical across three compacted turns", async () => {
+    const marked: Array<{ prefix: string; idx: number }> = [];
+    for (let turn = 0; turn < 3; turn++) {
+      const out = await compactHistory(historyAt(turn), MODEL, null, OP);
+      // The loop appends its volatile digest row below the compacted view and
+      // declares ephemeralTailMessages = 1 (build-input.ts).
+      const wire = canonicalToTransport(
+        [...out.messages, { messageId: `sa-${turn}`, role: "user", content: { text: `[SITUATIONAL CONTEXT turn ${turn}]` } }],
+        undefined,
+      );
+      const body = markConversationCache(
+        wire.map(m => ({ role: m.role === "assistant" ? "assistant" as const : "user" as const, content: m.content ?? "" })),
+        true,
+        1,
+      );
+      const idx = body.findIndex(m =>
+        Array.isArray(m.content) && m.content.some(b => (b as { cache_control?: unknown }).cache_control));
+      expect(idx).toBe(body.length - 2);
+      // Compare the CACHED CONTENT (the marker itself moves down by design).
+      marked.push({ idx, prefix: JSON.stringify(wire.slice(0, idx + 1)) });
+    }
+    // Turn 1's cached region is a byte-exact PREFIX of turn 2's and turn 3's:
+    // it only grows at the end, it never diverges.
+    const rows = (s: string) => JSON.parse(s) as unknown[];
+    for (const t of [1, 2]) {
+      const prev = rows(marked[t - 1].prefix);
+      const next = rows(marked[t].prefix);
+      expect(next.length).toBeGreaterThan(prev.length);
+      for (let i = 0; i < prev.length; i++) {
+        expect(JSON.stringify(next[i]), `turn ${t} diverged at wire index ${i}`)
+          .toBe(JSON.stringify(prev[i]));
+      }
+    }
+    expect(marked[2].idx).toBeGreaterThan(marked[0].idx);
   });
 
   it("never reuses a summary across ops (per-op key, hash-verified head)", async () => {

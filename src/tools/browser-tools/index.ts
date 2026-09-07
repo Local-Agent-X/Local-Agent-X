@@ -3,21 +3,24 @@
  *
  * One tool (`browser`) with an `action` discriminator. The per-action handlers
  * live in src/tools/browser-tools/:
- *   shared.ts      — ok/err helpers, auth-wall detector, post-action snapshot,
- *                    input-ref lister, VALID_ENGINES
- *   description.ts — static tool name + description + parameters schema
- *   navigation.ts  — navigate, new_tab, snapshot
- *   interact.ts    — click, click_text, fill, select, scroll
- *   page.ts        — extract, screenshot, evaluate, info, tabs, switch_tab,
- *                    dialog_accept, dialog_dismiss, close
- *   act.ts         — act (natural-language)
- *   observe.ts     — observe (role-bucketed, diff-aware view)
+ *   shared.ts        — ok/err helpers, auth-wall detector, post-action snapshot,
+ *                      input-ref lister, VALID_ENGINES
+ *   description.ts   — static tool name + description + parameters schema
+ *   action-tables.ts — action classification tables (reset / tracked /
+ *                      read-only / human-verification-blocked)
+ *   gates.ts         — pre-dispatch approval gates, human-verification block,
+ *                      post-dispatch progress guard
+ *   navigation.ts    — navigate, new_tab, snapshot
+ *   interact.ts      — click, click_text, fill, select, scroll
+ *   page.ts          — extract, screenshot, evaluate, info, tabs, switch_tab,
+ *                      dialog_accept, dialog_dismiss, close
+ *   act.ts           — act (natural-language)
+ *   observe.ts       — observe (role-bucketed, diff-aware view)
  */
 
 import type { ToolDefinition, ToolResult } from "../../types.js";
-import type { ServerEvent } from "../../types.js";
 import { getBrowserManager, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
-import type { BrowserEngine, BrowserBackend, WedgeRecoveryOutcome } from "../../browser/index.js";
+import type { BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
 import { VALID_ENGINES, err } from "./shared.js";
@@ -26,6 +29,8 @@ import {
   BROWSER_TOOL_DESCRIPTION,
   BROWSER_TOOL_PARAMETERS,
 } from "./description.js";
+import { READ_ONLY_ACTIONS } from "./action-tables.js";
+import { applyProgressGuard, humanVerificationBlock, runPreDispatchGates } from "./gates.js";
 import { handleNavigate, handleNewTab, handleSnapshot } from "./navigation.js";
 import {
   handleClick,
@@ -52,43 +57,15 @@ import { handleAct } from "./act.js";
 import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
 import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perception.js";
-import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { createLogger } from "../../logger.js";
-import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageActionDecision, sensitivePageStub } from "../../browser/guards.js";
-import { getApprovalManager } from "../../approval-manager.js";
-import { blocked, declined } from "../result-helpers.js";
-import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification } from "../../browser/human-verification.js";
+import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageStub } from "../../browser/guards.js";
+import { blocked } from "../result-helpers.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
 // the force-kill, so knowing whether it was click_text / evaluate / act / a scan
 // is what tells you where the next unbounded operation to cap lives.
 const log = createLogger("browser.wedge");
-
-// Actions that establish a fresh page context — clear stall state, don't compare.
-// close_tab counts: closing the active tab moves the agent onto a different page.
-const RESET_ACTIONS = new Set(["navigate", "new_tab", "switch_tab", "close_tab", "close"]);
-// Advancing actions where "page never changed" means the agent is stuck.
-// Click-style actions AND local edits (fill / select / scroll) all count: the
-// enriched fingerprint (interactions.ts) tracks value length, scroll position,
-// checked/selected state, and aria-expanded, so a PRODUCTIVE edit moves the
-// fingerprint (never false-trips) while a dead one that changes nothing is
-// still caught — this tracker is the ONLY browser-layer spin bound. Only pure
-// READS (snapshot / observe / extract / screenshot / info / tabs) are excluded:
-// a read never "tries to move the page", and blocking the agent's own
-// re-perceive recovery move with the stall error is the opposite of helpful.
-const TRACKED_ACTIONS = new Set(["click", "click_text", "fill", "select", "scroll", "act"]);
-const READ_ONLY_ACTIONS = new Set(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks"]);
-// Page-script evaluation is nominally inspection-only, but executing arbitrary
-// page JavaScript can still invoke getters or site-defined functions with side
-// effects. Dialog responses can likewise advance a challenge. Keep escape and
-// observation actions available while the user completes verification.
-const HUMAN_VERIFICATION_BLOCKED_ACTIONS = new Set([
-  ...TRACKED_ACTIONS,
-  "evaluate",
-  "dialog_accept",
-  "dialog_dismiss",
-]);
 
 /** Wedge outcome → what the agent is told. Honest about what survived: an
  *  in-place recovery keeps the tab and page; a recreated view reloads its last
@@ -112,53 +89,6 @@ function wedgeRecoveryMessage(outcome: WedgeRecoveryOutcome): string {
         "complete — retry it and a fresh browser will open."
       );
   }
-}
-
-/**
- * After an advancing action, fingerprint the page and trip a no-progress stop
- * if the session has spun without moving the page. The isError result feeds the
- * circuit breaker (run-sandboxed records isError as a failure), so an agent that
- * ignores the warning and keeps hammering gets a hard cooldown.
- */
-async function applyProgressGuard(
-  action: string,
-  manager: BrowserBackend,
-  sessionId: string,
-  result: ToolResult,
-): Promise<ToolResult> {
-  // Co-drive preemption: the human took the wheel, so the action never ran —
-  // an unchanged page here is NOT the agent spinning. Reset instead of
-  // recording, so a preempted stretch can't false-trip the breaker.
-  if (result.metadata?.userActive === true) {
-    resetProgress(sessionId);
-    return result;
-  }
-  if (RESET_ACTIONS.has(action)) {
-    resetProgress(sessionId);
-    return result;
-  }
-  if (!TRACKED_ACTIONS.has(action) || result.isError) return result;
-  // Defense in depth: a read-only action never represents "trying to move the
-  // page", so its result — often the agent's own re-perceive recovery move —
-  // must never be replaced by the stall error. TRACKED_ACTIONS already excludes
-  // reads; this makes the invariant explicit and regression-proof.
-  if (READ_ONLY_ACTIONS.has(action)) return result;
-  // Cap the fingerprint read: a hung page-eval here must not ride the outer
-  // tool timeout and report a completed action as a timeout. Timing out yields
-  // "" — recordProgress treats that as "unknown" (neither progress nor stall).
-  let fpTimer: ReturnType<typeof setTimeout> | undefined;
-  const fingerprint = await Promise.race([
-    manager.fingerprint(),
-    new Promise<string>((resolve) => { fpTimer = setTimeout(() => resolve(""), 2000); }),
-  ]);
-  clearTimeout(fpTimer);
-  const { stalled, unchanged } = recordProgress(sessionId, fingerprint);
-  if (!stalled) return result;
-  return err(
-    `No page change after ${unchanged} consecutive browser actions — the page is not responding to what you're doing. ` +
-    `Stop repeating the same action. Try a different approach: a different ref/selector, scroll to reveal off-screen ` +
-    `elements, navigate elsewhere, or stop and ask the user. Repeating will open the circuit breaker.`,
-  );
 }
 
 /**
@@ -189,81 +119,16 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           return err(`Invalid engine: "${engine}". Must be one of: ${VALID_ENGINES.join(", ")}`);
         }
 
-        // Set when an ask-level secret-read approval unlocked this page's
-        // stub; the dispatch tail then runs inside runWithSensitiveReadGrant
-        // so the unlock is visible to exactly this call's async chain
-        // (handlers, backends, post-dispatch backstop) and to no one else.
-        let grantedReadUrl: string | null = null;
         try {
-          if (action === "release_download") {
-            const id = String(args.download_id || "");
-            if (!id) return err("'download_id' is required. Use action='downloads' first.");
-            if (!onEvent) return blocked(
-              "BLOCKED: quarantined downloads can only be released from an interactive session with explicit user approval.",
-              { layer: "browser-download", browserStatus: "approval-required" },
-            );
-            let approvalBinding: ReturnType<BrowserBackend["getDownloadApproval"]>;
-            try { approvalBinding = manager.getDownloadApproval(id); }
-            catch (error) { return blocked(`BLOCKED: ${(error as Error).message}`, { layer: "browser-download", browserStatus: "not-releasable" }); }
-            const outcome = await getApprovalManager().requestApprovalDetailed({
-              toolName: "browser.release_download",
-              toolCallId: String(args._toolCallId || `browser-release-${id}`),
-              sessionId,
-              context: "Release a quarantined browser download into workspace/downloads. The file remains unavailable to agent tools until approved.",
-              args: { action: "release_download", ...approvalBinding },
-              alwaysAsk: true,
-              emit: onEvent as (event: ServerEvent) => void,
-            });
-            if (!outcome.approved) return declined(
-              "Download release was not approved; the file remains quarantined.",
-              { layer: "browser-download", browserStatus: "quarantined", downloadId: id },
-            );
-            args._downloadApproval = approvalBinding;
-          } else {
-            const pageUrl = manager.getCurrentUrl();
-            const pageDecision = sensitivePageActionDecision(pageUrl, action);
-            if (pageDecision.disposition === "blocked") return blocked(
-              `BLOCKED: ${pageDecision.reason}`,
-              { layer: "browser-sensitive-page", browserStatus: "blocked", category: pageDecision.category },
-            );
-            if (pageDecision.disposition === "approval-required") {
-              if (!onEvent) return blocked(
-                `BLOCKED: ${pageDecision.reason} Explicit approval is unavailable in this run.`,
-                { layer: "browser-sensitive-page", browserStatus: "approval-required", category: pageDecision.category },
-              );
-              const outcome = await getApprovalManager().requestApprovalDetailed({
-                toolName: "browser.sensitive_page_action",
-                toolCallId: String(args._toolCallId || `browser-sensitive-${sessionId}`),
-                sessionId,
-                context: `${pageDecision.reason} Approve only if you expect this action. Page contents and form values are intentionally omitted.`,
-                args: { action, category: pageDecision.category, page: pageDecision.page },
-                alwaysAsk: true,
-                emit: onEvent as (event: ServerEvent) => void,
-              });
-              if (!outcome.approved) return declined(
-                `Sensitive-page ${action} was not approved; no browser action was performed.`,
-                { layer: "browser-sensitive-page", browserStatus: "declined", category: pageDecision.category },
-              );
-              // Ask-level secret READ approved: the dispatch tail below runs
-              // inside the read-grant async context for exactly this page
-              // URL, covering the post-dispatch stub backstop too — approved
-              // content is not clobbered on the way out.
-              if (pageDecision.unlocksRead) grantedReadUrl = pageUrl;
-            }
-          }
+          const gated = await runPreDispatchGates(action, args, manager, sessionId, onEvent);
+          if (gated.kind === "halt") return gated.result;
+          const grantedReadUrl = gated.grantedReadUrl;
           // Everything from dispatch through the post-dispatch stub backstop
           // and the open-warning runs as ONE unit so an approved read grant
           // can scope to exactly this call's async context.
           const runGated = async (): Promise<ToolResult> => {
-          if (HUMAN_VERIFICATION_BLOCKED_ACTIONS.has(action)) {
-            const observation = await manager.observe();
-            if (requiresHumanVerification(observation)) {
-              return blocked(HUMAN_VERIFICATION_MESSAGE, {
-                layer: "browser-human-verification",
-                browserStatus: "human-verification-required",
-              });
-            }
-          }
+          const verificationBlock = await humanVerificationBlock(action, manager);
+          if (verificationBlock) return verificationBlock;
           const dispatch = (async (): Promise<ToolResult> => {
           switch (action) {
             case "navigate": return await handleNavigate(manager, args, engine);

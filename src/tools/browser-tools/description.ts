@@ -31,6 +31,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- evaluate: Run read-only JavaScript to inspect the page. It cannot click, type, focus, remove overlays, or mutate DOM/form state; use click/fill/select with fresh refs for actions.\n" +
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
   "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers. Form controls also show live state as {checked}/{unchecked}/{filled}/{disabled}, so re-observe after a click to confirm a checkbox toggled instead of reading the DOM by hand.\n" +
+  "- emulate: Render as a DIFFERENT DEVICE for the rest of the session — viewport size, deviceScaleFactor, isMobile/hasTouch, and USER AGENT. Pass device='iphone'|'android'|'ipad' (or 'desktop' to clear), or viewport_width + viewport_height (plus optional user_agent / is_mobile / has_touch / device_scale_factor). USE THIS BEFORE INVESTIGATING ANY MOBILE-ONLY BUG: many sites serve phones a DIFFERENT HTML document keyed on the user agent, so a desktop rendering can look perfectly clean while the reported defect is right there on mobile. Then use screenshot/snapshot to see the page as that device does. Emulation opens a FRESH isolated context (the current URL is re-opened; cookies/logins do NOT carry over), and is unavailable on the in-app browser because that window is the user's own.\n" +
   "- scroll: Scroll the page. value='up'|'down'|'top'|'bottom' OR ref=N to scroll that element into view.\n" +
   "- tabs: List all open tabs with URLs and titles — including the user's own browser tabs, marked [user tab].\n" +
   "- switch_tab: Switch to a tab by index (set 'value' to tab number). Switching onto a [user tab] row TAKES CONTROL of the user's own tab — use it when the user says they're already logged in, or asks you to act on the page they have open. Indexes are as-of the LAST 'tabs' listing; taking over a user tab requires a current listing, and if the tabs changed in between the switch refuses — run 'tabs' again.\n" +
@@ -67,7 +68,7 @@ export const BROWSER_TOOL_PARAMETERS = {
   properties: {
     action: {
       type: "string",
-      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
+      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "emulate", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
       description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
     },
     url: {
@@ -125,6 +126,35 @@ export const BROWSER_TOOL_PARAMETERS = {
     limit: {
       type: "number",
       description: "For 'history': maximum entries to return (default 25, max 100).",
+    },
+    device: {
+      type: "string",
+      enum: ["iphone", "android", "ipad", "desktop"],
+      description: "For 'emulate': a device preset supplying viewport, deviceScaleFactor, touch flags AND a real mobile user agent. 'desktop' clears emulation.",
+    },
+    viewport_width: {
+      type: "number",
+      description: "For 'emulate': viewport width in CSS pixels (required with viewport_height when no 'device' preset is given).",
+    },
+    viewport_height: {
+      type: "number",
+      description: "For 'emulate': viewport height in CSS pixels.",
+    },
+    device_scale_factor: {
+      type: "number",
+      description: "For 'emulate': devicePixelRatio (e.g. 3 for a modern phone). Default 1.",
+    },
+    is_mobile: {
+      type: "boolean",
+      description: "For 'emulate': set the mobile meta-viewport behaviour (Chromium only).",
+    },
+    has_touch: {
+      type: "boolean",
+      description: "For 'emulate': advertise touch support to the page.",
+    },
+    user_agent: {
+      type: "string",
+      description: "For 'emulate': override the user agent. Sites that serve phones a different document key on THIS — a mobile viewport alone is not enough.",
     },
     download_id: {
       type: "string",

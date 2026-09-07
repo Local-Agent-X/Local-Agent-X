@@ -80,6 +80,11 @@ export const ARI_ACTION_MAP: Record<string, string> = {
 // http actions in HOST_CAPABILITY_MANIFEST. Tools whose action isn't derivable
 // from args fall through to the static ARI_ACTION_MAP.
 const HTTP_WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+// Deliberately EXCLUDES emulate — it is "get" to the kernel. emulate re-opens
+// the CURRENT url in a new context (an http GET, no write). Classifying it as
+// a write would deny it under web/rag taint (deny-tainted-http-write) — i.e.
+// exactly after browsing, which is the only time a mobile re-render is ever
+// wanted.
 const BROWSER_WRITE_ACTIONS = new Set(["click", "fill", "select", "type", "evaluate", "act"]);
 
 export function deriveAriAction(toolName: string, args: Record<string, unknown>): string {

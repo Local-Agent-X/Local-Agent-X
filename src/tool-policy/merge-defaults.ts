@@ -42,6 +42,10 @@ const logger = createLogger("tool-policy");
 const LEGACY_DEFAULT_DECISIONS: Record<string, ReadonlyArray<ToolPolicyRule["decision"]>> = {
   // cf977d9a: browser.evaluate went confirm → allow (autonomous by default).
   "flag-browser-evaluate": ["confirm"],
+  // NOTE: browser.emulate adds NO entry here. This list is only for defaults
+  // whose DECISION changed in code (so a legacy snapshot rule can be
+  // recognised as stale and refreshed). A brand-new action that ships with no
+  // rule of its own has no prior decision to retire.
 };
 
 /** Deterministic JSON — object keys sorted at every depth. */

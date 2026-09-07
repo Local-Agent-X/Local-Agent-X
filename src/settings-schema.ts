@@ -111,13 +111,13 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     field: "dailyBudgetUsd",
     validate: z.number().min(0),
     runtime: true,
-    description: "Opt-in daily USD cap on real per-call API spend. 0 = disabled. When >0, tool calls are blocked once today's billable cost reaches this budget. Flat-rate subscription usage is not capped",
+    description: "Daily spending cap in US dollars (default $75). Applies only when you pay per call with an API key: once today's real spend reaches this amount, the agent's tool calls are blocked and the current task ends at its next checkpoint. On a subscription login the cost is shown for information only — it is not a real charge and never stops anything. Set to 0 for no cap",
   },
   {
     field: "sessionBudgetUsd",
     validate: z.number().min(0),
     runtime: true,
-    description: "Opt-in per-session USD cap on real per-call API spend. 0 = disabled. When >0, tool calls are blocked once the session's billable cost reaches this budget. Flat-rate subscription usage is not capped",
+    description: "Per-session spending cap in US dollars (default $15). Applies only when you pay per call with an API key: once this session's real spend reaches this amount, the agent's tool calls are blocked and the current task ends at its next checkpoint. On a subscription login the cost is shown for information only — it is not a real charge and never stops anything. Set to 0 for no cap",
   },
   {
     field: "modelDailyBudgetsUsd",

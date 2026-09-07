@@ -21,6 +21,10 @@ import { evaluateMutationReason } from "../src/tools/browser-tools/page.js";
 const VIEWPORT = 390;
 
 interface LayoutReport {
+  matchingMediaQueries: string[];
+  matchingMediaQueriesTotal: number;
+  unreadableStyleSheets: number;
+  cssRulesTruncated: boolean;
   documentScroll: { scrollWidth: number; clientWidth: number; horizontalOverflowPx: number };
   overflowingElements: { selector: string; overflowRightPx: number; backgroundColor: string }[];
   overflowingElementsTotal: number;
@@ -90,19 +94,132 @@ describe("layout_report script", () => {
     expect(report.fixedAndStickyElements[1].selector).toBe("nav.site-nav");
   });
 
-  it("does not mutate the page", () => {
+  /**
+   * FINDING 7: the old version of this compared outerHTML plus one input value
+   * and finished with `expect(location.href).toBe(location.href)` — a
+   * tautology. Adding `el.scrollIntoView()` or `history.replaceState(...)` to
+   * the script would have passed it (and passed evaluateMutationReason), while
+   * scrolling the user's page out from under them and rewriting the URL. The
+   * proof now covers the mutations that leave the serialized DOM untouched:
+   * scroll position, focus, and history — asserted both by OUTCOME (the values
+   * afterwards) and by INTERCEPT (the APIs were never called at all).
+   */
+  it("does not mutate the page — DOM, scroll, focus, history or location", () => {
     document.body.innerHTML =
       `<div id="promo-strip" data-rect="0,0,427,32">Free shipping</div>` +
       `<nav class="site-nav" data-rect="0,32,390,56" style="position: fixed">Home</nav>` +
-      `<input id="typed" value="untouched">`;
-    const before = document.documentElement.outerHTML;
+      `<input id="typed" value="untouched">` +
+      `<button id="focused">Focus me</button>`;
+    const focused = document.getElementById("focused") as HTMLElement;
+    focused.focus();
+
+    // INTERCEPT: every API that mutates without changing outerHTML. Each is
+    // replaced by a recorder, so a call is caught even when its effect is
+    // invisible to (or unsupported by) the DOM implementation.
+    const called: string[] = [];
+    const restore: (() => void)[] = [];
+    const intercept = (host: object, name: string) => {
+      const target = host as Record<string, unknown>;
+      if (typeof target[name] !== "function") return;
+      const original = target[name];
+      target[name] = function (...args: unknown[]) {
+        called.push(name);
+        return (original as (...a: unknown[]) => unknown).apply(this, args);
+      };
+      restore.push(() => { target[name] = original; });
+    };
+    for (const name of ["scrollIntoView", "focus", "blur", "click", "setAttribute", "removeAttribute", "remove", "insertBefore", "appendChild", "requestFullscreen"]) {
+      intercept(Element.prototype, name);
+    }
+    for (const name of ["replaceState", "pushState", "back", "forward", "go"]) intercept(history, name);
+    for (const name of ["scrollTo", "scrollBy", "scroll", "open", "close", "alert"]) intercept(window, name);
+    for (const name of ["write", "open", "close"]) intercept(Document.prototype, name);
+
+    const htmlBefore = document.documentElement.outerHTML;
     const inputBefore = (document.getElementById("typed") as HTMLInputElement).value;
+    const activeBefore = document.activeElement;
+    const scrollBefore = [window.scrollX, window.scrollY, document.documentElement.scrollTop, document.documentElement.scrollLeft];
+    const hrefBefore = String(document.location.href);
+    const historyLengthBefore = history.length;
 
-    run();
+    try {
+      run();
+    } finally {
+      for (const undo of restore) undo();
+    }
 
-    expect(document.documentElement.outerHTML).toBe(before);
+    expect(called).toEqual([]);
+    expect(document.documentElement.outerHTML).toBe(htmlBefore);
     expect((document.getElementById("typed") as HTMLInputElement).value).toBe(inputBefore);
-    expect(document.location.href).toBe(document.location.href);
+    expect(document.activeElement).toBe(activeBefore);
+    expect([window.scrollX, window.scrollY, document.documentElement.scrollTop, document.documentElement.scrollLeft])
+      .toEqual(scrollBefore);
+    expect(String(document.location.href)).toBe(hrefBefore);
+    expect(history.length).toBe(historyLengthBefore);
+  });
+
+  /**
+   * FINDING 6: the walk iterated sheet.cssRules ONE level deep, so an @media
+   * nested inside @layer / @supports / another @media — the normal shape of a
+   * modern or Tailwind build — was never visited, and the report said the page
+   * had no matching media queries at all.
+   *
+   * The rules are stubbed rather than parsed: happy-dom's CSSOM does not build
+   * nested grouping rules, and what is under test is the WALK, not a parser.
+   */
+  describe("@media discovery", () => {
+    const media = (mediaText: string, children: unknown[] = []) => ({ media: { mediaText }, cssRules: children });
+    /** @layer / @supports: a grouping rule with children and NO .media. */
+    const group = (children: unknown[]) => ({ cssRules: children });
+
+    function withSheets(sheets: unknown[], matches: string[]): LayoutReport {
+      Object.defineProperty(document, "styleSheets", { value: sheets, configurable: true });
+      const previous = globalThis.matchMedia;
+      globalThis.matchMedia = ((q: string) => ({ matches: matches.includes(q), media: q })) as typeof matchMedia;
+      try { return run(); } finally { globalThis.matchMedia = previous; }
+    }
+
+    it("finds an @media nested inside @layer > @supports", () => {
+      const report = withSheets(
+        [group([group([group([media("(max-width: 767px)")])])])],
+        ["(max-width: 767px)"],
+      );
+
+      expect(report.matchingMediaQueries).toEqual(["(max-width: 767px)"]);
+      expect(report.matchingMediaQueriesTotal).toBe(1);
+    });
+
+    it("finds an @media nested inside another @media, and reports only the matching ones", () => {
+      const report = withSheets(
+        [group([media("(min-width: 320px)", [media("(orientation: portrait)")])]), group([media("print")])],
+        ["(min-width: 320px)", "(orientation: portrait)"],
+      );
+
+      expect(report.matchingMediaQueries.sort()).toEqual(["(min-width: 320px)", "(orientation: portrait)"]);
+      expect(report.matchingMediaQueries).not.toContain("print");
+    });
+
+    it("counts a cross-origin sheet it cannot read instead of silently reporting zero", () => {
+      const cdn = { get cssRules(): unknown { throw new Error("SecurityError: cross-origin stylesheet"); } };
+      const report = withSheets([cdn, group([media("(max-width: 767px)")])], ["(max-width: 767px)"]);
+
+      expect(report.unreadableStyleSheets).toBe(1);
+      expect(report.matchingMediaQueries).toEqual(["(max-width: 767px)"]);
+    });
+
+    it("bounds the walk: neither depth nor rule count can run away", () => {
+      // Deeper than RULE_DEPTH — the innermost query must NOT be reported, and
+      // the walk must return rather than recurse forever.
+      let deep: unknown = media("(max-width: 1px)");
+      for (let i = 0; i < 40; i++) deep = group([deep]);
+      const deepReport = withSheets([deep as { cssRules: unknown[] }], ["(max-width: 1px)"]);
+      expect(deepReport.matchingMediaQueries).toEqual([]);
+
+      // Wider than RULE_CAP — the budget trips and says so.
+      const wide = group(Array.from({ length: 25000 }, () => group([])));
+      const wideReport = withSheets([wide], []);
+      expect(wideReport.cssRulesTruncated).toBe(true);
+    });
   });
 
   it("clears the evaluate guards it is exempted from, so no guard had to be weakened for it", () => {

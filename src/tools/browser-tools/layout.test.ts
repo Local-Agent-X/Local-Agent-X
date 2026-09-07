@@ -7,7 +7,7 @@
  * layout script's own read-only behaviour is proven against a real DOM in
  * test/browser-layout-report-script.test.ts.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const seam = vi.hoisted(() => {
   class FakeCdpOnlyOperationError extends Error {
@@ -20,6 +20,7 @@ const seam = vi.hoisted(() => {
     manager: {} as Record<string, unknown>,
     cdp: {} as Record<string, unknown>,
     cdpThrows: null as Error | null,
+    blockedPattern: null as string | null,
     FakeCdpOnlyOperationError,
   };
 });
@@ -40,7 +41,22 @@ vi.mock("../../browser/instance.js", () => ({
   },
 }));
 
+vi.mock("../../browser/guards.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../browser/guards.js")>();
+  return {
+    ...actual,
+    scanEvaluateScript: (script: string) => seam.blockedPattern ?? actual.scanEvaluateScript(script),
+  };
+});
+
 import { createBrowserTools } from "./index.js";
+import { scanEvaluateScript } from "../../browser/guards.js";
+import { LAYOUT_REPORT_SCRIPT } from "../../browser/layout-report.js";
+import {
+  clearSessionOwner,
+  registerChildSessionOwner,
+  resolveBrowserSessionId,
+} from "../../browser/session-owner-registry.js";
 import { _resetSessionEmulationForTest, getSessionEmulation } from "../../browser/emulation.js";
 
 const SESSION = "layout-session";
@@ -78,8 +94,27 @@ const OVERFLOW_REPORT = {
   fixedAndStickyTotal: 1,
 };
 
-function tool() {
-  const [browser] = createBrowserTools(() => SESSION);
+/** The scan walked only the first LAYOUT_REPORT_SCAN_CAP nodes: every element
+ *  count in it is a floor over the START of the document. */
+const TRUNCATED_REPORT = {
+  ...CLEAN_REPORT,
+  overflowingElements: [],
+  overflowingElementsTotal: 0,
+  fixedAndStickyTotal: 0,
+  elementsScanned: 4000,
+  scanTruncated: true,
+};
+
+/** Every stylesheet came from a CDN, so not one @media rule was readable. */
+const CDN_CSS_REPORT = {
+  ...CLEAN_REPORT,
+  matchingMediaQueries: [],
+  matchingMediaQueriesTotal: 0,
+  unreadableStyleSheets: 6,
+};
+
+function tool(sessionId: string = SESSION) {
+  const [browser] = createBrowserTools(() => sessionId);
   return browser;
 }
 
@@ -88,6 +123,7 @@ beforeEach(() => {
   for (const k of Object.keys(seam.manager)) delete seam.manager[k];
   for (const k of Object.keys(seam.cdp)) delete seam.cdp[k];
   seam.cdpThrows = null;
+  seam.blockedPattern = null;
   seam.manager.getCurrentUrl = () => PAGE;
   seam.manager.observe = vi.fn(async () => ({ title: "Products", url: PAGE, currentRefs: [], crossOriginIframes: [] }));
   seam.cdp.getEngine = () => "chromium";
@@ -201,6 +237,69 @@ describe("browser layout_report", () => {
     }
   });
 
+  // FINDING 4: the file used to CLAIM "the backend's own scanEvaluateScript
+  // blocklist still runs over it". It does not on the external-Chrome path —
+  // BrowserManager.evaluate goes straight to evaluateScript — and external
+  // Chrome is the only backend these actions run on. The scan now runs in the
+  // handler, so the claim is a behaviour instead of a comment.
+  it("runs the evaluate blocklist over its own script rather than assuming the backend did", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify(CLEAN_REPORT));
+    seam.blockedPattern = "some-blocked-pattern";
+
+    const result = await tool().execute({ action: "layout_report", _sessionId: SESSION });
+
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/rejected by the evaluate blocklist/i);
+    expect(String(result.content)).toContain("some-blocked-pattern");
+    expect(seam.manager.evaluate).not.toHaveBeenCalled();
+  });
+
+  it("and the real script clears that blocklist, so nothing had to be relaxed for it", () => {
+    expect(scanEvaluateScript(LAYOUT_REPORT_SCRIPT)).toBeNull();
+  });
+
+  // FINDING 5: the summary used to surface neither scanTruncated nor
+  // unreadableStyleSheets, so a 50k-node page whose offender sat at node 20,000
+  // read "0 element(s) extend past the viewport", and a CDN-served site read
+  // "0 matching @media quer(ies)" — the exact wrong conclusion this action
+  // exists to prevent.
+  it("never presents a clean element verdict off a TRUNCATED scan", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify(TRUNCATED_REPORT));
+
+    const text = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content);
+    const headline = text.split("Full report:")[0];
+
+    expect(headline).toMatch(/INCOMPLETE/);
+    expect(headline).toMatch(/scan stopped after 4000 nodes/i);
+    expect(headline).toMatch(/LOWER BOUNDS/);
+    // The counts are stated as floors, and the bare "0 element(s)" claim is gone.
+    expect(headline).toMatch(/at least 0 element\(s\) extend past the viewport/);
+    expect(headline).not.toMatch(/(?<!at least )\b0 element\(s\) extend past/);
+  });
+
+  it("never claims a page has no responsive CSS when the stylesheets were unreadable", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify(CDN_CSS_REPORT));
+
+    const text = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content);
+    const headline = text.split("Full report:")[0];
+
+    expect(headline).toMatch(/INCOMPLETE/);
+    expect(headline).toMatch(/6 stylesheet\(s\) could not be read/);
+    expect(headline).toMatch(/NOT evidence that the site lacks responsive CSS/i);
+    expect(headline).toMatch(/at least 0 matching @media/);
+    expect(headline).not.toMatch(/(?<!at least )\b0 matching @media/);
+  });
+
+  it("stays a plain clean headline when the scan really was complete", async () => {
+    seam.manager.evaluate = vi.fn(async () => JSON.stringify(CLEAN_REPORT));
+
+    const headline = String((await tool().execute({ action: "layout_report", _sessionId: SESSION })).content)
+      .split("Full report:")[0];
+
+    expect(headline).not.toMatch(/INCOMPLETE/);
+    expect(headline).not.toMatch(/at least/);
+  });
+
   it("withholds the report on a secret-bearing page like every other page read", async () => {
     seam.manager.getCurrentUrl = () => "https://vault.bitwarden.com/passwords";
     seam.manager.evaluate = vi.fn(async () => JSON.stringify(CLEAN_REPORT));
@@ -209,6 +308,66 @@ describe("browser layout_report", () => {
 
     expect(result.isError).toBe(true);
     expect(seam.manager.evaluate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * FINDING 1 (critical, shipped broken): a subagent's `emulate` hijacked its
+ * PARENT CHAT's browser. Every spawned run is registered against its root chat
+ * (registerChildSessionOwner), and cdpManagers / the emulation profile map are
+ * both keyed by that RESOLVED id — so a subagent calling emulate rewrote the
+ * parent's profile, closed the parent's context, and left the parent (and every
+ * sibling) on a cookieless 390x844 iPhone page. Only the subagent was told.
+ *
+ * Driven through execute() so the ownership check is proven where the agent
+ * actually reaches it, not on the handler in isolation.
+ */
+describe("emulate never re-identifies a browser the caller does not own", () => {
+  const PARENT = "chat-1";
+  const SUBAGENT = "agent-xyz";
+
+  beforeEach(() => {
+    // Exactly what server/handler-events.ts does when it preps a spawned run.
+    registerChildSessionOwner(SUBAGENT, PARENT, { agentId: "researcher" });
+  });
+
+  afterEach(() => {
+    clearSessionOwner(SUBAGENT);
+    clearSessionOwner(PARENT);
+  });
+
+  it("refuses the subagent, and the parent's browser identity is untouched", async () => {
+    // The premise the bug rests on: the subagent's browser IS the parent's.
+    expect(resolveBrowserSessionId(SUBAGENT)).toBe(PARENT);
+
+    const result = await tool(SUBAGENT).execute({ action: "emulate", device: "iphone", _sessionId: SUBAGENT });
+
+    expect(result.isError).toBe(true);
+    expect(String(result.content)).toMatch(/does not own its browser/i);
+    expect(String(result.content)).toContain(PARENT);
+    expect(String(result.content)).toMatch(/Ask the parent chat to run emulate/i);
+    // The parent's context was NOT torn down and NO profile was installed —
+    // not on the parent, not on the subagent, not on the resolved id.
+    expect(seam.cdp.close).not.toHaveBeenCalled();
+    expect(seam.cdp.navigate).not.toHaveBeenCalled();
+    expect(getSessionEmulation(PARENT)).toBeUndefined();
+    expect(getSessionEmulation(SUBAGENT)).toBeUndefined();
+  });
+
+  it("still lets the OWNER of that browser emulate it", async () => {
+    const result = await tool(PARENT).execute({ action: "emulate", device: "iphone", _sessionId: PARENT });
+
+    expect(result.isError).not.toBe(true);
+    expect(getSessionEmulation(PARENT)?.viewport).toEqual({ width: 390, height: 844 });
+    expect(seam.cdp.close).toHaveBeenCalled();
+  });
+
+  it("refuses before it can even consult the backend", async () => {
+    seam.cdp.getEngine = () => { throw new Error("emulate must refuse before touching the backend"); };
+
+    const result = await tool(SUBAGENT).execute({ action: "emulate", device: "iphone", _sessionId: SUBAGENT });
+
+    expect(result.isError).toBe(true);
   });
 });
 

@@ -9,6 +9,7 @@
  * Deleting "act" from TRACKED, or "evaluate" from HVB's extra members, passed.
  */
 import { describe, expect, it } from "vitest";
+import type { ActionTable } from "./action-tables.js";
 import {
   RESET_ACTIONS,
   TRACKED_ACTIONS,
@@ -16,7 +17,14 @@ import {
   HUMAN_VERIFICATION_BLOCKED_ACTIONS,
 } from "./action-tables.js";
 
-const intersect = (a: ReadonlySet<string>, b: ReadonlySet<string>) => [...a].filter((x) => b.has(x));
+const intersect = (a: ActionTable, b: ActionTable) => [...a].filter((x) => b.has(x));
+
+const TABLES: [string, ActionTable][] = [
+  ["RESET_ACTIONS", RESET_ACTIONS],
+  ["TRACKED_ACTIONS", TRACKED_ACTIONS],
+  ["READ_ONLY_ACTIONS", READ_ONLY_ACTIONS],
+  ["HUMAN_VERIFICATION_BLOCKED_ACTIONS", HUMAN_VERIFICATION_BLOCKED_ACTIONS],
+];
 
 describe("browser action tables", () => {
   it("never tracks progress for a read-only action (a read never 'tries to move the page')", () => {
@@ -63,13 +71,41 @@ describe("browser action tables", () => {
     expect(READ_ONLY_ACTIONS.has("emulate")).toBe(false);
   });
 
-  it("cannot be mutated by an importer (a deleted member would un-gate an action process-wide)", () => {
-    for (const table of [RESET_ACTIONS, TRACKED_ACTIONS, READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS]) {
-      const mutable = table as Set<string>;
-      expect(() => mutable.delete("evaluate")).toThrow(/immutable/);
-      expect(() => mutable.add("anything")).toThrow(/immutable/);
-      expect(() => mutable.clear()).toThrow(/immutable/);
+  // The bypass that defeated the previous "sealed Set": the tables were real
+  // Sets with add/delete/clear shadowed as own frozen props, so the OWN methods
+  // threw while `Set.prototype.delete.call(TABLE, "evaluate")` and
+  // `Set.prototype.clear.call(TABLE)` reached straight past them into
+  // [[SetData]] and emptied the human-verification block list process-wide. The
+  // old test only called the three shadowed own methods, so it proved the
+  // properties it had just defined. These call the prototype methods directly.
+  it.each(TABLES)("%s survives the Set.prototype.*.call bypass", (_name, table) => {
+    const receiver = table as unknown as Set<string>;
+    const members = [...table];
+    expect(members.length).toBeGreaterThan(0);
+
+    for (const method of ["delete", "add", "clear"] as const) {
+      expect(() => (Set.prototype[method] as (this: unknown, v?: string) => unknown)
+        .call(receiver, members[0])).toThrow(TypeError);
     }
+
+    expect([...table]).toEqual(members);
+    expect(table.size).toBe(members.length);
+    for (const member of members) expect(table.has(member)).toBe(true);
+  });
+
+  it("exposes no Set at all — there is no receiver for a prototype method to act on", () => {
+    for (const [, table] of TABLES) {
+      expect(table).not.toBeInstanceOf(Set);
+      expect(Object.isFrozen(table)).toBe(true);
+      // Own surface is exactly has/size/@@iterator — no add/delete/clear to
+      // shadow, and nothing that hands the backing Set back out.
+      expect(Object.getOwnPropertyNames(table).sort()).toEqual(["has", "size"]);
+      for (const value of Object.values(table)) expect(value).not.toBeInstanceOf(Set);
+    }
+  });
+
+  it("keeps evaluate gated after every bypass attempt above", () => {
     expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.has("evaluate")).toBe(true);
+    expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.size).toBe(11);
   });
 });

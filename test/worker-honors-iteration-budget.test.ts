@@ -1,34 +1,32 @@
 /**
- * Regression — the worker must honor `contextPack.budget.maxIterations` (CL-7),
- * and must treat it as a CADENCE rather than a wall.
+ * Regression — the worker must honor `contextPack.budget.maxIterations` (CL-7).
  *
- * The original bug: worker.ts's drive loop capped turns at a hardcoded
- * MAX_TURNS=64 and never read the iteration budget the entry runner stamped.
- * A worker asked to cap at N would silently run up to 64 turns. The fix reads
- * `op.contextPack.budget.maxIterations`, falling back to the fixed floor only
- * when the budget is absent / nonsensical — every case below still asserts the
- * op's own budget (3) is the number the checkpoint quotes.
+ * The bug: worker.ts's drive loop capped turns at a hardcoded MAX_TURNS=64 and
+ * never read the iteration budget the entry runner stamped. chat-runner and
+ * agent-runner both set `budget.maxIterations` (e.g. chat defaults to 30), and
+ * the loop's own comment claimed "Real cap is op budget" — but the loop ignored
+ * it. A worker asked to cap at N would silently run up to 64 turns.
  *
- * The second bug, fixed here: `maxIterations` was a hard WALL for the
- * `interactive` lane and a mere cadence for every other lane. The wall ended a
- * chat at an arbitrary turn count that said nothing about whether the work was
- * finished or whether the op was stuck — a user who walked away came back to an
- * unfinished task with no explanation. It is now a cadence for EVERY lane, and
- * whether the op ends at a checkpoint is decided by checkpoint-stop.ts.
+ * The fix reads `op.contextPack.budget.maxIterations` and uses it as the cap,
+ * falling back to the fixed floor only when the budget is absent / nonsensical.
  *
  * Real seam exercised: a genuine worker drives a real adapter whose every turn
  * is a non-terminal tool call (so the loop never terminates on its own) against
- * a live tool dispatcher, with the REAL loop-detection middleware installed so
- * the "did we learn anything" evidence set is populated by production code
- * rather than seeded by the test.
+ * a live tool dispatcher. With a budget of 3, the worker must stop after exactly
+ * 3 turns and finalize the interactive op as a successful checkpoint, not a
+ * technical failure. Autonomous lanes use the same value as checkpoint cadence
+ * and continue in the same worker.
+ *
+ * On OLD code (budget ignored, cap = 64): the 10-turn non-terminal script
+ * exhausts at turn 11 → the adapter's default terminal turn ends the op
+ * `succeeded` after ~11 turns. So this test's assertions (failed, 3 turns,
+ * maxTurns=3) FAIL on the pre-fix code and PASS on the fix.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { setMiddlewareStack, _resetMiddlewareStack } from "../src/canonical-loop/middlewares/host.js";
-import { loopDetectionMiddleware } from "../src/canonical-loop/middlewares/loop-detection.js";
 import {
   canonicalLoopEntry,
   registerAdapterForOp,
@@ -53,11 +51,6 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
   setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
-  // The dry-checkpoint condition reads loop-detection's distinct-result set.
-  // Install the REAL middleware (only that one — the full default stack would
-  // nudge/abort the scripted adapter for unrelated reasons) so the evidence
-  // this test turns on is recorded by production code.
-  setMiddlewareStack([loopDetectionMiddleware]);
 });
 
 afterEach(async () => {
@@ -66,7 +59,6 @@ afterEach(async () => {
   resetCanonicalRuntime();
   resetBus();
   resetLeaseConfig();
-  _resetMiddlewareStack();
   for (const id of tracked) {
     const dir = join(OPS_BASE, id);
     if (existsSync(dir)) {
@@ -107,58 +99,21 @@ async function awaitTerminal(opId: string, timeoutMs = 5_000): Promise<void> {
 }
 
 describe("worker honors budget.maxIterations (CL-7 regression)", () => {
-  it("treats maxIterations as a cadence for the interactive lane while work progresses", async () => {
-    // maxIterations used to be a hard WALL for `interactive` — the op died at
-    // an arbitrary turn count that said nothing about whether the work was
-    // done. It is now a checkpoint cadence for every lane; termination is
-    // decided by checkpoint-stop.ts. With every turn producing a NEW distinct
-    // tool result, no stop condition is met, so the op must run past the
-    // 3-turn budget and only end when the script runs out.
+  it("caps the drive loop at maxIterations, not the fixed 64 floor", async () => {
     const op = mkOp(3);
 
+    // Every turn is a non-terminal, non-silent tool call: assistantText is
+    // empty and terminalReason stays null, so the loop never ends on its own —
+    // the ONLY thing that stops it is the iteration cap. Ten of them, well
+    // under the old 64 floor, so if the budget were ignored the script would
+    // instead run out and the adapter's default turn would end the op cleanly.
     const script = Array.from({ length: 10 }, (_, i) =>
-      scriptTurn({ toolCalls: [{ toolCallId: `budget-tc-${i}`, tool: "search", args: { q: `q-${i}` } }] }),
+      scriptTurn({ toolCalls: [{ toolCallId: `budget-tc-${i}`, tool: "search", args: {} }] }),
     );
     const fake = new FakeAdapter({ script });
     registerAdapterForOp(op.id, () => fake);
 
-    // Distinct result bytes per call, so loop-detection's novelty set grows
-    // every turn and no checkpoint is ever "dry".
-    let n = 0;
-    setToolDispatcher({
-      async dispatch(call) {
-        return { toolCallId: call.toolCallId, status: "ok", result: { ok: true, finding: `distinct-finding-${n++}` }, durationMs: 0 };
-      },
-    });
-
-    canonicalLoopEntry(op);
-
-    await awaitTerminal(op.id);
-    await awaitIdle(5_000).catch(() => undefined);
-
-    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
-    // Ran WELL past the 3-turn budget — the wall is gone.
-    expect(fake.turnInputs.length).toBeGreaterThan(3);
-
-    // Every checkpoint it did pass was a continuing cadence marker, and the
-    // budget it quotes is still the op's, not the hardcoded 64 floor.
-    const checkpoints = readCanonicalEvents(op.id).filter(e => e.type === "iteration_checkpoint");
-    expect(checkpoints.length).toBeGreaterThanOrEqual(2);
-    for (const c of checkpoints) expect(c.body).toMatchObject({ maxTurns: 3, continuing: true });
-  });
-
-  it("stops an interactive op at the checkpoint where two rungs in a row learned nothing", async () => {
-    // Same script, but the dispatcher returns the IDENTICAL result every time,
-    // so loop-detection's distinct-result set stops growing after turn 0.
-    // Checkpoint 1 has no prior count to compare; checkpoints 2 and 3 are both
-    // dry, which is the stop.
-    const op = mkOp(3);
-
-    const script = Array.from({ length: 20 }, (_, i) =>
-      scriptTurn({ toolCalls: [{ toolCallId: `dry-tc-${i}`, tool: "search", args: {} }] }),
-    );
-    const fake = new FakeAdapter({ script });
-    registerAdapterForOp(op.id, () => fake);
+    // A benign tool dispatcher so each turn commits and the loop advances.
     setToolDispatcher({
       async dispatch(call) {
         return { toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 0 };
@@ -166,19 +121,24 @@ describe("worker honors budget.maxIterations (CL-7 regression)", () => {
     });
 
     canonicalLoopEntry(op);
+
     await awaitTerminal(op.id);
     await awaitIdle(5_000).catch(() => undefined);
 
-    expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
-    // Stopped well before the 20-turn script ran out, and after more than one
-    // checkpoint — proof it was the dry-rung condition and not the old wall.
-    expect(fake.turnInputs.length).toBeGreaterThan(3);
-    expect(fake.turnInputs.length).toBeLessThan(20);
+    const after = readOp(op.id);
 
-    const checkpoints = readCanonicalEvents(op.id).filter(e => e.type === "iteration_checkpoint");
-    const last = checkpoints.at(-1)!;
-    expect(last.body).toMatchObject({ maxTurns: 3, continuing: false, stopReason: "dry-checkpoints" });
-    expect(checkpoints.slice(0, -1).every(c => c.body?.continuing === true)).toBe(true);
+    expect(after?.canonical?.state).toBe("succeeded");
+
+    // Exactly maxIterations driveTurn calls ran. On the fix count starts at 0,
+    // runs turns 0/1/2, then the 4th iteration trips the cap before driveTurn.
+    expect(fake.turnInputs.length).toBe(3);
+
+    // The reason event quotes the BUDGET cap, proving it honored maxIterations
+    // rather than the hardcoded floor.
+    const events = readCanonicalEvents(op.id);
+    const capEvent = events.find(e => e.type === "iteration_checkpoint");
+    expect(capEvent).toBeDefined();
+    expect(capEvent!.body).toMatchObject({ maxTurns: 3, continuing: false });
   });
 
   it("uses maxIterations as checkpoint cadence for unattended lanes", async () => {

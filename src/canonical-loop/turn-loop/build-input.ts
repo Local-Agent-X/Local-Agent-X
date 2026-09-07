@@ -125,7 +125,20 @@ export async function buildTurnInput(
   if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
     const digest = buildSituationalAwareness(op, turnIdx);
     if (digest) {
-      input.messages = [...input.messages, situationalMessage(op.id, turnIdx, digest)];
+      // Run the append back through collapseAdjacentUserMessages. When the
+      // history already ENDS on a user row (a fresh user turn, a nudge), a
+      // bare append hands codex/gemini a run of user-only rows — the shape
+      // this file's own comment (and providers/sanitize.ts) says makes Codex
+      // return EMPTY responses, and the canonical view exists precisely so no
+      // transport has to repair it. Collapsing reuses the rule already here
+      // instead of teaching each transport a second one, and it costs the
+      // cache nothing: the merged row is still the LAST row, so it is exactly
+      // the one ephemeralTailMessages already declares volatile, and
+      // everything above it stays byte-identical turn over turn.
+      input.messages = collapseAdjacentUserMessages([
+        ...input.messages,
+        situationalMessage(op.id, turnIdx, digest),
+      ]);
       digestAppended = true;
     }
   }

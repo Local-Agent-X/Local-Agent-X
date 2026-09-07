@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { buildTurnInput, collapseAdjacentUserMessages } from "./build-input.js";
 import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
 import { markConversationCache } from "../../anthropic-client/cache-breakpoints.js";
+import { toGeminiContents } from "../adapters/gemini-native-transport.js";
+import { convertMessagesToInput } from "../../codex-message-convert.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { CanonicalMessage } from "../contract-types.js";
 import { appendOpMessage } from "../store.js";
 import { trackOpForSession, releaseOpFromSession } from "../../ops/session-bridge.js";
@@ -106,20 +109,61 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
+  // The assistant reply the seed user row is missing, so a continuation turn
+  // does NOT end on a user row — the ordinary mid-conversation shape.
+  function appendAssistantReply(turn = 0): void {
+    appendOpMessage({
+      messageId: `am-${turn}`, opId, turnIdx: turn, seqInTurn: 1,
+      role: "assistant", content: { text: "on it" },
+      createdAt: `2026-06-06T10:0${turn + 1}:00.000Z`,
+    });
+  }
+
   it("appends the ledger-backed digest as its OWN trailing user message, leaving history untouched", async () => {
+    appendAssistantReply();
     const input = await buildTurnInput(makeOp("interactive"), 1, null);
     const last = input.messages[input.messages.length - 1];
     expect(last.role).toBe("user");
     const text = (last.content as { text: string }).text;
     expect(text).toContain("[SITUATIONAL CONTEXT");
     expect(text).toContain("bash✗");      // the failed action from the ledger
-    // The digest is its OWN row now — the real user turn is NOT rewritten.
+    // The digest is its OWN row here — the real user turn is NOT rewritten.
     expect(text).not.toContain("ship it");
     const prior = input.messages[input.messages.length - 2];
-    expect((prior.content as { text: string }).text).toBe("ship it");
+    expect(prior.role).toBe("assistant");
+    expect(input.messages[0].content).toEqual({ text: "ship it" });
     // …and the transport is told the tail is volatile so the cache breakpoint
     // lands beneath it.
     expect(input.ephemeralTailMessages).toBe(1);
+  });
+
+  // F5 — when the history ALREADY ends on a user row (a fresh user turn, a
+  // nudge), a bare append would hand codex/gemini `[user, user]`, which is the
+  // shape this repo documents as making Codex return EMPTY responses. The
+  // digest merges into that row instead. It is still the LAST row, so it is
+  // still exactly the volatile row ephemeralTailMessages declares.
+  it("merges into a trailing user row instead of emitting two user rows in a row", async () => {
+    const input = await buildTurnInput(makeOp("interactive"), 1, null);
+    expect(input.messages).toHaveLength(1);
+    const text = (input.messages[0].content as { text: string }).text;
+    expect(text).toContain("ship it");
+    expect(text).toContain("[SITUATIONAL CONTEXT");
+    expect(input.ephemeralTailMessages).toBe(1);
+
+    // No transport sees a user-only run — checked on the two that break on it.
+    const wire = canonicalToTransport(input.messages, input.pendingRedirect);
+    expect(wire.map(m => m.role)).toEqual(["user"]);
+
+    // Gemini: contents roles (its transport's own converter).
+    const gemini = toGeminiContents(wire);
+    expect(gemini.map(c => c.role)).toEqual(["user"]);
+
+    // Codex: Responses-API input items, via the same map codex-transport does.
+    const codexItems = convertMessagesToInput(
+      wire.map(m => ({ role: m.role, content: m.content } as ChatCompletionMessageParam)),
+    ) as Array<{ type?: string; role?: string }>;
+    const userRun = codexItems.filter(i => i.type === "message" && i.role === "user");
+    expect(userRun).toHaveLength(1);
   });
 
   it("injects on the long autonomous lanes (agent/background) — they drift too", async () => {
@@ -152,6 +196,10 @@ describe("buildTurnInput — situational-awareness wiring", () => {
   // last user row) and this test goes red — the digest's per-turn bytes then
   // sit at an EARLY index, so turn 1's array is not a prefix of turn 2's.
   it("keeps turn N's messages a strict prefix of turn N+1's up to the cache breakpoint", async () => {
+    // Turn 1 mid-conversation: history does NOT end on a user row, so the
+    // digest is its own trailing row and the rows above it are the cached
+    // region under test.
+    appendAssistantReply();
     const turn1 = await buildTurnInput(makeOp("interactive"), 1, null);
 
     // A real continuation: the assistant answered and the user replied. Both
@@ -229,6 +277,7 @@ describe("buildTurnInput — situational-awareness wiring", () => {
       text: "actually deploy staging first",
       receivedAt: "2026-06-06T10:02:00.000Z",
     };
+    appendAssistantReply(); // mid-conversation: the digest is its own row
     const input = await buildTurnInput(makeOp("interactive"), 1, redirect);
     const wire = canonicalToTransport(input.messages, input.pendingRedirect);
 
